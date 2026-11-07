@@ -4,7 +4,8 @@ import { nativeCaddyProfile, createNativeCaddySetupInput, createNativeCaddyBindi
     createCaddyContainerSetupSteps, ensureNativeCaddyContainer, type NativeCaddyFirewallExposure } from '@happier-dev/cli-common/machineSetup';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
-import { runElevatedMachineSetupIntent, resolveInstalledMachineEffectCli } from '@/machines/adminAccess/runElevatedEffect';
+import { runElevatedMachineSetupIntent } from '@/machines/adminAccess/runElevatedEffect';
+import { resolveMachineEffectCli } from '@/machines/adminAccess/machineEffectCli';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { isDeepStrictEqual } from 'node:util';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
@@ -28,7 +29,7 @@ import { resolveOwnServerImageArchivePathForHost } from './releaseProvenance';
 import { createDeploymentImageArchiveCopyForHost } from './imageArchiveCopy';
 import { createOwnServerNativeRuntime } from './nativeRuntime';
 import { resolvePrivateServiceReferenceForHost } from './privateServiceReference';
-import { prepareOwnServerPreMigrationBackupOperandsForHost } from './backupDestination';
+import { prepareOwnServerPreMigrationBackupOperandsForHost, prepareOwnServerBackupRepositoryOperandsForHost } from './backupDestination';
 import { materializeCaddyInitialConfigV1 } from './caddyRouteMaterialization';
 export { openDeploymentBackupDestinationForHost, prepareOwnServerPreMigrationBackupOperandsForHost } from './backupDestination';
 
@@ -61,7 +62,7 @@ export type OwnServerDeploymentRuntimeHostInput = Readonly<{
     serverHttpBaseUrl: string;
     machineId: string;
     acquirePluginRuntimeRegistryLease(): Promise<PluginRuntimeRegistryLease>;
-    /** Current installed credential generation, independently of requester content custody. */
+    /** Admitted installed-holder lifetime, independently of requester content custody. */
     assertInstalledCurrent?(): Promise<void>;
     /** P42's authenticated storage reader. Never an actor catalog or value supplier. */
     readEnvironmentSecretLaunchAdmission?: (input: OwnServerSecretLaunchAdmissionRequest) => Promise<OwnServerSecretLaunchAdmission>;
@@ -208,6 +209,13 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                             ...(intent.pullRequestHead ? { pullRequestHead: intent.pullRequestHead, repository: sourceRepository } : {}) }), deploymentRoot,
                         artifactDirectory: join(configuration.happyHomeDir, 'tmp', 'deployment-source') },
                     secrets,
+                    async prepareBackupRepositoryOperands() {
+                        return prepareOwnServerBackupRepositoryOperandsForHost({ registry: retainedLease.registry,
+                            configuration: environment.content.backup,
+                            preparation: { ...secrets, environmentId: environment.environment.id, machineId: host.machineId,
+                                installationId: identity.installationId, bindings: environment.content.bindings, assertCurrent },
+                            context: request.context, signal, isCurrent: () => !released });
+                    },
                     async preparePreMigrationBackupOperands() {
                         return prepareOwnServerPreMigrationBackupOperandsForHost({ registry: retainedLease.registry,
                             configuration: environment.content.backup, data: environment.content.template?.data,
@@ -305,7 +313,10 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
     return {
         prepareDomainCaddy(request) {
             const routedNetworks = [...new Set(request.replicas.flatMap(replica => [...replica.networkNames]))];
-            if (!request.replicas.length || !routedNetworks.length) return { status: 'unavailable', reason: 'required_fact_unavailable' };
+            if (!request.replicas.length) return { status: 'unavailable', reason: 'required_fact_unavailable',
+                details: { requiredFact: 'deployed_replicas' } };
+            if (!routedNetworks.length) return { status: 'unavailable', reason: 'required_fact_unavailable',
+                details: { requiredFact: 'replica_networks' } };
             // Workload exports select the private network, never Caddy's port.
             // No export is required for an unpublished container-network app.
             const networks = [...new Set((request.environment.ownServer?.serviceExports ?? []).filter(item =>
@@ -324,7 +335,8 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
             if (candidates.length > 1) return { status: 'unavailable', reason: 'private_scope_unenforceable' };
             if (candidates.length) {
                 const network = candidates[0]!;
-                if (!network.addresses.length) return { status: 'unavailable', reason: 'required_fact_unavailable' };
+                if (!network.addresses.length) return { status: 'unavailable', reason: 'required_fact_unavailable',
+                    details: { requiredFact: 'private_network_addresses' } };
                 const requirement = nativeCaddyProfile.portRequirement;
                 exposures.push({ requirementId: requirement.id, exposure: requirement.exposure, protocol: requirement.protocol,
                     hostPort: requirement.hostPort, containerPort: requirement.containerPort,
@@ -336,26 +348,26 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
             if (bindings.status !== 'ready') return bindings;
             const privateSeedInput = { adminSocket: '/run/happier-caddy/admin.sock',
                 originListen: [`:${nativeCaddyProfile.portRequirement.containerPort}`] as const };
+            const publicSeedInput = { ...privateSeedInput,
+                publicListen: [`:${nativeCaddyProfile.publicPortRequirements[1].containerPort}`] as const,
+                publicHttpListen: [`:${nativeCaddyProfile.publicPortRequirements[0].containerPort}`] as const };
             const input = createNativeCaddySetupInput({ daemonGroup: request.daemonGroup, daemonGroupId: request.daemonGroupId,
-                routedNetworks, initialConfig: JSON.stringify(materializeCaddyInitialConfigV1({
-                    ...privateSeedInput,
-                    ...(publicIngress ? { publicListen: [`:${nativeCaddyProfile.publicPortRequirements[1].containerPort}`] as const,
-                        publicHttpListen: [`:${nativeCaddyProfile.publicPortRequirements[0].containerPort}`] as const } : {}),
-                })), bindings: { privateBinding: bindings.privateBinding, publicBindings: bindings.publicBindings } });
-            // The earlier owned private-only seed is an exact known predecessor,
-            // not foreign content. The native file owner still rejects other bytes.
+                routedNetworks, initialConfig: JSON.stringify(materializeCaddyInitialConfigV1(publicIngress ? publicSeedInput : privateSeedInput)),
+                bindings: { privateBinding: bindings.privateBinding, publicBindings: bindings.publicBindings } });
+            // Both owned startup seeds are exact known predecessors of each
+            // other. The native file owner still rejects every other digest.
             // Live routes/certificates remain in Caddy's separate autosave state.
-            const steps = createCaddyContainerSetupSteps(input, publicIngress ? {
-                previousInitialConfig: JSON.stringify(materializeCaddyInitialConfigV1(privateSeedInput)),
-            } : {});
+            const steps = createCaddyContainerSetupSteps(input, {
+                previousInitialConfig: JSON.stringify(materializeCaddyInitialConfigV1(publicIngress ? privateSeedInput : publicSeedInput)),
+            });
             return { status: 'ready', input, steps,
                 async ensure({ setup, context, actionId, installationId, dockerEngineId, run, signal }) {
                     const operationId = context.operationAcceptance?.operationId ?? context.actionRequestId;
                     if (!operationId) return refuse('operation_unavailable');
                     const desired = await setup.readDesired();
-                    if (desired.status !== 'ready') return refuse('required_fact_unavailable');
+                    if (desired.status !== 'ready') return refuse('required_fact_unavailable', { requiredFact: 'machine_setup_desired_state' });
                     const basis = { kind: 'setup' as const, machineId: host.machineId, desiredRevision: desired.policy.revision };
-                    const elevation = { ...setup.elevation, installationId, installedCli: resolveInstalledMachineEffectCli() };
+                    const elevation = { ...setup.elevation, installationId, ...resolveMachineEffectCli() };
                     return machineNativeEffectAdmission.run({ operation: { operationId, kind: actionId, signal },
                         keys: [{ kind: 'machineSetup' }, { kind: 'dockerEngine', dockerEndpoint: dockerEngineId }] }, async native => {
                         let applied: import('@happier-dev/cli-common/machineSetup').MachineSetupApplyResultV1 | undefined;
@@ -385,6 +397,7 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
         },
         acquire,
         acquireRetention: acquireNative,
+        acquireTeardown: acquireNative,
         acquireCandidate(request, environment) {
             return acquire({ actionId: 'deployments.deploy', context: request.context, executionRole: 'build',
                 input: { serverId: host.serverId, environmentId: request.environmentId, targetLinkId: request.targetLinkId },

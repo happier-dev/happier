@@ -180,7 +180,7 @@ async function fixture(privateNetwork = true, socketFixture = true, deferredAdmi
     const commands: MachineSetupNativeCommand[] = [];
     type Container = { Id: string; Name: string; Config: { Image: string; Cmd: string[]; User: string; Labels: Record<string, string> };
         HostConfig: { NetworkMode: string; RestartPolicy: { Name: string }; Binds: null; Mounts: Array<{ Type: string; Source: string; Target: string; ReadOnly: boolean }>; PortBindings: Record<string, Array<{ HostIp: string; HostPort: string }>> };
-        NetworkSettings: { Networks: Record<string, object>; Ports: Record<string, Array<{ HostIp: string; HostPort: string }>> }; State: { Running: boolean } };
+        NetworkSettings: { Networks: Record<string, object>; Ports: Record<string, Array<{ HostIp: string; HostPort: string }>> }; State: { Running: boolean; Status?: string; ExitCode?: number } };
     let container: Container | undefined;
     let exitCode: number | undefined, exited: (() => void) | undefined;
     let loseCreateResponse = false;
@@ -376,12 +376,14 @@ it.skipIf(process.platform === 'win32')('names the unavailable live admin config
     await writeFile(join(f.input.stateDirectory, 'initial.json'), f.input.initialConfig);
     expect(await observeNativeCaddyContainer({ dockerHost: f.input.dockerHost }, { run: f.run })).toMatchObject({
         status: 'unavailable', reason: 'required_fact_unavailable', details: {
+            requiredFact: 'caddyAdminConfig',
             failure: { requiredFact: 'caddyAdminConfig', errorCode: 'ENOENT' },
             remedy: expect.stringContaining('caddyAdminConfig'),
         },
     });
     expect(await ensureNativeCaddyContainer(input, f.options())).toMatchObject({
         status: 'unavailable', reason: 'required_fact_unavailable', details: {
+            requiredFact: 'caddyAdminConfig',
             failure: { requiredFact: 'caddyAdminConfig', errorCode: 'ENOENT' },
             remedy: expect.stringContaining('caddyAdminConfig'),
         },
@@ -693,6 +695,36 @@ it('keeps no-network origins container-only and refuses a foreign or incompatibl
     f.readContainer().Config.Labels = {};
     expect(await ensureNativeCaddyContainer(f.input, f.options())).toEqual({ status: 'unavailable', reason: 'foreign_effect_conflict' });
     expect(f.commands.slice(before).every(command => command.args[3] === 'ls' || command.args[3] === 'inspect')).toBe(true);
+});
+
+it.skipIf(process.platform === 'win32').each(['created', 'running', 'exited', 'custom binding'] as const)(
+    'recovers only the never-started owned public Caddy for private ingress: %s', async state => {
+    const f = await fixture(false); await f.setup();
+    expect(await ensureNativeCaddyContainer(f.input, f.options())).toMatchObject({ status: 'ready' });
+    await f.closeAdmin();
+    const retained = f.readContainer();
+    retained.State = { Running: state === 'running', Status: state === 'custom binding' ? 'created' : state, ExitCode: 128 };
+    retained.HostConfig.PortBindings = Object.fromEntries(nativeCaddyProfile.publicPortRequirements.map(port => [
+        `${port.containerPort}/${port.protocol}`, [{ HostIp: '0.0.0.0', HostPort: String(port.hostPort) }],
+    ]));
+    if (state === 'custom binding') retained.HostConfig.PortBindings['9000/tcp'] = [{ HostIp: '127.0.0.1', HostPort: '9000' }];
+    retained.NetworkSettings.Networks = {};
+    const autosave = join(f.input.stateDirectory, 'config', 'caddy', 'autosave.json');
+    await writeFile(autosave, '{"retainedDomain":"other-app.example"}');
+    const before = f.commands.length;
+    const result = await ensureNativeCaddyContainer(f.input, f.options());
+    if (state === 'created') {
+        expect(result).toMatchObject({ status: 'ready' });
+        expect(f.readContainer()).not.toBe(retained);
+        expect(f.readContainer().HostConfig.PortBindings).toEqual({});
+        expect(f.readContainer().State.Running).toBe(true);
+        expect(Object.keys(f.readContainer().NetworkSettings.Networks)).toEqual(['routed-a', 'routed-b']);
+    } else {
+        expect(result).toEqual({ status: 'unavailable', reason: 'foreign_effect_conflict' });
+        expect(f.readContainer()).toBe(retained);
+        expect(f.commands.slice(before).every(command => command.args[3] === 'ls' || command.args[3] === 'inspect')).toBe(true);
+    }
+    expect(await readFile(autosave, 'utf8')).toBe('{"retainedDomain":"other-app.example"}');
 });
 
 it.skipIf(process.platform === 'win32')('adds admitted public listeners and publications to the retained owned private-only Caddy without losing routes or networks', async () => {

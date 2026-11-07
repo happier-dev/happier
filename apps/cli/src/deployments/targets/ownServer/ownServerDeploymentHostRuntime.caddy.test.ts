@@ -13,6 +13,22 @@ import type { DeploymentEnvironmentContentV1 } from '@happier-dev/deployment-pro
 import { createOwnServerDeploymentRuntimeForHost } from './ownServerDeploymentHostRuntime';
 import { createNativeCaddyRoutes } from '@/machines/reachability/nativeCaddyRoutes';
 import { createServer } from 'node:http';
+import { createHash } from 'node:crypto';
+import { materializeCaddyInitialConfigV1 } from './caddyRouteMaterialization';
+
+it('names the missing deployed routing fact before native Caddy setup', () => {
+    const runtime = createOwnServerDeploymentRuntimeForHost({ credentials: { token: 'fixture', encryption: null },
+        serverId: 'home', serverHttpBaseUrl: 'https://home.test', machineId: 'machine',
+        resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }),
+        async acquirePluginRuntimeRegistryLease() { throw new Error('No native acquisition for missing routing facts'); } });
+    const request = { domain: { hostname: 'app.example.test', target: { service: 'web', containerPort: 80 } },
+        environment,
+        replicas: [], privateNetworks: [], daemonGroup: 'happier', daemonGroupId: 1001 };
+    expect(runtime.prepareDomainCaddy!(request)).toMatchObject({ status: 'unavailable', reason: 'required_fact_unavailable',
+        details: { requiredFact: 'deployed_replicas' } });
+    expect(runtime.prepareDomainCaddy!({ ...request, replicas: [{ containerName: 'web-1', networkNames: [] }] }))
+        .toMatchObject({ status: 'unavailable', reason: 'required_fact_unavailable', details: { requiredFact: 'replica_networks' } });
+});
 
 // Translate the native socket namespace at the OS/HTTP boundaries. Keep real
 // filesystem notifications, Unix transport and Caddy readiness beneath setup.
@@ -41,18 +57,24 @@ const environment: DeploymentEnvironmentContentV1 = { name: 'Staging', retainPre
     definition: { kind: 'repository', ref: 'main', compose: { path: 'compose.yaml', profiles: [], services: [] } },
     ingress: { kind: 'cloudflareTunnel' } };
 
-it.skipIf(process.platform === 'win32')('upgrades the exact retained Happier private seed for public ingress without claiming custom seed content', async () => {
+it.skipIf(process.platform === 'win32').each(['public', 'tunnel'] as const)('transitions the exact retained Happier seed to %s ingress without claiming custom seed content', async ingress => {
     const root = await mkdtemp(join(tmpdir(), 'domain-caddy-seed-'));
     onTestFinished(() => rm(root, { recursive: true, force: true }));
     // Captured from eadc2422, 2026-11-02 #36; SHA256 c217df0245baab3a0f36d34716b201c5bc3a5ace4f2340cd0788b495b5f66ba9.
-    const retainedSeed = '{"admin":{"listen":"unix//run/happier-caddy/admin.sock|0660","config":{"persist":true}},"apps":{"http":{"servers":{"happier_private":{"listen":[":8080"],"automatic_https":{"disable":true},"routes":[{"handle":[{"handler":"static_response","status_code":404}],"terminal":true}],"errors":{"routes":[]}}}}}}';
+    const privateSeed = '{"admin":{"listen":"unix//run/happier-caddy/admin.sock|0660","config":{"persist":true}},"apps":{"http":{"servers":{"happier_private":{"listen":[":8080"],"automatic_https":{"disable":true},"routes":[{"handle":[{"handler":"static_response","status_code":404}],"terminal":true}],"errors":{"routes":[]}}}}}}';
+    const publicSeed = JSON.stringify(materializeCaddyInitialConfigV1({ adminSocket: '/run/happier-caddy/admin.sock',
+        originListen: [':8080'], publicListen: [':443'], publicHttpListen: [':80'] }));
+    // Retained #75 guest seed, observed 2026-11-06; exact writer bytes, not shape-based ownership.
+    expect(Buffer.byteLength(publicSeed)).toBe(782);
+    expect(createHash('sha256').update(publicSeed).digest('hex')).toBe('3f37b3a617aa0eb51a90426e099d73adbfd4a3432d5d23ea4001d72cad97b6cb');
+    const retainedSeed = ingress === 'public' ? privateSeed : publicSeed;
     const runtime = createOwnServerDeploymentRuntimeForHost({ credentials: { token: 'fixture', encryption: null },
         serverId: 'home', serverHttpBaseUrl: 'https://home.test', machineId: 'machine',
         resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }),
         async acquirePluginRuntimeRegistryLease() { throw new Error('Uses deployed service facts'); } });
     const prepared = runtime.prepareDomainCaddy!({
         domain: { hostname: 'app.example.test', target: { service: 'web', containerPort: 80 } },
-        environment: { ...environment, ingress: undefined },
+        environment: { ...environment, ingress: ingress === 'public' ? undefined : environment.ingress },
         replicas: [{ containerName: 'deployed-web-1', networkNames: ['deployed_default'] }],
         privateNetworks: [], daemonGroup: 'happier', daemonGroupId: process.getgid!(),
     });

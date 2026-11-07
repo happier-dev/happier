@@ -1,7 +1,7 @@
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, mkdir, chmod, rm } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import { Server as TcpServer } from 'node:net';
-import { PassThrough } from 'node:stream';
+import { PassThrough, Transform } from 'node:stream';
 import { createInterface } from 'node:readline';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -23,16 +23,18 @@ import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, ExternalActionExecution
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { encodePlainArtifactStoredContent, ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
+import { MachinePublishedRowV1Schema } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { socketRpcCodec } from '@happier-dev/sync-client';
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import { DeploymentDomainContentV1Schema, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
+import { DeploymentDomainContentV1Schema, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, machineSecretGrantSubjectKey } from '@happier-dev/deployment-protocol';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import * as installationStore from '@/daemon/identity/store';
 import { prepareRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { createDaemonDeploymentActionDeps } from '@/deployments/createDaemonDeploymentActionDeps';
+import { projectDeploymentFailure } from '@/deployments/deploymentFailure';
 import type { ClientToServerEvents } from '@/api/types';
 import type { StoredCredentials } from '@/persistence';
 import type { DeploymentArtifactDocumentV1, DeploymentDomainContentV1 } from '@happier-dev/deployment-protocol';
@@ -49,6 +51,7 @@ import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/mac
 import { resolveInstalledMachineEffectCli } from '@/machines/adminAccess/runElevatedEffect';
 import { settleMachineCaddyFirewallForHost } from '@/machines/reachability/machineReachabilityHost';
 import { MachineEffectInternalRequestSchema, MachineEffectInternalRecordSchema } from '@/machines/setup/effectInternalProtocol';
+import { MachineElevationFailureV1Schema } from '@happier-dev/protocol/machines/adminAccessV1';
 import type { MachineElevationSpawn } from '@/machines/adminAccess/runElevatedEffect';
 import { MachineReachabilityPostureV1Schema } from '@happier-dev/protocol/machines/reachability/machineReachabilityPostureV1';
 import { observeOwnDaemonReachability } from '@/machines/reachability/observeOwnDaemonReachability';
@@ -59,11 +62,82 @@ import { projectSettledApprovalExecution } from '@happier-dev/protocol/actions/e
 import { ApprovalRequestV2Schema, StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { ApprovalRequestGetResultV1Schema } from '@happier-dev/protocol/approvals/approvalRequestPublicRead';
 import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
+import { runMachineSetupEffectInternal } from '@/machines/setup/effectInternal';
+import { sealMachineSecretGrant } from '@/deployments/secrets/machineSecretGrant';
+
+const retainedConnector = {
+    subject: { v: 1 as const, kind: 'connectorToken' as const, machineId: 'a', installationId: 'installed-a',
+        provider: { kind: 'builtin' as const, id: 'cloudflareNamed' as const }, connectorId: 'environment-tunnel' },
+    imageRef: 'cloudflare/cloudflared:2026.10.0', version: '2026.10.0', networkName: 'deployed_default',
+    tokenPath: '/etc/cloudflared/happier-environment-tunnel.token', token: 'fixture-private-connector-token', id: 'f'.repeat(64),
+};
+
+const seedFs = vi.hoisted(() => ({ root: '' }));
+// Translate privileged filesystem paths only; the real file backend reads,
+// checks ownership and digests, stages and atomically activates the seed.
+vi.mock('node:fs/promises', async importOriginal => {
+    const actual = await importOriginal<typeof import('node:fs/promises')>();
+    const path = <T,>(value: T): T => {
+        if (!seedFs.root || typeof value !== 'string') return value;
+        if (value === '/var/lib/happier' || value.startsWith('/var/lib/happier/'))
+            return (seedFs.root + '/state' + value.slice('/var/lib/happier'.length)) as T;
+        if (value === '/run/happier-caddy' || value.startsWith('/run/happier-caddy/'))
+            return (seedFs.root + '/admin' + value.slice('/run/happier-caddy'.length)) as T;
+        if (value === '/etc/cloudflared' || value.startsWith('/etc/cloudflared/'))
+            return (seedFs.root + '/cloudflared' + value.slice('/etc/cloudflared'.length)) as T;
+        return value;
+    };
+    const protectedConnectorPath = (value: unknown) => seedFs.root && typeof value === 'string'
+        && (value === '/etc/cloudflared' || value.startsWith('/etc/cloudflared/'));
+    return { ...actual,
+        lstat: async (...args: Parameters<typeof actual.lstat>) => {
+            const stat = await actual.lstat(path(args[0]), args[1]);
+            return protectedConnectorPath(args[0]) ? Object.assign(stat, { uid: 0, gid: 0 }) : stat;
+        },
+        readFile: (...args: Parameters<typeof actual.readFile>) => actual.readFile(path(args[0]), args[1]),
+        writeFile: (...args: Parameters<typeof actual.writeFile>) => actual.writeFile(path(args[0]), args[1], args[2]),
+        mkdir: (...args: Parameters<typeof actual.mkdir>) => actual.mkdir(path(args[0]), args[1]),
+        chmod: (...args: Parameters<typeof actual.chmod>) => actual.chmod(path(args[0]), args[1]),
+        chown: async (...args: Parameters<typeof actual.chown>) => {
+            if (protectedConnectorPath(args[0])) { await actual.lstat(path(args[0])); return; }
+            await actual.chown(path(args[0]), args[1], args[2]);
+        },
+        mkdtemp: async (...args: Parameters<typeof actual.mkdtemp>) => {
+            const physical = await actual.mkdtemp(path(args[0]), args[1]);
+            return protectedConnectorPath(args[0]) ? '/etc/cloudflared' + String(physical).slice((seedFs.root + '/cloudflared').length)
+                : seedFs.root && String(args[0]).startsWith('/var/lib/happier/')
+                    ? '/var/lib/happier' + String(physical).slice((seedFs.root + '/state').length) : physical;
+        },
+        rename: (...args: Parameters<typeof actual.rename>) => actual.rename(path(args[0]), path(args[1])),
+        rm: (...args: Parameters<typeof actual.rm>) => actual.rm(path(args[0]), args[1]),
+    };
+});
+vi.mock('node:http', async importOriginal => {
+    const actual = await importOriginal<typeof import('node:http')>();
+    return { ...actual, request: new Proxy(actual.request, { apply(target, receiver, args) {
+        const options: unknown = args[0];
+        if (seedFs.root && options && typeof options === 'object' && 'socketPath' in options
+            && options.socketPath === '/run/happier-caddy/admin.sock')
+            args[0] = { ...options, socketPath: `${seedFs.root}/admin/admin.sock` };
+        return Reflect.apply(target, receiver, args);
+    } }) };
+});
+vi.mock('node:fs', async importOriginal => {
+    const actual = await importOriginal<typeof import('node:fs')>();
+    return { ...actual, watch: new Proxy(actual.watch, { apply(target, receiver, args) {
+        if (seedFs.root && args[0] === '/run/happier-caddy') args[0] = `${seedFs.root}/admin`;
+        return Reflect.apply(target, receiver, args);
+    } }) };
+});
 
 const roots: string[] = [], servers: Server[] = [];
 const nativeDocker = new Map<string, ProjectNativeDockerPort>();
 const unavailableAdmin = new Set<string>();
+const pendingSeedOperations: Array<{ abort(): void; settled: Promise<unknown> }> = [];
 afterEach(async () => {
+    const pending = pendingSeedOperations.splice(0);
+    pending.forEach(operation => operation.abort());
+    await Promise.allSettled(pending.map(operation => operation.settled));
     await Promise.all(servers.splice(0).map(server => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))));
     await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })));
     vi.restoreAllMocks();
@@ -71,6 +145,7 @@ afterEach(async () => {
     vi.unstubAllEnvs();
     nativeDocker.clear();
     unavailableAdmin.clear();
+    seedFs.root = '';
 });
 const network = (address: string): MachinePrivateNetworkObservationV1 => ({ provider: { kind: 'builtin', id: 'tailscale' },
     networkIdentity: 'tailnet-a', interfaceName: 'tailscale0', addresses: [address], sourceRanges: ['100.64.0.0/10'],
@@ -80,9 +155,31 @@ const ok = (stdout: string): MachineSetupNativeCommandResult => ({ code: 0, stdo
 /** Docker is the system boundary; mounted seed and live Unix HTTP are real. */
 async function observed(address: string, port: number, edge = false,
     installed: readonly CaddyDomainRouteInput[] = [], containerNetwork: Readonly<{
-        name?: string; address?: string | null; additionalPorts?: readonly number[];
+        name?: string; address?: string | null; additionalPorts?: readonly number[]; retainedSeed?: string;
+        retainedPublicPorts?: Record<string, { HostIp: string; HostPort: string }[]>;
+        retainedPublicDomain?: CaddyDomainRouteInput;
+        failNetworkConnect?: boolean;
     }> = {}, produced?: ReturnType<NonNullable<ReturnType<typeof createOwnServerDeploymentRuntimeForHost>['prepareDomainCaddy']>>): Promise<NativeCaddyObservationResult> {
     const root = await mkdtemp('/tmp/hde-'); roots.push(root);
+    if (containerNetwork.retainedSeed !== undefined) {
+        seedFs.root = root;
+        await mkdir(join(root, 'state', 'caddy'), { recursive: true });
+        await mkdir(join(root, 'admin'));
+        await chmod(join(root, 'state'), 0o711);
+        await chmod(join(root, 'state', 'caddy'), 0o750);
+        await chmod(join(root, 'admin'), 0o750);
+        for (const name of ['data', 'config', 'logs']) {
+            await mkdir(`/var/lib/happier/caddy/${name}`, { mode: 0o700 });
+            await chmod(`/var/lib/happier/caddy/${name}`, 0o700);
+        }
+        await writeFile('/var/lib/happier/caddy/data/incumbent-certificate', 'retained certificate bytes');
+        await mkdir('/etc/cloudflared', { mode: 0o755 });
+        await chmod('/etc/cloudflared', 0o755);
+        await writeFile(retainedConnector.tokenPath, retainedConnector.token, { mode: 0o600 });
+        await chmod(retainedConnector.tokenPath, 0o600);
+        await writeFile('/var/lib/happier/caddy/initial.json', containerNetwork.retainedSeed, { mode: 0o640 });
+        await chmod('/var/lib/happier/caddy/initial.json', 0o640);
+    }
     const seed = produced?.status === 'ready' ? JSON.parse(produced.input.initialConfig)
         : { admin: { listen: 'unix//run/happier-caddy/admin.sock|0660' } };
     await writeFile(join(root, 'seed.json'), JSON.stringify(seed));
@@ -107,6 +204,17 @@ async function observed(address: string, port: number, edge = false,
         }
     }
     const config = produced ? seed : { ...seed, apps: { http: { servers: nativeServers }, tls } };
+    if (containerNetwork.retainedPublicDomain) {
+        const material = materializeCaddyDomainRouteV1(containerNetwork.retainedPublicDomain);
+        const publicServer = config.apps.http.servers.happier_public;
+        publicServer.routes.unshift(material.route);
+        if (material.fallbackRoute) publicServer.errors.routes.push(material.fallbackRoute);
+        if (material.tls) {
+            publicServer.tls_connection_policies.push(material.tls.connectionPolicy);
+            config.apps.http.servers.happier_public_http.routes.unshift(material.tls.redirectRoute);
+            if (material.tls.automationPolicy) config.apps.tls.automation.policies.push(material.tls.automationPolicy);
+        }
+    }
     const server = createServer((request, response) => {
         if (unavailableAdmin.has(join(root, 'admin.sock'))) { response.writeHead(503).end('{}'); return; }
         if (produced && request.method !== 'GET') {
@@ -132,7 +240,8 @@ async function observed(address: string, port: number, edge = false,
         response.setHeader('Content-Type', 'application/json'); response.setHeader('Etag', '"observed-generation"');
         response.end(JSON.stringify(value));
     });
-    await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(join(root, 'admin.sock'), resolve); });
+    const socketPath = join(root, containerNetwork.retainedSeed === undefined ? 'admin.sock' : 'admin/admin.sock');
+    await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(socketPath, resolve); });
     servers.push(server);
     const container = { Id: `caddy-${address}`, Name: '/owned-caddy',
         Config: { Image: nativeCaddyImage, Cmd: ['caddy', 'run', '--resume', '--config', '/etc/caddy/happier.json'],
@@ -150,9 +259,71 @@ async function observed(address: string, port: number, edge = false,
             `${binding.containerPort ?? binding.hostPort}/tcp`, [{ HostIp: binding.hostAddress, HostPort: String(binding.hostPort) }],
         ]));
     }
-    nativeDocker.set(join(root, 'admin.sock'), { engineId: 'engine-a', async run(args) {
-        if (args.includes('ls')) return { exitCode: 0, stdout: JSON.stringify(container.Id), stderr: '' };
-        if (args.includes('inspect')) return { exitCode: 0, stdout: JSON.stringify([container]), stderr: '' };
+    if (containerNetwork.retainedSeed !== undefined && produced?.status === 'ready') {
+        Object.assign(container.Config, { User: `0:${process.getgid!()}` });
+        Object.assign(container.HostConfig, { PortBindings: containerNetwork.retainedPublicPorts ?? {}, Mounts: [
+            ...['data', 'config', 'logs'].map(name => ({ Type: 'bind', Source: `/var/lib/happier/caddy/${name}`,
+                Target: name === 'logs' ? '/var/log/happier-caddy' : `/${name}`, ReadOnly: false })),
+            { Type: 'bind', Source: '/run/happier-caddy', Target: '/run/happier-caddy', ReadOnly: false },
+            { Type: 'bind', Source: '/var/lib/happier/caddy/initial.json', Target: '/etc/caddy/happier.json', ReadOnly: true },
+        ] });
+    }
+    let recoveryRunning = containerNetwork.retainedSeed === undefined || containerNetwork.retainedPublicDomain !== undefined;
+    let recreated = false;
+    let removed = false;
+    nativeDocker.set(containerNetwork.retainedSeed === undefined ? socketPath : '/run/happier-caddy/admin.sock', { engineId: 'engine-a', async run(args, signal) {
+        if (containerNetwork.retainedSeed !== undefined && args.some(arg => arg.startsWith('name=^/happier-cloudflared-')))
+            return { exitCode: 0, stdout: JSON.stringify(retainedConnector.id), stderr: '' };
+        if (containerNetwork.retainedSeed !== undefined && args.includes(retainedConnector.id)) {
+            if (args.includes('inspect')) return { exitCode: 0, stdout: JSON.stringify([{
+                Id: retainedConnector.id, Name: `/happier-cloudflared-${retainedConnector.subject.connectorId}`, State: { Running: true },
+                Config: { Image: retainedConnector.imageRef, User: '0:0', Entrypoint: ['cloudflared'],
+                    Labels: { 'dev.happier.machine-setup.recipe': 'cloudflare-connector@1' },
+                    Cmd: ['tunnel', '--no-autoupdate', '--metrics', '127.0.0.1:20241', 'run', '--token=', '--token-file', retainedConnector.tokenPath] },
+                HostConfig: { RestartPolicy: { Name: 'unless-stopped' }, NetworkMode: retainedConnector.networkName,
+                    Privileged: false, ReadonlyRootfs: true, PublishAllPorts: false, PortBindings: null, Binds: null,
+                    CapAdd: null, CapDrop: ['ALL'], SecurityOpt: ['no-new-privileges'],
+                    Mounts: [{ Type: 'bind', Source: retainedConnector.tokenPath, Target: retainedConnector.tokenPath, ReadOnly: true }] },
+                NetworkSettings: { Networks: { [retainedConnector.networkName]: {} } },
+            }]), stderr: '' };
+            if (args.includes('--version')) return { exitCode: 0, stdout: `cloudflared version ${retainedConnector.version}\n`, stderr: '' };
+            if (args.includes('ready') || args.includes('restart')) return { exitCode: 0, stdout: '', stderr: '' };
+            throw new Error('Unexpected retained connector Docker operation');
+        }
+        if (args.includes('ls')) return { exitCode: 0, stdout: removed ? '' : JSON.stringify(container.Id), stderr: '' };
+        if (args.includes('inspect')) {
+            const retained = containerNetwork.retainedSeed !== undefined;
+            return { exitCode: 0, stdout: JSON.stringify([{ ...container,
+                State: { Running: recoveryRunning, Status: recoveryRunning ? 'running' : 'created', ExitCode: recoveryRunning || recreated ? 0 : 128 },
+                ...(retained ? { HostConfig: { ...container.HostConfig, PortBindings: recreated ? {} : containerNetwork.retainedPublicPorts },
+                    NetworkSettings: { Networks: recreated || containerNetwork.retainedPublicDomain ? container.NetworkSettings.Networks : {},
+                        Ports: containerNetwork.retainedPublicDomain ? containerNetwork.retainedPublicPorts : {} } } : {}),
+            }]), stderr: '' };
+        }
+        if (containerNetwork.failNetworkConnect && args[0] === 'network' && args[1] === 'connect')
+            return { exitCode: 1, stdout: '', stderr: 'network attachment failed' };
+        if (containerNetwork.retainedSeed !== undefined && args.includes('rm')) {
+            expect(recoveryRunning).toBe(false);
+            removed = true;
+            return { exitCode: 0, stdout: container.Id, stderr: '' };
+        }
+        if (containerNetwork.retainedSeed !== undefined && args.includes('create')) {
+            expect(removed).toBe(true);
+            expect(args).not.toContain('--publish');
+            recreated = true;
+            removed = false;
+            return { exitCode: 0, stdout: container.Id, stderr: '' };
+        }
+        if (containerNetwork.retainedSeed !== undefined && args.includes('start')) {
+            recoveryRunning = true;
+            return { exitCode: 0, stdout: container.Id, stderr: '' };
+        }
+        if (containerNetwork.retainedSeed !== undefined && args.includes('wait')) {
+            await new Promise<void>(resolve => {
+                if (signal.aborted) resolve(); else signal.addEventListener('abort', () => resolve(), { once: true });
+            });
+            return { exitCode: 1, stdout: '', stderr: '' };
+        }
         throw new Error(`Domain add cannot mutate the healthy workload: ${args.slice(0, 2).join(' ')}`);
     } });
     return observeNativeCaddyContainer({ dockerHost: 'unix:///selected-docker.sock', containerName: 'owned-caddy',
@@ -343,9 +514,24 @@ it.skipIf(process.platform === 'win32')('selects one container origin common to 
             details: { requiredFact: 'sharedTunnelOrigin' } });
 });
 
-it.skipIf(process.platform === 'win32').each(['shared', 'no active Domain members', 'Domain Environment HTTP unavailable', 'Domain Home purpose refused', 'missing tunnel origin', 'misdirected discovery', 'administrator access off', 'administrator access not applied', 'administrator elevation denied', 'managed CLI unavailable', 'network review required', 'firewall prerequisite failed', 'firewall policy unavailable', 'firewall partial failure', 'daemon ACK unavailable', 'daemon ACK unknown', 'native cancelled', 'direct installed Caddy', 'direct installed Caddy admin unavailable', 'native Caddy port occupied', 'native Caddy host port occupied'] as const)(
+it.skipIf(process.platform === 'win32').each(['shared', 'no active Domain members', 'Domain Environment HTTP unavailable', 'Domain Home purpose refused', 'missing tunnel origin', 'misdirected discovery', 'administrator access off', 'administrator access not applied', 'administrator elevation denied', 'administrator native check unavailable', 'administrator native outcome unknown', 'administrator native outcome unknown with fact', 'managed CLI unavailable', 'network review required', 'firewall prerequisite failed', 'firewall policy unavailable', 'firewall partial failure', 'daemon ACK unavailable', 'daemon ACK unknown', 'Remove native parsed output invalid', 'Remove malformed native observation', 'native cancelled', 'direct installed Caddy', 'direct installed Caddy admin unavailable', 'native Caddy port occupied', 'native Caddy host port occupied', 'Tunnel retained public seed', 'Tunnel foreign seed', 'Tunnel running public Caddy', 'Tunnel running public network failure'] as const)(
     'carries the complete shared origin through the real controller and private child transport: %s', async scenario => {
+    const removingNativeOutput = scenario === 'Remove native parsed output invalid' || scenario === 'Remove malformed native observation';
+    const nativeOutcomeUnknown = scenario === 'administrator native outcome unknown'
+        || scenario === 'administrator native outcome unknown with fact';
+    const nativeUnknownWithFact = scenario === 'administrator native outcome unknown with fact';
+    const nativeCheckFailure = MachineElevationFailureV1Schema.parse({ kind: 'native_check_unavailable',
+        phase: 'check', stepId: 'caddy-initial-config', reason: 'foreign_effect_conflict', requiredFact: 'caddy-initial-config',
+        remedy: 'Inspect and reconcile the existing Caddy seed before retrying the Domain operation.' });
+    const nativeUnknownFailure = MachineElevationFailureV1Schema.parse({ ...nativeCheckFailure, kind: 'native_effect_failed' });
     const environment = createDeploymentEnvironmentDetailV1();
+    const networkConnectFailure = scenario === 'Tunnel running public network failure';
+    const runningPublic = scenario === 'Tunnel running public Caddy' || networkConnectFailure;
+    const retainedSeed = scenario === 'Tunnel retained public seed' || scenario === 'Tunnel foreign seed' || runningPublic;
+    const incumbentPublicDomain: CaddyDomainRouteInput = { domainId: 'incumbent-public',
+        domain: { hostname: 'incumbent.example.test', target: { service: 'web', containerPort: 80 } },
+        listener: 'public', upstreams: { kind: 'replicas', containerNames: ['deployed-web-1'] },
+        privateSourceRanges: [], publicTls: { kind: 'managed' } };
     environment.content.ingress = { kind: 'cloudflareTunnel' };
     environment.environment.owner = { kind: 'account', accountId: 'owner' };
     const link = environment.targetLinks[0]!.targetLink;
@@ -353,13 +539,13 @@ it.skipIf(process.platform === 'win32').each(['shared', 'no active Domain member
     link.members = [{ machineId: 'a', installationId: 'installed-a', state: 'active' },
         { machineId: 'b', installationId: 'installed-b', state: 'active' }];
     if (scenario !== 'shared' && scenario !== 'misdirected discovery' && scenario !== 'missing tunnel origin') {
-        delete environment.content.ingress;
+        if (!retainedSeed) delete environment.content.ingress;
         link.members = [link.members[0]!];
         link.machines = ['a'];
     }
     if (scenario === 'no active Domain members') link.members[0]!.state = 'joining';
     const occupiedPort = scenario === 'native Caddy port occupied' || scenario === 'native Caddy host port occupied';
-    const installedCaddy = scenario === 'direct installed Caddy' || scenario === 'direct installed Caddy admin unavailable' || occupiedPort;
+    const installedCaddy = scenario === 'direct installed Caddy' || scenario === 'direct installed Caddy admin unavailable' || occupiedPort || retainedSeed;
     if (installedCaddy) {
         link.state = 'deployed';
         link.activeDeploymentId = 'serving';
@@ -373,8 +559,30 @@ it.skipIf(process.platform === 'win32').each(['shared', 'no active Domain member
         environment: environment.content, replicas: [{ containerName: 'deployed-web-1', networkNames: ['deployed_default'] }],
         privateNetworks: [], daemonGroup: 'happier', daemonGroupId: 1000,
     }) : undefined;
+    const publicPrepared = retainedSeed ? nativeRuntime.prepareDomainCaddy!({
+        domain: { hostname: 'qa-domain-1101-r23b.localhost', target: { service: 'web', containerPort: 80 } },
+        environment: { ...environment.content, ingress: undefined },
+        replicas: [{ containerName: 'deployed-web-1', networkNames: ['deployed_default'] }],
+        privateNetworks: [], daemonGroup: 'happier', daemonGroupId: process.getgid!(),
+    }) : undefined;
+    if (publicPrepared && publicPrepared.status !== 'ready') throw new Error('Expected producer-built public Caddy seed');
+    const publicSeed = publicPrepared?.status === 'ready' ? publicPrepared.input.initialConfig : undefined;
+    if (publicSeed !== undefined) {
+        // Exact initial.json observed on the native Caddy guest, 2026-11-06.
+        expect(Buffer.byteLength(publicSeed)).toBe(782);
+        expect(createHash('sha256').update(publicSeed).digest('hex'))
+            .toBe('3f37b3a617aa0eb51a90426e099d73adbfd4a3432d5d23ea4001d72cad97b6cb');
+    }
+    const installedSeed = scenario === 'Tunnel foreign seed' ? publicSeed!.replace('404', '200') : publicSeed;
     const observations = await Promise.all([observed('100.70.0.2', 9381, false, [],
-        prepared ? { name: 'deployed_default' } : scenario === 'missing tunnel origin' ? { address: null } : {}, prepared), observed('100.70.0.3', 9381)]);
+        prepared ? { name: 'deployed_default', ...(installedSeed === undefined ? {} : { retainedSeed: installedSeed,
+            retainedPublicPorts: Object.fromEntries((publicPrepared?.status === 'ready' ? publicPrepared.input.publicBindings ?? [] : []).map(binding => [
+                `${binding.containerPort ?? binding.hostPort}/${binding.protocol}`, [{ HostIp: binding.hostAddress, HostPort: String(binding.hostPort) }],
+            ])),
+            ...(runningPublic ? { retainedPublicDomain: incumbentPublicDomain } : {}),
+            ...(networkConnectFailure ? { failNetworkConnect: true } : {}),
+        }) }
+            : scenario === 'missing tunnel origin' ? { address: null } : {}, runningPublic ? publicPrepared : prepared), observed('100.70.0.3', 9381)]);
     let installed: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | undefined;
     if (installedCaddy) {
         installed = await createAdmittedPluginRuntimeFixture({ runtimeOptions: { pluginIds: [] } });
@@ -396,7 +604,8 @@ it.skipIf(process.platform === 'win32').each(['shared', 'no active Domain member
             releaseObservation: async () => {}, nativeEffects: { keys: [] }, processSpec: { mode: { kind: 'native', builtinLifecycle: {
                 async inspect() { return { phase: 'running', readiness: 'ready', endpoint: 'http://127.0.0.1:32771' }; },
                 async stop() { return { status: 'stopped' }; },
-                nativeContainers: () => [{ id: 'healthy-web', composeProject: 'deployed', service: 'web', containerName: 'deployed-web-1', networkNames: ['deployed_default'] }],
+                nativeContainers: () => [{ id: 'healthy-web', composeProject: 'deployed', service: 'web', containerName: 'deployed-web-1',
+                    networkNames: ['deployed_default', ...(networkConnectFailure ? ['deployed_extra'] : [])] }],
                 nativeDocker: async () => occupiedPort ? { engineId: 'engine-a', async run(args) {
                     if (args.includes('--all')) return { exitCode: 0, stdout: '', stderr: '' };
                     if (scenario === 'native Caddy host port occupied') {
@@ -426,9 +635,21 @@ it.skipIf(process.platform === 'win32').each(['shared', 'no active Domain member
         targetLinkId: link.id, expectedTargetLinkRevision: link.revision, requestKey: 'domain-add',
         contentArtifactId: 'domain-content', contentHeaderVersion: 1, contentBodyVersion: 1 });
     if (!('contentArtifactId' in input)) throw new Error('Expected prepared Domain input');
+    const actionId = removingNativeOutput ? 'deployments.domains.remove' as const : 'deployments.domains.add' as const;
+    const actionInput = removingNativeOutput ? DeploymentActionInputSchemasV1['deployments.domains.remove'].parse({
+        serverId: input.serverId, environmentId: input.environmentId, domainId: input.domainId,
+        expectedRevision: input.expectedRevision, expectedDomainRevision: 1, requestKey: 'domain-remove',
+    }) : input;
     const domainContent = DeploymentDomainContentV1Schema.parse({
         hostname: 'qa-domain-1101-ingress.localhost', target: { service: 'web', containerPort: 80 },
-        healthCheck: { path: '/', expectStatus: 200 } });
+        healthCheck: { path: '/', expectStatus: 200 },
+        // A previously prepared tunnel retains its opaque target grant; this
+        // native recovery does not configure the vendor Account again.
+        ...(retainedSeed ? { cloudflarePreparation: { tunnelId: retainedConnector.subject.connectorId, owned: [], dnsOwnership: [],
+            connectors: [{ machineId: retainedConnector.subject.machineId, installationId: retainedConnector.subject.installationId,
+                grantRef: machineSecretGrantSubjectKey(retainedConnector.subject), imageRef: retainedConnector.imageRef,
+                version: retainedConnector.version, networkName: retainedConnector.networkName }] } } : {}),
+    });
     const credentials: StoredCredentials = { token: `h.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.s`, encryption: null };
     const documents = new Map<string, Record<string, unknown>>();
     for (const [id, kind, content] of [[environment.environment.contentArtifactId, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, environment.content],
@@ -440,6 +661,8 @@ it.skipIf(process.platform === 'win32').each(['shared', 'no active Domain member
             seq: 1, createdAt: 1, updatedAt: 1 });
     }
     const identity = tweetnacl.sign.keyPair();
+    const connectorGrant = retainedSeed ? sealMachineSecretGrant({ subject: retainedConnector.subject,
+        installationPublicKey: identity.publicKey, content: { kind: 'connectorToken', token: retainedConnector.token } }) : undefined;
     vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue({ version: 1,
         installationId: 'controller-installation', createdAt: 1, publicKey: Buffer.from(identity.publicKey).toString('base64url'),
         privateKey: Buffer.from(identity.secretKey).toString('base64url') });
@@ -447,7 +670,8 @@ it.skipIf(process.platform === 'win32').each(['shared', 'no active Domain member
         const path = new URL(url).pathname;
         if (path.startsWith('/v1/machines/')) {
             const machineId = path.split('/').at(-1)!;
-            return { status: 200, data: { machine: { id: machineId, kind: 'persistent', revokedAt: null, replacedByMachineId: null,
+            return { status: 200, data: { machine: MachinePublishedRowV1Schema.parse({ id: machineId, kind: 'persistent',
+                managedMachineRef: null, revokedAt: null, replacedByMachineId: null,
                 storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
                 metadataVersion: 1, daemonStateVersion: 1,
                 metadata: encodePlainMachineStoredContent({ host: 'own-server', platform: 'linux', happyCliVersion: '0.3',
@@ -456,7 +680,7 @@ it.skipIf(process.platform === 'win32').each(['shared', 'no active Domain member
                     daemonUid: 1000, daemonUsername: 'happier', daemonPrimaryGroup: 'happier', daemonIdentity: 'nonRoot',
                     rootEquivalentGroups: [], passwordlessSudoToRoot: 'allowed', managedDropIn: 'valid',
                     tailscaledOperator: { authorization: 'unknown' } } }),
-                installationId: `installed-${machineId}`, installationPublicKey: Buffer.from(identity.publicKey).toString('base64') } } };
+                installationId: `installed-${machineId}`, installationPublicKey: Buffer.from(identity.publicKey).toString('base64') }) } };
         }
         if (path === '/v1/account/encryption/currentness') return { status: 200, data: createAccountEncryptionCurrentnessFixture({ mode: 'plain' }) };
         if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
@@ -472,6 +696,12 @@ it.skipIf(process.platform === 'win32').each(['shared', 'no active Domain member
     const transitions: unknown[] = [];
     vi.spyOn(axios, 'request').mockImplementation(async request => {
         const path = new URL(request.url!).pathname;
+        if (retainedSeed && path === '/v1/deployments/machines/a/connector-secret-grant') {
+            expect(request.data).toMatchObject({ operation: 'read', subject: retainedConnector.subject,
+                hostMachineId: 'a', hostInstallationId: 'installed-a' });
+            expect(JSON.stringify(request)).not.toContain(retainedConnector.token);
+            return { status: 200, data: { ok: true, grant: connectorGrant } };
+        }
         if (request.method === 'GET' && scenario === 'Domain Environment HTTP unavailable') {
             throw Object.assign(new Error('Private network transport context'), { code: 'ECONNRESET' });
         }
@@ -481,6 +711,20 @@ it.skipIf(process.platform === 'win32').each(['shared', 'no active Domain member
         }
         if (request.method === 'GET') return { status: 200, data: DeploymentEnvironmentGetResultV1Schema.parse({ ok: true,
             environment: environment.environment, targetLinks: [link] }) };
+        if (removingNativeOutput) {
+            expect(request.method).toBe('POST');
+            expect(path).toBe(`/v1/deployments/environments/${input.environmentId}/domains/${input.domainId}/remove`);
+            const domain = DeploymentDomainHeaderV1Schema.parse({ v: 1, id: input.domainId, environmentId: input.environmentId,
+                targetLinkId: link.id, revision: 2, state: 'removing', contentArtifactId: input.contentArtifactId,
+                contentHeaderVersion: 1, contentBodyVersion: 1, createdByAccountId: 'owner', createdAtMs: 1, updatedAtMs: 1,
+                placements: [{ placement: { serverId: 'home', accountId: 'owner', environmentId: input.environmentId,
+                    targetLinkId: link.id, domainId: input.domainId, machineId: 'a', installationId: 'installed-a',
+                    nativeServer: 'private_app', actionOperationId: 'domain-operation', requestId: 'domain-request' },
+                    listener: 'privateOrigin', desired: false, dockerEngineId: 'engine-a', content: {
+                        contentArtifactId: input.contentArtifactId, contentHeaderVersion: 1, contentBodyVersion: 1 } }],
+            });
+            return { status: 200, data: { ok: true, environmentId: input.environmentId, revision: input.expectedRevision + 1, domain } };
+        }
         if (path.endsWith('/transitions')) {
             transitions.push(request.data);
             return { status: 200, data: { ok: true, environmentId: input.environmentId, revision: input.expectedRevision + 2,
@@ -531,18 +775,32 @@ it.skipIf(process.platform === 'win32').each(['shared', 'no active Domain member
     const channel = await createRequesterCurrentnessSocketHarness();
     const children: Array<ReturnType<typeof DeploymentDomainChildRpcV1Schema.parse>> = [];
     const nativeResults: unknown[] = [];
+    const seedChecks: unknown[] = [];
     type RpcCall = Parameters<ClientToServerEvents[typeof SOCKET_RPC_EVENTS.CALL]>[0];
     channel.server.on('connection', socket => {
         socket.on(SOCKET_RPC_EVENTS.CALL, async (call: RpcCall, acknowledge: (result: unknown) => void) => {
             const decoded = await socketRpcCodec.decodeRequestParams({ mode: 'plain' }, call.params, call.method);
             const job = DeploymentChildRpcV1Schema.parse(decoded.params);
+            if (removingNativeOutput) {
+                children.push(DeploymentDomainChildRpcV1Schema.parse(job));
+                // Socket.IO is the native guest boundary. The controller parses
+                // and projects this guest result through its real Domain owner.
+                acknowledge({ ok: true, result: scenario === 'Remove native parsed output invalid'
+                    ? { ok: false, errorCode: 'invalid_provider_output', error: 'invalid_provider_output' }
+                    : { state: 'removed' } });
+                return;
+            }
             if (installedCaddy) {
                 const nativeIdentity = { version: 1 as const, installationId: 'installed-a', createdAt: 1,
                     publicKey: Buffer.from(identity.publicKey).toString('base64url'), privateKey: Buffer.from(identity.secretKey).toString('base64url') };
                 vi.mocked(installationStore.readInstallationIdentityIfExistsSync).mockReturnValue(nativeIdentity);
                 try {
                     if (job.kind === 'domain') children.push(DeploymentDomainChildRpcV1Schema.parse(job));
-                    const result = await memberDeps!.deploymentChild(job, {});
+                    const controller = new AbortController();
+                    const settled = memberDeps!.deploymentChild(job, { actionRequestId: 'domain-operation',
+                        ...(retainedSeed ? { signal: controller.signal } : {}) });
+                    if (retainedSeed) pendingSeedOperations.push({ abort: () => controller.abort(), settled });
+                    const result = await settled;
                     nativeResults.push(result);
                     if (scenario === 'direct installed Caddy admin unavailable' && job.kind === 'domainDiscover') {
                         const caddy = observations[0]!;
@@ -603,6 +861,7 @@ it.skipIf(process.platform === 'win32').each(['shared', 'no active Domain member
                                 }
                                 stdout.write(JSON.stringify({ type: 'result', result: { status: 'failed',
                                     reason: scenario === 'firewall prerequisite failed' ? 'required_fact_unavailable' : 'foreign_effect_conflict',
+                                    stepId: 'firewall', requiredFact: 'firewall',
                                     completedStepIds: [], daemonRestartRequired: false } }) + '\n');
                                 return { code: 1, signal: null };
                             } finally { lines.close(); stdout.end(); stderr.end(); }
@@ -630,14 +889,15 @@ it.skipIf(process.platform === 'win32').each(['shared', 'no active Domain member
                         throw new Error('Missing posture must refuse Domain setup');
                     } catch (error) {
                         if (!(error instanceof Error) || !('code' in error)) throw error;
-                        acknowledge({ ok: true, result: { ok: false, errorCode: error.code, error: error.code,
+                        acknowledge({ ok: true, result: { ...('cause' in error ? projectDeploymentFailure(String(error.code), error)
+                            : { ok: false, errorCode: error.code, error: error.code }),
                             ...('details' in error ? { details: error.details } : {}) } });
                     }
                     if (scenario === 'network review required') expect(metadata).toEqual({});
                     return;
                 }
                 if (scenario === 'administrator access off' || scenario === 'administrator access not applied'
-                    || scenario === 'administrator elevation denied'
+                    || scenario === 'administrator elevation denied' || scenario === 'administrator native check unavailable' || nativeOutcomeUnknown
                     || scenario === 'managed CLI unavailable') {
                     if (prepared?.status !== 'ready') throw new Error('Expected native Caddy preparation');
                     const installHome = await mkdtemp(join(tmpdir(), 'domain-refusal-cli-'));
@@ -657,10 +917,45 @@ it.skipIf(process.platform === 'win32').each(['shared', 'no active Domain member
                                     daemonIdentity: 'nonRoot', rootEquivalentGroups: [],
                                     passwordlessSudoToRoot: scenario === 'administrator access not applied' ? 'denied' : 'allowed',
                                     managedDropIn: 'absent', tailscaledOperator: { authorization: 'unknown' } }),
-                                ...(scenario === 'administrator elevation denied' ? { spawn: () => {
+                                ...(scenario === 'administrator elevation denied' || scenario === 'administrator native check unavailable' || nativeOutcomeUnknown ? { spawn: () => {
                                     const stdin = new PassThrough(), stdout = new PassThrough(), stderr = new PassThrough();
-                                    stdout.end(); stderr.end();
-                                    return { stdin, stdout, stderr, settled: Promise.resolve({ code: 1, signal: null }),
+                                    // The elevated process is the boundary; its real interpreter
+                                    // result is validated before the native/Domain owners read it.
+                                    const settled = (async () => {
+                                        if (scenario === 'administrator native check unavailable' || nativeOutcomeUnknown) {
+                                            const lines = createInterface({ input: stdin });
+                                            try {
+                                                const frames = lines[Symbol.asyncIterator]();
+                                                stdout.write('{"type":"ready"}\n');
+                                                const frame = await frames.next();
+                                                const request = MachineEffectInternalRequestSchema.parse(JSON.parse(frame.value!));
+                                                expect(request.mode).toBe('check');
+                                                if (nativeOutcomeUnknown && !nativeUnknownWithFact) {
+                                                    if (request.mode !== 'check' || !('steps' in request)) throw new Error('Expected native setup CHECK');
+                                                    const plan = await checkMachineSetupEffectPlan({ basis: request.basis, steps: request.steps,
+                                                        ...(request.checks ? { checks: request.checks } : {}),
+                                                        backend: { async observe(step) { return { stepId: step.id, status: 'drifted', facts: {} }; },
+                                                            async apply() { throw new Error('The root OS process supplies this result'); } } });
+                                                    stdout.write(JSON.stringify({ type: 'result', result: { status: 'checked', plan } }) + '\n');
+                                                    const apply = MachineEffectInternalRequestSchema.parse(JSON.parse((await frames.next()).value!));
+                                                    expect(apply.mode).toBe('apply');
+                                                }
+                                                const result = nativeOutcomeUnknown ? nativeUnknownWithFact ? {
+                                                    status: 'outcome_unknown', completedStepIds: [], daemonRestartRequired: false,
+                                                    stepId: nativeUnknownFailure.stepId, reason: nativeUnknownFailure.reason,
+                                                    requiredFact: nativeUnknownFailure.requiredFact, failure: nativeUnknownFailure,
+                                                } : { status: 'applied', completedStepIds: [], daemonRestartRequired: false } : {
+                                                    status: 'unavailable', completedStepIds: [], daemonRestartRequired: false,
+                                                    stepId: nativeCheckFailure.stepId, reason: nativeCheckFailure.reason,
+                                                    requiredFact: nativeCheckFailure.requiredFact, failure: nativeCheckFailure,
+                                                };
+                                                stdout.end(JSON.stringify(MachineEffectInternalRecordSchema.parse({ type: 'result', result })) + '\n');
+                                            } finally { lines.close(); }
+                                        } else stdout.end();
+                                        stderr.end();
+                                        return { code: 1, signal: null };
+                                    })();
+                                    return { stdin, stdout, stderr, settled,
                                         terminate: async () => { stdin.destroy(); } };
                                 } } : {}),
                             },
@@ -692,53 +987,105 @@ it.skipIf(process.platform === 'win32').each(['shared', 'no active Domain member
         serverHttpBaseUrl: 'https://domain-origin.test', machineId: 'a', runtime: nativeRuntime,
         acquirePluginRuntimeRegistryLease: async () => installed.lease,
         captureNativeSetup: () => ({
-            readDesired: () => { throw new Error('Port refusal cannot read setup intent'); },
+            readDesired: () => {
+                if (!retainedSeed) throw new Error('Port refusal cannot read setup intent');
+                return getMachineSetupDesiredV1({
+                    read: async () => ({ status: 'ready', metadata: {}, metadataVersion: 38 }),
+                    compareAndSwap: async () => { throw new Error('Domain cannot change Machine policy'); },
+                });
+            },
             elevation: {
-                readPolicy: async () => { throw new Error('Port refusal cannot request elevation'); },
+                readPolicy: async () => {
+                    if (!retainedSeed) throw new Error('Port refusal cannot request elevation');
+                    return { version: 1, mode: 'preauthorized' };
+                },
                 observe: async () => ({ version: 1, observedAt: 0, daemonUid: 1001, daemonUsername: 'happier',
                     daemonPrimaryGroup: 'happier', daemonIdentity: 'nonRoot', rootEquivalentGroups: [],
                     passwordlessSudoToRoot: 'allowed', managedDropIn: 'valid', tailscaledOperator: { authorization: 'unknown' } }),
+                ...(retainedSeed ? { spawn: ((invocation) => {
+                    let protectedRoot = false;
+                    const stdin = new Transform({ transform(bytes, _encoding, callback) {
+                        const frame = MachineEffectInternalRequestSchema.safeParse(JSON.parse(String(bytes)));
+                        if (frame.success && 'connectorSecretGrant' in frame.data) protectedRoot = frame.data.connectorSecretGrant === true;
+                        callback(null, bytes);
+                    } }), stderr = new PassThrough();
+                    const stdout = new Transform({ transform(bytes, _encoding, callback) {
+                        const record = MachineEffectInternalRecordSchema.safeParse(JSON.parse(String(bytes)));
+                        if (record.success && record.data.type === 'result' && record.data.result.status === 'checked' && 'plan' in record.data.result)
+                            seedChecks.push(record.data.result.plan.nativeFacts);
+                        callback(null, bytes);
+                    } });
+                    const settled = runMachineSetupEffectInternal(invocation.args.filter(arg =>
+                        arg.startsWith('--operation-id=') || arg.startsWith('--installation-id=')), {
+                        stdin, stdout, readUid: () => 0, platform: 'linux',
+                        runNative: async command => {
+                            if (command.executable !== 'getent') throw new Error(`Unexpected root command ${command.executable}`);
+                            // The protected connector fixture projects root ownership;
+                            // ordinary Caddy files retain the executing test user's identity.
+                            const protectedIdentity = command.args.at(-1) === 'happier' ? 1001 : 0;
+                            const uid = protectedRoot ? protectedIdentity : process.getuid!();
+                            const gid = protectedRoot ? protectedIdentity : process.getgid!();
+                            return ok(command.args.includes('passwd')
+                                ? `${command.args.at(-1)}:x:${uid}:${gid}::/root:/bin/sh\n`
+                                : `${command.args.at(-1)}:x:${gid}:\n`);
+                        },
+                    }).then(code => { stdout.end(); stderr.end(); return { code, signal: null }; });
+                    return { stdin, stdout, stderr, settled, terminate: async () => { stdin.destroy(); await settled; } };
+                }) satisfies MachineElevationSpawn } : {}),
             },
         }),
         resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }) }) : undefined;
     const target = { kind: 'machine' as const, machineId: 'controller' };
-    const envelope = { v: 1 as const, requestId: 'domain-request', target, input };
+    const envelope = { v: 1 as const, requestId: 'domain-request', target, input: actionInput };
     const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'domain-root', binding: {
         serverIdentityId: 'home', accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 }, custodianAccountId: 'owner',
         machineId: 'controller', installationId: 'controller-installation', environmentId: input.environmentId,
-        actionId: 'deployments.domains.add', deploymentChildRoot: true,
+        actionId, deploymentChildRoot: true,
         requestId: envelope.requestId, accountEncryptionMode: 'plain', target,
         requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
-        deploymentNativeAdmission: projectDeploymentNativeAdmissionV1('deployments.domains.add', input) } });
+        deploymentNativeAdmission: projectDeploymentNativeAdmissionV1(actionId, actionInput) } });
     const requester = await prepareRequesterAccountActionContext({ authorization, purpose: { kind: 'external_action' },
         machineId: 'controller', installationId: 'controller-installation', installationPrivateKey: identity.secretKey,
         serverId: 'home', serverIdentityId: 'home', serverHttpBaseUrl: 'https://domain-origin.test', ownCredentials: credentials,
         isCurrent: async () => true, createExecutor: () => createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps }) });
     try {
         if (!requester) throw new Error('Expected admitted Domain requester');
-        const execute = () => deps.deploymentAction('deployments.domains.add', input, { externalActionExecutionAuthorization: requester.authorization,
+        const execute = () => deps.deploymentAction(actionId, actionInput, { externalActionExecutionAuthorization: requester.authorization,
             originalActionEnvelope: envelope, externalActionTarget: target, actionRequestId: envelope.requestId,
             operationAcceptance: { operationId: 'domain-operation', accept() {} } });
         if (scenario === 'no active Domain members' || scenario === 'Domain Environment HTTP unavailable'
             || scenario === 'network review required' || scenario === 'Domain Home purpose refused'
-           ) {
+            || scenario === 'administrator native check unavailable' || nativeOutcomeUnknown || removingNativeOutput) {
             const operations = createHostActionOperationRuntime({ serverId: 'home', machineId: 'controller',
                 resolveAccountId: async () => 'owner', generateOperationId: () => 'domain-operation' });
-            const result = await operations.observeExecution({ actionId: 'deployments.domains.add', input,
+            const result = await operations.observeExecution({ actionId, input: actionInput,
                 actionRequestId: envelope.requestId, execute: async () => ActionExecuteResultSchema.parse(await execute()) });
             const details = { environmentId: input.environmentId, domainId: input.domainId, step: 'native_execution',
-                ...(scenario === 'no active Domain members' ? { requiredFact: 'activeDomainMembers', remedy: expect.any(String) }
+                ...(removingNativeOutput ? { requiredFact: 'nativeExecutionResult', remedy: expect.stringMatching(/\S/) }
+                    : scenario === 'no active Domain members' ? { requiredFact: 'activeDomainMembers', remedy: expect.any(String) }
                     : scenario === 'network review required' ? { requiredFact: 'reachabilityPosture', remedy: expect.any(String) }
+                        : nativeOutcomeUnknown ? { ...(nativeUnknownWithFact ? { failure: nativeUnknownFailure, requiredFact: nativeUnknownFailure.requiredFact }
+                            : { requiredFact: 'nativeExecutionResult' }),
+                            remedy: nativeUnknownWithFact ? nativeUnknownFailure.remedy : expect.any(String) }
+                        : scenario === 'administrator native check unavailable' ? { failure: nativeCheckFailure, remedy: nativeCheckFailure.remedy }
                         : scenario === 'Domain Home purpose refused' ? { requiredFact: 'verification_purpose', remedy: expect.any(String) } : {}),
                 operation: { serverId: 'home', machineId: 'controller', operationId: 'domain-operation' } };
             // RpcError carries the Home reader's typed failure unchanged.
-            const errorCode = scenario === 'no active Domain members' ? 'required_fact_unavailable'
+            const errorCode = removingNativeOutput ? scenario === 'Remove native parsed output invalid'
+                ? 'invalid_provider_output' : 'invalid_action_transport_output'
+                : scenario === 'no active Domain members' ? 'required_fact_unavailable'
                 : scenario === 'network review required' ? 'machine_network_review_required'
+                    : nativeOutcomeUnknown ? 'outcome_unknown'
+                    : scenario === 'administrator native check unavailable' ? 'native_check_unavailable'
                     : scenario === 'Domain Home purpose refused' ? 'action_forbidden' : 'home_unreachable';
-            expect.soft(result).toMatchObject({ ok: false, errorCode, details });
+            expect.soft(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode, details });
+            if (removingNativeOutput || nativeOutcomeUnknown && !nativeUnknownWithFact) {
+                // Only the missing Domain result is known; no child-native step is fabricated.
+                expect(result).not.toHaveProperty('details.failure');
+            }
             if (scenario === 'Domain Home purpose refused') expect.soft(result).toMatchObject({
                 failureCause: { phase: 'home.authorization.verification_purpose', httpStatus: 401 } });
-            else expect.soft(result).not.toHaveProperty('failureCause');
+            else if (scenario !== 'administrator native check unavailable' && !nativeOutcomeUnknown) expect.soft(result).not.toHaveProperty('failureCause');
             const operation = await executeActionOperationActionV1({ actionId: 'action.operations.get',
                 input: { serverId: 'home', machineId: 'controller', operationId: 'domain-operation' },
                 transport: async ({ payload }) => operations.handlers.getV2(payload) });
@@ -746,21 +1093,21 @@ it.skipIf(process.platform === 'win32').each(['shared', 'no active Domain member
                 errorCode, details } } });
             if (scenario === 'Domain Home purpose refused') expect.soft(operation).toMatchObject({ operation: { error: {
                 failureCause: { phase: 'home.authorization.verification_purpose', httpStatus: 401 } } } });
-            else expect.soft(operation).not.toHaveProperty('operation.error.failureCause');
+            else if (scenario !== 'administrator native check unavailable' && !nativeOutcomeUnknown) expect.soft(operation).not.toHaveProperty('operation.error.failureCause');
             const { contentArtifactId: _artifactId, contentHeaderVersion: _headerVersion,
                 contentBodyVersion: _bodyVersion, ...authoredScope } = input;
             const canonicalHome = 'srv_domain_home';
             const actionArgs = scenario === 'network review required'
-                ? { ...authoredScope, serverId: canonicalHome, content: domainContent } : input;
+                ? { ...authoredScope, serverId: canonicalHome, content: domainContent } : actionInput;
             const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'executing', createdAtMs: 1, updatedAtMs: 2,
-                createdBy: { surface: 'cli' }, requestedSurface: 'ui', actionId: 'deployments.domains.add', actionArgs,
-                summary: 'Add Domain', decision: { kind: 'approve', decidedAtMs: 2 },
+                createdBy: { surface: 'cli' }, requestedSurface: 'ui', actionId, actionArgs,
+                summary: removingNativeOutput ? 'Remove Domain' : 'Add Domain', decision: { kind: 'approve', decidedAtMs: 2 },
                 executionOriginV1: { v: 1, authority: 'present_user', surface: 'ui', caller: { kind: 'host' },
                     serverId: 'home', accountId: 'owner', machineId: 'controller',
                     ...(scenario === 'network review required' ? { serverIdentityId: canonicalHome,
                         target: { kind: 'machine', machineId: 'controller' } } : {}),
-                    actionId: 'deployments.domains.add', requestId: envelope.requestId } });
-            const settled = projectSettledApprovalExecution({ request, actionId: 'deployments.domains.add', exec: result,
+                    actionId, requestId: envelope.requestId } });
+            const settled = projectSettledApprovalExecution({ request, actionId, exec: result,
                 dispatchEffectAttempted: true, executedAtMs: 3 });
             const approvals = createCliApprovalsArtifactStore({ credentials, serverId: 'home',
                 serverHttpBaseUrl: 'https://domain-origin.test', getAccountEncryptionMode: async () => 'plain' });
@@ -775,16 +1122,21 @@ it.skipIf(process.platform === 'win32').each(['shared', 'no active Domain member
             if (!publicResult.ok) throw new Error('The failed Domain approval must remain publicly readable');
             const publicRead = ApprovalRequestGetResultV1Schema.parse(publicResult.result);
             for (const observed of [stored, publicRead.request]) {
-                expect.soft(observed).toMatchObject({ status: 'failed', execution: {
+                expect.soft(observed).toMatchObject({ status: nativeOutcomeUnknown ? 'outcome_unknown' : 'failed', execution: {
                     ok: false, errorCode, details } });
+                if (removingNativeOutput || nativeOutcomeUnknown && !nativeUnknownWithFact) {
+                    expect(observed).toHaveProperty('execution.details.requiredFact', 'nativeExecutionResult');
+                    expect(observed).not.toHaveProperty('execution.details.failure');
+                }
                 if (scenario === 'Domain Home purpose refused') expect.soft(observed).toMatchObject({ execution: {
                     failureCause: { phase: 'home.authorization.verification_purpose', httpStatus: 401 } } });
-                else expect.soft(observed).not.toHaveProperty('execution.failureCause');
+                else if (scenario !== 'administrator native check unavailable' && !nativeOutcomeUnknown) expect.soft(observed).not.toHaveProperty('execution.failureCause');
                 expect(JSON.stringify(observed)).not.toContain('Private network transport context');
             }
             expect(JSON.stringify(operation)).not.toContain('Private network transport context');
             expect(admissions).toHaveLength(0);
-            expect(children).toHaveLength(0);
+            expect(children).toHaveLength(removingNativeOutput ? 1 : 0);
+            if (removingNativeOutput) expect(children[0]).toMatchObject({ actionId, capture: { desired: false } });
             return;
         }
         const result = scenario === 'direct installed Caddy admin unavailable' ? await (async () => {
@@ -844,9 +1196,10 @@ it.skipIf(process.platform === 'win32').each(['shared', 'no active Domain member
             expect(children).toHaveLength(0);
         } else if (scenario === 'firewall prerequisite failed' || scenario === 'firewall partial failure') {
             expect(result).toMatchObject({ ok: false,
-                errorCode: scenario === 'firewall prerequisite failed' ? 'native_effect_failed' : 'outcome_unknown', details: {
+                errorCode: 'native_effect_failed', effectAttempted: true, details: {
                     failure: { kind: 'native_effect_failed', reason: scenario === 'firewall prerequisite failed'
-                        ? 'required_fact_unavailable' : 'foreign_effect_conflict' }, remedy: expect.any(String),
+                        ? 'required_fact_unavailable' : 'foreign_effect_conflict', stepId: 'firewall', requiredFact: 'firewall' },
+                    requiredFact: 'firewall', remedy: expect.any(String),
                 } });
             expect(admissions).toHaveLength(0);
             expect(children).toHaveLength(0);
@@ -883,6 +1236,53 @@ it.skipIf(process.platform === 'win32').each(['shared', 'no active Domain member
                 details: { failure: { requiredFact: 'caddyAdminConfig' } } }]);
             expect(admissions).toHaveLength(1);
             expect(transitions).toEqual([]);
+        } else if (retainedSeed) {
+            if (!runningPublic) expect(seedChecks.length, 'The real root CHECK must observe the retained seed').toBeGreaterThan(0);
+            if (scenario === 'Tunnel foreign seed') {
+                expect(result, JSON.stringify({ result, seedChecks, nativeResults })).toMatchObject({ ok: false, errorCode: 'native_check_unavailable', details: {
+                    failure: { kind: 'native_check_unavailable', reason: 'foreign_effect_conflict', requiredFact: 'caddy-initial-config' },
+                    remedy: expect.stringMatching(/check|inspect|reconcile/i),
+                } });
+                expect(await readFile('/var/lib/happier/caddy/initial.json', 'utf8')).toBe(installedSeed);
+                expect(admissions).toEqual([]);
+                expect(children).toEqual([]);
+                expect(transitions).toEqual([]);
+            } else {
+                if (networkConnectFailure) {
+                    expect(ActionExecuteResultSchema.parse(result), JSON.stringify({ result, seedChecks, nativeResults })).toMatchObject({
+                        ok: false, errorCode: 'native_effect_failed', details: {
+                            failure: { kind: 'native_effect_failed', reason: 'native_effect_failed', requiredFact: 'caddyAdminConfig',
+                                stepId: 'caddy-container-network-connect', nativeCommand: { command: 'docker', phase: 'network-connect', exitCode: 1 } },
+                            remedy: expect.any(String),
+                        },
+                    });
+                } else expect(result, JSON.stringify({ result, seedChecks, nativeResults })).toMatchObject({ ok: true, domain: { state: 'active' } });
+                if (prepared?.status !== 'ready') throw new Error('Expected Tunnel seed');
+                expect(await readFile('/var/lib/happier/caddy/initial.json', 'utf8')).toBe(runningPublic ? publicSeed : prepared.input.initialConfig);
+                expect(await readFile('/var/lib/happier/caddy/data/incumbent-certificate', 'utf8')).toBe('retained certificate bytes');
+                expect(await readFile(retainedConnector.tokenPath, 'utf8')).toBe(retainedConnector.token);
+                expect(JSON.stringify({ result, nativeResults })).not.toContain(retainedConnector.token);
+                const docker = nativeDocker.get('/run/happier-caddy/admin.sock')!;
+                const finalContainer = JSON.parse((await docker.run(['container', 'inspect', '--', 'owned-caddy'], new AbortController().signal)).stdout)[0];
+                expect(finalContainer.State.Running).toBe(true);
+                if (!runningPublic) expect(finalContainer.HostConfig.PortBindings).toEqual({});
+                if (runningPublic) {
+                    const exchange = createNativeCaddyAdminExchange('/run/happier-caddy/admin.sock');
+                    const publicRoutes = await exchange({ method: 'GET', path: '/config/apps/http/servers/happier_public/routes/' });
+                    expect(publicRoutes.status).toBe(200);
+                    expect(publicRoutes.value).toContainEqual(materializeCaddyDomainRouteV1(incumbentPublicDomain).route);
+                    expect(finalContainer.HostConfig.PortBindings).toEqual(Object.fromEntries((publicPrepared?.status === 'ready'
+                        ? publicPrepared.input.publicBindings ?? [] : []).map(binding => [
+                        `${binding.containerPort ?? binding.hostPort}/${binding.protocol}`,
+                        [{ HostIp: binding.hostAddress, HostPort: String(binding.hostPort) }],
+                    ])));
+                }
+                expect(Object.keys(finalContainer.NetworkSettings.Networks)).toContain('deployed_default');
+                expect(admissions).toHaveLength(1);
+                expect(children).toHaveLength(1);
+                expect(transitions).toMatchObject(networkConnectFailure ? [] : [{ observations: [{ state: 'active' }] }]);
+                expect(admissions[0]?.placements).toMatchObject([{ machineId: 'a', listener: 'privateOrigin', nativeServer: 'happier_private' }]);
+            }
         } else if (scenario === 'direct installed Caddy') {
             expect(result, `Native public TLS listener/publication required for Domain admission: ${JSON.stringify(result)}`)
                 .toMatchObject({ ok: true, domain: { state: 'active' } });

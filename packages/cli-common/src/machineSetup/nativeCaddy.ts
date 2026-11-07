@@ -236,7 +236,7 @@ export async function checkNativeCaddyPortAvailability(input: Pick<NativeCaddySe
     });
 }
 type OwnedContainer = Readonly<{ status: 'observed'; containerId: string; containerName: string; config: Record<string, unknown>; host: Record<string, unknown>;
-    running: boolean; networks: Record<string, unknown>; ports: unknown }>;
+    running: boolean; created: boolean; networks: Record<string, unknown>; ports: unknown }>;
 async function inspectOwnedContainer(input: ContainerInput, run: ReturnType<typeof nativeDocker>): Promise<OwnedContainer
     | Readonly<{ status: 'needs_setup' }> | Readonly<{ status: 'unavailable'; reason: 'required_fact_unavailable' | 'foreign_effect_conflict' }>> {
     const unavailable = caddyFactUnavailable('caddyContainer');
@@ -262,7 +262,8 @@ async function inspectOwnedContainer(input: ContainerInput, run: ReturnType<type
         || JSON.stringify(config.Cmd) !== JSON.stringify(command)
         || object(host.RestartPolicy)?.Name !== 'unless-stopped' || Array.isArray(host.Binds) && host.Binds.length > 0
         || !Array.isArray(host.Mounts)) return { status: 'unavailable', reason: 'foreign_effect_conflict' };
-    return { status: 'observed', containerId: state.Id, containerName: state.Name.slice(1), config, host, running: status.Running, networks, ports: nativeNetwork?.Ports };
+    return { status: 'observed', containerId: state.Id, containerName: state.Name.slice(1), config, host,
+        running: status.Running, created: status.Status === 'created', networks, ports: nativeNetwork?.Ports };
 }
 
 function mountedPath(host: Record<string, unknown>, containerPath: string): string | undefined {
@@ -586,7 +587,14 @@ async function ensurePublicCaddyConfig(input: NativeCaddySetupInput, host: Recor
     return true;
 }
 
-function extendsPublicPorts(actual: unknown, input: NativeCaddySetupInput): boolean {
+function canReconfigurePorts(container: OwnedContainer, input: NativeCaddySetupInput): boolean {
+    const actual = container.host.PortBindings;
+    // A failed first public start has never served routes. Its exact owned
+    // profile can become private without stopping a live public Domain.
+    if (container.created && !container.running && !input.publicBindings?.length
+        && matchingPorts(actual, portBindings(nativeCaddyProfile.publicPortRequirements.map(({ id, ...requirement }) => ({
+            ...requirement, requirementId: id, hostAddress: '0.0.0.0',
+        }))))) return true;
     const ports = actual === null ? {} : object(actual);
     if (!ports) return false;
     const expected = portBindings(readCaddyContainerFirewallExposures(input));
@@ -641,7 +649,7 @@ export async function ensureNativeCaddyContainer(input: NativeCaddySetupInput, o
                     && (mount.ReadOnly ?? false) === expected.readOnly;
             }))) return unavailable('foreign_effect_conflict');
         const bindingsMatch = matchingPorts(host.PortBindings, portBindings(exposures));
-        if (!bindingsMatch && !extendsPublicPorts(host.PortBindings, input)) return unavailable('foreign_effect_conflict');
+        if (!bindingsMatch && !canReconfigurePorts(container, input)) return unavailable('foreign_effect_conflict');
         id = container.containerId;
         running = container.running;
         networks = container.networks;
@@ -660,7 +668,7 @@ export async function ensureNativeCaddyContainer(input: NativeCaddySetupInput, o
             }
         }
         if (!bindingsMatch) {
-            // Docker publications are immutable. The admitted owned extension
+            // Docker publications are immutable. The admitted owned transition
             // retains durable autosave/data and every incumbent network.
             if (running) {
                 const stopped = await run(['container', 'stop', '--', id]);
