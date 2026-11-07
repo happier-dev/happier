@@ -29,6 +29,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { Icon } from '@/components/ui/icons/Icon';
 import { useCollectionRailWidth } from '@/components/ui/lists/collection/useCollectionRailWidth';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { PageLoadingRows } from '@/components/ui/layout/PageLoadingRows';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { t } from '@/text';
@@ -43,6 +44,7 @@ import { ProjectDeploymentDefaultsSettings } from './ProjectDeploymentDefaultsSe
 import { DeploymentEnvironmentDetail, type DeploymentReviewHandle } from './DeploymentEnvironmentDetail';
 import { DeploymentEnvironmentDraft } from './DeploymentEnvironmentDraft';
 import { DeploymentReceiptDetail } from './DeploymentReceiptDetail';
+import { DeploymentDatabasePage } from './DeploymentDatabasePage';
 import { buildDeploymentEnvironmentHref } from './deploymentNavigation';
 import { useDeploymentProject } from './useDeploymentProject';
 import { useDeploymentCollection } from './useDeploymentReads';
@@ -53,6 +55,8 @@ const DEPLOYMENTS_DETAIL_MIN_WIDTH_PX = 480;
 type Selection = Readonly<{
   environmentId: string | null;
   deploymentId: string | null;
+  /** One of the Environment's databases, pushed in place like a receipt. */
+  database?: string | null;
   /** A new Environment's editor is the open detail, under its draft row. */
   drafting?: boolean;
   defaults?: boolean;
@@ -88,12 +92,7 @@ export const ProjectDeploymentsBody = React.memo(
     }
     if (!binding || !controller) {
       return (
-        <ItemList testID="project-deployments.loading">
-          <SurfaceStateCard
-            kind="loading"
-            title={t('projects.deployments.loading')}
-          />
-        </ItemList>
+        <PageLoadingRows testID="project-deployments.loading" header />
       );
     }
     return (
@@ -177,8 +176,9 @@ const ProjectDeploymentsPage = React.memo(
     const params = useLocalSearchParams<Record<string, string | string[] | undefined>>();
     const routeEnvironmentId = readProjectRouteStringParam(params.deploymentEnvironment);
     const routeDeploymentId = readProjectRouteStringParam(params.deployment);
+    const routeDatabase = readProjectRouteStringParam(params.deploymentService);
     const routeDefaults = readProjectRouteStringParam(params.deploymentSettings) === 'defaults';
-    const collectionVisible = !(phone && routeEnvironmentId && routeDeploymentId);
+    const collectionVisible = !(phone && routeEnvironmentId && (routeDeploymentId || routeDatabase));
     const collection = useDeploymentCollection(props.controller, {
       ...props.demand,
       visible: props.demand.visible && collectionVisible,
@@ -197,7 +197,8 @@ const ProjectDeploymentsPage = React.memo(
     } : {
       environmentId: routeEnvironmentId,
       deploymentId: routeEnvironmentId ? routeDeploymentId : null,
-    }, [drafting, routeDefaults, routeDeploymentId, routeEnvironmentId]);
+      database: routeEnvironmentId && !routeDeploymentId ? routeDatabase : null,
+    }, [drafting, routeDatabase, routeDefaults, routeDeploymentId, routeEnvironmentId]);
     const selectionRef = React.useRef(selection);
     selectionRef.current = selection;
     const setSelection = React.useCallback((next: Selection) => {
@@ -209,6 +210,7 @@ const ProjectDeploymentsPage = React.memo(
         deploymentSettings: next.defaults ? 'defaults' : undefined,
         deploymentEnvironment: next.environmentId ?? undefined,
         deployment: next.deploymentId ?? undefined,
+        deploymentService: next.database ?? undefined,
         // Another Environment opens on its Overview.
         ...(sameEnvironment ? {} : { deploymentTab: undefined, deploymentSection: undefined }),
       });
@@ -238,10 +240,15 @@ const ProjectDeploymentsPage = React.memo(
     );
     const back = React.useCallback(() => {
       const current = selectionRef.current;
-      setSelection(current.deploymentId
+      setSelection(current.deploymentId || current.database
         ? { environmentId: current.environmentId, deploymentId: null }
         : NOTHING_SELECTED);
     }, [setSelection]);
+    // A receipt's next action opens one of its Environment's pages: the receipt closes and that tab opens.
+    const openEnvironmentTab = React.useCallback((next: DeploymentEnvironmentDestinationV1) => {
+      setSelection({ environmentId: selectionRef.current.environmentId, deploymentId: null });
+      navigateEnvironment(next);
+    }, [navigateEnvironment, setSelection]);
     const hostedBack = useProjectPageBack(phone && (environmentId !== null || selection.drafting === true || selection.defaults === true), back);
     // Without a Project bar to host it (the standalone deployments route), the open Environment draws the
     // receipt's same page Back so a phone can return to the list.
@@ -312,12 +319,7 @@ const ProjectDeploymentsPage = React.memo(
     }
     if (!selection.defaults && !environmentId && !retained) {
       return (
-        <ItemList testID="project-deployments.loading">
-          <SurfaceStateCard
-            kind="loading"
-            title={t('projects.deployments.loading')}
-          />
-        </ItemList>
+        <PageLoadingRows testID="project-deployments.loading" header />
       );
     }
     const draft = selection.drafting ? (
@@ -382,6 +384,7 @@ const ProjectDeploymentsPage = React.memo(
           demand={props.demand}
           accountId={props.accountId}
           onBack={back}
+          onOpenEnvironmentTab={openEnvironmentTab}
           rollback={props.actions?.rollback ?? null}
           cancel={props.actions?.cancel ?? null}
           promote={props.actions?.promote ?? null}
@@ -394,6 +397,23 @@ const ProjectDeploymentsPage = React.memo(
             environmentId, deploymentId: selection.deploymentId })}
           review={review}
           onOpenReceipt={(deploymentId) => setSelection({ environmentId, deploymentId })}
+        />
+      ) : selection.database ? (
+        <DeploymentDatabasePage
+          key={`${environmentId}:database:${selection.database}`}
+          controller={props.controller}
+          environmentId={environmentId}
+          database={selection.database}
+          demand={props.demand}
+          phone={phone}
+          lifetime={props.lifetime}
+          review={review}
+          restore={props.actions?.restore ?? null}
+          onBack={back}
+          onNavigate={(next) => {
+            setSelection({ environmentId, deploymentId: null });
+            navigateEnvironment(next);
+          }}
         />
       ) : (
         <DeploymentEnvironmentDetail
@@ -411,6 +431,7 @@ const ProjectDeploymentsPage = React.memo(
           setBindings={props.actions?.setBindings ?? null}
           disposition={disposition}
           restore={props.actions?.restore ?? null}
+          restart={props.actions?.restart ?? null}
           domainActions={props.actions ?? null}
           environmentActions={props.actions ?? null}
           openPreparation={props.actions?.openPreparation ?? null}
@@ -427,6 +448,7 @@ const ProjectDeploymentsPage = React.memo(
           onOpenReceipt={(deploymentId) =>
             setSelection({ environmentId, deploymentId })
           }
+          onOpenDatabase={(database) => setSelection({ environmentId, deploymentId: null, database })}
         />
       ));
     const scale = Math.max(1, fontScale);

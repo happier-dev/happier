@@ -16,6 +16,7 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { PageLoadingRows } from '@/components/ui/layout/PageLoadingRows';
 import { useActiveServerAccountScopeLifetime } from '@/sync/store/hooks';
 import { useDeploymentPresentationDemand } from './useDeploymentPresentationDemand';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -112,13 +113,7 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
   }
   if (!snapshot.value || !serverId) {
     return (
-      <ItemList testID="all-deployments.loading">
-        {header}
-        <SurfaceStateCard
-          kind="loading"
-          title={t('projects.deployments.loading')}
-        />
-      </ItemList>
+      <PageLoadingRows testID="all-deployments.loading" header />
     );
   }
   const paged = read.hasNextPage || read.hasPreviousPage;

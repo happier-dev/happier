@@ -25,6 +25,11 @@ import { ListPresentationProvider } from '@/components/ui/lists/listPresentation
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
+import { EmptyState } from '@/components/ui/empty/EmptyState';
+import { PluginMark } from '@/components/settings/plugins/PluginMark';
+import { presentConnectSheet } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
+import { connectedAccountPurposeServiceTargets } from '@/sync/domains/connectedServices/connectedAccountPurposeTargetChoices';
+import { useProfile } from '@/sync/store/hooks';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
 import { ModalCardFooterActions } from '@/modal/components/card/ModalCardFooterActions';
 import type { CustomModalInjectedProps } from '@/modal/types';
@@ -45,6 +50,7 @@ import {
   type PlatformInspectOutcome,
   applyPlatformFieldPatch,
   disclosePlatformFields,
+  drawPlatformFields,
 } from './platformTargetLink';
 
 type Actions = ReturnType<typeof createDeploymentActions>;
@@ -184,6 +190,12 @@ function DeploymentPlatformTargetSheet(
   );
   const [busy, setBusy] = React.useState<'check' | 'link' | null>(null);
   const [linkRefused, setLinkRefused] = React.useState<string | null>(null);
+  // The Account's own inventory decides whether it has any account for this platform; unknown until it is read.
+  const accountId = props.lifetime.scope.accountId;
+  const service = target?.service ?? null;
+  const hasServiceAccount = useProfile((profile) => profile.id !== accountId || !service ? null
+    : connectedAccountPurposeServiceTargets(profile.connectedAccountsV4 ?? [], [], service).accounts.length > 0);
+  const needsConnect = target !== null && account === null && hasServiceAccount === false;
   const source =
     useProjectSource(props.lifetime, props.environment.projectSourceId).source
       ?.source ?? null;
@@ -249,17 +261,9 @@ function DeploymentPlatformTargetSheet(
     serverId: props.lifetime.scope.serverId,
     accountLifetime: props.lifetime,
   });
-  // A choice with nothing to pick yet (it waits on the one above it) is not drawn; required ones always are.
-  const visibleFields = fields.filter((field) => {
-    if (field.required || getValueAtPath(values, field.path) !== undefined)
-      return true;
-    const choices = options.state(field);
-    return (
-      choices.status !== 'ready' ||
-      choices.options.length > 0 ||
-      (cursors[field.path]?.length ?? 0) > 0
-    );
-  });
+  // One failed read is said once, at the sheet; an optional choice this target has nothing for is not drawn.
+  const drawn = drawPlatformFields(fields, values, (field) => options.state(field), (field) => (cursors[field.path]?.length ?? 0) > 0);
+  const visibleFields = drawn.fields;
   const missing = fields.some(
     (field) =>
       field.required && getValueAtPath(values, field.path) === undefined,
@@ -311,6 +315,17 @@ function DeploymentPlatformTargetSheet(
   };
 
   const { onClose, onApproval, actions } = props;
+  // Add a token runs the one shared connect flow for this service; its account becomes this link's account,
+  // and the platform's own choices and Check (what the token can do) follow in place.
+  const connect = async () => {
+    if (!target) return;
+    const result = await presentConnectSheet({ scope: props.lifetime.scope, service: target.service, intent: 'add' });
+    if (result.kind === 'dismissed' || !props.lifetime.isCurrent()) return;
+    setAccount(result.account);
+    setValues(EMPTY_VALUES);
+    setCursors({});
+    resetFrom();
+  };
   const check = async () => {
     if (!target || !draft || busy) return;
     setBusy('check');
@@ -380,7 +395,7 @@ function DeploymentPlatformTargetSheet(
         }
         size="normal"
         loading={busy !== null}
-        disabled={busy !== null || !draft || !target || missing}
+        disabled={busy !== null || !draft || !target || missing || needsConnect}
         title={
           ready && target
             ? t('projects.deployments.platformLink.link', {
@@ -448,13 +463,15 @@ function DeploymentPlatformTargetSheet(
                   itemProps: { disabled: busy !== null },
                 }}
               />
-              <ConnectedAccountPurposeTargetChooser
+              {needsConnect ? null : <ConnectedAccountPurposeTargetChooser
                 key={target.key}
                 testID="project-deployments.platform.account"
                 localizedTextPluginId={target.service.pluginId}
                 declaration={{
                   purpose: target.purpose,
                   service: target.service,
+                  // The credential this link uses; the provider's own account or team is a choice below it.
+                  title: t('projects.deployments.platformLink.connection'),
                   required: true,
                 }}
                 value={account ? { kind: 'account', account } : null}
@@ -466,7 +483,7 @@ function DeploymentPlatformTargetSheet(
                   setCursors({});
                   resetFrom();
                 }}
-              />
+              />}
               {/* Each provider choice is a row of the same sheet: the row names it, the control draws no label. */}
               {draft
                 ? visibleFields.map((field) => {
@@ -519,6 +536,31 @@ function DeploymentPlatformTargetSheet(
                   })
                 : null}
             </ItemGroup>
+            {draft && drawn.failure ? (
+              <SurfaceStateCard
+                testID="project-deployments.platform.choicesFailed"
+                size="line"
+                kind="error"
+                title={t('projects.deployments.platformLink.choicesFailed', { platform: target.title })}
+                reason={t('projects.deployments.platformLink.choicesFailedBody')}
+                diagnosticCode={drawn.failure.code}
+                action={{ label: t('common.retry'), onPress: () => options.retry() }}
+              />
+            ) : null}
+            {needsConnect ? (
+              <EmptyState
+                testID="project-deployments.platform.connect"
+                layout="centered"
+                icon={<PluginMark title={target.title} pluginId={target.pluginId} />}
+                title={t('projects.deployments.platformLink.connectTitle', { platform: target.title })}
+                subtitle={t('projects.deployments.platformLink.connectBody', { platform: target.title })}
+                primaryAction={{
+                  label: t('projects.deployments.platformLink.connectAction', { platform: target.title }),
+                  onPress: connect,
+                  testID: 'project-deployments.platform.connect.add',
+                }}
+              />
+            ) : null}
             <DeploymentPlatformInspectState outcome={outcome} />
             {linkRefused ? (
               <SurfaceStateCard

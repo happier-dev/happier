@@ -104,3 +104,47 @@ it('opens on the platform the person already chose in the draft', async () => {
     context.dispose();
   }
 });
+
+it('welcomes an Account with no platform account to add a token in place, then continues with that account', async () => {
+  const pluginId = 'com.example.connect-deploy';
+  const service = DEPLOYMENT_TARGETS_TEST_SERVICE;
+  const authored = createDeploymentTargetsTestPlugin(pluginId);
+  const serverId = await homes.addHome({ name: 'Connect target', serverUrl: 'https://connect-target.test', accountId: 'owner', currentAccount: true });
+  const context = await captureLazyActionAccountContext(serverId);
+  const installed = await installPortableAccountPluginReleaseForTest({ manifest: authored.manifest,
+    activate: api => authored.activateAccount(api, DEPLOYMENT_TARGETS_TEST_EXECUTION.account), accountLifetime: context.accountLifetime, publishProjection: true });
+  const { storage } = await import('@/sync/domains/state/storageStore');
+  const { ConnectSheetContent } = await import('@/components/settings/connectedServices/setup/ConnectSheetContent');
+  const previous = storage.getState().profile;
+  try {
+    // The Account's own inventory has no account for this platform's service.
+    storage.setState({ profile: { ...previous, id: 'owner', connectedAccountsV4: [] } });
+    const screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
+    await act(async () => showDeploymentPlatformTargetSheet({ name: 'Site', environment: { id: 'environment', revision: 4, projectSourceId: '' },
+      ownerAccountId: 'owner', lifetime: context.accountLifetime, actions: createDeploymentActions(context.accountLifetime, ''), onApproval: () => {},
+      initialTargetKey: `${pluginId}/beta` }));
+    await waitForHomeGovernance(async () => {
+      await act(async () => {});
+      expect(screen.findByTestId('project-deployments.platform.connect')).not.toBeNull();
+    });
+    expect(screen.root.findAllByType(ConnectedAccountPurposeTargetChooser)).toHaveLength(0);
+    // Add a token opens the one shared connect flow for this service, never a deployment-local form.
+    await screen.pressByTestIdAsync('project-deployments.platform.connect.add');
+    const sheet = () => screen.root.findAllByType(ConnectSheetContent)[0];
+    await waitForHomeGovernance(async () => { await act(async () => {}); expect(sheet()).toBeDefined(); });
+    expect(sheet()!.props.request).toMatchObject({ service, intent: 'add' });
+    await act(async () => sheet()!.props.onResult({ kind: 'connected', account: { service, accountId: 'new-token' } }));
+    // The new account is chosen; the platform's own choices and its Check (the permission probe) follow.
+    await waitForHomeGovernance(async () => {
+      await act(async () => {});
+      expect(screen.root.findByType(ConnectedAccountPurposeTargetChooser).props.value)
+        .toEqual({ kind: 'account', account: { service, accountId: 'new-token' } });
+    });
+    expect(screen.findByTestId('project-deployments.platform.connect')).toBeNull();
+    expect(screen.findByTestId('project-deployments.platform.check')).not.toBeNull();
+  } finally {
+    storage.setState({ profile: previous });
+    await installed.dispose();
+    context.dispose();
+  }
+});

@@ -217,6 +217,30 @@ export function disclosePlatformFields(
   return disclosed.length === fields.length ? fields : disclosed;
 }
 
+type PlatformFieldChoices = Readonly<{ status: 'loading' | 'ready' | 'failed'; options: readonly unknown[]; errorCode?: string }>;
+
+/**
+ * The disclosed choices the sheet draws, and the one failed read it says once. A failed read stops the list: the
+ * choices after it are read from its answer, and repeating the same failure under each row says one cause six
+ * times. An optional choice the target has nothing for (a Worker's Pages project) is left out; a required or
+ * answered one, one still loading or one being paged through always stays.
+ */
+export function drawPlatformFields<Field extends EffectiveActionInputField>(
+  fields: readonly Field[],
+  values: Readonly<Record<string, unknown>>,
+  choicesOf: (field: Field) => PlatformFieldChoices,
+  paged: (field: Field) => boolean,
+): Readonly<{ fields: readonly Field[]; failure: Readonly<{ code: string }> | null }> {
+  const drawn: Field[] = [];
+  for (const field of fields) {
+    const choices = choicesOf(field);
+    if (choices.status === 'failed') return { fields: drawn, failure: { code: choices.errorCode ?? 'unknown_error' } };
+    if (field.required || readHappierActionInputPath(values as Record<string, unknown>, field.path) !== undefined
+      || choices.status !== 'ready' || choices.options.length > 0 || paged(field)) drawn.push(field);
+  }
+  return { fields: drawn, failure: null };
+}
+
 /** A changed choice clears the ones after it: they were read for the old answer. `changedIndex` is -1 when nothing changed. */
 export function applyPlatformFieldPatch(
   fields: readonly EffectiveActionInputField[],

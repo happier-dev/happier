@@ -27,6 +27,7 @@ import { useCollectionDraftTitle } from '@/components/ui/lists/collection/Collec
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { SegmentedChoiceItem, type SegmentedChoiceOption } from '@/components/ui/lists/SegmentedChoiceItem';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useMachineListForServer } from '@/sync/store/hooks';
@@ -332,7 +333,7 @@ export const DeploymentEnvironmentDraft = React.memo(
                 value={platformTarget?.key ?? MACHINE_TILE}
                 onChange={chooseTarget}
                 minimumColumns={1}
-                maximumColumns={props.phone ? 1 : 2}
+                maximumColumns={props.phone ? 1 : 3}
               />
             ) : null}
             {machines.length === 0 ? (
@@ -409,40 +410,38 @@ export const DeploymentEnvironmentDraft = React.memo(
             </>}
           </ItemGroup>
           {props.copyFrom && copyChoices ? (
-            <ItemGroup title={t('projects.deployments.copy.bindings')} description={t('projects.deployments.copy.dataOmitted')}>
+            <ItemGroup title={t('projects.deployments.copy.bindings')} description={t('projects.deployments.copy.domainsStay')}>
               {copyChoices.secrets.map((choice, index) => {
                 const identity = choice.binding;
                 if (identity.purpose !== 'variable' && identity.purpose !== 'registry') return null;
                 const title = identity.purpose === 'variable' ? identity.name : identity.registryOrigin;
-                return <Item key={`secret:${index}`} title={title} showChevron={false}
-                  bottomElement={<SelectionTiles<string>
-                    testIdPrefix={`project-deployments.draft.copy.secret:${index}`} accessibilityLabel={title}
-                    surface="sheet" minimumColumns={1} maximumColumns={props.phone ? 1 : 3}
-                    value={choice.kind === 'rebind' ? 'choose' : choice.kind}
-                    options={[
-                      { id: 'useSameReference', title: t('projects.deployments.copy.same') },
-                      { id: 'choose', title: t('projects.deployments.copy.choose'), disabled: !props.lifetime },
-                      { id: 'omit', title: t('projects.deployments.copy.omit') },
-                    ]}
-                    onChange={next => {
-                      if (next === 'omit' || next === 'useSameReference') {
-                        setCopyChoices(current => current ? { ...current, secrets: current.secrets.map((row, i) => i === index
-                          ? { binding: row.binding, kind: next } : row) } : current);
-                      } else if (next === 'choose' && props.lifetime) {
-                        const lifetime = props.lifetime;
-                        const controller = new AbortController();
-                        void presentSavedSecretReferencePicker({ accountLifetime: lifetime, signal: controller.signal,
-                          ...(choice.kind === 'rebind' ? { selected: { ref: choice.source.ref,
-                            resourceRevision: choice.source.resourceRevision } } : {}),
-                          isCurrent: lifetime.isCurrent }).then(selected => {
-                          if (!selected) return;
-                          setCopyChoices(current => current ? { ...current, secrets: current.secrets.map((row, i) => i === index
-                            ? { binding: row.binding, kind: 'rebind', source: { kind: 'secret', ref: selected.ref,
-                              resourceRevision: selected.resourceRevision } } : row) } : current);
-                        });
-                      }
-                    }} />}
-                />;
+                return <SegmentedChoiceItem<SecretCopyChoice> key={`secret:${index}`} title={title}
+                  testIDPrefix={`project-deployments.draft.copy.secret:${index}`}
+                  value={choice.kind === 'rebind' ? 'choose' : choice.kind}
+                  options={[
+                    { id: 'useSameReference', label: t('projects.deployments.copy.same') },
+                    { id: 'choose', label: t('projects.deployments.copy.choose'), disabled: !props.lifetime },
+                    { id: 'omit', label: t('projects.deployments.copy.omit') },
+                  ]}
+                  onChange={next => {
+                    if (next !== 'choose') {
+                      setCopyChoices(current => current ? { ...current, secrets: current.secrets.map((row, i) => i === index
+                        ? { binding: row.binding, kind: next } : row) } : current);
+                      return;
+                    }
+                    if (!props.lifetime) return;
+                    // Choose another opens the one Saved Secret picker; dismissing it keeps the previous choice.
+                    const lifetime = props.lifetime;
+                    void presentSavedSecretReferencePicker({ accountLifetime: lifetime, signal: new AbortController().signal,
+                      ...(choice.kind === 'rebind' ? { selected: { ref: choice.source.ref,
+                        resourceRevision: choice.source.resourceRevision } } : {}),
+                      isCurrent: lifetime.isCurrent }).then(selected => {
+                      if (!selected) return;
+                      setCopyChoices(current => current ? { ...current, secrets: current.secrets.map((row, i) => i === index
+                        ? { binding: row.binding, kind: 'rebind', source: { kind: 'secret', ref: selected.ref,
+                          resourceRevision: selected.resourceRevision } } : row) } : current);
+                    });
+                  }} />;
               })}
               {copyChoices.values.map((choice, index) => <Item key={`value:${index}`}
                 title={choice.binding.purpose === 'variable' ? choice.binding.name : choice.binding.purpose}
@@ -450,6 +449,20 @@ export const DeploymentEnvironmentDraft = React.memo(
                 rightElement={<Switch value={choice.kind !== 'omit'} onValueChange={include => setCopyChoices(current => current
                   ? { ...current, values: current.values.map((row, i) => i === index
                     ? { binding: row.binding, kind: include ? 'include' : 'omit' } : row) } : current)} />} />)}
+            </ItemGroup>
+          ) : null}
+          {props.copyFrom && copyChoices && copyChoices.data.length > 0 ? (
+            <ItemGroup title={t('projects.deployments.copy.dataTitle')}>
+              {copyChoices.data.map((choice, index) => {
+                const link = props.copyFrom?.targetLinks.find(row => row.targetLink.id === choice.targetLinkId);
+                return <SegmentedChoiceItem<DataCopyChoice> key={choice.targetLinkId}
+                  title={link?.targetLink.targetKind ?? choice.targetLinkId}
+                  testIDPrefix={`project-deployments.draft.copy.data:${index}`}
+                  value={choice.kind === 'omit' ? 'createEmpty' : choice.kind}
+                  options={DATA_COPY_OPTIONS()}
+                  onChange={next => setCopyChoices(current => current ? { ...current, data: current.data.map((row, i) => i === index
+                    ? { targetLinkId: row.targetLinkId, kind: next } : row) } : current)} />;
+              })}
             </ItemGroup>
           ) : null}
           <ItemGroup
@@ -488,6 +501,15 @@ export const DeploymentEnvironmentDraft = React.memo(
   },
 );
 
+type SecretCopyChoice = 'useSameReference' | 'choose' | 'omit';
+type DataCopyChoice = Exclude<DeploymentEnvironmentCopyChoicesV1['data'][number]['kind'], 'omit'>;
+/** A copy's data is a deliberate choice; each option says what the new Environment gets. */
+const DATA_COPY_OPTIONS = (): ReadonlyArray<SegmentedChoiceOption<DataCopyChoice>> => [
+  { id: 'reuse', label: t('projects.deployments.copy.dataReuse'), description: t('projects.deployments.copy.dataReuseHint') },
+  { id: 'createEmpty', label: t('projects.deployments.copy.dataEmpty'), description: t('projects.deployments.copy.dataEmptyHint') },
+  { id: 'restoreBackup', label: t('projects.deployments.copy.dataRestore'), description: t('projects.deployments.copy.dataRestoreHint') },
+];
+
 const NO_PLATFORM_TARGETS: ReturnType<typeof readDeploymentPlatformTargets> = [];
 
 function copyBindingIdentity({ source: _source, ...identity }: EnvironmentSecretBindingV1): EnvironmentSecretBindingIdentityV1 {
@@ -507,7 +529,7 @@ function initialCopyChoices(source: DeploymentEnvironmentDetailV1): DeploymentEn
     values: source.content.bindings.filter(row => row.source.kind !== 'secret').map((row): DeploymentEnvironmentCopyChoicesV1['values'][number] => ({
       binding: copyBindingIdentity(row), kind: 'include',
     })),
-    data: source.targetLinks.filter(row => row.targetLink.role === 'data').map(row => ({ targetLinkId: row.targetLink.id, kind: 'omit' })),
+    data: source.targetLinks.filter(row => row.targetLink.role === 'data').map(row => ({ targetLinkId: row.targetLink.id, kind: 'createEmpty' })),
     retainPreviousDeployments: 'copy',
   };
 }

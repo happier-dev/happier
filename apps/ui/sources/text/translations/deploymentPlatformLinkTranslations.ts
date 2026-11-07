@@ -33,6 +33,12 @@ type DeploymentPlatformLinkCopy = Readonly<{
   refusedRemedy: string;
   nothingDeployedBody: string;
   deployNoPlatform: string;
+  connectTitle: (params: { platform: string }) => string;
+  connectBody: (params: { platform: string }) => string;
+  connectAction: (params: { platform: string }) => string;
+  choicesFailed: (params: { platform: string }) => string;
+  choicesFailedBody: string;
+  connection: string;
 }>;
 
 export const deploymentPlatformLinkTranslations = {
@@ -65,6 +71,12 @@ export const deploymentPlatformLinkTranslations = {
     refusedRemedy: 'Check the account and project you chose, then check again.',
     nothingDeployedBody: 'The first deploy builds this branch on the platform you link.',
     deployNoPlatform: 'This environment has no platform project to deploy to yet.',
+    connectTitle: ({ platform }) => `Connect ${platform} to deploy here`,
+    connectBody: ({ platform }) => `Happier links this environment to a ${platform} project, and checks what your token can do before it links and tells you what’s missing.`,
+    connectAction: ({ platform }) => `Add a ${platform} token`,
+    choicesFailed: ({ platform }) => `Couldn’t read your ${platform} choices`,
+    choicesFailedBody: "Check that the connection can see your projects, then retry.",
+    connection: "Connection",
   },
   ca: {
     title: ({ name }) => `Desplega ${name} a una plataforma`,
@@ -97,6 +109,12 @@ export const deploymentPlatformLinkTranslations = {
     refusedRemedy: 'Revisa el compte i el projecte que has triat i torna a comprovar.',
     nothingDeployedBody: 'El primer desplegament construeix aquesta branca a la plataforma que enllacis.',
     deployNoPlatform: 'Aquest entorn encara no té cap projecte de plataforma on desplegar.',
+    connectTitle: ({ platform }) => `Connecta ${platform} per desplegar-hi`,
+    connectBody: ({ platform }) => `Happier enllaça aquest entorn amb un projecte de ${platform} i comprova què pot fer el teu token abans d’enllaçar-lo; et diu què hi falta.`,
+    connectAction: ({ platform }) => `Afegeix un token de ${platform}`,
+    choicesFailed: ({ platform }) => `No s’han pogut llegir les opcions de ${platform}`,
+    choicesFailedBody: "Comprova que la connexió pot veure els teus projectes i torna-ho a provar.",
+    connection: "Connexió",
   },
   de: {
     title: ({ name }) => `${name} auf einer Plattform bereitstellen`,
@@ -128,6 +146,12 @@ export const deploymentPlatformLinkTranslations = {
     refusedRemedy: 'Prüfe das gewählte Konto und Projekt und prüfe dann erneut.',
     nothingDeployedBody: 'Das erste Deployment baut diesen Branch auf der verknüpften Plattform.',
     deployNoPlatform: 'Diese Umgebung hat noch kein Plattform-Projekt zum Deployen.',
+    connectTitle: ({ platform }) => `Verbinde ${platform}, um hier zu deployen`,
+    connectBody: ({ platform }) => `Happier verknüpft diese Umgebung mit einem ${platform}-Projekt und prüft vor dem Verknüpfen, was dein Token darf, und sagt dir, was fehlt.`,
+    connectAction: ({ platform }) => `${platform}-Token hinzufügen`,
+    choicesFailed: ({ platform }) => `${platform}-Auswahl konnte nicht gelesen werden`,
+    choicesFailedBody: "Prüfe, ob die Verbindung deine Projekte sieht, und versuche es erneut.",
+    connection: "Verbindung",
   },
   es: {
     title: ({ name }) => `Desplegar ${name} en una plataforma`,
@@ -160,6 +184,12 @@ export const deploymentPlatformLinkTranslations = {
     refusedRemedy: 'Revisa la cuenta y el proyecto que elegiste y vuelve a comprobar.',
     nothingDeployedBody: 'El primer despliegue construye esta rama en la plataforma que vincules.',
     deployNoPlatform: 'Este entorno aún no tiene un proyecto de plataforma donde desplegar.',
+    connectTitle: ({ platform }) => `Conecta ${platform} para desplegar aquí`,
+    connectBody: ({ platform }) => `Happier vincula este entorno a un proyecto de ${platform} y comprueba qué puede hacer tu token antes de vincularlo; te dice qué falta.`,
+    connectAction: ({ platform }) => `Añadir un token de ${platform}`,
+    choicesFailed: ({ platform }) => `No se pudieron leer las opciones de ${platform}`,
+    choicesFailedBody: "Comprueba que la conexión puede ver tus proyectos y vuelve a intentarlo.",
+    connection: "Conexión",
   },
   fr: {
     title: ({ name }) => `Déployer ${name} sur une plateforme`,
@@ -192,6 +222,12 @@ export const deploymentPlatformLinkTranslations = {
     refusedRemedy: 'Vérifie le compte et le projet choisis, puis vérifie à nouveau.',
     nothingDeployedBody: 'Le premier déploiement construit cette branche sur la plateforme que tu lies.',
     deployNoPlatform: 'Cet environnement n’a pas encore de projet de plateforme où déployer.',
+    connectTitle: ({ platform }) => `Connectez ${platform} pour déployer ici`,
+    connectBody: ({ platform }) => `Happier relie cet environnement à un projet ${platform} et vérifie ce que votre jeton peut faire avant de le relier ; il vous dit ce qui manque.`,
+    connectAction: ({ platform }) => `Ajouter un jeton ${platform}`,
+    choicesFailed: ({ platform }) => `Impossible de lire vos choix ${platform}`,
+    choicesFailedBody: "Vérifiez que la connexion voit vos projets, puis réessayez.",
+    connection: "Connexion",
   },
   it: {
     title: ({ name }) => `Distribuisci ${name} su una piattaforma`,
@@ -224,6 +260,12 @@ export const deploymentPlatformLinkTranslations = {
     refusedRemedy: 'Controlla l’account e il progetto scelti, poi verifica di nuovo.',
     nothingDeployedBody: 'La prima distribuzione compila questo branch sulla piattaforma che colleghi.',
     deployNoPlatform: 'Questo ambiente non ha ancora un progetto sulla piattaforma in cui distribuire.',
+    connectTitle: ({ platform }) => `Collega ${platform} per distribuire qui`,
+    connectBody: ({ platform }) => `Happier collega questo ambiente a un progetto ${platform} e verifica cosa può fare il tuo token prima di collegarlo; ti dice cosa manca.`,
+    connectAction: ({ platform }) => `Aggiungi un token ${platform}`,
+    choicesFailed: ({ platform }) => `Impossibile leggere le scelte di ${platform}`,
+    choicesFailedBody: "Controlla che la connessione veda i tuoi progetti, poi riprova.",
+    connection: "Connessione",
   },
   ja: {
     title: ({ name }) => `${name} をプラットフォームにデプロイ`,
@@ -255,6 +297,12 @@ export const deploymentPlatformLinkTranslations = {
     refusedRemedy: '選んだアカウントとプロジェクトを確認してから、もう一度チェックしてください。',
     nothingDeployedBody: '最初のデプロイで、連携したプラットフォーム上でこのブランチがビルドされます。',
     deployNoPlatform: 'この環境にはまだデプロイ先のプラットフォームのプロジェクトがありません。',
+    connectTitle: ({ platform }) => `ここにデプロイするには ${platform} を接続`,
+    connectBody: ({ platform }) => `Happier はこの環境を ${platform} のプロジェクトにリンクし、リンクする前にトークンでできることを確認して、足りないものを伝えます。`,
+    connectAction: ({ platform }) => `${platform} のトークンを追加`,
+    choicesFailed: ({ platform }) => `${platform} の選択肢を読み込めませんでした`,
+    choicesFailedBody: "接続からプロジェクトが見えることを確認して、もう一度お試しください。",
+    connection: "接続",
   },
   pl: {
     title: ({ name }) => `Wdróż ${name} na platformie`,
@@ -285,6 +333,12 @@ export const deploymentPlatformLinkTranslations = {
     refusedRemedy: 'Sprawdź wybrane konto i projekt, a potem sprawdź ponownie.',
     nothingDeployedBody: 'Pierwsze wdrożenie zbuduje tę gałąź na połączonej platformie.',
     deployNoPlatform: 'To środowisko nie ma jeszcze projektu na platformie do wdrożenia.',
+    connectTitle: ({ platform }) => `Połącz ${platform}, aby tu wdrażać`,
+    connectBody: ({ platform }) => `Happier łączy to środowisko z projektem ${platform} i przed połączeniem sprawdza, co może Twój token, oraz mówi, czego brakuje.`,
+    connectAction: ({ platform }) => `Dodaj token ${platform}`,
+    choicesFailed: ({ platform }) => `Nie udało się odczytać opcji ${platform}`,
+    choicesFailedBody: "Sprawdź, czy połączenie widzi Twoje projekty, i spróbuj ponownie.",
+    connection: "Połączenie",
   },
   pt: {
     title: ({ name }) => `Implementar ${name} numa plataforma`,
@@ -316,6 +370,12 @@ export const deploymentPlatformLinkTranslations = {
     refusedRemedy: 'Verifique a conta e o projeto que escolheu e volte a verificar.',
     nothingDeployedBody: 'A primeira implementação compila este ramo na plataforma que ligar.',
     deployNoPlatform: 'Este ambiente ainda não tem um projeto de plataforma para onde implementar.',
+    connectTitle: ({ platform }) => `Conecte ${platform} para implantar aqui`,
+    connectBody: ({ platform }) => `O Happier vincula este ambiente a um projeto do ${platform} e verifica o que o seu token pode fazer antes de vincular; ele diz o que falta.`,
+    connectAction: ({ platform }) => `Adicionar um token do ${platform}`,
+    choicesFailed: ({ platform }) => `Não foi possível ler suas opções do ${platform}`,
+    choicesFailedBody: "Verifique se a conexão vê seus projetos e tente novamente.",
+    connection: "Conexão",
   },
   ru: {
     title: ({ name }) => `Развернуть ${name} на платформе`,
@@ -347,6 +407,12 @@ export const deploymentPlatformLinkTranslations = {
     refusedRemedy: 'Проверьте выбранные аккаунт и проект, затем проверьте ещё раз.',
     nothingDeployedBody: 'Первое развёртывание соберёт эту ветку на подключённой платформе.',
     deployNoPlatform: 'У этой среды пока нет проекта на платформе для развёртывания.',
+    connectTitle: ({ platform }) => `Подключите ${platform}, чтобы развёртывать здесь`,
+    connectBody: ({ platform }) => `Happier связывает это окружение с проектом ${platform} и перед связыванием проверяет, что может ваш токен, и говорит, чего не хватает.`,
+    connectAction: ({ platform }) => `Добавить токен ${platform}`,
+    choicesFailed: ({ platform }) => `Не удалось прочитать варианты ${platform}`,
+    choicesFailedBody: "Проверьте, что подключению видны ваши проекты, и повторите.",
+    connection: "Подключение",
   },
   'zh-Hans': {
     title: ({ name }) => `将 ${name} 部署到平台`,

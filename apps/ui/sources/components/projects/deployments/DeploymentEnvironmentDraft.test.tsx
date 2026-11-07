@@ -79,6 +79,8 @@ describe('Environment draft Machine Home', () => {
       const header = () => screen.findAllByType(PageHeader)[0]!;
       expect(header().props.titleEditor.value).toBe('Staging copy');
       await screen.pressByTestIdAsync('project-deployments.draft.copy.secret:1:omit');
+      // Data comes along by an explicit choice: a new copy starts empty unless the person picks another.
+      await screen.pressByTestIdAsync('project-deployments.draft.copy.data:0:restoreBackup');
       await waitForTestEvent(screen.subscribe, () => header().props.primaryAction.disabled, value => value === false);
       await act(async () => header().props.primaryAction.onPress());
       await waitForTestEvent(homes.subscribe, () => authored, value => value !== undefined);
@@ -88,7 +90,7 @@ describe('Environment draft Machine Home', () => {
           { binding: { purpose: 'variable', name: 'KEEP', phase: 'runtime' }, kind: 'useSameReference' },
           { binding: { purpose: 'variable', name: 'EMPTY', phase: 'runtime' }, kind: 'omit' },
         ], values: [{ binding: { purpose: 'variable', name: 'PUBLIC', phase: 'runtime' }, kind: 'include' }],
-          data: [{ targetLinkId: 'source-data', kind: 'omit' }] },
+          data: [{ targetLinkId: 'source-data', kind: 'restoreBackup' }] },
       } });
       expect(authored).not.toHaveProperty('definition');
       await waitForTestEvent(screen.subscribe, () => screen.findByTestId('project-deployments.draft.refused'), node => node !== null);

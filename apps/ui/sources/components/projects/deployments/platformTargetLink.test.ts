@@ -10,6 +10,7 @@ import {
   readPlatformInspectOutcome,
   disclosePlatformFields,
   applyPlatformFieldPatch,
+  drawPlatformFields,
 } from './platformTargetLink';
 
 const service = {
@@ -305,5 +306,25 @@ describe('platform choice disclosure', () => {
     });
     expect(applyPlatformFieldPatch(fields, full, { project: 'prj-1' })).toEqual({ values: full, changedIndex: -1 });
   });
-});
 
+  it('says one failed read once, at the sheet, and draws no choice after it', () => {
+    const states: Record<string, { status: 'loading' | 'ready' | 'failed'; options: readonly unknown[]; errorCode?: string }> = {
+      account: { status: 'ready', options: [{ value: 'team-1' }] },
+      note: { status: 'failed', options: [], errorCode: 'provider_response_invalid' },
+      project: { status: 'failed', options: [], errorCode: 'provider_response_invalid' },
+    };
+    const drawn = drawPlatformFields(fields, { account: 'team-1' }, (entry: { path: string }) => states[entry.path]!, () => false);
+    expect(drawn.fields.map((entry: { path: string }) => entry.path)).toEqual(['account']);
+    expect(drawn.failure).toEqual({ code: 'provider_response_invalid' });
+  });
+
+  it('leaves out an optional choice this target has nothing for (a Worker has no Pages project)', () => {
+    const states: Record<string, { status: 'ready'; options: readonly unknown[] }> = {
+      account: { status: 'ready', options: [{ value: 'team-1' }] }, note: { status: 'ready', options: [] },
+      project: { status: 'ready', options: [{ value: 'prj-1' }] }, environment: { status: 'ready', options: [] },
+    };
+    const drawn = drawPlatformFields(fields, { account: 'team-1', project: 'prj-1' }, (entry: { path: string }) => states[entry.path]!, () => false);
+    expect(drawn.fields.map((entry: { path: string }) => entry.path)).toEqual(['account', 'project', 'environment']);
+    expect(drawn.failure).toBeNull();
+  });
+});
