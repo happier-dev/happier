@@ -201,6 +201,9 @@ describe('Code consumes the qualified browser and real entry-history batch', () 
         await vi.waitFor(() => expect(screen.findByTestId('repository-tree-row-LICENSE')).toBeTruthy());
         expect(screen.findHostByTestId('workspace-code-listing-pending')).toBeNull();
         await vi.waitFor(() => expect(screen.findHostByTestId('workspace-code-strip-none')).toBeTruthy());
+        // The strip says "No commits yet" once; no row repeats it.
+        expect(screen.findHostByTestId('workspace-code-history-LICENSE')).toBeNull();
+        expect(screen.root.findAll(node => node.props.children === 'projects.code.noEntryCommit')).toHaveLength(0);
     });
     it('previews a large folder in the Overview widget: the first rows, every entry counted, the way into Code', async () => {
         const rootPath = '/code-widget-preview';
@@ -226,7 +229,8 @@ describe('Code consumes the qualified browser and real entry-history batch', () 
                 entries: [{ name: 'apps', path: `${rootPath}/apps`, type: 'directory' }] };
             return { success: false, errorCode: 'FEATURE_UNSUPPORTED', error: 'Unavailable boundary operation' };
         } });
-        const history = { current: { kind: 'none' as const }, entry: () => ({ kind: 'none' as const }), revision: 1 };
+        const commit = { kind: 'commit' as const, commit: { oid: 'a'.repeat(40), subject: 'Add apps', authorName: 'Ada', committedAt: 0 } };
+        const history = { current: commit, entry: () => commit, revision: 1 };
         const screen = await fixture.render(<WorkspaceCodeBrowserView paneScopeId="code-narrow-test" scope={fixture.scope}
             rootLabel="Code" location={{ path: '', kind: 'folder' }} onNavigate={() => {}} onOpenFile={() => {}} history={history}
             presentation="widget" onOpenInCode={() => {}} />);

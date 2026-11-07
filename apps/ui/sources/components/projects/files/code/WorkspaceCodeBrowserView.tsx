@@ -182,7 +182,8 @@ export const WorkspaceCodeBrowserView = React.memo(function WorkspaceCodeBrowser
     const stackedRows = phone || (tableWidth !== null && tableWidth < CODE_TABLE_COLUMNS_MIN_WIDTH_PX);
     // Not a Git checkout (or history otherwise unknowable here): the table keeps the names and drops
     // the commit columns; the strip says why once (lab p-code STATES 2).
-    const historyColumns = history != null && history.current.kind !== 'unavailable';
+    // A folder no commit touches says "No commits yet" once in the strip; its rows don't repeat it.
+    const historyColumns = history != null && history.current.kind !== 'unavailable' && history.current.kind !== 'none';
     const renderRowMetadata = React.useCallback((node: LazyDirectoryTreeNode) => {
         const current = historyRef.current;
         if (!current || (node.type !== 'file' && node.type !== 'directory')) return null;
