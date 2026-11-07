@@ -6,14 +6,19 @@ import { isConnectedServiceQuotaMeterVisible } from '@/sync/domains/connectedSer
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type {
-    ConnectedServiceId,
+    ConnectedServiceId} from '@happier-dev/protocol/connect/connected-service-bindings';
+import type {
     ConnectedServiceQuotaMeterV1,
-    ConnectedServiceQuotaRecoveryCreditsV1,
-    ProviderAccountSubscriptionV1,
+    ConnectedServiceQuotaRecoveryCreditsV1} from '@happier-dev/protocol/connect/connected-service-schemas';
+import type {
+    ProviderAccountSubscriptionV1} from '@happier-dev/protocol/connect/accountSubscription';
+import type {
     QualifiedConnectedAccountRef,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import type { PopoverAnchor } from '@/components/ui/popover/_types';
+import { Item } from '@/components/ui/lists/Item';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
@@ -22,17 +27,16 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { Typography } from '@/constants/Typography';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-import { useConnectedServiceQuotaSnapshot } from '@/hooks/server/connectedServices/useConnectedServiceQuotaSnapshot';
+import { useConnectedServiceQuotaSnapshots } from '@/hooks/server/connectedServices/useConnectedServiceQuotaSnapshots';
 import { useQualifiedConnectedAccountQuota } from '@/hooks/server/connectedServices/useQualifiedConnectedAccountQuota';
 import { selectConnectedServiceQuotaSummaryMeters } from '@/sync/domains/connectedServices/connectedServiceQuotaBadges';
 import { resolveQuotaMeterTone } from '@/sync/domains/connectedServices/resolveQuotaTone';
 import { shouldHideQuotaForCredentialStatus } from '@/sync/domains/connectedServices/shouldHideQuotaForCredentialStatus';
 import { t } from '@/text';
 
-import { AccountSubscriptionLine, AccountUsageResetsLine, useConnectedAccountSubscription } from '../usage/AccountUsageFacts';
+import { AccountSubscriptionLine, useConnectedAccountSubscription } from '../usage/AccountUsageFacts';
 import { UsageMeterRow, UsageMeterStack, type UsageMeterSize } from '../usage/UsageMeterRow';
-import { OpenableSurface } from './OpenableSurface';
-import { ConnectedAccountIdentityText } from '../ConnectedAccountIdentityText';
+import { ConnectedServiceMark } from '../ConnectedServiceMark';
 
 /** One role an account plays: a pool it belongs to (and whether that pool uses it now). */
 export type ConnectedAccountIndexRole = Readonly<{
@@ -81,10 +85,12 @@ export type ConnectedAccountIndexEntry = Readonly<{
     identityLabel: string | null;
     roles: readonly ConnectedAccountIndexRole[];
     /** The account needs a new sign-in: the fix sits on the row, the cause under its name. */
-    signedOut: Readonly<{ reason: string; onSignInAgain: (() => void) | null }> | null;
+    signedOut: Readonly<{ reason: string; onSignInAgain: ((anchor?: PopoverAnchor) => void) | null }> | null;
     /** While a set-up panel is open elsewhere on the page, a row's fix steps down to secondary. */
     fixProminence?: 'primary' | 'secondary';
     legacyServiceId: ConnectedServiceId | null;
+    /** The service's owning plugin: its packaged brand is the row's mark when no built-in mark exists (as in the rail). */
+    pluginId?: string | null;
     accountId: string;
     /** ★: default for an agent (the per-agent default menu). */
     star: React.ReactNode;
@@ -188,27 +194,23 @@ export const ConnectedAccountIndexStatusLines = React.memo(function ConnectedAcc
 }>) {
     const { theme } = useUnistyles();
     const { facts } = props;
-    if (!facts.subscription && facts.staleSince === null && facts.fetchedAt === null && !facts.refreshing) return null;
+    // A fresh card's time is the page header's "As of", said once; a card names its own time only while it refreshes,
+    // after a failed refresh, or once it is stale.
+    const failedRefresh = facts.usage.kind === 'meters' && Boolean(facts.usage.error);
+    const ownTime = facts.fetchedAt !== null && facts.staleSince === null && (facts.refreshing || failedRefresh);
+    if (!facts.subscription && facts.staleSince === null && !ownTime && !facts.refreshing && !failedRefresh) return null;
     return (
-        <View style={styles.statusLines}>
+        // Facts, never a target: a press goes through to the card.
+        <View pointerEvents="none" style={styles.statusLines}>
             {facts.refreshing ? (
                 <SurfaceStateCard testID={`${props.testID}:refresh-status`} size="line" kind="loading" title={t('connectedServices.quota.refreshing')} />
             ) : null}
             {facts.usage.kind === 'meters' && facts.usage.error ? (
                 <SurfaceFreshnessLine testID={`${props.testID}:refresh-error`} reason={t('connectedServicesSettings.usageReadFailed')} tone="warning" />
             ) : null}
-            {facts.fetchedAt !== null && facts.staleSince === null ? (
-                <SurfaceAsOfLabel at={facts.fetchedAt} testID={`${props.testID}:as-of`} />
-            ) : null}
+            {ownTime ? <SurfaceAsOfLabel at={facts.fetchedAt!} testID={`${props.testID}:as-of`} /> : null}
             <AccountSubscriptionLine testID={`${props.testID}:subscription`} subscription={facts.subscription} now={props.now} />
-            {facts.staleSince !== null ? (
-                <View style={styles.statusLine}>
-                    <Icon name="clock" size={12} color={theme.colors.state.warning.foreground} />
-                    <Text style={[styles.statusText, styles.warning]} numberOfLines={2}>
-                        {t('connectedServicesCollection.usageCheckedMayBeOutOfDate', { time: formatStaleAge(facts.staleSince, props.now) })}
-                    </Text>
-                </View>
-            ) : null}
+            {facts.staleSince !== null ? <ConnectedAccountUsageFreshnessLine testID={props.testID} facts={{ ...facts, usage: { kind: 'none' } }} now={props.now} /> : null}
         </View>
     );
 });
@@ -274,6 +276,8 @@ export type ConnectedAccountIndexRowViewProps = ConnectedAccountIndexEntry & Rea
     /** Phones stack the limits under the identity (lab C1p). */
     compact: boolean;
     showDivider?: boolean;
+    /** The fact line's word when no plan is known: the service, on a sheet that mixes services. */
+    serviceFact?: string | null;
 }>;
 
 /** One explanation and one available next step, shared by account rows and cards. */
@@ -286,87 +290,84 @@ export const ConnectedAccountSignInRecovery = React.memo(function ConnectedAccou
 }>) {
     const { theme } = useUnistyles();
     const signIn = props.signedOut.onSignInAgain;
+    // The Connect sheet hangs from this button (popover on wide layouts).
+    const triggerRef = React.useRef<View>(null);
     return (
         <View pointerEvents="box-none" style={[styles.fix, props.compact ? styles.fixCompact : null]}>
             <View style={styles.statusLine}>
                 <Icon name="warning" size={14} color={theme.colors.state.warning.foreground} />
                 <Text style={[styles.statusText, styles.warning]}>{props.signedOut.reason}</Text>
             </View>
-            <RoundButton
-                testID={`${props.testID}:${signIn ? 'sign-in-again' : 'recovery-details'}`}
-                size="small"
-                display={signIn && props.prominence !== 'secondary' ? 'default' : 'secondary'}
-                title={t(signIn ? 'connectedServicesSettings.signInAgain' : 'common.details')}
-                onPress={signIn ?? props.onOpen}
-            />
+            <View ref={triggerRef} collapsable={false}>
+                <RoundButton
+                    testID={`${props.testID}:${signIn ? 'sign-in-again' : 'recovery-details'}`}
+                    size="small"
+                    display={signIn && props.prominence !== 'secondary' ? 'default' : 'secondary'}
+                    title={t(signIn ? 'connectedServicesSettings.signInAgain' : 'common.details')}
+                    onPress={signIn ? () => signIn({ kind: 'view', ref: triggerRef }) : props.onOpen}
+                />
+            </View>
         </View>
     );
 });
 
 /**
- * An account on the Connected services index, as a list row (lab `csvc` C1): identity on the left (name,
- * email · plan, signed out / subscription / stale, pool chips), every limit on the right with the usage
- * resets under it, then ★ and ↻. A signed-out account carries its fix instead of meters. The row opens
- * the account.
+ * An account on the Credentials list (lab `cr` crHome A): one sheet row like every other on the page. The
+ * service's mark, the account (a subscription's email) and one fact line (its name and plan, or its
+ * service), then one trailing thing: its limits, or the fix when it needs a new sign-in. Old usage says so
+ * under the fact line. The row opens the account, where its default, refresh, resets and pools live.
  */
 export const ConnectedAccountIndexRowView = React.memo(function ConnectedAccountIndexRowView(props: ConnectedAccountIndexRowViewProps) {
     const { facts } = props;
-    const identity = [props.identityLabel, facts.planLabel].filter(Boolean).join(' · ');
-    const use = props.signedOut ? (
+    const fact = [props.identityLabel, facts.planLabel ?? props.serviceFact ?? null].filter(Boolean).join(' · ');
+    const trailing = props.signedOut ? (
         <ConnectedAccountSignInRecovery testID={props.testID} signedOut={props.signedOut}
             onOpen={props.onOpen} compact={props.compact} prominence={props.fixProminence} />
     ) : (
-        <>
-            <View pointerEvents={facts.usage.kind === 'error' ? 'box-none' : 'none'}>
-                <ConnectedAccountIndexUsageBlock testID={props.testID} usage={facts.usage} now={props.now} align="end" />
-            </View>
-            <AccountUsageResetsLine
-                testID={`${props.testID}:resets`}
-                recoveryCredits={facts.recoveryCredits}
-                legacyServiceId={props.legacyServiceId}
-                accountId={props.accountId}
-                snapshotFetchedAtMs={facts.fetchedAt}
-                now={props.now}
-                onApplied={() => facts.refresh?.()}
-            />
-        </>
+        <View pointerEvents={facts.usage.kind === 'error' ? 'box-none' : 'none'} style={props.compact ? null : styles.use}>
+            <ConnectedAccountIndexUsageBlock testID={props.testID} usage={facts.usage} now={props.now} align="end" />
+        </View>
     );
-    const actions = (
-        <ConnectedAccountIndexActions
+    const staleOrFailed = facts.staleSince !== null || (facts.usage.kind === 'meters' && Boolean(facts.usage.error));
+    return (
+        <Item
             testID={props.testID}
-            star={props.star}
-            refresh={props.signedOut || facts.usage.kind === 'noLimits' ? null : facts.refresh}
-            refreshing={facts.refreshing}
+            title={props.title}
+            subtitle={fact || undefined}
+            icon={<ConnectedServiceMark legacyServiceId={props.legacyServiceId} pluginId={props.pluginId} size="inline" />}
+            rightElement={trailing}
+            rightElementOutsidePressable={Boolean(props.signedOut) || facts.usage.kind === 'error'}
+            keepChevronWithRightElement={!props.signedOut}
+            showChevron={!props.signedOut}
+            accessoryLayout="adaptive"
+            bottomElement={staleOrFailed ? <ConnectedAccountUsageFreshnessLine testID={props.testID} facts={facts} now={props.now} /> : undefined}
+            bottomElementInset="text"
+            showDivider={props.showDivider}
+            onPress={props.onOpen}
         />
     );
+});
+
+/** Usage a row shows that may be wrong: an old read, or a refresh that failed beside last-known limits. */
+export const ConnectedAccountUsageFreshnessLine = React.memo(function ConnectedAccountUsageFreshnessLine(props: Readonly<{
+    testID: string;
+    facts: ConnectedAccountIndexFacts;
+    now: number;
+}>) {
+    const { theme } = useUnistyles();
+    const { facts } = props;
+    if (facts.usage.kind === 'meters' && facts.usage.error) {
+        return <SurfaceFreshnessLine testID={`${props.testID}:refresh-error`} reason={t('connectedServicesSettings.usageReadFailed')} tone="warning" />;
+    }
+    if (facts.staleSince === null) return null;
     return (
-        <OpenableSurface
-            testID={props.testID}
-            accessibilityLabel={props.title}
-            onPress={props.onOpen}
-            style={[
-                styles.row,
-                props.compact ? styles.rowCompact : null,
-                props.showDivider !== false ? styles.divider : null,
-            ]}
-            hoveredStyle={styles.hovered}
-        >
-            <View pointerEvents="box-none" style={props.compact ? styles.compactHead : styles.identity}>
-                <View pointerEvents="none" style={styles.identityText}>
-                    <ConnectedAccountIdentityText value={props.title} style={styles.title} numberOfLines={1} />
-                    {identity ? <ConnectedAccountIdentityText value={identity} style={styles.subtitle} numberOfLines={1} /> : null}
-                    <ConnectedAccountIndexStatusLines
-                        testID={props.testID}
-                        facts={facts}
-                        now={props.now}
-                    />
-                    <ConnectedAccountIndexRoles testID={props.testID} roles={props.roles} />
-                </View>
-                {props.compact ? actions : null}
-            </View>
-            <View pointerEvents="box-none" style={props.compact ? styles.useCompact : styles.use}>{use}</View>
-            {props.compact ? null : actions}
-        </OpenableSurface>
+        <View testID={`${props.testID}:stale`} style={styles.statusLine}>
+            {/* Old usage is a fact, not a call to act: neutral ink, like the pool page (amber means "needs you"). */}
+            <Icon name="clock" size={12} color={theme.colors.text.secondary} />
+            <Text style={styles.statusText} numberOfLines={2}>
+                {t('connectedServicesCollection.usageCheckedMayBeOutOfDate', { time: formatStaleAge(facts.staleSince, props.now) })}
+            </Text>
+        </View>
     );
 });
 
@@ -402,18 +403,25 @@ function useQualifiedFacts(account: QualifiedConnectedAccountRef, billedPerUse: 
 }
 
 /** Reads a released V2 account's usage (no subscription record on that transport). */
-function useLegacyFacts(serviceId: ConnectedServiceId, profileId: string, status: unknown, billedPerUse: boolean): ConnectedAccountIndexFacts {
-    const quota = useConnectedServiceQuotaSnapshot({ serviceId, profileId, credentialHealthStatus: status });
+function useLegacyFacts(serviceId: ConnectedServiceId, profileId: string, billedPerUse: boolean): ConnectedAccountIndexFacts {
+    // A displayed quota is a read, not a recovery-credit operation. The shared
+    // reader owns negotiation/currentness; "Use one" mounts its own Action only
+    // when the account actually reports a usable reset.
+    const profiles = React.useMemo(() => [{ serviceId, profileId }], [serviceId, profileId]);
+    const quota = useConnectedServiceQuotaSnapshots(profiles);
+    const key = quota.profiles[0]?.key;
     const pinnedByKey = useSetting('connectedServicesQuotaPinnedMeterIdsByKey');
     const pinnedMeterIds = pinnedByKey[connectedServiceProfileKey({ serviceId, profileId })] ?? [];
-    const snapshot = quota.snapshot;
+    const snapshot = key ? quota.snapshotsByKey[key] ?? null : null;
+    const error = key ? quota.errorsByKey[key] ?? null : null;
     const refresh = quota.refresh;
-    const retry = React.useCallback(() => { void refresh(); }, [refresh]);
-    const meters = snapshot ? projectIndexMeters(snapshot.meters, quota.nowMs, pinnedMeterIds) : [];
+    const retry = React.useCallback(() => { if (key) void refresh([key]); }, [key, refresh]);
+    const now = Date.now();
+    const meters = snapshot ? projectIndexMeters(snapshot.meters, now, pinnedMeterIds) : [];
     const usage: ConnectedAccountIndexUsage = meters.length > 0
-        ? { kind: 'meters', meters, error: quota.error }
-        : quota.loading ? { kind: 'loading' }
-            : quota.error ? { kind: 'error', retry }
+        ? { kind: 'meters', meters, error }
+        : key && quota.loadingByKey[key] ? { kind: 'loading' }
+            : error ? { kind: 'error', retry }
                 : billedPerUse && snapshot?.meters.length === 0 ? { kind: 'noLimits' } : { kind: 'none' };
     return {
         usage,
@@ -421,9 +429,9 @@ function useLegacyFacts(serviceId: ConnectedServiceId, profileId: string, status
         subscription: null,
         recoveryCredits: snapshot?.recoveryCredits ?? null,
         fetchedAt: snapshot?.fetchedAt ?? null,
-        staleSince: snapshot && quota.nowMs - snapshot.fetchedAt > snapshot.staleAfterMs ? snapshot.fetchedAt : null,
-        refreshing: quota.isRefreshing,
-        refresh: retry,
+        staleSince: snapshot && now - snapshot.fetchedAt > snapshot.staleAfterMs ? snapshot.fetchedAt : null,
+        refreshing: key ? quota.refreshingByKey[key] ?? false : false,
+        refresh: key && quota.refreshableKeys.includes(key) ? retry : null,
     };
 }
 
@@ -461,7 +469,7 @@ const QualifiedFacts = React.memo(function QualifiedFacts(props: LiveProps & { a
 });
 
 const LegacyFacts = React.memo(function LegacyFacts(props: LiveProps & { serviceId: ConnectedServiceId; profileId: string }) {
-    const facts = useLegacyFacts(props.serviceId, props.profileId, props.status, props.billedPerUse);
+    const facts = useLegacyFacts(props.serviceId, props.profileId, props.billedPerUse);
     useRefreshOnToken(props.refreshToken, facts.refresh);
     return props.render(facts);
 });
@@ -482,61 +490,9 @@ export const ConnectedAccountIndexLiveFacts = React.memo(function ConnectedAccou
         : <LegacyFacts {...props} serviceId={props.identity.serviceId} profileId={props.identity.profileId} />;
 });
 
-/**
- * Where a service sheet's rows start their text in the list: under the service's name (sheet inset +
- * mark box + gap). Account rows and the sheet's other rows (support details) share this one edge.
- */
-export const CONNECTED_SERVICE_ACCOUNT_LEADING_INSET_PX = 58;
 
 const styles = StyleSheet.create((theme) => ({
-    row: {
-        flexDirection: 'row',
-        alignItems: 'flex-start',
-        gap: 18,
-        paddingTop: theme.space.s12,
-        paddingBottom: theme.space.s12,
-        paddingRight: theme.space.s10,
-        // Accounts align under their service's name (mark box + gap + sheet inset).
-        paddingLeft: CONNECTED_SERVICE_ACCOUNT_LEADING_INSET_PX,
-    },
-    rowCompact: {
-        flexDirection: 'column',
-        alignItems: 'stretch',
-        gap: theme.space.s12,
-        paddingLeft: 14,
-        paddingRight: theme.space.s8,
-    },
-    divider: {
-        borderBottomWidth: StyleSheet.hairlineWidth,
-        borderBottomColor: theme.colors.border.subtle,
-    },
-    hovered: {
-        backgroundColor: theme.colors.surface.pressedOverlay,
-    },
-    identity: {
-        flex: 1,
-        minWidth: 0,
-    },
-    compactHead: {
-        flexDirection: 'row',
-        alignItems: 'flex-start',
-        gap: theme.space.s8,
-    },
-    identityText: {
-        flex: 1,
-        minWidth: 0,
-    },
-    title: {
-        ...Typography.variant('body', 'semiBold'),
-        color: theme.colors.text.primary,
-    },
-    subtitle: {
-        ...Typography.variant('meta'),
-        marginTop: 1,
-        color: theme.colors.text.secondary,
-    },
     statusLines: {
-        marginTop: theme.space.s2,
         gap: theme.space.s2,
     },
     statusLine: {
@@ -550,13 +506,13 @@ const styles = StyleSheet.create((theme) => ({
         color: theme.colors.text.secondary,
     },
     warning: {
-        color: theme.colors.state.warning.foreground,
+        // The glyph keeps the warning hue; its words take the deeper warning text role.
+        color: theme.colors.state.warning.textForeground,
     },
     roles: {
         flexDirection: 'row',
         flexWrap: 'wrap',
         gap: theme.space.s4,
-        marginTop: theme.space.s8,
     },
     role: {
         flexDirection: 'row',
@@ -579,9 +535,6 @@ const styles = StyleSheet.create((theme) => ({
         flexShrink: 1,
         minWidth: 0,
         paddingTop: theme.space.s2,
-        gap: theme.space.s8,
-    },
-    useCompact: {
         gap: theme.space.s8,
     },
     actions: {

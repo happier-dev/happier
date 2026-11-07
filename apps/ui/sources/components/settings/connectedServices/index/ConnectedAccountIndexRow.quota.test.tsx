@@ -34,8 +34,11 @@ vi.mock('@/sync/api/account/apiAccountEncryptionMode', async (importOriginal) =>
 }));
 vi.mock('@/sync/api/account/apiConnectedServicesQuotasV3', () => ({
     getConnectedServiceQuotaSnapshotPlain: async () => ({
+        metadata: { fetchedAt: legacyFetchedAt, staleAfterMs: 30 * 60_000, status: 'ok', refreshRequestedAt: legacyFetchedAt },
+        snapshot: {
         v: 1, serviceId: 'openai-codex', profileId: 'work', fetchedAt: legacyFetchedAt,
         staleAfterMs: 30 * 60_000, planLabel: null, accountLabel: null, meters: [],
+        },
     }),
     requestConnectedServiceQuotaSnapshotRefreshV3: requestLegacyRefresh,
 }));
@@ -86,6 +89,14 @@ it('shows pending usage in account rows and cards while retaining the snapshot t
     }} />);
     expect(screen.findByTestId('account:refresh-status')).toBeTruthy();
     expect(screen.findByTestId('account:as-of')).toBeTruthy();
+});
+
+it('leaves a settled fresh card\'s time to the page header, which already says it once', async () => {
+    const screen = await renderScreen(<ConnectedAccountIndexStatusLines testID="account" now={2_000} facts={{
+        usage: { kind: 'meters', meters: [] }, planLabel: null, subscription: null, recoveryCredits: null,
+        fetchedAt: 1_000, staleSince: null, refreshing: false, refresh: vi.fn(),
+    }} />);
+    expect(screen.findByTestId('account:as-of')).toBeFalsy();
 });
 
 it('shows a failed refresh beside retained account usage instead of silently clearing pending', async () => {
