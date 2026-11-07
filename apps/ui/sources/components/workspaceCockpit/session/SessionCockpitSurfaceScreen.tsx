@@ -304,6 +304,7 @@ export const SessionCockpitSurfaceScreen = React.memo((props: SessionCockpitSurf
                     sessionId={props.sessionId}
                     scopeId={props.scopeId}
                     presentation="screen"
+                    isActive={isFocused}
                     showHeaderActions={false}
                 />
             </SessionCockpitFullscreenSurface>,
@@ -316,6 +317,7 @@ export const SessionCockpitSurfaceScreen = React.memo((props: SessionCockpitSurf
                 sessionId={props.sessionId}
                 scopeId={props.scopeId}
                 presentation={undefined}
+                isActive={isFocused}
                 showHeaderActions={false}
             />
         </View>,

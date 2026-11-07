@@ -38,6 +38,8 @@ export type SessionDetailsPanelProps = Readonly<{
     sessionId: string;
     scopeId: string;
     presentation?: 'pane' | 'screen';
+    /** Activity of a navigation host that presents details independently of the side pane. */
+    isActive?: boolean;
     /**
      * Pane-level controls for focus mode and closing the details pane. Embedded navigation shells
      * can hide these when they already provide the surrounding navigation chrome.
@@ -245,6 +247,7 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
 
     const activeTab = React.useMemo(() => tabs.find((t) => t.key === activeKey) ?? tabs.at(-1) ?? null, [activeKey, tabs]);
     const effectiveActiveKey = activeKey ?? activeTab?.key ?? null;
+    const isPresented = props.isActive ?? (props.presentation === 'screen' || details?.isOpen === true);
 
     React.useEffect(() => {
         const currentTabKeys = new Set(tabs.map((tab) => tab.key));
@@ -312,7 +315,7 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
                             deepLinkAnchor={anchor}
                             presentation="panel"
                             scopeId={props.scopeId}
-                            isActive={tab.key === effectiveActiveKey && (props.presentation === 'screen' || details?.isOpen === true)}
+                            isActive={tab.key === effectiveActiveKey && isPresented}
                             onStartEditingFile={resolveFileEditStartCallback(tab.key, Boolean(tab.isPreview))}
                         />
                     </React.Suspense>
@@ -363,7 +366,7 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
             if (isTerminalResource(tab.resource)) {
                 return (
                     <SessionEmbeddedTerminalPane
-                        active={tab.key === effectiveActiveKey && (props.presentation === 'screen' || details?.isOpen === true)}
+                        active={tab.key === effectiveActiveKey && isPresented}
                         sessionId={props.sessionId}
                         scopeId={props.scopeId}
                         currentDockLocation="details"
@@ -438,7 +441,7 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
                 <Text style={styles.emptyText}>{t('session.detailsPanel.unsupportedTab')}</Text>
             </View>
         );
-    }, [details?.isOpen, effectiveActiveKey, openFileTab, pane, props.presentation, props.scopeId, props.sessionId, renderLoadingFallback, requestClose, resolveFileEditStartCallback, styles.empty, styles.emptyText]);
+    }, [effectiveActiveKey, isPresented, openFileTab, pane, props.scopeId, props.sessionId, renderLoadingFallback, requestClose, resolveFileEditStartCallback, styles.empty, styles.emptyText]);
 
     const closeButton = (
         <IconAction
