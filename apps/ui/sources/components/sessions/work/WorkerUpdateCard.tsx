@@ -1,14 +1,15 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import type { WorkerDeliverableReferenceV1, WorkerUpdateV1 } from '@happier-dev/protocol';
+import type { WorkerDeliverableReferenceV1, WorkerUpdateV1 } from '@happier-dev/protocol/sessions/relations/workerUpdateV1';
 import { composeSessionWorkerUpdateHeadlineV1 } from '@happier-dev/protocol/sessions/relations/workerUpdateV1';
 import type { FollowDeliveryProjectionV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowDeliveryProjectionV1';
 import type { WorkerUpdateFollowMatchV1 } from '@happier-dev/protocol/sessions/messages/transcriptRawRecordV1';
 import type { FollowDeliveryMuteScopeV1 } from '@happier-dev/protocol/sessions/follow/sessionDeliveryMuteV1';
 import { executeSessionFollowAction } from '@/sync/api/session/sessionFollowApi';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { HAPPIER_WORK_UPDATE_CARD_MARK_SIZE_PX, HappierWorkUpdateCard, type HappierWorkUpdateCardFact, joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_WORK_UPDATE_CARD_MARK_SIZE_PX, HappierDisclosureToggle, HappierWorkUpdateCard, type HappierWorkUpdateCardFact, joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
+import { DisclosedCodeText, useCoreDisclosureToggleBinding } from '@/components/ui/lists/DisclosureCaret';
 import { renderWorkUpdateCardSurface, useWorkTheme, WORK_HOST, workTextStyle } from '@/components/work/map/WorkMapView';
 
 import { hasAgentIconMark } from '@/agents/catalog/catalog';
@@ -59,14 +60,20 @@ function buildWorkerUpdateDisplayText(update: WorkerUpdateV1, options: Readonly<
     const kind = describeWorkKind(update.workerKind);
     const engine = update.engine;
     const engineLabel = engine ? resolveExecutionRunBackendLabel({ kind: 'backend', backendId: engine.agentId }) ?? engine.agentId : null;
-    const issue = presentSessionRuntimeIssue(update.runtimeIssueV1);
+    // A failed worker's result that carries its runtime issue is that failure, not a result: the shared
+    // presenter says it once, as one line, and keeps the raw text for Details.
+    const preview = update.runtimeIssueV1?.sanitizedPreview;
+    const resultIsFailure = Boolean(update.runtimeIssueV1 && update.result
+        && (update.result === preview || (preview && update.result.includes(preview))));
+    const issue = presentSessionRuntimeIssue(update.runtimeIssueV1, resultIsFailure ? { failureText: update.result } : undefined);
     const title = options.title ?? workerUpdateFallbackTitle(update);
     return {
         title,
         state: describeWorkerUpdateHeadline(update, { title, stateWord: options.stateWord }),
         kind: joinHappierFacts(kind, age),
-        result: update.result,
-        issue: issue.message === update.result ? null : issue.message,
+        result: resultIsFailure ? undefined : update.result,
+        issue: !resultIsFailure && issue.summary === update.result ? null : issue.summary,
+        details: issue.details,
         reset: issue.reset,
         engine: engineLabel ? joinHappierFacts(engineLabel, engine?.modelId) : null,
         truncated: update.truncated ? t('sessionWork.workerUpdate.truncated') : null,
@@ -77,7 +84,8 @@ function buildWorkerUpdateDisplayText(update: WorkerUpdateV1, options: Readonly<
 /** Historical completion rows consume the same human fields as the actual shared worker card. */
 export function projectWorkerUpdateFindText(update: WorkerUpdateV1, options: Readonly<{ title?: string; at?: number; canInspect?: boolean }> = {}): readonly StructuredFindTextBlock[] {
     const content = buildWorkerUpdateDisplayText(update, options);
-    return Object.entries(content).flatMap(([field, text]) => field !== 'inspect' && text ? [{ id: `structured-worker-${field}`, text }] : []);
+    return Object.entries(content).flatMap(([field, text]) => field !== 'inspect' && field !== 'details' && text
+        ? [{ id: `structured-worker-${field}`, text }] : []);
 }
 
 /** A session worker is named by its own title when this device knows it; a run by its producer's headline. */
@@ -232,7 +240,6 @@ function WorkerUpdateMuteAction(props: Readonly<{ receiverSessionId: string; ser
 }
 
 
-
 const FOLLOW_STATUS_KEY = {
     queued: 'sessionWork.workerFollow.queued',
     next_turn: 'sessionWork.workerFollow.nextTurn',
@@ -321,6 +328,8 @@ export function WorkerUpdateCard(props: Readonly<{
     const status = resolveWorkStatusTone({ kind: 'worker_update', facts: { update, earlier: asksInTranscript && !current } });
     const content = buildWorkerUpdateDisplayText(update, { title, at: props.at, canInspect, stateWord: status.word });
     const needsYou = status.bucket === 'needs_you';
+    const disclosure = useCoreDisclosureToggleBinding();
+    const [detailsOpen, setDetailsOpen] = React.useState(false);
 
     // The run's own progress, when this device already knows the run in its exact Home (the active
     // store holds only the active Account's runs). A stated fact, never a read the card starts.
@@ -366,6 +375,12 @@ export function WorkerUpdateCard(props: Readonly<{
         {resultBody}
         {content.issue ? <StructuredFindText blockId="structured-worker-issue" testID="worker-update-issue"
             selectable style={styles.result} text={content.issue} /> : null}
+        {content.issue && content.details ? <>
+            <HappierDisclosureToggle testID="worker-update-details-toggle" label={t('common.details')}
+                open={detailsOpen} onPress={() => setDetailsOpen(open => !open)}
+                caret={disclosure.renderCaret(detailsOpen)} renderLabel={disclosure.renderLabel} focusColor={disclosure.focusColor} />
+            {detailsOpen ? <DisclosedCodeText testID="worker-update-details-code">{content.details}</DisclosedCodeText> : null}
+        </> : null}
         {update.deliverables?.map((reference, index) => <WorkerDeliverable
             key={JSON.stringify([serverId, reference, index])} reference={reference} index={index}
             serverId={serverId} enabled={props.navigationEnabled !== false && Boolean(serverId)} />)}

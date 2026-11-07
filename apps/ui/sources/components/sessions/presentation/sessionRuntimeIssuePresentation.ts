@@ -107,9 +107,24 @@ export function presentSessionActivationFailure(
     };
 }
 
+/**
+ * The first readable sentence of carried failure text: a raw payload (a JSON or schema dump) is detail,
+ * never the line a person reads.
+ */
+function readRuntimeIssueTextLine(text: string | null | undefined): string | null {
+    const first = text?.split('\n').map(line => line.trim()).find(line => line.length > 0);
+    const line = first?.split(/:\s*[[{]/)[0]?.replace(/:\s*$/, '').trim();
+    return line && /\p{L}/u.test(line) ? line : null;
+}
+
 /** Present the typed cause, reported reset and recovery supported by the carried Connected Account context. */
-export function presentSessionRuntimeIssue(issue: SessionRuntimeIssueV1 | null | undefined): Readonly<{
+export function presentSessionRuntimeIssue(issue: SessionRuntimeIssueV1 | null | undefined, context?: Readonly<{
+    /** The surface's own failure text that wraps this issue (a worker's result), when it has one. */
+    failureText?: string | null;
+}>): Readonly<{
     message: string | null;
+    /** One concise line: the localized cause, otherwise the carried text's first readable sentence. */
+    summary: string | null;
     cause: string | null;
     details: string | null;
     reset: string | null;
@@ -117,11 +132,15 @@ export function presentSessionRuntimeIssue(issue: SessionRuntimeIssueV1 | null |
 }> {
     const resetAtMs = issue?.usageLimit?.resetAtMs;
     const resetDate = resetAtMs == null ? null : new Date(resetAtMs);
-    const message = presentSessionStartupFailureCause(issue?.code, issue ?? undefined) ?? issue?.sanitizedPreview ?? null;
+    const localized = presentSessionStartupFailureCause(issue?.code, issue ?? undefined);
+    const message = localized ?? issue?.sanitizedPreview ?? null;
     const requestId = issue?.failureCause?.requestId;
+    const summary = issue ? localized ?? readRuntimeIssueTextLine(issue.sanitizedPreview) ?? readRuntimeIssueTextLine(context?.failureText) : null;
+    const raw = context?.failureText ?? issue?.sanitizedPreview ?? null;
     return {
+        summary,
         cause: message,
-        details: issue ? [issue.code, issue.failureCause?.code, issue.failureCause?.providerErrorCode,
+        details: issue ? [raw !== summary ? raw : null, issue.code, issue.failureCause?.code, issue.failureCause?.providerErrorCode,
             requestId ? t('session.startFailure.requestId', { id: requestId }) : null].filter(value => value != null).join('\n') : null,
         message: message && requestId ? `${message}\n${t('session.startFailure.requestId', { id: requestId })}` : message,
         recovery: issue?.usageLimit?.connectedService ? t('session.usageLimitRecovery.actions.switchAccountNow') : null,

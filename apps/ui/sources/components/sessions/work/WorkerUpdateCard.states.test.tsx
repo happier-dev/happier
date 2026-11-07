@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { WorkerUpdateV1 } from '@happier-dev/protocol';
+import type { WorkerUpdateV1 } from '@happier-dev/protocol/sessions/relations/workerUpdateV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
@@ -75,6 +75,21 @@ describe('WorkerUpdateCard states (lab cards-T1/T2)', () => {
         expect(card.getTextContent()).toContain(t('sessionWork.workerUpdate.state.failed'));
         expect(card.findAllHostsByTestId('worker-update-reset')).toHaveLength(resetAtMs === null ? 0 : 1);
         if (resetAtMs !== null) expect(card.getTextContent()).toContain(new Date(resetAtMs).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }));
+    });
+    it('says a raw schema failure once, as one line, with the raw text behind Details', async () => {
+        const raw = '[\n  {\n    "code": "unrecognized_keys",\n    "keys": ["diagnostics"],\n    "message": "Unrecognized key: \\"diagnostics\\""\n  }\n]';
+        const update: WorkerUpdateV1 = { v: 1, workerKind: 'execution_run', workerId: 'schema-failed', ownerState: 'failed',
+            wake: 'needs_you', headline: 'Background run failed', canInspect: false,
+            result: `Native Agent session turn failed: ${raw}`,
+            runtimeIssueV1: { v: 1, scope: 'primary_session', status: 'failed', code: 'agent_session_error', source: 'agent_session_error',
+                occurredAt: 1000, sanitizedPreview: raw } };
+        const card = await renderCard(update, getActiveServerSnapshot().serverId);
+        // One concise line; the schema JSON is not in the card until the person opens Details.
+        expect(card.getTextContent()).toContain('Native Agent session turn failed');
+        expect(card.getTextContent()).not.toContain('unrecognized_keys');
+        expect(card.findAllHostsByTestId('worker-update-result')).toHaveLength(0);
+        await card.pressByTestIdAsync('worker-update-details-toggle');
+        expect(card.getTextContent().split('unrecognized_keys').length - 1).toBe(1);
     });
     it('keeps historical results while only the latest update for each worker answers its current request', async () => {
         const serverId = getActiveServerSnapshot().serverId;
