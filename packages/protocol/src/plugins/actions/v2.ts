@@ -1,5 +1,6 @@
 import { ActionToolExposureSchema } from '../../actions/metadata.js';
 import { maxCodeUnits } from '../../strings/maxCodeUnits.js';
+import { deriveActionInputHints } from '../../actions/schemaInputHints.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { InputOptionValueSchema } from '../../inputs/inputFields.js';
@@ -495,9 +496,14 @@ function resolvePluginLocalizedActionInputText(value: PluginLocalizedStringV2): 
  */
 export function normalizePluginActionInputHintsV2(
   inputHints: PluginActionInputHintsV2 | undefined,
+  inputSchema?: PluginJsonSchemaV2,
 ): ActionInputHints | undefined {
-  if (inputHints === undefined) return undefined;
-  return normalizeActionInputHintsText(inputHints, resolvePluginLocalizedActionInputText);
+  const authored = inputHints === undefined ? undefined
+    : normalizeActionInputHintsText(inputHints, resolvePluginLocalizedActionInputText);
+  // A field-only empty declaration opts out; form copy alone still derives fields.
+  if (authored?.fields.length === 0 && authored.title === undefined
+    && authored.description === undefined && authored.submitLabel === undefined) return authored;
+  return deriveActionInputHints(inputSchema, authored);
 }
 
 /** Normalizes the bounded author declaration into the incumbent Action slash field. */

@@ -11,7 +11,7 @@ export function projectPluginActionInputDefinition(definition: PluginActionContr
   return {
     id: definition.id,
     ...(definition.inputSchema === undefined ? {} : { inputSchema: definition.inputSchema }),
-    inputHints: normalizePluginActionInputHintsV2(definition.inputHints) ?? null,
+    inputHints: normalizePluginActionInputHintsV2(definition.inputHints, definition.inputSchema) ?? null,
   };
 }
 

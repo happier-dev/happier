@@ -7024,6 +7024,11 @@ Agent catalog. Host targets, recipe seeds, offered candidates and returned draft
 use that canonical scope. An unknown identifier remains unresolved; the composer
 does not infer Home identity from an ambient selection or a matching Machine id.
 
+A contributed Action that opens its own editor can declare exactly
+`inputHints: { fields: [] }` to omit the host input form. Hints containing only
+form title, description or submit-label copy still derive fields. The input
+schema continues validating operands supplied by programmatic callers.
+
 In 0.3 development source, a declarative contributed Action control with omitted
 input presents its declared `inputHints.fields` through the existing Action form
 modal. Its exact occurrence, input schema and the control's UI invocation surface

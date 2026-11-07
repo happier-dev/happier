@@ -119,6 +119,11 @@ waiver. Check the host's advertised methods before offering the operation on
 older hosts: a missing `admitAction` rejects with `unsupported_method`. Ordinary
 `confirm` is presentation, not a substitute for this Action admission.
 
+If your Action opens its own editor, declare exactly `inputHints: { fields: [] }`
+to omit the host input form. Hints containing only a form title, description or
+submit label still derive fields. The input schema continues validating operands
+supplied by programmatic callers.
+
 Secret-bearing Action inputs must declare each confidential path in
 `inputHints.fields` with `widget: 'secret'` and a readable `title`, including
 inputs exposed only to CLI, MCP or Agents. A top-level `secrets` declaration
