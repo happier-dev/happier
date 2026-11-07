@@ -95,20 +95,30 @@ export function useDeploymentPlatformTargets(lifetime: ServerAccountScopeLifetim
     setState((previous) =>
       previous.status === 'ready' ? previous : { status: 'loading' },
     );
-    readPluginAccountAvailability(lifetime.scope)
+    let stopWaiting: (() => void) | null = null;
+    const reader = readPluginAccountAvailability(lifetime.scope);
+    reader
       .ensureCurrentAccountExecutionDeclarations({
         family: 'deploymentTargets',
       })
       .then((result) => {
         if (!live) return;
-        setState(
-          result.kind === 'available'
-            ? {
-                status: 'ready',
-                targets: readDeploymentPlatformTargets(result.declarations),
-              }
-            : { status: 'failed', code: result.code },
-        );
+        if (result.kind === 'available') {
+          setState({ status: 'ready', targets: readDeploymentPlatformTargets(result.declarations) });
+          return;
+        }
+        // Availability that has not arrived for this Account yet (not loaded, still the previous Account's, or a
+        // declaration still pending) is not a refusal: keep loading and read again once it changes.
+        if (result.code === 'account_availability_not_loaded' || result.code === 'account_availability_scope_mismatch'
+          || result.code === 'plugin_ui_declaration_pending') {
+          stopWaiting = reader.subscribe(() => {
+            stopWaiting?.();
+            stopWaiting = null;
+            if (live) setAttempt((value) => value + 1);
+          });
+          return;
+        }
+        setState({ status: 'failed', code: result.code });
       })
       .catch((error: unknown) => {
         const code = (error as { code?: unknown } | null)?.code;
@@ -120,6 +130,7 @@ export function useDeploymentPlatformTargets(lifetime: ServerAccountScopeLifetim
       });
     return () => {
       live = false;
+      stopWaiting?.();
     };
   }, [lifetime, attempt]);
   return {

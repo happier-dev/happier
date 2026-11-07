@@ -33,7 +33,8 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import { useMachineListForServer } from '@/sync/store/hooks';
 import { t } from '@/text';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
-import { isMachineOnline } from '@/utils/sessions/machineUtils';
+import { useMachinePresenceNowMs } from '@/hooks/machine/useMachinePresenceNowMs';
+import { describeMachinePresenceLine } from '@/utils/sessions/machinePresenceLine';
 import { presentSavedSecretReferencePicker } from '@/components/ui/forms/valueRefs/presentSavedSecretReferencePicker';
 import { deploymentActionRefusalRemedy, deploymentDefinitionLabel } from './deploymentPresentation';
 
@@ -131,13 +132,19 @@ export const DeploymentEnvironmentDraft = React.memo(
     React.useEffect(() => () => draftTitle.publish(''), [draftTitle]);
 
     // The first Machine that answers is the likely home; the person can choose another.
+    // One presence owner says whether each Machine answers: the menu shows its words, and the default uses its fact.
+    const presenceNowMs = useMachinePresenceNowMs(machines);
+    const presenceScope = props.lifetime?.scope ?? null;
+    const presence = React.useMemo(() => new Map(machines.map((machine) =>
+      [machine.id, describeMachinePresenceLine(machine, presenceNowMs, undefined, presenceScope)])), [machines, presenceNowMs, presenceScope]);
+    const answers = (machine: (typeof machines)[number]) => presence.get(machine.id)?.online === true;
     // The person's choice wins. Otherwise a copy starts on its source's Machine and a new draft on the first one that
     // answers; an unreachable Machine is never chosen for the person, so with none answering nothing is chosen.
     const preferredId = props.copyFrom ? copySourceMachineId(props.copyFrom) : null;
     const chosen =
       machines.find((machine) => machine.id === machineId) ??
-      machines.find((machine) => machine.id === preferredId && isMachineOnline(machine)) ??
-      machines.find((machine) => isMachineOnline(machine)) ??
+      machines.find((machine) => machine.id === preferredId && answers(machine)) ??
+      machines.find(answers) ??
       null;
     const branch = ref ?? source?.defaultRef ?? null;
     // A Compose Environment runs on the chosen Machine: its Docker host setup is planned once per choice, and a
@@ -262,15 +269,15 @@ export const DeploymentEnvironmentDraft = React.memo(
     };
     const machineItems = React.useMemo(
       (): DropdownMenuItem[] =>
-        machines.map((machine) => ({
-          id: machine.id,
-          title: getMachineDisplayName(machine, machines),
-          subtitle: isMachineOnline(machine)
-            ? undefined
-            : t('projects.deployments.machineAway'),
-          checked: machine.id === chosen?.id,
-        })),
-      [chosen?.id, machines],
+        // Answering Machines first; every row says its presence, and an away one stays choosable.
+        [...machines].sort((left, right) => Number(presence.get(right.id)?.online === true) - Number(presence.get(left.id)?.online === true))
+          .map((machine) => ({
+            id: machine.id,
+            title: getMachineDisplayName(machine, machines),
+            subtitle: presence.get(machine.id)?.label || undefined,
+            checked: machine.id === chosen?.id,
+          })),
+      [chosen?.id, machines, presence],
     );
 
     const saveAction = {
