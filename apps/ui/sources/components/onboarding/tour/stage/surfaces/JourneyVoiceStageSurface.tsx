@@ -64,7 +64,6 @@ export function buildJourneyVoiceStageModel(): VoiceSurfaceViewModel {
         canBargeIn: true,
         canCancelTurn: false,
         canOpenConversation: true,
-        canTeleportToSessionRoot: true,
         controlsDisabled: false,
         controlsLoading: false,
         delegatedWork: null,
@@ -87,7 +86,7 @@ export function buildJourneyVoiceStageModel(): VoiceSurfaceViewModel {
         onBargeIn: noop,
         onCancelTurn: noop,
         onOpenConversation: noop,
-        onTeleport: noop,
+        onOpenDelegatedSession: noop,
         onToggleExpanded: noop,
     };
 }

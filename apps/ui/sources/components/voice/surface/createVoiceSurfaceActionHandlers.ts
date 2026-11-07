@@ -1,9 +1,10 @@
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { createFrontDoorActionExecute, createFrontDoorUiActionExecutor, requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { getVoiceSessionPresentedAttemptId } from '@/voice/session/voiceSessionStore';
 import { VoiceConversationActionOutputSchemas } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
 
 const executeAction = createFrontDoorUiActionExecutor();
+const executeScopedAction = createFrontDoorActionExecute();
 
 
 /**
@@ -12,7 +13,6 @@ const executeAction = createFrontDoorUiActionExecutor();
  * dispatch every surface fires (`voiceAttemptRecovery.ts`).
  */
 export function createVoiceSurfaceActionHandlers(params: Readonly<{
-    sessionId: string | null | undefined;
     snapSessionId: string | null;
     expectedAttempt?: string | null;
 }>) {
@@ -30,10 +30,17 @@ export function createVoiceSurfaceActionHandlers(params: Readonly<{
     return {
         onBargeIn: () => turnControl('interrupt'),
         onCancelTurn: () => turnControl('cancel'),
-        onTeleport: () => {
-            const sessionId = String(params.sessionId ?? '').trim();
+        /** Ordinary navigation to a Session through `session.open`; moving the Voice agent is teleport's job. */
+        onOpenSession: (address: Readonly<{ sessionId: string; serverId: string | null }>) => {
+            const sessionId = address.sessionId.trim();
             if (!sessionId) return;
-            fireAndForget(executeAction('ui.voice_agent.teleport', { sessionId }), { tag: 'VoiceSurface.teleport' });
+            const serverId = address.serverId;
+            // The Session target resolves against the context Home, so the exact Home travels there too.
+            fireAndForget((async () => requireActionSuccess(await executeScopedAction(
+                'session.open',
+                { sessionId, ...(serverId ? { serverId } : {}) },
+                { surface: 'ui', defaultSessionId: sessionId, ...(serverId ? { serverId } : {}) },
+            )))(), { tag: 'VoiceSurface.openSession' });
         },
     };
 }

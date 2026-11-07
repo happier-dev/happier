@@ -789,16 +789,16 @@ describe('generated OpenAI conversation Actions through the lifecycle owner', ()
             speaking();
             await vi.waitFor(() => expect(lifecycle.getSnapshot().mode).toBe('speaking'));
             const sentBeforeInterrupt = sent().length;
-            await createVoiceSurfaceActionHandlers({ sessionId: 'session-original', snapSessionId: null }).onBargeIn();
+            await createVoiceSurfaceActionHandlers({ snapSessionId: null }).onBargeIn();
             expect(lifecycle.getSnapshot().mode).toBe('speaking');
             expect(sent().slice(sentBeforeInterrupt)).toEqual([]);
             setVoiceSessionLifecycleController(null);
-            await createVoiceSurfaceActionHandlers({ sessionId: 'session-original', snapSessionId: 'session-original' }).onBargeIn();
+            await createVoiceSurfaceActionHandlers({ snapSessionId: 'session-original' }).onBargeIn();
             await Promise.resolve();
             expect(lifecycle.getSnapshot().mode).toBe('speaking');
             expect(sent().slice(sentBeforeInterrupt)).toEqual([]);
             setVoiceSessionLifecycleController(lifecycle);
-            await createVoiceSurfaceActionHandlers({ sessionId: 'session-original', snapSessionId: 'session-original' }).onBargeIn();
+            await createVoiceSurfaceActionHandlers({ snapSessionId: 'session-original' }).onBargeIn();
             await vi.waitFor(() => expect(sent().slice(sentBeforeInterrupt)).toEqual([
                 { type: 'response.cancel' }, { type: 'output_audio_buffer.clear' },
             ]));

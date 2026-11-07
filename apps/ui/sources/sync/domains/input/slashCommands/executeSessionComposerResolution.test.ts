@@ -523,4 +523,51 @@ describe('executeSessionComposerResolution', () => {
       { defaultSessionId: 's1', surface: 'ui', placement: 'slash_command' },
     );
   });
+
+  it('dispatches a submitted /h.voice through voice_agent.start with the session Agent and instructions', async () => {
+    const executeSessionComposerResolution = await loadSubject();
+    const { resolveSessionComposerSend } = await import('./resolveSessionComposerSend');
+    const actionExecutor = { execute: vi.fn(async () => ({ ok: true as const, result: { runId: 'r1' } })) };
+    const setMessage = vi.fn();
+    const trackMessageSent = vi.fn();
+    const input = '/h.voice Talk me through the failing relay test.';
+
+    const resolved = resolveSessionComposerSend({ input, executionRunsEnabled: true, sessionId: 's1' });
+    expect(resolved).toMatchObject({ kind: 'action', actionId: 'voice_agent.start' });
+    if (resolved.kind !== 'action') return;
+
+    const handled = await executeSessionComposerResolution({
+      resolved,
+      sessionId: 's1',
+      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      permissionMode: null,
+      actionExecutor,
+      setMessage,
+      clearDraft: vi.fn(),
+      trackMessageSent,
+      navigateToRuns: vi.fn(),
+      modalAlert: vi.fn(),
+      previousMessage: input,
+    });
+
+    expect(handled).toBe(true);
+    expect(actionExecutor.execute).toHaveBeenCalledWith(
+      'voice_agent.start',
+      expect.objectContaining({
+        sessionId: 's1',
+        backendTargetKeys: ['agent:claude'],
+        instructions: 'Talk me through the failing relay test.',
+      }),
+      { defaultSessionId: 's1', surface: 'ui', placement: 'slash_command' },
+    );
+    expect(setMessage).toHaveBeenCalledWith('');
+    expect(trackMessageSent).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends /h.voice to the Agent unchanged while execution runs are off', async () => {
+    const { resolveSessionComposerSend } = await import('./resolveSessionComposerSend');
+    expect(resolveSessionComposerSend({ input: '/h.voice hello', executionRunsEnabled: false }))
+      .toEqual({ kind: 'send', text: '/h.voice hello' });
+  });
 });

@@ -39,7 +39,6 @@ function buildSurfaceModel(control: VoiceAttemptControlProjection): VoiceSurface
         canBargeIn: false,
         canCancelTurn: false,
         canOpenConversation: false,
-        canTeleportToSessionRoot: false,
         controlsDisabled: false,
         controlsLoading: false,
         delegatedWork: null,
@@ -60,7 +59,7 @@ function buildSurfaceModel(control: VoiceAttemptControlProjection): VoiceSurface
         onBargeIn: noop,
         onCancelTurn: noop,
         onOpenConversation: noop,
-        onTeleport: noop,
+        onOpenDelegatedSession: noop,
         onToggleExpanded: noop,
     };
 }

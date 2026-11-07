@@ -50,6 +50,8 @@ const executePresentationAction = createFrontDoorUiActionExecutor();
  */
 export type VoiceSurfaceDelegatedWork = Readonly<{
     sessionId: string;
+    /** The Home of the working Session when this device knows it, so opening it targets that exact Session. */
+    serverId: string | null;
     statusText: string | null;
     thinking: boolean;
 }>;
@@ -60,7 +62,6 @@ export type VoiceSurfaceViewModel = Readonly<{
     canBargeIn: boolean;
     canCancelTurn: boolean;
     canOpenConversation: boolean;
-    canTeleportToSessionRoot: boolean;
     controlsDisabled: boolean;
     controlsLoading: boolean;
     delegatedWork: VoiceSurfaceDelegatedWork | null;
@@ -90,7 +91,8 @@ export type VoiceSurfaceViewModel = Readonly<{
     onBargeIn: () => void | Promise<boolean>;
     onCancelTurn: () => void | Promise<boolean>;
     onOpenConversation: () => void;
-    onTeleport: () => void;
+    /** Opens the Session doing the delegated work. */
+    onOpenDelegatedSession: (work: VoiceSurfaceDelegatedWork) => void;
     onToggleExpanded: () => void;
     style?: unknown;
 }>;
@@ -153,7 +155,6 @@ export function useVoiceSurfaceModel(props: VoiceSurfaceProps): VoiceSurfaceView
         bargeInEnabled,
         bindingScope,
         cancelResponseSupported,
-        canTeleportToSessionRoot,
         daemonLocalVoiceUnavailable,
         startSessionAddress,
         startSessionId,
@@ -253,17 +254,21 @@ export function useVoiceSurfaceModel(props: VoiceSurfaceProps): VoiceSurfaceView
         ?? normalizeNonEmptyString(outputStatus?.sessionId);
     const delegatedStatusText = normalizeNonEmptyString(outputStatus?.text);
     const delegatedThinking = controlledSession?.thinking === true;
+    const delegatedServerId = controlledSession && controlledSession.id === delegatedSessionId
+        ? normalizeNonEmptyString(controlledSession.serverId)
+        : null;
     const delegatedWork = React.useMemo<VoiceSurfaceDelegatedWork | null>(
         () => (
             delegatedSessionId !== null && (delegatedThinking || delegatedStatusText !== null)
                 ? {
                     sessionId: delegatedSessionId,
+                    serverId: delegatedServerId,
                     statusText: delegatedStatusText,
                     thinking: delegatedThinking,
                 }
                 : null
         ),
-        [delegatedSessionId, delegatedStatusText, delegatedThinking],
+        [delegatedServerId, delegatedSessionId, delegatedStatusText, delegatedThinking],
     );
     const canBargeIn =
         bargeInEnabled
@@ -280,12 +285,10 @@ export function useVoiceSurfaceModel(props: VoiceSurfaceProps): VoiceSurfaceView
     const controlAttemptId = getVoiceSessionAttemptId();
     const handlers = React.useMemo(
         () => createVoiceSurfaceActionHandlers({
-            sessionId: props.sessionId ?? null,
             snapSessionId: snap.sessionId ?? null,
             expectedAttempt: controlAttemptId,
         }),
         [
-            props.sessionId,
             snap.sessionId,
             controlAttemptId,
         ],
@@ -305,7 +308,6 @@ export function useVoiceSurfaceModel(props: VoiceSurfaceProps): VoiceSurfaceView
         canBargeIn,
         canCancelTurn,
         canOpenConversation: baseAttemptControl.canOpenConversation,
-        canTeleportToSessionRoot,
         controlsDisabled,
         controlsLoading,
         delegatedWork,
@@ -327,14 +329,13 @@ export function useVoiceSurfaceModel(props: VoiceSurfaceProps): VoiceSurfaceView
         onBargeIn: handlers.onBargeIn,
         onCancelTurn: handlers.onCancelTurn,
         onOpenConversation: baseAttemptControl.onOpenConversation,
-        onTeleport: handlers.onTeleport,
+        onOpenDelegatedSession: handlers.onOpenSession,
         onToggleExpanded,
     }), [
         attemptControl,
         activityFeedEnabled,
         canBargeIn,
         canCancelTurn,
-        canTeleportToSessionRoot,
         snap.status,
         snap.mode,
         providerId,

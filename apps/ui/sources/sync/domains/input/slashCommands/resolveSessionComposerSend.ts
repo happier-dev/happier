@@ -3,6 +3,7 @@ import type { ActionId, PromptInvocationBehaviorV1, PromptInvocationsV1 } from '
 import { isPromptInvocationAvailable, normalizePromptInvocationTokenV1 } from '@happier-dev/protocol/prompts/library/promptInvocationsV1';
 import { findBuiltInPrompt } from './builtInPrompts';
 import { renderPromptTemplateTextV1 } from './renderPromptTemplateTextV1';
+import { isExecutionRunsFeatureAction } from '@/sync/domains/actions/isExecutionRunsFeatureAction';
 
 export type SessionComposerSendResolution =
     | { kind: 'noop' }
@@ -84,12 +85,8 @@ export function resolveSessionComposerSend(args: {
 
     const parsedSlash = parseSessionSlashCommand(args.input);
     if (parsedSlash?.kind === 'action') {
-        const actionId = String(parsedSlash.actionId ?? '').trim();
         // If the UI feature is disabled, do not intercept execution-run start commands: pass through as normal message.
-        if (
-            !args.executionRunsEnabled &&
-            (actionId === 'review.start' || actionId === 'subagents.plan.start' || actionId === 'subagents.delegate.start')
-        ) {
+        if (!args.executionRunsEnabled && isExecutionRunsFeatureAction(parsedSlash.actionId)) {
             return { kind: 'send', text: args.input };
         }
         return parsedSlash;

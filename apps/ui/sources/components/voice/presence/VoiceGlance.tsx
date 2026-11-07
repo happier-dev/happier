@@ -430,16 +430,13 @@ const VoiceGlanceHandoff = React.memo(function VoiceGlanceHandoff(
       ? t('voiceSurface.delegatedWorking')
       : null);
   const label = [title, status].filter(Boolean).join(', ');
-  // The row leads to the working session through the model's own navigation (teleport for a Voice
-  // agent's root session); without one it is information only.
-  const onPress = props.model.canTeleportToSessionRoot
-    ? props.model.onTeleport
-    : undefined;
+  // The row leads to the working session through ordinary Session navigation (`session.open`).
+  const onOpenDelegatedSession = props.model.onOpenDelegatedSession;
+  const onPress = React.useCallback(() => onOpenDelegatedSession(work), [onOpenDelegatedSession, work]);
   return (
     <Pressable
       testID={props.testID}
-      disabled={!onPress}
-      accessibilityRole={onPress ? 'link' : undefined}
+      accessibilityRole="link"
       accessibilityLabel={label}
       onPress={onPress}
       style={({ pressed }) => [

@@ -69,7 +69,6 @@ function surface(voice: VoiceAttemptControlProjection): VoiceSurfaceViewModel {
         canBargeIn: true,
         canCancelTurn: false,
         canOpenConversation: false,
-        canTeleportToSessionRoot: false,
         controlsDisabled: false,
         controlsLoading: false,
         delegatedWork: null,
@@ -90,7 +89,7 @@ function surface(voice: VoiceAttemptControlProjection): VoiceSurfaceViewModel {
         onBargeIn: vi.fn(),
         onCancelTurn: vi.fn(),
         onOpenConversation: vi.fn(),
-        onTeleport: vi.fn(),
+        onOpenDelegatedSession: vi.fn(),
         onToggleExpanded: vi.fn(),
     };
 }

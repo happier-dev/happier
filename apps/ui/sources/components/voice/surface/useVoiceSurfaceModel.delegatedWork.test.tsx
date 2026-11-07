@@ -84,6 +84,7 @@ describe('useVoiceSurfaceModel delegated work', () => {
         expect(model).not.toBeNull();
         expect(model?.delegatedWork).toEqual({
             sessionId: TARGET_SESSION_ID,
+            serverId: null,
             statusText: 'Codex is editing AgentInput.tsx',
             thinking: true,
         });

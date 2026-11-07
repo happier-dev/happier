@@ -295,10 +295,12 @@ export async function executeSessionComposerResolution(args: Readonly<{
     return true;
   }
 
-  if (actionId === 'subagents.plan.start' || actionId === 'subagents.delegate.start') {
+  if (actionId === 'subagents.plan.start' || actionId === 'subagents.delegate.start' || actionId === 'voice_agent.start') {
     const permissionMode = resolveExecutionRunActionDefaultPermissionMode(actionId) ?? 'read_only';
     const instructions = rest.trim();
-    if (instructions.length === 0) {
+    // The Run form has plan/delegate intents only; a bare /h.voice reaches the Action, whose
+    // admission names the missing instructions.
+    if (instructions.length === 0 && actionId !== 'voice_agent.start') {
       if (!accountScope || !isAccountCurrent()) return false;
       clearAcceptedComposer(args);
       storage.getState().createSessionActionDraft(accountScope, {

@@ -62,7 +62,6 @@ function surface(voice: VoiceAttemptControlProjection, overrides: Partial<VoiceS
         canBargeIn: true,
         canCancelTurn: false,
         canOpenConversation: false,
-        canTeleportToSessionRoot: false,
         controlsDisabled: false,
         controlsLoading: false,
         delegatedWork: null,
@@ -83,7 +82,7 @@ function surface(voice: VoiceAttemptControlProjection, overrides: Partial<VoiceS
         onBargeIn: vi.fn(),
         onCancelTurn: vi.fn(),
         onOpenConversation: vi.fn(),
-        onTeleport: vi.fn(),
+        onOpenDelegatedSession: vi.fn(),
         onToggleExpanded: vi.fn(),
         ...overrides,
     };
@@ -239,7 +238,7 @@ describe('VoiceGlance', () => {
     it('keeps delegated work on its own line rather than as the status caption', async () => {
         const voice = attempt();
         screen = await renderScreen(<VoiceGlance
-            model={surface(voice, { delegatedWork: { sessionId: 'session-2', statusText: 'Codex is running yarn test relay', thinking: true } })}
+            model={surface(voice, { delegatedWork: { sessionId: 'session-2', serverId: null, statusText: 'Codex is running yarn test relay', thinking: true } })}
             presentation="companion"
         />);
 

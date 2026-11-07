@@ -1,7 +1,6 @@
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useFocusedSessionAddress } from '@/sync/domains/session/sessionSurfaceVisibility';
 import { useSessionListPreferredMetadata } from '@/sync/store/hooks';
-import { getVoiceAgentSessionTeleportAvailability } from '@/voice/agent/getVoiceAgentSessionTeleportAvailability';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import {
     useVoiceTargetStore,
@@ -63,9 +62,6 @@ export function useVoiceSurfaceTargetState(params: Readonly<{
     const daemonLocalVoiceUnavailable =
         surfaceCapabilities?.requiresVoiceAgentFeature === true
         && voiceAgentEnabled !== true;
-    const canTeleportToSessionRoot =
-        params.variant === 'session'
-        && getVoiceAgentSessionTeleportAvailability({ voice: params.voice, sessionId: params.sessionId ?? null }).ok;
 
     /*
      * What this device shows its own user: the target Session's display name, from the same
@@ -88,7 +84,6 @@ export function useVoiceSurfaceTargetState(params: Readonly<{
         bindingScope,
         cancelResponseSupported,
         agentRuntime: surfaceCapabilities?.agentRuntime ?? null,
-        canTeleportToSessionRoot,
         daemonLocalVoiceUnavailable,
         routeSessionId,
         startSessionId,

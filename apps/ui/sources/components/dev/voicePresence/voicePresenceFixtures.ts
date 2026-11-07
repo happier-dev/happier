@@ -133,7 +133,6 @@ export function buildVoicePresenceSurfaceFixture(state: VoicePresenceFixtureStat
         canBargeIn: state === 'speaking',
         canCancelTurn: false,
         canOpenConversation: state === 'ended',
-        canTeleportToSessionRoot: false,
         controlsDisabled: false,
         controlsLoading: false,
         delegatedWork: live && (state === 'speaking' || state === 'listening')
@@ -156,7 +155,7 @@ export function buildVoicePresenceSurfaceFixture(state: VoicePresenceFixtureStat
         onBargeIn: NOOP,
         onCancelTurn: NOOP,
         onOpenConversation: NOOP,
-        onTeleport: NOOP,
+        onOpenDelegatedSession: NOOP,
         onToggleExpanded: NOOP,
     };
 }
