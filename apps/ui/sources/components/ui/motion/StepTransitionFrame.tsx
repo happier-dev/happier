@@ -7,7 +7,7 @@ import {
     resolveStepTransitionDirection,
     type StepTransitionDirection,
 } from './resolveStepTransitionDirection';
-import { SoftSlideTransitionFrame } from './SoftSlideTransitionFrame';
+import { SoftSlideTransitionFrame, type SoftSlideTransitionFrameProps } from './SoftSlideTransitionFrame';
 
 export type { StepTransitionDirection };
 
@@ -19,6 +19,8 @@ export type StepTransitionFrameProps = Readonly<{
     contentStyle?: StyleProp<ViewStyle>;
     /** Override the reduced-motion preference (test/escape hatch). */
     reducedMotion?: boolean;
+    /** Views kept mounted (hidden) while not shown, see `SoftSlideTransitionFrame.retainedLayers`. */
+    retainedLayers?: SoftSlideTransitionFrameProps['retainedLayers'];
     testID?: string;
 }>;
 
@@ -35,6 +37,7 @@ export function StepTransitionFrame(props: StepTransitionFrameProps) {
             style={props.style}
             testID={props.testID}
             transitionKey={props.transitionKey}
+            retainedLayers={props.retainedLayers}
         >
             {props.children}
         </SoftSlideTransitionFrame>

@@ -61,7 +61,43 @@ export type SoftSlideTransitionFrameProps = Readonly<{
     transitionKey: string | number;
     /** Defaults to `'signature'`; `StepTransitionFrame` owns the `'routine'` step body. */
     preset?: SlideTransitionRole;
+    /**
+     * Views that stay mounted, hidden, while they are neither current nor leaving (a sheet's own view
+     * under a view pushed inside it). A retained view slides out and back in without a remount.
+     */
+    retainedLayers?: ReadonlyArray<SoftSlideRetainedLayer>;
 }>;
+
+export type SoftSlideRetainedLayer = Readonly<{ key: string | number; children: React.ReactNode }>;
+
+/** The retained layers that are neither current nor leaving: mounted, hidden, out of the accessibility tree. */
+function renderRetainedLayers(
+    props: SoftSlideTransitionFrameProps,
+    layers: SoftSlideLayers,
+    LayerView: React.ElementType,
+): React.ReactElement[] {
+    return (props.retainedLayers ?? []).filter((layer) => layer.key !== layers.current.key && layer.key !== layers.exit?.key)
+        .map((layer) => (
+            <LayerView
+                key={layerReactKey(layer.key)}
+                pointerEvents="none"
+                aria-hidden={true}
+                accessibilityElementsHidden={true}
+                importantForAccessibility="no-hide-descendants"
+                style={RETAINED_LAYER_HIDDEN}
+            >
+                {layer.children}
+            </LayerView>
+        ));
+}
+
+const RETAINED_LAYER_HIDDEN = { display: 'none' } as const;
+
+/** A leaving layer shows its last children, unless it is retained: a retained view stays live while it leaves. */
+function exitChildren(props: SoftSlideTransitionFrameProps, exitLayer: SoftSlideTransitionLayer): React.ReactNode {
+    const retained = props.retainedLayers?.find((layer) => layer.key === exitLayer.key);
+    return retained ? retained.children : exitLayer.children;
+}
 
 const USE_NATIVE_DRIVER = Platform.OS !== 'web';
 
@@ -195,7 +231,8 @@ function WebSoftSlideTransitionFrame(props: SoftSlideTransitionFrameProps) {
 
     return (
         <View style={[styles.container, props.style]} testID={props.testID}>
-            {exitLayer ? (
+            {/* One flat keyed list: a layer moving between current, leaving and retained keeps its mount. */}
+            {[exitLayer ? (
                 <View
                     key={layerReactKey(exitLayer.key)}
                     pointerEvents="none"
@@ -213,9 +250,9 @@ function WebSoftSlideTransitionFrame(props: SoftSlideTransitionFrameProps) {
                     ]}
                     testID={props.testID ? `${props.testID}-exit-layer` : undefined}
                 >
-                    {exitLayer.children}
+                    {exitChildren(props, exitLayer)}
                 </View>
-            ) : null}
+            ) : null,
             <View
                 key={layerReactKey(layers.current.key)}
                 style={[
@@ -231,7 +268,8 @@ function WebSoftSlideTransitionFrame(props: SoftSlideTransitionFrameProps) {
                 testID={props.testID ? `${props.testID}-current-layer` : undefined}
             >
                 {layers.current.children}
-            </View>
+            </View>,
+            ...renderRetainedLayers(props, layers, View)]}
         </View>
     );
 }
@@ -339,7 +377,8 @@ function NativeSoftSlideTransitionFrame(props: SoftSlideTransitionFrameProps) {
 
     return (
         <View style={[styles.container, props.style]} testID={props.testID}>
-            {exitLayer ? (
+            {/* One flat keyed list: a layer moving between current, leaving and retained keeps its mount. */}
+            {[exitLayer ? (
                 <Animated.View
                     key={layerReactKey(exitLayer.key)}
                     pointerEvents="none"
@@ -358,7 +397,7 @@ function NativeSoftSlideTransitionFrame(props: SoftSlideTransitionFrameProps) {
                     ]}
                     testID={props.testID ? `${props.testID}-exit-layer` : undefined}
                 >
-                    {exitLayer.children}
+                    {exitChildren(props, exitLayer)}
                     {props.reducedMotion || transitionTokens.nativeBlurIntensity === 0 ? null : (
                         <NativeSlideBlurOverlay
                             intensity={transitionTokens.nativeBlurIntensity}
@@ -369,7 +408,7 @@ function NativeSoftSlideTransitionFrame(props: SoftSlideTransitionFrameProps) {
                         />
                     )}
                 </Animated.View>
-            ) : null}
+            ) : null,
             <Animated.View
                 key={layerReactKey(layers.current.key)}
                 style={[
@@ -392,7 +431,8 @@ function NativeSoftSlideTransitionFrame(props: SoftSlideTransitionFrameProps) {
                         })}
                     />
                 )}
-            </Animated.View>
+            </Animated.View>,
+            ...renderRetainedLayers(props, layers, Animated.View)]}
         </View>
     );
 }

@@ -418,7 +418,7 @@ function PhonePopoverSheet(props: PopoverProps) {
             bodyStyle={{ flexGrow: 0, paddingLeft: insets.left, paddingRight: insets.right }}
         >
             <FloatingOverlaySheetContext.Provider value={true}>
-                <PhoneSheetPushBody stack={pushStack} pushed={pushed !== null} renderProps={{
+                <PhoneSheetPushBody stack={pushStack} renderProps={{
                     placement: 'bottom',
                     maxWidth: Math.max(0, windowWidth - insets.left - insets.right),
                     maxHeight,

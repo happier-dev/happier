@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { View } from 'react-native';
+
+import { StepTransitionFrame, type StepTransitionDirection } from '@/components/ui/motion/StepTransitionFrame';
 
 import type { PopoverRenderProps } from './_types';
 
@@ -68,29 +69,50 @@ export function createPhoneSheetPushStack(): PhoneSheetPushStack {
 
 export const PhoneSheetPushContext = React.createContext<PhoneSheetPushStack | null>(null);
 
-const HIDDEN = { display: 'none' } as const;
+const SHEET_ROOT_KEY = 'phone-sheet-root';
 
 /**
  * The sheet's body: its own content, then the views pushed over it. Every view stays mounted (a pushed
- * popover lives inside the view under it); only the top one shows.
+ * popover lives inside the view under it); only the top one shows. Moving between them is the app's
+ * routine step transition (`StepTransitionFrame`): a push enters from the trailing edge, Back leaves
+ * toward it, and reduced motion cross-fades.
  */
 export function PhoneSheetPushBody(props: Readonly<{
     stack: PhoneSheetPushStack;
-    pushed: boolean;
     renderProps: PopoverRenderProps;
     children: React.ReactNode;
 }>) {
     const { stack } = props;
     React.useSyncExternalStore(stack.subscribe, stack.getVersion, stack.getVersion);
-    const entries = stack.getEntries();
+    const layers = [
+        { key: SHEET_ROOT_KEY, children: props.children },
+        ...stack.getEntries().map((entry) => ({
+            key: entry.key,
+            children: entry.render({ ...props.renderProps, requestClose: entry.close }),
+        })),
+    ];
+    const top = layers[layers.length - 1]!;
+    // A deeper stack is a push (forward), a shallower one a pop (backward).
+    const transitionRef = React.useRef<Readonly<{ key: string; depth: number; direction: StepTransitionDirection }>>(
+        { key: top.key, depth: layers.length, direction: 'replace' },
+    );
+    if (transitionRef.current.key !== top.key) {
+        transitionRef.current = {
+            key: top.key,
+            depth: layers.length,
+            direction: layers.length >= transitionRef.current.depth ? 'forward' : 'backward',
+        };
+    }
     return (
         <PhoneSheetPushContext.Provider value={stack}>
-            <View style={props.pushed ? HIDDEN : undefined}>{props.children}</View>
-            {entries.map((entry, index) => (
-                <View key={entry.key} style={index === entries.length - 1 ? undefined : HIDDEN}>
-                    {entry.render({ ...props.renderProps, requestClose: entry.close })}
-                </View>
-            ))}
+            <StepTransitionFrame
+                testID="popover-sheet.push"
+                transitionKey={top.key}
+                direction={transitionRef.current.direction}
+                retainedLayers={layers}
+            >
+                {top.children}
+            </StepTransitionFrame>
         </PhoneSheetPushContext.Provider>
     );
 }

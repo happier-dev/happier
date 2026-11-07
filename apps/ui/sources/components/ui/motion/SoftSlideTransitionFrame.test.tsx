@@ -51,6 +51,41 @@ describe('SoftSlideTransitionFrame', () => {
         expect(screen.findByTestId('slide-two')?.props.value).toBe('second');
         expect(mounts).toEqual(['mount:one', 'mount:two', 'unmount:one', 'mount:three']);
     });
+    it('keeps a retained layer mounted and hidden after it exits, and returns to it without a remount', async () => {
+        vi.useFakeTimers();
+        try {
+            const { SoftSlideTransitionFrame } = await import('./SoftSlideTransitionFrame');
+            const mounts: string[] = [];
+            function StatefulSlide(props: Readonly<{ name: string }>) {
+                const [value, setValue] = React.useState('initial');
+                React.useEffect(() => {
+                    mounts.push(`mount:${props.name}`);
+                    return () => { mounts.push(`unmount:${props.name}`); };
+                }, [props.name]);
+                return <TextInput testID={`slide-${props.name}`} value={value} onChangeText={setValue} />;
+            }
+            // A sheet's own view stays mounted under the view pushed over it (the pushed view lives inside it).
+            const frame = (stack: readonly string[], direction: 'forward' | 'backward' | 'replace') => {
+                const top = stack[stack.length - 1]!;
+                return <SoftSlideTransitionFrame direction={direction} reducedMotion testID="soft" transitionKey={top}
+                    retainedLayers={stack.map((key) => ({ key, children: <StatefulSlide name={key} /> }))}
+                ><StatefulSlide name={top} /></SoftSlideTransitionFrame>;
+            };
+            const screen = await renderScreen(frame(['menu'], 'replace'));
+            await act(async () => { screen.findByTestId('slide-menu')?.props.onChangeText('scrolled'); });
+            await screen.update(frame(['menu', 'picker'], 'forward'));
+            await act(async () => { vi.advanceTimersByTime(1000); });
+            // The menu has exited but is still mounted, with its state.
+            expect(screen.findByTestId('slide-menu')?.props.value).toBe('scrolled');
+            await screen.update(frame(['menu'], 'backward'));
+            await act(async () => { vi.advanceTimersByTime(1000); });
+            expect(screen.findByTestId('slide-menu')?.props.value).toBe('scrolled');
+            expect(mounts).toEqual(['mount:menu', 'mount:picker', 'unmount:picker']);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it('lets a bounded consumer make the current slide fill the available viewport', async () => {
         const { SoftSlideTransitionFrame } = await import('./SoftSlideTransitionFrame');
         const screen = await renderScreen(

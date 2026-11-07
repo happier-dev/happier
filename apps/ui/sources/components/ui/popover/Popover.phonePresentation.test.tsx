@@ -149,11 +149,13 @@ describe('Popover phone presentation', () => {
         expect(screen.getTextContent()).toContain('Session type');
         expect(screen.findByTestId('popover-sheet.back')).toBeTruthy();
 
-        // Back pops to the menu without closing the sheet.
+        // Back pops to the menu without closing the sheet: the picker slides out, then is gone.
         await screen.pressByTestIdAsync('popover-sheet.back');
         expect(modalSheets(screen)).toHaveLength(1);
-        expect(screen.findByTestId('picker-choice')).toBeNull();
         expect(screen.findByTestId('popover-sheet.back')).toBeNull();
+        expect(screen.findByTestId('popover-sheet.push-exit-layer')?.findAllByProps({ testID: 'picker-choice' }).length).toBeGreaterThan(0);
+        await act(async () => { await new Promise((resolve) => setTimeout(resolve, 400)); });
+        expect(screen.findByTestId('picker-choice')).toBeNull();
         expect(parentClose).not.toHaveBeenCalled();
 
         // A choice closes the whole sheet.
