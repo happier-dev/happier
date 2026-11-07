@@ -15,6 +15,7 @@ import { VoiceConversationLanguageSection } from '@/voice/settings/panels/VoiceC
 import { DaemonVoiceModelCatalogProvider } from '@/voice/settings/panels/modelCatalog/DaemonVoiceModelCatalogContext';
 import { VoiceDuringConversationSection, VoiceProviderSection } from '@/voice/settings/panels/VoiceProviderSection';
 import {
+  resolveVoiceSettingsRecoveryFocus,
   resolveVoiceSettingsRecoveryTarget,
   resolveVoiceSettingsRouteFocus,
 } from '@/voice/settings/voiceSettingsRouteFocus';
@@ -43,7 +44,13 @@ export function VoiceConversationsSettingsScreen() {
     () => focusRegistry.registerItemLayout('local'),
     [focusRegistry.registerItemLayout],
   );
+  // A card that needs a machine opens the header's "Runs on" chooser: one machine control per page.
+  const [machineChooserOpen, setMachineChooserOpen] = React.useState(false);
   const focusRecovery = React.useCallback((action: Parameters<typeof resolveVoiceSettingsRecoveryTarget>[0]) => {
+    if (resolveVoiceSettingsRecoveryFocus(action) === 'execution_machine') {
+      setMachineChooserOpen(true);
+      return;
+    }
     const target = resolveVoiceSettingsRecoveryTarget(action);
     if (typeof target === 'string') router.push(target);
     else if (target) router.setParams(target.params ?? {});
@@ -77,6 +84,8 @@ export function VoiceConversationsSettingsScreen() {
                   setVoice={setVoice}
                   intent="conversations"
                   presentation="chip"
+                  chooserOpen={machineChooserOpen}
+                  onChooserOpenChange={setMachineChooserOpen}
                   popoverBoundaryRef={popoverBoundaryRef}
                 />
               </View>

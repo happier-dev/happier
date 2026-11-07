@@ -47,6 +47,9 @@ export function VoiceExecutionMachineSection(props: Readonly<{
   intent?: 'conversations' | 'dictation' | 'advanced';
   /** `chip`: the page header's "Runs on" chip; `section` (default): a page section with the field. */
   presentation?: 'section' | 'chip';
+  /** The chip's chooser, opened by the page when a card asks for a machine, so the page has one machine control. */
+  chooserOpen?: boolean;
+  onChooserOpenChange?: (open: boolean) => void;
 }>) {
   const { theme } = useUnistyles();
   const machines = useAllMachines();
@@ -179,6 +182,7 @@ export function VoiceExecutionMachineSection(props: Readonly<{
           options: items.map((item) => ({ id: item.id, label: item.title, subtitle: item.subtitle, icon: item.icon })),
           selectedId,
           onChange: selectMachine,
+          ...(props.chooserOpen !== undefined ? { open: props.chooserOpen, onOpenChange: props.onChooserOpenChange } : {}),
           testID: 'settings.voice.executionMachine.chip',
           ...(fixedMachine === null && fixedMachineId ? { muted: true } : {}),
         }}

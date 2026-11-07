@@ -34,9 +34,12 @@ export function VoiceDictationSettingsScreen() {
     () => focusRegistry.registerItemLayout('execution_machine'),
     [focusRegistry.registerItemLayout],
   );
+  // A card that needs a machine opens the header's "Runs on" chooser: one machine control per page.
+  const [machineChooserOpen, setMachineChooserOpen] = React.useState(false);
   const focusRecovery = React.useCallback((action: Parameters<typeof resolveVoiceSettingsRecoveryFocus>[0]) => {
     const focus = resolveVoiceSettingsRecoveryFocus(action);
-    if (focus) router.setParams({ focus: focus === 'local' ? 'provider' : focus });
+    if (focus === 'execution_machine') setMachineChooserOpen(true);
+    else if (focus) router.setParams({ focus: focus === 'local' ? 'provider' : focus });
   }, [router]);
   const [voice, setVoice] = useVoiceSettingsMutable();
   const { executionMachine, daemonModelCatalog, localAvailability, daemonRouteDiagnosticReason } =
@@ -62,6 +65,8 @@ export function VoiceDictationSettingsScreen() {
                   setVoice={setVoice}
                   intent="dictation"
                   presentation="chip"
+                  chooserOpen={machineChooserOpen}
+                  onChooserOpenChange={setMachineChooserOpen}
                   popoverBoundaryRef={popoverBoundaryRef}
                 />
               </View>
