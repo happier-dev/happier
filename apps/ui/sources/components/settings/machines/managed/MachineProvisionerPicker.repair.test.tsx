@@ -5,6 +5,7 @@ import { PluginProjectedActionV2Schema } from '@happier-dev/protocol/daemon/cont
 import { DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { MachineProvisionersListResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { createRpcCallError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
@@ -52,9 +53,11 @@ function ProjectionReadiness(props: Readonly<{ serverId: string }>) {
 }
 
 describe('mounted provisioner repair', () => {
-    it.each(['picker', 'configuration', 'missingWithoutRepair', 'repairUnavailable', 'configuration.repairUnavailable'] as const)('runs the declared prerequisite repair from %s on the selected controller after confirmation and rechecks', async scenario => {
+    it.each(['picker', 'configuration', 'missingWithoutRepair', 'repairUnavailable', 'configuration.repairUnavailable', 'projectionOffline', 'projectionTransportUnavailable'] as const)('runs the declared prerequisite repair from %s on the selected controller after confirmation and rechecks', async scenario => {
         const surface = scenario.startsWith('configuration') ? 'configuration' : 'picker';
         const repairUnavailable = scenario.endsWith('repairUnavailable');
+        const projectionFailure = scenario === 'projectionOffline' ? 'machine-unavailable'
+            : scenario === 'projectionTransportUnavailable' ? 'transport-unavailable' : undefined;
         const serverId = await harness.addHome({ name: 'Build', serverUrl: `https://build-${scenario}.example`, serverIdentityId: `srv_build_${scenario}`, accountId: 'owner', currentAccount: true });
         await harness.addHome({ name: 'Other', serverUrl: 'https://other.example', serverIdentityId: 'srv_other', accountId: 'other' });
         const { clearPluginAccountAvailabilityProjection, replacePluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
@@ -92,7 +95,12 @@ describe('mounted provisioner repair', () => {
         } });
         let repaired = false;
         boundary.rpc.mockImplementation(async (request: { method: string; payload: unknown }) => {
-            if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) return projectionResponse;
+            if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+                if (scenario === 'projectionOffline') throw createRpcCallError({ error: 'machine_unavailable', errorCode: RPC_ERROR_CODES.FORBIDDEN,
+                    failureCause: { phase: 'rpc.admission.machine', errorClass: 'Error', errorCode: 'machine_unavailable', httpStatus: 403 } });
+                if (scenario === 'projectionTransportUnavailable') throw createRpcCallError({ error: 'Reply unavailable', errorCode: RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE });
+                return projectionResponse;
+            }
             if (request.method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ) return { ok: true,
                 inputSchema: { type: 'object', properties: {}, additionalProperties: false } };
             if (request.method === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE) { repaired = true; return { ok: true, result: { repaired: true } }; }
@@ -151,9 +159,23 @@ describe('mounted provisioner repair', () => {
             error: screen.tree.findAll(node => node.props.testID === 'managed-config.error').map(node => ({ kind: node.props.kind, title: node.props.title })) }).toMatchObject({ repairRow: true });
         await waitForHomeGovernance(() => expect(boundary.rpc.mock.calls.some(([request]) => request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE)).toBe(true));
         await waitForHomeGovernance(() => expect(['ready', 'unsupported', 'error']).toContain(screen.findByTestId('managed-repair.projection')?.props.accessibilityLabel));
-        expect(screen.findByTestId('managed-repair.projection')?.props).toMatchObject({ accessibilityLabel: 'ready', accessibilityHint: undefined });
+        expect(screen.findByTestId('managed-repair.projection')?.props).toMatchObject(projectionFailure
+            ? { accessibilityLabel: 'error', accessibilityHint: projectionFailure }
+            : { accessibilityLabel: 'ready', accessibilityHint: undefined });
         const checksBeforeRepair = harness.requestsFor('/v1/actions/machines.provisioners.check').length;
         await act(async () => { void screen.pressByTestId(repairControl); });
+        if (projectionFailure) {
+            const failureId = `managed-picker.provisioners.local.${buildQualifiedPluginContributionKey(contribution)}.repairFailure`;
+            await waitForHomeGovernance(() => expect(screen.findByTestId(failureId)).not.toBeNull());
+            const { t } = await import('@/text');
+            const failureCards = screen.tree.findAll(node => node.props.testID === failureId && node.props.diagnosticCode === projectionFailure);
+            expect(failureCards.length).toBeGreaterThan(0);
+            expect(failureCards.some(node => node.props.title === t('settingsProviders.detail.machineOffline')))
+                .toBe(projectionFailure === 'machine-unavailable');
+            expect(boundary.rpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE)).toHaveLength(0);
+            await screen.unmount();
+            return;
+        }
         if (repairUnavailable) {
             const failureId = surface === 'picker'
                 ? `managed-picker.provisioners.local.${buildQualifiedPluginContributionKey(contribution)}.repairFailure` : 'managed-config.repairFailure';

@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 
 import { resolveWindowsCommandInvocation } from './windows/resolveWindowsCommandInvocation.js';
+import { DEFAULT_COMMAND_CAPTURE_MAX_BYTES } from './commandCaptureBudget.js';
 
 function appendTail(current: string, chunk: string, maxBytes: number): string {
   const combined = current + chunk;
@@ -33,7 +34,7 @@ export async function runCommandStreaming(params: Readonly<{
     throw new Error('command is required');
   }
 
-  const maxCapturedBytes = Math.max(4 * 1024, Number(params.maxCapturedBytes ?? 32 * 1024));
+  const maxCapturedBytes = Math.max(4 * 1024, Number(params.maxCapturedBytes ?? DEFAULT_COMMAND_CAPTURE_MAX_BYTES));
 
   await new Promise<void>((resolve, reject) => {
     const invocation = resolveWindowsCommandInvocation({

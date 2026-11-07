@@ -24,6 +24,8 @@ import { resolveLocalHappierCommandTimeoutMs } from '../executors/happierJsonExe
 import type { InteractiveSystemTaskPromptRequest } from '../interactiveTaskKinds.js';
 import { parseSshKnownHostLine } from './sshKnownHostLine.js';
 import { buildManagedNativeGuestCommand, startManagedNativeGuestDaemon } from '../../machines/managed/nativeBootstrap.js';
+import { redactBugReportSensitiveText, trimBugReportTextToMaxBytes } from '@happier-dev/protocol/bugs/reports/redaction';
+import { DEFAULT_COMMAND_CAPTURE_MAX_BYTES } from '../../process/commandCaptureBudget.js';
 
 export type ManagedNativeBootstrapIO = Readonly<{
   exec(input: Readonly<{ command: string; input?: string; signal?: AbortSignal; timeoutMs?: number | null; allowWake?: false;
@@ -266,17 +268,21 @@ export async function runManagedMachineEnrollment(input: ManagedMachineEnrollmen
     // sign-in or changing the existing Machine. Native-process boot recovery is
     // handled above and continues to reuse its retained installation.
     await installRemoteCli(input.signal);
-    const commands = nativeProcess ? [['daemon', 'start', '--json']]
-      : ['install', 'restart'].map(action => ['daemon', 'service', action, ...(dedicatedIdentity ? ['--mode=user'] : []), '--json']);
+    const commands = nativeProcess ? [{ step: 'start' as const, args: ['daemon', 'start', '--json'] }]
+      : (['install', 'restart'] as const).map(step => ({ step,
+        args: ['daemon', 'service', step, ...(dedicatedIdentity ? ['--mode=user'] : []), '--json'] }));
     // An unchanged service definition can keep running the old payload at the
     // same CLI version. Adopt the promoted payload through its lifecycle owner.
-    for (const args of commands) {
+    for (const { step, args } of commands) {
       const updated = await payloadExec({
         command: buildRemoteHappierInvocationCommand({ binaryPath, args, channel: configuration.channel }),
         signal: input.signal,
         timeoutMs: resolveLocalHappierCommandTimeoutMs(args),
       });
-      if (updated.status !== 0) throw new SystemTaskExecutionError('background_service_failed', 'The updated guest background service could not be activated.');
+      if (updated.status !== 0) throw new SystemTaskExecutionError('background_service_failed', 'The updated guest background service could not be activated.', {
+        details: { kind: 'managedService', step, exitStatus: updated.status,
+          stderrTail: trimBugReportTextToMaxBytes(redactBugReportSensitiveText(updated.stderr), DEFAULT_COMMAND_CAPTURE_MAX_BYTES) },
+      });
       input.signal?.throwIfAborted();
     }
     // Installation can replace the guest daemon before Home acknowledges its

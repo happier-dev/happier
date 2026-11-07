@@ -21,6 +21,8 @@ import { admitManagedControl, linkManagedEnrollmentInTx, reportManagedAcquire, r
 import { registerManagedMachineRoutes } from './managedRoutes';
 import { limaAcquisitionResource } from '../../../../../../packages/plugins/machine-lima/src/machine/provider';
 import { LimaResourceSchema } from '../../../../../../packages/plugins/machine-lima/src/machine/schemas';
+import { buildManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
+import { createPluginJsonSchemaZodValueAdapter } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 
 describe('retained managed rows across declaration changes', () => {
     const homeId = `srv_${'a'.repeat(32)}`;
@@ -47,6 +49,77 @@ describe('retained managed rows across declaration changes', () => {
         const facts = await inTx(tx => readManagedProjectionFactsInTx(tx, [input]));
         expect(facts.declarationFor(input)).not.toBeNull();
     });
+
+    it('publishes retained guest observations after its controller replaces the declaration', async () => {
+        const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const keys = tweetnacl.sign.keyPair();
+        const controller = { machineId: randomUUID(), installationId: randomUUID() };
+        await db.machine.create({ data: { id: controller.machineId, accountId: account.id, metadata: '{}', active: true,
+            installationId: controller.installationId, installationPublicKey: new Uint8Array(keys.publicKey), pluginMaterializationRevision: 1n } });
+        const manifest = await seedBundledManagedAvailability(account.id, homeId, controller, ['machine-lima.json']);
+        const choices = { store: '/tmp/managed-observation-reload', image: 'fixture:ubuntu', arch: 'x86_64' as const,
+            vmType: 'qemu' as const, cpus: 2, memoryGiB: 4, diskGiB: 16, mounts: [] };
+        const input = { enrollmentIdentity: { kind: 'existingUser' as const, role: 'adopted' as const },
+            selection: { kind: 'one-off' as const, homeId, controller,
+                launch: { provider: { pluginId: manifest.id, localId: 'lima' }, schemaVersion: 1, name: 'Reload guest', choices },
+                retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false } };
+        const requestId = randomUUID();
+        const created = await admitManagedAcquire({ requesterAccountId: account.id, custodianAccountId: account.id,
+            requestEnvelopeDigest: 'observation-reload', input: { requestId, input, continuationPresent: false } });
+        const current = { homeId, managedId: created.machine.id, requestId, controller, expectedIntentRevision: 0 };
+        const resource = { contributionRef: input.selection.launch.provider, schemaVersion: 1,
+            value: { ...limaAcquisitionResource(choices, created.machine.id), mounts: [] } };
+        await submitManagedAcquire(current);
+        await reportManagedAcquire({ ...current, result: { kind: 'bound', resource },
+            configurationFacts: buildManagedConfigurationFactsV1({
+                choicesSchema: createPluginJsonSchemaZodValueAdapter(manifest.contributes.machineProvisioners![0].launchSchema),
+                launch: input.selection.launch, controller, provisioner: manifest.contributes.machineProvisioners![0],
+                optionStatus: 'unavailable', prerequisites: [], billing: manifest.contributes.machineProvisioners![0].billing,
+                retentionCapabilities: manifest.contributes.machineProvisioners![0].retention,
+                machineOverride: { retention: input.selection.retention, wakeOnAcceptedMessage: false },
+            }),
+            observation: { availability: 'unavailable', reason: 'bootstrap.incomplete', observedAt: 1 } });
+        const guest = await db.machine.create({ data: { id: randomUUID(), accountId: account.id,
+            metadata: '{}', installationId: randomUUID() } });
+        await inTx(tx => linkManagedEnrollmentInTx(tx, { ...current, resource }, account.id, guest.id));
+
+        const availability = createPluginAvailabilityOperations();
+        await availability.claimCollectionWriters({ accountId: account.id, publisher: controller,
+            input: { manifest: { ...manifest, contributes: { ...manifest.contributes, machineProvisioners: [] } } } });
+        const factsInput = { homeId, controller, provider: input.selection.launch.provider };
+        const facts = await inTx(tx => readManagedProjectionFactsInTx(tx, [factsInput]));
+        expect(facts.declarationFor(factsInput)).toBeNull();
+
+        const app = fastify().withTypeProvider<ZodTypeProvider>();
+        app.setValidatorCompiler(validatorCompiler);
+        app.setSerializerCompiler(serializerCompiler);
+        // Only the HTTP authentication boundary is replaced; publication, retained
+        // native-schema validation and the response's status are real.
+        app.decorate('authenticate', async (request: FastifyRequest) => {
+            Object.assign(request, createAuthenticatedRouteRequest({ userId: account.id,
+                externalActionExecutionAuthorized: true, externalActionExecutionMachineId: controller.machineId,
+                externalActionEffectActionId: 'machines.managed.acquire', externalActionExecutionRequestId: requestId,
+                externalActionExecutionCustodianAccountId: account.id }),
+            { headers: request.headers, params: request.params, query: request.query });
+        });
+        registerManagedMachineRoutes(app);
+        try {
+            const report = (value: unknown) => app.inject({ method: 'POST', url: '/v1/machines/managed/controller/report', payload: value });
+            const present = await report({ ...current, result: { kind: 'bound', resource },
+                observation: { availability: 'present', observedAt: 2 } });
+            expect(present.statusCode, present.body).toBe(200);
+            expect(present.json()).toMatchObject({ machine: { enrolledMachineId: guest.id,
+                observation: { availability: 'present', observedAt: 2 } } });
+            const invalid = await report({ ...current, result: { kind: 'bound',
+                resource: { ...resource, value: { ...resource.value, instance: 42 } } } });
+            expect(invalid.statusCode).toBe(409);
+            expect(invalid.json()).toMatchObject({ code: 'resource_mismatch' });
+            // Replacing installed declarations still governs a new admission.
+            await expect(admitManagedAcquire({ requesterAccountId: account.id, custodianAccountId: account.id,
+                requestEnvelopeDigest: 'new-after-reload', input: { requestId: randomUUID(), input, continuationPresent: false } }))
+                .rejects.toMatchObject({ code: 'provider_unavailable' });
+        } finally { await app.close(); }
+    }, 120_000);
 
     it('reads and deletes an enrolled nameless launch after a stale host republishes its required-instance declaration', async () => {
         const account = await db.account.create({ data: { encryptionMode: 'plain' } });

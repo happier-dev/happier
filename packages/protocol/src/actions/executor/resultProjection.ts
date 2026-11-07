@@ -165,11 +165,14 @@ function classifyActionExecutorThrownError(error: unknown): Readonly<{ errorCode
     const code = rawCodes[0] ?? 'action_failed';
     return { errorCode: code, error: code };
   }
-  if (rawCodes[0] && (readRecord(rawDetails).kind === 'managedBootstrap' || readRecord(rawDetails).kind === 'managedAgentIsolation'
+  if (rawCodes[0] && (readRecord(rawDetails).kind === 'managedBootstrap' || readRecord(rawDetails).kind === 'managedService' || readRecord(rawDetails).kind === 'managedAgentIsolation'
     || ManagedAgentStartFailureDetailsV1Schema.shape.kind.safeParse(readRecord(rawDetails).kind).success)) {
     const failure = ActionOperationFailureV1Schema.safeParse({ errorCode: rawCodes[0], error: rawCodes[0], details: rawDetails });
     if (failure.success) {
       const details = failure.data.details;
+      if (details && 'kind' in details && details.kind === 'managedService') {
+        return { ...failure.data, details: { ...details, stderrTail: redactBugReportSensitiveText(details.stderrTail) } };
+      }
       return details && 'kind' in details && details.kind === 'managedAgentIsolation' && details.phase === 'machines.agentIsolation.set'
         ? { ...failure.data, error: `Agent isolation requires a fresh review (reviewed metadata version ${details.expectedMetadataVersion}, current ${details.metadataVersion}). Review the Machine's Agent isolation settings before applying.` }
         : failure.data;

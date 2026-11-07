@@ -52,6 +52,7 @@ const selectInstallationId = (machine: Machine | null) => machine?.installationI
 
 /** A failed read is not a provider verdict; keep its cause human wherever the offer is drawn. */
 export function describeManagedProvisionerFailure(code: string): string {
+    if (code === 'machine-unavailable') return t('settingsProviders.detail.machineOffline');
     return readTransientAvailabilityFailure(code)?.message
         ?? resolveSystemTaskFailureMessage({ code })
         ?? t('managedMachines.providers.unavailable');
@@ -189,7 +190,12 @@ export function useManagedProvisionerPresentation(input: Readonly<{
     const repair = async (action: NonNullable<ManagedPrerequisiteV1['repairAction']>, binding: ServerCredentialAccountScopeBinding,
         signal?: AbortSignal) => {
         const controller = input.controller;
-        if (!controller || !binding.isCurrent() || projection.phase !== 'ready') return { ok: false as const, code: 'unavailable', reason: 'controller_unavailable' };
+        if (!controller || !binding.isCurrent()) return { ok: false as const, code: 'unavailable', reason: 'controller_unavailable' };
+        if (projection.phase !== 'ready') {
+            const reason = projection.failureReason ?? 'controller_unavailable';
+            return { ok: false as const, code: 'unavailable', reason,
+                ...(reason === 'machine-unavailable' ? { message: describeManagedProvisionerFailure(reason) } : {}) };
+        }
         const result = await launchPluginSurfaceAction({ action: action.action, input: action.input,
             contributedAction: { machineId: controller.machineId, serverId: input.serverId, accountLifetime: binding },
             clientAction: {},

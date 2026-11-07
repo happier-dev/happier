@@ -81,6 +81,7 @@ export type MachineContributionRegistryProjectionFailureReason =
     | 'request-failed'
     | 'transport-error'
     | 'transport-unavailable'
+    | 'machine-unavailable'
     | 'access-denied'
     | 'authentication-required'
     | 'authentication-unavailable'
@@ -261,7 +262,8 @@ function classifyMachineProjectionReadError(error: unknown): MachineContribution
             // available, not that the Machine is offline or lacks integrations.
             return 'transport-unavailable';
         case RPC_ERROR_CODES.FORBIDDEN:
-            return 'access-denied';
+            return error instanceof RpcError && error.failureCause?.errorCode === 'machine_unavailable'
+                ? 'machine-unavailable' : 'access-denied';
         case RPC_ERROR_CODES.TEAM_AUTHENTICATION_REQUIRED:
             return 'authentication-required';
         case RPC_ERROR_CODES.TEAM_AUTHENTICATION_UNAVAILABLE:

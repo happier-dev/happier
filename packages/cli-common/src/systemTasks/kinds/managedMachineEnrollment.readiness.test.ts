@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionOperationFailureV1Schema } from '@happier-dev/protocol/actions/operations/v1';
+import { DEFAULT_COMMAND_CAPTURE_MAX_BYTES } from '../../process/commandCaptureBudget.js';
 import { resolveHomeTargetFromDescriptor } from '../../homeTarget/homeTarget.js';
 import { runManagedMachineEnrollment } from './managedMachineEnrollment.js';
 
@@ -42,6 +45,50 @@ function retryGuest(operation: AbortController | undefined, readyAtMs: number) {
 }
 
 describe('retained native bootstrap readiness lifetime', () => {
+  it.each(['install', 'restart', 'start'] as const)('retains the failing %s process diagnostic through Action settlement', async step => {
+    const commands: string[] = [];
+    const secret = 'SERVICE_DIAGNOSTIC_PRIVATE_TOKEN';
+    const diagnostic = `old output\n${'é'.repeat(40_000)}\nservice manager refused ${step}\naccess_token=${secret}\n`;
+    const executor = createActionExecutor({ managedMachineAction: async () => runManagedMachineEnrollment({
+      correlation, target, channel: 'stable',
+      carrier: { kind: 'native', transport: { contributionRef: resource.contributionRef, schemaVersion: 1 } },
+    }, {
+      readCurrentManagedRow: async () => ({ ...machine,
+        ...(step === 'start' ? { enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' } as const } : {}) }),
+      createPromptId: () => 'unused',
+      runTask: async () => { throw new Error('Retained retry must not pair again'); },
+      approveLocalAuthRequest: async () => { throw new Error('Retained retry must not approve auth again'); },
+      installNativePayload: async () => ({ binaryPath: '/opt/happier/bin/happier' }),
+      // Native CLI process IO is the external boundary. Internal enrollment and
+      // public Action failure settlement both run unchanged beneath it.
+      native: { putFile: async () => {}, exec: async ({ command }) => {
+        if (command.startsWith('uname -s;')) return { status: 0, stdout: 'Linux\nx86_64\n/home/guest\n', stderr: '' };
+        commands.push(command);
+        return command.includes(`'${step}'`)
+          ? { status: 42, stdout: '', stderr: diagnostic }
+          : { status: 0, stdout: '', stderr: '' };
+      } },
+    }) });
+    const failure = await executor.execute('machines.managed.bootstrap.retry',
+      { homeId: correlation.homeId, managedId: correlation.managedId, expectedIntentRevision: 1 },
+      { surface: 'cli', authority: 'present_user', presentUserConfirmation: { actionId: 'machines.managed.bootstrap.retry' } });
+    expect(failure).toMatchObject({ ok: false, errorCode: 'background_service_failed',
+      failureCause: { errorCode: 'background_service_failed' },
+      details: { kind: 'managedService', step, exitStatus: 42 } });
+    if (failure.ok) throw new Error('Expected failed activation');
+    const { ok: _ok, ...operationFailure } = failure;
+    const parsed = ActionOperationFailureV1Schema.parse(operationFailure);
+    expect(parsed.details).toMatchObject({ stderrTail: expect.stringContaining(`service manager refused ${step}`) });
+    if (parsed.details?.kind !== 'managedService') throw new Error('Expected retained service diagnostic');
+    expect(Buffer.byteLength(parsed.details.stderrTail, 'utf8')).toBeLessThanOrEqual(DEFAULT_COMMAND_CAPTURE_MAX_BYTES);
+    const serialized = JSON.stringify(failure);
+    expect(serialized).not.toContain(secret);
+    expect(serialized).not.toContain('old output');
+    expect(serialized).toContain('[REDACTED]');
+    expect(commands.filter(command => command.includes(`'${step}'`))).toHaveLength(1);
+    expect(commands.some(command => command.includes("'status'"))).toBe(false);
+  });
+
   it('restarts the retained user service onto the promoted payload even when both payloads have the same version', async () => {
     let currentPayload = 'old-payload';
     let runningPayload = currentPayload;

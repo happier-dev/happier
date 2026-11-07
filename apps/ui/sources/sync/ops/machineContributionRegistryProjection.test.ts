@@ -374,6 +374,22 @@ describe('machine contribution registry projection ops', () => {
             .resolves.toEqual({ supported: false, reason });
     });
 
+    it.each([
+        ['machine_unavailable', 'machine-unavailable'],
+        ['machine_admin_access_required', 'access-denied'],
+    ])('classifies the server admission cause %s through the real RPC response', async (errorCode, reason) => {
+        const { machineContributionRegistryProjectionDescribe } = await import('./machineContributionRegistryProjection');
+        network.setRpcAckResponder(async () => ({
+            ok: false,
+            error: errorCode,
+            errorCode: RPC_ERROR_CODES.FORBIDDEN,
+            failureCause: { phase: 'rpc.admission.machine', errorClass: 'Error', errorCode, httpStatus: 403 },
+        }));
+
+        await expect(machineContributionRegistryProjectionDescribe('machine-1', { serverId: serverAId }))
+            .resolves.toEqual({ supported: false, reason });
+    });
+
     it.each(['machine-row', 'features', 'socket', 'reachability'] as const)('releases shared targeted reads when %s setup never settles, even after abort', async (phase) => {
         const { machinePluginUiTargetedContributionsRead } = await import('./machineContributionRegistryProjection');
         const { deleteServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');

@@ -163,8 +163,10 @@ export async function resolveManagedDeclarationInTx(tx: Tx, input: Readonly<{
     return (await readManagedProjectionFactsInTx(tx, [input])).declarationFor(input);
 }
 
-/** Retained Account facts and installed controller declarations share the row's one owner. */
-export function resolveManagedRowDeclarationInTx(tx: Tx, row: StoredManagedMachine) {
+/** An admitted row keeps its reviewed native schema across controller publication changes. */
+export async function resolveManagedRowDeclarationInTx(tx: Tx, row: StoredManagedMachine) {
+    const reviewed = readManagedReviewedDeclaration(row.reviewedFacts);
+    if (reviewed) return reviewed;
     return resolveManagedDeclarationInTx(tx, { homeId: row.homeId, custodianAccountId: row.custodianAccountId,
         controller: readManagedController(row), provider: readManagedLaunchSnapshot(row.launch).provider, reviewedFacts: row.reviewedFacts });
 }

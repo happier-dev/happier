@@ -169,6 +169,14 @@ export const ManagedBootstrapFailureDetailsV1Schema = lazyZodSchema(() => z.stri
   ? value.resultStatus !== undefined
   : value.resultStatus === undefined && value.reason === undefined)));
 export type ManagedBootstrapFailureDetailsV1 = Readonly<z.infer<typeof ManagedBootstrapFailureDetailsV1Schema>>;
+/** The existing activation process failure, with a producer-redacted diagnostic tail. */
+export const ManagedServiceFailureDetailsV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('managedService'),
+  step: z.enum(['install', 'restart', 'start']),
+  exitStatus: z.number().check(z.int()),
+  stderrTail: z.string(),
+}));
+export type ManagedServiceFailureDetailsV1 = Readonly<z.infer<typeof ManagedServiceFailureDetailsV1Schema>>;
 /** Preserve the isolation owner's closed refusal without native output or recovery payloads. */
 export const ManagedAgentIsolationFailureDetailsV1Schema = lazyZodSchema(() => z.union([z.strictObject({
   kind: z.literal('managedAgentIsolation'),
@@ -192,7 +200,7 @@ export const ManagedAgentStartFailureDetailsV1Schema = lazyZodSchema(() => z.str
 }));
 export const ManagedMachineFailureDetailsV1Schema = lazyZodSchema(() => z.union([
   ManagedControllerRequestFailureDetailsV1Schema, ManagedNativeFailureDetailsV1Schema,
-  ManagedBootstrapFailureDetailsV1Schema, ManagedAgentIsolationFailureDetailsV1Schema,
+  ManagedBootstrapFailureDetailsV1Schema, ManagedServiceFailureDetailsV1Schema, ManagedAgentIsolationFailureDetailsV1Schema,
   ManagedAgentStartFailureDetailsV1Schema,
 ]));
 export type ManagedMachineFailureDetailsV1 = Readonly<z.infer<typeof ManagedMachineFailureDetailsV1Schema>>;
@@ -243,6 +251,8 @@ export const ActionOperationFailureV1Schema = lazyZodSchema(() => z.strictObject
   ? true
   : failure.details.kind === 'managedBootstrap'
   ? /^bootstrap_effect_[a-z_]+$/u.test(failure.errorCode)
+  : failure.details.kind === 'managedService'
+  ? failure.errorCode === 'background_service_failed'
   : failure.details.kind === 'managedAgentIsolation'
   ? (failure.details.phase === 'machines.agentIsolation.preview' ? failure.details.status.code : failure.details.code) === failure.errorCode
   : failure.details.kind === 'homeAuthorityMismatch'
