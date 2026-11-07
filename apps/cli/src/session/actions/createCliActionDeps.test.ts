@@ -5874,7 +5874,9 @@ describe('createCliActionDeps session lifecycle bindings', () => {
       },
     });
     expect(deps.sessionHandoffPrepareTarget).toBeUndefined();
-    expect(deps.sessionHandoffPrepareTargetResume).toBeUndefined();
+    // AP-01 exposes same-job Resume; prepare/commit/abort remain private lifecycle phases.
+    expect(deps.sessionHandoffPrepareTargetResume).toBeTypeOf('function');
+    expect(deps.sessionHandoffStatusGet).toBeTypeOf('function');
     expect(deps.sessionHandoffCommit).toBeUndefined();
     expect(deps.sessionHandoffAbort).toBeUndefined();
   });

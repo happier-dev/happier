@@ -6,7 +6,6 @@ import { ACTION_IDS, ActionIdSchema, type ActionId } from './actionIds.js';
 /** Host lifecycle/plumbing operations that are not author-facing Actions. */
 export const INTERNAL_ACTION_REASONS = Object.freeze({
   'session.handoff.prepare_target': 'Private handoff lifecycle preparation phase; users invoke session.handoff instead.',
-  'session.handoff.prepare_target.resume': 'Private handoff lifecycle retry phase; users invoke session.handoff instead.',
   'session.handoff.prepare_target_result.get': 'Private handoff coordination receipt read; session.handoff.status.get is the user projection.',
   'session.handoff.commit': 'Private handoff lifecycle commit phase; users invoke session.handoff instead.',
   'session.handoff.abort': 'Private handoff lifecycle abort phase; users invoke session.handoff instead.',

@@ -2539,7 +2539,11 @@ describe("external Action execution authorization", () => {
         const token = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
         const { app, dispatchedPrincipals } = await createApp(fixture.team.id);
         const envelope = { ...fixture.envelope, input: actionId === 'settings.list' ? {}
-            : actionId === 'settings.set' ? { anchor: 'delegation.workDepthLimit', value: 3 } : { anchor: 'delegation.workDepthLimit' } };
+            : actionId === 'settings.set' ? { anchor: 'externalSessions.autoLinkSources', value: {
+                machineId: fixture.machine.id, qualifiedIdentity: { v: 1,
+                    agent: { pluginId: 'happier.agent.codex', localId: 'codex' }, source: { kind: 'codexHome', contractVersion: 1 } },
+                sourcePolicyId: `es-source-policy:v1:${'a'.repeat(64)}`, enabledAtMs: 10,
+            } } : { anchor: 'delegation.workDepthLimit' } };
         try {
             const response = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
                 headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: fixture.machine.id, envelope } });

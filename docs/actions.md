@@ -325,6 +325,15 @@ Handoff availability remains the handoff owner's source-and-target decision, not
 an inference from a ready destination. These source contracts still need the
 coordination program's integrated live repair and handoff validation.
 
+In 0.3 development source, agents, Session MCP and CLI callers can read
+`session.handoff.status.get` and invoke the existing typed
+`session.handoff.prepare_target.resume` on the retained target Machine. Resume
+uses the observed `handoffId`, `jobId` and `expectedRevision`, plus an explicit
+`attemptId`, through the same persisted recovery owner as Inbox Resume. It does
+not start a replacement handoff; preparation, commit and abort remain private
+lifecycle steps. The daemon's typed revision, identity and recovery failures
+remain visible to callers.
+
 In 0.3 development source, `actions.policy.get` and `actions.policy.reset` read or
 reset one exact `{ actionId, audience }` preference. `actions.policy.set` accepts
 that target with `mode: 'allowed' | 'ask_first' | 'off' | 'default'`, or a typed
@@ -4812,6 +4821,15 @@ use the existing answering-client placement, including otherwise headless
 Account anchors; a disconnected client returns connect-client recovery. They
 never downgrade conditions to ordinary writes. No-flag Account requests retain
 their existing headless owner. All requests retain normal Action admission and approval.
+
+In 0.3 development source, `externalSessions.autoLinkSources` uses the same
+Account Settings owner for source policies. Set a complete policy
+`{machineId, qualifiedIdentity, sourcePolicyId, enabledAtMs}` to enable or update
+that exact source. Set only `{machineId, qualifiedIdentity, sourcePolicyId}` to
+remove it, preserving the existing removal input. Writes merge into the latest
+Account value, retaining sibling policies and other external-session preferences;
+`settings.get` returns the policy list. Both input forms use the existing
+strict source-policy schemas and policy mutation owner.
 
 The same development-only conditional corridor extends the incumbent Session
 model and Account MCP rules Actions. `session.model.set {captureBefore: true}`

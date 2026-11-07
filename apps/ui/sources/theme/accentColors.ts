@@ -1,5 +1,6 @@
 /** Canonical named accents shared by theme consumers and persisted appearance choices. */
-export const ACCENT_COLOR_KEYS = ['blue', 'green', 'orange', 'yellow', 'red', 'indigo', 'purple'] as const;
+import { SESSION_APPEARANCE_ACCENT_COLOR_KEYS } from '@happier-dev/protocol/sessions/organization/appearances';
+export const ACCENT_COLOR_KEYS = SESSION_APPEARANCE_ACCENT_COLOR_KEYS;
 export type AccentColorKey = typeof ACCENT_COLOR_KEYS[number];
 
 export function parseAccentColorKey(value: unknown): AccentColorKey | null {

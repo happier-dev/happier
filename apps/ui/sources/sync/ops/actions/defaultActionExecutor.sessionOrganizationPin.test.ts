@@ -31,17 +31,20 @@ const initialPin = { sessionId: 'bot', sortKey: 'a', pinnedAt: 1, listPinned: tr
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
 let restoreActionLoader: (() => void) | undefined;
 let writes: unknown[] = [];
+let answerWrite: ((path: string, init: RequestInit) => Promise<Response>) | undefined;
 
 describe('default UI session.organization.pin.set transport', () => {
     beforeAll(loadSyncSingletonForTests);
     beforeEach(async () => {
         writes = [];
+        answerWrite = undefined;
         restoreActionLoader = await installRealActionExecutorModuleLoader();
         connection = await restoreServerAccountForTest({
             serverUrl: 'https://pin-action.example.test', serverIdentityId: 'srv_pin-action-home', accountId: 'account-a',
             request: async (url, init) => {
                 const path = new URL(String(url)).pathname;
-                if (init?.method && init.method !== 'GET') {
+                if (init?.method && init.method !== 'GET' && path.startsWith('/v2/session-organization/')) {
+                    if (answerWrite) return answerWrite(path, init);
                     if (path !== '/v2/session-organization/pins/bot' || init.method !== 'PUT') throw new Error('Unexpected organization write target');
                     const request = SetSessionPinRequestSchema.parse(JSON.parse(String(init.body)));
                     writes.push(request);
@@ -88,6 +91,52 @@ describe('default UI session.organization.pin.set transport', () => {
         expect(result, JSON.stringify(result)).toEqual({ ok: true, result: { pin } });
         expect(writes).toEqual([{ pinned: true, surface: 'rail' }]);
         expect(storage.getState().sessionOrganizationPinsBySessionKey[buildSessionOrganizationSessionKey(organizationServerId, 'bot')]).toEqual(pin);
+    });
+
+    it('sets and resets personal Session and Project-group colors through the saved display owners', async () => {
+        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+        const { buildSessionOrganizationLabelKey } = await import('@/sync/domains/session/organization/keys');
+        const serverId = connection!.home.id;
+        const organizationServerId = resolveServerProfileScopeIdForIdentifier(serverId);
+        const color = { kind: 'custom', hex: '#123456' } as const;
+        storage.getState().applySettingsLocal({ actionsSettingsV1: { v: 1, actions: {
+            'session.organization.appearance.set': { approvalRequiredSurfaces: [] },
+            'projects.organization.color.set': { approvalRequiredSurfaces: [] },
+        } } });
+        const value = { label: 'Personal title', future: { retained: true } };
+        const record = storage.getState().upsertSessionOrganizationLabelOptimistic(organizationServerId, {
+            labelKind: 'workspace', scopeKey: 'project-group', display: { t: 'plain', v: value },
+            displayState: { status: 'available', value }, archivedAt: null, createdAt: 1, updatedAt: 1,
+        });
+        storage.getState().commitSessionOrganizationOptimistic(record);
+        answerWrite = async (path, init) => {
+            const body = JSON.parse(String(init.body));
+            writes.push({ path, body });
+            if (path === '/v2/session-organization/appearances/bot') return Response.json({
+                appearance: body.display ? { sessionId: 'bot', display: body.display, updatedAt: 2 } : null,
+            });
+            if (path === '/v2/session-organization/labels') return Response.json({
+                label: { ...body, archivedAt: null, createdAt: 1, updatedAt: 2 },
+            });
+            throw new Error(`Unexpected organization write ${path}`);
+        };
+        const executor = createDefaultActionExecutor();
+        const context = { surface: 'agent' as const, authority: 'account_automation' as const, serverId };
+        for (const nextColor of [color, null]) {
+            expect(await executor.execute('session.organization.appearance.set', { sessionId: 'bot', color: nextColor }, context))
+                .toEqual({ ok: true, result: { status: 'applied' } });
+            expect(await executor.execute('projects.organization.color.set', { workspaceKey: 'project-group', color: nextColor }, context))
+                .toEqual({ ok: true, result: { status: 'applied' } });
+            const key = buildSessionOrganizationLabelKey({ serverId: organizationServerId, labelKind: 'workspace', scopeKey: 'project-group' });
+            expect(storage.getState().sessionOrganizationLabelsByLabelKey[key]?.display).toEqual({ t: 'plain', v: {
+                ...value, ...(nextColor ? { color: nextColor } : {}),
+            } });
+        }
+        expect(writes).toHaveLength(4);
+        expect(storage.getState().sessionOrganizationAppearancesBySessionKey[buildSessionOrganizationSessionKey(organizationServerId, 'bot')]).toBeUndefined();
+        const denied = await executor.execute('projects.organization.color.set', { workspaceKey: 'project-group', color, serverId: 'foreign-home' }, context);
+        expect(denied).toMatchObject({ ok: false, errorCode: 'server_target_mismatch' });
+        expect(writes).toHaveLength(4);
     });
 
     it('executes rail SessionActions through the same Account front door and can clear a demoted retained choice', async () => {

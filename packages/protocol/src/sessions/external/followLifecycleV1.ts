@@ -106,7 +106,7 @@ export type ExternalSessionsAutoLinkSourcePolicyIdentityV1 = Readonly<{
   sourcePolicyId: ExternalSessionsAutoLinkSourcePolicyIdV1;
 }>;
 
-const ExternalSessionsAutoLinkSourcePolicyIdentityV1Schema = lazyZodSchema(() => z.strictObject({
+export const ExternalSessionsAutoLinkSourcePolicyIdentityV1Schema = lazyZodSchema(() => z.strictObject({
   machineId: ExternalSessionsMachineIdV1Schema,
   qualifiedIdentity: LinkedExternalSessionQualifiedIdentityV1Schema,
   sourcePolicyId: ExternalSessionsAutoLinkSourcePolicyIdV1Schema,

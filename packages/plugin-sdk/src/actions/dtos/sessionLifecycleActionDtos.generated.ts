@@ -360,6 +360,12 @@ export type SessionLifecycleActionInputById = {
             kind: 'linked_workspace';
         } | undefined;
     };
+    readonly "session.handoff.prepare_target.resume": {
+        handoffId: string;
+        jobId: string;
+        expectedRevision: number;
+        attemptId: string;
+    };
     readonly "session.handoff.status.get": {
         [x: string]: unknown;
         handoffId: string;
@@ -2971,6 +2977,75 @@ export type SessionLifecycleActionResultById = {
             code: string;
             message: string;
         } | undefined;
+    };
+    readonly "session.handoff.prepare_target.resume": {
+        ok: false;
+        error: {
+            code: 'attempt_conflict' | 'identity_conflict' | 'internal_error' | 'invalid_request' | 'invalid_state' | 'not_found' | 'reconciliation_required' | 'stale_revision';
+            message: string;
+        };
+    } | {
+        ok: true;
+        handoffId: string;
+        jobId: string;
+        transitionRevision: number;
+        status: {
+            [x: string]: unknown;
+            handoffId: string;
+            status: 'aborted' | 'awaiting_recovery' | 'awaiting_user_resume' | 'completed' | 'failed' | 'in_progress' | 'pending' | 'ready_for_cutover' | 'reconciliation_required';
+            phase: 'cutover' | 'finalizing' | 'importing' | 'negotiating_transport' | 'preparing' | 'resuming' | 'staging_target' | 'transferring';
+            recoveryActions: readonly ('keep_stopped' | 'restart_on_source')[];
+            jobId?: string | undefined;
+            progress?: undefined | {
+                [x: string]: unknown;
+                updatedAtMs: number;
+                checkpoint: 'apply' | 'finalize' | 'import_session' | 'plan' | 'scan_source' | 'stage_target' | 'transfer_blobs';
+                planned: {
+                    [x: string]: unknown;
+                    totalFiles?: number | undefined;
+                    totalBytes?: number | undefined;
+                    added?: number | undefined;
+                    changed?: number | undefined;
+                    removed?: number | undefined;
+                };
+                transferred: {
+                    [x: string]: unknown;
+                    files?: number | undefined;
+                    bytes?: number | undefined;
+                    blobs?: number | undefined;
+                };
+                resumable: boolean;
+                applied?: undefined | {
+                    [x: string]: unknown;
+                    files?: number | undefined;
+                    bytes?: number | undefined;
+                };
+                remaining?: undefined | {
+                    [x: string]: unknown;
+                    files?: number | undefined;
+                    bytes?: number | undefined;
+                };
+                current?: undefined | {
+                    [x: string]: unknown;
+                    relativePath?: string | undefined;
+                    digest?: string | undefined;
+                    phaseDetail?: string | undefined;
+                };
+                warnings?: readonly ('blocking_divergence_detected' | 'problematic_source_entries' | 'resumed_existing_job')[] | undefined;
+            };
+            workspacePreflightSummary?: undefined | {
+                [x: string]: unknown;
+                addedPathsCount: number;
+                changedPathsCount: number;
+                removedPathsCount: number;
+                totalBytes?: number | undefined;
+            };
+            transportStrategy?: 'direct_peer' | 'server_routed_stream' | null | undefined;
+            failure?: undefined | {
+                code: 'agent_version_unsupported' | 'existing_session_state_unavailable' | 'existing_session_state_unsupported' | 'target_identity_conflict';
+                message?: string | undefined;
+            };
+        };
     };
     readonly "session.handoff.status.get": JsonValue;
     readonly "session.spawn_new": {

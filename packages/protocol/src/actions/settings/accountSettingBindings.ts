@@ -15,6 +15,8 @@ import { BackendTargetKeyV2InputSchema } from '../../backends/targets/backendTar
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import { buildScmGitRepoBackendPreferenceSettingsDelta, getFirstPartyScmBackendQualifiedId, getFirstPartyScmBackendLegacyLocalId, resolveScmGitRepoPreferredBackendId } from '../../scm/backendIdentity.js';
 import { ScmDiffAreaSchema } from '../../scm/workingSnapshot.js';
+import { ExternalSessionsAutoLinkSourcePolicyIdentityV1Schema, ExternalSessionsAutoLinkSourcePolicyV1Schema, readExternalSessionsSettingsV1,
+    removeExternalSessionsAutoLinkSourcePolicyV1, upsertExternalSessionsAutoLinkSourcePolicyV1 } from '../../sessions/external/followLifecycleV1.js';
 export * from './featurePreferenceMutations.js';
 export * from './glassPreferenceMutations.js';
 export * from './keyboardPreferenceMutations.js';
@@ -36,7 +38,7 @@ type CoupledSettings = Pick<AccountSettings, 'codingPromptBehaviorV1' | 'usageLi
     | 'sessionDefaultPermissionModeByTargetKey' | 'backendEnabledByTargetKey' | 'backendCliSourcePreferenceByTargetKey'
     | 'scmGitRepoPreferredBackend' | 'scmGitRepoPreferredBackendQualifiedId' | 'scmDefaultDiffModeByBackend'
     | 'toolViewDetailLevelByToolName' | 'toolViewExpandedDetailLevelByToolName'
-    | 'sessionIdleCompactionEnabledByTargetKey' | 'sessionIdleCompactionMinContextTokensByTargetKey' | 'sessionIdleCompactionCacheWindowOverrideMsByTargetKey'>;
+    | 'sessionIdleCompactionEnabledByTargetKey' | 'sessionIdleCompactionMinContextTokensByTargetKey' | 'sessionIdleCompactionCacheWindowOverrideMsByTargetKey' | 'externalSessionsSettingsV1'>;
 
 export type PortableAccountSettingBindingV1 = Readonly<{
     scope: 'account'; kind: 'owner'; access: 'read_write' | 'read_only' | 'sensitive';
@@ -57,6 +59,24 @@ export type PreparedPortableAccountSettingBindingV1 = PortableAccountSettingBind
 
 const boolean = (value: unknown) => typeof value === 'boolean' ? { success: true as const, value } : { success: false as const };
 const owner = { scope: 'account', kind: 'owner', access: 'read_write' } as const;
+const ExternalSessionsAutoLinkSourceIntentSchema = z.union([
+    ExternalSessionsAutoLinkSourcePolicyV1Schema, ExternalSessionsAutoLinkSourcePolicyIdentityV1Schema,
+]);
+/** Upsert one complete policy, or remove its exact identity, against the latest Account value. */
+export const externalSessionsAutoLinkSourceStorage: PortableAccountSettingBindingV1 = { ...owner,
+    read: settings => readExternalSessionsSettingsV1(settings.externalSessionsSettingsV1)?.autoLinkSourcePolicies ?? [],
+    parse: value => {
+        const parsed = ExternalSessionsAutoLinkSourceIntentSchema.safeParse(value);
+        return parsed.success ? { success: true, value: parsed.data } : { success: false };
+    },
+    mutate: (settings, value) => {
+        const parsed = ExternalSessionsAutoLinkSourceIntentSchema.safeParse(value);
+        if (!parsed.success) return null;
+        return { externalSessionsSettingsV1: 'enabledAtMs' in parsed.data
+            ? upsertExternalSessionsAutoLinkSourcePolicyV1(settings.externalSessionsSettingsV1, parsed.data)
+            : removeExternalSessionsAutoLinkSourcePolicyV1(settings.externalSessionsSettingsV1, parsed.data) };
+    },
+};
 export const scmGitRoutingStorage: PortableAccountSettingBindingV1 = { ...owner,
     read: settings => resolveScmGitRepoPreferredBackendId({ legacyPreference: settings.scmGitRepoPreferredBackend,
         qualifiedPreference: settings.scmGitRepoPreferredBackendQualifiedId }),
@@ -451,6 +471,7 @@ export function readPortableAccountSettingBindingV1(declaration: Readonly<{
     const storage = declaration.storage;
     const args: readonly unknown[] = Array.isArray(storage?.options) ? storage.options : [];
     switch (storage?.owner) {
+        case 'externalSessionsAutoLinkSourceStorage': return externalSessionsAutoLinkSourceStorage;
         case 'instructionsAgentEditsStorage': return instructionsAgentEditsStorage;
         case 'account.directConnections': return directConnectionsStorage;
         case 'profiles.defaultEnvironment.showFirst': return defaultEnvironmentShowFirstStorage;

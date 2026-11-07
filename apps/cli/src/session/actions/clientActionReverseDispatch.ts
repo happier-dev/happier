@@ -23,6 +23,7 @@ import { MOUNTED_BROWSER_DIAGNOSTICS_ACTION_IDS } from '@happier-dev/protocol/br
 import { createBrowserAutomationReverseDispatcher } from '@/daemon/browser/automation/reverseDispatch';
 import { isVoiceConversationActionId } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
 import { isSettingsDeclarationActionIdV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
+import { isSessionOrganizationAppearanceActionId } from '@happier-dev/protocol/actions/actionIds';
 
 export type ClientActionMachineRpc = Readonly<{
   hasConnectedClientRpcHandler(method: string): boolean;
@@ -67,6 +68,7 @@ export function createClientActionReverseDispatcher(
     // the invoking Agent's Session is in the background. View-specific Actions
     // still require the App viewing their exact Session, without fallback.
     const accountClientAction = isVoiceConversationActionId(actionId) || isSettingsDeclarationActionIdV1(actionId)
+      || isSessionOrganizationAppearanceActionId(actionId)
       || actionId === 'session.space_membership.set';
     const composerAction = actionId === 'ui.prompts.picker.open' || actionId === 'composer.transaction.apply'
       || actionId === 'composer.attachments.pick';

@@ -567,9 +567,9 @@ export const SESSION_LIFECYCLE_ACTION_SPECS = Object.freeze([
     surfaces: {
       ui: false,
       voice: false,
-      agent: false,
-      mcp: false,
-      cli: false,
+      agent: true,
+      mcp: true,
+      cli: true,
       rpc: true,
     },
     inputHints: {
@@ -653,9 +653,9 @@ export const SESSION_LIFECYCLE_ACTION_SPECS = Object.freeze([
     surfaces: {
       ui: false,
       voice: false,
-      agent: false,
-      mcp: false,
-      cli: false,
+      agent: true,
+      mcp: true,
+      cli: true,
       rpc: true,
       },
     inputHints: {

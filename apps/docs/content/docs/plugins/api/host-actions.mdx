@@ -13286,6 +13286,23 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `subdir` (text): Project subdirectory
 - `materialization` (json, required): Checkout choice
 
+## `projects.organization.color.set`
+
+**Set personal Project-group color** — Save or reset the personal Work Project-group color using its exact workspaceKey. A null color resets it; the private label and all other display fields are preserved by the organization owner.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
+
+### Input guidance
+
+- `workspaceKey` (text, required): Project-group workspace key
+- `color` (json, required): Named accent or custom hex color, or null to reset
+- `serverId` (text): Server Id
+- `clientId` (text): Client Id
+
 ## `projects.organization.update`
 
 **Update Project label** — Set or reset the private Project label at the reviewed organization row revision. A null label restores its baseline title; checkout labels and other organization fields are preserved.
@@ -18905,6 +18922,23 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `handoffTargetReplacementApprovalReceiptId` (text): Handoff Target Replacement Approval Receipt Id
 - `handoffTargetReplacementApprovalActionInput` (json): Handoff Target Replacement Approval Action Input
 
+## `session.handoff.prepare_target.resume`
+
+**Resume interrupted session handoff target preparation** — Explicitly continue one interrupted prepare-target job at its current durable revision.
+
+- Safety: `safe`; side effect: not classified.
+- Approval: `optional` result; `deferred` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `agent`, `mcp`, `cli`, `rpc`, `api`.
+
+### Input guidance
+
+- `handoffId` (text, required): Handoff id
+- `jobId` (text, required): Job id
+- `expectedRevision` (text, required): Expected revision
+- `attemptId` (text, required): Attempt id
+
 ## `session.handoff.status.get`
 
 **Get session handoff status** — Read scalar status for an in-progress session handoff.
@@ -18913,7 +18947,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `rpc`, `api`.
+- Also surfaced on: `agent`, `mcp`, `cli`, `rpc`, `api`.
 
 ### Input guidance
 
@@ -19288,6 +19322,23 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `intent` (text): Intent
 - `resumeRequest` (json): Resume Request
 - `destination` (json): Destination
+- `clientId` (text): Client Id
+
+## `session.organization.appearance.set`
+
+**Set personal Session color** — Save a personal Session color on the selected Home and Account, or reset it with null to reveal its Project-group color. Uses the existing encrypted organization appearance owner.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
+
+### Input guidance
+
+- `sessionId` (text, required): Session
+- `color` (json, required): Named accent or custom hex color, or null to reset
+- `serverId` (text): Server Id
 - `clientId` (text): Client Id
 
 ## `session.organization.move`

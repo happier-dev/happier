@@ -101,6 +101,35 @@ import { publishLocalDaemonStatus, readLocalDaemonSharedState } from '@/componen
 import type { LocalDaemonStatusData } from '@/components/settings/machines/localControl/useLocalDaemonControl';
 
 describe('personal list Settings approval defaults', () => {
+    it.each(['ui', 'agent', 'cli'] as const)('enables, updates and removes one auto-link source with the same Settings Action on %s', async surface => {
+        const identity = { machineId: 'machine-one', qualifiedIdentity: { v: 1 as const,
+            agent: { pluginId: 'happier.agent.codex', localId: 'codex' }, source: { kind: 'codexHome', contractVersion: 1 } },
+            sourcePolicyId: `es-source-policy:v1:${'d'.repeat(64)}` };
+        const sibling = { ...identity, machineId: 'machine-two' };
+        const owner = createOwner(undefined, true, true, settingsParse({ externalSessionsSettingsV1: {
+            v: 1, keepPassivelyFollowingAfterRestart: true,
+            autoLinkSourcePolicies: [{ ...sibling, enabledAtMs: 2 }],
+        } }));
+        const executor = throughActionExecutor(owner.action, () => owner.account().actionsSettingsV1);
+        const context = { surface, authority: 'present_user', bypassApprovals: true } as const;
+        for (const enabledAtMs of [10, 20]) {
+            expect(await executor.execute('settings.set', { anchor: 'externalSessions.autoLinkSources',
+                value: { ...identity, enabledAtMs } }, context)).toMatchObject({ ok: true, result: {
+                value: { ...identity, enabledAtMs },
+            } });
+            expect(await executor.execute('settings.get', { anchor: 'externalSessions.autoLinkSources' }, context))
+                .toMatchObject({ ok: true, result: { value: [{ ...sibling, enabledAtMs: 2 }, { ...identity, enabledAtMs }] } });
+            expect(owner.account().externalSessionsSettingsV1).toMatchObject({ keepPassivelyFollowingAfterRestart: true,
+                autoLinkSourcePolicies: [{ ...sibling, enabledAtMs: 2 }, { ...identity, enabledAtMs }] });
+        }
+        expect(await executor.execute('settings.set', { anchor: 'externalSessions.autoLinkSources', value: identity,
+            expectedSettingsVersion: 1 }, context)).toMatchObject({ ok: true });
+        expect(owner.account().externalSessionsSettingsV1).toMatchObject({ keepPassivelyFollowingAfterRestart: true,
+            autoLinkSourcePolicies: [{ ...sibling, enabledAtMs: 2 }] });
+        expect(await executor.execute('settings.set', { anchor: 'externalSessions.autoLinkSources', value: {
+            ...identity, enabled: true,
+        } }, context)).toMatchObject({ ok: false, errorCode: 'invalid_setting_value' });
+    });
     it('shares the opt-in status words preference through safe agent Actions and the Account writer', async () => {
         const owner = createOwner();
         const executor = throughActionExecutor(owner.action, () => owner.account().actionsSettingsV1);

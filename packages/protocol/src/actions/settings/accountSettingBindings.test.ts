@@ -12,6 +12,55 @@ function binding(owner: string, ...options: string[]) {
 }
 
 describe('portable coupled Account setting mutations', () => {
+    it('enables and updates one exact external auto-link source without replacing sibling policies or settings', () => {
+        const declaration = readBuiltInSettingDeclarationV1('externalSessions.autoLinkSources');
+        if (!declaration) throw new Error('Missing exact auto-link source declaration');
+        const identity = { machineId: 'machine-1', qualifiedIdentity: { v: 1 as const,
+            agent: { pluginId: 'happier.agent.codex', localId: 'codex' }, source: { kind: 'codexHome', contractVersion: 1 } },
+            sourcePolicyId: `es-source-policy:v1:${'a'.repeat(64)}` };
+        const sibling = { ...identity, machineId: 'machine-2', enabledAtMs: 2 };
+        const settings = accountSettingsParse({ externalSessionsSettingsV1: { v: 1, keepPassivelyFollowingAfterRestart: true,
+            autoLinkSourcePolicies: [sibling], futureNested: { revision: 2 } } });
+        const policy = { ...identity, enabledAtMs: 10 };
+        expect(parseBuiltInAccountSettingValueV1(declaration, policy)).toEqual({ success: true, value: policy });
+        const enabled = buildBuiltInAccountSettingMutationV1(declaration, settings, policy);
+        expect(enabled).toEqual({ externalSessionsSettingsV1: {
+            ...settings.externalSessionsSettingsV1, autoLinkSourcePolicies: [sibling, policy],
+        } });
+        const latest = accountSettingsParse({ ...settings, ...enabled });
+        const updated = { ...policy, enabledAtMs: 20 };
+        expect(buildBuiltInAccountSettingMutationV1(declaration, latest, updated)).toEqual({ externalSessionsSettingsV1: {
+            ...settings.externalSessionsSettingsV1, autoLinkSourcePolicies: [sibling, updated],
+        } });
+        expect(buildBuiltInAccountSettingMutationV1(declaration, latest, identity)).toEqual({ externalSessionsSettingsV1: {
+            ...settings.externalSessionsSettingsV1, autoLinkSourcePolicies: [sibling],
+        } });
+        for (const invalid of [{ ...policy, enabledAtMs: -1 }, { ...policy, enabledAtMs: 1.5 },
+            { ...policy, enabledAtMs: 'now' }, { ...policy, extra: true }]) {
+            expect(parseBuiltInAccountSettingValueV1(declaration, invalid)).toEqual({ success: false });
+            expect(buildBuiltInAccountSettingMutationV1(declaration, settings, invalid)).toBeNull();
+        }
+    });
+    it('removes only the exact external auto-link source through its declared owner', () => {
+        const declaration = readBuiltInSettingDeclarationV1('externalSessions.autoLinkSources');
+        expect(declaration).not.toBeNull();
+        if (!declaration) throw new Error('Missing exact auto-link source declaration');
+        const owner = readPortableAccountSettingBindingV1(declaration);
+        expect(owner).not.toBeNull();
+        if (!owner) throw new Error('Missing source-policy owner');
+        const identity = { machineId: 'machine-1', qualifiedIdentity: { v: 1 as const,
+            agent: { pluginId: 'happier.agent.codex', localId: 'codex' }, source: { kind: 'codexHome', contractVersion: 1 } },
+            sourcePolicyId: `es-source-policy:v1:${'a'.repeat(64)}` };
+        const sibling = { ...identity, machineId: 'machine-2' };
+        const settings = accountSettingsParse({ externalSessionsSettingsV1: { v: 1, keepPassivelyFollowingAfterRestart: true,
+            autoLinkSourcePolicies: [{ ...identity, enabledAtMs: 1 }, { ...sibling, enabledAtMs: 2 }] } });
+        expect(owner.parse(identity)).toEqual({ success: true, value: identity });
+        expect(owner.mutate(settings, identity)).toEqual({ externalSessionsSettingsV1: {
+            ...settings.externalSessionsSettingsV1, autoLinkSourcePolicies: [{ ...sibling, enabledAtMs: 2 }],
+        } });
+        expect(owner.parse({ ...identity, sourcePolicyId: 'not-a-policy' }).success).toBe(false);
+        expect(owner.parse({ ...identity, enabled: true }).success).toBe(false);
+    });
     it('writes one scalar layout and rejects the retired third layout', () => {
         const settings = accountSettingsParse({ sessionListLayoutV1: 'projects' });
         const declaration = readBuiltInSettingDeclarationV1('session.list.layout');

@@ -26,6 +26,32 @@ export type SessionOrganizationMoveActionInputById = {
         sortKey?: string | null | undefined;
         serverId?: string | undefined;
     };
+    readonly "session.organization.appearance.set": {
+        sessionId: string;
+        color: null | {
+            kind: 'accent';
+            key: 'blue' | 'green' | 'indigo' | 'orange' | 'purple' | 'red' | 'yellow';
+        } | {
+            kind: 'custom';
+            hex: string;
+        };
+        serverId?: string | undefined;
+    } & {
+        clientId?: string | undefined;
+    };
+    readonly "projects.organization.color.set": {
+        workspaceKey: string;
+        color: null | {
+            kind: 'accent';
+            key: 'blue' | 'green' | 'indigo' | 'orange' | 'purple' | 'red' | 'yellow';
+        } | {
+            kind: 'custom';
+            hex: string;
+        };
+        serverId?: string | undefined;
+    } & {
+        clientId?: string | undefined;
+    };
 };
 export type SessionOrganizationMoveActionResultById = {
     readonly "session.organization.move": {
@@ -47,5 +73,11 @@ export type SessionOrganizationMoveActionResultById = {
             listPinned: boolean;
             railPinned: boolean;
         } | null;
+    };
+    readonly "session.organization.appearance.set": {
+        status: 'applied';
+    };
+    readonly "projects.organization.color.set": {
+        status: 'applied';
     };
 };

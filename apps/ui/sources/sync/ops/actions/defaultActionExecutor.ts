@@ -227,7 +227,7 @@ import { isWorkflowHostAdmittedChildActionIdV1 } from '@happier-dev/protocol/act
 import { openSessionAuthoringDraft } from './sessionAuthoringOpenAction';
 import { setSessionSpaceMembership } from '../sessionOrganization/sessionSpaceMembership';
 import { invokeSessionListOrganizationAction } from '@/components/sessions/shell/drag/sessionListOrganizationAction';
-import { createSessionOrganizationMutationScopeForAccount, writeSessionOrganizationPin } from '@/sync/ops/sessionOrganization/sessionOrganizationMutationOwner';
+import { createSessionOrganizationMutationScopeForAccount, writeSessionOrganizationPin, writeSessionOrganizationAppearance, writeSessionOrganizationWorkspaceDisplay } from '@/sync/ops/sessionOrganization/sessionOrganizationMutationOwner';
 import { invokeSessionTerminalAction } from '@/components/sessions/terminal/sessionTerminalActions';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { serializeSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
@@ -2065,6 +2065,14 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         ...request,
         mutationScope: createSessionOrganizationMutationScopeForAccount(accountContext),
       });
+    },
+    sessionOrganizationAppearanceSet: async ({ input, signal }) => {
+      if (!accountContext) return { ok: false, errorCode: 'action_account_scope_unavailable', error: 'action_account_scope_unavailable' };
+      throwIfAborted(signal);
+      const scope = createSessionOrganizationMutationScopeForAccount(accountContext);
+      if ('sessionId' in input) await writeSessionOrganizationAppearance({ scope, sessionId: input.sessionId, color: input.color });
+      else await writeSessionOrganizationWorkspaceDisplay({ scope, workspaceKey: input.workspaceKey, patch: { color: input.color } });
+      return { status: 'applied' as const };
     },
     sessionOrganizationPinSet: async ({ sessionId, request, serverId, signal }) => {
       if (!accountContext) return { ok: false, errorCode: 'action_account_scope_unavailable', error: 'action_account_scope_unavailable' };

@@ -1,12 +1,10 @@
 import type { SessionOrganizationContentEnvelope } from '@happier-dev/protocol/sessions';
 import { parseAccentColorKey, type AccentColorKey } from '@/theme/accentColors';
+import type { SessionAppearanceColor } from '@happier-dev/protocol/sessions/organization/appearances';
+export type { SessionAppearanceColor } from '@happier-dev/protocol/sessions/organization/appearances';
 import { normalizeOpaqueThemeHexColor } from '@/theme/profiles/themeProfileColorValidation';
 import type { SessionOrganizationDisplayState } from './types';
 import { readSessionOrganizationDisplayRecord } from './displayRecord';
-
-export type SessionAppearanceColor =
-    | Readonly<{ kind: 'accent'; key: AccentColorKey }>
-    | Readonly<{ kind: 'custom'; hex: `#${string}` }>;
 
 const colorByDisplayRecord = new WeakMap<object, SessionAppearanceColor | null>();
 

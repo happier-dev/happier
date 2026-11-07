@@ -815,7 +815,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
   const { sessionModelUnarm, sessionModelSet } = createCliSessionModelActionDeps(params, { projectHomeId, resolveServerRequestHeaders });
   const agentCatalogDeps = createCliAgentCatalogActionDeps(params, { todoHomeBaseUrl });
   const { sessionOpen, sessionFork, sessionContinueWithReplay, sessionRollback, checkpointCodeRollback, sessionCheckpoint, sessionRestore, sessionContinuationInspect, sessionAgentTransition, sessionArchiveSet } = createCliSessionLifecycleActionDeps(params, { callMachineAction, callResolvedSessionRpc, normalizeStringValue, notSupported, readCurrentMachineControlIdentity, readTransportSessionOwnerMetadata, resolveServerRequestHeaders, resolveTransportForSession, resumeInactiveSessionTransport });
-  const { sessionHandoffTargetReplacementApprovalPreflight, sessionHandoffStart } = createCliSessionHandoffActionDeps(params, { callMachineAction, notSupported, resolveTransportForSession });
+  const { sessionHandoffTargetReplacementApprovalPreflight, sessionHandoffStart, sessionHandoffStatusGet, sessionHandoffPrepareTargetResume } = createCliSessionHandoffActionDeps(params, { callMachineAction, notSupported, resolveTransportForSession });
   const { sessionStatusGet, sessionWorkStateGet, sessionWaitIdle } = createCliSessionStatusActionDeps(params, { assertProjectRequesterCurrent, callMachineAction, callResolvedSessionRpc, executionRunActionFailure, homeAccountId, isSameActionHomeId, projectAccountAdmission, projectHomeId, projectRowsAuthority, readServerFeaturesSnapshot, resolveProjectHomeIdentity, resolveServerRequestHeaders, withProjectHome, machinesAgentsList: machineInventoryDeps.machinesAgentsList!, readHomeDomainAction: () => (readEffectiveDeps?.() ?? actionDeps).homeDomainAction });
   const workspaceSyncDeps = createCliWorkspaceSyncActionDeps(params, { actionHomeId, callMachineAction, normalizeStringValue, notSupported, projectHomeAdmission, projectHomeId, readProjectRows, readRecord, resolveProjectHomeIdentity });
 
@@ -1160,6 +1160,8 @@ export function createCliActionDeps(params: CliActionDepsParams,
     workspaceSyncConflictsList: workspaceSyncDeps.workspaceSyncConflictsList,
     workspaceSyncConflictInspect: workspaceSyncDeps.workspaceSyncConflictInspect,
     sessionHandoffStart,
+    sessionHandoffStatusGet,
+    sessionHandoffPrepareTargetResume,
     resolveAgentStartContext,
     ...spawnActionDeps,
     ...(artifactApprovalStore ?? {}),

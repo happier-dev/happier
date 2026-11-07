@@ -199,20 +199,20 @@ function entriesEqual<T>(a: readonly T[] | undefined, b: readonly T[]): boolean 
     return a.every((entry, index) => sameStrictJsonValue(entry, b[index]));
 }
 
-function replaceServerRecord<T>(
-    current: Record<string, T>,
+function replaceLabelsForServer(
+    current: Record<string, UiSessionOrganizationLabel>,
     serverId: string,
-    entries: Iterable<readonly [string, T]>,
-): Record<string, T> {
-    const next: Record<string, T> = {};
+    labels: readonly UiSessionOrganizationLabel[],
+): Record<string, UiSessionOrganizationLabel> {
+    const next: Record<string, UiSessionOrganizationLabel> = {};
     for (const [key, value] of Object.entries(current)) {
         if (!sessionOrganizationTupleKeyBelongsToServer(key, serverId)) {
             next[key] = value;
         }
     }
-    for (const [id, value] of entries) {
-        const key = buildSessionOrganizationServerKey(serverId, id);
-        next[key] = sameStrictJsonValue(current[key], value) ? current[key]! : value;
+    for (const label of labels) {
+        const key = buildSessionOrganizationLabelKey({ serverId, labelKind: label.labelKind, scopeKey: label.scopeKey });
+        next[key] = sameStrictJsonValue(current[key], label) ? current[key]! : label;
     }
     if (Object.keys(next).length !== Object.keys(current).length) return next;
     for (const [key, value] of Object.entries(next)) {
@@ -807,13 +807,10 @@ export function createSessionOrganizationDomain<S extends SessionOrganizationDom
                 );
                 const labels = options?.includeLabels === false
                     ? state.sessionOrganizationLabelsByLabelKey
-                    : replaceServerRecord(
+                    : replaceLabelsForServer(
                         state.sessionOrganizationLabelsByLabelKey,
                         serverId,
-                        uiSnapshot.labels.map((label) => [
-                            `${label.labelKind}:${label.scopeKey}`,
-                            label,
-                        ] as const),
+                        uiSnapshot.labels,
                     );
                 const orderEntries = replaceOrderEntries(
                     state.sessionOrganizationOrderEntriesByScopeKey,

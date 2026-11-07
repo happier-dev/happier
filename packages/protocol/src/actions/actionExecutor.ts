@@ -1,3 +1,4 @@
+import { dispatchSessionOrganizationAppearance } from './executor/session/organizationAppearance.js';
 import { BotTemplateActionIdV1Schema, BotTemplateActionOutputSchemasV1 } from '../bots/templates/botTemplateActionsV1.js';
 import { isScreenCaptureActionId } from './screenCaptureActionIds.js';
 import { executeSessionDelete } from './executor/session/delete.js';
@@ -5396,6 +5397,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           return completeActionResult(await deps.sessionOrganizationMove({ input: parsed.data,
             ...(ctx.signal ? { signal: ctx.signal } : {}) }));
         }
+
+        const appearanceResult = await dispatchSessionOrganizationAppearance({ actionId, admittedInput, deps, ctx,
+          sameHome: (left, right) => isSameHome(left, right, ctx) });
+        if (appearanceResult) return appearanceResult;
 
         if (actionId === 'session.organization.pin.set') {
           if (!deps.sessionOrganizationPinSet) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };

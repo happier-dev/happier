@@ -1676,6 +1676,10 @@ export type ActionExecutorDeps = Readonly<{
   projectsOpen?: (input: OpenProjectInputV1, context: ActionExecutorContext) => Promise<OpenProjectResultV1 | ActionApprovalRequestCreatedResult | ActionExecuteFailure>;
   workflowAuthoringAction?: (args: Readonly<{ actionId: WorkflowAuthoringActionId; input: unknown; context: ActionExecutorContext; signal?: AbortSignal }>) => Promise<unknown>;
   sessionOrganizationMove?: (args: Readonly<{ input: unknown; signal?: AbortSignal }>) => Promise<unknown>;
+  sessionOrganizationAppearanceSet?: (args: Readonly<{
+    input: import('../sessionOrganizationMoveAction.js').SessionOrganizationAppearanceActionInput;
+    signal?: AbortSignal;
+  }>) => Promise<Readonly<{ status: 'applied' }> | ActionExecuteFailure>;
   /** Authenticated Account HTTP mutation; rail admission uses current Session metadata in the host. */
   sessionOrganizationPinSet?: (args: Readonly<{
     context: ActionExecutorContext;
@@ -1780,11 +1784,11 @@ export type ActionExecutorDeps = Readonly<{
     | Readonly<{ type: 'error'; result: ActionExecuteResult }>
   >;
   sessionHandoffPrepareTarget?: (args: SessionHandoffPrepareTargetRequest) => Promise<unknown>;
-  sessionHandoffPrepareTargetResume?: (args: SessionHandoffPrepareTargetResumeRequest) => Promise<unknown>;
+  sessionHandoffPrepareTargetResume?: (args: SessionHandoffPrepareTargetResumeRequest, context: ActionExecutorContext) => Promise<unknown>;
   sessionHandoffPrepareTargetResultGet?: (args: SessionHandoffPrepareTargetResultGetRequest) => Promise<unknown>;
   sessionHandoffCommit?: (args: SessionHandoffCommitRequest) => Promise<unknown>;
   sessionHandoffAbort?: (args: SessionHandoffAbortRequest) => Promise<unknown>;
-  sessionHandoffStatusGet?: (args: SessionHandoffStatusGetRequest) => Promise<unknown>;
+  sessionHandoffStatusGet?: (args: SessionHandoffStatusGetRequest, context: ActionExecutorContext) => Promise<unknown>;
   workspaceSyncConflictResolve?: (args: Readonly<{
     actionReceiptId: string;
     input: WorkspaceSyncConflictResolveActionInputV1;

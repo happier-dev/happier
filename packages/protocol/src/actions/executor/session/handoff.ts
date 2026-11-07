@@ -62,7 +62,7 @@ export async function dispatchSessionHandoff(inv: Pick<CoreInvocation, 'actionId
           if (!deps.sessionHandoffPrepareTargetResume) {
             return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.handoff.prepare_target.resume' };
           }
-          const res = await deps.sessionHandoffPrepareTargetResume(parsed.data as SessionHandoffPrepareTargetResumeRequest);
+          const res = await deps.sessionHandoffPrepareTargetResume(parsed.data as SessionHandoffPrepareTargetResumeRequest, ctx);
           return completeActionResult(res);
         }
 
@@ -94,7 +94,7 @@ export async function dispatchSessionHandoff(inv: Pick<CoreInvocation, 'actionId
           if (!deps.sessionHandoffStatusGet) {
             return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.handoff.status.get' };
           }
-          const res = await deps.sessionHandoffStatusGet(parsed.data as SessionHandoffStatusGetRequest);
+          const res = await deps.sessionHandoffStatusGet(parsed.data as SessionHandoffStatusGetRequest, ctx);
           return completeActionResult(res);
         }
   return null;

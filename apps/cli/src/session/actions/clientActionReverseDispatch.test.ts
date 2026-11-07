@@ -22,6 +22,22 @@ const disconnectedClient: ClientActionMachineRpc = {
 };
 
 describe('client Action reverse delivery', () => {
+  it.each([
+    { actionId: 'session.organization.appearance.set', input: { sessionId: 'target-session', color: null } },
+    { actionId: 'projects.organization.color.set', input: { workspaceKey: 'project-group', color: null } },
+  ] as const)('routes saved personal color $actionId to the Account client while the invoking Session is backgrounded', async ({ actionId, input }) => {
+    const dispatch = createClientActionReverseDispatcher(() => ({
+      hasConnectedClientRpcHandler: method => method === RPC_METHODS.UI_ACTION_EXECUTE,
+      callConnectedClientRpc: async (method, _payload, options) => {
+        if (method !== RPC_METHODS.UI_ACTION_EXECUTE) return { ok: false, errorCode: RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE };
+        options.onIssued();
+        return { ok: true, result: { v: 1, execution: { ok: true, result: { status: 'applied' } } } };
+      },
+    }));
+    expect(await dispatch({ actionId, input,
+      context: { surface: 'agent', authority: 'account_automation', defaultSessionId: 'background-agent' } }))
+      .toEqual({ ok: true, result: { status: 'applied' } });
+  });
   it.each(['agent', 'mcp', 'cli'] as const)('routes a named dashboard from %s to the answering App while the caller Session is in the background', async surface => {
     const input = WidgetInstanceActionInputSchemasV1['widgets.area.layout.select'].parse({ surface: {
       serverId: 'home', accountId: 'viewer', owner: { kind: 'corePage', pageId: 'usage', area: 'main', layoutId: 'costs' },

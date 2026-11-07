@@ -502,6 +502,18 @@ Agent's OS-user permissions.
 ## HTTP endpoints by area
 See `api.md` for the full HTTP endpoint catalog and auth flows.
 
+## Personal organization color Actions (0.3 development)
+
+The client-placed `session.organization.appearance.set` and
+`projects.organization.color.set` Actions expose saved personal colors to agents,
+MCP and CLI through the same captured Account mutation owner. They accept a named
+accent or an opaque hex color normalized by the existing theme color owner;
+`color: null` resets the override. The
+Project-group intent uses its existing `workspaceKey` and merges only color,
+preserving its label and other display fields. Both need a connected signed-in
+client; they retain the existing display-envelope encryption and HTTP contracts.
+
+
 ## Sequencing and concurrency
 - `UpdatePayload.seq` is the per-user update sequence (monotonic) used for sync ordering.
 - Sessions, machines, and artifacts have their own `seq` fields used by clients for ordering.

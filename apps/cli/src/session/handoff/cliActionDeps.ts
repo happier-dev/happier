@@ -8,7 +8,8 @@ import type { resolveSessionTransportContext } from '@/session/services/resolveS
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import type { CliMachineActionCall } from '@/session/actions/cliActionDeps/machineTransport';
-type FamilyActionDeps = Pick<ActionExecutorDeps, 'sessionHandoffTargetReplacementApprovalPreflight' | 'sessionHandoffStart'>;
+type FamilyActionDeps = Pick<ActionExecutorDeps, 'sessionHandoffTargetReplacementApprovalPreflight' | 'sessionHandoffStart'
+  | 'sessionHandoffStatusGet' | 'sessionHandoffPrepareTargetResume'>;
 
 export function createCliSessionHandoffActionDeps(
   params: CliActionDepsParams,
@@ -23,7 +24,18 @@ export function createCliSessionHandoffActionDeps(
   }>>;
   }>,
 ): FamilyActionDeps {
+  const requestRecovery = (actionId: ActionId, method: string, request: unknown, context: ActionExecutorContext): Promise<unknown> => {
+    if (!params.credentials) return notSupported();
+    const target = context.externalActionTarget;
+    if (target?.kind !== 'machine') return Promise.resolve({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' });
+    return callMachineAction({ machineId: target.machineId, method, request, context,
+      effectActionId: actionId, exactMachine: true, ...(context.serverId ? { serverId: context.serverId } : {}),
+      ...(context.signal ? { signal: context.signal } : {}) });
+  };
   return {
+    // Recovery addresses the retained job on its admitted target, independently of the source Session.
+    sessionHandoffStatusGet: (input, context) => requestRecovery('session.handoff.status.get', RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3, input, context),
+    sessionHandoffPrepareTargetResume: (input, context) => requestRecovery('session.handoff.prepare_target.resume', RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESUME_V3, input, context),
     // One destination-approval preflight for both destination-choosing Action
     // families. Handoff expresses its intent through a workspace action; direct
     // Project linking has no Session and states its intent and mode explicitly.

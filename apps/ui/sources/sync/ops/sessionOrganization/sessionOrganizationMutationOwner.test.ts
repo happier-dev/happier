@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { SessionFolderV1, SessionFoldersV1 } from '@/sync/domains/session/folders';
+import { storage as hydratedStorage } from '@/sync/domains/state/storage';
+import { buildSessionOrganizationLabelKey } from '@/sync/domains/session/organization/keys';
+import { writeSessionOrganizationWorkspaceDisplay as writeHydratedWorkspaceDisplay } from './sessionOrganizationMutationOwner';
 
 const mocks = vi.hoisted(() => ({
     deleteSessionOrganizationFolder: vi.fn(),
@@ -71,6 +74,37 @@ function folders(...entries: SessionFolderV1[]): SessionFoldersV1 {
 }
 
 describe('sessionOrganizationMutationOwner', () => {
+    it('resets workspace colours after snapshot hydration while retaining names and unknown fields', async () => {
+        const serverId = 'workspace-hydrated-home';
+        const color = { kind: 'custom', hex: '#123456' } as const;
+        const namedDisplay = { label: 'Retained name', color, future: { retained: true } };
+        hydratedStorage.getState().applySessionOrganizationSnapshot(serverId, {
+            schemaVersion: 1, version: 1, pins: [], folders: [], folderAssignments: [], tags: [], tagAssignments: [], orderEntries: [],
+            labels: [
+                { labelKind: 'workspace', scopeKey: 'colour-only', display: { t: 'plain', v: { color } }, archivedAt: null, createdAt: 1, updatedAt: 1 },
+                { labelKind: 'workspace', scopeKey: 'named', display: { t: 'plain', v: namedDisplay }, archivedAt: null, createdAt: 1, updatedAt: 1 },
+            ],
+        });
+        mocks.deleteSessionOrganizationLabel.mockResolvedValue({ labelKind: 'workspace', scopeKey: 'colour-only', archived: true });
+        mocks.upsertSessionOrganizationLabel.mockImplementation(async ({ request }) => ({ label: {
+            ...request, archivedAt: null, createdAt: 1, updatedAt: 2,
+        } }));
+        const scope = { credentials, serverId, serverIdAliases: [], serverUrl: 'https://home.example' };
+        await writeHydratedWorkspaceDisplay({ scope, workspaceKey: 'colour-only', patch: { color: null } });
+        await writeHydratedWorkspaceDisplay({ scope, workspaceKey: 'named', patch: { color: null } });
+        expect(mocks.deleteSessionOrganizationLabel).toHaveBeenCalledWith(expect.objectContaining({ request: {
+            labelKind: 'workspace', scopeKey: 'colour-only',
+        } }));
+        expect(mocks.upsertSessionOrganizationLabel).toHaveBeenCalledWith(expect.objectContaining({ request: {
+            labelKind: 'workspace', scopeKey: 'named', display: { t: 'plain', v: { label: 'Retained name', future: { retained: true } } },
+        } }));
+        const labels = hydratedStorage.getState().sessionOrganizationLabelsByLabelKey;
+        expect(labels[buildSessionOrganizationLabelKey({ serverId, labelKind: 'workspace', scopeKey: 'colour-only' })]).toBeUndefined();
+        expect(labels[buildSessionOrganizationLabelKey({ serverId, labelKind: 'workspace', scopeKey: 'named' })]?.displayState).toEqual({
+            status: 'available', value: { label: 'Retained name', future: { retained: true } },
+        });
+    }, 120_000);
+
     it('merges concurrent workspace name and colour intents, suppresses equal writes, and deletes only both empty', async () => {
         const { storage } = await import('@/sync/domains/state/storage');
         const { writeSessionOrganizationWorkspaceDisplay } = await import('./sessionOrganizationMutationOwner');
