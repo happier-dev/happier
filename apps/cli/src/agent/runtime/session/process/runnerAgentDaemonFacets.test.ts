@@ -532,10 +532,7 @@ describe('runner Agent daemon facet adapters', () => {
     expect(voice?.resolveConversation({
       provider: voiceProvider,
       runtime: {
-        send: vi.fn(),
-        watch: vi.fn(),
-        dispose: vi.fn(),
-        realtimeConversation: conversation,
+        readAgentSessionRealtimeConversation: () => conversation,
       },
     })).toMatchObject({ conversation });
 
@@ -1290,9 +1287,9 @@ describe('runner Agent daemon facet adapters', () => {
       deadlineAtMs: admissionDeadlineAtMs,
     }));
     expect(readAfterTranscript).not.toHaveBeenCalled();
-    expect(providerSignal?.aborted).toBe(false);
-    caller.abort(new Error('caller retired follow'));
+    expect(caller.signal.aborted).toBe(false);
     expect(providerSignal?.aborted).toBe(true);
+    caller.abort(new Error('caller retired follow'));
     await facets.dispose();
   });
 
@@ -1653,12 +1650,13 @@ describe('runner Agent daemon facet adapters', () => {
     await facets.dispose();
   });
 
-  it('bounds close transport to six seconds and retirement retries the same follow id once', async () => {
+  it('joins physical close settlement and retirement retries the same follow id after failure', async () => {
     vi.useFakeTimers();
     try {
       const closeFollowIds: string[] = [];
       const closeTimeouts: Array<number | null | undefined> = [];
       let closeCount = 0;
+      let finishClose!: () => void;
       const dispatch = vi.fn(async (input): Promise<
         AgentRuntimeDaemonServiceResponseV1
       > => {
@@ -1695,11 +1693,12 @@ describe('runner Agent daemon facet adapters', () => {
           closeCount += 1;
           closeFollowIds.push(request.operation.followId);
           closeTimeouts.push(input.timeoutMs);
+          const attempt = closeCount;
           return await new Promise<AgentRuntimeDaemonServiceResponseV1>(
             (resolve) => {
-              setTimeout(() => {
+              finishClose = () => {
                 resolve(
-                  closeCount === 1
+                  attempt === 1
                     ? {
                         ok: false,
                         error: {
@@ -1715,7 +1714,7 @@ describe('runner Agent daemon facet adapters', () => {
                         },
                       },
                 );
-              }, input.timeoutMs ?? 300_000);
+              };
             },
           );
         }
@@ -1756,18 +1755,18 @@ describe('runner Agent daemon facet adapters', () => {
         retirementOutcome = 'resolved';
       });
 
-      await vi.advanceTimersByTimeAsync(5_999);
+      await vi.advanceTimersByTimeAsync(6_001);
       expect(explicitOutcome).toBe('pending');
       expect(retirementOutcome).toBe('pending');
-      await vi.advanceTimersByTimeAsync(1);
+      finishClose();
       await explicitClose;
       expect(explicitOutcome).toBe('rejected');
       expect(retirementOutcome).toBe('pending');
       expect(closeFollowIds).toHaveLength(2);
-      await vi.advanceTimersByTimeAsync(6_000);
+      finishClose();
       await retirement;
       expect(retirementOutcome).toBe('resolved');
-      expect(closeTimeouts).toEqual([6_000, 6_000]);
+      expect(closeTimeouts).toEqual([null, null]);
       expect(new Set(closeFollowIds).size).toBe(1);
       expect(closeCount).toBe(2);
       await facets.dispose();

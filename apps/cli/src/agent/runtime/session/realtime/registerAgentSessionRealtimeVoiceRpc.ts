@@ -5,6 +5,7 @@ import {
   type AgentSessionRealtimeStopResult,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { raceWithTimeout } from '@happier-dev/plugin-sdk/async';
+import { randomUUID } from 'node:crypto';
 import { AgentSessionRealtimeInspectRequestV1Schema, AgentSessionRealtimeStartRequestV1Schema, AgentSessionRealtimeStartResultV1Schema, AgentSessionRealtimeStopRequestV1Schema, AgentSessionRealtimeWatchRequestV1Schema } from '@happier-dev/protocol/voice/realtime/agentSession';
 import type { PluginContributionIdentityV1, VoiceProviderContribution } from '@happier-dev/protocol';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -12,6 +13,9 @@ import { HAPPIER_ACTION_DISCOVERY_GUIDANCE_V1 } from '@happier-dev/protocol/prom
 
 import type { RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
 import type { VoicePromptPreparation } from '@/agent/voice/agent/voiceAgentTypes';
+import type { NativeRealtimeInputAdmissionV1 } from '../process/agentRuntimeDaemonServiceTurnWitness';
+
+type NativeInputAdmission = Readonly<{ dispose(): Promise<void> }>;
 
 type ConversationDeclaration = Extract<
   VoiceProviderContribution,
@@ -36,6 +40,7 @@ type Attempt = {
   }> | null;
   disposed: boolean;
   cleanupPromise: Promise<AgentSessionRealtimeStopResult | null> | null;
+  inputAdmission: NativeInputAdmission | null;
 };
 
 type PendingAttempt = {
@@ -224,6 +229,12 @@ export function registerAgentSessionRealtimeVoiceRpc(input: Readonly<{
   resolvePromptPreparation?: (input: Readonly<{ sessionId: string; signal?: AbortSignal }>) => Promise<VoicePromptPreparation>;
   ownerId: string;
   agentGeneration: string;
+  admitNativeInput?: (input: Readonly<{
+    conversation: AgentSessionRealtimeConversation;
+    admission: NativeRealtimeInputAdmissionV1;
+    sessionId: string;
+    signal: AbortSignal;
+  }>) => Promise<NativeInputAdmission>;
   isOccurrenceCurrent: (provider: PluginContributionIdentityV1) => boolean;
   resolveProviderOccurrenceId: (
     provider: PluginContributionIdentityV1,
@@ -283,22 +294,29 @@ export function registerAgentSessionRealtimeVoiceRpc(input: Readonly<{
     }>,
   ): Promise<AgentSessionRealtimeStopResult | null> => {
     if (attempt.cleanupPromise) return attempt.cleanupPromise;
-    attempt.cleanupPromise = (async () => {
-      if (options.stop === 'best_effort') {
-        attempt.disposed = true;
-        return await retireHandleBestEffort(attempt.handle);
-      }
+    // Withdrawal starts synchronously, before waiting for native transport cleanup.
+    const withdrawal = (async () => { await attempt.inputAdmission?.dispose(); })();
+    // A daemon reply cannot postpone microphone/transport Stop. Schedule native
+    // cleanup after publishing cleanupPromise so synchronous terminal events join it.
+    const cleanup = Promise.resolve().then(async () => {
       attempt.disposed = true;
       try {
-        return options.stop === 'required'
+        return options.stop === 'best_effort'
+          ? await retireHandleBestEffort(attempt.handle)
+          : options.stop === 'required'
           ? await Promise.resolve().then(() => attempt.handle.stop())
           : null;
       } finally {
-        await Promise.resolve()
+        if (options.stop !== 'best_effort') await Promise.resolve()
           .then(() => attempt.handle.dispose())
           .catch(() => undefined);
       }
-    })();
+    });
+    attempt.cleanupPromise = Promise.allSettled([cleanup, withdrawal]).then(([stopped, withdrawn]) => {
+      if (stopped.status === 'rejected') throw stopped.reason;
+      if (withdrawn.status === 'rejected') throw withdrawn.reason;
+      return stopped.value;
+    });
     return attempt.cleanupPromise;
   };
   const finishAttempt = (
@@ -458,6 +476,7 @@ export function registerAgentSessionRealtimeVoiceRpc(input: Readonly<{
           ])
         : pendingAttempt.abortController.signal;
       const startOptions = optionsFor(context, startSignal);
+      let pendingInputAdmission: NativeInputAdmission | null = null;
       try {
         let preparation: VoicePromptPreparation | undefined;
         try {
@@ -473,6 +492,17 @@ export function registerAgentSessionRealtimeVoiceRpc(input: Readonly<{
         if (pendingAttempt.stopRequested || startOptions.signal?.aborted || input.getHappierSessionId() !== happierSessionId
           || !input.isOccurrenceCurrent(parsed.data.provider)) {
           return { ok: true as const, status: 'aborted' as const };
+        }
+        if (input.admitNativeInput) {
+          try {
+            pendingInputAdmission = await input.admitNativeInput({ conversation: resolved.conversation, sessionId: happierSessionId, signal: startSignal,
+              admission: { admissionId: randomUUID(), occurrenceId: input.ownerId, attemptId: parsed.data.applicationAttemptId } });
+          } catch {
+            if (pendingAttempt.stopRequested || startOptions.signal?.aborted) return { ok: true as const, status: 'aborted' as const };
+            return unavailable('agent_realtime_input_admission_unavailable', 'Native Realtime input admission is unavailable.');
+          }
+          if (pendingAttempt.stopRequested || startOptions.signal?.aborted || input.getHappierSessionId() !== happierSessionId
+            || !input.isOccurrenceCurrent(parsed.data.provider)) return { ok: true as const, status: 'aborted' as const };
         }
         let started;
         try {
@@ -552,7 +582,9 @@ export function registerAgentSessionRealtimeVoiceRpc(input: Readonly<{
           retirementSubscription: null,
           disposed: false,
           cleanupPromise: null,
+          inputAdmission: pendingInputAdmission,
         };
+        pendingInputAdmission = null;
         attempts.set(authorityKey, attempt);
         let subscription;
         try {
@@ -561,7 +593,7 @@ export function registerAgentSessionRealtimeVoiceRpc(input: Readonly<{
           });
         } catch {
           attempts.delete(authorityKey);
-          await retireHandleBestEffort(started.handle);
+          await ensureAttemptCleanup(attempt, { stop: 'best_effort' });
           return unavailable(
             'agent_realtime_watch_failed',
             'Agent realtime watch failed.',
@@ -604,6 +636,7 @@ export function registerAgentSessionRealtimeVoiceRpc(input: Readonly<{
           ...startResponse.data,
         };
       } finally {
+        await pendingInputAdmission?.dispose();
         if (pendingAttempts.get(authorityKey) === pendingAttempt) {
           pendingAttempts.delete(authorityKey);
         }

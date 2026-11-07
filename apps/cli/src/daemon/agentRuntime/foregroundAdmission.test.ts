@@ -147,6 +147,41 @@ function claimRequest(
 }
 
 describe('foreground Agent runtime admission', () => {
+  it('retains one native input only in the current authenticated foreground authority', async () => {
+    const retirement = new AbortController();
+    const capability = 'R'.repeat(43);
+    const owner = createForegroundAgentRuntimeAdmissionOwner({
+      prepare: async () => ({ ok: true, prepared: createPrepared(async () => undefined, retirement,
+        async () => ({ ok: true, environment: {}, unsetEnvironmentVariableNames: [], sensitiveEnvironmentVariableNames: [],
+          invocationContext: invocationContext({}), authority: { ...claimAuthority(),
+            capabilityDigest: hashAgentRuntimeSessionBridgeToken(capability) } })) }),
+      isProcessAlive: () => true,
+    });
+    try {
+      await owner.admit(admissionRequest);
+      await owner.claimEnvironment(claimRequest());
+      const request: AgentRuntimeDaemonServiceRequestV1 = { v: 1, context: { token: capability, sessionId: 'session-1' },
+        operation: { kind: 'native_realtime.input.admit', admission: { admissionId: 'native-input', occurrenceId: 'occurrence', attemptId: 'attempt' } } };
+      const subject = owner.authorizeDaemonServiceRequest({ request, providedCapability: capability });
+      expect(subject).not.toBeNull();
+      if (!subject || request.operation.kind !== 'native_realtime.input.admit') throw new Error('Missing native subject');
+      const admission = request.operation.admission;
+      expect(subject.readNativeRealtimeAdmission()).toBeNull();
+      expect(subject.admitNativeRealtimeInput(admission)).toBe(true);
+      expect(subject.admitNativeRealtimeInput(admission)).toBe(true);
+      expect(subject.admitNativeRealtimeInput({ ...admission, attemptId: 'another-attempt' })).toBe(false);
+      subject.retireNativeRealtimeInput({ ...admission, attemptId: 'another-attempt' });
+      expect(subject.readNativeRealtimeAdmission()).toEqual(admission);
+      expect(subject.readAdmission()).toBeNull();
+      subject.retireNativeRealtimeInput(admission);
+      expect(subject.readNativeRealtimeAdmission()).toBeNull();
+      expect(subject.admitNativeRealtimeInput(admission)).toBe(true);
+      retirement.abort();
+      expect(subject.readNativeRealtimeAdmission()).toBeNull();
+      expect(subject.admitNativeRealtimeInput(admission)).toBe(false);
+      expect(owner.authorizeDaemonServiceRequest({ request, providedCapability: capability })).toBeNull();
+    } finally { await owner.dispose(); }
+  });
   it('reports only the current claimed foreground Session for approval replay', async () => {
     const retirement = new AbortController();
     let generationCurrent = true;

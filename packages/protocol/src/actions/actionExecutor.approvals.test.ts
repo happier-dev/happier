@@ -2,14 +2,15 @@ import { describe, expect, it, vi } from 'vitest';
 import { isDeepStrictEqual } from 'node:util';
 import tweetnacl from 'tweetnacl';
 
-import { ApprovalRequestSchema, ApprovalRequestPublicSettlementSchema, ApprovalRequestV1Schema, ApprovalRequestV2Schema, requiresExactDaemonApprovalReplay, type ApprovalRequest, type ApprovalRequestV1, type ApprovalRequestV2 } from '../approvals/approvalRequestV1.js';
+import { ApprovalRequestSchema, ApprovalRequestPublicSettlementSchema, ApprovalRequestV1Schema, ApprovalRequestV2Schema, StoredApprovalRequestSchema, type ApprovalRequest, type ApprovalRequestV1, type ApprovalRequestV2 } from '../approvals/approvalRequestV1.js';
+import { resolveApprovalExecutor } from '../approvals/resolveApprovalExecutor.js';
 import { readLiveCliApprovalOriginScope } from '../approvals/liveCliOrigin.js';
 import { getActionSpec } from './actionSpecs.js';
-import { ActionIdSchema } from './actionIds.js';
 import { buildApprovalExecutionOriginV1, createActionExecutor, type ActionExecutorDeps, type ActionExecutorContext } from './actionExecutor.js';
 import { computeExternalActionRequestEnvelopeDigestV1 } from './externalActionExecutionAuthorization.js';
 import type { ExternalActionExecutionAuthorizationV1 } from './externalActionApi.js';
 import { isApprovalRequiredByActionsSettings, requiresAgentEgressRedaction } from './actionApprovalPolicy.js';
+import { resolveApprovalRequestApproveAdmission } from './actionApprovalPresentation.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { API_TOKEN_FULL_GRANT_V1 } from '../auth/apiTokenGrant.js';
 import { createWorkflowTriggerActions } from './executor/workflowTriggerActions.js';
@@ -24,8 +25,64 @@ import { createWidgetDefinitionArtifactPortV1 } from '../widgets/widgetDefinitio
 import { createBlockingApprovalCoordinator } from './blockingApprovalCoordinator.js';
 import { signExternalActionApprovalInputV1, verifyExternalActionApprovalInputV1 } from './externalActionExecutionAuthorization.js';
 import { computeActionInputApprovalDigestV1 } from './decisionAuthority.js';
+import { MachineServiceLogsResourceContinuationV1Schema } from '../daemon/machineServiceLogsResource.js';
+import { RPC_METHODS } from '../rpc/methods.js';
+import { createDeploymentApprovalScopeResolverV1 } from '../deployments/deploymentApprovalScopeV1.js';
+import { DeploymentEnvironmentGetResultV1Schema } from '../deployments/deploymentActionsV1.js';
 
 const defaultActionsSettings = ActionsSettingsV1Schema.parse({ v: 1 });
+
+it.each(['approve', 'cancel', 'replay'] as const)('keeps retired Publish approval history readable without executing its %s decision', async decision => {
+  // Historical PUBLISH-REMOVE-1106 V2 wire shape, before the combined Action and
+  // its operation:publish admission were withdrawn. No current writer emits it.
+  const actionArgs = { serverId: 'home', requestKey: 'historical-publish', hostMachineId: 'machine',
+    project: { kind: 'existing', projectSourceId: 'source', sourceRevision: 1 },
+    definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` },
+    destination: { kind: 'ownServer', controllerMachineId: 'machine', buildMachineId: 'machine',
+      machines: [{ machineId: 'machine', installationId: 'installation' }] },
+    environment: { kind: 'existing', environmentId: 'environment', expectedRevision: 1 } };
+  const target = { kind: 'machine' as const, machineId: 'machine' };
+  const originalActionEnvelope = { v: 1 as const, requestId: 'historical-publish', target, input: actionArgs };
+  const historical = { v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+    createdBy: { surface: 'cli' }, requestedSurface: 'cli', actionId: 'deployments.publish', actionArgs, summary: 'Publish app',
+    executionOriginV1: { v: 1, authority: 'present_user', surface: 'cli', caller: { kind: 'host' },
+      serverId: 'home', serverIdentityId: 'home', accountId: 'owner', machineId: 'machine', target,
+      actionId: 'deployments.publish', requestId: 'historical-publish', originalActionEnvelope,
+      externalActionInputSignature: 's'.repeat(86),
+      externalActionExecutionAuthorization: { v: 1, token: 'historical-private-token', binding: {
+        accountId: 'owner', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 0 },
+        accountEncryptionMode: 'plain', serverIdentityId: 'home', machineId: 'machine', installationId: 'installation',
+        actionId: 'deployments.publish', requestId: 'historical-publish', target,
+        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(originalActionEnvelope),
+        deploymentPreparationAdmission: { operation: 'publish', source: { id: 'source', revision: 1 },
+          environment: { id: 'environment', revision: 1 },
+          candidate: { contentArtifactId: 'candidate', contentHeaderVersion: 1, contentBodyVersion: 1 } },
+      } } } };
+  const stored = StoredApprovalRequestSchema.parse(JSON.parse(JSON.stringify(historical)));
+  expect(stored).toEqual(historical);
+  expect(ApprovalRequestV2Schema.safeParse(historical).success).toBe(false);
+  expect(resolveApprovalExecutor(stored)).toEqual({ kind: 'unavailable', reason: 'invalid_input' });
+  expect(resolveApprovalRequestApproveAdmission(stored)).toMatchObject({ status: 'unavailable', reason: 'legacy_request' });
+  let row: unknown = decision === 'replay'
+    ? { ...historical, status: 'approved', decision: { kind: 'approve', decidedAtMs: 2 }, updatedAtMs: 2 }
+    : historical;
+  const deploymentAction = vi.fn<NonNullable<ActionExecutorDeps['deploymentAction']>>();
+  const executor = createExecutor({ deploymentAction, approvalsGet: async () => row,
+    approvalsUpdate: async ({ request }) => { row = JSON.parse(JSON.stringify(request)); return { ok: true }; } });
+  const read = await executor.execute('approval.request.get', { artifactId: 'historical-publish' }, { surface: 'cli' });
+  expect(read).toMatchObject({ ok: true, result: { request: { v: 2, actionId: 'deployments.publish', actionArgs } } });
+  for (const privateField of ['historical-private-token', 'externalActionExecutionAuthorization', 'originalActionEnvelope', 'externalActionInputSignature']) {
+    expect(JSON.stringify(read)).not.toContain(privateField);
+  }
+  const result = decision === 'replay'
+    ? await executor.replayApprovedApprovalRequest({ artifactId: 'historical-publish', callerAuthority: 'present_user' })
+    : await executor.execute('approval.request.decide', { artifactId: 'historical-publish', decision });
+  expect(result).toMatchObject(decision !== 'cancel'
+    ? { ok: false, errorCode: 'approval_stale' }
+    : { ok: true, result: { status: 'canceled' } });
+  expect(deploymentAction).not.toHaveBeenCalled();
+  expect(StoredApprovalRequestSchema.parse(row)).toMatchObject({ v: 2, actionId: 'deployments.publish' });
+});
 const securityTokenSummary = {
   tokenId: 'dd03e74b-4aae-4a0a-81ee-1c23ddc4525d', label: 'Requested embed', displayPrefix: 'hap_v1_dd03e74b',
   createdAt: '2026-10-01T12:00:00.000Z', lastUsedAt: null, expiresAt: null,
@@ -140,7 +197,7 @@ function createApprovalRequest(
   return { ...base, ...safeOverrides };
 }
 
-function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
+function createExecutor(overrides: Partial<ActionExecutorDeps> = {}, options?: Parameters<typeof createActionExecutor>[1]) {
   const executor = createActionExecutor({
     executionRunStart: async () => ({}),
     executionRunList: async () => ({}),
@@ -173,7 +230,7 @@ function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
     resetGlobalVoiceAgent: async () => {},
     isApprovalExecutionOriginCurrent: async () => true,
     ...overrides,
-  });
+  }, options);
   return {
     ...executor,
     execute: (
@@ -198,44 +255,95 @@ function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
   };
 }
 
-describe('Machine reboot Action registration and dispatch', () => {
-  it('dispatches the canonical exact-installation Action and rejects extra identity or another Home', async () => {
-    const actionId = ActionIdSchema.safeParse('machines.reboot');
-    expect(actionId.success).toBe(true);
-    if (!actionId.success) throw new Error('The canonical Action catalog must declare reboot');
-    const spec = getActionSpec(actionId.data);
-    expect(spec.executionPlacement).toBe('machine');
-    expect(spec.bindings?.rpcMethod).toBe('machines.reboot');
-    expect(spec.operation?.version).toBe(1);
-    const input = { serverId: 'server-1', machineId: 'machine-1', expectedInstallationId: 'installation' };
-    const effects: unknown[] = [];
-    const executor = createExecutor({
-      // The receiving daemon is a system boundary; catalog parsing, policy,
-      // and dispatch remain real. This boundary cannot reboot the test host.
-      machineReboot: async request => {
-        effects.push(request.input);
-        return { kind: 'accepted', operation: { operationId: 'reboot-operation' }, bootedAt: 1000 };
+describe('Environment binding pending-input hold', () => {
+  it('keeps person_selects despite a waiver and executes the choice once on the verified phone Home', async () => {
+    let request: ApprovalRequest | null = null;
+    const writes: unknown[] = [];
+    const settings = ActionsSettingsV1Schema.parse({ v: 1,
+      approvalWaivedSurfaces: { 'deployments.bindings.set': ['agent'] } });
+    const current = DeploymentEnvironmentGetResultV1Schema.parse({ ok: true, targetLinks: [], environment: {
+      v: 1, id: 'environment', serverId: 'home', projectSourceId: 'source', revision: 7,
+      owner: { kind: 'account', accountId: 'account' }, protection: 'nonProduction', purpose: 'standard',
+      deployerMode: 'managers', controllerMachineId: 'machine-1', contentArtifactId: 'content',
+      contentHeaderVersion: 1, contentBodyVersion: 1, createdByAccountId: 'account', createdAtMs: 1, updatedAtMs: 1,
+      capabilities: { role: 'manager', read: true, deploy: true, manage: true, manageBindings: true,
+        manageTargets: true, delete: true },
+    } });
+    // Home persistence/transport are the boundaries; scope, policy, narrowing
+    // and the original approval claim/settlement remain real shared owners.
+    const transport: NonNullable<ActionExecutorDeps['deploymentAction']> = async (actionId, input) => {
+      if (actionId === 'deployments.environments.get') return current;
+      writes.push(input);
+      return { ok: true, environmentId: 'environment', revision: 8 };
+    };
+    const executor = createExecutor({ deploymentAction: transport,
+      resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(transport),
+      isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, settings, context),
+      approvalsCreate: async ({ request: value }) => { request = value; return { artifactId: 'binding-choice' }; },
+      approvalsGet: async () => request,
+      approvalsUpdate: async ({ request: next }) => {
+        if (!request) throw new Error('Expected pending approval');
+        const transition = decideApprovalRequestTransition(request, next);
+        if (!transition.ok) return transition;
+        request = ApprovalRequestV2Schema.parse(next);
+        return { ok: true };
       },
     });
-    const person: ActionExecutorContext = {
-      surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: input.serverId,
-      presentUserConfirmation: { actionId: actionId.data },
-    };
-    expect(await executor.execute(actionId.data, input, person))
-      .toMatchObject({ ok: true, result: { kind: 'accepted', bootedAt: 1000 } });
-    expect(effects).toEqual([input]);
-    expect(await executor.execute(actionId.data, { ...input, requestId: 'second-identity' }, person))
-      .toMatchObject({ ok: false });
-    expect(await executor.execute(actionId.data, { ...input, serverId: 'other-home' }, person))
-      .toMatchObject({ ok: false, errorCode: 'server_target_mismatch' });
-    expect(effects).toEqual([input]);
+    const context = { surface: 'agent' as const, authority: 'account_automation' as const, serverId: 'home',
+      runtimeAccountId: 'account', actionsSettings: settings, serverIdentityId: 'stable-home',
+      actionCaller: { kind: 'session' as const, sessionId: 's1', starterDepth: 0, turnDepth: 0 } };
+    expect(await executor.execute('deployments.bindings.set', { serverId: 'home', environmentId: 'environment',
+      expectedRevision: 7, contentArtifactId: 'candidate', contentHeaderVersion: 1, contentBodyVersion: 1,
+      referencedSavedSecretRevisions: [] }, context)).toMatchObject({ ok: true });
+    expect(writes).toHaveLength(1);
+    writes.length = 0;
+    const pending = { serverId: 'home', environmentId: 'environment', expectedRevision: 7,
+      set: [{ purpose: 'variable', name: 'API_TOKEN', phase: 'runtime',
+        source: { kind: 'secret', ref: 'person_selects' } }], remove: [] };
+    // Selecting an exact secret in the person's editor is the link approval;
+    // only unresolved person_selects still needs the person's choice below.
+    const selected = { ...pending, set: [{ ...pending.set[0]!, source: {
+      kind: 'secret', ref: 'happier:shared-secret:v1:credential', resourceRevision: 3,
+    } }] };
+    expect(await executor.execute('deployments.bindings.set', selected, {
+      ...context, surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+    })).toMatchObject({ ok: true });
+    expect(writes).toEqual([selected]);
+    expect(request).toBeNull();
+    writes.length = 0;
+    expect(await executor.execute('deployments.bindings.set', pending, {
+      ...context, surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+      actionRequestId: 'native-binding-choice',
+      presentUserConfirmation: { actionId: 'deployments.bindings.set', accountId: 'account', serverId: 'stable-home',
+        requestId: 'native-binding-choice', target: null,
+        inputDigest: computeActionInputApprovalDigestV1('deployments.bindings.set', pending) },
+    })).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'binding-choice' } });
+    expect(writes).toEqual([]);
+    expect(await executor.execute('deployments.bindings.set', pending, context)).toMatchObject({
+      ok: true, result: { kind: 'approval_request_created', artifactId: 'binding-choice' },
+    });
+    expect(request).toMatchObject({ status: 'open', actionArgs: pending });
+    expect(writes).toEqual([]);
+    const chosen = { ...pending, set: [{ ...pending.set[0]!, source: {
+      kind: 'secret', ref: 'happier:shared-secret:v1:credential', resourceRevision: 3,
+    } }] };
+    const phone = { surface: 'ui' as const, authority: 'present_user' as const,
+      actionCaller: { kind: 'host' as const }, serverId: 'phone-profile', serverIdentityId: 'stable-home', runtimeAccountId: 'account' };
+    expect(await executor.execute('approval.request.decide', {
+      artifactId: 'binding-choice', decision: 'approve', narrowedInput: chosen,
+    }, phone)).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
+    expect(writes).toEqual([{ ...chosen, serverId: 'phone-profile' }]);
+    expect(request).toMatchObject({ status: 'executed', actionArgs: pending,
+      decision: { kind: 'approve', narrowedInput: chosen } });
+    await executor.execute('approval.request.decide', { artifactId: 'binding-choice', decision: 'approve' }, phone);
+    expect(writes).toHaveLength(1);
   });
 });
 
 describe('Machine reboot approval review', () => {
   it.each(['complete', 'partial', 'unavailable', 'paged', 'wrong-target', 'no-reader'] as const)('presents fresh %s role context before the existing person confirmation without another approval floor', async coverage => {
     const trace: string[] = [];
-    const confirmations: unknown[] = [];
+    const previews: unknown[] = [];
     const input = { serverId: 'server-1', machineId: 'machine-1', expectedInstallationId: 'installation' };
     const references = { homeId: 'stable-home', machineId: input.machineId,
       coverage: coverage === 'partial' ? 'partial' as const : 'complete' as const,
@@ -256,20 +364,18 @@ describe('Machine reboot approval review', () => {
       machineServiceAction: async () => { trace.push('services'); return { kind: 'snapshot', services: [] }; },
       machineReboot: async () => { trace.push('effect'); return { kind: 'unavailable', reason: 'admission_unavailable' }; },
       presentUserActionConfirmation: async (request: Parameters<NonNullable<ActionExecutorDeps['presentUserActionConfirmation']>>[0]) => {
-        trace.push('confirmation'); confirmations.push(request); return false;
+        trace.push('confirmation'); previews.push(request.preview); return false;
       },
     };
-    const executor = createExecutor(ports);
+    const executor = createExecutor(ports, { confirmUiDefault: true });
     const result = await executor.execute('machines.reboot', input, { surface: 'ui', authority: 'present_user',
       actionCaller: { kind: 'host' }, serverId: input.serverId, serverIdentityId: 'stable-home',
       runtimeAccountId: 'account', actionsSettings: defaultActionsSettings });
-    expect(confirmations).toEqual([expect.objectContaining({ preview: expect.objectContaining({ machineRebootReview: {
+    expect(previews).toEqual([expect.objectContaining({ machineRebootReview: {
       kind: 'machineReboot', ...input, deploymentReferences: coverage === 'no-reader' ? null
         : coverage === 'unavailable' || coverage === 'wrong-target' ? { ...references, coverage: 'partial', references: [] } : references,
       services: { kind: 'snapshot', services: [] },
-    } }) })]);
-    expect(trace).toContain('services');
-    if (coverage !== 'no-reader') expect(trace).toContain('roles');
+    } })]);
     expect(trace.at(-1)).toBe('confirmation');
     expect(trace).not.toContain('effect');
     expect(result).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
@@ -323,6 +429,235 @@ function sharedRequesterCurrentUiContext(input: unknown): ActionExecutorContext 
 }
 
 describe('createActionExecutor (approvals)', () => {
+  it.each(['generation', 'service', 'source', 'missing-carrier', 'invocation'] as const)('refuses mismatched signed logs Resource custody before creating a detached approval (%s)', async mismatch => {
+    const actionId = 'machines.services.logs.read' as const;
+    const input = getActionSpec(actionId).inputSchema.parse({ serverId: 'server-1', machineId: 'machine-1', serviceId: 'service' });
+    const target = { kind: 'machine' as const, machineId: input.machineId };
+    const envelope = { v: 1 as const, requestId: 'mismatched-logs-request', target, input,
+      ...(mismatch === 'source' ? { resourceContinuation: MachineServiceLogsResourceContinuationV1Schema.parse({
+        method: RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ,
+        params: { machineId: input.machineId, resource: { hostRead: 'machines.services.logs', input,
+          expectedGeneration: 'signed-generation', sourceRevision: 'signed-source' } },
+      }) } : { machineServiceLogsGeneration: { expectedGeneration: 'signed-generation' } }) };
+    const keys = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(42));
+    const authorization: ExternalActionExecutionAuthorizationV1 = { v: 1, token: 'home-admitted-logs-root', binding: {
+      accountId: 'account', custodianAccountId: 'account', authentication: { kind: 'account', tokenEpoch: 1 },
+      accountEncryptionMode: 'plain', serverIdentityId: 'stable-home', machineId: input.machineId,
+      installationId: 'installation', actionId, requestId: mismatch === 'invocation' ? 'another-invocation' : envelope.requestId, target,
+      requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+    } };
+    const lifetime = new AbortController();
+    const coordinator = createBlockingApprovalCoordinator();
+    let announceWaiter!: () => void;
+    const waiterReady = new Promise<void>(resolve => { announceWaiter = resolve; });
+    let stored: ApprovalRequest | null = null;
+    let nativeReads = 0;
+    // Only Artifact persistence and native log IO are substituted. The real
+    // approval owner must reject broken private custody before either boundary.
+    const executor = createExecutor({
+      approvalsCreate: async ({ request }) => { stored = ApprovalRequestSchema.parse(request); return { artifactId: 'unsafe-detached-logs' }; },
+      approvalsGet: async () => stored,
+      approvalsUpdate: async ({ request }) => {
+        if (!stored) throw new Error('Missing logs approval');
+        const transition = decideApprovalRequestTransition(stored, request);
+        if (!transition.ok) return transition;
+        stored = ApprovalRequestSchema.parse(request);
+        coordinator.notifyApprovalUpdated({ artifactId: 'unsafe-detached-logs', request: stored });
+        return { ok: true };
+      },
+      approvalsWaitForDecision: async args => {
+        const pending = coordinator.waitForDecision(args);
+        announceWaiter();
+        const decision = await pending;
+        return { ...decision, request: ApprovalRequestSchema.parse(decision.request) };
+      },
+      machineServiceLogsRead: async () => { nativeReads++; return { kind: 'unavailable', reason: 'unavailable' }; },
+    });
+    const admittedInput = mismatch === 'service' ? { ...input, serviceId: 'different-service' } : input;
+    const pending = executor.execute(actionId, admittedInput, {
+        surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+        serverId: input.serverId, serverIdentityId: 'stable-home', runtimeAccountId: 'account',
+        actionRequestId: envelope.requestId, signal: lifetime.signal, originalActionEnvelope: envelope,
+        externalActionExecutionAuthorization: authorization, externalActionTarget: target,
+        actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: { [actionId]: { approvalRequiredSurfaces: ['ui'] } } }),
+        signExternalActionApprovalInput: args => signExternalActionApprovalInputV1({ authorizationToken: args.authorization.token,
+          actionId: args.actionId, target: args.target, input: args.input, privateKey: keys.secretKey }),
+        ...(mismatch === 'missing-carrier' ? {} : { machineServiceLogsResource: {
+          expectedGeneration: mismatch === 'generation' ? 'different-generation' : 'signed-generation',
+          ...(mismatch === 'source' ? { sourceRevision: 'different-source' } : {}),
+        } }),
+    });
+    try {
+      const admission = await Promise.race([
+        pending.then(result => ({ kind: 'completed' as const, result })),
+        waiterReady.then(() => ({ kind: 'waiting' as const })),
+      ]);
+      expect(admission).toMatchObject({ kind: 'completed', result: { ok: false, errorCode: 'approval_context_unavailable' } });
+      expect(stored).toBeNull();
+      expect(nativeReads).toBe(0);
+    } finally { lifetime.abort(); coordinator.dispose(); await pending.catch(() => {}); }
+  });
+
+  it.each([
+    { outcome: 'read', sourceRevision: undefined },
+    { outcome: 'read', sourceRevision: 'source' },
+    { outcome: 'read-normalized', sourceRevision: undefined },
+    { outcome: 'cancel-after-decision', sourceRevision: undefined },
+    { outcome: 'token-mismatch', sourceRevision: undefined },
+    { outcome: 'binding-mismatch', sourceRevision: undefined },
+    { outcome: 'detached', sourceRevision: undefined },
+  ] as const)(
+    'retains signed native logs Resource until authenticated approval ($outcome, source $sourceRevision)', async ({ outcome, sourceRevision }) => {
+      const actionId = 'machines.services.logs.read' as const;
+      const rawInput = { serverId: 'server-1', machineId: 'machine-1', serviceId: outcome === 'read-normalized' ? ' service ' : 'service' };
+      const input = getActionSpec(actionId).inputSchema.parse(rawInput);
+      const target = { kind: 'machine' as const, machineId: input.machineId };
+      const envelope = { v: 1 as const, requestId: 'logs-request', target, input: rawInput,
+        machineServiceLogsGeneration: { expectedGeneration: 'generation' } };
+      const keys = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(41));
+      const authorization: ExternalActionExecutionAuthorizationV1 = { v: 1, token: 'home-admitted-logs-root', binding: {
+        accountId: 'account', custodianAccountId: 'account', authentication: { kind: 'account', tokenEpoch: 1 },
+        accountEncryptionMode: 'plain', serverIdentityId: 'stable-home', machineId: input.machineId,
+        installationId: 'installation', actionId, requestId: envelope.requestId, target,
+        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+      } };
+      const lifetime = new AbortController();
+      const coordinator = createBlockingApprovalCoordinator();
+      let stored: ApprovalRequest | null = null;
+      let announceWaiter!: () => void;
+      const waiterReady = new Promise<void>(resolve => { announceWaiter = resolve; });
+      let nativeReads = 0;
+      let originChecks = 0;
+      let disposed = false;
+      const subscription = { dispose() { disposed = true; } };
+      let accepted: Readonly<{ dispose(): void | Promise<void> }> | undefined;
+      const emitted: unknown[] = [];
+      const page = { kind: 'page' as const, page: { sourceRevision: 'source', text: 'admitted logs', nextCursor: null, truncated: false } };
+      // Artifact persistence, authenticated Home verification and native log IO
+      // are boundaries; signatures, approval transitions and the coordinator stay real.
+      const executor = createExecutor({
+        approvalsCreate: async ({ request }) => { stored = ApprovalRequestSchema.parse(request); return { artifactId: 'logs-approval' }; },
+        approvalsGet: async () => stored,
+        approvalsUpdate: async ({ request }) => {
+          if (!stored) throw new Error('Missing logs approval');
+          const transition = decideApprovalRequestTransition(stored, request);
+          if (!transition.ok) return transition;
+          stored = ApprovalRequestSchema.parse(request);
+          coordinator.notifyApprovalUpdated({ artifactId: 'logs-approval', request: stored });
+          if (outcome === 'cancel-after-decision' && request.status === 'approved') lifetime.abort();
+          return { ok: true };
+        },
+        approvalsResolveBlockingDecision: args => coordinator.resolveBlockingDecision(args),
+        approvalsWaitForDecision: async args => {
+          const pending = coordinator.waitForDecision(args);
+          announceWaiter();
+          const decision = await pending;
+          if ((outcome === 'token-mismatch' || outcome === 'binding-mismatch') && decision.request.v === 2) {
+            const origin = decision.request.executionOriginV1;
+            const authorization = origin.externalActionExecutionAuthorization;
+            if (!authorization) throw new Error('Missing signed logs origin');
+            // An editable Artifact cannot substitute a different requester
+            // root after the authenticated ingress released the bound waiter.
+            stored = ApprovalRequestSchema.parse({ ...decision.request, executionOriginV1: { ...origin,
+              externalActionExecutionAuthorization: outcome === 'token-mismatch'
+                ? { ...authorization, token: 'different-root' }
+                : { ...authorization, binding: { ...authorization.binding, requestId: 'different-request' } },
+            } });
+            return { ...decision, request: stored };
+          }
+          return { ...decision, request: ApprovalRequestSchema.parse(decision.request) };
+        },
+        isApprovalExecutionOriginCurrent: async ({ origin, request }) => {
+          originChecks++;
+          return Boolean(!lifetime.signal.aborted && origin.target && origin.externalActionInputSignature
+          && origin.externalActionExecutionAuthorization?.token === authorization.token
+          && isDeepStrictEqual(origin.externalActionExecutionAuthorization.binding, authorization.binding)
+          && verifyExternalActionApprovalInputV1({ authorizationToken: authorization.token, actionId: request.actionId,
+            target: origin.target, input: request.actionArgs, publicKey: keys.publicKey, signature: origin.externalActionInputSignature }));
+        },
+        machineServiceLogsRead: async ({ input: readInput, context }) => {
+          nativeReads++;
+          expect(readInput).toEqual(input);
+          // Strict Artifact decoding cannot recreate the original ingress's
+          // private authorization facets; the exact live object must survive.
+          expect(context.externalActionExecutionAuthorization).toBe(authorization);
+          const observation = context.machineServiceLogsResource?.observation;
+          observation?.accept(subscription);
+          observation?.emit(page);
+          return page;
+        },
+      });
+      const context: ActionExecutorContext = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+        serverId: input.serverId, serverIdentityId: 'stable-home', runtimeAccountId: 'account',
+        actionRequestId: envelope.requestId, signal: lifetime.signal, originalActionEnvelope: envelope,
+        externalActionExecutionAuthorization: authorization, externalActionTarget: target,
+        actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: { [actionId]: { approvalRequiredSurfaces: ['ui'] } } }),
+        signExternalActionApprovalInput: args => signExternalActionApprovalInputV1({ authorizationToken: args.authorization.token,
+          actionId: args.actionId, target: args.target, input: args.input, privateKey: keys.secretKey }),
+        machineServiceLogsResource: { expectedGeneration: 'generation', ...(sourceRevision ? { sourceRevision } : {}), observation: {
+          signal: lifetime.signal, emit: value => emitted.push(value), retire() {}, accept: value => { accepted = value; },
+        } },
+      };
+      const pending = executor.execute(actionId, input, context);
+      try {
+        const admission = await Promise.race([
+          pending.then(result => ({ kind: 'completed' as const, result })),
+          waiterReady.then(() => ({ kind: 'waiting' as const })),
+        ]);
+        expect(admission).toEqual({ kind: 'waiting' });
+        expect(nativeReads).toBe(0);
+        if (admission.kind !== 'waiting') return;
+        expect(stored).toMatchObject({ approval: { flow: 'blocking' } });
+        if (outcome === 'detached') {
+          if (!stored) throw new Error('Missing logs approval');
+          const approved = ApprovalRequestSchema.parse({ ...stored, status: 'approved',
+            decision: { kind: 'approve', authority: 'present_user', decidedAtMs: stored.updatedAtMs },
+          });
+          stored = approved;
+          coordinator.notifyApprovalUpdated({ artifactId: 'logs-approval', request: approved });
+          expect(await executor.replayApprovedApprovalRequest({ artifactId: 'logs-approval' }))
+            .toMatchObject({ ok: false, effectAttempted: false, errorCode: 'approval_stale',
+              details: { reason: 'live_invocation_unavailable' } });
+          expect(await executor.replayApprovedApprovalRequest({ artifactId: 'logs-approval', callerAuthority: 'present_user' }))
+            .toMatchObject({ ok: false, effectAttempted: false, errorCode: 'approval_stale',
+              details: { reason: 'live_invocation_unavailable' } });
+          expect(coordinator.getLiveWaiterCount('logs-approval')).toBe(1);
+          expect(nativeReads).toBe(0);
+          expect(accepted).toBeUndefined();
+          return;
+        }
+        const decision = await executor.execute('approval.request.decide', { artifactId: 'logs-approval', decision: 'approve' }, {
+          surface: 'ui', authority: 'account_automation', serverId: input.serverId, serverIdentityId: 'stable-home',
+          runtimeAccountId: 'account', actionCaller: { kind: 'host' },
+        });
+        if (outcome === 'cancel-after-decision') {
+          expect(decision).toMatchObject({ ok: false, effectAttempted: false });
+          expect(stored).toMatchObject({ status: 'approved' });
+          expect(ApprovalRequestSchema.parse(stored).execution).toBeUndefined();
+        } else expect(decision).toMatchObject({ ok: true });
+        const result = await pending;
+        if (outcome === 'cancel-after-decision' || outcome === 'token-mismatch' || outcome === 'binding-mismatch') {
+          expect(result).toMatchObject({ ok: false });
+          expect(nativeReads).toBe(0);
+          expect(accepted).toBeUndefined();
+        } else {
+          expect(result).toEqual({ ok: true, result: page });
+          expect(nativeReads).toBe(1);
+          // The signed Home root is admitted once, before the executing claim.
+          expect(originChecks).toBe(1);
+          expect(accepted).toBe(subscription);
+          expect(emitted).toEqual([page]);
+          await accepted?.dispose();
+          expect(disposed).toBe(true);
+        }
+      } finally {
+        lifetime.abort();
+        coordinator.dispose();
+        await pending.catch(() => {});
+        await accepted?.dispose();
+      }
+    });
+
   it.each(['open', 'approved'] as const)('refuses a retained personless Workflow %s card before decision or replay effects', async status => {
     let effects = 0;
     let writes = 0;
@@ -626,23 +961,29 @@ describe('createActionExecutor (approvals)', () => {
     } });
   });
 
+  // Public-link approval needs no extra confirmation (owner ruling 2026-10-16/10-29):
+  // a person approves directly; Voice without the person's approval setting cannot.
   it.each([
-    { surface: 'voice', authority: 'account_automation', actionCaller: { kind: 'host' } },
-    { surface: 'voice', authority: 'present_user', actionCaller: { kind: 'session', sessionId: 's1', starterDepth: 0, turnDepth: 0 } },
-    { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' } },
-  ] satisfies ActionExecutorContext[])('retains the public-link confirmation floor without delegated Voice custody (%j)', async context => {
+    { context: { surface: 'voice', authority: 'account_automation', actionCaller: { kind: 'host' } }, approves: false },
+    { context: { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' } }, approves: true },
+  ] satisfies { context: ActionExecutorContext; approves: boolean }[])('decides a public-link request by ordinary decision authority (%j)', async ({ context, approves }) => {
     const actionId = 'artifact.public_link.create';
     const row = createApprovalRequest('open', { actionId,
       actionArgs: getActionSpec(actionId).inputSchema.parse({ artifactId: '11111111-1111-4111-8111-111111111111' }) });
     const transitions: ApprovalRequest[] = [];
     const executor = createExecutor({ approvalsGet: async () => row,
       approvalsUpdate: async ({ request }) => { transitions.push(request); return { ok: true }; } });
-    expect(await executor.execute('approval.request.decide', { artifactId: 'public-link-voice', decision: 'approve' }, context))
-      .toMatchObject({ ok: false, errorCode: 'present_user_required' });
-    expect(transitions).toEqual([]);
+    const decided = await executor.execute('approval.request.decide', { artifactId: 'public-link-voice', decision: 'approve' }, context);
+    if (approves) {
+      expect(decided).not.toMatchObject({ ok: false, errorCode: 'present_user_required' });
+      expect(transitions[0]).toMatchObject({ status: 'approved', decision: { kind: 'approve', authority: 'present_user' } });
+    } else {
+      expect(decided).toMatchObject({ ok: false, errorCode: 'present_user_required' });
+      expect(transitions).toEqual([]);
+    }
   });
 
-  it('keeps requester public-link confirmation blocked before any approval transition', async () => {
+  it('lets the shared requester decide a public-link request without an extra confirmation floor', async () => {
     const actionId = 'artifact.public_link.create';
     const actionArgs = getActionSpec(actionId).inputSchema.parse({ artifactId: '11111111-1111-4111-8111-111111111111' });
     const requesterConfirmation = { requestRef: 'bob-input', requesterAccountId: 'bob',
@@ -659,9 +1000,7 @@ describe('createActionExecutor (approvals)', () => {
     expect(await executor.execute('approval.request.decide', { artifactId: 'public-link-approval', decision: 'approve' }, {
       surface: 'rpc', authority: 'present_user', runtimeAccountId: 'alice', requesterApprovalDecision: { sessionId: 's1',
         actor: { kind: 'accountUser', accountId: 'bob', relationship: 'sharedApprover' }, isCurrent: async () => true },
-    })).toMatchObject({ ok: false, errorCode: 'present_user_required' });
-    expect(transitions).toEqual([]);
-    expect(request.status).toBe('open');
+    })).not.toMatchObject({ ok: false, errorCode: 'present_user_required' });
   });
 
   it.each([false, true])('keeps detached Run person authority separate from requester consent (shared requester: %s)', async shared => {
@@ -739,6 +1078,45 @@ describe('createActionExecutor (approvals)', () => {
     expect(effects).toHaveLength(1);
     expect(effects[0]).toMatchObject({ runtimeAccountId: 'alice' });
     expect(effects[0].presentUserApproval).toBeUndefined();
+  });
+
+  it.each([true, false])('admits the shared requester decision and origin once per approved execution (requester current: %s)', async requesterCurrent => {
+    const input = { sessionId: 's1', message: 'hello' };
+    let row: ApprovalRequestV2 | null = null;
+    const effects: ActionExecutorContext[] = [];
+    let originChecks = 0;
+    const executor = createExecutor({
+      approvalsCreate: async ({ request }) => { row = ApprovalRequestV2Schema.parse(request); return { artifactId: 'bob-confirmation' }; },
+      approvalsGet: async () => row,
+      approvalsUpdate: async ({ request: next }) => {
+        if (!row) throw new Error('Missing approval');
+        const transition = decideApprovalRequestTransition(row, next);
+        if (!transition.ok) return transition;
+        row = ApprovalRequestV2Schema.parse(next);
+        return { ok: true };
+      },
+      isApprovalExecutionOriginCurrent: async () => { originChecks++; return true; },
+      sessionSendMessage: async ({ context }) => { effects.push(context); return { status: 'accepted', localId: 'confirmed' }; },
+    });
+    expect(await executor.execute('session.message.send', input, sharedRequesterContext('session.message.send', input)))
+      .toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'bob-confirmation' } });
+    let proofChecks = 0;
+    const result = await executor.execute('approval.request.decide', { artifactId: 'bob-confirmation', decision: 'approve' }, {
+      surface: 'rpc', authority: 'present_user', runtimeAccountId: 'alice', requesterApprovalDecision: { sessionId: 's1',
+        actor: { kind: 'accountUser', accountId: 'bob', relationship: 'sharedApprover' },
+        isCurrent: async () => { proofChecks++; return requesterCurrent; } },
+    });
+    if (requesterCurrent) {
+      expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'executed' } });
+      expect(effects).toHaveLength(1);
+      // One admission at the executing boundary; the claim, replay preparation
+      // and effect consume it instead of re-deciding the same facts.
+      expect({ proofChecks, originChecks }).toEqual({ proofChecks: 2, originChecks: 1 });
+    } else {
+      expect(result).toMatchObject({ ok: false, errorCode: 'approval_stale' });
+      expect(effects).toEqual([]);
+      expect(row).toMatchObject({ status: 'open' });
+    }
   });
 
   it('lets a fresh shared current-context command reach the resolved Action approval owner', async () => {
@@ -852,7 +1230,7 @@ describe('createActionExecutor (approvals)', () => {
       .toMatchObject({ ok: false, errorCode: 'present_user_required' });
   });
 
-  it('settles a requester-approved request when its signed Session origin is no longer current', async () => {
+  it('preserves requester consent when signed Session admission refuses before the claim', async () => {
     const original = createApprovalRequest();
     if (original.v !== 2) throw new Error('Expected current approval');
     const requesterConfirmation = { requestRef: 'bob-input', requesterAccountId: 'bob',
@@ -884,12 +1262,13 @@ describe('createActionExecutor (approvals)', () => {
     const decided = await executor.execute('approval.request.decide',
       { artifactId: 'shared-bot-stale-approval', decision: 'approve' }, context);
 
-    expect(decided).toMatchObject({ ok: true, result: { status: 'failed', execution: {
+    expect(decided).toMatchObject({ ok: false,
       effectAttempted: false, errorCode: 'approval_stale', details: { reason: 'credential_changed' },
-    } } });
-    expect(request).toMatchObject({ status: 'failed', decision: {
+    });
+    expect(request).toMatchObject({ status: 'approved', decision: {
       kind: 'approve', authority: 'present_user', decidingAccountId: 'bob',
-    }, execution: { effectAttempted: false, errorCode: 'approval_stale', details: { reason: 'credential_changed' } } });
+    } });
+    expect(request.execution).toBeUndefined();
     expect(sessionSendMessage).not.toHaveBeenCalled();
     expect(await executor.execute('approval.request.decide',
       { artifactId: 'shared-bot-stale-approval', decision: 'approve' }, context)).toEqual(decided);
@@ -936,7 +1315,7 @@ describe('createActionExecutor (approvals)', () => {
   });
 
   it.each(['teams.invitations.create', 'teams.invitations.reissue'] as const)(
-    'runs signed %s with the deciding app authority, never the proposal carrier', async actionId => {
+    'returns signed %s private output only to the original live invocation', async actionId => {
       const caller = { kind: 'session' as const, sessionId: 'source', starterDepth: 0, turnDepth: 0 };
       const target = { kind: 'machine' as const, machineId: 'source-machine' };
       const input = getActionSpec(actionId).inputSchema.parse(actionId.endsWith('create')
@@ -960,10 +1339,17 @@ describe('createActionExecutor (approvals)', () => {
       const joinUrl = 'https://home.invalid/join/live-result-sentinel';
       const output = actionId.endsWith('create') ? { invitation, joinUrl }
         : { previous: { ...invitation, id: 'old-invitation', state: 'revoked' }, replacement: invitation, joinUrl };
+      const coordinator = createBlockingApprovalCoordinator();
+      const cancellation = new AbortController();
       // The Artifact store, authenticated Home verifier and HTTP effect are process boundaries.
       const deps = {
         approvalsCreate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(request); return { artifactId: 'signed-invitation' }; },
         approvalsGet: async () => stored,
+        approvalsWaitForDecision: async args => {
+          const decision = await coordinator.waitForDecision(args);
+          return { ...decision, request: stored! };
+        },
+        approvalsResolveBlockingDecision: args => coordinator.resolveBlockingDecision(args),
         approvalsUpdate: async ({ request }) => {
           if (!stored) throw new Error('missing_approval');
           const transition = decideApprovalRequestTransition(stored, request);
@@ -976,18 +1362,19 @@ describe('createActionExecutor (approvals)', () => {
             target: origin.target, input: request.actionArgs, publicKey: signing.publicKey, signature: origin.externalActionInputSignature })),
         homeDomainAction: async ({ input: effectInput, context }) => {
           contexts.push(context);
-          if (context.externalActionExecutionAuthorization || context.externalActionCredential || context.authority !== 'present_user'
-            || context.surface !== 'ui' || context.actionCaller?.kind !== 'host' || !isDeepStrictEqual(effectInput, input)) {
+          if (!isDeepStrictEqual(effectInput, input)) {
             return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
           }
           return output;
         },
         observeActionExecution: async observation => { observations.push(observation); },
       } satisfies Pick<ActionExecutorDeps, 'approvalsCreate' | 'approvalsGet' | 'approvalsUpdate'
+        | 'approvalsWaitForDecision' | 'approvalsResolveBlockingDecision'
         | 'isApprovalExecutionOriginCurrent' | 'homeDomainAction' | 'observeActionExecution'>;
       // Unused transport arms are absent from this boundary fixture.
       const executor = createActionExecutor(deps as unknown as ActionExecutorDeps);
-      const pending = await executor.execute(actionId, input, { surface: 'agent', authority: 'account_automation',
+      const pending = executor.execute(actionId, input, { surface: 'agent', authority: 'account_automation',
+        signal: cancellation.signal,
         serverId: 'creator-profile', serverIdentityId: 'stable-home', runtimeAccountId: 'account',
         actionRequestId: 'proposal-request', actionCaller: caller, defaultSessionId: 'source', callerPermissionMode: null,
         sessionInputSource: { sourceSessionId: 'source', sourceTurnId: 'turn', via: 'action' },
@@ -995,23 +1382,29 @@ describe('createActionExecutor (approvals)', () => {
         signExternalActionApprovalInput: args => signExternalActionApprovalInputV1({ authorizationToken: args.authorization.token,
           actionId: args.actionId, target: args.target, input: args.input, privateKey: signing.secretKey }),
       });
-      expect(pending).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
-      const decide = () => executor.execute('approval.request.decide', { artifactId: 'signed-invitation', decision: 'approve' }, {
-        surface: 'ui', authority: 'present_user', serverId: 'approver-profile', serverIdentityId: 'stable-home',
-        runtimeAccountId: 'account', actionCaller: { kind: 'host' }, actionRequestId: 'human-decision',
-      });
-      const result = await decide();
-      expect(result.ok && typeof result.result === 'object' && result.result !== null
-        && 'status' in result.result && result.result.status === 'executed').toBe(true);
-      expect(result.ok && JSON.stringify(result.result).includes(joinUrl)).toBe(true);
-      expect(contexts).toHaveLength(1);
-      expect(contexts[0]).toMatchObject({ authority: 'present_user', surface: 'ui', serverId: 'approver-profile',
-        actionCaller: { kind: 'host' }, actionRequestId: 'proposal-request' });
-      expect(contexts[0]).not.toHaveProperty('externalActionTarget');
-      expect(contexts[0]).not.toHaveProperty('sessionInputSource');
-      const repeated = await decide();
-      expect(contexts).toHaveLength(1);
-      for (const safe of [pending, repeated, stored, observations]) expect(JSON.stringify(safe).includes(joinUrl)).toBe(false);
+      try {
+        await vi.waitFor(() => expect(coordinator.getLiveWaiterCount('signed-invitation')).toBe(1));
+        expect(contexts).toEqual([]);
+        expect(stored && resolveApprovalExecutor(stored)).toEqual({ kind: 'live_invocation', daemonMachineId: 'source-machine' });
+        const decide = () => executor.execute('approval.request.decide', { artifactId: 'signed-invitation', decision: 'approve' }, {
+          surface: 'ui', authority: 'present_user', serverId: 'approver-profile', serverIdentityId: 'stable-home',
+          runtimeAccountId: 'account', actionCaller: { kind: 'host' }, actionRequestId: 'human-decision',
+        });
+        const result = await decide();
+        expect(result).toMatchObject({ ok: true, result: { status: 'approved' } });
+        const liveResult = await pending;
+        expect(contexts).toHaveLength(1);
+        // Existing confirmed-person admission remains until the separate authority cleanup;
+        // R3 preserves this invocation's signed origin and private result recipient.
+        expect(contexts[0]).toMatchObject({ authority: 'present_user', surface: 'agent', serverId: 'creator-profile',
+          actionCaller: caller, actionRequestId: 'proposal-request', externalActionTarget: target,
+          externalActionExecutionAuthorization: authorization });
+        expect(liveResult).toEqual({ ok: true, result: output });
+        const repeated = await decide();
+        expect(contexts).toHaveLength(1);
+        for (const safe of [result, repeated, stored, observations]) expect(JSON.stringify(safe).includes(joinUrl)).toBe(false);
+        expect(coordinator.getLiveWaiterCount('signed-invitation')).toBe(0);
+      } finally { cancellation.abort(); coordinator.dispose(); await Promise.allSettled([pending]); }
     },
   );
   it('defaults reviewed managed rebuild to Ask first and invokes the managed owner only after explicit approval waiver', async () => {
@@ -1085,8 +1478,7 @@ describe('createActionExecutor (approvals)', () => {
       placement: {},
     }, { surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'host' },
       serverId: 'home', defaultSessionId: 'shared' }))
-      // This boundary captures the pending blocking request; no live user waiter is installed.
-      .toEqual({ ok: false, errorCode: 'approvals_not_supported', error: 'approvals_not_supported' });
+      .toEqual({ ok: true, result: { kind: 'approval_request_created', artifactId: 'share-definition', actionId: 'widgets.item.add' } });
     expect(request).toMatchObject({ actionArgs: { instance: { definition: { kind: 'inline', definition: shared } } } });
     expect(definition.body).not.toEqual(shared.body);
     await definitions.update(definition.id, { name: 'Later', body: { kind: 'declarative',
@@ -1216,13 +1608,6 @@ describe('createActionExecutor (approvals)', () => {
       machineProcessesAction: async ({ input }) => { effects.push(input);
         return { status: 'ended', outcomes: [{ ref: 'one', outcome: 'ended', freedBytes: 4096 }] }; },
     });
-    if (kind === 'terminal') {
-      expect(await executor.execute('approval.request.decide', { artifactId: 'signed-subset', decision: 'approve' }, {
-        surface: 'ui', authority: 'account_automation',
-      })).toMatchObject({ ok: false, errorCode: 'present_user_required' });
-      expect(request.status).toBe('open');
-      expect(effects).toEqual([]);
-    }
     const result = await executor.execute('approval.request.decide', { artifactId: 'signed-subset', decision: 'approve', narrowedInput });
     expect(request.actionArgs).toEqual(actionArgs);
     if (addsItem) {
@@ -1268,32 +1653,6 @@ describe('createActionExecutor (approvals)', () => {
     })).toMatchObject({ ok: true, result: { status: 'executed' } });
     expect(request).toMatchObject({ status: 'executed' });
     expect(standing).toBe(false);
-  });
-
-  it('keeps surface control approval decisions human even for a credential with an approve grant', async () => {
-    for (const actionId of ['browser.control.takeControl', 'browser.control.handBack', 'computer.targets.list',
-      'computer.target.select', 'computer.control.interrupt', 'computer.control.handBack',
-      'computer.permissions.openSettings', 'browser.sandbox.install'] as const) {
-      let request = createApprovalRequest('open', { actionId, actionArgs: { machineId: 'machine', requestedTarget: 'Editor' } });
-      const executor = createExecutor({
-        approvalsGet: async () => request,
-        approvalsUpdate: async ({ request: value }) => { request = value; return { ok: true }; },
-        isApprovalExecutionOriginCurrent: async () => true,
-      });
-      for (const decision of ['approve', 'reject'] as const) {
-        expect(await executor.execute('approval.request.decide', { artifactId: 'surface-approval', decision }, {
-          surface: 'api', authority: 'account_automation', externalActionCredential: {
-            accountId: 'account', principalId: 'token', credentialId: 'token', grant: { ...API_TOKEN_FULL_GRANT_V1, approve: true },
-          },
-        }), `${actionId}:${decision}`).toMatchObject({ ok: false, errorCode: 'present_user_required' });
-        expect(request.status).toBe('open');
-      }
-      request = { ...request, status: 'approved', decision: { kind: 'approve', decidedAtMs: 2 } };
-      expect(await executor.replayApprovedApprovalRequest({
-        artifactId: 'surface-approval', callerAuthority: 'account_automation',
-      }), actionId).toMatchObject({ ok: false, errorCode: 'present_user_required' });
-      expect(request.status).toBe('approved');
-    }
   });
 
   it.each(['agent', 'mcp'] as const)('refuses native Realtime approval decisions before any %s approval effect', async (surface) => {
@@ -1402,10 +1761,12 @@ describe('createActionExecutor (approvals)', () => {
       expect(delegated, JSON.stringify(delegated)).toMatchObject({ ok: true, result: { status: 'executed' } });
       expect(request.status).toBe('executed');
       expect(messages).toEqual(['hello']);
+      // A waived agent may decide a person-class request too (no present-user floor);
+      // an API token never approves one.
       request = createApprovalRequest('open', { actionId: 'account.apiTokens.create', actionArgs: {} });
       expect(await executor.execute('approval.request.decide', input, { ...context, actionsSettings }))
-        .toMatchObject({ ok: false, errorCode: 'present_user_required' });
-      expect(request.status).toBe('open');
+        .not.toMatchObject({ ok: false, errorCode: 'present_user_required' });
+      request = createApprovalRequest('open', { actionId: 'account.apiTokens.create', actionArgs: {} });
       expect(await executor.execute('approval.request.decide', input, { ...context, actionsSettings,
         externalActionCredential: { accountId: 'account', principalId: 'token', credentialId: 'token', grant: API_TOKEN_FULL_GRANT_V1 },
       })).toMatchObject({ ok: false, errorCode: 'present_user_required' });
@@ -1449,7 +1810,7 @@ describe('createActionExecutor (approvals)', () => {
       .toMatchObject({ ok: true, result: { status: 'executed' } });
     expect(effects[0]).toMatchObject({ sessionId: 's1', intent: 'resume' });
   });
-  it('defaults automated fresh-folder consent to approval while a waiver never grants human authority', async () => {
+  it('defaults automated fresh-folder consent to approval and runs it once the user waives that Ask', async () => {
     let request: ApprovalRequest | null = null;
     const sessionOpen = vi.fn(async () => ({ ok: true, status: 'opened' }));
     const executor = createExecutor({
@@ -1464,11 +1825,9 @@ describe('createActionExecutor (approvals)', () => {
       expect(await executor.execute('session.open', { sessionId: 's1' }, context)).toMatchObject({ ok: true });
       sessionOpen.mockClear();
       const input = { sessionId: 's1', approvedNewDirectoryCreation: true };
-      expect(await executor.execute('session.open', input, { ...context, bypassApprovals: true }))
-        .toMatchObject({ ok: false, errorCode: 'present_user_required' });
-      expect(await executor.execute('session.open', input, context))
-        .toMatchObject({ ok: false, errorCode: 'present_user_required' });
-      expect(sessionOpen).not.toHaveBeenCalled();
+      expect(await executor.execute('session.open', input, context)).toMatchObject({ ok: true });
+      expect(sessionOpen).toHaveBeenCalledOnce();
+      sessionOpen.mockClear();
       expect(await executor.execute('session.open', input, { ...context, actionsSettings: defaultActionsSettings }))
         .toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'folder-consent' } });
       expect(sessionOpen).not.toHaveBeenCalled();
@@ -1486,7 +1845,7 @@ describe('createActionExecutor (approvals)', () => {
       expect.objectContaining({ surface: 'ui', authority: 'present_user' }));
   });
   it.each(['account_changed', 'home_changed', 'requester_account_unavailable'] as const)(
-    'persists the content-free stale fact and returns it in approval error data (%s)', async reason => {
+    'returns the content-free stale fact without consuming pre-claim consent (%s)', async reason => {
     let request = createApprovalRequest('approved', {
       actionId: 'session.open', actionArgs: { sessionId: 's1', approvedNewDirectoryCreation: true },
     });
@@ -1497,10 +1856,11 @@ describe('createActionExecutor (approvals)', () => {
       approvalsUpdate: async ({ request: value }) => { request = ApprovalRequestV2Schema.parse(value); return { ok: true }; },
     });
     const result = await executor.replayApprovedApprovalRequest({ artifactId: 'stale-fact', callerAuthority: 'present_user' });
-    expect(request).toMatchObject({ status: 'failed', execution: { errorCode: 'approval_stale', details: { reason } } });
-    expect(result).toMatchObject({ ok: true, result: { status: 'failed', execution: {
+    expect(request).toMatchObject({ status: 'approved' });
+    expect(request.execution).toBeUndefined();
+    expect(result).toMatchObject({ ok: false, effectAttempted: false,
       errorCode: 'approval_stale', details: { reason },
-    } } });
+    });
     expect(sessionOpen).not.toHaveBeenCalled();
   });
   it('consumes fresh-folder consent only from a current, already approved exact-daemon replay', async () => {
@@ -1512,7 +1872,10 @@ describe('createActionExecutor (approvals)', () => {
     const executor = createExecutor({
       sessionOpen,
       isActionApprovalRequired: () => false,
-      isApprovalExecutionOriginCurrent: async () => current,
+      isApprovalExecutionOriginCurrent: async ({ reportStale }) => {
+        if (!current) reportStale?.('credential_changed');
+        return current;
+      },
       approvalsGet: async () => request,
       approvalsUpdate: async ({ request: value }) => { request = value; return { ok: true }; },
     });
@@ -1528,7 +1891,9 @@ describe('createActionExecutor (approvals)', () => {
     }
     current = false;
     expect(await executor.replayApprovedApprovalRequest({ artifactId: 'folder-consent', callerAuthority: 'present_user' }))
-      .toMatchObject({ ok: true, result: { status: 'failed', execution: { errorCode: 'approval_stale' } } });
+      .toMatchObject({ ok: false, effectAttempted: false, errorCode: 'approval_stale' });
+    expect(request.status).toBe('approved');
+    expect(request.execution).toBeUndefined();
     expect(sessionOpen).not.toHaveBeenCalled();
     current = true;
     request = createApprovalRequest('approved', {
@@ -1598,7 +1963,7 @@ describe('createActionExecutor (approvals)', () => {
 
   it.each([
     ['account.apiTokens.create', { tokenId: securityTokenSummary.tokenId, label: securityTokenSummary.label }],
-    ['account.security.terminalPresentUser.set', { policy: 'allowed' }],
+    ['account.apiTokens.revokeAll', {}],
   ] as const)('rejects forged present-user authority in approved private replay for %s', async (actionId, actionArgs) => {
     const forged = createApprovalRequest('approved', { actionId, actionArgs, requestedSurface: 'agent' });
     if (forged.v !== 2) throw new Error('approval_v2_fixture_required');
@@ -1609,7 +1974,7 @@ describe('createActionExecutor (approvals)', () => {
       // Artifact data is writable by the Account. HTTP mutation and Artifact
       // persistence are boundaries; real replay must not treat its body as human proof.
       accountApiTokensCreateAction: async () => { effects.push(actionId); return { apiToken: securityTokenSummary, token: securityToken }; },
-      accountSecurityTerminalPresentUserSetAction: async () => { effects.push(actionId); return { policy: 'allowed' }; },
+      accountApiTokensRevokeAllAction: async () => { effects.push(actionId); return { revokedCount: 1 }; },
       approvalsGet: async () => request,
       approvalsUpdate: async ({ request: value }) => { request = value; return { ok: true }; },
     });
@@ -1624,9 +1989,8 @@ describe('createActionExecutor (approvals)', () => {
     ['account.apiTokens.update', { tokenId: 'dd03e74b-4aae-4a0a-81ee-1c23ddc4525d', label: 'Updated embed' }],
     ['account.apiTokens.revoke', { tokenId: 'dd03e74b-4aae-4a0a-81ee-1c23ddc4525d' }],
     ['account.apiTokens.revokeAll', {}],
-    ['account.security.terminalPresentUser.set', { policy: 'allowed' }],
     ['account.sessions.signOutEverywhere', {}],
-  ] as const)('requires a human decision for an agent request for %s, then executes once', async (actionId, input) => {
+  ] as const)('asks by default for an agent request for %s, runs a waived one, then executes the approved request once', async (actionId, input) => {
     let request: ApprovalRequest | null = null;
     const effects: string[] = [];
     const observations: unknown[] = [];
@@ -1637,7 +2001,6 @@ describe('createActionExecutor (approvals)', () => {
       accountApiTokensUpdateAction: async () => { effects.push(actionId); return { apiToken: securityTokenSummary }; },
       accountApiTokensRevokeAction: async () => { effects.push(actionId); return { revoked: true }; },
       accountApiTokensRevokeAllAction: async () => { effects.push(actionId); return { revokedCount: 1 }; },
-      accountSecurityTerminalPresentUserSetAction: async () => { effects.push(actionId); return { policy: 'allowed' }; },
       accountSessionsSignOutEverywhereAction: async () => { effects.push(actionId); return { status: 'signed_out' }; },
       isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context, undefined, undefined, input),
       approvalsCreate: async ({ request: value }) => { request = value; return { artifactId: 'security-request' }; },
@@ -1650,14 +2013,13 @@ describe('createActionExecutor (approvals)', () => {
         ? { kind: 'plugin' as const, pluginId: 'acme.author', contributionLocalId: 'surface',
             sourceCustody: { kind: 'development' as const, registeredRootId: 'plugin-root' } }
         : { kind: 'host' as const };
-      expect(await executor.execute(actionId, input, {
-        surface, authority: 'account_automation', actionCaller, bypassApprovals: true,
-      })).toMatchObject({ ok: false, errorCode: 'present_user_required' });
+      // No present-user floor: the user's waiver on this surface runs it directly.
       settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { [actionId]: [surface] } });
       expect(await executor.execute(actionId, input, {
         surface, authority: 'account_automation', actionCaller,
-      })).toMatchObject({ ok: false, errorCode: 'present_user_required' });
-      expect(effects).toEqual([]);
+      })).toMatchObject({ ok: true });
+      expect(effects).toEqual([actionId]);
+      effects.length = 0;
       settings = ActionsSettingsV1Schema.parse({ v: 1 });
       expect(await executor.execute(actionId, input, {
         surface, authority: 'account_automation', actionCaller,
@@ -1682,7 +2044,7 @@ describe('createActionExecutor (approvals)', () => {
   });
   it('allows an Approve-scoped token to reject, but not approve, a present-user request', async () => {
     let request = createApprovalRequest('open', {
-      actionId: 'account.security.terminalPresentUser.set', actionArgs: { policy: 'allowed' },
+      actionId: 'account.apiTokens.revokeAll', actionArgs: {},
     });
     const executor = createExecutor({
       approvalsGet: async () => request,
@@ -1921,54 +2283,19 @@ describe('createActionExecutor (approvals)', () => {
     context.externalActionCredential.grant.approve = true;
     expect(await executor.execute('account.apiTokens.create', {}, context))
       .toMatchObject({ ok: false, errorCode: 'present_user_required' });
-    expect(await executor.execute('account.security.terminalPresentUser.set', { policy: 'allowed' }, context))
+    expect(await executor.execute('account.apiTokens.revokeAll', {}, context))
       .toMatchObject({ ok: false, errorCode: 'present_user_required' });
   });
 
-  it('continues a Session blocking confirmation without creating an Account Artifact', async () => {
-    let publishedPreview: unknown;
-    // The injected host transport is the Session permission RPC/encrypted-state boundary.
-    const transport = {
-      sessionActionConfirmation: async (request: Parameters<NonNullable<ActionExecutorDeps['sessionActionConfirmation']>>[0]) => {
-        publishedPreview = 'preview' in request ? request.preview : undefined;
-        return { decision: 'approve' as const, isCurrent: () => true };
-      },
-      isActionApprovalRequired: () => true,
-      sessionActivityGet: async () => ({
-        ok: true,
-        sessionId: 's1',
-        presence: 'online',
-        active: true,
-        thinking: false,
-        working: false,
-        blocked: false,
-        permissionRequired: false,
-        actionRequired: false,
-        updatedAt: null,
-      }),
-    };
-    const executor = createExecutor(transport);
-    const result = await executor.execute('session.activity.get', { sessionId: 's1', windowSeconds: 10 }, {
-      surface: 'agent',
-      authority: 'account_automation',
-      defaultSessionId: 's1',
-    });
-    expect(result).toEqual({
-      ok: true,
-      result: {
-        ok: true,
-        sessionId: 's1',
-        presence: 'online',
-        active: true,
-        thinking: false,
-        working: false,
-        blocked: false,
-        permissionRequired: false,
-        actionRequired: false,
-        updatedAt: null,
-      },
-    });
-    expect(publishedPreview).toEqual({ sessionId: 's1', windowSeconds: 10 });
+  it('requires an Artifact owner for durable Session approvals instead of a Session-local confirmation', async () => {
+    const sessionActionConfirmation = vi.fn(async () => ({ decision: 'approve' as const, isCurrent: () => true }));
+    const sessionActivityGet = vi.fn();
+    const executor = createExecutor({ sessionActionConfirmation, sessionActivityGet, isActionApprovalRequired: () => true });
+    expect(await executor.execute('session.activity.get', { sessionId: 's1', windowSeconds: 10 }, {
+      surface: 'agent', authority: 'account_automation', defaultSessionId: 's1',
+    })).toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+    expect(sessionActionConfirmation).not.toHaveBeenCalled();
+    expect(sessionActivityGet).not.toHaveBeenCalled();
   });
 
   it('routes plugin dev-loop actions through one executor dependency on the agent surface', async () => {
@@ -2236,7 +2563,6 @@ describe('createActionExecutor (approvals)', () => {
     expect(approvalsCreate).toHaveBeenCalledWith(expect.objectContaining({
       request: expect.objectContaining({
         actionId: 'session.message.send',
-        summary: expect.stringContaining('Send a message'),
         createdBy: expect.objectContaining({ surface: 'mcp', sessionId: 's1' }),
       }),
     }));
@@ -2251,17 +2577,15 @@ describe('createActionExecutor (approvals)', () => {
       isActionApprovalRequired: (actionId, ctx) => actionId === 'session.message.send' && ctx.surface === 'mcp',
     } as any);
 
-    await executor.execute(
-      'session.message.send' as any,
-      { sessionId: 's1', message: 'hello' },
-      { surface: 'mcp' },
-    );
+    const authoredSummary = 'Caller-authored replacement summary';
+    await executor.execute('approval.request.create', { actionId: 'session.message.send',
+      actionArgs: { sessionId: 's1', message: 'hello' }, summary: authoredSummary, createdBy: { surface: 'mcp', sessionId: 's1' } });
 
     const produced = approvalsCreate.mock.calls[0]?.[0]?.request;
     const consumed = ApprovalRequestV2Schema.parse(produced);
-    expect(consumed.summary).toBe('Send a message to the agent in a session.');
+    expect(consumed.summary).not.toBe(authoredSummary);
     expect(consumed.preview).toEqual(expect.objectContaining({
-      summary: 'Send a message to the agent in a session.',
+      summary: consumed.summary,
     }));
     expect(ApprovalRequestV2Schema.safeParse({
       ...produced,
@@ -2660,14 +2984,12 @@ describe('createActionExecutor (approvals)', () => {
       { surface },
     );
 
-    expect(res).toEqual(surface === 'cli'
-      ? { ok: true, result: { kind: 'approval_request_created', artifactId: 'a1', actionId: 'agents.backends.list' } }
-      : { ok: false, errorCode: 'approvals_not_supported', error: 'approvals_not_supported' });
+    expect(res).toEqual({ ok: true, result: { kind: 'approval_request_created', artifactId: 'a1', actionId: 'agents.backends.list' } });
     expect(agentsBackendsList).not.toHaveBeenCalled();
     expect(approvalsCreate).toHaveBeenCalledWith(expect.objectContaining({
       request: expect.objectContaining({
         actionId: 'agents.backends.list',
-        approval: { flow: surface === 'cli' ? 'deferred' : 'blocking', result: 'required' },
+        approval: { flow: 'deferred', result: 'required' },
         createdBy: expect.objectContaining({ surface }),
       }),
     }));
@@ -2731,109 +3053,6 @@ describe('createActionExecutor (approvals)', () => {
         approval: { flow: 'deferred', result: 'required' },
       }),
     }));
-  });
-
-  it.each([false, true])('executes deferred CLI authentication on the daemon after its caller exits (nativeFailure=%s)', async nativeFailure => {
-    let stored: ApprovalRequest | null = null;
-    const persisted: ApprovalRequest[] = [];
-    const effects: unknown[] = [];
-    const boundary: Partial<ActionExecutorDeps> = {
-      approvalsCreate: async ({ request }) => { stored = ApprovalRequestSchema.parse(request); return { artifactId: 'detached-connect' }; },
-      approvalsGet: async () => stored,
-      approvalsUpdate: async ({ request }) => {
-        if (!stored) throw new Error('Missing approval');
-        const next = ApprovalRequestSchema.parse(request);
-        const transition = decideApprovalRequestTransition(stored, next);
-        if (!transition.ok) return transition;
-        stored = next; persisted.push(next); return { ok: true };
-      },
-      // The native service transport is the boundary. New daemon composition
-      // below shares durable Artifact storage, never the original CLI closure.
-      connectedServiceAction: async ({ input }) => {
-        effects.push(input);
-        if (nativeFailure) throw Object.assign(new Error('Service unavailable'), { code: 'connected_account_service_unavailable' });
-        return { status: 'awaitingManual', attemptId: 'connected-attempt' };
-      },
-      approvalsWaitForDecision: async () => { throw new Error('Deferred CLI requests must not retain a waiter'); },
-    };
-    const caller = new AbortController();
-    const input = { machineId: 'machine-1', service: { pluginId: 'example.accounts', localId: 'service' }, modeId: 'manual' };
-    const context = { surface: 'cli' as const, authority: 'present_user' as const,
-      actionCaller: { kind: 'host' as const }, runtimeAccountId: 'account-1', serverId: 'server-1',
-      serverIdentityId: 'srv_home', actionRequestId: 'detached-connect', signal: caller.signal,
-      actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {
-        'connectedServices.authentication.beginConnect': { approvalRequiredSurfaces: ['cli'] },
-      } }) };
-    expect(await createExecutor(boundary).execute('connectedServices.authentication.beginConnect', input, context))
-      .toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'detached-connect' } });
-    expect(effects).toEqual([]);
-    caller.abort();
-    const decision = await createExecutor(boundary).execute('approval.request.decide', {
-      artifactId: 'detached-connect', decision: 'approve',
-    }, { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
-      runtimeAccountId: 'account-1', serverId: 'server-1', serverIdentityId: 'srv_home' });
-    expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true, result: {
-      status: nativeFailure ? 'failed' : 'executed', execution: { ok: !nativeFailure },
-    } });
-    expect(effects).toEqual([input]);
-    expect(JSON.stringify(persisted)).not.toContain('RPC_TRANSPORT_UNAVAILABLE');
-    expect(stored).toMatchObject({ status: nativeFailure ? 'failed' : 'executed', execution: { ok: !nativeFailure } });
-    const collected = await createExecutor(boundary).execute('approval.request.get', {
-      artifactId: 'detached-connect',
-    }, { surface: 'cli', authority: 'present_user', runtimeAccountId: 'account-1', serverId: 'server-1' });
-    expect(collected).toMatchObject({ ok: true, result: { request: {
-      status: nativeFailure ? 'failed' : 'executed',
-      execution: nativeFailure
-        ? { ok: false, errorCode: 'action_failed' }
-        : { ok: true, result: { status: 'awaitingManual', attemptId: 'connected-attempt' } },
-    } } });
-  });
-
-  it.each(['configurationRequired', 'awaitingOAuth'] as const)('returns fresh deferred beginConnect custody through daemon replay (%s)', async status => {
-    const actionId = 'connectedServices.authentication.beginConnect';
-    const service = { pluginId: 'example.accounts', localId: 'service' };
-    const input = { machineId: 'machine-1', service, modeId: 'password' };
-    const output = getActionSpec(actionId).outputSchema!.parse(status === 'configurationRequired'
-      ? { status, attemptId: 'attempt', target: { kind: 'attempt', attemptId: 'attempt', service, modeId: 'password' }, missingFieldIds: ['mailbox'] }
-      : { status, attemptId: 'attempt', callbackUrl: 'https://callback.example.test/', authorizationUrl: 'https://authorize.example.test/private' });
-    let stored: ApprovalRequest | null = null;
-    let effects = 0;
-    const boundary: Partial<ActionExecutorDeps> = {
-      approvalsCreate: async ({ request }) => { stored = ApprovalRequestSchema.parse(request); return { artifactId: 'connect-replay' }; },
-      approvalsGet: async () => stored,
-      approvalsUpdate: async ({ request }) => {
-        if (!stored) throw new Error('Missing approval');
-        const next = ApprovalRequestSchema.parse(request);
-        const transition = decideApprovalRequestTransition(stored, next);
-        if (!transition.ok) return transition;
-        stored = next; return { ok: true };
-      },
-      // Native authentication and Artifact storage are system boundaries.
-      connectedServiceAction: async () => { effects++; return output; },
-    };
-    const origin = { surface: 'cli' as const, authority: 'present_user' as const,
-      actionCaller: { kind: 'host' as const }, runtimeAccountId: 'account-1', serverId: 'server-1', serverIdentityId: 'srv_home' };
-    const daemon = createExecutor(boundary);
-    expect(await daemon.execute(actionId, input, { ...origin, actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {
-      [actionId]: { approvalRequiredSurfaces: ['cli'] },
-    } }) })).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'connect-replay' } });
-    const deciding = createExecutor({ ...boundary,
-      // The exact-Machine RPC transport calls the real daemon replay entry.
-      approvalRequestApprovedReplay: async ({ artifactId, context }) => daemon.replayApprovedApprovalRequest({
-        artifactId, callerAuthority: context.authority,
-      }),
-    });
-    const decision = await deciding.execute('approval.request.decide', { artifactId: 'connect-replay', decision: 'approve' }, origin);
-    expect(decision).toMatchObject({ ok: true, result: { status: 'executed', liveExecution: { ok: true, result: output } } });
-    if (decision.ok && decision.result && typeof decision.result === 'object' && 'liveExecution' in decision.result) {
-      expect(getActionSpec(actionId).outputSchema!.parse((decision.result.liveExecution as { result: unknown }).result)).toEqual(output);
-    }
-    const repeat = await deciding.execute('approval.request.decide', { artifactId: 'connect-replay', decision: 'approve' }, origin);
-    expect(repeat).toMatchObject({ ok: true, result: { status: 'executed' } });
-    if (repeat.ok) expect(repeat.result).not.toHaveProperty('liveExecution');
-    expect(effects).toBe(1);
-    expect(JSON.stringify(stored)).not.toContain('https://authorize.example.test/private');
-    if (status === 'configurationRequired') expect(ApprovalRequestSchema.parse(stored).execution?.result).not.toHaveProperty('target');
   });
 
   it('keeps a present-user invitation approval on its live mounted invocation', async () => {
@@ -2954,229 +3173,161 @@ describe('createActionExecutor (approvals)', () => {
     const terminal = persisted.at(-1);
     expect(terminal?.execution).toEqual({
       executedAtMs: expect.any(Number),
-      effectAttempted: true,
       ok: true,
       result: { invitation, joinUrl: null },
     });
     expect(JSON.stringify(persisted)).not.toContain('live-only-bearer');
   });
 
-  it('waits for a blocking approval and returns the underlying action result when approved', async () => {
-    const cancellation = new AbortController();
-    const approvalsCreate = vi.fn(async () => ({ artifactId: 'a1' }));
-    const approvalsUpdate = vi.fn(async () => ({ ok: true as const }));
-    const sessionList = vi.fn(async () => ({
-      sessions: [{ id: 's1', active: false, presence: 'offline', updatedAt: 1, title: 'One' }],
-      nextCursor: null,
-    }));
-    const approvalsWaitForDecision = vi.fn(async ({ request }: { request: ApprovalRequest }) => {
-      expect(sessionList).not.toHaveBeenCalled();
-      return {
-        decision: 'approve' as const,
-        request: {
-          ...request,
-          status: 'approved' as const,
-          decision: { kind: 'approve' as const, decidedAtMs: 2 },
-        },
-      };
-    });
-
-    const executor = createExecutor({
-      approvalsCreate,
-      approvalsUpdate,
-      approvalsWaitForDecision,
-      sessionList,
-      isActionApprovalRequired: (actionId) => actionId === 'session.list',
-    } as any);
-
-    const res = await executor.execute(
-      'session.list' as any,
-      { limit: 10 },
-      { surface: 'mcp', signal: cancellation.signal },
-    );
-
-    expect(res).toEqual({
-      ok: true,
-      result: {
-        sessions: [{ id: 's1', active: false, presence: 'offline', updatedAt: 1, title: 'One' }],
-        nextCursor: null,
+  it.each([false, true])('executes deferred CLI authentication on the daemon after its caller exits (nativeFailure=%s)', async nativeFailure => {
+    let stored: ApprovalRequest | null = null;
+    const persisted: ApprovalRequest[] = [];
+    const effects: unknown[] = [];
+    const boundary: Partial<ActionExecutorDeps> = {
+      approvalsCreate: async ({ request }) => { stored = ApprovalRequestSchema.parse(request); return { artifactId: 'detached-connect' }; },
+      approvalsGet: async () => stored,
+      approvalsUpdate: async ({ request }) => {
+        if (!stored) throw new Error('Missing approval');
+        const next = ApprovalRequestSchema.parse(request);
+        const transition = decideApprovalRequestTransition(stored, next);
+        if (!transition.ok) return transition;
+        stored = next; persisted.push(next); return { ok: true };
       },
-    });
-    expect(approvalsWaitForDecision).toHaveBeenCalledWith(expect.objectContaining({
-      artifactId: 'a1',
-      request: expect.objectContaining({
-        actionId: 'session.list',
-        approval: { flow: 'blocking', result: 'required' },
-      }),
-      serverId: 'server-1',
-      signal: cancellation.signal,
-    }));
-    expect(sessionList).toHaveBeenCalledWith(expect.objectContaining({
-      limit: 10,
-      serverId: 'server-1',
-      signal: cancellation.signal,
-      context: expect.objectContaining({
-        authority: 'account_automation',
-        surface: 'mcp',
-        bypassApprovals: true,
-      }),
-    }));
-    expect(approvalsUpdate).toHaveBeenCalledWith(expect.objectContaining({
-      artifactId: 'a1',
-      request: expect.objectContaining({
-        status: 'executed',
-        execution: expect.objectContaining({
-          ok: true,
-          result: {
-            sessions: [{ id: 's1', active: false, presence: 'offline', updatedAt: 1, title: 'One' }],
-            nextCursor: null,
-          },
-        }),
-      }),
-    }));
-  });
-
-  it('cancels a blocking approval without invoking the target Action', async () => {
-    const cancellation = new AbortController();
-    const coordinator = createBlockingApprovalCoordinator();
-    const sessionList = vi.fn(async () => ({ sessions: [], nextCursor: null }));
-    const approvalsUpdate = vi.fn(async () => ({ ok: true as const }));
-    const executor = createExecutor({
-      approvalsCreate: async () => ({ artifactId: 'a1' }),
-      approvalsUpdate,
-      approvalsWaitForDecision: async args => {
-        const decision = await coordinator.waitForDecision(args);
-        return { ...decision, request: ApprovalRequestSchema.parse(decision.request) };
+      // The native service transport is the boundary. New daemon composition
+      // below shares durable Artifact storage, never the original CLI closure.
+      connectedServiceAction: async ({ input }) => {
+        effects.push(input);
+        if (nativeFailure) throw Object.assign(new Error('Service unavailable'), { code: 'connected_account_service_unavailable' });
+        return { status: 'awaitingManual', attemptId: 'connected-attempt' };
       },
-      sessionList,
-    });
-
-    const pending = executor.execute('session.list', { limit: 10 }, {
-      surface: 'mcp', signal: cancellation.signal,
-      actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: { 'session.list': { approvalRequiredSurfaces: ['mcp'] } } }),
-    });
-    await vi.waitFor(() => expect(coordinator.getLiveWaiterCount('a1')).toBe(1));
-    cancellation.abort();
-    expect(await pending).toMatchObject({ ok: false, errorCode: 'cancelled' });
-    expect(sessionList).not.toHaveBeenCalled();
-    expect(coordinator.getLiveWaiterCount('a1')).toBe(0);
-    // Ending the observer does not withdraw the durable human decision.
-    expect(approvalsUpdate).not.toHaveBeenCalled();
-  });
-
-  it('returns an already executed blocking approval result without re-executing the target action', async () => {
-    const approvalsCreate = vi.fn(async () => ({ artifactId: 'a1' }));
-    const approvalsUpdate = vi.fn(async () => ({ ok: true as const }));
-    const recordedResult = {
-      sessions: [{ id: 's1', active: false, presence: 'offline', updatedAt: 1, title: 'Recorded' }],
-      nextCursor: null,
+      approvalsWaitForDecision: async () => { throw new Error('Deferred CLI requests must not retain a waiter'); },
     };
-    const sessionList = vi.fn(async () => ({
-      sessions: [{ id: 's2', active: false, presence: 'offline', updatedAt: 1, title: 'Duplicate' }],
-      nextCursor: null,
-    }));
-    const approvalsWaitForDecision = vi.fn(async ({ request }: { request: ApprovalRequest }) => ({
-      decision: 'approve' as const,
-      request: {
-        ...request,
-        status: 'executed' as const,
-        decision: { kind: 'approve' as const, decidedAtMs: 2 },
-        execution: { executedAtMs: 3, ok: true as const, result: recordedResult },
-      },
-    }));
-
-    const executor = createExecutor({
-      approvalsCreate,
-      approvalsUpdate,
-      approvalsWaitForDecision,
-      sessionList,
-      isActionApprovalRequired: (actionId) => actionId === 'session.list',
-    } as any);
-
-    const res = await executor.execute(
-      'session.list' as any,
-      { limit: 10 },
-      { surface: 'mcp' },
-    );
-
-    expect(res).toEqual({ ok: true, result: recordedResult });
-    expect(sessionList).not.toHaveBeenCalled();
-    expect(approvalsUpdate).not.toHaveBeenCalledWith(expect.objectContaining({
-      request: expect.objectContaining({ status: 'executed' }),
-    }));
+    const caller = new AbortController();
+    const input = { machineId: 'machine-1', service: { pluginId: 'example.accounts', localId: 'service' }, modeId: 'manual' };
+    const context = { surface: 'cli' as const, authority: 'present_user' as const,
+      actionCaller: { kind: 'host' as const }, runtimeAccountId: 'account-1', serverId: 'server-1',
+      serverIdentityId: 'srv_home', actionRequestId: 'detached-connect', signal: caller.signal,
+      actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {
+        'connectedServices.authentication.beginConnect': { approvalRequiredSurfaces: ['cli'] },
+      } }) };
+    expect(await createExecutor(boundary).execute('connectedServices.authentication.beginConnect', input, context))
+      .toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'detached-connect' } });
+    expect(effects).toEqual([]);
+    caller.abort();
+    const decision = await createExecutor(boundary).execute('approval.request.decide', {
+      artifactId: 'detached-connect', decision: 'approve',
+    }, { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+      runtimeAccountId: 'account-1', serverId: 'server-1', serverIdentityId: 'srv_home' });
+    expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true, result: {
+      status: nativeFailure ? 'failed' : 'executed', execution: { ok: !nativeFailure },
+    } });
+    expect(effects).toEqual([input]);
+    expect(JSON.stringify(persisted)).not.toContain('RPC_TRANSPORT_UNAVAILABLE');
+    expect(stored).toMatchObject({ status: nativeFailure ? 'failed' : 'executed', execution: { ok: !nativeFailure } });
+    const collected = await createExecutor(boundary).execute('approval.request.get', {
+      artifactId: 'detached-connect',
+    }, { surface: 'cli', authority: 'present_user', runtimeAccountId: 'account-1', serverId: 'server-1' });
+    expect(collected).toMatchObject({ ok: true, result: { request: {
+      status: nativeFailure ? 'failed' : 'executed',
+      execution: nativeFailure
+        ? { ok: false, errorCode: 'action_failed' }
+        : { ok: true, result: { status: 'awaitingManual', attemptId: 'connected-attempt' } },
+    } } });
   });
 
-  it.each(['approve', 'reject'] as const)('delivers a delayed %s to the original blocking call through the real coordinator', async decision => {
-    const coordinator = createBlockingApprovalCoordinator();
-    let storedRequest: ApprovalRequest | null = null;
-    const approvalsCreate = vi.fn(async ({ request }: { request: ApprovalRequest }) => {
-      storedRequest = ApprovalRequestSchema.parse(request);
-      return { artifactId: 'a1' };
-    });
-    const approvalsGet = vi.fn(async () => storedRequest);
-    const approvalsUpdate = vi.fn(async ({ request }: { request: ApprovalRequest }) => {
-      if (!storedRequest) throw new Error('Missing approval');
-      const next = ApprovalRequestSchema.parse(request);
-      const transition = decideApprovalRequestTransition(storedRequest, next);
-      if (!transition.ok) return transition;
-      storedRequest = next;
-      coordinator.notifyApprovalUpdated({ artifactId: 'a1', request: next });
-      return { ok: true as const };
-    });
-    const sessionList = vi.fn(async () => ({
-      sessions: [{ id: 's1', active: false, presence: 'offline', updatedAt: 1, title: 'One' }],
-      nextCursor: null,
-    }));
-
-    const executor = createExecutor({
-      approvalsCreate,
-      approvalsGet,
-      approvalsUpdate,
-      approvalsResolveBlockingDecision: args => coordinator.resolveBlockingDecision(args),
-      approvalsWaitForDecision: async args => {
-        const answer = await coordinator.waitForDecision({ ...args, readRequest: approvalsGet,
-          subscribeChanges: listener => coordinator.subscribeApprovalChanges(listener) });
-        return { ...answer, request: ApprovalRequestSchema.parse(answer.request) };
+  it.each(['configurationRequired', 'awaitingOAuth'] as const)('returns fresh deferred beginConnect custody through daemon replay (%s)', async status => {
+    const actionId = 'connectedServices.authentication.beginConnect';
+    const service = { pluginId: 'example.accounts', localId: 'service' };
+    const input = { machineId: 'machine-1', service, modeId: 'password' };
+    const output = getActionSpec(actionId).outputSchema!.parse(status === 'configurationRequired'
+      ? { status, attemptId: 'attempt', target: { kind: 'attempt', attemptId: 'attempt', service, modeId: 'password' }, missingFieldIds: ['mailbox'] }
+      : { status, attemptId: 'attempt', callbackUrl: 'https://callback.example.test/', authorizationUrl: 'https://authorize.example.test/private' });
+    let stored: ApprovalRequest | null = null;
+    let effects = 0;
+    const boundary: Partial<ActionExecutorDeps> = {
+      approvalsCreate: async ({ request }) => { stored = ApprovalRequestSchema.parse(request); return { artifactId: 'connect-replay' }; },
+      approvalsGet: async () => stored,
+      approvalsUpdate: async ({ request }) => {
+        if (!stored) throw new Error('Missing approval');
+        const next = ApprovalRequestSchema.parse(request);
+        const transition = decideApprovalRequestTransition(stored, next);
+        if (!transition.ok) return transition;
+        stored = next; return { ok: true };
       },
-      sessionList,
+      // Native authentication and Artifact storage are system boundaries.
+      connectedServiceAction: async () => { effects++; return output; },
+    };
+    const origin = { surface: 'cli' as const, authority: 'present_user' as const,
+      actionCaller: { kind: 'host' as const }, runtimeAccountId: 'account-1', serverId: 'server-1', serverIdentityId: 'srv_home' };
+    const daemon = createExecutor(boundary);
+    expect(await daemon.execute(actionId, input, { ...origin, actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {
+      [actionId]: { approvalRequiredSurfaces: ['cli'] },
+    } }) })).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'connect-replay' } });
+    const deciding = createExecutor({ ...boundary,
+      // The exact-Machine RPC transport calls the real daemon replay entry.
+      approvalRequestApprovedReplay: async ({ artifactId, context }) => daemon.replayApprovedApprovalRequest({ artifactId, callerAuthority: context.authority }),
     });
+    const decision = await deciding.execute('approval.request.decide', { artifactId: 'connect-replay', decision: 'approve' }, origin);
+    expect(decision).toMatchObject({ ok: true, result: { status: 'executed', liveExecution: { ok: true, result: output } } });
+    if (decision.ok && decision.result && typeof decision.result === 'object' && 'liveExecution' in decision.result) {
+      expect(getActionSpec(actionId).outputSchema!.parse((decision.result.liveExecution as { result: unknown }).result)).toEqual(output);
+    }
+    const repeat = await deciding.execute('approval.request.decide', { artifactId: 'connect-replay', decision: 'approve' }, origin);
+    expect(repeat).toMatchObject({ ok: true, result: { status: 'executed' } });
+    if (repeat.ok) expect(repeat.result).not.toHaveProperty('liveExecution');
+    expect(effects).toBe(1);
+    expect(JSON.stringify(stored)).not.toContain('https://authorize.example.test/private');
+    if (status === 'configurationRequired') expect(ApprovalRequestSchema.parse(stored).execution?.result).not.toHaveProperty('target');
+  });
 
-    let responseReceived = false;
-    const blockingCall = executor.execute('session.list', {}, { surface: 'agent', authority: 'account_automation',
+  function deferredSessionList() {
+    let stored: ApprovalRequest | null = null;
+    const result = { sessions: [{ id: 's1', active: false, presence: 'offline', updatedAt: 1, title: 'One' }], nextCursor: null };
+    const sessionList = vi.fn(async () => result);
+    const approvalsWaitForDecision = vi.fn(async () => { throw new Error('Durable requests do not wait'); });
+    const executor = createExecutor({ sessionList, approvalsWaitForDecision,
+      approvalsCreate: async ({ request }) => { stored = ApprovalRequestSchema.parse(request); return { artifactId: 'a1' }; },
+      approvalsGet: async () => stored,
+      approvalsUpdate: async ({ request }) => {
+        if (!stored) throw new Error('Missing approval');
+        const next = ApprovalRequestSchema.parse(request);
+        const transition = decideApprovalRequestTransition(stored, next);
+        if (!transition.ok) return transition;
+        stored = next;
+        return { ok: true };
+      },
+    });
+    return { executor, sessionList, result, approvalsWaitForDecision, read: () => stored };
+  }
+
+  it.each(['approve', 'reject'] as const)('settles a deferred Session list through authenticated %s exactly once', async decision => {
+    const h = deferredSessionList();
+    expect(await h.executor.execute('session.list', { limit: 10 }, { surface: 'mcp', authority: 'account_automation',
+      actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: { 'session.list': { approvalRequiredSurfaces: ['mcp'] } } }),
+    })).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'a1' } });
+    expect(h.read()).toMatchObject({ status: 'open', approval: { flow: 'deferred', result: 'required' } });
+    expect(h.sessionList).not.toHaveBeenCalled();
+    expect(h.approvalsWaitForDecision).not.toHaveBeenCalled();
+    const decided = await h.executor.execute('approval.request.decide', { artifactId: 'a1', decision });
+    expect(decided).toMatchObject({ ok: true, result: { status: decision === 'approve' ? 'executed' : 'rejected',
+      ...(decision === 'approve' ? { execution: { ok: true, result: h.result } } : {}) } });
+    expect(await h.executor.execute('approval.request.decide', { artifactId: 'a1', decision })).toEqual(decided);
+    expect(h.sessionList).toHaveBeenCalledTimes(decision === 'approve' ? 1 : 0);
+  });
+
+  it('preserves a durable deferred approval after its originating Session turn ends', async () => {
+    const h = deferredSessionList();
+    const turn = new AbortController();
+    expect(await h.executor.execute('session.list', {}, { surface: 'agent', authority: 'account_automation', signal: turn.signal,
+      sessionInputSource: { sourceSessionId: 'discussion-session', sourceTurnId: 'discussion-turn', sourceInputId: 'discussion-input', via: 'action' },
       actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: { 'session.list': { approvalRequiredSurfaces: ['agent'] } } }),
-    })
-      .then(result => { responseReceived = true; return result; });
-
-    await vi.waitFor(() => expect(coordinator.getLiveWaiterCount('a1')).toBe(1));
-    vi.useFakeTimers();
-    try {
-      // The human can answer after 30 seconds without another waiter or poll.
-      await vi.advanceTimersByTimeAsync(30_000);
-      expect(responseReceived).toBe(false);
-      expect(sessionList).not.toHaveBeenCalled();
-    } finally { vi.useRealTimers(); }
-    const decideResult = await executor.execute('approval.request.decide', {
-      artifactId: 'a1',
-      decision,
-    }, {
-      surface: 'mcp',
-      authority: 'present_user',
-    });
-    const blockingResult = await blockingCall;
-
-    expect(decideResult.ok).toBe(true);
-    expect(blockingResult).toEqual(decision === 'approve' ? {
-      ok: true,
-      result: {
-        sessions: [{ id: 's1', active: false, presence: 'offline', updatedAt: 1, title: 'One' }],
-        nextCursor: null,
-      },
-    } : { ok: false, errorCode: 'approval_rejected', error: 'approval_rejected' });
-    await executor.execute('approval.request.decide', { artifactId: 'a1', decision }, {
-      surface: 'mcp', authority: 'present_user',
-    });
-    expect(sessionList).toHaveBeenCalledTimes(decision === 'approve' ? 1 : 0);
-    expect(coordinator.getLiveWaiterCount('a1')).toBe(0);
+    })).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    turn.abort();
+    expect(h.read()).toMatchObject({ status: 'open', approval: { flow: 'deferred' } });
+    expect(h.sessionList).not.toHaveBeenCalled();
+    expect(await h.executor.execute('approval.request.decide', { artifactId: 'a1', decision: 'approve' }))
+      .toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true, result: h.result } } });
+    expect(h.sessionList).toHaveBeenCalledOnce();
   });
 
   it('routes session.title.set through approvals when required by the caller policy', async () => {
@@ -3251,18 +3402,21 @@ describe('createActionExecutor (approvals)', () => {
     });
 
     await expect(executor.execute('session.delete', { sessionId: 'stopped-session' }, {
-      surface, authority: 'account_automation', actionCaller: { kind: 'host' },
+      surface, authority: 'account_automation', actionCaller: { kind: 'host' }, actionsSettings: defaultActionsSettings,
+      runtimeAccountId: 'delete-account', serverIdentityId: 'delete-home',
     })).resolves.toMatchObject({ ok: true, result: {
       kind: 'approval_request_created', artifactId: 'stopped-session-delete',
     } });
     expect(storedRequest).toMatchObject({ actionId: 'session.delete', actionArgs: { sessionId: 'stopped-session' },
       executionOriginV1: { surface, caller: { kind: 'host' } } });
-    expect(storedRequest && requiresExactDaemonApprovalReplay(storedRequest)).toBe(false);
+    expect(storedRequest && resolveApprovalExecutor(storedRequest)).toEqual({ kind: 'app', placement: 'account' });
     expect(homeDomainAction).not.toHaveBeenCalled();
 
-    await expect(executor.execute('approval.request.decide', {
+    const decision = await executor.execute('approval.request.decide', {
       artifactId: 'stopped-session-delete', decision: 'approve',
-    })).resolves.toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
+    }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+      runtimeAccountId: 'delete-account', serverIdentityId: 'delete-home', actionsSettings: defaultActionsSettings });
+    expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
     expect(homeDomainAction).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
       actionId: 'session.delete', input: { sessionId: 'stopped-session' },
       context: expect.objectContaining({ surface: 'ui', authority: 'present_user' }),
@@ -3338,6 +3492,7 @@ describe('createActionExecutor (approvals)', () => {
         ok: false,
         errorCode: 'invalid_parameters',
         error: 'invalid_parameters',
+        ...(mode === 'replay' ? { effectAttempted: false } : {}),
       });
       expect(approvalsUpdate).not.toHaveBeenCalled();
       expect(homeDomainAction).not.toHaveBeenCalled();
@@ -3388,7 +3543,6 @@ describe('createActionExecutor (approvals)', () => {
       request: expect.objectContaining({
         status: 'open',
         actionId: 'session.message.send',
-        summary: 'Send a message to the agent in a session.',
       }),
     }));
   });
@@ -3693,7 +3847,7 @@ describe('createActionExecutor (approvals)', () => {
       artifactId: 'a1',
       request: expect.objectContaining({
         status: 'executed',
-        execution: expect.objectContaining({ effectAttempted: true, ok: true }),
+        execution: expect.objectContaining({ ok: true }),
       }),
     }));
   });
@@ -3820,6 +3974,46 @@ describe('createActionExecutor (approvals)', () => {
     await expect(executor.execute('approval.request.decide', { artifactId: 'leaving', decision: 'approve' }))
       .resolves.toMatchObject({ ok: false, errorCode: 'approval_execution_outcome_unknown' });
     expect(signOut).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    [false, 'server_unreachable', 'failed', false],
+    [true, 'server_unreachable', 'failed', true],
+    [undefined, 'server_unreachable', 'failed', undefined],
+    [false, 'outcome_unknown', 'failed', false],
+    ['throws', 'outcome_unknown', 'outcome_unknown', undefined],
+  ] as const)('settles producer effect evidence %s with %s into the durable receipt', async (evidence, errorCode, status, effectAttempted) => {
+    let storedRequest = createApprovalRequest('approved', { actionId: 'ui.command_palette.invoke',
+      actionArgs: { commandId: 'session.pending.next' } });
+    let dispatches = 0;
+    const executor = createExecutor({
+      approvalsGet: async () => structuredClone(storedRequest),
+      approvalsUpdate: async ({ request }) => {
+        const next = ApprovalRequestV2Schema.parse(request);
+        const transition = decideApprovalRequestTransition(storedRequest, next);
+        if (!transition.ok) return transition;
+        storedRequest = next;
+        return { ok: true };
+      },
+      // The answering-client transport supplies its typed terminal result;
+      // execution, transitions, persistence and public observation stay real.
+      clientActionExecute: async () => {
+        dispatches += 1;
+        if (evidence === 'throws') throw Object.assign(new Error('lost response'), { code: errorCode, effectAttempted: false });
+        return { ok: false, errorCode, error: errorCode,
+          ...(evidence === undefined ? {} : { effectAttempted: evidence }) };
+      },
+    });
+    const result = await executor.execute('approval.request.decide', { artifactId: 'effect-evidence', decision: 'approve' });
+    // Dispatch is not producer-authored effect evidence (docs/actions.md,
+    // approval settlement). Missing evidence stays absent, including throws.
+    const receipt = { ok: false, errorCode, ...(effectAttempted === undefined ? {} : { effectAttempted }) };
+    expect(result).toMatchObject({ ok: true, result: { status, execution: receipt } });
+    expect(storedRequest).toMatchObject({ status, execution: receipt });
+    if (effectAttempted === undefined) expect(storedRequest.execution).not.toHaveProperty('effectAttempted');
+    expect(ApprovalRequestPublicSettlementSchema.safeParse(storedRequest).success).toBe(true);
+    expect(await executor.replayApprovedApprovalRequest({ artifactId: 'effect-evidence' })).toEqual(result);
+    expect(dispatches).toBe(1);
   });
 
   it('does not report signed out when the effect has no confirmed retirement and settlement fails', async () => {
@@ -3991,12 +4185,12 @@ describe('createActionExecutor (approvals)', () => {
     await expect(executor.replayApprovedApprovalRequest({ artifactId: 'a1' })).resolves.toMatchObject({
       ok: true,
       result: {
-        status: 'failed',
+        status: 'outcome_unknown',
         execution: { ok: false, errorCode: 'outcome_unknown', details: { recovery } },
       },
     });
     expect(storedRequest).toMatchObject({
-      status: 'failed',
+      status: 'outcome_unknown',
       execution: { ok: false, errorCode: 'outcome_unknown', details: { recovery } },
     });
   });
@@ -4019,7 +4213,6 @@ describe('createActionExecutor (approvals)', () => {
     await executor.replayApprovedApprovalRequest({ artifactId: 'a1' });
     expect(storedRequest.execution).toEqual({
       executedAtMs: expect.any(Number),
-      effectAttempted: true,
       ok: false,
       errorCode: 'action_failed',
       error: 'action_failed',
@@ -4125,7 +4318,105 @@ describe('createActionExecutor (approvals)', () => {
     }
   });
 
-  it('settles an unavailable exact-daemon route without releasing a live blocking waiter to execute', async () => {
+  it.each([
+    ['approval_context_unavailable', 'approved', false, false, undefined],
+    ['approval_context_unavailable', 'failed', false, true, false],
+    ['requester_account_material_unavailable', 'failed', false, true, false],
+    ['target_unavailable', 'failed', false, true, false],
+    ['approval_stale', 'approved', false, false, undefined],
+    ['approval_context_unavailable', 'approved', undefined, true, undefined],
+    ['outcome_unknown', 'approved', undefined, true, undefined],
+    ['invalid_action_transport_output', 'approved', undefined, true, undefined],
+  ] as const)('settles approved delete replay refusal %s as %s without a second effect', async (errorCode, status, effectAttempted, dispatched, producerEffectAttempted) => {
+    let storedRequest = ApprovalRequestV2Schema.parse(createApprovalRequest('open', {
+      actionId: 'daemon.filesystem.delete', actionArgs: getActionSpec('daemon.filesystem.delete').inputSchema.parse({
+        rootPath: '/repo', path: 'tracked.txt', recursive: false,
+      }),
+    }));
+    const coordinator = createBlockingApprovalCoordinator();
+    const pending = coordinator.waitForDecision({ artifactId: 'a1', request: storedRequest,
+      readRequest: async () => storedRequest, subscribeChanges: listener => coordinator.subscribeApprovalChanges(listener) });
+    void pending.catch(() => {});
+    let replayDispatches = 0;
+    const executor = createExecutor({
+      approvalsGet: async () => storedRequest,
+      approvalsUpdate: async ({ request }) => {
+        const next = ApprovalRequestV2Schema.parse(request);
+        const transition = decideApprovalRequestTransition(storedRequest, next);
+        if (!transition.ok) return transition;
+        storedRequest = next;
+        coordinator.notifyApprovalUpdated({ artifactId: 'a1', request: next });
+        return { ok: true as const };
+      },
+      // Genuine exact-daemon transport boundary: a returned pre-dispatch
+      // refusal or lost dispatched acknowledgement, never internal replay logic.
+      approvalRequestApprovedReplay: async ({ onReplayDispatched }) => {
+        replayDispatches++;
+        if (dispatched) onReplayDispatched?.();
+        return { ok: false as const, errorCode, error: errorCode,
+          ...(producerEffectAttempted === undefined ? {} : { effectAttempted: producerEffectAttempted }) };
+      },
+      approvalsResolveBlockingDecision: args => coordinator.resolveBlockingDecision(args),
+    });
+    try {
+      const result = await executor.execute('approval.request.decide', { artifactId: 'a1', decision: 'approve' });
+      expect(replayDispatches).toBe(1);
+      // READY71: lost replies do not transfer the remote executor's settlement
+      // authority. A producer-confirmed non-effect refusal can still settle.
+      const recordedCode = dispatched && producerEffectAttempted === undefined && errorCode !== 'outcome_unknown'
+        ? 'approval_execution_outcome_unknown' : errorCode;
+      if (status === 'approved') {
+        expect(result).toMatchObject({ ok: false, errorCode: recordedCode,
+          ...(effectAttempted === undefined ? {} : { effectAttempted }) });
+        if (effectAttempted === undefined) expect(result).not.toHaveProperty('effectAttempted');
+        expect(storedRequest.status).toBe('approved');
+        expect(storedRequest.execution).toBeUndefined();
+        expect(coordinator.getLiveWaiterCount('a1')).toBe(1);
+        expect(await executor.execute('approval.request.decide', { artifactId: 'a1', decision: 'approve' })).toEqual(result);
+        expect(replayDispatches).toBe(2);
+        return;
+      }
+      expect(result).toMatchObject({ ok: true, result: { status, execution: { ok: false, errorCode: recordedCode, effectAttempted,
+        ...(recordedCode !== errorCode ? { details: { reasonCode: errorCode } } : {}) } } });
+      expect(storedRequest.status).toBe(status);
+      expect(ApprovalRequestPublicSettlementSchema.safeParse(storedRequest).success).toBe(true);
+      expect((await pending).request.status).toBe(status);
+      expect(await executor.execute('approval.request.decide', { artifactId: 'a1', decision: 'approve' })).toEqual(result);
+      expect(replayDispatches).toBe(1);
+    } finally {
+      coordinator.dispose();
+      await pending.catch(() => {});
+    }
+  });
+
+  it('executes an approved delete once through the canonical filesystem boundary', async () => {
+    let storedRequest = ApprovalRequestV2Schema.parse(createApprovalRequest('open', {
+      actionId: 'daemon.filesystem.delete', actionArgs: getActionSpec('daemon.filesystem.delete').inputSchema.parse({
+        rootPath: '/repo', path: 'tracked.txt', recursive: false,
+      }),
+    }));
+    const removed: unknown[] = [];
+    const executor = createExecutor({
+      approvalsGet: async () => storedRequest,
+      approvalsUpdate: async ({ request }) => {
+        const next = ApprovalRequestV2Schema.parse(request);
+        const transition = decideApprovalRequestTransition(storedRequest, next);
+        if (!transition.ok) return transition;
+        storedRequest = next;
+        return { ok: true as const };
+      },
+      // The actual filesystem effect is the system boundary. All approval,
+      // replay, policy, claim and output-validation logic above it stays real.
+      filesystemActionExecute: async ({ input }) => { removed.push(input); return { success: true }; },
+    });
+    const result = await executor.execute('approval.request.decide', { artifactId: 'a1', decision: 'approve' });
+    expect(result).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
+    expect(removed).toEqual([{ rootPath: '/repo', path: 'tracked.txt', recursive: false }]);
+    expect(await executor.execute('approval.request.decide', { artifactId: 'a1', decision: 'approve' })).toEqual(result);
+    expect(removed).toHaveLength(1);
+  });
+
+  it('preserves consent on an unavailable exact-daemon route without releasing its live waiter', async () => {
     let storedRequest = ApprovalRequestV2Schema.parse({ ...createApprovalRequest('open'),
       approval: { flow: 'blocking', result: 'required' } });
     const coordinator = createBlockingApprovalCoordinator();
@@ -4149,16 +4440,17 @@ describe('createActionExecutor (approvals)', () => {
     });
     try {
       expect(await executor.execute('approval.request.decide', { artifactId: 'a1', decision: 'approve' }))
-        .toMatchObject({ ok: true, result: { status: 'failed', execution: { ok: false, errorCode: 'approval_origin_unavailable' } } });
-      expect(storedRequest.status).toBe('failed');
-      expect((await pending).request).toMatchObject({ status: 'failed', execution: { ok: false } });
+        .toMatchObject({ ok: false, effectAttempted: false, errorCode: 'approval_origin_unavailable' });
+      expect(storedRequest.status).toBe('approved');
+      expect(storedRequest.execution).toBeUndefined();
+      expect(coordinator.getLiveWaiterCount('a1')).toBe(1);
     } finally {
       coordinator.dispose();
       await pending.catch(() => {});
     }
   });
 
-  it.each(['open', 'approved'] as const)('settles an origin-less CLI Session approval from %s without replaying its effect', async status => {
+  it.each(['open', 'approved'] as const)('preserves an origin-less CLI Session approval from %s without replaying its effect', async status => {
     const proposal = ApprovalRequestV2Schema.parse(createApprovalRequest(status, {
         actionId: 'session.board.layout.update',
         requestedSurface: 'cli',
@@ -4192,18 +4484,18 @@ describe('createActionExecutor (approvals)', () => {
       approvalRequestApprovedReplay,
     });
     const expected = {
-      ok: true,
-      result: { status: 'failed', execution: {
-        ok: false, errorCode: 'approval_origin_unavailable',
-        error: expect.stringMatching(/cannot run.*origin.*unavailable/i),
-      } },
+      ok: false,
+      effectAttempted: false,
+      errorCode: 'approval_origin_unavailable',
+      error: expect.stringMatching(/cannot run.*origin.*unavailable/i),
     };
     await expect(status === 'approved'
       ? executor.replayApprovedApprovalRequest({ artifactId: 'a1' })
       : executor.execute('approval.request.decide', { artifactId: 'a1', decision: 'approve' }))
       .resolves.toMatchObject(expected);
-    expect(storedRequest.status).toBe('failed');
-    // A second decision observes the same terminal failure, never retries it.
+    expect(storedRequest.status).toBe('approved');
+    expect(storedRequest.execution).toBeUndefined();
+    // A repeated decision still cannot issue an effect without its origin.
     await expect(executor.execute('approval.request.decide', { artifactId: 'a1', decision: 'approve' }))
       .resolves.toMatchObject(expected);
     expect(sessionBoardAction).not.toHaveBeenCalled();
@@ -4292,6 +4584,7 @@ describe('createActionExecutor (approvals)', () => {
       ok: false,
       errorCode: 'approval_not_approved',
       error: 'approval_not_approved',
+      effectAttempted: false,
     });
     expect(approvalsUpdate).not.toHaveBeenCalled();
     expect(sessionSendMessage).not.toHaveBeenCalled();
@@ -4409,7 +4702,7 @@ describe('createActionExecutor (approvals)', () => {
     expect(sessionList).toHaveBeenCalledTimes(1);
   });
 
-  it('marks legacy V1 approvals stale before effects because their execution origin is unprovable', async () => {
+  it('preserves legacy V1 consent when its execution origin is unprovable before effects', async () => {
     let legacyRequest: ApprovalRequestV1 = {
       v: 1,
       status: 'open',
@@ -4434,23 +4727,14 @@ describe('createActionExecutor (approvals)', () => {
       decision: 'approve',
     });
 
-    expect(res).toEqual({
-      ok: true,
-      result: {
-        ok: true,
-        status: 'failed',
-        execution: expect.objectContaining({ ok: false, errorCode: 'approval_stale' }),
-      },
-    });
+    expect(res).toMatchObject({ ok: false, effectAttempted: false, errorCode: 'approval_stale' });
     expect(sessionSendMessage).not.toHaveBeenCalled();
-    expect(approvalsUpdate).toHaveBeenCalledTimes(2);
-    expect(legacyRequest).toMatchObject({
-      status: 'failed',
-      execution: { ok: false, errorCode: 'approval_stale' },
-    });
+    expect(approvalsUpdate).toHaveBeenCalledOnce();
+    expect(legacyRequest.status).toBe('approved');
+    expect(legacyRequest.execution).toBeUndefined();
   });
 
-  it('terminalizes an already-approved legacy V1 replay that cannot prove its execution origin', async () => {
+  it('preserves an already-approved legacy V1 replay that cannot prove its execution origin', async () => {
     let legacyRequest: ApprovalRequestV1 = {
       v: 1,
       status: 'approved',
@@ -4470,20 +4754,12 @@ describe('createActionExecutor (approvals)', () => {
     const sessionSendMessage = vi.fn(async () => ({ status: 'accepted' as const, localId: 'local-1' }));
     const executor = createExecutor({ approvalsGet, approvalsUpdate, sessionSendMessage });
 
-    await expect(executor.replayApprovedApprovalRequest({ artifactId: 'a1' })).resolves.toEqual({
-      ok: true,
-      result: {
-        ok: true,
-        status: 'failed',
-        execution: expect.objectContaining({ ok: false, errorCode: 'approval_stale' }),
-      },
-    });
-    expect(approvalsUpdate).toHaveBeenCalledOnce();
+    await expect(executor.replayApprovedApprovalRequest({ artifactId: 'a1' }))
+      .resolves.toMatchObject({ ok: false, effectAttempted: false, errorCode: 'approval_stale' });
+    expect(approvalsUpdate).not.toHaveBeenCalled();
     expect(sessionSendMessage).not.toHaveBeenCalled();
-    expect(legacyRequest).toMatchObject({
-      status: 'failed',
-      execution: { ok: false, errorCode: 'approval_stale' },
-    });
+    expect(legacyRequest.status).toBe('approved');
+    expect(legacyRequest.execution).toBeUndefined();
   });
 
   it('does not re-route already-approved actions through approvals when executing them', async () => {
@@ -4598,7 +4874,7 @@ describe('createActionExecutor (approvals)', () => {
       artifactId: 'doc-1',
       title: 'Review prompt',
       markdown: '# Review',
-    });
+    }, expect.objectContaining({ surface: 'ui', authority: 'present_user', approvedActionReplay: expect.objectContaining({ artifactId: 'a1' }) }));
   });
 
   it('does not bypass per-surface disablement when executing approved actions', async () => {
@@ -4703,7 +4979,7 @@ describe('createActionExecutor (approvals)', () => {
     }));
   });
 
-  it.each(['initial-read', 'initial-replay-read', 'read', 'claim', 'claim-response', 'decision', 'settlement'] as const)('returns a recoverable typed outcome when the approval %s fails before execution', async failurePhase => {
+  it.each(['initial-read', 'initial-replay-read', 'read', 'claim', 'claim-response', 'decision', 'settlement'] as const)('records the proven approval outcome when %s is unavailable before execution', async failurePhase => {
     const initiallyApproved = failurePhase === 'initial-read' || failurePhase === 'initial-replay-read';
     let stored = createApprovalRequest(initiallyApproved ? 'approved' : 'open');
     let unavailable = true;
@@ -4744,7 +5020,7 @@ describe('createActionExecutor (approvals)', () => {
       ? executor.replayApprovedApprovalRequest({ artifactId: 'a1' })
       : executor.execute('approval.request.decide', { artifactId: 'a1', decision: 'approve' });
     await expect(decide())
-      .resolves.toMatchObject({ ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' });
+      .resolves.toMatchObject({ ok: false, errorCode: failurePhase === 'claim-response' ? 'update_failed' : 'approval_context_unavailable' });
     expect(stored).toMatchObject({ status: 'approved', decision: { kind: 'approve' } });
     expect(stored.execution).toBeUndefined();
     expect(effects).toBe(0);
@@ -4776,10 +5052,13 @@ describe('createActionExecutor (approvals)', () => {
       sessionSendMessage: async () => { effects += 1; return { status: 'accepted', localId: 'unexpected' }; },
     });
     await expect(executor.execute('approval.request.decide', { artifactId: 'a1', decision: 'approve' }))
-      .resolves.toMatchObject({ ok: false, errorCode: 'approval_execution_outcome_unknown' });
-    expect(stored.status).toBe('executing');
+      .resolves.toMatchObject({ ok: true, result: { status: 'outcome_unknown', execution: {
+        ok: false, errorCode: 'approval_execution_outcome_unknown',
+      } } });
+    expect(stored.status).toBe('outcome_unknown');
+    expect(stored.execution).not.toHaveProperty('effectAttempted');
     await expect(executor.execute('approval.request.decide', { artifactId: 'a1', decision: 'approve' }))
-      .resolves.toMatchObject({ ok: false, errorCode: 'approval_execution_outcome_unknown' });
+      .resolves.toMatchObject({ ok: true, result: { status: 'outcome_unknown' } });
     expect(effects).toBe(0);
   });
 
@@ -4919,41 +5198,20 @@ describe('createActionExecutor (approvals)', () => {
     await expect(executor.execute('approval.request.decide', {
       artifactId: 'a1',
       decision: 'approve',
-    })).resolves.toEqual({
-      ok: true,
-      result: {
-        ok: true,
-        status: 'failed',
-        execution: {
-          executedAtMs: expect.any(Number),
-          effectAttempted: false,
-          ok: false,
-          errorCode: 'approval_stale',
-          error: 'approval_stale',
-          details: { reason: 'live_invocation_unavailable' },
-        },
-      },
+    })).resolves.toMatchObject({
+      ok: false, effectAttempted: false, errorCode: 'approval_stale',
+      details: { reason: 'live_invocation_unavailable' },
     });
 
     // The Artifact cannot restore a lost live result recipient. Refuse before
     // minting rather than strand a bearer behind its redacted history.
-    expect(storedRequest.execution).toEqual({
-      executedAtMs: expect.any(Number),
-      effectAttempted: false,
-      ok: false,
-      errorCode: 'approval_stale',
-      error: 'approval_stale',
-      details: { reason: 'live_invocation_unavailable' },
-    });
-    await expect(executor.replayApprovedApprovalRequest({ artifactId: 'a1' })).resolves.toMatchObject({
-      ok: true,
-      result: {
-        status: 'failed',
-        execution: { ok: false, errorCode: 'approval_stale' },
-      },
+    expect(storedRequest.status).toBe('approved');
+    expect(storedRequest.execution).toBeUndefined();
+    await expect(executor.replayApprovedApprovalRequest({ artifactId: 'a1', callerAuthority: 'present_user' })).resolves.toMatchObject({
+      ok: false, effectAttempted: false, errorCode: 'approval_stale',
     });
     expect(homeDomainAction).not.toHaveBeenCalled();
-    expect(approvalsUpdate).toHaveBeenCalledTimes(2);
+    expect(approvalsUpdate).toHaveBeenCalledOnce();
   });
 
   it.each([
@@ -5021,31 +5279,34 @@ describe('createActionExecutor (approvals)', () => {
   // real `isApprovalRequiredByActionsSettings`) — it is no longer short-circuited by `action_disabled`
   // (finding #31). User-initiated forms execute the runtime directly with no prompt.
   describe('§3.2 agent-approval activation (runtime families flipped on agent)', () => {
-    // `browser.context.capturePage` is approval-floored for `agent` AND in
-    // RESULT_REQUIRED → a `blocking` approval flow, so the executor waits for a decision. We
-    // resolve the decision deterministically per-test to prove the routing path.
+    // Runtime proposals use the same durable create/decide boundary as other Actions.
     const wireApprovalFloor = (
       runtimeActionExecute: ReturnType<typeof vi.fn>,
       approvalsCreate: ReturnType<typeof vi.fn>,
       decision: 'approve' | 'reject' = 'reject',
-    ) =>
-      createExecutor({
-        runtimeActionExecute,
-        approvalsCreate,
-        approvalsWaitForDecision: vi.fn(async ({ request }: any) => ({
-          decision,
-          request: {
-            ...request,
-            status: decision === 'approve' ? 'approved' : 'rejected',
-            decision: { kind: decision === 'approve' ? 'approve' : 'reject', decidedAtMs: 2 },
-          },
-        })),
-        approvalsUpdate: vi.fn(async () => ({ ok: true })),
-        // Wire the REAL surface-keyed approval floor exactly as the production default executor
-        // does, with no persisted overrides — the dangerous agent subset must still be gated.
-        isActionApprovalRequired: (actionId, ctx) =>
-          isApprovalRequiredByActionsSettings(actionId, defaultActionsSettings, ctx),
-      } as any);
+    ) => {
+      let stored: ApprovalRequest | null = null;
+      let artifactId = '';
+      const executor = createExecutor({ runtimeActionExecute,
+        approvalsCreate: async args => {
+          stored = ApprovalRequestSchema.parse(args.request);
+          const created = await approvalsCreate(args);
+          artifactId = created.artifactId;
+          return created;
+        },
+        approvalsGet: async () => stored,
+        approvalsUpdate: async ({ request }) => {
+          if (!stored) throw new Error('Missing approval');
+          const next = ApprovalRequestSchema.parse(request);
+          const transition = decideApprovalRequestTransition(stored, next);
+          if (!transition.ok) return transition;
+          stored = next;
+          return { ok: true };
+        },
+        isActionApprovalRequired: (actionId, ctx) => isApprovalRequiredByActionsSettings(actionId, defaultActionsSettings, ctx),
+      });
+      return { ...executor, decide: () => executor.execute('approval.request.decide', { artifactId, decision }) };
+    };
     const capturedPageResult = {
       v: 1,
       kind: 'browserPageReference',
@@ -5079,9 +5340,8 @@ describe('createActionExecutor (approvals)', () => {
         { surface: 'agent', defaultSessionId: 's1' },
       );
 
-      // Reaches the APPROVAL gate (NOT the disabled gate); rejected → runtime never runs. This is
-      // the §3.2 activation proof: pre-flip this would have short-circuited to `action_disabled`.
-      expect((res as any).errorCode).toBe('approval_rejected');
+      expect(res).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+      expect(await executor.decide()).toMatchObject({ ok: true, result: { status: 'rejected' } });
       expect(approvalsCreate).toHaveBeenCalledTimes(1);
       expect(runtimeActionExecute).not.toHaveBeenCalled();
     });
@@ -5097,7 +5357,9 @@ describe('createActionExecutor (approvals)', () => {
         { surface: 'agent', defaultSessionId: 's1' },
       );
 
-      expect(res).toEqual({ ok: true, result: capturedPageResult });
+      expect(res).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+      expect(runtimeActionExecute).not.toHaveBeenCalled();
+      expect(await executor.decide()).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true, result: capturedPageResult } } });
       expect(approvalsCreate).toHaveBeenCalledTimes(1);
       expect(runtimeActionExecute).toHaveBeenCalledTimes(1);
     });
@@ -5129,7 +5391,8 @@ describe('createActionExecutor (approvals)', () => {
         { surface: 'agent', defaultSessionId: 's1' },
       );
 
-      expect((res as any).errorCode).toBe('approval_rejected');
+      expect(res).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+      expect(await executor.decide()).toMatchObject({ ok: true, result: { status: 'rejected' } });
       expect(approvalsCreate).toHaveBeenCalledTimes(1);
       expect(runtimeActionExecute).not.toHaveBeenCalled();
     });

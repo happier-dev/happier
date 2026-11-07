@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { artifactListResponse } from '@/testkit/http/artifactHome';
 import fastify from 'fastify';
+import nacl from 'tweetnacl';
 import Ajv from 'ajv';
 import { z } from 'zod/mini';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -30,7 +31,7 @@ import { projectExecutablePluginToolCatalog } from '@/plugins/runtime/toolCatalo
 import { createCommittedContributedActionDefinitionLister } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
 import { createDaemonPluginActionExecutor } from '@/session/actions/createDaemonPluginActionExecutor';
 import { resolveRunnerMcpServers } from '@/mcp/runtime/resolveRunnerMcpServers';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { buildSessionMetadataEnvelopeFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
@@ -65,6 +66,21 @@ import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnve
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { compileActionCliFields, findCompiledActionCliCommand } from '@/cli/actions/compiledCommands';
 import { parseActionCliInput, composeActionCliInput } from '@/cli/actions/parseCommandInput';
+import { createNativeAgentSessionOperations } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession';
+import type { AgentSessionRealtimeConversation, AgentSessionRuntime, AgentSessionRuntimeContext, AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
+import { createRestrictedCurrentSessionListActionDependency } from '@/session/actions/sessionListActionDependency';
+import { SessionListQueryResponseV1Schema } from '@happier-dev/protocol/sessions/listing/response';
+import { registerAgentSessionRealtimeVoiceRpc } from '@/agent/runtime/session/realtime/registerAgentSessionRealtimeVoiceRpc';
+import type { RpcHandler, RpcHandlerContext } from '@/api/rpc/types';
+import type { NativeRealtimeInputAdmissionV1 } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceTurnWitness';
+import { withCodexNativeAttachFixture } from '../../../../packages/plugins/codex/src/agent/runtime/appServer/runtime.nativeAttach.test-support';
+
+// The native socket fixture owns TMPDIR. Isolate only its OS-user startup
+// lock from running native Agents, preserving the real lock and JSON-RPC path.
+vi.mock('node:os', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:os')>();
+  return { ...actual, userInfo: () => ({ ...actual.userInfo(), homedir: process.env.TMPDIR || actual.userInfo().homedir }) };
+});
 
 const env = process.env;
 
@@ -72,6 +88,35 @@ const getTestServerBinding = () => ({
   serverId: 'test-home',
   serverUrl: 'https://test-home.example.test',
 } as const);
+
+function installActionCatalogDaemonControlTransport(
+  executor: NonNullable<Parameters<typeof createDaemonControlApp>[0]['externalActionApi']>['executor'],
+) {
+  const control = createDaemonControlApp({
+    getChildren: () => [], machineId: 'machine-1', controlToken: 'catalog-control-token',
+    stopSession: async () => ({ status: 'not_found' as const }),
+    spawnSession: async () => { throw new Error('Unexpected Session spawn'); },
+    requestShutdown: () => {}, onHappySessionWebhook: () => {},
+    externalActionApi: {
+      currentServerId: getTestServerBinding().serverId, executor,
+      verifyPat: async () => { throw new Error('Catalog transport does not verify PATs'); },
+      resolveTarget: async () => ({ kind: 'machine' as const, machineId: 'machine-1' }),
+    },
+    pluginChangeService: {
+      requestPluginChange: vi.fn(), decidePluginChange: vi.fn(),
+      statusPluginChange: async () => ({ kind: 'expired' as const }),
+      listPendingPluginChanges: async () => ({ changes: [] }), shutdown: async () => {},
+    },
+  });
+  // Only daemon IPC is substituted. Keep the real control route and executor.
+  vi.spyOn(daemonControlClient, 'requestDaemonPluginActionExecution').mockImplementation(async request => {
+    const response = await control.inject({ method: 'POST', url: '/plugins/actions/execute',
+      headers: { 'x-happier-daemon-token': 'catalog-control-token' }, payload: request });
+    expect(response.statusCode).toBe(200);
+    return response.json();
+  });
+  return control;
+}
 
 async function installAccountCatalogDaemonTransport(params: Readonly<{
   sessionId: string;
@@ -114,32 +159,7 @@ async function installAccountCatalogDaemonTransport(params: Readonly<{
     resolveExecutablePluginRuntimeRegistry({ contributes: params.machineActionDirectTargetTransport
       ? getResolvedContributionRegistry() : createResolvedContributionRegistry({}), pluginIds: [] }) });
   await registryLease.release();
-  const control = createDaemonControlApp({
-    getChildren: () => [], machineId: 'machine-1', controlToken: 'catalog-control-token',
-    stopSession: async () => ({ status: 'not_found' as const }),
-    spawnSession: async () => { throw new Error('Unexpected Session spawn'); },
-    requestShutdown: () => {}, onHappySessionWebhook: () => {},
-    externalActionApi: {
-      currentServerId: getTestServerBinding().serverId, executor,
-      verifyPat: async () => { throw new Error('Catalog transport does not verify PATs'); },
-      resolveTarget: async () => ({ kind: 'machine' as const, machineId: 'machine-1' }),
-    },
-    pluginChangeService: {
-      requestPluginChange: vi.fn(), decidePluginChange: vi.fn(),
-      statusPluginChange: async () => ({ kind: 'expired' as const }),
-      listPendingPluginChanges: async () => ({ changes: [] }), shutdown: async () => {},
-    },
-  });
-  // Only daemon IPC and Home HTTP are substituted. Keep the actual control
-  // route's result projection as well as the credentialed Action executor.
-  vi.spyOn(daemonControlClient, 'requestDaemonPluginActionExecution').mockImplementation(async (request) => {
-    const response = await control.inject({
-      method: 'POST', url: '/plugins/actions/execute',
-      headers: { 'x-happier-daemon-token': 'catalog-control-token' }, payload: request,
-    });
-    expect(response.statusCode).toBe(200);
-    return response.json();
-  });
+  const control = installActionCatalogDaemonControlTransport(executor);
   return { executor, getSessionReads: () => sessionReads, close: async () => {
     restore(); await control.close(); await app.close();
   } };
@@ -152,26 +172,29 @@ const catalogHostTurn = {
     causalPermissionAuthority: { kind: 'admittedSessionInputV1' as const, admittedPermissionCeiling: 'yolo' as const } }),
 };
 
-function createProductionSessionDaemonExecutor(credentials: Parameters<typeof createCliActionExecutorFromCredentials>[0]['credentials']) {
+function createProductionSessionDaemonExecutor(credentials: Parameters<typeof createCliActionExecutorFromCredentials>[0]['credentials'],
+  createExecutor?: Parameters<typeof createDaemonSessionAccountActionExecutor>[0]['createExecutor']) {
   return createDaemonSessionAccountActionExecutor({
     serverId: getTestServerBinding().serverId, serverHttpBaseUrl: getTestServerBinding().serverUrl,
     token: credentials.token, credentials, machineId: 'machine-1',
     // Home authorization issuance is the remote boundary. The production daemon
     // and credentialed executor consume its strict, request-bound result.
     prepareExternalActionAuthorization: async ({ operation, sessionActionOrigin }) => {
-      const target = { kind: 'machine' as const, machineId: 'machine-1' };
+      const target = operation.actionId === 'session.title.set'
+        ? { kind: 'session' as const, sessionId: sessionActionOrigin.caller.sessionId }
+        : { kind: 'machine' as const, machineId: 'machine-1' };
       return { target, authorization: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'fixture-home-authorization', binding: {
         accountId: 'account-1', authentication: { kind: 'account', tokenEpoch: 0 },
-        serverIdentityId: 'srv_test-home', machineId: target.machineId, custodianAccountId: 'account-1', installationId: 'fixture-installation',
+        serverIdentityId: 'srv_test-home', machineId: 'machine-1', custodianAccountId: 'account-1', installationId: 'fixture-installation',
         actionId: operation.actionId, requestId: operation.requestId, target, accountEncryptionMode: 'plain',
         requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(ExternalActionRequestEnvelopeSchema.parse({ v: 1, requestId: operation.requestId, target, input: operation.input })),
-        sessionActionOrigin, sessionActionSource: { machineId: target.machineId, installationId: 'fixture-installation' },
+        sessionActionOrigin, sessionActionSource: { machineId: 'machine-1', installationId: 'fixture-installation' },
       } }) };
     },
-    createExecutor: (getCurrentTurnWorkDepth, isCallerCurrent) => createCliActionExecutorFromCredentials({
+    createExecutor: createExecutor ?? ((getCurrentTurnWorkDepth, isCallerCurrent) => createCliActionExecutorFromCredentials({
       credentials, serverId: getTestServerBinding().serverId, serverApiUrl: getTestServerBinding().serverUrl,
       getCurrentTurnWorkDepth, readCredentials: async () => await isCallerCurrent() ? credentials : null,
-    }),
+    })),
   });
 }
 
@@ -210,9 +233,12 @@ async function withTitleHost(
     readSharedMetadata: () => unknown;
     persistedWrites: () => number;
     localWrites: () => number;
+    daemonOperations: () => readonly Parameters<Parameters<typeof createSessionDaemonAuthorityFixture>[0]['execute']>[0][];
   }>) => Promise<void>,
+  clientOverrides: Partial<HappyMcpSessionClient> = {},
+  authority: 'session' | 'account' = 'session',
 ) {
-  const credentials = { token: 'title-daemon-account', encryption: null };
+  const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'account-1' })).toString('base64url')}.signature`, encryption: null };
   const fields = buildSessionMetadataEnvelopeFields({ credentials, accountEncryptionMode: 'plain', storedContentMode: 'plain',
     metadata: createTestMetadata(), agentState: null });
   let metadata = fields.sharedMetadata.ciphertext;
@@ -224,6 +250,11 @@ async function withTitleHost(
   const app = fastify();
   const restore = installAxiosFastifyAdapter({ app, origin: getTestServerBinding().serverUrl });
   app.get('/v1/account/encryption/currentness', async () => createAccountEncryptionCurrentnessFixture({ mode: 'plain' }));
+  app.get('/v2/account/settings', async () => ({ content: { t: 'plain', v: getAccountSettings() }, version: 1 }));
+  app.get('/v1/artifacts', async request => artifactListResponse(`http://localhost${request.url}`, []));
+  app.get(ACP_CATALOG_ROWS_ROUTE_V1, async () => ({ status: 'absent' }));
+  app.post('/v2/sessions/query', async () => SessionListQueryResponseV1Schema.parse({ sessions: [],
+    nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false }));
   app.get('/v2/sessions/:sessionId', async () => V2SessionByIdResponseSchema.parse({ session: createSessionRecordFixture({ id: sessionId,
     encryptionMode: 'plain', metadataLayoutVersion: 1, metadata, ownerMetadata, metadataVersion, agentStateVersion, share: null,
     effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }], capabilities: projectSessionAccessCapabilitiesV1({ owner: true, grants: [] }) },
@@ -245,23 +276,34 @@ async function withTitleHost(
   const { createCliActionExecutorHarness } = await import('@/session/actions/createCliActionExecutorHarness');
   const { executor } = createCliActionExecutorHarness({ token: credentials.token, credentials, sessionId,
     mode: 'plain', ctx: null, serverId: getTestServerBinding().serverId, serverHttpBaseUrl: getTestServerBinding().serverUrl,
+    serverIdentityId: 'srv_test-home', externalActionMachineInstallationId: 'fixture-installation',
+    externalActionMachineRequestPrivateKey: nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(29)).secretKey,
     actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1(getAccountSettings().actionsSettingsV1) },
   });
+  const control = installActionCatalogDaemonControlTransport(executor);
+  const execute = createProductionSessionDaemonExecutor(credentials, () => executor);
+  const daemonOperations: Parameters<Parameters<typeof createSessionDaemonAuthorityFixture>[0]['execute']>[0][] = [];
   const daemon = await createSessionDaemonAuthorityFixture({ sessionId,
-    execute: operation => executor.execute(ActionIdSchema.parse(operation.actionId), operation.input,
-      { surface: operation.surface, authority: 'account_automation', actionCaller: { kind: 'host' }, defaultSessionId: sessionId }),
+    execute: operation => { daemonOperations.push(operation); return execute(operation, { sessionId, isCurrent: async () => true }); },
   });
   const runtime = createHappierMcpServer(hostClient(sessionId, {
     updateMetadata: () => { localWrites += 1; },
     getActiveTurnAdmissionWitness: () => ({ turnId: 'title-turn', inputId: 'title-input', userMessageSeq: 1, userMessageSeqs: [1],
+      agentStartCaller: { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 }, callerPermissionMode: 'yolo',
       causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'yolo' } }),
-  }), { credentials: null, getAccountSettings });
+    ...clientOverrides,
+  }), { credentials: authority === 'account' ? credentials : null, getAccountSettings, isCredentialCurrent: () => true,
+    ...(authority === 'session' ? { sessionList: createRestrictedCurrentSessionListActionDependency({ credentials, sessionId,
+      serverId: getTestServerBinding().serverId, serverHttpBaseUrl: getTestServerBinding().serverUrl, material: { mode: 'plain' } }) } : {}),
+  });
   try {
-    await run({ runtime, readSharedMetadata: () => JSON.parse(metadata), persistedWrites: () => writes, localWrites: () => localWrites });
+    await run({ runtime, readSharedMetadata: () => JSON.parse(metadata), persistedWrites: () => writes, localWrites: () => localWrites,
+      daemonOperations: () => daemonOperations });
   } finally {
     try {
       await runtime.mcp.close();
       await daemon.close();
+      await control.close();
     } finally { restore(); await app.close(); }
   }
 }
@@ -287,6 +329,213 @@ describe('createHappierMcpServer real host admission', () => {
   beforeEach(resetEnvironment);
   afterEach(unmockCaseModules);
   afterEach(() => vi.restoreAllMocks());
+
+  it('executes a Happier Action during an ordinary native Codex turn without Realtime admission', async () => {
+    const sessionId = 'actual-happier-session';
+    await withCodexNativeAttachFixture(async ({ openConfiguredSession, requests, emitNotification, nativeLaunches }) => {
+      const provider = await openConfiguredSession(undefined, { happier: { command: 'happier-mcp', args: ['serve'] } });
+      const lifetime = new AbortController();
+      const native = createNativeAgentSessionOperations(provider, sessionId, undefined, undefined, undefined, undefined, undefined, {
+        context: { signal: lifetime.signal } as AgentSessionRuntimeContext,
+        cwd: '/tmp', connectedAccounts: [], capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
+        cancellation: { declared: false }, configuration: { declared: false }, compaction: { capability: null },
+      });
+      const unsubscribe = native.subscribeRuntimeEvents(() => {});
+      try {
+        await native.sendTurnPrompt('Use the Happier Action tool.', { localId: 'ordinary-input', turnId: 'ordinary-turn',
+          userMessageSeq: 1, userMessageSeqs: [1],
+          agentStartCaller: { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 },
+          causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'yolo' },
+        });
+        expect(requests.filter(request => request.method === 'turn/start')).toHaveLength(1);
+        expect(nativeLaunches[0]).toContain('mcp_servers.happier.enabled=true');
+        expect(nativeLaunches[0]?.some(value => value.startsWith('mcp_servers.happier.enabled_tools='))).toBe(false);
+        expect(native.readActiveTurnAdmissionWitness?.()).toMatchObject({ inputId: 'ordinary-input', turnId: 'ordinary-turn' });
+        expect(native.readActiveTurnAdmissionWitness?.()).not.toHaveProperty('nativeRealtimeAdmission');
+        await withTitleHost(sessionId, () => accountSettingsParse({}), async fixture => withMcpClient(fixture.runtime, async client => {
+          expect((await client.listTools()).tools.map(tool => `mcp__happier__${tool.name}`)).toContain('mcp__happier__action_execute');
+          const result = CallToolResultSchema.parse(await client.callTool({ name: 'action_execute', arguments: {
+            actionId: 'session.title.set', input: { title: 'Ordinary native Codex title' },
+          } }));
+          expect(result.isError, JSON.stringify(result)).not.toBe(true);
+          expect(fixture.readSharedMetadata()).toMatchObject({ summary: { text: 'Ordinary native Codex title' } });
+          expect(fixture.persistedWrites()).toBe(1);
+          expect(fixture.daemonOperations()).toContainEqual(expect.objectContaining({ actionId: 'session.title.set', witness:
+            expect.objectContaining({ inputId: 'ordinary-input', turnId: 'ordinary-turn', userMessageSeq: 1 }) }));
+          emitNotification('turn/completed', { threadId: 'fresh-thread', turn: { id: 'provider-turn-1', status: 'completed' } });
+          await vi.waitFor(() => expect(native.readActiveTurnAdmissionWitness?.()).toBeNull());
+          const ended = CallToolResultSchema.parse(await client.callTool({ name: 'action_execute', arguments: {
+            actionId: 'session.title.set', input: { title: 'After ordinary completion' },
+          } }));
+          expect(ended.isError).toBe(true);
+          expect(fixture.persistedWrites()).toBe(1);
+        }), {
+          getActiveTurnAdmissionWitness: () => native.readActiveTurnAdmissionWitness?.() ?? null,
+          getActiveTurnPermissionWitness: () => {
+            const witness = native.readActiveTurnAdmissionWitness?.();
+            return witness ? { turnId: witness.turnId, causalPermissionAuthority: witness.causalPermissionAuthority } : null;
+          },
+          getHostTurnWorkDepth: turnId => native.readActiveTurnAdmissionWitness?.()?.turnId === turnId ? 0 : undefined,
+        }, 'session');
+      } finally { unsubscribe(); lifetime.abort(); await native.resetOrDisposeRuntime(); }
+    });
+  });
+
+  it.each(['session', 'account'] as const)('uses the exact live native Realtime admission for MCP catalog and Session actions, then withdraws it at End (%s authority)', async authority => {
+    const sessionId = 'c777777777777777777777778';
+    const registryLease = await pluginReloadController.acquireRuntimeRegistry({ resolveRuntimeRegistry: () =>
+      resolveExecutablePluginRuntimeRegistry({ contributes: createResolvedContributionRegistry({}), pluginIds: [] }) });
+    await registryLease.release();
+    const lifetime = new AbortController();
+    const listeners = new Set<(event: AgentSessionRuntimeEvent) => void>();
+    let providerStarts = 0;
+    const conversation: AgentSessionRealtimeConversation = {
+      inspect: async () => ({ status: 'available', transport: 'webrtc' }),
+      start: async () => {
+        providerStarts += 1;
+        return { status: 'started', transport: { kind: 'webrtc', answerSdp: 'answer' },
+          handle: { stop: async () => ({ status: 'stopped' }), watch: () => ({ dispose() {} }), dispose() {} } };
+      },
+    };
+    const provider: AgentSessionRuntime & { realtimeConversation: AgentSessionRealtimeConversation } = {
+      realtimeConversation: conversation,
+      send: async () => ({ status: 'admitted' }),
+      watch: listener => { listeners.add(listener); return { dispose: () => { listeners.delete(listener); } }; },
+      dispose: async () => {},
+    };
+    const native = createNativeAgentSessionOperations(provider, sessionId, undefined, undefined, undefined, undefined, undefined, {
+      // External Agent context: these declared facets consume only the runtime lifetime.
+      context: { signal: lifetime.signal } as AgentSessionRuntimeContext,
+      cwd: '/tmp', connectedAccounts: [], capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
+      cancellation: { declared: false }, configuration: { declared: false }, compaction: { capability: null },
+    });
+    const unsubscribe = native.subscribeRuntimeEvents(() => {});
+    const handlers = new Map<string, RpcHandler>();
+    const admissions: NativeRealtimeInputAdmissionV1[] = [];
+    const registration = registerAgentSessionRealtimeVoiceRpc({
+      rpc: { registerHandler: (method, handler) => { handlers.set(method, handler); } }, runtime: native,
+      getHappierSessionId: () => sessionId, ownerId: 'session-occurrence', agentGeneration: 'native-generation',
+      isOccurrenceCurrent: () => true, resolveProviderOccurrenceId: () => 'live-provider-occurrence',
+      resolveRetirementSignal: () => null, resolveConversation: () => ({ conversation, retirementSignal: null }),
+      // The canonical host hook remains real. Daemon native-fact admission is
+      // separately covered by its control-service composition tests.
+      admitNativeInput: async ({ admission, conversation: admittedConversation, signal }) => {
+        admissions.push(admission);
+        const admitted = native.admitAgentSessionRealtimeInput?.({ admission, conversation: admittedConversation, signal,
+          agentStartCaller: { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 } });
+        if (!admitted) throw new Error('Native input admission unavailable');
+        return { dispose: async () => { admitted.dispose(); } };
+      },
+    });
+    const providerRef = { pluginId: 'acme.agent-plugin', localId: 'realtime' };
+    const applicationAttemptId = 'person-start-attempt';
+    const startRequest = { v: 1, provider: providerRef, applicationAttemptId, transport: { kind: 'webrtc', offerSdp: 'offer' } };
+    const ownerContext = { signal: lifetime.signal, callerAuthority: 'present_user',
+      authorization: { kind: 'session.write', sessionId, authority: 'sessionOwner' } } satisfies RpcHandlerContext;
+    const invokeRealtime = async (method: string, request: unknown, context: RpcHandlerContext) => {
+      const handler = handlers.get(method);
+      if (!handler) throw new Error(`Missing real Realtime RPC handler: ${method}`);
+      return await handler(request, context);
+    };
+    let sequence = 0;
+    const startTurn = (turnId: string) => {
+      for (const listener of listeners) listener({ kind: 'turn-start', sequence: ++sequence, sessionId, emittedAtMs: sequence,
+        turnId, startedBy: 'provider' });
+    };
+    const completeTurn = (turnId: string) => {
+      for (const listener of listeners) listener({ kind: 'turn-complete', sequence: ++sequence, sessionId, emittedAtMs: sequence, turnId });
+    };
+    let witnessOverride: ReturnType<NonNullable<typeof native.readActiveTurnAdmissionWitness>> | undefined;
+    try {
+      for (const context of [
+        { signal: ownerContext.signal, callerAuthority: 'present_user', authorization: { kind: 'session.write', sessionId } },
+        { signal: ownerContext.signal, callerAuthority: 'present_user' },
+      ] satisfies readonly RpcHandlerContext[]) {
+        expect(await invokeRealtime(SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_START, startRequest, context))
+          .toMatchObject({ ok: false, code: 'agent_realtime_owner_required' });
+        expect(providerStarts).toBe(0);
+        expect(admissions).toHaveLength(0);
+        const unadmittedTurnId = `unadmitted-provider-turn-${sequence + 1}`;
+        startTurn(unadmittedTurnId);
+        expect(native.readActiveTurnAdmissionWitness?.()).toBeNull();
+        completeTurn(unadmittedTurnId);
+      }
+      expect(await invokeRealtime(SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_START, startRequest, ownerContext))
+        .toMatchObject({ status: 'started' });
+      expect(providerStarts).toBe(1);
+      expect(admissions).toHaveLength(1);
+      const admission = admissions[0];
+      if (!admission) throw new Error('Owner Start did not admit a native input');
+      startTurn('native-speech-turn');
+      expect(native.readActiveTurnAdmissionWitness?.()).toMatchObject({ inputId: admission.admissionId,
+        turnId: 'native-speech-turn', nativeRealtimeAdmission: admission, userMessageSeq: null, userMessageSeqs: [] });
+      await withTitleHost(sessionId, () => accountSettingsParse({ actionsSettingsV1: { v: 1, approvalWaivedSurfaces: {
+        'session.permission.respond': ['agent'], 'approval.request.decide': ['agent'],
+      } } }), async fixture => withMcpClient(fixture.runtime, async client => {
+        for (const request of [
+          { name: 'action_execute', arguments: { actionId: 'session.list', input: {} } },
+          { name: 'action_spec_search', arguments: { query: 'session.title.set' } },
+          { name: 'action_spec_get', arguments: { id: 'session.title.set' } },
+          { name: 'action_execute', arguments: { actionId: 'session.title.set', input: { title: 'Native voice title' } } },
+        ]) {
+          const result = CallToolResultSchema.parse(await client.callTool(request));
+          expect(result.isError, JSON.stringify({ request, result })).not.toBe(true);
+        }
+        expect(fixture.readSharedMetadata()).toMatchObject({ summary: { text: 'Native voice title' } });
+        expect(fixture.persistedWrites()).toBe(1);
+        const daemonLists = fixture.daemonOperations().filter(operation => operation.actionId === 'session.list');
+        expect(daemonLists).toHaveLength(authority === 'account' ? 1 : 0);
+        if (authority === 'account') expect(daemonLists[0]).toMatchObject({ surface: 'agent', witness: {
+          turnId: 'native-speech-turn', inputId: admission.admissionId, nativeRealtimeAdmission: admission,
+          userMessageSeq: null, userMessageSeqs: [],
+        } });
+        for (const request of [
+          { actionId: 'session.permission.respond', input: { sessionId, requestId: 'native-permission', decision: 'allow' } },
+          { actionId: 'approval.request.decide', input: { artifactId: 'native-approval', decision: 'approve' } },
+        ]) {
+          const denied = CallToolResultSchema.parse(await client.callTool({ name: 'action_execute', arguments: request }));
+          expect(denied.isError).toBe(true);
+          expect(JSON.stringify(denied)).toContain('present_user_required');
+        }
+        const witness = native.readActiveTurnAdmissionWitness?.();
+        if (!witness) throw new Error('Expected live native witness');
+        for (const invalid of [
+          { ...witness, inputId: 'unrelated-input' },
+          { ...witness, agentStartCaller: { kind: 'session' as const, sessionId: 'foreign-session', starterDepth: 0, turnDepth: 0 } },
+          { ...witness, signal: undefined },
+        ]) {
+          witnessOverride = invalid;
+          for (const request of [
+            { name: 'action_spec_get', arguments: { id: 'session.title.set' } },
+            { name: 'change_title', arguments: { title: 'Refused native title' } },
+          ]) {
+            const refused = CallToolResultSchema.parse(await client.callTool(request));
+            expect(refused.isError).toBe(true);
+            expect(JSON.stringify(refused)).toContain('target_unavailable');
+          }
+        }
+        witnessOverride = undefined;
+        expect(await invokeRealtime(SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_STOP,
+          { v: 1, provider: providerRef, applicationAttemptId }, ownerContext)).toMatchObject({ status: 'stopped' });
+        expect(lifetime.signal.aborted).toBe(false);
+        expect(witness.signal?.aborted).toBe(true);
+        expect(native.readActiveTurnAdmissionWitness?.()).toBeNull();
+        const ended = CallToolResultSchema.parse(await client.callTool({ name: 'action_execute', arguments: {
+          actionId: 'session.title.set', input: { title: 'After End' },
+        } }));
+        expect(ended.isError).toBe(true);
+        expect(JSON.stringify(ended)).toContain('target_unavailable');
+        expect(fixture.persistedWrites()).toBe(1);
+      }), {
+        getActiveTurnAdmissionWitness: () => {
+          const witness = witnessOverride ?? native.readActiveTurnAdmissionWitness?.();
+          // The host samples Session permission policy beside the native input facts.
+          return witness ? { ...witness, callerPermissionMode: 'default' } : null;
+        },
+        getActiveTurnPermissionWitness: () => null, getHostTurnWorkDepth: () => undefined,
+      }, authority);
+    } finally { registration.dispose(); lifetime.abort(); unsubscribe(); await native.resetOrDisposeRuntime(); }
+  });
 
   it.each(['ready', 'missing_identity'] as const)('prepares an explicit addressed reply through the daemon async Home snapshot and original custody (%s)', async snapshotKind => {
     const sessionId = 'c777777777777777777777777';
@@ -388,9 +637,11 @@ describe('createHappierMcpServer real host admission', () => {
         surface: operation.surface, authority: 'account_automation', actionCaller: { kind: 'host' }, defaultSessionId: sessionId,
       }) });
     const bridge = await createHappierMcpBridge(hostClient(sessionId, {
+      getServerFeaturesSnapshot: () => ({ status: 'ready', provenance: 'authenticated',
+        features: FeaturesResponseSchema.parse({ features: { bots: { enabled: true } }, capabilities: {} }) }),
       getActiveTurnAdmissionWitness: () => ({ turnId: 'catalog-turn', inputId: 'catalog-input', userMessageSeq: 1, userMessageSeqs: [1],
         causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'yolo' } }),
-    }));
+    }), { sessionCredentials: { token: 'catalog-test-token', encryption: null } });
     const client = new Client({ name: 'native-discovery-contract-test', version: '1' });
     try {
       const config = bridge.mcpServers.happier;
@@ -423,6 +674,38 @@ describe('createHappierMcpServer real host admission', () => {
         expect(content.text).not.toContain('private-home-value');
         expect(content.text).not.toContain('private-unknown-action');
       }
+      const discovered = CallToolResultSchema.parse(await client.callTool({ name: 'action_spec_get',
+        arguments: { id: 'session.bot.face.set' } }));
+      expect(discovered.isError, JSON.stringify(discovered)).not.toBe(true);
+      const discoveryText = discovered.content.find(item => item.type === 'text');
+      if (discoveryText?.type !== 'text') throw new Error('Missing face authoring discovery');
+      const definition = PUBLIC_ACTION_OUTPUT_SCHEMAS['action.spec.get'].parse(JSON.parse(discoveryText.text)).actionSpec;
+      expect(definition?.description).toContain('8%');
+      expect(definition?.description).toContain('quiet and needsYou');
+      expect(definition?.description).toContain('details.issues[].constraint');
+      const faceHint = definition?.inputHints?.fields.find(field => field.path === 'face')?.description;
+      expect(faceHint).toContain('8%');
+      expect(faceHint).toContain('quiet and needsYou');
+      expect(faceHint).toContain('details.issues[].constraint');
+      const outline = 'M40 40 L42 40 L42 42 L40 42 Z';
+      const rejected = CallToolResultSchema.parse(await client.callTool({ name: 'action_execute', arguments: {
+        actionId: 'session.bot.face.set', input: { sessionId,
+          face: { shape: { v: 1, origin: 'custom', fill: [outline], mouth: [41, 75, 0.8] } } },
+      } }));
+      expect(rejected.isError).toBe(true);
+      const rejectionText = rejected.content.find(item => item.type === 'text');
+      if (rejectionText?.type !== 'text') throw new Error('Missing face authoring repair details');
+      expect(JSON.parse(rejectionText.text)).toMatchObject({ errorCode: 'invalid_parameters', details: {
+        issues: expect.arrayContaining([
+          expect.objectContaining({ code: 'custom', path: ['face', 'shape'],
+            constraint: { rule: 'body_coverage', minimumRatio: 0.08 } }),
+          expect.objectContaining({ code: 'custom', path: ['face', 'shape'],
+            constraint: { rule: 'mouth_containment', mood: 'quiet', maximumSignedDistance: 0 } }),
+          expect.objectContaining({ code: 'custom', path: ['face', 'shape'],
+            constraint: { rule: 'mouth_containment', mood: 'needsYou', maximumSignedDistance: 0 } }),
+        ]),
+      } });
+      expect(rejectionText.text).not.toContain(outline);
     } finally { await client.close(); bridge.happierMcpServer.stop(); await sessionAuthority.close(); await daemon.close(); }
   }, 30_000);
 
@@ -496,12 +779,15 @@ describe('createHappierMcpServer real host admission', () => {
       readOrganization: async () => ({}), readRoleSources,
       // The Session-scoped host consumes only its admitted Role projection.
       readAccountRoleOverrides: () => ({ status: 'ready', overrides: {} }),
+      readAppliedChildSelection: () => ({ status: 'applied',
+        backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+        modelId: 'fixture-model', connectedServices: null }),
     });
     const host = hostClient(sessionId, {
       getBackendTarget: () => ({ kind: 'backend', backendId: 'codex', sourceKind: 'built_in' }),
       getCurrentSessionLocation: () => ({ machineId: 'machine-1', path: configuration.happyHomeDir }),
       getServerFeaturesSnapshot: features,
-      ...(authorityScope === 'session' ? { getSessionRoleContext: () => sessionRoles, readRoleSources } : {}),
+      getSessionRoleContext: () => sessionRoles, readRoleSources,
       getActiveTurnAdmissionWitness: () => ({ turnId: 'catalog-turn', inputId: 'catalog-input', userMessageSeq: 1, userMessageSeqs: [1],
         agentStartCaller: { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 }, callerPermissionMode: 'yolo',
         causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'yolo' } }),
@@ -572,8 +858,6 @@ describe('createHappierMcpServer real host admission', () => {
       issue: { code: 'type', path: ['scope'], expected: 'string' } },
     { name: 'qa_input_ref_read', arguments: { scope: { privateRejectedValue: 'private-malformed-scope' } },
       issue: { code: 'type', path: ['scope'], expected: 'string' } },
-    { name: 'qa_input_tool_only_read', arguments: { scope: { privateRejectedValue: 'private-malformed-scope' } },
-      issue: { code: 'type', path: ['scope'], expected: 'string' } },
   ])('retains content-free MCP input repair details for $name over the native daemon bridge', async testCase => {
     const sessionId = 'c666666666666666666666669';
     const daemon = await installAccountCatalogDaemonTransport({ sessionId, readMetadata: () => createTestMetadata() });
@@ -587,9 +871,7 @@ describe('createHappierMcpServer real host admission', () => {
         manifest: createPluginManifestV2Fixture({ id: 'acme.mcp-input', contributes: {
           actions: [{ id: 'read', title: 'Read scope', scopes: ['global'], surfaces: ['agent', 'mcp'],
             execution: { target: 'daemon' }, dangerLevel: 'safe',
-            inputSchema: testCase.name === 'qa_input_tool_only_read' ? { type: 'object' } : pluginInputSchema }],
-          tools: [{ id: 'read-tool', name: testCase.name, title: 'Read scope', action: 'read', surfaces: ['agent', 'mcp'],
-            inputSchema: pluginInputSchema }],
+            inputSchema: pluginInputSchema, tool: { name: testCase.name }, toolExposure: { agent: 'direct', mcp: 'direct' } }],
         } }),
         files: { 'daemon.mjs': 'export function activate(api) { api.actions.register("read", async input => input); }' },
       }],
@@ -623,23 +905,19 @@ describe('createHappierMcpServer real host admission', () => {
     } finally { await client.close(); bridge.happierMcpServer.stop(); await sessionAuthority.close(); await plugin?.dispose(); await daemon.close(); }
   }, 30_000);
 
-  it('enforces the narrower declared Tool contract on the Agent bridge with confidential repair facts and contextual defaults', async () => {
+  it('enforces the Action contract on the Agent bridge with confidential repair facts and contextual defaults', async () => {
     const sessionId = 'c666666666666666666666669';
     const daemon = await installAccountCatalogDaemonTransport({ sessionId, readMetadata: () => createTestMetadata() });
     const plugin = await createAuthoredAdmittedPluginRuntimeFixture({ controller: pluginReloadController, plugins: [{
       manifest: createPluginManifestV2Fixture({ id: 'acme.agent-tool-input', contributes: {
         actions: [{ id: 'read', title: 'Read scope', scopes: ['global'], surfaces: ['agent', 'mcp'],
           execution: { target: 'daemon' }, dangerLevel: 'safe', inputSchema: { type: 'object', properties: {
-            scope: { type: 'string' }, secretText: { type: 'string' }, bundle: { type: 'string' }, machineId: { type: 'string' },
-          } },
+            scope: { type: 'string', enum: ['declared-private-secret', 'read'] }, secretText: { type: 'string' }, bundle: { type: 'string' }, machineId: { type: 'string' },
+          }, required: ['scope', 'machineId'], additionalProperties: false },
+          tool: { name: 'qa_agent_input_read' }, toolExposure: { agent: 'direct', mcp: 'direct' },
           contextualDefaults: { machineId: 'current_session_machine' },
           inputHints: { fields: [{ path: 'bundle', title: 'Bundle', widget: 'secret' },
             { path: 'secretText', title: 'Secret text', widget: 'secret' }] } }],
-        tools: [{ id: 'read-tool', name: 'qa_agent_input_read', title: 'Read scope', action: 'read', surfaces: ['agent', 'mcp'],
-          inputSchema: { type: 'object', properties: {
-            scope: { type: 'string', enum: ['declared-private-secret', 'read'] }, secretText: { type: 'string' },
-            bundle: { type: 'array', items: { type: 'string' } }, machineId: { type: 'string' },
-          }, required: ['scope', 'machineId'], additionalProperties: false } }],
       } }),
       files: { 'daemon.mjs': 'let calls = 0; export function activate(api) { api.actions.register("read", async input => ({ input, calls: ++calls })); }' },
     }] });

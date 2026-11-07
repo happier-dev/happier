@@ -31,6 +31,7 @@ import { runnerPinnedBundledCustodyCanSupersedeBootstrap } from '@/plugins/runti
 import type { ConnectedServiceRuntimeRegistry } from '@/daemon/connectedServices/runtimeRegistry/registry';
 import type { ConnectedServiceRuntimeTargetInput } from '@/daemon/connectedServices/runtimeRegistry/target';
 import type { ConnectedServiceMaterializedStateObservationBinding } from '../connectedServices/materialization/materializer';
+import { nativeRealtimeInputAdmissionV1Equal, type NativeRealtimeInputAdmissionV1 } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceTurnWitness';
 
 type Cleanup = () => void | Promise<void>;
 
@@ -57,6 +58,7 @@ export type PreparedForegroundAgentRuntimeAdmission = Readonly<{
     | Readonly<{
         ok: true;
         environment: Readonly<Record<string, string>>;
+        agentLaunchMaterials?: import('../agentIsolation/agentLaunchMaterials').AgentLaunchMaterialization;
         sessionConnectedAccounts?: readonly AgentSessionConnectedAccountSelection[];
         unsetEnvironmentVariableNames: readonly string[];
         sensitiveEnvironmentVariableNames: readonly string[];
@@ -117,6 +119,7 @@ type Admission = {
     capabilityDigest: string;
     invocationContext: RunnerAgentInvocationContext;
     admission: ForegroundDaemonServiceAdmission | null;
+    nativeRealtimeAdmission: NativeRealtimeInputAdmissionV1 | null;
   } | null;
 };
 
@@ -133,6 +136,9 @@ export type ForegroundDaemonServiceSubject = Readonly<{
   capabilityDigest: string;
   invocationContext: RunnerAgentInvocationContext;
   readAdmission(): ForegroundDaemonServiceAdmission | null;
+  readNativeRealtimeAdmission(): NativeRealtimeInputAdmissionV1 | null;
+  admitNativeRealtimeInput(admission: NativeRealtimeInputAdmissionV1): boolean;
+  retireNativeRealtimeInput(admission: NativeRealtimeInputAdmissionV1): void;
   recordAdmission(
     admission: ForegroundDaemonServiceAdmission,
   ): Promise<boolean>;
@@ -225,6 +231,7 @@ export function createForegroundAgentRuntimeAdmissionOwner(dependencies: Readonl
     }
     if (admission.released) return;
     admission.released = true;
+    if (admission.daemonServiceAuthority) admission.daemonServiceAuthority.nativeRealtimeAdmission = null;
     admission.cancellation.abort();
     admission.detachRetirementListener();
     const targetPid = admission.connectedServiceRuntimeTargetPid;
@@ -622,6 +629,7 @@ export function createForegroundAgentRuntimeAdmissionOwner(dependencies: Readonl
             capabilityDigest: claimed.authority.capabilityDigest,
             invocationContext,
             admission: null,
+            nativeRealtimeAdmission: null,
           };
         }
         if (admission.released || admission.retirementSignal.aborted || !admission.isCurrent()) {
@@ -629,10 +637,13 @@ export function createForegroundAgentRuntimeAdmissionOwner(dependencies: Readonl
         }
         const connectedServiceRuntimeRegistry = admission.requesterSessionRuntimeContext?.connectedServiceRuntimeRegistry
           ?? dependencies.connectedServiceRuntimeRegistry;
-        if (claimed.connectedServiceRuntimeTarget && connectedServiceRuntimeRegistry) {
+        if ((claimed.connectedServiceRuntimeTarget || claimed.agentLaunchMaterials) && connectedServiceRuntimeRegistry) {
           admission.connectedServiceRuntimeTargetPid = claimRequest.foregroundPid;
           connectedServiceRuntimeRegistry.registerTarget({
+            materializationKey: admission.request.sessionId,
+            sessionDirectory: admission.request.directory,
             ...claimed.connectedServiceRuntimeTarget,
+            ...(claimed.agentLaunchMaterials ? { agentLaunchMaterials: claimed.agentLaunchMaterials } : {}),
             pid: claimRequest.foregroundPid,
             sessionId: claimRequest.canonicalSessionId,
             agentId: retainedAgent.agentId,
@@ -682,6 +693,16 @@ export function createForegroundAgentRuntimeAdmissionOwner(dependencies: Readonl
         capabilityDigest: authority.capabilityDigest,
         invocationContext: authority.invocationContext,
         readAdmission: () => authority.admission,
+        readNativeRealtimeAdmission: () => authority.nativeRealtimeAdmission,
+        admitNativeRealtimeInput: (next) => {
+          if (readCurrentDaemonServiceAdmission(input.request.context.sessionId)?.authority !== authority) return false;
+          if (authority.nativeRealtimeAdmission) return nativeRealtimeInputAdmissionV1Equal(authority.nativeRealtimeAdmission, next);
+          authority.nativeRealtimeAdmission = Object.freeze({ ...next });
+          return true;
+        },
+        retireNativeRealtimeInput: (previous) => {
+          if (nativeRealtimeInputAdmissionV1Equal(authority.nativeRealtimeAdmission, previous)) authority.nativeRealtimeAdmission = null;
+        },
         recordAdmission: async (next) => {
           if (
             admission.released

@@ -14,15 +14,11 @@ import type {
 import type {
   AgentRuntimeDaemonServiceAuthorityExpectedInput,
 } from '@/daemon/agentRuntime/sessionBridgeAuthorization';
-import {
-  EXTERNAL_SESSION_FOLLOW_CLOSE_TRANSPORT_TIMEOUT_MS,
-} from '@/session/external/hostOperationOwner';
 import type {
   ExternalSessionHostOperationPort,
 } from '@/session/external/hostOperationOwner';
 import {
-  EXTERNAL_SESSION_FOLLOW_LISTENER_TIMEOUT_MS,
-  settleFollowListenerBounded,
+  settleFollowListener,
 } from '@/session/external/followListenerSettlement';
 import type {
   HostExternalTranscriptFollowEvent,
@@ -335,7 +331,7 @@ export async function createRunnerAgentDaemonFacets(input: Readonly<{
                     followId,
                   },
                   undefined,
-                  EXTERNAL_SESSION_FOLLOW_CLOSE_TRANSPORT_TIMEOUT_MS,
+                  null,
                 );
                 if (!response.ok) {
                   throw responseError(
@@ -415,12 +411,12 @@ export async function createRunnerAgentDaemonFacets(input: Readonly<{
             };
           }
           const callerSignal = options.signal;
-          const openSignal = callerSignal
-            ? AbortSignal.any([
-                callerSignal,
-                lifetime.signal,
-              ])
-            : lifetime.signal;
+          const followLifetime = new AbortController();
+          const openSignal = AbortSignal.any([
+            followLifetime.signal,
+            lifetime.signal,
+            ...(callerSignal ? [callerSignal] : []),
+          ]);
           const provisionalFollow = createProvisionalFollow(
             operation.followId,
           );
@@ -456,12 +452,11 @@ export async function createRunnerAgentDaemonFacets(input: Readonly<{
                 // the next progress is requested, so a multi-page replay
                 // drains oldest-first before the subscription is returned.
                 const replayedEvent = response.result;
-                await settleFollowListenerBounded(
+                await settleFollowListener(
                   Promise.resolve().then(async () =>
                     await listener(projectHostExternalTranscriptFollowEvent(
                       replayedEvent.event,
                     ))),
-                  operation.projection === 'terminal' ? undefined : EXTERNAL_SESSION_FOLLOW_LISTENER_TIMEOUT_MS,
                   openSignal,
                 );
                 const acknowledgedWitness = readWitness();
@@ -605,12 +600,7 @@ export async function createRunnerAgentDaemonFacets(input: Readonly<{
                 );
                 let reopened;
                 try {
-                  const reopenSignal = callerSignal
-                    ? AbortSignal.any([
-                        callerSignal,
-                        lifetime.signal,
-                      ])
-                    : lifetime.signal;
+                  const reopenSignal = openSignal;
                   reopened = await dispatchOperation(
                     candidate,
                     reopenSignal,
@@ -639,12 +629,11 @@ export async function createRunnerAgentDaemonFacets(input: Readonly<{
                       // deliver each replacement-follow replay page once and
                       // acknowledge it before the next progress.
                       const replacementEvent = reopened.result;
-                      await settleFollowListenerBounded(
+                      await settleFollowListener(
                         Promise.resolve().then(async () =>
                           await listener(projectHostExternalTranscriptFollowEvent(
                             replacementEvent.event,
                           ))),
-                        operation.projection === 'terminal' ? undefined : EXTERNAL_SESSION_FOLLOW_LISTENER_TIMEOUT_MS,
                         reopenSignal,
                       );
                       const acknowledgedWitness = readWitness();
@@ -711,6 +700,7 @@ export async function createRunnerAgentDaemonFacets(input: Readonly<{
             async close(acknowledgeEventId) {
               if (closePromise) return await closePromise;
               active = false;
+              followLifetime.abort();
               if (onCallerAbort) {
                 callerSignal?.removeEventListener(
                   'abort',
@@ -732,7 +722,7 @@ export async function createRunnerAgentDaemonFacets(input: Readonly<{
                       : {}),
                   },
                   undefined,
-                  EXTERNAL_SESSION_FOLLOW_CLOSE_TRANSPORT_TIMEOUT_MS,
+                  null,
                 );
                 if (!response.ok) {
                   throw responseError(
@@ -890,12 +880,11 @@ export async function createRunnerAgentDaemonFacets(input: Readonly<{
                 }
                 const followEventResult = next.result;
                 try {
-                  await settleFollowListenerBounded(
+                  await settleFollowListener(
                     Promise.resolve().then(async () =>
                       await listener(projectHostExternalTranscriptFollowEvent(
                         followEventResult.event,
                       ))),
-                    operation.projection === 'terminal' ? undefined : EXTERNAL_SESSION_FOLLOW_LISTENER_TIMEOUT_MS,
                     openSignal,
                   );
                 } catch (error) {
@@ -933,7 +922,7 @@ export async function createRunnerAgentDaemonFacets(input: Readonly<{
               ) {
                 const normalized = followFailureError(error);
                 if (!listenerRejected) {
-                  await settleFollowListenerBounded(
+                  await settleFollowListener(
                     Promise.resolve().then(async () =>
                       await listener(Object.freeze({
                         kind: 'terminated',
@@ -945,7 +934,6 @@ export async function createRunnerAgentDaemonFacets(input: Readonly<{
                             ? normalized.code
                             : 'plugin_external_follow_failed',
                       }))),
-                    operation.projection === 'terminal' ? undefined : EXTERNAL_SESSION_FOLLOW_LISTENER_TIMEOUT_MS,
                     openSignal,
                   ).catch(() => undefined);
                 }

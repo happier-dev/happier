@@ -16,6 +16,16 @@ import { AgentRuntimeDaemonServiceTurnWitnessV1Schema, projectAgentRuntimeDaemon
 import { SessionIndexedIdentifierMaxLengthV1 } from '@happier-dev/protocol/sessions/idsV1';
 
 describe('daemon service host turn depth', () => {
+  it('preserves the strict native admission through the private witness without a Queue identity', () => {
+    const admission = { admissionId: 'native-input', occurrenceId: 'realtime-occurrence', attemptId: 'attempt' };
+    const witness = projectAgentRuntimeDaemonServiceTurnWitnessV1({ turnId: 'provider-turn', inputId: admission.admissionId,
+      userMessageSeq: null, userMessageSeqs: [], nativeRealtimeAdmission: admission });
+    expect(witness.nativeRealtimeAdmission).toEqual(admission);
+    expect(AgentRuntimeDaemonServiceTurnWitnessV1Schema.safeParse({ ...witness,
+      nativeRealtimeAdmission: { ...admission, authority: 'person' } }).success).toBe(false);
+    expect(AgentRuntimeDaemonServiceTurnWitnessV1Schema.safeParse({ ...witness,
+      nativeRealtimeAdmission: { ...admission, attemptId: 'x'.repeat(513) } }).success).toBe(false);
+  });
   it('retains the protected Discussion question through the native host and private daemon witness only', async () => {
     const providerRequests: Parameters<AgentSessionRuntime['send']>[0][] = [];
     const provider: AgentSessionRuntime = { async send(request) { providerRequests.push(request); return { status: 'admitted' }; },

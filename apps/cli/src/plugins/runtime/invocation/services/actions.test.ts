@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import {
     ApiTokenGrantV1Schema,
     AutomationRunCauseSchema,
@@ -11,6 +12,7 @@ import {
 import { NO_TEAM_CAPABILITIES_V1 } from '@happier-dev/protocol/teams';
 import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import { buildAcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
+import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 
 import { createBrowserDaemonRuntimeActionExecutor } from '@/daemon/browser/actions/runtimeActionExecutor';
 import { createBrowserDaemonControlBroker } from '@/daemon/browser/control/broker';
@@ -28,6 +30,7 @@ import {
     type InvokeContributedAction,
 } from './actions';
 import { createPluginActionCallerMaterializationFixture } from './actionCaller.testkit';
+import { createManagedPluginSourceCustody } from '@/plugins/runtime/lifecycle/contributions/runtimeIdentity.testkit';
 import { createProductionPluginInvocationServiceOwners } from './production';
 import { resolvePluginMachineExecutionOrigin } from '@/plugins/runtime/resolvePluginMachineExecutionOrigin';
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
@@ -53,7 +56,9 @@ type TestActionExecutorOverrides = Partial<Pick<
     | 'sessionList'
     | 'approvalsCreate'
     | 'sessionSendMessage'
+    | 'resolveSessionReference'
     | 'invokeContributedAction'
+    | 'isActionApprovalRequired'
 >>;
 
 function createActionExecutorForTest(overrides: TestActionExecutorOverrides = {}) {
@@ -138,11 +143,178 @@ function createContributedActionServiceForTest(params: Omit<Parameters<typeof cr
 }
 
 describe('plugin invocation ActionsService', () => {
+    it('uses the current Run attachment once per new Action and detaches without inheriting the Session profile', async () => {
+        let approvalProfileId: string | null = 'builtin:read-propose';
+        let reads = 0;
+        let sessionReads = 0;
+        let effects = 0;
+        const pluginId = 'example.run-agent';
+        const service = createPluginInvocationActionsService({
+            seed: {
+                plugin: { id: pluginId, version: '1.0.0' },
+                contribution: { id: 'agent', qualifiedId: `${pluginId}/agents/agent` },
+                occurrenceId: 'run-agent-occurrence', surface: 'agent',
+                session: { id: 'run-session' },
+                sourceCustody: { kind: 'development', registeredRootId: 'run-agent-root' },
+                resolveCurrentPluginMaterializationRef: createPluginActionCallerMaterializationFixture(pluginId).resolveCurrentPluginMaterializationRef,
+                approvalContext: { serverId: 'home', runtimeAccountId: 'alice', approvalProfileId: 'builtin:full-trust' },
+                readApprovalProfileId: () => { reads++; return approvalProfileId; },
+                signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+            },
+            actionExecutor: createActionExecutor({
+                ...createUnavailableActionTransportDeps(),
+                readActionApprovalProfileId: async () => { sessionReads++; return 'builtin:read-propose'; },
+                approvalsCreate: async () => ({ artifactId: 'run-profile-approval' }),
+                agentsBackendsList: async () => { effects++; return { items: [] }; },
+            }),
+            invokeContributedAction: async () => { throw new Error('Unexpected contributed Action'); },
+        });
+        // This host boundary has no approval execution origin; a required review must refuse before effect.
+        await expect(service.execute('agents.backends.list', {})).rejects.toMatchObject({ code: 'approval_origin_unavailable' });
+        expect(effects).toBe(0);
+        approvalProfileId = null;
+        await expect(service.execute('agents.backends.list', {})).resolves.toMatchObject({ items: [] });
+        expect(effects).toBe(1);
+        expect(reads).toBe(2);
+        expect(sessionReads).toBe(0);
+    });
+
+    it.each(['workflow', 'unrelated-detached'] as const)('binds the typed requester refusal only to a detached Workflow turn (%s)', async scope => {
+        let cards = 0;
+        let effects = 0;
+        const failures: Error[] = [];
+        const pluginId = 'example.workflow-agent';
+        const seed = {
+            plugin: { id: pluginId, version: '1.0.0' },
+            contribution: { id: 'agent', qualifiedId: `${pluginId}/agents/agent` },
+            occurrenceId: 'workflow-agent-occurrence',
+            sourceCustody: { kind: 'development' as const, registeredRootId: 'workflow-agent-root' },
+            correlationId: 'detached-agent-run', surface: 'agent' as const,
+            resolveCurrentPluginMaterializationRef: createPluginActionCallerMaterializationFixture(pluginId).resolveCurrentPluginMaterializationRef,
+            workflowActionContext: { readRunId: () => scope === 'workflow' ? 'workflow-1' : undefined,
+                fail: (error: Error) => { failures.push(error); } },
+            approvalContext: { serverId: 'home', runtimeAccountId: 'alice' },
+            signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+        };
+        const service = createPluginInvocationActionsService({ seed,
+            actionExecutor: createActionExecutor({
+                ...createUnavailableActionTransportDeps(),
+                approvalsCreate: async () => { cards++; return { artifactId: 'must-not-create' }; },
+                executionRunPermissionRespond: async () => { effects++; return { ok: true }; },
+            }),
+            invokeContributedAction: async () => { throw new Error('Unexpected contributed Action'); },
+        });
+        const pending = service.execute('execution.run.permission.respond', {
+            runId: 'other-run', requestId: 'permission-1', approved: true,
+        });
+        if (scope === 'workflow') {
+            await expect(pending).rejects.toMatchObject({ code: 'approval_requester_unavailable' });
+            expect(failures).toEqual([expect.objectContaining({ code: 'approval_requester_unavailable' })]);
+        } else {
+            await expect(pending).resolves.toMatchObject({ kind: 'approval_request_created', artifactId: 'must-not-create' });
+            expect(failures).toEqual([]);
+        }
+        expect(cards).toBe(scope === 'workflow' ? 0 : 1);
+        expect(effects).toBe(0);
+    });
+
+    it.each(['bound', 'missing'] as const)('does not turn an exact Session routing address into current-Session authority (%s)', async anchor => {
+        let sends = 0;
+        const pluginId = 'example.session-bound-author';
+        const service = createPluginInvocationActionsService({
+            seed: {
+                plugin: { id: pluginId, version: '1.0.0' },
+                contribution: { id: 'send', qualifiedId: `${pluginId}/actions/send` },
+                occurrenceId: 'session-bound-current', sourceCustody: { kind: 'development', registeredRootId: 'session-bound-root' },
+                resolveCurrentPluginMaterializationRef: createPluginActionCallerMaterializationFixture(pluginId).resolveCurrentPluginMaterializationRef,
+                surface: 'background', signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+                ...(anchor === 'bound' ? { session: { id: 'caller-session' } } : {}), sessionListAccess: 'current_session',
+                approvalContext: { serverId: 'bound-home', runtimeAccountId: 'bound-account' },
+            },
+            actionExecutor: createActionExecutorForTest({
+                resolveSessionReference: async ({ sessionId, context }) => ({ kind: 'unique', address: {
+                    serverId: context.serverId!, sessionId: sessionId!,
+                } }),
+                sessionSendMessage: async () => {
+                sends++;
+                return { status: 'accepted', localId: 'must-not-send' };
+            } }),
+            invokeContributedAction: async () => { throw new Error('Unexpected contributed dispatch'); },
+        });
+        const input = { sessionId: 'other-session', message: 'Outside the bound Session', idempotencyKey: 'bound-session-input' };
+        await expect(service.execute('session.message.send', input)).rejects.toMatchObject({ code: 'unsupported_action' });
+        const options = { sessionAddress: { serverId: 'bound-home', sessionId: input.sessionId } };
+        await expect(service.execute('session.message.send', input, options)).rejects.toMatchObject({ code: 'session_target_unavailable' });
+        expect(sends).toBe(0);
+    });
+
+    it('retains exact Session address scope on bound host Actions and refuses unsupported routing before effects', async () => {
+        const sent: Parameters<NonNullable<ActionExecutorDeps['sessionSendMessage']>>[0][] = [];
+        const controller = new AbortController();
+        const pluginId = 'example.session-author';
+        const service = createPluginInvocationActionsService({
+            seed: {
+                plugin: { id: pluginId, version: '1.0.0' },
+                contribution: { id: 'start', qualifiedId: `${pluginId}/actions/start` },
+                occurrenceId: 'session-author-current', sourceCustody: { kind: 'development', registeredRootId: 'session-author-root' },
+                resolveCurrentPluginMaterializationRef: createPluginActionCallerMaterializationFixture(pluginId).resolveCurrentPluginMaterializationRef,
+                surface: 'background', signal: controller.signal, isOccurrenceCurrent: () => true,
+                approvalContext: { serverId: 'bound-home', runtimeAccountId: 'bound-account', expectedAccountId: 'bound-account' },
+            },
+            actionExecutor: createActionExecutorForTest({
+                // The Home reference read is a transport boundary; prefix behavior
+                // is exercised through the real CLI adapter in its composed suite.
+                resolveSessionReference: async ({ sessionId, context }) => ({ kind: 'unique', address: {
+                    serverId: context.serverId!, sessionId: sessionId!,
+                } }),
+                sessionSendMessage: async request => {
+                sent.push(request);
+                return { status: 'accepted', localId: 'addressed-input' };
+            } }),
+            // Cross-plugin dispatch is a process boundary, but an explicit
+            // Session address may not be silently discarded at that boundary.
+            invokeContributedAction: async () => { throw new Error('Unsupported contributed scope reached a target'); },
+        });
+        const address = { serverId: 'bound-home', sessionId: 'created-session' };
+        const options = { signal: controller.signal, sessionAddress: address };
+        await expect(service.execute('session.message.send', {
+            sessionId: address.sessionId, message: 'Continue the created Session', idempotencyKey: 'addressed-input',
+        }, options)).resolves.toMatchObject({ status: 'accepted', localId: 'addressed-input' });
+        expect(sent).toHaveLength(1);
+        expect(sent[0]).toMatchObject({ sessionId: 'created-session', context: {
+            serverId: 'bound-home', runtimeAccountId: 'bound-account',
+            expectedAccountId: 'bound-account', authority: 'account_automation',
+            actionCaller: { kind: 'plugin', pluginId },
+        } });
+        expect(sent[0]!.context.defaultSessionId).toBeUndefined();
+        for (const { sessionAddress, code } of [
+            { sessionAddress: { serverId: 'foreign-home', sessionId: address.sessionId }, code: 'plugin_action_session_address_unavailable' },
+            { sessionAddress: { serverId: address.serverId, sessionId: 'different-session' }, code: 'session_address_mismatch' },
+        ]) {
+            await expect(service.execute('session.message.send', {
+                sessionId: address.sessionId, message: 'Must not send elsewhere', idempotencyKey: 'must-not-send',
+            }, { ...options, sessionAddress })).rejects.toMatchObject({ name: 'PluginError', code });
+        }
+        await expect(service.execute('session.message.send', {
+            sessionId: { selector: 'workers' }, message: 'Must not fan out', idempotencyKey: 'must-not-fan-out',
+        }, options)).rejects.toMatchObject({ name: 'PluginError', code: 'session_address_mismatch' });
+        await expect(service.execute('session.list', {}, options)).rejects.toMatchObject({ name: 'PluginError', code: 'session_address_unsupported' });
+        await expect(service.execute({ pluginId: 'example.other', localId: 'write' }, {}, options))
+            .rejects.toMatchObject({ name: 'PluginError', code: 'session_address_unsupported' });
+        expect(sent).toHaveLength(1);
+        controller.abort();
+        await expect(service.execute('session.message.send', {
+            sessionId: address.sessionId, message: 'Must not send after cancellation', idempotencyKey: 'must-not-send-after-cancel',
+        }, options)).rejects.toMatchObject({ name: 'PluginError' });
+        expect(sent).toHaveLength(1);
+    });
+
     it.each(['source', 'source-machine', 'source-with-materialization', 'materialization'] as const)('stamps the exact %s origin through production services and the real target handler', async (kind) => {
         const sourceCustody = { kind: 'development' as const, registeredRootId: 'caller-root' };
         let machineId = 'machine-1';
         let currentSource = sourceCustody;
         let changeDuringHandler = false;
+        let handlerCalls = 0;
         const resolveOrigin = () => resolvePluginMachineExecutionOrigin({
             pluginId: 'acme.caller', context: { serverIdentityId: 'srv_home-1', machineId },
             ...(kind === 'materialization' ? { materializationId: 'caller-materialization' } : { sourceCustody: currentSource }),
@@ -168,6 +340,7 @@ describe('plugin invocation ActionsService', () => {
                 sourceCustody: { kind: 'development', registeredRootId: 'provider-root' }, localId: 'read-caller',
                 definition: { id: 'read-caller', dangerLevel: 'safe', scopes: ['global'], surfaces: ['plugin'], inputSchema: { type: 'object' }, resultSchema: {} },
                 handler: async (_input, context) => {
+                    handlerCalls += 1;
                     const caller = StrictJsonValueSchema.parse(context.caller);
                     if (changeDuringHandler) {
                         if (kind === 'source' || kind === 'source-with-materialization') currentSource = { ...sourceCustody, registeredRootId: 'replacement-root' };
@@ -202,13 +375,22 @@ describe('plugin invocation ActionsService', () => {
             await expect(service.execute({ pluginId: 'acme.provider', localId: 'read-caller' }, {}))
                 .resolves.toMatchObject({ executionOrigin: resolveOrigin(),
                     contribution: { id: 'caller', qualifiedId: 'acme.caller/caller' }, originSurface: 'background' });
+            const admittedOrigin = resolveOrigin();
             changeDuringHandler = true;
+            // The caller is admitted before dispatch: the settled effect keeps
+            // its admitted origin, and the change applies at the next call.
             await expect(service.execute({ pluginId: 'acme.provider', localId: 'read-caller' }, {}))
-                .rejects.toMatchObject({ code: 'plugin_action_caller_unavailable' });
+                .resolves.toMatchObject({ executionOrigin: admittedOrigin });
+            changeDuringHandler = false;
             await expect(service.getCurrentExecutionRouting?.()).resolves.toEqual(
                 kind === 'source' || kind === 'source-with-materialization' ? null
                     : { serverIdentityId: 'srv_home-1', machineId: 'replacement-machine', pluginId: 'acme.caller' },
             );
+            if (kind === 'source' || kind === 'source-with-materialization') {
+                await expect(service.execute({ pluginId: 'acme.provider', localId: 'read-caller' }, {}))
+                    .rejects.toMatchObject({ code: 'plugin_action_caller_unavailable' });
+                expect(handlerCalls).toBe(2);
+            }
         } finally {
             targets.dispose();
             await owners.dispose();
@@ -234,6 +416,7 @@ describe('plugin invocation ActionsService', () => {
         const runId = '99999999-9999-4999-8999-999999999999';
         let acceptedEnvelope: string | undefined;
         const run = WorkflowRunSummaryV1Schema.parse({ id: runId, sourceArtifactId: null,
+            attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
             ownerAccountId: 'account-1', visibleTeamId: null, origin: { kind: 'direct' }, state: 'queued', revision: 0,
             machineId: 'machine-1', workflowCustodyState: 'pending', originDeliveryAckRevision: null,
             availability: { pause: true, resumeBoundary: false, restoreWorkspace: false, cancel: true, inspectExecution: false, disabledReasons: [] },
@@ -1096,72 +1279,96 @@ describe('plugin invocation ActionsService', () => {
         expect(execute).toHaveBeenCalledOnce();
     });
 
-    it('keeps present-user decisions gated on the plugin Actions seam', async () => {
+    it('routes user-action answers through default Ask and explicit plugin Allow', async () => {
+        let settings = normalizeActionsSettingsV1({ v: 1 });
         const sessionUserActionAnswer = vi.fn<NonNullable<ActionExecutorDeps['sessionUserActionAnswer']>>(
             async (_args) => ({ ok: true }),
         );
+        const approvalsCreate = vi.fn<NonNullable<ActionExecutorDeps['approvalsCreate']>>(async () => ({ artifactId: 'answer-review' }));
         const service = createPluginInvocationActionsService({
             seed: {
                 plugin: { id: 'acme.interactions', version: '1.0.0' },
+                contribution: { id: 'manage', qualifiedId: 'acme.interactions/actions/manage' },
+                sourceCustody: createManagedPluginSourceCustody('interactions-policy-generation'),
                 resolveCurrentPluginMaterializationRef: createPluginActionCallerMaterializationFixture('acme.interactions').resolveCurrentPluginMaterializationRef,
                 occurrenceId: 'occurrenceId-1',
                 correlationId: 'interaction-1',
                 surface: 'ui',
                 session: { id: 'session-bound' },
+                approvalContext: { runtimeAccountId: 'alice', serverId: 'home', serverIdentityId: 'srv_policy_fixture' },
                 signal: new AbortController().signal,
                 isOccurrenceCurrent: () => true,
             },
             actionExecutor: createActionExecutorForTest({
                 sessionUserActionAnswer,
+                approvalsCreate,
+                isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, settings, context),
             }),
             invokeContributedAction: vi.fn(),
         });
 
-        // The local present-user respond id is host-only: the ActionSpec excludes
-        // it from the Plugin surface (pinned by the canonical ActionSpec owner),
-        // so the plugin seam has no local permission-respond path at all. The
-        // plugin-reachable decision path is the mediated remote permission
-        // vertical reached through its own host-stamped owner.
+        // Trusted plugins use ordinary user-changeable Action policy, never a
+        // hard present-person floor. Only the approval transport is substituted.
         await expect(service.execute('session.user_action.answer', {
             requestId: 'question-1',
             answers: [{ question: 'Continue?', values: ['Yes'] }],
-        })).rejects.toMatchObject({ code: 'present_user_required' });
+        })).resolves.toMatchObject({ kind: 'approval_request_created' });
         expect(sessionUserActionAnswer).not.toHaveBeenCalled();
+        expect(approvalsCreate).toHaveBeenCalledOnce();
+        settings = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'session.user_action.answer': ['plugin'] } });
+        await expect(service.execute('session.user_action.answer', {
+            requestId: 'question-1', answers: [{ question: 'Continue?', values: ['Yes'] }],
+        })).resolves.toEqual({ ok: true });
+        expect(sessionUserActionAnswer).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'session-bound',
+            context: expect.objectContaining({ authority: 'account_automation', surface: 'plugin',
+                actionCaller: expect.objectContaining({ kind: 'plugin', pluginId: 'acme.interactions' }) }) }));
+        expect(approvalsCreate).toHaveBeenCalledOnce();
     });
 
     // The daemon-side durable-push transfer repair reaches the generic webhook
-    // endpoint through exactly this seam, so this composition — real plugin
-    // ActionsService over the real canonical executor — is what decides whether
-    // a plugin may observe or move an endpoint at all. Generic observation and
-    // unrestricted retarget stay present-user administration and never reach
-    // the canonical webhook owner from a plugin; the correspondence check and
-    // the correspondence-gated target convergence are the two bounded
-    // capabilities the plugin surface owns.
-    it('keeps generic webhook endpoint observation and retarget outside plugin authority', async () => {
+    // endpoint through exactly this seam. Its ordinary Action preference must
+    // remain user-changeable without changing the plugin's stamped identity.
+    it('routes generic webhook observation and retarget through default Ask and explicit plugin Allow', async () => {
+        let settings = normalizeActionsSettingsV1({ v: 1 });
         const pluginWebhookAction = vi.fn<NonNullable<ActionExecutorDeps['pluginWebhookAction']>>(
-            async () => ({
+            async ({ actionId }) => actionId === 'plugin.webhook.endpoint.read' ? {
+                webhookEndpointId: 'wh_ep_AAAAAAAAAAAAAAAAAAAAAA', revision: 4,
+                contribution: { pluginId: 'happier.channels', localId: 'webhook' },
+                targetMaterialization: { machineId: 'machine-1', materializationId: 'materialization-1', pluginId: 'happier.channels' },
+                sourceInstanceId: 'channels.connection.connection-1', routing: 'accountEndpoint', readiness: 'ready',
+                publicUrl: 'https://webhook.example.test/endpoint', createdAt: 1,
+            } : actionId === 'plugin.webhook.endpoint.retarget' ? {
+                kind: 'retargeted', webhookEndpointId: 'wh_ep_AAAAAAAAAAAAAAAAAAAAAA', revision: 5,
+                previousTargetMaterialization: { machineId: 'machine-1', materializationId: 'materialization-1', pluginId: 'happier.channels' },
+                targetMaterialization: { machineId: 'machine-2', materializationId: 'materialization-2', pluginId: 'happier.channels' },
+            } : ({
                 kind: 'ready' as const,
                 webhookEndpointId: 'wh_ep_AAAAAAAAAAAAAAAAAAAAAA',
                 revision: 4,
             }),
         );
+        const approvalsCreate = vi.fn<NonNullable<ActionExecutorDeps['approvalsCreate']>>(async () => ({ artifactId: 'webhook-review' }));
         const service = createPluginInvocationActionsService({
             seed: {
                 plugin: { id: 'happier.channels', version: '1.0.0' },
+                contribution: { id: 'manage', qualifiedId: 'happier.channels/actions/manage' },
+                sourceCustody: createManagedPluginSourceCustody('channels-policy-generation'),
                 resolveCurrentPluginMaterializationRef: createPluginActionCallerMaterializationFixture('happier.channels').resolveCurrentPluginMaterializationRef,
                 occurrenceId: 'occurrenceId-1',
                 correlationId: 'connection-transfer-1',
                 surface: 'background',
+                approvalContext: { runtimeAccountId: 'alice', serverId: 'home', serverIdentityId: 'srv_policy_fixture' },
                 signal: new AbortController().signal,
                 isOccurrenceCurrent: () => true,
             },
-            actionExecutor: createActionExecutorForTest({ pluginWebhookAction }),
+            actionExecutor: createActionExecutorForTest({ pluginWebhookAction, approvalsCreate,
+                isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, settings, context) }),
             invokeContributedAction: vi.fn(),
         });
 
         await expect(service.execute('plugin.webhook.endpoint.read', {
             webhookEndpointId: 'wh_ep_AAAAAAAAAAAAAAAAAAAAAA',
-        })).rejects.toMatchObject({ code: 'present_user_required' });
+        })).resolves.toMatchObject({ kind: 'approval_request_created' });
 
         await expect(service.execute('plugin.webhook.endpoint.retarget', {
             webhookEndpointId: 'wh_ep_AAAAAAAAAAAAAAAAAAAAAA',
@@ -1172,9 +1379,22 @@ describe('plugin invocation ActionsService', () => {
                 pluginId: 'happier.channels',
             },
             idempotencyKey: 'xfer.connection-1.5.webhook',
-        })).rejects.toMatchObject({ code: 'present_user_required' });
+        })).resolves.toMatchObject({ kind: 'approval_request_created' });
 
         expect(pluginWebhookAction).not.toHaveBeenCalled();
+        expect(approvalsCreate).toHaveBeenCalledTimes(2);
+        settings = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: {
+            'plugin.webhook.endpoint.read': ['plugin'], 'plugin.webhook.endpoint.retarget': ['plugin'],
+        } });
+        await expect(service.execute('plugin.webhook.endpoint.read', { webhookEndpointId: 'wh_ep_AAAAAAAAAAAAAAAAAAAAAA' }))
+            .resolves.toMatchObject({ revision: 4, readiness: 'ready' });
+        await expect(service.execute('plugin.webhook.endpoint.retarget', { webhookEndpointId: 'wh_ep_AAAAAAAAAAAAAAAAAAAAAA',
+            expectedRevision: 4, targetMaterialization: { machineId: 'machine-2', materializationId: 'materialization-2', pluginId: 'happier.channels' },
+            idempotencyKey: 'xfer.connection-1.5.webhook' })).resolves.toMatchObject({ kind: 'retargeted' });
+        expect(pluginWebhookAction.mock.calls.slice(0, 2).map(([request]) => request.caller)).toEqual([
+            expect.objectContaining({ kind: 'plugin', pluginId: 'happier.channels' }),
+            expect.objectContaining({ kind: 'plugin', pluginId: 'happier.channels' }),
+        ]);
 
         await expect(service.execute('plugin.webhook.endpoint.checkCorrespondence', {
             webhookEndpointId: 'wh_ep_AAAAAAAAAAAAAAAAAAAAAA',
@@ -1188,7 +1408,8 @@ describe('plugin invocation ActionsService', () => {
             setup: { kind: 'accountEndpointV1', credential: 'serverGenerated' },
         })).resolves.toMatchObject({ kind: 'ready' });
 
-        expect(pluginWebhookAction).toHaveBeenCalledOnce();
+        expect(pluginWebhookAction).toHaveBeenCalledTimes(3);
+        expect(approvalsCreate).toHaveBeenCalledTimes(2);
     });
 
     // The composed seam the durable-push transfer actually depends on: a
@@ -1464,6 +1685,80 @@ describe('plugin invocation ActionsService', () => {
         );
     });
 
+    it.each(['witness', 'contributed'] as const)('keeps native Realtime decisions denied through the %s origin and the real executor', async (origin) => {
+        const delivered: string[] = [];
+        const settings = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'session.permission.respond': ['agent'] } });
+        const executor = createActionExecutorForTest({
+            isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, settings, context),
+            sessionPermissionRespond: async ({ decision }) => { delivered.push(decision); return { ok: true }; },
+        });
+        let native = true;
+        const attempt = new AbortController();
+        const inheritedContext = { nativeRealtimeInput: origin === 'contributed' ? true as const : undefined, signal: attempt.signal };
+        const service = createPluginInvocationActionsService({
+            seed: {
+                approvalContext: inheritedContext,
+                plugin: { id: 'acme.agent', version: '1.0.0' },
+                resolveCurrentPluginMaterializationRef: createPluginActionCallerMaterializationFixture('acme.agent').resolveCurrentPluginMaterializationRef,
+                contribution: { id: 'agent', qualifiedId: 'acme.agent/agents/agent' },
+                occurrenceId: 'native-occurrence', correlationId: 'native-invocation', surface: 'agent',
+                session: { id: 'session-1' }, signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+                readActiveTurnAdmissionWitness: () => ({
+                    inputId: 'native-input', turnId: 'native-turn', userMessageSeq: null, userMessageSeqs: [],
+                    callerPermissionMode: 'yolo',
+                    causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'yolo' },
+                    ...(native && origin === 'witness' ? { nativeRealtimeAdmission: { admissionId: 'native-admission', occurrenceId: 'native-occurrence', attemptId: 'native-attempt' }, signal: attempt.signal } : {}),
+                }),
+            },
+            actionExecutor: executor, invokeContributedAction: vi.fn(),
+        });
+        for (const decision of ['allow', 'deny'] as const) {
+            await expect(service.execute('session.permission.respond', { sessionId: 'session-1', requestId: 'permission-1', decision }))
+                .rejects.toMatchObject({ code: 'present_user_required' });
+        }
+        expect(delivered).toEqual([]);
+        native = false;
+        inheritedContext.nativeRealtimeInput = undefined;
+        await expect(service.execute('session.permission.respond', { sessionId: 'session-1', requestId: 'permission-1', decision: 'allow' }))
+            .resolves.toMatchObject({ ok: true });
+        expect(delivered).toEqual(['allow']);
+    });
+
+    it('cancels an Agent Action when its exact native Realtime admission ends', async () => {
+        const attempt = new AbortController();
+        let entered!: () => void;
+        const entering = new Promise<void>(resolve => { entered = resolve; });
+        const executor = createActionExecutorForTest({
+            sessionList: async ({ context }) => await new Promise((_resolve, reject) => {
+                context.signal?.addEventListener('abort', () => reject(context.signal?.reason), { once: true });
+                entered();
+            }),
+        });
+        const service = createPluginInvocationActionsService({
+            seed: {
+                plugin: { id: 'acme.agent', version: '1.0.0' },
+                resolveCurrentPluginMaterializationRef: createPluginActionCallerMaterializationFixture('acme.agent').resolveCurrentPluginMaterializationRef,
+                contribution: { id: 'agent', qualifiedId: 'acme.agent/agents/agent' },
+                occurrenceId: 'native-occurrence', correlationId: 'native-invocation', surface: 'agent',
+                session: { id: 'session-1' }, signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+                readActiveTurnAdmissionWitness: () => ({
+                    inputId: 'native-input', turnId: 'native-turn', userMessageSeq: null, userMessageSeqs: [],
+                    callerPermissionMode: 'default',
+                    causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'read-only' },
+                    nativeRealtimeAdmission: { admissionId: 'native-admission', occurrenceId: 'native-occurrence', attemptId: 'native-attempt' },
+                    signal: attempt.signal,
+                }),
+            },
+            actionExecutor: executor, invokeContributedAction: vi.fn(),
+        });
+        const pending = service.execute('session.list', {});
+        const settled = expect(pending).rejects.toMatchObject({ code: 'plugin_action_aborted' });
+        await entering;
+        attempt.abort(new Error('native Realtime ended'));
+        await settled;
+        await expect(service.execute('session.list', {})).rejects.toMatchObject({ code: 'plugin_action_aborted' });
+    });
+
     it('keeps each requester through production services and the real Action executor without changing executor authority', async () => {
         const contexts: ActionExecutorContext[] = [];
         const executor = createActionExecutorForTest({
@@ -1521,7 +1816,7 @@ describe('plugin invocation ActionsService', () => {
         }, owners.createOrdinaryServiceBinding(id, id));
         try {
             await expect(services.actions.execute('session.message.send', { sessionId: 'bot', message: 'Review this update', idempotencyKey: 'shared-plugin-request' }))
-                .rejects.toMatchObject({ code: 'approval_origin_unavailable' });
+                .rejects.toMatchObject({ code: 'approval_requester_unavailable' });
             expect(approval).toBeUndefined();
             expect(effects).toEqual([]);
         } finally { await owners.dispose(); }
@@ -1771,22 +2066,29 @@ describe('plugin invocation ActionsService', () => {
         }));
     });
 
-    it('routes own-grant revoke through the real executor and keeps user decisions directional', async () => {
+    it('routes own-grant revoke and user-waivable grant Ask through the real policy', async () => {
+        let settings = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'plugins.permissions.grants.revoke': ['plugin'] } });
         const pluginPermissionGrantAction: NonNullable<ActionExecutorDeps['pluginPermissionGrantAction']> = vi.fn(async () => ({
             ok: false as const,
             errorCode: 'test_stop_after_binding',
             error: 'test_stop_after_binding',
         }));
+        const approvalsCreate = vi.fn<NonNullable<ActionExecutorDeps['approvalsCreate']>>(async () => ({ artifactId: 'grant-review' }));
         const service = createPluginInvocationActionsService({
             seed: {
                 plugin: { id: 'acme.caller', version: '1.0.0' },
+                contribution: { id: 'manage', qualifiedId: 'acme.caller/actions/manage' },
+                sourceCustody: createManagedPluginSourceCustody('grants-policy-generation'),
                 resolveCurrentPluginMaterializationRef: createPluginActionCallerMaterializationFixture('acme.caller').resolveCurrentPluginMaterializationRef,
                 occurrenceId: 'occurrenceId-1',
+                correlationId: 'grant-management-1',
                 surface: 'ui',
+                approvalContext: { runtimeAccountId: 'alice', serverId: 'home', serverIdentityId: 'srv_policy_fixture' },
                 signal: new AbortController().signal,
                 isOccurrenceCurrent: () => true,
             },
-            actionExecutor: createPermissionActionExecutor(pluginPermissionGrantAction),
+            actionExecutor: createActionExecutorForTest({ pluginPermissionGrantAction, approvalsCreate,
+                isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, settings, context) }),
             invokeContributedAction: vi.fn(),
         });
 
@@ -1809,11 +2111,23 @@ describe('plugin invocation ActionsService', () => {
 
         await expect(service.execute('plugins.permissions.grants.grant', {
             requestId: 'request-1',
-        })).rejects.toMatchObject({ code: 'present_user_required' });
+        })).resolves.toMatchObject({ kind: 'approval_request_created' });
         expect(pluginPermissionGrantAction).toHaveBeenCalledTimes(1);
+        expect(approvalsCreate).toHaveBeenCalledOnce();
+        settings = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: {
+            'plugins.permissions.grants.revoke': ['plugin'], 'plugins.permissions.grants.grant': ['plugin'],
+        } });
+        await expect(service.execute('plugins.permissions.grants.grant', { requestId: 'request-1' }))
+            .rejects.toMatchObject({ code: 'test_stop_after_binding' });
+        expect(pluginPermissionGrantAction).toHaveBeenLastCalledWith(expect.objectContaining({
+            actionId: 'plugins.permissions.grants.grant', input: { requestId: 'request-1' },
+            caller: expect.objectContaining({ kind: 'plugin', pluginId: 'acme.caller' }),
+        }));
+        expect(pluginPermissionGrantAction).toHaveBeenCalledTimes(2);
+        expect(approvalsCreate).toHaveBeenCalledOnce();
     });
 
-    it('withholds a contributed result when the host-stamped caller materialization changes during dispatch', async () => {
+    it('returns the executed contributed result when the host-stamped caller materialization changes during dispatch', async () => {
         const initialCaller = createPluginActionCallerMaterializationFixture('acme.caller', {
             materializationId: 'materialization-caller-before',
         }).materialization;
@@ -1843,7 +2157,8 @@ describe('plugin invocation ActionsService', () => {
         await expect(service.execute(
             { pluginId: 'acme.target', localId: 'publish' },
             { title: 'Ready' },
-        )).rejects.toMatchObject({ code: 'plugin_action_caller_unavailable' });
+        )).resolves.toEqual({ accepted: true });
+        expect(invokeContributedAction).toHaveBeenCalledOnce();
         expect(invokeContributedAction).toHaveBeenCalledWith(expect.objectContaining({
             caller: expect.objectContaining({
                 materialization: initialCaller,

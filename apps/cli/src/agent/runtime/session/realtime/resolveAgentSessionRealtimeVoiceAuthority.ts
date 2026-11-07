@@ -3,10 +3,7 @@ import type {
   PluginSourceCustodyV1,
   VoiceProviderContribution,
 } from '@happier-dev/protocol';
-import {
-  assertAgentSessionRealtimeRuntime as assertExperimentalAgentSessionRealtimeRuntime,
-} from '@happier-dev/plugin-sdk/agents/runtime';
-
+import type { PluginRuntimeHookOperations } from '@/plugins/runtime/runtimeCore/plugin/sessionRuntimeHooks';
 import type { ResolvedVoiceProviderContribution } from '@/plugins/projection/registry/types';
 import type { PluginContributionRuntimeLifecycle } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import {
@@ -153,11 +150,15 @@ export function createAgentSessionRealtimeVoiceAuthority(input: Readonly<{
         return null;
       }
       try {
+        // This is the host turn adapter, whose reader validates the native SDK
+        // facet, follows replacement and withdraws on retirement.
+        if (!runtime || typeof runtime !== 'object') return null;
+        const hostRuntime = runtime as Pick<PluginRuntimeHookOperations, 'readAgentSessionRealtimeConversation'>;
+        if (typeof hostRuntime.readAgentSessionRealtimeConversation !== 'function') return null;
+        const conversation = hostRuntime.readAgentSessionRealtimeConversation();
+        if (!conversation) return null;
         return Object.freeze({
-          conversation:
-            assertExperimentalAgentSessionRealtimeRuntime(
-              runtime,
-            ).realtimeConversation,
+          conversation,
           retirementSignal: entry.retirementSignal,
         });
       } catch {

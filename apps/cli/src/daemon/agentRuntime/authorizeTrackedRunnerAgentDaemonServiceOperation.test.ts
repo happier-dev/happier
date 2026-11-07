@@ -68,6 +68,35 @@ function tracked(): TrackedSession {
 }
 
 describe('tracked Runner Agent daemon-service operation authority', () => {
+  it('requires the exact live native input under the same runner and source custody without a Queue witness', () => {
+    const current = tracked();
+    delete current.agentRuntimeDaemonServiceAdmittedTurnId;
+    const admission = { admissionId: 'native-input', occurrenceId: 'realtime-occurrence', attemptId: 'attempt-1' };
+    const nativeWitness = { turnId: 'provider-turn-1', inputId: admission.admissionId, userMessageSeq: null,
+      userMessageSeqs: [], nativeRealtimeAdmission: admission,
+      agentStartCaller: { kind: 'session' as const, sessionId, starterDepth: 0, turnDepth: 0 } };
+    const request = { tracked: current, ...direct, witness: nativeWitness, allowIdleCurrentGeneration: false };
+    expect(authorizeTrackedRunnerAgentDaemonServiceOperation(request)).toBe(false);
+    current.agentRuntimeDaemonServiceNativeRealtimeAdmission = { admission, runner, sourceCustody: binding.sourceCustody };
+    expect(authorizeTrackedRunnerAgentDaemonServiceOperation(request)).toBe(true);
+    expect(authorizeTrackedRunnerAgentDaemonServiceOperation({ ...request, witness: { ...nativeWitness, turnId: 'provider-turn-2' } })).toBe(true);
+    for (const denied of [
+      { ...nativeWitness, nativeRealtimeAdmission: { ...admission, attemptId: 'attempt-2' } },
+      { ...nativeWitness, inputId: 'queue-like-forgery' },
+      { ...nativeWitness, userMessageSeq: 1, userMessageSeqs: [1] },
+      { ...nativeWitness, nativeRealtimeAdmission: undefined },
+      { ...nativeWitness, agentStartCaller: undefined },
+      { ...nativeWitness, agentStartCaller: { ...nativeWitness.agentStartCaller, sessionId: 'another-session' } },
+    ]) expect(authorizeTrackedRunnerAgentDaemonServiceOperation({ ...request, witness: denied })).toBe(false);
+    expect(authorizeTrackedRunnerAgentDaemonServiceOperation({ ...request, sessionId: 'another-session' })).toBe(false);
+    current.agentRuntimeDaemonServiceNativeRealtimeAdmission = { admission, runner: { ...runner, processStartTimeMs: 456 }, sourceCustody: binding.sourceCustody };
+    expect(authorizeTrackedRunnerAgentDaemonServiceOperation(request)).toBe(false);
+    current.agentRuntimeDaemonServiceNativeRealtimeAdmission = { admission, runner,
+      sourceCustody: { kind: 'managed', immutableGenerationId: 'different-source', installSource: 'localPath' } };
+    expect(authorizeTrackedRunnerAgentDaemonServiceOperation(request)).toBe(false);
+    delete current.agentRuntimeDaemonServiceNativeRealtimeAdmission;
+    expect(authorizeTrackedRunnerAgentDaemonServiceOperation(request)).toBe(false);
+  });
   it.each(['snapshot', 'session', 'source_custody', 'runner_process'] as const)('diagnoses only the failed %s predicate', predicate => {
     const current = tracked();
     if (predicate === 'session') current.happySessionId = 'other-session';

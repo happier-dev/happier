@@ -166,6 +166,12 @@ export interface TrackedSession {
   agentRuntimeDaemonServiceAdmittedInputId?: string;
   agentRuntimeDaemonServiceAdmittedUserMessageSeq?: number | null;
   agentRuntimeDaemonServiceAdmittedUserMessageSeqs?: number[];
+  /** Live native input in exact runner/source custody; never serialized in a marker. */
+  agentRuntimeDaemonServiceNativeRealtimeAdmission?: Readonly<{
+    admission: import('@/agent/runtime/session/process/agentRuntimeDaemonServiceTurnWitness').NativeRealtimeInputAdmissionV1;
+    runner: import('./agentRuntime/sessionBridgeAuthorization').AgentRuntimeDaemonServiceAuthorityRunnerIdentity;
+    sourceCustody: PluginSourceCustodyV1;
+  }>;
   /** Exact completed runner-owned sessions.open request for fork/open proof. */
   agentRuntimeDaemonServiceSessionOpenAttestation?:
     AgentRuntimeDaemonServiceSessionOpenAttestationV1;

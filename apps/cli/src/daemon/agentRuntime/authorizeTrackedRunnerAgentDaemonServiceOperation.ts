@@ -11,6 +11,7 @@ import type {
 import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import { processIdentityMatches } from '@happier-dev/cli-common/processInstance';
 import { resolveTrackedSessionRunnerIdentity } from '../sessions/sessionReportCorrelation';
+import { nativeRealtimeInputWitnessMatchesV1 } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceTurnWitness';
 
 export function authorizeTrackedRunnerAgentDaemonServiceOperation(
   input: Readonly<{
@@ -43,6 +44,14 @@ export function authorizeTrackedRunnerAgentDaemonServiceOperation(
       .agentRuntimeDaemonServiceAdmittedTurnId;
   if (!input.witness) {
     return input.allowIdleCurrentGeneration || refuse('turn_witness');
+  }
+  if (input.witness.nativeRealtimeAdmission) {
+    const native = input.tracked.agentRuntimeDaemonServiceNativeRealtimeAdmission;
+    return Boolean(native
+      && processIdentityMatches(native.runner, input.runner)
+      && pluginSourceCustodyV1Equal(native.sourceCustody, input.retainedAgent.sourceCustody)
+      && nativeRealtimeInputWitnessMatchesV1(native.admission, input.witness, input.sessionId))
+      || refuse('turn_witness');
   }
   if (!admittedTurnId) return refuse('turn_witness');
   return Boolean(

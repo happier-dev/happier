@@ -19,6 +19,7 @@ import type {
     RuntimeTurnMessageHandler,
     RuntimeTurnPromptMeta,
     RuntimeTurnSessionOpenIntent,
+    RuntimeRollbackBoundaryObservation,
 } from '@/agent/runtime/turns/runtimeTurnOperations';
 import {
     normalizeBuiltInAgentId,
@@ -189,6 +190,7 @@ function bindReplaceableNativeAgentSessionOperations(params: Readonly<{
     let runtimeEventUnsubscribe: (() => void) | null = null;
     let promptDeliveryOutcomeHandler: ((outcome: PluginRuntimePromptDeliveryOutcome) => void) | null = null;
     let promptTerminallyRejectedHandler: PluginRuntimePromptAcceptedHandler | null = null;
+    let rollbackBoundaryHandler: ((input: RuntimeRollbackBoundaryObservation) => void) | null = null;
     let beforeToolExecutionHandler: ((toolName: string) => Promise<void>) | null = null;
     // Both native catalogs follow the existing runtime replacement lifetime.
     // Keep their sources stable for host publishers and fence retired callbacks.
@@ -273,6 +275,12 @@ function bindReplaceableNativeAgentSessionOperations(params: Readonly<{
     const bindProviderInputHandlersToCurrentRuntime = (): void => {
         const bindingEpoch = runtimeBindingEpoch;
         currentOperations.setBeforeToolExecution?.(beforeToolExecutionHandler);
+        currentOperations.setOnRollbackBoundary?.(rollbackBoundaryHandler
+            ? (input) => {
+                if (runtimeClosed || bindingEpoch !== runtimeBindingEpoch) return;
+                rollbackBoundaryHandler?.(input);
+            }
+            : null);
         currentOperations.setOnPromptDeliveryOutcome(promptDeliveryOutcomeHandler
             ? (outcome) => {
                 // Retirement itself publishes exact unresolved custody. Keep
@@ -351,12 +359,21 @@ function bindReplaceableNativeAgentSessionOperations(params: Readonly<{
                 return compact.apply(currentOperations, args);
             };
         },
+        readAgentSessionRealtimeConversation: () => runtimeClosed
+            ? null
+            : currentOperations.readAgentSessionRealtimeConversation?.() ?? null,
+        readNativeAttachLaunchAuthority: () => runtimeClosed
+            ? null : currentOperations.readNativeAttachLaunchAuthority?.() ?? null,
+        admitAgentSessionRealtimeInput: (input) => runtimeClosed
+            ? null
+            : currentOperations.admitAgentSessionRealtimeInput?.(input) ?? null,
         get permissionCapability() {
             return currentOperations.permissionCapability;
         },
         getRuntimeLifetimeSignal: () => currentOperations.getRuntimeLifetimeSignal?.() ?? null,
         readActiveTurnPermissionWitness: () => currentOperations.readActiveTurnPermissionWitness?.() ?? null,
         readActiveTurnInputId: () => currentOperations.readActiveTurnInputId?.() ?? null,
+        readTurnStartingInputId: (turnId: string) => currentOperations.readTurnStartingInputId?.(turnId) ?? null,
         readActiveTurnAdmissionWitness: () => currentOperations.readActiveTurnAdmissionWitness?.() ?? null,
         beginTurnLifecycle() {
             currentOperations.beginTurnLifecycle();
@@ -400,6 +417,10 @@ function bindReplaceableNativeAgentSessionOperations(params: Readonly<{
         },
         setOnPromptDeliveryOutcome(handler: ((outcome: PluginRuntimePromptDeliveryOutcome) => void) | null) {
             promptDeliveryOutcomeHandler = handler;
+            bindProviderInputHandlersToCurrentRuntime();
+        },
+        setOnRollbackBoundary(handler: ((input: RuntimeRollbackBoundaryObservation) => void) | null) {
+            rollbackBoundaryHandler = handler;
             bindProviderInputHandlersToCurrentRuntime();
         },
         ...(currentOperations.setBeforeToolExecution ? {
@@ -615,6 +636,9 @@ function bindReplaceableNativeAgentSessionOperations(params: Readonly<{
             return await currentOperations.updateSessionRuntimeConfig(update);
         },
         async resetOrDisposeRuntime(reason, nextSessionOpenIntent) {
+            // Terminal admission invalidates a waiting reopen immediately. Keep
+            // the binding epoch alive until disposal publishes input custody.
+            if (!nextSessionOpenIntent) runtimeClosed = true;
             // A startup-plan reopen must retain the native Goal's source and
             // publisher until its accepted control has settled. Terminal disposal
             // still cancels immediately; it also invalidates a waiting reopen.
@@ -627,7 +651,7 @@ function bindReplaceableNativeAgentSessionOperations(params: Readonly<{
             try {
                 if (pendingControls.length > 0) {
                     await Promise.allSettled(pendingControls);
-                    if (bindingEpoch !== runtimeBindingEpoch) return;
+                    if (runtimeClosed || bindingEpoch !== runtimeBindingEpoch) return;
                 }
                 await replacementLifecycle?.beforeReplacement();
                 runtimeClosed = true;
