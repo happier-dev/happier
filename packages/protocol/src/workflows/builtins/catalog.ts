@@ -1,4 +1,7 @@
 import type { WorkflowDefinitionV1 } from '../workflowV1.js';
+import type { DiscussionRoundOutcomeV1 } from '../../discussions/models.js';
+import type { WorkflowAcceptedSnapshotV1 } from '../workflowDefinitionV1.js';
+import type { WorkflowDiscussionRoundBindingV1 } from '../workflowDiscussionRoundV1.js';
 import { OPEN_A_PULL_REQUEST_WORKFLOW_V1 } from './openAPullRequest.js';
 import { PLAN_WITH_A_PANEL_WORKFLOW_V1 } from './planWithAPanel.js';
 import { KEEP_GOING_WORKFLOW_V1 } from './keepGoing.js';
@@ -21,6 +24,7 @@ type CatalogEntryFieldsV1 = Readonly<{
   purpose: BuiltinWorkflowPurposeV1;
   requiresOriginSession: boolean;
   definition: WorkflowDefinitionV1;
+  discussionRoundPattern?: DiscussionRoundOutcomeV1['pattern'];
 }>;
 
 /** Protocol discovery is available even when the Account library is offline. */
@@ -43,9 +47,11 @@ export const BUILTIN_WORKFLOW_CATALOG_V1 = Object.freeze([
     definition: OPEN_A_PULL_REQUEST_WORKFLOW_V1 },
   { id: 'builtin:fresh-opinions', version: 1, titleKey: 'workflows.builtins.freshOpinions.title',
     descriptionKey: 'workflows.builtins.freshOpinions.description', purpose: 'review', requiresOriginSession: false,
+    discussionRoundPattern: 'fresh_opinions',
     definition: FRESH_OPINIONS_WORKFLOW_V1 },
   { id: 'builtin:answer-and-review', version: 1, titleKey: 'workflows.builtins.answerAndReview.title',
     descriptionKey: 'workflows.builtins.answerAndReview.description', purpose: 'review', requiresOriginSession: false,
+    discussionRoundPattern: 'answer_and_review',
     definition: ANSWER_AND_REVIEW_WORKFLOW_V1 },
   { id: 'builtin:debate', version: 1, titleKey: 'workflows.builtins.debate.title',
     descriptionKey: 'workflows.builtins.debate.description', purpose: 'review', requiresOriginSession: false,
@@ -58,6 +64,15 @@ export const BUILTIN_WORKFLOW_IDS_V1 = Object.freeze(BUILTIN_WORKFLOW_CATALOG_V1
 
 export function getBuiltinWorkflowCatalogV1(): readonly BuiltinWorkflowCatalogEntryV1[] {
   return BUILTIN_WORKFLOW_CATALOG_V1;
+}
+
+/** Only a resolved, versioned catalog source supplies pattern identity; authored names and ids do not. */
+export function readWorkflowDiscussionRoundBindingV1(accepted: Pick<WorkflowAcceptedSnapshotV1, 'source' | 'resultDelivery'>): WorkflowDiscussionRoundBindingV1 | undefined {
+  const source = accepted.source;
+  if (source.kind !== 'catalog' || accepted.resultDelivery?.kind !== 'originating_discussion') return undefined;
+  const builtin = getBuiltinWorkflowCatalogV1().find(entry => entry.id === source.ref && entry.version === source.version);
+  return builtin?.discussionRoundPattern ? { discussionId: accepted.resultDelivery.discussion.discussionId,
+    pattern: builtin.discussionRoundPattern } : undefined;
 }
 
 /** The id is the parsed builtin arm's slug, not another reference grammar. */

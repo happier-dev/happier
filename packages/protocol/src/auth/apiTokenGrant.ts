@@ -1,11 +1,9 @@
-import { DeploymentIdentifierV1Schema } from '../deployments/deploymentIdentifiersV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { createStoredReadSchema, defineStoredReadProjection } from '../json/storedReadSchema.js';
 import { CallerInputConstraintsV1Schema, type CallerInputConstraintsV1 } from './callerInputConstraintsV1.js';
 export { CallerInputConstraintsV1Schema, type CallerInputConstraintsV1 } from './callerInputConstraintsV1.js';
-import { ACTION_ID_FAMILIES_V1, ActionIdFamilyV1Schema, type ActionIdFamilyV1 } from '../actions/actionIds.js';
-import { DECISION_ACTION_IDS } from '../actions/decisionAuthority.js';
+import { ACTION_ID_FAMILIES_V1, ActionIdFamilyV1Schema, DECISION_ACTION_IDS, SESSION_MESSAGE_SEND_ACTION_ID_V1, type ActionIdFamilyV1 } from '../actions/actionIds.js';
 import type { ExternalActionTargetV1 } from '../actions/externalActionApi.js';
 import { AgentExecutionTargetV1Schema } from '../agents/executionTargetV1.js';
 import { buildBackendTargetKeyV2 } from '../backends/targets/backendTargetRefV2.js';
@@ -15,18 +13,20 @@ import { isNativeAutomaticModelSelectionInputV1, type ProviderBoundModelRef } fr
 import type { SocketRpcSessionWriteAuthorityV1 } from '../rpc/index.js';
 import { SessionDirectoryIntentV1Schema } from '../sessions/creation/sessionDirectoryIntentV1.js';
 import { SessionExecutionTargetV1Schema } from '../sessions/creation/sessionExecutionTargetV1.js';
-import { SessionOrganizationPlacementV1Schema, type SessionOrganizationPlacementV1 } from '../sessions/creation/sessionSpawnNewResultV1.js';
+import { SessionOrganizationPlacementV1Schema, SessionSectionPlacementV1Schema, type SessionOrganizationPlacementV1 } from '../sessions/creation/sessionSpawnNewResultV1.js';
 import type { SessionPermissionMode } from '../sessions/metadata/sessionPermissionModes.js';
 import { parseAgentPermissionIntentV1Alias, type AgentPermissionIntentV1 } from '../runtime/permissionIntentV1.js';
 import { parseQualifiedPluginActionId } from '../plugins/actions/qualifiedActionId.js';
 import { SessionSpawnNewInputV2BaseSchema, SessionSpawnNewInputV2Schema } from '../sessions/creation/sessionSpawnNewInputV2.js';
 import { ConnectedServiceBindingsV2Schema, type ConnectedServiceBindingsV2 } from '../connect/connectedServiceBindings.js';
+import { DeploymentIdentifierV1Schema } from '../deployments/deploymentIdentifiersV1.js';
+import { BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '../bots/templates/botTemplateActionIdsV1.js';
 
 /** Prompt-free admission projection; ordinary Session input retains private custody. */
-export const ApiTokenSessionSpawnAdmissionV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.pick(SessionSpawnNewInputV2BaseSchema, {
+export const ApiTokenSessionSpawnAdmissionV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(z.pick(SessionSpawnNewInputV2BaseSchema, {
   executionTarget: true, agentTarget: true, directory: true, organizationPlacement: true,
   modelSelection: true, permissionMode: true, connectedServices: true,
-})));
+}), { machineSetupRequested: z.optional(z.literal(true)) })));
 export type ApiTokenSessionSpawnAdmissionV1 = z.infer<typeof ApiTokenSessionSpawnAdmissionV1Schema>;
 export function projectApiTokenSessionSpawnAdmissionV1(input: unknown): ApiTokenSessionSpawnAdmissionV1 {
   const canonical = SessionSpawnNewInputV2Schema.parse(input);
@@ -36,6 +36,7 @@ export function projectApiTokenSessionSpawnAdmissionV1(input: unknown): ApiToken
     ...(canonical.modelSelection !== undefined ? { modelSelection: canonical.modelSelection } : {}),
     ...(canonical.permissionMode !== undefined ? { permissionMode: canonical.permissionMode } : {}),
     ...(canonical.connectedServices !== undefined ? { connectedServices: canonical.connectedServices } : {}),
+    ...(canonical.machineSetupPlanInput !== undefined ? { machineSetupRequested: true } : {}),
   });
 }
 
@@ -59,6 +60,25 @@ export const ApiTokenGrantOriginV1Schema = lazyZodSchema(() => CanonicalHttpOrig
 const GrantIdSchema = lazyZodSchema(() => z.string().check(z.minLength(1)));
 const modelKey = (ref: ProviderBoundModelRef) => JSON.stringify([ref.agentTargetKey, ref.providerConnectionId, ref.modelId]);
 
+/** Only these Actions admit Environment-only CI authority; operation custody is checked by its owner. */
+export const API_TOKEN_ENVIRONMENT_ACTION_IDS_V1 = ['deployments.deploy', 'action.operations.get'] as const;
+
+/** Exact authority that can carry the person's saved deployment choice. */
+export function isApiTokenDeploymentGrantV1(grant: Readonly<{
+  approve: boolean;
+  create: unknown;
+  actions: Readonly<{ families: readonly string[]; ids: readonly string[] }> | null;
+  targets: Readonly<{ sessions: readonly string[]; machines: readonly string[]; environments?: readonly string[] }> | null;
+}>): boolean {
+  const actions = grant.actions;
+  return !grant.approve && grant.create === null
+    && actions !== null && actions.families.length === 0
+    && actions.ids.length === API_TOKEN_ENVIRONMENT_ACTION_IDS_V1.length
+    && API_TOKEN_ENVIRONMENT_ACTION_IDS_V1.every(id => actions.ids.includes(id))
+    && grant.targets !== null && grant.targets.sessions.length === 0 && grant.targets.machines.length === 0
+    && grant.targets.environments?.length === 1;
+}
+
 export const ApiTokenGrantV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
   actions: z.nullable(z.strictObject({ families: z.array(ActionIdFamilyV1Schema), ids: z.array(GrantIdSchema) })),
@@ -70,6 +90,8 @@ export const ApiTokenGrantV1Schema = lazyZodSchema(() => z.strictObject({
   /** Exact workflow.trigger.run_now operand restriction; absent/null is unrestricted. */
   automationIds: z.optional(z.nullable(z.array(GrantIdSchema).check(z.minLength(1)))),
   approve: z.boolean(),
+  /** Absent means Ask. Only an exact single-Environment deployment grant may save Automatic. */
+  deployApproval: z.optional(z.literal('automatic')),
   origins: z.array(ApiTokenGrantOriginV1Schema),
   models: CallerInputConstraintsV1Schema.shape.models,
   permissionModes: CallerInputConstraintsV1Schema.shape.permissionModes,
@@ -85,18 +107,34 @@ export const ApiTokenGrantV1Schema = lazyZodSchema(() => z.strictObject({
     [value.origins, ['origins']],
     ...(value.actions ? [[value.actions.families, ['actions', 'families']], [value.actions.ids, ['actions', 'ids']]] as const : []),
     ...(value.targets ? [[value.targets.sessions, ['targets', 'sessions']], [value.targets.machines, ['targets', 'machines']]] as const : []),
+    ...(value.targets?.environments ? [[value.targets.environments, ['targets', 'environments']]] as const : []),
     ...(value.models ? [[value.models.map(modelKey), ['models']]] as const : []),
     ...(value.permissionModes ? [[value.permissionModes, ['permissionModes']]] as const : []),
     ...(value.automationIds ? [[value.automationIds, ['automationIds']]] as const : []),
   ];
   for (const [list, path] of lists) if (new Set(list).size !== list.length) context.addIssue({ code: 'custom', path: [...path], message: 'Grant entries must be unique.' });
   if (value.actions && !value.actions.families.length && !value.actions.ids.length) context.addIssue({ code: 'custom', path: ['actions'], message: 'A restricted action grant must be nonempty.' });
-  if (value.targets && !value.targets.sessions.length && !value.targets.machines.length) context.addIssue({ code: 'custom', path: ['targets'], message: 'A restricted target grant must be nonempty.' });
+  if (value.targets && !value.targets.sessions.length && !value.targets.machines.length && !value.targets.environments?.length) context.addIssue({ code: 'custom', path: ['targets'], message: 'A restricted target grant must be nonempty.' });
   if (value.create && value.targets && !value.targets.machines.includes(value.create.machineId)) {
     context.addIssue({ code: 'custom', path: ['create', 'machineId'], message: 'The creation machine must belong to the grant targets.' });
   }
+  if (value.deployApproval === 'automatic' && !isApiTokenDeploymentGrantV1(value)) {
+    context.addIssue({ code: 'custom', path: ['deployApproval'], message: 'Automatic deployment requires an exact single-Environment deployment grant.' });
+  }
 })));
 export type ApiTokenGrantV1 = z.infer<typeof ApiTokenGrantV1Schema>;
+
+/** The existing grant owns the saved choice; Environment content never invalidates it. */
+export function resolveApiTokenDeploymentGrantV1(grant: ApiTokenGrantV1,
+  deployment?: Readonly<{ environmentId: string; deployApproval?: 'automatic' | 'ask' }> | null): ApiTokenGrantV1 {
+  if (deployment === undefined) return grant;
+  if (!isApiTokenDeploymentGrantV1(grant)
+    || deployment !== null && grant.targets?.environments?.[0] !== deployment.environmentId) {
+    throw Object.assign(new Error('credential_scope_denied'), { code: 'credential_scope_denied' });
+  }
+  const { deployApproval: _previous, ...base } = grant;
+  return deployment?.deployApproval === 'automatic' ? { ...base, deployApproval: 'automatic' } : base;
+}
 // Grants carry authority: stored reads must not erase an unknown restriction.
 defineStoredReadProjection(ApiTokenGrantV1Schema, () => ApiTokenGrantV1Schema);
 export const StoredApiTokenGrantV1Schema = createStoredReadSchema(ApiTokenGrantV1Schema);
@@ -110,10 +148,13 @@ export function isApiTokenGrantRestrictedV1(grant: ApiTokenGrantV1): boolean {
 }
 
 const DISCOVERY_IDS = new Set(['action.spec.search', 'action.spec.get', 'action.options.resolve']);
+const APPROVAL_OBSERVATION_IDS = new Set(['approval.request.list', 'approval.request.get']);
 function actionGranted(grant: ApiTokenGrantV1, actionId: string, contributedQualifiedId?: string, contributedActionAdmission?: 'pre_open'): boolean {
-  if (actionId === 'session.user_action.answer') actionId = 'session.message.send';
+  // Send includes answering agent questions; exact answer grants remain narrower.
+  if (actionId === 'session.user_action.answer' && actionGranted(grant, SESSION_MESSAGE_SEND_ACTION_ID_V1)) return true;
   if (DISCOVERY_IDS.has(actionId)) return true;
   if ((DECISION_ACTION_IDS as readonly string[]).includes(actionId)) return grant.approve;
+  if (APPROVAL_OBSERVATION_IDS.has(actionId)) return grant.approve;
   if (actionId === 'action.invoke') {
     if (grant.actions === null) return contributedQualifiedId !== undefined || contributedActionAdmission === 'pre_open';
     if (contributedQualifiedId !== undefined) return !!grant.actions?.ids.includes(contributedQualifiedId);
@@ -164,20 +205,45 @@ export function evaluateApiTokenGrantV1(input: Readonly<{
   contributedQualifiedId?: string;
   /** Host-only opaque ingress/currentness stage. Execution must supply the resolved identity. */
   contributedActionAdmission?: 'pre_open';
+  /** Identifies which canonical owner projected the Session creation operand. */
+  sessionSpawnInputKind?: 'public_api' | 'canonical_admission';
   spawnInput?: unknown;
   automationId?: unknown;
   /** Host-only opaque ingress/currentness; decoded execution and the native effect recheck the operand. */
   automationAdmission?: 'pre_open';
+  /** Exact Environment from admitted routing metadata or the decoded Action operand. */
+  environmentId?: unknown;
+  /** Host-only opaque stage; it still requires the exact granted Environment metadata. */
+  environmentAdmission?: 'pre_open';
   target?: ExternalActionTargetV1 | null;
   targetMachineId?: string | null;
-}>): { ok: true } | { ok: false; reason: 'action_not_granted' | 'target_required' | 'target_not_granted' | 'create_not_granted' | 'automation_not_granted' } {
+}>): { ok: true } | { ok: false; reason: ApiTokenGrantDenialReasonV1; deniedActionId?: string } {
   const { grant, actionId, target } = input;
   if (!actionGranted(grant, actionId, input.contributedQualifiedId, input.contributedActionAdmission)) return { ok: false, reason: 'action_not_granted' };
+  if (actionId === 'deployments.deploy' || 'environmentId' in input || input.environmentAdmission !== undefined) {
+    const environment = DeploymentIdentifierV1Schema.safeParse(input.environmentId);
+    if (!API_TOKEN_ENVIRONMENT_ACTION_IDS_V1.some((id) => id === actionId)
+      || !environment.success || environment.data !== input.environmentId || target?.kind === 'session'
+      || grant.targets !== null && !grant.targets.environments?.includes(environment.data)) {
+      return { ok: false, reason: 'environment_not_granted' };
+    }
+    // Controller/operation-host placement is routing, never a Machine grant.
+    // The decoded operand and originating-token operation custody are rechecked at dispatch.
+    return { ok: true };
+  }
   if (DISCOVERY_IDS.has(actionId)) return { ok: true };
   if (actionId === 'workflow.trigger.run_now' && grant.automationIds != null
     && !(input.automationAdmission === 'pre_open' && input.automationId === undefined)
     && (typeof input.automationId !== 'string' || !grant.automationIds.includes(input.automationId))) {
     return { ok: false, reason: 'automation_not_granted' };
+  }
+  const spawnInput = input.spawnInput;
+  const creation = actionId === BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 && spawnInput && typeof spawnInput === 'object' && !Array.isArray(spawnInput)
+    ? (spawnInput as Record<string, unknown>).creation : actionId === 'session.spawn_new' ? spawnInput : undefined;
+  if (creation && typeof creation === 'object' && !Array.isArray(creation)
+    && (creation as Record<string, unknown>).manager !== undefined
+    && !resolveApiTokenSessionCapabilityCeilingV1(grant).has('submitAgentInput')) {
+    return { ok: false, reason: 'action_not_granted', deniedActionId: SESSION_MESSAGE_SEND_ACTION_ID_V1 };
   }
   if (actionId === 'session.spawn_new' && grant.create !== null) {
     const binding = grant.create;
@@ -189,11 +255,18 @@ export function evaluateApiTokenGrantV1(input: Readonly<{
       const execution = SessionExecutionTargetV1Schema.safeParse(fields.executionTarget);
       // API projection puts Machine identity in the verified envelope target;
       // the host binds executionTarget before the strict execution-stage check.
-      const projectedApiTarget = input.contributedActionAdmission === 'pre_open'
+      const projectedApiTarget = input.sessionSpawnInputKind === 'public_api'
         && fields.executionTarget === undefined;
       const agent = AgentExecutionTargetV1Schema.safeParse(fields.agentTarget);
       const directory = SessionDirectoryIntentV1Schema.safeParse(fields.directory);
-      const placement = SessionOrganizationPlacementV1Schema.safeParse(fields.organizationPlacement);
+      const placement = input.sessionSpawnInputKind === 'public_api'
+        ? (() => {
+            const publicPlacement = SessionSectionPlacementV1Schema.safeParse(fields.organizationPlacement);
+            return publicPlacement.success
+              ? { success: true as const, data: { folderId: publicPlacement.data.sectionId, tagIds: publicPlacement.data.tagIds } }
+              : publicPlacement;
+          })()
+        : SessionOrganizationPlacementV1Schema.safeParse(fields.organizationPlacement);
       const hasConnectedServices = Object.prototype.hasOwnProperty.call(fields, 'connectedServices');
       const connectedServices = ConnectedServiceBindingsV2Schema.safeParse(fields.connectedServices);
       if ((!projectedApiTarget && (!execution.success || execution.data.machineId !== binding.machineId))
@@ -215,7 +288,8 @@ export function evaluateApiTokenGrantV1(input: Readonly<{
 
 export function isApiTokenGrantWithinV1(child: ApiTokenGrantV1, parent: ApiTokenGrantV1): boolean {
   const subset = (c: readonly string[] | null, p: readonly string[] | null) => p === null || (c !== null && c.every((item) => p.includes(item)));
-  if (child.approve && !parent.approve || !subset(child.origins, parent.origins)
+  if (child.deployApproval === 'automatic' && parent.deployApproval !== 'automatic'
+    || child.approve && !parent.approve || !subset(child.origins, parent.origins)
     || !subset(child.automationIds ?? null, parent.automationIds ?? null)
     || !subset(child.models?.map(modelKey) ?? null, parent.models?.map(modelKey) ?? null)
     || !subset(child.permissionModes?.map((mode) => parseAgentPermissionIntentV1Alias(mode)!) ?? null,
@@ -223,13 +297,15 @@ export function isApiTokenGrantWithinV1(child: ApiTokenGrantV1, parent: ApiToken
   if (parent.actions !== null) {
     if (child.actions === null) return false;
     const ordinaryIdWithin = (id: string) => (DECISION_ACTION_IDS as readonly string[]).includes(id)
+      || APPROVAL_OBSERVATION_IDS.has(id)
       || actionGranted(parent, id);
     if (!child.actions.ids.every(ordinaryIdWithin)
       || !child.actions.families.every((family: ActionIdFamilyV1) => parent.actions!.families.includes(family) || (ACTION_ID_FAMILIES_V1[family] as readonly string[]).every(ordinaryIdWithin))) return false;
   }
   if (parent.targets !== null && (child.targets === null
     || !subset(child.targets.sessions, parent.targets.sessions)
-    || !subset(child.targets.machines, parent.targets.machines))) return false;
+    || !subset(child.targets.machines, parent.targets.machines)
+    || !subset(child.targets.environments ?? [], parent.targets.environments ?? []))) return false;
   if (actionGranted(child, 'session.spawn_new')) {
     if (parent.create !== null) {
       if (child.create === null || child.create.machineId !== parent.create.machineId
@@ -282,12 +358,10 @@ export function isOriginAllowedByApiTokenGrantV1(grant: ApiTokenGrantV1, origin:
 }
 export function resolveApiTokenSessionCapabilityCeilingV1(grant: ApiTokenGrantV1): ReadonlySet<SocketRpcSessionWriteAuthorityV1> {
   const capabilities = new Set<SocketRpcSessionWriteAuthorityV1>(['readTranscript']);
-  if (actionGranted(grant, 'session.message.send') || actionGranted(grant, 'session.turn.cancel')
+  if (actionGranted(grant, SESSION_MESSAGE_SEND_ACTION_ID_V1) || actionGranted(grant, 'session.turn.cancel')
     || actionGranted(grant, 'session.compact')) capabilities.add('submitAgentInput');
   if (actionGranted(grant, 'session.stop')) capabilities.add('stopSession');
   if (actionGranted(grant, 'session.archive')) capabilities.add('archiveSession');
   if (grant.approve) capabilities.add('approveRuntimePermissions');
   return capabilities;
 }
-
-export const API_TOKEN_ENVIRONMENT_ACTION_IDS_V1 = ['deployments.deploy', 'action.operations.get'] as const;

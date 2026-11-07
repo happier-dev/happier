@@ -1,14 +1,16 @@
 import { ActionDefinitionV1Schema } from '@happier-dev/protocol/actions/actionDefinitionV1';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
-import type { ActionDefinitionV1, WorkflowAcceptedAuthorizationV1 } from '@happier-dev/protocol';
-import { PluginError } from '@happier-dev/plugin-sdk/errors';
-import { readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
-import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import type { ActionDefinitionV1 } from '@happier-dev/protocol';
+import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions';
+import { readHostReviewedChildOperationV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { inputTypeResourceReference } from '@happier-dev/protocol/inputs/runtime';
 import { PluginActionExecutionV2Schema } from '@happier-dev/protocol/plugins/actions/v2';
+import { readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
+import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';
 
 import type { ResolvedActionContribution, ResolvedActionDefinition } from '@/plugins/projection/registry/types';
+import { readResolvedActionContribution } from '@/plugins/projection/registry/actions';
 import type { TargetActionCurrentIntentRequest, TargetActionCurrentIntentResult } from '../actionExecutor';
 import {
   acquireAuthoritativePluginRuntimeRegistryLease,
@@ -17,6 +19,11 @@ import {
 import type { PluginActionSurface } from '@/plugins/runtime/types';
 import type { PluginExternalActionContext } from '../services/types';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '../../resolveExecutablePluginRuntimeRegistry';
+import type { HostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
+import { captureConnectedAccountInvocationPurposeBinding } from '@happier-dev/cli-common/connectedAccounts';
+import { readMachineProvisionerActionRolesV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import type { ConnectedAccountPurposeBindingOwner, ConnectedAccountPurposeBindingLease } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
+import type { AdmittedManagedProviderOperationExecutionRequest } from './managedProviderCustody';
 
 function projectDefinition(definition: ResolvedActionDefinition, identity: NonNullable<ResolvedActionContribution['identity']>): ActionDefinitionV1 {
   const execution = PluginActionExecutionV2Schema.safeParse(definition.execution);
@@ -96,15 +103,15 @@ function projectExternalActionContext(
 }
 
 export function createCommittedContributedActionInvoker(input: Readonly<{
+  /** Constraints already admitted by a containing SDK call, across execution realms. */
+  inheritedInvocation?: Pick<Parameters<typeof import('./executeContributedAction').executeContributedAction>[0],
+    'requiredDangerLevel' | 'requiredReadOnly' | 'resourceSessionId' | 'readObservation' | 'inheritedTargetedOperation'>;
+  connectedAccountPurposeBindingOwner?: Pick<ConnectedAccountPurposeBindingOwner, 'activatePurposeBindings'>;
+  observePluginExecution?: HostActionOperationRuntime['observePluginExecution'];
   acquireRuntimeRegistryLease?: typeof acquireAuthoritativePluginRuntimeRegistryLease;
   requestCurrentIntent?: (request: TargetActionCurrentIntentRequest) => Promise<TargetActionCurrentIntentResult>;
   /** Transport-only callers may supply a default without replacing a bound host surface. */
   defaultInvocationSurface?: PluginActionSurface;
-  /** Bound only by the accepted Workflow host; author input cannot supply this proof. */
-  isWorkflowRunAuthorizationCurrent?: (params: Readonly<{
-    authorization: WorkflowAcceptedAuthorizationV1;
-    signal?: AbortSignal;
-  }>) => boolean | Promise<boolean>;
 }> = {}): NonNullable<ActionExecutorDeps['invokeContributedAction']> {
   const acquire = input.acquireRuntimeRegistryLease ?? acquireAuthoritativePluginRuntimeRegistryLease;
   return async ({ action, input: actionInput, clientId, messageActionReference, context, approvalExecutionOrigin, requiredDangerLevel, resolveEnvironmentApprovalScope, signal }) => {
@@ -112,17 +119,6 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
     invocationSignal.throwIfAborted();
     const surface = readSurface(context.surface) ?? input.defaultInvocationSurface;
     if (!surface) return { ok: false, errorCode: 'contributed_action_unavailable', error: 'contributed_action_unavailable' };
-    const workflowCaller = context.actionCaller?.kind === 'workflowRun' && input.isWorkflowRunAuthorizationCurrent
-      ? context.actionCaller : null;
-    const isWorkflowCurrent = async () => {
-      if (!workflowCaller) return true;
-      return await input.isWorkflowRunAuthorizationCurrent!({
-        authorization: workflowCaller.authorization, signal: invocationSignal,
-      });
-    };
-    if (!await isWorkflowCurrent()) return {
-      ok: false, errorCode: 'workflow_authorization_not_current', error: 'workflow_authorization_not_current',
-    };
     const externalActionContext = projectExternalActionContext(
       context,
       approvalExecutionOrigin !== undefined,
@@ -134,11 +130,34 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
       return { ok: false, errorCode: 'contributed_action_unavailable', error: 'contributed_action_unavailable' };
     }
     const lease = await acquire();
+    let purposeLease: ConnectedAccountPurposeBindingLease | undefined;
     try {
       const { executeContributedAction } = await import('./executeContributedAction');
       invocationSignal.throwIfAborted();
+      const machine = context.invocationServices?.managedMachine;
+      const seed = context.invocationServices?.connectedAccountPurposeBinding;
+      const contribution = machine && lease.registry.contributes.machineProvisioners?.find(candidate =>
+        candidate.identity.pluginId === machine.launch.provider.pluginId && candidate.identity.localId === machine.launch.provider.localId);
+      const role = contribution && readMachineProvisionerActionRolesV1(contribution.definition).find(candidate => candidate.action === action.localId)?.role;
+      let admittedManagedProviderOperation: AdmittedManagedProviderOperationExecutionRequest | undefined;
+      if (machine && role && contribution) {
+        const binding = seed ? captureConnectedAccountInvocationPurposeBinding(seed) : undefined;
+        if (binding && input.connectedAccountPurposeBindingOwner) purposeLease = input.connectedAccountPurposeBindingOwner.activatePurposeBindings({
+          subject: { kind: 'managed_provider_operation', operationId: binding.operationId, pluginId: binding.identity.pluginId,
+            providerLocalId: binding.identity.localId, credentialConfigurations: binding.managedOperation?.credentialConfigurations,
+            isCurrent: binding.isCurrent }, purposes: binding.purposes, bindings: binding.purposeBindings.bindings,
+          ...(context.recordOperationCredentialUse ? { recordOperationCredentialUse: context.recordOperationCredentialUse } : {}),
+        });
+        admittedManagedProviderOperation = { managedId: machine.id, homeId: machine.homeId, intentRevision: machine.intentRevision,
+          accountMachine: machine, ...(binding ? { purposeBinding: binding } : {}), role,
+          contribution: { ...contribution.identity, occurrenceId: lease.registry.readPluginOccurrenceId?.(action.pluginId) ?? '' },
+          ...(purposeLease ? { exactPurposeBindingSubjectId: purposeLease.subjectId } : {}),
+          isCurrent: () => !invocationSignal.aborted && (!binding || binding.isCurrent()) && (!purposeLease || purposeLease.isCurrent()),
+        };
+      }
       const attempt = await executeContributedAction({
         runtimeRegistry: lease.registry,
+        ...input.inheritedInvocation,
         actionId: buildQualifiedPluginContributionKey(action),
         input: actionInput,
         ...(clientId === undefined ? {} : { clientId }),
@@ -146,17 +165,17 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
         ...(requiredDangerLevel ? { requiredDangerLevel } : {}),
         ...(resolveEnvironmentApprovalScope ? { resolveEnvironmentApprovalScope } : {}),
         approvalContext: context,
+        ...(context.actionsSettings ? { actionsSettings: context.actionsSettings } : {}),
+        ...(admittedManagedProviderOperation ? { admittedManagedProviderOperation } : {}),
         ...(approvalExecutionOrigin ? { approvalExecutionOrigin } : {}),
         ...(input.requestCurrentIntent ? { requestCurrentIntent: input.requestCurrentIntent } : {}),
         context: {
+          ...(input.observePluginExecution ? { observePluginExecution: input.observePluginExecution } : {}),
           surface,
           invocationSurface: surface,
+          ...(readHostReviewedChildOperationV1(context, formatQualifiedPluginActionId(action), actionInput)
+            ? { admittedPluginActionSurface: 'plugin' as const } : {}),
           initiatingActionCaller: context.actionCaller ?? { kind: 'host' },
-          ...(workflowCaller ? { beforeHandlerInvocation: async () => {
-            if (!await isWorkflowCurrent()) throw new PluginError({
-              code: 'workflow_authorization_not_current', message: 'workflow_authorization_not_current',
-            });
-          } } : {}),
           ...(externalActionContext ? { externalActionContext } : {}),
           ...(typeof context.defaultSessionId === 'string' ? { defaultSessionId: context.defaultSessionId } : {}),
           signal: invocationSignal,
@@ -171,12 +190,17 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
         return { ok: false, errorCode: attempt.result.errorCode, error: attempt.result.error,
           details: attempt.result.data };
       }
+      // The target already owns classification and redaction. Match the host
+      // contribution bridge's published PluginError envelope inside Action's
+      // existing details field; private top-level transport data is stripped
+      // by ordinary Action normalization.
       if (attempt.result.details !== undefined) return attempt.result;
       const error = new PluginError({ code: attempt.result.errorCode, message: attempt.result.error,
         ...(attempt.result.retryable === undefined ? {} : { retryable: attempt.result.retryable }),
         ...readPluginActionFailureAuthorPayload(attempt.result.data) });
       return { ...attempt.result, ...(error.data.failureCause ? { failureCause: error.data.failureCause } : {}), details: error.data };
     } finally {
+      purposeLease?.dispose();
       await lease.release();
     }
   };
@@ -187,11 +211,11 @@ export function createCommittedContributedActionDefinitionLister(input: Readonly
   onLeaseReleaseError?: () => void;
 }> = {}): NonNullable<ActionExecutorDeps['listContributedActionDefinitions']> {
   const tryAcquire = input.tryAcquireRuntimeRegistryLease ?? tryAcquireAuthoritativePluginRuntimeRegistryLease;
-  return () => {
+  return (selection) => {
     const lease = tryAcquire();
     if (!lease) return [];
     try {
-      return listRuntimeContributedActionDefinitions(lease.registry);
+      return listRuntimeContributedActionDefinitions(lease.registry, selection);
     } finally {
       void lease.release().catch(() => input.onLeaseReleaseError?.());
     }
@@ -201,10 +225,14 @@ export function createCommittedContributedActionDefinitionLister(input: Readonly
 /** The committed lease and in-runtime SDK dispatcher share the same declaration projection. */
 export function listRuntimeContributedActionDefinitions(
   registry: Pick<ResolvedExecutablePluginRuntimeRegistry, 'contributes' | 'targetActionInvocations'> | null | undefined,
+  selection?: Parameters<NonNullable<ActionExecutorDeps['listContributedActionDefinitions']>>[0],
 ): readonly ActionDefinitionV1[] {
   const targetActionInvocations = registry?.targetActionInvocations;
   if (!registry || !targetActionInvocations) return [];
-  return Object.freeze(registry.contributes.actions.flatMap(action => {
+  const identity = selection ? parseQualifiedPluginActionId(selection.id) : null;
+  const selected = identity ? readResolvedActionContribution(registry.contributes, identity) : null;
+  const actions = selection ? selected ? [selected] : [] : registry.contributes.actions;
+  return Object.freeze(actions.flatMap(action => {
     const identity = action.identity;
     if (!identity || identity.localId !== action.definition.id
       || targetActionInvocations.evaluateCatalogPolicy(identity.pluginId, identity.localId).outcome !== 'visible') return [];
@@ -218,7 +246,11 @@ export function createCommittedContributedActionSchemaReader(
 ): NonNullable<ActionExecutorDeps['readContributedActionSchemas']> {
   return async (actionId, signal) => {
     signal?.throwIfAborted();
-    const definition = ActionDefinitionV1Schema.safeParse(listDefinitions().find(action => action.id === actionId));
+    const identity = parseQualifiedPluginActionId(actionId);
+    if (!identity) return null;
+    const selected = listDefinitions({ id: formatQualifiedPluginActionId(identity) })
+      .find(candidate => candidate.id === actionId);
+    const definition = ActionDefinitionV1Schema.safeParse(selected);
     if (!definition.success) return null;
     return { inputSchema: definition.data.inputSchema,
       ...(definition.data.outputSchema === undefined ? {} : { outputSchema: definition.data.outputSchema }) };
@@ -238,7 +270,7 @@ export function createRegistryInputTypeDeps(runtime: Pick<ResolvedExecutablePlug
         return occurrenceId && candidates.length === 1
           ? { identity: candidates[0]!.identity, occurrenceId, definition: candidates[0]!.definition } : null;
     },
-    readInputTypeResource: async ({ type, resource, context, sessionId }) => {
+    readInputTypeResource: async ({ type, resource, context, sessionId, query }) => {
         const registry = runtime.contributes;
         if (registry.occurrenceIdsByPluginId?.[type.identity.pluginId] !== type.occurrenceId) {
           return { ok: false, errorCode: 'input_type_retired', error: 'input_type_retired' };
@@ -261,11 +293,19 @@ export function createRegistryInputTypeDeps(runtime: Pick<ResolvedExecutablePlug
         if (definition.source === 'dynamic' && definition.scope === 'surface') {
           return { ok: false, errorCode: 'input_type_options_unavailable', error: 'input_type_options_unavailable' };
         }
-        const result = await read({ callerPluginId: resource.pluginId, resourceId: resource.localId,
-          expectedCallerOccurrenceId: occurrenceId,
-          ...(definition.source === 'dynamic' && definition.scope === 'session' && sessionId
-            ? { context: { kind: 'session' as const, sessionId } } : {}),
-          ...(context.signal ? { signal: context.signal } : {}) });
+        let result: Awaited<ReturnType<typeof read>>;
+        try {
+          result = await read({ callerPluginId: resource.pluginId, resourceId: resource.localId,
+            expectedCallerOccurrenceId: occurrenceId,
+            ...(query ? { query } : {}),
+            ...(definition.source === 'dynamic' && definition.scope === 'session' && sessionId
+              ? { context: { kind: 'session' as const, sessionId } } : {}),
+            ...(context.signal ? { signal: context.signal } : {}) });
+        } catch (error) {
+          if (!isPluginError(error)) throw error;
+          return { ok: false, errorCode: error.code, error: error.message,
+            ...(error.details === undefined ? {} : { details: error.details }) };
+        }
         if (result.contentType !== 'application/json') {
           return { ok: false, errorCode: 'input_type_options_invalid', error: 'input_type_options_invalid' };
         }

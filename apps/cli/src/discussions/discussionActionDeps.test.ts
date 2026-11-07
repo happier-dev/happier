@@ -9,6 +9,7 @@ import tweetnacl from 'tweetnacl';
 import { createActionExecutor, FeaturesResponseSchema, accountSettingsParse, type ActionExecutorDeps } from '@happier-dev/protocol';
 import { DiscussionCreateRequestV1Schema, DiscussionPostRequestV1Schema, DiscussionAgentCreateRequestV1Schema, DiscussionAgentPostRequestV1Schema } from '@happier-dev/protocol/discussions/api';
 import { DiscussionSummaryV1Schema, type DiscussionMessageV1 } from '@happier-dev/protocol/discussions/models';
+import { DiscussionRecipientKeyEnvelopeCommitInputV1Schema, type DiscussionRecipientKeyEnvelopeCommitInputV1 } from '@happier-dev/protocol/discussions/access';
 import { DiscussionSecondOpinionPreviewV1Schema } from '@happier-dev/protocol/discussions/secondOpinion';
 import { CoordinationMessageRefV1Schema } from '@happier-dev/protocol/discussions/messageRefs';
 import { signAccountContentKeyBindingV1 } from '@happier-dev/protocol/crypto/accountContentKeyBindingV1';
@@ -24,10 +25,11 @@ import {
 } from '@happier-dev/protocol/actions/externalActionApi';
 import { verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
-import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { normalizeActionsSettingsV1, setActionApprovalOverride } from '@happier-dev/protocol/actions/actionSettings';
 
 const { axiosRequest, axiosGet, axiosPost } = vi.hoisted(() => ({ axiosRequest: vi.fn(), axiosGet: vi.fn(), axiosPost: vi.fn() }));
-vi.mock('axios', () => ({ default: { request: axiosRequest, get: axiosGet, post: axiosPost } }));
+// The credential transport reads Axios defaults before issuing a request.
+vi.mock('axios', () => ({ default: { defaults: {}, request: axiosRequest, get: axiosGet, post: axiosPost } }));
 
 import { createDiscussionActionDeps, createDiscussionAutonomousCheckInReader } from './discussionActionDeps';
 import { DiscussionAgentPublisherRequestV1Schema } from './discussionAgentPublisher';
@@ -39,6 +41,7 @@ import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { createCurrentSessionProjectionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { createDiscussionReplyReturnPublisher } from './discussionReplyReturnPublisher';
+import { buildWorkflowActionContext } from '@/daemon/workflows/workflowActionContext';
 import { projectWorkflowDiscussionResultContentV1 } from '@happier-dev/protocol/workflows/workflowDiscussionPublicationV1';
 import { deriveWorkflowDiscussionReplyLocalIdV1 } from '@happier-dev/protocol/workflows/workflowInvocationIdentityV1';
 import { materializeWorkflowAcceptedSnapshotV1, sealWorkflowAcceptedSnapshotStoredEnvelopeV1,
@@ -55,6 +58,10 @@ import { deriveWorkflowSessionInputLocalIdV2 } from '@happier-dev/protocol/sessi
 import * as sessionRpc from '@/session/transport/rpc/sessionRpc';
 import { DiscussionMachinePublicationV2Schema, type DiscussionAgentPostPublicationV1,
   type DiscussionWorkflowPostPublicationV1 } from '@happier-dev/protocol/discussions/api';
+import { SessionMessageReplyAccountMutationV1Schema, SessionMessageReplyReadResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
+import { createPluginInvocationActionsService } from '@/plugins/runtime/invocation/services/actions';
+import { createPluginActionCallerMaterializationFixture } from '@/plugins/runtime/invocation/services/actionCaller.testkit';
+import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
 
 const credentials = { token: 'token-1', encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) } };
 const keyless = { token: 'token-1', encryption: null };
@@ -104,16 +111,196 @@ function action(options: Partial<Parameters<typeof createDiscussionActionDeps>[0
   }).discussionAction!;
 }
 
-function discussionExecutor(deps: Pick<ActionExecutorDeps, 'discussionAction'> & Partial<ActionExecutorDeps>) {
+it.each([
+  ['session_missing', 'discussion_action_session_missing'],
+  ['session_mismatch', 'discussion_action_session_mismatch'],
+  ['origin_invalid', 'discussion_action_approval_origin_invalid'],
+  ['origin_mismatch', 'discussion_action_approval_session_mismatch'],
+  ['publisher_missing', 'discussion_action_session_publisher_missing'],
+] as const)('reports adapter %s as %s before publication', async (branch, errorCode) => {
+  axiosRequest.mockClear(); axiosPost.mockClear();
+  const postAgentMessage = vi.fn<NonNullable<Parameters<typeof createDiscussionActionDeps>[0]['postAgentMessage']>>(
+    async () => ({ v: 1, ok: false, error: 'discussions_unavailable' }));
+  const sessionId = 'guard-session';
+  const result = await action(branch === 'publisher_missing' ? {} : { postAgentMessage })({
+    actionId: 'discussion.reply', input: { discussionId: 'd1', localId: 'guard-local', content,
+      replyTarget: { kind: 'message', messageId: 'm1' } },
+    context: { ...context, surface: 'agent',
+      actionCaller: branch === 'session_missing' ? { kind: 'host' }
+        : { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 },
+      ...(branch === 'session_missing' ? {} : { defaultSessionId: branch === 'session_mismatch' ? 'other-session' : sessionId }),
+      ...(branch === 'origin_invalid' ? { approvalOrigin: { kind: 'transcript_tool_call', sessionId: '', toolCallId: 'guard-tool' } } : {}),
+      ...(branch === 'origin_mismatch' ? { approvalOrigin: { kind: 'transcript_tool_call', sessionId: 'other-session', toolCallId: 'guard-tool' } } : {}),
+    },
+  });
+  expect(result).toMatchObject({ ok: false, errorCode });
+  expect(postAgentMessage).not.toHaveBeenCalled();
+  expect(axiosRequest).not.toHaveBeenCalled();
+  expect(axiosPost).not.toHaveBeenCalled();
+});
+
+function discussionExecutor(deps: Pick<ActionExecutorDeps, 'discussionAction'> & Partial<ActionExecutorDeps>,
+  options: Pick<Parameters<typeof createCliActionDeps>[0], 'actionsSettingsProvider'> = {}) {
   return createActionExecutor({
     ...createCliActionDeps({ token: keyless.token, credentials: keyless, sessionId: 'cli-global',
       mode: 'plain', ctx: null, serverId: 'server-1', serverHttpBaseUrl: 'https://home.example.test',
-      resolveServerFeaturesSnapshot: () => features }),
+      resolveServerFeaturesSnapshot: () => features, ...options }),
     ...deps,
   });
 }
 
 describe('Home Discussion resource transport', () => {
+  it('admits only the quoted Session source of the active Discussion after a fresh disclosure read', async () => {
+    const participantSessionId = 'c123456789012345678901234';
+    const sourceSessionId = 'c123456789012345678901235';
+    const sourceMessageId = 'source-answer';
+    const discussionAddressing = { discussionId: 'discussion-1', messageId: 'message-1', throughSeq: 1, participantSessionId };
+    let sourceReadable = true;
+    const resourceRequest = axiosRequest.getMockImplementation()!;
+    axiosRequest.mockImplementation(async request => {
+      const url = new URL(request.url);
+      if (url.pathname === '/v1/discussions/discussion-1') return { status: 200, data: { discussion: {
+        ...wireSummary(), anchor: { kind: 'session', sessionId: sourceSessionId, messageId: sourceMessageId },
+      } } };
+      if (url.pathname === '/v1/discussions/discussion-1/messages') {
+        expect(url.searchParams.get('messageId')).toBe(discussionAddressing.messageId);
+        expect(url.searchParams.get('throughSeq')).toBe('1');
+        return sourceReadable ? { status: 200, data: { messages: [wireMessage()], messageSeq: 1, hasMoreOlder: false } }
+          : { status: 403, data: { error: 'discussion_access_forbidden' } };
+      }
+      return resourceRequest(request);
+    });
+    const sourceReads: string[] = [];
+    axiosGet.mockImplementation(async (url: string) => {
+      const target = new URL(url);
+      if (target.pathname === '/v1/account/encryption/currentness') return { status: 200, data: currentness('plain') };
+      if (target.pathname === '/v2/account/settings') return { status: 200, data: { version: 1, content: { t: 'plain', v: {} } } };
+      sourceReads.push(target.pathname);
+      if (target.pathname === `/v2/sessions/${sourceSessionId}`) return { status: 200, data: { session:
+        createCurrentSessionProjectionRecordFixture({ id: sourceSessionId, encryptionMode: 'plain', metadata: '{}', share: null,
+          effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }],
+            capabilities: projectSessionAccessCapabilitiesV1({ owner: true, grants: [] }) } }) } };
+      if (target.pathname === `/v1/sessions/${sourceSessionId}/messages`) return { status: 200, data: {
+        messages: [{ id: sourceMessageId, seq: 1, localId: null, sidechainId: null, createdAt: 1, updatedAt: 1,
+          messageRole: 'user', content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'Exact source answer' } } } }],
+        hasMore: false, nextBeforeSeq: null, nextAfterSeq: null,
+      } };
+      throw new Error(`Unexpected source read: ${target.pathname}`);
+    });
+    axiosPost.mockResolvedValue({ status: 200, data: { sessions: [], nextCursor: null, hasNext: false,
+      attentionNextCursor: null, attentionHasNext: false } });
+    const executor = discussionExecutor({}, { actionsSettingsProvider: {
+      getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }), getAccountSettings: () => accountSettingsParse({}),
+    } });
+    const caller = { kind: 'session' as const, sessionId: participantSessionId, starterDepth: 0, turnDepth: 0 };
+    const sourceContext = { serverId: 'server-1', surface: 'agent' as const, authority: 'account_automation' as const,
+      defaultSessionId: participantSessionId, actionCaller: caller, sessionListAccess: 'current_session' as const,
+      callerPermissionMode: 'read-only', agentStartContext: { caller, baseline: { machineId: 'machine', directory: '/workspace' },
+        ledSubtreeSessionIds: [], roles: {}, callerPermissionCeiling: 'read-only' as const, workDepthLimit: 0 },
+      sessionInputSource: { sourceSessionId: participantSessionId, sourceTurnId: 'turn', sourceInputId: 'input',
+        via: 'action' as const, discussionAddressing } };
+    const input = { sessionId: sourceSessionId, messageId: sourceMessageId };
+    const read = () => runWithServerHttpBaseUrl('https://home.example.test', () => executor.execute('session.transcript.get', input, sourceContext));
+    expect(await read()).toMatchObject({ ok: true, result: { sessionId: sourceSessionId,
+      items: [{ id: sourceMessageId, text: 'Exact source answer' }] } });
+    expect(await runWithServerHttpBaseUrl('https://home.example.test', () => executor.execute('session.transcript.get',
+      { sessionId: sourceSessionId, limit: 20 }, sourceContext))).toMatchObject({ ok: true });
+    sourceReads.length = 0;
+    sourceReadable = false;
+    expect(await read()).toMatchObject({ ok: false });
+    expect(sourceReads).toEqual([]);
+    expect(await executor.execute('session.transcript.get', { ...input, sessionId: participantSessionId + '-other' }, sourceContext))
+      .toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+    expect(await executor.execute('session.transcript.get', { sessionId: sourceSessionId }, sourceContext))
+      .toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+    expect(sourceReads).toEqual([]);
+  });
+
+  it.each(['publish', 'disabled'] as const)('preserves the ordinary terminal-return Action outcome (%s)', async mode => {
+    const sessionId = 'c123456789012345678901234';
+    const addressing = { discussionId: 'discussion-1', messageId: 'question', throughSeq: 1, participantSessionId: sessionId };
+    const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'account-1' })).toString('base64url')}.fixture`;
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json({ ...features.features,
+      capabilities: { serverIdentity: { serverIdentityId: 'srv_home' } } }));
+    onTestFinished(() => fetch.mockRestore());
+    axiosGet.mockImplementation(async (url: string) => {
+      const path = new URL(url).pathname;
+      if (path === '/v1/features') return { status: 200, data: features.features };
+      if (path === '/v1/account/encryption/currentness') return { status: 200, data: currentness('plain') };
+      if (path === `/v2/sessions/${sessionId}`) return { status: 200, data: { session:
+        createCurrentSessionProjectionRecordFixture({ id: sessionId, encryptionMode: 'plain', metadata: '{}', share: null,
+          effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }],
+            capabilities: projectSessionAccessCapabilitiesV1({ owner: true, grants: [] }) } }) } };
+      if (path.endsWith('/by-local-id/original/reply')) return { status: 200, data: { v: 1, status: 'available', progress: {
+        v: 1, mode: 'return', disposition: 'return_pending', acceptedTurnId: 'turn', discussion: addressing, outcome: { kind: 'pass' },
+      } } };
+      throw new Error(`Unexpected terminal-return read: ${path}`);
+    });
+    const http = axiosRequest.getMockImplementation()!;
+    axiosRequest.mockImplementation(async request => request.url.endsWith('/participants')
+      ? { status: 200, data: { discussionId: 'discussion-1', ownerAccountId: 'account-1', access: 'owner', grants: [],
+        participants: [{ participant: { kind: 'session', sessionId }, answerPolicy: 'when_addressed', createdAt: 1 }] } }
+      : http(request));
+    const rpc = vi.spyOn(sessionRpc, 'callSessionRpc').mockResolvedValue({ v: 1, ok: true, value: {
+      message: wireMessage(), messageSeq: 1,
+    } });
+    onTestFinished(() => rpc.mockRestore());
+    const diagnostics = vi.spyOn(logger, 'warnLocalFile');
+    onTestFinished(() => diagnostics.mockRestore());
+    // No explicit Require leaves default Ask intact; publication here uses
+    // the same deliberate persisted waiver as a person configuring this Action.
+    const actionsSettings = setActionApprovalOverride({ actionId: 'discussion.reply', surface: 'agent', approvalRequired: false,
+      settings: normalizeActionsSettingsV1({ v: 1, actions: { 'discussion.reply': { enabled: mode !== 'disabled' } } }) });
+    const publish = createDiscussionReplyReturnPublisher({ credentials: { token, encryption: null }, machineId: 'machine',
+      serverId: 'server-1', serverHttpBaseUrl: 'https://home.example.test', signal: new AbortController().signal,
+      isCurrent: async () => true, actionsSettingsProvider: {
+        getAccountSettings: () => accountSettingsParse({ actionsSettingsV1: actionsSettings }),
+        getActionsSettings: () => actionsSettings } });
+    const result = await publish({ serverId: 'server-1', requestSessionId: sessionId, requestLocalId: 'original',
+      acceptedTurnId: 'turn', discussion: addressing, outcome: { kind: 'pass' }, message: 'Passed' });
+    expect(result, JSON.stringify({ result, diagnostics: diagnostics.mock.calls,
+      reads: axiosGet.mock.calls.map(([url]) => new URL(String(url)).pathname),
+      requests: axiosRequest.mock.calls.map(([request]) => ({ path: new URL(request.url).pathname, method: request.method })) }))
+      .toMatchObject(mode === 'publish' ? { ok: true } : { ok: false,
+      failure: { code: 'action_disabled', phase: 'action_admission', retryable: false } });
+    expect(rpc).toHaveBeenCalledTimes(mode === 'publish' ? 1 : 0);
+    if (mode === 'disabled') expect(diagnostics).toHaveBeenCalledWith(
+      '[Discussion reply return] Action has no publication receipt', expect.objectContaining({
+        errorCode: 'action_disabled', phase: 'action_admission', retryable: false,
+        discussionId: addressing.discussionId, addressingMessageId: addressing.messageId,
+        requestSessionId: sessionId, requestLocalId: 'original',
+      }));
+    expect(JSON.stringify(diagnostics.mock.calls)).not.toContain('Passed');
+  });
+
+  it.each([
+    ['unavailable', 'discussions_unavailable'],
+    ['disabled', 'unsupported_action'],
+    ['unsupported', 'unsupported_action'],
+  ] as const)('distinguishes an unavailable feature probe from definitive feature refusal (%s)', async (scenario, errorCode) => {
+    const serverUrl = `https://feature-${scenario}.example.test`;
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+      if (scenario === 'unavailable') return new Response(null, { status: 503 });
+      if (scenario === 'unsupported') return new Response(null, { status: 404 });
+      return Response.json({ ...features.features, features: { ...features.features.features,
+        sessions: { ...features.features.features.sessions, conversations: { enabled: false } } } });
+    });
+    onTestFinished(() => fetch.mockRestore());
+    const diagnostics = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+    onTestFinished(() => diagnostics.mockRestore());
+    const actionRequestId = '7fcb870f-523c-4dd8-9618-71f99ff2725b';
+
+    expect(await action({ serverHttpBaseUrl: serverUrl, resolveServerFeaturesSnapshot: undefined })({
+      actionId: 'discussion.list', input: {}, context: { ...context, actionRequestId },
+    })).toMatchObject({ ok: false, errorCode });
+    expect(fetch.mock.calls.map(([url]) => String(url))).toEqual([`${serverUrl}/v1/features`]);
+    expect(axiosRequest).not.toHaveBeenCalled();
+    if (scenario === 'unavailable') expect(diagnostics).toHaveBeenCalledExactlyOnceWith(
+      '[Discussion] Action unavailable', { actionId: 'discussion.list', actionRequestId,
+        stage: 'feature', code: 'discussions_unavailable', blockerCode: 'probe_failed',
+        probeStatus: 'error', probeReason: 'response_status', httpStatus: 503 });
+    else expect(diagnostics).not.toHaveBeenCalled();
+  });
   it.each(['discussion.create', 'discussion.post', 'discussion.reply'] as const)('carries workspace attachment sources through the admitted Agent publisher (%s)', async actionId => {
     const blobId = '7578de54-3f59-4d6d-8293-ff6e4682fd10';
     const attached = { v: 1 as const, parts: [{ t: 'attachment' as const, attachment: {
@@ -202,7 +389,19 @@ describe('Home Discussion resource transport', () => {
     kit.requestControl('cancelled');
     // Only the HTTP boundary reports absence; the canonical resolver must
     // prove it through the exact read and both accessible inventories.
-    axiosPost.mockResolvedValue({ status: 200, data: { sessions: [] } });
+    const refusalMutations: ReturnType<typeof SessionMessageReplyAccountMutationV1Schema.parse>[] = [];
+    axiosPost.mockImplementation(async (url: string, body: unknown) => {
+      if ((scenario === 'session_not_found' || scenario === 'identity_denied') && url.endsWith('/reply')) {
+        const mutation = SessionMessageReplyAccountMutationV1Schema.parse(body);
+        if (mutation.kind !== 'discussion_publication') throw new Error('Unexpected original return mutation');
+        refusalMutations.push(mutation);
+        const original = SessionMessageReplyReadResultV1Schema.parse((await axiosGet(url)).data);
+        if (original.status !== 'available') throw new Error('Missing accepted original input');
+        return { status: 200, data: { v: 1, ok: true, progress: { ...original.progress,
+          disposition: 'released', returnPublication: mutation.publication } } };
+      }
+      return { status: 200, data: { sessions: [] } };
+    });
     const session = createCurrentSessionProjectionRecordFixture({ id: sessionId, active: false, encryptionMode: retiredSession ? 'plain' : 'e2ee',
       metadata: 'unavailable', dataEncryptionKey: null, share: null,
       effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }],
@@ -242,7 +441,7 @@ describe('Home Discussion resource transport', () => {
       onTestFinished(() => diagnostics.mockRestore());
       const publish = createDiscussionReplyReturnPublisher({ credentials: keyless, machineId,
         serverId: 'server-1', serverHttpBaseUrl: 'https://home.example.test', signal: new AbortController().signal,
-        workflowAuthorization: accepted.snapshot.authorization, isCurrent: async () => scenario !== 'identity_denied',
+        workflowActionContext: buildWorkflowActionContext({ ...accepted.snapshot, runId }), isCurrent: async () => scenario !== 'identity_denied',
         ...(retiredSession && scenario !== 'missing_machine_publisher' ? { postWorkflowMessage: async (publication: DiscussionAgentPostPublicationV1 | DiscussionWorkflowPostPublicationV1) => {
           machinePackets.push({ v: 2, operation: 'terminal_return', machineId, publication });
           if (scenario === 'machine_unavailable') return { v: 1 as const, ok: false as const, error: 'discussions_unavailable' as const };
@@ -277,6 +476,12 @@ describe('Home Discussion resource transport', () => {
       const pending = ['material_unavailable', 'missing_machine_publisher', 'machine_unavailable'].includes(scenario);
       expect(kit.run()).toMatchObject({ state: 'cancelled', workflowCustodyState: pending ? 'pending' : 'settled' });
       expect(kit.rowById(recordId)?.index.lifecycle).toBe('completed');
+      if (scenario === 'session_not_found' || scenario === 'identity_denied') {
+        expect(refusalMutations).toEqual([expect.objectContaining({ kind: 'discussion_publication',
+          acceptedTurnId: 'turn', publication: { kind: 'failed', failure: expect.objectContaining({
+            code: 'discussion_post_denied', retryable: false,
+          }) } })]);
+      }
       if (retiredSession) {
         expect(retiredRpc).not.toHaveBeenCalled();
         expect(machinePackets).toHaveLength(scenario === 'missing_machine_publisher' ? 0 : scenario === 'machine_ack_lost' ? 2 : 1);
@@ -308,8 +513,9 @@ describe('Home Discussion resource transport', () => {
     const sent: import('@happier-dev/protocol/discussions/api').DiscussionWorkflowPostPublicationV1[] = [];
     const workflow = { runId: 'run', invocationRecordId: 'invocation', invocationAttempt: '0' };
     const typedContent = projectWorkflowDiscussionResultContentV1({ ...workflow, lifecycle: 'completed', result: { checked: true } });
+    if (!typedContent) throw new Error('Expected completed Workflow content');
     const publication = createDiscussionReplyReturnPublisher({ credentials: { token, encryption: null }, machineId: 'machine',
-      workflowAuthorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' },
+      workflowActionContext: buildWorkflowActionContext({ runId: workflow.runId, authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' } }),
       serverId: 'server-1', serverHttpBaseUrl: 'https://home.example.test', signal: new AbortController().signal,
       isCurrent: async () => true, actionsSettingsProvider: { getAccountSettings: () => accountSettingsParse({}),
         getActionsSettings: () => normalizeActionsSettingsV1({ v: 1,
@@ -328,7 +534,9 @@ describe('Home Discussion resource transport', () => {
       producer: { v: 1, kind: 'workflow', ...workflow, execution: { kind: 'action', actionId: 'plugin:external/check' }, outcome: 'answer' },
       content: typedContent });
     if (outcome === 'lost_ack') {
-      await expect(publication).rejects.toThrow('committed_reply_ack_lost');
+      await expect(publication).resolves.toMatchObject({ ok: false, failure: {
+        code: 'outcome_unknown', phase: 'workflow_publication', retryable: true,
+      } });
       expect(sent).toEqual([]);
       return;
     }
@@ -422,14 +630,65 @@ describe('Home Discussion resource transport', () => {
     });
   });
 
+  it.each(['allowed', 'denied'] as const)('posts a channel message through the plugin Action and Discussion access owner (%s)', async access => {
+    const ordinaryRequest = axiosRequest.getMockImplementation()!;
+    const posted: unknown[] = [];
+    const requestedPaths: string[] = [];
+    axiosRequest.mockImplementation(async request => {
+      const path = new URL(request.url).pathname;
+      requestedPaths.push(`${request.method} ${path}`);
+      if (path === '/v1/discussions/discussion-1' && access === 'denied') {
+        return { status: 403, data: { error: 'discussion_access_forbidden' } };
+      }
+      if (request.method === 'POST' && path.endsWith('/messages')) {
+        posted.push(DiscussionPostRequestV1Schema.parse(JSON.parse(request.data)));
+      }
+      return ordinaryRequest(request);
+    });
+    const pluginId = 'happier.channels';
+    const actionsSettings = setActionApprovalOverride({ actionId: 'discussion.post', surface: 'plugin', approvalRequired: false,
+      settings: normalizeActionsSettingsV1({}) });
+    const service = createPluginInvocationActionsService({
+      seed: {
+        plugin: { id: pluginId, version: '0.0.0' },
+        contribution: { id: 'inbound', qualifiedId: `${pluginId}/actions/inbound` },
+        occurrenceId: 'channels-discussion-test',
+        sourceCustody: { kind: 'development', registeredRootId: 'channels-discussion-root' },
+        resolveCurrentPluginMaterializationRef: createPluginActionCallerMaterializationFixture(pluginId).resolveCurrentPluginMaterializationRef,
+        surface: 'background', signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+        approvalContext: { serverId: 'server-1', runtimeAccountId: 'account-1', expectedAccountId: 'account-1' },
+      },
+      actionExecutor: createCliActionExecutorHarness({
+        token: keyless.token, credentials: keyless, sessionId: 'cli-global',
+        mode: 'plain', ctx: null, serverId: 'server-1', serverHttpBaseUrl: 'https://home.example.test',
+        resolveServerFeaturesSnapshot: () => features,
+        actionsSettingsProvider: {
+        getAccountSettings: () => accountSettingsParse({ actionsSettingsV1: actionsSettings }),
+        getActionsSettings: () => actionsSettings,
+      } }, { discussionAction: action() }).executor,
+      invokeContributedAction: async () => { throw new Error('Discussion is a host Action'); },
+    });
+    const channelContent = { ...content, externalSource: { kind: 'channel' as const,
+      providerPluginId: pluginId, conversationDisplayName: 'Support', senderDisplayName: 'Ada' } };
+    const result = service.execute('discussion.post', { discussionId: 'discussion-1', localId: 'external-input-1', content: channelContent });
+    if (access === 'allowed') {
+      await expect(result, JSON.stringify(requestedPaths)).resolves.toMatchObject({ v: 1, message: { discussionId: 'discussion-1', content: channelContent } });
+      expect(posted).toHaveLength(1);
+    } else {
+      await expect(result, JSON.stringify(requestedPaths)).rejects.toMatchObject({ code: 'discussion_access_forbidden' });
+      expect(posted).toHaveLength(0);
+    }
+  });
+
   it('feeds admitted executable participants through the SessionTarget front door without starting model slots', async () => {
     // The complete CLI host resolves the bound source through its real reader;
     // only these authenticated Home HTTP responses are substituted.
     axiosGet.mockImplementation(async (url: string) => {
       const path = new URL(url).pathname;
       if (path === '/v1/account/encryption/currentness') return { status: 200, data: currentness('plain') };
-      if (path === '/v2/sessions/origin-session') return { status: 200, data: {
-        session: createCurrentSessionProjectionRecordFixture({ id: 'origin-session', encryptionMode: 'plain', metadata: '{}', share: null,
+      if (path === '/v2/sessions/origin-session' || path === '/v2/sessions/participant-session') return { status: 200, data: {
+        session: createCurrentSessionProjectionRecordFixture({ id: path.endsWith('/origin-session') ? 'origin-session' : 'participant-session',
+          encryptionMode: 'plain', metadata: '{}', share: null,
           effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }],
             capabilities: projectSessionAccessCapabilitiesV1({ owner: true, grants: [] }) },
         }),
@@ -591,6 +850,37 @@ describe('Home Discussion resource transport', () => {
     }
   });
 
+  it.each(['plain', 'e2ee'] as const)('keeps channel provenance inside the ordinary Discussion %s content envelope', async mode => {
+    const caller = mode === 'plain' ? keyless : credentials;
+    const key = await createResourceDataKey({ credentials: caller, mode });
+    const crypto: SessionStoredContentCryptoContext = key.mode === 'plain' ? plain
+      : { mode: 'e2ee', ctx: { encryptionKey: key.dataKey, encryptionVariant: 'dataKey' } };
+    const channelContent = { ...content, externalSource: { kind: 'channel' as const,
+      providerPluginId: 'happier.channel.telegram', conversationDisplayName: 'Private support channel', senderDisplayName: 'Private sender' } };
+    const posted: unknown[] = [];
+    axiosRequest.mockImplementation(async (request: { url: string; method: string; data?: string }) => {
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/encryption/currentness')) return { status: 200, data: currentness(mode) };
+      if (path === '/v1/discussions/discussion-1') return { status: 200, data: { discussion: wireSummary(crypto, key.dataEncryptionKey) } };
+      if (path.endsWith('/messages') && request.method === 'POST') {
+        const body = DiscussionPostRequestV1Schema.parse(JSON.parse(request.data!));
+        posted.push(body);
+        expect(openSessionStoredContent({ ...crypto, content: body.content })).toEqual(channelContent);
+        if (mode === 'e2ee') {
+          expect(request.data).not.toContain(channelContent.externalSource.conversationDisplayName);
+          expect(request.data).not.toContain(channelContent.externalSource.senderDisplayName);
+          expect(request.data).not.toContain(channelContent.externalSource.providerPluginId);
+        }
+        return { status: 200, data: { message: { ...wireMessage(crypto), localId: body.localId, content: body.content }, messageSeq: 1 } };
+      }
+      throw new Error('Unexpected channel provenance transport request');
+    });
+    const result = await action({ credentials: caller })({ actionId: 'discussion.post',
+      input: { discussionId: 'discussion-1', localId: 'channel-provenance-1', content: channelContent }, context });
+    expect(result).toMatchObject({ message: { content: channelContent } });
+    expect(posted).toHaveLength(1);
+  });
+
   it.each(['plain', 'e2ee'] as const)('opens the latest-message %s envelope through the same resource codec as its title', async mode => {
     const key = await createResourceDataKey({ credentials: mode === 'plain' ? keyless : credentials, mode });
     const crypto: SessionStoredContentCryptoContext = key.mode === 'plain' ? plain
@@ -671,7 +961,10 @@ describe('Home Discussion resource transport', () => {
         ? { incomplete: false, discussions: [{ latestMessage: { content } }] }
         : { discussion: { latestMessage: { content } } });
     }
-    expect(axiosRequest.mock.calls).toHaveLength(6);
+    const paths = axiosRequest.mock.calls.map(([request]) => new URL(request.url).pathname);
+    expect(paths.filter(path => path === '/v1/discussions' || path === '/v1/discussions/discussion-1')).toHaveLength(6);
+    expect(paths.filter(path => path.endsWith('/data-key/recipients'))).toHaveLength(0);
+    expect(paths.filter(path => path.endsWith('/data-key/envelopes'))).toHaveLength(0);
   });
 
   it.each(['plain', 'e2ee'] as const)('composes Doc comments and proposals through the real %s codec and rejoins an uncertain root', async mode => {
@@ -916,6 +1209,18 @@ describe('Home Discussion resource transport', () => {
     expect(result).toMatchObject({ discussion: { title: 'Title' }, firstMessage: { content } });
   });
 
+  it('keeps native approved creation closed when fresh Account currentness is unavailable', async () => {
+    axiosRequest.mockResolvedValue({ status: 503, data: { error: 'unavailable' } });
+    const postAgentMessage = vi.fn<NonNullable<Parameters<typeof createDiscussionActionDeps>[0]['postAgentMessage']>>();
+    expect(await action({ credentials, postAgentMessage })({ actionId: 'discussion.create', input: createInput,
+      context: { ...context, surface: 'agent', authority: 'present_user', defaultSessionId: 'participant-session',
+        actionCaller: { kind: 'session', sessionId: 'participant-session', starterDepth: 0, turnDepth: 0 },
+        approvedActionReplay: { artifactId: 'reviewed-native-create' } },
+    })).toMatchObject({ ok: false, errorCode: 'account_encryption_currentness_unavailable' });
+    expect(postAgentMessage).not.toHaveBeenCalled();
+    expect(axiosRequest.mock.calls.some(([request]) => request.method === 'POST')).toBe(false);
+  });
+
   it.each(['keyless', 'stale'] as const)('refuses encrypted creation before publication with %s Account material', async state => {
     axiosRequest.mockImplementation(async (request: { url: string; method: string }) => {
       if (request.url.endsWith('/encryption/currentness')) return { status: 200, data: {
@@ -1016,6 +1321,68 @@ describe('Home Discussion resource transport', () => {
       input: { ...createInput, participants: [{ kind: 'account', accountId: 'invited' }] }, context });
     expect(result).toMatchObject({ discussion: { title: 'Title' } });
     expect(steps).toEqual(['create', 'census', 'commit']);
+  });
+
+  it.each([
+    { state: 'missing tuple', storedEnvelope: false, storedFingerprint: null, expectedCensusReads: 1, expectedCommits: 1 },
+    { state: 'rotated binding', storedEnvelope: true, storedFingerprint: 'stale', expectedCensusReads: 1, expectedCommits: 1 },
+    { state: 'current tuple', storedEnvelope: true, storedFingerprint: 'current', expectedCensusReads: 0, expectedCommits: 0 },
+  ] as const)('repairs a $state only when a DEK holder opens the Discussion', async testCase => {
+    const resource = await createResourceDataKey({ credentials, mode: 'e2ee' });
+    if (resource.mode !== 'e2ee') throw new Error('Expected encrypted resource');
+    const crypto = { mode: 'e2ee' as const, ctx: { encryptionKey: resource.dataKey, encryptionVariant: 'dataKey' as const } };
+    const signing = tweetnacl.sign.keyPair();
+    const recipient = tweetnacl.box.keyPair();
+    const fingerprint = computeContentPublicKeyFingerprint(recipient.publicKey);
+    let recipientEnvelope: string | null = testCase.storedEnvelope ? resource.dataEncryptionKey : null;
+    let recipientFingerprint: string | null = testCase.storedFingerprint === 'current' ? fingerprint
+      : testCase.storedFingerprint === 'stale' ? computeContentPublicKeyFingerprint(tweetnacl.box.keyPair().publicKey) : null;
+    let censusReads = 0;
+    const commits: DiscussionRecipientKeyEnvelopeCommitInputV1[] = [];
+    axiosRequest.mockImplementation(async (request: { url: string; method: string; data?: string }) => {
+      const url = new URL(request.url);
+      if (url.pathname === '/v1/discussions') return { status: 200, data: { discussions: [wireSummary(crypto, resource.dataEncryptionKey)], nextCursor: null } };
+      if (url.pathname === '/v1/discussions/discussion-1') return { status: 200, data: { discussion: {
+        ...wireSummary(crypto, resource.dataEncryptionKey),
+        recipientKeyPreparationRequired: recipientEnvelope === null || recipientFingerprint !== fingerprint,
+      } } };
+      if (url.pathname.endsWith('/data-key/recipients')) {
+        censusReads++;
+        return { status: 200, data: { discussionId: 'discussion-1', ownerAccountId: 'account-1', encryptionMode: 'e2ee', access: 'owner',
+          dataEncryptionKey: resource.dataEncryptionKey, callerDataEncryptionKey: resource.dataEncryptionKey, recipients: [{
+            recipientAccountId: 'account-b', contentPublicKeyFingerprint: fingerprint,
+            encryptedDataKey: recipientEnvelope, recipientContentPublicKeyFingerprint: recipientFingerprint,
+            contentKey: { status: 'available', accountSigningPublicKey: Buffer.from(signing.publicKey).toString('hex'),
+              contentPublicKey: Buffer.from(recipient.publicKey).toString('base64'),
+              contentPublicKeySignature: Buffer.from(signAccountContentKeyBindingV1({ accountSigningSecretKey: signing.secretKey,
+                contentPublicKey: recipient.publicKey })).toString('base64') },
+          }] } };
+      }
+      if (url.pathname.endsWith('/data-key/envelopes')) {
+        const commit = DiscussionRecipientKeyEnvelopeCommitInputV1Schema.parse(JSON.parse(request.data!));
+        commits.push(commit);
+        recipientEnvelope = commit.recipientKeyEnvelopes[0]!.encryptedDataKey;
+        recipientFingerprint = commit.recipientKeyEnvelopes[0]!.recipientContentPublicKeyFingerprint;
+        return { status: 200, data: { appliedRecipientAccountIds: ['account-b'], skippedRecipientAccountIds: [] } };
+      }
+      throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+    });
+
+    expect(await action({ credentials })({ actionId: 'discussion.list', input: {}, context }))
+      .toMatchObject({ discussions: [{ title: 'Title' }] });
+    expect(censusReads).toBe(0);
+    expect(await action({ credentials })({ actionId: 'discussion.get', input: { discussionId: 'discussion-1' }, context }))
+      .toMatchObject({ discussion: { title: 'Title' } });
+    expect(censusReads).toBe(testCase.expectedCensusReads);
+    expect(commits).toHaveLength(testCase.expectedCommits);
+    if (testCase.expectedCommits === 1) {
+      expect(openEncryptedDataKeyEnvelopeV1({ envelope: Buffer.from(recipientEnvelope!, 'base64'),
+        recipientSecretKeyOrSeed: recipient.secretKey })).toEqual(resource.dataKey);
+    }
+    expect(await action({ credentials })({ actionId: 'discussion.get', input: { discussionId: 'discussion-1' }, context }))
+      .toMatchObject({ discussion: { title: 'Title' } });
+    expect(censusReads).toBe(testCase.expectedCensusReads);
+    expect(commits).toHaveLength(testCase.expectedCommits);
   });
 
   it('keeps an accepted encrypted create uncertain when post-commit key delivery cannot be confirmed', async () => {
@@ -1172,7 +1539,7 @@ describe('Home Discussion resource transport', () => {
     const result = await action()({ actionId: 'discussion.post',
       input: { discussionId: 'discussion-1', localId: 'post-1', content },
       context: { serverId: 'server-1', surface: 'agent', authority: 'account_automation', defaultSessionId: 'participant-session' } });
-    expect(result).toMatchObject({ ok: false, errorCode: 'discussion_post_denied' });
+    expect(result).toMatchObject({ ok: false, errorCode: 'discussion_action_session_publisher_missing' });
     expect(axiosRequest).not.toHaveBeenCalled();
   });
 
@@ -1180,7 +1547,7 @@ describe('Home Discussion resource transport', () => {
     const result = await action()({ actionId: 'discussion.post', input: { discussionId: 'discussion-1', content },
       context: { ...context, surface: 'mcp', authority: 'present_user', defaultSessionId: 'participant-session',
         actionCaller: { kind: 'session', sessionId: 'participant-session', starterDepth: 0, turnDepth: 0 } } });
-    expect(result).toMatchObject({ ok: false, errorCode: 'discussion_post_denied' });
+    expect(result).toMatchObject({ ok: false, errorCode: 'discussion_action_session_publisher_missing' });
     expect(axiosRequest).not.toHaveBeenCalled();
   });
 
@@ -1188,7 +1555,7 @@ describe('Home Discussion resource transport', () => {
     const result = await action()({ actionId: 'discussion.create', input: createInput,
       context: { ...context, surface: 'mcp', authority: 'present_user', defaultSessionId: 'participant-session',
         actionCaller: { kind: 'session', sessionId: 'participant-session', starterDepth: 0, turnDepth: 0 } } });
-    expect(result).toMatchObject({ ok: false, errorCode: 'discussion_post_denied' });
+    expect(result).toMatchObject({ ok: false, errorCode: 'discussion_action_session_publisher_missing' });
     expect(axiosRequest).not.toHaveBeenCalled();
   });
 
@@ -1304,6 +1671,38 @@ describe('Home Discussion resource transport', () => {
       request: expect.objectContaining({ localId: 'explicit-reply', replyTarget }),
     });
     expect(axiosRequest.mock.calls.some(([request]) => request.method === 'POST')).toBe(false);
+  });
+
+  it.each([
+    ['summary', 'request_failed'],
+    ['summary', 'timeout'],
+    ['messages', 'http'],
+    ['messages', 'domain'],
+  ] as const)('diagnoses unavailable %s reads (%s) without disclosing request or transport data', async (stage, cause) => {
+    const diagnostics = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+    onTestFinished(() => diagnostics.mockRestore());
+    const actionRequestId = '7fcb870f-523c-4dd8-9618-71f99ff2725b';
+    if (stage === 'messages') axiosRequest.mockResolvedValueOnce({ status: 200, data: { discussion: wireSummary() } });
+    if (cause === 'http' || cause === 'domain') axiosRequest.mockResolvedValueOnce({ status: 503,
+      data: cause === 'domain' ? { error: 'discussions_unavailable' } : { error: 'Private response body' } });
+    else axiosRequest.mockRejectedValueOnce(Object.assign(new Error('Private transport error'), {
+      code: cause === 'timeout' ? 'ECONNABORTED' : 'PRIVATE_CODE',
+      config: { url: 'https://private.example.test', headers: { Authorization: 'private-token' } },
+    }));
+    expect(await action()({ actionId: 'discussion.read', input: { discussionId: 'discussion-1' },
+      context: { ...context, actionRequestId } })).toEqual({ ok: false,
+      errorCode: 'discussions_unavailable', error: 'discussions_unavailable' });
+    expect(diagnostics).toHaveBeenCalledExactlyOnceWith('[Discussion] Action unavailable', {
+      actionId: 'discussion.read', actionRequestId, stage, code: 'discussions_unavailable',
+      ...(cause === 'http' || cause === 'domain' ? { httpStatus: 503 } : { transport: cause }),
+    });
+    diagnostics.mockClear();
+    axiosRequest.mockRejectedValueOnce(new Error('Private transport error'));
+    await action()({ actionId: 'discussion.read', input: { discussionId: 'discussion-1' },
+      context: { ...context, actionRequestId: 'Private non-UUID correlation' } });
+    expect(diagnostics).toHaveBeenCalledExactlyOnceWith('[Discussion] Action unavailable', {
+      actionId: 'discussion.read', stage: 'summary', code: 'discussions_unavailable', transport: 'request_failed',
+    });
   });
 
   it('distinguishes preparation read failure and cancellation from an unknown in-flight write', async () => {

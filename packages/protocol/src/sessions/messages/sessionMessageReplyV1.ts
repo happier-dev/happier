@@ -13,6 +13,10 @@ import { ParticipantExecutionRunRecipientRoutingIdentityV1Schema } from '../../m
 import { SessionMessageRefV1Schema } from './sessionMessageRefV1.js';
 import { ActionRequestAttributionV1Schema } from '../../actions/actionRequestAttributionV1.js';
 import { DiscussionAddressingV1Schema, DiscussionAddressV1Schema } from '../../discussions/references.js';
+import { SessionMessageReplyPublicationV1Schema } from './sessionMessageReplyPublicationV1.js';
+export { SessionMessageReplyPublicationV1Schema, SessionMessageReplyPublicationFailureV1Schema,
+  classifySessionMessageReplyPublicationFailureV1 } from './sessionMessageReplyPublicationV1.js';
+export type { SessionMessageReplyPublicationV1, SessionMessageReplyPublicationFailureV1 } from './sessionMessageReplyPublicationV1.js';
 
 export const SessionMessageReplyCapabilityV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1), protocolVersions: z.tuple([z.literal(1)]),
@@ -76,6 +80,7 @@ export const SessionMessageReplyProgressV1Schema = lazyZodSchema(() => z.strictO
   actionRequestAttributionV1: z.optional(ActionRequestAttributionV1Schema),
   acceptedTurnId: z.optional(TurnIdSchema),
   outcome: z.optional(SessionMessageReplyOutcomeV1Schema),
+  returnPublication: z.optional(SessionMessageReplyPublicationV1Schema),
   disposition: z.enum(['observing', 'inline', 'return_pending', 'returned', 'released']),
   returnedInputLocalId: z.optional(PendingLocalIdSchema),
 }).check(z.refine(value => value.mode !== 'return' || value.sourceSession !== undefined || value.discussion !== undefined || value.humanOrigin !== undefined, 'Return requires an admitted destination'),
@@ -108,6 +113,17 @@ export type SessionMessageReplyObservationRequestV1 = z.infer<typeof SessionMess
 /** Account observations and non-publishing private review use the same original-input mutation. */
 export const SessionMessageReplyAccountMutationV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.enum(['inline', 'release']) }),
+  z.strictObject({
+    kind: z.literal('discussion_publication'),
+    discussionId: DiscussionAddressingV1Schema.shape.discussionId,
+    messageId: DiscussionAddressingV1Schema.shape.messageId,
+    acceptedTurnId: z.optional(TurnIdSchema),
+    publication: SessionMessageReplyPublicationV1Schema,
+    approvalArtifactId: z.optional(z.string().check(z.minLength(1))),
+  }).check(z.refine(value => value.publication.kind === 'approval_pending'
+    ? value.approvalArtifactId === undefined
+    : value.publication.failure.code !== 'approval_rejected' && value.publication.failure.code !== 'approval_canceled'
+      || value.approvalArtifactId !== undefined, 'A publication decision names its exact approval')),
   z.strictObject({
     kind: z.literal('discussion_review'),
     discussionId: DiscussionAddressingV1Schema.shape.discussionId,
@@ -196,6 +212,7 @@ export type SessionMessageReplyMachinePendingPageV1 = z.infer<typeof SessionMess
 export const SessionMessageReplyPendingHintV1Schema = lazyZodSchema(() => z.strictObject({
   type: z.literal('session-message-reply-pending-v1'), v: z.literal(1),
   sessionId: asProtocolZod(SessionIdSchema), requestLocalId: PendingLocalIdSchema,
+  workflowRunId: z.optional(WorkflowRunIdV1Schema),
 }));
 export type SessionMessageReplyPendingHintV1 = z.infer<typeof SessionMessageReplyPendingHintV1Schema>;
 export const SessionMessageReplyMutationResultV1Schema = lazyZodSchema(() => z.union([
@@ -221,5 +238,3 @@ export function deriveSessionMessageReplyAnswerLocalIdV1(params: Readonly<{
     PendingLocalIdSchema.parse(params.localId), TurnIdSchema.parse(params.acceptedTurnId)]);
   return PendingLocalIdSchema.parse(`answer-v1:${encodeBase64(sha256(new TextEncoder().encode(identity)), 'base64url')}`);
 }
-
-export { classifySessionMessageReplyPublicationFailureV1 } from './sessionMessageReplyPublicationV1.js';

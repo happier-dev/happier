@@ -1,10 +1,10 @@
+import { prepareWorkflowDataCreationResultCapture } from '@/deployments/targets/workflowDataCreationResult';
 import type {
-  ActionExecutorContext,
   AccountApiTokensListActionOutputV1,
   WorkflowAcceptedAuthorizationV1,
-  WorkflowAcceptedOriginV1,
 } from '@happier-dev/protocol';
-import { materializeActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
+import { buildWorkflowActionContext, createWorkflowActionContextResolver } from './workflowActionContext';
+export { buildWorkflowActionContext } from './workflowActionContext';
 import type { WorkflowConversationUnavailableDetailsV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
@@ -75,32 +75,6 @@ import { resolveExternalActionMachineTarget } from '@/daemon/externalActions/rec
 
 type MachineAdmissionTransport = NonNullable<Parameters<typeof sendSessionMessage>[0]['machineAdmissionTransport']>;
 
-/** Host-private context from an accepted Workflow execution, never Action input. */
-export function buildWorkflowActionContext(execution: Readonly<{
-  runId: string;
-  authorization: WorkflowAcceptedAuthorizationV1;
-  origin?: WorkflowAcceptedOriginV1;
-  workspace?: Readonly<{ machineId: string }>;
-  signal?: AbortSignal;
-}>, requesterWorkAttributionV1?: RequesterWorkAttributionV1): ActionExecutorContext {
-  return {
-    surface: 'agent' as const,
-    authority: 'account_automation' as const,
-    actionCaller: {
-      kind: 'workflowRun' as const,
-      runId: execution.runId,
-      authorization: execution.authorization,
-    },
-    executionRunWorkflowRunId: execution.runId,
-    ...(execution.origin?.actionRequestAttributionV1 ? {
-      actionRequestAttributionV1: materializeActionRequestAttributionV1(execution.origin.actionRequestAttributionV1),
-    } : {}),
-    ...(requesterWorkAttributionV1 ? { requesterWorkAttributionV1 } : {}),
-    ...(execution.workspace ? { executionRunTargetMachineId: execution.workspace.machineId } : {}),
-    callerPermissionMode: execution.authorization.admittedPermissionCeiling,
-    ...(execution.signal ? { signal: execution.signal } : {}),
-  };
-}
 
 /** Only the loaded origin input queue can prove that a committed step was withdrawn. */
 export async function withdrawWorkflowOriginSessionInput(params: Readonly<{
@@ -193,12 +167,12 @@ export function createWorkflowAcceptedAuthorizationCurrentness(params: Readonly<
     if (reservation && (!params.discussionModelReservationCustody
       || !await isWorkflowDiscussionModelReservationCurrent({ ...params.discussionModelReservationCustody,
         accountId: params.accountId, reservation, ...(signal ? { signal } : {}) }))) return false;
-    // A failed authority read is unknown, not revocation. Propagate it to the
-    // claim owner's interruption/reclaim path; only verified negatives return false.
+    // A failed authority read is unknown, not revocation. The new Action's
+    // admission owner handles it; only verified negatives return false.
     const principal = authorization.principal;
     if (authorization.sourceAuthority) {
-      // The authoritative plugin-runtime lease proves that the admitted
-      // mediator still exists before this Run may release another leaf.
+      // The authoritative plugin-runtime lease proves the mediator's custody
+      // at this new Action admission, not at each admitted Run leaf.
       const sourceMediatorOccurrenceId = await params.resolveCurrentPluginOccurrenceId(
         authorization.sourceAuthority.mediatorPluginId,
       );
@@ -229,7 +203,7 @@ export function createWorkflowAcceptedAuthorizationCurrentness(params: Readonly<
   };
 }
 
-/** Source-backed accepted-authority reader owned by the assigned Run executor. */
+/** Source-backed accepted-authority reader for new Action admission. */
 export function createCredentialedWorkflowAcceptedAuthorizationCurrentness(params: Readonly<{
   credentials: StoredCredentials;
   accountId: string;
@@ -237,21 +211,18 @@ export function createCredentialedWorkflowAcceptedAuthorizationCurrentness(param
   serverHttpBaseUrl?: string;
 }>) {
   const serverId = params.serverId ?? configuration.activeServerId;
-  const serverHttpBaseUrl = params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl();
-  const accountServerActionDeps = createAccountServerActionDeps({
-    token: params.credentials.token,
-    serverId,
-    serverHttpBaseUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
-  });
+  const explicitBaseUrl = params.serverHttpBaseUrl;
+  const readBaseUrl = explicitBaseUrl === undefined ? captureServerHttpBaseUrl() : () => explicitBaseUrl;
   return createWorkflowAcceptedAuthorizationCurrentness({
     accountId: params.accountId,
     discussionModelReservationCustody: {
-      storage: createWorkflowRunStorageClient({ token: params.credentials.token, serverHttpBaseUrl }),
-      resolveAccountEncryption: async signal => await runWithServerHttpBaseUrl(serverHttpBaseUrl,
+      storage: createWorkflowRunStorageClient({ token: params.credentials.token, serverHttpBaseUrl: explicitBaseUrl }),
+      resolveAccountEncryption: async signal => await runWithServerHttpBaseUrl(readBaseUrl(),
         () => resolveAvailableEncryption(params.credentials, signal)),
     },
     listAccountApiTokens: async (signal) => {
-      const list = accountServerActionDeps.accountApiTokensListAction;
+      const list = createAccountServerActionDeps({ token: params.credentials.token, serverId,
+        serverHttpBaseUrl: readBaseUrl() }).accountApiTokensListAction;
       if (!list) throw new Error('workflow_api_token_currentness_unavailable');
       const result = await list({
         input: {},
@@ -302,8 +273,8 @@ export function createCredentialedWorkflowAcceptedAuthorizationCurrentness(param
 
 /** Production composition; the Automation worker remains the claim owner. */
 export function createProductionDaemonWorkflowRuntime(params: Readonly<{
-  secretSources?: import('./production').WorkflowProductionExecutionDeps['secretSources'];
   admissionDrain?: DaemonAdmissionDrain;
+  secretSources?: import('./production').WorkflowProductionExecutionDeps['secretSources'];
   credentials: StoredCredentials;
   accountId: string;
   serverId?: string;
@@ -329,8 +300,6 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
       ...(kind === 'wait' ? { timeoutMs: null } : {}), ...(signal ? { signal } : {}),
     });
   };
-  const accountServerActionDeps = createAccountServerActionDeps({ token: params.credentials.token, serverId,
-    serverHttpBaseUrl: resolveServerHttpBaseUrl() });
   const isAcceptedAuthorizationCurrent = createCredentialedWorkflowAcceptedAuthorizationCurrentness(params);
   return {
     isAcceptedAuthorizationCurrent,
@@ -347,6 +316,8 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
       installationIdentity?: Readonly<{ installationId: string; privateKey: import('@/api/externalActionExecutionAuthorization').ExternalActionMachineRequestSigningKey }>;
       serverIdentityId?: string;
     }>) {
+      const accountServerActionDeps = createAccountServerActionDeps({ token: params.credentials.token, serverId,
+        serverHttpBaseUrl: readBaseUrl() });
       const parsedStamp = RequesterWorkAttributionV1Schema.safeParse(input.requesterWorkAttributionV1);
       const stamp = parsedStamp.success ? Object.freeze(parsedStamp.data) : undefined;
       const requesterWorkAttributionV1 = stamp?.serverId === serverId
@@ -388,7 +359,6 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
         pluginActionExecutionOwner: 'current_process',
         listContributedActionDefinitions: createCommittedContributedActionDefinitionLister(),
         invokeContributedAction: createCommittedContributedActionInvoker({
-          isWorkflowRunAuthorizationCurrent: isAcceptedAuthorizationCurrent,
           requestCurrentIntent: createCredentialedTargetActionCurrentIntent(params.credentials),
         }),
       });
@@ -397,14 +367,13 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
         ...(input.savedSecretOperationContext ? { savedSecretOperationContext: input.savedSecretOperationContext } : {}),
         serverId, serverIdentityId: input.serverIdentityId,
         callMachineAction: async (request) => {
-          if (request.machineId !== input.machineId) {
-            return await callExactMachineRpc({ credentials: params.credentials, machineId: request.machineId,
-              serverUrl: resolveServerHttpBaseUrl(), authorityCeiling: 'account_automation',
-              method: request.method, request: request.request,
-              ...(request.signal ? { signal: request.signal } : {}) });
-          }
-          return await input.machineActionDirectTargetTransport.invoke(request.method, request.request,
-            request.signal ? { signal: request.signal } : undefined);
+          // Discovery spends the original Account's current Home admission even
+          // on this Machine. A closed local call has no requester receipt and
+          // cannot stand in for owner automation at the native effect boundary.
+          return await callExactMachineRpc({ credentials: params.credentials, machineId: request.machineId,
+            serverUrl: resolveServerHttpBaseUrl(), authorityCeiling: 'account_automation',
+            method: request.method, request: request.request,
+            ...(request.signal ? { signal: request.signal } : {}) });
         },
         readWorkflowDefinition: async (ref, signal) => {
           const encryption = await resolveAvailableEncryption(params.credentials, signal);
@@ -450,31 +419,7 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
             allowLists: current.allowLists,
           }) };
       };
-      const resolveWorkflowActionContext = async (execution: Readonly<{
-        runId: string;
-        authorization: WorkflowAcceptedAuthorizationV1;
-        workspace: Readonly<{ machineId: string; directory: string }>;
-        workDepth: number;
-        originSessionId?: string;
-        origin?: WorkflowAcceptedOriginV1;
-        role?: import('@happier-dev/protocol').WorkflowMaterializedLeafV1['role'];
-        signal?: AbortSignal;
-      }>) => {
-        const materialization = await resolveMaterializer({ machineId: execution.workspace.machineId,
-          directory: execution.workspace.directory, ...(execution.signal ? { signal: execution.signal } : {}) });
-        const current = materialization.agentStartPolicySnapshot;
-        return { ...buildWorkflowActionContext(execution, requesterWorkAttributionV1), defaultSessionId: execution.originSessionId ?? null,
-          workspaceWrites: execution.role?.workspaceWrites ?? 'allow',
-          externalActionTarget: { kind: 'machine' as const, machineId: execution.workspace.machineId,
-            project: { machineId: execution.workspace.machineId, directory: execution.workspace.directory } },
-          sessionAgentSpawnPolicyV1: current.policy,
-          agentStartContext: { caller: { kind: 'originless' as const, runId: execution.runId, runDepth: execution.workDepth,
-              ...(execution.originSessionId ? { runOriginSessionId: execution.originSessionId } : {}) },
-            baseline: { machineId: execution.workspace.machineId, directory: execution.workspace.directory },
-            ledSubtreeSessionIds: [], roles: execution.role ? { [execution.role.roleId]: execution.role } : {},
-            callerPermissionCeiling: execution.authorization.admittedPermissionCeiling,
-            workDepthLimit: current.workDepthLimit, allowLists: current.allowLists } };
-      };
+      const resolveWorkflowActionContext = createWorkflowActionContextResolver(resolveMaterializer, requesterWorkAttributionV1);
       const resolveConversation = async ({ sessionId, machineId, signal, onUnavailable }: Readonly<{
         sessionId: string;
         machineId: string;
@@ -510,6 +455,7 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
             credentials: params.credentials,
             publication: 'installed',
             serverId: configuration.activeServerId,
+            selection: { kinds: ['workspace-ref'] },
             ...(signal ? { signal } : {}),
           });
           return snapshot.workspaceRefs;
@@ -518,12 +464,16 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
           action: {
             executor: actionExecutor,
             buildContext: resolveWorkflowActionContext,
-            observeApproval: async ({ artifactId, actionRequestId, authorization, signal }) => {
+            prepareResultCapture: async actionId => {
+              const lease = await acquireAuthoritativePluginRuntimeRegistryLease();
+              try { return prepareWorkflowDataCreationResultCapture(actionId, lease.registry.contributes); }
+              finally { await lease.release(); }
+            },
+            observeApproval: async ({ artifactId, actionRequestId, actionId, signal }) => {
               if (!input.serverIdentityId) return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
               return await actionExecutor.observeRecordedApprovalExecution({ artifactId, signal,
-                expectedOrigin: { actionId: 'discussion.invite', requestId: actionRequestId,
+                expectedOrigin: { actionId: actionId ?? 'discussion.invite', requestId: actionRequestId,
                   accountId: params.accountId, serverIdentityId: input.serverIdentityId, machineId: input.machineId },
-                isCurrent: async () => await isAcceptedAuthorizationCurrent({ authorization, signal }),
               });
             },
             observeOperation: async (operation, observation) => {
@@ -622,16 +572,18 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
           expoPushSender: createWorkflowRunPushNotificationClient(params.credentials.token),
         }),
         resolveAccountEncryption: async (signal) => await resolveAvailableEncryption(params.credentials, signal),
-        onInvocationSettled: async ({ run, accepted, invocation, encryption, signal }) => {
+        onInvocationSettled: async ({ run, accepted, invocation, encryption, signal, retryFailedPublications }) => {
           if (accepted.resultDelivery?.kind !== 'originating_discussion') return;
+          // Result delivery to the frozen origin Discussion is admitted work: keep the
+          // Account-encryption witness and signal, never re-read principal authority.
           const current = async () => !signal?.aborted
-            && sameAutomationAccountContentIdentityV1((await resolveAvailableEncryption(params.credentials, signal)).witness, encryption.witness)
-            && await isAcceptedAuthorizationCurrent({ authorization: accepted.authorization, ...(signal ? { signal } : {}) });
+            && sameAutomationAccountContentIdentityV1((await resolveAvailableEncryption(params.credentials, signal)).witness, encryption.witness);
           const publish = createWorkflowDiscussionResultPublisher({ credentials: params.credentials,
             origin: accepted.resultDelivery, isCurrent: current, ...(signal ? { signal } : {}),
+            ...(retryFailedPublications ? { retryFailedPublications: true } : {}),
             publish: createDiscussionReplyReturnPublisher({ credentials: params.credentials,
               machineId: input.machineId, serverId, serverHttpBaseUrl: resolveServerHttpBaseUrl(),
-              workflowAuthorization: accepted.authorization,
+              workflowActionContext: buildWorkflowActionContext({ ...accepted, runId: run.id }),
               signal: signal ?? new AbortController().signal, isCurrent: current,
               ...(input.postWorkflowMessage ? { postWorkflowMessage: input.postWorkflowMessage } : {}) }),
           });

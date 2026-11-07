@@ -1,10 +1,12 @@
 import { createHash } from 'node:crypto';
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { buildTrustedHostSessionInputAdmissionV1, SessionInputRequestV1Schema,
   type SessionMessageProvenance } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { deriveSessionMessageReplyReturnLocalIdV1, SessionMessageReplyReadResultV1Schema,
   SessionMessageReplyMutationResultV1Schema, SessionMessageReplyCapabilityV1Schema,
   SessionMessageReplyMachinePendingPageV1Schema,
+  classifySessionMessageReplyPublicationFailureV1,
+  type SessionMessageReplyPublicationV1,
   type SessionMessageReplyAccountMutationV1,
   type SessionMessageReplyMutationResultV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
 import type { SessionMessageRefV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageRefV1';
@@ -47,8 +49,13 @@ export type DiscussionWorkflowReplyReturnPublication = Readonly<{
   expectedParentRevision?: number;
 }>;
 export type DiscussionReplyReturnPublication = DiscussionSessionReplyReturnPublication | DiscussionWorkflowReplyReturnPublication;
+export type DiscussionReplyReturnPublicationResult = DiscussionAgentPostResponseV1
+  | Readonly<{ v: 1; ok: false; error: string;
+      failure: import('@happier-dev/protocol/sessions/messages/sessionMessageReplyV1').SessionMessageReplyPublicationFailureV1 }>
+  | Readonly<{ v: 1; ok: false; error: 'discussions_unavailable';
+      pending: Readonly<{ kind: 'approval'; artifactId: string }> }>;
 export type DiscussionReplyReturnPublisher = (input: DiscussionReplyReturnPublication,
-  options?: Readonly<{ signal?: AbortSignal }>) => Promise<DiscussionAgentPostResponseV1>;
+  options?: Readonly<{ signal?: AbortSignal }>) => Promise<DiscussionReplyReturnPublicationResult>;
 type ReplyAddress = Readonly<{ credentials: Pick<StoredCredentials, 'token'>; sessionId: string; localId: string; signal?: AbortSignal;
   resolveAuthorizationHeaders?: (request: Readonly<{ method: string; path: string; body?: unknown }>) => Readonly<Record<string, string>> | null;
 }>;
@@ -140,7 +147,7 @@ export async function projectSessionMessageReplyOutcome(input: Readonly<{
 
 /** Existing original-input mutation for observation or a non-publishing private review. */
 export async function mutateSessionMessageReplyObservation(input: ReplyAddress & Readonly<{
-  operation: 'inline' | 'release' | Extract<SessionMessageReplyAccountMutationV1, { kind: 'discussion_review' }>; sourceSession?: ReplyPublisher;
+  operation: 'inline' | 'release' | Extract<SessionMessageReplyAccountMutationV1, { kind: 'discussion_review' | 'discussion_publication' }>; sourceSession?: ReplyPublisher;
 }>) {
   if (input.sourceSession && typeof input.operation === 'string') return input.sourceSession.mutateSessionMessageReply({
     requestSessionId: input.sessionId, requestLocalId: input.localId, operation: { kind: input.operation },
@@ -151,6 +158,18 @@ export async function mutateSessionMessageReplyObservation(input: ReplyAddress &
     body, requestOptions(input, { method: 'POST', path, body }));
   if (response.status !== 200) throw new Error('Session reply observation unavailable');
   return SessionMessageReplyMutationResultV1Schema.parse(response.data);
+}
+
+/** Retain publication state on the exact original, without changing the native answer. */
+export function settleDiscussionReplyReturnPublication(input: Readonly<{
+  credentials: Pick<StoredCredentials, 'token'>; requestSessionId: string; requestLocalId: string;
+  discussion: DiscussionAddressingV1; acceptedTurnId?: string; publication: SessionMessageReplyPublicationV1; signal?: AbortSignal;
+}>): Promise<SessionMessageReplyMutationResultV1> {
+  return mutateSessionMessageReplyObservation({ credentials: input.credentials,
+    sessionId: input.requestSessionId, localId: input.requestLocalId, ...(input.signal ? { signal: input.signal } : {}),
+    operation: { kind: 'discussion_publication', discussionId: input.discussion.discussionId,
+      messageId: input.discussion.messageId, ...(input.acceptedTurnId ? { acceptedTurnId: input.acceptedTurnId } : {}),
+      publication: input.publication } });
 }
 
 /**
@@ -222,6 +241,8 @@ export async function recoverSessionMessageRepliesForMachine(input: Readonly<{
   isCurrent: () => Promise<boolean>;
   /** Requester custody is bound to one Session, not its Account-wide inventory. */
   requesterSessionId?: string;
+  /** A new transport is an advancing recovery edge; duplicate hints are not. */
+  retryFailedPublications?: boolean;
   /** A strict inventory response proves this Home understands the new capability. */
   onSupported?: () => Promise<void>;
   machineAdmissionTransport: NonNullable<Parameters<typeof sendSessionMessage>[0]['machineAdmissionTransport']>;
@@ -245,15 +266,15 @@ export async function recoverSessionMessageRepliesForMachine(input: Readonly<{
     for (const entry of page.entries) {
       if (input.requesterSessionId !== undefined && entry.requestSessionId !== input.requesterSessionId) continue;
       if (!await current()) return;
-      const original = await readSessionMessageReply({ credentials: input.credentials, signal: input.signal,
-        sessionId: entry.requestSessionId, localId: entry.requestLocalId });
-      if (original.status !== 'available') continue;
-      const progress = original.progress;
+      const progress = entry.progress;
       // The hosted requester branch consumes C3's resource publisher only;
       // ordinary Session-return ACKs remain on their incumbent Machine authority.
       if (input.requesterSessionId !== undefined && !progress.discussion) continue;
       if (progress.mode !== 'return' || progress.disposition !== 'return_pending'
         || !progress.sourceSession && !progress.discussion && !progress.humanOrigin || !progress.outcome) continue;
+      if (progress.returnPublication?.kind === 'approval_pending'
+        || progress.returnPublication?.kind === 'failed'
+          && (!progress.returnPublication.failure.retryable || !input.retryFailedPublications)) continue;
       if (!await current()) return;
       const outcome = progress.outcome;
       if (outcome.kind === 'declined') continue;
@@ -266,13 +287,31 @@ export async function recoverSessionMessageRepliesForMachine(input: Readonly<{
         // A Discussion destination never falls back to its descriptive causal
         // source Session. Missing publisher custody leaves this original pending.
         if (!input.publishDiscussionReply) continue;
-        await input.publishDiscussionReply({ serverId: input.serverId,
+        const published = await input.publishDiscussionReply({ serverId: input.serverId,
           requestSessionId: entry.requestSessionId, requestLocalId: entry.requestLocalId,
           ...(progress.acceptedTurnId ? { acceptedTurnId: progress.acceptedTurnId } : {}),
           discussion: progress.discussion, outcome, message,
           ...(progress.actionRequestAttributionV1 ? { actionRequestAttributionV1: progress.actionRequestAttributionV1 } : {}),
           ...(sourceMessageRef ? { sourceMessageRef } : {}),
         }, { signal: input.signal });
+        if (!published.ok && await current()) {
+          let publication: SessionMessageReplyPublicationV1 | undefined;
+          if ('pending' in published) publication = { kind: 'approval_pending', artifactId: published.pending.artifactId };
+          else {
+            const failure = 'failure' in published ? published.failure
+              : classifySessionMessageReplyPublicationFailureV1(published.error, 'session_publisher');
+            if (failure) publication = { kind: 'failed', failure };
+          }
+          if (publication) {
+            const settled = await settleDiscussionReplyReturnPublication({ credentials: input.credentials,
+              requestSessionId: entry.requestSessionId, requestLocalId: entry.requestLocalId, discussion: progress.discussion,
+              ...(progress.acceptedTurnId ? { acceptedTurnId: progress.acceptedTurnId } : {}), publication, signal: input.signal });
+            if (!settled.ok) {
+              logger.warnLocalFile('[SessionReply] Original publication settlement refused', { errorCode: settled.error,
+                requestSessionId: entry.requestSessionId, requestLocalId: entry.requestLocalId });
+            }
+          }
+        }
         continue;
       }
       const destinationSessionId = progress.humanOrigin?.sessionId ?? progress.sourceSession?.sourceSessionId;
@@ -282,7 +321,7 @@ export async function recoverSessionMessageRepliesForMachine(input: Readonly<{
         sessionId: destinationSessionId,
         requestSessionId: entry.requestSessionId, requestLocalId: entry.requestLocalId,
         requestKind: 'session_input', acceptedTurnId: progress.acceptedTurnId,
-        ...(original.returnRecipient ? { recipient: original.returnRecipient } : {}),
+        ...(entry.returnRecipient ? { recipient: entry.returnRecipient } : {}),
         message, outcome: outcome.kind, mode: 'wait', signal: input.signal,
         answeredBy: { v: 1, kind: 'happierSession', sourceSessionId: entry.requestSessionId, via: 'action' },
         ...(progress.actionRequestAttributionV1 ? { actionRequestAttributionV1: progress.actionRequestAttributionV1 } : {}),

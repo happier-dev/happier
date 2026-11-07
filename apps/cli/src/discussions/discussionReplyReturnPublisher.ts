@@ -2,10 +2,12 @@ import { DiscussionAgentPostRequestV1Schema, DiscussionAgentPostResponseV1Schema
   type DiscussionAgentPostResponseV1 } from '@happier-dev/protocol/discussions/api';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { SessionInputSourceSessionV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
-import { deriveSessionMessageReplyReturnLocalIdV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
+import { classifySessionMessageReplyPublicationFailureV1, deriveSessionMessageReplyReturnLocalIdV1,
+  type SessionMessageReplyPublicationFailureV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
 import type { StoredCredentials } from '@/persistence';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
-import { readSessionMessageReply, type DiscussionReplyReturnPublisher } from '@/session/services/sessionMessageReply';
+import { readSessionMessageReply, type DiscussionReplyReturnPublisher,
+  type DiscussionReplyReturnPublicationResult } from '@/session/services/sessionMessageReply';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
 import { logger } from '@/ui/logger';
@@ -15,7 +17,8 @@ import type { DiscussionAgentPostPublicationV1, DiscussionWorkflowPostPublicatio
 import { deriveWorkflowDiscussionReplyLocalIdV1 } from '@happier-dev/protocol/workflows/workflowInvocationIdentityV1';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { areServerProfileIdentifiersEquivalent } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
-import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
 
 /** Account composition supplies policy and resource crypto, never a second writer. */
 export function createDiscussionReplyReturnPublisher(params: Readonly<{
@@ -26,7 +29,7 @@ export function createDiscussionReplyReturnPublisher(params: Readonly<{
   signal: AbortSignal;
   isCurrent(): Promise<boolean>;
   actionsSettingsProvider?: RuntimeActionSettingsProvider;
-  workflowAuthorization?: import('@happier-dev/protocol/workflows').WorkflowAcceptedSnapshotV1['authorization'];
+  workflowActionContext?: ActionExecutorContext;
   postWorkflowMessage?: (publication: DiscussionWorkflowPostPublicationV1 | DiscussionAgentPostPublicationV1,
     options?: Readonly<{ signal?: AbortSignal }>) => Promise<DiscussionAgentPostResponseV1>;
 }>): DiscussionReplyReturnPublisher {
@@ -37,20 +40,46 @@ export function createDiscussionReplyReturnPublisher(params: Readonly<{
   return async (original, options) => {
     const denied = (): DiscussionAgentPostResponseV1 => ({ v: 1, ok: false, error: 'discussion_post_denied' });
     const unavailable = (): DiscussionAgentPostResponseV1 => ({ v: 1, ok: false, error: 'discussions_unavailable' });
-    const withoutReceipt = (result: ActionExecuteResult): DiscussionAgentPostResponseV1 => {
-      // Approval and unknown admission/transport outcomes are still pending.
-      // Preserve only a typed domain refusal as proof that publication failed.
-      if (result.ok) return unavailable();
-      if (result.errorCode === 'action_disabled' || result.errorCode === 'present_user_required'
-        || result.errorCode === 'run_access_denied' || result.errorCode === 'approval_stale') return denied();
-      const failure = DiscussionAgentPostResponseV1Schema.safeParse({ v: 1, ok: false, error: result.errorCode });
-      return failure.success ? failure.data : unavailable();
+    const publicationResult = (result: DiscussionAgentPostResponseV1,
+      phase: SessionMessageReplyPublicationFailureV1['phase']): DiscussionReplyReturnPublicationResult => {
+      if (result.ok) return result;
+      const failure = classifySessionMessageReplyPublicationFailureV1(result.error, phase);
+      return failure ? { ...result, failure } : result;
+    };
+    const withoutReceipt = (result: ActionExecuteResult,
+      phase: SessionMessageReplyPublicationFailureV1['phase']): DiscussionReplyReturnPublicationResult => {
+      const correlation = 'kind' in original ? { discussionId: original.discussion.discussion.discussionId,
+        addressingMessageId: original.discussion.messageId, runId: original.workflow.runId,
+        invocationId: original.workflow.invocationRecordId } : { discussionId: original.discussion.discussionId,
+        addressingMessageId: original.discussion.messageId, requestSessionId: original.requestSessionId,
+        requestLocalId: original.requestLocalId, acceptedTurnId: original.acceptedTurnId,
+        ...(original.workflow ? { runId: original.workflow.runId, invocationId: original.workflow.invocationRecordId } : {}) };
+      if (result.ok) {
+        const approval = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
+        if (approval.success) {
+          logger.infoFile('[Discussion reply return] Publication awaiting approval', { ...correlation, phase,
+            artifactId: approval.data.artifactId });
+          return { v: 1, ok: false, error: 'discussions_unavailable',
+            pending: { kind: 'approval', artifactId: approval.data.artifactId } };
+        }
+      }
+      const failure = classifySessionMessageReplyPublicationFailureV1(result.ok ? 'action_outcome_unknown' : result.errorCode, phase)
+        ?? classifySessionMessageReplyPublicationFailureV1('action_outcome_unknown', phase);
+      logger.warnLocalFile('[Discussion reply return] Action has no publication receipt', { ...correlation,
+        errorCode: failure?.code ?? 'action_outcome_unknown', phase, retryable: failure?.retryable ?? true });
+      const domain = !result.ok && DiscussionAgentPostResponseV1Schema.safeParse({ v: 1, ok: false, error: result.errorCode });
+      const response = domain && domain.success ? domain.data : !result.ok && ['action_disabled', 'present_user_required',
+        'run_access_denied', 'approval_stale'].includes(result.errorCode) ? denied() : unavailable();
+      return failure ? { ...response, failure } : response;
     };
     const signal = options?.signal && options.signal !== params.signal
       ? AbortSignal.any([params.signal, options.signal]) : params.signal;
     const current = async () => !signal.aborted && await params.isCurrent() && !signal.aborted;
+    const workflowContext = original.workflow ? params.workflowActionContext : undefined;
+    if (original.workflow && (workflowContext?.actionCaller?.kind !== 'workflowRun'
+      || workflowContext.actionCaller.runId !== original.workflow.runId)) return denied();
     if ('kind' in original) {
-      if (!params.postWorkflowMessage || !params.workflowAuthorization) return unavailable();
+      if (!params.postWorkflowMessage) return unavailable();
       if (!await current()) return denied();
       const origin = await resolveCurrentOrigin(signal);
       const accountId = readAccountIdFromToken(params.credentials.token);
@@ -75,23 +104,21 @@ export function createDiscussionReplyReturnPublisher(params: Readonly<{
         } });
       const result = await executor.execute('discussion.reply', { discussionId: original.discussion.discussion.discussionId, localId,
         replyTarget: { kind: 'message', messageId: original.discussion.messageId }, content: original.content }, {
-        serverId: params.serverId, surface: 'agent', authority: 'account_automation',
-        actionCaller: { kind: 'workflowRun', runId: original.workflow.runId, authorization: params.workflowAuthorization },
+        ...workflowContext, serverId: params.serverId, surface: 'agent', authority: 'account_automation',
         runtimeAccountId: accountId, defaultSessionMachineId: params.machineId,
         discussionReplyReturn: { kind: 'workflow_invocation', serverId: origin.serverIdentityId,
           producer: original.producer, origin: original.discussion,
           ...(original.expectedParentRevision !== undefined ? { expectedParentRevision: original.expectedParentRevision } : {}) },
         actionRequestId: localId, signal,
       });
-      if (receipt.failure) throw receipt.failure;
-      if (!receipt.value) logger.warnLocalFile('[Discussion reply return] Action has no publication receipt', {
-        errorCode: result.ok ? 'publication_pending' : result.errorCode, phase: 'workflow_publication',
-      });
-      return receipt.value ?? withoutReceipt(result);
+      if (receipt.failure) {
+        signal.throwIfAborted();
+        return withoutReceipt({ ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown' }, 'workflow_publication');
+      }
+      return receipt.value ? publicationResult(receipt.value, 'workflow_publication') : withoutReceipt(result, 'workflow_publication');
     }
     if (!original.workflow && original.serverId !== params.serverId
       || original.discussion.participantSessionId !== original.requestSessionId || !await current()) return denied();
-    if (original.workflow && !params.workflowAuthorization) return denied();
     const origin = await resolveCurrentOrigin(signal);
     if (!origin) return unavailable();
     if (original.workflow && !isCapturedHome(original.serverId, origin.serverIdentityId) || !await current()) return denied();
@@ -117,7 +144,7 @@ export function createDiscussionReplyReturnPublisher(params: Readonly<{
     if (!await current()) return denied();
     const receipt: { value?: DiscussionAgentPostResponseV1 } = {};
     const transportFailure: { value?: Readonly<{ error: unknown }> } = {};
-    let phase = 'action_admission';
+    let phase: SessionMessageReplyPublicationFailureV1['phase'] = 'action_admission';
     const executor = createCliActionExecutor({ token: params.credentials.token, credentials: params.credentials,
       sessionId: '', mode: 'plain', ctx: null, serverId: params.serverId, serverHttpBaseUrl: params.serverHttpBaseUrl,
       serverIdentityId: origin.serverIdentityId,
@@ -171,22 +198,22 @@ export function createDiscussionReplyReturnPublisher(params: Readonly<{
     const result = await executor.execute('discussion.reply', { discussionId: original.discussion.discussionId, localId,
       replyTarget: { kind: 'message', messageId: original.discussion.messageId },
       content: original.content ?? { v: 1, parts: [{ t: 'text', text: original.message }] },
-    }, { serverId: params.serverId, surface: 'agent', authority: 'account_automation',
+    }, { ...workflowContext, serverId: params.serverId, surface: 'agent', authority: 'account_automation',
       defaultSessionId: original.requestSessionId, defaultSessionMachineId: params.machineId,
-      actionCaller: original.workflow && params.workflowAuthorization
-        ? { kind: 'workflowRun', runId: original.workflow.runId, authorization: params.workflowAuthorization } : { kind: 'host' },
+      actionCaller: workflowContext?.actionCaller ?? { kind: 'host' },
       discussionReplyReturn: { serverId: origin.serverIdentityId, requestLocalId: original.requestLocalId,
         ...(original.workflow ? { workflow: original.workflow } : {}),
         ...(original.acceptedTurnId ? { acceptedTurnId: original.acceptedTurnId } : {}) },
       actionRequestId: localId, signal, ...(sessionInputSource ? { sessionInputSource } : {}),
-      ...(original.actionRequestAttributionV1 ? { actionRequestAttributionV1: original.actionRequestAttributionV1 } : {}),
+      ...(original.actionRequestAttributionV1 && !workflowContext?.actionRequestAttributionV1
+        ? { actionRequestAttributionV1: original.actionRequestAttributionV1 } : {}),
     });
     // Action admission reports failures as values. Do not reinterpret a native
     // append whose acknowledgement was lost as an authoritative refusal.
-    if (transportFailure.value) throw transportFailure.value.error;
-    if (!receipt.value) logger.warnLocalFile('[Discussion reply return] Action has no publication receipt', {
-      errorCode: result.ok ? 'publication_pending' : result.errorCode, phase,
-    });
-    return receipt.value ?? withoutReceipt(result);
+    if (transportFailure.value) {
+      signal.throwIfAborted();
+      return withoutReceipt({ ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown' }, phase);
+    }
+    return receipt.value ? publicationResult(receipt.value, phase) : withoutReceipt(result, phase);
   };
 }

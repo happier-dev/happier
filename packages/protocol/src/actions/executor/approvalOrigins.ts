@@ -1,9 +1,9 @@
-import { isPresentUserHostInvocation } from '../invocationAuthority.js';
 import { ApprovalExecutionOriginV1Schema, ApprovalRequestOriginV1Schema, isApprovalRequesterConfirmationBoundToOriginV1, type ApprovalRequesterConfirmationV1, type ApprovalExecutionOriginCallerV1, type ApprovalExecutionOriginV1, type ApprovalRequest, type ApprovalRequestOriginV1 } from '../../approvals/approvalRequestV1.js';
-import { type ActionId } from '../actionIds.js';
+import { isWorkspaceSyncRelationshipWriteActionId, type ActionId } from '../actionIds.js';
 import { getActionSpec, resolveActionExecutionPlacementForInput } from '../actionSpecs.js';
 import type { ActionCaller, ActionExecutorContext } from './types.js';
 import { normalizeId } from './inputReading.js';
+import { readAdmittedWorkflowLeafStartDepthV1 } from './agentStartAdmission.js';
 import { AgentStartSessionCallerV1Schema } from '../../account/settings/admitAgentStartV1.js';
 import { PluginSourceCustodyV1Schema } from '../../plugins/runtime/sourceCustody.js';
 import { resolveWorkflowRunStartedByForActionCallerV1 } from '../../workflows/materializeWorkflowAcceptedSnapshotV1.js';
@@ -17,10 +17,31 @@ import { NpmRegistryProfileActionIdV1Schema, NpmRegistryProfileActionInputSchema
 import { readLocalServiceControlActionRequest } from '../specs/localServices.js';
 import { isProjectWorkspaceSyncPreparationActionV1 } from '../projectActionIdsV1.js';
 import { isInternalActionId } from '../pluginActionSurface.js';
-import { isDeploymentChildRootActionIdV1 } from '../../deployments/deploymentActionIdsV1.js';
+import { isMachineSetupPlanRpcChildV1 } from '../../machines/managed/actionsV1.js';
+import { RPC_METHODS } from '../../rpc/methods.js';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '../externalActionExecutionAuthorization.js';
-import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
+import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '../../json/strictJsonValue.js';
 import { MachineServiceLogsReadInputV1Schema } from '../../local/services/nativeLogsV1.js';
+import { isPresentUserHostInvocation } from '../invocationAuthority.js';
+
+/** A signed reviewer may use the same Account reads as the local deciding person. */
+export function isPresentUserApprovalDecisionForOrigin(input: Readonly<{
+  context: ActionExecutorContext;
+  artifactId: string;
+  origin: ApprovalExecutionOriginV1;
+}>): boolean {
+  const { context, artifactId, origin } = input;
+  if (isPresentUserHostInvocation(context)) return true;
+  const binding = context.externalActionExecutionAuthorization?.binding;
+  return context.authority === 'present_user'
+    && (context.surface === 'ui' || context.surface === 'cli' || context.surface === 'voice')
+    && context.actionCaller?.kind === 'host' && !context.externalActionCredential && !context.rpcSessionAuthorization
+    && binding !== undefined && 'authentication' in binding && binding.authentication.kind === 'account'
+    && binding.actionId === 'approval.request.decide'
+    && binding.approvalDecisionAdmission?.artifactId === artifactId && binding.approvalDecisionAdmission.decision === 'approve'
+    && binding.accountId === origin.accountId && binding.serverIdentityId === origin.serverIdentityId
+    && binding.machineId === origin.machineId;
+}
 
 /** The same live signed logs invocation owns its non-serializable observation. */
 export function resolveMachineServiceLogsApprovalLifetime(actionId: ActionId | null, input: unknown, context: ActionExecutorContext) {
@@ -181,9 +202,11 @@ export function buildApprovalExecutionOriginV1(params: Readonly<{
   if (sessionActionOrigin && params.context.workspaceWrites !== sessionActionOrigin.workspaceWrites) return null;
   const surface = externalAuthorization
     ? accountBinding
-      ? sessionActionOrigin || accountBinding.workflowActionOrigin
+      ? sessionActionOrigin || accountBinding.workflowActionOrigin || caller.kind === 'workflowRun'
         ? requestedSurface === 'plugin' && caller.kind === 'plugin' ? 'plugin' as const : 'agent' as const
         : requestedSurface === 'plugin' && caller.kind === 'plugin' ? 'plugin' as const
+          : requestedSurface === 'voice' && authority === 'present_user' && caller.kind === 'host'
+            && accountBinding.authentication.kind === 'account' ? 'voice' as const
           : requestedSurface === 'cli' && caller.kind === 'host' ? 'cli' as const : 'ui' as const
       : 'api' as const
     : requestedSurface;
@@ -192,14 +215,21 @@ export function buildApprovalExecutionOriginV1(params: Readonly<{
     if (!params.context.signExternalActionApprovalInput) return null;
     try {
       externalActionInputSignature = params.context.signExternalActionApprovalInput({
-        actionId: params.actionId, input: params.input, authorization: externalAuthorization,
+        actionId: params.actionId, input: projectNativeJsonValueForTransport(params.input), authorization: externalAuthorization,
         target: params.context.externalActionTarget ?? externalAuthorization.binding.target,
         ...(params.requesterConfirmation ? { requesterConfirmation: params.requesterConfirmation } : {}),
         ...(params.context.sessionTargetsV1 ? { sessionTargetsV1: params.context.sessionTargetsV1 } : {}),
       });
     } catch { return null; }
   }
-  const externalTarget = params.context.externalActionTarget;
+  // Background plugin continuations live on their stamped daemon. Preserve
+  // that destination before projecting away the live materialization context.
+  const backgroundPluginMachineId = !externalAuthorization
+    && params.context.actionCaller?.kind === 'plugin'
+    && params.context.actionCaller.originSurface === 'background'
+    ? normalizeId(params.context.actionCaller.materialization?.machineId) : '';
+  const externalTarget = params.context.externalActionTarget
+    ?? (backgroundPluginMachineId ? { kind: 'machine' as const, machineId: backgroundPluginMachineId } : undefined);
   const publication = params.actionId === 'artifact.publish_from_file'
     ? ArtifactActionInputSchemasV1['artifact.publish_from_file'].safeParse(params.admittedInput ?? params.input) : null;
   if (publication && !publication.success) return null;
@@ -264,10 +294,19 @@ export function buildApprovalExecutionOriginV1(params: Readonly<{
     // target. Retain its host-stamped Machine as origin, not execution input.
     || (params.context.actionCaller?.kind === 'plugin'
       ? normalizeId(params.context.actionCaller.materialization?.machineId) : '');
+  // Capture the host's admitted execution Machine now. Other Machine provenance
+  // alone does not select a target, and a contextual Session does not replace it.
+  const executionTarget = externalTarget
+    ?? (machineId && normalizeId(params.context.defaultSessionMachineId)
+      ? { kind: 'machine' as const, machineId } : undefined);
+  const admittedWorkflowLeafDepth = readAdmittedWorkflowLeafStartDepthV1(params.actionId, params.context);
   const candidate = {
     v: 1,
     authority,
     surface,
+    ...(params.context.callerSurface ? { callerSurface: params.context.callerSurface } : {}),
+    ...(params.context.approvalProfileId === undefined ? {} : { approvalProfileId: params.context.approvalProfileId }),
+    ...(admittedWorkflowLeafDepth === undefined ? {} : { agentStartWorkDepth: admittedWorkflowLeafDepth }),
     caller,
     serverId,
     ...(serverIdentityId
@@ -285,8 +324,13 @@ export function buildApprovalExecutionOriginV1(params: Readonly<{
         }
       : {}),
     ...(externalAuthorization ? { externalActionExecutionAuthorization: externalAuthorization } : {}),
-    ...((params.actionId === 'projects.open' || isProjectWorkspaceSyncPreparationActionV1(params.actionId)
-      || isDeploymentChildRootActionIdV1(params.actionId) || params.actionId === 'deployments.teardown'
+    ...((params.actionId === 'projects.open' || params.actionId === 'action.operations.cancel'
+      || isWorkspaceSyncRelationshipWriteActionId(params.actionId)
+      || externalAuthorization && 'credentialId' in externalAuthorization.binding
+      || isProjectWorkspaceSyncPreparationActionV1(params.actionId)
+      || externalAuthorization?.binding.deploymentChildRoot === true
+      || params.actionId === 'deployments.teardown'
+      || isMachineSetupPlanRpcChildV1({ rootActionId: params.actionId, effectActionId: 'machines.setup.plan', method: RPC_METHODS.MACHINE_SETUP_PLAN })
       || params.actionId === 'machines.services.logs.read' && params.context.machineServiceLogsResource)
       && externalAuthorization?.binding.actionId === params.actionId && params.context.originalActionEnvelope
       ? { originalActionEnvelope: params.context.originalActionEnvelope } : {}),
@@ -311,7 +355,7 @@ export function buildApprovalExecutionOriginV1(params: Readonly<{
       : {}),
     ...(params.context.discussionReplyReturn ? { discussionReplyReturn: params.context.discussionReplyReturn } : {}),
     ...(params.context.actionRequestAttributionV1 ? { actionRequestAttributionV1: params.context.actionRequestAttributionV1 } : {}),
-    ...(externalTarget ? { target: externalTarget } : {}),
+    ...(executionTarget ? { target: executionTarget } : {}),
     actionId: params.actionId,
     requestId: normalizeId(params.context.actionRequestId) || normalizeId(inputRecord.creationKey),
   };
@@ -369,22 +413,4 @@ export function isApprovalRequestActionReplayAdmitted(request: ApprovalRequest, 
 
 export function isBlockingApprovalRequest(request: ApprovalRequest): boolean {
   return request.approval?.flow === 'blocking';
-}
-
-export function isPresentUserApprovalDecisionForOrigin(input: Readonly<{
-  context: ActionExecutorContext;
-  artifactId: string;
-  origin: ApprovalExecutionOriginV1;
-}>): boolean {
-  const { context, artifactId, origin } = input;
-  if (isPresentUserHostInvocation(context)) return true;
-  const binding = context.externalActionExecutionAuthorization?.binding;
-  return context.authority === 'present_user'
-    && (context.surface === 'ui' || context.surface === 'cli' || context.surface === 'voice')
-    && context.actionCaller?.kind === 'host' && !context.externalActionCredential && !context.rpcSessionAuthorization
-    && binding !== undefined && 'authentication' in binding && binding.authentication.kind === 'account'
-    && binding.actionId === 'approval.request.decide'
-    && binding.approvalDecisionAdmission?.artifactId === artifactId && binding.approvalDecisionAdmission.decision === 'approve'
-    && binding.accountId === origin.accountId && binding.serverIdentityId === origin.serverIdentityId
-    && binding.machineId === origin.machineId;
 }

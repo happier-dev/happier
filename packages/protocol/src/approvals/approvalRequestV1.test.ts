@@ -1,3 +1,4 @@
+import { resolveProjectActionMachineV1 } from '../actions/executor/projectActionPlacement.js';
 import { projectExternalActionMachineRuntimeDemandV1 } from '../actions/actionSpecs.js';
 import { describe, expect, it } from 'vitest';
 
@@ -18,6 +19,60 @@ import {
   isMountedPluginBlockingApprovalEligibleForLiveClient,
 } from './approvalRequestV1.js';
 
+it.each(['ui', 'voice', 'plugin', 'agent', 'mcp', 'cli', 'rpc', 'api'] as const)(
+  'routes durable Account approval to the approving app independently of its %s origin', surface => {
+    const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+      createdBy: { surface: 'system' }, requestedSurface: surface, actionId: 'launch_profiles.delete',
+      actionArgs: getActionSpec('launch_profiles.delete').inputSchema.parse({ id: 'profile', expectedRevision: 1 }),
+      summary: 'Delete profile', approval: { flow: 'deferred', result: 'required' },
+      executionOriginV1: { v: 1, authority: 'account_automation', surface, caller: { kind: 'host' },
+        ...(surface === 'api' ? { accountId: 'alice', principalId: 'principal', credentialId: 'credential' } : {}),
+        serverId: 'home', machineId: 'source-machine', actionId: 'launch_profiles.delete', requestId: 'profile-delete' } });
+    expect(resolveApprovalExecutor(request)).toEqual({ kind: 'app', placement: 'account' });
+  },
+);
+
+it.each(['builtin:apply-safe', null] as const)('retains the admitted approval profile %s through durable origin capture', approvalProfileId => {
+  const origin = buildApprovalExecutionOriginV1({ actionId: 'session.title.set', input: { sessionId: 'session', title: 'Child' },
+    targetSessionId: 'session', context: { surface: 'agent', serverId: 'home', actionRequestId: 'profiled-request', approvalProfileId } });
+  expect(origin).not.toBeNull();
+  expect(origin).toHaveProperty('approvalProfileId', approvalProfileId);
+  expect(ApprovalExecutionOriginV1Schema.parse(origin)).toHaveProperty('approvalProfileId', approvalProfileId);
+});
+
+it('retains a finite originating caller audience without changing older approval origins', () => {
+  const origin = { v: 1, authority: 'account_automation', surface: 'ui', caller: { kind: 'host' },
+    serverId: 'home', actionId: 'actions.policy.set', requestId: 'foreign-policy' };
+  expect(ApprovalExecutionOriginV1Schema.parse(origin)).not.toHaveProperty('callerSurface');
+  expect(ApprovalExecutionOriginV1Schema.parse({ ...origin, callerSurface: 'foreign_session_html' }))
+    .toMatchObject({ callerSurface: 'foreign_session_html' });
+  for (const callerSurface of ['ui', 'owned_session_html', {}, null]) {
+    expect(ApprovalExecutionOriginV1Schema.safeParse({ ...origin, callerSurface }).success).toBe(false);
+  }
+});
+
+it('retains contributed Session approval targets only when they match the parsed invocation operand', () => {
+  const snapshot = { actionId: 'action.invoke', field: 'input.sessionId',
+    targets: [{ serverId: 'home', sessionId: 'reviewed-session' }], selector: false };
+  const request = { v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1, createdBy: { surface: 'system' },
+    requestedSurface: 'ui', actionId: 'action.invoke', summary: 'Link the reviewed Session',
+    actionArgs: { action: { pluginId: 'example.links', localId: 'link' }, input: { sessionId: 'reviewed-session' } },
+    executionOriginV1: { v: 1, authority: 'present_user', surface: 'ui', caller: { kind: 'host' },
+      serverId: 'home', actionId: 'action.invoke', requestId: 'reviewed-link', sessionTargetsV1: snapshot } };
+  expect(ApprovalRequestV2Schema.safeParse(request).success).toBe(true);
+  for (const invalid of [
+    { ...request, actionArgs: { action: { pluginId: 'example.links', localId: 'link' }, input: { sessionId: 'other-session' } } },
+    { ...request, actionArgs: { action: { pluginId: 'example.links', localId: 'link' }, input: {} } },
+    { ...request, executionOriginV1: { ...request.executionOriginV1,
+      sessionTargetsV1: { ...snapshot, field: 'action.pluginId' } } },
+    { ...request, actionId: 'session.stop', actionArgs: { sessionId: 'reviewed-session' },
+      executionOriginV1: { ...request.executionOriginV1, actionId: 'session.stop',
+        sessionTargetsV1: { ...snapshot, actionId: 'session.stop' } } },
+    { ...request, executionOriginV1: { ...request.executionOriginV1,
+      sessionTargetsV1: { ...snapshot, targets: [{ serverId: '', sessionId: 'reviewed-session' }] } } },
+  ]) expect(ApprovalRequestV2Schema.safeParse(invalid).success).toBe(false);
+});
+
 it('retains only closed, content-free admitted operation credential facts beside the original outcome', () => {
   const personal = { v: 1, kind: 'connected_account', label: 'Personal GitHub',
     owner: { kind: 'account', accountId: 'alice' }, service: { pluginId: 'example.service', localId: 'github' },
@@ -35,76 +90,100 @@ it('retains only closed, content-free admitted operation credential facts beside
     operationCredentialUses: [{ ...personal, futureAdmissionFact: true }, team] })).toEqual(receipt);
 });
 
-it('admits only unsigned mounted plugin Account/client blocking continuations to their live client', () => {
-  const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
-    createdBy: { surface: 'system' }, requestedSurface: 'plugin', approval: { flow: 'blocking', result: 'required' },
-    actionId: 'widgets.item.add', summary: 'Add widget', actionArgs: {
-      surface: { serverId: 'home', accountId: 'alice', owner: { kind: 'pluginArea', pluginId: 'example.widgets', pageId: 'overview', area: 'pinned' } },
-      instance: { v: 1, id: 'copy', definition: { kind: 'builtin', id: 'session_summary' }, bindings: {} },
-    }, executionOriginV1: { v: 1, authority: 'account_automation', surface: 'plugin',
-      caller: { kind: 'plugin', pluginId: 'example.widgets', contributionLocalId: 'overview', sourceCustody: { kind: 'development', registeredRootId: 'root' } },
-      serverId: 'home', serverIdentityId: 'srv_home', accountId: 'alice', machineId: 'machine', actionId: 'widgets.item.add', requestId: 'add' } });
-  expect(isMountedPluginBlockingApprovalEligibleForLiveClient(request)).toBe(true);
-  // The retained plugin invocation is local; a contextual Machine is not custody.
-  expect(resolveApprovalExecutor(request)).toEqual({ kind: 'live_invocation' });
-  expect(requiresExactDaemonApprovalReplay(request)).toBe(false);
-  const target = { kind: 'machine' as const, machineId: 'machine' };
-  const signed = ApprovalRequestV2Schema.parse({ ...request, executionOriginV1: {
-    ...request.executionOriginV1, target, externalActionInputSignature: 'a'.repeat(86),
-    externalActionExecutionAuthorization: { v: 1, token: 'signed-account-root', binding: {
-      serverIdentityId: 'srv_home', accountId: 'alice', authentication: { kind: 'account', tokenEpoch: 1 },
-      machineId: 'machine', custodianAccountId: 'alice', installationId: 'installation',
-      actionId: request.actionId, requestId: 'add', requestEnvelopeDigest: 'a'.repeat(43), target,
-    } },
-  } });
-  expect(isMountedPluginBlockingApprovalEligibleForLiveClient(signed)).toBe(false);
-  expect(requiresExactDaemonApprovalReplay(signed)).toBe(true);
-  for (const patch of [
-    { approval: undefined },
-    { approval: { flow: 'deferred', result: 'required' } },
-    { executionOriginV1: { ...request.executionOriginV1, machineId: undefined } },
-    { executionOriginV1: { ...request.executionOriginV1, serverIdentityId: undefined } },
-    { executionOriginV1: { ...request.executionOriginV1, sessionId: 'session', target: { kind: 'session', sessionId: 'session' } } },
-    { executionOriginV1: { ...request.executionOriginV1, callerPermissionMode: 'default' } },
-    { executionOriginV1: { ...request.executionOriginV1, externalActionInputSignature: 'a'.repeat(86) } },
-    { requestedSurface: 'agent', executionOriginV1: { ...request.executionOriginV1, surface: 'agent', caller: { kind: 'session', sessionId: 'session', starterDepth: 0, turnDepth: 0 } } },
-    { actionId: 'session.stop', actionArgs: { sessionId: 'session' }, executionOriginV1: { ...request.executionOriginV1, actionId: 'session.stop' } },
-  ]) {
-    expect(isMountedPluginBlockingApprovalEligibleForLiveClient(ApprovalRequestV2Schema.parse({ ...request, ...patch }))).toBe(false);
-  }
-});
-
-it('keeps client Voice replay app-owned while Machine effects retain their executor', () => {
-  const actionId = 'ui.voice_global.set_muted';
-  const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
-    createdBy: { surface: 'agent', sessionId: 'source' }, requestedSurface: 'agent', actionId,
-    actionArgs: { expectedAttempt: 'voice-attempt:1', muted: false }, summary: 'Unmute Voice',
-    executionOriginV1: { v: 1, authority: 'account_automation', surface: 'agent',
-      caller: { kind: 'session', sessionId: 'source', starterDepth: 0, turnDepth: 0 },
-      serverId: 'home', accountId: 'alice', machineId: 'offline-machine', actionId, requestId: 'unmute' } });
-  for (const surface of ['agent', 'mcp', 'voice'] as const) {
-    expect(requiresExactDaemonApprovalReplay(ApprovalRequestV2Schema.parse({ ...request,
-      requestedSurface: surface,
-      executionOriginV1: { ...request.executionOriginV1, surface } }))).toBe(false);
-  }
-  expect(requiresExactDaemonApprovalReplay(ApprovalRequestV2Schema.parse({ ...request,
-    requestedSurface: 'plugin',
-    executionOriginV1: { ...request.executionOriginV1, surface: 'plugin', caller: {
-      kind: 'plugin', pluginId: 'custom.voice', contributionLocalId: 'voice',
-      sourceCustody: { kind: 'development', registeredRootId: 'voice-root' },
-    } } }))).toBe(false);
-  expect(requiresExactDaemonApprovalReplay(ApprovalRequestV2Schema.parse({ ...request,
-    actionArgs: { expectedAttempt: 'voice-attempt:1', muted: 'false' } }))).toBe(true);
-  expect(requiresExactDaemonApprovalReplay(ApprovalRequestV2Schema.parse({ ...request,
-    actionId: 'session.stop', actionArgs: { sessionId: 'source' },
-    executionOriginV1: { ...request.executionOriginV1, actionId: 'session.stop' } }))).toBe(true);
-});
 import { projectApprovalExecutionFailureV2, readApprovalExecutionFailure } from './approvalExecutionFailure.js';
+import { projectSettledApprovalExecution } from '../actions/executor/approvalResults.js';
 import { ManagedResourceDependencyV1Schema } from '../machines/managed/managedDependencyV1.js';
 import { parseSessionBoardActionPortResultV1 } from '../sessions/board/actions.js';
 import { API_TOKEN_FULL_GRANT_V1 } from '../auth/apiTokenGrant.js';
 import { SessionActionRpcOriginV1Schema } from '../rpc/socket.js';
 import { buildApprovalExecutionOriginV1 } from '../actions/actionExecutor.js';
+
+it('retains root teardown Domain retirement partials through settlement and public and stored approval reads', () => {
+  const actionId = 'deployments.teardown';
+  const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'approved', createdAtMs: 1, updatedAtMs: 2,
+    createdBy: { surface: 'cli' }, requestedSurface: 'cli', actionId, summary: 'Stop and remove',
+    actionArgs: { serverId: 'home', environmentId: 'environment', expectedRevision: 1, targetLinkId: 'target',
+      expectedTargetLinkRevision: 1, requestKey: 'remove', reason: 'manual' },
+    decision: { kind: 'approve', decidedAtMs: 2 },
+    executionOriginV1: { v: 1, authority: 'present_user', surface: 'cli', caller: { kind: 'host' },
+      serverId: 'home', accountId: 'owner', machineId: 'machine', actionId, requestId: 'remove' } });
+  const details = { environmentId: 'environment', domainId: 'domain', domainHostname: 'tools.example.test',
+    step: 'removeDomain', partial: true, requiredFact: 'domainIngress', remedy: 'Restore the ingress route and retry removal.' };
+  const failure = { ok: false as const, errorCode: 'native_route_unavailable', error: 'native_route_unavailable', details };
+  const settled = projectSettledApprovalExecution({ request, actionId, exec: failure,
+    dispatchEffectAttempted: true, executedAtMs: 3 });
+  expect(settled.request).toMatchObject({ status: 'failed', execution: { details } });
+  const stored = StoredApprovalRequestSchema.parse(settled.request);
+  expect(readApprovalExecutionFailure(stored)).toEqual(failure);
+  expect(projectApprovalRequestForPublicRead(stored)).toMatchObject({ execution: { details } });
+  for (const unsafe of [{ ...details, environmentId: 'other' }, { ...details, token: 'must-not-persist' }]) {
+    const rejected = projectSettledApprovalExecution({ request, actionId, exec: { ...failure, details: unsafe },
+      dispatchEffectAttempted: true, executedAtMs: 3 });
+    expect(rejected.request.execution).not.toHaveProperty('details');
+  }
+  expect(readApprovalExecutionFailure(StoredApprovalRequestSchema.parse({ ...stored,
+    execution: { ...stored.execution, details: { ...details, environmentId: 'other' } } })))
+    .not.toHaveProperty('details');
+  expect(readApprovalExecutionFailure(StoredApprovalRequestSchema.parse({ ...stored,
+    execution: { ...stored.execution, details: { ...details, futureFact: true } } })))
+    .toMatchObject({ details });
+});
+
+it.each(['saved_secret_unavailable', 'approval_stale'])('retains only request-bound partial Duplicate continuations through approval history (%s)', errorCode => {
+  const actionId = 'deployments.environments.create';
+  const actionArgs = { serverId: 'home', projectSourceId: 'source', requestKey: 'copy',
+    protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
+    controllerMachineId: 'machine', buildMachineId: 'machine', contentArtifactId: 'content',
+    contentHeaderVersion: 1, contentBodyVersion: 1,
+    copyFrom: { environmentId: 'original', expectedRevision: 1,
+      choices: { secrets: [], values: [], data: [], retainPreviousDeployments: 'copy' } },
+    copyPlan: { bindings: [] }, copyIntentCommitment: 'A'.repeat(43) };
+  const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+    createdBy: { surface: 'cli' }, requestedSurface: 'cli', actionId, actionArgs, summary: 'Duplicate',
+    executionOriginV1: { v: 1, authority: 'present_user', surface: 'cli', caller: { kind: 'host' },
+      serverId: 'home', accountId: 'owner', actionId, requestId: 'copy' } });
+  const details = { kind: 'partial', phase: 'bindings', errorCode, savedSecrets: [], environmentId: 'duplicate', revision: 1, continuation: {
+    actionId: 'deployments.bindings.set', input: { serverId: 'home', environmentId: 'duplicate',
+      expectedRevision: 1, set: [], remove: [] } } };
+  const failure = { ok: false as const, errorCode, error: errorCode, details };
+  const execution = projectApprovalExecutionFailureV2({ request, failure, executedAtMs: 3 });
+  expect(execution).toMatchObject({ details });
+  const stored = StoredApprovalRequestSchema.parse({ ...request, status: 'failed', updatedAtMs: 3,
+    decision: { kind: 'approve', decidedAtMs: 2 }, execution });
+  expect(readApprovalExecutionFailure(stored)).toEqual(failure);
+  const retryCreate = { ...details, continuation: { actionId, input: actionArgs } };
+  expect(projectApprovalExecutionFailureV2({ request, failure: { ...failure, details: retryCreate }, executedAtMs: 3 }))
+    .toMatchObject({ details: retryCreate });
+  expect(projectApprovalExecutionFailureV2({ request, failure: { ...failure, details: { ...retryCreate,
+    continuation: { actionId, input: { ...actionArgs, requestKey: 'other' } } } }, executedAtMs: 3 }))
+    .not.toHaveProperty('details');
+  for (const unsafe of [ { ...details, opaque: 'diagnostic' }, { ...details, environmentId: 'other' },
+    { ...details, continuation: { ...details.continuation, input: { ...details.continuation.input, serverId: 'other' } } } ]) {
+    expect(projectApprovalExecutionFailureV2({ request, failure: { ...failure, details: unsafe }, executedAtMs: 3 }))
+      .not.toHaveProperty('details');
+  }
+  expect(projectApprovalExecutionFailureV2({ request: { ...request, actionId: 'settings.get' }, failure, executedAtMs: 3 }))
+    .not.toHaveProperty('details');
+});
+it('retains typed managed-native options failures through approval history', () => {
+  const actionId = 'machines.provisioners.options';
+  const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+    createdBy: { surface: 'system' }, requestedSurface: 'ui', actionId, summary: 'Read native options',
+    actionArgs: { homeId: 'home', controller: { machineId: 'host', installationId: 'installation' },
+      contribution: { pluginId: 'custom.compute', localId: 'vm' }, selectors: {} },
+    executionOriginV1: { v: 1, authority: 'present_user', surface: 'ui', caller: { kind: 'host' },
+      serverId: 'home', accountId: 'owner', actionId, requestId: 'options' } });
+  const details = { kind: 'managedNative', nativeCause: { httpStatusClass: '4xx', code: 'forbidden' } } as const;
+  const failure = { ok: false, errorCode: 'action_failed', error: 'action_failed', details } as const;
+  const execution = projectApprovalExecutionFailureV2({ request, failure, executedAtMs: 3 });
+  expect(execution).toMatchObject({ details });
+  const stored = StoredApprovalRequestSchema.parse({ ...request, status: 'failed', updatedAtMs: 3,
+    decision: { kind: 'approve', decidedAtMs: 2 }, execution });
+  expect(readApprovalExecutionFailure(stored)).toEqual(failure);
+  expect(projectApprovalExecutionFailureV2({ request,
+    failure: { ...failure, details: { ...details, message: 'opaque diagnostic' } }, executedAtMs: 3 }))
+    .not.toHaveProperty('details');
+});
 it.each(['discussion.create', 'discussion.post', 'discussion.reply'] as const)('retains the actual Session publisher custody for approved %s', actionId => {
   const content = { v: 1, parts: [{ t: 'text', text: 'Approved Agent publication' }] };
   const actionArgs = actionId === 'discussion.create' ? { title: 'Created by Agent', firstMessage: { content } }
@@ -114,7 +193,7 @@ it.each(['discussion.create', 'discussion.post', 'discussion.reply'] as const)('
     executionOriginV1: { v: 1, authority: 'account_automation', surface: 'agent',
       caller: { kind: 'session', sessionId: 'receiver', starterDepth: 0, turnDepth: 0 },
       sessionId: 'receiver', serverId: 'home', accountId: 'alice', machineId: 'machine', actionId, requestId: 'publication' } });
-  expect(requiresExactDaemonApprovalReplay(request)).toBe(true);
+  expect(resolveApprovalExecutor(request)).toEqual({ kind: 'daemon', machineId: 'machine', sessionId: 'receiver' });
 });
 it.each(['create', 'post', 'propose'] as const)('retains Session publication custody for a Doc %s without moving host Account effects', operation => {
   const discussionRef = { serverId: 'home', discussionId: 'discussion' };
@@ -132,9 +211,9 @@ it.each(['create', 'post', 'propose'] as const)('retains Session publication cus
     executionOriginV1: { v: 1, authority: 'account_automation', surface: 'agent',
       caller: { kind: 'session', sessionId: 'receiver', starterDepth: 0, turnDepth: 0 },
       sessionId: 'receiver', serverId: 'home', accountId: 'alice', machineId: 'machine', actionId, requestId: 'publication' } });
-  expect(requiresExactDaemonApprovalReplay(request)).toBe(true);
-  expect(requiresExactDaemonApprovalReplay(ApprovalRequestV2Schema.parse({ ...request,
-    executionOriginV1: { ...request.executionOriginV1, caller: { kind: 'host' }, sessionId: undefined } }))).toBe(false);
+  expect(resolveApprovalExecutor(request)).toEqual({ kind: 'daemon', machineId: 'machine', sessionId: 'receiver' });
+  expect(resolveApprovalExecutor(ApprovalRequestV2Schema.parse({ ...request,
+    executionOriginV1: { ...request.executionOriginV1, caller: { kind: 'host' }, sessionId: undefined } }))).toEqual({ kind: 'app', placement: 'account' });
 });
 it.each(['session', 'host'] as const)('preserves a protected pre-admission Discussion return from its actual %s executor without inventing a turn', executorKind => {
   const discussionReplyReturn = { serverId: 'srv_actual_home', requestLocalId: 'original' };
@@ -156,7 +235,7 @@ it.each(['session', 'host'] as const)('preserves a protected pre-admission Discu
     createdBy: { surface: 'agent', sessionId: 'receiver' }, actionId: 'discussion.reply',
     actionArgs: { discussionId: 'discussion', content: { v: 1, parts: [{ t: 'text', text: 'Input failed' }] },
       replyTarget: { kind: 'message', messageId: 'question' } }, summary: 'Review returned answer', executionOriginV1: origin });
-  expect(requiresExactDaemonApprovalReplay(request)).toBe(true);
+  expect(resolveApprovalExecutor(request)).toEqual({ kind: 'daemon', machineId: 'machine', sessionId: 'receiver' });
   if (executorKind === 'host') {
     expect(ApprovalExecutionOriginV1Schema.safeParse({ ...origin, sessionId: undefined }).success).toBe(false);
     expect(ApprovalExecutionOriginV1Schema.safeParse({ ...origin, machineId: undefined }).success).toBe(false);
@@ -187,7 +266,7 @@ it('retains exact Machine approval custody for a non-Session Workflow return', (
     createdBy: { surface: 'agent' }, actionId: 'discussion.reply', summary: 'Review Workflow result',
     actionArgs: { discussionId: 'discussion', replyTarget: { kind: 'message', messageId: 'question' },
       content: { v: 1, parts: [{ t: 'text', text: 'Accepted result' }] } }, executionOriginV1: origin });
-  expect(requiresExactDaemonApprovalReplay(request)).toBe(true);
+  expect(resolveApprovalExecutor(request)).toEqual({ kind: 'daemon', machineId: 'machine' });
 });
 it('preserves an addressed Discussion cutoff through the canonical approval execution origin', () => {
   const discussionAddressing = { discussionId: 'discussion', messageId: 'question', throughSeq: 2, participantSessionId: 'receiver' };
@@ -202,11 +281,11 @@ it('preserves an addressed Discussion cutoff through the canonical approval exec
   expect(ApprovalExecutionOriginV1Schema.safeParse({ ...origin, sessionInputSource: { ...context.sessionInputSource,
     discussionAddressing: { ...discussionAddressing, participantSessionId: 'other' } } }).success).toBe(false);
 });
-import { resolveProjectActionMachineV1 } from '../actions/executor/projectActionPlacement.js';
 import { signExternalActionApprovalInputV1 } from '../actions/externalActionExecutionAuthorization.js';
 import tweetnacl from 'tweetnacl';
 import { sealExternalActionRequestV2 } from '../actions/externalActionEncryption.js';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '../actions/externalActionExecutionAuthorization.js';
+import { deriveWorkspaceSyncRelationshipId } from '../workspaces/workspaceSyncAdmissionV1.js';
 
 it.each(['projects.compute.exec', 'projects.service.relocate'] as const)('retains only the exact signed protected %s original envelope in an approval origin', actionId => {
   const homeId = `srv_${'a'.repeat(32)}`;
@@ -227,7 +306,15 @@ it.each(['projects.compute.exec', 'projects.service.relocate'] as const)('retain
     externalActionExecutionAuthorization: { v: 1, token: 'signed-root', binding: { accountId: 'requester',
       authentication: { kind: 'terminal', tokenEpoch: 1 }, custodianAccountId: 'worker-owner', serverIdentityId: homeId,
       machineId: 'worker', installationId: 'worker-installation', accountEncryptionMode: 'e2ee', actionId,
-      requestId: 'finite-request', requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), target } } };
+      requestId: 'finite-request', requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+      machineRuntimeDemand: envelope.machineRuntimeDemand, target,
+      ...(envelope.workspaceSyncAdmission ? { workspaceSyncAdmission: {
+        relationshipId: deriveWorkspaceSyncRelationshipId(envelope.requestId),
+        sourceWorkspaceRefId: envelope.workspaceSyncAdmission.sourceWorkspaceRefId,
+        source: { machineId: envelope.workspaceSyncAdmission.sourceMachineId, actorAccountId: 'requester',
+          custodianAccountId: 'requester', installationId: 'source-installation', role: 'manage', encryptionMode: 'e2ee' },
+      } } : {}),
+    } } };
   expect(ApprovalExecutionOriginV1Schema.parse(origin).originalActionEnvelope).toEqual(envelope);
   const authorization = ApprovalExecutionOriginV1Schema.parse(origin).externalActionExecutionAuthorization!;
   const captured = buildApprovalExecutionOriginV1({ actionId, input, targetSessionId: null, context: {
@@ -243,12 +330,16 @@ it.each(['projects.compute.exec', 'projects.service.relocate'] as const)('retain
     { ...origin, originalActionEnvelope: { ...envelope, requestId: 'substituted' } },
     { ...origin, originalActionEnvelope: { ...envelope, target: { kind: 'machine', machineId: 'another-worker' } } },
     { ...origin, originalActionEnvelope: { ...envelope, payload: { t: 'encrypted', c: 'AAAA' } } },
+    ...(envelope.machineRuntimeDemand ? [{ ...origin, externalActionExecutionAuthorization: { ...origin.externalActionExecutionAuthorization,
+      binding: { ...origin.externalActionExecutionAuthorization.binding, machineRuntimeDemand: undefined } } }] : []),
+    ...(envelope.workspaceSyncAdmission ? [{ ...origin, externalActionExecutionAuthorization: { ...origin.externalActionExecutionAuthorization,
+      binding: { ...origin.externalActionExecutionAuthorization.binding, workspaceSyncAdmission: undefined } } }] : []),
     { ...origin, actionId: 'projects.script.run' },
     { ...origin, externalActionExecutionAuthorization: undefined },
   ]) expect(ApprovalExecutionOriginV1Schema.safeParse(changed).success).toBe(false);
 });
 
-it('replays client Home continuations at the deciding app across originating callers', () => {
+it('replays client Home continuations at the deciding app for every caller', () => {
   const actionId = 'account.home_continuation.invoke';
   const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
     createdBy: { surface: 'agent' }, requestedSurface: 'agent', actionId,
@@ -256,19 +347,101 @@ it('replays client Home continuations at the deciding app across originating cal
     executionOriginV1: { v: 1, authority: 'account_automation', surface: 'agent', caller: { kind: 'host' },
       serverId: 'home', accountId: 'alice', actionId, requestId: 'request-home' } });
   for (const surface of ['agent', 'mcp'] as const) {
-    expect(requiresExactDaemonApprovalReplay(ApprovalRequestV2Schema.parse({ ...request,
+    expect(resolveApprovalExecutor(ApprovalRequestV2Schema.parse({ ...request,
       createdBy: { surface }, requestedSurface: surface,
-      executionOriginV1: { ...request.executionOriginV1, surface } }))).toBe(false);
+      executionOriginV1: { ...request.executionOriginV1, surface } }))).toEqual({ kind: 'app', placement: 'client' });
   }
-  expect(requiresExactDaemonApprovalReplay(ApprovalRequestV2Schema.parse({ ...request,
+  expect(resolveApprovalExecutor(ApprovalRequestV2Schema.parse({ ...request,
     executionOriginV1: { ...request.executionOriginV1,
-      caller: { kind: 'session', sessionId: 'source', starterDepth: 0, turnDepth: 0 } } }))).toBe(false);
-  expect(requiresExactDaemonApprovalReplay(ApprovalRequestV2Schema.parse({ ...request,
+      caller: { kind: 'session', sessionId: 'source', starterDepth: 0, turnDepth: 0 } } }))).toEqual({ kind: 'app', placement: 'client' });
+  expect(resolveApprovalExecutor(ApprovalRequestV2Schema.parse({ ...request,
     executionOriginV1: { ...request.executionOriginV1, caller: { kind: 'plugin', pluginId: 'custom.owner', contributionLocalId: 'step',
-      sourceCustody: { kind: 'managed', immutableGenerationId: 'generation', installSource: 'archive' } } } }))).toBe(false);
-  expect(requiresExactDaemonApprovalReplay(ApprovalRequestV2Schema.parse({ ...request, actionId: 'ui.current_context.command.invoke',
+      sourceCustody: { kind: 'managed', immutableGenerationId: 'generation', installSource: 'archive' } } } }))).toEqual({ kind: 'app', placement: 'client' });
+  expect(resolveApprovalExecutor(ApprovalRequestV2Schema.parse({ ...request, actionId: 'ui.current_context.command.invoke',
     actionArgs: { commandId: 'current-ui:home' },
-    executionOriginV1: { ...request.executionOriginV1, actionId: 'ui.current_context.command.invoke' } }))).toBe(false);
+    executionOriginV1: { ...request.executionOriginV1, actionId: 'ui.current_context.command.invoke' } }))).toEqual({ kind: 'app', placement: 'client' });
+});
+
+it('retains a PAT Workflow Run root separately from its leaf approval request identity', () => {
+  const target = { kind: 'machine', machineId: 'receiver' };
+  const authorization = { v: 1, token: 'home-signed-run', binding: {
+    accountId: 'requester', principalId: 'principal', credentialId: 'credential', grant: API_TOKEN_FULL_GRANT_V1,
+    serverIdentityId: 'srv_home', machineId: 'receiver', custodianAccountId: 'requester', installationId: 'installation',
+    actionId: 'workflow.run.start', requestId: 'start-run', requestEnvelopeDigest: 'a'.repeat(43), target,
+  } };
+  const caller = { kind: 'workflowRun', runId: 'accepted-run', authorization: {
+    principal: { kind: 'api', accountId: 'requester', principalId: 'principal', credentialId: 'credential' },
+    admittedPermissionCeiling: 'default', externalActionExecutionAuthorization: authorization,
+  } };
+  const origin = { v: 1, authority: 'account_automation', surface: 'api', caller, serverId: 'profile',
+    serverIdentityId: 'srv_home', accountId: 'requester', principalId: 'principal', credentialId: 'credential',
+    machineId: 'receiver', target, actionId: 'action.invoke', requestId: 'accepted-run/leaf/0',
+    externalActionInputSignature: 'a'.repeat(86), externalActionExecutionAuthorization: authorization };
+  expect(ApprovalExecutionOriginV1Schema.parse(origin)).toEqual(origin);
+  const { principalId: _principal, credentialId: _credential, grant: _grant, ...accountBinding } = authorization.binding;
+  const accountAuthorization = { ...authorization, binding: { ...accountBinding,
+    authentication: { kind: 'account', tokenEpoch: 1 } } };
+  const accountOrigin = ApprovalExecutionOriginV1Schema.parse({ ...origin, surface: 'agent', principalId: undefined,
+    credentialId: undefined, externalActionExecutionAuthorization: accountAuthorization,
+    caller: { ...caller, authorization: { ...caller.authorization, principal: { kind: 'host' },
+      externalActionExecutionAuthorization: accountAuthorization } } });
+  const privateKey = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(17)).secretKey;
+  expect(buildApprovalExecutionOriginV1({ actionId: 'action.invoke', input: {}, targetSessionId: null,
+    context: { surface: 'agent', authority: 'account_automation', serverId: accountOrigin.serverId,
+      serverIdentityId: accountOrigin.serverIdentityId, runtimeAccountId: accountOrigin.accountId,
+      actionRequestId: accountOrigin.requestId, actionCaller: accountOrigin.caller,
+      externalActionTarget: accountOrigin.target, externalActionExecutionAuthorization: accountOrigin.externalActionExecutionAuthorization,
+      signExternalActionApprovalInput: ({ authorization, ...request }) => signExternalActionApprovalInputV1({
+        ...request, authorizationToken: authorization.token, privateKey }) } })).toMatchObject({
+    surface: 'agent', requestId: origin.requestId, caller: accountOrigin.caller,
+    externalActionExecutionAuthorization: accountAuthorization,
+  });
+  expect(ApprovalExecutionOriginV1Schema.safeParse({ ...accountOrigin, authority: 'present_user' }).success).toBe(false);
+  for (const patch of [
+    { caller: { kind: 'host' } },
+    { accountId: 'another-account' },
+    { externalActionExecutionAuthorization: { ...authorization, token: 'another-run-root' } },
+    { externalActionExecutionAuthorization: { ...authorization,
+      binding: { ...authorization.binding, installationId: 'another-installation' } } },
+  ]) expect(ApprovalExecutionOriginV1Schema.safeParse({ ...origin, ...patch }).success).toBe(false);
+});
+
+it.each(['machines.setup.apply', 'deployments.teardown'] as const)('retains signed Workflow Machine approval holds without admitting ordinary Agent host roots (%s)', actionId => {
+  const target = { kind: 'machine' as const, machineId: 'receiver' };
+  const binding = { accountId: 'requester', authentication: { kind: 'account' as const, tokenEpoch: 7 },
+    serverIdentityId: 'srv_home', machineId: 'receiver', custodianAccountId: 'requester', installationId: 'installation',
+    actionId, requestId: 'run/invocation/0', requestEnvelopeDigest: 'a'.repeat(43), target,
+    workflowActionOrigin: { runId: 'run', requestId: 'run/invocation/0' } };
+  const origin = { v: 1, authority: 'account_automation', surface: 'agent', caller: { kind: 'host' }, serverId: 'profile',
+    serverIdentityId: 'srv_home', accountId: 'requester', machineId: 'receiver', actionId: binding.actionId,
+    requestId: binding.requestId, target, externalActionInputSignature: 'a'.repeat(86),
+    externalActionExecutionAuthorization: { v: 1, token: 'home-signed', binding } };
+  expect(ApprovalExecutionOriginV1Schema.parse(origin)).toEqual(origin);
+  const privateKey = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(8)).secretKey;
+  const prepared = buildApprovalExecutionOriginV1({ actionId: binding.actionId,
+    input: actionId === 'deployments.teardown'
+      ? { serverId: 'srv_home', environmentId: 'environment', expectedRevision: 1, targetLinkId: 'link',
+        expectedTargetLinkRevision: 1, requestKey: 'cleanup', reason: 'manual' }
+      : { homeId: 'srv_home', machineId: 'receiver', targets: [{
+      homeId: 'srv_home', machineId: 'receiver', desiredRevision: 0, recipePlans: [], sources: [
+      { kind: 'accountPreset', presetId: 'preset', presetRevision: 1, setup: { scripts: [{ body: 'echo retained', affects: 'none' }],  } },
+      { kind: 'direct', setup: {} },
+    ] }] }, targetSessionId: null,
+    context: { authority: 'account_automation', surface: 'agent', actionCaller: { kind: 'host' }, serverId: 'profile',
+      serverIdentityId: 'srv_home', runtimeAccountId: 'requester', actionRequestId: binding.requestId,
+      externalActionTarget: target, externalActionExecutionAuthorization: { v: 1, token: 'home-signed', binding },
+      signExternalActionApprovalInput: ({ authorization, ...request }) => signExternalActionApprovalInputV1({
+        ...request, authorizationToken: authorization.token, privateKey }) } });
+  expect(prepared).toMatchObject({ authority: 'account_automation', surface: 'agent', caller: { kind: 'host' },
+    machineId: 'receiver', target, externalActionExecutionAuthorization: origin.externalActionExecutionAuthorization });
+  expect(ApprovalExecutionOriginV1Schema.safeParse(prepared).success).toBe(true);
+  const { workflowActionOrigin: _origin, ...ordinaryBinding } = binding;
+  for (const patch of [
+    { authority: 'present_user' }, { surface: 'ui' }, { caller: { kind: 'workflowRun', runId: 'run' } },
+    { serverIdentityId: 'srv_other' }, { accountId: 'other' }, { requestId: 'other' }, { machineId: 'other' },
+    { target: { kind: 'machine', machineId: 'other' } }, { sessionId: 'fabricated' },
+    { externalActionExecutionAuthorization: { ...origin.externalActionExecutionAuthorization, binding: ordinaryBinding } },
+  ]) expect(ApprovalExecutionOriginV1Schema.safeParse({ ...origin, ...patch }).success).toBe(false);
 });
 
 it('retains genuine signed Account approval origins without replacing Session automation with present-user authority', () => {
@@ -302,9 +475,6 @@ it('retains genuine signed Account approval origins without replacing Session au
   expect(ApprovalExecutionOriginV1Schema.safeParse({ ...plugin, surface: 'ui' }).success).toBe(false);
   expect(ApprovalExecutionOriginV1Schema.safeParse({ ...plugin, caller: { kind: 'host' } }).success).toBe(false);
   expect(ApprovalExecutionOriginV1Schema.safeParse({ ...plugin, caller: { ...pluginCaller, sourceCustody: undefined } }).success).toBe(false);
-  expect(requiresExactDaemonApprovalReplay(ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
-    createdBy: { surface: 'system' }, requestedSurface: 'ui', actionId: ui.actionId, actionArgs: {}, summary: 'Acquire Machine',
-    executionOriginV1: ui }))).toBe(true);
   for (const changed of [
     { serverIdentityId: 'srv_other' }, { accountId: 'other-requester' }, { machineId: 'other-machine' },
     { requestId: 'different-request' }, { target: { kind: 'machine', machineId: 'other-machine' } },
@@ -429,6 +599,25 @@ describe('ApprovalRequestV1Schema', () => {
     }
   });
 
+  it('reads the typed busy reason from a retained plugin refusal without diagnostics', () => {
+    // STORE-REPLAY pl50-cleanup-uninstall-change-refusal.json: this receipt
+    // already exists, so a producer-only fix cannot repair its presentation.
+    const result = getActionSpec('plugins.uninstall').outputSchema!.parse({
+      ok: false, kind: 'plugins_uninstall', action: 'uninstall', pluginId: 'pl50.fixture',
+      change: { kind: 'busy', pluginId: 'pl50.fixture' },
+    });
+    const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'executed', createdAtMs: 1, updatedAtMs: 3,
+      createdBy: { surface: 'system' }, requestedSurface: 'ui', actionId: 'plugins.uninstall',
+      actionArgs: { pluginId: 'pl50.fixture' }, summary: 'Remove plugin',
+      executionOriginV1: { v: 1, authority: 'account_automation', surface: 'ui', caller: { kind: 'host' },
+        serverId: 'home', serverIdentityId: 'home-identity', accountId: 'alice', machineId: 'machine',
+        actionId: 'plugins.uninstall', requestId: 'uninstall' },
+      decision: { kind: 'approve', decidedAtMs: 2 }, execution: { executedAtMs: 3, ok: true, result } });
+    expect(readApprovalExecutionFailure(request)).toMatchObject({ ok: false, errorCode: 'busy',
+      error: expect.stringContaining('pl50.fixture') });
+    expect(request.execution?.result).toEqual(result);
+  });
+
   it.each([
     ['machines.presets.create', { kind: 'refused', code: 'provider_unavailable' }, 'provider_unavailable'],
     ['machines.presets.update', { kind: 'conflict', currentRevision: 4 }, 'conflict'],
@@ -514,6 +703,72 @@ describe('ApprovalRequestV1Schema', () => {
       details: { category: 'transport_timeout' } };
     expect(projectApprovalExecutionFailureV2({ request, failure: uncertain, executedAtMs: 3 }))
       .toMatchObject({ details: uncertain.details });
+  });
+
+  it.each([
+    { code: 'effect_in_progress', details: { actionOperationId: 'held-owner-compose' }, effectAttempted: false },
+    { code: 'plan_changed', details: { setupOutcome: 'applied' }, effectAttempted: true },
+  ] as const)('retains only request-bound Machine reachability $code failure facts', ({ code, details, effectAttempted }) => {
+    const actionId = 'machines.reachability.configure';
+    const selected = { provider: { kind: 'builtin', id: 'tailscale' }, config: {}, credentialRefs: [] } as const;
+    const change = { kind: 'privateNetwork', intent: 'leave', selection: selected } as const;
+    const input = { serverId: 'home', machineId: 'machine', change, reviewedPlanDigest: 'a'.repeat(64),
+      reviewedPlanBasis: { machineId: 'machine', installationId: 'installation', currentPostureRevision: null,
+        currentSelections: [selected], change, occurrences: [], recipePlans: [] } };
+    const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+      createdBy: { surface: 'cli' }, requestedSurface: 'cli', actionId, summary: 'Configure Machine network',
+      actionArgs: getActionSpec(actionId).inputSchema.parse(input),
+      executionOriginV1: { v: 1, authority: 'present_user', surface: 'cli', caller: { kind: 'host' },
+        serverId: 'home', accountId: 'account', machineId: 'machine', actionId, requestId: 'request' } });
+    const failure = { ok: false as const, errorCode: code, error: code, effectAttempted, details };
+    const execution = projectApprovalExecutionFailureV2({ request, failure, executedAtMs: 3, effectAttempted });
+    expect(execution).toEqual({ executedAtMs: 3, ok: false, errorCode: code, error: code, effectAttempted, details });
+    const stored = StoredApprovalRequestSchema.parse({ ...request,
+      status: effectAttempted ? 'outcome_unknown' : 'failed', updatedAtMs: 3,
+      decision: { kind: 'approve', decidedAtMs: 2 }, execution });
+    expect(readApprovalExecutionFailure(stored)?.details).toEqual(details);
+    expect(projectApprovalRequestForPublicRead(stored)).toMatchObject({ execution: { details } });
+
+    const unsafeDetails = { ...details, bearer: 'must-not-persist' };
+    expect(projectApprovalExecutionFailureV2({ request, failure: { ...failure, details: unsafeDetails },
+      executedAtMs: 3, effectAttempted })).not.toHaveProperty('details');
+    const contaminated = StoredApprovalRequestSchema.parse({ ...stored,
+      execution: { ...execution, details: unsafeDetails } });
+    expect(readApprovalExecutionFailure(contaminated)?.details).toEqual(details);
+    expect(JSON.stringify(readApprovalExecutionFailure(contaminated))).not.toContain('must-not-persist');
+
+    const futureInput = { ...input, futureInputFact: true,
+      reviewedPlanBasis: { ...input.reviewedPlanBasis, futureBasisFact: true } };
+    expect(projectApprovalExecutionFailureV2({ request: { ...request, actionArgs: futureInput }, failure,
+      executedAtMs: 3, effectAttempted })).not.toHaveProperty('details');
+    expect(readApprovalExecutionFailure(StoredApprovalRequestSchema.parse({ ...contaminated,
+      actionArgs: futureInput }))?.details).toEqual(details);
+
+    for (const actionArgs of [{}, { ...input, reviewedPlanDigest: 'invalid' },
+      { ...input, reviewedPlanBasis: { ...input.reviewedPlanBasis, recipePlans: 'invalid' } }]) {
+      expect(projectApprovalExecutionFailureV2({ request: { ...request, actionArgs }, failure,
+        executedAtMs: 3, effectAttempted })).not.toHaveProperty('details');
+      expect(readApprovalExecutionFailure(StoredApprovalRequestSchema.parse({ ...stored, actionArgs })))
+        .not.toHaveProperty('details');
+    }
+    const foreign = ApprovalRequestV2Schema.parse({ ...request, actionId: 'machines.reachability.inspect',
+      actionArgs: { serverId: 'home', machineId: 'machine' },
+      executionOriginV1: { ...request.executionOriginV1, actionId: 'machines.reachability.inspect' } });
+    expect(projectApprovalExecutionFailureV2({ request: foreign, failure, executedAtMs: 3, effectAttempted }))
+      .not.toHaveProperty('details');
+    expect(readApprovalExecutionFailure(StoredApprovalRequestSchema.parse({ ...stored, actionId: foreign.actionId,
+      actionArgs: foreign.actionArgs, executionOriginV1: foreign.executionOriginV1 }))).not.toHaveProperty('details');
+
+    const mismatchedCode = code === 'effect_in_progress' ? 'plan_changed' : 'effect_in_progress';
+    expect(projectApprovalExecutionFailureV2({ request, failure: { ...failure, errorCode: mismatchedCode },
+      executedAtMs: 3, effectAttempted })).not.toHaveProperty('details');
+    expect(readApprovalExecutionFailure(StoredApprovalRequestSchema.parse({ ...stored,
+      execution: { ...execution, errorCode: mismatchedCode } }))).not.toHaveProperty('details');
+    const invalidDetails = code === 'effect_in_progress' ? { actionOperationId: '' } : { setupOutcome: 'not-applied' };
+    expect(projectApprovalExecutionFailureV2({ request, failure: { ...failure, details: invalidDetails },
+      executedAtMs: 3, effectAttempted })).not.toHaveProperty('details');
+    expect(readApprovalExecutionFailure(StoredApprovalRequestSchema.parse({ ...stored,
+      execution: { ...execution, details: invalidDetails } }))).not.toHaveProperty('details');
   });
 
   it('retains only content-free client delivery causes through durable approval and public reads', () => {
@@ -723,7 +978,7 @@ describe('ApprovalRequestV1Schema', () => {
     expect(projectApprovalExecutionFailureV2({ request: { ...request, actionArgs: {} }, failure: transportedFailure, executedAtMs: 3 })).not.toHaveProperty('details');
   });
 
-  it('keeps confidential credential approval custody value-free and bound to its admitted Home and target', () => {
+  it('keeps confidential credential approval custody value-free without comparing the Action target to its origin', () => {
     const actionArgs = {
       serverId: 'home-1', sessionId: 'session-1', machineId: 'machine-1', purpose: 'Sign in',
       browserSessionId: 'browser-1', viewId: 'view-1', tabId: 'tab-1', frameId: 'frame-1',
@@ -746,8 +1001,6 @@ describe('ApprovalRequestV1Schema', () => {
       { actionArgs: { ...actionArgs, value: 'recognizable-private-value' } },
       { preview: { actionId, actionArgs, valueHash: 'recognizable-private-value' } },
       { origin: { kind: 'transcript_tool_call', toolName: 'secret_fill', toolInput: { value: 'recognizable-private-value' } } },
-      { actionArgs: { ...actionArgs, serverId: 'other-home' } },
-      { actionArgs: { ...actionArgs, machineId: 'other-machine' } },
       { actionArgs: { ...actionArgs, field: { ...actionArgs.field, value: 'recognizable-private-value' } } },
     ]) {
       expect(ApprovalRequestV2Schema.safeParse({ ...request, ...changed }).success).toBe(false);
@@ -783,6 +1036,21 @@ describe('ApprovalRequestV1Schema', () => {
       executionOriginV1: { ...request.executionOriginV1, actionId: 'computer.secret.fill' } };
     expect(ApprovalRequestV2Schema.safeParse(native).success).toBe(true);
     expect(ApprovalRequestV2Schema.safeParse({ ...native, actionArgs: { ...nativeArgs, value: 'recognizable-private-value' } }).success).toBe(false);
+    for (const target of [request, native]) {
+      const routed = { ...target, executionOriginV1: { ...target.executionOriginV1,
+        serverId: 'local-home-profile', serverIdentityId: 'home-1' } };
+      expect(ApprovalRequestV2Schema.safeParse(routed).success).toBe(true);
+      expect(StoredApprovalRequestSchema.safeParse(routed).success).toBe(true);
+      for (const serverIdentityId of [undefined, 'foreign-home']) {
+        const unbound = { ...routed, executionOriginV1: { ...routed.executionOriginV1, serverIdentityId } };
+        expect(ApprovalRequestV2Schema.safeParse(unbound).success).toBe(true);
+        expect(StoredApprovalRequestSchema.safeParse(unbound).success).toBe(true);
+      }
+      const differentOrigin = { ...routed, executionOriginV1: { ...routed.executionOriginV1,
+        sessionId: 'requesting-session', machineId: 'origin-machine' } };
+      expect(ApprovalRequestV2Schema.safeParse(differentOrigin).success).toBe(true);
+      expect(StoredApprovalRequestSchema.safeParse(differentOrigin).success).toBe(true);
+    }
   });
   it('accepts target proof only for the two workspace destination producers', () => {
     const proof = {
@@ -1471,6 +1739,77 @@ describe('ApprovalRequestV1Schema', () => {
   });
 });
 
+describe('Approval caller provenance', () => {
+  function approvalWithCaller(caller: unknown): unknown {
+    return {
+      v: 2,
+      status: 'approved',
+      createdAtMs: 1,
+      updatedAtMs: 2,
+      createdBy: { surface: 'system' },
+      requestedSurface: 'ui',
+      actionId: 'session.title.set',
+      actionArgs: { sessionId: 'session-1', title: 'Reviewed title' },
+      summary: 'Set title',
+      decision: { kind: 'approve', decidedAtMs: 2 },
+      executionOriginV1: {
+        v: 1,
+        authority: 'present_user',
+        surface: 'ui',
+        caller,
+        serverId: 'home-1',
+        accountId: 'account-1',
+        sessionId: 'session-1',
+        target: { kind: 'session', sessionId: 'session-1' },
+        actionId: 'session.title.set',
+        requestId: 'request-1',
+      },
+    };
+  }
+
+  it('retains strict Session and Run caller provenance', () => {
+    expect(ApprovalRequestV2Schema.parse(approvalWithCaller({ kind: 'host' })).executionOriginV1.caller).toEqual({ kind: 'host' });
+
+    const sessionCaller = { kind: 'session', sessionId: 'session-caller', starterDepth: 2, turnDepth: 3 };
+    const session = ApprovalRequestV2Schema.parse(approvalWithCaller(sessionCaller));
+    expect(session.executionOriginV1.caller).toEqual(sessionCaller);
+    expect(ApprovalRequestV2Schema.safeParse(approvalWithCaller({ ...sessionCaller, capability: 'secret' })).success).toBe(false);
+    expect(ApprovalRequestV2Schema.safeParse(approvalWithCaller({ ...sessionCaller, sessionId: ' ' })).success).toBe(false);
+    expect(ApprovalRequestV2Schema.safeParse(approvalWithCaller({ kind: 'session', sessionId: 'session-caller' })).success).toBe(false);
+    expect(ApprovalRequestV2Schema.safeParse(approvalWithCaller({ ...sessionCaller, starterDepth: undefined })).success).toBe(false);
+    expect(ApprovalRequestV2Schema.safeParse(approvalWithCaller({ ...sessionCaller, turnDepth: -1 })).success).toBe(false);
+
+    ApprovalRequestV2Schema.parse(approvalWithCaller({
+      kind: 'workflowRun',
+      runId: 'workflow-run-1',
+      authorization: {
+        admittedPermissionCeiling: 'default',
+        principal: {
+          kind: 'api',
+          accountId: 'account-1',
+          principalId: 'principal-1',
+          credentialId: 'credential-1',
+        },
+      },
+    }));
+
+    const automationCaller = {
+      kind: 'automationRun',
+      runId: 'automation-run-1',
+      automationId: 'automation-1',
+      cause: { kind: 'manual', invokedAt: 1_700_000_000_000 },
+    } as const;
+    ApprovalRequestV2Schema.parse({
+      ...approvalWithCaller(automationCaller) as Record<string, unknown>,
+      executionOriginV1: {
+        ...(approvalWithCaller(automationCaller) as { executionOriginV1: Record<string, unknown> }).executionOriginV1,
+        runId: 'automation-run-1',
+      },
+    });
+  });
+
+});
+
 describe('requiresExactDaemonApprovalReplay', () => {
   it.each([
     { actionId: 'projects.prepare', input: { workspace: { serverId: 'stable-home', machineId: 'machine-1', workspaceId: 'checkout', rootPath: '/repo' },
@@ -1784,4 +2123,94 @@ describe('requiresExactDaemonApprovalReplay', () => {
     });
     expect(requiresExactDaemonApprovalReplay(apiRequest)).toBe(false);
   });
+});
+
+describe('public replay carrier compatibility', () => {
+it('admits only unsigned mounted plugin Account/client blocking continuations to their live client', () => {
+  const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+    createdBy: { surface: 'system' }, requestedSurface: 'plugin', approval: { flow: 'blocking', result: 'required' },
+    actionId: 'widgets.item.add', summary: 'Add widget', actionArgs: {
+      surface: { serverId: 'home', accountId: 'alice', owner: { kind: 'pluginArea', pluginId: 'example.widgets', pageId: 'overview', area: 'pinned' } },
+      instance: { v: 1, id: 'copy', definition: { kind: 'builtin', id: 'session_summary' }, bindings: {} },
+    }, executionOriginV1: { v: 1, authority: 'account_automation', surface: 'plugin',
+      caller: { kind: 'plugin', pluginId: 'example.widgets', contributionLocalId: 'overview', sourceCustody: { kind: 'development', registeredRootId: 'root' } },
+      serverId: 'home', serverIdentityId: 'srv_home', accountId: 'alice', machineId: 'machine', actionId: 'widgets.item.add', requestId: 'add' } });
+  expect(isMountedPluginBlockingApprovalEligibleForLiveClient(request)).toBe(true);
+  // The retained plugin invocation is local; a contextual Machine is not custody.
+  expect(resolveApprovalExecutor(request)).toEqual({ kind: 'live_invocation' });
+  expect(requiresExactDaemonApprovalReplay(request)).toBe(false);
+  const target = { kind: 'machine' as const, machineId: 'machine' };
+  const signed = ApprovalRequestV2Schema.parse({ ...request, executionOriginV1: {
+    ...request.executionOriginV1, target, externalActionInputSignature: 'a'.repeat(86),
+    externalActionExecutionAuthorization: { v: 1, token: 'signed-account-root', binding: {
+      serverIdentityId: 'srv_home', accountId: 'alice', authentication: { kind: 'account', tokenEpoch: 1 },
+      machineId: 'machine', custodianAccountId: 'alice', installationId: 'installation',
+      actionId: request.actionId, requestId: 'add', requestEnvelopeDigest: 'a'.repeat(43), target,
+    } },
+  } });
+  expect(isMountedPluginBlockingApprovalEligibleForLiveClient(signed)).toBe(false);
+  expect(requiresExactDaemonApprovalReplay(signed)).toBe(true);
+  for (const patch of [
+    { approval: undefined },
+    { approval: { flow: 'deferred', result: 'required' } },
+    { executionOriginV1: { ...request.executionOriginV1, machineId: undefined } },
+    { executionOriginV1: { ...request.executionOriginV1, serverIdentityId: undefined } },
+    { executionOriginV1: { ...request.executionOriginV1, sessionId: 'session', target: { kind: 'session', sessionId: 'session' } } },
+    { executionOriginV1: { ...request.executionOriginV1, callerPermissionMode: 'default' } },
+    { executionOriginV1: { ...request.executionOriginV1, externalActionInputSignature: 'a'.repeat(86) } },
+    { requestedSurface: 'agent', executionOriginV1: { ...request.executionOriginV1, surface: 'agent', caller: { kind: 'session', sessionId: 'session', starterDepth: 0, turnDepth: 0 } } },
+    { actionId: 'session.stop', actionArgs: { sessionId: 'session' }, executionOriginV1: { ...request.executionOriginV1, actionId: 'session.stop' } },
+  ]) {
+    expect(isMountedPluginBlockingApprovalEligibleForLiveClient(ApprovalRequestV2Schema.parse({ ...request, ...patch }))).toBe(false);
+  }
+});
+
+it('keeps client Voice replay app-owned while Machine effects retain their executor', () => {
+  const actionId = 'ui.voice_global.set_muted';
+  const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+    createdBy: { surface: 'agent', sessionId: 'source' }, requestedSurface: 'agent', actionId,
+    actionArgs: { expectedAttempt: 'voice-attempt:1', muted: false }, summary: 'Unmute Voice',
+    executionOriginV1: { v: 1, authority: 'account_automation', surface: 'agent',
+      caller: { kind: 'session', sessionId: 'source', starterDepth: 0, turnDepth: 0 },
+      serverId: 'home', accountId: 'alice', machineId: 'offline-machine', actionId, requestId: 'unmute' } });
+  for (const surface of ['agent', 'mcp', 'voice'] as const) {
+    expect(requiresExactDaemonApprovalReplay(ApprovalRequestV2Schema.parse({ ...request,
+      requestedSurface: surface,
+      executionOriginV1: { ...request.executionOriginV1, surface } }))).toBe(false);
+  }
+  expect(requiresExactDaemonApprovalReplay(ApprovalRequestV2Schema.parse({ ...request,
+    requestedSurface: 'plugin',
+    executionOriginV1: { ...request.executionOriginV1, surface: 'plugin', caller: {
+      kind: 'plugin', pluginId: 'custom.voice', contributionLocalId: 'voice',
+      sourceCustody: { kind: 'development', registeredRootId: 'voice-root' },
+    } } }))).toBe(false);
+  expect(requiresExactDaemonApprovalReplay(ApprovalRequestV2Schema.parse({ ...request,
+    actionArgs: { expectedAttempt: 'voice-attempt:1', muted: 'false' } }))).toBe(true);
+  expect(requiresExactDaemonApprovalReplay(ApprovalRequestV2Schema.parse({ ...request,
+    actionId: 'session.stop', actionArgs: { sessionId: 'source' },
+    executionOriginV1: { ...request.executionOriginV1, actionId: 'session.stop' } }))).toBe(true);
+});
+it('replays client Home continuations at the deciding app across originating callers', () => {
+  const actionId = 'account.home_continuation.invoke';
+  const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+    createdBy: { surface: 'agent' }, requestedSurface: 'agent', actionId,
+    actionArgs: { operation: 'refresh', commandId: 'current-ui:home' }, summary: 'Refresh Homes',
+    executionOriginV1: { v: 1, authority: 'account_automation', surface: 'agent', caller: { kind: 'host' },
+      serverId: 'home', accountId: 'alice', actionId, requestId: 'request-home' } });
+  for (const surface of ['agent', 'mcp'] as const) {
+    expect(requiresExactDaemonApprovalReplay(ApprovalRequestV2Schema.parse({ ...request,
+      createdBy: { surface }, requestedSurface: surface,
+      executionOriginV1: { ...request.executionOriginV1, surface } }))).toBe(false);
+  }
+  expect(requiresExactDaemonApprovalReplay(ApprovalRequestV2Schema.parse({ ...request,
+    executionOriginV1: { ...request.executionOriginV1,
+      caller: { kind: 'session', sessionId: 'source', starterDepth: 0, turnDepth: 0 } } }))).toBe(false);
+  expect(requiresExactDaemonApprovalReplay(ApprovalRequestV2Schema.parse({ ...request,
+    executionOriginV1: { ...request.executionOriginV1, caller: { kind: 'plugin', pluginId: 'custom.owner', contributionLocalId: 'step',
+      sourceCustody: { kind: 'managed', immutableGenerationId: 'generation', installSource: 'archive' } } } }))).toBe(false);
+  expect(requiresExactDaemonApprovalReplay(ApprovalRequestV2Schema.parse({ ...request, actionId: 'ui.current_context.command.invoke',
+    actionArgs: { commandId: 'current-ui:home' },
+    executionOriginV1: { ...request.executionOriginV1, actionId: 'ui.current_context.command.invoke' } }))).toBe(false);
+});
+
 });

@@ -1,5 +1,3 @@
-import { isManagedControllerCodecActionV1, openManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
-import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { createSessionFollowActionDeps } from '@/api/sessionFollowActionDeps';
 import { createSessionReadStateActionDeps } from '@/api/sessionReadStateActionDeps';
 import { createCliActionExecutorHarness } from './createCliActionExecutorHarness';
@@ -16,13 +14,14 @@ import {
   hasStoredSessionCredentialProvenance,
   type StoredCredentials,
 } from '@/persistence';
-import { createDaemonPluginActionExecutor, createPluginActionExecutor, readPluginActionExecutionReference } from './createDaemonPluginActionExecutor';
+import { createDaemonPluginActionExecutor, createPluginActionExecutor, readPluginActionExecutionReference, type PluginActionExecutionRequestOwner } from './createDaemonPluginActionExecutor';
 import { createCommittedContributedActionSchemaReader, createCommittedInputTypeDeps } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
 import type { CliActionExactHomeTarget } from './createCliActionDeps';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import { clientActionUnavailable } from '@happier-dev/protocol/actions/clientDispatchV1';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps, RuntimeActionExecute, ActionId } from '@happier-dev/protocol';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import type {
   ExternalSessionPluginAdmissionOwner,
 } from './externalSessions/pluginExternalSessionAdmissionOwner';
@@ -35,7 +34,6 @@ import type { ResolveSpawnConnectedServicesTeamResourceCatalog } from '@/session
 import { createSessionFollowSourceKeyPreparationAfterSet } from '@/agent/runtime/session/follow/createSessionFollowSourceKeyPreparationAfterSet';
 import { resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
 import { isFilesystemActionId } from '@happier-dev/protocol/actions/filesystemActionFamily';
-import { resolveEffectiveTerminalPresentUserPolicy } from '@/settings/accountSettings/resolveEffectiveTerminalPresentUserPolicy';
 import { normalizeServerHttpBaseUrl, resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { signExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -43,7 +41,10 @@ import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalA
 import { ManagedMachineActionIdV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { refreshAccountSettingsForMinimumVersion } from '@/settings/accountSettings/refreshAccountSettingsForMinimumVersion';
 import { actionStartTargetUnavailableV1, measureActionStartPhaseV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
-import { bindDiscussionDraftReply } from '@/discussions/bindDiscussionDraftReply';
+import { isManagedControllerCodecActionV1, openManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { readHostReviewedChildOperationV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { readRetainedVerifiedExternalActionRequester, retainVerifiedExternalActionRequester } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 
 type CliActionExecutorParams = Parameters<typeof createCliActionExecutorHarness>[0]
   & CliTranscriptActionExecutorOptions
@@ -65,6 +66,7 @@ type CliActionExecutorParams = Parameters<typeof createCliActionExecutorHarness>
     invokeContributedAction?: ActionExecutorDeps['invokeContributedAction'];
     /** Exact daemon replay for API target-action approvals. */
     targetActionApprovalReplay?: ActionExecutorDeps['targetActionApprovalReplay'];
+    executionRunHostActionApprovalReplay?: ActionExecutorDeps['executionRunHostActionApprovalReplay'];
     approvalRequestApprovedReplay?: ActionExecutorDeps['approvalRequestApprovedReplay'];
     /** Current authority/credential/target proof for durable core Action replay. */
     isApprovalExecutionOriginCurrent?: ActionExecutorDeps['isApprovalExecutionOriginCurrent'];
@@ -79,8 +81,11 @@ type CliActionExecutorParams = Parameters<typeof createCliActionExecutorHarness>
     workflowAction?: ActionExecutorDeps['workflowAction'];
     /** Reuses the root placement owner for Machine children of Account composites. */
     routeHostChildAction?: ActionExecutorDeps['routeHostChildAction'];
+    deploymentBackupAction?: ActionExecutorDeps['deploymentBackupAction'];
+    projectReadinessRead?: ActionExecutorDeps['projectReadinessRead'];
     managedMachineAction?: ActionExecutorDeps['managedMachineAction'];
-    machineEnvironmentApply?: ActionExecutorDeps['machineEnvironmentApply'];
+    machineSetupPlan?: ActionExecutorDeps['machineSetupPlan'];
+    machineReachabilityAction?: ActionExecutorDeps['machineReachabilityAction'];
     /** Receiving daemon's native Stop effect, after requester policy and scope admission. */
     sessionStop?: ActionExecutorDeps['sessionStop'];
     /** Installed exact-target worker Status/retirement producer, overriding only those IDs. */
@@ -95,6 +100,7 @@ type CliActionExecutorParams = Parameters<typeof createCliActionExecutorHarness>
     sessionTrackedTargetCompatibilityDeps?: Pick<ActionExecutorDeps, 'sessionTargetTrackedSet'>;
     sessionReadStateActionDeps?: Pick<ActionExecutorDeps, 'sessionReadStateAction'>;
     pluginActionExecutionOwner?: 'daemon_control' | 'current_process';
+    requestPluginActionExecution?: PluginActionExecutionRequestOwner;
     /** Credentialed capability receiver; captured parent registries omit this. */
     accountPluginActions?: true;
   }>;
@@ -109,13 +115,19 @@ export function createCliActionExecutor(
       operationContext: params.savedSecretOperationContext, serverHttpBaseUrl: params.serverHttpBaseUrl, isCredentialCurrent: params.isCredentialCurrent }) : undefined);
   const invokeContributedAction: ActionExecutorDeps['invokeContributedAction'] = params.invokeContributedAction
     ?? (params.pluginActionExecutionOwner === 'current_process' ? undefined
-      : async (request) => pluginExecutor!.invokeContributedAction(request));
+      : async (request) => pluginExecutor.invokeContributedAction(request));
   const actionSettingsProvider = params.actionsSettingsProvider ?? createActionSettingsProvider({
     scopeKey: resolveAccountSettingsScopeKeyForToken(params.token),
   });
   const runtimeAccountId = readAccountIdFromToken(params.token) ?? undefined;
   const requesterPrivateEffectAuthorityFailure = (actionId: ActionId, context: ActionExecutorContext | undefined) => {
     const binding = context?.externalActionExecutionAuthorization?.binding;
+    if (binding && binding.accountId !== runtimeAccountId && binding.accountEncryptionMode === 'e2ee'
+      && (actionId === 'template.instantiate' || actionId === 'session.spawn_new')) {
+      // Placement authority does not provide the requester's private Session
+      // encryption material. Prepared requester executors carry that Account.
+      return { ok: false as const, errorCode: 'requester_account_material_unavailable', error: 'requester_account_material_unavailable' };
+    }
     if (!binding || !('authentication' in binding) || !binding.sessionActionOrigin
       || binding.accountId === runtimeAccountId) return null;
     const effect = getActionSpec(actionId).sideEffectClass;
@@ -191,6 +203,9 @@ export function createCliActionExecutor(
       ...(params.targetActionApprovalReplay
         ? { targetActionApprovalReplay: params.targetActionApprovalReplay }
         : {}),
+      ...(params.executionRunHostActionApprovalReplay
+        ? { executionRunHostActionApprovalReplay: params.executionRunHostActionApprovalReplay }
+        : {}),
       ...(params.approvalRequestApprovedReplay
         ? { approvalRequestApprovedReplay: params.approvalRequestApprovedReplay }
         : {}),
@@ -216,9 +231,25 @@ export function createCliActionExecutor(
       ...(personalSavedSecretActionExecute ? { personalSavedSecretActionExecute } : {}),
       ...(params.projectWorkerAction ? { projectWorkerAction: params.projectWorkerAction } : {}),
       ...(params.workflowAction ? { workflowAction: params.workflowAction } : {}),
-      ...(params.routeHostChildAction ? { routeHostChildAction: params.routeHostChildAction } : {}),
+      ...(params.deploymentBackupAction ? { deploymentBackupAction: params.deploymentBackupAction } : {}),
+      ...(params.projectReadinessRead ? { projectReadinessRead: params.projectReadinessRead } : {}),
+      routeHostChildAction: async request => {
+        if (request.actionId === 'action.invoke'
+          && readHostReviewedChildOperationV1(request.context, request.actionId, request.input)) {
+          const { executeAccountPluginAction } = await import('./executeAccountPluginAction');
+          const account = await executeAccountPluginAction({ host: params, deps: harness.deps,
+            actionId: request.actionId, input: request.input, context: request.context });
+          if (account.matched) return account.result;
+          // Only a positively declared Machine child reaches its invoker;
+          // unavailable Account custody or Client placement cannot borrow it.
+          if (account.accountSelectionUnavailable && account.executionPlacement !== 'machine') return { ok: false,
+            errorCode: 'plugin_action_execution_placement_unavailable', error: 'plugin_action_execution_placement_unavailable' };
+        }
+        return await params.routeHostChildAction?.(request) ?? null;
+      },
       ...(params.managedMachineAction ? { managedMachineAction: params.managedMachineAction } : {}),
-      ...(params.machineEnvironmentApply ? { machineEnvironmentApply: params.machineEnvironmentApply } : {}),
+      ...(params.machineSetupPlan ? { machineSetupPlan: params.machineSetupPlan } : {}),
+      ...(params.machineReachabilityAction ? { machineReachabilityAction: params.machineReachabilityAction } : {}),
       ...(params.sessionStop ? { sessionStop: params.sessionStop } : {}),
       ...(params.hostActionApprovalLifetime ? { hostActionApprovalLifetime: params.hostActionApprovalLifetime } : {}),
       ...(params.runActionOperation ? { runActionOperation: params.runActionOperation } : {}),
@@ -286,6 +317,19 @@ export function createCliActionExecutor(
   const base = harness.executor;
   const executeInCurrentProcess: NonNullable<Parameters<typeof createDaemonPluginActionExecutor>[0]['executeInCurrentProcess']> =
     async (actionId, input, context) => {
+      if (context?.surface === 'plugin' && context.actionCaller?.kind === 'plugin' && params.invokeContributedAction) {
+        const reference = readPluginActionExecutionReference(actionId, input);
+        if (reference) {
+          // The bound runtime's catalog already projects placement. Reading it
+          // internally must not introduce another approval-routed Action;
+          // the actual invocation still owns caller and surface admission.
+          const id = formatQualifiedPluginActionId(reference);
+          const definition = params.listContributedActionDefinitions?.({ id }).find(candidate => candidate.id === id);
+          if (definition?.executionPlacement === 'machine') {
+            return { matched: true, result: await base.execute(actionId as ActionId, input, context) };
+          }
+        }
+      }
       const { executeAccountPluginAction } = await import('./executeAccountPluginAction');
       return await executeAccountPluginAction({ host: params, deps: harness.deps,
         actionId, input, ...(context ? { context } : {}) });
@@ -296,25 +340,22 @@ export function createCliActionExecutor(
     || params.accountPluginActions === true
     || (actionId === 'action.options.resolve' && readPluginActionExecutionReference(actionId, input) !== null);
   const pluginExecutor = params.pluginActionExecutionOwner === 'current_process'
-    ? createPluginActionExecutor({ base, executeInCurrentProcess: (actionId, input, context) =>
+    ? createPluginActionExecutor({ base, executeInCurrentProcess: async (actionId, input, context) =>
       usesPluginPlacement(actionId, input) ? executeInCurrentProcess(actionId, input, context)
-        : Promise.resolve({ matched: false as const }) })
-    : createDaemonPluginActionExecutor({ base, executeInCurrentProcess });
-  const daemonAware = pluginExecutor ?? base;
+        // This bound registry owns caller and placement admission. Returning
+        // unmatched would classify its nested plugin call as unbound transport.
+        : { matched: true as const, result: await base.execute(actionId as ActionId, input, context) } })
+    : createDaemonPluginActionExecutor({ base, executeInCurrentProcess,
+      ...(params.requestPluginActionExecution ? { requestPluginActionExecution: params.requestPluginActionExecution } : {}) });
   const resolveContext = async (context: RpcActionExecutorContext | undefined) => {
     const currentWorkspaceWrites = harness.deps.getCurrentWorkspaceWrites?.();
     const credential = params.credentials && hasStoredSessionCredentialProvenance(params.credentials) ? 'terminal' : 'api_token';
     const surface = context?.surface ?? 'cli';
-    // RPC receivers already have the verified caller stamp. The host's terminal
-    // opt-out cannot narrow an Account/UI caller; an unstamped RPC stays automation.
+    // RPC receivers already have the verified caller stamp; an unstamped RPC stays automation.
     let authority = surface === 'rpc'
       ? credential === 'terminal' ? context?.authority ?? 'account_automation' : 'account_automation'
       : context?.authority === 'account_automation' ? 'account_automation' : resolveInvocationAuthority({
         credential, surface,
-        terminalPolicy: resolveEffectiveTerminalPresentUserPolicy({
-          token: params.token,
-          ...(params.serverHttpBaseUrl ? { serverHttpBaseUrl: params.serverHttpBaseUrl } : {}),
-        }),
       });
     let authorization = context?.externalActionExecutionAuthorization;
     const sessionBinding = authorization && 'authentication' in authorization.binding
@@ -340,7 +381,7 @@ export function createCliActionExecutor(
       && !Boolean(context.signal?.aborted)
       && await requesterHttp.isCurrent().catch(() => false)
       && !Boolean(context.signal?.aborted));
-    // Ordinary Account UI ingress retains its human cause only at its exact
+    // Ordinary Account host ingress retains its human cause only at its exact
     // credential-backed receiver, after the incumbent Home verifier checks
     // the installed destination's signed request. A raw origin cannot confer it.
     const privatelyReconciledSession = Boolean(admittedPrivateUiCustody && authorization
@@ -348,8 +389,11 @@ export function createCliActionExecutor(
       && authorization.binding.target.machineId === authorization.binding.machineId
       && context?.externalActionTarget?.kind === 'session'
       && context.defaultSessionId === context.externalActionTarget.sessionId);
-    const ordinaryUiBinding = authorization && 'authentication' in authorization.binding
-      && !authorization.binding.sessionActionOrigin && surface === 'ui' && context?.authority === 'present_user'
+    const ordinaryAccountHostBinding = authorization && 'authentication' in authorization.binding
+      && !authorization.binding.sessionActionOrigin
+      && (surface === 'ui' || surface === 'voice' && context?.actionCaller?.kind === 'host'
+        && authorization.binding.authentication.kind === 'account')
+      && context?.authority === 'present_user'
       && privateKey && params.serverId && params.serverIdentityId === authorization.binding.serverIdentityId
       && runtimeAccountId === authorization.binding.accountId
       && (runtimeAccountId === authorization.binding.custodianAccountId || admittedPrivateUiCustody)
@@ -361,7 +405,7 @@ export function createCliActionExecutor(
     // A managed controller keeps its own Account custody. The verified Home
     // root plus exact installed codec preserves the requester's direct click;
     // neither the custodian credential nor a raw UI label supplies that cause.
-    let managedControllerUiBinding: typeof ordinaryUiBinding = null;
+    let managedControllerUiBinding: typeof ordinaryAccountHostBinding = null;
     if (authorization && 'authentication' in authorization.binding
       && authorization.binding.authentication.kind === 'account'
       && isManagedControllerCodecActionV1(authorization.binding)
@@ -401,7 +445,7 @@ export function createCliActionExecutor(
       && params.externalActionMachineInstallationId === sessionBinding.installationId
       && context?.defaultSessionMachineId === sessionBinding.sessionActionSource?.machineId
       && sameStrictJsonValue(context.externalActionTarget, sessionBinding.target));
-    if ((admittedReceiver || ordinaryUiBinding || managedControllerUiBinding) && authorization && privateKey && params.externalActionMachineInstallationId
+    if ((admittedReceiver || ordinaryAccountHostBinding || managedControllerUiBinding) && authorization && privateKey && params.externalActionMachineInstallationId
       && params.serverId && params.serverIdentityId && context?.externalActionTarget) {
       const originalAuthorization = authorization;
       const projectionRequest = { authorization: originalAuthorization,
@@ -416,11 +460,18 @@ export function createCliActionExecutor(
         return null;
       }
       authorization = projected;
-      if (ordinaryUiBinding || managedControllerUiBinding) authority = resolveInvocationAuthority({ credential: 'account', surface });
+      const retainedRequester = ordinaryAccountHostBinding || managedControllerUiBinding
+        ? readRetainedVerifiedExternalActionRequester(originalAuthorization) : undefined;
+      if (retainedRequester) {
+        if (projected.token !== originalAuthorization.token
+          || !sameStrictJsonValue(projected.binding, originalAuthorization.binding)) return null;
+        authorization = retainVerifiedExternalActionRequester({ authorization: projected, isCurrent: retainedRequester.isCurrent });
+      }
+      if (ordinaryAccountHostBinding || managedControllerUiBinding) authority = 'present_user';
     }
     const credentials = params.credentials;
-    if (ordinaryUiBinding && credentials && !params.actionsSettingsProvider) {
-      const managedAction = ManagedMachineActionIdV1Schema.safeParse(ordinaryUiBinding.actionId);
+    if (ordinaryAccountHostBinding && credentials && !params.actionsSettingsProvider) {
+      const managedAction = ManagedMachineActionIdV1Schema.safeParse(ordinaryAccountHostBinding.actionId);
       if (managedAction.success && getActionSpec(managedAction.data).sideEffectClass !== 'read') {
         // The ordinary receiver has this acquiring Account's credential, not a
         // reviewed Session policy. Fetch its persisted policy before Ask-first
@@ -439,10 +490,16 @@ export function createCliActionExecutor(
       && params.externalActionMachineInstallationId === sessionBinding.installationId
       && sessionBinding.sessionActionSource?.machineId === sessionBinding.machineId
       && sessionBinding.sessionActionSource.installationId === sessionBinding.installationId);
+    // The accepted Run retains its original Home root. Reuse this installed
+    // signer's custody for approval input without admitting the principal again.
+    const canSignWorkflowApproval = Boolean(context?.actionCaller?.kind === 'workflowRun' && authorization && privateKey
+      && params.serverIdentityId === authorization.binding.serverIdentityId
+      && runtimeAccountId === authorization.binding.accountId
+      && params.externalActionMachineInstallationId === authorization.binding.installationId);
     const approvalAuthorization = authorization;
     const signExternalActionApprovalInput: ActionExecutorContext['signExternalActionApprovalInput'] =
       context?.signExternalActionApprovalInput
-      ?? ((ordinaryUiBinding || managedControllerUiBinding || canSignOriginalSessionApproval || admittedReceiver && runtimeAccountId === sessionBinding?.accountId)
+      ?? ((ordinaryAccountHostBinding || managedControllerUiBinding || canSignOriginalSessionApproval || canSignWorkflowApproval || admittedReceiver && runtimeAccountId === sessionBinding?.accountId)
         && approvalAuthorization && privateKey ? ({ actionId, input, target, authorization: suppliedAuthorization, requesterConfirmation, sessionTargetsV1 }) => {
         if (suppliedAuthorization.token !== approvalAuthorization.token
           || !sameStrictJsonValue(target, approvalAuthorization.binding.target)) throw new Error('approval_origin_unavailable');
@@ -485,14 +542,7 @@ export function createCliActionExecutor(
         return { kind: 'ready' as const, invocation: { run: () =>
           result ??= pluginExecutor.execute(actionId, input, resolvedContext) } };
       }
-      // The daemon binds drafts before signing, but an unchanged signed reply
-      // must still refuse if its current participant policy now requires a draft.
-      // Already-bound drafts carry discussionReplyReturn and skip this recheck.
-      const bound = await bindDiscussionDraftReply({ actionId, input, context: resolvedContext,
-        serverId: params.serverId ?? configuration.activeServerId, discussionAction: harness.deps.discussionAction,
-        credentials: { token: params.token }, serverHttpBaseUrl: params.serverHttpBaseUrl });
-      if ('failure' in bound) return { kind: 'settled' as const, result: bound.failure };
-      return await base.prepare(bound.actionId, bound.input, bound.context);
+      return await base.prepare(actionId, input, resolvedContext);
     },
     execute: async (actionId, input, context) => {
       const denied = filesystemRequesterAuthorityFailure(actionId, context)
@@ -500,12 +550,7 @@ export function createCliActionExecutor(
       if (denied) return denied;
       const resolvedContext = await measureActionStartPhaseV1(context, 'cli_context', () => resolveContext(context));
       if (!resolvedContext) return actionStartTargetUnavailableV1(context, 'cli_context', 'requester_projection_unavailable');
-      // Retain the same current-policy recheck as prepare; never rewrite signed operands.
-      const bound = await bindDiscussionDraftReply({ actionId, input, context: resolvedContext,
-        serverId: params.serverId ?? configuration.activeServerId, discussionAction: harness.deps.discussionAction,
-        credentials: { token: params.token }, serverHttpBaseUrl: params.serverHttpBaseUrl });
-      if ('failure' in bound) return bound.failure;
-      return await daemonAware.execute(bound.actionId, bound.input, bound.context);
+      return await pluginExecutor.execute(actionId, input, resolvedContext);
     },
     continueConfidentialApprovalRequest: async (input, context) => {
       const resolvedContext = await measureActionStartPhaseV1(context, 'cli_context', () => resolveContext(context));

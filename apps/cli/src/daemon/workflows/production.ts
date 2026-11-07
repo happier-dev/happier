@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 
-import { applyWorkflowInvocationFactV1, classifyWorkflowHoldV1, WorkflowAuthoredInputV1Schema, WorkflowCheckpointEnvelopeV1Schema, WorkflowProgressEnvelopeV1Schema, WorkflowInvocationFactV1Schema, WorkflowInvocationFactResultV1Schema, WorkflowRunInvocationIndexV1Schema, WorkflowRunSummaryV1Schema, WorkflowOperationErrorCodeV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { applyWorkflowInvocationFactV1, classifyWorkflowHoldV1, WorkflowAuthoredInputV1Schema, WorkflowCheckpointEnvelopeV1Schema, WorkflowProgressEnvelopeV1Schema, WorkflowInvocationFactV1Schema, WorkflowInvocationFactResultV1Schema, WorkflowRunInvocationIndexV1Schema, WorkflowRunSummaryV1Schema, WorkflowOperationErrorCodeV1Schema, WORKFLOW_UNSETTLED_INVOCATION_LIFECYCLES_V1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { sameStrictJsonValue, StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
-import { WorkflowMachineCommandOutputV1Schema } from '@happier-dev/protocol/workflows/stepActionsV1';
+import { getWorkflowActionOutputKindV1, WorkflowMachineCommandOutputV1Schema } from '@happier-dev/protocol/workflows/stepActionsV1';
 import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES } from '@happier-dev/protocol/actions/externalActionLimits';
 import { AutomationStoredContentEnvelopeV1ReadSchema } from '@happier-dev/protocol/automations/automationStoredContentEnvelopeV1';
 import { AutomationStoredWorkflowDefinitionV2ReadSchema } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
@@ -16,6 +16,7 @@ import { readWorkflowInvocationMembersV1, readWorkflowInvocationRootV1 } from '@
 import { resolveWorkflowDefinitionRefV1 } from '@happier-dev/protocol/workflows/workflowDefinitionResolverV1';
 import { collectWorkflowLeavesV1, deriveWorkflowDestinationsV1 } from '@happier-dev/protocol/workflows/workflowDestinationsV1';
 import { countWorkflowStepsV1 } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
+import { workflowTriggerDisplayNameV1 } from '@happier-dev/protocol/workflows/workflowStepLabel';
 import { readTriggerTargetV1 } from '@happier-dev/protocol/workflows/triggers/triggerTargetV1';
 import { openWorkflowAcceptedSnapshotStoredEnvelopeV1, openWorkflowCheckpointStoredEnvelopeV1, openWorkflowProgressStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1, sealWorkflowCheckpointStoredEnvelopeV1, sealWorkflowAcceptedSnapshotStoredEnvelopeV1, sealWorkflowFinalResultStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
 import { WorkflowRunRecipientCensusResponseV1Schema, WorkflowRunRecipientKeyEnvelopeCommitResponseV1Schema } from '@happier-dev/protocol/workflows/workflowRunKeyV1';
@@ -25,12 +26,14 @@ import { ReviewStartTerminalValueV1Schema } from '@happier-dev/protocol/actions/
 import { openAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { sameAutomationAccountContentIdentityV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
 import type { WorkflowRunEncryptionV1, WorkflowRunRecipientCensusResponseV1, WorkflowCheckpointEnvelopeV1, WorkflowProgressEnvelopeV1, WorkflowRunInvocationIndexV1, WorkflowRunSummaryV1, WorkflowRunStepProgressV1, TriggerTargetV1, WorkflowDefinitionV1, MaterializeWorkflowAcceptedSnapshotV1Input } from '@happier-dev/protocol';
-import { assertControllerDominates } from '@happier-dev/protocol/actions/executor/workflowRunActions';
+import { assertControllerDominates, normalizeStoredWorkflowTriggerConsent } from '@happier-dev/protocol/actions/executor/workflowRunActions';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
 import { resolveCanonicalAbsolutePath } from '@/utils/path/expandHomeDirPath';
 import { createWorkflowInteractionCapacityError } from '@/agent/permissions/interactionPersistenceError';
 import { readWorktreeChangeFingerprint } from '@/scm/readWorktreeChangeFingerprint';
 import { classifyDaemonServerWorkError } from '@/daemon/serverWork/classifyDaemonServerWorkError';
+import { readWorkflowDiscussionRoundBindingV1, WorkflowDiscussionRoundProjectResultV1Schema,
+  type WorkflowDiscussionRoundBindingV1, type WorkflowDiscussionRoundProgressV1 } from '@happier-dev/protocol/workflows';
 
 import { getRandomBytes } from '@/api/encryption';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -60,6 +63,7 @@ import { createWorkflowRunStorageClient } from './workflowRunStorageClient';
 import { createCoordinatorWorkspaceResolver } from './resolveWorkflowWorkspace';
 import { prepareWorkflowAcceptedWorkspaceTarget } from './resolveWorkflowWorkspace';
 import { bindAutomationWorkflowInputs, resolveAutomationWorkflowOccurrenceSeed, WorkflowInputResolutionError } from './input';
+import { resolveDeploymentTriggerOccurrence, admitDeploymentTriggerOccurrence } from './deploymentTrigger';
 import { shouldPublishWorkflowSharedConversation, type WorkflowConversationBinding } from './workflowConversation';
 import type { WorkflowProducerBinding, WorkflowInvocationBindingRow } from './workflowScopeBinding';
 import { materializeWorkflowContainerResult } from './workflowContainerResult';
@@ -71,7 +75,11 @@ import { createProductionWorkflowSessionContextReader } from './workflowSessionC
 import { createProductionWorkflowDiscussionContextReader, resolveWorkflowDiscussionOrigin } from './workflowDiscussion';
 import { createDiscussionActionDeps } from '@/discussions/discussionActionDeps';
 import { createWorkflowDiscussionResultPublisher, WorkflowDiscussionPublicationUnavailable } from './workflowDiscussionPublication';
+import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
 import { createDiscussionReplyReturnPublisher } from '@/discussions/discussionReplyReturnPublisher';
+import { buildWorkflowActionContext } from './workflowActionContext';
+import { deriveWorkflowDiscussionReplyLocalIdV1 } from '@happier-dev/protocol/workflows/workflowInvocationIdentityV1';
+import { deriveSessionMessageReplyReturnLocalIdV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
 import {
   AgentStateRequestStore,
   type AgentStateRequestPersistenceTarget,
@@ -93,6 +101,14 @@ import {
 } from './executionRunStepExecutor';
 
 type StorageClient = ReturnType<typeof createWorkflowRunStorageClient>;
+
+// Aggregate projection has no terminal-resolution authority. Keep settled
+// content intact while its children/publication retain custody.
+// outcome_uncertain remains resolvable through observed_terminal_execution;
+// these aggregate writes never carry that explicit resolution.
+const IMMUTABLE_INVOCATION_LIFECYCLES = new Set<WorkflowRunInvocationIndexV1['lifecycle']>([
+  'completed', 'failed', 'skipped', 'cancelled', 'outcome_uncertain', 'superseded',
+]);
 
 /** Durable correspondence failures keep their original generic-error routing. */
 function workflowConversationResolverUnavailable(...args: Parameters<typeof workflowConversationUnavailable>) {
@@ -199,6 +215,7 @@ type PersistedInvocation = Readonly<{
 
 /** Internal durable row owner, exported only so its persistence concurrency contract can be tested at the real boundary. */
 export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore {
+  private lastDiscussionRoundProgress: WorkflowDiscussionRoundProgressV1 | undefined;
   private readonly records = new Map<string, WorkflowCoordinatorInvocation>();
   private readonly recordsById = new Map<string, WorkflowCoordinatorInvocation>();
   private readonly currentSlots = new Map<string, WorkflowCoordinatorInvocation>();
@@ -228,6 +245,7 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
       frozenChildren?: Readonly<Record<string, WorkflowDefinitionV1>>;
       destinations?: NonNullable<WorkflowRunStepProgressV1['destinations']>;
       projectionExpectedRevision?: number;
+      discussionRound?: WorkflowDiscussionRoundBindingV1;
     },
   ) {}
 
@@ -373,7 +391,7 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
         }
       }
     }
-    if (this.params.destinations) {
+    if (this.params.authoredDefinition || this.params.destinations) {
       if (progress.blockKind === 'root') {
         for (const leaf of progress.stepProgress?.destinations ?? []) if (leaf.observation) {
           this.rememberDestinationObservation(leaf.sourceKey, leaf.blockId, leaf.observation);
@@ -503,7 +521,7 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
     const output = WorkflowMachineCommandOutputV1Schema.safeParse(progress.result);
     const complete = this.trySerializeProgress(binding, progress);
     if (complete !== undefined) return { progress, contentEnvelope: complete };
-    if (execution?.kind !== 'action' || execution.actionId !== 'machines.command.run' || !output.success) {
+    if (execution?.kind !== 'action' || getWorkflowActionOutputKindV1(execution.actionId) !== 'command' || !output.success) {
       // Only command output is a suffix projection. Inputs, identities and other
       // result contracts remain governed by the incumbent envelope rejection.
       return { progress, contentEnvelope: this.serializeProgress(binding, progress) };
@@ -637,15 +655,45 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
     return await this.commitFact({ key: pending.key, lifecycle: invocation.lifecycle });
   });
 
+  /** Publication observers share the root fact writer and never clear another root hold. */
+  reconcilePublicationApprovalAttention = async (hasPending: () => boolean): Promise<void> => {
+    const rootKey = this.recordsById.get(this.params.rootRecordId)?.key;
+    if (!rootKey) throw new Error('workflow_root_invocation_missing');
+    await this.serializedInvocation(rootKey, async () => {
+      if (await this.readControl() !== 'running') return;
+      const root = this.recordsById.get(this.params.rootRecordId);
+      if (!root || (root.lifecycle !== 'running' && root.lifecycle !== 'needs_attention')
+        || root.reason !== undefined && root.reason !== 'approval_required') return;
+      const pending = hasPending();
+      if (pending) {
+        if (root.lifecycle !== 'needs_attention' || root.reason !== 'approval_required') {
+          await this.commitFactNow({ key: root.key, lifecycle: 'needs_attention', reason: 'approval_required' });
+        }
+      } else if (root.reason === 'approval_required') {
+        await this.commitFactNow({ key: root.key, lifecycle: 'running' });
+      }
+    });
+  };
+
   private async commitFactNow(
     fact: Parameters<WorkflowCoordinatorStore['commitFact']>[0],
     stepProgress?: WorkflowRunStepProgressV1,
     loopProgress?: WorkflowProgressEnvelopeV1['loopProgress'],
+    discussionRound?: WorkflowDiscussionRoundProgressV1,
   ): Promise<WorkflowCoordinatorInvocation> {
     const current = this.records.get(fact.key);
     const persisted = this.persisted.get(fact.key);
     if (!current || !persisted) throw new Error('workflow_invocation_intent_missing');
     if (current.lifecycle === 'waiting_for_review' && fact.interaction !== undefined) return current;
+    // These root facts own metadata only. Their caller may have captured a
+    // lifecycle before entering this queue; only a lifecycle owner may change
+    // the current state or retire its reason.
+    const preservesRootLifecycle = current.recordId === this.params.rootRecordId
+      && (stepProgress !== undefined || loopProgress !== undefined
+        || (fact.resultProvenance !== undefined || fact.workspace !== undefined || fact.sharedConversationInvocationRecordId !== undefined)
+          && Object.keys(fact).every(key => key === 'key' || key === 'lifecycle' || key === 'resultProvenance'
+            || key === 'workspace' || key === 'sharedConversationInvocationRecordId'));
+    if (preservesRootLifecycle) fact = { ...fact, lifecycle: current.lifecycle };
     const { key: _key, lifecycle: _lifecycle, review, ...ownedFact } = fact;
     const { reason: _reason, reasonMessage: _reasonMessage, reasonDetails: _reasonDetails, failureCause: _failureCause, runtimeIssueV1: _runtimeIssueV1, ...withoutInvalidResultReason } = ownedFact;
     const publishedResultWins = fact.lifecycle === 'waiting_for_review' && fact.reason === 'invalid_result_contract'
@@ -654,7 +702,7 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
     // than a leaf's immutable observation/review history. A newly admitted
     // running boundary retires its old failure; a new refusal replaces it.
     // Aggregate refreshes alone cannot authorize either transition.
-    const updatesRootReason = current.recordId === this.params.rootRecordId
+    const updatesRootReason = current.recordId === this.params.rootRecordId && !preservesRootLifecycle
       && (fact.reason !== undefined || (fact.lifecycle === 'running' && !stepProgress && !loopProgress));
     const { reason: _previousRootReason, ...withoutRootReason } = persisted.progress;
     const priorProgress = updatesRootReason ? withoutRootReason : persisted.progress;
@@ -671,7 +719,7 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
       memberOrdinal: index.memberOrdinal, attempt: index.attempt,
     };
     if (fact.lifecycle === 'admitting' && progress.execution?.kind === 'action'
-      && progress.execution.actionId === 'machines.command.run') {
+      && getWorkflowActionOutputKindV1(progress.execution.actionId) === 'command') {
       // Windows process status is a 32-bit DWORD. Reserve the longer signed
       // interpretation as well as unsigned Node/Bun-compatible producers;
       // POSIX statuses and BASH's -1 sentinel are shorter. This is serialized
@@ -700,6 +748,7 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
         accountCurrentness: this.params.encryption.witness,
         invocationId: index.id, invocationAttempt: index.attempt, expectedLifecycle: index.lifecycle, expectedContentRevision: index.contentRevision,
         lifecycle: fact.lifecycle, contentEnvelope: fitted.contentEnvelope,
+        ...(discussionRound ? { discussionRound } : {}),
       }));
       this.params.revision = Math.max(this.params.revision, parentRevision);
       updatedIndex = updated;
@@ -777,7 +826,8 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
         && matchesActionRequest(current.execution) && matchesActionRequest(refreshed?.execution);
       const exactCancelledCommand = fact.execution === undefined && fact.reason === 'command_cancelled'
         && fact.result !== undefined && current.execution?.kind === 'action'
-        && current.execution.actionId === 'machines.command.run';
+        && getWorkflowActionOutputKindV1(current.execution.actionId) === 'command'
+        && WorkflowMachineCommandOutputV1Schema.safeParse(fact.result).success;
       if (current.lifecycle === 'admitting' && fact.lifecycle === 'cancelled'
         && refreshed?.lifecycle === 'cancel_requested'
         && refreshed.recordId === current.recordId && refreshed.attempt === current.attempt
@@ -798,23 +848,27 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
         // unwind) under the refreshed CAS instead of abandoning stop custody.
         return await this.commitFactNow(fact);
       }
+      if (refreshed && refreshed.contentRevision !== current.contentRevision && (stepProgress || loopProgress)
+        && (refreshed.lifecycle === current.lifecycle || refreshed.lifecycle === 'cancel_requested')) {
+        // Aggregates carry observed progress, not lifecycle authority. Rebase
+        // after a competing publication or Stop without reopening its control
+        // state or losing a member that completed before cancellation.
+        this.loadedParentSlots.clear();
+        this.progressMembers.clear();
+        return await this.commitFactNow({ ...fact, lifecycle: refreshed.lifecycle }, stepProgress ? await this.projectStepProgress() : undefined,
+          loopProgress ? await this.projectLoopProgress(refreshed) : undefined,
+          discussionRound ? await this.readDiscussionRoundProgress() : undefined);
+      }
       if (refreshed?.lifecycle === 'cancel_requested' || refreshed?.lifecycle === 'cancelled') {
         throw new WorkflowControlBoundary('cancelled');
       }
       if (refreshed?.lifecycle === 'superseded') throw error;
       if (refreshed?.contentRevision !== current.contentRevision && refreshed?.lifecycle === current.lifecycle) {
-        if (stepProgress || loopProgress) {
-          // An aggregate is not an independent row fact: after a competing
-          // publisher wins, recompute from current slots instead of replaying it.
-          this.loadedParentSlots.clear();
-          this.progressMembers.clear();
-          return await this.commitFactNow(fact, stepProgress ? await this.projectStepProgress() : undefined,
-            loopProgress && refreshed ? await this.projectLoopProgress(refreshed) : undefined);
-        }
         return await this.commitFactNow(fact);
       }
       throw error;
     }
+    if (discussionRound) this.lastDiscussionRoundProgress = discussionRound;
     return this.remember(updatedIndex, progress);
   }
 
@@ -851,7 +905,7 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
   private async refreshLoopProgress(key: string): Promise<void> {
     await this.serializedInvocation(key, async () => {
       const invocation = this.records.get(key);
-      if (!invocation) return;
+      if (!invocation || IMMUTABLE_INVOCATION_LIFECYCLES.has(invocation.lifecycle)) return;
       const loopProgress = await this.projectLoopProgress(invocation);
       if (!loopProgress || sameStrictJsonValue(this.persisted.get(key)?.progress.loopProgress, loopProgress)) return;
       await this.commitFactNow({ key, lifecycle: invocation.lifecycle }, undefined, loopProgress);
@@ -863,11 +917,22 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
     const root = this.recordsById.get(this.params.rootRecordId);
     if (!definition || !root) throw new Error('workflow_root_invocation_missing');
     let completed = 0;
+    let skipped = 0;
     let currentLoop: WorkflowRunStepProgressV1['currentLoop'];
     for (const [ordinal, block] of definition.blocks.entries()) {
       const invocation = await this.readCurrent({ runId: this.params.runId, blockId: block.id,
         scope: [], parentKey: root.key, memberOrdinal: String(ordinal) });
-      if (invocation?.lifecycle === 'completed') completed += countWorkflowStepsV1([block]);
+      if (invocation?.lifecycle === 'skipped') skipped += countWorkflowStepsV1([block]);
+      if (invocation?.lifecycle === 'completed') {
+        // A settled container proves its frontier is closed, not that both If
+        // alternatives (or an empty loop's body) ran. Reuse the exact leaf facts
+        // retained for destinations, including after reload; no history scan.
+        for (const leaf of collectWorkflowLeavesV1({ ...definition, blocks: [block] })) {
+          const observation = this.destinationObservations.get(JSON.stringify(['$root', leaf.id]));
+          if (observation?.lifecycle === 'completed') completed++;
+          else if (!observation || observation.lifecycle === 'skipped') skipped++;
+        }
+      }
       if (block.kind !== 'loop' || !invocation || invocation.lifecycle === 'completed') continue;
       const loop = invocation.container;
       if (loop?.kind !== 'loop') continue;
@@ -884,21 +949,49 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
       const observation = this.destinationObservations.get(JSON.stringify([leaf.sourceKey, leaf.blockId]));
       return { ...leaf, ...(observation ? { observation } : {}) };
     });
-    return { completed, total: countWorkflowStepsV1(definition.blocks), ...(currentLoop ? { currentLoop } : {}),
+    return { completed, skipped, total: countWorkflowStepsV1(definition.blocks), ...(currentLoop ? { currentLoop } : {}),
       ...(destinations ? { destinations } : {}) };
   }
+
+  /** Reuse the built-in's durable outcome aggregate and exact current slots, never scan private list rows. */
+  readDiscussionRoundProgress = async (): Promise<WorkflowDiscussionRoundProgressV1 | undefined> => {
+    const binding = this.params.discussionRound;
+    const root = this.recordsById.get(this.params.rootRecordId);
+    if (!binding || !root) return undefined;
+    const child = (parent: WorkflowCoordinatorInvocation, blockId: string, ordinal: number) => this.readCurrent({
+      runId: this.params.runId, blockId, scope: [], parentKey: parent.key, memberOrdinal: String(ordinal),
+    });
+    const answered = (row: WorkflowCoordinatorInvocation | undefined) => row?.lifecycle === 'completed'
+      && (row.replyOutcome ? row.replyOutcome.kind === 'answer' : typeof row.result === 'string' && row.result.trim().length > 0);
+    if (binding.pattern === 'answer_and_review') {
+      return { discussionId: binding.discussionId, answerCount: Number(answered(await child(root, 'answer', 0))), synthesized: false };
+    }
+    const outcomes = await child(root, 'outcomes', 1);
+    const parsed = outcomes?.lifecycle === 'completed' ? WorkflowDiscussionRoundProjectResultV1Schema.safeParse(outcomes.result) : undefined;
+    const synthesis = await child(root, 'synthesize', 2);
+    const choice = synthesis ? await child(synthesis, 'choose-synthesizer', 0) : undefined;
+    const selected = choice?.container?.kind === 'if' ? choice.container.selected : undefined;
+    const result = choice && selected ? await child(choice, selected === 'then' ? 'selected-synthesis' : 'synthesis', 0) : undefined;
+    return { discussionId: binding.discussionId,
+      answerCount: parsed?.success ? parsed.data.outcomeReferences.filter(outcome => outcome.kind === 'answer').length : 0,
+      synthesized: answered(result) };
+  };
 
   /** The executing/recovery owner publishes counts; list readers never reconstruct private structure. */
   refreshStepProgress = async (): Promise<void> => {
     const root = this.recordsById.get(this.params.rootRecordId);
     if (!this.params.authoredDefinition || !root) return;
     await this.serializedInvocation(root.key, async () => {
-      const stepProgress = await this.projectStepProgress();
-      const persisted = this.persisted.get(root.key);
-      if (sameStrictJsonValue(persisted?.progress.stepProgress, stepProgress)) return;
       const currentRoot = this.recordsById.get(this.params.rootRecordId);
       if (!currentRoot) throw new Error('workflow_root_invocation_missing');
-      await this.commitFactNow({ key: root.key, lifecycle: currentRoot.lifecycle }, stepProgress);
+      if (IMMUTABLE_INVOCATION_LIFECYCLES.has(currentRoot.lifecycle)) return;
+      const stepProgress = await this.projectStepProgress();
+      const discussionRound = await this.readDiscussionRoundProgress();
+      const roundChanged = !sameStrictJsonValue(this.lastDiscussionRoundProgress, discussionRound);
+      const persisted = this.persisted.get(root.key);
+      if (sameStrictJsonValue(persisted?.progress.stepProgress, stepProgress) && !roundChanged) return;
+      await this.commitFactNow({ key: root.key, lifecycle: currentRoot.lifecycle }, stepProgress, undefined,
+        roundChanged ? discussionRound : undefined);
     });
   };
 
@@ -1265,8 +1358,8 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
 }
 
 export type WorkflowProductionExecutionDeps = Readonly<{
-  secretSources?: NonNullable<Parameters<typeof createWorkflowRunCommittedNotificationHandler>[0]>['secretSources'];
   credentials: StoredCredentials;
+  secretSources?: NonNullable<Parameters<typeof createWorkflowRunCommittedNotificationHandler>[0]>['secretSources'];
   sessionStartup?: import('./sessionStepExecutor').WorkflowSessionStartup;
   /** Stable Home identity used by Account-scoped domain rows. */
   serverIdentityId?: string;
@@ -1451,6 +1544,12 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
       const target = readTriggerTargetV1({ workflowDefinitionId: frozen.success ? null : claim.workflowDefinitionId,
         scopeSessionId }, definitionContent);
       if (!storedDefinition.success || target.kind !== 'available') return refuse('definition_payload', 'source_unavailable');
+      if (storedDefinition.data.deploymentTriggers?.some(trigger => trigger.approval)) {
+        try {
+          storedDefinition.data = (await normalizeStoredWorkflowTriggerConsent({ automationId: claim.automationId,
+            context: storedDefinition.data, project: { machineId: params.machineId, ...storedDefinition.data.workspace } })).context;
+        } catch (error) { return refuseSourceRead('definition_payload', error); }
+      }
       let source: WorkflowTriggerClaimSource | null;
       try {
         source = await resolveWorkflowTriggerClaimSource({
@@ -1473,6 +1572,10 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
             kind: 'automation_trigger_evidence',
             encryption: accountEncryption,
           });
+      const deploymentOccurrence = resolveDeploymentTriggerOccurrence({ cause: claim.automationCause,
+        evidence: evidenceContent, triggers: storedDefinition.data.deploymentTriggers });
+      if (deploymentOccurrence.kind === 'refused') return refuse('deployment_occurrence', deploymentOccurrence.code);
+      if (deploymentOccurrence.kind === 'skipped') return { state: 'skipped', reason: 'filtered', admission: 'refused' };
       const prepareClaimWorkspace = async () => {
         let workspaceRefs: readonly import('@happier-dev/protocol').WorkspaceRefV1[] = [];
         if (storedDefinition.data.workspace.workspaceRefId) {
@@ -1503,10 +1606,12 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
       const diffFingerprint = fingerprint?.kind === 'available' ? fingerprint.fingerprint : undefined;
       let inputs: ReturnType<typeof bindAutomationWorkflowInputs>;
       try {
-        const occurrenceSeed = WorkflowResolvedInputsV1Schema.parse(resolveAutomationWorkflowOccurrenceSeed({
+        const occurrenceSeed = WorkflowResolvedInputsV1Schema.parse({ ...resolveAutomationWorkflowOccurrenceSeed({
           cause: claim.automationCause, openedEvidence: evidenceContent,
           ...(diffFingerprint === undefined ? {} : { diffFingerprint }),
-        }));
+        }), ...(deploymentOccurrence.kind === 'available' ? {
+          sha: deploymentOccurrence.occurrence.sha, requestKey: deploymentOccurrence.occurrence.requestKey,
+        } : {}) });
         inputs = bindAutomationWorkflowInputs({ definition: source.definition, evidence: occurrenceSeed,
           constants: storedDefinition.data.inputs });
       } catch (error) {
@@ -1539,9 +1644,11 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
         // must settle this occurrence rather than silently repeat on reclaim.
         return refuseSourceRead('materialization_host', error);
       }
-      // A saved or plugin Workflow names its Run; every other source (inline,
-      // legacy, a built-in) has only the Automation that fired it to name it.
-      const automationTitle = claim.automationName?.trim();
+      // Saved/plugin provenance wins. An inline Account Workflow uses the same name as its Library row.
+      const automationTitle = claim.automationName === undefined ? undefined : workflowTriggerDisplayNameV1({
+        name: claim.automationName,
+        ...(source.kind === 'inline' ? { target: { kind: 'inline', definition: source.definition } as const } : {}),
+      })?.trim();
       const runMetadata = (source.kind === 'inline' ? undefined : source.metadata)
         ?? (automationTitle ? { title: automationTitle } : undefined);
       let created: Awaited<ReturnType<typeof materializeWorkflowAcceptedSnapshotV1>>;
@@ -1562,7 +1669,12 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
                 ...(source.kind === 'saved' ? { definitionId: source.definitionId, revision: source.revision,
                   savedBy: source.savedBy ?? null } : {}) },
             ...(runMetadata ? { metadata: runMetadata } : {}),
-            ...(originSessionId ? { origin: { kind: 'direct', originSessionId } } : {}),
+            ...(originSessionId || storedDefinition.data.approvalProfileId !== undefined ? { origin: { kind: 'direct',
+              ...(originSessionId ? { originSessionId } : {}),
+              ...(storedDefinition.data.approvalProfileId === undefined ? {} : { actionPolicy: {
+                authority: 'account_automation', approvalProfileId: storedDefinition.data.approvalProfileId,
+              } }),
+            } } : {}),
             ...(storedDefinition.data.onComplete?.kind === 'originating_session' && originSessionId ? {
               resultDelivery: { kind: 'originating_session', originSessionId, reportPolicy },
             } : {}),
@@ -1573,6 +1685,20 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
         return refuseSourceRead('materialization', error);
       }
       if (!created.ok) return refuse('materialization', created.error.code, created.error.blockId);
+      if (deploymentOccurrence.kind === 'available') {
+        try {
+          const controller = await params.resolveControllerContext({ runId: claim.runId, accepted: created.snapshot,
+            ...(claim.signal ? { signal: claim.signal } : {}) });
+          const context: ActionExecutorContext = { ...controller, executionRunTargetMachineId: params.machineId,
+            externalActionTarget: { kind: 'machine', machineId: params.machineId }, ...(claim.signal ? { signal: claim.signal } : {}) };
+          const decision = await admitDeploymentTriggerOccurrence({ occurrence: deploymentOccurrence.occurrence,
+            snapshot: created.snapshot, machineId: params.machineId, executor: params.execution.detachedRun.actionExecutor, context });
+          if (decision.kind === 'refused') return refuse('deployment_filter', decision.code);
+          if (decision.kind === 'skipped') return { state: 'skipped', reason: 'filtered', admission: 'refused' };
+        } catch (error) {
+          return refuseSourceRead('deployment_filter', error);
+        }
+      }
       // Only a lifecycle event has a source turn that can feed back into itself.
       // A manual/scheduled scoped habit intentionally continues its destination.
       const sourceSessionId = claim.automationCause.kind === 'trigger' && claim.automationCause.triggerKind === 'sessionLifecycle'
@@ -1615,6 +1741,13 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
         : undefined;
       const prepared = prepareWorkflowRunDataKeyV1({ accountId: params.accountId, encryption: accountEncryption,
         ...(census ? { census } : {}), randomBytes: getRandomBytes });
+      const triggerCause = claim.automationCause;
+      const exactConsent = triggerCause.kind === 'trigger'
+        ? storedDefinition.data.actionApprovals?.find(approval => approval.triggerId === triggerCause.triggerId)
+        : undefined;
+      if (exactConsent && exactConsent.operation.approvedBy.accountId === params.accountId) {
+        created = { ...created, snapshot: { ...created.snapshot, approvedOperation: structuredClone(exactConsent.operation) } };
+      }
       const candidate = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
         ...sealMode({ witness: accountEncryption.witness, runCrypto: prepared.runCrypto }),
         binding: { v: 1, purpose: 'accepted_snapshot', accountId: params.accountId, runId: claim.runId },
@@ -1690,6 +1823,8 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
         });
     };
 
+    // Delivering a result to the frozen origin Discussion is admitted work: it keeps the
+    // Account-encryption witness and abort signal but never re-reads principal authority.
     const isPublicationEncryptionCurrent = async (signal?: AbortSignal): Promise<boolean> =>
       sameAutomationAccountContentIdentityV1((await params.resolveAccountEncryption(signal)).witness, accountEncryption.witness);
 
@@ -1724,7 +1859,7 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
         frontier: { nextBlockOrdinal: 0, paused: false },
       });
       const rootProgress = WorkflowProgressEnvelopeV1Schema.parse({
-        stepProgress: { completed: 0, total: countWorkflowStepsV1(accepted.authoredDefinition.blocks) },
+        stepProgress: { completed: 0, skipped: 0, total: countWorkflowStepsV1(accepted.authoredDefinition.blocks) },
         kind: 'happier.workflow-progress.v1', invocationPath: { blockId: '$root', scope: [] },
         blockKind: 'root', attempt: '0', logicalInvocationRecordId: rootRecordId,
       });
@@ -1762,6 +1897,7 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
       authoredDefinition: accepted.authoredDefinition,
       definition: accepted.definition,
       frozenChildren: accepted.frozenChildren,
+      discussionRound: readWorkflowDiscussionRoundBindingV1(accepted),
       destinations: deriveWorkflowDestinationsV1({ definition: accepted.authoredDefinition, children: accepted.frozenChildren,
         materializedLeaves: accepted.materializedLeaves, originSessionId: accepted.origin?.originSessionId }).leaves,
     });
@@ -1793,7 +1929,7 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
       return { state, reason: controllerFailure };
     }
     await prepareRecipients(claim.signal);
-    if (rootAtStart.lifecycle === 'pending') {
+    if (rootAtStart.lifecycle === 'pending' || initial.run.state === 'claimed') {
       const checkpointEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowCheckpointStoredEnvelopeV1({
         ...sealMode(encryption), binding: { v: 1, purpose: 'checkpoint', accountId: params.accountId, runId: claim.runId },
         checkpoint: durableStore.checkpoint,
@@ -1803,9 +1939,11 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
         accountCurrentness: encryption.witness,
         expectedRevision: durableStore.revision,
         state: 'running', checkpointEnvelope,
-        invocationTransitions: [{ id: rootAtStart.id, expectedLifecycle: 'pending', expectedContentRevision: rootAtStart.contentRevision, lifecycle: 'running' }],
+        ...(rootAtStart.lifecycle === 'pending' ? {
+          invocationTransitions: [{ id: rootAtStart.id, expectedLifecycle: 'pending', expectedContentRevision: rootAtStart.contentRevision, lifecycle: 'running' }],
+        } : {}),
       }));
-      durableStore.applyParentTransition(started, 'running');
+      durableStore.applyParentTransition(started, rootAtStart.lifecycle === 'pending' ? 'running' : rootAtStart.lifecycle);
     }
     const resolveSharedSessionConversation = async ({ conversationBinding }: Readonly<{ conversationBinding?: WorkflowConversationBinding }>) => {
       const record = await durableStore.resolveSharedInvocation(conversationBinding);
@@ -1917,13 +2055,45 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
       && (rootInvocation.lifecycle === 'running' || rootInvocation.lifecycle === 'needs_attention')) {
       await durableStore.commitFact({ key: rootInvocation.key, lifecycle: 'running' });
     }
+    // A refused/aborted publication stays unresolved until the enclosing Run
+    // settles it. Only the final successful approval can release this attention.
+    let unresolvedPublicationApprovals = 0;
+    const reconcilePublicationAttention = () => durableStore.reconcilePublicationApprovalAttention(() => unresolvedPublicationApprovals > 0);
     const publishDiscussionResult = accepted.resultDelivery?.kind === 'originating_discussion'
       ? createWorkflowDiscussionResultPublisher({
         credentials: params.execution.credentials, origin: accepted.resultDelivery,
         isCurrent: isPublicationEncryptionCurrent,
+        findApproval: async (publication, signal) => {
+          if (!('kind' in publication) || !params.execution.serverIdentityId) return undefined;
+          const retained = await createCliApprovalsArtifactStore({ credentials: params.execution.credentials,
+            serverId: params.execution.serverId, serverHttpBaseUrl: resolveServerHttpBaseUrl() }).findWorkflowDiscussionReplyApproval({
+            serverIdentityId: params.execution.serverIdentityId, accountId: params.accountId, machineId: params.machineId,
+            producer: publication.producer, origin: publication.discussion, authorization: accepted.authorization,
+          }, { signal });
+          return retained ? { kind: 'approval', artifactId: retained.artifactId } : undefined;
+        },
+        ...(params.execution.action?.observeApproval ? { observeApproval: async ({ artifactId, publication, signal }) => {
+          signal?.throwIfAborted();
+          unresolvedPublicationApprovals++;
+          await reconcilePublicationAttention();
+          const observed = await params.execution.action!.observeApproval!({ artifactId, actionId: 'discussion.reply',
+            actionRequestId: 'kind' in publication ? deriveWorkflowDiscussionReplyLocalIdV1(publication.workflow)
+              : deriveSessionMessageReplyReturnLocalIdV1({ sessionId: publication.requestSessionId,
+                localId: publication.requestLocalId, acceptedTurnId: publication.acceptedTurnId }),
+            authorization: accepted.authorization, signal: signal ?? claim.signal ?? new AbortController().signal });
+          signal?.throwIfAborted();
+          if (observed.ok) {
+            unresolvedPublicationApprovals--;
+            await reconcilePublicationAttention();
+          }
+          return observed;
+        } } : {}),
+        // Every newly claimed coordinator may retry retained transient return
+        // custody. Equal control hints do not create a claim or a retry loop.
+        retryFailedPublications: true,
         publish: createDiscussionReplyReturnPublisher({ credentials: params.execution.credentials,
           machineId: params.machineId, serverId: params.execution.serverId,
-          workflowAuthorization: accepted.authorization,
+          workflowActionContext: buildWorkflowActionContext({ ...accepted, runId: claim.runId }, params.requesterWorkAttributionV1),
           serverHttpBaseUrl: resolveServerHttpBaseUrl(), signal: claim.signal ?? new AbortController().signal,
           ...(params.execution.postWorkflowMessage ? { postWorkflowMessage: params.execution.postWorkflowMessage } : {}),
           isCurrent: isPublicationEncryptionCurrent }),
@@ -2067,7 +2237,7 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
           && classifyDaemonServerWorkError(error).kind === 'server_error';
         if (!publicationUnavailable && !storageUnavailable) throw error;
         if (publicationUnavailable) {
-          discussionPublicationPending = true;
+          discussionPublicationPending = !error.terminal;
           // An Ask or unavailable append retains publication custody, not an
           // executable claim. Never replace Cancel with publication attention
           // or reopen an already-cancelled root on every lease reclaim.
@@ -2082,11 +2252,18 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
         // incumbent lease-reclaim owner remains responsible for recovery.
         const root = await durableStore.readByLogicalInvocation(rootRecordId);
         if (!root) throw error;
-        const reason = publicationUnavailable ? 'workflow_discussion_publication_unavailable' : 'storage_unavailable';
+        const terminalPublicationFailure = publicationUnavailable && error.terminal;
+        const reason = publicationUnavailable && error.pending ? 'approval_required'
+          : publicationUnavailable && error.failure ? error.failure.code
+          : publicationUnavailable ? 'workflow_discussion_publication_unavailable' : 'storage_unavailable';
         try {
-          await durableStore.commitFact({ key: root.key, lifecycle: 'needs_attention',
+          await durableStore.commitFact({ key: root.key, lifecycle: terminalPublicationFailure ? 'failed' : 'needs_attention',
             reason,
-            reasonMessage: publicationUnavailable
+            reasonMessage: terminalPublicationFailure
+              ? 'The accepted result is saved, but its Discussion return was refused. The native execution result is unchanged.'
+              : publicationUnavailable && error.pending
+              ? 'The accepted result is saved privately for Discussion publication. Resolve its approval request, then resume the run.'
+              : publicationUnavailable
               ? 'The accepted result is saved, but Discussion publication is unavailable. Restore access or resolve the publication request, then resume the run.'
               : 'Workflow storage is temporarily unavailable. Previously saved work is preserved; review the run before continuing.' });
         } catch (error) {
@@ -2095,7 +2272,7 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
           }
           throw error;
         }
-        return { state: 'interrupted', reason } satisfies WorkflowCoordinatorResult;
+        return { state: terminalPublicationFailure ? 'failed' : 'interrupted', reason } satisfies WorkflowCoordinatorResult;
       }
       finally { releaseActivity?.(); }
     };
@@ -2179,13 +2356,21 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
           finalResult: result.finalResult,
         }))
         : undefined;
-      const custodyState = hasPendingChildStop || discussionPublicationPending
+      let custodyState = hasPendingChildStop || discussionPublicationPending
         ? undefined : projectWorkflowTerminalCustodySettlement(result.state);
+      if (custodyState === 'settled') {
+        const unsettled = await durableStore.listByLifecycle({ runId: claim.runId,
+          lifecycles: WORKFLOW_UNSETTLED_INVOCATION_LIFECYCLES_V1 });
+        // The root closes in this transition. Independent accepted inputs and
+        // review holds remain owned by the existing terminal recovery path.
+        if (unsettled.some(row => row.recordId !== rootBeforeSettlement.id)) custodyState = undefined;
+      }
       const transition = {
         operation: 'transition', runId: claim.runId, parentAttempt: claim.attempt,
         accountCurrentness: encryption.witness,
         expectedRevision: durableStore.revision,
         state: terminalState, checkpointEnvelope,
+        discussionRound: await durableStore.readDiscussionRoundProgress(),
         ...(resultEnvelope ? { resultEnvelope } : {}),
         ...(custodyState ? { custodyState } : {}),
         ...(rootTerminal === rootBeforeSettlement.lifecycle ? {} : {

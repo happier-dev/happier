@@ -1,6 +1,9 @@
 import { sameAutomationAccountContentIdentityV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
 import { sealAutomationRunFailureDetailStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationRunFailureDetailStoredContent';
-import type { AutomationAccountCurrentnessWitnessV1 } from '@happier-dev/protocol';
+import type { ActionExecuteResult, ActionExecutorContext, ActionId, AutomationAccountCurrentnessWitnessV1 } from '@happier-dev/protocol';
+import { openAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { materializeAutomationRunExecutionRecipeV1, parseAutomationRunExecutionRecipeV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
 import {
   isAvailableE2eeAutomationAccountEncryptionV1,
   type AvailableAutomationAccountEncryptionV1,
@@ -49,7 +52,7 @@ type AutomationV3RunFailureSettlement = Readonly<{
 type AutomationRunClaimClient = Readonly<{
   heartbeatRun: AutomationClaimClient['heartbeatRun'];
   failRun: (params: AutomationV3RunFailureSettlement) => Promise<void>;
-}>;
+}> & Partial<Pick<AutomationClaimClient, 'startRun' | 'succeedRun'>>;
 
 type ResolveAutomationAccountEncryption = (
   signal: AbortSignal,
@@ -163,6 +166,8 @@ export async function executeClaimedRun(params: {
   leaseDurationMs: number;
   /** Canonical Account-currentness/material owner for private admission diagnostics. */
   resolveAutomationAccountEncryption?: ResolveAutomationAccountEncryption;
+  /** The daemon's canonical contributed Action executor, shared with interactive callers. */
+  actionExecutor?: Readonly<{ execute: (actionId: ActionId, input: unknown, context?: ActionExecutorContext) => Promise<ActionExecuteResult> }>;
   /** Worker-owned currentness signal for this exact claimed Run attempt. */
   signal?: AbortSignal;
   /** Origin-neutral workflow coordinator supplied by daemon bootstrap. */
@@ -251,6 +256,64 @@ export async function executeClaimedRun(params: {
         });
         return;
       }
+      if (claimed.run.recipeKind === 'action-v1') {
+        const encryption = await resolveMatchingAutomationCurrentness({
+          signal: executionController.signal, expected: claimed.accountCurrentness,
+          resolveAutomationAccountEncryption: params.resolveAutomationAccountEncryption,
+        });
+        if (!encryption || !isCurrent()) return;
+        let settlementCurrentness: AutomationAccountCurrentnessWitnessV1 = encryption.witness;
+        const fail = async (errorCode: string, errorMessage: string) => {
+          if (isCurrent()) await claimClient.failRun({ ...createV3RunFailureSettlement({
+            machineId, claimed, accountEncryption: encryption, errorCode, errorMessage,
+          }), accountCurrentness: settlementCurrentness });
+        };
+        const parsed = parseAutomationRunExecutionRecipeV1(claimed.run.executionInputEnvelope);
+        if (parsed.kind !== 'available') {
+          await fail('invalid_template', 'Automation Action recipe is invalid');
+          return;
+        }
+        const recipe = parsed.recipe;
+        const openedContent = isAvailableE2eeAutomationAccountEncryptionV1(encryption)
+          && recipe.template.t === 'encrypted'
+          ? {
+            template: openAccountScopedBlobCiphertext({ kind: 'automation_template_payload',
+              material: encryption.material.material, ciphertext: recipe.template.c })?.value,
+            triggerEvidence: recipe.triggerEvidence?.t === 'encrypted'
+              ? openAccountScopedBlobCiphertext({ kind: 'automation_trigger_evidence',
+                material: encryption.material.material, ciphertext: recipe.triggerEvidence.c })?.value
+              : null,
+          } : undefined;
+        const materialized = materializeAutomationRunExecutionRecipeV1({ recipe,
+          cause: claimed.run.cause, accountCurrentness: encryption.witness, runId: claimed.run.id, openedContent });
+        if (materialized.kind !== 'available' || materialized.target.kind !== 'contributedAction') {
+          await fail('invalid_template', 'Automation Action input is unavailable or invalid');
+          return;
+        }
+        if (!params.actionExecutor || !claimClient.startRun || !claimClient.succeedRun) {
+          await fail('target_unavailable', 'Automation Action executor is unavailable');
+          return;
+        }
+        const started = await claimClient.startRun({ protocol: 'v3', runId: claimed.run.id,
+          machineId, attempt, accountCurrentness: encryption.witness });
+        if (!started || !isCurrent()) return;
+        settlementCurrentness = started;
+        const result = await params.actionExecutor.execute('action.invoke', {
+          action: materialized.target.action, input: materialized.target.input,
+        }, { surface: 'cli', authority: 'account_automation', signal: executionController.signal,
+          actionCaller: { kind: 'automationRun', runId: claimed.run.id,
+            automationId: claimed.run.automationId, cause: claimed.run.cause } });
+        if (!isCurrent()) return;
+        if (result.ok && ActionApprovalRequestCreatedResultSchema.safeParse(result.result).success) {
+          await fail('approval_required', 'Automation Action requires present-user approval');
+        } else if (result.ok) {
+          await claimClient.succeedRun({ protocol: 'v3', runId: claimed.run.id,
+            machineId, attempt, accountCurrentness: started });
+        } else {
+          await fail(result.errorCode ?? 'target_unavailable', result.error);
+        }
+        return;
+      }
       if (claimed.run.recipeKind === 'workflow-v2'
         || (claimed.run.recipeKind === 'legacy' && claimed.run.executionInputEnvelope !== null)) {
         if (claimed.run.executionInputEnvelope === null || !params.coordinateWorkflowRun) {
@@ -299,10 +362,10 @@ export async function executeClaimedRun(params: {
         errorMessage: 'Automation Run requires a Workflow execution recipe',
       });
     } catch (error) {
-      // The canonical Workflow lifecycle owns target outcomes and recovery.
+      // The canonical execution owner retains target outcomes and recovery.
       // A failed dispatch leaves the incumbent lease available for reclaim.
       if (isCurrent()) {
-        logAutomationWarn('Workflow Run execution failed before a proven terminal outcome', error, {
+        logAutomationWarn('Automation Run execution failed before a proven terminal outcome', error, {
           runId: claimed.run.id,
           automationId: claimedAutomationId,
         });

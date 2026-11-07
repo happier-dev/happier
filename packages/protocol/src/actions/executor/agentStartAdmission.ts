@@ -1,4 +1,5 @@
 import * as z from 'zod/mini';
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { actionStartTargetUnavailableV1, measureActionStartPhaseV1 } from './actionStartDiagnostics.js';
 export { actionStartTargetUnavailableV1, measureActionStartPhaseV1 } from './actionStartDiagnostics.js';
 export type { ActionStartDiagnosticV1, ActionStartPhaseV1 } from './actionStartDiagnostics.js';
@@ -28,7 +29,16 @@ import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
 import { ManagedAcquireAgentStartV1Schema } from '../../machines/managed/agentStartV1.js';
 import { PROFILE_ACTION_OUTPUT_SCHEMAS_V1, parseProfileActionRequestV1 } from '../../profiles/profileActionsV1.js';
 import { SessionCapabilitySelectionAuthoringV1Schema, SessionSkillSelectionAuthoringV1Schema } from '../../reach/sessionCapabilitySelectionV1.js';
-import { actionInputIssueFailure, ActionInputIssueSchema } from './actionInputValidation.js';
+import { actionInputIssueFailure } from './actionInputValidation.js';
+import { BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '../../bots/templates/botTemplateActionIdsV1.js';
+
+/** Native Workflow leaves already admitted by materialization retain that host-stamped depth. */
+export function readAdmittedWorkflowLeafStartDepthV1(actionId: string, context: ActionExecutorContext): number | undefined {
+    return (actionId === 'execution.run.start' || actionId === 'session.spawn_new')
+        && context.actionCaller?.kind === 'workflowRun'
+        && context.executionRunWorkflowRunId === context.actionCaller.runId
+        ? context.agentStartWorkDepth : undefined;
+}
 
 /** Only fresh Session creation admits a Profile; resume keeps its stored session selection. */
 export async function resolveProfileSkillSeedsAtAdmissionV1(input: Readonly<Record<string, unknown>>,
@@ -61,11 +71,11 @@ const unresolved = { kind: 'unresolved' } as const;
 const RunStartConfigOptionsSchema = z.record(z.string(), SpawnConfigOptionValueSchema);
 // Admission needs authoritative selection facts, not a dynamically bound task
 // body. The native Session owner still validates the complete effective input.
-const spawnPolicyFields = z.object(z.pick(SessionSpawnNewInputV2BaseSchema, {
+const spawnPolicyFields = lazyZodSchema(() => z.object(z.pick(SessionSpawnNewInputV2BaseSchema, {
     executionTarget: true, directory: true, agentTarget: true, roleId: true,
     modelSelection: true, permissionMode: true, agentModeId: true, configuration: true,
     profileId: true, environmentVariables: true, connectedServices: true, capabilitySelection: true, transcriptStorage: true,
-}).shape);
+}).shape));
 type SpawnStartFactsInput = {
     [Key in keyof z.infer<typeof spawnPolicyFields>]?: z.infer<typeof spawnPolicyFields>[Key] | Unresolved;
 };
@@ -85,7 +95,8 @@ export function isAgentStartActionInvocationV1(actionId: string, input: Readonly
 }
 /** Action policies that may admit new Agent work, unlike observation and own-Session controls. */
 export function requiresActionAgentStartDepthV1(actionId: string): boolean {
-    return isAgentStartActionV1(actionId) || actionId === 'workflow.run.start' || actionId === 'workflow.trigger.run_now'
+    return isAgentStartActionV1(actionId) || actionId === BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1
+        || actionId === 'workflow.run.start' || actionId === 'workflow.trigger.run_now'
         || actionId === 'workflow.definition.create' || actionId === 'workflow.definition.update'
         || actionId === 'workflow.definition.edit'
         || actionId === 'workflow.trigger.add' || actionId === 'workflow.trigger.update'
@@ -427,45 +438,46 @@ export function spawnStartFactsV1(input: Readonly<SpawnStartFactsInput>): AgentS
         capabilitySelection: input.capabilitySelection, transcriptStorage: input.transcriptStorage,
     };
 }
-export async function resolveActionAgentStartContextV1(deps: Pick<ActionExecutorDeps, 'resolveAgentStartContext'> & Partial<Pick<ActionExecutorDeps, 'sessionList'>>, context: ActionExecutorContext, targetSessionId?: string,
-    options?: Readonly<{ purpose: 'session_scope' }>) {
+export async function resolveActionAgentStartContextV1(deps: Pick<ActionExecutorDeps, 'resolveAgentStartContext'> & Partial<Pick<ActionExecutorDeps, 'sessionList' | 'sessionRead'>>, context: ActionExecutorContext, targetSessionId?: string | readonly string[],
+    options?: Parameters<NonNullable<ActionExecutorDeps['resolveAgentStartContext']>>[1]): Promise<Awaited<ReturnType<NonNullable<ActionExecutorDeps['resolveAgentStartContext']>>>> {
     let resolved = context.agentStartContext ?? await measureActionStartPhaseV1(context, 'agent_start_context',
       async () => await deps.resolveAgentStartContext?.(context, options) ?? null);
+    if (resolved && 'ok' in resolved) return resolved;
     if (context.actionCaller?.kind === 'session') {
         const caller = context.actionCaller;
         if (!resolved || resolved.caller.kind !== 'session' || resolved.caller.sessionId !== caller.sessionId) {
-            if (resolved) context.recordActionStartDiagnostic?.({ phase: 'agent_start_context', refusalReason: 'caller_witness_invalid' });
-            return null;
+            return resolved ? actionStartTargetUnavailableV1(context, 'agent_start_context', 'caller_witness_invalid') : null;
         }
         const original = AgentStartSessionCallerV1Schema.safeParse(caller);
         if (!original.success) {
-            context.recordActionStartDiagnostic?.({ phase: 'agent_start_context', refusalReason: 'caller_witness_invalid' });
-            return null;
+            return actionStartTargetUnavailableV1(context, 'agent_start_context', 'caller_witness_invalid');
         }
         resolved = { ...resolved, caller: original.data };
     }
     if (!resolved || targetSessionId === undefined)
         return resolved;
     const origin = resolved.caller.kind === 'session' ? resolved.caller.sessionId : resolved.caller.runOriginSessionId;
-    if (!origin || targetSessionId === origin)
+    const targets = (typeof targetSessionId === 'string' ? [targetSessionId] : targetSessionId).filter(id => id !== origin);
+    if (!origin || targets.length === 0)
         return resolved;
     // Captured start facts preserve caller identity and depth, not a continuing
     // grant to a Session that has since been detached or revoked.
     // Readable led Sessions do not widen an explicitly current-Session-only
     // start corpus, including when captured caller facts named them earlier.
-    const ids = context.sessionListAccess !== 'current_session' && deps.sessionList
-        ? await readActionCallerLedSubtreeSessionIds({ sessionList: deps.sessionList }, { ...context, defaultSessionId: origin }) : null;
+    const ids = context.sessionListAccess !== 'current_session' && deps.sessionRead
+        ? await readActionCallerLedSubtreeSessionIds({ sessionRead: deps.sessionRead },
+          { ...context, defaultSessionId: origin }, undefined, targets) : null;
     return { ...resolved, ledSubtreeSessionIds: !context.signal?.aborted && ids ? [...ids] : [] };
 }
-export function admitActionAgentStartV1(context: ActionExecutorContext, request: AgentStartRequestV1, resolved: AgentStartContextV1 | null) {
+export function admitActionAgentStartV1(context: ActionExecutorContext, request: AgentStartRequestV1,
+    resolved: Awaited<ReturnType<NonNullable<ActionExecutorDeps['resolveAgentStartContext']>>>) {
+    if (resolved && 'ok' in resolved) return { ok: false as const, refusal: resolved.details, error: resolved };
     const policy = SessionAgentSpawnPolicyV1StrictSchema.safeParse(context.sessionAgentSpawnPolicyV1 ?? {});
     if (!resolved || !policy.success) {
         const reason = !resolved ? 'agent_start_context_unavailable' as const : 'spawn_policy_invalid' as const;
         const error = actionStartTargetUnavailableV1(context, 'agent_start_context', reason);
         return { ok: false as const, refusal: { code: 'target_unavailable' as const, reason },
-            error: { ...error, details: { ...error.details,
-                issues: [ActionInputIssueSchema.parse({ code: 'unavailable', path: ['host'] })],
-            } } };
+            error };
     }
     const admission = admitAgentStartV1(policy.data, request, resolved);
     if (!admission.ok && admission.refusal.code === 'target_unavailable' && admission.refusal.reason)

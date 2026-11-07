@@ -25,6 +25,12 @@ export const WorkflowRunRecipientCensusResponseV1Schema = lazyZodSchema(() => (<
   ownerAccountCurrentness: AutomationAccountCurrentnessWitnessV1Schema,
 })));
 export type WorkflowRunRecipientCensusResponseV1 = z.infer<typeof WorkflowRunRecipientCensusResponseV1Schema>;
+/** A missing exact Run may prepare its audience in the same admission read. */
+export const WorkflowRunAdmissionPreparationInputV1Schema = lazyZodSchema(() => z.omit(WorkflowRunRecipientCensusInputV1Schema, { runId: true }));
+export const WorkflowRunAdmissionPreparationResultV1Schema = lazyZodSchema(() => z.strictObject({
+  run: z.null(),
+  keyCensus: WorkflowRunRecipientCensusResponseV1Schema,
+}));
 export const WorkflowRunRecipientKeyEnvelopeCommitInputV1Schema = lazyZodSchema(() => z.strictObject({
   runId: WorkflowRunIdV1Schema,
   expectedDataEncryptionKey: SessionDataKeyEnvelopeBytesV1Schema,

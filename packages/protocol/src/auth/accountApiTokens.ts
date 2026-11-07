@@ -4,6 +4,7 @@ import { ApiTokenGrantV1Schema } from './apiTokenGrant.js';
 import { EmbedConfigV1Schema } from '../embed/embedConfigV1.js';
 import { decodeBase64, encodeBase64, type Base64Variant } from '../crypto/base64.js';
 import { SERVER_IDENTITY_ID_PATTERN } from '../features/payload/capabilities/serverIdentityCapabilities.js';
+import { DeploymentDeploySemanticInputV1Schema } from '../deployments/deploymentDeployIntentV1.js';
 
 const AccountApiTokenIdV1Schema = lazyZodSchema(() => z.string().check(z.uuid()));
 const AccountApiTokenInstantV1Schema = lazyZodSchema(() => z.string().check(z.iso.datetime({ offset: true }), z.maxLength(64)));
@@ -70,6 +71,13 @@ export const AccountApiTokenSummaryV1Schema = lazyZodSchema(() => z.strictObject
 }));
 export type AccountApiTokenSummaryV1 = z.infer<typeof AccountApiTokenSummaryV1Schema>;
 
+/** Deployment choice is intent; authenticated token preparation produces consent. */
+export const AccountApiTokenDeploymentInputV1Schema = lazyZodSchema(() => z.strictObject({
+  ...DeploymentDeploySemanticInputV1Schema.shape,
+  deployApproval: z.optional(z.enum(['automatic', 'ask'])),
+}));
+export type AccountApiTokenDeploymentInputV1 = z.infer<typeof AccountApiTokenDeploymentInputV1Schema>;
+
 /** The Account is derived from verified credential provenance, never this input. */
 export const AccountApiTokensCreateActionInputV1Schema = lazyZodSchema(() => z.strictObject({
   tokenId: ApiTokenUuidV4Schema,
@@ -79,16 +87,24 @@ export const AccountApiTokensCreateActionInputV1Schema = lazyZodSchema(() => z.s
   authorizeUnattendedTeamAccess: z.optional(z.boolean()),
   grant: z.optional(ApiTokenGrantV1Schema),
   embedConfig: z.optional(EmbedConfigV1Schema),
+  deployment: z.optional(AccountApiTokenDeploymentInputV1Schema),
 }));
 export type AccountApiTokensCreateActionInputV1 = z.infer<typeof AccountApiTokensCreateActionInputV1Schema>;
 
 export const AccountApiTokensUpdateActionInputV1Schema = lazyZodSchema(() => z.strictObject({
   tokenId: AccountApiTokenIdV1Schema,
+  /** Refreshes this token's evidence from the authenticated present person, never input evidence. */
+  authorizeUnattendedTeamAccess: z.optional(z.literal(true)),
   label: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(256))),
   grant: z.optional(ApiTokenGrantV1Schema),
   embedConfig: z.optional(z.nullable(EmbedConfigV1Schema)),
-}).check(z.refine((value) => value.label !== undefined || value.grant !== undefined || value.embedConfig !== undefined, 'An update must contain at least one change.')));
+  deployment: z.optional(z.nullable(AccountApiTokenDeploymentInputV1Schema)),
+}).check(z.refine((value) => value.label !== undefined || value.grant !== undefined || value.embedConfig !== undefined
+  || value.deployment !== undefined || value.authorizeUnattendedTeamAccess === true, 'An update must contain at least one change.')));
 export type AccountApiTokensUpdateActionInputV1 = z.infer<typeof AccountApiTokensUpdateActionInputV1Schema>;
+
+export const AccountApiTokensCreateHttpInputV1Schema = AccountApiTokensCreateActionInputV1Schema;
+export const AccountApiTokensUpdateHttpInputV1Schema = AccountApiTokensUpdateActionInputV1Schema;
 export const AccountApiTokensUpdateActionOutputV1Schema = lazyZodSchema(() => z.strictObject({ apiToken: AccountApiTokenSummaryV1Schema }));
 export type AccountApiTokensUpdateActionOutputV1 = z.infer<typeof AccountApiTokensUpdateActionOutputV1Schema>;
 
@@ -140,7 +156,9 @@ export function projectAccountApiTokenCreationObservation(value: unknown): Reado
     : AccountApiTokensUpdateActionOutputV1Schema.parse(value);
 }
 
-export const AccountApiTokensListActionInputV1Schema = lazyZodSchema(() => z.strictObject({}));
+export const AccountApiTokensListActionInputV1Schema = lazyZodSchema(() => z.strictObject({
+  includeChildren: z.optional(z.literal(true)),
+}));
 export type AccountApiTokensListActionInputV1 = z.infer<typeof AccountApiTokensListActionInputV1Schema>;
 
 /** List projections are summaries only and can never re-disclose a bearer. */
@@ -239,11 +257,12 @@ export const AccountApiTokensServerErrorV1Schema = lazyZodSchema(() => z.strictO
     'credential_scope_denied', 'credential_origin_denied', 'model_not_granted',
     'credential_authentication_evidence_limit',
     'credential_authentication_evidence_unavailable',
-    'database_transaction_conflict_exhausted', 'database_connection_unavailable',
+    'database_transaction_conflict_exhausted', 'database_transaction_timeout', 'database_connection_unavailable',
   ]),
   statusCode: z.optional(z.literal(503)),
 }).check(z.superRefine((value, context) => {
   const databaseFailure = value.error === 'database_transaction_conflict_exhausted'
+    || value.error === 'database_transaction_timeout'
     || value.error === 'database_connection_unavailable';
   if (databaseFailure !== (value.statusCode === 503)) {
     context.addIssue({

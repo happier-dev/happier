@@ -1,25 +1,20 @@
-import type { SessionInitialTriggerAdmissionV1 } from '../../sessions/creation/sessionInitialTriggerAdmissionV1.js';
-import { ActionInvokeInputSchema } from '../actionInvokeInput.js';
 import { artifactSavedByFromActionContextV1 } from '../../artifacts/artifactBinaryV1.js';
+import { isConfirmedActionWriteRefusal } from './actionFailureEnvelope.js';
+import type { SessionInitialTriggerAdmissionV1 } from '../../sessions/creation/sessionInitialTriggerAdmissionV1.js';
+import { isTerminalAutomationRunStateV3 } from '../../automations/automationRunStateV3.js';
 import { WorkflowApprovedOperationStepV1Schema } from '../approvedOperationV1.js';
-import { readAuthenticatedActionRequesterAccountIdV1 } from '../actionRequestAttributionV1.js';
-import { WorkflowApprovedOperationV1Schema, type WorkflowApprovedOperationV1, type WorkflowAcceptedSnapshotV1 } from '../../workflows/workflowDefinitionV1.js';
-import { ActionIdSchema, type ActionId } from '../actionIds.js';
-import { getActionSpec } from '../actionSpecs.js';
-import { computeActionInputApprovalDigestV1 } from '../decisionAuthority.js';
-import { isHostAdmittedReviewedChildPolicyV1, readHostReviewedChildOperationV1 } from './deploymentRoleChild.js';
-import { projectTargetActionApprovalInput } from '../actionApprovalPresentation.js';
-import { validateExecutionRunProfileResult } from '../../execution/runs/resultContract.js';
-import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '../../plugins/actions/qualifiedActionId.js';
-import type { DeploymentPublishInputV1 } from '../../deployments/deploymentActionsV1.js';
-import type { MachineSetupApplyInputV1 } from '../../machines/managed/actionsV1.js';
-import type { ActionExecutorContext } from './types.js';
-import type { WorkflowProjectTargetV1 } from '../../workflows/workflowWorkspaceV1.js';
+export { DeploymentShaApprovalInputV1Schema, WorkflowApprovedOperationStepV1Schema,
+  matchesApprovedOperationStepV1 } from '../approvedOperationV1.js';
+export { normalizeStoredWorkflowTriggerConsent } from './workflowTriggerConsent.js';
+export { resolveInitialDeploymentApprovalV1 } from '../../deployments/deploymentApprovalScopeV1.js';
+export { prepareApiTokenDeploymentAuthoring, type ApiTokenDeploymentAuthoringHost } from './apiTokenDeploymentAuthoring.js';
 import { deriveWorkflowReplacementId } from '../../workflows/workflowInvocationIdentityV1.js';
+import { readAuthenticatedActionRequesterAccountIdV1 } from '../actionRequestAttributionV1.js';
 import { readWorkflowRunDisplayMetadataV1, readWorkflowRunSourceSavedByV1 } from '../../workflows/workflowRunDisplayMetadataV1.js';
 import { z as zodMiniCore0 } from 'zod/mini';
 
-import { WorkflowAcceptedSnapshotV1Schema, type WorkflowDefinitionSavedByV1 } from '../../workflows/workflowDefinitionV1.js';
+import { WorkflowAcceptedSnapshotV1Schema, WorkflowApprovedOperationV1Schema, type WorkflowApprovedOperationV1,
+  type WorkflowAcceptedSnapshotV1, type WorkflowDefinitionSavedByV1 } from '../../workflows/workflowDefinitionV1.js';
 import { deriveWorkflowDestinationsV1, WorkflowDiscussionOriginV1Schema, type WorkflowDiscussionOriginV1 } from '../../workflows/workflowDestinationsV1.js';
 import { listWorkflowAcceptedLeafSelectionsV1 } from '../../workflows/workflowStepSelectionV1.js';
 import { workflowBlockOrdinalV1 } from '../../workflows/workflowStepLabel.js';
@@ -31,29 +26,37 @@ import { materializeWorkflowAcceptedSnapshotV1, readWorkflowAcceptedAgentStartLe
 import type { WorkflowAuthoredResultReference } from '../../workflows/workflowReferenceV1.js';
 import { openWorkflowAcceptedSnapshotListingStoredEnvelopeV1, openWorkflowAcceptedSnapshotStoredEnvelopeV1, openWorkflowCheckpointStoredEnvelopeV1, openWorkflowFinalResultStoredEnvelopeV1, openWorkflowProgressStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1, sealWorkflowAcceptedSnapshotStoredEnvelopeV1, sealWorkflowCheckpointStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '../../workflows/workflowStoredContentV1.js';
 import { validateWorkflowDefinition, matchesWorkflowAcceptedDefinitionV1 } from '../../workflows/workflowValidationV1.js';
-import type { WorkflowActionIdV1 } from '../actionIds.js';
+import { ActionIdSchema, type ActionId, type WorkflowActionIdV1 } from '../actionIds.js';
+import { getActionSpec } from '../actionSpecs.js';
+import { computeActionInputApprovalDigestV1 } from '../decisionAuthority.js';
+import { isHostAdmittedReviewedChildPolicyV1, readHostAdmittedReviewedChildV1, readHostReviewedChildOperationV1 } from './deploymentRoleChild.js';
+import { projectTargetActionApprovalInput } from '../actionApprovalPresentation.js';
 import { workflowInputToFieldHint, type WorkflowBlock, type WorkflowDefinitionV1, type WorkflowIngressContextV1 } from '../../workflows/workflowV1.js';
-import type { WorkflowWorkspaceProgressV1 } from '../../workflows/workflowWorkspaceV1.js';
+import type { WorkflowWorkspaceProgressV1, WorkflowProjectTargetV1 } from '../../workflows/workflowWorkspaceV1.js';
+import type { MachineSetupApplyInputV1 } from '../../machines/managed/actionsV1.js';
 import { formatWorkflowDefinitionRefV1 } from '../../workflows/workflowDefinitionRefV1.js';
 import { resolveWorkflowDefinitionRefV1 } from '../../workflows/workflowDefinitionResolverV1.js';
-import { WorkflowRunRecipientCensusResponseV1Schema, WorkflowRunRecipientKeyEnvelopeCommitResponseV1Schema, type WorkflowRunRecipientCensusResponseV1 } from '../../workflows/workflowRunKeyV1.js';
-import { prepareWorkflowRunDataKeyV1, resolveWorkflowRunDataKeyV1, runWorkflowRecipientKeyPreparationV1, type WorkflowRunEncryptionV1 } from '../../workflows/workflowRunDataKeyV1.js';
+import { WorkflowRunAdmissionPreparationResultV1Schema, WorkflowRunRecipientCensusResponseV1Schema, WorkflowRunRecipientKeyEnvelopeCommitResponseV1Schema, type WorkflowRunRecipientCensusResponseV1 } from '../../workflows/workflowRunKeyV1.js';
+import { prepareWorkflowRunDataKeyV1, resolveWorkflowRunDataKeyV1, runWorkflowRecipientKeyPreparationV1, type WorkflowRunEncryptionV1, type WorkflowRunReadEncryptionV1 } from '../../workflows/workflowRunDataKeyV1.js';
 import { resolveWorkflowInvocationStructureV1, resolveWorkflowRetainedConversationAttemptV1 } from '../../workflows/workflowInvocationStructureV1.js';
-import { decodeExecutionRunResultObservation, type ExecutionRunProfileResultContract } from '../../execution/runs/resultContract.js';
+import { decodeExecutionRunResultObservation, validateExecutionRunProfileResult, type ExecutionRunProfileResultContract } from '../../execution/runs/resultContract.js';
 import { PluginJsonSchemaV2Schema } from '../../plugins/contributions/jsonSchema.js';
+import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '../../plugins/actions/qualifiedActionId.js';
 import { ActionCompletionContractV1Schema } from '../actionCompletion.js';
 import { AgentPermissionIntentV1Schema } from '../../runtime/permissionIntentV1.js';
 import { SessionInputCausalPermissionAuthorityV1Schema } from '../../sessions/messages/sessionInputAdmission.js';
 import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES } from '../externalActionLimits.js';
 import { assertNonEscalatingPermissionMode, resolveEffectivePermissionMode } from '../permissionPrivilege.js';
 import { StrictJsonValueSchema, sameStrictJsonValue } from '../../json/strictJsonValue.js';
+import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import type {
   AvailableAutomationAccountEncryptionV1,
 } from '../../automations/automationAccountCurrentnessV1.js';
-import type { ActionExecutorDeps, WorkflowActionExecuteArgs } from './types.js';
+import type { ActionExecutorContext, ActionExecutorDeps, WorkflowActionExecuteArgs } from './types.js';
 import type { WorkflowRunActionOwner } from './workflowAccountActions.js';
 import { admitActionAgentStartV1, resolveActionAgentStartContextV1 } from './agentStartAdmission.js';
-import type { WorkflowPluginSourceReaderV1 } from '../../workflows/workflowPluginSourceV1.js';
+import { readWorkflowDiscussionRoundBindingV1 } from '../../workflows/builtins/catalog.js';
+import type { WorkflowPluginSourceReaderV1 } from '../../workflows/workflowPluginSourceContractV1.js';
 import { resolveInputTypeOptions, readInputFieldOptionsConstraint, validateInputFieldSchema, validateInputFieldValue } from '../../inputs/inputTypeRuntime.js';
 import type { InputOption } from '../../inputs/inputFields.js';
 import { ActionExecuteFailureSchema } from '../actionExecutionResult.js';
@@ -230,7 +233,7 @@ function workflowError(code: string, details?: unknown): Error & { code: string;
 }
 
 function resolvePreparedOriginalInput(progress: WorkflowProgressEnvelopeV1): WorkflowAuthoredInputV1 {
-  const prepared = WorkflowAuthoredInputV1Schema.safeParse(progress.input);
+  const prepared = createStoredReadSchema(WorkflowAuthoredInputV1Schema).safeParse(progress.input);
   if (prepared.success) return prepared.data;
   throw workflowError('content_unavailable');
 }
@@ -286,6 +289,9 @@ function sealMode(encryption: WorkflowRunEncryptionV1, randomBytes: (length: num
 function parseSnapshot(value: unknown) {
   const parsed = record(value);
   return {
+    managedCreationId: parsed.managedCreationId === undefined || parsed.managedCreationId === null ? null
+      : typeof parsed.managedCreationId === 'string' && parsed.managedCreationId.length > 0 ? parsed.managedCreationId
+      : (() => { throw workflowError('content_unavailable'); })(),
     run: WorkflowRunSummaryV1Schema.parse(parsed.run),
     acceptedEnvelope: typeof parsed.acceptedEnvelope === 'string' ? parsed.acceptedEnvelope : (() => { throw workflowError('content_unavailable'); })(),
     checkpointEnvelope: parsed.checkpointEnvelope === null || typeof parsed.checkpointEnvelope === 'string' ? parsed.checkpointEnvelope : (() => { throw workflowError('content_unavailable'); })(),
@@ -297,14 +303,12 @@ function parseSnapshot(value: unknown) {
 
 function principal(args: RunArgs) {
   if (args.context.actionCaller?.kind === 'workflowRun') return args.context.actionCaller.authorization.principal;
-  if (args.context.actionCaller?.kind === 'session') {
-    return { kind: 'session' as const, sessionId: args.context.actionCaller.sessionId };
-  }
   if (args.context.externalActionCredential) {
-    // The live grant remains on the caller context; the accepted principal
-    // stores identity only, as required by its canonical strict schema.
     const { accountId, principalId, credentialId } = args.context.externalActionCredential;
     return { kind: 'api' as const, accountId, principalId, credentialId };
+  }
+  if (args.context.actionCaller?.kind === 'session') {
+    return { kind: 'session' as const, sessionId: args.context.actionCaller.sessionId };
   }
   if (args.context.actionCaller?.kind === 'plugin') {
     const sourceCustody = args.context.actionCaller.sourceCustody;
@@ -319,7 +323,7 @@ function principal(args: RunArgs) {
   return { kind: 'host' as const };
 }
 
-function currentControllerAuthorization(args: RunArgs) {
+function currentControllerAuthorization(args: RunArgs, retainCombinedAccountRoot = false) {
   const causalPresent = Object.prototype.hasOwnProperty.call(args.context, 'causalPermissionAuthority');
   const causal = causalPresent
     ? SessionInputCausalPermissionAuthorityV1Schema.safeParse(args.context.causalPermissionAuthority)
@@ -335,9 +339,19 @@ function currentControllerAuthorization(args: RunArgs) {
       })
     : { ok: true as const, effectiveMode: callerPermissionMode };
   if (!effective.ok) throw workflowError('run_access_denied');
+  const accepted = args.context.actionCaller?.kind === 'workflowRun' ? args.context.actionCaller.authorization : undefined;
+  const original = accepted?.externalActionExecutionAuthorization ?? (args.context.externalActionCredential || retainCombinedAccountRoot
+    ? args.context.externalActionExecutionAuthorization : undefined);
+  const reviewed = accepted?.reviewedChild ?? readHostAdmittedReviewedChildV1(args.context);
   return {
     effectivePermissionMode: effective.effectiveMode,
     principal: principal(args),
+    ...(original && (!('authentication' in original.binding) || retainCombinedAccountRoot) ? {
+      externalActionExecutionAuthorization: { v: original.v, token: original.token, binding: original.binding },
+      ...(reviewed ? { reviewedChild: { actionId: reviewed.actionId, role: reviewed.role,
+        inputDigest: reviewed.inputDigest,
+        ...(reviewed.deploymentNativeAdmission ? { deploymentNativeAdmission: reviewed.deploymentNativeAdmission } : {}) } } : {}),
+    } : {}),
     ...(args.context.actionCaller?.kind === 'workflowRun' && args.context.actionCaller.authorization.sourceAuthority
       ? { sourceAuthority: args.context.actionCaller.authorization.sourceAuthority } : {}),
     ...(causal?.success && causal.data.sourceAuthority ? {
@@ -441,11 +455,12 @@ export async function assertControllerDominates(
   assertRunResourceRestriction(args.context, { machineId: accepted.machineId, project: accepted.workspaceTarget.project }, host.normalizeAbsolutePath);
 
   if (args.context.surface === 'agent') {
-    const resolved = await resolveActionAgentStartContextV1(host, args.context);
-    for (const leaf of await readWorkflowAcceptedAgentStartLeavesV1(accepted)) {
+    const leaves = await readWorkflowAcceptedAgentStartLeavesV1(accepted);
+    const resolved = leaves.length > 0 ? await resolveActionAgentStartContextV1(host, args.context) : null;
+    for (const leaf of leaves) {
       const role = accepted.materializedLeaves.find((entry) => entry.sourceKey === leaf.sourceKey
         && entry.blockId === leaf.blockId && entry.role?.roleId === leaf.roleId)?.role;
-      const authority = resolved && role ? { ...resolved, roles: { ...resolved.roles, [role.roleId]: role } } : resolved;
+      const authority = resolved && !('ok' in resolved) && role ? { ...resolved, roles: { ...resolved.roles, [role.roleId]: role } } : resolved;
       const admitted = admitActionAgentStartV1(args.context, readWorkflowRunLeafStartRequestV1(leaf), authority);
       if (!admitted.ok) throw workflowError(admitted.error.errorCode ?? 'run_access_denied', admitted.error.details);
     }
@@ -511,6 +526,8 @@ export type WorkflowAccountRunActionDeps = Readonly<{
   definitions: DefinitionReader;
   readPluginWorkflows?: WorkflowPluginSourceReaderV1;
   resolveEncryption: (signal?: AbortSignal) => Promise<AvailableAutomationAccountEncryptionV1>;
+  /** Server-admitted list sidecars need caller key material, never an exact Account cursor. */
+  resolveReadEncryption?: (signal?: AbortSignal) => Promise<WorkflowRunReadEncryptionV1>;
   /** Read once for a new Run with origin reports; retries retain the accepted snapshot. */
   resolveRunReportPolicy?: (args: WorkflowActionExecuteArgs<'workflow.run.start'>) => Promise<FollowPolicyV1>;
   /** Canonical C3 authorized read supplies the immutable message sequence, never frontend input. */
@@ -521,12 +538,13 @@ export type WorkflowAccountRunActionDeps = Readonly<{
   normalizeAbsolutePath: (directory: string) => string | null;
   resolveAgentStartContext?: ActionExecutorDeps['resolveAgentStartContext'];
   sessionList?: ActionExecutorDeps['sessionList'];
+  sessionRead?: ActionExecutorDeps['sessionRead'];
   resolveServerProfileScopeId?: ActionExecutorDeps['resolveServerProfileScopeId'];
   inputTypeDeps?: Pick<ActionExecutorDeps, 'resolveInputType' | 'readInputTypeResource'>;
   resolveMaterializationContext?: (args: WorkflowActionExecuteArgs<'workflow.run.start'>, target: Readonly<{
     machineId: string;
     directory: string;
-  }>) => Promise<Pick<Parameters<typeof materializeWorkflowAcceptedSnapshotV1>[0], 'roleSelection' | 'effects'>>;
+  }>, readAgentStartContext: () => ReturnType<typeof resolveActionAgentStartContextV1>) => Promise<Pick<Parameters<typeof materializeWorkflowAcceptedSnapshotV1>[0], 'roleSelection' | 'effects'>>;
   assertCurrent?: () => void;
   prepareWorkspace?: (input: Readonly<{ projectTarget: NonNullable<WorkflowMachineTarget['project']>; definition: WorkflowDefinitionV1 }>) => Promise<
     Readonly<{ ok: true; workspaceTarget: ReturnType<typeof WorkflowAcceptedSnapshotV1Schema.parse>['workspaceTarget'] }>
@@ -547,7 +565,164 @@ export type WorkflowAccountRunActionDeps = Readonly<{
   randomBytes: (length: number) => Uint8Array;
 }>;
 
-/** One Account run owner; hosts supply concrete storage, authority and machine effects. */
+function hasDurableWorkflowApprovalInput(step: WorkflowApprovedOperationV1['steps'][number],
+  materializedLeaves: WorkflowAcceptedSnapshotV1['materializedLeaves'] = [],
+  admittedStep: WorkflowApprovedOperationV1['steps'][number] = step): boolean {
+  const actionId = ActionIdSchema.safeParse(step.actionId);
+  if (!actionId.success || actionId.data === 'action.invoke') {
+    const envelope = actionId.success ? getActionSpec('action.invoke').inputSchema.safeParse(step.input) : null;
+    if (envelope && (!envelope.success || !sameStrictJsonValue(envelope.data, step.input))) return false;
+    const target = envelope?.success ? envelope.data.action : parseQualifiedPluginActionId(step.actionId);
+    if (!target) return false;
+    const admittedEnvelope = admittedStep.actionId === 'action.invoke'
+      ? getActionSpec('action.invoke').inputSchema.safeParse(admittedStep.input) : null;
+    if (admittedEnvelope && !admittedEnvelope.success) return false;
+    const admittedInput = admittedEnvelope?.success ? admittedEnvelope.data.input ?? null : admittedStep.input;
+    const references = admittedStep.binding?.kind === 'producer_result' ? admittedStep.binding.references : undefined;
+    const leaves = materializedLeaves.filter(leaf => {
+      if (leaf.kind !== 'action' || leaf.actionId !== formatQualifiedPluginActionId(target)
+        || leaf.actionInput === undefined) return false;
+      const frozenInput = references
+        ? Object.fromEntries(Object.entries(leaf.actionInput).filter(([field]) => !Object.hasOwn(references, field)))
+        : leaf.actionInput;
+      return sameStrictJsonValue(frozenInput, admittedInput);
+    });
+    if (leaves.length === 0) return false;
+    const input = envelope?.success ? envelope.data.input ?? null : step.input;
+    // Exact operands select their admitted occurrence. If indistinguishable
+    // occurrences disagree, none may borrow a less confidential declaration.
+    return leaves.every(leaf => {
+      const contract = leaf.actionContract;
+      // Older frozen schemas do not establish confidential operands.
+      if (!contract || contract.secretInputPaths === undefined) return false;
+      const schema = PluginJsonSchemaV2Schema.safeParse(contract.inputSchema);
+      if (!schema.success || !step.binding
+        && !validateExecutionRunProfileResult(input, { kind: 'json', schema: schema.data }).ok) return false;
+      const projection = projectTargetActionApprovalInput(input, contract.secretInputPaths);
+      return projection !== null && projection.confidentialPaths.length === 0;
+    });
+  }
+  const spec = getActionSpec(actionId.data);
+  if (spec.approvalInputCustody === 'live_only') return false;
+  // Deferred operands cannot satisfy the concrete Action schema yet. The Run
+  // owner resolves them before ordinary preparation validates the full input.
+  if (step.binding?.kind === 'deployment_sha') {
+    // The canonical binding schema validates fixed operands before the Run
+    // supplies its admitted SHA and originating request key.
+    if (!WorkflowApprovedOperationStepV1Schema.safeParse(step).success) return false;
+  } else if (step.binding?.kind !== 'producer_result') {
+    const parsed = spec.inputSchema.safeParse(step.input);
+    if (!parsed.success || !sameStrictJsonValue(parsed.data, step.input)) return false;
+  }
+  const projection = projectTargetActionApprovalInput(step.input,
+    (spec.inputHints?.fields ?? []).filter(field => field.widget === 'secret').map(field => field.path));
+  return projection !== null && projection.confidentialPaths.length === 0;
+}
+
+/** Captured native Account custody, supplied by the host and never Action JSON. */
+export type WorkflowApprovedOperationNativeAccountV1 = Readonly<{
+  accountId: string;
+  serverId: string;
+  isCurrent: () => Promise<boolean>;
+}>;
+
+/** One person-consent producer for the Run, saved trigger and API token. */
+export async function prepareWorkflowApprovedOperation(params: Readonly<{
+  parent: Readonly<{ actionId: ActionId; input: WorkflowApprovedOperationV1['parent']['input'] }>;
+  steps: readonly WorkflowApprovedOperationV1['steps'][number][];
+  context: ActionExecutorContext;
+  nativeAccount?: WorkflowApprovedOperationNativeAccountV1;
+  /** The Run materializer's admitted declarations, never authored Action JSON. */
+  materializedLeaves?: WorkflowAcceptedSnapshotV1['materializedLeaves'];
+}>): Promise<WorkflowApprovedOperationV1> {
+  const { context, parent } = params;
+  const proof = context.presentUserApproval;
+  let accountId: string | null = null;
+  if (proof && context.approvedActionReplay && context.approvedActionReplay.artifactId === proof.artifactId
+    && proof.actionId === parent.actionId && proof.requestId === context.actionRequestId
+    && proof.inputDigest === computeActionInputApprovalDigestV1(parent.actionId, parent.input)
+    && proof.decidingAccountId) accountId = proof.decidingAccountId;
+  if (!accountId && proof?.decidingAccountId && proof.decidingAccountId === context.runtimeAccountId
+    && (!params.nativeAccount || params.nativeAccount.accountId === proof.decidingAccountId
+      && params.nativeAccount.serverId === context.serverId)) {
+    const child = readHostReviewedChildOperationV1(context, parent.actionId, parent.input);
+    // The issuer admits the exact child; durable authoring retains the person
+    // who reviewed its original parent, not a fabricated child decision.
+    if (child && isHostAdmittedReviewedChildPolicyV1(child, parent.actionId, parent.input)
+      && proof.actionId === child.parent.actionId
+      && proof.inputDigest === computeActionInputApprovalDigestV1(proof.actionId, child.parent.input)) {
+      accountId = proof.decidingAccountId;
+    }
+  }
+  if (!accountId) {
+    const authorization = context.externalActionExecutionAuthorization;
+    const binding = authorization?.binding;
+    const requesterAccountId = binding ? readAuthenticatedActionRequesterAccountIdV1(binding) : null;
+    const projection = authorization?.requesterAccountProjection;
+    if (context.authority === 'present_user' && context.actionCaller?.kind === 'host'
+      && (context.surface === 'ui' || context.surface === 'cli' || context.surface === 'voice')
+      && !context.sessionInputSource && !context.causalPermissionAuthority && !context.rpcSessionAuthorization
+      && binding?.actionId === parent.actionId && binding.requestId === context.actionRequestId
+      && !binding.sessionActionOrigin && !binding.workflowActionOrigin
+      && requesterAccountId && projection?.accountId === requesterAccountId && await projection.isCurrent()) {
+      accountId = requesterAccountId;
+    }
+  }
+  const nativeAccount = params.nativeAccount;
+  const savedBy = artifactSavedByFromActionContextV1(context);
+  if (!accountId && nativeAccount
+    && (parent.actionId === 'workflow.trigger.add' || parent.actionId === 'workflow.trigger.update'
+      || parent.actionId === 'account.apiTokens.create' || parent.actionId === 'account.apiTokens.update')
+    && context.authority === 'present_user' && context.actionCaller?.kind === 'host'
+    && (context.surface === 'ui' || context.surface === 'cli' || context.surface === 'voice')
+    && typeof context.actionRequestId === 'string' && context.actionRequestId.length > 0
+    && !context.externalActionCredential && !context.externalActionExecutionAuthorization
+    && !context.sessionInputSource && !context.causalPermissionAuthority && !context.rpcSessionAuthorization
+    && !context.presentUserApproval && !context.approvedActionReplay
+    && savedBy?.kind === 'person' && savedBy.accountId === nativeAccount.accountId
+    && context.runtimeAccountId === nativeAccount.accountId && context.serverId === nativeAccount.serverId
+    && await nativeAccount.isCurrent()) accountId = nativeAccount.accountId;
+  if (!accountId || !hasDurableWorkflowApprovalInput(parent)
+    || params.steps.some(step => !hasDurableWorkflowApprovalInput(step, params.materializedLeaves))) {
+    throw workflowError('approval_required');
+  }
+  return structuredClone(WorkflowApprovedOperationV1Schema.parse({
+    parent, approvedBy: { accountId }, steps: params.steps,
+  }));
+}
+
+/** Bind already-owned persisted consent to its admitted concrete effect. */
+export function bindWorkflowApprovedOperationSteps(params: Readonly<{
+  operation: WorkflowApprovedOperationV1;
+  steps: readonly WorkflowApprovedOperationV1['steps'][number][];
+  materializedLeaves?: WorkflowAcceptedSnapshotV1['materializedLeaves'];
+}>): WorkflowApprovedOperationV1 {
+  const operation = WorkflowApprovedOperationV1Schema.parse(params.operation);
+  if (params.steps.some(step => {
+    const native = ActionIdSchema.safeParse(step.actionId);
+    if (native.success && native.data !== 'action.invoke') return !hasDurableWorkflowApprovalInput(step);
+    // Preparation may add defaults or resolve producer operands. Select the
+    // original reviewed fixed operands before reading their frozen declaration.
+    const admitted = operation.steps.filter(candidate => candidate.actionId === step.actionId
+      && Object.entries(candidate.input).every(([field, value]) => sameStrictJsonValue(value, step.input[field])));
+    return admitted.length === 0 || admitted.some(candidate =>
+      !hasDurableWorkflowApprovalInput(step, params.materializedLeaves, candidate));
+  })) throw workflowError('approval_required');
+  return structuredClone(WorkflowApprovedOperationV1Schema.parse({ ...operation, steps: params.steps }));
+}
+
+/** Exact parent consent sealed by the existing Run owner, never frozen policy. */
+export async function prepareWorkflowApprovedOperationSnapshot(params: Readonly<{
+  snapshot: WorkflowAcceptedSnapshotV1;
+  parent: Readonly<{ actionId: ActionId; input: WorkflowApprovedOperationV1['parent']['input'] }>;
+  steps: readonly WorkflowApprovedOperationV1['steps'][number][];
+  context: ActionExecutorContext;
+  nativeAccount?: WorkflowApprovedOperationNativeAccountV1;
+}>): Promise<WorkflowAcceptedSnapshotV1> {
+  return { ...params.snapshot, approvedOperation: await prepareWorkflowApprovedOperation({ ...params,
+    materializedLeaves: params.snapshot.materializedLeaves }) };
+}
+
 /** Preserve the materializer's fixed operands and the authored references it cannot resolve yet. */
 function readWorkflowApprovedOperationSteps(snapshot: WorkflowAcceptedSnapshotV1): WorkflowApprovedOperationV1['steps'] {
   const sources = new Map<string, WorkflowDefinitionV1>([['$root', snapshot.definition], ...Object.entries(snapshot.frozenChildren)]);
@@ -571,8 +746,18 @@ function readWorkflowApprovedOperationSteps(snapshot: WorkflowAcceptedSnapshotV1
   });
 }
 
+/** One Account run owner; hosts supply concrete storage, authority and machine effects. */
+/** Host-only composition at the Run owner; never an Action input or consent carrier. */
+export type WorkflowCombinedRunStartV1 = Readonly<{
+  parent: Readonly<{ actionId: 'machines.setup.apply'; input: MachineSetupApplyInputV1 }>;
+  start: WorkflowActionExecuteArgs<'workflow.run.start'>['input'];
+  context: ActionExecutorContext;
+  orchestrationTarget: WorkflowProjectTargetV1;
+}>;
+
 export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActionDeps): WorkflowRunActionOwner & Readonly<{
   startCombined: (request: WorkflowCombinedRunStartV1, ingressContext?: WorkflowIngressContextV1) => ReturnType<WorkflowRunActionOwner['execute']>;
+  waitCombined: (request: WorkflowCombinedRunStartV1, ingressContext?: WorkflowIngressContextV1) => ReturnType<WorkflowRunActionOwner['execute']>;
 }> {
   const isSameHome = (context: RunArgs['context'], serverId: string) =>
     areServerProfileIdentifiersEquivalent(context.serverId, serverId, identifier =>
@@ -635,8 +820,8 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       commit: async input => WorkflowRunRecipientKeyEnvelopeCommitResponseV1Schema.parse(await deps.storage.execute({ operation: 'run-key.commit', ...input }, signal ? { signal } : {})),
       ...(signal ? { signal } : {}),
     });
-  const openAccepted = async (runId: string, signal?: AbortSignal, publisherMachineId?: string) => {
-    const snapshot = await getSnapshot(runId, signal, publisherMachineId);
+  const openAccepted = async (runId: string, signal?: AbortSignal, publisherMachineId?: string, suppliedSnapshot?: ReturnType<typeof parseSnapshot>) => {
+    const snapshot = suppliedSnapshot ?? await getSnapshot(runId, signal, publisherMachineId);
     const accountId = snapshot.keyCensus.ownerAccountId;
     const resolved = resolveWorkflowRunDataKeyV1({ encryption: await encryption(signal), census: snapshot.keyCensus });
     if (resolved.kind !== 'available') throw workflowError(resolved.reason);
@@ -648,7 +833,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       ...openMode(enc), binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId }, envelope,
     });
     if (opened.kind !== 'available') throw workflowError('content_unavailable');
-    return { accountId, enc, snapshot, accepted: WorkflowAcceptedSnapshotV1Schema.parse(opened.content) };
+    return { accountId, enc, snapshot, accepted: opened.content };
   };
 
   // Reads the worker's authored-count fact; neither list nor detail recounts invocations.
@@ -749,8 +934,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     combined?: WorkflowCombinedRunStartV1) => {
     const admittedTarget = combined?.orchestrationTarget ?? workflowProjectTarget(args.context);
     if (combined) {
-      const reviewedHost = combined.parent.actionId === 'deployments.publish'
-        ? combined.parent.input.hostMachineId : combined.parent.input.machineId;
+      const reviewedHost = combined.parent.input.machineId;
       if (reviewedHost !== admittedTarget?.machineId) throw workflowError('target_unavailable');
       assertRunResourceRestriction(args.context, { machineId: admittedTarget.machineId, project: admittedTarget }, deps.normalizeAbsolutePath);
     }
@@ -827,11 +1011,12 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       throw workflowError('invalid_input');
     }
     let replayAccepted: ReturnType<typeof WorkflowAcceptedSnapshotV1Schema.parse> | undefined;
-    const projectExisting = async () => {
+    const projectExisting = async (snapshot?: ReturnType<typeof parseSnapshot>) => {
       const existing = await openAccepted(
         input.runId,
         args.context.signal,
-        workflowProjectTarget(args.context)?.machineId,
+        admittedTarget?.machineId,
+        snapshot,
       );
       const sameSource = replaySource
         ? replayAccepted !== undefined
@@ -875,6 +1060,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       }
       if (!sameSource
         || (combined !== undefined && !sameStrictJsonValue(existing.accepted.approvedOperation?.parent, combined.parent))
+        || existing.snapshot.managedCreationId !== (input.managedCreation?.managedId ?? null)
         || ((inputSource.kind === 'saved' || inputSource.kind === 'inline') && inputSource.visibleTeamId !== undefined
           && inputSource.visibleTeamId !== existing.snapshot.keyCensus.visibleTeamId)
         || !sameStrictJsonValue(existing.accepted.roleOverrides ?? [], replaySource?.accepted.roleOverrides ?? input.roleOverrides ?? [])
@@ -906,22 +1092,46 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       return WorkflowActionOutputSchemasV1['workflow.run.start'].parse({ run: { ...existing.snapshot.run,
         origin: projectAcceptedOrigin(existing.accepted.origin, existing.snapshot.run.origin) }, admission: 'existing' });
     };
+    // Resolve the independent Account reads together and reuse this invocation's
+    // mode witness for preparation, sealing and admission.
+    const [enc, accountId] = await Promise.all([
+      encryption(args.context.signal),
+      deps.resolveAccountId(args.context.signal),
+    ]);
+    let admissionCensus: WorkflowRunRecipientCensusResponseV1 | undefined;
     if (!replaySource) {
-      try {
-        return await projectExisting();
-      } catch (error) {
-        if (!isNotFound(error)) throw error;
+      if (enc.witness.mode === 'e2ee' && (inputSource.kind === 'inline' || inputSource.kind === 'saved')) {
+        // These sources already name the final audience. Return either the exact
+        // accepted Run or its admission census without a second network round.
+        let raw: unknown;
+        try {
+          raw = await deps.storage.execute({ operation: 'get', runId: input.runId,
+            prepareAdmission: { sourceArtifactId: inputSource.kind === 'saved'
+              ? inputSource.definitionId : inputSource.sourceArtifactId ?? null,
+              ...(inputSource.visibleTeamId !== undefined ? { visibleTeamId: inputSource.visibleTeamId } : {}) },
+          }, { ...(args.context.signal ? { signal: args.context.signal } : {}),
+            ...(admittedTarget?.machineId ? { publisherMachineId: admittedTarget.machineId } : {}) });
+        } catch (error) { translateStorageError(error); }
+        const preparation = WorkflowRunAdmissionPreparationResultV1Schema.safeParse(raw);
+        if (preparation.success) admissionCensus = preparation.data.keyCensus;
+        else return await projectExisting(parseSnapshot(raw));
+      } else {
+        try { return await projectExisting(); }
+        catch (error) { if (!isNotFound(error)) throw error; }
       }
     }
     const discussionOrigin = await resolveDiscussion();
 
     let definition: WorkflowDefinitionV1;
+    let definitionValidation = checkedInline;
     let metadata = replaySource ? replaySource.accepted.metadata ?? undefined : input.metadata;
     let source: Parameters<typeof materializeWorkflowAcceptedSnapshotV1>[0]['context']['source'];
     const projectTarget = admittedTarget;
     if (!projectTarget) throw workflowError('target_unavailable',
       actionStartTargetUnavailableV1(args.context, 'workflow_workspace', 'workspace_unavailable').details);
     let materialization: Awaited<ReturnType<NonNullable<WorkflowAccountRunActionDeps['resolveMaterializationContext']>>> | undefined;
+    let agentStartContext: ReturnType<typeof resolveActionAgentStartContextV1> | undefined;
+    const readAgentStartContext = () => agentStartContext ??= resolveActionAgentStartContextV1(deps, args.context);
     if (replaySource) {
       definition = replaySource.accepted.authoredDefinition;
       source = replaySource.accepted.source;
@@ -964,13 +1174,14 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       );
       if (!checkedSaved.valid || !checkedSaved.normalizedDefinition) throw workflowError('invalid_input');
       definition = checkedSaved.normalizedDefinition;
+      definitionValidation = checkedSaved;
       metadata = saved.metadata;
       source = { kind: 'saved', definitionId: inputSource.definitionId, revision: inputSource.revision,
         savedBy: saved.savedBy ?? null };
     } else {
       if (!deps.resolveMaterializationContext) throw workflowError('source_unavailable');
       materialization = await measureActionStartPhaseV1(args.context, 'workflow_materialization_context',
-        () => deps.resolveMaterializationContext!(args, projectTarget));
+        () => deps.resolveMaterializationContext!(args, projectTarget, readAgentStartContext));
       const resolved = await resolveWorkflowDefinitionRefV1(inputSource.workflow, {
         readPluginWorkflows: deps.readPluginWorkflows,
         ...(args.context.signal ? { signal: args.context.signal } : {}),
@@ -981,6 +1192,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       const checked = validateWorkflowDefinition(resolved.definition, ingressContext ? { context: ingressContext } : {});
       if (!checked.valid || !checked.normalizedDefinition) throw workflowError('invalid_input', { issues: checked.issues });
       definition = checked.normalizedDefinition;
+      definitionValidation = checked;
       metadata = resolved.metadata ?? metadata;
       source = { kind: 'catalog', ref: inputSource.workflow, version: resolved.version };
     }
@@ -988,7 +1200,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       if (!deps.resolveMaterializationContext) throw workflowError('target_unavailable', actionStartTargetUnavailableV1(args.context,
         'workflow_materialization_context', 'materialization_owner_unavailable').details);
       materialization = await measureActionStartPhaseV1(args.context, 'workflow_materialization_context',
-        () => deps.resolveMaterializationContext!(args, projectTarget));
+        () => deps.resolveMaterializationContext!(args, projectTarget, readAgentStartContext));
     }
     const readArtifactDefinition = materialization.effects.readWorkflowDefinition;
     materialization = { ...materialization, effects: { ...materialization.effects,
@@ -1035,11 +1247,11 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     const preparedWorkspace = replaySource ? { ok: true as const, workspaceTarget: replaySource.accepted.workspaceTarget }
       : await measureActionStartPhaseV1(args.context, 'workflow_workspace',
         () => deps.prepareWorkspace!({ projectTarget, definition }));
-    if (!preparedWorkspace.ok) throw workflowError('target_unavailable',
-      actionStartTargetUnavailableV1(args.context, 'workflow_workspace', 'workspace_unavailable').details);
-    const controller = currentControllerAuthorization(args);
-    const resolvedAgentContext = args.context.surface === 'agent'
-      ? await resolveActionAgentStartContextV1(deps, args.context) : null;
+    if (!preparedWorkspace.ok) throw workflowError('target_unavailable', {
+      ...actionStartTargetUnavailableV1(args.context, 'workflow_workspace', 'workspace_unavailable').details,
+      errorCode: preparedWorkspace.code,
+    });
+    const controller = currentControllerAuthorization(args, combined !== undefined);
     materialization = { ...materialization, effects: { ...materialization.effects,
       admitSessionAuthority: async target => {
         const context = args.context;
@@ -1055,6 +1267,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
         }, controller.principal.kind === 'session' ? { ...context, surface: 'agent' } : context, { sessionId: 'current_session' }, {
           resolveAgentStartContext: deps.resolveAgentStartContext,
           sessionList: deps.sessionList ?? (async () => { throw new Error('session_scope_unavailable'); }),
+          sessionRead: deps.sessionRead,
         });
         return failure === null;
       },
@@ -1069,20 +1282,61 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
         throw workflowError('content_unavailable');
       }
     }
+    const callerAuthorization = args.context.externalActionExecutionAuthorization;
+    const callerBinding = callerAuthorization?.binding;
+    const requesterAccount = callerAuthorization?.requesterAccountProjection;
+    const requesterAccountId = callerBinding ? readAuthenticatedActionRequesterAccountIdV1(callerBinding) : null;
+    const directPersonSurface = args.context.surface === 'ui'
+      ? args.context.authority === 'present_user' && callerBinding && 'authentication' in callerBinding
+        && callerBinding.authentication.kind === 'account'
+      : args.context.surface === 'cli' && !args.context.sessionInputSource
+        && !args.context.causalPermissionAuthority && !args.context.rpcSessionAuthorization;
+    // Only the receiving host's privately admitted Account custody can stamp a
+    // direct person. The worker bearer, Run owner and public inputs cannot.
+    const authenticatedStarter = !args.context.actionRequestAttributionV1
+      && directPersonSurface
+      && args.context.actionCaller?.kind === 'host'
+      && callerBinding?.actionId === (combined?.parent.actionId ?? 'workflow.run.start')
+      && 'authentication' in callerBinding
+      && requesterAccountId
+      && !callerBinding.sessionActionOrigin && !callerBinding.workflowActionOrigin
+      && requesterAccount?.accountId === requesterAccountId
+      && await requesterAccount.isCurrent()
+      ? { requestRef: callerBinding.requestId,
+        requester: { serverId: callerBinding.serverIdentityId, accountId: requesterAccountId } }
+      : undefined;
+    let replaySnapshot = replaySource?.accepted;
+    if (replaySnapshot) {
+      // A new Run reuses the frozen program, not its previous
+      // requester. Retain the origin location without editing the prior Run.
+      const { actionRequestAttributionV1: _priorCause, authenticatedStarterV1: _priorStarter,
+        ...origin } = replaySnapshot.origin ?? { kind: 'direct' as const };
+      const { approvalProfileId: _priorProfile, ...actionPolicy } = origin.actionPolicy
+        ?? { authority: args.context.authority ?? 'account_automation' as const };
+      replaySnapshot = { ...replaySnapshot, origin: { ...origin,
+        actionPolicy: { ...actionPolicy,
+          ...(args.context.approvalProfileId === undefined ? {} : { approvalProfileId: args.context.approvalProfileId }) },
+        ...(authenticatedStarter ? { authenticatedStarterV1: authenticatedStarter } : {}),
+        ...(args.context.actionRequestAttributionV1 ? { actionRequestAttributionV1: args.context.actionRequestAttributionV1 } : {}) } };
+    }
+    const originActionsSettings = args.context.actionsSettings ? { ...args.context.actionsSettings } : undefined;
+    // Saved profiles remain current Account preferences, never frozen Run rules.
+    if (originActionsSettings) delete originActionsSettings.approvalProfiles;
     const materialized = await measureActionStartPhaseV1(args.context, 'workflow_materialization',
       () => materializeWorkflowAcceptedSnapshotV1({
-      definition, ...materialization,
+      definition, definitionValidation, ...materialization,
       ...(ingressContext ? { ingressContext } : {}),
       roleOverrides: input.roleOverrides,
-      ...(replaySource && replayRequest ? { replay: { snapshot: replaySource.accepted,
+      ...(replaySnapshot && replayRequest ? { replay: { snapshot: replaySnapshot,
         ...(replayRequest.agentOverride ? { agentOverride: replayRequest.agentOverride } : {}) } } : {}),
       admission: args.context.surface === 'agent' ? { kind: 'agent',
       admitRun: async ({ permissionCeiling }) => admitActionAgentStartV1(args.context, {
         kind: 'workflow_run', facts: { machineId: projectTarget.machineId, directory: projectTarget.directory,
           permissionMode: permissionCeiling }, ...(originSessionId ? { targetSessionId: originSessionId } : {}),
-      }, resolvedAgentContext),
+      }, await resolveActionAgentStartContextV1(deps, args.context, undefined, { purpose: 'workflow_run' })),
       admitLeaf: async (leaf, facts) => {
-        const resolved = resolvedAgentContext && facts.role ? { ...resolvedAgentContext,
+        const resolvedAgentContext = await readAgentStartContext();
+        const resolved = resolvedAgentContext && !('ok' in resolvedAgentContext) && facts.role ? { ...resolvedAgentContext,
           roles: { ...resolvedAgentContext.roles, [facts.role.roleId]: facts.role } } : resolvedAgentContext;
         return admitActionAgentStartV1(args.context, readWorkflowRunLeafStartRequestV1(leaf), resolved);
       } } : { kind: 'user' },
@@ -1093,11 +1347,17 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       workspaceTarget: preparedWorkspace.workspaceTarget,
       origin: { kind: 'direct', ...(originSessionId ? { originSessionId } : {}),
         ...(discussionOrigin ? { discussion: discussionOrigin } : {}),
+        ...(authenticatedStarter ? { authenticatedStarterV1: authenticatedStarter } : {}),
         actionPolicy: { ...(args.context.surface ? { surface: args.context.surface } : {}),
           authority: args.context.authority ?? 'account_automation',
-          ...(args.context.actionsSettings ? { actionsSettings: args.context.actionsSettings } : {}) },
+          ...(args.context.approvalProfileId === undefined ? {} : { approvalProfileId: args.context.approvalProfileId }),
+          ...(originActionsSettings ? { actionsSettings: originActionsSettings } : {}) },
         ...(args.context.actionRequestAttributionV1 ? { actionRequestAttributionV1: args.context.actionRequestAttributionV1 } : {}) },
       authorization: { principal: controller.principal,
+        ...('externalActionExecutionAuthorization' in controller ? {
+          externalActionExecutionAuthorization: controller.externalActionExecutionAuthorization,
+          ...('reviewedChild' in controller ? { reviewedChild: controller.reviewedChild } : {}),
+        } : {}),
         ...('sourceAuthority' in controller ? { sourceAuthority: controller.sourceAuthority } : {}) },
       ...(resultDelivery?.kind === 'originating_session' && originSessionId ? {
         resultDelivery: {
@@ -1134,6 +1394,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
         }
       }
     }
+    const discussionRound = readWorkflowDiscussionRoundBindingV1(accepted);
     if (!('origin' in accepted)) throw workflowError('invalid_input');
     if (!assertNonEscalatingPermissionMode({ requestedMode: accepted.authorization.admittedPermissionCeiling,
       callerMode: controller.effectivePermissionMode }).ok) throw workflowError('run_access_denied');
@@ -1142,34 +1403,32 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       try { return await projectExisting(); }
       catch (error) { if (!isNotFound(error)) throw error; }
     }
-    // These independent Account reads share the caller's cancellation owner.
-    // Both must succeed before key preparation or admission can write anything.
-    const [enc, accountId] = await Promise.all([
-      encryption(args.context.signal),
-      deps.resolveAccountId(args.context.signal),
-    ]);
     const sourceArtifactId = accepted.source.kind === 'saved' || accepted.source.kind === 'automation'
       ? accepted.source.definitionId ?? null
       : accepted.source.kind === 'inline' ? accepted.source.sourceArtifactId ?? replaySource?.snapshot.run.sourceArtifactId ?? null : null;
     const visibleTeamId = replaySource ? replaySource.snapshot.keyCensus.visibleTeamId ?? undefined
       : input.source.kind === 'saved' || input.source.kind === 'inline' ? input.source.visibleTeamId : undefined;
     const census = enc.witness.mode === 'e2ee'
-      ? WorkflowRunRecipientCensusResponseV1Schema.parse(await deps.storage.execute({ operation: 'run-key.census', runId: input.runId, sourceArtifactId, ...(visibleTeamId ? { visibleTeamId } : {}) }, args.context.signal ? { signal: args.context.signal } : {}))
+      ? admissionCensus ?? WorkflowRunRecipientCensusResponseV1Schema.parse(await deps.storage.execute({ operation: 'run-key.census', runId: input.runId, sourceArtifactId, ...(visibleTeamId ? { visibleTeamId } : {}) }, args.context.signal ? { signal: args.context.signal } : {}))
       : undefined;
     const prepared = prepareWorkflowRunDataKeyV1({ accountId, encryption: enc, ...(census ? { census } : {}), randomBytes: deps.randomBytes });
     const acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
       ...sealMode({ witness: enc.witness, runCrypto: prepared.runCrypto }, deps.randomBytes),
       binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId: input.runId }, acceptedSnapshot: accepted,
     }));
+    const requesterScope = { scopeId: input.runId, machineId: projectTarget.machineId };
+    await deps.workflowRequesterCustody?.retain(requesterScope);
     let result: Readonly<Record<string, unknown>>;
     try {
       result = record(await deps.storage.execute({
         operation: 'admit', runId: input.runId, origin: projectAcceptedOrigin(accepted.origin), machineId: projectTarget.machineId,
+        ...(input.managedCreation ? { managedCreation: input.managedCreation } : {}),
         accountCurrentness: enc.witness, acceptedEnvelope,
         sourceArtifactId,
         recipientKeyEnvelopes: prepared.recipientKeyEnvelopes,
         ...(census ? { visibleTeamId: census.visibleTeamId } : visibleTeamId ? { visibleTeamId } : {}),
         ...(resultDelivery ? { resultDelivery } : {}),
+        ...(discussionRound ? { discussionRoundPattern: discussionRound.pattern } : {}),
         ...(discussionOrigin ? { discussionTargetSessionIds: [...new Set(accepted.materializedLeaves
           .flatMap(listWorkflowAcceptedLeafSelectionsV1).flatMap(leaf => leaf.kind === 'step'
             && leaf.selection.conversation?.kind === 'existing_session' ? [leaf.selection.conversation.sessionId] : []))] } : {}),
@@ -1184,7 +1443,16 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
         // Another admission may have won the caller-allocated Run id race. The
         // accepted E2EE envelope is randomized, so only the Action host can
         // reopen the committed snapshot and compare semantic correspondence.
-        return await projectExisting();
+        const existing = await projectExisting();
+        if (isTerminalAutomationRunStateV3(existing.run.state) && existing.run.workflowCustodyState !== 'pending') {
+          await deps.workflowRequesterCustody?.retire(requesterScope);
+        }
+        return existing;
+      }
+      // A lost reply may already have queued the Run. Only a received client
+      // refusal proves there is no new admitted work needing this custody.
+      if (isConfirmedActionWriteRefusal(error)) {
+        await deps.workflowRequesterCustody?.retire(requesterScope);
       }
       translateStorageError(error);
     }
@@ -1429,8 +1697,10 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     if (isStructuralRecoveryFrame(prior.progress.blockKind)) return { activity: 'not_active' as const, canReattach: false, canContinueConversation: false };
     deps.assertCurrent?.();
     const evidence = await deps.observeRecovery?.({ run, index: prior.index, progress: prior.progress, ...(signal ? { signal } : {}) })
-      ?? { activity: prior.progress.execution === undefined && EXACT_RECOVERY_RETRY_LIFECYCLES.has(prior.index.lifecycle)
-          || prior.progress.uncertainPriorEffects?.activity === 'stopped' ? 'not_active' as const : 'unknown' as const,
+      // Missing correspondence does not prove that admission never happened.
+      // Account-only readers retain unknown activity until the execution owner
+      // observes it, or an exact stopped-effects fact is already recorded.
+      ?? { activity: prior.progress.uncertainPriorEffects?.activity === 'stopped' ? 'not_active' as const : 'unknown' as const,
         canReattach: false, canContinueConversation: false };
     deps.assertCurrent?.();
     return evidence;
@@ -2157,10 +2427,17 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     const signal = args.context.signal;
     const opened = await openAccepted(input.runId, signal);
     const completing = args.actionId === 'workflow.run.invocations.complete_review';
-    if (completing && args.input.mode === 'use_result') await assertControllerDominates(args, opened.accepted, ingressContext, deps.isAcceptedAuthorizationCurrent, deps);
+    // Use and Generate both admit work on the admitted Run: this decide step is
+    // their one authority check (step 2, check once at admission).
+    if (completing) await assertControllerDominates(args, opened.accepted, ingressContext, deps.isAcceptedAuthorizationCurrent, deps);
     else assertRunResourceRestriction(args.context, { machineId: opened.accepted.machineId,
       project: opened.accepted.workspaceTarget.project }, deps.normalizeAbsolutePath);
     const callerAccountId = await deps.resolveAccountId(signal);
+    // Execution/approval authority does not identify the author of supplied bytes.
+    const author = artifactSavedByFromActionContextV1({ ...args.context, runtimeAccountId: callerAccountId });
+    const suppliedResultSource = author?.kind === 'agent'
+      ? { kind: 'published', by: 'agent' } as const
+      : { kind: 'human', accountId: callerAccountId } as const;
     const prior = await readPriorProgress(input.runId, input.invocation.recordId, opened, signal);
     if (prior.index.runId !== input.runId || prior.index.id !== input.invocation.recordId) throw workflowError('content_unavailable');
     const structure = await reviewStructure(opened, prior, signal);
@@ -2185,7 +2462,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       if (args.input.mode === 'generate') return true;
       return decision.kind === 'use_result' && sameStrictJsonValue(decision.followUp ?? null, args.input.followUp ?? null)
         && (args.input.value === undefined || (sameStrictJsonValue(row.progress.result, args.input.value)
-          && row.progress.review?.resultSource?.kind === 'human' && row.progress.review.resultSource.accountId === callerAccountId));
+          && sameStrictJsonValue(row.progress.review?.resultSource, suppliedResultSource)));
     };
     const rejoin = async (fresh: OpenedRun, row: OpenedRow) => {
       if (!exactDecision(row) || args.actionId !== 'workflow.run.invocations.complete_review') return undefined;
@@ -2229,7 +2506,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     if (args.actionId === 'workflow.run.invocations.publish_draft') {
       requireValidValue(args.input.value);
       progress = WorkflowProgressEnvelopeV1Schema.parse({ ...prior.progress, result: args.input.value,
-        review: { ...prior.progress.review, resultSource: { kind: 'published', by: args.context.surface === 'agent' || args.context.surface === 'mcp' ? 'agent' : 'user' } } });
+        review: { ...prior.progress.review, resultSource: { kind: 'published', by: suppliedResultSource.kind === 'human' ? 'user' : 'agent' } } });
     } else if (args.input.mode === 'use_result') {
       const value = args.input.value === undefined ? prior.progress.result : args.input.value;
       requireValidValue(value);
@@ -2242,7 +2519,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
             ingressContext ? { context: ingressContext } : {})) throw workflowError('invalid_input');
       }
       progress = WorkflowProgressEnvelopeV1Schema.parse({ ...prior.progress, ...(value === undefined ? {} : { result: value }),
-        review: { ...prior.progress.review, ...(args.input.value === undefined ? {} : { resultSource: { kind: 'human', accountId: callerAccountId } }),
+        review: { ...prior.progress.review, ...(args.input.value === undefined ? {} : { resultSource: suppliedResultSource }),
           decision: { kind: 'use_result', requestedFromContentRevision: input.expectedContentRevision, ...(args.input.followUp ? { followUp: args.input.followUp } : {}) } } });
       progress = applyWorkflowInvocationFactV1(progress, {}, {
         previousLifecycle: prior.index.lifecycle, lifecycle: 'completed', observedAtMs: Date.now(),
@@ -2281,8 +2558,8 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     return WorkflowActionOutputSchemasV1[args.actionId].parse({ run: body.run, invocation: index, disposition: body.disposition });
   };
 
-  const execute: WorkflowRunActionOwner['execute'] = async (args, ingressContext) => {
-    if (args.actionId === 'workflow.run.invocations.complete_review' && args.context.authority !== 'present_user') throw workflowError('present_user_required');
+  const execute = async (args: Parameters<WorkflowRunActionOwner['execute']>[0],
+    ingressContext?: WorkflowIngressContextV1, combined?: WorkflowCombinedRunStartV1): ReturnType<WorkflowRunActionOwner['execute']> => {
     if (args.actionId === 'workflow.run.invocations.complete_review' || args.actionId === 'workflow.run.invocations.publish_draft') return await review(args, ingressContext);
     if (args.actionId === 'workflow.run.start') return await start(args, ingressContext);
     // The caller's resource restriction is not the transport relay. Check it
@@ -2328,6 +2605,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
         const underSessionIds = args.input.underSessionId === undefined ? null
           : deps.sessionList ? await readActionCallerLedSubtreeSessionIds({ sessionList: deps.sessionList }, args.context, args.input.underSessionId) : null;
         if (args.input.underSessionId !== undefined && underSessionIds === null) throw workflowError('target_unavailable');
+        let callerEncryption: Promise<WorkflowRunReadEncryptionV1> | undefined;
         const projectPage = async (raw: unknown) => {
           const storagePage = record(raw);
           if (storagePage.projection !== args.input.projection) throw workflowError('content_unavailable');
@@ -2339,7 +2617,8 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
             ...page, projection: 'membership', metadataByRunId: {},
           });
           const acceptedEnvelopesByRunId = record(storagePage.acceptedEnvelopesByRunId);
-          const callerEncryption = await encryption(args.context.signal);
+          const readEncryption = page.runs.length === 0 ? undefined
+            : await (callerEncryption ??= deps.resolveReadEncryption?.(args.context.signal) ?? encryption(args.context.signal));
           const keyCensusByRunId = record(storagePage.keyCensusByRunId);
           const rootProgressByRunId = record(storagePage.rootProgressByRunId ?? {});
           const heldProgressByRunId = record(storagePage.heldProgressByRunId ?? {});
@@ -2365,7 +2644,8 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
             let heldStep: WorkflowRunSummaryV1['heldStep'] = args.input.attention === 'required' ? null : undefined;
             try {
               const census = WorkflowRunRecipientCensusResponseV1Schema.parse(keyCensusByRunId[run.id]);
-              const resolved = resolveWorkflowRunDataKeyV1({ encryption: callerEncryption, census });
+              if (!readEncryption) throw workflowError('content_unavailable');
+              const resolved = resolveWorkflowRunDataKeyV1({ encryption: readEncryption, census });
               if (resolved.kind !== 'available') throw workflowError(resolved.reason);
               await prepareRunRecipients(run.id, resolved.encryption, census, args.context.signal);
               ({ stepProgress, stepProgressCurrentness, resultProvenance } = openRootProgress(run.id,
@@ -2427,8 +2707,9 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
                     envelope: typeof fact.contentEnvelope === 'string' ? parseWorkflowStoredContentEnvelopeV1(fact.contentEnvelope) : null });
                   if (progress.kind === 'available') {
                     const authored = authoredContext(progress.content.invocationPath);
-                    const label = authored.block?.kind === progress.content.blockKind ? authored.block.name?.trim() : undefined;
-                    if (label) heldStep = { invocationId: index.id, label, ...(authored.laneLabel ? { laneLabel: authored.laneLabel } : {}) };
+                    const label = (authored.block?.kind === progress.content.blockKind ? authored.block.name?.trim() : undefined)
+                      || progress.content.blockKind;
+                    heldStep = { invocationId: index.id, label, ...(authored.laneLabel ? { laneLabel: authored.laneLabel } : {}) };
                   }
                 }
               }
@@ -2591,10 +2872,14 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     }
     if (args.actionId === 'workflow.run.wait') {
       const waitArgs = args;
+      if (combined) {
+        const { accepted } = await openAccepted(args.input.runId, args.context.signal);
+        if (!sameStrictJsonValue(accepted.approvedOperation?.parent, combined.parent)) throw workflowError('run_access_denied');
+      }
       const deadline = args.input.timeoutSeconds === undefined
         ? undefined
         : Date.now() + args.input.timeoutSeconds * 1_000;
-      const unboundedCallingSession = deadline === undefined
+      const unboundedCallingSession = combined === undefined && deadline === undefined
         && (args.context.surface === 'agent' || args.context.surface === 'mcp')
         && Boolean(args.context.defaultSessionId);
       let stored: unknown;
@@ -2794,6 +3079,14 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     } finally {
       deps.assertCurrent?.();
     }
+  }, waitCombined: async (request, ingressContext) => {
+    deps.assertCurrent?.();
+    try {
+      return await execute({ actionId: 'workflow.run.wait', input: { runId: request.start.runId, conditions: ['terminal'] },
+        context: request.context }, ingressContext, request);
+    } finally {
+      deps.assertCurrent?.();
+    }
   }, execute: async (args, ingressContext) => {
     deps.assertCurrent?.();
     try {
@@ -2803,163 +3096,3 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     }
   } };
 }
-
-export type WorkflowCombinedRunStartV1 = Readonly<{
-  parent: Readonly<{ actionId: 'deployments.publish'; input: DeploymentPublishInputV1 }>
-    | Readonly<{ actionId: 'machines.setup.apply'; input: MachineSetupApplyInputV1 }>;
-  start: WorkflowActionExecuteArgs<'workflow.run.start'>['input'];
-  context: ActionExecutorContext;
-  orchestrationTarget: WorkflowProjectTargetV1;
-}>;
-
-function hasDurableWorkflowApprovalInput(step: WorkflowApprovedOperationV1['steps'][number],
-  materializedLeaves: WorkflowAcceptedSnapshotV1['materializedLeaves'] = [],
-  admittedStep: WorkflowApprovedOperationV1['steps'][number] = step): boolean {
-  const actionId = ActionIdSchema.safeParse(step.actionId);
-  if (!actionId.success || actionId.data === 'action.invoke') {
-    const envelope = actionId.success ? ActionInvokeInputSchema.safeParse(step.input) : null;
-    if (envelope && (!envelope.success || !sameStrictJsonValue(envelope.data, step.input))) return false;
-    const target = envelope?.success ? envelope.data.action : parseQualifiedPluginActionId(step.actionId);
-    if (!target) return false;
-    const admittedEnvelope = admittedStep.actionId === 'action.invoke'
-      ? ActionInvokeInputSchema.safeParse(admittedStep.input) : null;
-    if (admittedEnvelope && !admittedEnvelope.success) return false;
-    const admittedInput = admittedEnvelope?.success ? admittedEnvelope.data.input ?? null : admittedStep.input;
-    const references = admittedStep.binding?.kind === 'producer_result' ? admittedStep.binding.references : undefined;
-    const leaves = materializedLeaves.filter(leaf => {
-      if (leaf.kind !== 'action' || leaf.actionId !== formatQualifiedPluginActionId(target)
-        || leaf.actionInput === undefined) return false;
-      const frozenInput = references
-        ? Object.fromEntries(Object.entries(leaf.actionInput).filter(([field]) => !Object.hasOwn(references, field)))
-        : leaf.actionInput;
-      return sameStrictJsonValue(frozenInput, admittedInput);
-    });
-    if (leaves.length === 0) return false;
-    const input = envelope?.success ? envelope.data.input ?? null : step.input;
-    // Exact operands select their admitted occurrence. If indistinguishable
-    // occurrences disagree, none may borrow a less confidential declaration.
-    return leaves.every(leaf => {
-      const contract = leaf.actionContract;
-      // Older frozen schemas do not establish confidential operands.
-      if (!contract || contract.secretInputPaths === undefined) return false;
-      const schema = PluginJsonSchemaV2Schema.safeParse(contract.inputSchema);
-      if (!schema.success || !step.binding
-        && !validateExecutionRunProfileResult(input, { kind: 'json', schema: schema.data }).ok) return false;
-      const projection = projectTargetActionApprovalInput(input, contract.secretInputPaths);
-      return projection !== null && projection.confidentialPaths.length === 0;
-    });
-  }
-  const spec = getActionSpec(actionId.data);
-  if (spec.approvalInputCustody === 'live_only') return false;
-  // Deferred operands cannot satisfy the concrete Action schema yet. The Run
-  // owner resolves them before ordinary preparation validates the full input.
-  if (step.binding?.kind === 'deployment_sha') {
-    // The canonical binding schema validates fixed operands before the Run
-    // supplies its admitted SHA and originating request key.
-    if (!WorkflowApprovedOperationStepV1Schema.safeParse(step).success) return false;
-  } else if (step.binding?.kind !== 'producer_result') {
-    const parsed = spec.inputSchema.safeParse(step.input);
-    if (!parsed.success || !sameStrictJsonValue(parsed.data, step.input)) return false;
-  }
-  const projection = projectTargetActionApprovalInput(step.input,
-    (spec.inputHints?.fields ?? []).filter(field => field.widget === 'secret').map(field => field.path));
-  return projection !== null && projection.confidentialPaths.length === 0;
-}
-export type WorkflowApprovedOperationNativeAccountV1 = Readonly<{
-  accountId: string;
-  serverId: string;
-  isCurrent: () => Promise<boolean>;
-}>;
-export async function prepareWorkflowApprovedOperation(params: Readonly<{
-  parent: Readonly<{ actionId: ActionId; input: WorkflowApprovedOperationV1['parent']['input'] }>;
-  steps: readonly WorkflowApprovedOperationV1['steps'][number][];
-  context: ActionExecutorContext;
-  nativeAccount?: WorkflowApprovedOperationNativeAccountV1;
-  /** The Run materializer's admitted declarations, never authored Action JSON. */
-  materializedLeaves?: WorkflowAcceptedSnapshotV1['materializedLeaves'];
-}>): Promise<WorkflowApprovedOperationV1> {
-  const { context, parent } = params;
-  const proof = context.presentUserApproval;
-  let accountId: string | null = null;
-  if (proof && context.approvedActionReplay && context.approvedActionReplay.artifactId === proof.artifactId
-    && proof.actionId === parent.actionId && proof.requestId === context.actionRequestId
-    && proof.inputDigest === computeActionInputApprovalDigestV1(parent.actionId, parent.input)
-    && proof.decidingAccountId) accountId = proof.decidingAccountId;
-  if (!accountId && proof?.decidingAccountId && proof.decidingAccountId === context.runtimeAccountId
-    && (!params.nativeAccount || params.nativeAccount.accountId === proof.decidingAccountId
-      && params.nativeAccount.serverId === context.serverId)) {
-    const child = readHostReviewedChildOperationV1(context, parent.actionId, parent.input);
-    // The issuer admits the exact child; durable authoring retains the person
-    // who reviewed its original parent, not a fabricated child decision.
-    if (child && isHostAdmittedReviewedChildPolicyV1(child, parent.actionId, parent.input)
-      && proof.actionId === child.parent.actionId
-      && proof.inputDigest === computeActionInputApprovalDigestV1(proof.actionId, child.parent.input)) {
-      accountId = proof.decidingAccountId;
-    }
-  }
-  if (!accountId) {
-    const authorization = context.externalActionExecutionAuthorization;
-    const binding = authorization?.binding;
-    const requesterAccountId = binding ? readAuthenticatedActionRequesterAccountIdV1(binding) : null;
-    const projection = authorization?.requesterAccountProjection;
-    if (context.authority === 'present_user' && context.actionCaller?.kind === 'host'
-      && (context.surface === 'ui' || context.surface === 'cli' || context.surface === 'voice')
-      && !context.sessionInputSource && !context.causalPermissionAuthority && !context.rpcSessionAuthorization
-      && binding?.actionId === parent.actionId && binding.requestId === context.actionRequestId
-      && !binding.sessionActionOrigin && !binding.workflowActionOrigin
-      && requesterAccountId && projection?.accountId === requesterAccountId && await projection.isCurrent()) {
-      accountId = requesterAccountId;
-    }
-  }
-  const nativeAccount = params.nativeAccount;
-  const savedBy = artifactSavedByFromActionContextV1(context);
-  if (!accountId && nativeAccount
-    && (parent.actionId === 'workflow.trigger.add' || parent.actionId === 'workflow.trigger.update'
-      || parent.actionId === 'account.apiTokens.create' || parent.actionId === 'account.apiTokens.update')
-    && context.authority === 'present_user' && context.actionCaller?.kind === 'host'
-    && (context.surface === 'ui' || context.surface === 'cli' || context.surface === 'voice')
-    && typeof context.actionRequestId === 'string' && context.actionRequestId.length > 0
-    && !context.externalActionCredential && !context.externalActionExecutionAuthorization
-    && !context.sessionInputSource && !context.causalPermissionAuthority && !context.rpcSessionAuthorization
-    && !context.presentUserApproval && !context.approvedActionReplay
-    && savedBy?.kind === 'person' && savedBy.accountId === nativeAccount.accountId
-    && context.runtimeAccountId === nativeAccount.accountId && context.serverId === nativeAccount.serverId
-    && await nativeAccount.isCurrent()) accountId = nativeAccount.accountId;
-  if (!accountId || !hasDurableWorkflowApprovalInput(parent)
-    || params.steps.some(step => !hasDurableWorkflowApprovalInput(step, params.materializedLeaves))) {
-    throw workflowError('approval_required');
-  }
-  return structuredClone(WorkflowApprovedOperationV1Schema.parse({
-    parent, approvedBy: { accountId }, steps: params.steps,
-  }));
-}
-export function bindWorkflowApprovedOperationSteps(params: Readonly<{
-  operation: WorkflowApprovedOperationV1;
-  steps: readonly WorkflowApprovedOperationV1['steps'][number][];
-  materializedLeaves?: WorkflowAcceptedSnapshotV1['materializedLeaves'];
-}>): WorkflowApprovedOperationV1 {
-  const operation = WorkflowApprovedOperationV1Schema.parse(params.operation);
-  if (params.steps.some(step => {
-    const native = ActionIdSchema.safeParse(step.actionId);
-    if (native.success && native.data !== 'action.invoke') return !hasDurableWorkflowApprovalInput(step);
-    // Preparation may add defaults or resolve producer operands. Select the
-    // original reviewed fixed operands before reading their frozen declaration.
-    const admitted = operation.steps.filter(candidate => candidate.actionId === step.actionId
-      && Object.entries(candidate.input).every(([field, value]) => sameStrictJsonValue(value, step.input[field])));
-    return admitted.length === 0 || admitted.some(candidate =>
-      !hasDurableWorkflowApprovalInput(step, params.materializedLeaves, candidate));
-  })) throw workflowError('approval_required');
-  return structuredClone(WorkflowApprovedOperationV1Schema.parse({ ...operation, steps: params.steps }));
-}
-export async function prepareWorkflowApprovedOperationSnapshot(params: Readonly<{
-  snapshot: WorkflowAcceptedSnapshotV1;
-  parent: Readonly<{ actionId: ActionId; input: WorkflowApprovedOperationV1['parent']['input'] }>;
-  steps: readonly WorkflowApprovedOperationV1['steps'][number][];
-  context: ActionExecutorContext;
-  nativeAccount?: WorkflowApprovedOperationNativeAccountV1;
-}>): Promise<WorkflowAcceptedSnapshotV1> {
-  return { ...params.snapshot, approvedOperation: await prepareWorkflowApprovedOperation({ ...params,
-    materializedLeaves: params.snapshot.materializedLeaves }) };
-}
-
-export { matchesApprovedOperationStepV1 } from '../approvedOperationV1.js';
