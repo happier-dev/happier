@@ -21,8 +21,8 @@ type SaveAsSourceHost = Pick<
   | 'dismissSourceCreation'
   | 'sourceCreation'
   | 'teamName'
-  | 'newSessionHere'
 >;
+type RowCreationHost = SaveAsSourceHost & Pick<ProjectsListModel, 'newSessionHere'>;
 type SaveResult = Awaited<ReturnType<ProjectsListModel['saveSourceCreation']>>;
 
 type SaveAsSourceModalProps = CustomModalInjectedProps &
@@ -87,31 +87,19 @@ function ProjectSaveAsSourceModal(props: SaveAsSourceModalProps) {
 }
 
 /**
- * The row menu's "New session here" and "Save as a source" for every Projects entrance, settled
- * visibly: the session opens or one line says it could not; Save as a source opens its editor.
+ * "Save as a source" for one checkout, wherever it is offered (the Projects row menu, a Project's Deployments
+ * page without a source): the existing new-Source editor in a sheet, or one line that it could not open.
  */
-export function useProjectRowCreationActions(host: SaveAsSourceHost) {
+export function useProjectSaveAsSource(host: SaveAsSourceHost) {
   const {
     saveAsSource,
     saveSourceCreation,
     dismissSourceCreation,
     sourceCreation,
     teamName,
-    newSessionHere,
   } = host;
   const accountScope = useActiveServerAccountScope();
-  const newSession = React.useCallback(
-    async (ref: WorkspaceRefV1) => {
-      const result = await newSessionHere(ref);
-      if (!result.ok && result.errorCode === 'action_account_scope_changed') return;
-      if (result.ok && ActionApprovalRequestCreatedResultSchema.safeParse(result.result).success) return;
-      const outcome = result.ok ? SessionAuthoringOpenResultV1Schema.safeParse(result.result) : null;
-      if (outcome?.success && (outcome.data.kind === 'opened' || outcome.data.kind === 'stale')) return;
-      Modal.alert(t('projects.identity.newSessionUnavailable'));
-    },
-    [newSessionHere],
-  );
-  const saveSource = React.useCallback(
+  return React.useCallback(
     async (ref: WorkspaceRefV1) => {
       const result = await saveAsSource(ref);
       if (result.kind === 'editing') {
@@ -159,5 +147,25 @@ export function useProjectRowCreationActions(host: SaveAsSourceHost) {
       teamName,
     ],
   );
+}
+
+/**
+ * The row menu's "New session here" and "Save as a source" for every Projects entrance, settled
+ * visibly: the session opens or one line says it could not; Save as a source opens its editor.
+ */
+export function useProjectRowCreationActions(host: RowCreationHost) {
+  const { newSessionHere } = host;
+  const newSession = React.useCallback(
+    async (ref: WorkspaceRefV1) => {
+      const result = await newSessionHere(ref);
+      if (!result.ok && result.errorCode === 'action_account_scope_changed') return;
+      if (result.ok && ActionApprovalRequestCreatedResultSchema.safeParse(result.result).success) return;
+      const outcome = result.ok ? SessionAuthoringOpenResultV1Schema.safeParse(result.result) : null;
+      if (outcome?.success && (outcome.data.kind === 'opened' || outcome.data.kind === 'stale')) return;
+      Modal.alert(t('projects.identity.newSessionUnavailable'));
+    },
+    [newSessionHere],
+  );
+  const saveSource = useProjectSaveAsSource(host);
   return { newSession, saveSource };
 }

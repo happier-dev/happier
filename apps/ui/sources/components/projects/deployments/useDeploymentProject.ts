@@ -6,11 +6,13 @@ import { PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protoc
 import { readServerAccountScopeOwnerLifetime, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent, getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { subscribeHomeAccountChange, type HomeAccountChangeEvent } from '@/sync/runtime/orchestration/homeAccountChange';
+import { createDeploymentActions } from './deploymentActions';
 import { createDeploymentReadTransport } from './deploymentReadTransport';
-import { useDeploymentCollection } from './useDeploymentReads';
+import { projectDeploymentEnvironmentTabResult, useDeploymentCollection } from './useDeploymentReads';
 
 type ProjectOwner = Readonly<{
     controller: DeploymentReadControllerV1;
+    actions: ReturnType<typeof createDeploymentActions> | null;
     acquireDemand(): () => void;
 }>;
 const projects = new WeakMap<ServerAccountScopeLifetime, Map<string | undefined, ProjectOwner>>();
@@ -35,7 +37,7 @@ function readProject(lifetime: ServerAccountScopeLifetime, projectSourceId: stri
         if (sources?.get(projectSourceId) === owner) sources.delete(projectSourceId);
     }
     const owner: ProjectOwner = {
-        controller,
+        controller, actions: projectSourceId === undefined ? null : createDeploymentActions(lifetime, projectSourceId),
         acquireDemand() {
             if (retired) return () => {};
             presentedBorrowers++;
@@ -89,7 +91,7 @@ function useDeploymentOwner(lifetime: ServerAccountScopeLifetime | null, project
     React.useEffect(() => {
         if (presented) return owner?.acquireDemand();
     }, [owner, presented]);
-    return { controller: owner?.controller ?? null };
+    return { controller: owner?.controller ?? null, actions: owner?.actions ?? null };
 }
 
 /** One Source shares its demand owner only within the captured Account lifetime. */
@@ -111,4 +113,12 @@ export function useDeploymentInventory(lifetime: ServerAccountScopeLifetime | nu
         previewRepositoryId: query.previewRepositoryId, previewPullRequestIds: query.previewPullRequestIds,
         previewTemplateEnvironmentId: query.previewTemplateEnvironmentId });
     return { ...read, controller };
+}
+
+/** Exact children of P44's admitted template relation, never an Account inventory scan. */
+export function useDeploymentEnvironmentPreviews(lifetime: ServerAccountScopeLifetime | null, demand: DeploymentReadDemandV1,
+    query: Readonly<{ previewTemplateEnvironmentId: string; cursor?: string }>) {
+    const read = useDeploymentInventory(lifetime, demand, query);
+    return { ...read, result: projectDeploymentEnvironmentTabResult(read.snapshot, read.snapshot.value?.items ?? [], read.refresh),
+        retry: read.refresh };
 }

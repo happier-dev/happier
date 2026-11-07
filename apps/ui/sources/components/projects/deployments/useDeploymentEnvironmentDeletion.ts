@@ -126,39 +126,18 @@ export function useDeploymentEnvironmentDeletion(options: DeploymentEnvironmentD
             return result.ok ? { kind: 'linked', targetLinkId: result.targetLinkId } : readDeploymentActionResult(result);
         }, operation, 'manageTargets');
     }
-    /**
-     * Stop and remove: one simple teardown request names the target link the sheet showed (the controller prepares the
-     * candidate; the UI builds none). A teardown that already succeeded continues to the record disposition at the
-     * revision the teardown left; one still running returns its receipt, and Remove is offered again once it settles.
-     */
-    function stopAndRemove(targetLinkId: string | null, settledTeardownIds: readonly string[], operation?: UiActionOperation) {
+    /** Stop and remove is one admitted teardown; its owner also removes the Environment. */
+    function stopAndRemove(targetLinkId: string | null, operation?: UiActionOperation) {
         return run(async (actions, value, invoked) => {
             const link = targetLinkId ?? value.environment.runtimeTargetLinkId ?? null;
             const torn = await actions.teardown({ environmentId: value.environment.id, reason: 'manual',
-                ...(link ? { targetLinkId: link } : {}), requestKey: randomUUID() },
+                ...(link ? { targetLinkId: link } : {}), requestKey: randomUUID(), removeEnvironment: true },
             { ...invoked, presentUserConfirmation: { actionId: 'deployments.teardown' } });
-            if (torn.ok && 'detached' in torn) {
-                if (targetLinkId) return { kind: 'unlinked', targetLinkId: torn.targetLinkId, detached: torn.detached };
-                const result = await actions.deleteEnvironment({ environmentId: value.environment.id,
-                    expectedRevision: torn.revision, requestKey: operation?.actionRequestId ?? randomUUID(), detachKeepRunning: true },
-                { ...invoked, presentUserConfirmation: { actionId: 'deployments.environments.delete' } });
-                return result.ok ? { kind: 'deleted', detached: result.detached } : readDeploymentActionResult(result);
+            if (torn.ok && 'environmentRemoved' in torn && torn.environmentRemoved === true) {
+                return { kind: 'deleted', detached: false };
             }
-            if (!torn.ok || !('deploymentId' in torn) || torn.state !== 'succeeded') return readDeploymentActionResult(torn);
-            const requestKey = operation?.actionRequestId ?? randomUUID();
-            if (targetLinkId) {
-                const current = value.targetLinks.find(item => item.targetLink.id === targetLinkId)?.targetLink;
-                if (!current) return { kind: 'refused', reason: 'other', code: 'deployment_unavailable' };
-                const result = await actions.unlink({ environmentId: value.environment.id, expectedRevision: torn.revision,
-                    targetLinkId, expectedTargetLinkRevision: current.revision, requestKey, teardownDeploymentId: torn.deploymentId },
-                { ...invoked, presentUserConfirmation: { actionId: 'deployments.targets.unlink' } });
-                return result.ok ? { kind: 'unlinked', targetLinkId: result.targetLinkId, detached: result.detached }
-                    : readDeploymentActionResult(result);
-            }
-            const result = await actions.deleteEnvironment({ environmentId: value.environment.id, expectedRevision: torn.revision,
-                requestKey, teardownDeploymentIds: [...new Set([...settledTeardownIds, torn.deploymentId])] },
-            { ...invoked, presentUserConfirmation: { actionId: 'deployments.environments.delete' } });
-            return result.ok ? { kind: 'deleted', detached: result.detached } : readDeploymentActionResult(result);
+            if (torn.ok && 'detached' in torn) return { kind: 'started' };
+            return readDeploymentActionResult(torn);
         }, operation);
     }
     /** No fabricated resource inventory: the native owner must supply the exact prepared teardown operand. */

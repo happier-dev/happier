@@ -1,4 +1,3 @@
-import { withShortcut } from '@/keyboard/withShortcut';
 import { HAPPIER_ICON_BUTTON_SIZE, HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
 import { Animated, View } from 'react-native';
@@ -14,12 +13,15 @@ import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useKeyboardShortcutLabel } from '@/keyboard/shortcutLabels';
+import { withShortcut } from '@/keyboard/withShortcut';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
+import { useHeaderHeight } from '@/utils/platform/responsive';
+import { HEADER_BAND_HORIZONTAL_PADDING_PX } from '@/components/ui/layout/headerBand';
 import { t } from '@/text';
 
 import { usePaneRegion } from '../paneRegionContext';
-import { usePaneMainColumn } from './usePaneMainColumn';
+import { PaneMainChipClaimsContext, usePaneMainColumn } from './usePaneMainColumn';
 
 /** Whether a header in this column draws the hide control (the main column's own header only). */
 export function usePaneMainHideAvailable(): boolean {
@@ -74,7 +76,7 @@ export const PaneMainHideButton = React.memo(function PaneMainHideButton(
           color={props.color ?? theme.colors.text.secondary}
         />
       }
-      onPress={() => main.setHidden(true)}
+      onPress={() => main.requestHidden(true)}
     />
   );
 });
@@ -86,7 +88,7 @@ export const PaneMainHideButton = React.memo(function PaneMainHideButton(
  * state is announced once. Pressing it shows the column again (or opens the narrow drawer).
  */
 export const PaneMainRestoreChip = React.memo(function PaneMainRestoreChip(
-  props: Readonly<{ testID?: string }>,
+  props: Readonly<{ testID?: string; /** The host's stand-in: it never claims, or it would hide itself. */ fallback?: boolean }>,
 ) {
   const main = usePaneMainColumn();
   const shortcut = useKeyboardShortcutLabel('panes.main.toggle');
@@ -106,8 +108,51 @@ export const PaneMainRestoreChip = React.memo(function PaneMainRestoreChip(
     }
     lastAnnounced.current = state;
   }, [name, state, visible]);
+  // A header that draws the chip claims it, so the host's fallback stays away.
+  const claims = React.useContext(PaneMainChipClaimsContext);
+  const claiming = visible && props.fallback !== true;
+  React.useLayoutEffect(() => (claiming && claims ? claims.claim() : undefined), [claims, claiming]);
   if (!visible || !main) return null;
   return <PaneMainRestoreChipBody main={main} state={state} name={name} shortcut={shortcut} testID={props.testID} />;
+});
+
+const NO_CLAIMS_SUBSCRIBE = () => () => {};
+const NO_CLAIMS_SNAPSHOT = () => false;
+
+/**
+ * The chip's guarantee: while the main column is hidden and no pane header drew its restore chip
+ * (a side pane still loading, empty or unavailable, or one without a header), the host draws it at
+ * the leading edge of the band a header would have. Headers stay the chip's home; this stands in
+ * only when none claims it.
+ */
+export const PaneMainRestoreFallback = React.memo(function PaneMainRestoreFallback() {
+  const claims = React.useContext(PaneMainChipClaimsContext);
+  const claimed = React.useSyncExternalStore(
+    claims?.subscribe ?? NO_CLAIMS_SUBSCRIBE,
+    claims?.isClaimed ?? NO_CLAIMS_SNAPSHOT,
+    claims?.isClaimed ?? NO_CLAIMS_SNAPSHOT,
+  );
+  const visible = usePaneMainRestoreChipVisible();
+  const layout = useOptionalAppPaneScopeLayout();
+  const height = useHeaderHeight();
+  const wanted = visible && !claimed;
+  // Show after headers have claimed in this commit, so a header's chip never flashes a second one.
+  const [shown, setShown] = React.useState(false);
+  React.useEffect(() => setShown(wanted), [wanted]);
+  if (!wanted || !shown) return null;
+  const mirrored = layout?.arrangement === 'editor';
+  return (
+    <View
+      testID="pane-main-restore-fallback"
+      pointerEvents="box-none"
+      style={[
+        styles.fallback,
+        { height, [mirrored ? 'right' : 'left']: HEADER_BAND_HORIZONTAL_PADDING_PX / 2 },
+      ]}
+    >
+      <PaneMainRestoreChip fallback />
+    </View>
+  );
 });
 
 /**
@@ -154,7 +199,7 @@ function PaneMainRestoreChipBody(props: Readonly<{
       accessibilityRole="button"
       accessibilityLabel={label}
       keyboardShortcuts={shortcut}
-      onPress={() => main.setHidden(false)}
+      onPress={() => main.requestHidden(false)}
       style={({ hovered, pressed }) => [
         styles.chip,
         attention
@@ -204,6 +249,7 @@ function PaneMainRestoreChipBody(props: Readonly<{
 const S = DETAILS_TAB_STRIP_METRICS;
 
 const styles = StyleSheet.create((theme) => ({
+  fallback: { position: 'absolute', top: 0, zIndex: 2, flexDirection: 'row', alignItems: 'center', maxWidth: '100%' },
   arrival: { flexShrink: 1, minWidth: 0 },
   // One strip tab's height and radius, so the chip sits on the strip's rhythm; a flat ink edge
   // because it is an in-flow control, not a floating surface.

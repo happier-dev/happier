@@ -1,5 +1,5 @@
 import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, DeploymentEnvironmentGetResultV1Schema, DeploymentCancelTransitionInputV1Schema, DeploymentEnvironmentCreatePreviewV1Schema, DeploymentTargetLinkInputV1Schema, type DeploymentActionInputV1, type DeploymentActionOutputV1, type DeploymentEnvironmentCreateInputV1, type DeploymentEnvironmentCreateIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { isDeploymentDomainChildActionIdV1, isDeploymentPromoteActionIdV1, type DeploymentTransportActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { isDeploymentDomainChildActionIdV1, isDeploymentPromoteActionIdV1, isDeploymentTargetLinkActionIdV1, type DeploymentTransportActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 import { type ActionExecutorContext, type ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -34,7 +34,7 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
         if (!spec.serverTransport) return failure('unsupported_action');
         const transportInput = { ...input, serverId: account.serverIdentityId ?? account.serverId };
         const bound = bindHomeDomainHttpRequestV1({ transport: spec.serverTransport,
-            inputSchema: actionId === 'deployments.targets.link' ? DeploymentTargetLinkInputV1Schema
+            inputSchema: isDeploymentTargetLinkActionIdV1(actionId) ? DeploymentTargetLinkInputV1Schema
                 : DeploymentActionInputSchemasV1[actionId], input: transportInput });
         const body = actionId === 'deployments.cancel'
             ? DeploymentCancelTransitionInputV1Schema.parse({ ...transportInput, kind: 'cancel' }) : bound.body;
@@ -92,7 +92,7 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
         account.assertCurrent();
         if (!areServerProfileIdentifiersEquivalent(input.serverId, account.serverId)) return failure('action_account_scope_changed');
         let linkControllerMachineId: string | undefined;
-        if (actionId === 'deployments.targets.link' && !('contentArtifactId' in input)) {
+        if (isDeploymentTargetLinkActionIdV1(actionId) && !('contentArtifactId' in input)) {
             const intent = DeploymentActionInputSchemasV1[actionId].parse(input);
             const read = await storage('deployments.environments.get', {
                 serverId: intent.serverId, environmentId: intent.environmentId,
@@ -120,7 +120,7 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
             && actionId !== 'deployments.health.read' && actionId !== 'deployments.health.current'
             && actionId !== 'deployments.drift.read' && actionId !== 'deployments.logs.read'
             && actionId !== 'deployments.environments.create' && actionId !== 'deployments.environments.update'
-            && actionId !== 'deployments.bindings.set' && actionId !== 'deployments.targets.link') {
+            && actionId !== 'deployments.bindings.set' && !isDeploymentTargetLinkActionIdV1(actionId)) {
             return storage(actionId, input, context);
         }
         const selectedReadInput = actionId === 'deployments.health.read' || actionId === 'deployments.health.current'

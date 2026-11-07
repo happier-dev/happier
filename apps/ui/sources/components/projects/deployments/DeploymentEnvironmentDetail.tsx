@@ -394,9 +394,9 @@ export const DeploymentEnvironmentDetail = React.memo(
         canRemove: true,
         ...(!targetLinkId || running ? { domains: { controller: props.controller, environmentId: detail.environment.id } } : {}),
         // This review is the person's confirmation of the exact Actions, so the front door does not ask again.
-        // Something still running is stopped first: one teardown of the target link shown here, then the removal.
+        // The teardown owner stops the shown target and removes the Environment in that admitted operation.
         run: (choice) => choice === 'remove' && (running || (!targetLinkId && detail.environment.runtimeTargetLinkId != null))
-          ? disposition.stopAndRemove(targetLinkId, settledTeardowns)
+          ? disposition.stopAndRemove(targetLinkId)
           : targetLinkId
             ? disposition.unlink(targetLinkId, choice === 'detach' ? { kind: 'detachKeepRunning' } : { kind: 'afterTeardown' },
               { presentUserConfirmation: { actionId: 'deployments.targets.unlink' } })
@@ -405,8 +405,8 @@ export const DeploymentEnvironmentDetail = React.memo(
               : { kind: 'afterTeardown', deploymentIds: settledTeardowns },
             { presentUserConfirmation: { actionId: 'deployments.environments.delete' } }),
         onApproval: review.request,
-        onDone: () => {
-          if (!targetLinkId) onDeleted?.();
+        onDone: (outcome) => {
+          if (outcome.kind === 'deleted') onDeleted?.();
         },
       });
     };

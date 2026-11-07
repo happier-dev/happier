@@ -47,7 +47,7 @@ export type DeploymentDispositionSheetInput = Readonly<{
   /** A held approval continues on the page's one approval handle. */
   onApproval: (artifactId: string) => void;
   /** The subject is gone; the page leaves it. */
-  onDone: () => void;
+  onDone: (outcome: Extract<DeploymentEnvironmentDeletionOutcome, { kind: 'deleted' | 'unlinked' }>) => void;
 }>;
 
 /**
@@ -96,7 +96,7 @@ function DeploymentDispositionSheet(
           t('projects.deployments.factCostsValue', { machine }),
         ].join('\n\n'));
       }
-      onDone();
+      onDone(outcome);
       return;
     }
     if (outcome.kind === 'approval') {
@@ -104,7 +104,7 @@ function DeploymentDispositionSheet(
       onApproval(outcome.artifactId);
       return;
     }
-    // A teardown still running is its receipt: the sheet closes and Remove is offered again once it settles.
+    // Admitted teardown work continues through its existing receipt.
     if (outcome.kind === 'receipt' || outcome.kind === 'started') {
       onClose();
       return;

@@ -1,0 +1,98 @@
+import * as React from 'react';
+import { useUnistyles } from 'react-native-unistyles';
+import { Icon } from '@/components/ui/icons/Icon';
+import { isDeploymentReadDemandActiveV1, resolveDeploymentCreationDefaultsV1, type DeploymentReadDemandV1 } from '@happier-dev/deployments';
+import type { DeploymentCreationDefaultsV1 } from '@happier-dev/protocol/projects/deploymentCreationDefaultsV1';
+import { isAccountCurrentnessEntityIdV1, TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
+import { PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
+import { readProjectDeploymentDefaults, writeProjectDeploymentDefaults, type ProjectDeploymentDefaultsRead } from '@/sync/api/projects/projectDeploymentDefaults';
+import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { Modal } from '@/modal';
+import { ItemList } from '@/components/ui/lists/ItemList';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { Item } from '@/components/ui/lists/Item';
+import { PageHeader } from '@/components/ui/layout/PageHeader';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { t } from '@/text';
+import { renderDeploymentDefaultsEditorRows } from './DeploymentCreationDefaultsRows';
+import { useDeploymentAccountDefaults } from './useDeploymentAccountDefaults';
+
+/** Project overrides use the existing Source leaf and encrypted Artifact Actions. */
+export function ProjectDeploymentDefaultsSettings(props: Readonly<{ lifetime: ServerAccountScopeLifetime | null; sourceId: string; demand: DeploymentReadDemandV1 }>) {
+    const { theme } = useUnistyles();
+    const { lifetime, sourceId } = props;
+    const presented = isDeploymentReadDemandActiveV1(props.demand);
+    const execution = useMountedActionExecution(lifetime?.scope);
+    const router = useRouter();
+    const [value, setValue] = React.useState<ProjectDeploymentDefaultsRead | null>(null);
+    const [error, setError] = React.useState<unknown>(null);
+    const [retry, setRetry] = React.useState(0);
+    const [saving, setSaving] = React.useState(false);
+    React.useEffect(() => {
+        if (!lifetime || !presented) return;
+        setValue(null);
+        setError(null);
+        const cancellation = new AbortController();
+        const retirement = lifetime.onRetire(() => cancellation.abort());
+        const read = async () => {
+            try {
+                const next = await readProjectDeploymentDefaults(lifetime, sourceId, cancellation.signal);
+                if (!cancellation.signal.aborted) { setValue(next); setError(null); }
+            } catch (failure) { if (!cancellation.signal.aborted) setError(failure); }
+        };
+        const stop = subscribeHomeAccountChange(event => {
+            if (!areServerProfileIdentifiersEquivalent(event.serverId, lifetime.scope.serverId)) return;
+            if (event.changeKinds && !event.changeKinds.includes('account')) return;
+            if (!event.entityIds || event.entityIds.some(id => isAccountCurrentnessEntityIdV1(id)
+                || id === PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1 || id === TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1
+                || id === `projects:${sourceId}:deploymentDefaults`)) void read();
+        }, { serverIds: [lifetime.scope.serverId], reconnect: 'refresh' });
+        void read();
+        return () => { cancellation.abort(); retirement.dispose(); stop(); };
+    }, [lifetime, presented, sourceId, retry]);
+    const ownAccount = value?.owner.kind === 'account' && value.owner.accountId === lifetime?.scope.accountId;
+    const account = useDeploymentAccountDefaults(ownAccount && presented ? lifetime : null);
+    const resolved = value ? resolveDeploymentCreationDefaultsV1({
+        projectSourceId: sourceId, projectOwner: value.owner,
+        projectDefaults: { projectSourceId: sourceId, deploymentDefaults: value.preferences },
+        ...(ownAccount && account.preferences && lifetime ? { account: { accountId: lifetime.scope.accountId, defaults: account.preferences } } : {}),
+        target: { kind: 'ownServer', machines: [] },
+    }) : null;
+    const save = async (preferences: DeploymentCreationDefaultsV1) => {
+        if (!lifetime || !value?.canManage || saving || error) return;
+        setSaving(true);
+        try {
+            const next = await writeProjectDeploymentDefaults({ serverId: lifetime.scope.serverId,
+                accountId: lifetime.scope.accountId, current: value, preferences, execute: execution.executeValue });
+            if (lifetime.isCurrent()) setValue(next);
+        } catch (failure) { Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(failure, t('common.unavailable'))); }
+        finally { setSaving(false); }
+    };
+    return <ItemList testID="project-deployment-defaults" style={{ paddingTop: 0 }}>
+        <PageHeader title={t('projects.deployments.defaultsEditor.projectTitle')}
+            description={t('projects.deployments.defaultsEditor.projectDescription')} />
+        {execution.approval.approvalPending ? <ActionApprovalPendingNotice message={t('approvals.waitingForYou')}
+            summary={execution.approval.approvalSummary} onOpenApproval={execution.approval.openApproval} /> : null}
+        {error ? <SurfaceStateCard kind="error" title={t('projects.deployments.loadErrorTitle')}
+            action={{ label: t('common.retry'), onPress: () => setRetry(value => value + 1) }} /> : null}
+        {value && resolved && lifetime && (!ownAccount || account.preferences) ? <ItemGroup title={t('projects.deployments.creationDefaults')}>
+            {renderDeploymentDefaultsEditorRows({ serverId: lifetime.scope.serverId, preferences: value.preferences, resolved,
+                inheritLabel: t(ownAccount ? 'projects.deployments.defaultsEditor.useAccount' : 'projects.deployments.defaultsEditor.useBuiltin'),
+                disabled: !value.canManage || saving || !execution.ready || Boolean(error), onChange: next => { void save(next); } })}
+        </ItemGroup> : !error ? <SurfaceStateCard kind={account.error ? 'error' : 'loading'} title={t('projects.deployments.creationDefaults')}
+            {...(account.error ? { action: { label: t('common.retry'), onPress: account.retry } } : {})} /> : null}
+        {ownAccount && lifetime ? <ItemGroup><Item testID="project-deployment-defaults.account" title={t('projects.deployments.defaultsEditor.accountLink')}
+            icon={<Icon name="sliders-horizontal" size={18} color={theme.colors.text.secondary} />}
+            onPress={() => router.push({ pathname: SETTINGS_ROUTES.deployments, params: { serverId: lifetime.scope.serverId } })} /></ItemGroup> : null}
+        <ItemGroup><Item testID="deployment-defaults.notifications" title={t('projects.deployments.defaultsEditor.alertChannels')}
+            icon={<Icon name="bell" size={18} color={theme.colors.text.secondary} />}
+            onPress={() => router.push(SETTINGS_ROUTES.notifications)} /></ItemGroup>
+    </ItemList>;
+}

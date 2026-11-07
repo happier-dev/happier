@@ -1,10 +1,12 @@
+import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { renderHook, standardCleanup } from '@/dev/testkit';
+import { act, renderHook, renderScreen, standardCleanup, waitForTestEvent } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { DeploymentPublishPrepareInputV1Schema, DeploymentPublishPrepareResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { createRegistryHostV1, REGISTRY_ACTION_OUTPUT_SCHEMAS_V1, DeploymentTemplateV1Schema } from '@happier-dev/protocol/registries';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -29,6 +31,31 @@ describe('catalog App preparation entry', () => {
     beforeEach(() => homes.reset());
     afterEach(standardCleanup);
     afterEach(() => router.resetParams());
+
+    it('opens the actual checkout-independent route through the existing Home and Project read owner', async () => {
+        const serverId = await homes.addHome({ name: 'App Home', serverUrl: 'https://app-home.test',
+            accountId: 'owner', currentAccount: true });
+        const account = await captureLazyActionAccountContext(serverId);
+        const base = createDeploymentEnvironmentDetailV1();
+        const detail = createDeploymentEnvironmentDetailV1({ environment: { ...base.environment, serverId,
+            owner: { kind: 'account', accountId: 'owner' } } });
+        await account.createArtifactDocument({ artifactId: detail.environment.contentArtifactId,
+            header: { kind: 'deployment-environment.v1', title: detail.content.name }, body: JSON.stringify(detail.content) });
+        homes.answer(serverId, 'GET /v1/deployments/environments', { body: { ok: true, items: [], nextCursor: null } });
+        homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { body: {
+            ok: true, environment: detail.environment, targetLinks: detail.targetLinks.map(item => item.targetLink),
+        } });
+        router.module.router.setParams({ serverId, projectSourceId: detail.environment.projectSourceId,
+            deploymentEnvironment: detail.environment.id, deploymentTab: 'settings', deploymentSection: 'controller' });
+        const { WorkspaceRouteBody } = await import('../../../app/(app)/deployments/[projectSourceId]');
+        try {
+            const screen = await renderScreen(React.createElement(WorkspaceRouteBody));
+            await act(async () => { await waitForTestEvent(screen.subscribe,
+                () => screen.findByTestId('project-deployments.environment.settings.controller'), node => node !== null); });
+            expect(screen.findByTestId('project-deployments.environment.settings.controller')).not.toBeNull();
+            expect(homes.requests.some(request => request.path.includes('/projects/') || request.path.includes('workspace'))).toBe(false);
+        } finally { await act(async () => { account.dispose(); }); }
+    });
 
     it('does no work on mount and prepares the exact pin through the existing scoped Action without repository or resource writes', async () => {
         const { useCatalogAppPreparation } = await import('./useCatalogAppPreparation');

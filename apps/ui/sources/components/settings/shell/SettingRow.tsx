@@ -72,7 +72,8 @@ function useRegisterRequestedAnchor(anchor: string, isTarget: boolean) {
  * Scrolls the host into view and pulses its overlay twice once `active` turns on (after `delayMs`);
  * under reduced motion it marks it briefly without animation.
  */
-function useSettingReveal(active: boolean, delayMs: number) {
+/** Scrolls the host into view and pulses it once while `active`: settings search anchors and in-page section links. */
+export function useSettingReveal(active: boolean, delayMs: number) {
     const focused = useIsFocused();
     const reducedMotion = useReducedMotionPreference();
     const scrollSourceRef = usePopoverScrollSourceRef();
@@ -171,7 +172,7 @@ export const SettingRow = React.memo(function SettingRow(props: SettingRowProps)
  * rows and sections expose their reveal scope to disclosures. Route/virtualized owners may ask
  * through `useSettingRevealRequested` when they must first bring an anchor into the rendered tree.
  */
-function useRequestedSettingAnchor(): string | null {
+export function useRequestedSettingAnchor(): string | null {
     const params: Readonly<Record<string, string | string[] | undefined>> = useLocalSearchParams();
     const requested = params[SETTING_ANCHOR_QUERY_PARAM];
     return (Array.isArray(requested) ? requested[0] : requested) ?? null;
