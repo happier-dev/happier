@@ -108,7 +108,7 @@ import { useActionFieldOptionsForMachine } from '@/components/sessions/actions/u
 import { resolveEffectiveActionInputFields } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import { findWorkflowActionSpec } from '@/components/workflows/presentation/workflowActionCatalog';
 import { formatWorkflowProblemMessage, resolveWorkflowProblemPresentation } from '@/components/workflows/presentation/workflowProblemPresentation';
-import { exportWorkflowDocument, importWorkflowDocumentViaAction, type WorkflowImportResult } from '@/sync/domains/workflows/workflowInterchange';
+import { exportWorkflowDocumentViaAction, importWorkflowDocumentViaAction, type WorkflowImportResult } from '@/sync/domains/workflows/workflowInterchange';
 import {
     pickWorkflowDocumentText,
 } from '@/sync/domains/workflows/workflowDocumentFile';
@@ -545,7 +545,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
     // The contextual default comes from the canonical New Session resolver, and
     // only when it produces a genuinely valid choice (UX §2.3). A reviewed copy
     // keeps its predecessor's accepted target instead.
-    const accountMemory = useWorkflowEditorAccountMemory(props.accountLifetime);
+    const accountMemory = useWorkflowEditorAccountMemory(props.accountLifetime, { workspaceRefs: false });
     const recentMachinePaths = accountMemory.recentMachinePaths as
         | ReadonlyArray<Readonly<{ machineId?: string | null; path?: string | null }>>
         | undefined;
@@ -1439,12 +1439,16 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
     const handleExportJson = React.useCallback(() => {
         const draft = draftStore.get();
         if (draft === null) return;
-        const exported = exportWorkflowDocument({ draft });
-        if (!exported.ok) return;
+        const sourceIsCurrent = captureSourceGeneration();
         void (async () => {
-            await confirmWorkflowDocumentExport({ name: draft.name, json: exported.json });
+            try {
+                const exported = await exportWorkflowDocumentViaAction({ draft });
+                if (sourceIsCurrent()) await confirmWorkflowDocumentExport({ name: draft.name, json: exported.json });
+            } catch (error) {
+                if (sourceIsCurrent()) await Modal.alert(t('common.error'), formatWorkflowProblemMessage(error));
+            }
         })();
-    }, [draftStore]);
+    }, [captureSourceGeneration, draftStore]);
 
     // Action-step field options are read for the Where Machine only while an
     // Action step exists, so an editor without one issues no capabilities read.

@@ -1065,6 +1065,7 @@ describe('WorkflowEditorHostScreen composition', () => {
             await renderScreen(<WorkflowEditorHostScreen accountLifetime={lifetime}
                 source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
             await vi.waitFor(() => expect(boundary.httpRequests.some(request => request.path === '/v1/account/authoring-memory')).toBe(true));
+            expect(boundary.httpRequests.filter(request => request.path.endsWith('/project-rows/list'))).toHaveLength(0);
             await act(async () => {
                 readBodyProps()!.onChange({ ...readBodyProps()!.draftStore.get(), name: 'Saved before personal memory is ready' });
                 readBodyProps()!.onChangeProjectTarget!({ machineId: 'machine-a', directory: '/repo' });

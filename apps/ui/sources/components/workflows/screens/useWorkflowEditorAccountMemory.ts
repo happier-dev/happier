@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { useAuthoringMemoryField, useWorkspaceRefs } from '@/sync/domains/state/storage';
+import { getStorage } from '@/sync/domains/state/storage';
+import { readProjectWorkspaceRefs } from '@/sync/store/domains/projectAccountRows';
 import { useApplyAuthoringMemoryDelta } from '@/sync/store/settingsWriters';
 import { areServerAccountScopesEqual, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
@@ -18,9 +19,10 @@ export function useWorkflowEditorAccountMemory(accountLifetime?: ServerAccountSc
     demand?: Readonly<{ workspaceRefs: boolean }>) {
     const readWorkspaces = demand?.workspaceRefs !== false;
     accountLifetime = useWorkflowAccountLifetime(accountLifetime);
-    const activeRecent = useAuthoringMemoryField('recentMachinePaths');
-    const activeProjects = useAuthoringMemoryField('workflowProjectTargetsByDefinitionId');
-    const activeWorkspaceRefs = useWorkspaceRefs();
+    const useActiveMemory = accountLifetime === undefined;
+    const activeRecent = getStorage()(state => useActiveMemory ? state.authoringMemory.recentMachinePaths : authoringMemoryDefaults.recentMachinePaths);
+    const activeProjects = getStorage()(state => useActiveMemory ? state.authoringMemory.workflowProjectTargetsByDefinitionId : authoringMemoryDefaults.workflowProjectTargetsByDefinitionId);
+    const activeWorkspaceRefs = getStorage()(state => useActiveMemory && readWorkspaces ? readProjectWorkspaceRefs(state) : EMPTY_WORKSPACES);
     const applyActive = useApplyAuthoringMemoryDelta();
     const [state, setState] = React.useState(() => ({ lifetime: accountLifetime, memory: authoringMemoryDefaults }));
     const [owner, setOwner] = React.useState<Readonly<{ lifetime: ServerAccountScopeLifetime;

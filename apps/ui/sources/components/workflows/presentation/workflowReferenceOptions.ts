@@ -3,7 +3,7 @@ import { getBuiltinWorkflowCatalogV1 } from '@happier-dev/protocol/workflows';
 import type { BuiltinWorkflowPurposeV1 } from '@happier-dev/protocol/workflows/builtins/catalog';
 import { parseWorkflowDefinitionRefV1 } from '@happier-dev/protocol/workflows/workflowDefinitionRefV1';
 import { WorkflowDefinitionArtifactHeaderV1ReadSchema } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
-import { projectWorkflowPluginSourceV1 } from '@happier-dev/protocol/workflows/workflowPluginSourceV1';
+import { projectWorkflowPluginSourceV1 } from '@happier-dev/protocol/workflows/workflowPluginSourceContractV1';
 import { useShallow } from 'zustand/react/shallow';
 
 import { useWorkflowDefinitionLibrary } from '@/components/workflows/library/workflowLibraryReads';
@@ -101,7 +101,7 @@ export function useWorkflowReferenceTitles(refs: readonly string[], enabled = tr
             if (isArtifactOnlyHomeAccountChange(event) && event.entityIds !== undefined
                 && !event.entityIds.some(id => requestedIds.has(id))) return;
             refresh();
-        }, { serverIds: [lifetime.scope.serverId] });
+        }, { serverIds: [lifetime.scope.serverId], reconnect: 'refresh' });
         refresh();
         return () => { controller?.abort(); retirement.dispose(); unsubscribe(); };
     }, [addressedReadEnabled, artifactKey, lifetime]);
@@ -119,7 +119,8 @@ export function useWorkflowReferenceTitles(refs: readonly string[], enabled = tr
         // inert labels while a replacement relay has not supplied those references yet.
         const ordered = [...machines.filter(machine => machine.id === relay), ...machines.filter(machine => machine.id !== relay)];
         return ordered.map(machine => ({ relay: machine.id === relay,
-            reader: captureDaemonMergedProjectionReader({ machineId: machine.id, serverId: lifetime.scope.serverId }) }));
+            reader: captureDaemonMergedProjectionReader({ machineId: machine.id, serverId: lifetime.scope.serverId,
+                sections: ['familiesById.workflows'] }) }));
     }, [lifetime, machineInputs, reachabilityRevision, useStore]);
     const readAdmitted = React.useCallback((reader: ReturnType<typeof captureDaemonMergedProjectionReader>) => {
         const entry = reader.readCached();
@@ -173,8 +174,8 @@ export function useWorkflowReferenceTitles(refs: readonly string[], enabled = tr
 
 /**
  * The person's own saved workflows as references, from the library owner's one
- * read. Mounted only where it is demanded (an open Run a workflow picker, or a
- * block that names a saved workflow), so an editor without either reads nothing.
+ * read. Mounted only for an open reference picker; an already-named block uses
+ * the exact reference readers instead of demanding collection pages.
  */
 export function useWorkflowLibraryReferenceOptions(options?: Readonly<{ enabled?: boolean; accountLifetime?: ServerAccountScopeLifetime | null }>): readonly WorkflowReferenceOption[] {
     return useWorkflowReferenceLibrary(options).options;

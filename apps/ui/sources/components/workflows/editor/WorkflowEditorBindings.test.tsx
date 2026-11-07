@@ -2,11 +2,11 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDeferred, renderScreen, standardCleanup } from '@/dev/testkit';
-import { ARTIFACT_PLAIN_DATA_KEY_MARKER, DaemonContributionRegistryProjectionDescribeResponseSchema, PluginProjectionV2Schema, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
-import { encodeArtifactListCursor } from '@/sync/api/artifacts/apiArtifacts';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { DaemonContributionRegistryProjectionDescribeResponseSchema, PluginProjectionV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { Artifact } from '@/sync/domains/artifacts/artifactTypes';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -74,7 +74,9 @@ beforeEach(async () => {
     serverId = await home.addHome({ name: 'Editor bindings', serverUrl: 'https://editor-bindings.test', accountId: 'account-a' });
     publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
     getStorage().setState({ profileScope: { serverId, accountId: 'account-a' },
-        machines: { 'machine-a': createMachineFixture({ id: 'machine-a', activeAt: Date.now() }) }, machineListByServerId: {} });
+        // account-a is the Machine's custodian: automatic Account relays use only an own Machine.
+        machines: { 'machine-a': createMachineFixture({ id: 'machine-a', activeAt: Date.now(),
+            access: createPlainMachineRowFixture({ id: 'machine-a', accountId: 'account-a' }).access }) }, machineListByServerId: {} });
     clearDaemonMergedProjectionCacheForTests(); resetWorkflowLibraryReadsForTests();
     machineRpc.mockReset();
     machineRpc.mockResolvedValue(childProjection());
@@ -83,6 +85,68 @@ beforeEach(async () => {
 afterEach(async () => { await standardCleanup(); resetWorkflowLibraryReadsForTests(); await home.reset(); });
 
 describe('workflow editor declared bindings', () => {
+    it('names a built-in child without reading saved or plugin inventories', async () => {
+        const builtin = (await import('../presentation/workflowReferenceOptions')).listBuiltinWorkflowReferenceOptions()[0]!;
+        const block = { kind: 'workflow' as const, id: 'builtin', workflowRef: builtin.ref, input: {} };
+        const draft = buildWorkflowEditorDraftFromDefinition({ draftId: 'builtin', name: 'Parent',
+            definition: createWorkflowDefinitionFixture({ blocks: [block] }) });
+        const screen = await renderScreen(<harness.WorkflowNestedWorkflowBlockEditor block={block} draft={draft}
+            ordinal={1} total={1} actions={[]} onSelect={() => {}} onChangeBlock={() => {}} testIDPrefix="editor" />);
+        expect(screen.getTextContent()).toContain(builtin.title);
+        expect(home.requests.filter(request => new URL(request.path, request.serverUrl).pathname === '/v1/artifacts')).toHaveLength(0);
+        expect(machineRpc).not.toHaveBeenCalled();
+    });
+    it('names a missing Action catalog entry without blaming private content', async () => {
+        const block = { kind: 'action' as const, id: 'missing', actionId: 'example.tools/actions/missing', input: {} };
+        const draft = buildWorkflowEditorDraftFromDefinition({ draftId: 'missing', name: 'Missing Action',
+            definition: createWorkflowDefinitionFixture({ blocks: [block] }) });
+        const screen = await renderScreen(<harness.WorkflowActionBlockEditor block={block} draft={draft}
+            editable={false} ordinal={1} total={1} actions={[]} onSelect={() => {}}
+            onChangeBlock={() => {}} testIDPrefix="editor" />);
+        expect(JSON.stringify(screen.findByTestId('editor-action-missing-label-source')?.props.children))
+            .toContain('workflows.page.blocks.actionNotInCatalog');
+        expect(screen.getTextContent()).not.toContain('workflows.contentUnavailable');
+    });
+    it('reads input-bound fields as one line at rest and opens them when the step is selected', async () => {
+        const block = { kind: 'action' as const, id: 'verify', actionId: 'machines.command.run', input: {
+            command: { kind: 'literal' as const, value: 'echo hi' },
+            env: { kind: 'input' as const, name: 'backupTarget', path: ['environmentId'] },
+            cwd: { kind: 'input' as const, name: 'backupTarget', path: ['machineId'] },
+        } };
+        const draft = buildWorkflowEditorDraftFromDefinition({ draftId: 'verify', name: 'Verify',
+            definition: createWorkflowDefinitionFixture({ blocks: [block], inputs: [
+                { name: 'backupTarget', valueType: 'json', required: true },
+            ] }) });
+        const props = { block, draft, ordinal: 1, total: 1, actions: [], onSelect: () => {}, onChangeBlock: () => {}, testIDPrefix: 'editor' };
+        const atRest = await renderScreen(<harness.WorkflowActionBlockEditor {...props} />);
+        expect(atRest.findByTestId('editor-action-verify-field-env')).toBeNull();
+        expect(atRest.findByTestId('editor-action-verify-field-cwd')).toBeNull();
+        expect(atRest.findByTestId('editor-action-verify-field-command')).not.toBeNull();
+        expect(atRest.findByTestId('editor-action-verify-asks')).not.toBeNull();
+        const selected = await renderScreen(<harness.WorkflowActionBlockEditor {...props} selected />);
+        expect(selected.findByTestId('editor-action-verify-asks')).toBeNull();
+        expect(selected.findByTestId('editor-action-verify-field-env')).not.toBeNull();
+    });
+
+    it('keeps unset optional fields behind one more-settings control until asked for', async () => {
+        const block = { kind: 'action' as const, id: 'quiet', actionId: 'machines.command.run', input: {
+            command: { kind: 'literal' as const, value: 'echo hi' },
+        } };
+        const draft = buildWorkflowEditorDraftFromDefinition({ draftId: 'quiet', name: 'Quiet',
+            definition: createWorkflowDefinitionFixture({ blocks: [block] }) });
+        const props = { block, draft, ordinal: 1, total: 1, actions: [], onSelect: () => {}, onChangeBlock: () => {}, testIDPrefix: 'editor' };
+        const screen = await renderScreen(<harness.WorkflowActionBlockEditor {...props} selected />);
+        // What is set (and anything required) stays; an option nobody set waits behind one control.
+        expect(screen.findByTestId('editor-action-quiet-field-command')).not.toBeNull();
+        expect(screen.findByTestId('editor-action-quiet-field-env')).toBeNull();
+        expect(screen.findByTestId('editor-action-quiet-more-settings')).not.toBeNull();
+        await screen.pressByTestIdAsync('editor-action-quiet-more-settings');
+        expect(screen.findByTestId('editor-action-quiet-field-env')).not.toBeNull();
+        // A reader never sees the control: unset fields already say nothing there.
+        const reading = await renderScreen(<harness.WorkflowActionBlockEditor {...props} editable={false} />);
+        expect(reading.findByTestId('editor-action-quiet-more-settings')).toBeNull();
+    });
+
     it('edits command text literally while preserving its environment binding', async () => {
         const block = { kind: 'action' as const, id: 'command', actionId: 'machines.command.run', input: {
             command: { kind: 'literal' as const, value: 'printf "%s\\n" "$MESSAGE"' },
@@ -208,48 +272,39 @@ describe('workflow editor declared bindings', () => {
         const draft = buildWorkflowEditorDraftFromDefinition({ draftId: 'draft', name: 'Parent',
             definition: createWorkflowDefinitionFixture({ blocks: [block] }) });
         const changed = vi.fn();
+        const requestsBeforeMount = home.requests.length;
         const screen = await renderScreen(<harness.WorkflowNestedWorkflowBlockEditor block={block} draft={draft}
             ordinal={1} total={1} actions={[]} onSelect={() => {}} onChangeBlock={changed} testIDPrefix="editor" />);
         expect(screen.findByTestId('editor-workflow-child-input-topic')).not.toBeNull();
         expect(screen.findByTestId('editor-workflow-child-input-oldField')).not.toBeNull();
         expect(changed).not.toHaveBeenCalled();
+        expect(home.requests.slice(requestsBeforeMount).filter(request => new URL(request.path, request.serverUrl).pathname === '/v1/artifacts')).toHaveLength(0);
     });
 
-    it.each([false, true])('reads a later-page plugin child, retaining bindings and retrying a failed page (%s)', async (failPage) => {
+    it.each([false, true])('reads an exact plugin child, retaining bindings and retrying a failed lookup (%s)', async (failPage) => {
         let failing = failPage;
         const successor = createDeferred<void>();
-        machineRpc.mockResolvedValue(childProjection('later-child'));
-        // The real Artifact reader derives its next cursor from a full page.
-        // Non-workflow documents keep this about late child-schema disclosure.
-        const cursors: (string | null)[] = [];
+        machineRpc.mockImplementation(async () => {
+            if (failing) throw new Error('Plugin lookup unavailable');
+            return childProjection('later-child');
+        });
+        // A page-sized unrelated library must never be demanded to resolve one plugin reference.
         const firstPage = Array.from({ length: 500 }, (_, index) => ({
             id: `document-${index}`, ownerAccountId: 'account-a', access: 'view', encryptionMode: 'plain',
             dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, header: encodePlainArtifactStoredContent({ kind: 'note.v1' }),
             body: encodePlainArtifactStoredContent({ body: '' }), headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
         } satisfies Artifact));
-        const lastRow = firstPage.at(-1)!;
-        const laterCursor = encodeArtifactListCursor({ artifactId: lastRow.id, updatedAt: lastRow.updatedAt });
-        home.answer(serverId, '/v1/artifacts', { select: () => {
-            const request = home.requests.at(-1)!;
-            const params = new URL(request.path, request.serverUrl).searchParams;
-            const cursor = params.get('cursor');
-            cursors.push(cursor);
-            // A kind-selected list answers the filtered wire shape; an unfiltered list answers rows.
-            const filtered = params.has('kinds') || params.has('kind') || params.has('unclassified');
-            const page = (items: readonly Artifact[]) => filtered ? { items, hasUnclassified: false } : items;
-            if (getStorage().getState().profileScope?.accountId === 'account-b') return { body: page([]), respondAfter: successor.promise };
-            if (!cursor) return { body: page(firstPage) };
-            return failing ? { status: 403, body: { error: 'run_access_denied' } } : { body: page([]) };
-        } });
+        home.answer(serverId, '/v1/artifacts', { body: firstPage });
         const block = { kind: 'workflow' as const, id: 'later', workflowRef: 'plugin:example.tools/later-child',
             input: { oldField: { kind: 'literal' as const, value: 'Keep me' } } };
         const draft = buildWorkflowEditorDraftFromDefinition({ draftId: 'draft', name: 'Parent',
             definition: createWorkflowDefinitionFixture({ blocks: [block] }) });
         const changed = vi.fn();
+        const requestsBeforeMount = home.requests.length;
         const screen = await renderScreen(<harness.WorkflowNestedWorkflowBlockEditor block={block} draft={draft}
             ordinal={1} total={1} actions={[]} onSelect={() => {}} onChangeBlock={changed} testIDPrefix="editor" />);
         if (failPage) {
-            await vi.waitFor(() => expect(cursors).toContain(laterCursor));
+            await vi.waitFor(() => expect(screen.findByTestId('editor-workflow-later-retry')).not.toBeNull());
             expect(screen.findByTestId('editor-workflow-later-input-topic')).toBeNull();
             expect(screen.findByTestId('editor-workflow-later-input-oldField')).not.toBeNull();
             failing = false;
@@ -257,8 +312,7 @@ describe('workflow editor declared bindings', () => {
         }
         await vi.waitFor(() => expect(screen.findByTestId('editor-workflow-later-input-topic')).not.toBeNull());
         expect(screen.findByTestId('editor-workflow-later-input-oldField')).not.toBeNull();
-        // Source discovery is produced only by the plugin-phase continuation.
-        expect(cursors).toContain(laterCursor);
+        expect(home.requests.slice(requestsBeforeMount).filter(request => new URL(request.path, request.serverUrl).pathname === '/v1/artifacts')).toHaveLength(0);
         expect(machineRpc.mock.calls.some(([request]) => request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE)).toBe(true);
         expect(changed).not.toHaveBeenCalled();
         if (!failPage) {
@@ -305,6 +359,7 @@ describe('workflow editor declared bindings', () => {
         let deny = false;
         const successor = createDeferred<void>();
         await createWorkflowDefinition({ definitionId: ref, definition: child, metadata: { title: 'Shared child' } });
+        getStorage().setState({ artifacts: {} });
         const row = home.artifacts(serverId).read(ref);
         if (!row) throw new Error('Missing produced child Artifact');
         home.answer(serverId, `/v1/artifacts/${ref}`, { select: () => deny
@@ -316,9 +371,12 @@ describe('workflow editor declared bindings', () => {
         const draft = buildWorkflowEditorDraftFromDefinition({ draftId: 'draft', name: 'Parent',
             definition: createWorkflowDefinitionFixture({ blocks: [block] }) });
         const changed = vi.fn();
+        const requestsBeforeMount = home.requests.length;
         const screen = await renderScreen(<harness.WorkflowNestedWorkflowBlockEditor block={block} draft={draft}
             ordinal={1} total={1} actions={[]} onSelect={() => {}} onChangeBlock={changed} testIDPrefix="editor" />);
         await vi.waitFor(() => expect(screen.findByTestId('editor-workflow-shared-input-topic')).not.toBeNull());
+        expect(screen.getTextContent()).toContain('Shared child');
+        expect(home.requests.slice(requestsBeforeMount).filter(request => new URL(request.path, request.serverUrl).pathname === '/v1/artifacts')).toHaveLength(0);
         await act(async () => { await switchAccount('account-b'); });
         expect(screen.findByTestId('editor-workflow-shared-input-topic')).toBeNull();
         expect(screen.findByTestId('editor-workflow-shared-input-oldField')).not.toBeNull();

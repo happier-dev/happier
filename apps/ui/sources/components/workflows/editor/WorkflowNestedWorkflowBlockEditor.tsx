@@ -27,7 +27,7 @@ import { WorkflowKindCard } from './WorkflowKindCard';
 import { formatWorkflowBlockOptionsSummary, WorkflowStepOptionsFootChip } from './WorkflowStepOptionsChip';
 import {
     listBuiltinWorkflowReferenceOptions,
-    useWorkflowReferenceLibrary,
+    useWorkflowReferenceTitles,
 } from '@/components/workflows/presentation/workflowReferenceOptions';
 
 import { workflowEditorStyles } from './workflowEditorStyles';
@@ -100,13 +100,13 @@ export function WorkflowNestedWorkflowBlockEditor(props: Readonly<{
     const { theme } = useUnistyles();
     const editable = props.editable !== false;
     const frozen = props.slots?.nestedDefinition;
-    const library = useWorkflowReferenceLibrary({ enabled: frozen === undefined });
-    const libraryOptions = library.options;
-    const known = [...listBuiltinWorkflowReferenceOptions(), ...libraryOptions]
+    const known = listBuiltinWorkflowReferenceOptions()
         .find((option) => option.ref === block.workflowRef) ?? null;
-    const childName = known?.title ?? t('workflows.page.blocks.menuRun');
-    const displayName = workflowBlockReferenceLabel(block, childName);
     const child = useWorkflowReferenceDefinition(frozen === undefined ? block.workflowRef : null, frozen === undefined);
+    const titleRefs = React.useMemo(() => [block.workflowRef], [block.workflowRef]);
+    const referenceTitle = useWorkflowReferenceTitles(titleRefs);
+    const childName = known?.title ?? referenceTitle(block.workflowRef) ?? child.title ?? t('workflows.page.blocks.menuRun');
+    const displayName = workflowBlockReferenceLabel(block, childName);
     const definition = frozen === undefined ? child.definition : frozen;
     const declared = React.useMemo(() => definition === null ? null
         : projectWorkflowRunInputFields({ inputs: definition.inputs, values: {} }).map((field) => field.definition), [definition]);
