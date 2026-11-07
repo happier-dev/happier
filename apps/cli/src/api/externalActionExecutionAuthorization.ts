@@ -537,9 +537,10 @@ export function resolveExternalActionRootInvocationAuthority(authorization: Exte
   return resolveInvocationAuthority({ credential, surface: 'rpc' });
 }
 
-/** Account ingress keeps its admitted surface; an unstamped root uses its authenticated client kind. */
+/** A terminal bearer cannot claim the UI approval floor; other admitted surfaces are preserved. */
 export function resolveExternalActionAccountInvocationSurface(authenticationKind: 'account' | 'terminal' | undefined,
   surface?: ActionExecutorContext['surface']): NonNullable<ActionExecutorContext['surface']> {
+  if (authenticationKind === 'terminal' && surface === 'ui') return 'cli';
   return surface ?? (authenticationKind === 'terminal' ? 'cli' : 'ui');
 }
 
@@ -736,7 +737,8 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
   if (input.foreignTargetOnly && !workflow && !scopedController) {
     if (input.target.kind !== 'machine') return fail('target_unavailable');
     const machineId = input.target.machineId;
-    machines = await phase('machine_inventory', () => listCurrentAccountMachines({ token: input.credentials.token, serverHttpBaseUrl: homeUrl,
+    machines = await phase('machine_inventory', () => listCurrentAccountMachines({ token: input.credentials.token,
+      credentials: input.credentials, machineIds: [machineId], projection: 'hostFacts', serverHttpBaseUrl: homeUrl,
       ...(input.signal ? { signal: input.signal } : {}) }));
     if (!await isCurrent()) return fail('target_unavailable');
     const own = machines.find(row => row.id === machineId);
@@ -764,6 +766,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
   }));
   // These passive reads already have the exact target and authenticated requester. Join them
   // before interpreting mode/ownership, minting authority or disclosing material.
+  const target = input.target;
   const [modeRead, inventoryRead, installedRead] = await Promise.allSettled([
     workflowBinding ? Promise.resolve(workflowBinding.accountEncryptionMode
       ? { kind: 'resolved' as const, mode: workflowBinding.accountEncryptionMode }
@@ -771,8 +774,9 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
       : phase('account_mode', () => readAccountEncryptionModeOnce({ credentials: input.credentials, request: () => axios.get<unknown>(`${homeUrl}/v1/account/encryption`, {
       headers, ...(input.signal ? { signal: input.signal } : {}), validateStatus: () => true,
     }) })),
-    input.target.kind === 'machine' && !machines && !workflow && !scopedController
-      ? phase('machine_inventory', () => listCurrentAccountMachines({ token: input.credentials.token, serverHttpBaseUrl: homeUrl,
+    target.kind === 'machine' && !machines && !workflow && !scopedController
+      ? phase('machine_inventory', () => listCurrentAccountMachines({ token: input.credentials.token,
+        credentials: input.credentials, machineIds: [target.machineId], projection: 'hostFacts', serverHttpBaseUrl: homeUrl,
         ...(input.signal ? { signal: input.signal } : {}) })) : machines,
     input.target.kind === 'machine' && requiresMachineProof && input.serverIdentityId && !workflow && !scopedController
       ? readInstalledPublication(input.target.machineId) : undefined,
@@ -795,8 +799,13 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
     foreign = selected.foreign;
   }
   let material: Extract<AccountScopedCryptoMaterial, { type: 'dataKey' }> | undefined;
+  const workflowActionOrigin = workflow && workflowCaller?.kind === 'workflowRun'
+    ? { runId: workflowCaller.runId, requestId: input.requestId,
+      ...(workflowCaller.authorization.reviewedChild ? { reviewedChild: workflowCaller.authorization.reviewedChild } : {}) }
+    : undefined;
   const controllerCodec = Boolean(foreign && (managedAdmission
-    || isManagedControllerCodecActionV1({ actionId: input.actionId, managedAdmission })));
+    || isManagedControllerCodecActionV1({ actionId: input.actionId, managedAdmission }))
+    || workflowActionOrigin && isReviewedMachineSetupCodecV1({ actionId: input.actionId, workflowActionOrigin }));
   if (controllerCodec) material = { type: 'dataKey', machineKey: randomBytes(32) };
   if (mode.mode === 'e2ee') {
     if (!input.serverIdentityId) return fail('admission_unavailable');
@@ -837,9 +846,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
       method, requestId: envelope.requestId, params, originalActionEnvelope: spawnChild.context.originalActionEnvelope } : null;
   })() : undefined;
   if (spawnChild && !nativeCredentialSpawnChild) return fail('admission_unavailable');
-  if (workflow && workflowCaller?.kind === 'workflowRun') {
-    const workflowActionOrigin = { runId: workflowCaller.runId, requestId: input.requestId,
-      ...(workflowCaller.authorization.reviewedChild ? { reviewedChild: workflowCaller.authorization.reviewedChild } : {}) };
+  if (workflow && workflowActionOrigin) {
     body = ExternalActionExecutionAuthorizationRequestV1Schema.parse({ v: 1, machineId: workflow.machineId,
       envelope, workflowActionOrigin,
       ...(workflowAuthorization ? { executionAuthorization: workflowAuthorization } : {}),
@@ -883,7 +890,11 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
         || !isExternalActionAuthorizationBoundToEnvelope(root, { actionId, machineId: input.target.machineId, envelope })
         || !await isCurrent()) return fail('admission_unavailable');
       try {
-        const authorization = sealExternalActionRequesterAccountContextV1({ authorization: minted.authorization,
+        const authorization = controllerCodec && material
+          ? sealManagedControllerActionCodecV1({ authorization: minted.authorization, material,
+            ...(input.invocation ? { invocation: input.invocation } : {}),
+            installationPublicKey: decodeBase64(installed.installationPublicKey), randomBytes })
+          : sealExternalActionRequesterAccountContextV1({ authorization: minted.authorization,
           credentials: { ...encodeStoredCredentials(input.credentials), token: input.credentials.token },
           purpose: { kind: 'external_action' }, installationPublicKey: decodeBase64(installed.installationPublicKey), randomBytes });
         if (!await isCurrent()) return fail('target_unavailable');
@@ -978,7 +989,10 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
       if (wake) {
         const wakeController = wake.target.controller;
         if (!wakeController) return fail('admission_unavailable');
-        const controller = machines?.find(row => row.id === wakeController.machineId);
+        const controller = machines?.find(row => row.id === wakeController.machineId)
+          ?? (await phase('machine_inventory', () => listCurrentAccountMachines({ token: input.credentials.token,
+            credentials: input.credentials, machineIds: [wakeController.machineId], projection: 'hostFacts',
+            serverHttpBaseUrl: homeUrl, ...(input.signal ? { signal: input.signal } : {}) })))[0];
         if (!controller || controller.kind !== 'persistent' || controller.revokedAt !== null
           || controller.replacedByMachineId !== null || controller.access?.accessState !== 'ready') return fail('admission_unavailable');
         const installedController = await readInstalledMachine(controller);
@@ -1271,7 +1285,7 @@ export async function projectExternalActionRequesterHttpAuthorization(input: Rea
   if (requesterContext && (requesterContext.authorization.token !== authorization.token
     || !sameStrictJsonValue(requesterContext.authorization.binding, authorization.binding))) return null;
   const admittedCustody = requesterContext?.isCustodyCurrent;
-  const nativePreparationReadCustody = input.forwardedDeploymentChild !== undefined || authorization.binding.actionId === 'projects.service.relocate'
+  const nativePreparationReadCustody = authorization.binding.actionId === 'projects.service.relocate'
     || authorization.binding.actionId === 'discussion.second_opinion.start'
     || isSessionStopChildRootV1(authorization.binding.actionId)
     || authorization.binding.actionId === 'execution.run.start'

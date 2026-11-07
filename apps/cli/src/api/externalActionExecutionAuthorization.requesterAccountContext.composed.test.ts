@@ -1,3 +1,15 @@
+import fastify from 'fastify';
+import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
+import { encodePlainArtifactStoredContent } from '@happier-dev/protocol';
+import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
+import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
+import { registerAccountHomeHttp, registerPlainArtifactRoutes } from '@/session/actions/widgetApproval.testkit';
+import { admitRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { createRequesterBoundDeploymentActionDeps } from '@/daemon/externalActions/deploymentActionDeps';
+import { createPluginInvocationActionsService } from '@/plugins/runtime/invocation/services/actions';
+import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
+import { deploymentEventActions } from '../../../../packages/plugins/machine-services/src/deploymentEvents';
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { createServer, type Server } from 'node:http';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -10,6 +22,7 @@ import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { openExternalActionRequestV2, prepareExternalActionResponseV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { computeExternalActionRequestEnvelopeDigestV1, verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { deriveWorkspaceSyncRelationshipId, projectWorkspaceSyncAdmissionInputV1 } from '@happier-dev/protocol/workspaces/workspaceSyncAdmissionV1';
 import { EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, ExternalActionExecutionAuthorizationRequestV1Schema, projectExternalActionDeploymentPreparationEnvelopeAdmissionV1, type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { DeploymentPrepareInputV1Schema, ExternalActionRequestEnvelopeSchema, type ActionExecuteResult, type ActionId } from '@happier-dev/protocol';
 import { openExternalActionRequesterAccountContextV1, openManagedControllerActionCodecV1, openManagedCreationActionCodecV1, projectRequesterSessionCredentialDisclosure } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
@@ -27,6 +40,7 @@ import { captureConsoleText } from '@/testkit/logger/captureOutput';
 import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invocationAuthority';
 import { configuration } from '@/configuration';
 import { withTempDir } from '@/testkit/fs/tempDir';
+import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { ManagedWakeTargetV1Schema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import { ManagedMachineActionInputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -69,6 +83,80 @@ it('requires installed requester custody for private deployment observation read
     serverId: 'home', environmentId: 'environment', targetLinkId: 'runtime',
   })).toBe(true);
 });
+
+it.each(['cli', 'ui'] as const)('runs real failure-observer setup after admitted Link without Project requester authority (%s)', async surface => {
+  const endpoint = 'https://link-observer-content.test';
+  const serverId = homeIdentityId;
+  const credentials: StoredCredentials = { token: token(), encryption: null, credentialProvenance: 'stored_session' };
+  const app = fastify();
+  const restore = installAxiosFastifyAdapter({ app, origin: endpoint });
+  const channel = await createRequesterCurrentnessSocketHarness();
+  const features = registerAccountHomeHttp(app, { accountId: 'bob', serverId });
+  vi.stubGlobal('fetch', async () => Response.json(features));
+  const artifacts = registerPlainArtifactRoutes(app, 'bob');
+  const environment = createDeploymentEnvironmentDetailV1();
+  environment.environment.serverId = serverId;
+  environment.environment.owner = { kind: 'account', accountId: 'bob' };
+  const link = createDeploymentTargetLinkHeaderV1({ environmentId: environment.environment.id, role: 'runtime',
+    source: { kind: 'plugin', contribution: { pluginId: 'happier.deploy.cloudflare', localId: 'pages' } } });
+  environment.environment.runtimeTargetLinkId = link.id;
+  const principal = { kind: 'account', accountId: 'bob', purpose: {
+    consumer: { pluginId: 'happier.deploy.cloudflare', localId: 'targets-inspect-v1' }, purpose: 'deploy.manage' },
+    target: { kind: 'account', account: { service: { pluginId: 'happier.deploy.cloudflare', localId: 'cloudflare' }, accountId: 'provider' } } };
+  artifacts.seed(link.contentArtifactId,
+    encodePlainArtifactStoredContent({ kind: DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, title: 'Runtime' }),
+    encodePlainArtifactStoredContent({ body: JSON.stringify({ credentialPrincipal: principal,
+      providerIdentity: { providerAccountId: 'organization', providerResourceId: 'project', providerEnvironment: 'production' },
+      providerEnvironment: { kind: 'production' } }) }));
+  app.get(`/v1/deployments/environments/${environment.environment.id}`, async () => ({
+    ok: true, environment: environment.environment, targetLinks: [link] }));
+  const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'admitted-link-root', binding: {
+    accountId: 'bob', custodianAccountId: 'bob', authentication: { kind: 'account', tokenEpoch: 7 },
+    accountEncryptionMode: 'plain', serverIdentityId: serverId, machineId: 'machine', installationId: 'installation',
+    actionId: 'deployments.targets.link', requestId: `observer-${surface}`, requestEnvelopeDigest: 'a'.repeat(43),
+    target: { kind: 'machine', machineId: 'machine' },
+    deploymentLinkAdmission: { environmentId: environment.environment.id, owner: environment.environment.owner },
+  } });
+  const admitted = await admitRequesterAccountActionContext({ authorization: root, credentials, serverId,
+    serverIdentityId: serverId, serverHttpBaseUrl: endpoint, isCurrent: async () => true });
+  if (!admitted) { await channel.close(); restore(); await app.close(); vi.unstubAllGlobals();
+    throw new Error('Expected installed requester content custody'); }
+  try {
+    const native = createRequesterBoundDeploymentActionDeps({ credentials, serverId, serverHttpBaseUrl: endpoint, machineId: 'machine',
+      resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }) });
+    const requesterExecutor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...native });
+    // The installed ingress supplies its native executor; its content projection remains the real admitted owner.
+    const carrier = Object.defineProperties({ ...admitted.authorization }, {
+      requesterAccountProjection: { value: admitted.authorization.requesterAccountProjection, enumerable: false },
+      requesterAccountExecutor: { value: requesterExecutor, enumerable: false },
+    });
+    const keys = new Uint8Array(32).fill(19);
+    const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: carrier,
+      serverId, serverIdentityId: serverId, serverHttpBaseUrl: endpoint, target: root.binding.target,
+      installationId: 'installation', privateKey: new Uint8Array([...keys, ...ed25519.getPublicKey(keys)]), rootAdmitted: true });
+    if (!authorization) throw new Error('Expected admitted Link HTTP projection');
+    const executor = createActionExecutor(createCliActionDeps({ token: credentials.token, credentials, serverId,
+      serverHttpBaseUrl: endpoint, sessionId: '' }));
+    const controller = new AbortController();
+    const pluginId = 'happier.machine.services';
+    const actions = createPluginInvocationActionsService({ seed: {
+      plugin: { id: pluginId, version: '0.0.0' }, surface,
+      contribution: { id: 'deployment-failed/setup', qualifiedId: `${pluginId}/actions/deployment-failed/setup` },
+      occurrenceId: createPluginRuntimeOccurrenceId(pluginId), signal: controller.signal, isOccurrenceCurrent: () => true,
+      resolveCurrentPluginMaterializationRef: () => ({ pluginId, machineId: 'machine', materializationId: 'installed' }),
+      approvalContext: { surface, authority: 'present_user', actionCaller: { kind: 'host' }, runtimeAccountId: 'bob', serverId,
+        actionRequestId: root.binding.requestId, externalActionTarget: root.binding.target, externalActionExecutionAuthorization: authorization },
+    }, actionExecutor: executor, invokeContributedAction: async () => { throw new Error('Setup invokes a native observation Action'); } });
+    const setup = deploymentEventActions['deployment-failed/setup']!;
+    // The executable plugin context is a host boundary; setup, Actions service, authorization and Artifact readers stay real.
+    const context = { plugin: { id: pluginId, version: '0.0.0' }, surface, invokedAtMs: 1000,
+      signal: controller.signal, services: { actions } } as unknown as Parameters<typeof setup.run>[1];
+    await expect(setup.run({ v: 1, serverId, environmentId: environment.environment.id, targetLinkId: link.id }, context))
+      .resolves.toMatchObject({ sourceConfig: { environmentId: environment.environment.id, targetLinkId: link.id,
+        credentialPrincipal: principal } });
+  } finally { await admitted.dispose(); await channel.close(); restore(); await app.close(); vi.unstubAllGlobals(); }
+});
+
 it('keeps nested Link observation on its admitted native reader after rebuilding requester HTTP ports', async () => {
   const credentials: StoredCredentials = { token: token(), encryption: null, credentialProvenance: 'stored_session' };
   const host = { credentials, serverId: 'home', serverHttpBaseUrl: 'https://link-observer.test', machineId: 'machine',
@@ -147,6 +235,7 @@ function token(kind: 'account' | 'terminal' = 'account') {
 async function home(mode: 'plain' | 'e2ee', events: string[], options: {
   mutateRoot?: boolean; custodianAccountId?: string; authenticationKind?: 'account' | 'terminal';
   finiteWake?: boolean; accountOwnedFiniteWake?: boolean; finiteAction?: boolean; staleController?: 'key' | 'installation';
+  controllerCustodianAccountId?: string;
   originalOwnAction?: ActionId; ownExecution?: ActionExecuteResult; onInventoryRead?: () => void; localDaemon?: boolean;
   ownHttpResponse?: Readonly<{ status: number; body: string }>;
   localDaemonExecution?: ActionExecuteResult;
@@ -163,6 +252,8 @@ async function home(mode: 'plain' | 'e2ee', events: string[], options: {
   passiveReadDelayMs?: number;
   invalidEncryptionResponse?: boolean;
   inventoryUnavailable?: boolean;
+  malformedUnrelatedMachine?: boolean;
+  onInventoryResponse?: (path: string, rowCount: number) => void;
   scopedManagedController?: boolean;
   scopedControllerMismatch?: 'parent' | 'installation' | 'resource' | 'account-owned';
   onRequestAuthorization?: (authorization: string | undefined) => void;
@@ -183,7 +274,7 @@ async function home(mode: 'plain' | 'e2ee', events: string[], options: {
       access: { custodian: { accountId: options.custodianAccountId ?? 'alice', displayName: 'Alice' }, role: 'use', resourceMode: options.custodianAccountId === 'bob' ? mode : 'plain', accessState: 'ready' } };
     const controller = { ...machine, id: 'alice-controller', installationId: 'controller-installation',
       installationPublicKey: encodeBase64(controllerPublicKey),
-      access: { ...machine.access, custodian: { accountId: 'alice', displayName: 'Alice' } } };
+      access: { ...machine.access, custodian: { accountId: options.controllerCustodianAccountId ?? 'alice', displayName: 'Alice' } } };
     if (request.url === '/v1/account/encryption') {
       await options.beforeEncryptionRead?.();
       if (options.passiveReadDelayMs) await new Promise(resolve => setTimeout(resolve, options.passiveReadDelayMs));
@@ -194,20 +285,32 @@ async function home(mode: 'plain' | 'e2ee', events: string[], options: {
       await options.beforeInventoryRead?.();
       if (options.passiveReadDelayMs) await new Promise(resolve => setTimeout(resolve, options.passiveReadDelayMs));
       if (options.inventoryUnavailable) { response.statusCode = 503; return respond({ error: 'unavailable' }); }
-      return respond(options.finiteWake ? [machine, controller] : [machine]);
+      const rows = options.malformedUnrelatedMachine ? [machine, { id: 'unrelated-machine' }]
+        : options.finiteWake ? [machine, controller] : [machine];
+      options.onInventoryResponse?.(request.url, rows.length);
+      return respond(rows);
     }
     // Ordinary targets have no managed row; the real asleep classifier reads
     // this Account endpoint before choosing its existing Machine transport.
     if (request.url === managedMachineActionEndpointPathV1('machines.managed.list')) return respond({ machines: [] });
     if (request.url === '/ping') return respond({ status: 'ok' });
     if (request.url === '/v1/machines/alice-machine') {
-      options.onInstalledMachineRead?.();
+      const hostFacts = request.headers.accept === 'application/json;happier-machine-projection=host-facts';
+      if (hostFacts) {
+        options.onInventoryRead?.();
+        await options.beforeInventoryRead?.();
+        if (options.inventoryUnavailable) { response.statusCode = 503; return respond({ error: 'unavailable' }); }
+        options.onInventoryResponse?.(request.url, 1);
+      } else options.onInstalledMachineRead?.();
       if (options.passiveReadDelayMs) await new Promise(resolve => setTimeout(resolve, options.passiveReadDelayMs));
-      return respond({ machine: options.installedCustodianAccountId
+      return respond({ machine: !hostFacts && options.installedCustodianAccountId
         ? { ...machine, access: { ...machine.access, custodian: { accountId: options.installedCustodianAccountId } } } : machine });
     }
-    if (request.url === '/v1/machines/alice-controller') return respond({ machine: options.staleController === 'installation'
-      ? { ...controller, installationId: 'replacement-controller-installation' } : controller });
+    if (request.url === '/v1/machines/alice-controller') {
+      if (request.headers.accept === 'application/json;happier-machine-projection=host-facts') options.onInventoryResponse?.(request.url, 1);
+      return respond({ machine: options.staleController === 'installation'
+        ? { ...controller, installationId: 'replacement-controller-installation' } : controller });
+    }
     if (options.allowedTerminalSecurity && request.method === 'GET' && request.url === '/v1/account/security') {
       await options.beforeAccountSecurityRead?.();
       // The network fixture substitutes credential verification/current Account
@@ -260,6 +363,8 @@ async function home(mode: 'plain' | 'e2ee', events: string[], options: {
       events.push('home-authorized');
       const prepared = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
       const deploymentPreparationAdmission = projectExternalActionDeploymentPreparationEnvelopeAdmissionV1({ actionId, envelope: prepared.envelope });
+      const workspaceSync = prepared.envelope.v === 1 ? projectWorkspaceSyncAdmissionInputV1(actionId, prepared.envelope.input)
+        : prepared.envelope.workspaceSyncAdmission;
       const managedAdmission = actionId === 'machines.managed.power.set' || actionId === 'machines.managed.delete'
         ? prepared.envelope.v === 1 ? projectExternalActionManagedAdmissionV1(actionId, prepared.envelope.input)
           : prepared.envelope.managedAdmission
@@ -272,6 +377,14 @@ async function home(mode: 'plain' | 'e2ee', events: string[], options: {
         serverIdentityId: homeIdentityId, custodianAccountId: options.custodianAccountId ?? 'alice', machineId: 'alice-machine',
         installationId: 'alice-installation', actionId, requestId: 'request-1',
         target: prepared.envelope.target!, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(prepared.envelope),
+        ...(prepared.envelope.v === 2 ? { machineRuntimeDemand: prepared.envelope.machineRuntimeDemand } : {}),
+        ...(workspaceSync ? { workspaceSyncAdmission: {
+          relationshipId: workspaceSync.relationshipId ?? deriveWorkspaceSyncRelationshipId(prepared.envelope.requestId),
+          sourceWorkspaceRefId: workspaceSync.sourceWorkspaceRefId,
+          source: { actorAccountId: 'bob', custodianAccountId: machine.access.custodian.accountId,
+            machineId: workspaceSync.sourceMachineId, installationId: machine.installationId,
+            role: 'use' as const, encryptionMode: machine.access.resourceMode },
+        } } : {}),
         ...(deploymentPreparationAdmission ? { deploymentPreparationAdmission } : {}),
         ...(managedAdmission ? { managedAdmission } : {}),
       } };
@@ -929,6 +1042,27 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
     });
   });
 
+  it.each([true, false])('reads one exact host-facts row for Machine admission (foreign shortcut: %s)', async foreignTargetOnly => {
+    const events: string[] = [];
+    const inventoryResponses: Array<Readonly<{ path: string; rows: number }>> = [];
+    const actionId = foreignTargetOnly ? 'settings.list' : 'machines.work.summary.get';
+    const target = await home('plain', events, { custodianAccountId: 'bob', originalOwnAction: actionId,
+      malformedUnrelatedMachine: true,
+      onInventoryResponse: (path, rows) => { inventoryResponses.push({ path, rows }); } });
+    const result = await dispatchOriginalAccountAction({ actionId, input: foreignTargetOnly ? {} : ownMachineInput,
+      requestId: 'request-1', target: { kind: 'machine', machineId: 'alice-machine' },
+      credentials: { token: token(), encryption: null }, serverHttpBaseUrl: target.url,
+      serverIdentityId: homeIdentityId, ...(foreignTargetOnly ? { foreignTargetOnly: true as const } : {}) });
+    expect(inventoryResponses).toEqual([{ path: '/v1/machines/alice-machine', rows: 1 }]);
+    if (foreignTargetOnly) {
+      expect(result).toBeNull();
+      expect(events).toEqual([]);
+    } else {
+      expect(result).toMatchObject({ ok: true, result: ownMachineResult });
+      expect(events).toEqual(['home-authorized', 'dispatch']);
+    }
+  });
+
   it('overlaps passive Home mode and inventory reads but joins both before authorization or dispatch', async () => {
     const events: string[] = [];
     const measured = await home('plain', [], { custodianAccountId: 'bob', originalOwnAction: 'machines.work.summary.get', passiveReadDelayMs: 20 });
@@ -1245,6 +1379,35 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
     });
   });
 
+  it('delivers encrypted terminal Session creation when its admitted wake controller is outside the target inventory', async () => {
+    await withConfiguredDaemonTestHome({ prefix: 'happier-spawn-wake-controller-' }, async () => {
+      const events: string[] = [];
+      const inventoryResponses: Array<Readonly<{ path: string; rows: number }>> = [];
+      const target = await home('e2ee', events, { finiteWake: true, originalOwnAction: 'session.spawn_new',
+        authenticationKind: 'terminal', custodianAccountId: 'bob', controllerCustodianAccountId: 'bob',
+        onInventoryResponse: (path, rows) => { inventoryResponses.push({ path, rows }); } });
+      const input = SessionSpawnNewInputV2Schema.parse({ creationKey: 'read-only-isolation',
+        executionTarget: { serverId: homeIdentityId, machineId: 'alice-machine' },
+        directory: { kind: 'path', path: '/tmp' }, permissionMode: 'read-only',
+        agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } });
+      const executor = createCliActionExecutorFromCredentials({ credentials: {
+        token: token('terminal'), credentialProvenance: 'stored_session',
+        encryption: { type: 'legacy', secret: new Uint8Array(32).fill(23) },
+      }, externalActionClient: true, serverId: 'home', serverIdentityId: homeIdentityId, serverApiUrl: target.url,
+        actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }) } });
+      expect(await executor.execute('session.spawn_new', input, { surface: 'cli', actionRequestId: 'request-1' }))
+        .toMatchObject({ ok: false, errorCode: 'fixture_receipt' });
+      expect(events).toEqual(['home-authorized', 'dispatch']);
+      expect(inventoryResponses).toEqual([{ path: '/v1/machines/alice-machine', rows: 1 },
+        { path: '/v1/machines/alice-controller', rows: 1 }]);
+      const delivered = ExternalActionExecutionAuthorizationRequestV1Schema.parse(target.readReceived());
+      expect(delivered.executionAuthorization?.binding).toMatchObject({ actionId: 'session.spawn_new',
+        accountId: 'bob', custodianAccountId: 'bob', authentication: { kind: 'terminal', tokenEpoch: 7 } });
+      expect(delivered.executionAuthorization?.managedFiniteWake?.target.controller)
+        .toEqual({ machineId: 'alice-controller', installationId: 'controller-installation' });
+    });
+  });
+
   it('refuses a controller-free target in the native finite-wake custody carrier', async () => {
     const events: string[] = [];
     const target = await home('plain', events, { finiteWake: true, accountOwnedFiniteWake: true, custodianAccountId: 'bob' });
@@ -1260,7 +1423,9 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
 
   it.each(['bob', 'alice'] as const)('captures the same original finite root for a %s-owned guest and genuine Bob custody on its foreign controller', async guestCustodian => {
     const events: string[] = [];
-    const target = await home('plain', events, { finiteWake: true, custodianAccountId: guestCustodian });
+    const inventoryResponses: Array<Readonly<{ path: string; rows: number }>> = [];
+    const target = await home('plain', events, { finiteWake: true, custodianAccountId: guestCustodian,
+      onInventoryResponse: (path, rows) => { inventoryResponses.push({ path, rows }); } });
     const credentials: StoredCredentials = { token: token(), encryption: null };
     const disclosedRecipients: string[] = [];
     const result = await dispatchOriginalAccountAction({ actionId: 'projects.script.run',
@@ -1280,6 +1445,8 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
         return true;
       } });
     expect(result).toMatchObject({ errorCode: 'fixture_receipt' });
+    expect(inventoryResponses).toEqual([{ path: '/v1/machines/alice-machine', rows: 1 },
+      { path: '/v1/machines/alice-controller', rows: 1 }]);
     expect(disclosedRecipients).toEqual(guestCustodian === 'bob'
       ? ['alice-controller'] : ['alice-machine', 'alice-controller']);
     const received = ExternalActionExecutionAuthorizationRequestV1Schema.parse(target.readReceived());
