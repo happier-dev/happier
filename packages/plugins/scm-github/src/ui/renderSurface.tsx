@@ -2324,7 +2324,7 @@ function useGithubTimelineStream(input: TriageDetailSurfaceInputV1): GithubActiv
  * request's feedback, and Triage's Activity panel that merges them — rendered
  * through the one shared Activity owner.
  *
- * It is a loading state only while every read is still settling, and a failure
+ * It is a loading state while any initial read is still settling, and a failure
  * only when every read failed; otherwise it shows what answered, beside a banner
  * naming each read that did not.
  */
@@ -2351,7 +2351,7 @@ function GithubActivityView({
 }>): React.ReactElement {
   const text = usePluginTranslation();
   const readFailed = text('plugins.github.ui.readFailed', 'GitHub could not complete this read.');
-  if (streams.every((stream) => stream.settling)) {
+  if (streams.some((stream) => stream.settling)) {
     return <LoadingState title={loadingTitle} titleKey={loadingTitleKey} />;
   }
   const cold = streams.every((stream) => stream.unavailable !== null) ? streams[0]?.unavailable ?? null : null;

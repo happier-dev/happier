@@ -6,8 +6,8 @@ import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
-import { afterEach, describe, expect, it } from 'vitest';
-import { TriageEvidenceDisclosureProvider, type TriageDetailPrimaryWriteV1 } from '@happier-dev/triage-sources/ui';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { TriageActivityAgentProvider, TriageEvidenceDisclosureProvider, type TriageDetailPrimaryWriteV1 } from '@happier-dev/triage-sources/ui';
 import { projectGithubRepositoryCapabilities } from '../../triage/capabilities.js';
 import { GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1 } from '../../triage/contribution.js';
 
@@ -156,10 +156,12 @@ afterEach(async () => {
  * its own, and its Overview panel is the story rail's source half.
  */
 async function mountPanel(panel: string | (() => string), options: Readonly<{
+  reads?: string[];
   visible?: () => boolean;
+  refreshGeneration?: () => number;
   readCapabilities?: (signal: AbortSignal) => Promise<JsonValue>;
-  feedback?: (connection: string) => JsonValue;
-  timeline?: (continuation: string | undefined) => JsonValue;
+  feedback?: (connection: string) => JsonValue | Promise<JsonValue>;
+  timeline?: (continuation: string | undefined) => JsonValue | Promise<JsonValue>;
   checks?: JsonValue;
   overview?: JsonValue | Promise<JsonValue>;
   translations?: Readonly<Record<string, string>>;
@@ -183,9 +185,11 @@ async function mountPanel(panel: string | (() => string), options: Readonly<{
           available: false, disclose: async () => ({ kind: 'inert' }),
           primaryWrite: { value: options.primaryValue, offer: offerPrimaryWrite },
         }}>{body}</TriageEvidenceDisclosureProvider>;
-        return options.visible === undefined ? offered : <Tabs value={options.visible() ? 'source' : 'session'}
+        const activity = options.refreshGeneration === undefined ? offered : <TriageActivityAgentProvider
+          value={{ events: [], tail: null, refreshGeneration: options.refreshGeneration() }}>{offered}</TriageActivityAgentProvider>;
+        return options.visible === undefined ? activity : <Tabs value={options.visible() ? 'source' : 'session'}
           onValueChange={() => {}} ariaLabel="Detail planes" tabList="host">
-          <Tabs.Item value="source" title="Source" retention="retain">{offered}</Tabs.Item>
+          <Tabs.Item value="source" title="Source" retention="retain">{activity}</Tabs.Item>
           <Tabs.Item value="session" title="Session" />
         </Tabs>;
       }),
@@ -197,6 +201,7 @@ async function mountPanel(panel: string | (() => string), options: Readonly<{
       handlers: {
         executeAction: async ({ action, input, signal }) => {
           const localId = (action as { localId: string }).localId;
+          options.reads?.push(localId);
           if (localId === GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestMerge || localId === GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestMarkReady) {
             options.writes?.push({ localId, input });
             return { kind: 'refused', reason: 'state_changed' };
@@ -415,6 +420,49 @@ describe('the GitHub detail as Triage panels', () => {
     await expect(detail.getByText('provider-specific-event')).resolves.toBeDefined();
     await expect(detail.getByText('Mara')).resolves.toBeDefined();
     await expect(detail.queryAllByRole('tab')).resolves.toEqual([]);
+  });
+
+  it.each(['timeline', 'reviews'] as const)('publishes the initial Activity together after its %s read settles, without rereading on rerender', async delayed => {
+    let release!: (value: JsonValue) => void;
+    const pending = new Promise<JsonValue>(resolve => { release = resolve; });
+    const timeline: JsonValue = { kind: 'timeline', rows: [{ id: 'earlier', kind: 'labeled',
+      rawKind: 'labeled', actor: 'Mara', summary: 'Earlier timeline event', atMs: 10 }],
+      omittedRowCount: 0, projectionTruncated: false };
+    const reads: string[] = [];
+    const detail = await mountPanel('activity', { reads, timeline: () => delayed === 'timeline' ? pending : timeline,
+      feedback: connection => connection === delayed ? pending : connection === 'comments' ? {
+        kind: 'comments', rows: [{ id: 'IC_initial', author: 'Mara', body: 'The conversation answered first.', createdAtMs: 20 }],
+        omittedRowCount: 0, projectionTruncated: false,
+      } : { kind: connection, rows: [], omittedRowCount: 0, projectionTruncated: false },
+    });
+    try {
+      expect(document.body.textContent).not.toContain('The conversation answered first.');
+      await act(async () => { release(delayed === 'timeline' ? timeline : { kind: 'reviews', rows: [],
+        omittedRowCount: 0, projectionTruncated: false }); });
+      await expect(detail.getByText('The conversation answered first.')).resolves.toBeDefined();
+      expect(document.body.textContent).toContain('Earlier timeline event');
+      await act(async () => { await detail.updateSurface(createSurfaceContextFixture()); });
+      expect(reads.filter(id => id === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listTimeline)).toHaveLength(1);
+    } finally { await act(async () => { release({ kind: delayed, rows: [], omittedRowCount: 0, projectionTruncated: false }); }); }
+  });
+
+  it('keeps the published Activity visible while an empty timeline refresh is pending', async () => {
+    let release!: (value: JsonValue) => void;
+    let timelineReads = 0;
+    let refreshGeneration = 0;
+    const empty: JsonValue = { kind: 'timeline', rows: [], omittedRowCount: 0, projectionTruncated: false };
+    const detail = await mountPanel('activity', {
+      refreshGeneration: () => refreshGeneration,
+      timeline: () => ++timelineReads === 1 ? empty : new Promise<JsonValue>(resolve => { release = resolve; }),
+      feedback: connection => connection === 'comments' ? { kind: 'comments', rows: [{ id: 'IC_retained',
+        author: 'Mara', body: 'Keep this conversation visible.', createdAtMs: 20 }], omittedRowCount: 0, projectionTruncated: false }
+        : { kind: connection, rows: [], omittedRowCount: 0, projectionTruncated: false },
+    });
+    try {
+      refreshGeneration += 1;
+      await act(async () => { await detail.updateSurface(createSurfaceContextFixture()); });
+      expect(document.body.textContent).toContain('Keep this conversation visible.');
+    } finally { await act(async () => { release?.(empty); }); }
   });
 
   it('reads the conversation and the timeline as one chronological Activity stream', async () => {
