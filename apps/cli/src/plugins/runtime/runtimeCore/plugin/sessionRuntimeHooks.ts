@@ -2,7 +2,7 @@ import type {
     RuntimeTurnOperations,
     RuntimeTurnPromptMeta,
 } from '@/agent/runtime/turns/runtimeTurnOperations';
-import type { AgentSessionModelsSource, AgentSessionModesSource, AgentSessionRealtimeConversation } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentSessionModelsSource, AgentSessionModesSource, AgentSessionRealtimeConversation, AgentSessionRuntimeAuthControl } from '@happier-dev/plugin-sdk/agents/runtime';
 import type {
     HostProviderInputOutcomeEvidence,
 } from '@/agent/runtime/session/input/providerInputOutcome';
@@ -39,6 +39,7 @@ export type PluginRuntimeApplyConfigDeltaInFlight = (
 ) => Promise<PluginRuntimeInFlightConfigApplyOutcome>;
 
 export type PluginRuntimeHookOperations = RuntimeTurnOperations & Readonly<{
+    runtimeAuth?: AgentSessionRuntimeAuthControl;
     /** Exact current incarnation's original Exec custody, spent lazily on attach. */
     readNativeAttachLaunchAuthority?: () => import('@/plugins/runtime/invocation/services/exec').HostAgentNativeLaunchAuthority | null;
     /** Host-private repository execution through this Session's current Exec service. */

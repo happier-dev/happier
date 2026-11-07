@@ -341,6 +341,24 @@ function bindReplaceableNativeAgentSessionOperations(params: Readonly<{
         },
         ...(stableModels ? { models: stableModels } : {}),
         ...(stableModes ? { modes: stableModes } : {}),
+        ...(currentOperations.runtimeAuth ? {
+            runtimeAuth: {
+                async apply(request) {
+                    const auth = runtimeClosed ? undefined : currentOperations.runtimeAuth;
+                    return auth ? await auth.apply(request) : {
+                        ok: false as const, errorCode: 'unsupported_session_runtime_method',
+                        error: 'Native authentication control is unavailable for the current runtime.',
+                    };
+                },
+                async readIdentity(request) {
+                    const auth = runtimeClosed ? undefined : currentOperations.runtimeAuth;
+                    return auth ? await auth.readIdentity(request) : {
+                        ok: false as const, errorCode: 'unsupported_session_runtime_method',
+                        error: 'Native authentication control is unavailable for the current runtime.',
+                    };
+                },
+            } satisfies NonNullable<PluginRuntimeHookOperations['runtimeAuth']>,
+        } : {}),
         readSessionCompactionCapability: () => runtimeClosed
             ? null : currentOperations.readSessionCompactionCapability?.() ?? null,
         get compactContext() {

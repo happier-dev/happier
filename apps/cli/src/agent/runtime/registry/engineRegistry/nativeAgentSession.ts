@@ -3398,6 +3398,7 @@ export function createNativeAgentSessionOperations(
         : undefined;
     const operations: PluginRuntimeHookOperations = Object.freeze({
         ...directHostControls,
+        ...(session.runtimeAuth ? { runtimeAuth: session.runtimeAuth } : {}),
         admitAgentSessionRealtimeInput(input) {
             const caller = AgentStartSessionCallerV1Schema.safeParse(input.agentStartCaller);
             if (activeControlUnavailable() || input.signal.aborted || nativeRealtimeInput

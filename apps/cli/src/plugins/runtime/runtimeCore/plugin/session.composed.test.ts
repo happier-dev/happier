@@ -13,6 +13,7 @@ import { createMutableApiSessionClientFixture } from '@/testkit/backends/session
 import { createCurrentSessionPresentationHost } from '@/session/presentation/currentSessionPresentationService';
 import { createNativeAgentSessionOperations } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession';
 import { createNativeAgentSessionPublications } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionPublications';
+import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
 import { createSessionRuntimeModesPublisher } from '@/agent/runtime/controls/sessionRuntimeModesPublisher';
 import { computeSessionModePickerControl } from '../../../../../../ui/sources/sync/domains/sessionControl/sessionModeControl';
 import { MetadataSchema } from '@happier-dev/session-core/state';
@@ -20,13 +21,15 @@ import { projectAgentPreflightSessionControlsCatalogEntry } from '@/plugins/proj
 import { probeAgentModesBestEffort } from '@/capabilities/probes/agentModesProbe';
 import { preflightCatalogEntryFixture } from '@/capabilities/probes/preflightSessionControlsProbeAdapter.testkit';
 import { bindSessionProviderInputOutcome, createSessionProviderInputOutcomeNormalizer, type SessionProviderInputOutcome } from '@/agent/runtime/session/input/providerInputOutcome';
-import type { AgentSessionModesSnapshot, AgentSessionRuntime, AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentSessionModesSnapshot, AgentSessionRuntime, AgentSessionRuntimeContext, AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
 import {
   ProviderConnectionIdSchema,
   PluginAgentContributionV2Schema,
   PluginBackendDefinitionV1Schema,
   SessionCreationCorrespondenceV1Schema,
   deriveSessionCreationTagV1,
+  SessionTurnMutationV1Schema,
+  type SessionTurnMutationV1,
   type ProviderBoundModelRef,
   type TeamCredentialProviderModelSelectionV1,
 } from '@happier-dev/protocol';
@@ -196,6 +199,88 @@ function createHostFactoryParams() {
 }
 
 describe('plugin session runtime adapters', () => {
+  it.each([false, true])('switches an idle Codex account through the native host RPC after a usage-limit failure (runtime replaced: %s)', async (replaceRuntime) => {
+      const [{ registerSessionControlHandlers }, { adaptAgentSessionRuntimeAuthControl },
+          { buildConnectedServiceCredentialRecord }, { SESSION_RPC_METHODS }] = await Promise.all([
+          import('@/rpc/handlers/sessionControls'),
+          import('@/agent/runtime/session/loop/runtimeAuthControlAdapter'),
+          import('@happier-dev/protocol'),
+          import('@happier-dev/protocol/rpc'),
+      ]);
+      const { withCodexNativeAttachFixture } = await import('../../../../../../../packages/plugins/codex/src/agent/runtime/appServer/runtime.nativeAttach.test-support');
+      await withCodexNativeAttachFixture(async ({ openConfiguredSession, requests }) => {
+          let session = await openConfiguredSession();
+          const events: AgentSessionRuntimeEvent[] = [];
+          session.watch(event => events.push(event));
+          await session.send({ inputIds: ['exhausted-input'], input: { text: 'Reply OK.' },
+              delivery: { kind: 'newTurn', turnId: 'exhausted-turn' } });
+          await vi.waitFor(() => expect(events).toContainEqual(expect.objectContaining({
+              kind: 'turn-failed', diagnostic: expect.objectContaining({
+                  details: expect.objectContaining({ source: 'usage_limit' }),
+              }),
+          })));
+          let firstOpen = true;
+          const plan = await createPublicPluginSessionRuntimePlan({
+              backend: createBackendFixture(), agent: createAgentFixture(),
+              sessionInput: buildPluginSessionBindingInput({ credentials, startedBy: 'daemon', startingMode: 'remote' }),
+              createSessionRuntime: async () => {
+                  if (!firstOpen) {
+                      session = await openConfiguredSession();
+                      session.watch(event => events.push(event));
+                  }
+                  firstOpen = false;
+                  return createNativeAgentSessionInteractionOperations({
+                      session, sessionId: 'actual-happier-session', cwd: '/workspace',
+                      context: { agent: { id: 'codex' }, session: { id: 'actual-happier-session' } } as AgentSessionRuntimeContext,
+                      capabilities: { open: ['create'], delivery: ['newTurn'], cancel: true },
+                  });
+              },
+          });
+          const runtime = (await plan.config.createSessionRuntime?.(createHostFactoryParams()))?.nativeRuntime;
+          if (!runtime) throw new Error('Missing composed native runtime');
+          try {
+              const handlers = new Map<string, import('@/api/rpc/types').RpcHandler>();
+              registerSessionControlHandlers({ registerHandler: (method, handler) => { handlers.set(method, handler); } }, {
+                  sessionRuntimeControls: runtime.runtimeAuth
+                      ? adaptAgentSessionRuntimeAuthControl(runtime.runtimeAuth) : {},
+              });
+              if (replaceRuntime) await runtime.resetOrDisposeRuntime('runtime_recovery', { kind: 'create' });
+              const credential = buildConnectedServiceCredentialRecord({ now: 1_000,
+                  serviceId: 'openai-codex', profileId: 'healthy', kind: 'oauth',
+                  oauth: { accessToken: 'fixture-healthy-access', refreshToken: 'fixture-refresh',
+                      idToken: 'fixture-id', providerAccountId: 'acct_target', providerEmail: null,
+                      scope: null, tokenType: null },
+              });
+              const applied = await handlers.get(SESSION_RPC_METHODS.SESSION_CONNECTED_SERVICE_AUTH_APPLY_GENERATION)?.({
+                  serviceId: 'happier.agent.codex/openai-codex', reason: 'manual',
+                  authGeneration: { credential, selection: { kind: 'profile',
+                      serviceId: 'happier.agent.codex/openai-codex', profileId: 'healthy' } },
+              });
+              expect(applied, JSON.stringify(applied)).toMatchObject({ ok: true, appliedVia: 'direct_live_hot_auth',
+                  verification: { providerAccountId: 'acct_target', proofStrength: 'exact' } });
+              expect(requests).toContainEqual({ method: 'account/login/start', params: {
+                  type: 'chatgptAuthTokens', accessToken: 'fixture-healthy-access', chatgptAccountId: 'acct_target',
+              } });
+              await expect(handlers.get(SESSION_RPC_METHODS.SESSION_CONNECTED_SERVICE_AUTH_READ_RUNTIME_IDENTITY)?.({
+                  serviceId: 'happier.agent.codex/openai-codex', reason: 'diagnostic', requireExactProof: true,
+              })).resolves.toMatchObject({ ok: true, identity: { providerAccountId: 'acct_target' },
+                  runtime: { inProviderTurn: false } });
+              await session.send({ inputIds: ['healthy-input'], input: { text: 'Reply OK.' },
+                  delivery: { kind: 'newTurn', turnId: 'healthy-turn' } });
+              await vi.waitFor(() => expect(events).toContainEqual(expect.objectContaining({
+                  kind: 'turn-complete', turnId: 'healthy-turn',
+              })));
+          } finally { await runtime.resetOrDisposeRuntime(); }
+      }, { onTurnStart: ({ socket, params, turnId }) => {
+          const failed = turnId === 'provider-turn-1';
+          socket.send(JSON.stringify({ method: 'turn/completed', params: {
+              threadId: params.threadId, turn: { id: turnId, status: failed ? 'failed' : 'completed',
+                  ...(failed ? { error: { message: 'Usage limit reached', codex_error_info: 'usage_limit_reached' } } : {}),
+              },
+          } }));
+      } });
+  });
+
   it('keeps manual support after a usage-limited first turn and distinguishes an unopened thread', async () => {
     const handlers = new Map<string, (params: unknown) => void | Promise<void>>();
     const receipts = createCodexNativeEventFixture();
@@ -264,6 +349,69 @@ describe('plugin session runtime adapters', () => {
       ]);
     } finally { watch.dispose(); await runtime.resetOrDisposeRuntime(); }
   });
+  it('carries the native starting input through replacement into the host Turn mutation', async () => {
+    const host = createHostFactoryParams();
+    // QA18's real producer uses a Discussion Follow localId, an accepted
+    // newTurn and a host start. Its replaceable adapter lost the start reader.
+    const localId = 'discussion-follow-v1:-Oiy1dozYZkhU4o7tj-KPTADEdqwq1R3ql8MP0O1Fvk';
+    const turnId = 'native-turn-408b3aeb-5b38-4c7f-8e16-55fc6cdb3e76-2';
+    const plan = await createPublicPluginSessionRuntimePlan({
+      backend: createBackendFixture(), agent: createAgentFixture(),
+      sessionInput: buildPluginSessionBindingInput({ credentials: tokenOnlyCredentials, startedBy: 'daemon', startingMode: 'remote' }),
+      createSessionRuntime: async () => {
+        let publish: ((event: AgentSessionRuntimeEvent) => void) | undefined;
+        let sequence = 0;
+        // Native process/transport is the only replaced boundary. The exact
+        // host input correlation, replacement and lifecycle below are real.
+        const native: AgentSessionRuntime = {
+          async send(input) {
+            publish?.({ sequence: ++sequence, sessionId: host.session.sessionId, emittedAtMs: sequence,
+              kind: 'input-accepted', inputIds: input.inputIds, delivery: input.delivery });
+            if (input.delivery.kind === 'newTurn') publish?.({ sequence: ++sequence,
+              sessionId: host.session.sessionId, emittedAtMs: sequence, kind: 'turn-start',
+              turnId: input.delivery.turnId, startedBy: 'host' });
+            return { status: 'admitted' };
+          },
+          watch(listener) { publish = listener; return { dispose() { publish = undefined; } }; },
+          dispose() {},
+        };
+        return createNativeAgentSessionOperations(native, host.session.sessionId, undefined, undefined, undefined, undefined, undefined, {
+          context: { signal: new AbortController().signal } as AgentSessionRuntimeContext,
+          cwd: host.directory, connectedAccounts: [], capabilities: { open: ['create'], delivery: ['newTurn', 'steer'], cancel: false },
+          cancellation: { declared: false }, configuration: { declared: false }, compaction: { capability: null },
+        });
+      },
+    });
+    const runtime = (await plan.config.createSessionRuntime?.(host))?.nativeRuntime;
+    if (!runtime) throw new Error('Missing composed native runtime');
+    const mutations: SessionTurnMutationV1[] = [];
+    const lifecycle = createSessionTurnLifecycle({ agentId: 'codex',
+      session: { sessionId: host.session.sessionId, enqueueSessionTurnMutation(mutation) {
+        mutations.push(SessionTurnMutationV1Schema.parse(mutation));
+      } },
+      readStartingInput: id => {
+        const inputId = runtime.readTurnStartingInputId?.(id);
+        return inputId ? { turnId: id, inputId } : null;
+      },
+    });
+    const unsubscribe = runtime.subscribeRuntimeEvents(event => lifecycle.observeRuntimeEvent(event));
+    try {
+      expect(runtime.readTurnStartingInputId?.(turnId) ?? null).toBeNull();
+      await runtime.sendTurnPrompt('Addressed Discussion question', { localId, turnId });
+      await lifecycle.drainAcceptedLifecycle();
+      expect(mutations).toMatchObject([{ action: 'begin', turnId, startingInputId: localId }]);
+      await runtime.steerInFlightTurn('Same-turn supplement', { localId: 'later-steer', turnId });
+      expect(runtime.readTurnStartingInputId?.(turnId)).toBe(localId);
+      expect(mutations).toHaveLength(1);
+      await runtime.resetOrDisposeRuntime('runtime_recovery', { kind: 'create' });
+      expect(runtime.readTurnStartingInputId?.(turnId) ?? null).toBeNull();
+      await runtime.sendTurnPrompt('New lifetime', { localId: 'successor-input', turnId: 'successor-turn' });
+      await lifecycle.drainAcceptedLifecycle();
+      expect(mutations).toMatchObject([{ action: 'begin', startingInputId: localId },
+        { action: 'begin', turnId: 'successor-turn', startingInputId: 'successor-input' }]);
+    } finally { unsubscribe(); await runtime.resetOrDisposeRuntime(); }
+  });
+
   it.each([true, false])('retains native mode publication through the replaceable runtime into composer options (producer bound: %s)', async (bound) => {
     const host = createHostFactoryParams();
     const agentId = 'acme.sample.provider';
