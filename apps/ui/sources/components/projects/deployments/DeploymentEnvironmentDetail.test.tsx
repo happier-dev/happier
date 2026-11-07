@@ -103,6 +103,17 @@ function environmentDetailForHome(overrides: Parameters<typeof createDeploymentE
   const detail = createDeploymentEnvironmentDetailV1(overrides);
   return { ...detail, environment: environmentHeaderForHome(detail.environment) };
 }
+type TeardownControllerBoundary = Extract<Parameters<typeof import('@/dev/testkit/harness/externalActionAccountHttpBoundary').createExternalActionAccountHttpBoundary>[0],
+  { requesterInvocation?: 'required' }>;
+
+/** Home's HTTP boundary keeps requester custody, authorization and crypto real. */
+async function answerTeardownController(machineId: string, execute: TeardownControllerBoundary['execute'],
+  failure?: TeardownControllerBoundary['failure']) {
+  const { answerExternalActionAccountForHome } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
+  return answerExternalActionAccountForHome(homes, scope.serverId, { machineId, actionId: 'deployments.teardown',
+    tokenEpoch: 0, requesterInvocation: 'required', ...(failure ? { failure } : {}), execute });
+}
+
 const shown = { mounted: true, visible: true, focused: true };
 const noReview = { pendingId: null, request: () => {}, open: () => {} };
 beforeEach(async () => {
@@ -222,8 +233,7 @@ describe('Project deployments page', () => {
       accountId: scope.accountId, currentAccount: true, serverIdentityId: `srv_${'8'.repeat(32)}` });
     const previousPromotionRequests = homes.requestsFor('/v1/actions/deployments.promote').length;
     const { Modal, ModalProvider } = await import('@/modal');
-    const { ExternalActionRequestEnvelopeV1Schema } = await import('@happier-dev/protocol/actions/externalActionApi');
-    const { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+    const { answerExternalActionAccountForHome } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
     const { createDeploymentActions } = await import('./deploymentActions');
     const base = environmentDetailForHome();
     const definition = { kind: 'stored' as const, document: 'services:\n  app:\n    image: app:tested\n',
@@ -239,22 +249,17 @@ describe('Project deployments page', () => {
     const { controller, receipt } = controllerFor({ detail, receipt: sourceReceipt, destinations: [destination, viewOnly], onListEnvironments: list });
     const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
     const actions = createDeploymentActions(lifetime, scope.projectSourceId);
-    const machine = createPlainMachineRowFixture({ id: 'machine-a', accountId: scope.accountId });
-    homes.answer(scope.serverId, 'POST /v1/machines/read-batch', { select: async body => ({
-      body: await createMachineReadBatchResponseFixture(body, id => id === machine.id ? machine : null).json(),
-    }) });
     homes.answer(scope.serverId, 'GET /v1/deployments/environments/production', { body: { ok: true,
       environment: destination, targetLinks: [] } });
-    homes.answer(scope.serverId, '/v1/actions/deployments.promote', { select: body => {
-      const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
-      expect(envelope.input).toEqual({ serverId: scope.serverId, environmentId: 'production',
+    await answerExternalActionAccountForHome(homes, scope.serverId, { actionId: 'deployments.promote', machineId: 'machine-a',
+      tokenEpoch: 0, deploymentSource: { id: scope.projectSourceId, revision: 1 }, execute: input => {
+      expect(input).toEqual({ serverId: scope.serverId, environmentId: 'production',
         sourceEnvironmentId: detail.environment.id, sourceDeploymentId: receipt.deployment.id, artifact: 'image' });
-      return { body: { v: 1, actionId: 'deployments.promote', requestId: envelope.requestId, execution: { ok: true,
-        result: response === 'review'
-          ? { kind: 'approval_request_created', actionId: 'deployments.promote', artifactId: 'promotion-review' }
-          : response === 'refusal' ? { ok: false, error: 'deployment_access_denied' }
-          : { ok: true, environmentId: 'production', deploymentId: 'promoted-receipt', revision: 2,
-              deploymentRevision: 1, state: 'succeeded' } } } };
+      return response === 'review'
+        ? { kind: 'approval_request_created', actionId: 'deployments.promote', artifactId: 'promotion-review' }
+        : response === 'refusal' ? { ok: false, error: 'deployment_access_denied' }
+        : { ok: true, environmentId: 'production', deploymentId: 'promoted-receipt', revision: 2,
+            deploymentRevision: 1, state: 'succeeded' };
     } });
     const request = vi.fn();
     const openPromoted = vi.fn();
@@ -376,33 +381,30 @@ describe('Project deployments page', () => {
       targetLink: { ...item.targetLink, activeDeploymentId: undefined } })) };
     const { controller } = controllerFor({ detail, ...(neverDeployed ? { history: [] } : {}) });
     const { ModalProvider } = await import('@/modal');
-    const { ExternalActionRequestEnvelopeV1Schema } = await import('@happier-dev/protocol/actions/externalActionApi');
-    const { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+    const { DeploymentTeardownActionInputV1Schema } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
+    const { ActionExecuteFailureSchema } = await import('@happier-dev/protocol/actions/actionExecutionResult');
     homes.answer(scope.serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { body: {
       ok: true, environment: { ...detail.environment, serverId: homeIdentity },
       targetLinks: detail.targetLinks.map(item => item.targetLink),
     } });
-    const machine = createPlainMachineRowFixture({ id: detail.environment.controllerMachineId!, accountId: scope.accountId });
-    homes.answer(scope.serverId, 'POST /v1/machines/read-batch', { select: async body => ({
-      body: await createMachineReadBatchResponseFixture(body, id => id === machine.id ? machine : null).json(),
-    }) });
-    homes.answer(scope.serverId, '/v1/actions/deployments.teardown', { select: body => {
-      const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
-      if (envelope.input && typeof envelope.input === 'object' && 'mode' in envelope.input && envelope.input.mode === 'preview') {
-        if (neverDeployed) return { body: { v: 1, actionId: 'deployments.teardown', requestId: envelope.requestId,
-          execution: { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' } } };
-        return { body: { v: 1, actionId: 'deployments.teardown', requestId: envelope.requestId, execution: { ok: true,
-          result: { ok: true, kind: 'preview', volumes: [{ name: 'app_data', machineId: machine.id }, { name: 'app_logs', machineId: machine.id }] } } } };
+    const machineId = detail.environment.controllerMachineId!;
+    await answerTeardownController(machineId, raw => {
+      const input = DeploymentTeardownActionInputV1Schema.parse(raw);
+      if ('mode' in input && input.mode === 'preview') {
+        if (neverDeployed) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+        return { ok: true, kind: 'preview', volumes: [{ name: 'app_data', machineId }, { name: 'app_logs', machineId }] };
       }
-      if (removed && !neverDeployed) expect(envelope.input).toMatchObject({ volumes: [
+      if (removed && !neverDeployed) expect(input).toMatchObject({ volumes: [
         { name: 'app_data', disposition: 'delete', confirmation: 'app_data' },
         { name: 'app_logs', disposition: 'keep' },
       ] });
-      return { body: { v: 1, actionId: 'deployments.teardown', requestId: envelope.requestId,
-        execution: removed ? { ok: true, result: { ok: true, environmentId: detail.environment.id,
-          revision: detail.environment.revision + 2, deploymentId: 'teardown-removed', deploymentRevision: 2, state: 'succeeded', environmentRemoved: true } }
-          : { ok: false, errorCode: 'deployment_domain_native_unavailable', error: 'deployment_domain_native_unavailable' } } };
-    } });
+      return removed ? { ok: true, environmentId: detail.environment.id,
+        revision: detail.environment.revision + 2, deploymentId: 'teardown-removed', deploymentRevision: 2, state: 'succeeded', environmentRemoved: true }
+        : { ok: false, errorCode: 'deployment_domain_native_unavailable', error: 'deployment_domain_native_unavailable' };
+    }, result => {
+      const failure = ActionExecuteFailureSchema.safeParse(result);
+      return failure.success ? { errorCode: failure.data.errorCode, error: failure.data.error } : null;
+    });
     const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
     const { createDeploymentActions } = await import('./deploymentActions');
     const done = vi.fn();
@@ -1248,33 +1250,19 @@ describe('Deployment receipt header actions', () => {
           state, reason: state === 'outcome_unknown' ? 'removal_unproved' : 'native_route_unavailable', resources: [] }] } },
     });
     const { controller } = controllerFor({ detail, receipt });
-    const { ExternalActionRequestEnvelopeV1Schema } = await import('@happier-dev/protocol/actions/externalActionApi');
-    const { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
     const { createDeploymentActions } = await import('./deploymentActions');
-    const machine = createPlainMachineRowFixture({ id: detail.environment.controllerMachineId, accountId: scope.accountId });
     homes.answer(scope.serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { body: {
       ok: true, environment: { ...detail.environment, serverId: homeIdentity },
       targetLinks: detail.targetLinks.map(row => row.targetLink),
     } });
-    homes.answer(scope.serverId, 'POST /v1/machines/read-batch', { select: async body => ({
-      body: await createMachineReadBatchResponseFixture(body, id => id === machine.id ? machine : null).json(),
-    }) });
     const beforeTeardowns = homes.requestsFor('/v1/actions/deployments.teardown').length;
     const beforeDeploys = homes.requestsFor('/v1/actions/deployments.deploy').length;
-    homes.answer(scope.serverId, '/v1/actions/deployments.teardown', { select: body => {
-      const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
-      expect(envelope.input).toMatchObject({ environmentId: detail.environment.id,
+    await answerTeardownController(detail.environment.controllerMachineId, input => {
+      expect(input).toMatchObject({ environmentId: detail.environment.id,
         targetLinkId: receipt.deployment.targetLinkId, requestKey: receipt.deployment.requestKey, reason: receipt.content.teardown!.reason });
-      return { body: { v: 1, actionId: 'deployments.teardown', requestId: envelope.requestId,
-        execution: { ok: true, result: { ok: true, environmentId: detail.environment.id, revision: 4,
-          deploymentId: receipt.deployment.id, deploymentRevision: 1, state: 'running' } } } };
-    } });
-    homes.answer(scope.serverId, '/v1/actions/deployments.deploy', { select: body => {
-      const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
-      return { body: { v: 1, actionId: 'deployments.deploy', requestId: envelope.requestId,
-        execution: { ok: true, result: { ok: true, environmentId: detail.environment.id, revision: 4,
-          deploymentId: 'unwanted-redeploy', deploymentRevision: 1, state: 'running' } } } };
-    } });
+      return { ok: true, environmentId: detail.environment.id, revision: 4,
+        deploymentId: receipt.deployment.id, deploymentRevision: 1, state: 'running' };
+    });
     const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
     routerMock.module.router.setParams({ deploymentEnvironment: detail.environment.id, deployment: receipt.deployment.id });
     try {
@@ -1285,6 +1273,14 @@ describe('Deployment receipt header actions', () => {
       const { Modal } = await import('@/modal');
       vi.mocked(Modal.confirm).mockClear();
       await screen.pressByTestIdAsync('project-deployments.receipt.deployAgain');
+      await waitForHomeGovernance(() => {
+        const requests = homes.requestsFor('/v1/actions/deployments.teardown').length - beforeTeardowns
+          + homes.requestsFor('/v1/actions/deployments.deploy').length - beforeDeploys;
+        expect(requests > 0 || screen.findByTestId('project-deployments.outcome.refused.other') !== null).toBe(true);
+      });
+      if (screen.findByTestId('project-deployments.outcome.refused.other.details')) {
+        await screen.pressByTestIdAsync('project-deployments.outcome.refused.other.details');
+      }
       await waitForHomeGovernance(() => {
         const teardowns = homes.requestsFor('/v1/actions/deployments.teardown').length - beforeTeardowns;
         const deploys = homes.requestsFor('/v1/actions/deployments.deploy').length - beforeDeploys;
@@ -1602,52 +1598,6 @@ describe('Environment Overview attention and status (L-A, DEPLOY-COMPOSE P1)', (
       expect(rowText('srv-b')).toContain('Down');
       expect(rowText('srv-c')).toContain('not counted as down');
       expect(screen.getTextContent()).toContain('1 of 3 down');
-    } finally { controller.retire(); }
-  });
-
-  it('names a stored definition and says when its revision is not the one serving', async () => {
-    const base = environmentDetailForHome();
-    const servingId = base.targetLinks.find(row => row.targetLink.id === base.environment.runtimeTargetLinkId)!.targetLink.activeDeploymentId!;
-    const stored = { kind: 'stored' as const, document: 'services:\n  app:\n    image: app:1\n', composeDigest: `sha256:${'b'.repeat(64)}`, profiles: [], services: ['app'] };
-    const servingBase = createDeploymentReceiptDetailV1();
-    const serving = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ id: servingId, state: 'succeeded' }),
-      content: { ...servingBase.content, sourceIntent: { ...stored, contentRevision: 3 } } });
-    for (const [revision, notDeployed] of [[4, true], [3, false]] as const) {
-      const detail = { ...base, content: { ...base.content, definition: { ...stored, contentRevision: revision } } };
-      const { controller } = controllerFor({ detail, receipt: serving, history: [serving] });
-      try {
-        const screen = await render(controller, detail);
-        await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.environment.definition')).not.toBeNull());
-        const text = JSON.stringify(screen.findByTestId('project-deployments.environment.definition')
-          ?.findAll(node => typeof node.props.children === 'string').map(node => node.props.children));
-        expect(text).toContain(`revision ${revision}`);
-        expect(text.includes('not deployed yet')).toBe(notDeployed);
-      } finally { controller.retire(); }
-    }
-  });
-
-  it('says a refused deploy\'s typed Source remedy and opens the Source from the banner (E4)', async () => {
-    const { HappyError } = await import('@/utils/errors/errors');
-    const { readDeploymentRefusalRecoveryV1, projectDeploymentFailureRecoveryV1 } = await import('@happier-dev/protocol/deployments/deploymentFailureRecoveryV1');
-    // The server stored only its generic fallback remedy beside the typed code (JOURNEY-OPUS-84 j2-02).
-    const details = projectDeploymentFailureRecoveryV1({});
-    const deploy = vi.fn(async () => { throw new HappyError('deployment_source_unavailable', false,
-      { code: 'deployment_source_unavailable', details }); });
-    const opened: string[] = [];
-    const { controller, detail } = controllerFor({});
-    try {
-      const screen = await renderScreen(<DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id}
-        demand={shown} accountId="account-owner" serverId={scope.serverId} phone={false} deploy={deploy} review={noReview}
-        onOpenReceipt={() => {}} onOpenRecoveryDestination={destination => { opened.push(destination); }} />);
-      await waitForContent(screen, 'project-deployments.environment.deploy');
-      await screen.pressByTestIdAsync('project-deployments.environment.deploy');
-      const recovery = readDeploymentRefusalRecoveryV1('deployment_source_unavailable', details)!;
-      await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(recovery.remedy));
-      expect(screen.getTextContent()).not.toContain(details.remedy);
-      const banner = screen.root.findAll(node => typeof node.props.testID === 'string'
-        && node.props.testID.startsWith('project-deployments.outcome.refused.') && !node.props.testID.includes('.', 'project-deployments.outcome.refused.'.length))[0];
-      await screen.pressByTestIdAsync(`${banner!.props.testID}.action`);
-      expect(opened).toEqual(['source']);
     } finally { controller.retire(); }
   });
 

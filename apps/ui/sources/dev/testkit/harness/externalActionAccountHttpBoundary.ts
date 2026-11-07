@@ -22,6 +22,32 @@ import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { openExternalActionRequestV2, prepareExternalActionResponseV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import type { Encryption } from '@/sync/encryption/encryption';
 import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '../fixtures/machineFixtures';
+import type { HomeGovernanceHarness } from './homeGovernanceHarness';
+
+type HomeActionBoundaryInput<T = Parameters<typeof createExternalActionAccountHttpBoundary>[0]> = T extends unknown
+    ? Omit<T, 'serverUrl' | 'serverIdentityId' | 'accountId' | 'encryption'> : never;
+
+/** Publish one installed controller and its real private requester carrier on the captured Home. */
+export async function answerExternalActionAccountForHome(homes: Pick<HomeGovernanceHarness, 'answer'>,
+    serverId: string, params: HomeActionBoundaryInput) {
+    const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+    const account = await captureLazyActionAccountContext(serverId);
+    try {
+        const { encryption } = await account.resolveAccountEncryption();
+        if (!account.serverIdentityId) throw new Error('Expected external Action Home identity');
+        const boundary = await createExternalActionAccountHttpBoundary({ ...params, serverUrl: account.endpointUrl,
+            serverIdentityId: account.serverIdentityId, accountId: account.accountId, ...(encryption ? { encryption } : {}) });
+        for (const path of [`GET /v1/machines/${encodeURIComponent(params.machineId)}`, 'POST /v1/machines/read-batch',
+            `POST ${bindExternalActionExecutionAuthorizationHttpPathV1(params.actionId)}`, `POST /v1/actions/${params.actionId}`]) {
+            homes.answer(serverId, path, { select: async (_body, request) => {
+                const response = await boundary.handle(new URL(request.url), request.init);
+                if (!response) throw new Error('Expected external Action HTTP boundary');
+                return { status: response.status, body: await response.json() };
+            } });
+        }
+        return boundary;
+    } finally { account.dispose(); }
+}
 
 /** One current Account's external issuer and Machine HTTP responses.
  * Account capture, custody admission, authorization binding and requester-box crypto stay real.
