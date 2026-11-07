@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto';
 import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { DaemonExecutionRunEntry } from '@happier-dev/protocol';
+import type { DaemonExecutionRunEntry } from '@happier-dev/protocol/daemon/executionRuns';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { flushHookEffects, renderScreen as renderTestScreen, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -10,18 +10,19 @@ import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionAc
 import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { installBrowserStorageLockBoundary } from '@/dev/testkit/harness/browserStorageLockBoundary';
+import { createSessionFixture, createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 
-const { route, routerPush, breadcrumb, originalSentryDsn } = vi.hoisted(() => {
+const { route, routerPush, routerNavigate, breadcrumb, originalSentryDsn } = vi.hoisted(() => {
     const originalSentryDsn = process.env.EXPO_PUBLIC_SENTRY_DSN;
     // Telemetry's external SDK is enabled for the refresh diagnostic assertion.
     process.env.EXPO_PUBLIC_SENTRY_DSN = 'https://fixture@example.test/1';
-    return { route: { params: {} as Record<string, string> }, routerPush: vi.fn(), breadcrumb: vi.fn(), originalSentryDsn };
+    return { route: { params: {} as Record<string, string> }, routerPush: vi.fn(), routerNavigate: vi.fn(), breadcrumb: vi.fn(), originalSentryDsn };
 });
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('react-native-keyboard-controller', () => ({ useFocusedInputHandler: () => {} }));
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
-    params: () => route.params, router: { push: routerPush },
+    params: () => route.params, router: { push: routerPush, navigate: routerNavigate },
 }).module);
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 vi.mock('@sentry/react-native', () => ({ addBreadcrumb: breadcrumb }));
@@ -109,7 +110,7 @@ beforeEach(async () => {
     await homes.reset();
     getStorage().setState(initialState, true);
     runs = []; pendingRuns = undefined; releaseRuns = undefined; rpcRequests.length = 0; rpcServerUrls.length = 0;
-    routerPush.mockClear(); breadcrumb.mockClear();
+    routerPush.mockClear(); routerNavigate.mockClear(); breadcrumb.mockClear();
     globalThis.__HAPPIER_SENTRY_INIT__ = true;
     globalThis.__HAPPIER_CRASH_REPORTS_OPTOUT__ = false;
     serverB = await homes.addHome({ name: 'Machine B', serverUrl: 'https://machine-runs-b.test', accountId: 'account-b', currentAccount: true, active: false });
@@ -140,6 +141,80 @@ afterEach(async () => {
 });
 
 describe('MachineDetailScreen (execution runs section)', () => {
+    it('conceals hidden Session names in mounted run groups and restores them after sharing', async () => {
+        runs = [createExecutionRun({ runId: 'private-run' })];
+        const row = createSessionListRenderableSessionFixture({ id: 'sess-1', metadata: {
+            name: 'Private run project', path: '/private-project', host: 'host', machineId: 'machine-1',
+        } });
+        getStorage().setState({ sessionListRowsByServerId: { [serverA]: { [row.id]: row } } });
+        getStorage().getState().applySettingsLocal({ sessionListHiddenTagIdsWhileRecording: { [serverA]: ['private'] } });
+        getStorage().getState().setSessionTagAssignmentsOptimistic(serverA, row.id, ['private']);
+        const { setScreenSharingPrivacyActive } = await import('@/desktop/capture/useNativeRecordingActive');
+        const screen = await renderRuns();
+        try {
+            expect(screen.getTextContent()).toContain('Private run project');
+            await act(async () => { setScreenSharingPrivacyActive(true); });
+            expect(screen.getTextContent()).not.toContain('Private run project');
+            expect(runRows(screen, 'private-run').length).toBeGreaterThan(0);
+            await act(async () => { setScreenSharingPrivacyActive(false); });
+            expect(screen.getTextContent()).toContain('Private run project');
+        } finally { setScreenSharingPrivacyActive(false); await screen.unmount(); }
+    });
+
+    it('names run groups from their Home-qualified Session titles and follows renames', async () => {
+        runs = [createExecutionRun({ runId: 'run-titled' }),
+            createExecutionRun({ runId: 'run-missing', happySessionId: 'missing' })];
+        const row = createSessionListRenderableSessionFixture({ id: 'sess-1', metadata: {
+            name: 'Coastal parser notes', path: '/project', host: 'host', machineId: 'machine-1',
+        } });
+        getStorage().setState({ sessions: { 'sess-1': createSessionFixture({ id: 'sess-1', serverId: serverB,
+            metadata: { name: 'Wrong Home', path: '/elsewhere', host: 'other' } }) },
+            sessionListRowsByServerId: { [serverA]: { [row.id]: row } } });
+        const screen = await renderRuns();
+        const headers = () => screen.findAllByType(Item).filter(item => item.props.subtitle === 'runs.openSession');
+        expect(headers().map(item => item.props.title)).toEqual(['session.untitled', 'Coastal parser notes']);
+        await act(async () => { getStorage().setState({ sessionListRowsByServerId: { [serverA]: {
+            [row.id]: { ...row, metadata: { ...row.metadata!, name: 'Renamed parser notes' } },
+        } } }); });
+        expect(headers().map(item => item.props.title)).toEqual(['session.untitled', 'Renamed parser notes']);
+        await act(async () => { await headers()[1]!.props.onPress(); });
+        expect(routerNavigate).toHaveBeenCalledWith(`/session/sess-1?serverId=${encodeURIComponent(serverA)}`, expect.anything());
+    });
+    it.each(['use', 'manage'] as const)('offers the Machine-wide run inventory only to Manage guests (%s)', async role => {
+        const machine = createMachineFixture({ activeAt: Date.now(), isShared: true, access: {
+            custodian: { accountId: 'machine-owner', displayName: 'Machine owner' }, role,
+            resourceMode: 'plain', accessState: 'ready',
+        } });
+        homes.answer(serverA, '/v1/machines', { body: [createPlainMachineRowFixture({ id: machine.id, accountId: 'machine-owner', machine })] });
+        await sync.refreshMachines();
+        runs = [createExecutionRun({ runId: 'owner-machine-run' })];
+        const screen = await renderScreen(<MachinePageScreen />);
+        await flushHookEffects({ cycles: 8 });
+        if (role === 'use') {
+            expect(listRequests()).toHaveLength(0);
+            expect(runGroups(screen)).toHaveLength(0);
+            expect(screen.findByTestId('machine-runs-error')).toBeNull();
+        } else {
+            await waitForHomeGovernance(() => expect(runGroups(screen)).toHaveLength(1));
+            expect(listRequests().length).toBeGreaterThan(0);
+            expect(runRows(screen, 'owner-machine-run').length).toBeGreaterThan(0);
+            // Withdrawal takes effect at the next mounted read; restoring Manage restores the inventory.
+            for (const nextRole of ['use', 'manage'] as const) {
+                const nextMachine = { ...machine, access: { ...machine.access!, role: nextRole } };
+                homes.answer(serverA, '/v1/machines', { body: [createPlainMachineRowFixture({ id: machine.id, accountId: 'machine-owner', machine: nextMachine })] });
+                const priorReads = listRequests().length;
+                await act(async () => { await sync.refreshMachines(); });
+                await flushHookEffects({ cycles: 8 });
+                if (nextRole === 'use') {
+                    expect(runGroups(screen)).toHaveLength(0);
+                    expect(listRequests()).toHaveLength(priorReads);
+                } else {
+                    await waitForHomeGovernance(() => expect(runGroups(screen)).toHaveLength(1));
+                    expect(listRequests().length).toBeGreaterThan(priorReads);
+                }
+            }
+        }
+    });
     it('composes Project work in place on the Overview, after the vitals and before This machine', async () => {
         runs = [createExecutionRun({ runId: 'run-1' })];
         const screen = await renderRuns();
@@ -264,14 +339,14 @@ describe('MachineDetailScreen (execution runs section)', () => {
         await act(async () => { runRows(screen, 'run-1')[0]!.props.onPress(); });
         expect(routerPush).toHaveBeenCalledWith(`/session/sess-1/runs/run-1?serverId=${encodeURIComponent(serverA)}`);
     });
-    it('keeps detached daemon runs unlinked while offering their own Run Stop', async () => {
+    it('opens detached daemon Run details while offering their own Run Stop', async () => {
         runs = [createExecutionRun({ runId: 'run-detached', happySessionId: null })];
         const screen = await renderRuns();
         await flushHookEffects();
         const rows = runRows(screen, 'run-detached');
         expect(rows).toHaveLength(1);
-        expect(screen.findAllByType(Item).filter(item => item.props.title === 'runs.sessionTitle')).toHaveLength(0);
-        expect(rows[0]?.props.onPress).toBeUndefined();
+        expect(screen.findAllByType(Item).filter(item => item.props.subtitle === 'runs.openSession')).toHaveLength(0);
+        expect(rows[0]?.props.onPress).toEqual(expect.any(Function));
         expect(rows[0]?.props.rightAccessory).toBeTruthy();
     });
 });

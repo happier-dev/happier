@@ -8,6 +8,7 @@ import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprov
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { ExecutionRunRow } from '@/components/sessions/runs/ExecutionRunRow';
 import { readExecutionRunSessionAssociation } from '@/components/sessions/runs/readExecutionRunSessionAssociation';
+import { formatDaemonRunProcessFacts } from '@/components/sessions/runs/runListPresentation';
 import { isAcceptedPendingSessionStop, readSessionStopActionResponse } from '@/components/sessions/sessionStopArchiveFlow';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Switch } from '@/components/ui/forms/Switch';
@@ -16,7 +17,8 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
-import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
+import { useOpenExecutionRunDetails } from '@/components/sessions/runs/useOpenExecutionRunDetails';
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { useMountedShouldContinue } from '@/hooks/ui/useMountedShouldContinue';
 import { Modal } from '@/modal';
@@ -27,6 +29,7 @@ import { t } from '@/text';
 import { showDaemonUnavailableAlert, tryShowDaemonUnavailableAlertForRpcFailure } from '@/utils/errors/daemonUnavailableAlert';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
+import { useSessionDisplayTitles } from '@/utils/sessions/sessionDisplayTitle';
 
 type ExecutionRunsState =
     | { status: 'idle' | 'loading'; runs: readonly DaemonExecutionRunEntry[] }
@@ -49,6 +52,7 @@ export const MachineRunsSection = React.memo(function MachineRunsSection(props: 
 }>) {
     const { theme } = useUnistyles();
     const router = useRouter();
+    const openRunDetails = useOpenExecutionRunDetails();
     const shouldContinue = useMountedShouldContinue();
     const navigateToSession = useNavigateToSession();
     const { machine, online: isOnline, isServerSwitching } = props;
@@ -58,6 +62,16 @@ export const MachineRunsSection = React.memo(function MachineRunsSection(props: 
     const [executionRunsState, setExecutionRunsState] = React.useState<ExecutionRunsState>({ status: 'idle', runs: [] });
     const [showFinishedRuns, setShowFinishedRuns] = React.useState(false);
     const [stoppingRunId, setStoppingRunId] = React.useState<string | null>(null);
+    const visibleRuns = React.useMemo(() => showFinishedRuns
+        ? executionRunsState.runs
+        : executionRunsState.runs.filter(run => run.status === 'running'), [executionRunsState.runs, showFinishedRuns]);
+    const sessionAddresses = React.useMemo(() => Array.from(new Set(visibleRuns.flatMap(run => {
+        const sessionId = readExecutionRunSessionAssociation(run);
+        return sessionId === null ? [] : [sessionId];
+    }))).map(sessionId => ({ sessionId, serverId: machineServerId })), [visibleRuns, machineServerId]);
+    const sessionTitles = useSessionDisplayTitles(sessionAddresses);
+    const isSessionVisible = useSessionRecordingVisibility();
+    const sessionTitleById = new Map(sessionAddresses.map((address, index) => [address.sessionId, sessionTitles[index]]));
     const readLifetime = React.useMemo(() => ({ controller: new AbortController() }), [machineId, machineServerId]);
     React.useEffect(() => {
         if (readLifetime.controller.signal.aborted) readLifetime.controller = new AbortController();
@@ -88,7 +102,7 @@ export const MachineRunsSection = React.memo(function MachineRunsSection(props: 
             // coming: leave "Loading…" rather than hold it forever. Loaded rows stay as they were.
             setExecutionRunsState((prev) => (prev.status === 'loading' ? { status: 'idle', runs: prev.runs } : prev));
         };
-    }, [isOnline, isServerSwitching, machineId, machineServerId, props.refreshKey]);
+    }, [isOnline, isServerSwitching, machineId, machineServerId, machine.access?.role, props.refreshKey]);
 
     // On the Overview (MPG-8) Runs is there once the machine has some: no section, and no loading line, for a machine
     // that has none or whose first read is still out. A failed read still says so once.
@@ -115,14 +129,10 @@ export const MachineRunsSection = React.memo(function MachineRunsSection(props: 
                 keeps the runs it already shows. */}
             {executionRunsState.status === 'error' ? (
                 <SurfaceStateCard testID="machine-runs-error" size="line" kind="error" title={t('machineDetailPage.runsLoadFailed')} reason={executionRunsState.error || undefined} />
-            ) : (showFinishedRuns ? executionRunsState.runs : executionRunsState.runs.filter((r) => r.status === 'running')).length === 0 ? (
+            ) : visibleRuns.length === 0 ? (
                 <SurfaceStateCard testID="machine-runs-empty" size="line" kind="empty" title={t('runs.empty')} />
             ) : (
                 (() => {
-                    const visibleRuns = showFinishedRuns
-                        ? executionRunsState.runs
-                        : executionRunsState.runs.filter((r) => r.status === 'running');
-
                     const grouped = new Map<string | null, DaemonExecutionRunEntry[]>();
                     for (const run of visibleRuns) {
                         const key = readExecutionRunSessionAssociation(run);
@@ -145,7 +155,8 @@ export const MachineRunsSection = React.memo(function MachineRunsSection(props: 
                         const header = sessionId === null ? null : (
                             <Item
                                 key={`sess-${sessionId}`}
-                                title={t('runs.sessionTitle', { sessionId })}
+                                title={isSessionVisible({ sessionId, serverId: machineServerId })
+                                    ? sessionTitleById.get(sessionId) ?? t('session.untitled') : t('session.untitled')}
                                 icon={<Icon name="chat-circle-dots" />}
                                 subtitle={t('runs.openSession')}
                                 subtitleStyle={{ color: theme.colors.text.secondary }}
@@ -155,16 +166,6 @@ export const MachineRunsSection = React.memo(function MachineRunsSection(props: 
                         );
 
                         const rows = runs.slice(0, 20).map((run) => {
-                            const detailParts: string[] = [t('runs.detail.pid', { pid: run.pid })];
-                            const cpu = (run as any).process?.cpu;
-                            const memory = (run as any).process?.memory;
-                            if (typeof cpu === 'number' && Number.isFinite(cpu)) {
-                                detailParts.push(t('runs.detail.cpu', { percent: cpu.toFixed(1) }));
-                            }
-                            if (typeof memory === 'number' && Number.isFinite(memory)) {
-                                detailParts.push(t('runs.detail.memory', { megabytes: Math.round(memory / (1024 * 1024)) }));
-                            }
-
                             const canStop = run.status === 'running';
                             const onStop = async () => {
                                 if (!machineId) return;
@@ -175,7 +176,7 @@ export const MachineRunsSection = React.memo(function MachineRunsSection(props: 
                                 const stopSessionProcess = async () => {
                                     if (!sessionId) return;
                                     if (!stopExecution.isCurrent()) return;
-                                    const stopResult = await stopExecution.execute('session.stop', { sessionId });
+                                    const stopResult = await stopExecution.execute('session.stop', { sessionId, stopIntent: 'lifecycle_control' });
                                     if (!stopExecution.isCurrent() || isExecutionRunMutationCancelled(stopResult)) return;
                                     const response = stopResult.ok ? readSessionStopActionResponse(stopResult.result) : null;
                                     if (response && (response.success || isAcceptedPendingSessionStop(response))) return;
@@ -255,12 +256,8 @@ export const MachineRunsSection = React.memo(function MachineRunsSection(props: 
                                     key={run.runId}
                                     run={run as any}
                                     serverId={machineServerId}
-                                    subtitle={`${t('runs.runLabel', { runId: run.runId })} · ${detailParts.join(' · ')}`}
-                                    onPress={sessionId ? () => router.push(buildScopedSessionRouteHref({
-                                        sessionId,
-                                        serverId: machineServerId,
-                                        suffix: `/runs/${encodeURIComponent(run.runId)}`,
-                                    }) as any) : undefined}
+                                    subtitle={formatDaemonRunProcessFacts(run)}
+                                    onPress={() => openRunDetails({ sessionId, serverId: machineServerId, machineId, runId: run.runId })}
                                     rightAccessory={canStop ? (
                                         <Pressable
                                             accessibilityRole="button"

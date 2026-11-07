@@ -2,7 +2,8 @@ import 'fake-indexeddb/auto';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DaemonExecutionRunEntrySchema, DaemonExecutionRunListResponseSchema, ExecutionRunStopRequestSchema, type DaemonExecutionRunEntry } from '@happier-dev/protocol';
+import { DaemonExecutionRunEntrySchema, DaemonExecutionRunListResponseSchema, type DaemonExecutionRunEntry } from '@happier-dev/protocol/daemon/executionRuns';
+import { ExecutionRunStopRequestSchema} from '@happier-dev/protocol/execution/runs/index';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
 import { MachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
@@ -10,6 +11,7 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import { clearMachineRequestReachabilityForTest, recordMachineRequestFailed } from '@/sync/domains/machines/reachability/machineReachability';
 import { flushHookEffects, pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE } from '@/dev/testkit/fixtures/executionRunCapabilitiesDescribe';
 import { createExpoRouterMock, createStackOptionsCapture } from '@/dev/testkit/mocks/router';
 import { installBrowserRuntimeForTests } from '@/dev/testkit/harness/browserRuntimeHarness';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -61,10 +63,7 @@ installSessionActionRpcBoundary(async (request, context) => {
         if (targetId === 'machine-1') return detachedStopRpc(targetId, parsed, { serverId });
         return sessionStopRpc(targetId, parsed, { serverId });
     }
-    if (method === RPC_METHODS.CAPABILITIES_DETECT) return {
-        protocolVersion: 1, results: { 'tool.executionRuns': { ok: true, checkedAt: 1,
-            data: { protocolVersion: 2, features: { detachedScope: true, startAndWait: true } } } },
-    };
+    if (method === RPC_METHODS.CAPABILITIES_DESCRIBE) return EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE;
     if (method === RPC_METHODS.STOP_SESSION) {
         if (!request.params || typeof request.params !== 'object' || !('sessionId' in request.params)
             || typeof request.params.sessionId !== 'string') throw new Error('Malformed daemon Session-stop request');
@@ -77,7 +76,9 @@ await loadSyncSingletonForTests();
 const disposeActionLoader = await installRealActionExecutorModuleLoader();
 const { default: Screen } = await import('@/app/(app)/runs');
 const { ExecutionRunRow } = await import('@/components/sessions/runs/ExecutionRunRow');
+const { Modal } = await import('@/modal');
 const { Item } = await import('@/components/ui/lists/Item');
+const { CountedDisclosureItem } = await import('@/components/ui/lists/CountedDisclosureItem');
 const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 const { storage } = await import('@/sync/domains/state/storageStore');
 const { TokenStorage } = await import('@/auth/storage/tokenStorage');
@@ -89,7 +90,7 @@ let homeProfileIds: Record<string, string> = {};
 const machineListState: { byServerId: Record<string, Machine[]> } = { byServerId: {} };
 let scopesReady = false;
 function serveMachineInventory(serverId: string, machines: readonly Machine[]) {
-    const rows = machines.map(machine => ({ ...createPlainMachineRowFixture({ id: machine.id, accountId: ACCOUNT }),
+    const rows = machines.map(machine => ({ ...createPlainMachineRowFixture({ id: machine.id, accountId: ACCOUNT, machine }),
         active: machine.active, activeAt: machine.activeAt, metadataVersion: machine.metadataVersion,
         metadata: encodePlainMachineStoredContent(MachinePublishedMetadataV1Schema.parse(machine.metadata)),
     }));
@@ -162,6 +163,12 @@ describe('Runs screen', () => {
         connection = await restoreServerAccountForTest({ serverUrl: homeUrls[HOME_A]!, serverIdentityId: HOME_A,
             accountId: ACCOUNT, credentials, additionalRequestOrigins: [homeUrls[HOME_B]!], request: createSessionReadBatchFetchBoundary(homes.request) });
         await sync.awaitBootstrapForegroundAcquisition();
+        // Foreground acquisition does not join the background Machine census.
+        // Let its real publication settle before later cases change the inventory.
+        await waitForHomeGovernance(() => {
+            expect(storage.getState().machineListStatusByServerId[HOME_A]).toBe('idle');
+            expect(storage.getState().machines[machine.id]).toBeDefined();
+        });
         installSessionActionFixture({ homes, storage, serverId: homeProfileIds[HOME_A]!,
             session: { id: 'sess-1', serverId: HOME_A, metadata: { path: '/repo', host: 'a.local', machineId: 'machine-1' } } });
     });
@@ -184,8 +191,14 @@ describe('Runs screen', () => {
         for (const serverId of [HOME_A, HOME_B]) {
             const machines = machineListState.byServerId[serverId] ?? [];
             serveMachineInventory(serverId, machines);
-            storage.getState().applyMachines(machines, true, { sourceServerId: serverId, sourceAccountId: ACCOUNT });
-            storage.getState().markMachineListSettled(serverId);
+            if (serverId === HOME_A) {
+                // The applied Home's RPC reads Sync's hydrated content projection.
+                await sync.refreshMachines();
+            } else {
+                // Inactive Home RPC opens the exact HTTP row served above.
+                storage.getState().applyMachines(machines, true, { sourceServerId: serverId, sourceAccountId: ACCOUNT });
+                storage.getState().markMachineListSettled(serverId);
+            }
         }
         const screen = await renderScreen(<Screen />, { wrapper: AccountBoundary, createNodeMock: element => Object.assign(
             document.createElement(element.type === 'TextInput' ? 'textarea' : 'div'), {
@@ -210,7 +223,7 @@ describe('Runs screen', () => {
         try {
             await waitForHomeGovernance(() => expect(daemonListSignals.length).toBeGreaterThan(0));
             const originalRead = daemonListSignals[0]!;
-            const machine = machineListState.byServerId[HOME_A]![0]!;
+            const machine = storage.getState().machines['machine-1']!;
             await act(async () => {
                 storage.getState().applyMachines([{ ...machine, activeAt: machine.activeAt + 1,
                     metadataVersion: machine.metadataVersion + 1,
@@ -240,6 +253,73 @@ describe('Runs screen', () => {
         expect(typeof options?.headerRight).toBe('function');
         return renderScreen(React.createElement(options!.headerRight as React.ComponentType));
     }
+
+    it('reads a Use inventory once through its Home and displays the daemon-attributed runs', async () => {
+        const machine = machineListState.byServerId[HOME_A]![0]!;
+        machineListState.byServerId[HOME_A] = [{ ...machine, isShared: true, access: {
+            custodian: { accountId: 'machine-owner', displayName: 'Machine owner' },
+            role: 'use', resourceMode: 'plain', accessState: 'ready',
+        } }];
+        daemonListRpc.mockResolvedValue({ runs: [createExecutionRun({ runId: 'attributed-use-run' })] });
+        const screen = await renderRunsScreen();
+        expect(daemonListRpc).toHaveBeenCalledTimes(1);
+        expect(daemonListRpc).toHaveBeenCalledWith('machine-1', { serverId: HOME_A });
+        const items = screen.findAllByType(Item);
+        expect(items.map(item => item.props.title)).not.toContain('common.error');
+        const rows = screen.findAllByType(ExecutionRunRow);
+        expect(rows).toHaveLength(1);
+        expect(rows[0]!.props.run.runId).toBe('attributed-use-run');
+    });
+
+    it('keeps owned runs visible when a shared Machine registry read is forbidden', async () => {
+        const owned = machineListState.byServerId[HOME_A]![0]!;
+        machineListState.byServerId[HOME_A] = [owned, createMachineFixture({ id: 'shared-machine', activeAt: Date.now() })];
+        daemonListRpc.mockImplementation(async machineId => {
+            if (machineId === 'shared-machine') throw Object.assign(new Error('Forbidden'), { code: 'RPC_FORBIDDEN' });
+            return { runs: [createExecutionRun({ runId: 'owned-run' })] };
+        });
+        const screen = await renderRunsScreen();
+        expect(screen.findAllByType(Item).filter(item => item.props.title === 'common.error')
+            .map(item => item.props.subtitle)).toEqual([]);
+        expect(daemonListRpc.mock.calls.map(([machineId]) => machineId).sort()).toEqual(['machine-1', 'shared-machine']);
+        expect(screen.findAllByType(ExecutionRunRow).map(row => row.props.run.runId)).toEqual(['owned-run']);
+        // The refused Machine says so once, on its own row; it never reads as an empty Machine.
+        const items = screen.findAllByType(Item);
+        // (The harness transport does not carry the daemon's refusal code; live carries RPC_FORBIDDEN → "Not shared".)
+        expect(items.map(item => item.props.detail).filter(Boolean)).toHaveLength(1);
+        expect(items.map(item => item.props.detail)).not.toContain('detailPages.runs.machineNotChecked');
+        expect(items.map(item => item.props.title)).not.toContain('runs.empty');
+    });
+
+    it('confirms an empty list only when every Machine was read', async () => {
+        const owned = machineListState.byServerId[HOME_A]![0]!;
+        machineListState.byServerId[HOME_A] = [owned, createMachineFixture({ id: 'offline-machine', activeAt: Date.now() })];
+        recordMachineRequestFailed({ serverId: HOME_A, accountId: ACCOUNT, machineId: 'offline-machine' });
+        const partial = await renderRunsScreen();
+        expect(daemonListRpc.mock.calls.map(([machineId]) => machineId)).toEqual(['machine-1']);
+        expect(partial.findAllHostsByTestId('runs.empty')).toHaveLength(0);
+        // A Machine that could not be asked (offline) folds into one counted row instead of a row of its own.
+        expect(partial.findAllByType(CountedDisclosureItem).map(item => item.props.count)).toEqual([1]);
+        expect(partial.findAllByType(Item).map(item => item.props.detail)).not.toContain('detailPages.runs.machineNotChecked');
+        await partial.unmount();
+
+        machineListState.byServerId[HOME_A] = [owned];
+        const confirmed = await renderRunsScreen();
+        expect(confirmed.findAllHostsByTestId('runs.empty').length).toBeGreaterThan(0);
+        expect(confirmed.findAllByType(Item).map(item => item.props.detail).filter(Boolean)).toEqual([]);
+    });
+
+    it('tells same-named machines apart through the canonical machine name owner', async () => {
+        const twin = (id: string) => createMachineFixture({ id, activeAt: Date.now(), metadata: {
+            host: 'devbox', platform: 'linux', happyCliVersion: '1.0.0', happyHomeDir: '/tmp', homeDir: '/tmp',
+        } });
+        const owned = machineListState.byServerId[HOME_A]![0]!;
+        machineListState.byServerId[HOME_A] = [owned, twin('twin-aaaa'), twin('twin-bbbb')];
+        const screen = await renderRunsScreen();
+        const twins = screen.findAllByType(Item).filter(item => item.props.title === 'devbox');
+        expect(twins).toHaveLength(2);
+        expect(new Set(twins.map(item => item.props.titleQualifier)).size).toBe(2);
+    });
 
     it('configures a header title with a refresh action', async () => {
         await renderRunsScreen();
@@ -331,7 +411,6 @@ describe('Runs screen', () => {
         const screen = await renderRunsScreen();
         const row = screen.findByType(ExecutionRunRow);
 
-        expect(row.props.subtitle).toContain('runs.sessionTitle');
         expect(row.props.onPress).toEqual(expect.any(Function));
         expect(row.props.rightAccessory).toBeTruthy();
         row.props.onPress();
@@ -344,7 +423,7 @@ describe('Runs screen', () => {
         expect(sessionStopRpc).toHaveBeenCalledWith('sess-1', { runId: 'run-associated' }, { serverId: 'srv_server-a' });
     });
 
-    it('stops a detached daemon run through its exact Machine without inventing a Session', async () => {
+    it('opens and stops a detached daemon run through its exact Machine without inventing a Session', async () => {
         daemonListRpc.mockResolvedValue({
             runs: [createExecutionRun({ runId: 'run-detached', happySessionId: null })],
         });
@@ -353,9 +432,13 @@ describe('Runs screen', () => {
         const row = screen.findByType(ExecutionRunRow);
 
         expect(row.props.run.happySessionId).toBeNull();
-        expect(row.props.subtitle).not.toContain('runs.sessionTitle');
-        expect(row.props.onPress).toBeUndefined();
+        expect(row.props.onPress).toEqual(expect.any(Function));
         expect(row.props.rightAccessory).toBeTruthy();
+        await act(async () => { await row.props.onPress(); });
+        expect(Modal.show).toHaveBeenLastCalledWith(expect.objectContaining({
+            props: expect.objectContaining({ sessionId: null, serverId: HOME_A,
+                workspace: { machineId: 'machine-1' }, runId: 'run-detached' }),
+        }));
         const stopButton = row.findAll(node => typeof node.type === 'string' && node.props.accessibilityLabel === 'runs.stop.stopRunA11y')[0];
         await pressTestInstanceAsync(stopButton);
         await flushHookEffects({ cycles: 2 });
@@ -396,6 +479,32 @@ describe('Runs screen', () => {
         expect(Modal.alertAsync).not.toHaveBeenCalled();
         expect(sessionStopRpc).not.toHaveBeenCalled();
         expect(machineStopRpc).not.toHaveBeenCalled();
+    });
+
+    it('opens a bare Run deep link once through the shared opener, including a finished Run', async () => {
+        routerMock.state.router.setParams({ runId: 'run-linked' });
+        daemonListRpc.mockResolvedValue({ runs: [
+            createExecutionRun({ runId: 'other-run' }),
+            createExecutionRun({ runId: 'run-linked', status: 'succeeded' }),
+        ] });
+        const screen = await renderRunsScreen();
+        await flushHookEffects({ cycles: 2 });
+        expect(routerPushSpy).toHaveBeenCalledWith(
+            '/session/sess-1/runs/run-linked?serverId=srv_server-a',
+        );
+        expect(screen.findAllByType(ExecutionRunRow).map(row => row.props.run.runId)).toEqual(['run-linked']);
+        await flushHookEffects({ cycles: 2 });
+        expect(routerPushSpy).toHaveBeenCalledTimes(1);
+        expect(daemonListRpc).toHaveBeenCalledTimes(1);
+    });
+
+    it('leaves a bare Run deep link in the collection when multiple Homes return that id', async () => {
+        routerMock.state.router.setParams({ runId: 'same-run' });
+        machineListState.byServerId[HOME_B] = [createMachineFixture({ id: 'machine-b', activeAt: Date.now() })];
+        daemonListRpc.mockResolvedValue({ runs: [createExecutionRun({ runId: 'same-run' })] });
+        const screen = await renderRunsScreen();
+        expect(screen.findAllByType(ExecutionRunRow)).toHaveLength(2);
+        expect(routerPushSpy).not.toHaveBeenCalled();
     });
 
     it('selects an exact detached execution Run from fully qualified route intent, including a finished Run', async () => {

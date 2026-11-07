@@ -1,11 +1,15 @@
 import type {
-    ComposerAttachmentDraftV1,
-    ComposerRefV1,
+    ComposerAttachmentDraftV1} from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
+import type {
+    ComposerRefV1} from '@happier-dev/protocol/plugins/ui/composerRef';
+import type {
     ComposerSnapshotV1,
-    ComposerTransactionResultV1,
-    ParticipantRecipientV1,
+    ComposerTransactionResultV1} from '@happier-dev/protocol/plugins/ui/composer';
+import type {
+    ParticipantRecipientV1} from '@happier-dev/protocol/messages/structured/participantMessageV1';
+import type {
     PendingRequestedActionV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
 import { DEFAULT_PENDING_REQUESTED_ACTION_V1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
 import { composerRefsV1Equal } from '@happier-dev/protocol/plugins/ui/composerRef';
 import * as React from 'react';
@@ -52,12 +56,15 @@ import {
     clearSessionAttachmentDrafts,
     readSessionAttachmentDrafts,
     writeSessionAttachmentDrafts,
+    sessionAttachmentDraftKey,
     type SessionAttachmentDraftScope,
 } from '@/components/sessions/attachments/sessionAttachmentDraftStore';
 import { useAttachmentDraftManager } from '@/components/sessions/attachments/useAttachmentDraftManager';
+import { moveAttachmentDraftsForKey } from '@/components/sessions/attachments/attachmentDraftMemoryStore';
 import { useAttachmentsUploadConfig } from '@/components/sessions/attachments/useAttachmentsUploadConfig';
 import {
-    buildAttachmentMessageMeta,
+    AttachmentUploadCancelled,
+    buildSessionAttachmentIngressMeta,
     uploadAttachmentDraftsToSession,
 } from '@/components/sessions/attachments/uploadAttachmentDraftsToSession';
 import { useSessionFileUploadAvailability } from '@/components/sessions/files/useSessionFileUploadAvailability';
@@ -76,7 +83,7 @@ import {
     type ComposerPresentationDocumentMutation,
     type ComposerPresentationTarget,
 } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
-import { buildSessionDraftSyncStatusBadge } from '@/components/sessions/drafts/sessionDraftStatusPresentation';
+import { buildSessionDraftSyncStatusBadge, selectSessionDraftSyncBadgeStatus } from '@/components/sessions/drafts/sessionDraftStatusPresentation';
 import { useComposerPresentationInputEffects } from '@/components/sessions/presentation/useComposerPresentationInputEffects';
 import { useComposerScopePluginPresentation } from '@/components/sessions/presentation/useComposerScopePluginPresentation';
 import { Modal } from '@/modal';
@@ -152,7 +159,7 @@ export type ParticipantComposerDocument = Readonly<{
 
 type SessionParticipantComposerProps = Readonly<{
     sessionId: string | null;
-    workspace?: Readonly<{ machineId: string; cwd: string }>;
+    workspace?: Readonly<{ machineId: string; cwd?: string }>;
     /** Exact Home route scope when the parent already owns qualified navigation. */
     serverId?: string | null;
     /** The parent Session's input grant, independent of transient launch readiness. */
@@ -186,6 +193,8 @@ type SessionParticipantComposerProps = Readonly<{
     engine?: ParticipantComposerEngine | null;
     /** What the empty input says ("Reply to GPT-6 Sol…"); the generic prompt otherwise. */
     placeholder?: string;
+    /** Who answers, named and not chosen (a walkthrough's model); exclusive with `engine`. */
+    fixedEngine?: Readonly<{ label: string; agentId: string | undefined }> | null;
 }>;
 
 export const SessionParticipantComposer = React.memo((props: SessionParticipantComposerProps) => props.sessionId === null
@@ -216,16 +225,12 @@ function SessionParticipantComposerContent(props: SessionParticipantComposerProp
         () => [...participantAccountBindings.values()][0] ?? null,
         [participantAccountBindings],
     );
-    const composerAccountLifetime = React.useMemo(() => {
-        if (!participantAccountBinding) return null;
-        return {
-            scope: participantAccountBinding.scope,
-            isCurrent: participantAccountBinding.isCurrent,
-            onRetire: participantAccountBinding.onRetire,
-        };
-    }, [participantAccountBinding]);
+    const composerAccountLifetime = participantAccountBinding;
     const participantAccountId = participantAccountBinding?.accountId.trim() || null;
     const participantDaemonProjection = useDaemonMergedProjectionInputs({
+        sections: ['actionsById', 'resourcesById', 'familiesById.pluginUi', 'familiesById.inputTypes',
+            'familiesById.composerAttachments', 'familiesById.composerControls', 'familiesById.composerRegions',
+            'contributionIntrospection', 'composerSurfaceCatalog'],
         machineId: participantMachineTarget?.machineId ?? null,
         serverId: participantServerId,
         enabled: participantMachineTarget !== null,
@@ -263,7 +268,7 @@ function SessionParticipantComposerContent(props: SessionParticipantComposerProp
     // the public participant composer identity. Launcher fields are independent
     // of the parent Session composer's text and routing.
     const participantComposerDocumentOwner = useRepositoryComposerDocumentOwner({
-        scope: runDraftAddress ? composerAccountLifetime?.scope ?? null : null,
+        scopeLifetime: runDraftAddress ? composerAccountLifetime : null,
         ref: composerRef,
         address: runDraftAddress,
         launcherDraftKey: props.launcherDraftKey,
@@ -280,19 +285,20 @@ function SessionParticipantComposerContent(props: SessionParticipantComposerProp
             ? subscribeSessionDraft(runDraftScope, runDraftAddress, listener)
             : () => undefined
     ), [runDraftAddress, runDraftScope]);
-    const readRunDraftSnapshot = React.useCallback(() => (
+    // Only the badge status: the repository republishes this draft on every keystroke.
+    const readRunDraftBadgeStatus = React.useCallback(() => (
         runDraftScope && runDraftAddress
-            ? getSessionDraftSnapshot(runDraftScope, runDraftAddress)
+            ? selectSessionDraftSyncBadgeStatus(getSessionDraftSnapshot(runDraftScope, runDraftAddress)?.status ?? 'clean')
             : null
     ), [runDraftAddress, runDraftScope]);
-    const runDraftSnapshot = React.useSyncExternalStore(
+    const runDraftBadgeStatus = React.useSyncExternalStore(
         subscribeRunDraft,
-        readRunDraftSnapshot,
-        readRunDraftSnapshot,
+        readRunDraftBadgeStatus,
+        readRunDraftBadgeStatus,
     );
     const runDraftStatusBadge = React.useMemo(
-        () => buildSessionDraftSyncStatusBadge(runDraftSnapshot?.status ?? 'clean'),
-        [runDraftSnapshot?.status],
+        () => buildSessionDraftSyncStatusBadge(runDraftBadgeStatus),
+        [runDraftBadgeStatus],
     );
     const statusBadges = React.useMemo(
         () => (runDraftStatusBadge ? [runDraftStatusBadge] : []),
@@ -396,9 +402,9 @@ function SessionParticipantComposerContent(props: SessionParticipantComposerProp
     const attachmentsUploadConfig = useAttachmentsUploadConfig();
     const attachmentsUploadsFeatureEnabled = useFeatureEnabled('attachments.uploads');
     const attachmentsUploadsTransferAvailable = useSessionFileUploadAvailability(props.sessionId ?? '', participantServerId, 'attachment');
-    const attachmentsUploadsEnabled = props.sessionId !== null && attachmentsUploadsFeatureEnabled
-        && attachmentsUploadsTransferAvailable
+    const attachmentsUploadsShown = props.sessionId !== null && attachmentsUploadsFeatureEnabled
         && composerAccountLifetime !== null;
+    const attachmentsUploadsEnabled = attachmentsUploadsShown && attachmentsUploadsTransferAvailable;
     const transferDraftScope = React.useMemo<SessionAttachmentDraftScope | null>(() => {
         const serverId = participantServerId?.trim();
         const occurrenceId = props.draftOccurrenceId?.trim()
@@ -414,14 +420,18 @@ function SessionParticipantComposerContent(props: SessionParticipantComposerProp
         [attachmentsUploadsEnabled, transferDraftScope],
     );
     const transferDraftManager = useAttachmentDraftManager({
+        pictureEditAddress: () => composerAccountLifetime?.isCurrent()
+            ? { scope: composerAccountLifetime.scope, ref: composerRef } : null,
         enabled: attachmentsUploadsEnabled,
         maxFileBytes: attachmentsUploadConfig.maxFileBytes,
         initialDrafts: initialTransferDrafts,
-        ...(props.sessionId ? { eagerUpload: { sessionId: props.sessionId, config: attachmentsUploadConfig } } : {}),
+        memoryKey: attachmentsUploadsEnabled && transferDraftScope ? sessionAttachmentDraftKey(transferDraftScope) : null,
+        ...(props.sessionId && composerAccountLifetime ? { eagerUpload: { sessionId: props.sessionId,
+            sessionTarget: { ...composerAccountLifetime.scope, sessionId: props.sessionId }, config: attachmentsUploadConfig } } : {}),
         onPickedDrafts: (drafts) => {
             if (!composerAccountLifetime?.isCurrent()) return;
             insertComposerAttachmentReferences({ ref: composerRef,
-                scope: composerAccountLifetime.scope, items: (drafts).map(draft => ({ draft })) });
+                scope: composerAccountLifetime.scope, items: drafts.map(draft => ({ draft })) });
         },
         onRemoveDraft: (attachmentId) => {
             if (!composerAccountLifetime?.isCurrent()) return;
@@ -433,20 +443,12 @@ function SessionParticipantComposerContent(props: SessionParticipantComposerProp
     const activeTransferDraftScopeRef = React.useRef(transferDraftScope);
 
     React.useEffect(() => {
-        if (!transferDraftScope || !attachmentsUploadsEnabled) return;
-        // A mounted composer can survive an Account credential replacement.
-        // Never write the previous Account's still-rendered bytes into the new
-        // scope; the following effect hydrates the manager first.
-        if (activeTransferDraftScopeRef.current !== transferDraftScope) return;
-        writeSessionAttachmentDrafts(transferDraftScope, transferDraftManager.drafts);
-    }, [attachmentsUploadsEnabled, transferDraftManager.drafts, transferDraftScope]);
-    React.useEffect(() => {
         const previousScope = activeTransferDraftScopeRef.current;
         if (previousScope === transferDraftScope) return;
         activeTransferDraftScopeRef.current = transferDraftScope;
         // The same person's same unsent staging can be handed a new draft occurrence
         // when its launcher starts another attempt. Only an Account, Home or Session
-        // change replaces the owner of these process-local bytes, so the mounted
+        // change replaces the owner of these local sources, so the mounted
         // drafts move with the composer instead of being dropped for an empty one.
         if (
             attachmentsUploadsEnabled
@@ -456,20 +458,12 @@ function SessionParticipantComposerContent(props: SessionParticipantComposerProp
             && previousScope.accountId === transferDraftScope.accountId
             && previousScope.sessionId === transferDraftScope.sessionId
         ) {
-            const carried = transferDraftManager.getDraftsSnapshot();
-            clearSessionAttachmentDrafts(previousScope);
-            if (carried.length > 0) writeSessionAttachmentDrafts(transferDraftScope, carried);
-            return;
+            fireAndForget(moveAttachmentDraftsForKey(sessionAttachmentDraftKey(previousScope), sessionAttachmentDraftKey(transferDraftScope)), {
+                onError: () => Modal.alert(t('common.error'), t('attachments.alerts.recoveryFailedBody')),
+            });
         }
-        transferDraftManager.replaceDrafts(
-            transferDraftScope && attachmentsUploadsEnabled
-                ? readSessionAttachmentDrafts(transferDraftScope)
-                : [],
-        );
     }, [
         attachmentsUploadsEnabled,
-        transferDraftManager.getDraftsSnapshot,
-        transferDraftManager.replaceDrafts,
         transferDraftScope,
     ]);
 
@@ -653,7 +647,7 @@ function SessionParticipantComposerContent(props: SessionParticipantComposerProp
         removeComposerAttachment,
     ]);
 
-    const handleParticipantSend = React.useCallback((sendOptions?: AgentInputSendOptions) => {
+    const handleParticipantSend = React.useCallback(async (sendOptions?: AgentInputSendOptions) => {
         if (!props.canSendMessages) {
             Modal.alert(t('common.error'), t('session.sharing.noEditPermission'));
             return;
@@ -671,7 +665,7 @@ function SessionParticipantComposerContent(props: SessionParticipantComposerProp
 
         const snapshot = readParticipantComposerSnapshot();
         const submittedCurrentness = participantComposerDocumentOwner.captureCurrentness();
-        const submittedTransferDrafts = [...transferDraftManager.getSendableDraftsSnapshot()];
+        const submittedTransferDrafts = [...await transferDraftManager.prepareDraftsForSubmit()];
         const submittedTransferDraftIds = new Set(submittedTransferDrafts.map((draft) => draft.id));
         const clearSubmittedTransferDrafts = () => {
             if (submittedTransferDraftIds.size === 0) return;
@@ -728,10 +722,12 @@ function SessionParticipantComposerContent(props: SessionParticipantComposerProp
                             : undefined,
                     );
 
+                    let uploadedAttachments: Parameters<typeof mergeBrowserContextMessageMetaOverrides>[0]['uploadedAttachments'];
                     const mergeBrowserContextMeta = (metaOverrides?: Record<string, unknown>): Record<string, unknown> | undefined | null => {
                         const result = mergeBrowserContextMessageMetaOverrides({
                             // Detached text-only Runs do not inherit a parent Session's browser attachments.
                             state: props.sessionId === null ? null : props.browserContextState ?? null,
+                            uploadedAttachments,
                             metaOverrides,
                         });
                         if (result.ok) {
@@ -762,7 +758,8 @@ function SessionParticipantComposerContent(props: SessionParticipantComposerProp
                                 applyDraftPatch: transferDraftManager.applyDraftPatch,
                                 messageLocalId: submissionLocalId,
                             });
-                            transferMetaOverrides = buildAttachmentMessageMeta(uploaded);
+                            uploadedAttachments = uploaded;
+                            transferMetaOverrides = buildSessionAttachmentIngressMeta(uploaded);
                         }
                         // Every Session-bound participant destination — including an Execution
                         // Run — is an ordinary target of canonical Session input admission. The
@@ -875,7 +872,7 @@ function SessionParticipantComposerContent(props: SessionParticipantComposerProp
                         else throw new Error(t('common.unavailable'));
                         return { status: 'accepted' };
                     } catch (error) {
-                        if (error instanceof ParticipantComposerSubmissionHeld) return { status: 'rejected' };
+                        if (error instanceof ParticipantComposerSubmissionHeld || error instanceof AttachmentUploadCancelled) return { status: 'rejected' };
                         const failureLabelKey = getSessionInputFailureLabelKey(error);
                         Modal.alert(
                             t('common.error'),
@@ -921,13 +918,14 @@ function SessionParticipantComposerContent(props: SessionParticipantComposerProp
         updateParticipantComposerDocument,
     ]);
 
-    const transferAttachmentChip = React.useMemo(() => attachmentsUploadsEnabled
+    const transferAttachmentChip = React.useMemo(() => attachmentsUploadsShown
         ? createAttachmentActionChip({
             onPickFile: () => openAttachmentFilePickerFiles(transferDraftManager.filePickerRef.current),
             onPickImage: () => openAttachmentFilePickerImages(transferDraftManager.filePickerRef.current),
-            disabled: isUploadingAttachments,
+            disabled: isUploadingAttachments || !attachmentsUploadsTransferAvailable,
+            disabledReason: !attachmentsUploadsTransferAvailable ? t('files.transfers.uploadUnavailable') : undefined,
         })
-        : null, [attachmentsUploadsEnabled, isUploadingAttachments, transferDraftManager.filePickerRef]);
+        : null, [attachmentsUploadsShown, attachmentsUploadsTransferAvailable, isUploadingAttachments, transferDraftManager.filePickerRef]);
     const extraActionChips = React.useMemo(() => [
         ...(props.extraActionChips ?? []),
         ...(transferAttachmentChip ? [transferAttachmentChip] : []),
@@ -946,6 +944,7 @@ function SessionParticipantComposerContent(props: SessionParticipantComposerProp
         <PluginContextualResourceStoreProvider>
             {participantComposerPresentation.beforeComposer}
             <AgentInput
+                statusRegions={participantComposerPresentation.statusRegions}
                 composerRef={composerRef}
                 composerReferenceHost={props.sessionId === null ? null : participantComposerDropHost}
                 composerFileScope={props.sessionId === null ? undefined : resolveWorkspaceTargetForSession(participantSessionAddress ?? props.sessionId)}
@@ -958,6 +957,10 @@ function SessionParticipantComposerContent(props: SessionParticipantComposerProp
                     agentPickerOptions: props.engine.options,
                     agentPickerSelectedOptionId: props.engine.selectedOptionId,
                     onAgentPickerSelect: props.engine.onSelect,
+                } : props.fixedEngine ? {
+                    engineControls: 'none' as const,
+                    engineLabel: props.fixedEngine.label,
+                    engineAgentId: props.fixedEngine.agentId,
                 } : {})}
                 value={document.text}
                 onComposerFocusChange={onComposerFocusChange}

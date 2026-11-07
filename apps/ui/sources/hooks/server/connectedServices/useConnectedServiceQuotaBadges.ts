@@ -17,11 +17,20 @@ type UseConnectedServiceQuotaBadgesOptions = Readonly<{
 }>;
 
 const DEFAULT_QUOTA_BADGE_LIMIT = 3;
+const EMPTY_QUOTA_SNAPSHOTS = Object.freeze({});
 
 export function useConnectedServiceQuotaBadges(
   profiles: ReadonlyArray<ConnectedServiceQuotaProfileRefInput>,
   options: UseConnectedServiceQuotaBadgesOptions = {},
 ): Record<string, Array<{ meterId: string; text: string }>> {
+  return useConnectedServiceQuotaBadgeState(profiles, options).badgesByKey;
+}
+
+/** Choosers consume the same snapshot read as their badges, including pool-member limits. */
+export function useConnectedServiceQuotaBadgeState(
+  profiles: ReadonlyArray<ConnectedServiceQuotaProfileRefInput>,
+  options: UseConnectedServiceQuotaBadgesOptions = {},
+) {
   const settings = useSettingsValues([
       'connectedServicesQuotaPinnedMeterIdsByKey',
       'connectedServicesQuotaSummaryStrategyByKey',
@@ -37,7 +46,7 @@ export function useConnectedServiceQuotaBadges(
   const { profiles: normalizedProfiles, snapshotsByKey } =
     useConnectedServiceQuotaSnapshots(profiles, { fetchPolicy });
 
-  return React.useMemo(() => {
+  const badgesByKey = React.useMemo(() => {
     const badgesByKey: Record<string, Array<{ meterId: string; text: string }>> = {};
     if (!quotasEnabled) return badgesByKey;
 
@@ -79,4 +88,5 @@ export function useConnectedServiceQuotaBadges(
     snapshotsByKey,
     strategyByKey,
   ]);
+  return { badgesByKey, snapshotsByKey: quotasEnabled ? snapshotsByKey : EMPTY_QUOTA_SNAPSHOTS };
 }

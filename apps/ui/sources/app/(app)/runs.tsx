@@ -4,14 +4,15 @@ import { Pressable, View } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useUnistyles } from 'react-native-unistyles';
 
-import type { DaemonExecutionRunEntry } from '@happier-dev/protocol';
 
-import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ExecutionRunRow } from '@/components/sessions/runs/ExecutionRunRow';
 import { readExecutionRunSessionAssociation } from '@/components/sessions/runs/readExecutionRunSessionAssociation';
+import { aggregateMachineRunReads, executionRunMachineAddressKey, formatDaemonRunProcessFacts, selectMachineRunsForPresentation,
+  summarizeRunListPresentation, machineRunReadFailureDetail, type MachineRunReadAggregate, type RunListUnavailableMachine } from '@/components/sessions/runs/runListPresentation';
+import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { isAcceptedPendingSessionStop, readSessionStopActionResponse } from '@/components/sessions/sessionStopArchiveFlow';
 import { ConstrainedScreenContent } from '@/components/ui/layout/ConstrainedScreenContent';
 import { Modal } from '@/modal';
@@ -19,8 +20,10 @@ import { t } from '@/text';
 import { showDaemonUnavailableAlert, tryShowDaemonUnavailableAlertForRpcFailure } from '@/utils/errors/daemonUnavailableAlert';
 import { useAllProfileMachineInventorySnapshots } from '@/sync/domains/machines/useMachineInventorySnapshots';
 import { filterVisibleMachines } from '@/sync/domains/machines/resolveServerScopedMachines';
-import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
-import { machineExecutionRunsList } from '@/sync/ops/machineExecutionRuns';
+import { formatMachineDisplayNameParts, resolveMachineDisplayNameParts } from '@/utils/sessions/machineDisplayNames';
+import { CountedDisclosureItem } from '@/components/ui/lists/CountedDisclosureItem';
+import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
+import { machineExecutionRunsList, type MachineExecutionRunsListResult } from '@/sync/ops/machineExecutionRuns';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
 import { isExecutionRunMutationCancelled } from '@/sync/ops/sessionExecutionRuns';
@@ -34,21 +37,17 @@ import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
-import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
+import { useOpenExecutionRunDetails } from '@/components/sessions/runs/useOpenExecutionRunDetails';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { machinePageHref } from '@/components/settings/machines/collection/machineCollectionModel';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 
 type MachineRunsState =
   | { status: 'idle' }
   | { status: 'loading' }
-  | { status: 'loaded'; runsByMachineAddressKey: Record<string, readonly DaemonExecutionRunEntry[]> }
+  | MachineRunReadAggregate
   | { status: 'error'; error: string };
-
-/** Opaque Home-qualified machine identity. Never parse this key. */
-function executionRunMachineAddressKey(serverId: string, machineId: string): string {
-  return JSON.stringify([serverId, machineId]);
-}
 
 /** Exact pending-row identity for duplicate Run ids across Homes or machines. */
 function executionRunRowAddressKey(serverId: string, machineId: string, runId: string): string {
@@ -62,29 +61,9 @@ function readExactRouteIdentity(value: string | string[] | undefined): string | 
   return raw;
 }
 
-function getMachineTitle(machine: MachineDisplayRenderable): string {
-  const displayName = typeof machine?.metadata?.displayName === 'string' ? machine.metadata.displayName.trim() : '';
-  if (displayName) return displayName;
-  const host = typeof machine?.metadata?.host === 'string' ? machine.metadata.host.trim() : '';
-  if (host) return host;
-  return String(machine?.id ?? t('runs.unknownMachine'));
-}
-
-function formatRunDetails(run: DaemonExecutionRunEntry): string {
-  const sessionId = readExecutionRunSessionAssociation(run);
-  const detailParts: string[] = [t('runs.detail.pid', { pid: run.pid })];
-  if (sessionId) {
-    detailParts.unshift(t('runs.sessionTitle', { sessionId }));
-  }
-  const cpu = (run as any).process?.cpu;
-  const memory = (run as any).process?.memory;
-  if (typeof cpu === 'number' && Number.isFinite(cpu)) {
-    detailParts.push(t('runs.detail.cpu', { percent: cpu.toFixed(1) }));
-  }
-  if (typeof memory === 'number' && Number.isFinite(memory)) {
-    detailParts.push(t('runs.detail.memory', { megabytes: Math.round(memory / (1024 * 1024)) }));
-  }
-  return `${t('runs.runLabel', { runId: run.runId })} · ${detailParts.join(' · ')}`;
+function unavailableMachineDetail(machine: RunListUnavailableMachine | undefined): string | undefined {
+  return machine?.reason === 'not_offered' ? t('detailPages.runs.machineNotShared')
+    : machine?.reason === 'read_failed' ? machineRunReadFailureDetail(machine.errorCode) : undefined;
 }
 
 /** Each collection row retains its own exact Home through admission and approval. */
@@ -114,6 +93,7 @@ function RunStopButton(props: Readonly<{
 export default function RunsScreen() {
   const { theme } = useUnistyles();
   const router = useRouter();
+  const openRunDetails = useOpenExecutionRunDetails();
   const routeParams = useLocalSearchParams<{
     serverId?: string | string[];
     machineId?: string | string[];
@@ -122,15 +102,16 @@ export default function RunsScreen() {
   const routeServerId = readExactRouteIdentity(routeParams.serverId);
   const routeMachineId = readExactRouteIdentity(routeParams.machineId);
   const routeRunId = readExactRouteIdentity(routeParams.runId);
-  // A daemon Run is only exact as one Home + Machine + Run tuple. Treat a
-  // partial query as ordinary collection navigation so duplicate opaque ids on
-  // another Home cannot be selected, revealed, or acted on by accident.
+  // A full address scopes the read. A bare Run id resolves through this
+  // collection's admitted reads, and opens only when exactly one row matches.
+  // Other partial or malformed addresses remain ordinary collection navigation.
   const requestedTarget = routeServerId && routeMachineId && routeRunId
     ? { serverId: routeServerId, machineId: routeMachineId, runId: routeRunId }
     : null;
   const requestedServerId = requestedTarget?.serverId ?? null;
   const requestedMachineId = requestedTarget?.machineId ?? null;
-  const requestedRunId = requestedTarget?.runId ?? null;
+  const requestedRunId = requestedTarget?.runId
+    ?? (routeParams.serverId === undefined && routeParams.machineId === undefined ? routeRunId : null);
   const shouldContinue = useMountedShouldContinue();
   const inventory = useAllProfileMachineInventorySnapshots();
   const machineScopeBindings = useServerCredentialAccountScopeBindings(inventory.flatMap(snapshot =>
@@ -139,6 +120,7 @@ export default function RunsScreen() {
   const [stoppingRunAddressKey, setStoppingRunAddressKey] = React.useState<string | null>(null);
   const [state, setState] = React.useState<MachineRunsState>({ status: 'idle' });
   const loadControllerRef = React.useRef<AbortController | null>(null);
+  const openedRunAddressRef = React.useRef<string | null>(null);
   const headerTint = theme.colors.chrome.header.foreground ?? theme.colors.text.primary;
 
   React.useEffect(() => {
@@ -165,16 +147,20 @@ export default function RunsScreen() {
     return machines.flatMap(machine => {
       const machineId = machine.id.trim();
       return machineId && isMachineVisibleForLaunchSelection(machine) && machine.availability?.kind !== 'locked'
-        ? [{ serverId, machineId, accountId: binding.scope.accountId,
+        ? [{ serverId, machineId, accountId: binding.scope.accountId, role: machine.access?.role,
           automatic: requestedRunId !== null || isMachineReachable(binding.scope, machine) }]
         : [];
     });
   });
   // Presence timestamps and display metadata do not change a Run read's target
   // or authority. Keep the admitted read alive while those projections refresh.
-  const readTargetsKey = JSON.stringify([requestedRunId, nextReadTargets]);
+  const nextMachineAddresses = serverEntries.flatMap(([serverId, machines]) =>
+    machines.map(machine => ({ serverId, machineId: machine.id.trim() })));
+  const readTargetsKey = JSON.stringify([requestedRunId, nextReadTargets, nextMachineAddresses]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const readTargets = React.useMemo(() => nextReadTargets, [readTargetsKey]);
+  const { readTargets, machineAddresses } = React.useMemo(() => ({
+    readTargets: nextReadTargets, machineAddresses: nextMachineAddresses,
+  }), [readTargetsKey]);
 
   const load = React.useCallback(async (intent?: 'retry') => {
     loadControllerRef.current?.abort();
@@ -182,7 +168,7 @@ export default function RunsScreen() {
     loadControllerRef.current = controller;
     setState({ status: 'loading' });
 
-    const runsByMachineAddressKey: Record<string, readonly DaemonExecutionRunEntry[]> = {};
+    const readsByMachineAddressKey: Record<string, MachineExecutionRunsListResult> = {};
     const retirements = [...machineScopeBindings.values()].map(binding => binding.onRetire(() => controller.abort()));
 
     try {
@@ -195,37 +181,57 @@ export default function RunsScreen() {
           if (intent !== 'retry' && !automatic) return;
 
           const res = await machineExecutionRunsList(machineId, { serverId, accountId, signal: controller.signal });
-          if (!res.ok) throw new Error(res.error || t('runs.failedToLoad'));
           if (!controller.signal.aborted && binding.isCurrent()) {
-            runsByMachineAddressKey[executionRunMachineAddressKey(serverId, machineId)] = res.runs;
+            readsByMachineAddressKey[executionRunMachineAddressKey(serverId, machineId)] = res;
           }
         }),
       );
 
-      if (!controller.signal.aborted) setState({ status: 'loaded', runsByMachineAddressKey });
+      if (!controller.signal.aborted) setState(aggregateMachineRunReads(machineAddresses.map(address => ({
+        ...address, result: readsByMachineAddressKey[executionRunMachineAddressKey(address.serverId, address.machineId)],
+      }))));
     } catch (error) {
       if (!controller.signal.aborted) setState({ status: 'error', error: error instanceof Error ? error.message : t('runs.failedToLoad') });
     } finally {
       for (const retirement of retirements) retirement.dispose();
     }
-  }, [machineScopeBindings, readTargets]);
+  }, [machineScopeBindings, readTargets, machineAddresses]);
 
   React.useEffect(() => {
     void load();
     return () => loadControllerRef.current?.abort();
   }, [load]);
 
+  React.useEffect(() => {
+    if (requestedRunId === null) {
+      openedRunAddressRef.current = null;
+      return;
+    }
+    if (state.status !== 'loaded') return;
+    const matches = serverEntries.flatMap(([serverId, machines]) => machines.flatMap(machine => {
+      const machineId = machine.id.trim();
+      const runs = state.runsByMachineAddressKey[executionRunMachineAddressKey(serverId, machineId)] ?? [];
+      return runs.filter(run => run.runId === requestedRunId).map(run => ({ serverId, machineId, run }));
+    }));
+    if (matches.length !== 1) return;
+    const { serverId, machineId, run } = matches[0];
+    const address = executionRunRowAddressKey(serverId, machineId, run.runId);
+    if (openedRunAddressRef.current === address) return;
+    openedRunAddressRef.current = address;
+    const sessionId = readExecutionRunSessionAssociation(run);
+    void openRunDetails({ serverId, machineId, runId: run.runId, sessionId });
+  }, [openRunDetails, requestedRunId, serverEntries, state]);
+
   const headerRight = React.useCallback(() => {
     return (
-      <Pressable
+      <HappierPressable
         accessibilityRole="button"
         accessibilityLabel={t('runs.a11y.refresh')}
         onPress={() => void load('retry')}
-        hitSlop={10}
         style={({ pressed }) => ({ padding: theme.space.s4, opacity: pressed ? motionTokens.press.opacity : 1 })}
       >
         <Icon name="arrow-clockwise" size={20} color={headerTint} />
-      </Pressable>
+      </HappierPressable>
     );
   }, [headerTint, load]);
 
@@ -239,6 +245,49 @@ export default function RunsScreen() {
   // A Home is named only when runs from more than one Home share the page.
   const showsHomeNames = serverEntries.filter(([, machines]) => machines.length > 0).length > 1;
 
+  const openMachine = (serverId: string, machineId: string) => {
+    router.push(machinePageHref({ door: 'rail', target: { machineId, serverId: serverId || undefined } }) as never);
+  };
+  // Every visible Machine is either read (its rows, possibly none) or unknown; unknown is never zero.
+  // Same-named machines on one Home are told apart by the machine name owner (as the Machines list does).
+  const machineRunEntries = state.status !== 'loaded' ? [] : serverEntries.flatMap(([serverId, machines]) => {
+    const names = resolveMachineDisplayNameParts(machines);
+    return machines.map((machine) => {
+      const machineId = String(machine?.id ?? '').trim();
+      const addressKey = executionRunMachineAddressKey(serverId, machineId);
+      const name = names.get(machine.id) ?? { name: t('runs.unknownMachine'), hint: null };
+      return { serverId, machine, machineId, addressKey, name, runs: selectMachineRunsForPresentation({
+        runs: state.runsByMachineAddressKey[addressKey], showFinished, requestedRunId,
+      }) };
+    });
+  });
+  const runsSummary = summarizeRunListPresentation(machineRunEntries.map(entry => entry.runs));
+  const unavailableByAddressKey = new Map(state.status === 'loaded' ? state.unavailableMachines.map(machine =>
+    [executionRunMachineAddressKey(machine.serverId, machine.machineId), machine] as const) : []);
+  // A refused or failed read is a fact about that Machine, so it leads the quiet ones (nothing running).
+  // A Machine that was not asked (offline when the page read) folds into one counted row: dozens of
+  // offline machines must not bury the ones that answered.
+  const otherMachineEntries = machineRunEntries.filter(entry => !entry.runs || entry.runs.length === 0);
+  const notReadEntries = otherMachineEntries.filter(entry => unavailableByAddressKey.get(entry.addressKey)?.reason === 'not_read');
+  const answeredEntries = otherMachineEntries.filter(entry => unavailableByAddressKey.get(entry.addressKey)?.reason !== 'not_read')
+    .sort((a, b) => Number(unavailableByAddressKey.get(b.addressKey)?.reason === 'read_failed')
+      - Number(unavailableByAddressKey.get(a.addressKey)?.reason === 'read_failed'));
+
+  const renderMachineRow = ({ serverId, machineId, addressKey, name }: (typeof machineRunEntries)[number]) => (
+    <Item
+      key={addressKey}
+      testID="runs.open-machine"
+      title={name.name}
+      titleQualifier={name.hint}
+      subtitle={showsHomeNames
+        ? t('detailPages.runs.onHome', { home: resolveHomeDisplayLabel(getServerProfileById(serverId), serverId) })
+        : undefined}
+      detail={unavailableMachineDetail(unavailableByAddressKey.get(addressKey))}
+      icon={<Icon name="desktop" size={20} color={theme.colors.text.secondary} />}
+      onPress={() => openMachine(serverId, machineId)}
+    />
+  );
+
   const screenOptions = React.useMemo(() => ({
     headerShown: true,
     headerTitle: t('runs.title'),
@@ -246,13 +295,15 @@ export default function RunsScreen() {
   }), [headerRight]);
 
   return (
-    <View style={{ flex: 1, backgroundColor: theme.colors.surface.base }}>
+    <View style={{ flex: 1 }}>
       <Stack.Screen options={screenOptions} />
       <ConstrainedScreenContent style={{ flex: 1 }}>
         <ItemList>
           <PageHeader
             title={t('runs.title')}
             description={t('detailPages.runs.description')}
+            // The filter decides what the page lists: it stays on the page on a phone, not in the overflow.
+            actionsPlacement="page"
             actions={(
               <View style={{ width: 180 }}>
                 <SegmentedTabBar
@@ -283,42 +334,36 @@ export default function RunsScreen() {
                 label: t('settings.addMachine'), testID: 'runs.no-machines.add', onPress: () => router.push('/settings/machines/add' as never),
               }} />
             </ItemGroup>
-          ) : (
-            serverEntries.flatMap(([serverId, machines]) => {
-              if (!Array.isArray(machines) || machines.length === 0) return [];
-              const homeName = showsHomeNames
-                ? resolveHomeDisplayLabel(getServerProfileById(serverId), serverId)
-                : null;
-
-              return machines.map((machine) => {
-                const machineId = String(machine?.id ?? '').trim();
-                const title = getMachineTitle(machine);
-
-                const rawRuns = (state.status === 'loaded'
-                  ? state.runsByMachineAddressKey[executionRunMachineAddressKey(serverId, machineId)]
-                  : null) ?? [];
-                const visibleByStatus = showFinished ? rawRuns : rawRuns.filter((r) => r.status === 'running');
-                const runs = requestedRunId === null
-                  ? visibleByStatus
-                  : visibleByStatus.filter((run) => run.runId === requestedRunId);
-
-                return (
+          ) : (<>
+            {runsSummary.emptyState === 'empty' ? (
+              <EmptyState
+                layout="inline"
+                iconName="play-circle"
+                title={showFinished ? t('detailPages.runs.emptyAll') : t('detailPages.runs.emptyRunning')}
+                subtitle={t('detailPages.runs.emptyDescription')}
+                testID="runs.empty"
+              />
+            ) : null}
+            {machineRunEntries.flatMap(({ serverId, machine, machineId, addressKey, name, runs }) => {
+                if (!runs || runs.length === 0) return [];
+                const homeName = showsHomeNames
+                  ? resolveHomeDisplayLabel(getServerProfileById(serverId), serverId)
+                  : null;
+                return [(
                   <ItemGroup
-                    key={executionRunMachineAddressKey(serverId, machineId)}
-                    title={title}
+                    key={addressKey}
+                    title={formatMachineDisplayNameParts(name)}
                     description={homeName ? t('detailPages.runs.onHome', { home: homeName }) : undefined}
+                    action={(
+                      <SectionActionButton
+                        testID="runs.open-machine"
+                        title={t('runs.openMachine')}
+                        destination
+                        onPress={() => openMachine(serverId, machineId)}
+                      />
+                    )}
                   >
-                    <Item
-                      testID="runs.open-machine"
-                      title={t('runs.openMachine')}
-                      onPress={() => {
-                        router.push(machinePageHref({ door: 'rail', target: { machineId, serverId: serverId || undefined } }) as never);
-                      }}
-                    />
-                    {runs.length === 0 ? (
-                      <Item title={t('runs.empty')} showChevron={false} />
-                    ) : (
-                      runs.slice(0, 50).map((run) => {
+                    {runs.slice(0, 50).map((run) => {
                         const sessionId = readExecutionRunSessionAssociation(run);
                         const canStop = run.status === 'running';
                         const runAddressKey = executionRunRowAddressKey(serverId, machineId, run.runId);
@@ -398,12 +443,8 @@ export default function RunsScreen() {
                             run={run as any}
                             serverId={serverId}
                             selected={run.runId === requestedRunId}
-                            subtitle={formatRunDetails(run)}
-                            onPress={sessionId ? () => router.push(buildScopedSessionRouteHref({
-                              sessionId,
-                              serverId,
-                              suffix: `/runs/${encodeURIComponent(run.runId)}`,
-                            }) as any) : undefined}
+                            subtitle={formatDaemonRunProcessFacts(run)}
+                            onPress={() => openRunDetails({ sessionId, serverId, machineId, runId: run.runId })}
                             rightAccessory={canStop ? (
                               <RunStopButton
                                 serverId={serverId}
@@ -415,13 +456,26 @@ export default function RunsScreen() {
                             ) : null}
                           />
                         );
-                      })
-                    )}
+                    })}
                   </ItemGroup>
-                );
-              });
-            })
-          )}
+                )];
+            })}
+            {otherMachineEntries.length > 0 ? (
+              <ItemGroup
+                title={otherMachineEntries.length < machineRunEntries.length
+                  ? t('detailPages.runs.otherMachinesTitle') : t('detailPages.runs.machinesTitle')}
+                description={runsSummary.unknownMachineCount > 0
+                  ? t('detailPages.runs.uncheckedDescription', { count: runsSummary.unknownMachineCount }) : undefined}
+              >
+                {answeredEntries.map(renderMachineRow)}
+                {notReadEntries.length > 0 ? (
+                  <CountedDisclosureItem testID="runs.offline-machines" title={t('status.offline')} count={notReadEntries.length}>
+                    {notReadEntries.map(renderMachineRow)}
+                  </CountedDisclosureItem>
+                ) : null}
+              </ItemGroup>
+            ) : null}
+          </>)}
         </ItemList>
       </ConstrainedScreenContent>
     </View>

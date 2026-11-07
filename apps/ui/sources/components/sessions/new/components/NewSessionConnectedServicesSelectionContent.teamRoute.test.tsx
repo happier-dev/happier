@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { SelectionListProps } from '@/components/ui/selectionList';
+import { SelectionList } from '@/components/ui/selectionList';
 import type { SessionRoute } from '@/providers/session/resolveSessionRoutePresentation';
 import { renderScreen } from '@/dev/testkit';
 
@@ -10,7 +10,6 @@ import { installNewSessionComponentsCommonModuleMocks } from './newSessionCompon
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const capturedSelectionLists = vi.hoisted(() => [] as SelectionListProps[]);
 const NO_QUOTA_BADGES = vi.hoisted(() => ({}));
 
 installNewSessionComponentsCommonModuleMocks({
@@ -27,34 +26,24 @@ installNewSessionComponentsCommonModuleMocks({
     },
 });
 
-vi.mock('@/components/ui/selectionList', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/components/ui/selectionList')>();
-    return {
-        ...actual,
-        SelectionList: (props: SelectionListProps) => {
-            capturedSelectionLists.push(props);
-            return React.createElement('SelectionList', { testID: props.testID });
-        },
-    };
-});
-
 vi.mock('@/components/ui/rendering/normalizeNodeForView', () => ({
     normalizeNodeForView: (node: React.ReactNode) => node,
 }));
 
+const EMPTY_QUOTA_SNAPSHOTS = vi.hoisted(() => ({}));
+
 vi.mock('@/hooks/server/connectedServices/useConnectedServiceQuotaBadges', () => ({
-    useConnectedServiceQuotaBadges: () => NO_QUOTA_BADGES,
+    useConnectedServiceQuotaBadgeState: () => ({ badgesByKey: NO_QUOTA_BADGES, snapshotsByKey: EMPTY_QUOTA_SNAPSHOTS }),
 }));
 
 const SERVICE = { pluginId: 'happier.agent.codex', localId: 'openai-codex' } as const;
 const SERVICE_ID = 'happier.agent.codex/openai-codex';
 const SELECTION = { source: 'team_resource' as const, resourceId: 'resource-1', deliveryMode: 'brokered' as const };
+const { NewSessionConnectedServicesSelectionContent } = await import('./NewSessionConnectedServicesSelectionContent');
 
 describe('NewSessionConnectedServicesSelectionContent on a Team route', () => {
     async function renderRoute(appliedRoute: SessionRoute, bound: boolean) {
-        const { NewSessionConnectedServicesSelectionContent } = await import('./NewSessionConnectedServicesSelectionContent');
-        capturedSelectionLists.length = 0;
-        await renderScreen(
+        const screen = await renderScreen(
             <NewSessionConnectedServicesSelectionContent
                 supportedServiceIds={[SERVICE_ID]}
                 profileOptionsByServiceId={{}}
@@ -75,7 +64,7 @@ describe('NewSessionConnectedServicesSelectionContent on a Team route', () => {
                 maxHeight={420}
             />,
         );
-        return capturedSelectionLists[capturedSelectionLists.length - 1]!;
+        return screen.findByType(SelectionList).props;
     }
 
     const TEAM_ROUTE: SessionRoute = {

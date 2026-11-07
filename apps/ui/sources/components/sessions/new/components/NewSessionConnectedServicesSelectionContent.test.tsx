@@ -2,12 +2,13 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { SelectionList } from '@/components/ui/selectionList';
+import { normalizeConnectedServiceQuotaProfileRefs, type ConnectedServiceQuotaProfileRefInput } from '@/sync/domains/connectedServices/connectedServiceQuotaProfileRefs';
 import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const capturedSelectionLists = vi.hoisted(() => [] as Array<Record<string, unknown>>);
-const useConnectedServiceQuotaBadgesMock = vi.hoisted(() => vi.fn((_profiles: unknown, _options: unknown) => ({})));
+const useConnectedServiceQuotaBadgesMock = vi.hoisted(() => vi.fn((_profiles: readonly ConnectedServiceQuotaProfileRefInput[], _options: unknown) => ({})));
 
 installNewSessionComponentsCommonModuleMocks({
     reactNative: async () => {
@@ -23,39 +24,19 @@ installNewSessionComponentsCommonModuleMocks({
     },
 });
 
-vi.mock('@/components/ui/selectionList', () => ({
-    SelectionList: (props: Record<string, unknown>) => {
-        capturedSelectionLists.push(props);
-        return React.createElement('SelectionList', props);
-    },
-    resolvePopoverSelectionListHeightBehavior: () => 'measuredToMaxHeight',
-}));
-
-vi.mock('@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName', () => ({
-    resolveConnectedServiceDisplayName: (id: string) => id,
-}));
+const EMPTY_QUOTA_SNAPSHOTS = vi.hoisted(() => ({}));
 
 vi.mock('@/hooks/server/connectedServices/useConnectedServiceQuotaBadges', () => ({
-    useConnectedServiceQuotaBadges: (profiles: unknown, options: unknown) => useConnectedServiceQuotaBadgesMock(profiles, options),
+    useConnectedServiceQuotaBadgeState: (profiles: readonly ConnectedServiceQuotaProfileRefInput[], options: unknown) => ({ badgesByKey: useConnectedServiceQuotaBadgesMock(profiles, options), snapshotsByKey: EMPTY_QUOTA_SNAPSHOTS }),
 }));
 
-vi.mock('./buildNewSessionConnectedServicesSelectionListModel', () => ({
-    buildNewSessionConnectedServicesSelectionListModel: () => ({
-        rootStep: {
-            id: 'root',
-            sections: [{ kind: 'static', id: 'services', options: [{ id: 'service:codex', label: 'Codex' }] }],
-        },
-        selectedOptionId: 'service:codex',
-    }),
-}));
+const { NewSessionConnectedServicesSelectionContent } = await import('./NewSessionConnectedServicesSelectionContent');
 
 describe('NewSessionConnectedServicesSelectionContent', () => {
     it('uses measured native connected-services content height under the computed popover cap', async () => {
-        capturedSelectionLists.length = 0;
         useConnectedServiceQuotaBadgesMock.mockClear();
-        const { NewSessionConnectedServicesSelectionContent } = await import('./NewSessionConnectedServicesSelectionContent');
 
-        await renderScreen(<NewSessionConnectedServicesSelectionContent
+        const screen = await renderScreen(<NewSessionConnectedServicesSelectionContent
             supportedServiceIds={['happier.agent.codex/openai-codex']}
             profileOptionsByServiceId={{}}
             groupOptionsByServiceId={{}}
@@ -65,13 +46,11 @@ describe('NewSessionConnectedServicesSelectionContent', () => {
             maxHeight={360}
         />);
 
-        expect(capturedSelectionLists[0]?.heightBehavior).toBe('measuredToMaxHeight');
+        expect(screen.findByType(SelectionList).props.heightBehavior).toBe('measuredToMaxHeight');
     });
 
     it('keeps a novel qualified service key intact for cache-only quota rows', async () => {
-        capturedSelectionLists.length = 0;
         useConnectedServiceQuotaBadgesMock.mockClear();
-        const { NewSessionConnectedServicesSelectionContent } = await import('./NewSessionConnectedServicesSelectionContent');
 
         await renderScreen(<NewSessionConnectedServicesSelectionContent
             supportedServiceIds={['acme.review/reviewer-service']}
@@ -89,9 +68,12 @@ describe('NewSessionConnectedServicesSelectionContent', () => {
             maxHeight={360}
         />);
 
-        expect(useConnectedServiceQuotaBadgesMock).toHaveBeenCalledWith(
-            [{ serviceId: 'acme.review/reviewer-service', profileId: 'work' }],
-            { fetchPolicy: 'cache_only' },
-        );
+        const [profiles, options] = useConnectedServiceQuotaBadgesMock.mock.calls.at(-1)!;
+        expect(normalizeConnectedServiceQuotaProfileRefs(profiles)).toEqual([
+            expect.objectContaining({ kind: 'qualified', ref: {
+                service: { pluginId: 'acme.review', localId: 'reviewer-service' }, accountId: 'work',
+            } }),
+        ]);
+        expect(options).toEqual({ fetchPolicy: 'cache_only' });
     });
 });

@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import type { ConnectedServiceQuotaMeterV1, QualifiedConnectedAccountRef } from '@happier-dev/protocol';
+import type { ConnectedServiceQuotaMeterV1} from '@happier-dev/protocol/connect/connected-service-schemas';
+import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 
 import { Icon } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
@@ -20,6 +21,7 @@ export type ConnectedServicePoolIndexMember = Readonly<{
     accountId: string;
     title: string;
     enabled: boolean;
+    credentialStatus: unknown;
 }>;
 
 export type ConnectedServicePoolIndexEntry = Readonly<{
@@ -76,8 +78,8 @@ export const ConnectedServicePoolIndexItemView = React.memo(function ConnectedSe
             {props.members.map((member) => {
                 const pct = usage.lowestRemainingByAccountId[member.accountId] ?? null;
                 const tone = pct === null ? 'neutral' : resolveQuotaTone(pct);
-                const color = tone === 'danger' ? theme.colors.state.danger.foreground
-                    : tone === 'warning' ? theme.colors.state.warning.foreground : theme.colors.text.primary;
+                const color = tone === 'danger' ? theme.colors.state.danger.textForeground
+                    : tone === 'warning' ? theme.colors.state.warning.textForeground : theme.colors.text.primary;
                 const active = member.accountId === props.activeAccountId;
                 return (
                     <Text
@@ -110,6 +112,8 @@ export const ConnectedServicePoolIndexItemView = React.memo(function ConnectedSe
                 />
             ))}
         </UsageMeterStack>
+    ) : usage && props.members.length > 0 && usage.room.reporting === 0 && usage.room.unreported === 0 ? (
+        <Text style={styles.subtitle}>{t('common.unavailable')}</Text>
     ) : null;
     const lead = (
         <View style={styles.lead}>
@@ -191,6 +195,7 @@ export const ConnectedServicePoolIndexItem = React.memo(function ConnectedServic
             members: members.map((member) => ({
                 accountId: member.accountId,
                 enabled: member.enabled,
+                credentialStatus: member.credentialStatus,
                 meters: metersByAccountId.get(member.accountId) ?? null,
             })),
             // The derivation follows the snapshots; a reset that passes is read on their next update.

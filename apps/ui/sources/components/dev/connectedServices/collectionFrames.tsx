@@ -4,12 +4,15 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type {
     ConnectedServiceQuotaMeterV1,
-    ConnectedServiceQuotaRecoveryCreditsV1,
-    ProviderAccountSubscriptionV1,
+    ConnectedServiceQuotaRecoveryCreditsV1} from '@happier-dev/protocol/connect/connected-service-schemas';
+import type {
+    ProviderAccountSubscriptionV1} from '@happier-dev/protocol/connect/accountSubscription';
+import type {
     QualifiedConnectedAccountGroupV4,
-    QualifiedConnectedAccountProfileV4,
+    QualifiedConnectedAccountProfileV4} from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import type {
     QualifiedConnectedAccountPurposeBindingTargetV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
 
 import { ConnectedServicesRailView, RailAccountMeta, type ConnectedServicesRailAccountMeta } from '@/components/settings/connectedServices/collection/ConnectedServicesRail';
 import { AgentDefaultMenuButton } from '@/components/settings/connectedServices/defaults/AgentDefaultMenuButton';
@@ -297,6 +300,7 @@ function CollectionFrame(props: Readonly<{ presentation: ConnectedServicesIndexP
                     members: entry.members.map((member) => ({
                         accountId: member.accountId,
                         enabled: member.enabled,
+                        credentialStatus: member.credentialStatus,
                         meters: (USAGE[shortKey(sheet, member.accountId)]?.windows ?? []).slice(0, 2).map(quotaMeter),
                     })),
                     now: NOW,
@@ -394,6 +398,12 @@ function DetailFrame(props: Readonly<{ accountKey: 'chatgpt:personal' | 'chatgpt
             }}
             authenticationModeTitle={t('connectedServicesSettings.detailSignedInWithCode')}
             lastUsedAt={NOW - 9 * MIN}
+            // Held sign-in evidence, as a code sign-in on a Machine records it (the Team account keeps the quiet state).
+            {...(signedOut ? {} : {
+                lastRefreshSuccessAt: NOW - 2 * HOUR,
+                authenticationProvenance: { authenticatedAt: NOW - 13 * DAY, machine: { serverId: 'home', machineId: 'nl2-devbox' } },
+                authenticationMachineName: 'nl2-devbox',
+            })}
             onOpenPool={noop}
             rename={{ currentLabel: signedOut ? 'Team' : 'Personal', onRename: noop }}
             onReconnect={noop}
@@ -419,8 +429,9 @@ function DetailFrame(props: Readonly<{ accountKey: 'chatgpt:personal' | 'chatgpt
                         <AccountDetailResetsSectionView recoveryCredits={usage.resets ?? null} now={NOW} pending={false} onUse={noop} />
                     )} />
             )}
-            usedBySection={(
+            renderUsedBy={(slots) => (
                 <AccountDetailUsedBySectionView
+                    {...slots}
                     rows={signedOut ? [
                         { key: 'pool:Codex', agentId: 'codex', title: 'Codex', subtitle: t('connectedServicesSettings.detailUsedByPool', { pool: 'Codex pool' }), isDefault: false, onPress: noop },
                     ] : [
