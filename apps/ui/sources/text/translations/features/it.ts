@@ -7391,6 +7391,8 @@ const machineDetailPageTranslations = { it: translated({
                 notReported: ({ machine }) => `${machine} ha bisogno di una versione più recente di Happier per mostrare la sua archiviazione.`,
                 error: ({ machine }) => `Impossibile leggere l’archiviazione su ${machine}.`,
                 incomplete: ({ categories }: { categories: string }) => "Impossibile leggere parte dell’archiviazione: " + categories,
+                sizingOn: ({ machine }) => `Misurazione delle cartelle di Happier su ${machine}…`,
+                sizingReason: "Una macchina impegnata può richiedere qualche minuto. Le dimensioni appaiono qui appena risponde.",
                 incompletePermissionRemedy: "Concedi l’accesso amministratore o esegui Happier come proprietario di questa macchina, poi riprova.",
                 openAdminAccess: "Configura l’accesso amministratore",
                 permissionDeniedReason: "Happier non ha il permesso di leggere una cartella di archiviazione.",

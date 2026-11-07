@@ -7418,6 +7418,8 @@ const machineDetailPageTranslations = { ru: translated({
                 notReported: ({ machine }) => `Чтобы показать хранилище, ${machine} нужна более новая версия Happier.`,
                 error: ({ machine }) => `Не удалось прочитать хранилище на ${machine}.`,
                 incomplete: ({ categories }: { categories: string }) => "Не удалось прочитать часть хранилища: " + categories,
+                sizingOn: ({ machine }) => `Измеряем папки Happier на ${machine}…`,
+                sizingReason: "Загруженной машине может понадобиться несколько минут. Размеры появятся здесь, как только она ответит.",
                 incompletePermissionRemedy: "Предоставьте права администратора или запустите Happier от имени владельца этой машины и повторите попытку.",
                 openAdminAccess: "Настроить доступ администратора",
                 permissionDeniedReason: "У Happier нет разрешения на чтение папки хранилища.",

@@ -7381,6 +7381,8 @@ const machineDetailPageTranslations = { 'zh-Hans': translated({
                 notReported: ({ machine }) => `${machine} 需要更新版本的 Happier 才能显示其存储。`,
                 error: ({ machine }) => `无法读取 ${machine} 上的存储。`,
                 incomplete: ({ categories }: { categories: string }) => "部分存储无法读取：" + categories,
+                sizingOn: ({ machine }) => `正在测量 ${machine} 上的 Happier 文件夹…`,
+                sizingReason: "繁忙的机器可能需要几分钟。一旦它响应，大小就会显示在这里。",
                 incompletePermissionRemedy: "请授予管理员访问权限，或以此机器所有者的身份运行 Happier，然后重试。",
                 openAdminAccess: "设置管理员访问权限",
                 permissionDeniedReason: "Happier 没有读取存储文件夹的权限。",

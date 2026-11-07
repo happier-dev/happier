@@ -7386,6 +7386,8 @@ const machineDetailPageTranslations = { ja: translated({
                 notReported: ({ machine }) => `${machine} のストレージを表示するには、より新しい Happier が必要です。`,
                 error: ({ machine }) => `${machine} のストレージを読み取れませんでした。`,
                 incomplete: ({ categories }: { categories: string }) => "ストレージの一部を読み取れませんでした: " + categories,
+                sizingOn: ({ machine }) => `${machine} の Happier フォルダを計測しています…`,
+                sizingReason: "負荷の高いマシンでは数分かかることがあります。応答があり次第ここにサイズが表示されます。",
                 incompletePermissionRemedy: "管理者アクセスを許可するか、このマシンの所有者として Happier を実行して、もう一度試してください。",
                 openAdminAccess: "管理者アクセスを設定",
                 permissionDeniedReason: "Happier にストレージフォルダーを読み取る権限がありません。",

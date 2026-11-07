@@ -7391,6 +7391,8 @@ const machineDetailPageTranslations = { ca: translated({
                 notReported: ({ machine }) => `${machine} necessita una versió més recent de Happier per mostrar el seu emmagatzematge.`,
                 error: ({ machine }) => `No s’ha pogut llegir l’emmagatzematge de ${machine}.`,
                 incomplete: ({ categories }: { categories: string }) => "No s’ha pogut llegir part de l’emmagatzematge: " + categories,
+                sizingOn: ({ machine }) => `Mesurant les carpetes de Happier a ${machine}…`,
+                sizingReason: "Una màquina ocupada pot trigar uns minuts. Les mides apareixen aquí tan aviat com respongui.",
                 incompletePermissionRemedy: "Concedeix accés d’administrador o executa Happier com a propietari d’aquesta màquina i torna-ho a provar.",
                 openAdminAccess: "Configura l’accés d’administrador",
                 permissionDeniedReason: "Happier no té permís per llegir una carpeta d’emmagatzematge.",

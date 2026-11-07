@@ -7383,6 +7383,8 @@ const machineDetailPageTranslations = { de: translated({
                 notReported: ({ machine }) => `${machine} braucht ein neueres Happier, um den Speicherplatz anzuzeigen.`,
                 error: ({ machine }) => `Speicherplatz auf ${machine} konnte nicht gelesen werden.`,
                 incomplete: ({ categories }: { categories: string }) => "Ein Teil des Speichers konnte nicht gelesen werden: " + categories,
+                sizingOn: ({ machine }) => `Happiers Ordner auf ${machine} werden vermessen…`,
+                sizingReason: "Ein ausgelasteter Rechner kann einige Minuten brauchen. Die Größen erscheinen hier, sobald er antwortet.",
                 incompletePermissionRemedy: "Gewähre Administratorzugriff oder führe Happier als Besitzer dieses Rechners aus und versuche es erneut.",
                 openAdminAccess: "Administratorzugriff einrichten",
                 permissionDeniedReason: "Happier hat keine Berechtigung, einen Speicherordner zu lesen.",

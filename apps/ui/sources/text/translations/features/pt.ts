@@ -7391,6 +7391,8 @@ const machineDetailPageTranslations = { pt: translated({
                 notReported: ({ machine }) => `${machine} precisa de uma versão mais recente do Happier para mostrar o armazenamento.`,
                 error: ({ machine }) => `Não foi possível ler o armazenamento em ${machine}.`,
                 incomplete: ({ categories }: { categories: string }) => "Não foi possível ler parte do armazenamento: " + categories,
+                sizingOn: ({ machine }) => `A medir as pastas do Happier em ${machine}…`,
+                sizingReason: "Uma máquina ocupada pode demorar alguns minutos. Os tamanhos aparecem aqui assim que responder.",
                 incompletePermissionRemedy: "Concede acesso de administrador ou executa o Happier como proprietário desta máquina e tenta novamente.",
                 openAdminAccess: "Configurar o acesso de administrador",
                 permissionDeniedReason: "O Happier não tem permissão para ler uma pasta de armazenamento.",

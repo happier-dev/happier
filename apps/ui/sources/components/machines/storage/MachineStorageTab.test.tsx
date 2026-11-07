@@ -569,6 +569,26 @@ describe('MachineStorageTab', () => {
         expect(modal.current!.spies.confirm.mock.calls.at(-1)?.[2]).toMatchObject({ confirmText: t('machineStorage.keep.confirmInUse') });
     });
 
+    it('says in words that a first sizing is still running, and on a swapping machine offers its processes', async () => {
+        // A busy machine can take minutes to answer its first sizing (the daemon joins its running measurement);
+        // the tab says so instead of a wordless skeleton, and offers the one step that helps: the machine's processes.
+        const pressure = { key: 'memory', level: 'needs_you', since: 1, metric: 'memory', nextStep: 'review_processes',
+            kind: 'memory_pressure', pressure: 'critical', swapping: true } as const;
+        const { screen, setParams } = await mount({ id: 'storage' }, { daemonState: { resources: { v: 1, vitals: { state: 'reporting' },
+            host: { logicalCores: 4, memoryTotalBytes: 100, bootedAt: 1 }, attention: { level: 'needs_you', reasons: [pressure] } } } },
+            (rpc) => rpc.method === RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET ? new Promise(() => {}) : undefined);
+        await vi.waitFor(async () => { await act(async () => {}); expect(screen.findByTestId('machine-storage-sizing')).not.toBeNull(); });
+        expect(screen.getTextContent()).toContain(t('machineStorage.states.sizingOn', { machine: 'leeroy-mbp' }));
+        await act(async () => { screen.pressByTestId('machine-storage-sizing-action'); });
+        expect(setParams).toHaveBeenCalledWith({ id: 'processes', sort: 'memory' });
+    });
+
+    it('offers no control that cannot speed up a first sizing on a calm machine', async () => {
+        const { screen } = await mount({ id: 'storage' }, {}, (rpc) => rpc.method === RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET ? new Promise(() => {}) : undefined);
+        await vi.waitFor(async () => { await act(async () => {}); expect(screen.findByTestId('machine-storage-sizing')).not.toBeNull(); });
+        expect(screen.findAllHostsByTestId('machine-storage-sizing-action')).toHaveLength(0);
+    });
+
     it('says a nearly full disk in amber with one callout that opens the prepared low-disk view', async () => {
         const reason = { key: 'disk:mac', level: 'needs_you', since: 1, metric: 'disk', nextStep: 'free_up_space',
             kind: 'disk_nearly_full', volumeId: 'mac', volumeLabel: 'Macintosh HD' } as const;

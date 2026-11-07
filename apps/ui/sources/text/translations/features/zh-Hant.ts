@@ -7381,6 +7381,8 @@ const machineDetailPageTranslations = { 'zh-Hant': translated({
                 notReported: ({ machine }) => `${machine} 需要較新版本的 Happier 才能顯示其儲存空間。`,
                 error: ({ machine }) => `無法讀取 ${machine} 上的儲存空間。`,
                 incomplete: ({ categories }: { categories: string }) => "無法讀取部分儲存空間：" + categories,
+                sizingOn: ({ machine }) => `正在測量 ${machine} 上的 Happier 資料夾…`,
+                sizingReason: "忙碌的機器可能需要幾分鐘。一旦它回應，大小就會顯示在這裡。",
                 incompletePermissionRemedy: "請授予管理員存取權限，或以此機器擁有者的身分執行 Happier，然後再試一次。",
                 openAdminAccess: "設定管理員存取權限",
                 permissionDeniedReason: "Happier 沒有讀取儲存資料夾的權限。",

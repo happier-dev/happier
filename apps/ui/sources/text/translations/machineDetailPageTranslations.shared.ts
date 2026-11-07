@@ -1099,6 +1099,8 @@ export const english = {
             notReported: ({ machine }: { machine: string }) => `${machine} needs a newer Happier to show its storage.`,
             error: ({ machine }: { machine: string }) => `Couldn’t read storage on ${machine}.`,
             incomplete: ({ categories }: { categories: string }) => `Some storage could not be read: ${categories}.`,
+            sizingOn: ({ machine }: { machine: string }) => `Sizing Happier’s folders on ${machine}…`,
+            sizingReason: 'A busy machine can take a few minutes. The sizes appear here as soon as it answers.',
             incompletePermissionRemedy: 'Grant administrator access or run Happier as the Machine owner, then try again.',
             openAdminAccess: 'Set up admin access',
             permissionDeniedReason: 'Happier does not have permission to read a storage folder.',

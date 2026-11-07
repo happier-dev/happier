@@ -7389,6 +7389,8 @@ const machineDetailPageTranslations = { fr: translated({
                 notReported: ({ machine }) => `${machine} a besoin d’une version plus récente de Happier pour afficher son stockage.`,
                 error: ({ machine }) => `Impossible de lire le stockage de ${machine}.`,
                 incomplete: ({ categories }: { categories: string }) => "Une partie du stockage n’a pas pu être lue : " + categories,
+                sizingOn: ({ machine }) => `Mesure des dossiers de Happier sur ${machine}…`,
+                sizingReason: "Une machine chargée peut prendre quelques minutes. Les tailles s’affichent ici dès qu’elle répond.",
                 incompletePermissionRemedy: "Accorde un accès administrateur ou exécute Happier en tant que propriétaire de cette machine, puis réessaie.",
                 openAdminAccess: "Configurer l’accès administrateur",
                 permissionDeniedReason: "Happier n’a pas l’autorisation de lire un dossier de stockage.",

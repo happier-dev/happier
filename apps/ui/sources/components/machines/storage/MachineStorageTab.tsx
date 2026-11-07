@@ -357,7 +357,7 @@ function StorageMainView(
       ) : null}
       {view.kind === 'ready' && !disk ? <StorageReadNotice issues={view.summary.incomplete} onRetry={retry} onOpenRemedy={props.onOpenAdminAccess} /> : null}
       {view.kind === 'loading' ? (
-        <StorageLoading />
+        <StorageLoading serverId={props.serverId} machineId={props.machineId} machineName={props.machineName} setParams={props.setParams} />
       ) : disk ? (
         <StorageWholeDiskView
           serverId={props.serverId}
@@ -1044,8 +1044,26 @@ function StorageSentence(
   );
 }
 
-/** The first sizing (never sized): the sentence, a disk and the breakdown rows at their final size. */
-function StorageLoading() {
+/**
+ * The first sizing (never sized): what is running, in words, with a way to read it again, then a disk and
+ * the breakdown rows at their final size. A busy machine can take minutes; the tab never waits wordlessly.
+ */
+function StorageLoading(props: Readonly<{
+  serverId: string;
+  machineId: string;
+  machineName: string;
+  setParams: (next: MachinePageTabParams) => void;
+}>) {
+  // Reading again would only join the machine's running measurement; the one step that helps a busy
+  // machine is its own published attention action (a swapping machine: Review processes).
+  const resources = useMachineField(props.machineId, 'daemonState', 'resources', { serverId: props.serverId });
+  const action = React.useMemo(() => {
+    for (const reason of readMachinePublishedResources({ resources })?.attention.reasons ?? []) {
+      const resolved = reason.kind === 'memory_pressure' ? resolveMachineReasonAction(reason) : null;
+      if (resolved) return resolved;
+    }
+    return null;
+  }, [resources]);
   const { theme } = useUnistyles();
   const color = theme.colors.surface.skeleton;
   return (
@@ -1054,13 +1072,21 @@ function StorageLoading() {
       accessibilityLabel={t('machineStorage.states.loading')}
       accessibilityRole="progressbar"
     >
-      <ItemGroup surface="none" header="none">
-        <View style={styles.freshness}>
-          <HappierSkeletonBlock color={color} width={96} height={14} />
-        </View>
-        <View style={styles.sentenceSkeleton}>
-          <HappierSkeletonBlock color={color} width="70%" height={16} />
-        </View>
+      <ItemGroup header="none">
+        <SurfaceStateCard
+          testID="machine-storage-sizing"
+          kind="loading"
+          size="line"
+          title={t('machineStorage.states.sizingOn', { machine: props.machineName })}
+          reason={t('machineStorage.states.sizingReason')}
+          {...(action ? {
+            action: {
+              label: action.label,
+              testID: 'machine-storage-sizing-action',
+              onPress: () => props.setParams(action.tab),
+            },
+          } : {})}
+        />
       </ItemGroup>
       <ItemGroup>
         <View style={styles.skeletonVolume}>
@@ -1094,29 +1120,11 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: 'space-between',
     marginLeft: 0,
   },
-  freshness: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    columnGap: theme.space.s6,
-    rowGap: theme.space.s2,
-    minHeight: 24,
-  },
-  freshnessText: {
-    ...Typography.default(),
-    ...happierPageTextMetrics('meta'),
-    color: theme.colors.text.secondary,
-    fontVariant: ['tabular-nums'],
-  },
   accessory: {
     ...Typography.default(),
     ...happierPageTextMetrics('meta'),
     color: theme.colors.text.secondary,
     fontVariant: ['tabular-nums'],
-  },
-  sentenceSkeleton: {
-    marginTop: theme.space.s10,
-    minHeight: 20,
   },
   skeletonVolume: {
     gap: theme.space.s12,

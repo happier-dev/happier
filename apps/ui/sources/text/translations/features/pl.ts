@@ -7409,6 +7409,8 @@ const machineDetailPageTranslations = { pl: translated({
                 notReported: ({ machine }) => `${machine} potrzebuje nowszej wersji Happier, aby pokazać swoje miejsce na dysku.`,
                 error: ({ machine }) => `Nie udało się odczytać miejsca na dysku na ${machine}.`,
                 incomplete: ({ categories }: { categories: string }) => "Nie udało się odczytać części danych: " + categories,
+                sizingOn: ({ machine }) => `Mierzenie folderów Happier na ${machine}…`,
+                sizingReason: "Zajęta maszyna może potrzebować kilku minut. Rozmiary pojawią się tu, gdy tylko odpowie.",
                 incompletePermissionRemedy: "Przyznaj uprawnienia administratora lub uruchom Happier jako właściciel tej maszyny i spróbuj ponownie.",
                 openAdminAccess: "Skonfiguruj dostęp administratora",
                 permissionDeniedReason: "Happier nie ma uprawnień do odczytu folderu przechowywania danych.",
