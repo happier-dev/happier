@@ -235,6 +235,13 @@ export type StorageVolumeCleanupV1 = z.infer<typeof StorageVolumeCleanupV1Schema
 
 export const HappierStorageSummaryV1Schema = lazyZodSchema(() => z.object({
   revision: revision(), sizedAt: time(),
+  // Missing on older producers. A cold measuring result contains no measured rows;
+  // with hasMeasured=true the last figures remain usable while sizing settles.
+  measurement: z.optional(z.discriminatedUnion('status', [
+    z.object({ status: z.literal('ready') }),
+    z.object({ status: z.literal('measuring'), hasMeasured: z.boolean() }),
+    z.object({ status: z.literal('failed'), hasMeasured: z.boolean(), error: z.string() }),
+  ])),
   docker: z.optional(MachineStorageDockerSummaryV1Schema),
   incomplete: z.optional(z.array(StorageReadIssueV1Schema)),
   // The watch cursor includes scan progress; detail readers use their producer's content revision.

@@ -5,13 +5,16 @@ import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 import { setImmediate as yieldToEventLoop } from 'node:timers/promises';
 import { expect, it, onTestFinished, vi } from 'vitest';
-import { HappierStorageSummaryV1Schema, MachineStoragePolicyV1Schema, MachineStorageScanGetResultV1Schema, type MachineStorageScanGetInputV1 } from '@happier-dev/protocol/storage/storageV1';
+import { HappierStorageSummaryV1Schema, MachineStorageScanGetResultV1Schema, type MachineStorageScanGetInputV1 } from '@happier-dev/protocol/storage/storageV1';
 import { openProtectedSqliteDatabaseSync } from '@/daemon/persistence/sqliteSync';
 import { createStorageScanIndex } from './scan/scanIndex';
 import { createStorageService, type StorageOperationActor } from './storageService';
 import { createProcessCustodyFixture } from '@/testkit/processCustodyFixture';
 import { measureNativeDisk } from './measure/nativeDiskMeasure';
 import { withScmWorktreeMutationActivity } from '@/scm/worktreeMutationActivity';
+import { createStoragePolicyFixture } from './storagePolicy.testkit';
+import { withStorageReadTrace } from '@/daemon/externalActions/webLatencyTrace';
+import { logger } from '@/ui/logger';
 
 vi.mock('node:child_process', async importOriginal => {
     const actual = await importOriginal<typeof import('node:child_process')>();
@@ -152,6 +155,9 @@ it.skipIf(process.env.STO13_PROFILE !== '1' && process.env.STO19_PROFILE !== '1'
                 fixture.service.scanGet({ ...fixture.request, scanId: undefined, view: { ...fixture.request.view, nodeId: join(fixture.root, 'cache') } }, { actor }).then(page => { listMs = performance.now() - start; return page; }),
                 fixture.service.summary().then(summary => { summaryMs = performance.now() - start; return summary; }),
             ]);
+            console.log(JSON.stringify({ qa: 'sto13-read', phase, ms: performance.now() - start, listMs, summaryMs, state: page.state?.status,
+                root: page.root && { bytes: page.root.size.allocatedBytes, items: page.root.items }, nodes: page.nodes.length,
+                summaryStates: summary.wholeDisk.scans.map(state => state.status) }));
             MachineStorageScanGetResultV1Schema.parse(page); HappierStorageSummaryV1Schema.parse(summary);
             expect(page.root?.size.allocatedBytes).toBe(page.nodes.reduce((bytes, node) => bytes + node.size.allocatedBytes, 0));
             expect(page.root?.items).toBe(1 + page.nodes.reduce((items, node) => items + node.items, 0));
@@ -168,6 +174,7 @@ it.skipIf(process.env.STO13_PROFILE !== '1' && process.env.STO19_PROFILE !== '1'
                 const start = performance.now();
                 const summary = await fixture.service.summary({ actor });
                 HappierStorageSummaryV1Schema.parse(summary);
+                console.log(JSON.stringify({ qa: 'sto19-summary', phase, ms: performance.now() - start, suggestions: summary.suggestionsTop.length }));
             }
         }
         phase = 'start';
@@ -187,6 +194,9 @@ it.skipIf(process.env.STO13_PROFILE !== '1' && process.env.STO19_PROFILE !== '1'
         const measured = await measureNativeDisk({ paths: [target] });
         expect(finished.page.root?.size.allocatedBytes).toBe(21 * 8 * (process.env.STO19_PROFILE === '1' ? 1704 : 568) * 81920 + measured.totalAllocatedBytes);
         await saveProfile();
+        console.log(JSON.stringify({ qa: 'sto13-sql', pragmas, locks, plans, chargePlan, entryVisits: Object.fromEntries(visits),
+            serializedReadNodes: Object.fromEntries(serialized),
+            statements: [...statements].sort((a, b) => b[1].ms - a[1].ms).slice(0, 12) }));
     } finally {
         scanChild?.stdout?.resume();
         if (scanId) await fixture.service.scanCancel({ machineId: 'machine', scanId }, { actor });
@@ -224,6 +234,7 @@ it.skipIf(process.env.STO15_PROFILE !== '1')('returns a retained page before an 
         const start = performance.now(); const before = batches;
         const page = MachineStorageScanGetResultV1Schema.parse(await fixture.service.scanGet({ ...fixture.request,
             scanId, view: { ...fixture.request.view, nodeId: join(fixture.root, 'cache') } }, { actor }));
+        console.log(JSON.stringify({ qa: 'sto15-unpaused-read', ms: performance.now() - start, before, batches, childClosed }));
         expect(childClosed).toBe(false);
         expect(batches).toBeGreaterThan(before);
         expect(page.state?.status).toBe('running');
@@ -250,14 +261,14 @@ function deferred() {
     return { promise, resolve };
 }
 
-async function retainedFixture(files = 1414, packages = 0, wholeVolume = false) {
+async function retainedFixture(files = 1414, packages = 0, wholeVolume = false, logCount = 650) {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'happier-storage-read-')));
     const home = join(root, 'home'); const scanRoot = join(root, 'cache'); const system = join(root, 'system');
     await Promise.all([mkdir(home), mkdir(scanRoot), mkdir(system)]);
     const children = Array.from({ length: 22 }, (_, index) => join(scanRoot, `folder-${index}`));
     await Promise.all(children.map(path => mkdir(path)));
     await mkdir(join(home, 'logs'));
-    await Promise.all(Array.from({ length: 650 }, (_, index) => writeFile(join(home, 'logs', `${index}.log`), 'fixture')));
+    await Promise.all(Array.from({ length: logCount }, (_, index) => writeFile(join(home, 'logs', `${index}.log`), 'fixture')));
     const volume = { id: 'retained', mountPath: wholeVolume ? scanRoot : root, usedBytes: 0 };
     const index = createStorageScanIndex({ activeServerDir: home });
     await index.initialize([volume], true);
@@ -311,9 +322,9 @@ async function retainedFixture(files = 1414, packages = 0, wholeVolume = false) 
             readProjects: () => ({ status: 'ready', projects: [] }),
             readInUsePaths: () => ({ reliable: true, paths: [...processPaths, held],
                 sessions: processPaths.map((path, i) => ({ path, sessionId: `session-${i % 180}` })) }) },
-        readPolicy: () => MachineStoragePolicyV1Schema.parse({ wholeDiskEnabled: true }),
+        resourcesPolicy: await createStoragePolicyFixture({ wholeDiskEnabled: true }),
         readStorageProtectionFacts: () => ({ systemPaths: [system] }),
-        subscribeVolumeChanges: listener => { volumeListener = listener; return () => { volumeListener = undefined; }; },
+        subscribeChanges: listener => { volumeListener = listener; return () => { volumeListener = undefined; }; },
         readVolumes: () => [{ id: volume.id, label: 'Volume', mount: volume.mountPath, totalBytes: 10_000_000_000, availableBytes: 5_000_000_000 },
             ...(additionalVolume ? [{ id: 'additional', label: 'Additional', mount: join(root, 'additional'), totalBytes: 1_000_000, availableBytes: 500_000 }] : [])] });
     await service.initialize();
@@ -322,6 +333,42 @@ async function retainedFixture(files = 1414, packages = 0, wholeVolume = false) 
         request: { machineId: 'machine', scanId: state.scanId, view: { tab: 'folders', depth: 1, sort: { by: 'size', direction: 'desc' } } } satisfies MachineStorageScanGetInputV1,
         dispose: async () => { service.dispose(); await rm(root, { recursive: true, force: true }); } };
 }
+
+it('does not multiply unrelated catalog comparisons by the returned page size', async () => {
+    const { Session } = await import('node:inspector');
+    const profiler = new Session(); profiler.connect();
+    const post = <T>(method: string, params: object = {}) => new Promise<T>((done, fail) => {
+        profiler.post(method, params, (error, result) => error ? fail(error) : done(result as T));
+    });
+    type Coverage = { result: { url: string; functions: { functionName: string; ranges: { count: number }[] }[] }[] };
+    try {
+        await post('Profiler.enable');
+        const comparisons: number[] = [];
+        for (const logs of [65, 650]) {
+            const fixture = await retainedFixture(1, 0, false, logs);
+            try {
+                // Warm the genuine catalog/index. Count only the subsequent public read.
+                await fixture.service.scanGet(fixture.request, { actor });
+                await post('Profiler.startPreciseCoverage', { callCount: true, detailed: false });
+                const page = await fixture.service.scanGet(fixture.request, { actor });
+                const coverage = await post<Coverage>('Profiler.takePreciseCoverage');
+                await post('Profiler.stopPreciseCoverage');
+                expect(page.nodes).toHaveLength(22);
+                const owner = coverage.result.filter(script => script.url.endsWith('/storage/storagePath.ts'));
+                expect(owner).toHaveLength(1);
+                comparisons.push(owner.flatMap(script => script.functions)
+                    .filter(fn => fn.functionName === 'equal' || fn.functionName === 'contains')
+                    .reduce((count, fn) => count + fn.ranges[0].count, 0));
+            } finally { await fixture.dispose(); }
+        }
+        expect(comparisons[0]).toBeGreaterThan(0);
+        // More unrelated logs may be indexed once; they must add no per-row joins.
+        expect(comparisons[1]).toBe(comparisons[0]);
+    } finally {
+        await post('Profiler.stopPreciseCoverage');
+        profiler.disconnect();
+    }
+}, 60_000);
 
 it('shares one fresh physical protection rule set across a retained 31k-item page', async () => {
     const fixture = await retainedFixture();
@@ -350,29 +397,51 @@ it('shares one fresh physical protection rule set across a retained 31k-item pag
     } finally { await fixture.dispose(); }
 }, 60_000);
 
-it('reuses the storage catalog snapshot across 300k-item pages until an owner invalidates it', async () => {
-    const fixture = await retainedFixture(1704, 8);
+it('reads a cold 300k-item scan page without unrelated catalog walks, retaining fresh protection after invalidation', async () => {
+    const fixture = await retainedFixture(1704, 8, true);
     const directory = vi.mocked(filesystem.readdir);
     const logReads = () => directory.mock.calls.filter(([path]) => String(path) === join(fixture.home, 'logs')).length;
+    const previousTrace = process.env.HAPPIER_WEB_LATENCY_TRACE;
+    const trace = vi.spyOn(logger, 'debug');
     try {
-        const first = await fixture.service.scanGet(fixture.request, { actor });
+        directory.mockClear();
+        process.env.HAPPIER_WEB_LATENCY_TRACE = '1';
+        const started = performance.now();
+        const first = await withStorageReadTrace('fx-fst-b-cold', () => fixture.service.scanGet(fixture.request, { actor }));
+        const coldMs = performance.now() - started;
+        if (previousTrace === undefined) delete process.env.HAPPIER_WEB_LATENCY_TRACE;
+        else process.env.HAPPIER_WEB_LATENCY_TRACE = previousTrace;
         expect(first.root?.items).toBe(300103);
+        expect(first.state?.status).toBe('complete');
         expect(first.nodes).toHaveLength(22);
-        expect(logReads()).toBeGreaterThan(0);
+        const coldLogReads = logReads();
+        const coldTempReads = directory.mock.calls.filter(([path]) => String(path).startsWith(join(fixture.root, 'no-temp'))).length;
+        const stages = trace.mock.calls.flatMap(([label, value]) => label === '[storage-read]'
+            && typeof value === 'object' && value !== null && 'status' in value && value.status === 'settled' ? [value] : []);
+        console.log(JSON.stringify({ qa: 'FX-FST-B', requestId: 'fx-fst-b-cold', coldMs, coldLogReads, coldTempReads,
+            returnedNodes: first.nodes.length, stages }));
+        expect.soft(coldLogReads).toBe(0);
+        expect.soft(coldTempReads).toBe(0);
         directory.mockClear();
         fixture.setHeld(fixture.children[1]);
         const second = await fixture.service.scanGet(fixture.request, { actor });
-        // Category inventory is snapshot data. Process protections are still
-        // current even when no inventory invalidation was emitted.
+        // A page takes fresh protection even when no inventory event was emitted.
         expect(second.nodes.find(node => node.nodeId === fixture.children[0])?.flags.inUse).toBe(false);
         expect(second.nodes.find(node => node.nodeId === fixture.children[1])?.flags.inUse).toBe(true);
         expect(logReads()).toBe(0);
-        // Direct SCM mutations also change inventory even without a Project,
-        // tracked Session or explicit Size again edge.
+        // Invalidating the summary catalog must not make a scan page rediscover it.
         await withScmWorktreeMutationActivity(async () => {});
-        await fixture.service.scanGet(fixture.request, { actor });
-        expect(logReads()).toBeGreaterThan(0);
-    } finally { await fixture.dispose(); }
+        fixture.setHeld(fixture.children[2]);
+        const afterInvalidation = await fixture.service.scanGet(fixture.request, { actor });
+        expect(afterInvalidation.nodes.find(node => node.nodeId === fixture.children[1])?.flags.inUse).toBe(false);
+        expect(afterInvalidation.nodes.find(node => node.nodeId === fixture.children[2])?.flags.inUse).toBe(true);
+        expect(logReads()).toBe(0);
+    } finally {
+        trace.mockRestore();
+        if (previousTrace === undefined) delete process.env.HAPPIER_WEB_LATENCY_TRACE;
+        else process.env.HAPPIER_WEB_LATENCY_TRACE = previousTrace;
+        await fixture.dispose();
+    }
 }, 60_000);
 
 it.skipIf(process.platform !== 'linux' && process.platform !== 'darwin')('serves honest retained snapshots during concurrent index ingestion', async () => {
@@ -500,7 +569,7 @@ it('admits Cancel without waiting for unrelated volume index discovery', async (
     }
 }, 60_000);
 
-it('settles a real scan Cancel while retained list and summary reads await filesystem work', async () => {
+it('settles a real scan Cancel while retained list and explicit refresh await filesystem work', async () => {
     const fixture = await retainedFixture();
     const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
     const projectionEntered = deferred(); const projectionRelease = deferred();
@@ -533,7 +602,7 @@ it('settles a real scan Cancel while retained list and summary reads await files
         // edge makes the concurrent summary require genuinely new inventory.
         fixture.service.invalidate();
         holdSummary = true;
-        summary = fixture.service.summary({ signal: summaryController.signal }).catch(error => error).finally(() => { summaryFinished = true; });
+        summary = fixture.service.refresh({ signal: summaryController.signal }).catch(error => error).finally(() => { summaryFinished = true; });
         await summaryEntered.promise;
         const cancel = fixture.service.scanCancel({ machineId: 'machine', scanId: running.scanId }, { actor });
         projectionRelease.resolve();

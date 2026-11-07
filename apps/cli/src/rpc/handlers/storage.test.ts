@@ -102,6 +102,7 @@ describe('lazy storage Machine RPC', () => {
                 { id: 'locked', label: 'Locked', mount: locked, totalBytes: 2000, availableBytes: 400 }] }) });
         try {
             const read = handlers.get(RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET)!;
+            await handlers.get(RPC_METHODS.DAEMON_STORAGE_SIZE_REFRESH)!({ machineId: 'machine' }, context());
             const summary = HappierStorageSummaryV1Schema.parse(await read({ machineId: 'machine' }, context()));
             expect(summary.volumes).toEqual(expect.arrayContaining([
                 expect.objectContaining({ volume: expect.objectContaining({ volumeId: 'main' }), cleanup: { kind: 'available' } }),
@@ -278,6 +279,7 @@ describe('lazy storage Machine RPC', () => {
     it('exposes Machine categories to Manage and only shared capacity totals to Use', async () => {
         const { handlers, routes } = setup();
         try {
+            await handlers.get(RPC_METHODS.DAEMON_STORAGE_SIZE_REFRESH)!({ machineId: 'machine' }, context());
             const read = handlers.get(RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET)!;
             for (const actor of ['owner', 'manager']) {
                 expect(await read({ machineId: 'machine' }, context(actor))).toMatchObject({ categories: expect.arrayContaining([expect.objectContaining({ categoryId: 'ownData',
@@ -356,8 +358,9 @@ describe('lazy storage Machine RPC', () => {
         const { handlers, routes } = setup({ target: () => target });
         try {
             const previous = await routes.getService(target);
-            expect((await previous.summary()).volumes[0]?.volume.volumeId).toBe('home');
+            expect((await previous.refresh()).volumes[0]?.volume.volumeId).toBe('home');
             target = { ...identity, serverId: 'replacement-home' };
+            await (await routes.getService(target)).refresh();
             expect(await handlers.get(RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET)!({ serverId: target.serverId, machineId: 'machine' }, context()))
                 .toMatchObject({ volumes: [{ volume: { volumeId: 'replacement-home' } }] });
             await expect(previous.summary()).rejects.toMatchObject({ name: 'AbortError' });
@@ -504,6 +507,7 @@ describe.skipIf(process.platform !== 'linux' && process.platform !== 'darwin')('
         const parses = [HappierStorageSummaryV1Schema, MachineStorageCategoryListResultV1Schema,
             MachineStoragePileResultV1Schema, MachineStorageWatchResultV1Schema].map(schema => vi.spyOn(schema, 'parse'));
         try {
+            await request(RPC_METHODS.DAEMON_STORAGE_SIZE_REFRESH, {});
             const owner = await request(RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET, {});
             expect(owner).toMatchObject({ categories: expect.arrayContaining([
                 expect.objectContaining({ categoryId: 'sessionFolders', count: 2 }),

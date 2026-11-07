@@ -578,7 +578,10 @@ export function createStorageOperations(input: Readonly<{
                 }), { callerKind: actor.kind }))).items : [];
             await assertActor(actor);
             policy();
-            return { ...current, revision: input.revision(), pile: projection.result.summary, pileRevision: projection.contentRevision,
+            // Keep the cursor paired with the supplied measurement. Protection
+            // or pile I/O may span a newer measurement publication; its revision
+            // must remain visible to the next watch rather than being consumed here.
+            return { ...current, pile: projection.result.summary, pileRevision: projection.contentRevision,
                 itemsRevision: detailRevision(actor, 'items', {
                     worktrees: worktreeItems(candidates, actor).map(item => ({ item: publicStorageItem(item), projectIds: item.projectIds })),
                     suggestions: eligibleSuggestions,

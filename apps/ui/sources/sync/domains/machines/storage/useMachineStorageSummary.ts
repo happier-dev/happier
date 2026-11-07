@@ -35,9 +35,17 @@ export function useMachineStorageSummary(input: MachineStorageHookInput): Machin
     const { key, enabled, offline, daemonStateVersion } = useMachineStorageTarget(input);
     useMachineStorageDemand(key, enabled);
     useMachineResourceLiveDemand([{ ...key, daemonStateVersion }], { detail: 'summary', enabled });
-    const status = useMachineStorageSelection(key, selectStorageStatus);
+    const storedStatus = useMachineStorageSelection(key, selectStorageStatus);
     const storedSummary = useMachineStorageSelection(key, selectStorageSummary);
-    const failure = useMachineStorageSelection(key, selectStorageFailure);
+    const storedFailure = useMachineStorageSelection(key, selectStorageFailure);
+    const measurement = storedSummary?.measurement;
+    // Retain the raw progress cursor in the store so its ordinary watch stays
+    // subscribed, while presentation never mistakes a cold result for zero.
+    const unmeasured = measurement && measurement.status !== 'ready' && !measurement.hasMeasured;
+    const status = storedStatus === 'ready' && measurement?.status === 'failed' ? 'error'
+        : storedStatus === 'ready' && unmeasured ? 'loading' : storedStatus;
+    const failure = React.useMemo(() => storedFailure ?? (measurement?.status === 'failed'
+        ? { ok: false as const, reason: 'request_failed' as const, error: measurement.error } : undefined), [storedFailure, measurement]);
     const resourceKey = React.useMemo(() => ({ ...key, view: 'summary' as const }), [key]);
     const subscribeCapacity = React.useCallback((listener: () => void) => machineResourceStore.observe(resourceKey, listener), [resourceKey]);
     const readCapacity = React.useCallback(() => {
@@ -45,8 +53,11 @@ export function useMachineStorageSummary(input: MachineStorageHookInput): Machin
         return disk?.reported ? disk.volumes : null;
     }, [resourceKey]);
     const capacity = React.useSyncExternalStore(subscribeCapacity, readCapacity, readCapacity);
-    const summary = React.useMemo(() => joinCapacity(storedSummary, capacity), [storedSummary, capacity]);
-    const retry = React.useCallback(() => machineStorageStore.retry(key), [key]);
+    const summary = React.useMemo(() => joinCapacity(unmeasured ? null : storedSummary, capacity), [unmeasured, storedSummary, capacity]);
+    const retry = React.useCallback(() => {
+        if (measurement?.status === 'failed') void machineStorageStore.sizeAgain(key);
+        else machineStorageStore.retry(key);
+    }, [key, measurement?.status]);
     const sizeAgain = React.useCallback(() => machineStorageStore.sizeAgain(key), [key]);
     return React.useMemo(() => ({ status, summary, failure, offline, retry, sizeAgain }), [status, summary, failure, offline, retry, sizeAgain]);
 }

@@ -41,6 +41,44 @@ beforeEach(async () => { await home.reset(); machineStorageStore.reset(); machin
 afterEach(async () => { standardCleanup(); machineStorageStore.reset(); machineResourceStore.reset(); storage.setState(beforeState); await home.reset(); });
 
 describe('machine storage hooks', () => {
+    it('keeps cold measurement in Sizing and advances through the existing watch to measured figures', async () => {
+        const serverId = await home.addHome({ name: 'Storage Home', serverUrl: 'https://storage-sizing.test', serverIdentityId: 'srv_storage_sizing', accountId: 'owner' });
+        await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: 'machine', active: true, activeAt: Date.now() })]);
+        home.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: {} }, version: 1 } });
+        const watches: Array<ReturnType<typeof createDeferred<MachineStorageWatchResultV1>>> = [];
+        transport.rpc.mockImplementation(async ({ method }: { method: string }) => {
+            if (method === RPC_METHODS.DAEMON_STORAGE_WATCH) {
+                const answer = createDeferred<MachineStorageWatchResultV1>(); watches.push(answer); return answer.promise;
+            }
+            if (method === RPC_METHODS.MACHINES_VITALS_GET) return { state: 'unavailable', reason: 'unavailable' };
+            if (method === RPC_METHODS.DAEMON_STORAGE_SIZE_REFRESH) return { ...report(4), measurement: { status: 'ready' } };
+            return { ...report(1), categories: [], measurement: { status: 'measuring', hasMeasured: false } };
+        });
+        const hook = await renderHook(() => useMachineStorageSummary({ serverId, machineId: 'machine', expectedAccountId: 'owner' }));
+        try {
+            await act(async () => { await vi.waitFor(() => expect(watches).toHaveLength(1)); });
+            expect(hook.getCurrent()).toMatchObject({ status: 'loading', summary: null });
+            expect(selectStorageTabView({ ...hook.getCurrent(), recipient: false }).kind).toBe('loading');
+            await act(async () => {
+                watches[0]!.resolve({ changed: true, summary: { ...report(2), measurement: { status: 'ready' } } });
+                await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ status: 'ready', summary: { revision: 2 } }));
+            });
+            expect(selectStorageTabView({ ...hook.getCurrent(), recipient: false }).kind).toBe('ready');
+            expect(transport.rpc.mock.calls.filter(([input]) => input.method === RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET)).toHaveLength(1);
+            await act(async () => {
+                await vi.waitFor(() => expect(watches).toHaveLength(2));
+                watches[1]!.resolve({ changed: true, summary: { ...report(2), revision: 3,
+                    measurement: { status: 'failed', hasMeasured: true, error: 'Storage measurement failed' } } });
+                await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ status: 'error',
+                    summary: { sizedAt: 100 }, failure: { reason: 'request_failed' } }));
+            });
+            await act(async () => {
+                hook.getCurrent().retry();
+                await vi.waitFor(() => expect(transport.rpc.mock.calls.filter(([input]) => input.method === RPC_METHODS.DAEMON_STORAGE_SIZE_REFRESH)).toHaveLength(1));
+                await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ status: 'ready', summary: { revision: 4 } }));
+            });
+        } finally { await hook.unmount(); }
+    });
     it('joins live Vitals capacity without rereading Storage or changing its summary on CPU-only ticks', async () => {
         const serverId = await home.addHome({ name: 'Storage Home', serverUrl: 'https://storage-vitals.test', serverIdentityId: 'srv_storage_vitals', accountId: 'owner' });
         await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: 'machine', active: true, activeAt: Date.now() })]);

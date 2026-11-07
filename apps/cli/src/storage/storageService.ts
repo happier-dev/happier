@@ -119,8 +119,9 @@ export function createStorageService(deps: StorageServiceDeps) {
     // Same event-invalidated observation as sizes; only its presentation window
     // crosses summary RPC/watch. Keep all rows for fresh actor filtering/backfill.
     let suggestions: readonly StorageItemV1[] = [];
-    type Operation = { controller: AbortController; readers: number; done: Promise<HappierStorageSummaryV1> };
+    type Operation = { controller: AbortController; readers: number; background: boolean; done: Promise<HappierStorageSummaryV1> };
     let pending: Operation | null = null;
+    let measurementError: string | undefined;
     const abortError = () => Object.assign(new Error('Storage request cancelled'), { name: 'AbortError' });
     const notify = () => { for (const listener of listeners) listener(); };
     const invalidate = () => { if (disposed) return; dirty = true; revision += 1; notify(); };
@@ -354,7 +355,6 @@ export function createStorageService(deps: StorageServiceDeps) {
         sizedTrashEntries = trashEntries;
         suggestions = nextSuggestions;
         cached = result;
-        notify();
         return result;
     }
 
@@ -363,14 +363,23 @@ export function createStorageService(deps: StorageServiceDeps) {
         const controller = new AbortController();
         controllers.add(controller);
         dirty = false;
+        measurementError = undefined;
         const measuredRevision = ++revision;
-        const operation: Operation = { controller, readers: 0,
+        const operation: Operation = { controller, readers: 0, background: false,
             done: measure(controller.signal, measuredRevision).catch(error => {
-                if (pending === operation) dirty = true;
+                if (pending === operation) {
+                    if (controller.signal.aborted) dirty = true;
+                    // Summary is also shared with Use recipients; native errors
+                    // can contain private owner paths and stay out of this fact.
+                    else measurementError = 'Storage measurement failed';
+                }
                 throw error;
             }).finally(() => {
                 controllers.delete(controller);
-                if (pending === operation) pending = null;
+                if (pending === operation) {
+                    pending = null;
+                    if (!disposed) { revision += 1; notify(); }
+                }
             }),
         };
         pending = operation;
@@ -389,7 +398,7 @@ export function createStorageService(deps: StorageServiceDeps) {
                 complete();
             };
             const onAbort = () => finish(() => {
-                if (operation.readers !== 0) { reject(abortError()); return; }
+                if (operation.readers !== 0 || operation.background) { reject(abortError()); return; }
                 operation.controller.abort();
                 // The last reader owns native retirement; do not report its cancellation
                 // before the helper's close/settlement has reached the existing adapter.
@@ -400,22 +409,43 @@ export function createStorageService(deps: StorageServiceDeps) {
             if (signal?.aborted) onAbort();
         });
     }
+    async function readMeasured(signal?: AbortSignal): Promise<void> {
+        if (!cached || dirty || pending || measurementError !== undefined) await join(begin(), signal);
+    }
     async function summary(options: Readonly<{ signal?: AbortSignal; actor?: StorageOperationActor; context?: ActionExecutorContext }> = {}): Promise<HappierStorageSummaryV1> {
         assertActive(options.signal);
         requirePolicy();
-        const measured = cached && !dirty && !pending ? cached : await timeWebLatencyPhase('storage.summary.measurement', () => join(begin(), options.signal));
-        // Only explicit Manage Actions pass context. Watches and filesystem
-        // invalidation retain the last projection without native reads.
+        if (dirty || pending) {
+            const operation = begin();
+            operation.background = true;
+            // Reads own demand, not the measurement's lifetime. The service keeps
+            // it alive until settlement or disposal, even if this reader leaves.
+            void operation.done.catch(() => {});
+        }
+        // Explicit demand may read Docker or initialize scan state. Capture the
+        // measurement and its cursor together after those asynchronous reads.
         if (options.context && options.actor) {
             docker = deps.readDockerStorage ? await deps.readDockerStorage({ actor: options.actor, context: options.context })
                 : { kind: 'unavailable', reason: 'native_runtime_unavailable' };
         }
+        const scanStates = scanOwner ? [...(await timeWebLatencyPhase('storage.summary.scans', scans)).index.states()] : [];
+        assertActive(options.signal);
+        const measured: HappierStorageSummaryV1 = cached ?? {
+            revision, sizedAt: 0, volumes: [], categories: [], suggestionsTop: [],
+            pile: { count: 0, freesBytes: 0, droppedSinceLastView: [] },
+            trash: { count: 0, allocatedBytes: 0 },
+            wholeDisk: { enabled: readWholeDiskEnabled() === true, scans: [] },
+        };
+        const measurement: NonNullable<HappierStorageSummaryV1['measurement']> = pending || dirty
+            ? { status: 'measuring', hasMeasured: cached !== null }
+            : measurementError !== undefined ? { status: 'failed', hasMeasured: cached !== null, error: measurementError }
+                : { status: 'ready' };
         // One-shot Action reads join the current capacity from Vitals without
         // publishing a Storage revision or measuring any Storage tree.
         const capacity = new Map(deps.readVolumes().map(volume => [volume.id, volume]));
-        const current = { ...measured, ...(docker ? { docker } : {}), revision, wholeDisk: {
+        const current = { ...measured, measurement, ...(docker ? { docker } : {}), revision, wholeDisk: {
             enabled: readWholeDiskEnabled() === true,
-            scans: scanOwner ? [...(await timeWebLatencyPhase('storage.summary.scans', scans)).index.states()] : [],
+            scans: scanStates,
         }, volumes: measured.volumes.map(volume => {
             const latest = capacity.get(volume.volume.volumeId);
             if (!latest) return volume;
@@ -448,7 +478,7 @@ export function createStorageService(deps: StorageServiceDeps) {
     const operations = createStorageOperations({ readPolicy: requirePolicy, deps: { ...deps, readCompletedStorageScan,
         readIndexedStorageItem: deps.readIndexedStorageItem ?? (async ref => (await scans()).index.readNode(ref.itemId) ?? null) }, catalog, revision: () => revision, invalidate,
         setTrashRoots: paths => { currentTrashRoots = paths; },
-        readSizedItems: async signal => { await summary({ signal }); return items; },
+        readSizedItems: async signal => { await readMeasured(signal); return items; },
         readIncomplete: () => cached?.incomplete ?? [],
     });
     const protectedFolders = createStorageProtectedFolders({ resourcesPolicy: deps.resourcesPolicy,
@@ -562,6 +592,7 @@ export function createStorageService(deps: StorageServiceDeps) {
                         path: entry.originalPath, title: entry.title, size: entry.size, lastChangedAt: entry.movedAt,
                         evidence: ['trash_entry'], verdict: 'safe', reason: { code: 'old' }, collectable: false })) };
             }
+            await readMeasured(options.signal);
             const current = await summary({ signal: options.signal });
             // The admitted caller's readonly Session scope filters the snapshot;
             // keep local lifetime checks before stripping its private bindings.

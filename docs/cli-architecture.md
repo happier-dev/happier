@@ -3768,8 +3768,16 @@ The common temporary-directory owner resolves the trusted OS temp parent to its
 physical path (including macOS `/var` aliases), while still rejecting a symlink
 for the private current-user leaf. The native helper's no-follow rule is unchanged.
 
-Snapshots retain their last successful sizes until owner invalidation or explicit
-Size again. Vitals alone publishes capacity changes. Mounted Storage consumers
+Snapshots retain their last successful sizes across owner invalidation. Summary
+reads return those figures immediately with `measurement: {status: 'measuring',
+hasMeasured: true}` while the single demand-started measurement runs. Before the
+first measurement, the same fact has `hasMeasured: false` and no measured rows;
+consumers keep showing Sizing rather than a measured zero. Settlement publishes
+one new watch revision with `status: 'ready'`, or `status: 'failed'` with an error
+and the last figures retained. Failed background work does not retry on every read;
+an owner change or explicit Size again retries it. Size again and category-detail
+reads still await sizing. No measurement timer or timeout is added.
+Vitals alone publishes capacity changes. Mounted Storage consumers
 join its existing shared Vitals subscription with the measured Storage snapshot;
 capacity changes neither advance Storage's revision nor project actors, enumerate
 processes or walk the pile. One-shot Storage reads join current Vitals capacity

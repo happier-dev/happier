@@ -7177,6 +7177,17 @@ additive-open/drop; they confer no effect authority. Older readers drop the fiel
 new readers accept its absence as unreported, and no request, persisted format,
 Action or wire epoch changes. Scan and Trash consume the daemon protection owner.
 
+Storage summaries also add optional `measurement` presentation facts: `ready`,
+`measuring` with `hasMeasured`, or `failed` with `hasMeasured` and an error message
+that contains no native paths. The daemon returns last-measured figures during sizing, and no
+measured rows before the first measurement. New consumers preserve Sizing for
+that cold result and keep the existing revision watch subscribed. Absence retains
+the legacy measured-summary interpretation; older additive-open/drop readers
+discard the field. This development producer/consumer change adds no Action,
+request, persisted format or wire epoch; the predecessor basis above has no
+Storage domain. Current clients need the measurement-aware reader to distinguish
+an unmeasured result from an empty inventory.
+
 Unreleased 0.3 backup restore accepts optional `backupOperationId` to select an
 exact retained scheduled run alongside its snapshot `restoreBackupId`. Omitting
 it preserves pre-migration receipt selection. Backup run results optionally retain
@@ -8678,6 +8689,15 @@ This is an unpublished operation V2 presentation extension under the same direct
 cut, requiring matching current readers, not a new capability, retry authority,
 persistence format or released-client update floor.
 
+Activation of an already enrolled managed guest retains a separate closed
+`managedService` detail on `background_service_failed`: the failing `install`,
+`restart`, or native-process `start` step, its integer exit status, and a stderr
+tail redacted by the existing sensitive-text redactor and bounded by the process
+owner's diagnostic capture budget. It carries no stdout or command arguments.
+The generic `failureCause` remains content-free. This unpublished V2 diagnostic
+requires matching current readers; V1 still omits details. Service activation
+order, timeout ownership and restart behavior are unchanged.
+
 Unexpected Action exceptions in the development read retain optional `failureCause`
 on Action and operation failures: the producer phase, known exception class,
 producer-declared identifier code (or null), and HTTP status (or null). This replaces the
@@ -8735,6 +8755,14 @@ an older strict development report reader rejects the added field. Update the
 controller payload and server together; this direct cut adds no capability gate,
 auth scope or migration. Facts fill the existing `reviewedFacts` column without
 rewriting the signed admitted input or replacing an existing reviewed snapshot.
+
+An admitted managed row resolves its native schema from that retained reviewed
+provisioner before consulting installed declarations. A controller republishing
+its declaration therefore cannot invalidate a later report for the admitted
+resource or prevent a successful observation from replacing `bootstrap.incomplete`.
+Rows without retained provisioner facts still use the existing installed-declaration
+lookup. New acquisitions continue selecting the current installed declaration;
+report currentness and native-resource validation are unchanged.
 
 Managed native failures in the same development V2 read retain a closed
 `managedNative` detail with `nativeCause`: an HTTP status class and optional
