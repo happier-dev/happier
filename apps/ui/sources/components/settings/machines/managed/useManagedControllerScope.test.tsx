@@ -51,8 +51,12 @@ describe('Managed controller scope', () => {
     try {
       expect(hook.getCurrent().controller?.machineId).toBe(intent === 'default' ? guest.id : computer.id);
       if (intent === 'none') {
-        await act(async () => storage.setState({ machineListByServerId: { srv_build: [guest] } }));
-        expect(hook.getCurrent().controller).toBeUndefined();
+        await act(async () => {
+          storage.setState({ machineListByServerId: { srv_build: [guest] } });
+          storage.getState().markMachineListSettled(serverId);
+        });
+        expect(hook.getCurrent().controller?.machineId).toBe(computer.id);
+        expect(hook.getCurrent().selection?.state.kind).toBe('missing');
       }
       const target = hook.getCurrent().selection?.pickerRows.find(row => row.candidate.target.machineId === guest.id)?.candidate.target;
       expect(target).toBeDefined();

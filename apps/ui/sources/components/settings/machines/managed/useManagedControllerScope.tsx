@@ -108,7 +108,7 @@ export function useManagedControllerScope(
   const preferredMachineId = input.preferred?.machineId;
   const preferredInstallationId = input.preferred?.installationId;
   const namedRetained = scopedChoice?.explicit ? scopedChoice.controller
-    : preferredMachineId && preferredInstallationId ? input.preferred : undefined;
+    : preferredMachineId && preferredInstallationId ? input.preferred : scopedChoice?.controller;
   const { onSelect } = input;
 
   // The chooser owns its inventory demand, including an answer that removes its last row.
@@ -185,7 +185,6 @@ export function useManagedControllerScope(
   );
   const automaticState = React.useMemo(() => {
     const readScope = binding?.isCurrent() ? binding.scope : null;
-    const retainedAutomatic = scopedChoice && !scopedChoice.explicit ? scopedChoice.controller : undefined;
     return resolveMachineAdministrationTargetState({
       storedTarget: defaultTarget,
       candidates: scopedRows.map(row => row.candidate),
@@ -201,19 +200,17 @@ export function useManagedControllerScope(
           const leftId = left.target.machineId;
           const rightId = right.target.machineId;
           return Number(installedProvisionerMachines.has(rightId)) - Number(installedProvisionerMachines.has(leftId))
-            || Number(rightId === retainedAutomatic?.machineId && eligibleById.get(rightId)?.installationId === retainedAutomatic?.installationId)
-              - Number(leftId === retainedAutomatic?.machineId && eligibleById.get(leftId)?.installationId === retainedAutomatic?.installationId)
             || Number(!!rememberedTarget && machineAdministrationTargetsEqual(right.target, rememberedTarget))
               - Number(!!rememberedTarget && machineAdministrationTargetsEqual(left.target, rememberedTarget))
             || Number(rightId === thisMachineId) - Number(leftId === thisMachineId);
         },
       },
     });
-  }, [binding, defaultTarget, eligibleById, installedProvisionerMachines, rememberedTarget, scopedChoice, scopedRows, thisMachineId, unsupportedProvisionerMachines]);
+  }, [binding, defaultTarget, eligibleById, installedProvisionerMachines, rememberedTarget, scopedRows, thisMachineId, unsupportedProvisionerMachines]);
   // Kept identity-stable by its ids: presence updates must not restart the reads it scopes.
   const preferred = React.useMemo(() => {
-    // A draft keeps its exact installation even when asleep, missing or replaced; fresh execution
-    // admission decides whether it can run. Inventory churn must never silently redirect it.
+    // Resolve a default only once per page scope. Availability updates its status, never its identity;
+    // fresh execution admission still decides whether the retained installation can run.
     if (namedRetained) return namedRetained;
     const machine = automaticState.kind !== 'unselected'
       && (automaticState.kind === 'online' || defaultTarget && automaticState.snapshot)
@@ -243,7 +240,9 @@ export function useManagedControllerScope(
         rows.find(
           (row) => areServerProfileIdentifiersEquivalent(row.serverId, input.serverId)
             && row.candidate.target.machineId === controller?.machineId,
-        )?.candidate.target ?? null;
+        )?.candidate.target ?? (controller && binding?.isCurrent()
+          ? { serverIdentityId: binding.scope.serverId, machineId: controller.machineId }
+          : null);
       const matchesAccount = doesMachineAdministrationTargetMatchActiveAccount({ target: selectedTarget, activeAccountServerId: activeAccountScope?.serverId });
       const resolveExecutionTarget = (options?: MachineAdministrationExecutionTargetOptions) => {
         if (!matchesAccount || !selectedTarget || !controller || !binding?.isCurrent()) return null;

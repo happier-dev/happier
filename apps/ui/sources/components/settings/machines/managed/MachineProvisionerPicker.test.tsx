@@ -398,18 +398,19 @@ describe('provisioner picker demand', () => {
     await act(async () => replacePluginAccountAvailabilityProjection({ scope, snapshot: {
       availabilityCursor: 3, intentReads: [], materializations: materializations.map(row => row.machineId === 'controller-126' ? { ...row, enabled: false } : row), snapshots: [],
     } }));
-    expect(restored.getCurrent().controller?.machineId).toBe('58f6');
+    // R2: once resolved, changing declarations does not choose another controller.
+    expect(restored.getCurrent().controller?.machineId).toBe('controller-126');
     // A settled source-bound declaration failure is unknown support, never a
     // negative capability fact. The real report strips the inline manifest.
     await act(async () => replacePluginAccountAvailabilityProjection({ scope, snapshot: {
       availabilityCursor: 4, intentReads: [], materializations: materializations.map(row =>
         projectPluginMachineMaterializationReportFactsV1(row.machineId === 'controller-126' ? { ...row, enabled: false } : row)), snapshots: [],
     } }));
-    expect(restored.getCurrent().controller?.machineId).toBe('58f6');
+    expect(restored.getCurrent().controller?.machineId).toBe('controller-126');
     await act(async () => replacePluginAccountAvailabilityProjection({ scope, snapshot: {
       availabilityCursor: 5, intentReads: [], materializations: [], snapshots: [],
     } }));
-    expect(restored.getCurrent().controller).toBeUndefined();
+    expect(restored.getCurrent().controller?.machineId).toBe('controller-126');
     expect(harness.requests.length - baselineRequests).toBe(0);
     await restored.unmount();
     const explicit = await renderHook(() => useManagedControllerScope({ serverId, testIDPrefix: 'capable.scope',
@@ -526,7 +527,9 @@ describe('provisioner picker demand', () => {
     expect(renders - baselineRenders).toBe(0);
     expect(hook.getCurrent().managed.selection!.pickerRows).toBe(originalRows);
     await act(async () => publishMachineActivity(machines[0]!, { active: false, activeAt: 0 }, []));
-    expect(hook.getCurrent().managed.controller?.machineId).toBe('controller-001');
+    // R2: keep the resolved target and publish its offline state instead of redirecting.
+    expect(hook.getCurrent().managed.controller?.machineId).toBe('controller-000');
+    expect(hook.getCurrent().managed.selection?.state.kind).toBe('offline');
     expect(hook.getCurrent().managed.selection!.pickerRows.at(-1)!.candidate.availability).toBe('offline');
     expect(hook.getCurrent().administration.pickerRows.find(row => row.candidate.target.machineId === machines[0]!.id)
       ?.candidate.availability).toBe('offline');
@@ -626,8 +629,9 @@ describe('provisioner picker demand', () => {
     expect(scope.getCurrent().controller?.machineId).toBe('a');
     await act(async () => storage.setState({ machineListByServerId: { srv_build: [online('z'), asleep,
       createControllerMachineFixture({ id: 'a', installationId: 'a-installation', active: false, activeAt: 0 })] } }));
-    // An automatic pick whose machine went offline yields to the online controller.
-    expect(scope.getCurrent().controller?.machineId).toBe('z');
+    // R2: an unavailable resolved default stays selected until the person chooses.
+    expect(scope.getCurrent().controller?.machineId).toBe('a');
+    expect(scope.getCurrent().selection?.state.kind).toBe('offline');
     const target = scope.getCurrent().selection?.pickerRows.find(row => row.candidate.target.machineId === 'z')?.candidate.target;
     expect(target).toBeDefined();
     await act(async () => scope.getCurrent().selection?.selectTarget(target!));
@@ -673,7 +677,7 @@ describe('provisioner picker demand', () => {
     expect(second.getCurrent().controller?.machineId).toBe('z');
     await second.unmount();
   });
-  it('moves an automatic controller choice after a failed request proves it unreachable', async () => {
+  it('retains a resolved controller after a failed request proves it unreachable', async () => {
     const serverId = await harness.addHome({ name: 'Build', serverUrl: 'https://build.example', serverIdentityId: 'srv_build', accountId: 'owner', currentAccount: true });
     const { storage } = await import('@/sync/domains/state/storage');
     const { useManagedControllerScope } = await import('./useManagedControllerScope');
@@ -687,7 +691,8 @@ describe('provisioner picker demand', () => {
     // Request observations use the Home's canonical scope, not its device-local route profile id.
     await act(async () => recordMachineRequestFailed({ serverId: 'srv_build', accountId: 'owner', machineId: 'a' }));
 
-    expect(scope.getCurrent().controller?.machineId).toBe('z');
+    expect(scope.getCurrent().controller?.machineId).toBe('a');
+    expect(scope.getCurrent().selection?.state.kind).toBe('offline');
     await scope.unmount();
   });
   it('lets the person switch controller while the Home\u2019s machine list is being re-read after a failure', async () => {

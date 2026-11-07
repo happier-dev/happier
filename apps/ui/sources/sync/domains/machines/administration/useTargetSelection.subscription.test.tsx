@@ -19,6 +19,9 @@ import * as machineDisplayNames from '@/utils/sessions/machineDisplayNames';
 import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from './selectionPreferences';
 import { useMachineAdministrationExecutionTargetBinding } from './useExecutionTargetBinding';
 import { useMachineAdministrationTargetSelection } from './useTargetSelection';
+import { useManagedControllerScope } from '@/components/settings/machines/managed/useManagedControllerScope';
+import { createManagedControllerMachineFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
+import { publishMachineActivity } from '@/sync/domains/machines/machineActivity';
 
 // The transport is the boundary; credential, inventory and target admission stay real.
 vi.mock('socket.io-client', async (importOriginal) => (
@@ -34,6 +37,62 @@ afterEach(async () => {
 });
 
 describe('machine administration target demand', () => {
+    it('resolves the initial controller once across availability waves and never replaces a person\'s choice', async () => {
+        const previous = storage.getState();
+        const home = await network.addHome('https://administration-arrival-waves.example.test', 'arrival-owner', {
+            serverIdentityId: 'srv_arrival_waves',
+        });
+        await setActiveServerId(home.id);
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+        const scope = { serverId: 'srv_arrival_waves', accountId: home.accountId };
+        const machines = ['first', 'second', 'third'].map(id => createManagedControllerMachineFixture({
+            id, installationId: `${id}-installation`, active: false, activeAt: 0,
+        }));
+        let inventoryReads = 0;
+        network.setHttpResponder(async input => {
+            if (new URL(String(input)).pathname !== '/v1/machines/managed/actions/list') return null;
+            inventoryReads += 1;
+            return Response.json({ machines: [] });
+        });
+        try {
+            storage.setState(state => ({ profileScope: scope, settingsScope: scope,
+                settings: { ...state.settings, machineAdministrationTargetsLocalV1: {} },
+                machineListByServerId: { [scope.serverId]: machines }, machineListStatusByServerId: { [scope.serverId]: 'idle' } }));
+            const publishWave = async (onlineIds: readonly string[]) => act(async () => {
+                for (const machine of machines) publishMachineActivity(machine, {
+                    active: onlineIds.includes(machine.id), activeAt: onlineIds.includes(machine.id) ? Date.now() : 0,
+                }, []);
+            });
+            await publishWave([]);
+            const selections: (string | undefined)[] = [];
+            const hook = await renderHook(() => {
+                const current = useManagedControllerScope({ serverId: home.id, testIDPrefix: 'arrival.scope' });
+                if (selections.at(-1) !== current.controller?.machineId) selections.push(current.controller?.machineId);
+                return current;
+            });
+            try {
+                expect(hook.getCurrent().controller).toBeUndefined();
+                await publishWave(['first']);
+                expect(hook.getCurrent().controller?.machineId).toBe('first');
+                await publishWave(['second']);
+                expect(hook.getCurrent().controller?.machineId).toBe('first');
+                expect(hook.getCurrent().selection?.state.kind).toBe('offline');
+                await publishWave(['first', 'second', 'third']);
+                expect(selections).toEqual(['first']);
+                const target = { serverIdentityId: scope.serverId, machineId: 'second' };
+                await act(async () => hook.getCurrent().selection?.selectTarget(target));
+                expect(hook.getCurrent().controller?.machineId).toBe('second');
+                await publishWave(['first', 'third']);
+                expect(hook.getCurrent().controller?.machineId).toBe('second');
+                expect(hook.getCurrent().selection?.state.kind).toBe('offline');
+                await publishWave(['second', 'third']);
+                expect(selections).toEqual(['first', 'second']);
+                expect(inventoryReads).toBe(0);
+                expect(storage.getState().settings.machineAdministrationTargetsLocalV1).toEqual({});
+            } finally { await hook.unmount(); }
+        } finally { storage.setState(previous); await removeServerProfile(home.id); }
+    });
+
     it('drops a confirmed-absent managed enrollment from choices while retaining its saved missing selection', async () => {
         const { ManagedMachineV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachineV1');
         const { createDeferred, flushHookEffects } = await import('@/dev/testkit');
