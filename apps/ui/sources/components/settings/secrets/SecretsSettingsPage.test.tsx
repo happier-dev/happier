@@ -256,7 +256,7 @@ describe('SecretsSettingsPage', () => {
 
     it('offers only the operations an owned shared secret\'s projected capabilities allow', async () => {
         const handlers = {
-            onRenameShared: vi.fn(), onRotateShared: vi.fn(), onManageAccessShared: vi.fn(), onDeleteShared: vi.fn(),
+            onRenameShared: vi.fn(async () => true), onRotateShared: vi.fn(), onManageAccessShared: vi.fn(), onDeleteShared: vi.fn(),
         };
         const full = ownedEntry();
         const limited = ownedEntry({
@@ -266,12 +266,28 @@ describe('SecretsSettingsPage', () => {
         const { screen, props } = await renderPage({ personalSecrets: [], sharedEntries: [full, limited], ...handlers, selectedRef: full.ref });
         for (const id of ['rotate', 'manageAccess', 'delete']) expect(screen.findByTestId(`saved-secret:${full.ref}:${id}`)).toBeTruthy();
         expect(moreMenuIds(screen)).toEqual(['rename']);
+        // An operation menu has no preselected choice when it opens.
+        expect(moreMenu(screen)?.props.allowEmptySelection).toBe(true);
         await screen.pressByTestIdAsync(`saved-secret:${full.ref}:manageAccess`);
         expect(handlers.onManageAccessShared).toHaveBeenCalledWith(full);
+        await act(async () => moreMenu(screen)?.props.onSelect('rename'));
+        await act(async () => { screen.changeTextByTestId(`saved-secret:${full.ref}:edit-input`, 'Renamed deploy key'); });
+        await screen.pressByTestIdAsync(`saved-secret:${full.ref}:edit-save`);
+        expect(handlers.onRenameShared).toHaveBeenCalledWith(full, 'Renamed deploy key');
 
         await screen.update(<SecretsSettingsPage {...props} selectedRef={limited.ref} />);
         for (const id of ['rotate', 'manageAccess', 'delete']) expect(screen.findByTestId(`saved-secret:${limited.ref}:${id}`)).toBeFalsy();
         expect(moreMenuIds(screen)).toEqual([]);
+    });
+
+    it('moves the selected shared secret through its overflow operation', async () => {
+        const entry = ownedEntry({ storage: { kind: 'value' }, audience: { accounts: [], teams: [], groups: [] } });
+        const onMove = vi.fn();
+        const { screen } = await renderPage({ personalSecrets: [], sharedEntries: [entry], selectedRef: entry.ref,
+            moveToVault: { label: 'Move to vault', onMove } });
+        expect(moreMenuIds(screen)).toContain('move');
+        await act(async () => moreMenu(screen)?.props.onSelect('move'));
+        expect(onMove).toHaveBeenCalledWith(entry);
     });
 
     it('offers the one conversion out of each secret\'s current mode, and only where the screen allows it', async () => {
@@ -359,6 +375,52 @@ describe('SecretsSettingsPage', () => {
             onRotateShared: vi.fn(), selectedRef: linked.ref });
         expect(linkedPage.findByTestId(`saved-secret:${linked.ref}:history`)).toBeTruthy();
         expect(headerMeta(linkedPage, linked.ref)).toContain('secretsSettings.storageLinked');
+    });
+
+    it('opens a secret shared with you as the same page, gated by its capabilities: who shared it, use only, where it is used', async () => {
+        const recipient = ownedEntry({
+            ref: 'happier:shared-secret:v1:staging-db', name: 'Staging database URL', kind: 'other', relationship: 'recipient',
+            owner: { kind: 'account', accountId: 'ari', name: 'Ari Rahman' } as never,
+            accessSources: [{ kind: 'team', teamId: 'studio', name: 'Studio' }], audience: null, ownerAccountId: null,
+            capabilities: { use: true, rename: false, rotate: false, manageAccess: false, delete: false },
+        });
+        const onOpenSecret = vi.fn();
+        const handlers = { onRenameShared: vi.fn(), onRotateShared: vi.fn(), onManageAccessShared: vi.fn(), onDeleteShared: vi.fn() };
+        const scope = { serverId: 's', accountId: 'me' } as never;
+        const { screen } = await renderPage({ personalSecrets: [], sharedEntries: [recipient], scope, onOpenSecret, ...handlers });
+        await screen.pressByTestIdAsync(`saved-secret:${recipient.ref}`);
+        expect(onOpenSecret).toHaveBeenCalledWith(recipient.ref);
+
+        const { screen: page } = await renderPage({ personalSecrets: [], sharedEntries: [recipient], scope, ...handlers, selectedRef: recipient.ref });
+        expect(pageHeader(page, recipient.ref)?.props.title).toBe('Staging database URL');
+        // Provenance replaces storage: the owner decides where it is kept, so that is not the viewer's fact.
+        const metaKeys = (pageHeader(page, recipient.ref)?.props.meta ?? []).map((fact: { key: string }) => fact.key);
+        expect(metaKeys).toContain('provenance');
+        expect(metaKeys).not.toContain('storage');
+        // Use only: no Reveal, Copy, Replace, Share, history, rename or delete.
+        expect(page.findByTestId(`saved-secret:${recipient.ref}:value`)).toBeTruthy();
+        for (const id of ['value-reveal', 'rotate', 'manageAccess', 'delete', 'history', 'rename', 'more']) {
+            expect(page.findByTestId(`saved-secret:${recipient.ref}:${id}`)).toBeFalsy();
+        }
+        expect(page.findAll((node) => node.props.testID === `saved-secret:${recipient.ref}:value`
+            && node.props.subtitle === 'secretsSettings.valueUseOnly(owner=Ari Rahman)').length).toBeGreaterThan(0);
+        // Where you use it, from the same census as an owned secret.
+        expect(page.findByTestId(`saved-secret:${recipient.ref}:used-by`)).toBeTruthy();
+    });
+
+    it('says a shared-with-you secret this device cannot open yet on its value row, once', async () => {
+        const recipient = ownedEntry({
+            ref: 'happier:shared-secret:v1:staging-db', relationship: 'recipient', materialStatus: 'preparing_encrypted_access',
+            owner: { kind: 'account', accountId: 'ari', name: 'Ari Rahman' } as never, audience: null,
+            capabilities: { use: true, rename: false, rotate: false, manageAccess: false, delete: false },
+        });
+        const { screen: page } = await renderPage({ personalSecrets: [], sharedEntries: [recipient], scope: { serverId: 's', accountId: 'me' } as never,
+            selectedRef: recipient.ref,
+            resolveSharedReference: (ref: string) => ({ ref, kind: 'shared_resource', status: 'preparing_encrypted_access' }) as never });
+        const metaKeys = (pageHeader(page, recipient.ref)?.props.meta ?? []).map((fact: { key: string }) => fact.key);
+        expect(metaKeys).not.toContain('status');
+        expect(page.findAll((node) => node.props.testID === `saved-secret:${recipient.ref}:value`
+            && node.props.subtitle === 'secrets.catalog.status.preparing_encrypted_access').length).toBeGreaterThan(0);
     });
 
     it('names the installed source a linked row reads from', async () => {
