@@ -480,7 +480,7 @@ it.skipIf(process.platform === 'win32')('derives private/public placements from 
             { nativeServer: 'private_app', listener: 'privateOrigin' }, { nativeServer: 'public_app', listener: 'public' },
         ] });
     expect(selectDomainCaddyPlacements({ members: [member, peer] }))
-        .toMatchObject({ status: 'unavailable', details: { requiredFact: 'domainIngress' } });
+        .toMatchObject({ status: 'unavailable', details: { requiredFact: 'domain_ingress_required', remedy: expect.any(String) } });
 });
 
 it.skipIf(process.platform === 'win32')('selects one container origin common to every active Tunnel member and preserves its exact per-member mapping', async () => {
@@ -820,7 +820,11 @@ it.skipIf(process.platform === 'win32').each(['shared', 'no active Domain member
                     // Machine metadata and elevation are system boundaries. Keep
                     // the real posture admission and failure settlement beneath this RPC.
                     const metadata = scenario === 'network review required' ? {} : { reachabilityPosture: MachineReachabilityPostureV1Schema.parse({
-                        revision: 0, management: { providers: [], publicSsh: { kind: 'closed' } }, defaultServiceIngress: { kind: 'none' },
+                        revision: 0, management: { providers: [], publicSsh: { kind: 'closed' } },
+                        // A saved default is independent of Domain firewall settlement
+                        // (MACH-COMPOSE-1107 T2-INGRESS); retain the native cause.
+                        defaultServiceIngress: { kind: 'provider', selection: { provider: { kind: 'builtin', id: 'cloudflareNamed' },
+                            config: { hostname: 'app.example.test' }, credentialRefs: [] } },
                     }) };
                     // The root process is the OS boundary. Keep the real
                     // CHECK/APPLY parser, elevation, transition and public RPC.

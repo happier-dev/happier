@@ -4,7 +4,7 @@ import { createDockerNetworkAuthoredProvider, createGenericDefaultFactoryJourney
 } from './genericMachineReachability.testkit';
 import { userInfo } from 'node:os';
 import { unlink } from 'node:fs/promises';
-import { resolveInstalledMachineEffectCli } from '../adminAccess/runElevatedEffect';
+import { resolveMachineEffectCli } from '../adminAccess/machineEffectCli';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { AccessProviderSelectionV1 } from '@happier-dev/plugin-sdk/access-providers';
 import { relayAccessProviderDescriptors } from '@happier-dev/cli-common/relayAccess/catalog';
@@ -43,7 +43,7 @@ describe.runIf(process.platform === 'linux' && userInfo().uid !== 0)('builtin Ma
       const { reachabilityPosture: _posture, ...metadata } = snapshot.metadata;
       expect(await api.client.compareAndSwapMachineMetadata({ expectedMetadataVersion: snapshot.metadataVersion, metadata }))
         .toMatchObject({ status: 'applied' });
-      const executablePath = resolveInstalledMachineEffectCli();
+      const { installedCli: executablePath } = resolveMachineEffectCli();
       if (!installed) await unlink(executablePath);
       const result = await api.inspectOriginalCli({ serverId: f.home.serverIdentityId, machineId });
       if (installed) {
@@ -118,7 +118,15 @@ describe.runIf(process.platform === 'linux' && userInfo().uid !== 0)('builtin Ma
     } finally { await api.dispose(); }
   });
 
-  it('applies an approved public SSH closure through the original Action before saving the posture', async () => {
+  // MACH-COMPOSE-1107 T2-INGRESS: a default is a Domain-route selection,
+  // independent of management membership and the retained-SSH transaction.
+  it.each([
+    { kind: 'none' as const },
+    { kind: 'provider' as const, selection: { provider: { kind: 'builtin' as const, id: 'cloudflareNamed' },
+      config: { hostname: 'app.example.test' }, credentialRefs: [] } },
+    { kind: 'provider' as const, selection: { provider: { kind: 'builtin' as const, id: 'tailscaleServe' },
+      config: {}, credentialRefs: [] } },
+  ])('applies an approved public SSH closure with default ingress %j before saving the posture', async defaultServiceIngress => {
     const { f, api } = prepared;
     await api.connectMachineControl();
     try {
@@ -126,7 +134,7 @@ describe.runIf(process.platform === 'linux' && userInfo().uid !== 0)('builtin Ma
       const snapshot = api.client.getMachineMetadataSnapshot();
       if (snapshot.status !== 'ready') throw new Error('The public Machine metadata is unavailable');
       const current = MachineReachabilityPostureV1Schema.parse(snapshot.metadata.reachabilityPosture);
-      const posture = { ...current, revision: current.revision + 1,
+      const posture = { ...current, revision: current.revision + 1, defaultServiceIngress,
         management: { ...current.management, publicSsh: { kind: 'closed' as const },
           independentRecovery: { kind: 'providerConsole' as const, evidence: 'userAttested' as const, confirmedAtMs: 1_793_610_000_000 } } };
       f.hostNative.setOnFirewallMutation(() => {
@@ -152,6 +160,64 @@ describe.runIf(process.platform === 'linux' && userInfo().uid !== 0)('builtin Ma
       expect(f.elevation.diagnostics.flatMap(diagnostic => diagnostic.requests)).toEqual(expect.arrayContaining([
         expect.objectContaining({ mode: 'apply' }),
       ]));
+      const saved = parseReachabilityInspectResult(await api.invoke('machines.reachability.inspect', {
+        serverId: 'generic-home', machineId,
+      }));
+      expect(saved.posture).toEqual(posture);
+      expect(saved.observation.ingress).toEqual(defaultServiceIngress.kind === 'none' ? [] : [expect.objectContaining({
+        provider: defaultServiceIngress.selection.provider,
+      })]);
+    } finally { await api.dispose(); }
+  });
+
+  it('refuses unavailable, malformed and management-only defaults without native or metadata effects', async () => {
+    const { f, api } = prepared;
+    try {
+      const snapshot = api.client.getMachineMetadataSnapshot();
+      if (snapshot.status !== 'ready') throw new Error('The public Machine metadata is unavailable');
+      const current = MachineReachabilityPostureV1Schema.parse(snapshot.metadata.reachabilityPosture);
+      const callsBefore = f.hostNative.calls.length;
+      for (const [selection, errorCode] of [
+        [{ provider: { kind: 'builtin', id: 'missing-ingress' }, config: {}, credentialRefs: [] }, 'access_provider_unavailable'],
+        [{ provider: { kind: 'builtin', id: 'cloudflareNamed' }, config: {}, credentialRefs: [] }, 'invalid_access_provider_selection'],
+        [builtin(false), 'access_provider_target_unsupported'],
+      ] satisfies [AccessProviderSelectionV1, string][]) {
+        expect(await api.inspectOriginalCli({ serverId: f.home.serverIdentityId, machineId,
+          change: { kind: 'posture', posture: { ...current, revision: current.revision + 1,
+            defaultServiceIngress: { kind: 'provider', selection } } },
+        })).toMatchObject({ ok: false, errorCode });
+      }
+      expect(f.hostNative.calls).toHaveLength(callsBefore);
+      expect(api.client.getMachineMetadataSnapshot()).toEqual(snapshot);
+      expect(f.home.approvalRequests()).toEqual([]);
+    } finally { await api.dispose(); }
+  });
+
+  it('saves default ingress while keeping SSH open and reports missing native setup without a mutation', async () => {
+    const { f, api } = prepared;
+    try {
+      const snapshot = api.client.getMachineMetadataSnapshot();
+      if (snapshot.status !== 'ready') throw new Error('The public Machine metadata is unavailable');
+      const current = MachineReachabilityPostureV1Schema.parse(snapshot.metadata.reachabilityPosture);
+      const posture = { ...current, revision: current.revision + 1,
+        defaultServiceIngress: { kind: 'provider' as const, selection: {
+          provider: { kind: 'builtin' as const, id: 'caddy' }, config: {}, credentialRefs: [],
+        } } };
+      const raw = await api.inspectOriginalCli({ serverId: f.home.serverIdentityId, machineId,
+        change: { kind: 'posture', posture } });
+      expect(raw.ok, JSON.stringify(raw)).toBe(true);
+      if (!raw.ok) throw new Error(raw.errorCode);
+      const review = parseReachabilityInspectResult(raw.result);
+      expect(review.plan?.basis.firewallTransition).toBeUndefined();
+      const configured = parseCompletedReachabilityConfigure((await executeReviewedReachabilityConfigure(f, api, review)).result);
+      expect(configured).toMatchObject({ status: 'applied', posture, observation: { ingress: [{
+        provider: posture.defaultServiceIngress.selection.provider,
+        state: 'needsSetup', code: 'needs_setup', remedies: ['configure'],
+      }] } });
+      expect(f.hostNative.firewallStages).toEqual([]);
+      expect(f.hostNative.tailscaleMutations).toEqual([]);
+      expect(f.elevation.diagnostics.flatMap(diagnostic => diagnostic.requests).every(request => request.mode === 'check')).toBe(true);
+      expect(f.home.approvalRequests().map(request => request.actionId)).toEqual(['machines.reachability.configure']);
     } finally { await api.dispose(); }
   });
 

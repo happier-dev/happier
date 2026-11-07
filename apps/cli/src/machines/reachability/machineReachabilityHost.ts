@@ -61,8 +61,10 @@ export type MachineReachabilityHostDependencies = Readonly<{
   publish(observation: MachineReachabilityObservationV1): Promise<MachineReachabilityObservationV1>;
 }>;
 
-const refuse = (code: string, details?: unknown): never => {
-  throw Object.assign(new Error(code), { code, ...(details === undefined ? {} : { details }) });
+const refuse = (code: string, details?: unknown, effectAttempted?: boolean): never => {
+  throw Object.assign(new Error(code, effectAttempted === undefined ? undefined : {
+    cause: { ok: false, errorCode: code, error: code, details, effectAttempted } satisfies ActionExecuteFailure,
+  }), { code, ...(details === undefined ? {} : { details }) });
 };
 const errorCode = (error: unknown) => error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
   ? error.code : 'machine_reachability_unavailable';
@@ -138,8 +140,12 @@ async function prepare(input: MachineReachabilityInspectInputV1, deps: MachineRe
   let membershipEntry: MachineReachabilityPlanBasisV1['recipePlans'][number] | undefined;
   const nativeProfiles: NonNullable<MachineReachabilityPlanBasisV1['nativeProfiles']> = [];
   if (change?.kind === 'posture') {
-    if (change.posture.defaultServiceIngress.kind !== 'none'
-      || state.posture && change.posture.management.publicSsh.kind === 'open'
+    const ingress = change.posture.defaultServiceIngress;
+    if (ingress.kind === 'provider') {
+      const selected = providers.resolve(ingress.selection, 'domainRoute');
+      if (!selected.ok) return { ...selected, effectAttempted: false };
+    }
+    if (state.posture && change.posture.management.publicSsh.kind === 'open'
         && !sameStrictJsonValue(change.posture.management.publicSsh, state.posture.management.publicSsh)
       || state.posture && !sameStrictJsonValue(change.posture.management.providers, state.posture.management.providers))
       return refuse('machine_reachability_closure_unsupported');
@@ -703,7 +709,6 @@ export async function settleMachineCaddyFirewallForHost(input: Pick<RetainedSshT
     requiredFact: 'reachabilityPosture',
     remedy: 'Review and apply this Machine’s Network posture before retrying the Domain action. Use machines.reachability.inspect to review it, then machines.reachability.configure to apply the reviewed plan. If native firewall facts are unavailable, use administrator or provider-console access to inspect and reconcile the saved rules, effective Happier table and firewall service first. Do not replay an uncertain firewall change.',
   });
-  if (state.posture.defaultServiceIngress.kind !== 'none') return refuse('machine_reachability_closure_unsupported');
   const transitioned = await executeRetainedSshTransition({ ...input,
     expectedMetadataVersion: state.metadataVersion, current: state.posture, desired: state.posture,
     field: reachabilityPostureField,
@@ -714,11 +719,18 @@ export async function settleMachineCaddyFirewallForHost(input: Pick<RetainedSshT
     }, publicSsh: state.posture.management.publicSsh } });
   if (transitioned.status !== 'applied' && transitioned.status !== 'unchanged')
     return refuse(transitioned.errorCode ?? transitioned.status, {
+      ...(transitioned.failure?.requiredFact ? { requiredFact: transitioned.failure.requiredFact } : {}),
       ...(transitioned.failure ? { failure: transitioned.failure } : {}),
       ...(transitioned.recovery ? { recovery: transitioned.recovery } : {}),
       ...(transitioned.restoration ? { restoration: transitioned.restoration } : {}),
       remedy: transitioned.status === 'outcome_unknown' || transitioned.status === 'recoveryRequired'
         ? 'Inspect and reconcile the Happier firewall rules and service on this Machine before retrying the Domain action.'
-        : 'Check nftables and the Happier firewall setup prerequisites on this Machine, then retry the Domain action.',
-    });
+        : transitioned.failure?.kind === 'daemon_reachability_unavailable'
+          ? 'The required Home-routed daemon ACK (homeRoutedDaemonAck) was not observed. Check this Machine’s connection and daemon RPC route through its Home; if the Home rejects self-routed probes, update the Home server before retrying the Domain action.'
+        : transitioned.errorCode === 'cancelled'
+          ? 'Firewall staging was cancelled. Retry the Domain action when ready.'
+        : transitioned.failure?.requiredFact
+          ? `The native firewall could not read the required fact ${transitioned.failure.requiredFact}. Check the retained nftables SSH policy and Happier firewall setup on this Machine, then retry the Domain action.`
+          : 'Check nftables and the Happier firewall setup prerequisites on this Machine, then retry the Domain action.',
+    }, transitioned.effectAttempted);
 }
