@@ -3,7 +3,7 @@ import * as React from 'react';
 import { usePathname } from '@/components/appShell/workspace/destinationRoute';
 import { WorkspaceDestinationRow } from '@/components/appShell/workspace/WorkspaceDestinationRow';
 import { buildPluginsHomeRoute, resolvePluginsSurfaceHost } from './model/pluginsSurfaceRoutes';
-import { useHappierCollection, type CollectionAnatomy, type CollectionRowActions } from '@happier-dev/plugin-ui';
+import { Status, useHappierCollection, type CollectionAnatomy, type CollectionRowActions } from '@happier-dev/plugin-ui';
 import { ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -31,7 +31,6 @@ import { t, type TranslationKeyNoParams } from '@/text';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 
 import { PluginMark } from './PluginMark';
-import { PluginCardStatus } from './collection/PluginCardStatus';
 import { PluginsPageCollection } from './collection/PluginsPageCollection';
 import { buildPluginMarketplaceDiscoverIssues } from './model/pluginMarketplaceDiscoverIssues';
 import { PLUGIN_KIND_SHELF_ORDER, pluginKindShelfTitle, resolvePluginKindShelf, type PluginKindShelfKey } from './model/pluginContributionKindLabel';
@@ -448,7 +447,8 @@ function useInstalledPluginAnatomy(projectionByPluginId: PluginProjectionFactsBy
         // card composes it as a compact tile instead of reserving an empty band (R-APP-14).
         description: (row) => row.entry.description ?? null,
         reason: (row) => (row.statusLabel
-            ? <PluginCardStatus label={row.statusLabel} tone={row.statusTone} />
+            ? <Status label={row.statusLabel} tone={row.statusTone === 'quiet' ? 'secondary' : row.statusTone}
+                presentation="inline" indicator={row.statusTone !== 'quiet'} />
             : null),
         // A card's control sits in its footer; a list row's is its row action (`useInstalledPluginRowActions`),
         // which the Collection draws in every list geometry, so the list does not draw it a second time.
@@ -1302,16 +1302,17 @@ function useDiscoverListingAnatomy(props: DiscoverListingActionInputs & Readonly
         // The grid-only slot keeps its two-line place without inventing unavailable catalog copy.
         description: ({ entry }) => entry.description ?? '',
         reason: ({ entry }) => (installedPluginById.has(entry.id) && entry.warning !== 'withdrawn' ? (
-            <PluginCardStatus
+            <Status
                 testID={`settings.plugins.marketplace.installedStatus.${entry.sourceId}.${entry.id}`}
                 label={t('settingsPlugins.surfaces.installed')}
-                tone="quiet"
+                tone="secondary" presentation="inline" indicator={false}
             />
         ) : (
-            <PluginCardStatus
+            <Status
                 testID={`settings.plugins.marketplace.reviewStatus.${entry.sourceId}.${entry.id}`}
                 label={catalogReviewStatusLabel(entry)}
-                tone={entry.warning === 'withdrawn' ? 'warning' : 'quiet'}
+                tone={entry.warning === 'withdrawn' ? 'warning' : 'secondary'}
+                presentation="inline" indicator={entry.warning === 'withdrawn'}
             />
         )),
         // A card's control sits in its footer; a list row's is its row action (`useDiscoverListingRowActions`),

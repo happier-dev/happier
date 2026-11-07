@@ -42,7 +42,7 @@ import { listPluginsDeveloperLinks, type PluginsDeveloperRoute } from './model/p
 import { resolvePluginMachineCoverageLabels } from './machines/pluginMachineCoverage';
 import { usePluginMachineMatrix } from './machines/usePluginMachineMatrix';
 import { PluginListingView } from './listing/PluginListingScreen';
-import { PLUGIN_CARD_MIN_WIDTH_PX } from './collection/PluginCardStatus';
+import { PLUGIN_CARD_MIN_WIDTH_PX } from './collection/PluginsPageCollection';
 import {
     createPluginSettingsViews,
     filterInstalledPlugins,

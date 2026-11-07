@@ -2187,7 +2187,6 @@
     "sources/components/settings/plugins/PluginSourcesScreen.tsx",
     "sources/components/settings/plugins/PluginUpdateReviewSettingsEntry.tsx",
     "sources/components/settings/plugins/PluginsNavigationColumn.tsx",
-    "sources/components/settings/plugins/collection/PluginCardStatus.tsx",
     "sources/components/settings/plugins/collection/PluginsPageCollection.tsx",
     "sources/components/settings/plugins/detail/PluginDetailContributionsSection.tsx",
     "sources/components/settings/plugins/detail/PluginDetailDiagnosticsSection.tsx",

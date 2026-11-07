@@ -10,6 +10,9 @@ vi.mock('react-native', async () => {
 });
 vi.mock('react-native-reanimated', async () => (await import('@/dev/testkit/mocks/reanimated')).createReanimatedModuleMock());
 
+// Collect the screen graph before the case timer starts, as the adjacent installed suite does.
+await import('./PluginMarketplaceSections');
+
 /**
  * With no machine chosen nothing has been read or searched: the page says what to do next instead
  * of an empty list or "No plugins matched this search".
