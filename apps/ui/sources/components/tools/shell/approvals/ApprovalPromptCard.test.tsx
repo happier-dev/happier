@@ -17,7 +17,7 @@ import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 
 import { collectRenderedTestIds } from '@/dev/testkit/render/collectRenderedTestIds';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
@@ -376,6 +376,50 @@ describe('ApprovalPromptCard', () => {
             expect(ids).toContain('approval-prompt-card');
             expect(ids).toContain('approval-prompt-approve');
             expect(ids).not.toContain('transcript-board-item-visual-1');
+        });
+    });
+
+    describe('a first Computer click at Ask (lab computer CS)', () => {
+        function computerClickApproval(captureMedia: boolean): ApprovalRequest {
+            return {
+                ...approvalRequest(),
+                actionId: 'computer.input',
+                actionArgs: { machineId: 'machine-exact', captureId: 'capture-1', operation: { kind: 'click', x: 412, y: 318 } },
+                summary: 'Click Sign in',
+                preview: { computerApprovalDisplay: {
+                    machineDisplayName: 'MacBook Pro', requiresTargetSelection: false, appName: 'Safari',
+                    target: { kind: 'window', title: 'Sign in to Lumen' },
+                    ...(captureMedia ? { captureMedia: { mediaId: 'media-1', mediaKind: 'image', width: 1280, height: 800, sizeBytes: 48_213,
+                        file: { sessionId: 'session-1', storage: 'session', path: '.happier/media/sign-in.png',
+                            sha256: 'a'.repeat(64), mimeType: 'image/png' } } } : {}),
+                } },
+            };
+        }
+
+        it('shows the shared window as the owner last captured it, in the chat card itself', async () => {
+            const screen = await renderCard(computerClickApproval(true), { chrome: 'inline' });
+            const ids = collectRenderedTestIds(screen.tree.toJSON());
+            expect(ids).toContain('approval-prompt-computer-action');
+            expect(ids.some((id) => id.startsWith('approval-prompt-computer-action-capture'))).toBe(true);
+        });
+
+        it('reads a daemon-stored capture from the Machine the Home lists under its stable identity', async () => {
+            const approval = computerClickApproval(true);
+            const display = (approval.preview as { computerApprovalDisplay: { captureMedia: { file: { storage: string } } } }).computerApprovalDisplay;
+            display.captureMedia.file.storage = 'daemon';
+            // Machine inventories may be keyed by the Home's portable identity rather than this device's profile id.
+            const machine = createMachineFixture({ id: 'machine-exact' });
+            storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: { 'srv_stable-home-a': [machine] } });
+            const screen = await renderCard(approval, { chrome: 'inline' });
+            const ids = collectRenderedTestIds(screen.tree.toJSON());
+            expect(ids.some((id) => id.startsWith('approval-prompt-computer-action-capture'))).toBe(true);
+        });
+
+        it('leaves the picture out when the owner has no capture yet', async () => {
+            const screen = await renderCard(computerClickApproval(false), { chrome: 'inline' });
+            const ids = collectRenderedTestIds(screen.tree.toJSON());
+            expect(ids).toContain('approval-prompt-computer-action');
+            expect(ids.some((id) => id.startsWith('approval-prompt-computer-action-capture'))).toBe(false);
         });
     });
 

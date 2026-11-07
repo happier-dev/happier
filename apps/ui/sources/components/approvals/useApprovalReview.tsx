@@ -54,7 +54,8 @@ import { ApprovalPreviewCard } from './ApprovalPreviewCard';
 import { readApprovalPreviewSummary } from './actionApprovalPresentation';
 import { ApprovalVisualPreview } from './ApprovalVisualPreview';
 import { HandoffTargetConsequencesCard, describeHandoffTargetApproval } from './HandoffTargetConsequencesCard';
-import { ComputerActionApprovalCard } from './ComputerActionApprovalCard';
+import { ComputerActionApprovalCard, readComputerActLabel } from './ComputerActionApprovalCard';
+import { ComputerApprovalCapture } from './ComputerApprovalCapture';
 import { CapabilityEnableDetailsDecisions } from '@/components/sessions/capabilities/CapabilityEnableApproval';
 import { ResourceProposalBody } from './resourceProposal/ResourceProposalBody';
 import { resolveResourceProposalLabels } from './resourceProposal/resourceProposalLabels';
@@ -66,7 +67,6 @@ import { useComputerApprovalChoice } from './useComputerApprovalChoice';
 import { useEnvironmentBindingApprovalChoice } from './useEnvironmentBindingApprovalChoice';
 import { openComputerTargetPickerForSession } from '@/components/computer/openComputerTargetPickerForSession';
 
-import { SessionStoredImageThumbnail } from '@/components/sessions/media/SessionStoredImageThumbnail';
 import { readApprovalOriginMachineId, readApprovalSessionEndpointLabels, readApprovalTargetEndpointLabels } from './approvalEndpointLabels';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import {
@@ -364,19 +364,6 @@ export function useApprovalReview(props: ApprovalReviewInput) {
   });
   const computerAction = computerChoice.presentation;
   const chooseComputerTarget = computerChoice.chooseTarget;
-  const computerCaptureMedia = computerAction?.captureMedia ?? null;
-  const computerCropMedia = React.useMemo(() => (computerCaptureMedia ? [{
-    id: computerCaptureMedia.mediaId,
-    name: computerAction?.target?.title ?? '',
-    path: computerCaptureMedia.file.path,
-    mimeType: computerCaptureMedia.file.mimeType,
-    sizeBytes: computerCaptureMedia.sizeBytes,
-    sha256: computerCaptureMedia.file.sha256,
-    width: computerCaptureMedia.width,
-    height: computerCaptureMedia.height,
-    category: 'tool-artifact' as const,
-    role: 'output' as const,
-  }] : []), [computerAction?.target?.title, computerCaptureMedia]);
   const handoffTargetApproval = parsed?.kind === 'built_in'
     ? parsed.request.handoffTargetReplacementApproval ?? null
     : null;
@@ -714,17 +701,7 @@ export function useApprovalReview(props: ApprovalReviewInput) {
               <ComputerActionApprovalCard
                 presentation={computerAction}
                 onChooseTarget={chooseComputerTarget}
-                media={computerCaptureMedia ? (
-                  <SessionStoredImageThumbnail
-                    sessionId={computerCaptureMedia.file.sessionId}
-                    serverId={approvalServerId}
-                    machineId={computerAction.machineId}
-                    storage={computerCaptureMedia.file.storage}
-                    media={computerCropMedia}
-                    mediaPreviewEnabled
-                    testID="approvals.computer-action-crop"
-                  />
-                ) : undefined}
+                media={<ComputerApprovalCapture presentation={computerAction} serverId={approvalServerId} testID="approvals.computer-action-crop" />}
               />
             </SectionContentRow>
           </ItemGroup>
@@ -751,7 +728,10 @@ export function useApprovalReview(props: ApprovalReviewInput) {
               <ProjectCommandApprovalFacts presentation={projectCommand} testID="approvals.project-command" />
             </SectionContentRow>
           </ItemGroup>
-        ) : deploymentReview ? null : shownActionFields && !confidentialAction ? (
+        ) : deploymentReview ? null
+          // An open Computer ask's card already says what, where and what it sends; its operands are not a second list.
+          : computerAction && parsed.request.status === 'open' ? null
+          : shownActionFields && !confidentialAction ? (
           <ActionApprovalFieldsCard presentation={shownActionFields} request={parsed?.kind === 'built_in' ? parsed.request : undefined} anatomy="page" serverId={approvalServerId}
             homeIdentity={approvalHomeKnown ? undefined : approvalOriginHomeId || undefined}
             failureTechnicalDetails={failureCodeInDetails ? failureTechnicalDetails : undefined} />
@@ -839,7 +819,9 @@ export function useApprovalReview(props: ApprovalReviewInput) {
 
   return {
     kind: 'ready' as const,
-    title: projectCommandTitle ?? deploymentDecision?.title ?? (requestTitle.title || t('approvals.untitled')),
+    // A Computer ask is titled by its host-stamped act, never by the agent's own summary (lab computer CSp).
+    title: projectCommandTitle ?? deploymentDecision?.title ?? (computerAction ? readComputerActLabel(computerAction) : null)
+      ?? (requestTitle.title || t('approvals.untitled')),
     description: (parsed.request.status === 'open' ? deploymentDecision?.description : undefined) ?? (parsed.kind === 'target' && parsed.request.detail
       ? parsed.request.detail
       : requestTitle.detail ?? undefined),

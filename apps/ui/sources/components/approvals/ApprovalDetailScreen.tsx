@@ -7,6 +7,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { t } from '@/text';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { PagePinnedBar } from '@/components/ui/layout/PagePinnedBar';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { useApprovalReview, type ApprovalReviewInput } from './useApprovalReview';
 
@@ -105,15 +106,20 @@ export const ApprovalDetailScreen = React.memo((props: ApprovalReviewInput) => {
         meta={review.headerFacts.length > 0 ? review.headerFacts : undefined}
       />
 
-      {review.requestGroup}
+      {review.statusFollowsFacts ? null : review.requestGroup}
       {review.sections}
+      {/* A confidential entry is the decision itself: its credential form leads, like any decision. */}
+      {review.confidential}
+      {review.decision}
+      {review.statusFollowsFacts ? review.requestGroup : null}
       {review.workspaceSyncReview}
       {/* Who asked follows what they asked for: the thing being decided leads the page. */}
       {review.requesterContext}
       {review.requesterConfirmationSection}
-      {review.confidential}
-      {review.decision}
     </ItemList>
+    {review.compactViewport && review.decisionBar && !review.capabilityDecisions ? (
+      <PagePinnedBar testID="approvals.pinned-decision">{review.decisionBar}</PagePinnedBar>
+    ) : null}
     </View>
   );
 });

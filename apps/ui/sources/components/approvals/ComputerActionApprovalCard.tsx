@@ -21,6 +21,15 @@ export function readComputerTargetLabel(target: NonNullable<ComputerActionApprov
     return target.kind === 'window' ? t('computerUse.picker.untitledWindow') : t('computerUse.approval.screen');
 }
 
+/** What the person is asked to let happen ("Click", "Share Safari"); the approval page titles itself with it. */
+export function readComputerActLabel(presentation: ComputerActionApproval): string {
+    if (presentation.act === 'fill') return t('approvals.confidential.title');
+    if (presentation.act === 'share' && presentation.appName) return t('computerUse.picker.shareApp', { app: presentation.appName });
+    if (presentation.act === 'drag') return t('browserPresence.doing.drag');
+    if (presentation.act === 'wheel') return t('browserPresence.doing.scroll');
+    return t(`computerUse.approval.act.${presentation.act}`);
+}
+
 /**
  * The act, where it lands ("Sign in to Lumen on Studio laptop"), the exact text or key, the latest
  * picture of the window when the host passes it, and one consequence line. When no window is shared
@@ -30,7 +39,7 @@ export function readComputerTargetLabel(target: NonNullable<ComputerActionApprov
  */
 export const ComputerActionApprovalCard = React.memo(function ComputerActionApprovalCard(props: Readonly<{
     presentation: ComputerActionApproval;
-    /** The latest picture of the shared window (the host renders the Session image it can read). */
+    /** The latest picture of the shared window (`ComputerApprovalCapture`); shown only while the owner has one. */
     media?: React.ReactNode;
     /** Opens the target picker; offered while no window is shared, and to change an agent's choice. */
     onChooseTarget?: () => void;
@@ -51,11 +60,7 @@ export const ComputerActionApprovalCard = React.memo(function ComputerActionAppr
     return (
         <View style={[styles.card, props.style]} testID={testID}>
             <View style={styles.what}>
-                <Text style={styles.act}>{presentation.act === 'fill' ? t('approvals.confidential.title') : presentation.act === 'share' && presentation.appName
-                    ? t('computerUse.picker.shareApp', { app: presentation.appName })
-                    : presentation.act === 'drag' ? t('browserPresence.doing.drag')
-                    : presentation.act === 'wheel' ? t('browserPresence.doing.scroll')
-                    : t(`computerUse.approval.act.${presentation.act}`)}</Text>
+                <Text style={styles.act}>{readComputerActLabel(presentation)}</Text>
                 <Text style={styles.where}>{where}</Text>
             </View>
             {presentation.suggestion && presentation.requiresTargetSelection ? (
@@ -74,7 +79,7 @@ export const ComputerActionApprovalCard = React.memo(function ComputerActionAppr
                     />
                 </View>
             ) : null}
-            {presentation.target && props.media ? <View accessibilityLabel={t('computerUse.approval.cropA11y', { target: readComputerTargetLabel(presentation.target) })}>{props.media}</View> : null}
+            {presentation.target && presentation.captureMedia && props.media ? <View accessibilityLabel={t('computerUse.approval.cropA11y', { target: readComputerTargetLabel(presentation.target) })}>{props.media}</View> : null}
             {presentation.sent ? (
                 <View style={styles.sent}>
                     <Text style={styles.label}>

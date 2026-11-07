@@ -2522,6 +2522,26 @@ describe('ApprovalDetailScreen', () => {
     });
   });
 
+  it('asks a first Computer click as the act itself, with the card as its only facts (lab computer CSp)', async () => {
+    currentArtifact = await createBuiltInApprovalArtifact({
+      actionId: 'computer.input',
+      sourceSessionId: 'session-1',
+      actionArgs: { machineId: 'machine-2', captureId: 'capture_1', operation: { kind: 'click', x: 412, y: 318 } },
+      summary: 'Click Sign in',
+      preview: { computerApprovalDisplay: {
+        machineDisplayName: 'Workstation one', requiresTargetSelection: false, appName: 'Safari',
+        target: { kind: 'window', title: 'Sign in to Lumen' },
+      } },
+    });
+    const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
+    const screen = await renderScreen(<ApprovalDetailScreen artifactId="artifact-1" />);
+    expect(screen.findByTestId('approvals.computer-action')).not.toBeNull();
+    const header = screen.tree.root.findAll((node) => node.props?.testID === 'approvals.header' && node.props?.title !== undefined);
+    expect(header[0]!.props.title).toBe('computerUse.approval.act.click');
+    // The card already says what, where and the consequence; the raw operands are not a second list.
+    expect(screen.findByTestId('approvals.fields-table')).toBeNull();
+  });
+
   it('names both endpoints and uses a consequence-specific decision for an ordinary non-empty replacement', async () => {
     currentArtifact = createHandoffApprovalArtifact({
       mode: 'keep_synced',

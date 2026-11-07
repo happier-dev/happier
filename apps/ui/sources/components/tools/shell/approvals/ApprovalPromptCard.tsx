@@ -30,6 +30,7 @@ import { ActionApprovalFieldsCard, ApprovalTechnicalDetails } from '@/components
 import { DiscussionDraftAnswer, readDiscussionDraftApproval } from '@/components/approvals/discussionDraftApproval';
 import { PromptDocApprovalDiff } from '@/components/approvals/PromptDocApprovalDiff';
 import { ComputerActionApprovalCard } from '@/components/approvals/ComputerActionApprovalCard';
+import { ComputerApprovalCapture } from '@/components/approvals/ComputerApprovalCapture';
 import {
     ProjectCommandApprovalFacts,
     describeProjectCommandApprovalDecisions,
@@ -439,6 +440,8 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
                 <ComputerActionApprovalCard
                     presentation={computerAction}
                     onChooseTarget={!decisionDisabled ? chooseComputerTarget : undefined}
+                    media={<ComputerApprovalCapture presentation={computerAction}
+                        serverId={transcriptSource.serverId ?? approvalHome.serverId} testID="approval-prompt-computer-action-capture" />}
                     testID="approval-prompt-computer-action"
                 />
             ) : null}
