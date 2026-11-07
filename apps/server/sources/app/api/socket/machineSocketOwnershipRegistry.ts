@@ -281,23 +281,20 @@ export function createMachineSocketOwnershipRegistry(params: Readonly<{
                     : null;
             let takeoverSocketId: string | null = null;
             if (localOwner) {
-                if (localOwner.socketId === paramsForClaim.socketId) {
-                    localOwners.set(key, normalizedOwner);
-                    startRefreshLoop(key, paramsForClaim.socketId);
-                    return { result: "already-owned-by-self" };
-                }
-
-                if (localOwner.runtimeId && normalizedOwner.runtimeId && localOwner.runtimeId === normalizedOwner.runtimeId) {
-                    if (localOwner.socketId !== paramsForClaim.socketId) {
-                        disconnectSocketById(localOwner.socketId);
+                const isSelf = localOwner.socketId === paramsForClaim.socketId
+                    || Boolean(localOwner.runtimeId && normalizedOwner.runtimeId && localOwner.runtimeId === normalizedOwner.runtimeId);
+                if (isSelf) {
+                    // Redis-backed reclaims must publish the socket before retiring its predecessor.
+                    if (!params.config.enabled) {
+                        localOwners.set(key, normalizedOwner);
+                        if (localOwner.socketId !== paramsForClaim.socketId) {
+                            disconnectSocketById(localOwner.socketId);
+                        }
+                        stopRefreshLoop(key);
+                        startRefreshLoop(key, paramsForClaim.socketId);
+                        return { result: "already-owned-by-self" };
                     }
-                    localOwners.set(key, normalizedOwner);
-                    stopRefreshLoop(key);
-                    startRefreshLoop(key, paramsForClaim.socketId);
-                    return { result: "already-owned-by-self" };
-                }
-
-                if (isSocketLive(localOwner.socketId)) {
+                } else if (isSocketLive(localOwner.socketId)) {
                     if (takeoverRequested && isManualOwner(localOwner)) {
                         takeoverSocketId = localOwner.socketId;
                     } else {
@@ -363,8 +360,8 @@ export function createMachineSocketOwnershipRegistry(params: Readonly<{
             }
 
             if (takeoverSocketId) {
-                disconnectSocketById(takeoverSocketId);
                 localOwners.set(key, normalizedOwner);
+                disconnectSocketById(takeoverSocketId);
                 stopRefreshLoop(key);
                 startRefreshLoop(key, paramsForClaim.socketId);
                 return { result: "takeover-granted" };
@@ -376,24 +373,27 @@ export function createMachineSocketOwnershipRegistry(params: Readonly<{
             return { result: "granted" };
         },
 
+        // Only a confirmed release may publish this socket's Machine as offline.
+        // An unconfirmed Redis release leaves presence to the existing timeout owner.
         async releaseOwner(paramsForRelease: Readonly<{
             accountId: string;
             machineId: string;
             socketId: string;
-        }>): Promise<void> {
+        }>): Promise<boolean> {
             const key = resolveOwnershipKey(paramsForRelease);
             const localOwner = localOwners.get(key);
-            if (localOwner?.socketId === paramsForRelease.socketId) {
+            const releasedLocally = localOwner?.socketId === paramsForRelease.socketId;
+            if (releasedLocally) {
                 localOwners.delete(key);
                 stopRefreshLoop(key);
             }
-            if (!params.config.enabled) return;
+            if (!params.config.enabled) return releasedLocally;
 
             const redis = getRedisClient();
             try {
-                await redis.eval(DEL_IF_SOCKET_ID_SCRIPT, 1, key, paramsForRelease.socketId);
+                return await redis.eval(DEL_IF_SOCKET_ID_SCRIPT, 1, key, paramsForRelease.socketId) === 1;
             } catch {
-                // best-effort only; avoid bubbling into socket disconnect handlers
+                return false;
             }
         },
     };

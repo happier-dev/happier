@@ -126,7 +126,7 @@ export function startSocket(app: Fastify) {
         provider?: string;
         owner?: Record<string, unknown>;
     }) {
-        const err: any = new Error(params.error);
+        const err: Error & { data?: Record<string, unknown> } = new Error(params.error);
         err.data = {
             error: params.error,
             statusCode: params.statusCode,
@@ -143,7 +143,7 @@ export function startSocket(app: Fastify) {
     });
     eventRouter.setIo(io);
 
-    io.use(async (socket, next) => {
+    const authenticateSocket = async (socket: Socket, next: (error?: Error) => void) => {
         const token = socket.handshake.auth.token as string;
         const clientType = socket.handshake.auth.clientType as 'session-scoped' | 'user-scoped' | 'machine-scoped' | undefined;
         const clientPurpose = socket.handshake.auth.clientPurpose as string | undefined;
@@ -234,6 +234,18 @@ export function startSocket(app: Fastify) {
         socketData.machineId = machineId;
         socketData.connectedServiceIds = readConnectedServiceReaderSupport(socket.handshake.auth[CONNECTED_SERVICE_READER_SUPPORT_SOCKET_AUTH_FIELD]);
         return next();
+    };
+
+    // Socket.IO consumes next(), not a middleware Promise. Keep infrastructure
+    // failures on that callback boundary so they cannot escape as rejections.
+    io.use((socket, next) => {
+        void authenticateSocket(socket, next).catch((error) => {
+            log(
+                { module: 'websocket-auth-handshake', error: describeLoggableError(error) },
+                'Socket authentication handshake failed unexpectedly',
+            );
+            next(rejectSocket({ statusCode: 503, error: 'upstream_error' }));
+        });
     });
 
     io.on("connection", (socket) => {
@@ -368,10 +380,24 @@ export function startSocket(app: Fastify) {
                 });
             }
             if (connection.connectionType === 'machine-scoped') {
+                const disconnectedMachineId = connection.machineId;
+                const disconnectedAt = Date.now();
                 void machineSocketOwnershipRegistry.releaseOwner({
                     accountId: userId,
-                    machineId: connection.machineId,
+                    machineId: disconnectedMachineId,
                     socketId: socket.id,
+                }).then((released) => {
+                    if (!released || plannedSocketShutdownStarted) return;
+                    eventRouter.emitEphemeral({
+                        userId,
+                        payload: buildMachineActivityEphemeral(disconnectedMachineId, false, disconnectedAt),
+                        recipientFilter: { type: 'user-scoped-only' },
+                    });
+                }).catch((error) => {
+                    log(
+                        { module: 'machine-presence', error: describeLoggableError(error) },
+                        'Failed to publish machine disconnect',
+                    );
                 });
             }
 
@@ -396,15 +422,6 @@ export function startSocket(app: Fastify) {
                     : `User disconnected: ${userId} (reason=${String(reason)}, durationMs=${durationMs}, socketId=${socket.id}, clientType=${metadata.clientType}, purpose=${metadata.clientPurpose})`,
             );
 
-            // Broadcast daemon offline status
-            if (connection.connectionType === 'machine-scoped' && !plannedSocketShutdownStarted) {
-                const machineActivity = buildMachineActivityEphemeral(connection.machineId, false, Date.now());
-                eventRouter.emitEphemeral({
-                    userId,
-                    payload: machineActivity,
-                    recipientFilter: { type: 'user-scoped-only' }
-                });
-            }
         });
 
         // Handlers

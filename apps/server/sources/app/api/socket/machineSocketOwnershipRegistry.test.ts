@@ -163,6 +163,57 @@ describe("createMachineSocketOwnershipRegistry", () => {
         }
     });
 
+    it("reports whether a disconnect actually released the current local owner", async () => {
+        const io = createIoStub();
+        setSocket(io, "socket-old", true);
+        setSocket(io, "socket-new", true);
+        const registry = createMachineSocketOwnershipRegistry({ io, config: { enabled: false } });
+        const identity = { accountId: "acct-1", machineId: "machine-1" };
+        await registry.claimOwner({ ...identity, socketId: "socket-old", owner: { runtimeId: "same" } });
+        await registry.claimOwner({ ...identity, socketId: "socket-new", owner: { runtimeId: "same" } });
+        await expect(registry.releaseOwner({ ...identity, socketId: "socket-old" })).resolves.toBe(false);
+        await expect(registry.claimOwner({
+            ...identity, socketId: "socket-other", owner: { runtimeId: "other" },
+        })).resolves.toMatchObject({ result: "conflict", owner: { socketId: "socket-new" } });
+        await expect(registry.releaseOwner({ ...identity, socketId: "socket-new" })).resolves.toBe(true);
+        await expect(registry.releaseOwner({ ...identity, socketId: "socket-new" })).resolves.toBe(false);
+    });
+
+    it.each([
+        { name: "same runtime", nextOwner: { runtimeId: "same" }, result: "already-owned-by-self" },
+        { name: "manual takeover", nextOwner: { runtimeId: "other", takeoverRequested: true }, result: "takeover-granted" },
+    ])("keeps the replacement owned during a synchronous $name disconnect", async ({ nextOwner, result }) => {
+        const io = createIoStub();
+        const predecessor = setSocket(io, "socket-old", true);
+        setSocket(io, "socket-new", true);
+        const registry = createMachineSocketOwnershipRegistry({ io, config: { enabled: false } });
+        const identity = { accountId: "acct-1", machineId: "machine-1" };
+        await registry.claimOwner({
+            ...identity, socketId: "socket-old", owner: { runtimeId: "same", startupSource: "manual" },
+        });
+        let release: Promise<boolean> | undefined;
+        vi.mocked(predecessor.disconnect).mockImplementation(() => {
+            release = registry.releaseOwner({ ...identity, socketId: "socket-old" });
+            return predecessor;
+        });
+        await expect(registry.claimOwner({
+            ...identity, socketId: "socket-new", owner: nextOwner,
+        })).resolves.toEqual({ result });
+        expect(release).toBeDefined();
+        await expect(release).resolves.toBe(false);
+        await expect(registry.releaseOwner({ ...identity, socketId: "socket-new" })).resolves.toBe(true);
+    });
+
+    it("uses the Redis conditional release result", async () => {
+        const registry = createMachineSocketOwnershipRegistry({
+            io: createIoStub(), config: { enabled: true, instanceId: "instance-1" },
+        });
+        const identity = { accountId: "acct-1", machineId: "machine-1", socketId: "socket-old" };
+        redisEvalMock.mockResolvedValueOnce(0).mockResolvedValueOnce(1);
+        await expect(registry.releaseOwner(identity)).resolves.toBe(false);
+        await expect(registry.releaseOwner(identity)).resolves.toBe(true);
+    });
+
     it("rejects a second live owner for the same account and machine", async () => {
         const io = createIoStub();
         setSocket(io, "socket-stable", true);
@@ -294,6 +345,28 @@ describe("createMachineSocketOwnershipRegistry", () => {
         expect(oldSocket.disconnect).toHaveBeenCalledWith(true);
     });
 
+    it("keeps the prior owner live until Redis accepts a same-runtime reclaim", async () => {
+        const io = createIoStub();
+        const oldSocket = setSocket(io, "socket-old", true);
+        setSocket(io, "socket-new", true);
+        redisHmgetMock.mockResolvedValue(["socket-old", "runtime-same", null, null, null, null, null]);
+        redisEvalMock.mockResolvedValueOnce("granted");
+        const registry = createMachineSocketOwnershipRegistry({
+            io, config: { enabled: true, instanceId: "instance-1" },
+        });
+        const identity = { accountId: "acct-1", machineId: "machine-1" };
+        await registry.claimOwner({ ...identity, socketId: "socket-old", owner: { runtimeId: "runtime-same" } });
+        redisEvalMock.mockRejectedValueOnce(new Error("redis unavailable"));
+        try {
+            await expect(registry.claimOwner({ ...identity, socketId: "socket-new", owner: { runtimeId: "runtime-same" } }))
+                .rejects.toThrow("redis unavailable");
+            expect(oldSocket.connected).toBe(true);
+        } finally {
+            await registry.releaseOwner({ ...identity, socketId: "socket-old" });
+            await registry.releaseOwner({ ...identity, socketId: "socket-new" });
+        }
+    });
+
     it("keeps the replacement owner's refresh loop alive when a stale prior refresh resolves late", async () => {
         vi.useFakeTimers();
         try {
@@ -319,6 +392,7 @@ describe("createMachineSocketOwnershipRegistry", () => {
                 ]);
             redisEvalMock.mockResolvedValueOnce("granted");
             redisEvalMock.mockImplementationOnce(() => staleRefresh);
+            redisEvalMock.mockResolvedValueOnce("self");
             redisEvalMock.mockResolvedValueOnce(1);
 
             const registry = createMachineSocketOwnershipRegistry({
@@ -358,9 +432,9 @@ describe("createMachineSocketOwnershipRegistry", () => {
 
             await vi.advanceTimersByTimeAsync(1000);
 
-            expect(redisEvalMock).toHaveBeenCalledTimes(3);
+            expect(redisEvalMock).toHaveBeenCalledTimes(4);
             expect(redisEvalMock).toHaveBeenNthCalledWith(
-                3,
+                4,
                 expect.stringContaining("updatedAt"),
                 1,
                 "machine-owner:acct-1:machine-1",
@@ -645,7 +719,7 @@ describe("createMachineSocketOwnershipRegistry", () => {
                 machineId: "machine-1",
                 socketId: "socket-1",
             }),
-        ).resolves.toBeUndefined();
+        ).resolves.toBe(false);
     });
 
 });

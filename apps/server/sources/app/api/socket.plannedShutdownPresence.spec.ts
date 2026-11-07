@@ -87,7 +87,7 @@ vi.mock("@/app/features/catalog/readFeatureEnv", () => ({
 vi.mock("@/app/api/socket/machineSocketOwnershipRegistry", () => ({
     createMachineSocketOwnershipRegistry: vi.fn(() => ({
         claimOwner: vi.fn(async () => ({ result: "claimed" })),
-        releaseOwner: vi.fn(async () => undefined),
+        releaseOwner: vi.fn(async () => true),
     })),
 }));
 
