@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { execFileSync } from 'node:child_process';
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { AgentSessionRuntimeEventSchema, type WorkerUpdateV1 } from '@happier-dev/protocol';
+import { PluginError } from '@happier-dev/plugin-sdk';
 
 import type { Metadata } from '@/api/types';
 import { createAccountEncryptionCurrentnessFixture, createMutableApiSessionClientFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
@@ -16,6 +20,10 @@ import type { ApiSessionClient } from '@/api/session/sessionClient';
 import { createWorkflowStepWithdrawal } from '@/agent/runtime/session/contextOnly/workflowStepWithdrawal';
 import { fitWorkerUpdateWithinHostContextAllowance } from '@/agent/runtime/session/contextOnly/hostContextOnlyInput';
 import { createDeferred } from '@/testkit/async/deferred';
+import { withTempDir } from '@/testkit/fs/tempDir';
+import { createRepositoryCheckpointPromptLifecycle } from './checkpoints/repositoryCheckpointPromptLifecycle';
+import { logger } from '@/ui/logger';
+import { createNativeAgentSessionEffectBoundaryError } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionBoundaryError';
 
 const { loggerDebugMock } = vi.hoisted(() => ({
   loggerDebugMock: vi.fn(),
@@ -127,14 +135,63 @@ it('sends an interceptable turn before checkpoint completion and holds only writ
   expect(beforeTool).toBeNull();
 });
 
+it('collects observable runtime input while initial checkpoint retention is pending and preserves exact turn endpoints', async () => {
+  await withTempDir('checkpoint-send-', async directory => {
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: directory, encoding: 'utf8' }).trim();
+    git('init', '-q');
+    await writeFile(join(directory, 'tracked.txt'), 'committed\n');
+    git('add', 'tracked.txt');
+    git('-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-qm', 'initial');
+    await writeFile(join(directory, 'tracked.txt'), 'pre-existing dirt\n');
+    const cwd = git('rev-parse', '--show-toplevel');
+    const retentionEntered = createDeferred<void>();
+    const releaseRetention = createDeferred<void>();
+    const session = createMutableApiSessionClientFixture({ overrides: {
+      sessionId: 'session-local-special-command',
+      fetchEarliestCommittedUserMessageLocalId: async () => {
+        retentionEntered.resolve();
+        await releaseRetention.promise;
+        return 'checkpoint-send';
+      },
+    } });
+    const lifecycle = createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: cwd, provider: 'codex', protocol: 'codex' });
+    // An observable runtime has no before-tool callback: capture must still
+    // precede send, but Home's optional evidence retention must not hold input.
+    const runtime = createRuntime();
+    runtime.sendTurnPrompt.mockImplementation(async () => {
+      await writeFile(join(cwd, 'tracked.txt'), 'pre-existing dirt\nagent edit\n');
+    });
+    const loop = runSingleSpecialCommand({ text: 'edit', localId: 'checkpoint-send', runtime, checkpointLifecycle: lifecycle });
+    try {
+      await retentionEntered.promise;
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(runtime.sendTurnPrompt).toHaveBeenCalledTimes(1);
+    } finally {
+      releaseRetention.resolve();
+      await loop;
+    }
+    const refs = git('for-each-ref', '--format=%(refname)', 'refs/happier/checkpoints/').split('\n');
+    const start = refs.find(ref => ref.endsWith('/message-start/checkpoint-send'));
+    const final = refs.find(ref => ref.endsWith('/turn-final/checkpoint-send'));
+    expect(start).toBeDefined();
+    expect(final).toBeDefined();
+    expect(git('show', `${start}:tracked.txt`)).toBe('pre-existing dirt');
+    expect(git('diff', '--unified=0', start!, final!, '--', 'tracked.txt')).toContain('+agent edit');
+    expect(git('diff', '--unified=0', start!, final!, '--', 'tracked.txt')).not.toContain('+pre-existing dirt');
+  });
+});
+
 async function runSingleSpecialCommand(params: Readonly<{
   text: string;
   localId: string;
+  promptContext?: Pick<PermissionModeQueuedPrompt, 'structuredInput' | 'attachments' | 'inputContextBlock'>;
+  metadata?: Partial<Metadata>;
   runtime?: ReturnType<typeof createRuntime>;
   registerProviderAcceptedEffect?: (localId: string, onAccepted: ((pendingSettlement?: Promise<void>) => void) | null) => void;
   hostContextOnly?: PreparedHostContextOnly;
   onHostEventCommitted?: (localId: string) => void;
-  onPromptFailure?: (error: unknown) => void | Promise<void>;
+  onPromptFailure?: Parameters<typeof runPermissionModePromptLoop>[0]['onPromptFailure'];
+  resolveComposerAttachmentForDispatch?: Parameters<typeof runPermissionModePromptLoop>[0]['resolveComposerAttachmentForDispatch'];
   checkpointLifecycle?: Parameters<typeof runPermissionModePromptLoop>[0]['checkpointLifecycle'];
   exitWhen?: () => boolean;
   resolveFreshSessionSystemPrompt?: Parameters<typeof runPermissionModePromptLoop>[0]['resolveFreshSessionSystemPrompt'];
@@ -150,10 +207,10 @@ async function runSingleSpecialCommand(params: Readonly<{
       enqueueAgentMessageCommitted,
     },
   });
-  session.__setMetadata(createTestMetadata({ permissionMode: 'default', permissionModeUpdatedAt: 0 }));
+  session.__setMetadata(createTestMetadata({ permissionMode: 'default', permissionModeUpdatedAt: 0, ...params.metadata }));
   const queue = createModeQueue();
   const hostEvents: string[] = [];
-  if (!params.hostContextOnly) queue.push({ text: params.text, localId: params.localId }, { permissionMode: 'default' });
+  if (!params.hostContextOnly) queue.push({ text: params.text, localId: params.localId, ...params.promptContext }, { permissionMode: 'default' });
   let contextAvailable = params.hostContextOnly !== undefined;
   const inputConsumer = params.hostContextOnly ? createSessionProviderInputConsumer({
     messageQueue: queue,
@@ -208,6 +265,7 @@ async function runSingleSpecialCommand(params: Readonly<{
     formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
     registerProviderAcceptedEffect: params.registerProviderAcceptedEffect ?? (() => undefined),
     ...(params.onPromptFailure ? { onPromptFailure: params.onPromptFailure } : {}),
+    ...(params.resolveComposerAttachmentForDispatch ? { resolveComposerAttachmentForDispatch: params.resolveComposerAttachmentForDispatch } : {}),
     ...(params.resolveFreshSessionSystemPrompt ? { resolveFreshSessionSystemPrompt: params.resolveFreshSessionSystemPrompt } : {}),
     ...(params.checkpointLifecycle ? { checkpointLifecycle: params.checkpointLifecycle } : {}),
   } as Parameters<typeof runPermissionModePromptLoop>[0]);
@@ -422,6 +480,92 @@ function createRealWakeFollowContext() {
 describe('runPermissionModePromptLoop hook dispatch', () => {
   beforeEach(() => {
     loggerDebugMock.mockClear();
+  });
+
+  it.each(['structured input', 'daemon refusal', 'bridge refusal', 'native send'] as const)('logs only class, code and phase for a %s failure', async (boundary) => {
+    // File logging and native process delivery are real system boundaries.
+    const log = vi.spyOn(logger, 'infoFile').mockImplementation(() => undefined);
+    const runtime = createRuntime();
+    const privateText = 'PRIVATE_PROMPT_AND_CREDENTIAL_SENTINEL';
+    const onPromptFailure = vi.fn();
+    if (boundary === 'native send') {
+      runtime.sendTurnPrompt.mockRejectedValue(Object.assign(new TypeError(privateText), {
+        code: 'ECONNRESET', credential: privateText,
+      }));
+    }
+    try {
+      const result = await runSingleSpecialCommand({
+        text: privateText, localId: 'diagnostic-input', runtime, onPromptFailure,
+        ...(boundary === 'daemon refusal' || boundary === 'bridge refusal' ? { resolveComposerAttachmentForDispatch: async () => {
+          if (boundary === 'bridge refusal') throw createNativeAgentSessionEffectBoundaryError('authority_unavailable_before_effect');
+          throw new PluginError({ code: 'triage_account_storage_unavailable', message: privateText, retryable: true });
+        } } : {}),
+        ...(boundary !== 'native send' ? { promptContext: { structuredInput: {
+          // Match the retained mounted Ask envelope; identifiers/locator are synthetic.
+          v: 1, composerAttachments: [{ v: 1, instanceId: 'entry-1',
+            attachment: { pluginId: 'happier.triage', localId: 'entry' }, key: 'entry-1',
+            value: { v: 1,
+              entryRef: { source: { pluginId: 'happier.scm.forge.github', localId: 'github-forge' },
+                kindId: 'issue', collisionScope: 'fixture/repo', entryId: '42' },
+              sourceInstance: { source: { pluginId: 'happier.scm.forge.github', localId: 'github-forge' },
+                sourceInstanceId: 'fixture-source' },
+              lastKnownLocator: { v: 1, webUrl: 'https://github.example.test/fixture/repo/issues/42',
+                displayPath: 'fixture/repo#42', routingToken: 'fixture-route' },
+            }, presentation: { label: privateText, description: privateText, typeLabel: 'Issue' } }],
+        } } } : {}),
+      });
+      const failures = log.mock.calls.filter(([label]) => label === '[PermissionModePromptLoop] Prompt failed');
+      expect(failures).toHaveLength(1);
+      expect(failures[0]?.[1]).toEqual({
+        sessionId: 'session-local-special-command', localId: 'diagnostic-input',
+        phase: boundary !== 'native send' ? 'structured_input_resolution' : 'native_send_entered',
+        errorClass: boundary !== 'native send' ? 'Error' : 'TypeError',
+        errorCode: boundary === 'structured input' ? 'composer_attachment_resolution_unavailable'
+          : boundary !== 'native send' ? 'composer_attachment_resolution_failed' : 'ECONNRESET',
+        ...(boundary === 'daemon refusal' || boundary === 'bridge refusal' ? { preparationCause: {
+          code: boundary === 'bridge refusal' ? 'native_agent_privileged_effect_authority_unavailable'
+            : 'triage_account_storage_unavailable', stage: 'dispatch',
+        } } : {}),
+      });
+      expect(JSON.stringify(failures)).not.toContain(privateText);
+      expect(onPromptFailure).toHaveBeenCalledOnce();
+      expect(onPromptFailure).toHaveBeenCalledWith(expect.any(Error), {
+        beforeProviderDispatch: boundary !== 'native send',
+      });
+      if (boundary === 'structured input') {
+        expect(runtime.sendTurnPrompt).not.toHaveBeenCalled();
+        expect(result.observeProviderInputSettlement).toHaveBeenCalledWith(expect.objectContaining({
+          kind: 'rejected_before_effect', reason: 'runtime_config_blocked',
+          diagnostic: expect.objectContaining({ code: 'composer_attachment_resolution_unavailable' }),
+        }));
+      }
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it.each(['CLI text', 'mounted Action context', 'mounted Action with replay'] as const)('dispatches a %s first input through real preparation', async (shape) => {
+    const mounted = shape !== 'CLI text';
+    const onPromptFailure = vi.fn();
+    const { runtime } = await runSingleSpecialCommand({
+      text: 'Reply with the entry receipt.', localId: 'mounted-action-input', onPromptFailure,
+      metadata: {
+        profileId: mounted ? 'qa-profile' : undefined,
+        ...(shape === 'mounted Action with replay' ? { replaySeedV1: { v: 1,
+          seedText: 'Earlier context', sourceSessionId: 'source', sourceCutoffSeqInclusive: 1, createdAtMs: 1 } } : {}),
+      },
+      ...(mounted ? { promptContext: {
+        structuredInput: { v: 1, mentions: [] },
+        attachments: [{ name: 'entry.txt', path: '/tmp/entry.txt', sizeBytes: 12, mimeType: 'text/plain' }],
+        inputContextBlock: 'Mounted Action source context',
+      } } : {}),
+    });
+    expect(onPromptFailure).not.toHaveBeenCalled();
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledOnce();
+    const prompt = runtime.sendTurnPrompt.mock.calls[0]?.[0];
+    expect(prompt).toContain('Reply with the entry receipt.');
+    if (mounted) expect(prompt).toContain('entry.txt');
+    if (shape === 'mounted Action with replay') expect(prompt).toContain('Earlier context');
   });
 
   it('delivers the composed session plan through the ordinary fresh-session prompt owner', async () => {
@@ -808,7 +952,9 @@ describe('runPermissionModePromptLoop hook dispatch', () => {
     expect(result.hostEvents).toEqual([localInputId]);
     // The Session lifecycle owns the single failed-turn publication through onPromptFailure.
     expect(onPromptFailure).toHaveBeenCalledOnce();
-    expect(onPromptFailure).toHaveBeenCalledWith(expect.objectContaining({ message: 'provider_input_size_refused' }));
+    expect(onPromptFailure).toHaveBeenCalledWith(expect.objectContaining({ message: 'provider_input_size_refused' }), {
+      beforeProviderDispatch: false,
+    });
     expect(result.enqueueAgentMessageCommitted).not.toHaveBeenCalled();
     expect(withdrawal.withdrawWorkflowStepInput({ localInputId })).toBe('dispatched');
     expect(result.readSendReadyCount()).toBe(1);

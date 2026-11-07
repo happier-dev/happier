@@ -68,6 +68,7 @@ describe('initial checkpoint of an attached Session', () => {
             try {
                 const messageId = earliestLocalId?.startsWith('plugin-input-v1:') ? earliestLocalId : 'first';
                 await lifecycle.onBeforePromptDispatch?.({ messageId, prompt: 'edit' });
+                await lifecycle.onTurnStarted?.({ messageId, turnId: messageId });
                 const initial = await readRepositoryCheckpointInitialEvidence({ cwd: repoRoot, scopeId: `${sessionId}:${repoRoot}` });
                 if (earliestLocalId === messageId) {
                     expect(initial?.state).toBe('available');
@@ -78,6 +79,7 @@ describe('initial checkpoint of an attached Session', () => {
                 }
                 await writeFile(join(repoRoot, 'tracked.txt'), 'later agent edit\n');
                 await lifecycle.onBeforePromptDispatch?.({ messageId: 'later', prompt: 'continue' });
+                await lifecycle.onTurnStarted?.({ messageId: 'later', turnId: 'later' });
                 expect(await readRepositoryCheckpointInitialEvidence({ cwd: repoRoot, scopeId: `${sessionId}:${repoRoot}` })).toEqual(initial);
                 expect(transcriptReads).toBe(1);
             } finally {

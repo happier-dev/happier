@@ -27,11 +27,11 @@ it('holds an opened native mutation until checkpoint preparation completes and p
         const cwd = git('rev-parse', '--show-toplevel');
         const entered = createDeferred<void>();
         const release = createDeferred<void>();
-        // Home's earliest-prompt read is the controlled boundary; Git and native
-        // host services remain real while checkpoint preparation is held.
+        // Hold the Git process boundary before it reads the worktree. Optional
+        // Home retention is no longer part of the native mutation barrier.
         const session = createMutableApiSessionClientFixture({ overrides: {
             sessionId: 'native-checkpoint',
-            fetchEarliestCommittedUserMessageLocalId: async () => { entered.resolve(); await release.promise; return 'message'; },
+            fetchEarliestCommittedUserMessageLocalId: async () => 'message',
         } });
         const runtime: AgentRuntime = { toolExecution: { capability: 'interceptable' }, sessions: {
             async open(_request, context) {
@@ -65,7 +65,14 @@ it('holds an opened native mutation until checkpoint preparation completes and p
             permissionHandler: createProviderEnforcedPermissionHandler({ session, logPrefix: '[checkpoint]' }), memoryRecallGuidanceEnabled: false,
         });
         const operations = resolveHostSessionRuntimeFactoryResult(created).runtime;
-        const lifecycle = createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: cwd, provider: 'claude', protocol: 'claude' });
+        const lifecycle = createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: cwd, provider: 'claude', protocol: 'claude',
+            scmCommandRunner: async input => {
+                if (input.args[0] === 'add') { entered.resolve(); await release.promise; }
+                const stdout = execFileSync(input.bin, [...input.args], { cwd: input.cwd,
+                    env: { ...process.env, ...input.env }, input: input.stdin, encoding: 'utf8' });
+                return { success: true, stdout, stderr: '', exitCode: 0 };
+            },
+        });
         let capture: Promise<void> | undefined;
         let send: Promise<void> | undefined;
         try {

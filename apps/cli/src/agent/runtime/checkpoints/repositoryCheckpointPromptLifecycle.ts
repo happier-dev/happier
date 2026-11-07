@@ -278,14 +278,6 @@ export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
                     context: binding.context,
                     checkpointRef: messageStart,
                 });
-                try {
-                    await runWithScmCommandRunner(params.scmCommandRunner, () => retainRepositoryCheckpointInitialEvidence({ cwd: binding.repoRoot ?? params.runtimeDirectory,
-                        scopeId: binding.scopeId, checkpointRef: messageStart, captured,
-                        sessionIsNew: params.sessionIsNew === true && params.session.sessionId === initialSessionId,
-                        readEarliestPromptLocalId: () => params.session.fetchEarliestCommittedUserMessageLocalId() }));
-                } catch (error) {
-                    logger.debug('Repository initial checkpoint retention unavailable (non-fatal)', error);
-                }
                 if (!captured.success) {
                     bindingsByMessageId.set(messageId, {
                         ...binding,
@@ -294,15 +286,30 @@ export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
                         unavailableError: captured.error,
                     });
                     logger.debug('Repository message-start checkpoint unavailable (non-fatal)', captured);
-                    return;
+                } else {
+                    bindingsByMessageId.set(messageId, {
+                        ...binding,
+                        receipts: appendReceipts(binding.receipts, captured.receipts),
+                    });
                 }
-                bindingsByMessageId.set(messageId, {
-                    ...binding,
-                    receipts: appendReceipts(binding.receipts, captured.receipts),
-                });
+                return { binding, messageStart, captured,
+                    sessionIsNew: params.sessionIsNew === true && params.session.sessionId === initialSessionId };
             })();
-            checkpointPreparation = capture.catch(() => undefined);
-            return capture;
+            // Only immutable capture guards native writes. Initial evidence retention
+            // joins the existing lifecycle tail, so Home I/O cannot delay input collection.
+            checkpointPreparation = capture.then(async (result) => {
+                if (!result) return;
+                try {
+                    await runWithScmCommandRunner(params.scmCommandRunner, () => retainRepositoryCheckpointInitialEvidence({
+                        cwd: result.binding.repoRoot ?? params.runtimeDirectory, scopeId: result.binding.scopeId,
+                        checkpointRef: result.messageStart, captured: result.captured, sessionIsNew: result.sessionIsNew,
+                        readEarliestPromptLocalId: () => params.session.fetchEarliestCommittedUserMessageLocalId(),
+                    }));
+                } catch (error) {
+                    logger.debug('Repository initial checkpoint retention unavailable (non-fatal)', error);
+                }
+            }).catch(() => undefined);
+            return capture.then(() => undefined);
         },
         onTurnStarted({ messageId, turnId, sequence }) {
             const started = checkpointPreparation.then(async () => {
@@ -482,7 +489,8 @@ export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
             bindingsByMessageId.delete(messageId);
             if (binding) endAttributionInterval(binding);
         },
-        onSessionEnd() {
+        async onSessionEnd() {
+            await checkpointPreparation;
             for (const binding of bindingsByMessageId.values()) {
                 endAttributionInterval(binding);
             }

@@ -354,6 +354,7 @@ describe('createRepositoryCheckpointPromptLifecycle', () => {
         try {
             await writeFile(join(repoRoot, 'tracked.txt'), 'already changed before resume\n');
             await lifecycle.onBeforePromptDispatch?.({ messageId: 'resumed', prompt: 'continue' });
+            await lifecycle.onTurnStarted?.({ messageId: 'resumed', turnId: 'resumed' });
             expect(await readRepositoryCheckpointInitialEvidence({ cwd: repoRoot, scopeId: `${session.sessionId}:${repoRoot}` })).toMatchObject({
                 state: 'unavailable', recoverable: true,
             });
@@ -367,8 +368,10 @@ describe('createRepositoryCheckpointPromptLifecycle', () => {
             provider: 'codex', protocol: 'codex', sessionIsNew: true });
         try {
             await lifecycle.onBeforePromptDispatch?.({ messageId: 'first', prompt: 'edit' });
+            await lifecycle.onTurnStarted?.({ messageId: 'first', turnId: 'first' });
             sessionId = 'older-swapped-session';
             await lifecycle.onBeforePromptDispatch?.({ messageId: 'swapped', prompt: 'continue old session' });
+            await lifecycle.onTurnStarted?.({ messageId: 'swapped', turnId: 'swapped' });
             expect(await readRepositoryCheckpointInitialEvidence({ cwd: repoRoot, scopeId: `${sessionId}:${repoRoot}` })).toMatchObject({ state: 'unavailable', recoverable: true });
         } finally { await lifecycle.onSessionEnd?.(); await rm(repoRoot, { recursive: true, force: true }); }
     });
@@ -381,12 +384,14 @@ describe('createRepositoryCheckpointPromptLifecycle', () => {
         try {
             await writeFile(join(repoRoot, 'tracked.txt'), 'pre-existing dirt\n');
             await lifecycle.onBeforePromptDispatch?.({ messageId: 'first', prompt: 'edit' });
+            await lifecycle.onTurnStarted?.({ messageId: 'first', turnId: 'first' });
             const baseline = await runGit(repoRoot, ['rev-parse', '--verify', ref]);
             expect(await runGit(repoRoot, ['show', `${baseline}:tracked.txt`])).toBe('pre-existing dirt');
             await writeFile(join(repoRoot, 'tracked.txt'), 'agent change\n');
             await lifecycle.onSessionEnd?.();
             lifecycle = createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: repoRoot, provider: 'codex', protocol: 'codex' });
             await lifecycle.onBeforePromptDispatch?.({ messageId: 'resumed', prompt: 'continue' });
+            await lifecycle.onTurnStarted?.({ messageId: 'resumed', turnId: 'resumed' });
             expect(await runGit(repoRoot, ['rev-parse', '--verify', ref])).toBe(baseline);
         } finally {
             await lifecycle.onSessionEnd?.();
@@ -432,10 +437,12 @@ describe('createRepositoryCheckpointPromptLifecycle', () => {
             provider: 'codex', protocol: 'codex', sessionIsNew: true });
         try {
             await lifecycle.onBeforePromptDispatch?.({ messageId: 'plugin-input-v1:first-id', prompt: 'edit' });
+            await lifecycle.onTurnStarted?.({ messageId: 'plugin-input-v1:first-id', turnId: 'first' });
             await runGit(repoRoot, ['update-ref', '-d', `refs/happier/checkpoints/${encodeRepositoryCheckpointScope(scopeId)}/session-initial`]);
             await rm(join(repoRoot, '.git', 'happier', 'checkpoint-evidence', encodeRepositoryCheckpointScope(scopeId), 'initial.json'));
             await writeFile(join(repoRoot, 'tracked.txt'), 'already changed after first dispatch\n');
             await lifecycle.onBeforePromptDispatch?.({ messageId: 'later-safe-id', prompt: 'continue' });
+            await lifecycle.onTurnStarted?.({ messageId: 'later-safe-id', turnId: 'later' });
             expect(await readRepositoryCheckpointInitialEvidence({ cwd: repoRoot, scopeId })).toMatchObject({ state: 'unavailable', recoverable: true });
         } finally { await lifecycle.onSessionEnd?.(); await rm(repoRoot, { recursive: true, force: true }); }
     });
@@ -461,8 +468,10 @@ describe('createRepositoryCheckpointPromptLifecycle', () => {
         const lifecycle = createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: repoRoot, provider: 'codex', protocol: 'codex', sessionIsNew: true });
         try {
             await lifecycle.onBeforePromptDispatch?.({ messageId: 'first', prompt: 'edit' });
+            await lifecycle.onTurnStarted?.({ messageId: 'first', turnId: 'first' });
             await writeFile(join(repoRoot, 'tracked.txt'), 'agent ran after failed capture\n');
             await lifecycle.onBeforePromptDispatch?.({ messageId: 'later', prompt: 'continue' });
+            await lifecycle.onTurnStarted?.({ messageId: 'later', turnId: 'later' });
             expect(await readRepositoryCheckpointInitialEvidence({ cwd: repoRoot, scopeId: `${session.sessionId}:${repoRoot}` })).toEqual({
                 state: 'unavailable', reason: 'First checkpoint object write failed',
             });
