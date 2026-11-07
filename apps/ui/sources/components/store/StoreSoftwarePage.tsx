@@ -55,6 +55,9 @@ import {
   type SoftwareInputDraft,
 } from './StoreSoftwareInputs';
 import { showStoreSoftwareReview } from './StoreSoftwareReview';
+import { StoreAddToPresetButton, StorePresetEditorHandoff, type StorePresetChoice } from './presets/StoreAddToPreset';
+import { StorePresetsShelf } from './presets/StorePresetsShelf';
+import type { StorePresetDoorItem } from './presets/storePresetDoor';
 import { describeMachineSetupAllOffline } from '@/components/settings/machines/managed/MachineSetupPlanReview';
 import {
   SoftwareMachineMark,
@@ -177,6 +180,8 @@ export function StoreSoftwarePage(
               subtitle={t('capabilities.store.softwarePage.noMachineBody')}
             />
           )}
+          {/* The Account's presets hold software for any Machine, so they stay whatever the browsed Machine says. */}
+          <StorePresetsShelf presented={props.presented} query={input.query} />
         </StoreKindFrame>
       )}
     </StoreSoftwareKind>
@@ -412,6 +417,14 @@ function SoftwareListingBody(
     });
     return null;
   };
+  // A recipe joins a preset as itself with the values typed here; a runtime's Mise configuration is not a preset item.
+  const presetItem = React.useMemo((): StorePresetDoorItem | null => {
+    const recipe = toolchain ? null : MachineRecipeReferenceV1Schema.safeParse(item.value);
+    return recipe?.success
+      ? { kind: 'softwareRecipe', selection: { ref: recipe.data, inputs: omitBlankSoftwareInputs(draft) ?? {} } } : null;
+  }, [item.value, toolchain, draft]);
+  const [presetHandoff, setPresetHandoff] = React.useState<StorePresetChoice | null>(null);
+  const returnFromPreset = React.useCallback(() => setPresetHandoff(null), []);
   const key = actionInputOptionValueKey(item.value);
   const config_: CapabilityListingConfig<StoreSoftwareItem> = {
     testID: 'store.software.listing',
@@ -422,6 +435,15 @@ function SoftwareListingBody(
         onPress: review,
         ...(disabledReason ? { disabledReason } : {}),
       },
+      ...(presetItem ? { secondary: (
+        <StoreAddToPresetButton
+          testID="store.software.listing.addToPreset"
+          serverId={props.target.scope?.serverId ?? null}
+          item={presetItem}
+          name={item.label}
+          onChoose={setPresetHandoff}
+        />
+      ) } : {}),
       provenance: (
         <Text variant="meta" style={{ color: theme.colors.text.secondary }}>
           {/* A disabled Review always says what it waits for, where the note stands beside it. */}
@@ -617,6 +639,9 @@ function SoftwareListingBody(
       </View>
     ),
   };
+  if (presetHandoff && presetItem) {
+    return <StorePresetEditorHandoff choice={presetHandoff} item={presetItem} onReturn={returnFromPreset} />;
+  }
   return (
     <CapabilityListingDetail
       config={config_}

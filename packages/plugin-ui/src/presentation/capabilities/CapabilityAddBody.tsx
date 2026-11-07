@@ -114,6 +114,8 @@ export type HappierCapabilityAddDetailFooter = Readonly<{
     busy?: boolean;
     disabledReason?: string;
   }>;
+  /** A quieter second way in beside the primary (a listing's "Add to a preset…"); the caller owns its menu. */
+  secondary?: React.ReactNode;
   /** After the primary resolved `then: 'stay'`: the footer's note, an optional way to the added item, and Done. */
   afterAdd?: Readonly<{
     start?: React.ReactNode;
@@ -1219,6 +1221,9 @@ function AddDetail<Item>(
         testID={`${props.testID}:detail-action`}
       >
         <View style={props.pushed ? styles.stretch : null}>{primary}</View>
+        {footer.secondary === undefined || afterAdd !== undefined ? null : (
+          <View style={props.pushed ? styles.stretch : null}>{footer.secondary}</View>
+        )}
         {note === null ? null : (
           <View style={props.pushed ? null : styles.slot}>{note}</View>
         )}

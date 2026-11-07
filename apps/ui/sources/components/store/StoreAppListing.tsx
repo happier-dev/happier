@@ -29,6 +29,8 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 
 import { catalogText, showStoreAppPreparation } from './StoreAppPreparation';
+import { StoreAddToPresetButton, StorePresetEditorHandoff, type StorePresetChoice } from './presets/StoreAddToPreset';
+import type { StorePresetDoorItem } from './presets/storePresetDoor';
 import {
   useStoreAppListing,
   type StoreAppListingSelection,
@@ -134,6 +136,12 @@ export function StoreAppListing(
     [summary],
   );
   const ready = state.kind === 'ready' ? state : null;
+  // The exact pin joins a preset as an App in its own new Environment; saving the preset deploys nothing.
+  const templateRef = ready?.templateRef;
+  const presetItem = React.useMemo((): StorePresetDoorItem | null => templateRef ? { kind: 'app', definition: {
+    name, project: { kind: 'create' }, definition: { from: 'catalogApp', templateRef } } } : null, [templateRef, name]);
+  const [presetHandoff, setPresetHandoff] = React.useState<StorePresetChoice | null>(null);
+  const returnFromPreset = React.useCallback(() => setPresetHandoff(null), []);
   // The listing that asked owns its install sheet: once it stops being presented (a route change, Back, a
   // closed pane) the sheet is withdrawn with it, never left open over another page.
   const focused = useIsFocused();
@@ -219,6 +227,15 @@ export function StoreAppListing(
               disabledReason: t('capabilities.store.appPage.needsReviewHint'),
             }),
       },
+      ...(presetItem ? { secondary: (
+        <StoreAddToPresetButton
+          testID="store.app.listing.addToPreset"
+          serverId={lifetime.scope.serverId}
+          item={presetItem}
+          name={name}
+          onChoose={setPresetHandoff}
+        />
+      ) } : {}),
       provenance: (
         <Text variant="meta" style={{ color: theme.colors.text.secondary }}>
           {t('capabilities.store.appPage.installNote')}
@@ -360,6 +377,9 @@ export function StoreAppListing(
       </View>
     ),
   };
+  if (presetHandoff && presetItem) {
+    return <StorePresetEditorHandoff choice={presetHandoff} item={presetItem} onReturn={returnFromPreset} />;
+  }
   return (
     <CapabilityListingDetail
       config={config}
