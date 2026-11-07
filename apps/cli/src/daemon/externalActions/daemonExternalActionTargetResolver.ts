@@ -32,7 +32,11 @@ import type { SessionInputSourceSessionV1 } from '@happier-dev/protocol/sessions
 
 import type { ResolveExternalActionTarget } from './executeExternalAction';
 import { rethrowRequesterHomeReadFailure } from "@/daemon/sessionEncryption/requesterCurrentness";
-import { logger } from '@/ui/logger';
+import { timeApprovalPhase, withApprovalActionTrace } from './webLatencyTrace';
+import { createCredentialedWorkflowActionAdmissionReader,
+  type createWorkflowActionAdmissionReader } from '../workflows/workflowActionAdmission';
+import { ActionInvokeInputSchema } from '@happier-dev/protocol/actions/actionInvokeInput';
+import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 
 type CurrentMachineExecutionOrigin = Readonly<{
   serverIdentityId: string;
@@ -53,6 +57,20 @@ export type DaemonApprovalExecutionOriginCurrentness = (args: Readonly<{
 
 async function readCurrentPluginSourceCustody(pluginId: string): Promise<PluginSourceCustodyV1 | null> {
   return readAuthoritativePluginSlotOccurrence(pluginId)?.sourceCustody ?? null;
+}
+
+function doesCurrentPermissionModeAdmitApprovedMode(origin: ApprovalExecutionOriginV1, currentMode: string | null): boolean {
+  if (origin.causalPermissionAuthority && !origin.callerPermissionMode) return false;
+  if (origin.callerPermissionMode === undefined) return true;
+  if (!origin.callerPermissionMode || !currentMode) return false;
+  if (origin.causalPermissionAuthority) {
+    const admittedPermissionCeiling = origin.causalPermissionAuthority.admittedPermissionCeiling;
+    const approved = resolveEffectivePermissionMode({ currentMode: origin.callerPermissionMode, admittedPermissionCeiling });
+    const current = resolveEffectivePermissionMode({ currentMode, admittedPermissionCeiling });
+    return approved.ok && current.ok && assertNonEscalatingPermissionMode({
+      requestedMode: approved.effectiveMode, callerMode: current.effectiveMode }).ok;
+  }
+  return assertNonEscalatingPermissionMode({ requestedMode: origin.callerPermissionMode, callerMode: currentMode }).ok;
 }
 
 /** Reviewed publication retains its original input, not a fresh Agent turn. */
@@ -125,6 +143,8 @@ export function createDaemonApprovalExecutionOriginCurrentness(input: Readonly<{
     origin: ApprovalExecutionOriginV1,
     signal?: AbortSignal,
   ) => Promise<string | null>;
+  /** Opens the immutable accepted ceiling for a signed Workflow root, never an editable approval assertion. */
+  readWorkflowActionAdmission?: ReturnType<typeof createWorkflowActionAdmissionReader>;
   resolveCurrentSessionAgentSpawnPolicyV1?: (
     origin: ApprovalExecutionOriginV1,
     signal?: AbortSignal,
@@ -132,15 +152,10 @@ export function createDaemonApprovalExecutionOriginCurrentness(input: Readonly<{
   now?: () => number;
 }>): DaemonApprovalExecutionOriginCurrentness {
   const now = input.now ?? Date.now;
-  return async ({ origin, request, actionInput, signal, reportStale }) => {
-    const phase = async <T>(name: string, read: () => T | Promise<T>): Promise<T> => {
-      const startedAt = performance.now();
-      let status: 'completed' | 'failed' = 'failed';
-      try { const result = await read(); status = 'completed'; return result; }
-      finally { logger.debug('[ActionApproval] origin phase', { phase: name, status,
-        actionId: origin.actionId, requestId: origin.requestId, machineId: input.machineId,
-        durationMs: Math.round(performance.now() - startedAt) }); }
-    };
+  return async ({ origin, request, actionInput, signal, reportStale }) => withApprovalActionTrace(request ? 'approval.request.decide' : origin.actionId,
+    () => timeApprovalPhase('approval.origin.currentness', async () => {
+    const phase = <T>(name: string, read: () => T | Promise<T>): Promise<T> =>
+      timeApprovalPhase(`approval.origin.${name}`, read);
     const stale = (reason: DaemonApprovalExecutionOriginStaleReason) => {
       reportStale?.(reason);
       return false;
@@ -180,20 +195,21 @@ export function createDaemonApprovalExecutionOriginCurrentness(input: Readonly<{
         // Rechecking its contract preserves a narrowed Account authority rather
         // than introducing a second human-only interpretation during replay.
         const principalMatches = ApprovalExecutionOriginV1Schema.safeParse(origin).success;
+        const retainedWorkflow = principalMatches && origin.caller.kind === 'workflowRun';
         if (
           (request ? request.v !== 2 : actionInput === undefined)
           || !origin.externalActionInputSignature
           || !origin.target
           || !input.externalActionMachinePublicKey
-          || !input.verifyExternalExecutionAuthorization
+          || (!retainedWorkflow && !input.verifyExternalExecutionAuthorization)
           || !principalMatches
-          || (!acceptedSession && origin.caller.kind !== 'host' && origin.caller.kind !== 'plugin')
+          || (!acceptedSession && !retainedWorkflow && origin.caller.kind !== 'host' && origin.caller.kind !== 'plugin')
           || origin.serverIdentityId !== externalAuthorization.binding.serverIdentityId
           || origin.accountId !== input.accountId
           || origin.accountId !== externalAuthorization.binding.accountId
           || origin.machineId !== input.machineId
           || origin.machineId !== externalAuthorization.binding.machineId
-          || origin.requestId !== externalAuthorization.binding.requestId
+          || (!retainedWorkflow && origin.requestId !== externalAuthorization.binding.requestId)
           || !verifyExternalActionApprovalInputV1({
             authorizationToken: externalAuthorization.token,
             actionId: origin.actionId,
@@ -206,7 +222,7 @@ export function createDaemonApprovalExecutionOriginCurrentness(input: Readonly<{
           })
         ) return stale('credential_changed');
         const target = origin.target;
-        if (!await phase('external_authorization', () => input.verifyExternalExecutionAuthorization!({
+        if (!retainedWorkflow && !await phase('external_authorization', () => input.verifyExternalExecutionAuthorization!({
           authorization: externalAuthorization,
           // Account currentness verifies the retained root; the installation
           // signature above binds its exact approved effect. PAT currentness
@@ -241,7 +257,33 @@ export function createDaemonApprovalExecutionOriginCurrentness(input: Readonly<{
         // Home admitted the exact original turn. Accepted Session work still
         // passes the ordinary current Session/permission/Account checks below;
         // naturally ending the old turn is not itself a revocation.
-        if (!acceptedSession) return true;
+        if (!acceptedSession) {
+          const workflow = binding.workflowActionOrigin;
+          const retainedCaller = retainedWorkflow && origin.caller.kind === 'workflowRun' ? origin.caller : undefined;
+          const runId = retainedCaller?.runId
+            ?? (workflow && !workflow.sessionLeaf && !workflow.sessionAuthority ? workflow.runId : undefined);
+          if (runId) {
+            if (!input.readWorkflowActionAdmission) return stale('workflow_authorization_unavailable');
+            const admission = await input.readWorkflowActionAdmission({ runId, phase: 'approval_replay',
+              context: { actionRequestId: origin.requestId, externalActionExecutionAuthorization: externalAuthorization,
+                ...(retainedCaller ? { actionCaller: retainedCaller, executionRunWorkflowRunId: runId } : {}),
+                ...(signal ? { signal } : {}) } });
+            const invocation = await admission?.readActionInvocation('approval_replay');
+            const execution = invocation?.progress.execution;
+            // Contributed leaves retain their qualified id; their signed approval uses action.invoke.
+            const contributed = origin.actionId === 'action.invoke'
+              ? ActionInvokeInputSchema.safeParse(request?.v === 2 ? request.actionArgs : actionInput) : null;
+            const qualifiedActionId = contributed?.success ? formatQualifiedPluginActionId(contributed.data.action) : null;
+            if (!admission || admission.run.ownerAccountId !== input.accountId || execution?.kind !== 'action'
+              || (execution.actionId !== origin.actionId && execution.actionId !== qualifiedActionId)
+              || execution.actionRequestId !== origin.requestId) return stale('workflow_authorization_changed');
+            // The signature above binds the prepared effect. This read recovers
+            // only its accepted ceiling, never fresh authority over its operands.
+            if (origin.callerPermissionMode === undefined || !doesCurrentPermissionModeAdmitApprovedMode(origin,
+              admission.accepted.authorization.admittedPermissionCeiling)) return stale('permission_changed');
+          }
+          return true;
+        }
       }
       if (origin.accountId !== undefined && origin.accountId !== input.accountId) return stale('account_changed');
       if (origin.machineId !== undefined && origin.machineId !== input.machineId) return stale('machine_changed');
@@ -249,12 +291,18 @@ export function createDaemonApprovalExecutionOriginCurrentness(input: Readonly<{
       const operands = request?.actionArgs ?? actionInput;
       const hasSessionOperand = operands !== null && typeof operands === 'object' && 'sessionId' in operands
         && typeof operands.sessionId === 'string' && operands.sessionId.trim().length > 0;
-      const machineEffect = request?.v === 2
-        && resolveActionExecutionPlacementForInput(getActionSpec(request.actionId), operands) === 'machine';
+      const requestSpec = request?.v === 2 ? getActionSpec(request.actionId) : null;
+      // Live input remains on this exact origin Machine. The durable projection
+      // cannot be parsed as executable input to infer placement; a contextual
+      // Session does not own those retained operands. Explicit Session targets
+      // still pass their ordinary locality checks below.
+      const liveInputCustody = requestSpec?.approvalInputCustody === 'live_only';
+      const machineEffect = requestSpec !== null && !liveInputCustody
+        && resolveActionExecutionPlacementForInput(requestSpec, operands) === 'machine';
       const target = origin.target
         // Machine-only effects replay on the recorded Machine. A contextual
         // Session is not their target; explicit Session operands still recheck locality.
-        ?? (machineEffect && !hasSessionOperand && origin.machineId
+        ?? ((liveInputCustody || machineEffect) && !hasSessionOperand && origin.machineId
           ? { kind: 'machine' as const, machineId: origin.machineId }
           : origin.sessionId
           ? { kind: 'session' as const, sessionId: origin.sessionId }
@@ -313,38 +361,11 @@ export function createDaemonApprovalExecutionOriginCurrentness(input: Readonly<{
       }
 
       if (origin.callerPermissionMode !== undefined || origin.causalPermissionAuthority !== undefined) {
-        if (origin.causalPermissionAuthority && !origin.callerPermissionMode) return stale('permission_changed');
-        if (origin.callerPermissionMode !== undefined) {
-          if (origin.callerPermissionMode === null) return stale('permission_changed');
-          // A Workflow Run has no Session whose mode can change: its current
-          // permission is the immutable ceiling of the accepted authorization
-          // that the Workflow owner has just rechecked above, exactly the mode
-          // its live admission stamped as caller permission.
-          const currentPermissionMode = origin.caller.kind === 'workflowRun'
-            ? origin.caller.authorization.admittedPermissionCeiling
-            : input.resolveCurrentPermissionMode
-              ? await input.resolveCurrentPermissionMode(origin, signal)
-              : null;
-          if (!currentPermissionMode) return stale('permission_changed');
-          if (origin.causalPermissionAuthority) {
-            const admittedPermissionCeiling = origin.causalPermissionAuthority.admittedPermissionCeiling;
-            const approved = resolveEffectivePermissionMode({
-              currentMode: origin.callerPermissionMode,
-              admittedPermissionCeiling,
-            });
-            const current = resolveEffectivePermissionMode({
-              currentMode: currentPermissionMode,
-              admittedPermissionCeiling,
-            });
-            if (!approved.ok || !current.ok || !assertNonEscalatingPermissionMode({
-              requestedMode: approved.effectiveMode,
-              callerMode: current.effectiveMode,
-            }).ok) return stale('permission_changed');
-          } else if (!assertNonEscalatingPermissionMode({
-            requestedMode: origin.callerPermissionMode,
-            callerMode: currentPermissionMode,
-          }).ok) return stale('permission_changed');
-        }
+        // Local Workflow callers retain their already rechecked accepted authorization.
+        const currentPermissionMode = origin.caller.kind === 'workflowRun'
+          ? origin.caller.authorization.admittedPermissionCeiling
+          : input.resolveCurrentPermissionMode ? await input.resolveCurrentPermissionMode(origin, signal) : null;
+        if (!doesCurrentPermissionModeAdmitApprovedMode(origin, currentPermissionMode)) return stale('permission_changed');
       }
 
       if (
@@ -384,7 +405,7 @@ export function createDaemonApprovalExecutionOriginCurrentness(input: Readonly<{
       rethrowRequesterHomeReadFailure(error);
       return stale('currentness_read_failed');
     }
-  };
+  }));
 }
 
 const SPAWN_POLICY_ALLOWANCE_FIELDS = [
@@ -440,7 +461,7 @@ export function createDaemonApprovalExecutionOriginCurrentnessFromCredentials(in
 }>): ReturnType<typeof createDaemonApprovalExecutionOriginCurrentness> | undefined {
   const accountId = readAccountIdFromToken(input.credentials.token);
   if (!accountId) return undefined;
-  const accountServerActionDeps = createAccountServerActionDeps({
+  const createAccountServerActionDepsForHome = () => createAccountServerActionDeps({
     token: input.credentials.token,
     serverId: input.serverId,
     serverHttpBaseUrl: input.serverApiUrl,
@@ -449,8 +470,7 @@ export function createDaemonApprovalExecutionOriginCurrentnessFromCredentials(in
       : {}),
   });
   const installationIdentity = readInstallationIdentityIfExistsSync();
-  const listAccountApiTokensAction = accountServerActionDeps.accountApiTokensListAction;
-  if (!listAccountApiTokensAction) return undefined;
+  if (!createAccountServerActionDepsForHome().accountApiTokensListAction) return undefined;
 
   const readCurrentSession = async (origin: ApprovalExecutionOriginV1, signal?: AbortSignal) => {
     const sessionId = origin.caller.kind === 'session' ? origin.caller.sessionId : origin.sessionId;
@@ -470,12 +490,12 @@ export function createDaemonApprovalExecutionOriginCurrentnessFromCredentials(in
     machineId: input.machineId,
     serverId: input.serverId,
     resolveCurrentMachineExecutionOriginContext: input.resolveCurrentMachineExecutionOriginContext ?? createCurrentMachineExecutionOriginContextResolver({
-      serverUrl: input.serverApiUrl,
+      get serverUrl() { return input.serverApiUrl; },
       resolveCurrentMachineId: () => input.machineId,
     }),
     resolveTarget: createDaemonExternalActionTargetResolver({
       credentials: input.credentials,
-      serverApiUrl: input.serverApiUrl,
+      get serverApiUrl() { return input.serverApiUrl; },
       currentMachineHost: input.currentMachineHost,
       currentMachineHomeDir: input.currentMachineHomeDir,
       ...(input.resolveServerFeaturesSnapshot
@@ -486,7 +506,7 @@ export function createDaemonApprovalExecutionOriginCurrentnessFromCredentials(in
       token: input.credentials.token, ...(signal ? { signal } : {}),
     })).id === accountId,
     listAccountApiTokens: async (signal) => {
-      const result = await listAccountApiTokensAction({
+      const result = await createAccountServerActionDepsForHome().accountApiTokensListAction!({
         input: {},
         context: { surface: 'rpc', authority: 'account_automation', serverId: input.serverId },
         ...(signal ? { signal } : {}),
@@ -515,6 +535,8 @@ export function createDaemonApprovalExecutionOriginCurrentnessFromCredentials(in
     ...(input.isWorkflowRunAuthorizationCurrent
       ? { isWorkflowRunAuthorizationCurrent: input.isWorkflowRunAuthorizationCurrent }
       : {}),
+    readWorkflowActionAdmission: request => createCredentialedWorkflowActionAdmissionReader({
+      credentials: input.credentials, serverHttpBaseUrl: input.serverApiUrl })(request),
     resolveCurrentPermissionMode: input.resolveCurrentPermissionMode ?? (async (origin, signal) => {
       const transport = await readCurrentSession(origin, signal);
       if (!transport) return null;

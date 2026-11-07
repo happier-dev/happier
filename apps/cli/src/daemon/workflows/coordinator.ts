@@ -15,9 +15,11 @@ import { ActionDefinitionV1Schema } from '@happier-dev/protocol/actions/actionDe
 import type { createActionExecutor, ActionExecuteResult, ActionExecutorContext, ActionCompletionRun, ActionCompletionOperation, ActionCompletionStateV1, ExecutionRunTerminalObservation } from '@happier-dev/protocol/actions';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { getWorkflowActionOutputKindV1, WorkflowMachineCommandOutputV1Schema } from '@happier-dev/protocol/workflows/stepActionsV1';
 import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import { readWorkflowActionApprovalSettlement } from './actionApproval';
+import { WorkflowInvocationSettlementFailure } from './invocationSettlementFailure';
 import { readRetainedWorkflowSessionStartupFailure } from './workflowSessionStartupFailure';
 import { readWorkflowProjectSetupConsentHold } from './stepExecution';
 import { validateExecutionRunProfileResult } from '@happier-dev/protocol/execution/runs/resultContract';
@@ -229,12 +231,15 @@ export type WorkflowStepExecutor = (params: Readonly<{
   /** Origin observation reads the canonical Run control before waiting for host dispatch. */
   readOriginInputControl?: () => Promise<'running' | 'pause_requested' | 'cancel_requested'>;
   /** Durable admission fence after preparation, immediately before releasing input. */
-  beforeInputAdmission: () => Promise<void>;
-  /** Exact pre-terminal Workflow fact emitted by a detached Execution Run. */
+  beforeInputAdmission: (renderedText?: string) => Promise<void>;
+  /** Exact pre-terminal Workflow fact emitted by its execution owner. */
   onExecutionObservation?: (observation: Readonly<{
     execution: Extract<NonNullable<WorkflowProgressEnvelopeV1['execution']>, { kind: 'detached_run' | 'action' }>;
     setupConsentOutput?: Readonly<{ operation: import('@happier-dev/protocol/actions/operations/v1').ActionOperationSnapshotV1 }>;
     usage?: WorkflowUsageV1;
+  }> | Readonly<{
+    execution: Extract<NonNullable<WorkflowProgressEnvelopeV1['execution']>, { kind: 'session' }>;
+    attentionRequired: boolean;
   }>) => Promise<void>;
   signal?: AbortSignal;
 }>) => Promise<WorkflowStepExecutionResult>;
@@ -283,12 +288,15 @@ export type WorkflowWorkspaceResolver = (params: Readonly<{
 
 export type WorkflowActionExecutor = Readonly<{
   executor: Pick<ReturnType<typeof createActionExecutor>, 'prepare'>;
+  /** Host-owned role projection, snapshotted before effects; never an authored result policy. */
+  prepareResultCapture?: (actionId: string) => Promise<((output: WorkflowJsonValue) => WorkflowJsonValue | undefined) | undefined>;
   /** Existing Artifact execution observer; it never decides or replays an effect. */
-  observeApproval?: (params: Readonly<{ artifactId: string; actionRequestId: string;
+  observeApproval?: (params: Readonly<{ artifactId: string; actionRequestId: string; actionId?: 'discussion.invite' | 'discussion.reply';
     authorization: WorkflowAcceptedAuthorizationV1; signal: AbortSignal }>) => Promise<ActionExecuteResult>;
-  buildContext: (params: Readonly<{ runId: string; authorization: WorkflowAcceptedAuthorizationV1;
+  buildContext: (params: Readonly<{ runId: string; invocationRecordId?: string; authorization: WorkflowAcceptedAuthorizationV1;
     workDepth: number; originSessionId?: string; workspace: WorkflowWorkspaceDescriptorV1;
     origin?: WorkflowAcceptedOriginV1;
+    approvalProfileId?: string | null;
     role?: WorkflowMaterializedLeafV1['role'];
     signal?: AbortSignal }>) => Promise<ActionExecutorContext>;
   observeRun: (run: ActionCompletionRun, params: Readonly<{ workspace: WorkflowWorkspaceDescriptorV1;
@@ -696,22 +704,17 @@ class KeyedAdmissionGate {
 
 function withAbortSignal(context: ExecutionContext, signal: AbortSignal): ExecutionContext {
   if (!context.signal) return { ...context, signal };
-  const combined = new AbortController();
-  const relay = (source: AbortSignal) => {
-    if (!combined.signal.aborted) combined.abort(source.reason);
-  };
-  if (context.signal.aborted) relay(context.signal);
-  else context.signal.addEventListener('abort', () => relay(context.signal!), { once: true });
-  if (signal.aborted) relay(signal);
-  else signal.addEventListener('abort', () => relay(signal), { once: true });
-  return { ...context, signal: combined.signal };
+  return { ...context, signal: AbortSignal.any([context.signal, signal]) };
 }
 
-function hasFailedSessionStartup(execution: WorkflowProgressEnvelopeV1['execution']): boolean {
+function hasDefinitiveFailedSessionStartup(execution: WorkflowProgressEnvelopeV1['execution']): boolean {
   if (execution?.kind !== 'action' || execution.actionId !== 'session.spawn_new'
     || execution.awaitedOperations?.length !== 1 || !isWorkflowJsonObject(execution.output)) return false;
-  return readRetainedWorkflowSessionStartupFailure(execution.output.operation,
-    execution.awaitedOperations[0]!, execution.actionRequestId) !== undefined;
+  const failed = readRetainedWorkflowSessionStartupFailure(execution.output.operation,
+    execution.awaitedOperations[0]!, execution.actionRequestId);
+  // A typed Home read refusal settles this attempt, not the Workflow. Keep
+  // ordinary user-initiated recovery available without retrying native work.
+  return failed !== undefined && failed.error?.errorCode !== 'project_requester_home_unavailable';
 }
 
 function persistedFailure(record: WorkflowCoordinatorInvocation): WorkflowLeafFailure | undefined {
@@ -733,7 +736,7 @@ function persistedFailure(record: WorkflowCoordinatorInvocation): WorkflowLeafFa
       // A persisted definitive leaf failure remains collectable after process
       // reconstruction. The authored parent policy decides whether that fact
       // is collected or fail-stops; the leaf row does not encode that policy.
-      return new WorkflowLeafFailure(record.blockKind === 'step' && hasFailedSessionStartup(record.execution)
+      return new WorkflowLeafFailure(record.blockKind === 'step' && hasDefinitiveFailedSessionStartup(record.execution)
         ? 'failed' : 'interrupted', code, true);
     default:
       return undefined;
@@ -783,7 +786,7 @@ class WorkflowReviewHolds {
   confirm?: () => ReturnType<WorkflowCoordinatorStore['confirmReviewHolds']>;
   parkRevision?: number;
   private inFlight = 0;
-  private scheduled?: NodeJS.Immediate;
+  private scheduled?: ReturnType<typeof setImmediate>;
   private refreshing?: Promise<void>;
   private closed = false;
   constructor(readonly runId: string, private readonly onActivityChanged: () => void) {}
@@ -883,7 +886,7 @@ type WorkflowCoordinatorDependencies = Readonly<{
   rootInvocationRecordId?: string;
   onReviewEntered?: (params: Readonly<{ runId: string; invocation: WorkflowCoordinatorInvocation }>) => Promise<void>;
   /** Publish committed leaf outcomes, including terminal failures; replay repairs the same publication. */
-  onInvocationSettled?: (params: Readonly<{ runId: string; invocation: WorkflowCoordinatorInvocation }>) => Promise<void>;
+  onInvocationSettled?: (params: Readonly<{ runId: string; invocation: WorkflowCoordinatorInvocation; signal?: AbortSignal }>) => Promise<void>;
   resolveDiscussionReplyParent?: (params: Readonly<{ runId: string; invocation: WorkflowCoordinatorInvocation }>) =>
     Promise<NonNullable<WorkflowProgressEnvelopeV1['discussionReplyTo']>>;
 }>;
@@ -959,6 +962,8 @@ export function createWorkflowCoordinator(deps: WorkflowCoordinatorDependencies)
             executeStep: (input) => holds.track(() => deps.executeStep(input)),
             ...(deps.prepareStep ? { prepareStep: (input: Parameters<WorkflowStepPreparer>[0]) => holds.track(() => deps.prepareStep!(input)) } : {}),
             resolveWorkspace: (input) => holds.track(() => deps.resolveWorkspace(input)),
+            ...(deps.onInvocationSettled ? { onInvocationSettled: (input: Parameters<NonNullable<typeof deps.onInvocationSettled>>[0]) =>
+              holds.track(() => deps.onInvocationSettled!(input)) } : {}),
             ...(deps.onReviewEntered ? { onReviewEntered: (input: Parameters<NonNullable<typeof deps.onReviewEntered>>[0]) => holds.track(() => deps.onReviewEntered!(input)) } : {}),
             allocateInvocationRecordId: deps.allocateInvocationRecordId ?? randomUUID },
           admissionGate: new KeyedAdmissionGate(), signal, holds,
@@ -969,7 +974,7 @@ export function createWorkflowCoordinator(deps: WorkflowCoordinatorDependencies)
           const terminal = await trackedStore.listByLifecycle({ runId, lifecycles: ['failed', 'cancelled'] });
           for (const invocation of terminal) {
             if (invocation.blockKind === 'step' || invocation.blockKind === 'action') {
-              await deps.onInvocationSettled({ runId, invocation });
+              await deps.onInvocationSettled({ runId, invocation, ...(signal ? { signal } : {}) });
             }
           }
         }
@@ -1280,7 +1285,7 @@ async function executeBodyFrame(params: Readonly<{
     }
     await params.afterBlocks?.(key);
   } catch (error) {
-    if (error instanceof WorkflowLeafFailure || (error instanceof WorkflowControlBoundary && error.state === 'cancelled'
+    if (error instanceof WorkflowLeafFailure || error instanceof WorkflowInvocationSettlementFailure && error.terminal || (error instanceof WorkflowControlBoundary && error.state === 'cancelled'
       && classifyWorkflowAbort(params.context.signal) !== 'fail_stop')) {
       const failStopClosure = classifyWorkflowAbort(params.context.signal) === 'fail_stop';
       const cancellation = classifyWorkflowAbort(params.context.signal) === 'cancelled';
@@ -1292,7 +1297,7 @@ async function executeBodyFrame(params: Readonly<{
         key,
         lifecycle,
         ...(failStopClosure ? { reason: failStopCausalReason(params.context.signal) }
-          : error instanceof WorkflowLeafFailure ? { reason: error.code } : {}),
+          : error instanceof WorkflowLeafFailure || error instanceof WorkflowInvocationSettlementFailure ? { reason: error.code } : {}),
       });
     }
     throw error;
@@ -1339,7 +1344,7 @@ async function ensureAndCommitContainer(
     await body(key);
     await context.deps.store.commitContainerResult({ key });
   } catch (error) {
-    if (error instanceof WorkflowLeafFailure || (error instanceof WorkflowControlBoundary && error.state === 'cancelled'
+    if (error instanceof WorkflowLeafFailure || error instanceof WorkflowInvocationSettlementFailure && error.terminal || (error instanceof WorkflowControlBoundary && error.state === 'cancelled'
       && classifyWorkflowAbort(context.signal) !== 'fail_stop')) {
       const failStopClosure = classifyWorkflowAbort(context.signal) === 'fail_stop';
       const cancellation = classifyWorkflowAbort(context.signal) === 'cancelled';
@@ -1355,7 +1360,7 @@ async function ensureAndCommitContainer(
         key,
         lifecycle,
         ...(failStopClosure ? { reason: failStopCausalReason(context.signal) }
-          : error instanceof WorkflowLeafFailure ? { reason: error.code } : {}),
+          : error instanceof WorkflowLeafFailure || error instanceof WorkflowInvocationSettlementFailure ? { reason: error.code } : {}),
       });
     }
     throw error;
@@ -1752,7 +1757,7 @@ async function executePublishedLeaf(
     if (context.deps.onInvocationSettled && prior?.lifecycle !== 'failed' && prior?.lifecycle !== 'cancelled') {
       const settled = await context.deps.store.readCurrent(address);
       if (settled && ['completed', 'failed', 'cancelled'].includes(settled.lifecycle)) {
-        await context.deps.onInvocationSettled({ runId: context.runId, invocation: settled });
+        await context.deps.onInvocationSettled({ runId: context.runId, invocation: settled, ...(context.signal ? { signal: context.signal } : {}) });
       }
     }
   }
@@ -1779,9 +1784,7 @@ async function executeActionBlock(
   const setupConsentHold = heldConsent !== null && row?.reason === heldConsent.code;
   const pendingApproval = row?.execution?.kind === 'action'
     ? ActionApprovalRequestCreatedResultSchema.safeParse(row.execution.output) : null;
-  const approvalHold = pendingApproval?.success === true
-    && row?.execution?.kind === 'action' && pendingApproval.data.actionId === 'action.invoke'
-    && (row.execution.actionId === 'action.invoke' || parseQualifiedPluginActionId(row.execution.actionId) !== null);
+  const approvalHold = pendingApproval?.success === true;
   if (row && !setupConsentHold) { const failure = persistedFailure(row); if (failure) throw failure; }
   const frozen = context.materializedLeaves.find((candidate) => candidate.sourceKey === context.sourceKey
     && candidate.blockId === leaf.id && candidate.kind === 'action');
@@ -1819,6 +1822,11 @@ async function executeActionBlock(
   if (row.lifecycle !== 'pending' && !setupConsentHold && !completionState && !approvalHold) return await fail('outcome_uncertain', 'outcome_uncertain');
   let workspace = row.workspace?.descriptor;
   let completed: Awaited<ReturnType<typeof resumeActionCompletionV1>> | undefined;
+  let captureResult: ((output: WorkflowJsonValue) => WorkflowJsonValue | undefined) | undefined;
+  const readTarget = (input: Record<string, WorkflowJsonValue>) => {
+    const wrapped = actionId === 'action.invoke' ? PluginContributionIdentityV1Schema.safeParse(input.action) : null;
+    return contributedAction ?? (wrapped?.success ? wrapped.data : undefined);
+  };
   let noRunsLaunched = false;
   if (row.lifecycle === 'pending' || setupConsentHold) {
     const runtime = createResolutionRuntime(context.inputs, frame, context.deps.store, context.deps.sessionContext);
@@ -1846,9 +1854,10 @@ async function executeActionBlock(
     input = projectWorkflowFiniteActionInputV1({ machineId: actionWorkspace.machineId, actionId, input });
     const localInputId = `workflow:${createHash('sha256').update(row.recordId).digest('hex')}:action`;
     const actionRequestId = `${context.runId}/${row.logicalInvocationRecordId ?? row.recordId}/${row.attempt}`;
-    const actionContext: ActionExecutorContext = { ...await context.holds.track(() => context.deps.action!.buildContext({ runId: context.runId, authorization: context.authorization,
+    const actionContext: ActionExecutorContext = { ...await context.holds.track(() => context.deps.action!.buildContext({ runId: context.runId, invocationRecordId: row.recordId, authorization: context.authorization,
       workDepth: context.workDepth, workspace: actionWorkspace, ...(context.originSessionId ? { originSessionId: context.originSessionId } : {}),
       ...(context.origin ? { origin: context.origin } : {}),
+      ...(frozen.selection.approvalProfileId === undefined ? {} : { approvalProfileId: frozen.selection.approvalProfileId }),
       ...(frozen.role ? { role: frozen.role } : {}),
       ...(context.signal ? { signal: context.signal } : {}) })), actionRequestId };
     // Qualified plugin Actions consume the same host front door and approval
@@ -1863,8 +1872,8 @@ async function executeActionBlock(
     // prepared invocation retains its admitted operand; correspondence is display
     // data and must never become a secret-bearing replay input.
     let presentedInput = input;
-    const wrappedTarget = actionId === 'action.invoke' ? PluginContributionIdentityV1Schema.safeParse(input.action) : null;
-    const target = contributedAction ?? (wrappedTarget?.success ? wrappedTarget.data : undefined);
+    const target = readTarget(input);
+    captureResult = target ? await context.deps.action.prepareResultCapture?.(formatQualifiedPluginActionId(target)) : undefined;
     if (target) {
       const preparedDescription = await context.holds.track(() => context.deps.action!.executor.prepare('action.spec.get',
         { id: formatQualifiedPluginActionId(target) }, actionContext));
@@ -1917,7 +1926,7 @@ async function executeActionBlock(
       throw new WorkflowLeafFailure('interrupted', consent.code);
     }
     const approval = invoked.ok ? ActionApprovalRequestCreatedResultSchema.safeParse(invoked.result) : null;
-    if ((contributedAction || actionId === 'action.invoke') && approval?.success && approval.data.actionId === 'action.invoke') {
+    if (approval?.success) {
       // The approval owner owns execution. Retain its exact correspondence before
       // surfacing the hold; reclaim observes settlement and never re-invokes.
       await context.deps.store.commitFact({ key: row.key, lifecycle: 'waiting_for_approval', reason: 'approval_required',
@@ -1937,16 +1946,14 @@ async function executeActionBlock(
     }
   }
   if (approvalHold && pendingApproval?.success && row.execution?.kind === 'action') {
+    const target = readTarget(row.execution.input);
+    captureResult = target ? await context.deps.action.prepareResultCapture?.(formatQualifiedPluginActionId(target)) : undefined;
     if (!workspace) return await fail('outcome_uncertain', 'outcome_uncertain');
-    const approvalWorkspace = workspace;
-    const actionContext = { ...await context.holds.track(() => context.deps.action!.buildContext({
-      runId: context.runId, authorization: context.authorization, workDepth: context.workDepth, workspace: approvalWorkspace,
-      ...(context.origin ? { origin: context.origin } : {}),
-      ...(context.originSessionId ? { originSessionId: context.originSessionId } : {}),
-      ...(frozen.role ? { role: frozen.role } : {}), ...(context.signal ? { signal: context.signal } : {}),
-    })), actionRequestId: row.execution.actionRequestId };
+    // The daemon observes its own admitted invocation, without spending the original PAT again.
+    const actionContext: ActionExecutorContext = { surface: 'agent', authority: 'account_automation',
+      actionCaller: { kind: 'host' }, ...(context.signal ? { signal: context.signal } : {}) };
     const approvalExecution = row.execution;
-    const settlement = await context.holds.track(() => readWorkflowActionApprovalSettlement({ execution: approvalExecution,
+    const settlement = await context.holds.track(() => readWorkflowActionApprovalSettlement({ runId: context.runId, execution: approvalExecution,
       read: async artifactId => {
         const prepared = await context.deps.action!.executor.prepare('approval.request.get', { artifactId }, actionContext);
         const observed = prepared.kind === 'ready' ? await prepared.invocation.run() : prepared.result;
@@ -1962,7 +1969,9 @@ async function executeActionBlock(
   // interrupted. Preserve that correspondence before stopping observation.
   const abort = classifyWorkflowAbort(context.signal);
   if ((abort === 'cancelled' || abort === 'fail_stop') && completed?.kind === 'completed'
-    && row.execution?.kind === 'action') {
+    && row.execution?.kind === 'action'
+    && (getWorkflowActionOutputKindV1(actionId) !== 'command'
+      || WorkflowMachineCommandOutputV1Schema.safeParse(completed.value).success)) {
     // A successful immediate reply is definitive; failed native launches may
     // carry details without proving whether an execution was created.
     row = await context.deps.store.commitFact({ key: row.key, lifecycle: 'cancelled',
@@ -1983,8 +1992,9 @@ async function executeActionBlock(
   if (!completed) return await fail('outcome_uncertain', 'outcome_uncertain');
   // The command owner confirms cancellation with its exact terminal output.
   // Native launch failures can carry details while their execution remains unknown.
-  if (actionId === 'machines.command.run' && completed.kind === 'failed'
+  if (getWorkflowActionOutputKindV1(actionId) === 'command' && completed.kind === 'failed'
     && completed.errorCode === 'command_cancelled' && completed.value !== undefined
+    && WorkflowMachineCommandOutputV1Schema.safeParse(completed.value).success
     && classifyWorkflowAbort(context.signal) === 'cancelled' && row.execution?.kind === 'action') {
     await context.deps.store.commitFact({ key: row.key, lifecycle: 'cancelled',
       reason: completed.errorCode, execution: { ...row.execution, output: completed.value }, result: completed.value,
@@ -2019,11 +2029,25 @@ async function executeActionBlock(
   const outputSchema = frozen.actionContract.outputSchema;
   if (!isWorkflowJsonObject(outputSchema)) return await fail('schema_mismatch');
   const validated = validateExecutionRunProfileResult(completed.value, { kind: 'json', schema: outputSchema });
+  const capturedOutput = validated.ok ? captureResult?.(validated.value) : undefined;
+  const capturedExecution = capturedOutput !== undefined && row.execution?.kind === 'action'
+    ? { execution: { ...row.execution, output: capturedOutput } } : {};
+  const commandOutput = validated.ok && getWorkflowActionOutputKindV1(actionId) === 'command'
+    ? WorkflowMachineCommandOutputV1Schema.safeParse(validated.value) : undefined;
+  if (commandOutput && !commandOutput.success) {
+    // The declared closed command result admitted an unknown-dispatch receipt,
+    // not finite output. Retain uncertainty through the existing invocation owner.
+    return await fail('action_outcome_unknown', 'outcome_uncertain');
+  }
+  if (commandOutput?.success && commandOutput.data.exitCode !== 0) {
+    return await fail('command_failed', 'failed', true, commandOutput.data);
+  }
   const reviewRequired = classifyWorkflowReviewEntryV1({ mayEnterReview: true, pauseForReview: leaf.pauseForReview === true,
     isGeneration: false, inputCompleted: true, observation: { kind: validated.ok ? 'completed' : 'failed' } }) === 'waiting_for_review';
   if (!validated.ok && !reviewRequired) return await fail('schema_mismatch');
   if (reviewRequired) {
     row = await enterReview({ key: row.key, lifecycle: 'waiting_for_review',
+      ...capturedExecution,
       ...(validated.ok ? { result: validated.value, review: { resultSource: { kind: 'execution_input' as const } } }
         : { reason: 'schema_mismatch', ...('issues' in validated && validated.issues ? { validationIssues: [...validated.issues] } : {}) }),
       resultContract: { kind: 'json', schema: outputSchema } }, context);
@@ -2032,7 +2056,7 @@ async function executeActionBlock(
     if (row.lifecycle !== 'completed') throw new WorkflowRuntimeInterruption();
   } else {
     if (!validated.ok) return await fail('schema_mismatch');
-    row = await context.deps.store.commitFact({ key: row.key, lifecycle: 'completed', result: validated.value });
+    row = await context.deps.store.commitFact({ key: row.key, lifecycle: 'completed', result: validated.value, ...capturedExecution });
   }
   const result = row.result ?? (validated.ok ? validated.value : null);
   return result;
@@ -2170,6 +2194,21 @@ async function executeStepBlock(
   const rejoining = existing !== undefined
     && existing.lifecycle !== 'pending'
     && existing.lifecycle !== 'waiting_for_capacity';
+  const intent = existing ?? {
+    key, recordId: context.deps.allocateInvocationRecordId(), acceptedAtMs: Date.now(), runId: context.runId, blockId: step.id, memberOrdinal, ...(parentKey ? { parentKey } : {}),
+    path, blockKind: 'step' as const, attempt: 0, lifecycle: 'pending' as const, resultContract: step.result,
+  };
+  const persistIntent = async (input?: WorkflowAuthoredInputV1) => {
+    assertWorkflowAbortSignal(context);
+    try {
+      return await context.deps.store.ensureIntent({ ...intent, blockKind: 'step', ...(input ? { input } : {}) });
+    } catch (error) {
+      // Allocation retains the exact parent CAS, including a Pause/Cancel
+      // that arrived while the input was being resolved.
+      await reconcileAdmissionRefusal(context);
+      throw error;
+    }
+  };
   let admitted: WorkflowCoordinatorInvocation;
   if (rejoining) {
     // `admitting` may represent a lost admission acknowledgement. Without
@@ -2183,20 +2222,7 @@ async function executeStepBlock(
     // Allocation is fenced separately from input release. Preparation stays
     // pending; the adapter's final callback validates the exact parent claim
     // and controls atomically with the admitting fact after all async work.
-    assertWorkflowAbortSignal(context);
-    try {
-      admitted = await context.deps.store.ensureIntent({
-        key, recordId: context.deps.allocateInvocationRecordId(), acceptedAtMs: Date.now(), runId: context.runId, blockId: step.id, memberOrdinal, ...(parentKey ? { parentKey } : {}),
-        path, blockKind: 'step', attempt: 0, lifecycle: 'pending', resultContract: step.result,
-      });
-    } catch (error) {
-      // A parent CAS can lose to an external pause/cancel after the
-      // container/claim-level admission check. Re-read only the canonical
-      // control owner; do not retry a new row or reinterpret unrelated
-      // storage failures.
-      await reconcileAdmissionRefusal(context);
-      throw error;
-    }
+    admitted = intent;
   }
   const isOriginInput = conversationBinding.kind === 'origin_session';
   const previousAttempt = admitted.previousAttemptRecordId
@@ -2205,7 +2231,56 @@ async function executeStepBlock(
   const isReviewGeneration = previousAttempt?.review?.decision?.kind === 'generate';
   const recoveryPrevious = admitted.recovery?.conversation === 'same_conversation'
     ? await readRetainedConversationAttempt(admitted, context.deps.store) : previousAttempt;
-  const observationDeadline = admitted.observationDeadline;
+  const recoveryInput = admitted.recovery?.input;
+  const effectiveStep = recoveryInput?.kind === 'replacement'
+    ? { ...step, document: recoveryInput.value.document }
+    : step;
+  // Conversation custody may point to another invocation; original input
+  // belongs to this leaf's exact previous attempt, regardless of that choice.
+  const persistedInput = admitted.input
+    ?? (recoveryInput?.kind === 'original' ? previousAttempt?.input : undefined);
+  let replyParent = admitted.discussionReplyTo;
+  let input: MaterializedWorkflowStepInput;
+  try {
+    if (!replyParent && step.discussionReplyTo && context.deps.resolveDiscussionReplyParent) {
+      const producer = await createWorkflowProducerBinding({ runId: context.runId, store: context.deps.store, frame })
+        .resolve(step.discussionReplyTo);
+      if (!producer || producer.lifecycle !== 'completed') throw new WorkflowInputResolutionError('missing_reference');
+      replyParent = await context.deps.resolveDiscussionReplyParent({ runId: context.runId, invocation: producer });
+    }
+    const inputRuntime = createResolutionRuntime(context.inputs, frame, context.deps.store, context.deps.sessionContext);
+    input = step.inputMode === 'none' ? { text: '', references: [], attachments: [], values: [] } : await materializeWorkflowStepInput({
+      automationCause: context.automationCause,
+      document: persistedInput?.document ?? effectiveStep.document,
+      ...(persistedInput ? { retainedInput: persistedInput } : {}),
+      references: persistedInput
+        ? persistedInput.input.map((value) => ({ kind: 'literal' as const, value }))
+        : recoveryInput?.kind === 'replacement'
+          ? recoveryInput.value.input.map((value) => ({ kind: 'literal' as const, value }))
+          : [
+              ...step.input,
+              ...supplementalInputValues.map((value) => ({ kind: 'literal' as const, value })),
+            ],
+      // Accepted input already contains the captured Discussion frontier. A
+      // reconstructed literal is not an invitation to append today's history.
+      runtime: persistedInput ? { ...inputRuntime, resolveDiscussionContext: undefined } : inputRuntime,
+      ...(step.pauseForReview && !isReviewGeneration ? { reviewContext: { runId: context.runId,
+        invocationRecordId: admitted.recordId, contentRevision: admitted.contentRevision ?? '0' } } : {}),
+    });
+  } catch (error) {
+    // Keep an unresolved intent visible on resolution failure, as before.
+    // No executor or workspace preparation has run at this point.
+    if (!rejoining) admitted = await persistIntent();
+    throw error;
+  }
+  const authoredInput: WorkflowAuthoredInputV1 = {
+    document: persistedInput?.document ?? effectiveStep.document,
+    input: [...input.values],
+    ...(input.renderedText === undefined ? {} : { renderedText: input.renderedText }),
+  };
+  // The input is already known before preparation. Seal it in the existing
+  // admission write instead of a second fact and root-projection round trip.
+  if (!rejoining) admitted = await persistIntent(step.inputMode === 'none' ? undefined : authoredInput);
   const invocation: WorkflowProgressEnvelopeV1 = {
     kind: 'happier.workflow-progress.v1',
     invocationPath: path,
@@ -2216,41 +2291,7 @@ async function executeStepBlock(
     ...(admitted.execution && !(isOriginInput && !rejoining) ? { execution: admitted.execution } : {}),
     ...(admitted.recovery ? { recovery: admitted.recovery } : {}),
     ...(admitted.previousAttemptRecordId ? { previousAttemptRecordId: admitted.previousAttemptRecordId } : {}),
-    ...(observationDeadline ? { observationDeadline } : {}),
-  };
-  const recoveryInput = admitted.recovery?.input;
-  const effectiveStep = recoveryInput?.kind === 'replacement'
-    ? { ...step, document: recoveryInput.value.document }
-    : step;
-  const persistedInput = admitted.input;
-  let replyParent = admitted.discussionReplyTo;
-  if (!replyParent && step.discussionReplyTo && context.deps.resolveDiscussionReplyParent) {
-    const producer = await createWorkflowProducerBinding({ runId: context.runId, store: context.deps.store, frame })
-      .resolve(step.discussionReplyTo);
-    if (!producer || producer.lifecycle !== 'completed') throw new WorkflowInputResolutionError('missing_reference');
-    replyParent = await context.deps.resolveDiscussionReplyParent({ runId: context.runId, invocation: producer });
-  }
-  const inputRuntime = createResolutionRuntime(context.inputs, frame, context.deps.store, context.deps.sessionContext);
-  const input = step.inputMode === 'none' ? { text: '', references: [], attachments: [], values: [] } : await materializeWorkflowStepInput({
-    automationCause: context.automationCause,
-    document: persistedInput?.document ?? effectiveStep.document,
-    references: persistedInput
-      ? persistedInput.input.map((value) => ({ kind: 'literal' as const, value }))
-      : recoveryInput?.kind === 'replacement'
-        ? recoveryInput.value.input.map((value) => ({ kind: 'literal' as const, value }))
-        : [
-            ...step.input,
-            ...supplementalInputValues.map((value) => ({ kind: 'literal' as const, value })),
-          ],
-    // Accepted input already contains the captured Discussion frontier. A
-    // reconstructed literal is not an invitation to append today's history.
-    runtime: persistedInput ? { ...inputRuntime, resolveDiscussionContext: undefined } : inputRuntime,
-    ...(step.pauseForReview && !isReviewGeneration ? { reviewContext: { runId: context.runId,
-      invocationRecordId: admitted.recordId, contentRevision: admitted.contentRevision ?? '0' } } : {}),
-  });
-  const authoredInput: WorkflowAuthoredInputV1 = {
-    document: persistedInput?.document ?? effectiveStep.document,
-    input: [...input.values],
+    ...(admitted.observationDeadline ? { observationDeadline: admitted.observationDeadline } : {}),
   };
   const executionInput: MaterializedWorkflowStepInput = { ...input,
     ...(replyParent ? { discussionReplyTo: replyParent } : {}) };
@@ -2408,14 +2449,17 @@ async function executeStepBlock(
       ...(rejoining && !admitted.execution ? { observationOnly: true } : {}),
       ...(frame.item ? { item: frame.item } : {}),
       ...(frame.iteration ? { iteration: frame.iteration } : {}),
-      beforeInputAdmission: async () => {
+      beforeInputAdmission: async (renderedText) => {
         await context.deps.waitForNewWorkAdmission?.(context.signal);
         assertWorkflowAbortSignal(context);
         if (!isOriginInput && (admitted.lifecycle === 'pending' || admitted.lifecycle === 'waiting_for_capacity' || admitted.lifecycle === 'admitting'
           || (admitted.lifecycle === 'waiting_for_approval' && admitted.execution?.kind === 'action'
             && admitted.execution.actionId === 'discussion.invite'))) {
           try {
-            admitted = await context.deps.store.commitFact({ key, lifecycle: 'admitting' });
+            admitted = await context.deps.store.commitFact({ key, lifecycle: 'admitting',
+              ...(renderedText !== undefined && admitted.input?.renderedText === undefined
+                ? { input: { ...authoredInput, renderedText } } : {}),
+            });
           } catch (error) {
             // A lost transition response is ambiguous. Do not dispatch on the
             // strength of a subsequent read that merely says `admitting`.
@@ -2449,12 +2493,19 @@ async function executeStepBlock(
           && durableExecution.providerResumeIdentity
           ? { ...correspondence, providerResumeIdentity: durableExecution.providerResumeIdentity }
           : correspondence;
-        if (durableExecution?.kind === 'action' && correspondence.kind === 'detached_run'
-          && (durableExecution.actionId !== 'execution.run.start' || durableExecution.input.runId !== correspondence.runId
-            || durableExecution.localInputId !== correspondence.localInputId)) throw new Error('workflow_invocation_fact_conflict');
+        if (durableExecution?.kind === 'action' && correspondence.kind === 'detached_run') {
+          const approval = ActionApprovalRequestCreatedResultSchema.safeParse(durableExecution.output);
+          const approvedStart = durableExecution.actionId === 'execution.run.start'
+            && approval.success && approval.data.actionId === durableExecution.actionId;
+          if ((durableExecution.actionId !== 'execution.run.start' && durableExecution.actionId !== 'execution.run.send')
+            || !approvedStart && durableExecution.input.runId !== correspondence.runId
+            || durableExecution.localInputId !== correspondence.localInputId) throw new Error('workflow_invocation_fact_conflict');
+        }
         durableExecution = persistedCorrespondence;
         const current = await context.deps.store.read(key);
-        const lifecycle = isOriginInput && current?.lifecycle === 'cancel_requested' ? 'cancel_requested' : 'running';
+        const lifecycle = isOriginInput && current?.lifecycle === 'cancel_requested' ? 'cancel_requested'
+          : current?.lifecycle === 'waiting_for_approval' && current.execution?.kind === 'session'
+            && sameStrictJsonValue(current.execution, persistedCorrespondence) ? 'waiting_for_approval' : 'running';
         await context.deps.store.commitFact({ key, lifecycle, execution: persistedCorrespondence,
           ...(current?.observationDeadline ? { observationDeadline: current.observationDeadline } : step.timeoutMs !== undefined && acceptedAtMs !== undefined
             ? { observationDeadline: { kind: 'at', expiresAt: new Date(acceptedAtMs + step.timeoutMs).toISOString() } } : {}),
@@ -2472,17 +2523,35 @@ async function executeStepBlock(
       },
       onExecutionObservation: async (observation) => {
         const currentExecution = durableExecution;
+        if ('attentionRequired' in observation) {
+          if (currentExecution?.kind !== 'session'
+            || currentExecution.sessionId !== observation.execution.sessionId
+            || currentExecution.localInputId !== observation.execution.localInputId) {
+            throw new Error('workflow_invocation_fact_conflict');
+          }
+          const current = await context.deps.store.read(key);
+          if (!current || current.lifecycle !== 'running' && current.lifecycle !== 'waiting_for_approval'
+            || context.signal?.aborted) return;
+          const lifecycle = observation.attentionRequired ? 'waiting_for_approval' : 'running';
+          if (current.lifecycle === lifecycle) return;
+          await context.deps.store.commitFact({ key, lifecycle });
+          return;
+        }
         if (observation.execution.kind === 'action') {
           const incoming = observation.execution;
           const consent = observation.setupConsentOutput
             ? readWorkflowProjectSetupConsentHold(incoming.actionId, observation.setupConsentOutput) : null;
-          const invitation = incoming.actionId === 'discussion.invite'
-            ? ActionApprovalRequestCreatedResultSchema.safeParse(incoming.output) : null;
+          const approval = ActionApprovalRequestCreatedResultSchema.safeParse(incoming.output);
           const creationKey = `workflow:${context.runId}:${admitted.recordId}`;
           const invitationHold = executionTarget.kind === 'session' && selectedLeaf.participant?.kind === 'model'
             && incoming.actionId === 'discussion.invite' && incoming.localInputId === creationKey
             && incoming.actionRequestId === `${creationKey}:discussion.invite`
-            && invitation?.success === true && invitation.data.actionId === 'discussion.invite';
+            && approval.success && approval.data.actionId === 'discussion.invite';
+          const detachedStartHold = executionTarget.kind === 'detached_run'
+            && (incoming.actionId === 'execution.run.start' || incoming.actionId === 'execution.run.send')
+            && incoming.actionRequestId === `${incoming.localInputId}:${incoming.actionId === 'execution.run.start' ? 'execution-run-start' : 'execution-run-send'}`
+            && approval.success && approval.data.actionId === incoming.actionId;
+          const approvalHold = invitationHold || detachedStartHold;
           const invitationToStartup = currentExecution?.kind === 'action' && currentExecution.actionId === 'discussion.invite'
             && incoming.actionId === 'session.spawn_new' && incoming.actionRequestId === creationKey
             && currentExecution.localInputId === creationKey && incoming.input.creationKey === creationKey;
@@ -2492,7 +2561,7 @@ async function executeStepBlock(
             || !sameStrictJsonValue(currentExecution.awaitedOperations, incoming.awaitedOperations))) {
             throw new Error('workflow_invocation_fact_conflict');
           }
-          if (!invitationHold && incoming.actionId !== (executionTarget.kind === 'session' ? 'session.spawn_new' : 'execution.run.start')
+          if (!approvalHold && incoming.actionId !== (executionTarget.kind === 'session' ? 'session.spawn_new' : 'execution.run.start')
             || incoming.awaitedOperations?.some(operation => operation.machineId !== workspaceResolution.workspace.machineId)) {
             throw new Error('workflow_invocation_fact_conflict');
           }
@@ -2500,15 +2569,15 @@ async function executeStepBlock(
           if (current?.lifecycle === 'cancel_requested' || current?.lifecycle === 'cancelled'
             || context.signal?.aborted) return;
           durableExecution = incoming;
-          await context.deps.store.commitFact({ key, lifecycle: invitationHold ? 'waiting_for_approval' : consent ? 'needs_attention' : 'running', execution: incoming,
-            ...(invitationHold ? { reason: 'approval_required' } : consent ? { reason: consent.code } : {}) });
+          await context.deps.store.commitFact({ key, lifecycle: approvalHold ? 'waiting_for_approval' : consent ? 'needs_attention' : 'running', execution: incoming,
+            ...(approvalHold ? { reason: 'approval_required' } : consent ? { reason: consent.code } : {}) });
           return;
         }
         if (currentExecution && (
           currentExecution.kind !== 'action' && (currentExecution.kind !== 'detached_run'
           || currentExecution.runId !== observation.execution.runId
           || currentExecution.localInputId !== observation.execution.localInputId)
-          || currentExecution.kind === 'action' && (currentExecution.actionId !== 'execution.run.start'
+          || currentExecution.kind === 'action' && ((currentExecution.actionId !== 'execution.run.start' && currentExecution.actionId !== 'execution.run.send')
             || currentExecution.localInputId !== observation.execution.localInputId)
         )) {
           throw new Error('workflow_invocation_fact_conflict');
@@ -2537,7 +2606,7 @@ async function executeStepBlock(
       ...(context.signal ? { signal: context.signal } : {}),
     });
     if (execution.kind === 'needs_attention' && (execution.code === 'approval_required' || execution.code === 'approval_unavailable')
-      && durableExecution?.kind === 'action' && durableExecution.actionId === 'discussion.invite') {
+      && durableExecution?.kind === 'action' && ActionApprovalRequestCreatedResultSchema.safeParse(durableExecution.output).success) {
       // A reclaimed or non-live observer retains the same existing Artifact.
       throw new WorkflowControlBoundary('paused', execution.code);
     }
@@ -2642,10 +2711,10 @@ async function executeStepBlock(
           ? 'cancel_requested' : current?.lifecycle ?? 'admitting', reason: execution.code });
       throw new WorkflowLeafFailure('interrupted', execution.code);
     }
-    // A failed original startup owns no Workflow input to reattach. Preserve
+    // A definitively failed original startup owns no Workflow input to reattach. Preserve
     // its definitive failure through reconstruction and settle parent custody;
     // failures of an already-admitted native input retain ordinary recovery.
-    const state = execution.kind === 'failed' && hasFailedSessionStartup(durableExecution) ? 'failed'
+    const state = execution.kind === 'failed' && hasDefinitiveFailedSessionStartup(durableExecution) ? 'failed'
       : execution.kind === 'failed' || execution.kind === 'needs_attention'
       || (execution.kind === 'outcome_uncertain' && durableExecution !== undefined)
       ? 'interrupted'

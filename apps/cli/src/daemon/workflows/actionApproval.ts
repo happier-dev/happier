@@ -1,8 +1,6 @@
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { prepareActionCompletionV1 } from '@happier-dev/protocol/actions/actionCompletion';
-import { StoredTargetActionApprovalRequestV1Schema } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
-import { StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
-import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { ApprovalRequestPublicReadSchema } from '@happier-dev/protocol/approvals/approvalRequestPublicRead';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import type { WorkflowProgressEnvelopeV1 } from '@happier-dev/protocol/workflows';
@@ -13,36 +11,38 @@ type ActionExecution = Extract<NonNullable<WorkflowProgressEnvelopeV1['execution
 
 /** The retained envelope identifies custody; only the approval owner can settle its effect. */
 export async function readWorkflowActionApprovalSettlement(params: Readonly<{
+  /** Host settlement reads are limited to this admitted Run's exact recorded invocation. */
+  runId?: string;
   execution: ActionExecution;
   read: (artifactId: string) => Promise<unknown>;
 }>): Promise<WorkflowInvocationRecoveryObservation | null> {
   const envelope = ActionApprovalRequestCreatedResultSchema.safeParse(params.execution.output);
   if (!envelope.success) return null;
-  const reservation = params.execution.actionId === 'discussion.invite' && envelope.data.actionId === 'discussion.invite';
-  if (!reservation && envelope.data.actionId !== 'action.invoke') return null;
+  const builtin = envelope.data.actionId === params.execution.actionId && envelope.data.actionId !== 'action.invoke';
+  if (!builtin && envelope.data.actionId !== 'action.invoke') return null;
   const wrapped = params.execution.actionId === 'action.invoke'
     ? PluginContributionIdentityV1Schema.safeParse(params.execution.input.action) : null;
   const identity = wrapped?.success ? wrapped.data : parseQualifiedPluginActionId(params.execution.actionId);
-  if (!reservation && !identity) return { kind: 'unresolved', code: 'approval_unavailable' };
+  if (!builtin && !identity) return { kind: 'unresolved', code: 'approval_unavailable' };
   try {
     const raw = await params.read(envelope.data.artifactId);
     const body = isWorkflowJsonObject(raw) ? raw : null;
-    const request = reservation ? StoredApprovalRequestSchema.safeParse(body?.request)
-      : StoredTargetActionApprovalRequestV1Schema.safeParse(body?.request);
-    if (!request.success || body?.artifactId !== envelope.data.artifactId) {
+    const request = ApprovalRequestPublicReadSchema.safeParse(body?.request);
+    if (!request.success) {
       return { kind: 'unresolved', code: 'approval_unavailable' };
     }
-    if (reservation) {
+    if (params.runId !== undefined) {
+      const origin = 'executionOriginV1' in request.data ? request.data.executionOriginV1 : undefined;
+      if (body?.artifactId !== envelope.data.artifactId || origin?.caller.kind !== 'workflowRun'
+        || origin.caller.runId !== params.runId || origin.requestId !== params.execution.actionRequestId
+        || origin.actionId !== envelope.data.actionId) {
+        return { kind: 'unresolved', code: 'approval_unavailable' };
+      }
+    }
+    if (builtin) {
       const core = 'actionArgs' in request.data ? request.data : null;
-      const caller = core?.v === 2 ? core.executionOriginV1.caller : undefined;
-      const marker = caller?.kind === 'workflowRun' ? caller.discussionModelReservation : undefined;
-      const participant = params.execution.input.participant;
-      if (core?.v !== 2 || core.actionId !== 'discussion.invite' || !marker
-        || core.executionOriginV1.requestId !== params.execution.actionRequestId
-        || marker.discussionId !== params.execution.input.discussionId
-        || !isWorkflowJsonObject(participant) || participant.kind !== 'model'
-        || marker.participantSlotId !== participant.participantSlotId
-        || !sameStrictJsonValue(core.actionArgs, params.execution.input)) {
+      if (core?.v !== 2 || core.actionId !== params.execution.actionId
+        || core.executionOriginV1.requestId !== params.execution.actionRequestId) {
         return { kind: 'unresolved', code: 'approval_unavailable' };
       }
     } else if (!identity || !('qualifiedActionId' in request.data)
