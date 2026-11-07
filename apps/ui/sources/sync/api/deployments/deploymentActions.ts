@@ -4,6 +4,7 @@ import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/d
 import { type ActionExecutorContext, type ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DeploymentTemplateInstantiateResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { resolveDeploymentTemplateExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { isPresentUserHostInvocation } from '@happier-dev/protocol/actions/invocationAuthority';
@@ -18,9 +19,7 @@ import { prepareUiDeploymentTargetLink } from './prepareUiDeploymentTargetLink';
 import { DeploymentInvalidV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 
 function creationMachine(input: DeploymentEnvironmentCreateInputV1 | DeploymentEnvironmentCreateIntentInputV1) {
-    return 'definition' in input && input.definition?.from === 'catalogApp'
-        ? input.firstTargetLink?.machines[0]?.machineId
-        : input.controllerMachineId ?? input.firstTargetLink?.machines[0]?.machineId;
+    return input.controllerMachineId ?? input.firstTargetLink?.machines[0]?.machineId;
 }
 
 /** Account-bound storage and the existing Machine Action transport; no UI native effects. */
@@ -52,8 +51,13 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
     const instantiateTemplate: NonNullable<ActionExecutorDeps['deploymentTemplateInstantiate']> = async (input, context) => {
         account.assertCurrent();
         if (!areServerProfileIdentifiersEquivalent(input.serverId, account.serverId)) return failure('action_account_scope_changed');
+        const selected = await resolveDeploymentTemplateExecutionMachineIdV1(input, async selector => {
+            const read = await storage('deployments.environments.get', selector, context);
+            return 'errorCode' in read ? read : DeploymentEnvironmentGetResultV1Schema.parse(read);
+        });
+        if (!selected.ok) return selected;
         const result = await executeOriginalAccountMachineAction({ account, actionId: 'deployments.templates.instantiate',
-            machineId: input.machineId, requestId: context.actionRequestId ?? randomUUID(), input,
+            machineId: selected.machineId, requestId: context.actionRequestId ?? randomUUID(), input,
             actionCaller: context.actionCaller, signal: context.signal, onTransportIssued: context.onTransportIssued });
         if (!result.ok) return result;
         const approval = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
@@ -87,9 +91,9 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
         deploymentAction: async (actionId, input, context) => {
         account.assertCurrent();
         if (!areServerProfileIdentifiersEquivalent(input.serverId, account.serverId)) return failure('action_account_scope_changed');
+        let linkControllerMachineId: string | undefined;
         if (actionId === 'deployments.targets.link' && !('contentArtifactId' in input)) {
             const intent = DeploymentActionInputSchemasV1[actionId].parse(input);
-            if ('contentArtifactId' in intent) return storage(actionId, intent, context);
             const read = await storage('deployments.environments.get', {
                 serverId: intent.serverId, environmentId: intent.environmentId,
             }, context);
@@ -98,7 +102,9 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
             if (!current.ok) return current;
             try {
                 const prepared = await prepareUiDeploymentTargetLink(account, intent, context, current);
-                return 'contentArtifactId' in prepared ? await storage(actionId, prepared, context) : prepared;
+                if (!('contentArtifactId' in prepared)) return prepared;
+                input = prepared;
+                linkControllerMachineId = current.environment.controllerMachineId;
             }
             catch (error) {
                 if (error && typeof error === 'object' && 'code' in error && typeof error.code === 'string') {
@@ -108,13 +114,13 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
                 throw error;
             }
         }
-        if (!isDeploymentDomainChildActionIdV1(actionId) && actionId !== 'deployments.deploy' && actionId !== 'deployments.rollback'
+        if (getActionSpec(actionId).executionPlacement !== 'machine'
+            && !isDeploymentDomainChildActionIdV1(actionId) && actionId !== 'deployments.deploy' && actionId !== 'deployments.rollback'
             && actionId !== 'deployments.promote' && actionId !== 'deployments.teardown'
             && actionId !== 'deployments.health.read' && actionId !== 'deployments.health.current'
             && actionId !== 'deployments.drift.read' && actionId !== 'deployments.logs.read'
-            && actionId !== 'deployments.publish.prepare'
             && actionId !== 'deployments.environments.create' && actionId !== 'deployments.environments.update'
-            && actionId !== 'deployments.bindings.set') {
+            && actionId !== 'deployments.bindings.set' && actionId !== 'deployments.targets.link') {
             return storage(actionId, input, context);
         }
         const selectedReadInput = actionId === 'deployments.health.read' || actionId === 'deployments.health.current'
@@ -122,7 +128,10 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
             ? DeploymentActionInputSchemasV1[actionId].parse(input) : undefined;
         const effectInput = selectedReadInput ?? DeploymentActionInputSchemasV1[actionId].parse(input);
         let machineId: string;
-        if (actionId === 'deployments.publish.prepare') machineId = DeploymentActionInputSchemasV1[actionId].parse(input).machineId;
+        // Link completion belongs to the controller's enrollment owner, including
+        // content authored here under the captured Account's encryption mode.
+        if (linkControllerMachineId) machineId = linkControllerMachineId;
+        else if (actionId === 'deployments.publish.prepare') machineId = DeploymentActionInputSchemasV1[actionId].parse(input).machineId;
         else if (actionId === 'deployments.environments.create') {
             const create = DeploymentActionInputSchemasV1[actionId].parse(input);
             const selected = creationMachine(create);
