@@ -1,3 +1,5 @@
+import { ForgeCiSelectionV1Schema } from '@happier-dev/triage-protocol/ci/v1';
+import { ScmSuggestionV1ProtocolSchema } from '@happier-dev/protocol/scm';
 import {
   defineProtocolArray,
   defineProtocolLiteral,
@@ -12,13 +14,19 @@ import {
   TriageConfiguredSourceCredentialInstanceV1Schema as TriageConfiguredSourceInstanceV1Schema,
   TriageSourceEntryLocalRefV1Schema,
   TriageSourceFailureV1Schema,
+  TriagePullRequestStatusV1Schema,
 } from '@happier-dev/triage-protocol/v1';
 
 import {
   GITHUB_DETAIL_BOUNDS_V1,
   GITHUB_MAX_CHANGED_FILE_ROWS_V1,
   GITHUB_MAX_TIMELINE_ROWS_V1,
+  GITHUB_TIMELINE_KINDS_V1,
 } from './projection.js';
+import { GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1 } from '../contribution.js';
+import { GITHUB_CHECKS_STATES_V1, GITHUB_CHECKS_CONDITION_STATES_V1 } from '../types.js';
+import { GITHUB_MERGE_METHODS_V1 } from '../mutations/contracts.js';
+import { GITHUB_REVIEW_DECISIONS_V1 } from '../mapping/facts.js';
 import { GITHUB_MAX_DETAIL_PAGE_SIZE_V1 } from './routes.js';
 import {
   GITHUB_ISSUE_FEEDBACK_COMMENT_PAGE_SIZE_V1,
@@ -81,9 +89,9 @@ const TimestampSchema = defineProtocolNumber({ integer: true });
 const CountSchema = defineProtocolNumber({ integer: true, minimum: 0 });
 
 const ReviewDecisionSchema = defineProtocolUnion([
-  defineProtocolLiteral('approved'),
-  defineProtocolLiteral('changes-requested'),
-  defineProtocolLiteral('review-required'),
+  defineProtocolLiteral(GITHUB_REVIEW_DECISIONS_V1[0]),
+  defineProtocolLiteral(GITHUB_REVIEW_DECISIONS_V1[1]),
+  ...GITHUB_REVIEW_DECISIONS_V1.slice(2).map(decision => defineProtocolLiteral(decision)),
 ]);
 
 const RoutingTokenSchema = defineProtocolUtf8String({
@@ -138,12 +146,13 @@ const GithubDetailUnavailableSchema = defineProtocolObject({
 
 /* ------------------------------------------------------------- capabilities */
 
-export const GithubCapabilitiesInputV1Schema = defineProtocolObject({
+const exactEntryInput = {
   v: defineProtocolLiteral(1),
   instance: TriageConfiguredSourceInstanceV1Schema,
   localRef: TriageSourceEntryLocalRefV1Schema,
   routingToken: RoutingTokenSchema,
-}, { policy: 'closed' });
+};
+export const GithubCapabilitiesInputV1Schema = defineProtocolObject(exactEntryInput, { policy: 'closed' });
 
 const GithubCapabilityAvailabilitySchema = defineProtocolUnion([
   defineProtocolObject({ kind: defineProtocolLiteral('available') }, { policy: 'closed' }),
@@ -156,49 +165,35 @@ const GithubCapabilityAvailabilitySchema = defineProtocolUnion([
     code: defineProtocolLiteral('repository_archived'),
   }, { policy: 'closed' }),
 ]);
+export type GithubCapabilityAvailabilityV1 = ReturnType<typeof GithubCapabilityAvailabilitySchema.parse>;
 
-export const GithubCapabilitiesResultV1Schema = defineProtocolUnion([
-  defineProtocolObject({
+const GithubCapabilitiesValueV1Schema = defineProtocolObject({
     kind: defineProtocolLiteral('capabilities'),
-    operations: defineProtocolObject({
-      pullRequestMerge: GithubCapabilityAvailabilitySchema,
-      pullRequestSubmitReview: GithubCapabilityAvailabilitySchema,
-      pullRequestReviewCommentCreate: GithubCapabilityAvailabilitySchema,
-      pullRequestThreadReply: GithubCapabilityAvailabilitySchema,
-      pullRequestClose: GithubCapabilityAvailabilitySchema,
-      pullRequestReopen: GithubCapabilityAvailabilitySchema,
-      pullRequestMarkReady: GithubCapabilityAvailabilitySchema,
-      pullRequestUpdateBranch: GithubCapabilityAvailabilitySchema,
-      pullRequestAddReviewers: GithubCapabilityAvailabilitySchema,
-      pullRequestRemoveReviewers: GithubCapabilityAvailabilitySchema,
-      pullRequestThreadResolution: GithubCapabilityAvailabilitySchema,
-      issueClose: GithubCapabilityAvailabilitySchema,
-      issueReopen: GithubCapabilityAvailabilitySchema,
-      issueComment: GithubCapabilityAvailabilitySchema,
-      issueAssigneeAdd: GithubCapabilityAvailabilitySchema,
-      issueAssigneeRemove: GithubCapabilityAvailabilitySchema,
-      issueLabelAdd: GithubCapabilityAvailabilitySchema,
-      issueLabelRemove: GithubCapabilityAvailabilitySchema,
-    }, { policy: 'closed' }),
-    mergeMethods: defineProtocolObject({
-      merge: GithubCapabilityAvailabilitySchema,
-      squash: GithubCapabilityAvailabilitySchema,
-      rebase: GithubCapabilityAvailabilitySchema,
-    }, { policy: 'closed' }),
+    // A daemon may predate a write operation; absent preflight facts do not invalidate reads.
+    operations: defineProtocolObject(Object.fromEntries(
+      Object.keys(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1).map(key => [key, GithubCapabilityAvailabilitySchema.optional()]),
+    ) as { [K in keyof typeof GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1]: ReturnType<typeof GithubCapabilityAvailabilitySchema.optional> }, { policy: 'closed' }),
+    mergeMethods: defineProtocolObject(Object.fromEntries(
+      GITHUB_MERGE_METHODS_V1.map(method => [method, GithubCapabilityAvailabilitySchema]),
+    ) as { [K in (typeof GITHUB_MERGE_METHODS_V1)[number]]: typeof GithubCapabilityAvailabilitySchema }, { policy: 'closed' }),
     /** Explicit repository settings, distinct from permission to attempt a write. */
-    mergeSettings: defineProtocolObject({
-      merge: GithubBooleanSchema.nullable(),
-      squash: GithubBooleanSchema.nullable(),
-      rebase: GithubBooleanSchema.nullable(),
-    }, { policy: 'closed' }).optional(),
-  }, { policy: 'closed' }),
+    mergeSettings: defineProtocolObject(Object.fromEntries(
+      GITHUB_MERGE_METHODS_V1.map(method => [method, GithubBooleanSchema.nullable()]),
+    ) as { [K in (typeof GITHUB_MERGE_METHODS_V1)[number]]: ReturnType<typeof GithubBooleanSchema.nullable> }, { policy: 'closed' }).optional(),
+  }, { policy: 'closed' });
+export const GithubCapabilitiesResultV1Schema = defineProtocolUnion([
+  GithubCapabilitiesValueV1Schema,
   GithubDetailUnavailableSchema,
 ]);
 export type GithubCapabilitiesResultV1 = ReturnType<typeof GithubCapabilitiesResultV1Schema.parse>;
 
 /* -------------------------------------------------------------------- overview */
 
-export const GithubOverviewInputV1Schema = GithubCapabilitiesInputV1Schema;
+export const GithubOverviewInputV1Schema = defineProtocolObject({
+  ...exactEntryInput,
+  /** Explicit requirements disclosure; ordinary explained status never fans out to rules. */
+  includeBranchRules: GithubBooleanSchema.optional(),
+}, { policy: 'closed' });
 
 const GithubOverviewCommonV1 = {
   kind: defineProtocolLiteral('overview'),
@@ -215,6 +210,10 @@ const GithubOverviewCommonV1 = {
   assignees: defineProtocolArray(LabelSchema).optional(),
   /** `null` is the provider-stated absence of a milestone. */
   milestone: LabelSchema.nullable().optional(),
+  milestoneNumber: defineProtocolNumber({ integer: true, minimum: 1 }).nullable().optional(),
+  issueType: LabelSchema.nullable().optional(),
+  locked: GithubBooleanSchema.optional(),
+  lockReason: LabelSchema.nullable().optional(),
 } as const;
 
 const GithubRequestedReviewerV1Schema = defineProtocolUnion([
@@ -234,81 +233,17 @@ const GithubBranchUpdateEligibilityV1Schema = defineProtocolUnion([
   defineProtocolLiteral('unknown'),
 ]);
 
-export const GithubOverviewResultV1Schema = defineProtocolUnion([
-  defineProtocolObject({
-    ...GithubOverviewCommonV1,
-    kindId: defineProtocolLiteral('pull-request'),
-    draft: GithubBooleanSchema.optional(),
-    merged: GithubBooleanSchema.optional(),
-    /** Native conflict test, not authorization to merge. Null means unknown/computing. */
-    mergeable: GithubBooleanSchema.nullable().optional(),
-    mergeableState: LabelSchema.nullable().optional(),
-    requiredChecks: defineProtocolObject({
-      state: defineProtocolUnion([
-        defineProtocolLiteral('passed'),
-        defineProtocolLiteral('failed'),
-        defineProtocolLiteral('pending'),
-        defineProtocolLiteral('neutral'),
-        defineProtocolLiteral('none'),
-        defineProtocolLiteral('unknown'),
-        defineProtocolLiteral('superseded'),
-      ]),
-      failingCount: CountSchema.nullable(),
-      pendingCount: CountSchema.nullable(),
-    }, { policy: 'closed' }).optional(),
-    reviewDecision: ReviewDecisionSchema.nullable().optional(),
-    headBranch: LabelSchema.optional(),
-    baseBranch: LabelSchema.optional(),
-    requestedReviewers: defineProtocolArray(GithubRequestedReviewerV1Schema).optional(),
-    headRevision: IdentifierSchema.optional(),
-    additions: CountSchema.optional(),
-    deletions: CountSchema.optional(),
-    /** GitHub's own count of changed files in the whole pull request (`changed_files`). */
-    changedFiles: CountSchema.optional(),
-    branchUpdateEligibility: GithubBranchUpdateEligibilityV1Schema,
-  }, { policy: 'closed' }),
-  defineProtocolObject({
-    ...GithubOverviewCommonV1,
-    kindId: defineProtocolLiteral('issue'),
-  }, { policy: 'closed' }),
-  GithubDetailUnavailableSchema,
-]);
-export type GithubOverviewResultV1 = ReturnType<typeof GithubOverviewResultV1Schema.parse>;
 
 /* ------------------------------------------------------------------- timeline */
 
 export const GithubTimelineInputV1Schema = pagedPlaneInput;
 export type GithubTimelineInputV1 = ReturnType<typeof GithubTimelineInputV1Schema.parse>;
 
-/**
- * The published timeline vocabulary, enumerated rather than derived.
- *
- * The projector's `GITHUB_TIMELINE_KINDS_V1` is the runtime owner of the same
- * list; enumerating the arms here keeps the schema honestly typed without a cast
- * that would let a widened projection through, and `contracts.test.ts` pins the
- * two lists equal so neither can gain an arm alone.
- */
+/** The projector owns the vocabulary; keep the union's required first two members typed. */
 const GithubTimelineKindSchema = defineProtocolUnion([
-  defineProtocolLiteral('commented'),
-  defineProtocolLiteral('committed'),
-  defineProtocolLiteral('forcePushed'),
-  defineProtocolLiteral('baseChanged'),
-  defineProtocolLiteral('reviewed'),
-  defineProtocolLiteral('reviewRequested'),
-  defineProtocolLiteral('reviewRequestRemoved'),
-  defineProtocolLiteral('merged'),
-  defineProtocolLiteral('closed'),
-  defineProtocolLiteral('reopened'),
-  defineProtocolLiteral('labeled'),
-  defineProtocolLiteral('unlabeled'),
-  defineProtocolLiteral('assigned'),
-  defineProtocolLiteral('unassigned'),
-  defineProtocolLiteral('milestoned'),
-  defineProtocolLiteral('demilestoned'),
-  defineProtocolLiteral('renamed'),
-  defineProtocolLiteral('referenced'),
-  defineProtocolLiteral('crossReferenced'),
-  defineProtocolLiteral('unsupported'),
+  defineProtocolLiteral(GITHUB_TIMELINE_KINDS_V1[0]),
+  defineProtocolLiteral(GITHUB_TIMELINE_KINDS_V1[1]),
+  ...GITHUB_TIMELINE_KINDS_V1.slice(2).map(kind => defineProtocolLiteral(kind)),
 ]);
 
 export const GithubProjectedTimelineRowV1Schema = defineProtocolObject({
@@ -475,6 +410,9 @@ export const GithubFeedbackCommentV1Schema = defineProtocolObject({
   createdAtMs: TimestampSchema.optional(),
   url: LocationSchema.optional(),
   truncated: defineProtocolLiteral(true).optional(),
+  /** GitHub's own `viewerCanUpdate`: this viewer may edit the body. */
+  editable: defineProtocolLiteral(true).optional(),
+  suggestions: defineProtocolArray(ScmSuggestionV1ProtocolSchema).optional(),
 }, { policy: 'closed' });
 
 export const GithubFeedbackThreadV1Schema = defineProtocolObject({
@@ -497,8 +435,10 @@ export const GithubFeedbackReviewV1Schema = defineProtocolObject({
   body: CommentBodySchema,
   state: LabelSchema,
   submittedAtMs: TimestampSchema.optional(),
+  commitRevision: defineProtocolString({ minLength: 1 }).optional(),
   url: LocationSchema.optional(),
   truncated: defineProtocolLiteral(true).optional(),
+  editable: defineProtocolLiteral(true).optional(),
 }, { policy: 'closed' });
 
 export const GithubFeedbackRequestV1Schema = defineProtocolObject({
@@ -592,6 +532,8 @@ export const GithubProjectedCheckRowV1Schema = defineProtocolObject({
   startedAtMs: TimestampSchema.optional(),
   completedAtMs: TimestampSchema.optional(),
   logExcerpt: CommentBodySchema.optional(),
+  annotationsCount: defineProtocolNumber({ integer: true, minimum: 0 }).optional(),
+  actions: defineProtocolObject({ selection: ForgeCiSelectionV1Schema, checkRunId: IdentifierSchema, headSha: IdentifierSchema }, { policy: 'closed' }).optional(),
   truncated: defineProtocolLiteral(true).optional(),
 }, { policy: 'closed' });
 
@@ -601,10 +543,9 @@ export const GithubProjectedCheckRowV1Schema = defineProtocolObject({
  * the third is "these rows are real but the list is short".
  */
 const ChecksStateSchema = defineProtocolUnion([
-  defineProtocolLiteral('none'),
-  defineProtocolLiteral('unknown'),
-  defineProtocolLiteral('knownIncomplete'),
-  defineProtocolLiteral('resolved'),
+  defineProtocolLiteral(GITHUB_CHECKS_STATES_V1[0]),
+  defineProtocolLiteral(GITHUB_CHECKS_STATES_V1[1]),
+  ...GITHUB_CHECKS_STATES_V1.slice(2).map(state => defineProtocolLiteral(state)),
 ]);
 
 /**
@@ -628,9 +569,8 @@ const ChecksRowStateSchema = defineProtocolUnion([
   }, { policy: 'closed' }),
 ]);
 
-export const GithubChecksResultV1Schema = defineProtocolUnion([
-  defineProtocolObject({
-    kind: defineProtocolLiteral('checks'),
+/** One pull request's checks at one head: the Checks Action's answer and the Overview's. */
+const GithubChecksViewV1Fields = {
     /**
      * Omitted when this surface cannot answer: no checks at all, or a read that
      * failed. An omitted state is never rendered as a passing one.
@@ -653,7 +593,57 @@ export const GithubChecksResultV1Schema = defineProtocolUnion([
     commitStatusFailure: TriageSourceFailureV1Schema.optional(),
     omittedRowCount: CountSchema,
     projectionTruncated: GithubBooleanSchema,
+} as const;
+export const GithubChecksViewV1Schema = defineProtocolObject(GithubChecksViewV1Fields, { policy: 'closed' });
+
+export const GithubChecksResultV1Schema = defineProtocolUnion([
+  defineProtocolObject({
+    kind: defineProtocolLiteral('checks'),
+    ...GithubChecksViewV1Fields,
   }, { policy: 'closed' }),
   GithubDetailUnavailableSchema,
 ]);
 export type GithubChecksResultV1 = ReturnType<typeof GithubChecksResultV1Schema.parse>;
+
+export const GithubOverviewResultV1Schema = defineProtocolUnion([
+  defineProtocolObject({
+    ...GithubOverviewCommonV1,
+    kindId: defineProtocolLiteral('pull-request'),
+    draft: GithubBooleanSchema.optional(),
+    merged: GithubBooleanSchema.optional(),
+    /** Native conflict test, not authorization to merge. Null means unknown/computing. */
+    mergeable: GithubBooleanSchema.nullable().optional(),
+    mergeableState: LabelSchema.nullable().optional(),
+    /** The existing status owner, acquired once alongside this exact PR read. */
+    pullRequestStatus: TriagePullRequestStatusV1Schema.optional(),
+    /** Present only when the same summary supplied every repository capability fact. */
+    capabilities: GithubCapabilitiesValueV1Schema.optional(),
+    /** The detail's checks, from the same head-qualified rollup read as `pullRequestStatus`. */
+    checks: GithubChecksViewV1Schema.optional(),
+    requiredChecks: defineProtocolObject({
+      state: defineProtocolUnion([
+        defineProtocolLiteral(GITHUB_CHECKS_CONDITION_STATES_V1[0]),
+        defineProtocolLiteral(GITHUB_CHECKS_CONDITION_STATES_V1[1]),
+        ...GITHUB_CHECKS_CONDITION_STATES_V1.slice(2).map(state => defineProtocolLiteral(state)),
+      ]),
+      failingCount: CountSchema.nullable(),
+      pendingCount: CountSchema.nullable(),
+    }, { policy: 'closed' }).optional(),
+    reviewDecision: ReviewDecisionSchema.nullable().optional(),
+    headBranch: LabelSchema.optional(),
+    baseBranch: LabelSchema.optional(),
+    requestedReviewers: defineProtocolArray(GithubRequestedReviewerV1Schema).optional(),
+    headRevision: IdentifierSchema.optional(),
+    additions: CountSchema.optional(),
+    deletions: CountSchema.optional(),
+    /** GitHub's own count of changed files in the whole pull request (`changed_files`). */
+    changedFiles: CountSchema.optional(),
+    branchUpdateEligibility: GithubBranchUpdateEligibilityV1Schema,
+  }, { policy: 'closed' }),
+  defineProtocolObject({
+    ...GithubOverviewCommonV1,
+    kindId: defineProtocolLiteral('issue'),
+  }, { policy: 'closed' }),
+  GithubDetailUnavailableSchema,
+]);
+export type GithubOverviewResultV1 = ReturnType<typeof GithubOverviewResultV1Schema.parse>;

@@ -7,6 +7,40 @@ import {
 } from '@happier-dev/triage-protocol/v1';
 
 import type { GithubTriageEntryLocatorV1 } from './types.js';
+import type { GithubTriageKindIdV1 } from './types.js';
+import type { PluginUiResourceIntentV1 } from '@happier-dev/plugin-sdk/protocol';
+
+/** GitHub owns resource URL semantics; the host only carries the typed intent. */
+export function parseGithubResourceUrl(resource: Readonly<{ kind: string; url: string }>):
+  Readonly<GithubRepositoryRouteV1 & { kindId: GithubTriageKindIdV1 | null; number: string }> | null {
+  const parsed = readGithubResourceRoute(resource.url);
+  if (parsed === null || parsed.kind !== resource.kind) return null;
+  const { kind: _kind, ...route } = parsed;
+  return route;
+}
+
+export function readGithubResourceIntent(url: string): PluginUiResourceIntentV1 | undefined {
+  const parsed = readGithubResourceRoute(url);
+  return parsed === null ? undefined : { kind: parsed.kind, url };
+}
+
+function readGithubResourceRoute(value: string):
+  Readonly<GithubRepositoryRouteV1 & { kind: PluginUiResourceIntentV1['kind']; kindId: GithubTriageKindIdV1 | null; number: string }> | null {
+  let url: URL;
+  try { url = new URL(value); } catch { return null; }
+  if (url.origin !== 'https://github.com' || url.username || url.password) return null;
+  const match = /^\/([^/]+)\/([^/]+)\/(pull|issues|actions\/runs|security\/dependabot|security\/code-scanning)\/([1-9][0-9]*)(?:\/.*)?$/u.exec(url.pathname);
+  if (match === null) return null;
+  const [, owner, name, route, number] = match;
+  const repositoryKey = buildGithubRepositoryKey({ owner, name });
+  if (repositoryKey === null || number === undefined) return null;
+  const kind = route === 'pull' ? 'pullRequest' : route === 'issues' ? 'issue' : route === 'actions/runs' ? 'ciRun' : 'securityAlert';
+  const repository = parseGithubRoutingToken(repositoryKey);
+  if (repository === null) return null;
+  const kindId = route === 'pull' ? 'pull-request' : route === 'issues' ? 'issue'
+    : route === 'security/dependabot' ? 'dependabot-alert' : route === 'security/code-scanning' ? 'code-scanning-alert' : null;
+  return { ...repository, kind, kindId, number };
+}
 
 /**
  * Locator material. `routingToken` IS the repository key (`owner/name`, lowercased),
@@ -18,7 +52,7 @@ import type { GithubTriageEntryLocatorV1 } from './types.js';
  */
 
 /** One path segment of a GitHub owner or repository name. */
-const REPOSITORY_SEGMENT_PATTERN = /^[A-Za-z0-9._-]{1,100}$/u;
+const REPOSITORY_SEGMENT_PATTERN = /^(?!\.{1,2}$)[A-Za-z0-9._-]{1,100}$/u;
 
 export type GithubRepositoryRouteV1 = Readonly<{ owner: string; name: string }>;
 
@@ -80,6 +114,10 @@ export function readGithubAbsoluteWebUrl(value: unknown): string | null {
   return utf8ByteLength(absolute) <= MAX_TRIAGE_LOCATION_UTF8_BYTES_V1 ? absolute : null;
 }
 
+export function buildGithubEntryDisplayPath(repositoryKey: string, entryNumber: string): string {
+  return `${repositoryKey}#${entryNumber}`;
+}
+
 export function buildGithubEntryLocator(input: Readonly<{
   owner: unknown;
   name: unknown;
@@ -89,7 +127,7 @@ export function buildGithubEntryLocator(input: Readonly<{
 }>): GithubTriageEntryLocatorV1 | null {
   const repositoryKey = buildGithubRepositoryKey({ owner: input.owner, name: input.name });
   if (repositoryKey === null) return null;
-  const displayPath = `${repositoryKey}#${input.entryNumber}`;
+  const displayPath = buildGithubEntryDisplayPath(repositoryKey, input.entryNumber);
   // `displayPath` is bounded display text at the target. A row whose path does not fit
   // has no shorter honest form, so it is not emitted rather than shown truncated.
   if (utf8ByteLength(displayPath) > MAX_TRIAGE_TEXT_UTF8_BYTES_V1) return null;

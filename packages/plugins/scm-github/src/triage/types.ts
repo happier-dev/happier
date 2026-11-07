@@ -1,4 +1,5 @@
-import type { TriageEntryStateV1, TriageSourceEntrySnapshotV1, TriageTaskFieldsV1 } from '@happier-dev/triage-protocol/v1';
+import type { TriageEntryStateV1, TriageSourceEntrySnapshotV1, TriageSourceViewerFactsV1, TriageTaskFieldsV1 } from '@happier-dev/triage-protocol/v1';
+import type { GithubResponseFailureClassV1, GithubResponseFailureV1 } from '../observations/githubResponseFailure.js';
 
 /**
  * GitHub-local Triage shapes.
@@ -11,7 +12,9 @@ import type { TriageEntryStateV1, TriageSourceEntrySnapshotV1, TriageTaskFieldsV
  */
 
 /** GitHub's own kind vocabulary. Never flattened into another forge's spelling. */
-export type GithubTriageKindIdV1 = 'pull-request' | 'issue';
+export const GITHUB_TRIAGE_KIND_IDS_V1 =
+  Object.freeze(['pull-request', 'issue', 'dependabot-alert', 'code-scanning-alert'] as const);
+export type GithubTriageKindIdV1 = (typeof GITHUB_TRIAGE_KIND_IDS_V1)[number];
 
 /**
  * Identity. `collisionScope` is `github:<repository.id>` and `entryId` is the native
@@ -34,16 +37,10 @@ export type GithubTriageEntryLocatorV1 = Readonly<{
   webUrl: string | null;
 }>;
 
-export type GithubTriagePresentationV1 = 'active' | 'closed' | 'resolved' | 'unknown';
+export type GithubTriagePresentationV1 = TriageEntryStateV1['presentation'];
 
 /** Closed canonical involvement vocabulary. Native lane ids never cross this boundary. */
-export type GithubTriageInvolvementV1 =
-  | 'author'
-  | 'assignee'
-  | 'reviewRequested'
-  | 'mentioned'
-  | 'subscribed'
-  | 'participating';
+export type GithubTriageInvolvementV1 = TriageSourceViewerFactsV1['involvement'][number];
 
 export type GithubTriageRowFactToneV1 = Extract<GithubTriageRowFactValueV1, { kind: 'status' }>['tone'];
 
@@ -75,6 +72,7 @@ export type GithubTriageEntrySnapshotV1 = Readonly<{
   scopeDisplayName?: string;
   /** Who opened the entry (their login), one bounded display line; absent when GitHub names nobody. */
   authorLabel?: string;
+  assigneeLabel?: string | null;
   /** The entry's number as GitHub writes it ("#2481"), one bounded display line. */
   designation?: string;
   webUrl: string | null;
@@ -101,25 +99,12 @@ export type GithubTriageEntrySnapshotV1 = Readonly<{
 
 export type GithubTriageViewerFactsV1 = Readonly<{
   involvement: readonly GithubTriageInvolvementV1[];
+  sourceAttention?: TriageSourceViewerFactsV1['sourceAttention'];
 }>;
 
 /** Closed failure classes. `permission` and `rateLimit` stay distinct on purpose. */
-export type GithubTriageFailureClassV1 =
-  | 'authentication'
-  | 'permission'
-  | 'rateLimit'
-  | 'transient'
-  | 'unsupportedContract'
-  | 'unknown';
-
-export type GithubTriageFailureV1 = Readonly<{
-  class: GithubTriageFailureClassV1;
-  code: string;
-  /** Classified, non-secret detail accepted by the public Triage failure contract. */
-  detail?: string;
-  /** Absolute epoch milliseconds, derived only from provider retry evidence. */
-  retryNotBeforeMs?: number;
-}>;
+export type GithubTriageFailureClassV1 = GithubResponseFailureClassV1;
+export type GithubTriageFailureV1 = GithubResponseFailureV1;
 
 export type GithubTriagePresentObservationV1 = Readonly<{
   kind: 'present';
@@ -151,18 +136,23 @@ export type GithubTriageScanObservationV1 = Exclude<
   Readonly<{ kind: 'absent'; localRef: GithubTriageEntryLocalRefV1 }>
 >;
 
-export type GithubTriageScanPartialReasonV1 =
-  | 'result-ceiling'
-  | 'incomplete-results'
-  | 'undecodable-items'
-  | 'lane-unresolved'
-  | 'projection-budget'
-  /**
-   * The walk stopped with lanes still open but its own continuation bytes could not
-   * be produced. Saying so is the point: a `complete` arm that quietly dropped the
-   * rest of the walk would read as a finished one.
-   */
-  | 'continuation-unavailable';
+/** Complete reason vocabulary in reporting priority order. An unencodable continuation ends the walk. */
+export const GITHUB_SCAN_PARTIAL_REASON_PRIORITY_V1 = Object.freeze([
+  'continuation-unavailable',
+  'result-ceiling',
+  'incomplete-results',
+  'undecodable-items',
+  'lane-unresolved',
+  'projection-budget',
+] as const);
+export type GithubTriageScanPartialReasonV1 = (typeof GITHUB_SCAN_PARTIAL_REASON_PRIORITY_V1)[number];
+
+export const GITHUB_CHECKS_STATES_V1 = Object.freeze(['none', 'unknown', 'knownIncomplete', 'resolved'] as const);
+export type GithubChecksStateV1 = (typeof GITHUB_CHECKS_STATES_V1)[number];
+
+export const GITHUB_CHECKS_CONDITION_STATES_V1 = Object.freeze([
+  'passed', 'failed', 'pending', 'neutral', 'none', 'unknown', 'superseded',
+] as const);
 
 /**
  * The walk-level reasons GitHub can establish on one page and must still report on a

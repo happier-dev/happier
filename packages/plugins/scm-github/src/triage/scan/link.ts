@@ -24,7 +24,7 @@ export type GithubValidatedNextPageV1 = Readonly<{ url: string; page: number }>;
 /**
  * Validated means: exact `https://api.github.com` origin with no credentials or
  * fragment, the `/search/issues` path, a positive `page`, `per_page` still this
- * invocation's frozen geometry inside `1..100`, and the frozen lane query, sort, order
+ * lane's issued geometry inside `1..100`, and the frozen lane query, sort, order
  * and advanced-search parameters unchanged.
  *
  * A malformed, cross-origin, or query-changing Link is a typed failure — never a URL to
@@ -76,6 +76,7 @@ export function validateGithubFollowUpPageUrl(
   candidate: string,
   requestedUrl: string,
   expectedRepositoryId?: string | null,
+  pagination: 'page' | 'cursor' = 'page',
 ): string | null {
   let next: URL;
   let requested: URL;
@@ -93,25 +94,43 @@ export function validateGithubFollowUpPageUrl(
       || resource === undefined || next.pathname !== `/repositories/${expectedRepositoryId}${resource}`) return null;
   }
 
-  const page = Number(next.searchParams.get('page'));
-  if (!Number.isSafeInteger(page) || page < 1) return null;
-  const requestedPageText = requested.searchParams.get('page');
-  const requestedPage = requestedPageText === null ? 1 : Number(requestedPageText);
-  if (!Number.isSafeInteger(requestedPage) || requestedPage < 1 || page <= requestedPage) return null;
+  if (pagination === 'page' || !next.searchParams.has('before') && !next.searchParams.has('after')) {
+    const page = Number(next.searchParams.get('page'));
+    if (!Number.isSafeInteger(page) || page < 1) return null;
+    const requestedPageText = requested.searchParams.get('page');
+    const requestedPage = requestedPageText === null ? 1 : Number(requestedPageText);
+    if (!Number.isSafeInteger(requestedPage) || requestedPage < 1 || page <= requestedPage) return null;
+  } else {
+    const before = next.searchParams.get('before');
+    const after = next.searchParams.get('after');
+    if ((before === null) === (after === null) || (before ?? after) === '') return null;
+    if (before === requested.searchParams.get('before') && after === requested.searchParams.get('after')) return null;
+  }
 
   const comparable = (url: URL): string => {
     const parameters = new URLSearchParams(url.searchParams);
     parameters.delete('page');
+    if (pagination === 'cursor') { parameters.delete('before'); parameters.delete('after'); }
     parameters.sort();
     return parameters.toString();
   };
   return comparable(next) === comparable(requested) ? next.toString() : null;
 }
 
+/** Alert collections support GitHub's opaque cursor links as well as page links. */
+export function validateGithubCursorFollowUpUrl(candidate: string, requestedUrl: string, expectedRepositoryId?: string | null): string | null {
+  return validateGithubFollowUpPageUrl(candidate, requestedUrl, expectedRepositoryId, 'cursor');
+}
+
+export function readValidatedGithubCursorFollowUpPage(headers: Readonly<Record<string, string>>, requestedUrl: string, expectedRepositoryId?: string | null): Readonly<{ kind: 'ended' }> | Readonly<{ kind: 'next'; url: string }> | Readonly<{ kind: 'invalid' }> {
+  return readValidatedGithubFollowUpPage(headers, requestedUrl, expectedRepositoryId, 'cursor');
+}
+
 export function readValidatedGithubFollowUpPage(
   headers: Readonly<Record<string, string>>,
   requestedUrl: string,
   expectedRepositoryId?: string | null,
+  pagination: 'page' | 'cursor' = 'page',
 ): Readonly<{ kind: 'ended' }> | Readonly<{ kind: 'next'; url: string }>
   | Readonly<{ kind: 'invalid' }> {
   const parsed = parseForgeLinkHeader(readForgeLinkHeaderValue(headers));
@@ -119,7 +138,7 @@ export function readValidatedGithubFollowUpPage(
   if (parsed.kind === 'absent') return Object.freeze({ kind: 'ended' });
   const next = parsed.links.next;
   if (next === undefined) return Object.freeze({ kind: 'ended' });
-  const validated = validateGithubFollowUpPageUrl(next, requestedUrl, expectedRepositoryId);
+  const validated = validateGithubFollowUpPageUrl(next, requestedUrl, expectedRepositoryId, pagination);
   return validated === null
     ? Object.freeze({ kind: 'invalid' })
     : Object.freeze({ kind: 'next', url: validated });

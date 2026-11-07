@@ -1,4 +1,5 @@
 import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
+import { defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
 
 export const GITHUB_PLUGIN_ID = 'happier.scm.forge.github';
 export const GITHUB_CONNECTED_ACCOUNT_ID = 'github-account';
@@ -10,6 +11,7 @@ export const GITHUB_CONNECTED_ACCOUNT_SERVICE = Object.freeze({
 export const GITHUB_CONNECTED_ACCOUNT_PURPOSE = 'github-connected-account';
 export const GITHUB_WEBHOOK_CONTRIBUTION_ID = 'github-events';
 export const GITHUB_AUTOMATION_REPOSITORY_SETUP_ACTION_ID = 'automation/setup-repository-event-v1';
+export const GITHUB_DEPLOYMENT_REVIEW_SETUP_ACTION_ID = 'automation/setup-deployment-review-event-v1';
 /** Host target-Action boundary for one repository-scoped checkpointed-pull attempt. */
 export const GITHUB_AUTOMATION_REPOSITORY_SOURCE_ATTEMPT_ACTION_ID = 'automation/run-repository-event-source-attempt-v1';
 /** Explicit user/host Action for replacing a pull history-gap marker with a current-head baseline. */
@@ -19,6 +21,10 @@ export const GITHUB_AUTOMATION_REPOSITORY_EVENT_BACKGROUND_SERVICE_ID = 'automat
 export const GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONTRACT_VERSION = 1;
 export const GITHUB_API_ORIGIN = 'https://api.github.com';
 export const GITHUB_API_VERSION = '2026-03-10';
+/** Known media locations for cooperative network disclosure, not a redirect allowlist. */
+export const GITHUB_PRIVATE_MEDIA_HOST_SUFFIXES_V1 = Object.freeze([
+  'actions.githubusercontent.com', 'blob.core.windows.net', 'release-assets.githubusercontent.com',
+]);
 export type GithubRepositorySourceConfigV1 = Readonly<{
   v: 1;
   repositoryId: string;
@@ -30,10 +36,37 @@ export type GithubRepositorySourceConfigV1 = Readonly<{
 /** Provider-private source facts retained by an Automation Event definition. */
 export type GithubAutomationRepositoryEventSourceConfigV1 = Readonly<{
   v: 1;
-  credentialRef: ConnectedAccountRef;
+  credentialRef: ConnectedAccountRef | null;
   repository: GithubRepositorySourceConfigV1;
   checks?: Readonly<{ pullRequestNumber: number; headSha: string; selection: 'all' | 'required' }>;
+  deploymentReview?: Readonly<{
+    monitoringMachineId: string;
+    /** Omission preserves existing enrollments and selects Automatic. */
+    deliveryMode?: 'automatic' | 'webhook' | 'polling';
+    pollingIntervalMs?: number;
+  }>;
 }>;
+
+/** Exact placement retained by the Automation definition, never a plugin setting. */
+export const GithubDeploymentMonitoringSelectionV1Schema = defineProtocolObject({
+  monitoringMachineId: defineProtocolString({ minLength: 1, pattern: '^\\S(?:.*\\S)?$' }),
+  deliveryMode: defineProtocolUnion([defineProtocolLiteral('automatic'), defineProtocolLiteral('webhook'), defineProtocolLiteral('polling')]).optional(),
+  pollingIntervalMs: defineProtocolNumber({ integer: true, minimum: 1, maximum: Number.MAX_SAFE_INTEGER }).optional(),
+}, { policy: 'closed' });
+export function parseGithubDeploymentMonitoringSelection(value: unknown): NonNullable<GithubAutomationRepositoryEventSourceConfigV1['deploymentReview']> {
+  const parsed = GithubDeploymentMonitoringSelectionV1Schema.safeParse(value);
+  if (!parsed.success) throw new RangeError('GitHub deployment monitoring requires one exact Machine');
+  return parsed.data;
+}
+
+/** One parser for the deployment source used by observation and app-page admission. */
+export function parseGithubDeploymentMonitoringSourceConfig(value: unknown): GithubAutomationRepositoryEventSourceConfigV1 & Readonly<{ deploymentReview: NonNullable<GithubAutomationRepositoryEventSourceConfigV1['deploymentReview']> }> {
+  if (!isRecord(value) || Object.keys(value).length !== 4 || value.v !== 1 || (value.credentialRef !== null && !isGithubConnectedAccountRef(value.credentialRef))) {
+    throw new RangeError('GitHub deployment source configuration is incompatible');
+  }
+  return { v: 1, credentialRef: value.credentialRef, repository: parseGithubRepositorySourceConfig(value.repository),
+    deploymentReview: parseGithubDeploymentMonitoringSelection(value.deploymentReview) };
+}
 
 export type GithubChannelProviderConfigV1 = Readonly<{
   v: 1;

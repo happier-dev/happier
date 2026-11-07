@@ -1,6 +1,7 @@
 import {
   defineProtocolArray,
   defineProtocolLiteral,
+  defineProtocolNumber,
   defineProtocolObject,
   defineProtocolString,
   defineProtocolUnion,
@@ -21,6 +22,9 @@ import {
   TriageSourceEntryLocalRefV1Schema,
   TriageSourceFailureV1Schema,
   TriageSourceObservationV1Schema,
+  TriageSourceOperationOutcomeV1Schema,
+  TriagePullRequestRequirementRefV1Schema,
+  TRIAGE_PULL_REQUEST_MERGE_METHODS_V1,
   type TriageSourceAccountBindingV1,
 } from '@happier-dev/triage-protocol/v1';
 
@@ -74,10 +78,11 @@ const RevisionSchema = defineProtocolUtf8String({
 });
 
 /** GitHub's own merge-method vocabulary, verbatim. */
+export const GITHUB_MERGE_METHODS_V1 = TRIAGE_PULL_REQUEST_MERGE_METHODS_V1;
 export const GithubMergeMethodV1Schema = defineProtocolUnion([
-  defineProtocolLiteral('merge'),
-  defineProtocolLiteral('squash'),
-  defineProtocolLiteral('rebase'),
+  defineProtocolLiteral(GITHUB_MERGE_METHODS_V1[0]),
+  defineProtocolLiteral(GITHUB_MERGE_METHODS_V1[1]),
+  ...GITHUB_MERGE_METHODS_V1.slice(2).map(method => defineProtocolLiteral(method)),
 ]);
 export type GithubMergeMethodV1 = ReturnType<typeof GithubMergeMethodV1Schema.parse>;
 
@@ -91,14 +96,90 @@ const CommitMessageSchema = defineProtocolString({ minLength: 1 });
  * source-private route the target observed for THIS entry. Cached corpus bytes
  * explain what the user selected; they never authorize the write.
  */
-const mutationTargetShape = {
+export const mutationTargetShape = {
   v: defineProtocolLiteral(1),
   instance: TriageConfiguredSourceInstanceV1Schema,
   localRef: TriageSourceEntryLocalRefV1Schema,
   routingToken: RoutingTokenSchema,
 } as const;
 
-export const GithubPullRequestMergeInputV1Schema = defineProtocolObject({
+const PreviewReferenceSchema = defineProtocolString({ minLength: 1 });
+const PreviewStatusSchema = defineProtocolUnion([
+  defineProtocolLiteral('pending'), defineProtocolLiteral('ready'),
+  defineProtocolLiteral('failed'), defineProtocolLiteral('removed'),
+]);
+const previewPublicationShape = {
+  serverId: PreviewReferenceSchema,
+  environmentId: PreviewReferenceSchema,
+  templateEnvironmentId: PreviewReferenceSchema,
+  targetLinkId: PreviewReferenceSchema,
+  deploymentId: PreviewReferenceSchema,
+  expectedHeadSha: RevisionSchema,
+  status: PreviewStatusSchema,
+  targetUrl: defineProtocolUnion([defineProtocolString({ minLength: 1 }), defineProtocolLiteral(null)]),
+} as const;
+export const GithubPullRequestPreviewStatusInputV1Schema = defineProtocolObject({
+  ...mutationTargetShape, ...previewPublicationShape,
+}, { policy: 'closed' });
+export type GithubPullRequestPreviewStatusInputV1 = ReturnType<typeof GithubPullRequestPreviewStatusInputV1Schema.parse>;
+export const GithubPullRequestPreviewStatusResultV1Schema = defineProtocolUnion([
+  defineProtocolObject({ kind: defineProtocolLiteral('applied'), publication: defineProtocolObject({
+    ...previewPublicationShape, context: PreviewReferenceSchema, providerStatusId: PreviewReferenceSchema,
+  }, { policy: 'closed' }) }, { policy: 'closed' }),
+  defineProtocolObject({ kind: defineProtocolLiteral('refused'), reason: defineProtocolUnion([
+    defineProtocolLiteral('head_advanced'), defineProtocolLiteral('state_changed'),
+    defineProtocolLiteral('preview_context_changed'), defineProtocolLiteral('preview_url_unavailable'),
+    defineProtocolLiteral('provider_native_preview'),
+  ]) }, { policy: 'closed' }),
+  defineProtocolObject({ kind: defineProtocolLiteral('uncertain'), failure: TriageSourceFailureV1Schema.optional() }, { policy: 'closed' }),
+  defineProtocolObject({ kind: defineProtocolLiteral('failed'), failure: TriageSourceFailureV1Schema }, { policy: 'closed' }),
+]);
+export type GithubPullRequestPreviewStatusResultV1 = ReturnType<typeof GithubPullRequestPreviewStatusResultV1Schema.parse>;
+
+/** Content and branch edits remain separate Actions with separate approval preferences. */
+export const GithubPullRequestEditInputV1Schema = defineProtocolUnion([
+  defineProtocolObject({ ...mutationTargetShape, title: defineProtocolString({ minLength: 1 }),
+    body: defineProtocolString().optional() }, { policy: 'closed' }),
+  defineProtocolObject({ ...mutationTargetShape, title: defineProtocolString({ minLength: 1 }).optional(),
+    body: defineProtocolString() }, { policy: 'closed' }),
+]);
+export const GithubPullRequestChangeBaseInputV1Schema = defineProtocolObject({
+  ...mutationTargetShape, baseBranch: defineProtocolString({ minLength: 1 }),
+}, { policy: 'closed' });
+export const GithubPullRequestConvertToDraftInputV1Schema = defineProtocolObject(
+  mutationTargetShape, { policy: 'closed' },
+);
+
+export const GithubEntryMilestoneSetInputV1Schema = defineProtocolObject({
+  ...mutationTargetShape, milestone: defineProtocolNumber({ integer: true, minimum: 1 }).nullable(),
+}, { policy: 'closed' });
+export const GithubIssueTypeSetInputV1Schema = defineProtocolObject({
+  ...mutationTargetShape, issueType: defineProtocolString({ minLength: 1 }).nullable(),
+}, { policy: 'closed' });
+export const GITHUB_LOCK_REASONS_V1 = Object.freeze(['off-topic', 'too heated', 'resolved', 'spam'] as const);
+export const GithubEntryLockInputV1Schema = defineProtocolObject({
+  ...mutationTargetShape, reason: defineProtocolUnion([
+    defineProtocolLiteral(GITHUB_LOCK_REASONS_V1[0]), defineProtocolLiteral(GITHUB_LOCK_REASONS_V1[1]),
+    ...GITHUB_LOCK_REASONS_V1.slice(2).map(reason => defineProtocolLiteral(reason)),
+  ]).optional(),
+}, { policy: 'closed' });
+export const GithubEntryUnlockInputV1Schema = defineProtocolObject(mutationTargetShape, { policy: 'closed' });
+
+export const GithubEntryAdministrationInputV1Schema = defineProtocolObject(mutationTargetShape, { policy: 'closed' });
+export const GithubIssueTransferInputV1Schema = defineProtocolObject({
+  ...mutationTargetShape, destinationRepository: defineProtocolString({ minLength: 1 }),
+  createLabelsIfMissing: defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]).optional(),
+}, { policy: 'closed' });
+export const GithubPullRequestRevertInputV1Schema = defineProtocolObject({
+  ...mutationTargetShape, title: defineProtocolString({ minLength: 1 }).optional(), body: defineProtocolString().optional(),
+  draft: defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]).optional(),
+}, { policy: 'closed' });
+export const GithubPullRequestHeadBranchRestoreInputV1Schema = defineProtocolObject({
+  ...mutationTargetShape, headRevision: RevisionSchema,
+}, { policy: 'closed' });
+export const GithubPullRequestHeadBranchDeleteInputV1Schema = GithubPullRequestHeadBranchRestoreInputV1Schema;
+
+const mergeInputShape = {
   ...mutationTargetShape,
   /**
    * The head the USER saw. It is required, it is never filled from a fresh read
@@ -109,9 +190,30 @@ export const GithubPullRequestMergeInputV1Schema = defineProtocolObject({
   mergeMethod: GithubMergeMethodV1Schema,
   commitTitle: CommitTitleSchema.optional(),
   commitMessage: CommitMessageSchema.optional(),
-}, { policy: 'closed' });
+} as const;
+
+export const GithubSkippedRequirementV1Schema = TriagePullRequestRequirementRefV1Schema;
+export type GithubSkippedRequirementV1 = ReturnType<typeof GithubSkippedRequirementV1Schema.parse>;
+
+export const GithubPullRequestMergeInputV1Schema = defineProtocolUnion([
+  defineProtocolObject({ ...mergeInputShape, intent: defineProtocolLiteral('normal').optional() }, { policy: 'closed' }),
+  defineProtocolObject({ ...mergeInputShape, intent: defineProtocolLiteral('withoutWaiting'),
+    skippedRequirements: defineProtocolArray(GithubSkippedRequirementV1Schema),
+  }, { policy: 'closed' }),
+]);
 export type GithubPullRequestMergeInputV1 =
   ReturnType<typeof GithubPullRequestMergeInputV1Schema.parse>;
+
+export const GithubPullRequestEnqueueInputV1Schema = defineProtocolObject({
+  ...mutationTargetShape, expectedHeadSha: RevisionSchema,
+}, { policy: 'closed' });
+export const GithubPullRequestDequeueInputV1Schema = defineProtocolObject(mutationTargetShape, { policy: 'closed' });
+export const GithubPullRequestAutoMergeSetInputV1Schema = defineProtocolObject({
+  ...mutationTargetShape,
+  expectedHeadSha: RevisionSchema,
+  enabled: defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]),
+  mergeMethod: GithubMergeMethodV1Schema.optional(),
+}, { policy: 'closed' });
 
 /**
  * Draft → ready for review. It carries the pinned head and nothing else: the
@@ -131,13 +233,29 @@ export type GithubPullRequestMarkReadyInputV1 =
   ReturnType<typeof GithubPullRequestMarkReadyInputV1Schema.parse>;
 
 /** GitHub's review-verdict vocabulary, narrowed to the three endpoint events. */
+/** UI order, shared with the closed write contract. */
+export const GITHUB_REVIEW_VERDICTS_V1 = Object.freeze(['comment', 'approve', 'requestChanges'] as const);
 export const GithubPullRequestReviewVerdictV1Schema = defineProtocolUnion([
-  defineProtocolLiteral('approve'),
-  defineProtocolLiteral('requestChanges'),
-  defineProtocolLiteral('comment'),
+  defineProtocolLiteral(GITHUB_REVIEW_VERDICTS_V1[0]),
+  defineProtocolLiteral(GITHUB_REVIEW_VERDICTS_V1[1]),
+  ...GITHUB_REVIEW_VERDICTS_V1.slice(2).map(verdict => defineProtocolLiteral(verdict)),
 ]);
 export type GithubPullRequestReviewVerdictV1 =
   ReturnType<typeof GithubPullRequestReviewVerdictV1Schema.parse>;
+
+export const GithubPullRequestPendingReviewCreateInputV1Schema = defineProtocolObject({
+  ...mutationTargetShape, headRevision: RevisionSchema, body: defineProtocolString().optional(),
+}, { policy: 'closed' });
+export const GithubPullRequestPendingReviewSubmitInputV1Schema = defineProtocolObject({
+  ...mutationTargetShape, reviewId: defineProtocolString({ minLength: 1 }), headRevision: RevisionSchema,
+  verdict: GithubPullRequestReviewVerdictV1Schema, body: defineProtocolString().optional(),
+}, { policy: 'closed' });
+export const GithubPullRequestPendingReviewDeleteInputV1Schema = defineProtocolObject({
+  ...mutationTargetShape, reviewId: defineProtocolString({ minLength: 1 }),
+}, { policy: 'closed' });
+export const GithubPullRequestReviewDismissInputV1Schema = defineProtocolObject({
+  ...mutationTargetShape, reviewId: defineProtocolString({ minLength: 1 }), message: defineProtocolString({ minLength: 1 }),
+}, { policy: 'closed' });
 
 /**
  * Publishes one frozen canonical Reviews plan against the exact observed base
@@ -282,7 +400,7 @@ export type GithubPullRequestReopenInputV1 =
  * `applied` is the only arm that claims an effect, and it claims it only after
  * the confirming read observed the requested terminal state.
  */
-const AppliedArmSchema = defineProtocolObject({
+const appliedFields = {
   kind: defineProtocolLiteral('applied'),
   /**
    * `alreadySatisfied` is not a softer success: it states that NO request was
@@ -295,24 +413,45 @@ const AppliedArmSchema = defineProtocolObject({
     defineProtocolLiteral('alreadySatisfied'),
   ]),
   observation: TriageSourceObservationV1Schema,
-}, { policy: 'closed' });
+};
+const AppliedArmSchema = defineProtocolObject(appliedFields, { policy: 'closed' });
 
 /**
  * The request was accepted and its effect could not be confirmed. It is NEVER
  * reported as success and never automatically retried: the user's decision was
  * about the state they saw, and a retry re-decides on their behalf.
  */
-const UncertainArmSchema = defineProtocolObject({
+const uncertainFields = {
   kind: defineProtocolLiteral('uncertain'),
   observation: TriageSourceObservationV1Schema.optional(),
   failure: TriageSourceFailureV1Schema.optional(),
-}, { policy: 'closed' });
+};
+const UncertainArmSchema = defineProtocolObject(uncertainFields, { policy: 'closed' });
 
 /** No effect reached GitHub, and the provider or this source said exactly why. */
-const FailedArmSchema = defineProtocolObject({
+const failedFields = {
   kind: defineProtocolLiteral('failed'),
   failure: TriageSourceFailureV1Schema,
-}, { policy: 'closed' });
+};
+const FailedArmSchema = defineProtocolObject(failedFields, { policy: 'closed' });
+
+/** Atomic native administration payload; transfer/delete additionally carry the canonical observation. */
+export const GithubEntryAdministrationResultV1Schema = defineProtocolUnion([
+  defineProtocolObject({ ...appliedFields, observation: TriageSourceObservationV1Schema.optional(),
+    entry: defineProtocolObject({
+      id: defineProtocolString({ minLength: 1 }),
+      pinned: defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]).optional(),
+      subscription: defineProtocolUnion([defineProtocolLiteral('SUBSCRIBED'), defineProtocolLiteral('UNSUBSCRIBED')]).optional(),
+      url: defineProtocolString({ minLength: 1 }).optional(), routingToken: RoutingTokenSchema.optional(),
+      localRef: TriageSourceEntryLocalRefV1Schema.optional(),
+      branch: defineProtocolObject({ name: defineProtocolString({ minLength: 1 }),
+        exists: defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]),
+      }, { policy: 'closed' }).optional(),
+    }, { policy: 'closed' }),
+  }, { policy: 'closed' }),
+  UncertainArmSchema, FailedArmSchema,
+]);
+export type GithubEntryAdministrationResultV1 = ReturnType<typeof GithubEntryAdministrationResultV1Schema.parse>;
 
 /**
  * A refusal is this source's own decision, made from a fresh provider read, and
@@ -320,23 +459,39 @@ const FailedArmSchema = defineProtocolObject({
  * observed entity so the host re-renders what is true now instead of prompting a
  * blind retry. Refusing is correct; racing is not.
  */
-function defineRefusedArm(reason: ProtocolComposableSchema<string, string>) {
-  return defineProtocolObject({
+function refusedFields(reason: ProtocolComposableSchema<string, string>) {
+  return {
     kind: defineProtocolLiteral('refused'),
     reason,
-    /** Omitted only when the confirming read itself could not be made. */
+    /** Present when a full entity observation is available; native payloads may carry only identity. */
     observation: TriageSourceObservationV1Schema.optional(),
-  }, { policy: 'closed' });
+  };
 }
+function defineRefusedArm(reason: ProtocolComposableSchema<string, string>) {
+  return defineProtocolObject(refusedFields(reason), { policy: 'closed' });
+}
+export const GithubPullRequestHeadBranchRestoreResultV1Schema = defineProtocolUnion([
+  GithubEntryAdministrationResultV1Schema, defineRefusedArm(defineProtocolLiteral('head_advanced')),
+]);
+export type GithubPullRequestHeadBranchRestoreResultV1 = ReturnType<typeof GithubPullRequestHeadBranchRestoreResultV1Schema.parse>;
+export const GithubPullRequestHeadBranchDeleteResultV1Schema = defineProtocolUnion([
+  GithubEntryAdministrationResultV1Schema,
+  defineProtocolObject({ ...refusedFields(defineProtocolLiteral('branch_moved')),
+    currentBranchRevision: defineProtocolString({ minLength: 1 }),
+  }, { policy: 'closed' }),
+]);
+export type GithubPullRequestHeadBranchDeleteResultV1 = ReturnType<typeof GithubPullRequestHeadBranchDeleteResultV1Schema.parse>;
 
 /**
  * Merge can refuse for four reasons; a state change can refuse for one. They are
  * separate schemas because a vocabulary arm no path can reach is a claim the
  * surface would have to render and this source could never produce.
  */
-export const GithubPullRequestMergeResultV1Schema = defineProtocolUnion([
-  AppliedArmSchema,
-  defineRefusedArm(defineProtocolUnion([
+type ResultFields = Readonly<Record<string, ProtocolComposableSchema<unknown, unknown>>>;
+function defineMergeResult<TFields extends ResultFields, TRequirements extends ResultFields>(fields: TFields, requirements: TRequirements) {
+  return defineProtocolUnion([
+  defineProtocolObject({ ...fields, ...appliedFields }, { policy: 'closed' }),
+  defineProtocolObject({ ...fields, ...refusedFields(defineProtocolUnion([
     /** The provider head no longer equals the SHA the user acted on. */
     defineProtocolLiteral('head_advanced'),
     /** The current state cannot satisfy this transition at all. */
@@ -345,12 +500,42 @@ export const GithubPullRequestMergeResultV1Schema = defineProtocolUnion([
     defineProtocolLiteral('not_mergeable'),
     /** The repository's own settings forbid the requested merge method. */
     defineProtocolLiteral('merge_method_not_allowed'),
-  ])),
-  UncertainArmSchema,
-  FailedArmSchema,
+    defineProtocolLiteral('requirements_unknown'),
+    defineProtocolLiteral('bypass_not_allowed'),
+  ])) }, { policy: 'closed' }),
+  defineProtocolObject({
+    ...fields,
+    kind: defineProtocolLiteral('refused'),
+    reason: defineProtocolUnion([defineProtocolLiteral('requirements_unmet'), defineProtocolLiteral('requirements_changed')]),
+    ...requirements,
+    observation: TriageSourceObservationV1Schema.optional(),
+  }, { policy: 'closed' }),
+  defineProtocolObject({ ...fields, ...uncertainFields }, { policy: 'closed' }),
+  defineProtocolObject({ ...fields, ...failedFields }, { policy: 'closed' }),
 ]);
+}
+export const GithubPullRequestMergeResultV1Schema = defineMergeResult({}, { unmetRequirements: defineProtocolArray(GithubSkippedRequirementV1Schema) });
+export const GithubPullRequestMergeActionResultV1Schema = defineMergeResult({ outcome: TriageSourceOperationOutcomeV1Schema }, {});
+export type GithubPullRequestMergeActionResultV1 = ReturnType<typeof GithubPullRequestMergeActionResultV1Schema.parse>;
 export type GithubPullRequestMergeResultV1 =
   ReturnType<typeof GithubPullRequestMergeResultV1Schema.parse>;
+
+function defineNativeMergeResult<TFields extends ResultFields>(fields: TFields) {
+  return defineProtocolUnion([
+  defineProtocolObject({ ...fields, ...appliedFields }, { policy: 'closed' }),
+  defineProtocolObject({ ...fields, ...refusedFields(defineProtocolUnion([
+    defineProtocolLiteral('head_advanced'), defineProtocolLiteral('state_changed'),
+    defineProtocolLiteral('not_mergeable'), defineProtocolLiteral('merge_method_not_allowed'),
+    defineProtocolLiteral('operation_not_allowed'),
+  ])) }, { policy: 'closed' }),
+  defineProtocolObject({ ...fields, ...uncertainFields }, { policy: 'closed' }),
+  defineProtocolObject({ ...fields, ...failedFields }, { policy: 'closed' }),
+]);
+}
+export const GithubPullRequestNativeMergeResultV1Schema = defineNativeMergeResult({});
+export const GithubPullRequestNativeMergeActionResultV1Schema = defineNativeMergeResult({ outcome: TriageSourceOperationOutcomeV1Schema });
+export type GithubPullRequestNativeMergeActionResultV1 = ReturnType<typeof GithubPullRequestNativeMergeActionResultV1Schema.parse>;
+export type GithubPullRequestNativeMergeResultV1 = ReturnType<typeof GithubPullRequestNativeMergeResultV1Schema.parse>;
 
 /**
  * One entry's state transition, answered with the re-observed entry.
@@ -371,20 +556,36 @@ export const GithubPullRequestStateResultV1Schema = defineProtocolUnion([
 export type GithubPullRequestStateResultV1 =
   ReturnType<typeof GithubPullRequestStateResultV1Schema.parse>;
 
+/** Native remote drafts already have GitHub identity; no local publication plan is created. */
+export const GithubPullRequestReviewMutationResultV1Schema = defineProtocolUnion([
+  defineProtocolObject({ ...appliedFields, observation: TriageSourceObservationV1Schema.optional(),
+    review: defineProtocolObject({ id: defineProtocolString({ minLength: 1 }), state: defineProtocolString({ minLength: 1 }),
+      body: defineProtocolString().optional() }, { policy: 'closed' }),
+  }, { policy: 'closed' }),
+  defineRefusedArm(defineProtocolUnion([defineProtocolLiteral('head_advanced'), defineProtocolLiteral('state_changed')])),
+  UncertainArmSchema, FailedArmSchema,
+]);
+export type GithubPullRequestReviewMutationResultV1 = ReturnType<typeof GithubPullRequestReviewMutationResultV1Schema.parse>;
+
 /**
  * Draft → ready refuses for the same two reasons a head-pinned transition can:
  * the head the user acted on moved, or the pull request is no longer in a state
  * this transition applies to.
  */
-export const GithubPullRequestMarkReadyResultV1Schema = defineProtocolUnion([
-  AppliedArmSchema,
-  defineRefusedArm(defineProtocolUnion([
+function defineMarkReadyResult<TFields extends ResultFields>(fields: TFields) {
+  return defineProtocolUnion([
+  defineProtocolObject({ ...fields, ...appliedFields }, { policy: 'closed' }),
+  defineProtocolObject({ ...fields, ...refusedFields(defineProtocolUnion([
     defineProtocolLiteral('head_advanced'),
     defineProtocolLiteral('state_changed'),
-  ])),
-  UncertainArmSchema,
-  FailedArmSchema,
+  ])) }, { policy: 'closed' }),
+  defineProtocolObject({ ...fields, ...uncertainFields }, { policy: 'closed' }),
+  defineProtocolObject({ ...fields, ...failedFields }, { policy: 'closed' }),
 ]);
+}
+export const GithubPullRequestMarkReadyResultV1Schema = defineMarkReadyResult({});
+export const GithubPullRequestMarkReadyActionResultV1Schema = defineMarkReadyResult({ outcome: TriageSourceOperationOutcomeV1Schema });
+export type GithubPullRequestMarkReadyActionResultV1 = ReturnType<typeof GithubPullRequestMarkReadyActionResultV1Schema.parse>;
 export type GithubPullRequestMarkReadyResultV1 =
   ReturnType<typeof GithubPullRequestMarkReadyResultV1Schema.parse>;
 
@@ -706,3 +907,81 @@ export const GithubPullRequestThreadResolutionResultV1Schema = defineProtocolUni
 ]);
 export type GithubPullRequestThreadResolutionResultV1 =
   ReturnType<typeof GithubPullRequestThreadResolutionResultV1Schema.parse>;
+
+/**
+ * Edit the body of ONE existing comment: a conversation comment on an issue or
+ * pull request, a line review comment, or a review's summary.
+ *
+ * GitHub is the permission owner (its per-comment `viewerCanUpdate`), so nothing
+ * here decides who may edit. The id is a GLOBAL node id, which is why the
+ * Action's read proves the comment belongs to the admitted entry and is the
+ * named kind BEFORE it writes. The body replaces the whole text, as GitHub's own
+ * editor does; GitHub keeps the earlier text in the comment's edit history.
+ */
+export const GithubCommentEditTargetKindV1Schema = defineProtocolUnion([
+  defineProtocolLiteral('issue-comment'),
+  defineProtocolLiteral('review-comment'),
+  defineProtocolLiteral('review'),
+]);
+export type GithubCommentEditTargetKindV1 = ReturnType<typeof GithubCommentEditTargetKindV1Schema.parse>;
+
+export const GithubCommentEditInputV1Schema = defineProtocolObject({
+  ...mutationTargetShape,
+  target: defineProtocolObject({
+    kind: GithubCommentEditTargetKindV1Schema,
+    id: NodeIdSchema,
+  }, { policy: 'closed' }),
+  body: defineProtocolString({ minLength: 1 }),
+}, { policy: 'closed' });
+export type GithubCommentEditInputV1 = ReturnType<typeof GithubCommentEditInputV1Schema.parse>;
+
+/** The comment as GitHub's update answered it; there is no alreadySatisfied arm, an edit always writes. */
+export const GithubCommentEditResultV1Schema = defineProtocolUnion([
+  defineProtocolObject({
+    kind: defineProtocolLiteral('applied'),
+    effect: defineProtocolLiteral('changed'),
+    comment: defineProtocolObject({
+      id: NodeIdSchema,
+      body: defineProtocolString(),
+    }, { policy: 'closed' }),
+  }, { policy: 'closed' }),
+  defineProtocolObject({
+    kind: defineProtocolLiteral('uncertain'),
+    failure: TriageSourceFailureV1Schema.optional(),
+  }, { policy: 'closed' }),
+  FailedArmSchema,
+]);
+export type GithubCommentEditResultV1 = ReturnType<typeof GithubCommentEditResultV1Schema.parse>;
+
+/**
+ * Post ONE new conversation comment on the admitted issue or pull request, as
+ * GitHub's own comment box does. The entry is the admitted one; the Action's read
+ * pins its repository id and kind before it posts. A lost response is
+ * `uncertain`, never re-posted.
+ */
+export const GithubCommentCreateInputV1Schema = defineProtocolObject({
+  ...mutationTargetShape,
+  body: defineProtocolString({ minLength: 1 }),
+}, { policy: 'closed' });
+export type GithubCommentCreateInputV1 = ReturnType<typeof GithubCommentCreateInputV1Schema.parse>;
+
+/** The posted comment as GitHub answered it, enough to show it in place until the next read. */
+export const GithubCommentCreateResultV1Schema = defineProtocolUnion([
+  defineProtocolObject({
+    kind: defineProtocolLiteral('applied'),
+    effect: defineProtocolLiteral('changed'),
+    comment: defineProtocolObject({
+      id: NodeIdSchema,
+      body: defineProtocolString(),
+      author: defineProtocolString({ minLength: 1 }).optional(),
+      createdAtMs: defineProtocolNumber({ integer: true }).optional(),
+      url: defineProtocolString({ minLength: 1 }).optional(),
+    }, { policy: 'closed' }),
+  }, { policy: 'closed' }),
+  defineProtocolObject({
+    kind: defineProtocolLiteral('uncertain'),
+    failure: TriageSourceFailureV1Schema.optional(),
+  }, { policy: 'closed' }),
+  FailedArmSchema,
+]);
+export type GithubCommentCreateResultV1 = ReturnType<typeof GithubCommentCreateResultV1Schema.parse>;

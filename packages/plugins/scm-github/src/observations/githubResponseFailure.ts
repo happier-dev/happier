@@ -1,4 +1,5 @@
-import { readTriageResponseHeaderV1 } from '@happier-dev/triage-protocol/v1';
+import { readTriageResponseHeaderV1, MAX_TRIAGE_FAILURE_DETAIL_UTF8_BYTES_V1, projectTriageDisplayTextV1,
+  type TriageSourceFailureClassV1 } from '@happier-dev/triage-protocol/v1';
 import { isBoundedInvocationDeadline, TriageSourceAuthorizationErrorV1 } from '@happier-dev/triage-sources/runtime';
 
 import {
@@ -43,19 +44,16 @@ import {
  * arm — `unknown` — never absence.
  */
 
-export type GithubResponseFailureClassV1 =
-  | 'authentication'
-  | 'permission'
-  | 'rateLimit'
-  | 'transient'
-  | 'unsupportedContract'
-  | 'unknown';
+export type GithubResponseFailureClassV1 = TriageSourceFailureClassV1;
 
 export type GithubResponseFailureV1 = Readonly<{
   class: GithubResponseFailureClassV1;
   code: string;
   /** Absolute epoch milliseconds, derived only from provider retry evidence. */
   retryNotBeforeMs?: number;
+  detail?: string;
+  /** Validated provider permission sets: commas mean AND; semicolons mean OR. */
+  requiredPermissions?: string;
 }>;
 
 /**
@@ -77,6 +75,16 @@ export const GITHUB_RESPONSE_FAILURE_CODE = Object.freeze({
 
 /** GitHub names the permission a rejected request required on this response header. */
 const ACCEPTED_PERMISSIONS_HEADER = 'x-accepted-github-permissions';
+
+/** GitHub header grammar: commas form a required set; semicolons separate alternatives. */
+function readAcceptedGithubPermissions(headers: Readonly<Record<string, string>>): string | undefined {
+  const raw = readTriageResponseHeaderV1(headers, ACCEPTED_PERMISSIONS_HEADER);
+  if (raw === null || new TextEncoder().encode(raw).byteLength > MAX_TRIAGE_FAILURE_DETAIL_UTF8_BYTES_V1) return undefined;
+  const alternatives = raw.split(';').map(set => set.split(',').map(permission => permission.trim()));
+  if (alternatives.some(set => set.length === 0 || set.some(permission => !/^[a-z_]+=(?:read|write|admin)$/u.test(permission)))) return undefined;
+  const detail = alternatives.map(set => set.join(', ')).join('; ');
+  return new TextEncoder().encode(detail).byteLength <= MAX_TRIAGE_FAILURE_DETAIL_UTF8_BYTES_V1 ? detail : undefined;
+}
 
 /**
  * GitHub answered about this exact resource: it is deleted, renamed, or masked
@@ -102,6 +110,18 @@ export function classifyGithubResponseFacts(
   facts: GithubResponseFactsV1,
   nowMs: number,
 ): GithubResponseFailureV1 {
+  const failure = classifyGithubResponseStatus(facts, nowMs);
+  const requestId = readTriageResponseHeaderV1(facts.headers, 'x-github-request-id');
+  if (requestId === null || !/^[A-Za-z0-9][A-Za-z0-9:._-]*$/u.test(requestId)) return failure;
+  const diagnostic = `GitHub request ID: ${requestId}`;
+  if (new TextEncoder().encode(diagnostic).byteLength > MAX_TRIAGE_FAILURE_DETAIL_UTF8_BYTES_V1) return failure;
+  return Object.freeze({ ...failure, detail: projectTriageDisplayTextV1(
+    failure.detail === undefined ? diagnostic : `${diagnostic}; ${failure.detail}`,
+    MAX_TRIAGE_FAILURE_DETAIL_UTF8_BYTES_V1,
+  ).value });
+}
+
+function classifyGithubResponseStatus(facts: GithubResponseFactsV1, nowMs: number): GithubResponseFailureV1 {
   // Every throttle family GitHub publishes, wherever it reports it: the primary
   // and secondary limits, and a content-creation `422` GitHub itself says to
   // retry. A throttle is never a permanent failure.
@@ -120,11 +140,13 @@ export function classifyGithubResponseFacts(
     return Object.freeze({ class: 'authentication', code: GITHUB_RESPONSE_FAILURE_CODE.unauthorized });
   }
   if (facts.status === 403) {
+    const detail = readAcceptedGithubPermissions(facts.headers);
     return Object.freeze({
       class: 'permission',
       code: readTriageResponseHeaderV1(facts.headers, ACCEPTED_PERMISSIONS_HEADER) === null
         ? GITHUB_RESPONSE_FAILURE_CODE.forbidden
         : GITHUB_RESPONSE_FAILURE_CODE.insufficientScope,
+      ...(detail === undefined ? {} : { detail, requiredPermissions: detail }),
     });
   }
   if (facts.status === 404) {

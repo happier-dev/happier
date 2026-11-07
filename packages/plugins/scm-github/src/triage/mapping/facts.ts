@@ -1,12 +1,10 @@
 import {
-  MAX_TRIAGE_ROW_FACTS_V1,
   MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1,
   projectTriageDisplayTextV1,
 } from '@happier-dev/triage-protocol/v1';
 
 import type {
   GithubTriageKindIdV1,
-  GithubTriageRowFactImportanceV1,
   GithubTriageRowFactV1,
 } from '../types.js';
 
@@ -21,12 +19,12 @@ import type {
  * inputs rather than collapsing both into a missing field.
  */
 
-export type GithubReviewDecisionV1 = 'approved' | 'changes-requested' | 'review-required';
+export const GITHUB_REVIEW_DECISIONS_V1 = Object.freeze(['approved', 'changes-requested', 'review-required'] as const);
+export type GithubReviewDecisionV1 = (typeof GITHUB_REVIEW_DECISIONS_V1)[number];
 
-export type GithubChecksRowStateV1 =
-  | Readonly<{ kind: 'allPassing' }>
-  | Readonly<{ kind: 'running' }>
-  | Readonly<{ kind: 'failing'; failingCount: number }>;
+export type GithubChecksRowStateV1 = NonNullable<Extract<
+  import('../detail/contracts.js').GithubChecksResultV1, { kind: 'checks' }
+>['rowState']>;
 
 export type GithubRowFactsInputV1 = Readonly<{
   kindId: GithubTriageKindIdV1;
@@ -57,20 +55,6 @@ export type GithubRowFactsProjectionV1 = Readonly<{
   rowFacts: readonly GithubTriageRowFactV1[];
   truncated: boolean;
 }>;
-
-/** Keep actionable facts ahead of labels, then other supplementary facts. */
-const IMPORTANCE_RANK: Readonly<Record<GithubTriageRowFactImportanceV1, number>> = Object.freeze({
-  primary: 0,
-  secondary: 1,
-  supplementary: 3,
-});
-
-function rowFactPriority(fact: GithubTriageRowFactV1): number {
-  // These values already travel as snapshot/observation metadata, unlike labels.
-  if (fact.id === 'github/author' || fact.id === 'github/updated') return 4;
-  if (fact.id === 'github/labels') return 2;
-  return IMPORTANCE_RANK[fact.importance];
-}
 
 /** Label names joined by `, `, first three, then `+N`. */
 export function formatGithubLabelSummary(labelNames: readonly string[]): string {
@@ -227,6 +211,10 @@ export function buildGithubRowFacts(input: GithubRowFactsInputV1): GithubRowFact
       });
     } else if (input.additionsDeletions !== null) {
       const { additions, deletions } = input.additionsDeletions;
+      // TriageRowFactValueV1Schema has text/scalar-number arms, not a diff-stat pair.
+      // Keep both exact counts in this locale-neutral observation text, including zero.
+      // UI detail/Files render through public plugin-ui DiffStat/formatHappierDiffStat;
+      // their locale-aware presentation must not be persisted into this source fact.
       push({
         id: 'github/additions-deletions',
         importance: 'supplementary',
@@ -235,19 +223,5 @@ export function buildGithubRowFacts(input: GithubRowFactsInputV1): GithubRowFact
     }
   }
 
-  if (facts.length > MAX_TRIAGE_ROW_FACTS_V1) {
-    // The published fact count is small, so WHICH facts survive is the whole product
-    // decision. Emission order is the table's reading order, not an importance order,
-    // so a positional slice would drop a pull request's review decision and checks.
-    // Labels are the issue's Signal: retain them before author/update facts whose
-    // values already travel as snapshot/observation metadata. Their presentation
-    // importance remains supplementary; selection must not erase the only signal.
-    const ranked = [...facts].sort((left, right) =>
-      rowFactPriority(left) - rowFactPriority(right));
-    return Object.freeze({
-      rowFacts: Object.freeze(ranked.slice(0, MAX_TRIAGE_ROW_FACTS_V1)),
-      truncated: true,
-    });
-  }
   return Object.freeze({ rowFacts: Object.freeze(facts), truncated });
 }

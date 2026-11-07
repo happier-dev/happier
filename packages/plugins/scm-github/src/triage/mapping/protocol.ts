@@ -21,6 +21,7 @@ import type {
 import { GITHUB_TRIAGE_DEPLOYMENT_BASE_URL_V1 } from '../configuration.js';
 import { GITHUB_PLUGIN_ID } from '../../observations/githubProviderContracts.js';
 import { GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1 } from '../contribution.js';
+import { GITHUB_FILE_VIEWED_ACTION_IDS_V1 } from '../fileViewedContracts.js';
 import { GITHUB_CHANGED_FILES_PAGE_SIZE_V1 } from '../detail/routes.js';
 import { buildGithubRepositoryKey, parseGithubRoutingToken } from '../locator.js';
 
@@ -179,6 +180,7 @@ export function toTriageSnapshot(
     scopeLabel,
     ...(snapshot.scopeDisplayName === undefined ? {} : { scopeDisplayName: snapshot.scopeDisplayName }),
     ...(snapshot.authorLabel === undefined ? {} : { authorLabel: snapshot.authorLabel }),
+    ...(snapshot.assigneeLabel === undefined ? {} : { assigneeLabel: snapshot.assigneeLabel }),
     ...(snapshot.designation === undefined ? {} : { designation: snapshot.designation }),
     ...(isEmittableInstant(snapshot.createdAtMs) ? { createdAtMs: snapshot.createdAtMs } : {}),
     ...(snapshot.completedAtMs === undefined ? {} : { completedAtMs: snapshot.completedAtMs }),
@@ -204,7 +206,8 @@ export function toTriageSnapshot(
 export function toTriageViewerFacts(
   viewer: GithubTriageViewerFactsV1,
 ): TriageSourceViewerFactsV1 {
-  return Object.freeze({ involvement: Object.freeze([...viewer.involvement]) });
+  return Object.freeze({ involvement: Object.freeze([...viewer.involvement]),
+    ...(viewer.sourceAttention === undefined ? {} : { sourceAttention: viewer.sourceAttention }) });
 }
 
 export function toTriageFailure(failure: GithubTriageFailureV1): TriageSourceFailureV1 {
@@ -212,6 +215,7 @@ export function toTriageFailure(failure: GithubTriageFailureV1): TriageSourceFai
     class: failure.class,
     code: failure.code,
     ...(failure.detail === undefined ? {} : { detail: failure.detail }),
+    ...(failure.requiredPermissions === undefined ? {} : { requiredPermissions: failure.requiredPermissions }),
     ...(failure.retryNotBeforeMs === undefined
       ? {}
       : { retryNotBeforeMs: failure.retryNotBeforeMs }),
@@ -294,31 +298,53 @@ export function toTriageGetResult(
   if (observation.kind !== 'present' || projected.kind !== 'present') return projected;
   if (observation.localRef.kindId !== 'pull-request') return { ...projected,
     ...(observation.taskFields === undefined ? {} : { taskFields: observation.taskFields }) };
-  const revision = observation.snapshot.reviewRevision;
-  const route = parseGithubRoutingToken(observation.locator.routingToken);
+  const comparisonSource = buildGithubPullRequestComparisonSourceV1({
+    instance,
+    localRef: toTriageLocalRef(observation.localRef),
+    routingToken: observation.locator.routingToken,
+    revision: observation.snapshot.reviewRevision,
+  });
+  return comparisonSource === null ? projected : Object.freeze({ ...projected, comparisonSource });
+}
+
+/**
+ * A pull request's comparison source: its immutable endpoints, its changed-files read and its Viewed
+ * read/set Actions. The authoritative get result and the native Files panel both build it here, so the
+ * panel joins the same Viewed source core does for this PR and head.
+ */
+export function buildGithubPullRequestComparisonSourceV1(input: Readonly<{
+  instance: TriageConfiguredSourceInstanceV1;
+  localRef: TriageSourceEntryLocalRefV1;
+  routingToken: string | null | undefined;
+  revision: Readonly<{ baseSha: string; headSha: string }> | null | undefined;
+}>) {
+  const { instance, localRef, revision } = input;
+  const route = input.routingToken == null ? null : parseGithubRoutingToken(input.routingToken);
   const repository = route === null ? null : buildGithubRepositoryKey(route);
-  const number = Number(observation.localRef.entryId);
-  if (revision === undefined || repository === null || !Number.isSafeInteger(number) || number < 1) return projected;
+  const number = Number(localRef.entryId);
+  if (localRef.kindId !== 'pull-request' || revision == null || repository === null
+    || !Number.isSafeInteger(number) || number < 1) return null;
+  const entry = Object.freeze({ v: 1 as const, instance, localRef, routingToken: repository });
   return Object.freeze({
-    ...projected,
-    comparisonSource: Object.freeze({
-      kind: 'pullRequest' as const,
-      locator: Object.freeze({
-        providerId: 'github',
-        repository,
-        number,
-        baseOid: revision.baseSha,
-        headOid: revision.headSha,
-        sourceAction: Object.freeze({
-          action: Object.freeze({ pluginId: GITHUB_PLUGIN_ID, localId: GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listChangedFiles }),
-          input: Object.freeze({
-            v: 1,
-            instance,
-            localRef: toTriageLocalRef(observation.localRef),
-            routingToken: repository,
-            limit: GITHUB_CHANGED_FILES_PAGE_SIZE_V1,
-            comparison: true,
-          }),
+    kind: 'pullRequest' as const,
+    locator: Object.freeze({
+      providerId: 'github',
+      repository,
+      number,
+      baseOid: revision.baseSha,
+      headOid: revision.headSha,
+      fileViewedActions: Object.freeze({
+        read: Object.freeze({ action: Object.freeze({ pluginId: GITHUB_PLUGIN_ID, localId: GITHUB_FILE_VIEWED_ACTION_IDS_V1.read }),
+          input: entry }),
+        set: Object.freeze({ action: Object.freeze({ pluginId: GITHUB_PLUGIN_ID, localId: GITHUB_FILE_VIEWED_ACTION_IDS_V1.set }),
+          input: entry }),
+      }),
+      sourceAction: Object.freeze({
+        action: Object.freeze({ pluginId: GITHUB_PLUGIN_ID, localId: GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listChangedFiles }),
+        input: Object.freeze({
+          ...entry,
+          limit: GITHUB_CHANGED_FILES_PAGE_SIZE_V1,
+          comparison: true,
         }),
       }),
     }),

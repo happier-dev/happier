@@ -7,6 +7,18 @@
  * this subpath rather than eagerly traversing that UI surface.
  */
 export * from './ui/sourcePanelProtocol.js';
+export {
+  createTriageIssueEventSourceSetupV1,
+  TriageIssueEventSetupInputV1Schema, TriageIssueEventSourceConfigV1Schema, TriageIssueTransitionV1Schema,
+  TriageIssueInvestigationV1Schema,
+  TRIAGE_ISSUE_DEFAULT_CHECK_PERIOD_MS_V1, TRIAGE_ISSUE_EVENT_LOCAL_ID_V1,
+  TRIAGE_ISSUE_SETUP_ACTION_LOCAL_ID_V1, TRIAGE_ISSUE_BACKGROUND_LOCAL_ID_V1,
+  TRIAGE_ISSUE_NOTIFICATION_CATEGORY_ID_V1, TRIAGE_ISSUE_EVENT_SETUP_INPUT_HINTS_V1,
+} from './observations/issueSource.js';
+export type { TriageIssueEventSourceConfigV1, TriageIssueTransitionV1 } from './observations/issueSource.js';
+export { createTriageIssueEventSourceAdapterV1, createTriageIssueHistoryGapResetV1 } from './observations/issueObserver.js';
+export { TRIAGE_ISSUE_CHECKPOINT_COLLECTION_V1 } from './observations/issueCheckpoint.js';
+export type { TriageIssueObserverProviderV1 } from './observations/issueObserver.js';
 export { scanTriageSelectedScopeUnitsV1 } from './paging/selectedScopes.js';
 export {
   readTriageSourceAccountListingV1,
@@ -52,3 +64,11 @@ export {
 export {
   fitComposerReferenceResolutionPrefixV1,
 } from './projection/composerReferenceResolution.js';
+export {
+  requestTriageSessionHandoffV1,
+  readTriageSessionHandoffChoicesV1,
+  type TriageSessionHandoffHostV1,
+  type TriageSessionHandoffChoicesReadOutcomeV1,
+} from './sessionHandoff.js';
+export { publishTriageAttentionV1 } from './observations/attention.js';
+export { shouldCompleteTriagePostMutation, completeTriagePostMutationIfNeeded } from './invocation/postMutation.js';

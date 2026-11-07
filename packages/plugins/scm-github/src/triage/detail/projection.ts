@@ -7,7 +7,7 @@ import {
   type TriageBoundedTextV1,
 } from '@happier-dev/triage-protocol/v1';
 
-import type { GithubCheckObservationV1 } from '../checks.js';
+import type { GithubCheckObservationV1, GithubCheckActionsTargetV1 } from '../checks.js';
 import type { GithubPatchEvidenceV1 } from './contracts.js';
 import { readGithubAbsoluteWebUrl } from '../locator.js';
 import { readGithubChangedFileImportSpecifiers } from './files/orderChangedFiles.js';
@@ -641,6 +641,8 @@ export type GithubProjectedCheckRowV1 = Readonly<{
   startedAtMs?: number;
   completedAtMs?: number;
   logExcerpt?: string;
+  annotationsCount?: number;
+  actions?: GithubCheckActionsTargetV1;
   truncated?: true;
 }>;
 
@@ -689,6 +691,8 @@ export function projectGithubCheckRows(
       ...(observation.startedAtMs === null ? {} : { startedAtMs: observation.startedAtMs }),
       ...(observation.completedAtMs === null ? {} : { completedAtMs: observation.completedAtMs }),
       ...(logExcerpt === null ? {} : { logExcerpt: logExcerpt.value }),
+      ...(observation.annotationsCount === undefined ? {} : { annotationsCount: observation.annotationsCount }),
+      ...(observation.actions === undefined ? {} : { actions: observation.actions }),
       ...(truncated ? { truncated: true as const } : {}),
     }));
   }

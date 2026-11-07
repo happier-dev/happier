@@ -1,8 +1,10 @@
-import { PluginError, type PluginContributionRef, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { computeCanonicalDomainSeparatedDigest, PluginError, type PluginInvocationContext, type PluginContributionRef } from '@happier-dev/plugin-sdk';
+import type { GithubHttpInvocationContextV1 } from './githubHttpInvocation.js';
 import type {
   ConnectedAccountMaterialization,
   ConnectedAccountRef,
 } from '@happier-dev/plugin-sdk/connected-accounts';
+import { parseRetryAfterHeader } from '@happier-dev/plugin-sdk/connected-accounts';
 import {
   admitForgeRequestUrl,
   materializeTriageSourceAuthorizationV1,
@@ -23,6 +25,7 @@ import { createGithubRequestHeaders } from './githubRequestHeaders.js';
 
 export type GithubApiResponseV1 = Readonly<{
   status: number;
+  statusText?: string;
   headers: Readonly<Record<string, string>>;
   body: Uint8Array;
 }>;
@@ -51,12 +54,216 @@ export type GithubResponseFactsV1 = Readonly<{
  */
 export type GithubApiMethodV1 = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
 
+export type GithubAccountRequestV1 = Readonly<{
+  url: string;
+  method?: GithubApiMethodV1;
+  headers?: Readonly<Record<string, string>>;
+  body?: Uint8Array;
+  redirect?: 'error' | 'manual' | 'follow';
+  /** Only the native query owner can admit a POST as a read-only GraphQL query. */
+  readOnlyGraphql?: boolean;
+}>;
+
+export type GithubAccountRequestOwnerV1 = Readonly<{
+  request(input: GithubAccountRequestV1, options: Readonly<{
+    signal?: AbortSignal;
+    transport(input: GithubAccountRequestV1, signal: AbortSignal): Promise<GithubApiResponseV1>;
+    disposeTransport?(): void | Promise<void>;
+  }>): Promise<GithubApiResponseV1>;
+  dispose(): void;
+}>;
+
+function isGithubSafeRead(input: GithubAccountRequestV1): boolean {
+  const method = input.method ?? 'GET';
+  return method === 'GET' || (method === 'POST' && input.readOnlyGraphql === true && new URL(input.url).pathname === '/graphql');
+}
+
+function githubRequestResource(input: GithubAccountRequestV1): string {
+  const path = new URL(input.url).pathname;
+  return path === '/graphql' ? 'graphql' : path.startsWith('/search/') ? 'search' : 'core';
+}
+
+type AccountRequestEntry = Readonly<{ credential: string; owner: GithubAccountRequestOwnerV1; clearJoins(): void }>;
+const accountOwnersByLifetime = new WeakMap<object, Map<string, AccountRequestEntry>>();
+let activeRequestOccurrence: object | null = null;
+
+/** The existing definePlugin setup/cleanup owns the lifetime of account transport state. */
+export function beginGithubAccountRequestOccurrenceV1(): () => void {
+  if (activeRequestOccurrence !== null) throw new Error('GitHub request occurrence is already active');
+  const occurrence = {};
+  activeRequestOccurrence = occurrence;
+  return () => {
+    if (activeRequestOccurrence === occurrence) activeRequestOccurrence = null;
+    disposeGithubAccountRequestLifetimeV1(occurrence);
+  };
+}
+
+/** Both activation realms retire transport state at their existing cleanup boundary. */
+export function disposeGithubAccountRequestLifetimeV1(lifetime: object): void {
+  const entries = accountOwnersByLifetime.get(lifetime);
+  for (const entry of entries?.values() ?? []) entry.owner.dispose();
+  entries?.clear();
+  accountOwnersByLifetime.delete(lifetime);
+}
+
+/**
+ * Borrows transport state after credential admission. Each invocation supplies its
+ * own admitted read; an executing handle is held only until its flight settles.
+ */
+export function getGithubAccountRequestOwnerV1(scope: Readonly<{
+  lifetime?: object;
+  fallbackLifetime?: object;
+  accountScope: string;
+  credentialScope: string;
+  executionOrigin?: string;
+  now?: () => number;
+}>): GithubAccountRequestOwnerV1 {
+  const lifetime = scope.lifetime ?? activeRequestOccurrence ?? scope.fallbackLifetime ?? {};
+  let entries = accountOwnersByLifetime.get(lifetime);
+  if (!entries) {
+    entries = new Map();
+    accountOwnersByLifetime.set(lifetime, entries);
+  }
+  const key = JSON.stringify([scope.accountScope, scope.executionOrigin ?? '']);
+  // Keep no credential bytes beyond the admitted invocation's own client closure.
+  const credential = computeCanonicalDomainSeparatedDigest('github-account-request-credential-v1', [scope.credentialScope]);
+  const existing = entries.get(key);
+  if (existing?.credential === credential) return existing.owner;
+  existing?.clearJoins();
+
+  const now = scope.now ?? Date.now;
+  let retryNotBeforeMs = 0;
+  const primaryRetryNotBeforeByResource = new Map<string, number>();
+  let retired = false;
+  type Flight = { controller: AbortController; promise: Promise<GithubApiResponseV1>; consumers: number };
+  const reads = new Map<string, Flight>();
+  const pending = new Set<Flight>();
+  const clearJoins = () => { reads.clear(); };
+  const owner: GithubAccountRequestOwnerV1 = Object.freeze({
+    dispose(): void {
+      retired = true;
+      retryNotBeforeMs = 0;
+      primaryRetryNotBeforeByResource.clear();
+      clearJoins();
+      for (const flight of pending) flight.controller.abort();
+      pending.clear();
+    },
+    async request(input, options): Promise<GithubApiResponseV1> {
+      if (options.signal?.aborted || retired) {
+        await options.disposeTransport?.();
+        options.signal?.throwIfAborted();
+        throw new DOMException('GitHub request authority retired', 'AbortError');
+      }
+      const checkedAtMs = now();
+      const parkedUntilMs = Math.max(retryNotBeforeMs, primaryRetryNotBeforeByResource.get(githubRequestResource(input)) ?? 0);
+      if (parkedUntilMs > checkedAtMs) {
+        await options.disposeTransport?.();
+        return Object.freeze({
+          status: 429,
+          headers: Object.freeze({ 'retry-after': String(Math.ceil((parkedUntilMs - checkedAtMs) / 1_000)) }),
+          body: new TextEncoder().encode('{"message":"GitHub account requests are rate limited."}'),
+        });
+      }
+      const method = input.method ?? 'GET';
+      const safe = isGithubSafeRead(input);
+      const readKey = safe ? JSON.stringify([
+        method, input.url, input.redirect ?? 'error',
+        Object.entries(input.headers ?? {}).map(([name, value]) => [name.toLowerCase(), value] as const).sort(([a], [b]) => a.localeCompare(b)),
+        input.body === undefined ? null : Array.from(input.body),
+      ]) : null;
+      let flight = readKey === null ? undefined : reads.get(readKey);
+      if (flight?.controller.signal.aborted) flight = undefined;
+      const joined = flight !== undefined;
+      if (!flight) {
+        const controller = new AbortController();
+        // Publish before starting transport so synchronous boundary re-entry shares it.
+        let resolve!: (response: GithubApiResponseV1) => void;
+        let reject!: (error: unknown) => void;
+        const promise = new Promise<GithubApiResponseV1>((yes, no) => { resolve = yes; reject = no; });
+        flight = { controller, promise, consumers: 0 };
+        const created = flight;
+        pending.add(created);
+        if (readKey !== null) reads.set(readKey, created);
+        const settle = () => {
+          pending.delete(created);
+          if (readKey !== null && reads.get(readKey) === created) reads.delete(readKey);
+        };
+        void promise.then(settle, settle);
+        try {
+          void options.transport(input, controller.signal).then(async (response) => {
+            try {
+              controller.signal.throwIfAborted();
+              const observedAtMs = now();
+              // Primary bucket headers describe successful responses too. The
+              // last successful slot parks only its resource without decoding its body
+              // or changing that response's success classification. Primary refusals
+              // use the same resource; secondary/content throttles remain global.
+              const facts = response.status === 403 || response.status === 429 || response.status === 422
+                ? readGithubApiResponseFacts(response) : null;
+              const primary = readTriageResponseHeaderV1(response.headers, 'x-ratelimit-remaining') === '0'
+                && (facts === null || !isGithubSecondaryRateLimitResponse(facts) && !isGithubContentCreationThrottled(facts));
+              const retryAfterMs = (primary ? readGithubRetryAfterMs(response.headers, observedAtMs) : null)
+                ?? (facts === null ? null : readGithubRateLimitRetryAfterMs(facts, observedAtMs)
+                  ?? readGithubContentCreationThrottleRetryAfterMs(facts, observedAtMs));
+              if (retryAfterMs !== null && !retired) {
+                if (primary) {
+                  const resource = readTriageResponseHeaderV1(response.headers, 'x-ratelimit-resource') ?? githubRequestResource(input);
+                  primaryRetryNotBeforeByResource.set(resource, Math.max(primaryRetryNotBeforeByResource.get(resource) ?? 0, observedAtMs + retryAfterMs));
+                } else retryNotBeforeMs = Math.max(retryNotBeforeMs, observedAtMs + retryAfterMs);
+              }
+            } finally {
+              await options.disposeTransport?.();
+            }
+            controller.signal.throwIfAborted();
+            resolve(response);
+          }, async (error: unknown) => {
+            await options.disposeTransport?.();
+            reject(error);
+          }).catch(reject);
+        } catch (error) {
+          void Promise.resolve().then(() => options.disposeTransport?.()).then(() => reject(error), reject);
+        }
+      }
+      const current = flight;
+      current.consumers += 1;
+      // Join before disposing an unused prepared handle: disposal may cross the
+      // background-process bridge while the original caller is cancelled.
+      const result = joined
+        ? Promise.all([current.promise, Promise.resolve().then(() => options.disposeTransport?.())]).then(([response]) => response)
+        : current.promise;
+      return await new Promise<GithubApiResponseV1>((resolve, reject) => {
+        let settled = false;
+        const finish = (complete: () => void) => {
+          if (settled) return;
+          settled = true;
+          options.signal?.removeEventListener('abort', abort);
+          current.consumers -= 1;
+          if (current.consumers === 0 && pending.has(current)) {
+            current.controller.abort();
+            if (readKey !== null && reads.get(readKey) === current) reads.delete(readKey);
+          }
+          complete();
+        };
+        const abort = () => finish(() => reject(options.signal?.reason));
+        options.signal?.addEventListener('abort', abort, { once: true });
+        if (options.signal?.aborted) abort();
+        void result.then((response) => finish(() => resolve(response)), (error) => finish(() => reject(error)));
+      });
+    },
+  });
+  entries.set(key, { credential, owner, clearJoins });
+  return owner;
+}
+
 export type GithubApiClientV1 = Readonly<{
+  /** Immutable workflow definitions share this admitted account/materialization lifetime. */
+  immutableDefinitionLifetime?: object;
   request(input: Readonly<{
     url: string;
     method?: GithubApiMethodV1;
     headers?: Readonly<Record<string, string>>;
     body?: Uint8Array;
+    readOnlyGraphql?: boolean;
   }>): Promise<GithubApiResponseV1>;
   /**
    * The single narrow manual-redirect read, for the documented GitHub issue `301`
@@ -68,6 +275,11 @@ export type GithubApiClientV1 = Readonly<{
   requestWithoutFollowingRedirects(input: Readonly<{
     url: string;
   }>): Promise<GithubApiResponseV1>;
+}>;
+
+/** The same admitted client, with private media required only by byte consumers. */
+export type GithubApiMediaClientV1 = GithubApiClientV1 & Readonly<{
+  requestMedia(input: Readonly<{ url: string; media: 'json' | 'binary' }>): Promise<GithubApiResponseV1>;
 }>;
 
 /** GitHub requires at least one minute before retrying an unhinted limit response. */
@@ -180,7 +392,7 @@ export function readGithubContentCreationThrottleRetryAfterMs(
  * retains no token outside the current invocation closure.
  */
 function assertGithubCredentialRef(
-  context: PluginInvocationContext,
+  context: GithubHttpInvocationContextV1,
   credentialRef: ConnectedAccountRef,
 ): void {
   if (!isGithubConnectedAccountRef(credentialRef, context.plugin.id)) {
@@ -224,29 +436,56 @@ const LISTED_ACCOUNT_AUTHORIZATION_REFUSALS: Readonly<Record<
 });
 
 function createGithubApiClientWithAuthorization(
-  context: PluginInvocationContext,
+  context: GithubHttpInvocationContextV1,
   authorizationHeader: string,
-): GithubApiClientV1 {
+  credentialRef?: ConnectedAccountRef,
+): GithubApiMediaClientV1 {
+  const owner = getGithubAccountRequestOwnerV1({
+    ...(context.githubRequestLifetime !== undefined ? { lifetime: context.githubRequestLifetime }
+      : credentialRef === undefined ? { lifetime: context.services.connectedAccounts } : {}),
+    accountScope: credentialRef === undefined ? 'unidentified-native' : JSON.stringify([credentialRef.service.pluginId, credentialRef.service.localId, credentialRef.accountId]),
+    fallbackLifetime: context.services.connectedAccounts,
+    credentialScope: authorizationHeader,
+    executionOrigin: GITHUB_API_ORIGIN,
+  });
   async function send(input: Readonly<{
     url: string;
     method?: GithubApiMethodV1;
     headers?: Readonly<Record<string, string>>;
     body?: Uint8Array;
+    readOnlyGraphql?: boolean;
+    media?: 'json' | 'binary';
     redirect: 'error' | 'manual';
   }>): Promise<GithubApiResponseV1> {
     assertGithubApiUrl(input.url);
     context.signal.throwIfAborted();
-    const response = await context.services.http.request({
+    const safeRead = isGithubSafeRead(input);
+    const request = {
       url: input.url,
       method: input.method ?? 'GET',
       headers: createGithubRequestHeaders({
         authorization: authorizationHeader,
         userAgent: context.plugin.id,
         headers: input.headers,
+        media: input.media,
       }),
-      ...(input.body === undefined ? {} : { body: input.body }),
+      ...(input.body === undefined ? {} : { body: safeRead ? input.body.slice() : input.body }),
       redirect: input.redirect,
-    }, { signal: context.signal });
+    };
+    const prepareExactRead = () => {
+      return input.method === 'POST'
+        ? context.services.http.prepareRead({ ...request, method: 'POST', intent: 'graphqlQuery' }, { signal: context.signal })
+        : context.services.http.prepareRead({ ...request, method: 'GET', intent: 'get' }, { signal: context.signal });
+    };
+    const prepared = safeRead ? await prepareExactRead() : null;
+    const response = await owner.request({ ...request, ...(input.readOnlyGraphql === undefined ? {} : { readOnlyGraphql: input.readOnlyGraphql }) }, {
+      signal: context.signal,
+      ...(prepared ? { disposeTransport: () => prepared.dispose() } : {}),
+      transport: (request, signal) => prepared ? prepared.request({ signal }) : context.services.http.request({
+        ...request,
+        redirect: request.redirect ?? 'error',
+      }, { signal }),
+    });
     context.signal.throwIfAborted();
     return Object.freeze({
       status: response.status,
@@ -256,6 +495,27 @@ function createGithubApiClientWithAuthorization(
   }
 
   return Object.freeze({
+    immutableDefinitionLifetime: owner,
+    async requestMedia(input): Promise<GithubApiResponseV1> {
+      const response = await send({ url: input.url, method: 'GET', media: input.media, redirect: 'manual' });
+      if (response.status !== 302) return response;
+      const location = readTriageResponseHeaderV1(response.headers, 'location');
+      let destination: URL;
+      try { destination = new URL(location ?? ''); } catch {
+        throw new PluginError({ code: 'github_media_redirect_invalid', message: 'GitHub did not provide an admitted download location.' });
+      }
+      // The storage hop carries no authorization, so it must be HTTPS without embedded
+      // credentials and must not lead back to the authorized API origin.
+      if (destination.protocol !== 'https:' || destination.username || destination.password
+        || destination.origin === new URL(input.url).origin) {
+        throw new PluginError({ code: 'github_media_redirect_invalid', message: 'GitHub did not provide an admitted download location.' });
+      }
+      context.signal.throwIfAborted();
+      const downloaded = await context.services.http.request({ url: destination.toString(), method: 'GET', headers: {}, redirect: 'error' }, { signal: context.signal });
+      context.signal.throwIfAborted();
+      // Never expose the API Location header or signed URL to an Action caller.
+      return { status: downloaded.status, headers: {}, body: downloaded.body };
+    },
     request(input): Promise<GithubApiResponseV1> {
       return send({ ...input, redirect: 'error' });
     },
@@ -266,9 +526,10 @@ function createGithubApiClientWithAuthorization(
 }
 
 async function createGithubApiClientFromMaterialization(
-  context: PluginInvocationContext,
+  context: GithubHttpInvocationContextV1,
   materialized: ConnectedAccountMaterialization,
-): Promise<GithubApiClientV1> {
+  credentialRef?: ConnectedAccountRef,
+): Promise<GithubApiMediaClientV1> {
   context.signal.throwIfAborted();
   // Which materializations are admissible is the shared forge rule, applied identically to
   // GitHub's two account paths. What GitHub owns is the refusal: this vertical reports an
@@ -277,26 +538,31 @@ async function createGithubApiClientFromMaterialization(
   if (!authorization.ok) {
     throw new PluginError(LISTED_ACCOUNT_AUTHORIZATION_REFUSALS[authorization.reason]);
   }
-  return createGithubApiClientWithAuthorization(context, authorization.authorization);
+  return createGithubApiClientWithAuthorization(context, authorization.authorization, credentialRef);
 }
 
-/** The host selects an explicit account first, otherwise this machine's declared native login. */
+/** An explicit service pins native login; omission retains the host's selected-account/native path. */
 export async function createGithubNativeApiClient(
-  context: PluginInvocationContext,
-  service: PluginContributionRef = GITHUB_CONNECTED_ACCOUNT_SERVICE,
-): Promise<GithubApiClientV1> {
-  if (service.pluginId !== context.plugin.id || service.localId !== GITHUB_CONNECTED_ACCOUNT_ID) {
+  context: GithubHttpInvocationContextV1,
+  service?: PluginContributionRef,
+): Promise<GithubApiMediaClientV1> {
+  const nativeService = service ?? GITHUB_CONNECTED_ACCOUNT_SERVICE;
+  if (nativeService.pluginId !== context.plugin.id || nativeService.localId !== GITHUB_CONNECTED_ACCOUNT_ID) {
     throw new PluginError({
       code: 'github_credential_mismatch',
       message: 'The GitHub request did not carry this plugin’s native Connected Service.',
     });
   }
+  const binding = await context.services.connectedAccounts.getBinding(GITHUB_CONNECTED_ACCOUNT_PURPOSE, { signal: context.signal });
+  if (service !== undefined && binding !== null) {
+    throw new PluginError({ code: 'github_credential_mismatch', message: 'The explicit native GitHub service cannot substitute a Connected Account.' });
+  }
   const materialized = await context.services.connectedAccounts.materialize(
     GITHUB_CONNECTED_ACCOUNT_PURPOSE,
     { kind: 'httpHeaders', origin: GITHUB_API_ORIGIN, headerNames: ['authorization'] },
-    { nativeService: service, signal: context.signal },
+    { signal: context.signal, ...(binding ? { expectedAccount: binding.account } : { nativeService }) },
   );
-  return createGithubApiClientFromMaterialization(context, materialized);
+  return createGithubApiClientFromMaterialization(context, materialized, binding?.account);
 }
 
 /**
@@ -305,9 +571,10 @@ export async function createGithubNativeApiClient(
  * ref cannot select a different same-service credential.
  */
 export async function createGithubApiClient(
-  context: PluginInvocationContext,
-  credentialRef: ConnectedAccountRef,
-): Promise<GithubApiClientV1> {
+  context: GithubHttpInvocationContextV1,
+  credentialRef: ConnectedAccountRef | null,
+): Promise<GithubApiMediaClientV1> {
+  if (credentialRef === null) return createGithubNativeApiClient(context, GITHUB_CONNECTED_ACCOUNT_SERVICE);
   assertGithubCredentialRef(context, credentialRef);
   const materialized = await context.services.connectedAccounts.materialize(
     GITHUB_CONNECTED_ACCOUNT_PURPOSE,
@@ -318,7 +585,7 @@ export async function createGithubApiClient(
     },
     { signal: context.signal, expectedAccount: credentialRef },
   );
-  return createGithubApiClientFromMaterialization(context, materialized);
+  return createGithubApiClientFromMaterialization(context, materialized, credentialRef);
 }
 
 /**
@@ -326,9 +593,9 @@ export async function createGithubApiClient(
  * account must still be admitted by the exact current purpose target.
  */
 export async function createGithubListedAccountApiClient(
-  context: PluginInvocationContext,
+  context: GithubHttpInvocationContextV1 & Pick<PluginInvocationContext, 'invocationId'>,
   credentialRef: ConnectedAccountRef,
-): Promise<GithubApiClientV1> {
+): Promise<GithubApiMediaClientV1> {
   assertGithubCredentialRef(context, credentialRef);
   // The exact-bound-account materialization request is the shared forge rule, not a
   // GitHub one: building it here made this the fourth copy of one request shape, and the
@@ -347,7 +614,7 @@ export async function createGithubListedAccountApiClient(
     if (authorization.failure !== undefined) throw new TriageSourceAuthorizationErrorV1(authorization.failure);
     throw new PluginError(LISTED_ACCOUNT_AUTHORIZATION_REFUSALS[authorization.reason]);
   }
-  return createGithubApiClientWithAuthorization(context, authorization.authorization);
+  return createGithubApiClientWithAuthorization(context, authorization.authorization, credentialRef);
 }
 
 export function decodeGithubJsonResponse(response: GithubApiResponseV1): unknown {
@@ -366,10 +633,11 @@ export function readGithubRetryAfterMs(
   nowMs = Date.now(),
 ): number | null {
   const retryAfter = readTriageResponseHeaderV1(headers, 'retry-after');
-  if (retryAfter !== null && /^\d+$/u.test(retryAfter)) {
-    const seconds = Number(retryAfter);
-    if (Number.isSafeInteger(seconds) && seconds >= 0) return seconds * 1_000;
+  if (retryAfter !== null) {
+    const retry = parseRetryAfterHeader(retryAfter, { nowMs });
+    if (retry.retryAfterMs !== null) return retry.retryAfterMs;
   }
+  if (readTriageResponseHeaderV1(headers, 'x-ratelimit-remaining') !== '0') return null;
   const reset = readTriageResponseHeaderV1(headers, 'x-ratelimit-reset');
   if (reset !== null && /^\d+$/u.test(reset)) {
     const resetAtMs = Number(reset) * 1_000;
@@ -383,6 +651,7 @@ export function isGithubRateLimited(facts: GithubResponseFactsV1): boolean {
   const remaining = readTriageResponseHeaderV1(facts.headers, 'x-ratelimit-remaining');
   return facts.status === 429
     || remaining === '0'
+    || readTriageResponseHeaderV1(facts.headers, 'retry-after') !== null
     || isGithubSecondaryRateLimitResponse(facts);
 }
 

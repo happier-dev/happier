@@ -4,8 +4,9 @@ import {
   TriageSourceScopeUnitV1Schema,
   type TriageSourceScopeSelectionV1,
   type TriageSourceScopeUnitV1,
+  type TriageSourceInstanceDraftV1,
 } from '@happier-dev/triage-protocol/v1';
-import { createProtocolStoredReadSchema, defineProtocolArray, defineProtocolLiteral, defineProtocolObject } from '@happier-dev/plugin-sdk/protocol';
+import { createProtocolStoredReadSchema, defineProtocolArray, defineProtocolLiteral, defineProtocolObject, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
 
 import { buildGithubRepositoryKey, parseGithubRoutingToken } from './locator.js';
 import type { GithubTriageFailureV1 } from './types.js';
@@ -36,12 +37,33 @@ export type GithubTriageConfigurationV1 = Readonly<{
   v: 1;
   selection: TriageSourceScopeSelectionV1;
   units?: readonly TriageSourceScopeUnitV1[];
+  alerts?: GithubTriageAlertFamiliesV1;
 }>;
 
+export type GithubTriageAlertFamiliesV1 = Readonly<{ dependabot: boolean; codeScanning: boolean }>;
+const NO_ALERTS: GithubTriageAlertFamiliesV1 = Object.freeze({ dependabot: false, codeScanning: false });
+
+export function readGithubTriageAlertFamilies(configuration: GithubTriageConfigurationV1): GithubTriageAlertFamiliesV1 {
+  return configuration.alerts ?? NO_ALERTS;
+}
+
+/** Extra fields stay inside the shared Settings draft and its one Save/Cancel. */
+export function writeGithubTriageAlertFamiliesDraft(
+  draft: TriageSourceInstanceDraftV1,
+  alerts: GithubTriageAlertFamiliesV1,
+): TriageSourceInstanceDraftV1 | null {
+  const decoded = decodeGithubTriageConfiguration(draft.configuration.token);
+  if (!decoded.ok) return null;
+  const token = encodeGithubTriageConfiguration({ ...decoded.configuration, alerts });
+  return token === null ? null : { ...draft, configuration: { v: 1, token } };
+}
+
+const booleanValue = defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]);
 const configurationSchema = createProtocolStoredReadSchema(defineProtocolObject({
   v: defineProtocolLiteral(1),
   selection: TriageSourceScopeSelectionV1Schema,
   units: defineProtocolArray(TriageSourceScopeUnitV1Schema).optional(),
+  alerts: defineProtocolObject({ dependabot: booleanValue, codeScanning: booleanValue }, { policy: 'closed' }).optional(),
 }, { policy: 'closed' }));
 
 export type GithubTriageConfigurationDecodeV1 =
@@ -119,7 +141,9 @@ function readConfiguration(value: unknown): GithubTriageConfigurationV1 | null {
   }
   const parsed = configurationSchema.safeParse(current);
   if (!parsed.success) return null;
-  if (parsed.data.selection.kind === 'all') return GITHUB_TRIAGE_ACCOUNT_SCOPE_V1;
+  const alerts = parsed.data.alerts;
+  if (parsed.data.selection.kind === 'all') return alerts === undefined ? GITHUB_TRIAGE_ACCOUNT_SCOPE_V1
+    : { ...GITHUB_TRIAGE_ACCOUNT_SCOPE_V1, alerts };
   const ids = parsed.data.selection.unitIds.map(normalizeUnitId);
   if (ids.some((id) => id === null)) return null;
   const selection = TriageSourceScopeSelectionV1Schema.safeParse({ kind: 'selected', unitIds: ids });
@@ -131,7 +155,8 @@ function readConfiguration(value: unknown): GithubTriageConfigurationV1 | null {
     if (!ids.includes(id)) continue;
     units.push({ ...unit, id });
   }
-  return { v: 1, selection: selection.data, ...(parsed.data.units === undefined ? {} : { units }) };
+  return { v: 1, selection: selection.data, ...(parsed.data.units === undefined ? {} : { units }),
+    ...(alerts === undefined ? {} : { alerts }) };
 }
 
 export function decodeGithubTriageConfiguration(token: unknown): GithubTriageConfigurationDecodeV1 {

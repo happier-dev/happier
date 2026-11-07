@@ -1,3 +1,4 @@
+import { githubDetailTabDeclaration } from '../ui/detail/tabDeclarations.js';
 import {
   TriageSourceDescriptorV1Schema,
   type TriageSourceDescriptorV1,
@@ -5,7 +6,7 @@ import {
 
 import { GITHUB_CONNECTED_ACCOUNT_PURPOSE } from '../observations/githubProviderContracts.js';
 
-import type { GithubTriageKindIdV1 } from './types.js';
+import { GITHUB_TRIAGE_KIND_IDS_V1, type GithubTriageKindIdV1 } from './types.js';
 
 /**
  * The GitHub Triage source declaration.
@@ -21,6 +22,7 @@ export const GITHUB_TRIAGE_CONTRIBUTION_LOCAL_ID_V1 = 'github-forge';
 
 /** The Action ids the contribution's operation roles bind to. */
 export const GITHUB_TRIAGE_ACTION_IDS_V1 = Object.freeze({
+  readAttention: 'triage/read-github-attention',
   create: 'github/issue/create',
   edit: 'github/issue/edit',
   transition: 'github/issue/transition',
@@ -28,7 +30,11 @@ export const GITHUB_TRIAGE_ACTION_IDS_V1 = Object.freeze({
   listScopeUnits: 'triage/list-github-scope-units',
   scan: 'triage/scan-github',
   get: 'triage/get-github-entry',
+  resolveResource: 'triage/resolve-github-resource',
+  linkSession: 'triage/link-github-session',
+  readSessionLinks: 'triage/read-github-session-links',
   readPullRequestStatus: 'triage/read-github-pull-request-status',
+  readFixPullRequests: 'triage/read-github-fix-pull-requests',
   prepareReviewWorkspace: 'triage/prepare-github-review-workspace',
   verifyReviewWorkspace: 'triage/verify-github-review-workspace',
 });
@@ -73,7 +79,44 @@ export const GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1 = Object.freeze({
  * publication Actions; none owns a source-local lease, receipt or correlation.
  */
 export const GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1 = Object.freeze({
+  pullRequestPreviewStatus: 'github/pull-request/preview-status',
+  closingReferenceAdd: 'github/issue/closing-reference-add',
+  closingReferenceRemove: 'github/issue/closing-reference-remove',
+  subIssueAdd: 'github/issue/sub-issue-add',
+  subIssueRemove: 'github/issue/sub-issue-remove',
+  subIssueReprioritize: 'github/issue/sub-issue-reprioritize',
+  blockedByAdd: 'github/issue/blocked-by-add',
+  blockedByRemove: 'github/issue/blocked-by-remove',
+  blockingAdd: 'github/issue/blocking-add',
+  blockingRemove: 'github/issue/blocking-remove',
+  projectItemAdd: 'github/project/item-add',
+  projectItemRemove: 'github/project/item-remove',
+  projectFieldSet: 'github/project/field-set',
+  projectFieldClear: 'github/project/field-clear',
+  pullRequestEdit: 'github/pull-request/edit',
+  pullRequestChangeBase: 'github/pull-request/change-base',
+  pullRequestConvertToDraft: 'github/pull-request/convert-to-draft',
+  entryMilestoneSet: 'github/entry/milestone-set',
+  issueTypeSet: 'github/issue/type-set',
+  entryLock: 'github/entry/lock',
+  entryUnlock: 'github/entry/unlock',
+  pendingReviewCreate: 'github/pull-request/pending-review-create',
+  pendingReviewSubmit: 'github/pull-request/pending-review-submit',
+  pendingReviewDelete: 'github/pull-request/pending-review-delete',
+  reviewDismiss: 'github/pull-request/review-dismiss',
+  issueTransfer: 'github/issue/transfer',
+  issueDelete: 'github/issue/delete',
+  issuePin: 'github/issue/pin',
+  issueUnpin: 'github/issue/unpin',
+  entrySubscribe: 'github/entry/subscribe',
+  entryUnsubscribe: 'github/entry/unsubscribe',
+  pullRequestRevert: 'github/pull-request/revert',
+  pullRequestHeadBranchRestore: 'github/pull-request/head-branch-restore',
+  pullRequestHeadBranchDelete: 'github/pull-request/head-branch-delete',
   pullRequestMerge: 'github/pull-request/merge',
+  pullRequestEnqueue: 'github/pull-request/enqueue',
+  pullRequestDequeue: 'github/pull-request/dequeue',
+  pullRequestAutoMergeSet: 'github/pull-request/auto-merge-set',
   pullRequestSubmitReview: 'github/pull-request/submit-review',
   pullRequestReviewCommentCreate: 'github/pull-request/review-comment-create',
   pullRequestThreadReply: 'github/pull-request/thread-reply',
@@ -91,6 +134,8 @@ export const GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1 = Object.freeze({
   issueAssigneeRemove: 'github/issue/assignee-remove',
   issueLabelAdd: 'github/issue/label-add',
   issueLabelRemove: 'github/issue/label-remove',
+  commentEdit: 'github/comment/edit',
+  commentCreate: 'github/comment/create',
 });
 
 /**
@@ -121,8 +166,7 @@ export const GITHUB_TRIAGE_SETTINGS_RENDERER_ID_V1 = 'github-triage-sources';
 export const GITHUB_TRIAGE_SETTINGS_ARTIFACT_ID_V1 = 'github-triage-sources-native';
 
 /** The one declared kind vocabulary; every emitted local ref is validated against it. */
-export const GITHUB_TRIAGE_KIND_IDS_V1: readonly GithubTriageKindIdV1[] =
-  Object.freeze(['pull-request', 'issue']);
+export { GITHUB_TRIAGE_KIND_IDS_V1 } from './types.js';
 
 /**
  * Parsed through the published descriptor schema at module load, so a descriptor that
@@ -135,6 +179,7 @@ export const GITHUB_TRIAGE_SOURCE_DESCRIPTOR_V1: TriageSourceDescriptorV1 =
   // vocabulary: discovery, reauthorization and materialization all use this exact
   // string, and a candidate binding that named another purpose would be rejected.
   purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE,
+  sessionRelations: { kindIds: ['pull-request'] },
   // The page this source's own Settings contribution ships, so the PRs & Issues
   // surface can offer a working Configure action instead of naming Settings and
   // leaving the reader to find it. A BARE local id: the target qualifies it with
@@ -152,11 +197,11 @@ export const GITHUB_TRIAGE_SOURCE_DESCRIPTOR_V1: TriageSourceDescriptorV1 =
       // r0.42: the Triage detail frame draws these tabs and asks this source
       // for each as a panel; the writes render as the header `actions` panel.
       detailTabs: Object.freeze([
-        Object.freeze({ kind: 'shared', id: 'overview' }),
-        Object.freeze({ kind: 'shared', id: 'activity' }),
-        Object.freeze({ kind: 'shared', id: 'files', summaryFact: 'github/changed-files' }),
+        Object.freeze({ kind: 'shared', id: 'overview', scrollOwner: githubDetailTabDeclaration('overview').scrollOwner }),
+        Object.freeze({ kind: 'shared', id: 'activity', scrollOwner: githubDetailTabDeclaration('timeline').scrollOwner }),
+        Object.freeze({ kind: 'shared', id: 'files', scrollOwner: githubDetailTabDeclaration('files').scrollOwner, summaryFact: 'github/changed-files' }),
         // The row's own checks rollup ("2 failing") is the Checks tab's summary.
-        Object.freeze({ kind: 'shared', id: 'checks', summaryFact: 'github/checks' }),
+        Object.freeze({ kind: 'shared', id: 'checks', scrollOwner: githubDetailTabDeclaration('checks').scrollOwner, summaryFact: 'github/checks' }),
       ]),
       detailActions: true,
     }),
@@ -168,7 +213,6 @@ export const GITHUB_TRIAGE_SOURCE_DESCRIPTOR_V1: TriageSourceDescriptorV1 =
       task: true,
       taskCapabilities: {
         completedScan: true,
-        completingTransitionId: 'completed',
         createFields: ['title', 'body', 'assigneeIds', 'labelIds', 'scopeId'],
         editFields: ['title', 'body', 'assigneeIds', 'labelIds'],
         transitions: [
@@ -180,11 +224,16 @@ export const GITHUB_TRIAGE_SOURCE_DESCRIPTOR_V1: TriageSourceDescriptorV1 =
       // An issue has no changes of its own: Triage sources its Files and
       // Checks from the linked fix PR.
       detailTabs: Object.freeze([
-        Object.freeze({ kind: 'shared', id: 'overview' }),
-        Object.freeze({ kind: 'shared', id: 'activity' }),
+        Object.freeze({ kind: 'shared', id: 'overview', scrollOwner: githubDetailTabDeclaration('overview').scrollOwner }),
+        Object.freeze({ kind: 'shared', id: 'activity', scrollOwner: githubDetailTabDeclaration('timeline').scrollOwner }),
       ]),
       detailActions: true,
     }),
+    { id: 'dependabot-alert', workflowSubject: 'errorIssue', glyph: 'shield', displayName: 'Dependabot alert',
+      pluralDisplayName: 'Dependabot alerts', detailTabs: [{ kind: 'shared', id: 'overview', scrollOwner: githubDetailTabDeclaration('overview').scrollOwner }], detailActions: true },
+    { id: 'code-scanning-alert', workflowSubject: 'errorIssue', glyph: 'shield', displayName: 'Code scanning alert',
+      pluralDisplayName: 'Code scanning alerts', detailTabs: [{ kind: 'shared', id: 'overview', scrollOwner: githubDetailTabDeclaration('overview').scrollOwner },
+        { kind: 'source', id: 'locations', scrollOwner: githubDetailTabDeclaration('locations').scrollOwner, title: 'Locations' }], detailActions: true },
   ]),
   });
 

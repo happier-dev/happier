@@ -1,8 +1,11 @@
 import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
+import type { ScmSuggestionV1 } from '@happier-dev/protocol/scm';
+import { projectGithubSuggestions } from './suggestions.js';
 
 import type { GithubApiClientV1 } from '../observations/githubApiClient.js';
 
 import type { GithubRepositoryRouteV1 } from './locator.js';
+import { GITHUB_ROUTE_BODY_MISMATCH_FAILURE } from './errors.js';
 import { sendGithubGraphqlRequest } from './mutations/graphql.js';
 import {
   projectGithubCommentBody,
@@ -60,6 +63,9 @@ export type GithubFeedbackCommentV1 = Readonly<{
   createdAtMs: number | null;
   url: string | null;
   truncated?: true;
+  /** GitHub's own `viewerCanUpdate`: the viewer may edit this body. */
+  editable?: true;
+  suggestions?: readonly ScmSuggestionV1[];
 }>;
 
 export type GithubFeedbackThreadV1 = Readonly<{
@@ -80,8 +86,10 @@ export type GithubFeedbackReviewV1 = Readonly<{
   body: string;
   state: string;
   submittedAtMs: number | null;
+  commitRevision?: string;
   url: string | null;
   truncated?: true;
+  editable?: true;
 }>;
 
 export type GithubFeedbackRequestV1 =
@@ -141,7 +149,7 @@ const COMMENTS_QUERY = `query GithubFeedbackComments(
     databaseId
     pullRequest(number: $number) {
       comments(last: $commentCount, before: $commentCursor) {
-        nodes { id author { login } body createdAt url }
+        nodes { id author { login } body createdAt url viewerCanUpdate }
         pageInfo { hasPreviousPage startCursor }
       }
     }
@@ -155,12 +163,15 @@ const ISSUE_COMMENTS_QUERY = `query GithubFeedbackComments(
     databaseId
     issue(number: $number) {
       comments(last: $commentCount, before: $commentCursor) {
-        nodes { id author { login } body createdAt url }
+        nodes { id author { login } body createdAt url viewerCanUpdate }
         pageInfo { hasPreviousPage startCursor }
       }
     }
   }
 }`;
+
+const REVIEW_COMMENT_FIELDS = `id author { login } body createdAt url viewerCanUpdate
+  path diffHunk line originalLine originalStartLine commit { oid } originalCommit { oid } outdated`;
 
 const THREADS_QUERY = `query GithubFeedbackThreads(
   $owner: String!, $name: String!, $number: Int!, $threadCount: Int!,
@@ -171,13 +182,13 @@ const THREADS_QUERY = `query GithubFeedbackThreads(
     pullRequest(number: $number) {
       reviewThreads(last: $threadCount, before: $threadCursor) {
         nodes {
-          id isResolved path line
+          id isResolved path line diffSide
           firstComment: comments(first: 1) {
             totalCount
-            nodes { id author { login } body createdAt url }
+            nodes { ${REVIEW_COMMENT_FIELDS} }
           }
           comments(last: $replyCount) {
-            nodes { id author { login } body createdAt url }
+            nodes { ${REVIEW_COMMENT_FIELDS} }
             pageInfo { hasPreviousPage startCursor }
           }
         }
@@ -195,7 +206,7 @@ const REVIEWS_QUERY = `query GithubFeedbackReviews(
     pullRequest(number: $number) {
       reviewDecision
       reviews(last: $reviewCount, before: $reviewCursor) {
-        nodes { id author { login } body state submittedAt url }
+        nodes { id author { login } body state commit { oid } submittedAt url viewerCanUpdate }
         pageInfo { hasPreviousPage startCursor }
       }
     }
@@ -227,10 +238,10 @@ const THREAD_REPLIES_QUERY = `query GithubFeedbackThreadReplies(
 ) {
   node(id: $threadId) {
     ... on PullRequestReviewThread {
-      id
+      id diffSide
       pullRequest { number repository { databaseId } }
       comments(last: $replyCount, before: $replyCursor) {
-        nodes { id author { login } body createdAt url }
+        nodes { ${REVIEW_COMMENT_FIELDS} }
         pageInfo { hasPreviousPage startCursor }
       }
     }
@@ -261,13 +272,14 @@ function nullableCursor(pageInfo: unknown, direction: 'previous' | 'next'): stri
   return cursor ?? undefined;
 }
 
-function decodeComment(raw: unknown): GithubFeedbackCommentV1 | null {
+function decodeComment(raw: unknown, diffSide?: unknown): GithubFeedbackCommentV1 | null {
   if (!isRecord(raw)) return null;
   const id = projectGithubDetailIdentifierV1(raw.id);
   if (id === null || typeof raw.body !== 'string') return null;
   const author = isRecord(raw.author) ? projectGithubDetailLabelV1(raw.author.login) : null;
   const body = projectGithubCommentBody(raw.body);
   const truncated = id.truncated || (author?.truncated ?? false) || body.truncated;
+  const suggestions = projectGithubSuggestions(raw, diffSide);
   return Object.freeze({
     id: id.value,
     author: author?.value ?? null,
@@ -275,6 +287,8 @@ function decodeComment(raw: unknown): GithubFeedbackCommentV1 | null {
     createdAtMs: epochMs(raw.createdAt),
     url: projectGithubDetailWebUrlV1(raw.url),
     ...(truncated ? { truncated: true as const } : {}),
+    ...(raw.viewerCanUpdate === true ? { editable: true as const } : {}),
+    ...(suggestions.length ? { suggestions } : {}),
   });
 }
 
@@ -291,29 +305,25 @@ function chronological<T extends Readonly<{ createdAtMs: number | null; id: stri
   }));
 }
 
-function commentsFrom(connection: unknown): readonly GithubFeedbackCommentV1[] | null {
+function commentsFrom(connection: unknown, diffSide?: unknown): readonly GithubFeedbackCommentV1[] | null {
   if (!isRecord(connection) || !Array.isArray(connection.nodes)) return null;
   const rows: GithubFeedbackCommentV1[] = [];
   for (const raw of connection.nodes) {
-    const decoded = decodeComment(raw);
+    const decoded = decodeComment(raw, diffSide);
     if (decoded !== null) rows.push(decoded);
   }
   return chronological(rows);
 }
 
-function readFeedbackSubject(
-  data: Readonly<Record<string, unknown>>,
-  repositoryId: string,
-  kindId: 'pull-request' | 'issue',
-): Readonly<Record<string, unknown>> | null {
-  const repository = data.repository;
-  if (!isRecord(repository) || String(repository.databaseId) !== repositoryId) return null;
-  const subject = kindId === 'pull-request' ? repository.pullRequest : repository.issue;
-  return isRecord(subject) ? subject : null;
-}
-
 function unavailable(failure: TriageSourceFailureV1): GithubFeedbackConnectionResultV1 {
   return Object.freeze({ kind: 'unavailable' as const, failure });
+}
+
+/** Both body-free status and Feedback consume these same provider-native facts. */
+export function readGithubThreadResolutionV1(raw: unknown): Readonly<{ id: string; isResolved: boolean; truncated?: true }> | null {
+  if (!isRecord(raw) || typeof raw.isResolved !== 'boolean') return null;
+  const id = projectGithubDetailIdentifierV1(raw.id);
+  return id === null ? null : { id: id.value, isResolved: raw.isResolved, ...(id.truncated ? { truncated: true } : {}) };
 }
 
 function decodeThreads(connection: unknown): readonly GithubFeedbackThreadV1[] | null {
@@ -321,10 +331,10 @@ function decodeThreads(connection: unknown): readonly GithubFeedbackThreadV1[] |
   const rows: GithubFeedbackThreadV1[] = [];
   for (const raw of connection.nodes) {
     if (!isRecord(raw)) continue;
-    const id = projectGithubDetailIdentifierV1(raw.id);
-    if (id === null || typeof raw.isResolved !== 'boolean') continue;
-    const replies = commentsFrom(raw.comments);
-    const firstReplies = isRecord(raw.firstComment) ? commentsFrom(raw.firstComment) : null;
+    const resolution = readGithubThreadResolutionV1(raw);
+    if (resolution === null) continue;
+    const replies = commentsFrom(raw.comments, raw.diffSide);
+    const firstReplies = isRecord(raw.firstComment) ? commentsFrom(raw.firstComment, raw.diffSide) : null;
     const replyCount = isRecord(raw.firstComment) ? raw.firstComment.totalCount : null;
     const repliesCursor = isRecord(raw.comments)
       ? nullableCursor(raw.comments.pageInfo, 'previous')
@@ -340,12 +350,12 @@ function decodeThreads(connection: unknown): readonly GithubFeedbackThreadV1[] |
     ) continue;
     const line = typeof raw.line === 'number' && Number.isSafeInteger(raw.line) ? raw.line : null;
     const path = projectGithubDetailPathV1(raw.path);
-    const truncated = id.truncated || (path?.truncated ?? false)
+    const truncated = resolution.truncated === true || (path?.truncated ?? false)
       || firstReplies.some((reply) => reply.truncated === true)
       || replies.some((reply) => reply.truncated === true);
     rows.push(Object.freeze({
-      id: id.value,
-      isResolved: raw.isResolved,
+      id: resolution.id,
+      isResolved: resolution.isResolved,
       path: path?.value ?? null,
       line,
       firstReply: firstReplies[0] ?? null,
@@ -375,8 +385,10 @@ function decodeReviews(connection: unknown): readonly GithubFeedbackReviewV1[] |
       body: body.value,
       state: state.value,
       submittedAtMs: epochMs(raw.submittedAt),
+      ...(isRecord(raw.commit) && typeof raw.commit.oid === 'string' && raw.commit.oid !== '' ? { commitRevision: raw.commit.oid } : {}),
       url: projectGithubDetailWebUrlV1(raw.url),
       ...(truncated ? { truncated: true as const } : {}),
+      ...(raw.viewerCanUpdate === true ? { editable: true as const } : {}),
     }));
   }
   return Object.freeze([...rows].sort((left, right) => {
@@ -493,17 +505,19 @@ export async function readGithubFeedbackConnection(
     const thread = answered.data.node;
     const owningPullRequest = isRecord(thread) ? thread.pullRequest : null;
     const owningRepository = isRecord(owningPullRequest) ? owningPullRequest.repository : null;
+    if (isRecord(owningRepository) && String(owningRepository.databaseId) !== input.repositoryId) {
+      return unavailable(GITHUB_ROUTE_BODY_MISMATCH_FAILURE);
+    }
     if (
       !isRecord(thread)
       || thread.id !== threadId
       || !isRecord(owningPullRequest)
       || owningPullRequest.number !== number
       || !isRecord(owningRepository)
-      || String(owningRepository.databaseId) !== input.repositoryId
     ) {
       return unavailable(INVALID_RESPONSE);
     }
-    const rows = commentsFrom(thread.comments);
+    const rows = commentsFrom(thread.comments, thread.diffSide);
     const previousCursor = isRecord(thread.comments)
       ? nullableCursor(thread.comments.pageInfo, 'previous')
       : undefined;
@@ -517,8 +531,11 @@ export async function readGithubFeedbackConnection(
       });
   }
 
-  const subject = readFeedbackSubject(answered.data, input.repositoryId, input.kindId);
-  if (subject === null) return unavailable(INVALID_RESPONSE);
+  const repository = answered.data.repository;
+  if (!isRecord(repository)) return unavailable(INVALID_RESPONSE);
+  if (String(repository.databaseId) !== input.repositoryId) return unavailable(GITHUB_ROUTE_BODY_MISMATCH_FAILURE);
+  const subject = input.kindId === 'pull-request' ? repository.pullRequest : repository.issue;
+  if (!isRecord(subject)) return unavailable(INVALID_RESPONSE);
 
   if (input.connection === 'comments') {
     const connection = subject.comments;

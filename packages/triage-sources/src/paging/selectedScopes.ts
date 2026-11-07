@@ -21,13 +21,16 @@ const frontierSchema = defineProtocolObject({
 }, { policy: 'closed' });
 
 function withoutCount(evidence: TriageSourceScanEvidenceV1): TriageSourceScanEvidenceV1 {
-  return evidence.kind === 'partial' ? { kind: 'partial', reason: evidence.reason } : evidence;
+  if (evidence.kind !== 'partial') return evidence;
+  const { omittedItemCount: _count, ...retained } = evidence;
+  return retained;
 }
 
 function combineEvidence(previous: TriageSourceScanEvidenceV1 | undefined, current: TriageSourceScanEvidenceV1): TriageSourceScanEvidenceV1 {
   if (previous === undefined || previous.kind === 'walkFinished') return current;
   if (current.kind === 'walkFinished') return previous;
-  if (previous.kind === 'partial') return { ...current, kind: 'partial', reason: previous.reason };
+  if (previous.kind === 'partial') return { ...current, kind: 'partial', reason: previous.reason,
+    ...(previous.failure === undefined ? {} : { failure: previous.failure }) };
   return current;
 }
 
@@ -80,6 +83,7 @@ export async function scanTriageSelectedScopeUnitsV1(input: Readonly<{
   });
   if (token === null) return { kind: 'complete', observations: result.observations,
     evidence: { kind: 'partial', reason: 'continuation-unavailable',
+      ...(evidence.kind === 'partial' && evidence.failure !== undefined ? { failure: evidence.failure } : {}),
       ...(evidence.kind === 'partial' && evidence.omittedItemCount !== undefined ? { omittedItemCount: evidence.omittedItemCount } : {}),
     } };
   return { kind: 'page', observations: result.observations,

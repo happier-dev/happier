@@ -38,10 +38,11 @@ export async function readCurrentTriageConfiguredSourceInstanceV1(input: Readonl
   context: PluginInvocationContext;
   sourceInstanceId: string;
   instanceDigest: string;
+  instance?: TriageConfiguredSourceInstanceV1;
 }>): Promise<CurrentTriageConfiguredSourceInstanceV1> {
   const raw = await input.context.services.actions.execute(
     TRIAGE_SOURCES_READ_CONFIGURED_ACTION_REF_V1,
-    { v: 1 },
+    { v: 1, ...(input.instance === undefined ? {} : { exact: input.instance }) },
     { signal: input.context.signal },
   );
   const parsed = TriageReadConfiguredSourceInstancesResultV1Schema.safeParse(raw);

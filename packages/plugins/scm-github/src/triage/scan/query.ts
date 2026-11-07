@@ -7,25 +7,20 @@ import { GITHUB_MAX_PAGE_SIZE_V1, type GithubTriageInvolvementV1 } from '../type
  * because the response cannot say which lane matched.
  */
 
-export type GithubScanLaneIdV1 =
-  | 'authored'
-  | 'review-requested'
-  | 'reviewed'
-  | 'assigned'
-  | 'mentioned';
+export type GithubScanLaneIdV1 = (typeof GITHUB_SCAN_LANE_ORDER_V1)[number];
 
 /**
  * Bounded round-robin order: attention-first. Authored work cannot starve
  * review-requested, assigned or mentioned work, and every non-ended lane is attempted
  * within one five-request cycle.
  */
-export const GITHUB_SCAN_LANE_ORDER_V1: readonly GithubScanLaneIdV1[] = Object.freeze([
+export const GITHUB_SCAN_LANE_ORDER_V1 = Object.freeze([
   'review-requested',
   'assigned',
   'mentioned',
   'reviewed',
   'authored',
-]);
+] as const);
 
 /**
  * `review-requested:` is deliberately the TEAM-INCLUSIVE qualifier. GitHub documents
@@ -66,14 +61,32 @@ export function mapGithubLaneToInvolvement(
  */
 export function buildGithubLaneQuery(input: Readonly<{
   laneId: GithubScanLaneIdV1;
-  repositoryKey: string | null;
+  repositoryKeys: readonly string[] | null;
   completedSinceMs?: number;
+  query?: string;
 }>): string {
   const qualifiers = [input.completedSinceMs === undefined ? 'is:open'
     : `(is:open OR (is:issue is:closed closed:>=${new Date(input.completedSinceMs).toISOString()}))`, 'archived:false'];
-  if (input.repositoryKey !== null) qualifiers.push(`repo:${input.repositoryKey}`);
+  const repositories = input.repositoryKeys ?? [];
+  if (repositories.length > 0) qualifiers.push(repositories.length === 1 ? `repo:${repositories[0]}`
+    : `(${repositories.map(key => `repo:${key}`).join(' OR ')})`);
   qualifiers.push(LANE_QUALIFIERS[input.laneId]);
+  // Text terms stay literals: a typed OR/repo: qualifier must not widen the
+  // configured repository or involvement selection.
+  const terms = input.query?.trim().split(/\s+/u).filter(Boolean) ?? [];
+  qualifiers.push(...terms.map(term => JSON.stringify(term)));
   return qualifiers.join(' ');
+}
+
+/** GitHub allows five Boolean operators, excluding qualifiers from its text limit.
+ * The completed-issues expression above already consumes one OR.
+ * https://docs.github.com/en/rest/search/search#limitations-on-query-length
+ */
+export function groupGithubScanRepositories(repositoryKeys: readonly string[], completedSinceMs?: number): readonly (readonly string[])[] {
+  const groupSize = 5 - (completedSinceMs === undefined ? 0 : 1) + 1;
+  const groups: string[][] = [];
+  for (let index = 0; index < repositoryKeys.length; index += groupSize) groups.push(repositoryKeys.slice(index, index + groupSize));
+  return groups;
 }
 
 export const GITHUB_SEARCH_ISSUES_PATH = '/search/issues';

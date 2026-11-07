@@ -2,6 +2,7 @@ import * as React from 'react';
 import type { PluginActionExecution } from '@happier-dev/plugin-ui';
 
 import { resolveTriageCrossCopyContext } from './crossCopyContext.js';
+export { shouldCompleteTriagePostMutation, completeTriagePostMutationIfNeeded } from '../invocation/postMutation.js';
 
 /**
  * The child-to-target half of Triage's post-mutation completion seam.
@@ -25,32 +26,6 @@ export type TriagePostMutationCompletionV1 = () => Promise<void>;
 export type TriagePostMutationProviderStateClassifierV1 = (
   execution: PluginActionExecution<unknown>,
 ) => boolean;
-
-/**
- * The one source-side gate before asking the Triage target to re-observe.
- *
- * `outcomeUnknown` is the host's universal evidence that dispatch may already have reached the
- * provider. Other settled outcomes are not universally evidence of a remote effect, so their
- * provider's published semantics decide. The target callback remains the sole owner of the exact
- * re-read and canonical fold.
- */
-export function shouldCompleteTriagePostMutation(
-  execution: PluginActionExecution<unknown>,
-  providerMayHaveChanged: TriagePostMutationProviderStateClassifierV1,
-): boolean {
-  if (execution.status === 'idle' || execution.status === 'pending') return false;
-  if (execution.status === 'outcomeUnknown') return true;
-  return providerMayHaveChanged(execution);
-}
-
-/** Invoke the target-owned completion once when the settled Action may have changed provider state. */
-export async function completeTriagePostMutationIfNeeded(
-  complete: TriagePostMutationCompletionV1,
-  execution: PluginActionExecution<unknown>,
-  providerMayHaveChanged: TriagePostMutationProviderStateClassifierV1,
-): Promise<void> {
-  if (shouldCompleteTriagePostMutation(execution, providerMayHaveChanged)) await complete();
-}
 
 const NO_AGGREGATE_COMPLETION: TriagePostMutationCompletionV1 = async () => undefined;
 

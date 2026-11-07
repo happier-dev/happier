@@ -2,6 +2,7 @@ import {
   decodeGithubJsonResponse,
   type GithubApiClientV1,
 } from '../observations/githubApiClient.js';
+import type { ForgeCiSelectionV1 } from '@happier-dev/triage-protocol/ci/v1';
 
 import {
   classifyGithubResponseFailure,
@@ -11,10 +12,11 @@ import {
 import { buildGithubApiUrl, type GithubRepositoryRouteV1 } from './locator.js';
 import type { GithubChecksRowStateV1, GithubReviewDecisionV1 } from './mapping/facts.js';
 import { readValidatedGithubFollowUpPage } from './scan/link.js';
-import { readGithubCheckOutcomeV1 } from './checkOutcome.js';
+import { readGithubCheckOutcomeV1, readGithubStatusContextObservationV1 } from './checkOutcome.js';
 import { readGithubChecksConditionSurface, type GithubChecksConditionSnapshotV1 } from './checksCondition.js';
 import {
   GITHUB_MAX_PAGE_SIZE_V1,
+  type GithubChecksStateV1,
   type GithubTriageFailureV1,
 } from './types.js';
 
@@ -44,6 +46,7 @@ import {
 const GITHUB_CHECK_SUITE_CEILING_V1 = 1_000;
 
 export type GithubCheckResourceKindV1 = 'check-run' | 'commit-status';
+export type GithubCheckActionsTargetV1 = Readonly<{ selection: ForgeCiSelectionV1; checkRunId: string; headSha: string }>;
 
 export type GithubCheckObservationV1 = Readonly<{
   /**
@@ -63,9 +66,15 @@ export type GithubCheckObservationV1 = Readonly<{
   checkSuiteCreatedAtMs?: number;
   /** Provider Check Run output or legacy status description, when supplied. */
   logExcerpt?: string | null;
+  /** Provider evidence on the current PR head; REST historical rows omit it. */
+  required?: boolean | null;
+  /** Native total from already-requested Check Run output; absence means unknown. */
+  annotationsCount?: number;
+  /** Native CheckSuite.workflowRun plus App/repository/commit provenance, never name or ID guesses. */
+  actions?: GithubCheckActionsTargetV1;
 }>;
 
-export type GithubChecksStateV1 = 'none' | 'unknown' | 'knownIncomplete' | 'resolved';
+export type { GithubChecksStateV1 } from './types.js';
 
 /** Decode omissions belong to the Checks read, not the shared provider classifier. */
 type GithubChecksReadFailureV1 = GithubTriageFailureV1 & Readonly<{ omittedRowCount?: number }>;
@@ -74,6 +83,7 @@ export type GithubChecksSurfaceV1 = Readonly<{
   observation?: GithubChecksConditionSnapshotV1;
   /** Scalar from the same head-qualified GraphQL read, never inferred from review rows. */
   reviewDecision?: GithubReviewDecisionV1 | null;
+  nativePullRequest?: GithubNativePullRequestFactsV1;
   state: GithubChecksStateV1;
   observations: readonly GithubCheckObservationV1[];
   /** `null`, never `0`, wherever a per-job breakdown is unavailable. */
@@ -84,6 +94,28 @@ export type GithubChecksSurfaceV1 = Readonly<{
   commitStatusFailure: GithubChecksReadFailureV1 | null;
   /** The list row projection, or `null` when the surface cannot answer. */
   rowState: GithubChecksRowStateV1 | null;
+}>;
+
+/** Body-free native facts acquired alongside the current-head check rollup. */
+export type GithubNativePullRequestFactsV1 = Readonly<{
+  repository: Readonly<{
+    archived: boolean | null;
+    hasIssues?: boolean | null;
+    mergeSettings: Readonly<{ merge: boolean | null; squash: boolean | null; rebase: boolean | null }>;
+  }>;
+  nodeId: string | null;
+  mergeStateStatus: string | null;
+  canMergeWithoutWaiting: boolean | null;
+  viewerCanUpdate: boolean | null;
+  viewerCanEnableAutoMerge: boolean | null;
+  viewerCanDisableAutoMerge: boolean | null;
+  queue?: Readonly<{ id: string; state: string | null; position: number | null;
+    estimatedTimeToMergeSeconds?: number | null }> | null;
+  reviews: readonly Readonly<{ id: string; author: string | null; state: string; submittedAtMs: number | null }>[];
+  requests: readonly Readonly<{ kind: 'user' | 'team'; subject: string }>[];
+  reviewIncomplete: boolean;
+  threads: readonly Readonly<{ id: string; isResolved: boolean }>[];
+  threadsIncomplete: boolean;
 }>;
 
 export type GithubChecksDependenciesV1 = Readonly<{
@@ -131,6 +163,7 @@ function decodeCheckRun(raw: unknown): GithubCheckObservationV1 | null {
   const name = readTrimmedString(raw.name);
   const status = readTrimmedString(raw.status);
   if (id === null || name === null || status === null) return null;
+  const annotationsCount = isRecord(raw.output) ? raw.output.annotations_count : undefined;
   return Object.freeze({
     key: `github-check-run:${id}`,
     resourceKind: 'check-run',
@@ -141,6 +174,8 @@ function decodeCheckRun(raw: unknown): GithubCheckObservationV1 | null {
     startedAtMs: readEpochMs(raw.started_at),
     completedAtMs: readEpochMs(raw.completed_at),
     logExcerpt: readCheckOutput(raw.output),
+    ...(typeof annotationsCount === 'number' && Number.isSafeInteger(annotationsCount) && annotationsCount >= 0
+      ? { annotationsCount } : {}),
   });
 }
 
@@ -150,17 +185,15 @@ function decodeCommitStatus(raw: unknown): GithubCheckObservationV1 | null {
   const context = readTrimmedString(raw.context);
   const state = readTrimmedString(raw.state);
   if (id === null || context === null || state === null) return null;
+  const normalized = readGithubStatusContextObservationV1(state);
   return Object.freeze({
     key: `github-commit-status:${id}`,
     resourceKind: 'commit-status',
     name: context,
-    status: state === 'pending' ? 'in_progress' : 'completed',
-    conclusion: state === 'pending'
-      ? null
-      : state === 'success' ? 'success' : 'failure',
+    ...normalized,
     detailsUrl: readTrimmedString(raw.target_url),
     startedAtMs: readEpochMs(raw.created_at),
-    completedAtMs: state === 'pending' ? null : readEpochMs(raw.updated_at),
+    completedAtMs: normalized.status === 'in_progress' ? null : readEpochMs(raw.updated_at),
     logExcerpt: readTrimmedString(raw.description),
   });
 }
@@ -260,6 +293,8 @@ async function readPaginatedCollection(
 export async function readGithubPullRequestChecks(
   input: Readonly<{ route: GithubRepositoryRouteV1; headSha: string; repositoryId?: string | null;
     observation?: Readonly<{ pullRequestNumber: number; selection: 'all' | 'required' }>;
+    includeStatus?: boolean;
+    includeOutput?: boolean;
   }>,
   dependencies: GithubChecksDependenciesV1,
 ): Promise<GithubChecksSurfaceV1> {
@@ -281,7 +316,9 @@ export async function readGithubPullRequestChecks(
     'status',
   ])}?per_page=${GITHUB_MAX_PAGE_SIZE_V1}`;
 
-  const checkRuns = await readPaginatedCollection(dependencies, {
+  // The two collections are independent, so both walks start together; each keeps its
+  // own pagination, failure and completeness evidence.
+  const [checkRuns, commitStatuses] = await Promise.all([readPaginatedCollection(dependencies, {
     initialUrl: checkRunsUrl,
     repositoryId: input.repositoryId ?? null,
     decodeRow: decodeCheckRun,
@@ -297,8 +334,7 @@ export async function readGithubPullRequestChecks(
         }),
       });
     },
-  });
-  const commitStatuses = await readPaginatedCollection(dependencies, {
+  }), readPaginatedCollection(dependencies, {
     initialUrl: statusUrl,
     repositoryId: input.repositoryId ?? null,
     decodeRow: decodeCommitStatus,
@@ -306,7 +342,7 @@ export async function readGithubPullRequestChecks(
       if (!isRecord(body) || !Array.isArray(body.statuses)) return null;
       return Object.freeze({ rows: Object.freeze([...body.statuses]), totalCount: null });
     },
-  });
+  })]);
 
   return projectGithubChecksSurface({ checkRuns, commitStatuses });
 }
@@ -345,27 +381,37 @@ export function projectGithubChecksSurface(input: Readonly<{
     });
   }
 
-  let failing = 0;
-  let running = 0;
-  let passing = 0;
-  let unknown = false;
-  for (const observation of observations) {
-    const outcome = readGithubCheckOutcomeV1(observation);
-    if (outcome === 'pending') {
-      running += 1;
-      continue;
-    }
-    if (outcome === 'failed') {
-      failing += 1;
-      continue;
-    }
-    if (outcome === 'neutral') continue;
-    if (outcome === 'unknown') {
-      unknown = true;
-      continue;
-    }
-    passing += 1;
-  }
+  const tally = { failed: 0, pending: 0, passed: 0, neutral: 0, unknown: 0 };
+  for (const observation of observations) tally[readGithubCheckOutcomeV1(observation)] += 1;
+  return projectGithubChecksTally({ observations, tally, knownIncomplete, state });
+}
+
+/** Per-outcome counts under the one check outcome policy, `readGithubCheckOutcomeV1`. */
+export type GithubChecksOutcomeTallyV1 = Readonly<Record<ReturnType<typeof readGithubCheckOutcomeV1>, number>>;
+
+/**
+ * The list row's checks surface from GitHub's own per-state counts of the head's rollup
+ * contexts (`checkRunCountsByState`, `statusContextCountsByState`). The counts cover the
+ * whole connection, so no context page is read and the surface carries no rows.
+ */
+export function projectGithubChecksCountsSurface(tally: GithubChecksOutcomeTallyV1): GithubChecksSurfaceV1 {
+  const total = tally.failed + tally.pending + tally.passed + tally.neutral + tally.unknown;
+  return projectGithubChecksTally({ observations: Object.freeze([]), tally, knownIncomplete: false,
+    state: total === 0 ? 'none' : 'resolved' });
+}
+
+function projectGithubChecksTally(input: Readonly<{
+  observations: readonly GithubCheckObservationV1[];
+  tally: GithubChecksOutcomeTallyV1;
+  knownIncomplete: boolean;
+  state: GithubChecksStateV1;
+}>): GithubChecksSurfaceV1 {
+  const { observations, knownIncomplete, state } = input;
+  const failing = input.tally.failed;
+  const running = input.tally.pending;
+  const passing = input.tally.passed;
+  const unknown = input.tally.unknown > 0;
+  const total = failing + running + passing + input.tally.neutral + input.tally.unknown;
 
   // A whole-suite verdict is a claim about checks this walk never read. `allPassing`
   // over a known-incomplete collection is the dangerous one: it reads as "CI is
@@ -373,7 +419,7 @@ export function projectGithubChecksSurface(input: Readonly<{
   // failures and observed in-flight runs are positive evidence and survive; the
   // suite-wide breakdown does not, for the same reason an unreadable suite's does
   // not — a rendered `0 failing` nobody could compute is a fabricated fact.
-  const rowState: GithubChecksRowStateV1 | null = observations.length === 0
+  const rowState: GithubChecksRowStateV1 | null = total === 0
     ? null
     : failing > 0
       ? Object.freeze({ kind: 'failing', failingCount: failing })
@@ -381,7 +427,7 @@ export function projectGithubChecksSurface(input: Readonly<{
         ? Object.freeze({ kind: 'running' })
         : passing > 0 && !knownIncomplete && !unknown ? Object.freeze({ kind: 'allPassing' }) : null;
 
-  const countsUnavailable = observations.length === 0 || knownIncomplete || unknown;
+  const countsUnavailable = total === 0 || knownIncomplete || unknown;
   return Object.freeze({
     state: unknown ? 'unknown' : state,
     observations,

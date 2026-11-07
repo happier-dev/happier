@@ -1,4 +1,6 @@
-import type { ForgeCiActionInputByOperationV1, ForgeCiActionResultByOperationV1, ForgeCiJobRefV1, ForgeCiLogV1, ForgeCiRunRefV1, ForgeCiStepV1 } from '@happier-dev/triage-protocol/ci/v1';
+import type { ForgeCiActionInputByOperationV1, ForgeCiActionResultByOperationV1, ForgeCiJobRefV1, ForgeCiLogV1, ForgeCiRunRefV1, ForgeCiStepV1, ForgeCiMutationResultV1, ForgeCiOperationIdV1 } from '@happier-dev/triage-protocol/ci/v1';
+import { completeTriagePostMutationIfNeeded } from '@happier-dev/triage-sources/runtime';
+import { forgeCiMutationAffectsReadV1 } from './mutationReads.js';
 import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
 import type { ForgeCiAdapterV1 } from './adapter.js';
 import { projectForgeCiBranchCountsV1, type ForgeCiBranchCountsProjectionV1, type ForgeCiBranchCountsV1 } from './statePresentation.js';
@@ -38,6 +40,8 @@ export type ForgeCiReadsV1 = Readonly<{
     /** Existing exact-job evidence only; ambiguous log identities and retired authority are unavailable. */
     getLogIndex(job: ForgeCiJobRefV1): ForgeCiLogIndexV1 | null;
     invalidate<K extends ForgeCiReadOperationV1>(operation?: K, input?: ForgeCiActionInputByOperationV1[K]): void;
+    /** Settled writes hand their typed change facts to the one read/publication owner. */
+    completeMutation(operation: ForgeCiOperationIdV1, result: ForgeCiMutationResultV1): Promise<void>;
     retire(): void;
 }>;
 
@@ -315,6 +319,15 @@ export function createForgeCiReadsV1({ adapter, scopeKey }: Readonly<{ adapter: 
         return retained?.source === log && retained.index.complete && retained.index.continuation === null ? retained.index.log : null;
     }
     const controller: ForgeCiReadsV1 = {
+        async completeMutation(operation, result) {
+            const affected = result.kind === 'rejected' ? null : result.affected;
+            await completeTriagePostMutationIfNeeded(async () => {
+                // The provider classifier admitted these change facts once below.
+                await Promise.all([...entries.values()]
+                    .filter(entry => forgeCiMutationAffectsReadV1(operation, affected!, entry.operation, entry.input))
+                    .map(entry => refresh(entry)));
+            }, result, () => affected !== null);
+        },
         acquirePaged(operation, input, demand = {}) {
             return createForgeCiPagedReadV1(controller, operation, input, demand, reconcileForgeCiRowsV1);
         },

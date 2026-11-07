@@ -1,4 +1,5 @@
 import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
+import { settleAtMostOnceProviderWrite } from '@happier-dev/triage-sources/runtime';
 
 import {
   decodeGithubJsonResponse,
@@ -13,6 +14,7 @@ import {
 } from '../errors.js';
 import { buildGithubApiUrl } from '../locator.js';
 import { toTriageFailure } from '../mapping/protocol.js';
+import type { GithubResponseFailureV1 } from '../../observations/githubResponseFailure.js';
 
 /**
  * The one GraphQL request this vertical makes, and the one place its answer is
@@ -58,7 +60,7 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
  * status. An unrecognized type keeps its own code rather than being flattened
  * into a nearby one.
  */
-function classifyGithubGraphqlError(errors: readonly unknown[]): TriageSourceFailureV1 {
+export function classifyGithubGraphqlError(errors: readonly unknown[]): GithubResponseFailureV1 {
   const first = errors.find(isRecord);
   const type = typeof first?.type === 'string' ? first.type.trim() : '';
   switch (type) {
@@ -86,10 +88,38 @@ export type GithubGraphqlOutcomeV1 =
     mayHaveChanged: boolean;
   }>;
 
+/** Native atomic mutation payloads settle through the existing at-most-once owner. */
+export async function settleGithubGraphqlMutation<TApplied extends Readonly<{ kind: 'applied' }>>(
+  request: Readonly<{ query: string; variables: Readonly<Record<string, unknown>> }>,
+  project: (data: Readonly<Record<string, unknown>>) => TApplied | null,
+  dependencies: Readonly<{ client: GithubApiClientV1; now: () => number }>,
+): Promise<TApplied | Readonly<{ kind: 'uncertain'; failure?: TriageSourceFailureV1 }>
+  | Readonly<{ kind: 'failed'; failure: TriageSourceFailureV1 }>> {
+  let confirmation: Readonly<{ kind: 'applied'; observation: TApplied }>
+    | Readonly<{ kind: 'uncertain'; failure?: TriageSourceFailureV1 }> = { kind: 'uncertain' };
+  const settled = await settleAtMostOnceProviderWrite({
+    dispatch: async () => {
+      const response = await sendGithubGraphqlRequest(request, dependencies);
+      if (response.ok) {
+        const applied = project(response.data);
+        if (applied !== null) confirmation = { kind: 'applied', observation: applied };
+      } else confirmation = { kind: 'uncertain', failure: response.failure };
+      return response;
+    },
+    mayHaveChanged: response => response.ok || response.mayHaveChanged,
+    confirm: async () => confirmation,
+  });
+  if (settled.kind === 'applied') return settled.observation;
+  if (settled.kind === 'settled' && !settled.result.ok) return { kind: 'failed', failure: settled.result.failure };
+  return { kind: 'uncertain', ...(settled.kind === 'uncertain' && settled.failure !== undefined ? { failure: settled.failure } : {}) };
+}
+
 export async function sendGithubGraphqlRequest(
   request: Readonly<{
     query: string;
     variables: Readonly<Record<string, unknown>>;
+    /** Trusted static query call sites only; mutation callers never set this. */
+    readOnlyGraphql?: true;
   }>,
   dependencies: Readonly<{ client: GithubApiClientV1; now: () => number }>,
 ): Promise<GithubGraphqlOutcomeV1> {
@@ -98,6 +128,7 @@ export async function sendGithubGraphqlRequest(
     response = await dependencies.client.request({
       url: GITHUB_GRAPHQL_URL,
       method: 'POST',
+      ...(request.readOnlyGraphql === true ? { readOnlyGraphql: true } : {}),
       headers: { 'content-type': 'application/json' },
       body: new TextEncoder().encode(JSON.stringify({
         query: request.query,

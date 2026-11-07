@@ -1,4 +1,7 @@
+import type { TriageDetailPanelScrollOwnerV1 } from '@happier-dev/triage-protocol/v1';
 import type { GithubTriageKindIdV1 } from '../../triage/types.js';
+import type { PluginUiPageNavigationItemV1 } from '@happier-dev/plugin-sdk/ui';
+import { GITHUB_TRIAGE_KIND_IDS_V1 } from '../../triage/types.js';
 
 /**
  * The GitHub detail body's tab declarations.
@@ -11,13 +14,12 @@ import type { GithubTriageKindIdV1 } from '../../triage/types.js';
  * test can check without mounting a device.
  *
  * `retainedState` is deliberately narrow, and it is the one thing a panel may
- * not overstate: `panelReaders.ts` reads this exact field's tab to decide what
- * survives a leave, so a tab that claims to keep something it drops is a defect
- * rather than prose. A `discard` panel keeps nothing at all and re-reads from
- * the first page. `retain` is spent only where restarting would re-charge a
- * reader's already-paid provider walk and lose their place in it — it is never
- * permission to hold provider content indefinitely, because the retained walk
- * lives and dies with the mounted detail body.
+ * not overstate: a tab that claims to keep something it drops is a defect
+ * rather than prose. Retention here is the PANEL's subtree (scroll, viewport,
+ * drafts). The provider answers behind checks, changed files, timeline and
+ * feedback are read once per open detail by `resourceOwners.tsx`, whatever a
+ * tab declares, so neither lifetime re-asks GitHub on a tab switch; they live
+ * and die with the mounted detail body, never longer.
  *
  * Which tabs exist is a function of the entry KIND, not of a read. A pull
  * request has changed files and checks; an issue has neither, and an issue is
@@ -27,6 +29,7 @@ import type { GithubTriageKindIdV1 } from '../../triage/types.js';
 
 export type GithubDetailTabIdV1 =
   | 'overview'
+  | 'locations'
   | 'timeline'
   | 'files'
   | 'checks'
@@ -38,6 +41,7 @@ export type GithubDetailTabIdV1 =
 export type GithubDetailTabReadPlaneV1 =
   /** The applied observation only; this panel issues no provider read. */
   | 'observation'
+  | 'locations'
   /** The panel's own cursor-paged event-timeline walk. */
   | 'timeline'
   /** The panel's own cursor-paged changed-file walk. */
@@ -72,18 +76,20 @@ export type GithubDetailTabDeclarationV1 = Readonly<{
    */
   title: string;
   titleKey: string;
+  glyph: NonNullable<PluginUiPageNavigationItemV1['glyph']>;
   /** Stated on every concrete tab; never inherited from the shared default. */
   retention: 'retain' | 'discard';
   /** Exactly what survives a tab leave, in this panel and nothing else. */
   retainedState: string;
   readPlane: GithubDetailTabReadPlaneV1;
   /** The single component that owns this panel's vertical scrolling. */
-  scrollOwner: 'scrollArea' | 'list';
+  scrollOwner: TriageDetailPanelScrollOwnerV1;
   /** The entry kinds this tab is present for. */
   kinds: readonly GithubTriageKindIdV1[];
 }>;
 
 const BOTH_KINDS: readonly GithubTriageKindIdV1[] = Object.freeze(['pull-request', 'issue']);
+const ALL_KINDS = GITHUB_TRIAGE_KIND_IDS_V1;
 const PULL_REQUEST_ONLY: readonly GithubTriageKindIdV1[] = Object.freeze(['pull-request']);
 const ISSUE_ONLY: readonly GithubTriageKindIdV1[] = Object.freeze(['issue']);
 
@@ -92,18 +98,31 @@ export const GITHUB_DETAIL_TABS_V1: readonly GithubDetailTabDeclarationV1[] = Ob
     id: 'overview' as const,
     title: 'Overview',
     titleKey: 'plugins.github.ui.tab.overview',
+    glyph: 'info' as const,
     retention: 'retain' as const,
     retainedState: 'its reader scroll anchor and parsed body-markdown render model only',
     readPlane: 'observation' as const,
     scrollOwner: 'scrollArea' as const,
-    kinds: BOTH_KINDS,
+    kinds: ALL_KINDS,
+  }),
+  Object.freeze({
+    id: 'locations' as const,
+    title: 'Locations',
+    titleKey: 'plugins.github.ui.tab.locations',
+    glyph: 'target' as const,
+    retention: 'retain' as const,
+    retainedState: 'the mounted location pages, selected immutable instance and snippet; hidden panels stop all reads',
+    readPlane: 'locations' as const,
+    scrollOwner: 'list' as const,
+    kinds: Object.freeze(['code-scanning-alert'] as const),
   }),
   Object.freeze({
     id: 'timeline' as const,
     title: 'Timeline',
     titleKey: 'plugins.github.ui.tab.timeline',
+    glyph: 'list' as const,
     retention: 'discard' as const,
-    retainedState: 'nothing: rows, page position, scroll and errors remount at the first page',
+    retainedState: 'nothing in the panel: scroll remounts; its rows and page position are the detail-owned walk and are drawn again, not re-read',
     readPlane: 'timeline' as const,
     scrollOwner: 'list' as const,
     kinds: BOTH_KINDS,
@@ -112,6 +131,7 @@ export const GITHUB_DETAIL_TABS_V1: readonly GithubDetailTabDeclarationV1[] = Ob
     id: 'files' as const,
     title: 'Files',
     titleKey: 'plugins.github.ui.tab.files',
+    glyph: 'file' as const,
     retention: 'retain' as const,
     retainedState: 'the changed-file rows already walked, the position of the next'
       + ' page, and the list viewport and scroll anchor over them, so a reader who'
@@ -127,8 +147,9 @@ export const GITHUB_DETAIL_TABS_V1: readonly GithubDetailTabDeclarationV1[] = Ob
     id: 'checks' as const,
     title: 'Checks',
     titleKey: 'plugins.github.ui.tab.checks',
+    glyph: 'check' as const,
     retention: 'discard' as const,
-    retainedState: 'nothing: check rows and scroll remount from the source default',
+    retainedState: 'nothing in the panel: scroll remounts; its check rows are the detail-owned read and are drawn again, not re-read',
     readPlane: 'checks' as const,
     scrollOwner: 'list' as const,
     kinds: PULL_REQUEST_ONLY,
@@ -141,9 +162,10 @@ export const GITHUB_DETAIL_TABS_V1: readonly GithubDetailTabDeclarationV1[] = Ob
     // reports as wrong with it.
     title: 'Feedback',
     titleKey: 'plugins.github.ui.tab.feedback',
+    glyph: 'review' as const,
     retention: 'discard' as const,
-    retainedState: 'nothing: the conversation, the review people and the findings all'
-      + ' remount at their first page, and no comment or review draft survives a leave',
+    retainedState: 'nothing in the panel: no comment or review draft survives a leave; the conversation,'
+      + ' review people and findings are the detail-owned walks and are drawn again, not re-read',
     readPlane: 'feedback' as const,
     scrollOwner: 'list' as const,
     kinds: PULL_REQUEST_ONLY,
@@ -152,8 +174,9 @@ export const GITHUB_DETAIL_TABS_V1: readonly GithubDetailTabDeclarationV1[] = Ob
     id: 'comments' as const,
     title: 'Comments',
     titleKey: 'plugins.github.ui.tab.comments',
+    glyph: 'conversations' as const,
     retention: 'discard' as const,
-    retainedState: 'nothing: rows, page position, scroll and errors remount at the first page',
+    retainedState: 'nothing in the panel: scroll remounts; its rows and page position are the detail-owned walk and are drawn again, not re-read',
     readPlane: 'comments' as const,
     scrollOwner: 'list' as const,
     // A pull request's conversation is one of the things `Feedback` unifies, so a
@@ -167,6 +190,7 @@ export const GITHUB_DETAIL_TABS_V1: readonly GithubDetailTabDeclarationV1[] = Ob
     id: 'work-sessions' as const,
     title: 'Work Sessions',
     titleKey: 'plugins.github.ui.tab.workSessions',
+    glyph: 'terminal' as const,
     retention: 'discard' as const,
     retainedState: 'nothing; there is no provider or Session-store read to keep alive',
     readPlane: 'linkedSessions' as const,
