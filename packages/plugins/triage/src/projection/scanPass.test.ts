@@ -132,6 +132,30 @@ function completedPage(entryId: string): TriageScanResultV1 {
 }
 
 describe('one materialization pass', () => {
+    it.each([
+        { observationBudget: 1, rowCount: 10 },
+        { observationBudget: 4, rowCount: 2 },
+    ])('admits one native minimum page with a smaller $observationBudget-row share', async ({ observationBudget, rowCount }) => {
+        const submitted: number[] = [];
+        const source = {
+            ...answeringLane({ sourceInstanceId: INSTANCE_ID, declaredKindIds: ['issue'], scan: async input => {
+                if (input.page.kind !== 'initial') throw new Error('The native page must remain explicit continuation demand');
+                submitted.push(input.page.limit);
+                return { kind: 'page', observations: Array.from({ length: rowCount }, (_, index) => presentObservation('issue', String(index))),
+                    evidence: { kind: 'partial', reason: 'more-pages' }, continuation: { v: 1, token: 'native-next' } };
+            } }),
+            minimumScanPageSize: 10,
+        };
+        const result = await runTriageScanPass({ lanes: [source], pageLimit: observationBudget,
+            observationBudget, nowMs: () => 1000 });
+
+        expect(submitted).toEqual([10]);
+        expect(result.observations).toHaveLength(rowCount);
+        expect(result.lanes[0]).toMatchObject({ exhausted: false, health: { kind: 'partial' } });
+        expect(result.stopped).toEqual([{ sourceInstanceId: INSTANCE_ID, pageLimit: 10,
+            continuation: { v: 1, token: 'native-next' } }]);
+    });
+
     it('walks past non-selected kinds before spending the result row budget', async () => {
         const mixed = positionalLane({
             sourceInstanceId: INSTANCE_ID,

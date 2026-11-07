@@ -723,6 +723,109 @@ function seedInstances(
 }
 
 describe('the aggregate list continuation set', () => {
+    it.each([
+        { limit: 4, minimum: 10, total: 2 },
+        { limit: 1, minimum: 10, total: 12 },
+        { limit: 1, minimum: MAX_TRIAGE_LIST_WINDOW_ROWS_V1, total: MAX_TRIAGE_LIST_WINDOW_ROWS_V1 },
+    ])('carries native pages whole across a $limit-row share with minimum $minimum and $total entries', async ({ limit, minimum, total }) => {
+        const { collections, control } = createTestkitCorpusCollections();
+        control.sourceInstances.seed(toCorpusStoredValue(configuredRow({
+            instanceTag: paddedInstanceTag('a'), sourceInstanceId: INSTANCE_ID, configuredAtMs: 1,
+        })));
+        const submitted: number[] = [];
+        const deps = {
+            sourceInstances: collections.sourceInstances,
+            readAdmittedSources: async () => [{ ...ADMITTED_SOURCE,
+                descriptor: { ...ADMITTED_SOURCE.descriptor, minimumScanPageSize: minimum } }],
+            executeScan: async (_operation, input): Promise<TriageScanResultV1> => {
+                const offset = input.page.kind === 'initial' ? 0 : minimum;
+                if (input.page.kind === 'initial') submitted.push(input.page.limit);
+                else expect(input.page.continuation.token).toBe('native-next');
+                const observations = Array.from({ length: Math.min(minimum, total - offset) }, (_, index) => ({
+                    kind: 'present' as const,
+                    localRef: { kindId: 'pull-request', collisionScope: 'example/repository', entryId: String(offset + index) },
+                    locator: testkitLocator(), snapshot: testkitSnapshot(), viewer: testkitViewer(),
+                }));
+                return offset + observations.length < total
+                    ? { kind: 'page', observations, evidence: { kind: 'partial', reason: 'more-pages' },
+                        continuation: { v: 1, token: 'native-next' } }
+                    : { kind: 'complete', observations, evidence: { kind: 'walkFinished' } };
+            },
+            nowMs: () => 1000,
+        } satisfies Parameters<typeof listTriageEntries>[1];
+        const input = { v: 1, sources: { kind: 'selected', sourceInstanceIds: [INSTANCE_ID] }, limit, order: 'newest' } as const;
+        const first = TriageListEntriesResultV1Schema.parse(await listTriageEntries(input, deps));
+        expect(submitted).toEqual([minimum]);
+        expect(first.window.rows).toHaveLength(Math.min(minimum, total));
+        const rows = [...first.window.rows];
+        if (total > minimum) {
+            expect(first.window.continuations).toEqual([{ sourceInstanceId: INSTANCE_ID, pageLimit: minimum,
+                continuation: { v: 1, token: 'native-next' } }]);
+            const second = TriageListEntriesResultV1Schema.parse(await listTriageEntries({ ...input, resume: first.window.continuations }, deps));
+            rows.push(...second.window.rows);
+            expect(second.window.coverage).toBe('complete');
+            expect(second.window.continuations ?? []).toEqual([]);
+        } else expect(first.window.coverage).toBe('complete');
+        expect(new Set(rows.map(row => row.entryRef.entryId))).toEqual(new Set(Array.from({ length: total }, (_, index) => String(index))));
+        expect(rows).toHaveLength(total);
+    });
+
+    it('keeps every native minimum-page row and rotates a deferred peer before deepening that source', async () => {
+        const { collections, control } = createTestkitCorpusCollections();
+        const nativeSource = { pluginId: 'example.native-pages', localId: 'forge' };
+        control.sourceInstances.seed(toCorpusStoredValue(configuredRow({
+            instanceTag: paddedInstanceTag('a'), sourceInstanceId: INSTANCE_ID, configuredAtMs: 1, source: nativeSource,
+        })));
+        control.sourceInstances.seed(toCorpusStoredValue(configuredRow({
+            instanceTag: paddedInstanceTag('b'), sourceInstanceId: SECOND_INSTANCE_ID, configuredAtMs: 2,
+        })));
+        const native = { ...ADMITTED_SOURCE,
+            contributor: { ...ADMITTED_SOURCE.contributor, pluginId: nativeSource.pluginId, contributionId: nativeSource.localId },
+            descriptor: { ...ADMITTED_SOURCE.descriptor, minimumScanPageSize: 10 },
+        };
+        const submitted: { id: string; limit: number }[] = [];
+        const deps = {
+            sourceInstances: collections.sourceInstances,
+            readAdmittedSources: async () => [native, ADMITTED_SOURCE],
+            executeScan: async (_operation, input): Promise<TriageScanResultV1> => {
+                const id = input.instance.instance.sourceInstanceId;
+                const nativePage = id === INSTANCE_ID;
+                const limit = input.page.kind === 'initial' ? input.page.limit : 10;
+                submitted.push({ id, limit });
+                if (nativePage && limit < 10) return { kind: 'failed', failure: {
+                    class: 'unsupportedContract', code: 'example/minimum-page', detail: 'Native pages require ten rows.',
+                } };
+                const offset = input.page.kind === 'continuation' ? 10 : 0;
+                const count = nativePage ? Math.min(limit, 12 - offset) : 5;
+                const observations = Array.from({ length: count }, (_, index) => ({
+                    kind: 'present' as const,
+                    localRef: { kindId: 'pull-request', collisionScope: 'example/repository', entryId: `${id}-${offset + index}` },
+                    locator: testkitLocator(), snapshot: testkitSnapshot(), viewer: testkitViewer(),
+                }));
+                return nativePage && offset === 0
+                    ? { kind: 'page', observations, evidence: { kind: 'partial', reason: 'more-pages' }, continuation: { v: 1, token: 'native-next' } }
+                    : { kind: 'complete', observations, evidence: { kind: 'walkFinished' } };
+            },
+            nowMs: () => 1000,
+        } satisfies Parameters<typeof listTriageEntries>[1];
+        const initial = { v: 1, sources: { kind: 'allConfigured' }, limit: 10, order: 'newest' } as const;
+        const first = await listTriageEntries(initial, deps);
+        expect(submitted).toEqual([{ id: INSTANCE_ID, limit: 10 }]);
+        expect(first.window.rows).toHaveLength(10);
+        expect(first.window.continuations).toEqual([
+            { sourceInstanceId: SECOND_INSTANCE_ID, pageLimit: 5 },
+            { sourceInstanceId: INSTANCE_ID, pageLimit: 10, continuation: { v: 1, token: 'native-next' } },
+        ]);
+        const second = await listTriageEntries({ ...initial, resume: first.window.continuations }, deps);
+        expect(submitted[1]).toEqual({ id: SECOND_INSTANCE_ID, limit: 5 });
+        expect(second.window.rows).toHaveLength(5);
+        const third = await listTriageEntries({ ...initial, resume: second.window.continuations }, deps);
+        const rows = [...first.window.rows, ...second.window.rows, ...third.window.rows];
+        expect(rows).toHaveLength(17);
+        expect(new Set(rows.map(row => row.entryRef.entryId)).size).toBe(17);
+        expect(third.window.coverage).toBe('complete');
+        expect(third.window.continuations ?? []).toEqual([]);
+    });
     it('starts both post-provider currentness reads before either boundary settles', async () => {
         const { collections, control } = createTestkitCorpusCollections();
         const ids = seedInstances(control, 1);

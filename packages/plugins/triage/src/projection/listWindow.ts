@@ -1,6 +1,7 @@
 import type { PluginContributionIdentity } from '@happier-dev/plugin-sdk/manifest';
 import type { TriageListInvocationErrorV1 } from '../actions/listEntriesProtocol.js';
 import {
+    MAX_TRIAGE_LIST_WINDOW_ROWS_V1,
     triageTaskStatusCategoryV1,
     MAX_TRIAGE_ROW_FACTS_V1,
     type TriageEntryRefV1,
@@ -54,7 +55,7 @@ import {
  * pages into the mounted projection. It is independent of strict JSON Action
  * admission, which has no aggregate byte quota.
  */
-export const MAX_TRIAGE_LIST_WINDOW_ROWS_V1 = 56;
+export { MAX_TRIAGE_LIST_WINDOW_ROWS_V1 } from '@happier-dev/triage-protocol/v1';
 
 /**
  * How one configured source instance's lane ended in this pass.

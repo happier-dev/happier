@@ -77,6 +77,8 @@ export type TriageScanLaneV1 = Readonly<{
     resume?: TriageScanContinuationV1;
     /** Geometry retained beside `resume`; omitted for a new lane. */
     pageLimit?: number;
+    /** Source-declared native minimum, used only when starting a new walk. */
+    minimumScanPageSize?: number;
     scan: (input: TriageScanInputV1, options?: PluginCancellationOptions) => Promise<TriageScanResultV1>;
 }>;
 
@@ -89,6 +91,8 @@ export type TriageScanPassStopV1 = Readonly<{
 }>;
 
 export type TriageScanPassResultV1 = Readonly<{
+    /** Capacity for the result projection, including the first lane's atomic page. */
+    observationBudget: number;
     observations: readonly CorpusQualifiedObservationV1[];
     lanes: readonly TriageListLaneV1[];
     /**
@@ -240,7 +244,8 @@ export async function runTriageScanPass(input: Readonly<{
         const deadline = new AbortController();
         return {
             lane,
-            pageLimit: Math.max(1, Math.trunc(lane.pageLimit ?? pageLimit)),
+            pageLimit: Math.max(1, Math.trunc(lane.pageLimit
+                ?? Math.max(pageLimit, lane.minimumScanPageSize ?? 1))),
             continuation: lane.resume ?? null,
             // A lane that never ran is not evidence that the walk finished.
             health: { kind: 'unavailable' },
@@ -252,6 +257,14 @@ export async function runTriageScanPass(input: Readonly<{
                 : deadline.signal,
         };
     });
+    // A fair share can be smaller than one native page. Admit that first page
+    // whole rather than returning an unavailable lane without making a read.
+    // The descriptor and retained geometry already fit the wire row maximum;
+    // return this decision so projection cannot cut rows behind its frontier.
+    // A zero budget remains a metadata-only read.
+    const observationBudget = input.observationBudget > 0
+        ? Math.max(input.observationBudget, states[0]?.pageLimit ?? 0)
+        : input.observationBudget;
     const observations: CorpusQualifiedObservationV1[] = [];
     /** Lanes whose page violated the contract; nothing they produced is adopted. */
     const contractFailed = new Set<string>();
@@ -269,7 +282,7 @@ export async function runTriageScanPass(input: Readonly<{
         ready = [];
         for (const state of waiting) {
             if (aborted()) break;
-            if (input.observationBudget - observations.length - reserved < state.pageLimit) {
+            if (observationBudget - observations.length - reserved < state.pageLimit) {
                 // A provider page is atomic: its continuation advances past every
                 // row it returns. Reserve its whole limit before starting it,
                 // including while another lane is unanswered. A short answer
@@ -462,6 +475,7 @@ export async function runTriageScanPass(input: Readonly<{
     for (const state of states) state.deadline.abort();
 
     return Object.freeze({
+        observationBudget,
         observations: Object.freeze(
             observations.filter((observation) => !contractFailed.has(observation.sourceInstanceId)),
         ),

@@ -30,6 +30,14 @@ const MINIMAL = Object.freeze({
 });
 
 describe('the V1 source descriptor', () => {
+    it('retains a source-declared minimum scan page without requiring one from other sources', () => {
+        expect(TriageSourceDescriptorV1Schema.parse({ ...MINIMAL, minimumScanPageSize: 10 }))
+            .toMatchObject({ minimumScanPageSize: 10 });
+        expect(TriageSourceDescriptorV1Schema.parse(MINIMAL)).not.toHaveProperty('minimumScanPageSize');
+        for (const minimumScanPageSize of [0, -1, 1.5]) {
+            expect(TriageSourceDescriptorV1Schema.safeParse({ ...MINIMAL, minimumScanPageSize }).success).toBe(false);
+        }
+    });
     it('admits only a nonempty unique subset of declared kinds for source Session relations', () => {
         const scoped = { ...MINIMAL, sessionRelations: { kindIds: ['pull-request'] } };
         expect(admitTriageSourceDescriptorV1(scoped)).toMatchObject({ ok: true,

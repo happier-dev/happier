@@ -1,6 +1,7 @@
 import {
     defineProtocolArray,
     defineProtocolLiteral,
+    defineProtocolNumber,
     defineProtocolObject,
     defineProtocolUnion,
     defineProtocolUniqueArray,
@@ -8,6 +9,7 @@ import {
 
 import {
     MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1,
+    MAX_TRIAGE_LIST_WINDOW_ROWS_V1,
     TRIAGE_DETAIL_ACTIONS_PANEL_V1,
     TRIAGE_DETAIL_SHARED_TABS_V1,
 } from './bounds.js';
@@ -104,6 +106,11 @@ export const TriageSourceDescriptorV1Schema = defineProtocolObject({
     kinds: defineProtocolArray(TriageSourceKindDescriptorV1ProtocolSchema, {
         minItems: 1,
     }),
+    /** Native provider pages cannot be smaller than this source-owned geometry.
+     * It must fit one existing transport window; omission permits any positive limit. */
+    minimumScanPageSize: defineProtocolNumber({
+        integer: true, minimum: 1, maximum: MAX_TRIAGE_LIST_WINDOW_ROWS_V1,
+    }).optional(),
     /**
      * The local id of the source's OWN `settingsPages[]` entry for putting
      * itself into PRs & Issues.

@@ -310,6 +310,9 @@ export async function assembleTriageListPass(
             sourceInstanceId: row.configured.instance.sourceInstanceId,
             source,
             declaredKindIds,
+            ...(contribution.descriptor.minimumScanPageSize === undefined ? {} : {
+                minimumScanPageSize: contribution.descriptor.minimumScanPageSize,
+            }),
             ...(selectedKindIds === undefined ? {} : { selectedKindIds }),
             ...(completedKindIds.length === 0 || input.tasks === undefined ? {} : {
                 completed: { kindIds: completedKindIds, sinceMs: input.tasks.completedSinceMs },
@@ -445,7 +448,7 @@ export async function assembleTriageListPass(
         activeSourceInstanceIds: settledConfiguredSources
             .filter((summary) => summary.available)
             .map((summary) => summary.sourceInstanceId),
-        lens,
+        lens: { ...lens, limit: pass.observationBudget },
         assembledAtMs: deps.nowMs(),
     });
 

@@ -1,5 +1,7 @@
 import type { TriageSourceDescriptorV1 } from '@happier-dev/triage-protocol/v1';
 
+import { BITBUCKET_MIN_PAGE_LENGTH } from '../pagination.js';
+
 /**
  * The declared Connected Account purpose. It is the host-access request id, and it is the exact
  * argument this source passes to the generic Connected Accounts metadata listing and to every
@@ -64,6 +66,7 @@ export const BITBUCKET_TRIAGE_DESCRIPTOR: TriageSourceDescriptorV1 = Object.free
   // contributor identity the host already admitted.
   settingsPageId: BITBUCKET_TRIAGE_SETTINGS_PAGE_ID,
   displayName: 'Bitbucket Cloud',
+  minimumScanPageSize: BITBUCKET_MIN_PAGE_LENGTH,
   kinds: Object.freeze([
     Object.freeze({
       id: BITBUCKET_PULL_REQUEST_KIND_ID,
