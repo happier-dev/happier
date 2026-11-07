@@ -2,8 +2,8 @@ import {
     defineProtocolLiteral,
     defineProtocolNumber,
     defineProtocolObject,
-    defineProtocolUnion,
     defineProtocolString,
+    defineProtocolUnion,
     type ProtocolComposableSchema,
 } from '@happier-dev/plugin-sdk/protocol';
 
@@ -42,6 +42,8 @@ export const TriageSourceFailureV1Schema = defineProtocolObject({
     class: TriageSourceFailureClassV1ProtocolSchema,
     code: TriageIdentifierV1ProtocolSchema,
     detail: defineTriageSingleLineStringV1(MAX_TRIAGE_FAILURE_DETAIL_UTF8_BYTES_V1).optional(),
+    /** Provider-reported permission requirement, diagnostic only, never admission authority. */
+    requiredPermissions: defineTriageSingleLineStringV1(MAX_TRIAGE_FAILURE_DETAIL_UTF8_BYTES_V1).optional(),
     retryNotBeforeMs: defineProtocolNumber({ integer: true, minimum: 0 }).optional(),
 }, { policy: 'closed' });
 export type TriageSourceFailureV1 = ReturnType<typeof TriageSourceFailureV1Schema.parse>;
@@ -53,6 +55,7 @@ export const TriageListInvocationErrorV1Schema = defineProtocolObject({
     requestId: TriageIdentifierV1ProtocolSchema.optional(),
 }, { policy: 'closed' });
 export type TriageListInvocationErrorV1 = ReturnType<typeof TriageListInvocationErrorV1Schema.parse>;
+
 
 /** One failure/read envelope for the domain-versioned protocol subpaths. */
 export const TriageReadUnavailableV1Schema = defineProtocolObject({

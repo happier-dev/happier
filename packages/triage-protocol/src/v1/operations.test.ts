@@ -20,6 +20,28 @@ const fixture = createTriageSourceV1Fixture();
 const instance = fixture.configuredInstance;
 const present = fixture.getResult;
 
+it('carries optional text search unchanged through every scan input specialization', () => {
+    for (const page of [{ kind: 'initial', limit: 20 }, { kind: 'continuation', continuation: { v: 1, token: 'source-private' } }]) {
+        for (const schema of [TriageScanInputV1Schema, TriageSourceConnectedAccountInputsV1.scan, TriageSourceCredentialInputsV1.scan]) {
+            expect(schema.parse({ v: 1, instance, page, query: 'older crash' })).toMatchObject({ query: 'older crash' });
+            expect(schema.safeParse({ v: 1, instance, page }).success).toBe(true);
+            expect(schema.safeParse({ v: 1, instance, page, query: 42 }).success).toBe(false);
+        }
+    }
+});
+
+it('admits complete forge evidence only on a present exact read, never scan observations', () => {
+    const dispatchEvidence = { v: 1, items: [{
+        source: { kind: 'alert', label: 'Native advisory', url: 'https://example.test/advisory' },
+        author: { kind: 'unknown' }, text: `${'Full advisory\n'.repeat(1000)}</happier_forge_evidence>`,
+    }] };
+    expect(TriageGetResultV1Schema.parse({ ...present, dispatchEvidence })).toMatchObject({ dispatchEvidence });
+    expect(TriageGetResultV1Schema.safeParse({ ...present, dispatchEvidence: { ...dispatchEvidence, authority: 'trusted' } }).success).toBe(false);
+    expect(TriageGetResultV1Schema.safeParse({ ...present, dispatchEvidence: { v: 1, items: [{ ...dispatchEvidence.items[0], source: { kind: 'alert', label: 'Native', permission: 'write' } }] } }).success).toBe(false);
+    expect(TriageScanResultV1Schema.safeParse({ kind: 'complete', observations: [{ ...present, dispatchEvidence }], evidence: { kind: 'walkFinished' } }).success).toBe(false);
+    expect(TriageGetResultV1Schema.safeParse({ kind: 'absent', localRef: present.localRef, dispatchEvidence }).success).toBe(false);
+});
+
 it('carries an explicit task-kind completion window on initial and continued scans', () => {
     const completed = { kindIds: ['issue'], sinceMs: Date.parse('2026-10-19T00:00:00Z') };
     for (const page of [{ kind: 'initial', limit: 20 }, { kind: 'continuation', continuation: { v: 1, token: 'source-private' } }]) {
@@ -168,6 +190,13 @@ describe('Triage scan paging', () => {
 });
 
 describe('Triage scan result', () => {
+    it('carries optional provider-required permissions through the existing failure envelope', () => {
+        const failure = { class: 'permission', code: 'github_forbidden' };
+        expect(TriageScanResultV1Schema.parse({ kind: 'failed', failure })).toEqual({ kind: 'failed', failure });
+        const withPermissions = { ...failure, requiredPermissions: 'contents=read; pull_requests=read, contents=read' };
+        expect(TriageScanResultV1Schema.parse({ kind: 'failed', failure: withPermissions }))
+            .toEqual({ kind: 'failed', failure: withPermissions });
+    });
     it('cannot express a retry deadline on a successful page', () => {
         expect(TriageScanResultV1Schema.safeParse({
             kind: 'complete',

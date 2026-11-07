@@ -3,10 +3,12 @@ import {
     defineProtocolArray,
     defineProtocolNumber,
     defineProtocolObject,
+    defineProtocolString,
     defineProtocolUnion,
     type ProtocolComposableSchema,
 } from '@happier-dev/plugin-sdk/protocol';
 import { ScmComparisonSourceSchema } from '@happier-dev/plugin-sdk/scm';
+import { SessionInputForgeEvidenceV1Schema } from '@happier-dev/plugin-sdk/sessions';
 
 import { TriageSourceFailureV1Schema } from './diagnostics.js';
 import { TriageTaskFieldsV1Schema } from './tasks.js';
@@ -51,6 +53,9 @@ function defineTriageScanInputV1<TInput, TOutput>(instance: ProtocolComposableSc
             v: defineProtocolLiteral(1),
             instance,
             completed,
+            // Optional source-side text narrowing. The aggregate still applies its
+            // matcher and retains the source's completeness evidence.
+            query: defineProtocolString().optional(),
             page: defineProtocolObject({
                 kind: defineProtocolLiteral('initial'),
                 limit: defineProtocolNumber({
@@ -63,6 +68,7 @@ function defineTriageScanInputV1<TInput, TOutput>(instance: ProtocolComposableSc
             v: defineProtocolLiteral(1),
             instance,
             completed,
+            query: defineProtocolString().optional(),
             page: defineProtocolObject({
                 kind: defineProtocolLiteral('continuation'),
                 continuation: TriageScanContinuationV1Schema,
@@ -156,6 +162,10 @@ export const TriageGetResultV1Schema = defineProtocolUnion([
          * unavailable, never empty or truncated. Exact-read-only, not snapshot,
          * scan, retained projection, or mutation authority. */
         taskFields: TriageTaskFieldsV1Schema.optional(),
+        /** Fresh source detail for this exact dispatch. Descriptive data only;
+         * the containing Action/input owns the byte budget. Never retained in
+         * observations or snapshots, and never interpreted as authority. */
+        dispatchEvidence: SessionInputForgeEvidenceV1Schema.optional(),
     }, { policy: 'closed' }),
     TriageSourceAbsentObservationV1ProtocolSchema,
     TriageSourceMergedObservationV1ProtocolSchema,
