@@ -3,14 +3,24 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { storage } from '@/sync/domains/state/storageStore';
 import { subscribeRegisteredStorageMachineUpdates } from '@/sync/domains/state/storageStateReaderBridge';
-import { createSessionListRuntimeClock } from '@/hooks/session/sessionListRuntimeClock';
-import { readMachineStatusNextRefreshAtMs } from '@/utils/sessions/machineUtils';
 import * as inventory from '@/sync/domains/machines/machineInventorySnapshots';
 import * as origins from './pluginExecutionOrigin';
 import * as fleet from './fleetUnion';
+import * as originIdentity from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { captureMachinePresenceObservation, clearMachineRequestReachabilityForTest, recordMachineRequestFailed,
     recordMachineRequestSucceeded, withdrawMachinePresenceForScope } from '@/sync/domains/machines/reachability/machineReachability';
 import { createExecutionOriginMachineSnapshotPublication, type ExecutionOriginMachineSnapshotInputs } from './pluginExecutionOriginMachineSnapshots';
+import { PluginPortableReleaseManifestV1Schema, type PluginMachineMaterializationV1 } from '@happier-dev/protocol/plugins/availability/v1';
+import { GH_DEP_ID } from '@happier-dev/protocol/installables';
+import { prefetchMachineCapabilities } from '@/hooks/server/useMachineCapabilitiesCache';
+import { createPluginAccountAvailabilityReaderStore } from '@/sync/domains/plugins/availability/reader';
+
+// Keep real cache admission/publication; Machine RPC is the process boundary.
+const capabilityBoundary = vi.hoisted(() => ({ rpc: vi.fn() }));
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
+    const { createServerScopedMachineRpcBoundaryMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
+    return createServerScopedMachineRpcBoundaryMock(capabilityBoundary.rpc);
+});
 
 const originalState = storage.getState();
 const connections: Array<{ dispose(): void }> = [];
@@ -19,6 +29,7 @@ afterEach(() => {
     clearMachineRequestReachabilityForTest();
     storage.setState(originalState, true);
     vi.restoreAllMocks();
+    capabilityBoundary.rpc.mockReset();
     vi.useRealTimers();
 });
 
@@ -39,10 +50,9 @@ function fixture() {
         accountScopesByServerId: new Map([[home.serverIdentityId, { serverId: home.serverIdentityId, accountId: 'account-count' }]]),
         materializations: [], sources: [source] };
     const publication = createExecutionOriginMachineSnapshotPublication({ readState: storage.getState,
-        subscribeState: listener => storage.subscribe(listener), subscribeMachineUpdates: subscribeRegisteredStorageMachineUpdates,
-        clock: createSessionListRuntimeClock() });
-    const connect = (next = inputs) => {
-        const connection = publication.connect(next, () => {});
+        subscribeState: listener => storage.subscribe(listener), subscribeMachineUpdates: subscribeRegisteredStorageMachineUpdates });
+    const connect = (next = inputs, listener = () => {}) => {
+        const connection = publication.connect(next, listener);
         connections.push(connection);
         return connection;
     };
@@ -50,7 +60,312 @@ function fixture() {
 }
 
 describe('execution-origin Machine publication', () => {
-    it('invalidates retained facts on scoped request/withdrawal changes and absent-row census settlement', () => {
+    it('uses Availability declarations for thin census rows, retains unknown coverage, and switches only for proven improvement', () => {
+        const { inputs, home, machine, source, connect } = fixture();
+        const second = createMachineFixture({ id: 'z-thin-machine', activeAt: machine.activeAt });
+        storage.setState({ machineListByServerId: { [home.id]: [machine, second] } });
+        const manifest = PluginPortableReleaseManifestV1Schema.parse({ schemaVersion: 2, id: 'acme.thin-source', version: '1.0.0',
+            displayName: 'Source', runtime: { apiVersion: 1 }, contributes: {
+                actions: [{ id: 'read', title: 'Read', scopes: ['global'], surfaces: ['ui'], placementBindings: [],
+                    dangerLevel: 'safe', execution: { target: 'daemon' } }],
+                targetedPluginContributions: [{ id: 'source', target: { pluginId: inputs.pluginId, pointId: 'sources' },
+                    protocol: { id: 'sources', version: 1 }, operations: { read: 'read' } }],
+            } });
+        const presentation = PluginPortableReleaseManifestV1Schema.parse({ ...manifest, id: 'acme.unknown', contributes: {} });
+        const store = createPluginAccountAvailabilityReaderStore({ hostBundledUi: [{ pluginId: manifest.id,
+            pluginVersion: manifest.version, displayName: 'Source', packageName: '@acme/thin-source',
+            normalizedManifest: manifest, entriesById: {} }, { pluginId: presentation.id,
+            pluginVersion: presentation.version, displayName: 'Pending source', packageName: '@acme/pending-source',
+            presentationManifest: presentation, entriesById: {} }] });
+        const scope = { serverId: home.id, accountId: 'account-count' };
+        const row: PluginMachineMaterializationV1 = { serverIdentityId: home.serverIdentityId, machineId: second.id,
+            materializationId: 'thin-source', pluginId: manifest.id, version: manifest.version, sourceClass: 'bundledFirstParty',
+            portableRelease: false, enabled: true, trustState: 'trusted', observedAt: Date.now(), uiArtifacts: [] };
+        const publish = (rows: readonly PluginMachineMaterializationV1[], inventoryComplete = true) => {
+            store.replace({ scope, snapshot: { availabilityCursor: 1, intentReads: [], materializations: rows,
+                inventoryComplete,
+                snapshots: [machine, second].map(host => ({ serverIdentityId: home.serverIdentityId, machineId: host.id,
+                    materializations: rows.filter(row => row.machineId === host.id) })) } });
+            return store.bind(scope).readInstalledPlugins();
+        };
+        const next = { ...inputs, sources: [source, { ...source, source: { ...source.source,
+            origin: { ...source.source.origin, sourceRef: { ...source.source.origin.sourceRef, machineId: second.id } } } }],
+            selection: { availabilityRevision: {}, storedOrigin: null, homeServerIdentityId: home.serverIdentityId,
+                installedPlugins: publish([]),
+                classifyRelease: () => ({ releaseContent: 'matched' as const, validation: { kind: 'admitted' as const } }) } };
+        const connection = connect(next);
+        const expectMachine = (id: string) => expect(connection.getSnapshot().selection?.state)
+            .toMatchObject({ kind: 'selected', origin: { sourceRef: { machineId: id } } });
+        expectMachine(machine.id);
+        connection.updateInputs({ ...next, materializations: [row], selection: { ...next.selection,
+            availabilityRevision: {}, installedPlugins: publish([row], false) } });
+        expectMachine(machine.id);
+        // First-paint bundled declarations are partial, even when a peer supplies a source.
+        const unknown = { ...row, machineId: machine.id, pluginId: presentation.id };
+        connection.updateInputs({ ...next, materializations: [unknown, row], selection: { ...next.selection,
+            availabilityRevision: {}, installedPlugins: publish([unknown, row]) } });
+        expectMachine(machine.id);
+        connection.updateInputs({ ...next, materializations: [row], selection: { ...next.selection,
+            availabilityRevision: {}, installedPlugins: publish([row]) } });
+        expectMachine(second.id);
+        const stable = connection.getSnapshot();
+        for (let read = 0; read < 100; read++) expect(connection.getSnapshot()).toBe(stable);
+        // Equal proven coverage and then absent evidence preserve the incumbent.
+        const equalRows = [row, { ...row, machineId: machine.id }];
+        connection.updateInputs({ ...next, materializations: equalRows, selection: { ...next.selection,
+            availabilityRevision: {}, installedPlugins: publish(equalRows) } });
+        expectMachine(second.id);
+        connection.updateInputs({ ...next, materializations: [unknown], selection: { ...next.selection,
+            availabilityRevision: {}, installedPlugins: publish([unknown]) } });
+        expectMachine(second.id);
+        const extra = { ...row, machineId: machine.id, pluginId: 'acme.extra', materializationId: 'extra',
+            declaredManifest: PluginPortableReleaseManifestV1Schema.parse({ ...manifest, id: 'acme.extra' }) };
+        const supersetRows = [...equalRows, extra, unknown,
+            { ...unknown, machineId: second.id, materializationId: 'unknown-second' }];
+        connection.updateInputs({ ...next, materializations: supersetRows, selection: { ...next.selection,
+            availabilityRevision: {}, installedPlugins: publish(supersetRows, false) } });
+        expectMachine(second.id);
+        connection.updateInputs({ ...next, materializations: supersetRows, selection: { ...next.selection,
+            availabilityRevision: {}, installedPlugins: publish(supersetRows) } });
+        expectMachine(machine.id);
+        const improved = connection.getSnapshot();
+        for (let read = 0; read < 100; read++) expect(connection.getSnapshot()).toBe(improved);
+        connection.dispose();
+        const cold = connect({ ...next, materializations: [row], selection: { ...next.selection,
+            availabilityRevision: {}, installedPlugins: publish([row]) } });
+        expect(cold.getSnapshot().selection?.state).toMatchObject({ kind: 'selected',
+            origin: { sourceRef: { machineId: second.id } } });
+    });
+    it('retains Auto across published native authentication changes without probes or unnecessary notifications', async () => {
+        const { inputs, home, machine, source, connect, now } = fixture();
+        const second = createMachineFixture({ id: 'native-auth-other', activeAt: now + 1 });
+        storage.setState({ machineListByServerId: { [home.id]: [machine, second] } });
+        const manifest = PluginPortableReleaseManifestV1Schema.parse({ schemaVersion: 2, id: 'acme.native-source', version: '1.0.0',
+            displayName: 'Source', runtime: { apiVersion: 1 }, contributes: {
+                actions: [{ id: 'read', title: 'Read', scopes: ['global'], surfaces: ['ui'], placementBindings: [],
+                    dangerLevel: 'safe', execution: { target: 'daemon' } }],
+                targetedPluginContributions: [{ id: 'source', target: { pluginId: inputs.pluginId, pointId: 'sources' },
+                    protocol: { id: 'sources', version: 1 }, operations: { read: 'read' } }],
+                connectedAccountDescriptors: [{ id: 'account', title: 'Account', authentication: {
+                    native: { systemTool: 'gh' }, defaultModeId: 'manual', modes: [{ id: 'manual', kind: 'manual',
+                        outcomeReconciliation: 'none', fields: [{ id: 'credential', title: 'Credential', schema: { type: 'string' }, secret: true }] }],
+                } }],
+            } });
+        const materializations: PluginMachineMaterializationV1[] = [machine, second].map(host => ({
+            serverIdentityId: home.serverIdentityId, machineId: host.id, materializationId: `native-${host.id}`,
+            pluginId: manifest.id, version: manifest.version, sourceClass: 'registryPackage', portableRelease: true,
+            enabled: true, trustState: 'trusted', observedAt: now, uiArtifacts: [], declaredManifest: manifest,
+        }));
+        const accountLifetime = { scope: { serverId: home.id, accountId: 'account-count' }, isCurrent: () => true,
+            onRetire: () => ({ dispose() {} }) };
+        const notifications = vi.fn();
+        const connection = connect({ ...inputs, accountLifetime, materializations,
+            sources: [source, { ...source, source: { ...source.source,
+                origin: { ...source.source.origin, sourceRef: { ...source.source.origin.sourceRef, machineId: second.id } } } }],
+            selection: { availabilityRevision: {}, storedOrigin: null, homeServerIdentityId: home.serverIdentityId,
+                classifyRelease: () => ({ releaseContent: 'matched' as const, validation: { kind: 'admitted' as const } }) },
+        }, notifications);
+        expect(connection.getSnapshot().selection?.state).toMatchObject({ kind: 'selected', origin: { sourceRef: { machineId: second.id } } });
+        expect(capabilityBoundary.rpc).toHaveBeenCalledTimes(0);
+        notifications.mockClear();
+        const publish = async (machineId: string, authenticated: boolean) => {
+            capabilityBoundary.rpc.mockResolvedValue({ protocolVersion: 1, results: {
+                [GH_DEP_ID]: { ok: true, checkedAt: now, data: { installed: true, authenticated } },
+            } });
+            await prefetchMachineCapabilities({ machineId, serverId: home.id, accountLifetime,
+                request: { requests: [{ id: GH_DEP_ID }] } });
+        };
+        await publish(machine.id, true);
+        const selected = connection.getSnapshot();
+        expect(selected.selection?.state).toMatchObject({ kind: 'selected', origin: { sourceRef: { machineId: second.id } } });
+        expect(notifications).toHaveBeenCalledTimes(0);
+        const afterChange = notifications.mock.calls.length;
+        for (let read = 0; read < 100; read++) expect(connection.getSnapshot()).toBe(selected);
+        await publish('unrelated-native-machine', true);
+        expect(notifications).toHaveBeenCalledTimes(afterChange);
+        await publish(second.id, true);
+        expect(connection.getSnapshot().selection?.state).toMatchObject({ kind: 'selected', origin: { sourceRef: { machineId: second.id } } });
+        expect(notifications).toHaveBeenCalledTimes(afterChange);
+        await publish(machine.id, false);
+        expect(connection.getSnapshot().selection?.state).toMatchObject({ kind: 'selected', origin: { sourceRef: { machineId: second.id } } });
+        expect(capabilityBoundary.rpc).toHaveBeenCalledTimes(4);
+    });
+
+    it('retains Auto on better contributor republish, fails over when its Machine disappears, and keeps reads free of scans', () => {
+        const { inputs, home, machine, source, connect } = fixture();
+        const second = createMachineFixture({ id: 'z-second-machine', activeAt: machine.activeAt });
+        storage.setState({ machineListByServerId: { [home.id]: [machine, second] } });
+        const next = { ...inputs, sources: [source, { ...source, source: { ...source.source,
+            origin: { ...source.source.origin, sourceRef: { ...source.source.origin.sourceRef, machineId: second.id } } } }],
+            selection: { availabilityRevision: {}, storedOrigin: null, homeServerIdentityId: home.serverIdentityId,
+                classifyRelease: () => ({ releaseContent: 'matched' as const, validation: { kind: 'admitted' as const } }) } };
+        const connection = connect(next);
+        expect(connection.getSnapshot().selection?.state).toMatchObject({ kind: 'selected',
+            origin: { sourceRef: { machineId: machine.id } } });
+        const manifest = PluginPortableReleaseManifestV1Schema.parse({ schemaVersion: 2, id: 'acme.source',
+            version: '1.0.0', displayName: 'Source', runtime: { apiVersion: 1 }, contributes: {
+                actions: [{ id: 'read', title: 'Read', scopes: ['global'], surfaces: ['ui'], placementBindings: [], dangerLevel: 'safe',
+                    execution: { target: 'daemon' } }],
+                targetedPluginContributions: [{ id: 'source', target: { pluginId: inputs.pluginId, pointId: 'sources' },
+                    protocol: { id: 'sources', version: 1 }, operations: { read: 'read' } }],
+            } });
+        let declarationReads = 0;
+        const contributor: PluginMachineMaterializationV1 = { serverIdentityId: home.serverIdentityId, machineId: second.id,
+            materializationId: 'source', pluginId: manifest.id, version: manifest.version, sourceClass: 'registryPackage',
+            portableRelease: true, enabled: true, trustState: 'trusted', observedAt: Date.now(), uiArtifacts: [],
+            get declaredManifest() { declarationReads += 1; return manifest; } };
+        connection.updateInputs({ ...next, materializations: [contributor] });
+        const selected = connection.getSnapshot();
+        expect(selected.selection?.state).toMatchObject({ kind: 'selected',
+            origin: { sourceRef: { machineId: machine.id } } });
+        declarationReads = 0;
+        for (let render = 0; render < 100; render += 1) expect(connection.getSnapshot()).toBe(selected);
+        expect(declarationReads).toBe(0);
+        storage.setState({ machineListByServerId: { [home.id]: [second] } });
+        expect(connection.getSnapshot().selection?.state).toMatchObject({ kind: 'selected',
+            origin: { sourceRef: { machineId: second.id } } });
+        connection.updateInputs({ ...next, materializations: [{ ...contributor, machineId: machine.id }] });
+        expect(connection.getSnapshot().selection?.state).toMatchObject({ kind: 'selected',
+            origin: { sourceRef: { machineId: second.id } } });
+    });
+    it('rebuilds retired requester facts from the current census before a same-scope successor selects', () => {
+        const { inputs, home, machine, connect } = fixture();
+        let current = true;
+        const retirements = new Set<() => void>();
+        const scope = inputs.accountScopesByServerId.get(home.serverIdentityId)!;
+        const lifetime = { scope, isCurrent: () => current, onRetire(cancel: () => void) {
+            retirements.add(cancel); return { dispose: () => { retirements.delete(cancel); } };
+        } };
+        const selection = { availabilityRevision: {}, storedOrigin: null, homeServerIdentityId: home.serverIdentityId,
+            classifyRelease: () => ({ releaseContent: 'matched' as const, validation: { kind: 'admitted' as const } }) };
+        const next = { ...inputs, selection, accountLifetime: lifetime };
+        const connection = connect(next);
+        expect(connection.getSnapshot().selection?.state.kind).toBe('selected');
+        current = false;
+        for (const cancel of [...retirements]) cancel();
+        expect(connection.getSnapshot().selection).toBeNull();
+        const revoked = { ...machine, revokedAt: Date.now() };
+        storage.setState({ machineListByServerId: { [home.id]: [revoked] } });
+        storage.setState({ machineListByServerId: { [home.id]: [{ ...revoked,
+            metadata: { ...revoked.metadata!, displayName: 'Changed while retired' } }] } });
+        connection.updateInputs({ ...next, accountLifetime: { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) } });
+        expect(connection.getSnapshot().selection?.state).toMatchObject({ kind: 'unavailable', reasons: ['revoked'] });
+        expect(connection.getSnapshot().key).toContain('revoked');
+    });
+    it('builds only changed Machine candidates across 170 Machines and shares them across selection consumers', () => {
+        const { inputs, home, machine, connect } = fixture();
+        const machines = [machine, ...Array.from({ length: 169 }, (_, index) => createMachineFixture({
+            id: `origin-scale-${index}`, activeAt: Date.now(),
+        }))];
+        storage.setState({ machineListByServerId: { [home.id]: machines } });
+        const build = vi.spyOn(origins, 'buildPluginMachineExecutionOriginCandidates');
+        const equal = vi.spyOn(originIdentity, 'arePluginMachineExecutionOriginsEqual');
+        const classifyRelease = vi.fn(() => ({ releaseContent: 'matched' as const, validation: { kind: 'admitted' as const } }));
+        const plugins = Array.from({ length: 4 }, (_, index) => {
+            const pluginId = `acme.scale-${index}`;
+            const materializations = machines.map(row => ({ serverIdentityId: home.serverIdentityId, machineId: row.id, pluginId,
+                materializationId: `portable-${row.id}`, version: '1.0.0', sourceClass: 'registryPackage' as const,
+                portableRelease: true, enabled: true, trustState: 'trusted' as const, observedAt: 1, uiArtifacts: [] }));
+            const selection = { availabilityRevision: {}, classifyRelease, storedOrigin: null, homeServerIdentityId: home.serverIdentityId };
+            const next = { ...inputs, pluginId, sources: [], materializations, selection };
+            const first = connect(next);
+            const contextual = connect({ ...next, selection: { ...selection,
+                contextualTarget: { serverIdentityId: home.serverIdentityId, machineId: machine.id } } });
+            const initial = first.getSnapshot().selection!.candidates;
+            return { first, contextual, next, initial, initialOrigins: initial.map(origins.getPluginExecutionOriginCandidateOrigin) };
+        });
+        expect.soft(classifyRelease).toHaveBeenCalledTimes(170 * plugins.length);
+        for (const plugin of plugins) expect.soft(plugin.contextual.getSnapshot().selection!.candidates).toBe(plugin.initial);
+        build.mockClear(); classifyRelease.mockClear(); equal.mockClear();
+        for (let index = 0; index < 30; index += 1) storage.setState({ settingsVersion: index });
+        expect(build).not.toHaveBeenCalled();
+        expect(classifyRelease).not.toHaveBeenCalled();
+        expect(equal).not.toHaveBeenCalled();
+        storage.setState({ machineListByServerId: { [home.id]: machines.map(row => row.id === machine.id
+            ? { ...row, revokedAt: Date.now() } : row) } });
+        expect(build.mock.calls.flatMap(([params]) => params.materializations).map(row => row.machineId))
+            .toEqual(plugins.map(() => machine.id));
+        for (const plugin of plugins) {
+            const candidates = plugin.first.getSnapshot().selection!.candidates;
+            expect(plugin.contextual.getSnapshot().selection!.candidates).toBe(candidates);
+            expect(candidates.filter(row => !plugin.initial.includes(row))).toHaveLength(1);
+            expect(candidates.find(row => 'materialization' in row && row.materialization.machineId === machine.id)?.validation)
+                .toEqual({ kind: 'rejected', reason: 'revoked' });
+            for (const [index, row] of candidates.entries()) if (row === plugin.initial[index]) {
+                expect(origins.getPluginExecutionOriginCandidateOrigin(row)).toBe(plugin.initialOrigins[index]);
+            }
+            const materializations = [{ ...plugin.next.materializations[0]!, materializationId: 'new-first-origin' },
+                ...plugin.next.materializations];
+            plugin.first.updateInputs({ ...plugin.next, materializations });
+            const extended = plugin.first.getSnapshot().selection!.candidates;
+            expect(extended).toHaveLength(candidates.length + 1);
+            expect(extended.filter(row => !candidates.includes(row))).toHaveLength(1);
+        }
+    });
+    it('visits independent demands linearly on a Machine fact publication', () => {
+        const { inputs, home, machine, source, now, connect } = fixture();
+        let demandReads = 0;
+        const demands = Array.from({ length: 138 }, (_, index) => {
+            const pluginId = `acme.count-${index}`;
+            const next: ExecutionOriginMachineSnapshotInputs = {
+                ...inputs,
+                get pluginId() { demandReads += 1; return pluginId; },
+                sources: [{ ...source, source: { ...source.source, origin: { ...source.source.origin,
+                    sourceRef: { ...source.source.origin.sourceRef, pluginId } } } }],
+            };
+            return connect(next);
+        });
+        demandReads = 0;
+        storage.setState({ machineListByServerId: { [home.id]: [{ ...machine, activeAt: now + 1 }] } });
+        // Each demand reads its own identity for preference/readiness resolution;
+        // no publication searches every sibling demand for reusable projections.
+        expect(demandReads).toBeLessThanOrEqual(demands.length * 4);
+        for (const demand of demands) expect(demand.readCurrent().readMachineFact({
+            serverIdentityId: home.serverIdentityId, machineId: machine.id,
+        }).activeAt).toBe(now + 1);
+    });
+
+    it('keeps equivalent consumers independent when one changes its inputs or disposes', () => {
+        const { inputs, home, machine, connect } = fixture();
+        const firstListener = vi.fn();
+        const secondListener = vi.fn();
+        const first = connect(inputs, firstListener);
+        const second = connect(inputs, secondListener);
+        expect(first.getSnapshot()).toBe(second.getSnapshot());
+        firstListener.mockClear();
+        secondListener.mockClear();
+        first.updateInputs({ ...inputs, sources: [] });
+        expect(firstListener).toHaveBeenCalledTimes(1);
+        expect(secondListener).not.toHaveBeenCalled();
+        first.dispose();
+        storage.setState({ machineListByServerId: { [home.id]: [{ ...machine, revokedAt: Date.now() }] } });
+        expect(secondListener).toHaveBeenCalledTimes(1);
+        expect(second.getSnapshot().key).toContain('revoked');
+    });
+
+    it('resolves newly available Auto choices without scanning unrelated plugin demands', () => {
+        const { inputs, home, machine, source, now, connect } = fixture();
+        storage.setState({ machineListByServerId: { [home.id]: [{ ...machine, active: false, activeAt: 0 }] } });
+        let demandReads = 0;
+        const selection = { availabilityRevision: {}, storedOrigin: null,
+            homeServerIdentityId: home.serverIdentityId,
+            classifyRelease: () => ({ releaseContent: 'matched' as const, validation: { kind: 'admitted' as const } }) };
+        const demands = Array.from({ length: 138 }, (_, index) => {
+            const pluginId = `acme.recovery-${index}`;
+            return connect({ ...inputs, get pluginId() { demandReads += 1; return pluginId; }, selection,
+                sources: [{ ...source, source: { ...source.source, origin: { ...source.source.origin,
+                    sourceRef: { ...source.source.origin.sourceRef, pluginId } } } }] });
+        });
+        for (const demand of demands) expect(demand.getSnapshot().selection?.state.kind).toBe('unavailable');
+        demandReads = 0;
+        storage.setState({ machineListByServerId: { [home.id]: [{ ...machine, activeAt: now + 1 }] } });
+        // Two identity reads prepare the shared view; the remaining reads are
+        // each demand's own preference, candidate and election inputs.
+        expect(demandReads).toBeLessThanOrEqual(demands.length * 16);
+        for (const demand of demands) expect(demand.getSnapshot().selection?.state.kind).toBe('selected');
+    });
+
+    it('retains facts through withdrawal and invalidates on scoped request failures or absent-row census settlement', () => {
         const { inputs, home, machine, connect } = fixture();
         const scope = inputs.accountScopesByServerId.get(home.serverIdentityId)!;
         const connection = connect();
@@ -58,7 +373,7 @@ describe('execution-origin Machine publication', () => {
         const fact = () => connection.readCurrent().readMachineFact(target);
         expect(fact()).toMatchObject({ eligible: true, rejection: null });
         withdrawMachinePresenceForScope(scope);
-        expect(fact()).toMatchObject({ eligible: false, rejection: 'unknown' });
+        expect(fact()).toMatchObject({ eligible: true, rejection: null });
         captureMachinePresenceObservation(scope)([machine.id]);
         expect(fact()).toMatchObject({ eligible: true, rejection: null });
         recordMachineRequestFailed({ ...scope, machineId: machine.id, observedAtMs: 10 });
@@ -305,12 +620,201 @@ describe('execution-origin Machine publication', () => {
         expect([project.mock.calls.length, targets.mock.calls.length]).toEqual(before);
     });
 
+    describe('across many plugin demands', () => {
+        const classify = () => ({ releaseContent: 'matched' as const, validation: { kind: 'admitted' as const } });
+        function manyPlugins(count: number) {
+            const ctx = fixture();
+            const second = createMachineFixture({ id: 'origin-count-machine-b', activeAt: ctx.now });
+            storage.setState({ machineListByServerId: { [ctx.home.id]: [ctx.machine, second] } });
+            const sourceFor = (pluginId: string, machineId: string) => ({ ...ctx.source, source: { ...ctx.source.source,
+                origin: { ...ctx.source.source.origin, sourceRef: { ...ctx.source.source.origin.sourceRef, pluginId, machineId } } } });
+            const plugins = Array.from({ length: count }, (_, index) => {
+                const pluginId = `acme.many-${index}`;
+                const machineId = index % 2 === 0 ? ctx.machine.id : second.id;
+                const listener = vi.fn();
+                const inputsFor = (sources = [sourceFor(pluginId, machineId)]): ExecutionOriginMachineSnapshotInputs => ({
+                    ...ctx.inputs, pluginId, sources,
+                    accountScopesByServerId: new Map(ctx.inputs.accountScopesByServerId), bindings: [], profiles: [...ctx.inputs.profiles],
+                    selection: { availabilityRevision: null, classifyRelease: classify, storedOrigin: null,
+                        machineRejections: [], establishingTargets: [] } });
+                const connection = ctx.connect(inputsFor(), listener);
+                return { pluginId, machineId, listener, inputsFor, connection };
+            });
+            return { ...ctx, second, plugins };
+        }
+
+        it('does not republish when a parent rebuilds semantically unchanged inputs', () => {
+            const { plugins } = manyPlugins(20);
+            const before = plugins.map(plugin => plugin.connection.getSnapshot());
+            for (const plugin of plugins) plugin.listener.mockClear();
+            for (const plugin of plugins) plugin.connection.updateInputs(plugin.inputsFor());
+            plugins.forEach((plugin, index) => {
+                expect(plugin.listener).not.toHaveBeenCalled();
+                expect(plugin.connection.getSnapshot()).toBe(before[index]);
+            });
+        });
+
+        it('wakes only demands supplied by the Machine whose eligibility changed', () => {
+            const { plugins, home, machine, second } = manyPlugins(20);
+            for (const plugin of plugins) plugin.listener.mockClear();
+            storage.setState({ machineListByServerId: { [home.id]: [machine, { ...second, revokedAt: Date.now() }] } });
+            for (const plugin of plugins) {
+                expect(plugin.listener).toHaveBeenCalledTimes(plugin.machineId === second.id ? 1 : 0);
+            }
+        });
+
+        it('publishes each plugin once per real input arrival and never for an equal re-arrival', () => {
+            const { plugins } = manyPlugins(20);
+            for (const plugin of plugins) {
+                plugin.listener.mockClear();
+                plugin.connection.updateInputs(plugin.inputsFor([]));
+                expect(plugin.listener).toHaveBeenCalledTimes(1);
+                plugin.connection.updateInputs(plugin.inputsFor([]));
+                plugin.connection.updateInputs(plugin.inputsFor([]));
+                expect(plugin.listener).toHaveBeenCalledTimes(1);
+            }
+        });
+    });
+
+    describe('work per transition across plugins × Machines', () => {
+        const classify = () => ({ releaseContent: 'matched' as const, validation: { kind: 'admitted' as const } });
+        // Every plugin holds an installation on every Machine and declares one
+        // contribution to the next plugin: the busy Account's real shape.
+        function account(pluginCount: number, machineCount: number) {
+            const ctx = fixture();
+            const machines = [ctx.machine, ...Array.from({ length: machineCount - 1 }, (_, index) =>
+                createMachineFixture({ id: `origin-work-${index}`, activeAt: ctx.now }))];
+            storage.setState({ machineListByServerId: { [ctx.home.id]: machines } });
+            const pluginIds = Array.from({ length: pluginCount }, (_, index) => `acme.work-${index}`);
+            const counts = { declarationReads: 0, rowPluginIdReads: 0 };
+            const manifests = pluginIds.map((id, index) => {
+                const manifest = PluginPortableReleaseManifestV1Schema.parse({ schemaVersion: 2, id, version: '1.0.0', displayName: id,
+                    runtime: { apiVersion: 1 }, contributes: {
+                        actions: [{ id: 'read', title: 'Read', scopes: ['global'], surfaces: ['ui'], placementBindings: [],
+                            dangerLevel: 'safe', execution: { target: 'daemon' } }],
+                        targetedPluginContributions: [{ id: 'source', target: { pluginId: pluginIds[(index + 1) % pluginCount]!, pointId: 'sources' },
+                            protocol: { id: 'sources', version: 1 }, operations: { read: 'read' } }],
+                    } });
+                const contributes = manifest.contributes;
+                Object.defineProperty(manifest, 'contributes', { enumerable: true, get() { counts.declarationReads += 1; return contributes; } });
+                return manifest;
+            });
+            const store = createPluginAccountAvailabilityReaderStore({ hostBundledUi: manifests.map(manifest => ({ pluginId: manifest.id,
+                pluginVersion: manifest.version, displayName: manifest.id, packageName: `@acme/${manifest.id}`,
+                normalizedManifest: manifest, entriesById: {} })) });
+            const scope = { serverId: ctx.home.id, accountId: 'account-count' };
+            const rowsFor = () => pluginIds.flatMap(pluginId => machines.map((host): PluginMachineMaterializationV1 => ({
+                serverIdentityId: ctx.home.serverIdentityId, machineId: host.id, materializationId: `${pluginId}-${host.id}`, pluginId,
+                version: '1.0.0', sourceClass: 'bundledFirstParty', portableRelease: true, enabled: true, trustState: 'trusted',
+                observedAt: 1, uiArtifacts: [] })));
+            const publish = (cursor: number, rows: readonly PluginMachineMaterializationV1[]) => {
+                store.replace({ scope, snapshot: { availabilityCursor: cursor, intentReads: [], materializations: rows, inventoryComplete: true,
+                    snapshots: machines.map(host => ({ serverIdentityId: ctx.home.serverIdentityId, machineId: host.id,
+                        materializations: rows.filter(row => row.machineId === host.id) })) } });
+                return store.bind(scope).readInstalledPlugins();
+            };
+            const rows = rowsFor();
+            const materializations = rows.map(row => {
+                const counted = { ...row };
+                Object.defineProperty(counted, 'pluginId', { enumerable: true, get() { counts.rowPluginIdReads += 1; return row.pluginId; } });
+                return counted;
+            });
+            const installedPlugins = publish(1, rows);
+            const inputsFor = (pluginId: string, selection: Partial<NonNullable<ExecutionOriginMachineSnapshotInputs['selection']>> = {}): ExecutionOriginMachineSnapshotInputs => ({
+                ...ctx.inputs, pluginId, sources: [], materializations,
+                selection: { availabilityRevision: null, classifyRelease: classify, storedOrigin: null,
+                    homeServerIdentityId: ctx.home.serverIdentityId, installedPlugins, ...selection } });
+            const connections = pluginIds.map(pluginId => ctx.connect(inputsFor(pluginId)));
+            const measure = (transition: () => void) => {
+                const stringify = vi.spyOn(JSON, 'stringify');
+                const mapGet = vi.spyOn(Map.prototype, 'get');
+                counts.declarationReads = 0;
+                counts.rowPluginIdReads = 0;
+                transition();
+                const result = { stringify: stringify.mock.calls.length, mapGet: mapGet.mock.calls.length, ...counts };
+                stringify.mockRestore();
+                mapGet.mockRestore();
+                return result;
+            };
+            return { ...ctx, machines, pluginIds, connections, inputsFor, measure, scope, rowsFor, publish };
+        }
+        const revokeMachine = ({ home, machines }: ReturnType<typeof account>, machineId: string) =>
+            storage.setState({ machineListByServerId: { [home.id]: machines.map(row => row.id === machineId ? { ...row, revokedAt: Date.now() } : row) } });
+
+        it('derives per-installation facts once, not per demand, when one Machine flips', () => {
+            const work = account(12, 6);
+            const counted = work.measure(() => revokeMachine(work, work.machines[1]!.id));
+            for (const connection of work.connections) expect(connection.getSnapshot().key).toContain('revoked');
+            expect(counted.declarationReads).toBe(0);
+            // One changed row serialized per demand, whatever the Account's installation count.
+            expect(counted.stringify).toBeLessThanOrEqual(12 * 2);
+        });
+
+        it('reuses shared facts across equal Availability republications with a new cursor', () => {
+            const work = account(8, 4);
+            const installedPlugins = work.publish(2, work.rowsFor());
+            const counted = work.measure(() => work.connections.forEach((connection, index) => {
+                connection.updateInputs(work.inputsFor(work.pluginIds[index]!, { installedPlugins }));
+            }));
+            expect(counted.declarationReads).toBe(0);
+            expect(counted.stringify).toBeLessThanOrEqual(8 * 2);
+        });
+
+        it('rebinds a plugin without rescanning other plugins\' installations', () => {
+            const work = account(12, 6);
+            const counted = work.measure(() => work.connections.forEach((connection, index) => {
+                connection.updateInputs(work.inputsFor(work.pluginIds[index]!, { machineRejections: [{ serverIdentityId: work.home.serverIdentityId,
+                    machineId: work.machines[1]!.id, reason: 'daemon_unavailable' }] }));
+            }));
+            expect(counted.declarationReads).toBe(0);
+            // Only each plugin's own rows are revisited; the 72-row Account is never walked per demand.
+            expect(counted.rowPluginIdReads).toBeLessThanOrEqual(12 * 6 * 4);
+        });
+
+        it('grows linearly in demands on a census transition', () => {
+            const cost = (pluginCount: number) => {
+                clearMachineRequestReachabilityForTest();
+                const work = account(pluginCount, 6);
+                const scopeOf = work.inputs.accountScopesByServerId.get(work.home.serverIdentityId)!;
+                captureMachinePresenceObservation(scopeOf)(work.machines.map(row => row.id));
+                for (const connection of work.connections) expect(connection.getSnapshot().key).not.toContain('unknown');
+                const counted = work.measure(() => storage.setState({ machineListStatusByServerId: { [work.home.id]: 'loading' } }));
+                for (const connection of work.connections) connection.dispose();
+                return counted.mapGet;
+            };
+            const small = cost(10);
+            const large = cost(20);
+            expect(large / small).toBeLessThan(2.4);
+        });
+
+        it('keeps the elected origin when shared facts serve several plugins, and follows a changed declaration', () => {
+            const work = account(6, 3);
+            for (const connection of work.connections) {
+                expect(connection.getSnapshot().selection?.state).toMatchObject({ kind: 'selected', selectionSource: 'auto' });
+            }
+            const pluginId = work.pluginIds[1]!;
+            const before = work.connections[1]!.getSnapshot().selection!.state;
+            expect(before).toMatchObject({ origin: { materializationRef: { pluginId } } });
+            // Contributor plugin 0 targets plugin 1. Removing it from all but the last Machine moves the coverage there.
+            const last = work.machines[2]!.id;
+            const narrowed = work.rowsFor().filter(row => row.pluginId !== work.pluginIds[0] || row.machineId === last);
+            const installedPlugins = work.publish(3, narrowed);
+            const connection = work.connections[1]!;
+            connection.updateInputs(work.inputsFor(pluginId, { installedPlugins }));
+            expect(connection.getSnapshot().selection?.state).toMatchObject({ kind: 'selected',
+                origin: { materializationRef: { machineId: last, pluginId } } });
+        });
+    });
+
     it('publishes suppressed heartbeat ordering, expiry and refusal while retaining unchanged eligibility', () => {
         vi.useFakeTimers();
         const { now, machine, home, source, inputs, connect } = fixture();
         const second = createMachineFixture({ id: 'second-origin-machine', activeAt: now + 1 });
-        storage.setState({ machineListByServerId: { [home.id]: [machine, second] } });
-        storage.getState().applyMachines([machine, second], false, { sourceServerId: home.id });
+        const machines = [machine, second, ...Array.from({ length: 136 }, (_, index) => createMachineFixture({
+            id: `heartbeat-unrelated-${index}`, activeAt: now,
+        }))];
+        storage.setState({ machineListByServerId: { [home.id]: machines } });
+        storage.getState().applyMachines(machines, false, { sourceServerId: home.id });
         const pair = { ...inputs, sources: [source, { ...source, source: { ...source.source,
             origin: { ...source.source.origin, sourceRef: { ...source.source.origin.sourceRef, machineId: second.id } } } }] };
         const serialize = vi.spyOn(origins, 'createPluginMachineExecutionOriginMachineFacts');
@@ -319,24 +823,38 @@ describe('execution-origin Machine publication', () => {
         const first = connection.getSnapshot();
         const state = storage.getState();
         const project = vi.spyOn(inventory, 'resolveAllProfileMachineInventorySnapshots');
+        const storedMachine = state.machineListByServerId[home.id]!.find(row => row.id === machine.id)!;
+        const metadata = storedMachine.metadata;
+        if (!metadata) throw new Error('Machine metadata fixture is required');
+        const host = metadata.host;
+        let metadataReads = 0;
+        // Observe content conversion, not the pointer copy required by immutable publication.
+        Object.defineProperty(metadata, 'host', { configurable: true,
+            get() { metadataReads += 1; return host; } });
         for (let index = 0; index < 100; index += 1) {
-            storage.getState().applyMachines([{ ...machine }], false, { sourceServerId: home.id });
+            storage.getState().applyMachineActivityUpdates([{ id: machine.id, active: true, activeAt: now }], { sourceServerId: home.id });
             expect(storage.getState()).toBe(state);
             expect(connection.getSnapshot()).toBe(first);
             connection.readCurrent();
         }
         expect(project).not.toHaveBeenCalled();
         expect(update).not.toHaveBeenCalled();
-        storage.getState().applyMachines([{ ...machine, activeAt: now + 2 }], false, { sourceServerId: home.id });
+        expect(metadataReads).toBe(0);
+        storage.getState().applyMachineActivityUpdates([{ id: machine.id, active: true, activeAt: now + 2 }], { sourceServerId: home.id });
         expect(storage.getState()).toBe(state);
-        expect(project).toHaveBeenCalledTimes(1);
+        expect(storedMachine.activeAt).toBe(now);
+        expect(project).not.toHaveBeenCalled();
         expect(serialize).toHaveBeenCalledTimes(1);
         expect(update).toHaveBeenCalledTimes(1);
+        expect(metadataReads).toBe(0);
         expect(connection.getSnapshot().key).not.toBe(first.key);
         expect(connection.getSnapshot().eligibilityKey).toBe(first.eligibilityKey);
         expect(connection.readCurrent().readMachineFact({ serverIdentityId: home.serverIdentityId, machineId: machine.id }).activeAt).toBe(now + 2);
-        const deadline = readMachineStatusNextRefreshAtMs({ ...machine, activeAt: now + 2 }, now)!;
-        vi.advanceTimersByTime(deadline - Date.now());
+        expect(connection.readCurrent().snapshots.find(snapshot => snapshot.kind === 'resolved')?.machines
+            .find(row => row.id === machine.id)?.activeAt).toBe(now + 2);
+        vi.advanceTimersByTime(120_000);
+        expect(connection.readCurrent().readMachineFact({ serverIdentityId: home.serverIdentityId, machineId: machine.id }).rejection).toBeNull();
+        storage.getState().applyMachineActivityUpdates([{ id: machine.id, active: false, activeAt: now + 2 }], { sourceServerId: home.id });
         expect(connection.readCurrent().readMachineFact({ serverIdentityId: home.serverIdentityId, machineId: machine.id }).rejection).toBe('offline');
         storage.setState({ machineListByServerId: { [home.id]: [{ ...machine, activeAt: Date.now(), revokedAt: Date.now() }] } });
         expect(connection.readCurrent().readMachineFact({ serverIdentityId: home.serverIdentityId, machineId: machine.id }).rejection).toBe('revoked');

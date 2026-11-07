@@ -1,9 +1,8 @@
-import { isMachineReachableV1, isMachineRequestReachabilityFailureV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
-import { readMachineOnlineGraceMsFromEnv } from '@/utils/sessions/machineUtils';
+import { isMachineRequestReachabilityFailureV1, type MachinePresenceV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
+import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { createServerAccountScope, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier, type ProfileScopeResolver } from '@/sync/domains/server/serverProfiles';
 import type { SessionMachineReachability } from './resolveSessionMachineReachability';
-import { readMachineActivity } from '@/sync/domains/machines/machineActivity';
 
 export type MachineReachabilityScope = ServerAccountScope;
 
@@ -24,32 +23,13 @@ type MachineRequestObservationInput = MachineReachabilityScope & Readonly<{
 type ScopeReachability = {
     relay: Map<string, MachineRequestReachabilityObservation>;
     direct: Map<string, MachineRequestReachabilityObservation>;
-    // A transport withdrawal invalidates retained presence, not Machine identity.
-    // Each fresh ingress/read re-observes only its own Machine in that exact scope.
-    observedSinceWithdrawal?: Set<string>;
 };
 
 // Index the identity parts directly: reads do not rebuild encoded resource keys.
 const scopes = new Map<string, Map<string, ScopeReachability>>();
-type MachinePresence = Parameters<typeof isMachineReachable>[1];
-type DerivedReachability = {
-    serverId: string;
-    accountId: string;
-    machineId: string;
-    active: boolean;
-    activeAt: number | null | undefined;
-    revokedAt: number | null | undefined;
-    observation: MachineRequestReachabilityObservation | null;
-    graceMs: number;
-    evaluatedAtMs: number;
-    reachable: boolean;
-};
-// A row's descriptive verdict is derived again only when its own inputs change.
-// Scope, request failure, revocation and withdrawal remain live checks on every read.
-let derivedReachability = new WeakMap<MachinePresence, DerivedReachability>();
 export type MachineRequestReachabilityChange = Readonly<{
     scope: MachineReachabilityScope;
-    /** Absence means the whole Account's observation changed (withdrawal or retirement). */
+    /** Absence means the whole Account's request observations were retired. */
     machineIds?: readonly string[];
 }>;
 type ReachabilitySubscription = Readonly<{
@@ -81,7 +61,7 @@ function ensureScope(scope: MachineReachabilityScope): ScopeReachability {
 }
 
 function retireEmptyScope(scope: MachineReachabilityScope, state: ScopeReachability | undefined): void {
-    if (!state || state.relay.size > 0 || state.direct.size > 0 || state.observedSinceWithdrawal) return;
+    if (!state || state.relay.size > 0 || state.direct.size > 0) return;
     const accounts = scopes.get(scope.serverId);
     accounts?.delete(scope.accountId);
     if (accounts?.size === 0) scopes.delete(scope.serverId);
@@ -104,26 +84,15 @@ function publishReachabilityChange(change: MachineRequestReachabilityChange | nu
     }
 }
 
-/** Called by the existing Account socket's transport-withdrawal edge. Reconnect alone is not a presence observation. */
-export function withdrawMachinePresenceForScope(scope: MachineReachabilityScope): void {
-    const normalized = normalizeScope(scope);
-    if (!normalized) return;
-    ensureScope(normalized).observedSinceWithdrawal = new Set();
-    publishReachabilityChange({ scope: normalized });
+/** Transport lifecycle adapter: losing the Account socket supplies no new Machine presence fact. */
+export function withdrawMachinePresenceForScope(_scope: MachineReachabilityScope): void {
+    // Keep the last admitted activity and request verdict; only their producers can replace them.
 }
 
-/** Capture before an HTTP read so a pre-withdrawal response cannot restore old presence. */
-export function captureMachinePresenceObservation(scope: MachineReachabilityScope | null): (machineIds: readonly string[]) => void {
-    const normalized = normalizeScope(scope);
-    const state = normalized ? readScope(normalized) : undefined;
-    const captured = state?.observedSinceWithdrawal;
-    return machineIds => {
-        if (!captured || state?.observedSinceWithdrawal !== captured) return;
-        const changedMachineIds: string[] = [];
-        for (const machineId of machineIds) {
-            if (!captured.has(machineId)) { captured.add(machineId); changedMachineIds.push(machineId); }
-        }
-        if (changedMachineIds.length > 0 && normalized) publishReachabilityChange({ scope: normalized, machineIds: changedMachineIds });
+/** Ingress adapter for existing readers; applying their rows/activity already publishes the presence fact. */
+export function captureMachinePresenceObservation(_scope: MachineReachabilityScope | null): (machineIds: readonly string[]) => void {
+    return () => {
+        // No second observation set or publication alongside the activity owner.
     };
 }
 
@@ -195,14 +164,17 @@ export function readMachineRequestReachabilityRevision(): number {
  */
 export function isMachineReachable(
     scope: MachineReachabilityScope | null | undefined,
-    machine: Readonly<{ id: string; active: boolean; activeAt?: number | null; revokedAt?: number | null }>,
+    machine: MachinePresenceV1 & Readonly<{ id: string }>,
     nowMs: number = Date.now(),
     resolveScopeId?: ProfileScopeResolver,
 ): boolean {
     return resolveMachineReachability(scope, machine, nowMs, resolveScopeId) === 'reachable';
 }
 
-/** Shared presence verdict; unknown never supplies execution admission. */
+/**
+ * Shared presence verdict; a missing Account scope cannot supply execution admission.
+ * A socket lifecycle change retains the last Machine activity, request and revocation facts.
+ */
 export function resolveMachineReachability(
     scope: MachineReachabilityScope | null | undefined,
     machine: Parameters<typeof isMachineReachable>[1],
@@ -210,38 +182,14 @@ export function resolveMachineReachability(
     resolveScopeId?: ProfileScopeResolver,
 ): SessionMachineReachability {
     const normalized = normalizeScope(scope, resolveScopeId);
-    if (!normalized) return 'unknown';
-    const state = readScope(normalized);
-    const observation = readObservation(state, machine.id);
-    const requestOutcome = observation?.outcome;
+    const state = normalized ? readScope(normalized) : undefined;
+    const requestOutcome = readObservation(state, machine.id)?.outcome;
     if ((typeof machine.revokedAt === 'number' && Number.isFinite(machine.revokedAt) && machine.revokedAt > 0)
         || requestOutcome === 'failed') return 'unreachable';
-    const observedSinceWithdrawal = state?.observedSinceWithdrawal;
-    if (observedSinceWithdrawal && !observedSinceWithdrawal.has(machine.id)) return 'unknown';
-    const graceMs = readMachineOnlineGraceMsFromEnv();
-    const previous = derivedReachability.get(machine);
-    const activity = readMachineActivity(machine);
-    const activeAt = activity.activeAt;
-    if (previous && previous.serverId === normalized.serverId && previous.accountId === normalized.accountId
-        && previous.machineId === machine.id && previous.active === activity.active && previous.activeAt === activeAt
-        && previous.revokedAt === machine.revokedAt && previous.observation === observation
-        && previous.graceMs === graceMs
-        && Number.isFinite(nowMs) && nowMs >= previous.evaluatedAtMs
-        // Protocol grace is inclusive. A reachable timed verdict must be re-derived
-        // after that boundary; an expired verdict stays expired as time advances.
-        && (!previous.reachable || graceMs <= 0 || typeof activeAt !== 'number' || !activeAt || !Number.isFinite(activeAt)
-            || Math.max(0, nowMs - activeAt) <= graceMs)) {
-        return previous.reachable ? 'reachable' : 'unreachable';
-    }
-    const reachable = isMachineReachableV1({ machine: { active: activity.active, activeAt, revokedAt: machine.revokedAt }, nowMs, graceMs, requestOutcome });
-    if (Number.isFinite(nowMs)) {
-        derivedReachability.set(machine, {
-            serverId: normalized.serverId, accountId: normalized.accountId, machineId: machine.id,
-            active: activity.active, activeAt, revokedAt: machine.revokedAt, observation,
-            graceMs, evaluatedAtMs: nowMs, reachable,
-        });
-    }
-    return reachable ? 'reachable' : 'unreachable';
+    const reachable = isMachineOnline(machine, nowMs);
+    if (!reachable) return 'unreachable';
+    if (!normalized) return 'unknown';
+    return 'reachable';
 }
 
 /** The protocol-owned verdict; a failed request overrides pushed presence until a later reply or reconnect. */
@@ -274,13 +222,10 @@ export function clearMachineRequestReachabilityForScope(scope: MachineReachabili
 }
 
 export function clearMachineRequestReachabilityForTest(): void {
-    derivedReachability = new WeakMap();
     let changed = false;
     for (const accounts of scopes.values()) {
         for (const state of accounts.values()) {
-            changed ||= state.relay.size > 0 || state.direct.size > 0 || state.observedSinceWithdrawal !== undefined;
-            // Retire captured ingress callbacks along with their scope.
-            state.observedSinceWithdrawal = undefined;
+            changed ||= state.relay.size > 0 || state.direct.size > 0;
         }
     }
     scopes.clear();
@@ -288,7 +233,7 @@ export function clearMachineRequestReachabilityForTest(): void {
     publishReachabilityChange(null, { answer: true });
 }
 
-// Each test starts with fresh observations: a prior test's Socket teardown must
-// not leave its Home unknown. Vitest's setup runs this only once this module loads.
+// Each test starts with fresh request observations. Vitest's setup registers
+// this reset only once this module loads.
 (globalThis as unknown as { [key: symbol]: Map<string, () => void> | undefined })[Symbol.for('happier.vitest.testResets')]
     ?.set('machineRequestReachability', clearMachineRequestReachabilityForTest);

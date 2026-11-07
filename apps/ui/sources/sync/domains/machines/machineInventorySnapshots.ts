@@ -207,6 +207,7 @@ export function resolveAllProfileMachineInventorySnapshots(params: Readonly<{
             const executionEligibleMachineIds: string[] = [];
             const executionPendingMachineIds: string[] = [];
             const machines: MachineDisplayRenderable[] = [];
+            let warmById: ReadonlyMap<string, MachineDisplayRenderable> | undefined;
             for (const machine of raw.machines) {
                 if (params.machineId && machine.id !== params.machineId) continue;
                 // Presence is a live, self-expiring fact. Resolve it once for
@@ -217,7 +218,14 @@ export function resolveAllProfileMachineInventorySnapshots(params: Readonly<{
                         executionPendingMachineIds.push(machine.id);
                     }
                 }
-                if (isPersistentMachine(machine)) machines.push(buildMachineDisplayRenderableFromMachine(machine));
+                if (isPersistentMachine(machine)) {
+                    if (accountScope && machine.metadata === null && machine.availability === undefined) {
+                        warmById ??= new Map(readWarmMachineDisplays({ profile, serverIdentityId,
+                            accountId: accountScope.accountId, machineId: params.machineId,
+                            loadWarmEntries: params.loadWarmEntries }).map(display => [display.id, display]));
+                    }
+                    machines.push(buildMachineDisplayRenderableFromMachine(machine, warmById?.get(machine.id)));
+                }
             }
             snapshots.push(Object.freeze({
                 kind: 'resolved',

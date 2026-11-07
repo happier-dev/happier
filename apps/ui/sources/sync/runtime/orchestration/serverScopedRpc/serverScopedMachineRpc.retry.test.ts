@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
+import type { MachinePublishedRowV1 } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { installSessionOpsNetworkBoundary, type SessionOpsRpcRequest } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import { createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -26,6 +27,8 @@ const {
     clearMachineRequestReachabilityForTest,
     readMachineRequestReachabilityObservation,
     recordMachineRequestFailed,
+    resolveMachineReachability,
+    withdrawMachinePresenceForScope,
 } = await import('@/sync/domains/machines/reachability/machineReachability');
 
 // The remote Machine owns the same synthetic legacy Account key as the client.
@@ -37,7 +40,7 @@ const cipher = encryption.getMachineEncryption('machine-1');
 if (!cipher) throw new Error('Expected initialized Machine encryption');
 const content = { mode: 'e2ee' as const, cipher };
 let home: Awaited<ReturnType<typeof boundary.addHome>>;
-const publishedMachine = { id: 'machine-1', metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0, dataEncryptionKey: null };
+const publishedMachine = { id: 'machine-1', managedMachineRef: null, metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0, dataEncryptionKey: null } satisfies MachinePublishedRowV1;
 
 async function decodeRequest(request: SessionOpsRpcRequest) {
     return await socketRpcCodec.decodeRequestParams(content, request.payload, `${request.targetId}:${request.method}`);
@@ -120,6 +123,49 @@ describe('machineRpcWithServerScope (scoped encrypted network)', () => {
         await resetServerReachabilitySupervisors();
     });
 
+    it.each(['not-shared-machine', 'absent-machine'])('refuses a finite Project Action without disclosing or dispatching to %s', async machineId => {
+        let selectedReads = 0;
+        boundary.setHttpResponder(async (input, init) => {
+            const url = new URL(String(input));
+            if (url.pathname === '/v1/machines/read-batch') {
+                selectedReads += 1;
+                return createMachineReadBatchResponseFixture(init?.body, () => null);
+            }
+            return null;
+        });
+        const { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } = await import('@happier-dev/protocol/actions/projectActionFamily');
+        await expect(machineRpcWithServerScope({ serverId: home.id, machineId,
+            method: PROJECT_FINITE_ACTION_RPC_METHODS_V1['projects.script.run'],
+            payload: { command: 'private-project-command' }, timeoutMs: 5_000,
+        })).rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN });
+        expect(selectedReads).toBe(1);
+        expect(boundary.requests).toHaveLength(0);
+    });
+
+    it('retains known Machine presence when a request completes across repeated transport withdrawal', async () => {
+        const issued = createDeferred<void>();
+        const reply = createDeferred<void>();
+        const scope = { serverId: home.id, accountId: 'account-a' };
+        const machine = { id: 'machine-1', active: true, activeAt: 0 };
+        withdrawMachinePresenceForScope(scope);
+        expect(resolveMachineReachability(scope, machine)).toBe('reachable');
+        boundary.setRpcAckResponder(async request => {
+            const decoded = await decodeRequest(request);
+            issued.resolve();
+            await reply.promise;
+            return { ok: true, result: await socketRpcCodec.encodeResponse(content, { ok: true }, decoded.callId) };
+        });
+        const pending = machineRpcWithServerScope({ serverId: home.id, machineId: machine.id,
+            method: 'method-test', payload: {}, preferScoped: true });
+        await issued.promise;
+        withdrawMachinePresenceForScope(scope);
+        reply.resolve();
+        await expect(pending).resolves.toEqual({ ok: true });
+        expect(resolveMachineReachability(scope, machine)).toBe('reachable');
+        expect(resolveMachineReachability(scope, { ...machine, id: 'untouched-machine' })).toBe('reachable');
+        expect(resolveMachineReachability(scope, { ...machine, revokedAt: 1 })).toBe('unreachable');
+    });
+
     it('records a successful reply under the captured credential Account after credentials change', async () => {
         const issued = createDeferred<void>();
         const reply = createDeferred<void>();
@@ -171,7 +217,7 @@ describe('machineRpcWithServerScope (scoped encrypted network)', () => {
     });
 
     it.each([RPC_ERROR_CODES.FORBIDDEN, RPC_ERROR_CODES.METHOD_NOT_AVAILABLE, 'MACHINE_ENCRYPTION_UNAVAILABLE', 'MACHINE_RPC_TIMEOUT', 'action_failed'])('preserves the Computer RPC refusal through the real Action consumer: %s', async errorCode => {
-        const { createActionExecutor, createUnavailableRuntimeActionExecutor } = await import('@happier-dev/protocol');
+        const [{ createActionExecutor}, { createUnavailableRuntimeActionExecutor}] = await Promise.all([import('@happier-dev/protocol/actions/actionExecutor'), import('@happier-dev/protocol/actions/executor/dispatch')]);
         const { ActionExecuteFailureSchema } = await import('@happier-dev/protocol/actions/actionExecutionResult');
         const { createComputerRuntimeActionExecutor } = await import('@/sync/domains/computer/actions/runtimeActionExecutor');
         const { createComputerControlClient } = await import('@/sync/domains/computer/computerControlClient');
@@ -184,7 +230,7 @@ describe('machineRpcWithServerScope (scoped encrypted network)', () => {
             if (errorCode === 'action_failed') throw new Error('Unclassified network failure');
             return { ok: false, error: 'Owner refused the request', errorCode };
         });
-        const executor = createActionExecutor({ runtimeActionExecute: createComputerRuntimeActionExecutor({ fallback: createUnavailableRuntimeActionExecutor() }) } as import('@happier-dev/protocol').ActionExecutorDeps);
+        const executor = createActionExecutor({ runtimeActionExecute: createComputerRuntimeActionExecutor({ fallback: createUnavailableRuntimeActionExecutor() }) } as import('@happier-dev/protocol/actions/executor/types').ActionExecutorDeps);
         let failure: unknown;
         const execute: typeof executor.execute = async (...args) => {
             const result = await executor.execute(...args);
@@ -585,7 +631,7 @@ describe('machineRpcWithServerScope (scoped encrypted network)', () => {
         try {
             const { createUiWorkflowActionTransport } = await import('@/sync/ops/actions/workflowActionTransport');
             const execute = createUiWorkflowActionTransport({
-                account: { serverId: home.id, accountId: 'account-a', assertCurrent: () => {} },
+                account: { serverId: home.id, accountId: 'account-a', assertCurrent: () => {}, assertResultCurrent: () => {} },
                 resolveFallbackMachineId: () => null,
                 transport: request => machineRpcWithServerScope({ ...request, preferScoped: true, timeoutMs: 4_000 }),
             });

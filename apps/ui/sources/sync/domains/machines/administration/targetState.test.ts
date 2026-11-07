@@ -162,7 +162,7 @@ describe('snapshot Administration candidates', () => {
 
         expect(rows[0]?.candidate.availability).toBe('offline');
     });
-    it('keeps a selected machine well formed while presence is withdrawn and recovers on a fresh observation', () => {
+    it('keeps the selected Machine online through transport withdrawal and a fresh observation', () => {
         const scope = { serverId: profile.serverIdentityId!, accountId: 'account-b' };
         const selectedMachine = machine({ id: 'machine-b', active: true });
         const readCandidate = () => buildMachineAdministrationCandidatesFromSnapshots({
@@ -175,11 +175,11 @@ describe('snapshot Administration candidates', () => {
 
         withdrawMachinePresenceForScope(scope);
         const withdrawn = readCandidate();
-        expect(withdrawn.availability).toBe('unknown');
+        expect(withdrawn.availability).toBe('online');
         expect(resolveMachineAdministrationTargetState({ storedTarget: initial.target, candidates: [withdrawn] }))
-            .toEqual({ kind: 'missing', target: initial.target, snapshot: withdrawn, inventoryKnown: false });
+            .toEqual({ kind: 'online', target: initial.target, machine: withdrawn });
         expect(resolveMachineAdministrationTargetState({ storedTarget: null, candidates: [withdrawn] }))
-            .toEqual({ kind: 'unselected', candidates: [withdrawn] });
+            .toEqual({ kind: 'online', target: withdrawn.target, machine: withdrawn });
 
         captureMachinePresenceObservation(scope)([selectedMachine.id]);
         const restored = readCandidate();

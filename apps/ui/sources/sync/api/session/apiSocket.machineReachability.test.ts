@@ -23,81 +23,68 @@ afterEach(() => { for (const dispose of disposers.splice(0)) dispose(); apiSocke
 afterAll(() => boundary.dispose());
 
 describe('Machine reachability through the authenticated socket ingress', () => {
-    it('restores presence through an admitted HTTP census only for its captured Home and Account', async () => {
-        const { createPlainMachineRowFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
-        const { createDeferred } = await import('@/dev/testkit');
-        const { fetchAndApplyMachines } = await import('@/sync/engine/machines/syncMachines');
+    it('retains the 65-Machine online/offline fleet across socket loss, reconnect and errors', async () => {
         const { resolveMachinePickerPresence } = await import('@/sync/domains/machines/identity/resolveMachinePickerPresence');
         const socket = boundary.socketBoundaries.at(-1)!;
         const scope = { serverId: home.id, accountId: 'account-a' };
         const now = Date.now();
-        const row = { ...createPlainMachineRowFixture({ id: 'machine', accountId: scope.accountId }), active: false, activeAt: now - 97_000 };
-        const machine = { id: row.id, active: true, activeAt: row.activeAt };
-        const entered = createDeferred<void>();
-        const release = createDeferred<void>();
-        const read = (serverId: string, request: () => Promise<Response>, token = home.token) => fetchAndApplyMachines({
-            credentials: { token }, sourceServerId: serverId, expectedAccountMode: 'plain',
-            encryption: null, machineDataKeys: new Map(), request, applyMachines: () => {},
-        });
-        const pending = read(home.id, async () => { entered.resolve(); await release.promise; return Response.json([row]); });
-        await entered.promise;
+        const machines = Array.from({ length: 65 }, (_, index) => ({
+            id: `machine-${index}`, active: index < 2, activeAt: index < 2 ? now : now - 97_000,
+            presenceProtocolVersion: 1 as const,
+        }));
+        const statuses = () => machines.map(machine => resolveMachinePickerPresence(machine, Date.now(), scope).status);
+        expect(statuses()).toEqual([...Array(2).fill('online'), ...Array(63).fill('offline')]);
+        const initial = statuses();
         socket.trigger('disconnect', 'transport close');
+        expect(statuses()).toEqual(initial);
         socket.trigger('connect');
-        release.resolve();
-        await pending;
-        // A census already in flight at withdrawal cannot bless retained presence.
-        expect.soft(resolveMachinePickerPresence(machine, now, scope).status).toBe('unknown');
-        await read('another-home', async () => Response.json([row]));
-        expect.soft(resolveMachinePickerPresence(machine, now, scope).status).toBe('unknown');
-        const other = await boundary.addHome('https://presence-other-account.example.test', 'account-b');
-        await read(home.id, async () => Response.json([row]), other.token);
-        expect.soft(resolveMachinePickerPresence(machine, now, scope).status).toBe('unknown');
-        await read(home.id, async () => Response.json([row]));
-        expect(resolveMachinePickerPresence({ ...machine, active: false }, now, scope).status).toBe('offline');
+        expect(statuses()).toEqual(initial);
+        socket.trigger('connect_error', new Error('Transport unavailable'));
+        expect(statuses()).toEqual(initial);
     });
-    it('withdraws retained presence across own loss and reconnect until exact-scope fresh presence arrives', async () => {
+    it('retains reachability through loss and reconnect until fresh activity changes it', async () => {
         const { resolveMachinePickerPresence } = await import('@/sync/domains/machines/identity/resolveMachinePickerPresence');
         const { resolveMachineSpawnReadiness, canAttemptMachineSpawn } = await import('@/sync/domains/machines/identity/resolveMachineSpawnReadiness');
         const socket = boundary.socketBoundaries.at(-1)!;
         const scope = { serverId: home.id, accountId: 'account-a' };
         const now = Date.now();
-        const machine = { id: 'machine', active: true, activeAt: now };
-        const { MachineActivityAccumulator } = await import('@/sync/engine/activity/machineActivityAccumulator');
-        const accumulator = new MachineActivityAccumulator((updates, options) => {
-            for (const update of updates.values()) if (update.id === machine.id) Object.assign(machine, { active: update.active, activeAt: update.activeAt });
-            options?.onApplied?.();
-        });
+        const { createMachineFixture } = await import('@/dev/testkit');
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { flushMachineActivityUpdates } = await import('@/sync/engine/socket/socket');
+        const { resolveServerScopedMachine } = await import('@/sync/domains/machines/resolveServerScopedMachine');
+        const previousState = storage.getState();
+        let machine = createMachineFixture({ id: 'machine', active: true, activeAt: now, presenceProtocolVersion: 1 });
+        storage.getState().applyMachines([machine], false, { sourceServerId: scope.serverId });
         const unsubscribe = apiSocket.onMessage('ephemeral', (raw) => {
             const { success, data } = EphemeralUpdateSchema.safeParse(raw);
             if (!success || data.type !== 'machine-activity') return;
             const observe = owner.captureMachinePresenceObservation(scope);
-            accumulator.addUpdate(data, { sourceServerId: scope.serverId, onApplied: () => observe([data.id]) });
+            flushMachineActivityUpdates({ updates: new Map([[data.id, data]]), sourceServerId: scope.serverId });
+            machine = resolveServerScopedMachine(storage.getState(), scope.serverId, machine.id) ?? machine;
+            observe([data.id]);
         });
-        disposers.push(() => { unsubscribe(); accumulator.reset(); });
-        // Warm the canonical accumulator so the next same-state heartbeat is queued.
-        accumulator.addUpdate(machine, { sourceServerId: scope.serverId });
+        disposers.push(() => { unsubscribe(); storage.setState(previousState, true); });
         expect(resolveMachinePickerPresence(machine, now, scope).status).toBe('online');
         socket.trigger('disconnect', 'transport close');
         vi.useFakeTimers({ toFake: ['Date'] });
         vi.setSystemTime(now + 97_000);
-        const checkUnknown = () => {
-            expect.soft(resolveMachinePickerPresence(machine, Date.now(), scope)).toEqual({ status: 'unknown', selectable: false });
-            expect.soft(owner.isMachineReachable(scope, machine)).toBe(false);
-            expect.soft(resolveMachineSpawnReadiness({ selectedMachineId: machine.id, machine, scope }).status).toBe('unknown');
-            expect.soft(resolveMachineSpawnReadiness({ selectedMachineId: machine.id, machine, scope, machineReachable: false }).status).toBe('unknown');
-            expect.soft(canAttemptMachineSpawn({ selectedMachineId: machine.id, machine, scope })).toBe(false);
+        const checkRetained = () => {
+            expect.soft(resolveMachinePickerPresence(machine, Date.now(), scope)).toEqual({ status: 'online', selectable: true });
+            expect.soft(owner.isMachineReachable(scope, machine)).toBe(true);
+            expect.soft(resolveMachineSpawnReadiness({ selectedMachineId: machine.id, machine, scope }).status).toBe('ready');
+            expect.soft(resolveMachineSpawnReadiness({ selectedMachineId: machine.id, machine, scope, machineReachable: false }).status).toBe('offline');
+            expect.soft(canAttemptMachineSpawn({ selectedMachineId: machine.id, machine, scope })).toBe(true);
         };
-        checkUnknown();
+        checkRetained();
         socket.trigger('connect');
-        checkUnknown();
+        checkRetained();
         socket.trigger('ephemeral', { type: 'machine-activity', id: 'another-machine', active: true, activeAt: Date.now() });
-        checkUnknown();
+        checkRetained();
         // Other Home/Account facts are not withdrawn by this socket.
         expect(resolveMachinePickerPresence(machine, now, { ...scope, accountId: 'account-b' }).status).toBe('online');
         expect(resolveMachinePickerPresence(machine, now, { ...scope, serverId: 'another-home' }).status).toBe('online');
         socket.trigger('ephemeral', { type: 'machine-activity', id: machine.id, active: true, activeAt: Date.now() });
-        expect(owner.resolveMachineReachability(scope, machine)).toBe('unknown');
-        accumulator.flush();
+        expect(owner.resolveMachineReachability(scope, machine)).toBe('reachable');
         expect(resolveMachinePickerPresence({ ...machine, activeAt: Date.now() }, Date.now(), scope).status).toBe('online');
         expect(owner.resolveMachineReachability(scope, { ...machine, revokedAt: now })).toBe('unreachable');
         // A real offline observation must restore the ordinary offline verdict.
@@ -106,6 +93,62 @@ describe('Machine reachability through the authenticated socket ingress', () => 
         vi.setSystemTime(now + 194_000);
         socket.trigger('ephemeral', { type: 'machine-activity', id: machine.id, active: false, activeAt: now + 97_001 });
         expect(resolveMachinePickerPresence({ ...machine, active: false }, Date.now(), scope).status).toBe('offline');
+    });
+    describe('intentional visibility pause', () => {
+        async function presenceFixture() {
+            const { createMachineFixture } = await import('@/dev/testkit');
+            const { storage } = await import('@/sync/domains/state/storage');
+            const scope = { serverId: home.id, accountId: 'account-a' };
+            const machine = createMachineFixture({ id: 'machine', active: true, activeAt: Date.now(), presenceProtocolVersion: 1 });
+            const previousState = storage.getState();
+            storage.getState().applyMachines([machine], false, { sourceServerId: scope.serverId });
+            disposers.push(() => storage.setState(previousState, true));
+            // Fresh presence for this machine has been observed on the live socket.
+            owner.captureMachinePresenceObservation(scope)([machine.id]);
+            return { scope, machine };
+        }
+        const reconnect = async () => {
+            apiSocket.initialize({ endpoint: home.serverUrl, serverId: home.id, token: home.token,
+                request: async () => Response.json({ cursor: 0 }), isCurrent: () => true }, null);
+            await waitForHomeGovernance(() => expect(boundary.socketBoundaries.at(-1)?.socket.connected).toBe(true));
+        };
+        it('keeps retained presence through a pause and resume until fresh presence arrives', async () => {
+            const { scope, machine } = await presenceFixture();
+            expect(owner.resolveMachineReachability(scope, machine)).toBe('reachable');
+            apiSocket.disconnect({ visibilityPause: true });
+            expect(owner.resolveMachineReachability(scope, machine)).toBe('reachable');
+            await reconnect();
+            expect(owner.resolveMachineReachability(scope, machine)).toBe('reachable');
+        });
+        it('becomes unreachable once fresh presence says the machine went offline while paused', async () => {
+            const { scope, machine } = await presenceFixture();
+            apiSocket.disconnect({ visibilityPause: true });
+            await reconnect();
+            boundary.socketBoundaries.at(-1)!.trigger('ephemeral', { type: 'machine-activity', id: machine.id, active: false, activeAt: Date.now() });
+            const { resolveServerScopedMachine } = await import('@/sync/domains/machines/resolveServerScopedMachine');
+            const { storage } = await import('@/sync/domains/state/storage');
+            const fresh = resolveServerScopedMachine(storage.getState(), scope.serverId, machine.id) ?? machine;
+            expect(owner.resolveMachineReachability(scope, { ...fresh, active: false })).toBe('unreachable');
+        });
+        it('keeps the admitted Account mode through a pause and revalidates it once fresh transport arrives', async () => {
+            const { getAccountEncryptionModeCacheRevision } = await import('@/sync/api/account/apiAccountEncryptionMode');
+            const admitted = getAccountEncryptionModeCacheRevision(home.id);
+            apiSocket.disconnect({ visibilityPause: true });
+            expect(getAccountEncryptionModeCacheRevision(home.id)).toBe(admitted);
+            await reconnect();
+            expect(getAccountEncryptionModeCacheRevision(home.id)).toBeGreaterThan(admitted);
+        });
+        it('still withdraws the Account mode on a plain disconnect', async () => {
+            const { getAccountEncryptionModeCacheRevision } = await import('@/sync/api/account/apiAccountEncryptionMode');
+            const admitted = getAccountEncryptionModeCacheRevision(home.id);
+            apiSocket.disconnect();
+            expect(getAccountEncryptionModeCacheRevision(home.id)).toBeGreaterThan(admitted);
+        });
+        it('keeps known presence on a plain disconnect', async () => {
+            const { scope, machine } = await presenceFixture();
+            apiSocket.disconnect();
+            expect(owner.resolveMachineReachability(scope, machine)).toBe('reachable');
+        });
     });
     it('keeps a request-scoped Forbidden response from poisoning Machine reachability through the real scoped RPC owner', async () => {
         const { machineRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc');
@@ -176,7 +219,7 @@ describe('Machine reachability through the authenticated socket ingress', () => 
         await waitForHomeGovernance(() => expect(boundary.socketBoundaries.at(-1)?.socket.connected).toBe(true));
         const socket = boundary.socketBoundaries.at(-1)!;
         const scope = { serverId: home.id, accountId: 'account-a' };
-        expect(owner.resolveMachineReachability(scope, { id: 'unaffected', active: true })).toBe('unknown');
+        expect(owner.resolveMachineReachability(scope, { id: 'unaffected', active: true })).toBe('reachable');
         owner.recordMachineRequestFailed({ ...scope, machineId: 'machine' });
         socket.trigger('ephemeral', { type: 'machine-activity', id: 'machine', active: true, activeAt: 100, reconnected: true });
         socket.trigger('disconnect', 'transport close');

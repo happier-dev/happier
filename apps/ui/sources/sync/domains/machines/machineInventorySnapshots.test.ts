@@ -62,10 +62,39 @@ const accountScopesByServerId = new Map(profiles.map(profile => [profile.serverI
 
 describe('resolveAllProfileMachineInventorySnapshots', () => {
     beforeEach(clearMachineRequestReachabilityForTest);
+    it('keeps the scoped last-known name and home while opening live content, without admitting the cached row', () => {
+        const live = { ...machine({ id: 'selected' }), metadata: null, availability: undefined };
+        const cached: MachineDisplayCacheEntryV1 = { machineId: live.id, metadataVersion: 1, updatedAt: 10,
+            active: false, activeAt: 0, revokedAt: null, displayName: 'Studio', homeDir: '/Users/alice' };
+        const loadWarmEntries = vi.fn(() => ({ [live.id]: cached }));
+        const input = { profiles: [profiles[0]], serverId: 'srv_server_a', machineId: live.id,
+            activeServerId: 'local-a', activeMachines: [], accountScopesByServerId,
+            machineListByServerId: { 'local-a': [live] }, machineListStatusByServerId: { 'local-a': 'loading' as const },
+            loadWarmEntries };
+        const pending = resolveAllProfileMachineInventorySnapshots(input)[0];
+        expect(pending.machines[0]?.metadata).toMatchObject({ displayName: 'Studio', homeDir: '/Users/alice' });
+        expect(resolveAllProfileMachineInventorySnapshots(input)[0].machines[0]).toBe(pending.machines[0]);
+        cached.displayName = 'Renamed studio';
+        const renamed = resolveAllProfileMachineInventorySnapshots(input)[0].machines[0];
+        expect(renamed).not.toBe(pending.machines[0]);
+        expect(renamed?.metadata?.displayName).toBe('Renamed studio');
+        expect(pending.kind === 'resolved' && pending.executionEligibleMachineIds).toEqual([]);
+        expect(live.metadata).toBeNull();
+        const locked = { ...live, availability: { kind: 'locked' as const, reason: 'recipient_access_refused' as const } };
+        expect(resolveAllProfileMachineInventorySnapshots({ ...input,
+            machineListByServerId: { 'local-a': [locked] } })[0].machines[0]?.metadata).toBeNull();
+        expect(resolveAllProfileMachineInventorySnapshots({ ...input,
+            accountScopesByServerId: new Map() })[0].machines[0]?.metadata).toBeNull();
+        const opened = machine({ id: live.id });
+        loadWarmEntries.mockClear();
+        expect(resolveAllProfileMachineInventorySnapshots({ ...input,
+            machineListByServerId: { 'local-a': [opened] } })[0].machines[0]?.metadata?.displayName).toBe(live.id);
+        expect(loadWarmEntries).not.toHaveBeenCalled();
+    });
     it('derives only changed display rows across a 138-Machine fleet while keeping live admission current', () => {
         let displayReads = 0;
         const makeRow = (id: string) => {
-            const row = machine({ id, active: true });
+            const row = { ...machine({ id, active: true }), presenceProtocolVersion: 1 as const };
             Object.defineProperty(row.metadata!, 'displayName', { configurable: true,
                 get: () => { displayReads += 1; return id; } });
             return row;
@@ -91,18 +120,26 @@ describe('resolveAllProfileMachineInventorySnapshots', () => {
         // The metadata getter observes real display conversion, not a mocked internal helper.
         expect(displayReads).toBe(initialReads + updates * initialReads / rows.length);
         const beforeHeartbeat = resolveAllProfileMachineInventorySnapshots(input)[0];
-        rows[1].activeAt += 1;
-        const heartbeat = resolveAllProfileMachineInventorySnapshots(input)[0];
+        // The projection consumes immutable records from the Machine store.
+        const heartbeatRows = rows.map((row, index) => index === 1 ? { ...row, activeAt: row.activeAt + 1 } : row);
+        const heartbeatInput = { ...input, activeMachines: heartbeatRows, machineListByServerId: { 'local-a': heartbeatRows } };
+        const heartbeat = resolveAllProfileMachineInventorySnapshots(heartbeatInput)[0];
         expect(heartbeat.machines[1]).not.toBe(beforeHeartbeat.machines[1]);
+        expect(beforeHeartbeat.machines[1].activeAt).toBe(20);
         expect(heartbeat.machines[1].activeAt).toBe(21);
         expect(heartbeat.machines[2]).toBe(beforeHeartbeat.machines[2]);
-        expect(resolveAllProfileMachineInventorySnapshots({ ...input, nowMs: 20 + 24 * 60 * 60 * 1000 })[0])
-            .toMatchObject({ executionEligibleMachineIds: [] });
-        rows[1].revokedAt = 1;
-        expect(resolveAllProfileMachineInventorySnapshots(input)[0])
+        expect(resolveAllProfileMachineInventorySnapshots({ ...heartbeatInput, nowMs: 20 + 24 * 60 * 60 * 1000 })[0])
+            .toMatchObject({ executionEligibleMachineIds: rows.map(row => row.id) });
+        const offlineRows = heartbeatRows.map((row, index) => index === 1 ? { ...row, active: false } : row);
+        expect(resolveAllProfileMachineInventorySnapshots({ ...heartbeatInput,
+            activeMachines: offlineRows, machineListByServerId: { 'local-a': offlineRows } })[0])
+            .toMatchObject({ executionEligibleMachineIds: expect.not.arrayContaining([rows[1].id]) });
+        const revokedRows = heartbeatRows.map((row, index) => index === 1 ? { ...row, revokedAt: 1 } : row);
+        expect(resolveAllProfileMachineInventorySnapshots({ ...heartbeatInput,
+            activeMachines: revokedRows, machineListByServerId: { 'local-a': revokedRows } })[0])
             .toMatchObject({ executionEligibleMachineIds: expect.not.arrayContaining([rows[1].id]) });
     });
-    it('keeps unchanged-row reuse subordinate to Account-scoped presence withdrawal and fresh observation', () => {
+    it('retains unchanged-row eligibility through Account transport withdrawal and fresh observation', () => {
         const row = machine({ id: 'withdrawn-row', active: true });
         const scope = { serverId: 'srv_server_a', accountId: 'account-1' };
         const input = { profiles: [profiles[0]], activeServerId: 'local-a', activeMachines: [row],
@@ -112,7 +149,7 @@ describe('resolveAllProfileMachineInventorySnapshots', () => {
         expect(admitted).toMatchObject({ executionEligibleMachineIds: [row.id] });
         withdrawMachinePresenceForScope(scope);
         const withdrawn = resolveAllProfileMachineInventorySnapshots(input)[0];
-        expect(withdrawn).toMatchObject({ executionEligibleMachineIds: [] });
+        expect(withdrawn).toMatchObject({ executionEligibleMachineIds: [row.id] });
         expect(withdrawn.machines[0]).toBe(admitted.machines[0]);
         expect(resolveAllProfileMachineInventorySnapshots({ ...input,
             accountScopesByServerId: new Map([[scope.serverId, { ...scope, accountId: 'account-2' }]]) })[0])
