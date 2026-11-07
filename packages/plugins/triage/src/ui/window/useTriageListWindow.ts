@@ -4,7 +4,7 @@ import { usePluginHostApi, usePluginHostReadiness, usePluginUiEphemeralSharedSco
 
 import type { TriageListLensV1 } from '../../projection/listWindow.js';
 import type { TriageListWindowSnapshotV1, TriageListWindowStoreV1 } from '../../projection/listWindowStore.js';
-import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
+import type { TriageListPublicationV1 } from '../list/publication.js';
 import type { TriageRefreshTriggerV1 } from '../../refresh/refreshEligibility.js';
 import {
   acquireTriageListWindow,
@@ -57,7 +57,7 @@ export type TriageMountedListWindowV1 = Readonly<{
   setLens(lens: TriageListLensV1): void;
 }>;
 
-export function useTriageListWindow(shapeOf?: (snapshot: TriageListWindowSnapshotV1) => unknown): TriageMountedListWindowV1 {
+export function useTriageListWindow(publication?: TriageListPublicationV1): TriageMountedListWindowV1 {
   const hostApi = usePluginHostApi();
   const sharedScope = usePluginUiEphemeralSharedScope();
   const hostReadiness = usePluginHostReadiness(Object.is(TRIAGE_DATA_ACTION_EXECUTION_V1.target, 'daemon'));
@@ -69,12 +69,15 @@ export function useTriageListWindow(shapeOf?: (snapshot: TriageListWindowSnapsho
 
   const subscribe = useCallback((listener: () => void) => {
     const lease = acquireTriageListWindow(hostApi, sharedScope, committedReadiness.current);
-    const unsubscribe = subscribeToTriageListWindow(hostApi, listener, sharedScope);
+    const unsubscribe = subscribeToTriageListWindow(hostApi, change => {
+      publication?.synchronize(readTriageMountedWindowReadState(hostApi, sharedScope).snapshot, change);
+      listener();
+    }, sharedScope);
     return () => {
       unsubscribe();
       lease.release();
     };
-  }, [hostApi, sharedScope]);
+  }, [hostApi, sharedScope, publication]);
 
   // Host identity addresses this artifact's local lease; Account/plugin/install
   // isolation and retirement belong to the injected shared scope.
@@ -82,14 +85,12 @@ export function useTriageListWindow(shapeOf?: (snapshot: TriageListWindowSnapsho
     () => readTriageMountedWindowReadState(hostApi, sharedScope),
     [hostApi, sharedScope],
   );
-  const shape = useRef<unknown>(undefined);
   const readShape = useCallback(() => {
     const state = readSnapshot();
-    if (shapeOf === undefined) return state;
-    const next = { readiness: state.readiness, snapshot: shapeOf(state.snapshot) };
-    if (!pluginJsonValuesEqual(shape.current, next)) shape.current = next;
-    return shape.current;
-  }, [readSnapshot, shapeOf]);
+    if (publication === undefined) return state;
+    publication.synchronize(state.snapshot);
+    return `${publication.getRevision()}:${state.readiness?.revision}:${state.readiness?.pending}:${state.readiness?.ready}`;
+  }, [readSnapshot, publication]);
   // The shell subscribes to structure, but always reads the owner's full current snapshot.
   // Ordinary consumers retain the full-snapshot subscription.
   useSyncExternalStore(subscribe, readShape, readShape);

@@ -16,6 +16,7 @@ import { fromCorpusStoredRow, toCorpusStoredValue, type CorpusRowV1 } from '../c
 import type { CorpusSourceInstanceRowV1 } from '../collections/rows.js';
 import { renderSourceQualifiedId } from '../identity/components.js';
 import { deriveConfiguredSourceInstanceTag } from '../identity/tags.js';
+import { readInternalTaskSourceRecordV1, isInternalTaskConfiguredInstanceV1, projectInternalTaskSourceRecordV1 } from '../../internalTasks/configuration.js';
 
 /**
  * The one canonical `source-instances` lifecycle writer.
@@ -167,6 +168,26 @@ export async function readConfiguredSourceInstanceRow(
     return row ? fromCorpusStoredRow<CorpusSourceInstanceRowV1>(row) : null;
 }
 
+/** Resolve a private tuple witness or catalog row address to its canonical stored row. */
+export async function readExactConfiguredSourceInstanceRow(
+    sourceInstances: Pick<CorpusCollectionHandleV1, 'get' | 'identityTag'>,
+    exact: TriageConfiguredSourceInstanceV1 | Readonly<{ sourceInstanceId: string; configurationRowId: string }>,
+    options?: PluginCancellationOptions,
+): Promise<CorpusRowV1<CorpusSourceInstanceRowV1> | null> {
+    const sourceInstanceId = 'instance' in exact ? exact.instance.sourceInstanceId : exact.sourceInstanceId;
+    const builtin = readInternalTaskSourceRecordV1(sourceInstanceId);
+    if (builtin !== null && ('instance' in exact ? isInternalTaskConfiguredInstanceV1(exact)
+        : exact.configurationRowId === builtin.rowId)) return builtin;
+    const tag = 'instance' in exact
+        ? await deriveConfiguredSourceInstanceTag(sourceInstances, {
+            source: exact.instance.source, binding: exact.binding, localInstanceKey: exact.localInstanceKey,
+        }, options)
+        : exact.configurationRowId;
+    const stored = await readConfiguredSourceInstanceRow(sourceInstances, tag, options);
+    return stored !== null && stored.value.configured.instance.sourceInstanceId === sourceInstanceId
+        ? projectInternalTaskSourceRecordV1(stored) : null;
+}
+
 /**
  * Finds the exact row holding one stable `sourceInstanceId`, across both
  * lifecycles.
@@ -190,6 +211,8 @@ export async function findConfiguredSourceInstanceRow(
     sourceInstanceId: string,
     options?: PluginCancellationOptions,
 ): Promise<CorpusRowV1<CorpusSourceInstanceRowV1> | null> {
+    const builtin = readInternalTaskSourceRecordV1(sourceInstanceId);
+    if (builtin !== null) return builtin;
     const seenCursors = new Set<string>();
     let cursor: string | undefined;
     do {
@@ -200,7 +223,9 @@ export async function findConfiguredSourceInstanceRow(
         }, options);
         for (const row of page.rows) {
             const decoded = fromCorpusStoredRow<CorpusSourceInstanceRowV1>(row);
-            if (decoded.value.configured.instance.sourceInstanceId === sourceInstanceId) return decoded;
+            if (decoded.value.configured.instance.sourceInstanceId === sourceInstanceId) {
+                return projectInternalTaskSourceRecordV1(decoded);
+            }
         }
         cursor = advanceConfiguredSourceCollectionCursor(seenCursors, page.nextCursor);
     } while (cursor !== undefined);

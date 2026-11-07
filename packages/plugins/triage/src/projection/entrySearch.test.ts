@@ -121,7 +121,7 @@ function pickerTitles(
         freshness: 'fresh',
         pending: 'idle',
         passes: 1,
-        configuredSources: [{ sourceInstanceId: INSTANCE_ID, source: TRIAGE_TESTKIT_SOURCE, available: true }],
+        configuredSources: [{ sourceInstanceId: INSTANCE_ID, configurationRowId: INSTANCE_ID, source: TRIAGE_TESTKIT_SOURCE, available: true }],
     };
     const view = buildTriagePickerView({
         facts: projectTriagePickerCorpusFacts({ snapshot, nowMs: 6_000 }),

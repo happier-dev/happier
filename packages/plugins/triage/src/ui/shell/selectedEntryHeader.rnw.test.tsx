@@ -12,6 +12,7 @@ import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1 } from '../../actions/entryDetailProtocol.js';
 import {
     TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1,
+    TriageListEntriesInputV1Schema,
     TriageListEntriesResultV1Schema,
     type TriageListEntriesResultV1,
 } from '../../actions/listEntriesProtocol.js';
@@ -23,9 +24,9 @@ import {
     testkitViewer,
 } from '../../corpus/testkit/observations.test-support.js';
 import { renderSurface as renderShellSurface } from '../surface.js';
-import { refreshTriageListWindow, readTriageListWindowReadOwner } from '../window/mountedWindow.js';
+import { acquireTriageListWindow, refreshTriageListWindow, readTriageListWindowReadOwner } from '../window/mountedWindow.js';
 import { reobserveTriagePostMutationRow } from '../detail/postMutationReobservation.js';
-import { triageEntryRowKey, TRIAGE_LIST_DEFAULT_LENS_V1 } from '../../projection/listWindow.js';
+import { triageEntryRowKey, TRIAGE_LIST_DEFAULT_LENS_V1, MAX_TRIAGE_LIST_WINDOW_ROWS_V1 } from '../../projection/listWindow.js';
 import { TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1 } from '../../actions/reobserveEntryProtocol.js';
 import { createTriageEphemeralSharedScopeFixture } from '../window/ephemeralSharedScope.test-support.js';
 import { renderSurface as renderTasksSurface } from '../tasksSurface.js';
@@ -33,6 +34,9 @@ import { INTERNAL_TASK_DESCRIPTOR_V1 } from '../../internalTasks/contribution.js
 import { INTERNAL_TASK_SOURCE_RECORD_V1 } from '../../internalTasks/configuration.js';
 import { TRIAGE_TASKS_LIST_ACTION_LOCAL_ID_V1 } from '../../actions/tasksProtocol.js';
 import { TRIAGE_SHELL_FILL_TEST_ID_V1 } from './root.js';
+import * as listSections from '../list/sections.js';
+import { reduceTriageSurfaceV1, TRIAGE_SURFACE_INITIAL_STATE_V1 } from '../state/surface.js';
+import { readTriageWindowLensV1 } from './lens.js';
 
 // Install the real accepted-render probe before ReactDOM registers its renderer.
 // The browser and composed regression therefore count the same committed work.
@@ -94,7 +98,7 @@ function listResult(listsTheEntry: boolean): TriageListEntriesResultV1 {
     return TriageListEntriesResultV1Schema.parse({
         v: 1,
         configuredSources: [{
-            sourceInstanceId: INSTANCE,
+            sourceInstanceId: INSTANCE, configurationRowId: INSTANCE,
             source: SOURCE,
             displayLabel: 'Example account',
             available: true,
@@ -235,16 +239,18 @@ afterEach(async () => {
 });
 
 describe('the selected entry once the window stops holding it', () => {
-    it('publishes an unreferenced Task title without rendering the list and refreshes referenced blocker names', async () => {
+    it.each([3, 1_000])('publishes one Task title in %i retained rows without rendering unaffected rows and refreshes referenced blocker names', async (count) => {
         const sourceInstanceId = INTERNAL_TASK_SOURCE_RECORD_V1.value.configured.instance.sourceInstanceId;
-        const refs = ['edited', 'dependent', 'blocker'].map(entryId => ({ source: INTERNAL_TASK_SOURCE_V1,
+        const refs = ['edited', 'dependent', 'blocker', ...Array.from({ length: count - 3 }, (_, index) => `task-${index}`)].map(entryId => ({ source: INTERNAL_TASK_SOURCE_V1,
             kindId: 'task', collisionScope: 'personal', entryId }));
-        const titles = ['Independent task', 'Waiting task', 'Required task'];
+        const titles = refs.map((_, index) => ['Independent task', 'Waiting task', 'Required task'][index] ?? `Other task ${index}`);
         const { attention: _attention, ...taskRow } = listResult(true).window.rows[0]!;
-        const parsedResult = TriageListEntriesResultV1Schema.safeParse({ ...listResult(true),
-            configuredSources: [{ sourceInstanceId, source: INTERNAL_TASK_SOURCE_V1, displayLabel: 'Happier tasks', available: true }],
+        const resultPage = (offset: number) => TriageListEntriesResultV1Schema.parse({ ...listResult(true),
+            configuredSources: [{ sourceInstanceId, configurationRowId: INTERNAL_TASK_SOURCE_RECORD_V1.rowId, source: INTERNAL_TASK_SOURCE_V1, displayLabel: 'Happier tasks', available: true }],
             window: { ...listResult(true).window,
-                rows: refs.map((entryRef, index) => ({ ...taskRow, entryRef,
+                rows: refs.slice(offset, offset + MAX_TRIAGE_LIST_WINDOW_ROWS_V1).map((entryRef, pageIndex) => {
+                    const index = offset + pageIndex;
+                    return { ...taskRow, entryRef,
                     selected: { kind: 'selected', sourceInstanceId, reason: 'onlyPresent' },
                     observation: { sourceInstanceId, observedAtMs: 1_760_000_100_000,
                         outcome: { kind: 'present', locator: testkitLocator({ displayPath: titles[index] }),
@@ -252,36 +258,47 @@ describe('the selected entry once the window stops holding it', () => {
                                 state: { presentation: 'active', stage: 'unstarted', nativeLabel: 'To do' },
                                 relations: { blockedBy: index === 1 ? [refs[2]!] : [] } }),
                             viewer: testkitViewer({ involvement: ['assignee'] }) } },
-                })),
-                lanes: [{ sourceInstanceId, source: INTERNAL_TASK_SOURCE_V1, health: { kind: 'walkFinished' }, exhausted: true }],
+                }; }),
+                lanes: [{ sourceInstanceId, source: INTERNAL_TASK_SOURCE_V1,
+                    health: offset + MAX_TRIAGE_LIST_WINDOW_ROWS_V1 >= refs.length ? { kind: 'walkFinished' } : { kind: 'partial', reason: 'more-pages' },
+                    exhausted: offset + MAX_TRIAGE_LIST_WINDOW_ROWS_V1 >= refs.length }],
+                continuations: offset + MAX_TRIAGE_LIST_WINDOW_ROWS_V1 >= refs.length ? [] : [{ sourceInstanceId,
+                    pageLimit: MAX_TRIAGE_LIST_WINDOW_ROWS_V1,
+                    continuation: { v: 1, token: `${offset + MAX_TRIAGE_LIST_WINDOW_ROWS_V1}` } }],
                 taskProjection: { sourceInstanceId, order: { scope: { serverId: 'home', accountId: 'account' },
                     undoneOrder: refs.map(ref => ref.entryId) },
                     entries: refs.map(entryRef => ({ entryRef, result: { kind: 'complete', links: [] } })) },
             },
         });
-        if (!parsedResult.success) throw new Error(JSON.stringify(parsedResult.error.issues));
-        const result = parsedResult.data;
+        const result = resultPage(0);
         const protocol = { id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1, version: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1 };
         const ephemeralSharedScope = createTriageEphemeralSharedScopeFixture();
+        const admittedSurface = createSurfaceContextFixture({
+            reducedMotion: true,
+            mount: { kind: 'destination', destination: { pluginId: 'happier.triage', localId: 'tasks' }, container: 'appPage' },
+            targetedContributions: { target: { pluginId: 'happier.triage', occurrenceId: 'task-target',
+                sourceCustody: { kind: 'development', registeredRootId: 'triage-root' } },
+                points: [{ pointId: TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, protocols: [{ protocol,
+                    contributions: [{ contributor: { pluginId: INTERNAL_TASK_SOURCE_V1.pluginId,
+                        contributionId: INTERNAL_TASK_SOURCE_V1.localId, occurrenceId: 'task-source',
+                        sourceCustody: { kind: 'development', registeredRootId: 'triage-root' } },
+                        protocol, descriptor: INTERNAL_TASK_DESCRIPTOR_V1, operations: [], surfaces: [] }] }] }] },
+        });
+        let showTasks = false;
         let shell!: PluginUiTestkit;
         await act(async () => {
             shell = await createPluginUiTestkit({
                 identity: { instanceId: 'task-title-locality', mountNonce: 'task-title-locality' },
-                authorPlugin: { id: 'happier.triage', version: '0.0.0' }, surface: renderTasksSurface,
-                surfaceContext: createSurfaceContextFixture({
-                    reducedMotion: true,
-                    mount: { kind: 'destination', destination: { pluginId: 'happier.triage', localId: 'tasks' }, container: 'appPage' },
-                    targetedContributions: { target: { pluginId: 'happier.triage', occurrenceId: 'task-target',
-                        sourceCustody: { kind: 'development', registeredRootId: 'triage-root' } },
-                        points: [{ pointId: TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, protocols: [{ protocol,
-                            contributions: [{ contributor: { pluginId: INTERNAL_TASK_SOURCE_V1.pluginId,
-                                contributionId: INTERNAL_TASK_SOURCE_V1.localId, occurrenceId: 'task-source',
-                                sourceCustody: { kind: 'development', registeredRootId: 'triage-root' } },
-                                protocol, descriptor: INTERNAL_TASK_DESCRIPTOR_V1, operations: [], surfaces: [] }] }] }] },
-                }),
+                authorPlugin: { id: 'happier.triage', version: '0.0.0' },
+                // A retained inactive host surface observes publications without issuing a new view demand.
+                surface: context => showTasks ? renderTasksSurface({ ...context, activity: { active: false } }) : null,
+                surfaceContext: admittedSurface,
                 adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope, detailsPane: { available: true } }),
                 handlers: { executeAction: async ({ action, input }) => {
-                    if (action === TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1 || action === TRIAGE_TASKS_LIST_ACTION_LOCAL_ID_V1) return result as unknown as JsonValue;
+                    if (action === TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1 || action === TRIAGE_TASKS_LIST_ACTION_LOCAL_ID_V1) {
+                        const requested = TriageListEntriesInputV1Schema.parse(input);
+                        return resultPage(Number(requested.resume?.[0]?.continuation?.token ?? 0)) as unknown as JsonValue;
+                    }
                     if (action === TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1) {
                         const requested = input as { entryRef: { entryId: string } };
                         const row = result.window.rows.find(row => row.entryRef.entryId === requested.entryRef.entryId)!;
@@ -292,7 +309,21 @@ describe('the selected entry once the window stops holding it', () => {
             });
         });
         mounted.push(shell);
-        await act(async () => { await refreshTriageListWindow('view', shell.context.hostApi, ephemeralSharedScope); });
+        // Populate the real retained owner before mounting the list whose publication cost is measured.
+        const preload = acquireTriageListWindow(shell.context.hostApi, ephemeralSharedScope);
+        const store = readTriageListWindowReadOwner(shell.context.hostApi, ephemeralSharedScope)!;
+        try {
+            const initial = TRIAGE_SURFACE_INITIAL_STATE_V1;
+            store.setLens(readTriageWindowLensV1(reduceTriageSurfaceV1(initial,
+                { kind: 'settledRouteApplied', state: initial }, 'mine')));
+            await refreshTriageListWindow('view', shell.context.hostApi, ephemeralSharedScope);
+            while ((store.getSnapshot().window?.rows.length ?? 0) < count) {
+                expect(store.getSnapshot().loadMore).toEqual({ kind: 'available' });
+                await store.loadMore();
+            }
+            showTasks = true;
+            await act(async () => { await shell.updateSurface(admittedSurface); });
+        } finally { preload.release(); }
         const measureTable = async () => {
             const stage = document.querySelector(`[data-testid="${TRIAGE_SHELL_FILL_TEST_ID_V1}:stage"]`);
             const onLayout = (stage as unknown as { __reactLayoutHandler: (event: unknown) => void }).__reactLayoutHandler;
@@ -301,8 +332,7 @@ describe('the selected entry once the window stops holding it', () => {
         await measureTable();
         expect(document.body.textContent).toContain('Blocked by Required task');
         await act(async () => { await shell.press(await shell.getByRole('button', { name: titles[0]! })); });
-        const store = readTriageListWindowReadOwner(shell.context.hostApi, ephemeralSharedScope)!;
-        expect(store.getSnapshot().window?.rows).toHaveLength(3);
+        expect(store.getSnapshot().window?.rows).toHaveLength(count);
         const publishTitle = async (index: number, title: string) => {
             const row = store.getRow(triageEntryRowKey(refs[index]!))!;
             const observation = row.observations[0]!;
@@ -312,7 +342,12 @@ describe('the selected entry once the window stops holding it', () => {
                 outcome: { ...observation.outcome, snapshot: { ...observation.outcome.snapshot, title } } }); });
         };
         renderProbe.reset();
-        await publishTitle(0, 'Independent task edited');
+        // Observe the real planner without replacing internal behavior: every input row builds an item.
+        const planning = vi.spyOn(listSections, 'planTriageListItemsV1');
+        try {
+            await publishTitle(0, 'Independent task edited');
+            expect(planning.mock.calls.reduce((count, [input]) => count + input.rows.length, 0)).toBe(1);
+        } finally { planning.mockRestore(); }
         await expect(shell.getByRole('heading', { name: 'Independent task edited' })).resolves.toBeDefined();
         await expect(shell.getByRole('button', { name: 'Independent task edited' })).resolves.toBeDefined();
         const counts = renderProbe.collect().components;
@@ -323,9 +358,15 @@ describe('the selected entry once the window stops holding it', () => {
         expect(counts.CollectionOwnedDetailHeader?.renders).toBe(1);
         await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Close details' })); });
         await measureTable();
+        renderProbe.reset();
         await publishTitle(2, 'Required task renamed');
         await expect(shell.getByText('Blocked by Required task renamed')).resolves.toBeDefined();
-    });
+        const blockerCounts = renderProbe.collect().components;
+        expect(blockerCounts.CollectionRow?.renders).toBe(2);
+        expect(blockerCounts.Collection?.renders ?? 0).toBe(0);
+        expect(blockerCounts.ListRoot?.renders ?? 0).toBe(0);
+        expect(blockerCounts.NativeCollectionVirtualizer?.renders ?? 0).toBe(0);
+    }, 60_000);
     it('publishes a native exact reread to the retained row, selected header and current context', async () => {
         const { shell, ephemeralSharedScope } = await mountShell(true);
         await openTheRow(shell);

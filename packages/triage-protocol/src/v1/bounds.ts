@@ -71,8 +71,8 @@ export const MAX_TRIAGE_LIST_SOURCE_BATCH_V1 = 32;
  * four per source lane (label, failure detail, required permissions, continuation). Single-line
  * UTF-8 strings expand at most twofold in JSON. Its fixed framing, native
  * identities, stable scope-unit ids and explicit finite provider-fact witnesses
- * occupy 1,240,055 bytes, including source-label truncation markers and
- * optional failures alongside partially readable source lanes.
+ * occupy 1,249,015 bytes, including configured row addresses, source-label
+ * truncation markers and optional failures alongside partially readable lanes.
  * `maximumEncodedActionValue.test.ts` independently re-derives both coefficients
  * from the actual schema and proves this allocation fits and the next byte
  * does not, including all 56 rows and 32 lane continuations.
@@ -81,7 +81,7 @@ export const MAX_TRIAGE_LIST_SOURCE_BATCH_V1 = 32;
  * facts, relations, transitions and configured scope units have no count quota;
  * their complete result remains governed by the existing host envelope.
  */
-const listFixedEnvelopeBytes = 1_240_055;
+const listFixedEnvelopeBytes = 1_249_015;
 const listEscapedFieldUnits = 2 * (
     MAX_TRIAGE_LIST_WINDOW_ROWS_V1 * 26 + MAX_TRIAGE_LIST_SOURCE_BATCH_V1 * 4
 );

@@ -4,11 +4,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   TriageListEntriesInputV1Schema,
+  TriageListEntriesResultV1Schema,
   type TriageListEntriesInputV1,
   type TriageListEntriesResultV1,
 } from '../../actions/listEntriesProtocol.js';
 import { TRIAGE_LIST_DEFAULT_LENS_V1 } from '../../projection/listWindow.js';
-import type { TriageListWindowStoreV1 } from '../../projection/listWindowStore.js';
+import { createTriageListWindowStore, type TriageListWindowStoreV1 } from '../../projection/listWindowStore.js';
 import {
   acquireTriageListWindow,
   loadMoreTriageListWindow,
@@ -56,7 +57,7 @@ function createHostStub(
   let rejectGate: ((error: Error) => void) | null = null;
   const result = (continued: boolean): TriageListEntriesResultV1 => ({
     v: 1,
-    configuredSources: [{ sourceInstanceId, source: SOURCE, available: options.paged === true }],
+    configuredSources: [{ sourceInstanceId, configurationRowId: sourceInstanceId, source: SOURCE, available: options.paged === true }],
     configuredSourcesStatus: 'complete',
     window: {
       v: 1,
@@ -246,6 +247,96 @@ it('uses the same mounted owner for a task completion window and restarts paging
 });
 
 describe('the mounted PRs & Issues window is scoped by its host-owned lifetime', () => {
+  it('reads and subscribes to a window produced by an artifact with the original v1 shared shape', async () => {
+    const lifetime = createTriageEphemeralSharedScopeOriginFixture();
+    const scope = lifetime.forExecutionOrigin('mixed-artifacts');
+    const first = createHostStub(INSTANCE_A, { paged: true });
+    const second = createHostStub(INSTANCE_B);
+    // Primary basis: 5953e70e60cb31d3f7ca40c57b078df58f2007ce
+    // (aa8da0daee^), mountedWindow.ts:66. Its v1 value exposed only
+    // store/registerClient; readiness was never shared by that producer.
+    const clients = new Map<TriageListWindowHostV1, number>();
+    const store = createTriageListWindowStore({
+      readEntries: async (input, options) => {
+        const client = clients.keys().next().value;
+        if (!client) throw new Error('No live legacy client');
+        return TriageListEntriesResultV1Schema.parse(await client.executeAction('entries/list-v1', input, options));
+      },
+      nowMs: () => Date.now(),
+    });
+    const original = scope.acquire('triage.list-window.v1', () => ({
+      value: { store, registerClient(client: TriageListWindowHostV1) {
+        clients.set(client, (clients.get(client) ?? 0) + 1);
+        let registered = true;
+        return () => {
+          if (!registered) return;
+          registered = false;
+          const remaining = (clients.get(client) ?? 1) - 1;
+          if (remaining > 0) clients.set(client, remaining);
+          else clients.delete(client);
+        };
+      } },
+      retainWhenIdle: true,
+      dispose: () => { clients.clear(); store.dispose(); },
+    }));
+    if (!original) throw new Error('Expected the original shared producer');
+    const unregisterFirst = original.value.registerClient(first.host);
+    vi.resetModules();
+    const reader = await import('./mountedWindow.js');
+    const lease = reader.acquireTriageListWindow(second.host, scope, { pending: true, revision: 0 });
+    const notified = vi.fn();
+    let unsubscribe: (() => void) | undefined;
+    try {
+      unsubscribe = reader.subscribeToTriageListWindow(second.host, notified, scope);
+      reader.setTriageListWindowReadiness(second.host, scope, { pending: false, ready: true, revision: 1 });
+      const before = reader.readTriageMountedWindowReadState(second.host, scope);
+      expect(before.readiness).toBeNull();
+      expect(reader.readTriageMountedWindowReadState(second.host, scope)).toBe(before);
+      await Promise.all([store.refresh('view'), reader.refreshTriageListWindow('view', second.host, scope)]);
+      expect(first.inputs.filter(input => input.limit > 0)).toHaveLength(1);
+      expect(second.calls).toHaveLength(0);
+      expect(notified).toHaveBeenCalled();
+      const after = reader.readTriageMountedWindowReadState(second.host, scope);
+      expect(after.snapshot).toBe(store.getSnapshot());
+      expect(after.snapshot.configuredSources.map(source => source.sourceInstanceId)).toEqual([INSTANCE_A]);
+      expect(after).not.toBe(before);
+      expect(reader.readTriageMountedWindowReadState(second.host, scope)).toBe(after);
+      lease.release();
+      expect(store.getSnapshot()).toBe(after.snapshot);
+    } finally {
+      unsubscribe?.(); lease.release(); unregisterFirst(); original.release(); lifetime.retire();
+    }
+  }, 60_000);
+
+  it('keeps the original reader contract when a newer artifact produced the shared window', async () => {
+    const lifetime = createTriageEphemeralSharedScopeOriginFixture();
+    const scope = lifetime.forExecutionOrigin('mixed-artifacts');
+    const first = createHostStub(INSTANCE_A);
+    const originalReader = createHostStub(INSTANCE_B, { paged: true });
+    const firstLease = acquireTriageListWindow(first.host, scope, { pending: true, revision: 0 });
+    const original = scope.acquire<Readonly<{
+      store: TriageListWindowStoreV1;
+      registerClient(host: TriageListWindowHostV1): () => void;
+    }>>('triage.list-window.v1', () => { throw new Error('The newer producer owns this slot'); });
+    if (!original) throw new Error('Expected the shared window');
+    const unregister = original.value.registerClient(originalReader.host);
+    const notified = vi.fn();
+    const unsubscribe = original.value.store.subscribe(notified);
+    let readerLease: TriageListWindowLeaseV1 | undefined;
+    try {
+      firstLease.release();
+      readerLease = acquireTriageListWindow(first.host, scope, { pending: false, ready: true, revision: 1 });
+      expect(readTriageMountedWindowReadState(first.host, scope).readiness).toBeNull();
+      await Promise.all([original.value.store.refresh('view'), refreshTriageListWindow('view', first.host, scope)]);
+      expect(originalReader.inputs.filter(input => input.limit > 0)).toHaveLength(1);
+      expect(first.calls).toHaveLength(0);
+      expect(notified).toHaveBeenCalled();
+      expect(readTriageListWindowSnapshot(first.host, scope)).toBe(original.value.store.getSnapshot());
+    } finally {
+      unsubscribe(); readerLease?.release(); firstLease.release(); unregister(); original.release(); lifetime.retire();
+    }
+  });
+
   it('forwards readiness from the actual read client and ignores another artifact without acquiring data', () => {
     const first = createHostStub(INSTANCE_A);
     const second = createHostStub(INSTANCE_B);

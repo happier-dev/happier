@@ -195,11 +195,18 @@ export type TriageListLoadMoreV1 =
      */
     | Readonly<{ kind: 'unresumable' }>;
 
+export type TriageListWindowChangeV1 = Readonly<{
+    changedRows: readonly TriageListRowV1[];
+    metadataChanged: boolean;
+    /** Membership/order or non-row window facts changed. */
+    structureChanged: boolean;
+}>;
+
 export type TriageListWindowStoreV1 = Readonly<{
     getSnapshot(): TriageListWindowSnapshotV1;
     /** Project the retained acquisition through another lens without mutating it. */
     project(lens: TriageListLensV1): TriageListWindowV1 | undefined;
-    subscribe(listener: () => void): () => void;
+    subscribe(listener: (change: TriageListWindowChangeV1) => void): () => void;
     /** Read retained entry truth, including entries outside the current lens. */
     getRow(key: string): TriageListRowV1 | null;
     subscribeRow(key: string, listener: () => void): () => void;
@@ -261,7 +268,8 @@ function sameConfiguredSourceAcquisitionSet(
     const rightBySourceInstanceId = new Map(right.map((summary) => [summary.sourceInstanceId, summary]));
     return left.every((summary) => {
         const candidate = rightBySourceInstanceId.get(summary.sourceInstanceId);
-        if (candidate === undefined || !sameTriageSourceIdentity(summary.source, candidate.source)) return false;
+        if (candidate === undefined || !sameTriageSourceIdentity(summary.source, candidate.source)
+            || summary.configurationRowId !== candidate.configurationRowId) return false;
         // The canonical Action always supplies the Collection revision. The
         // optional fallback keeps older in-process fixtures compatible without
         // minting a second configuration identity.
@@ -318,7 +326,8 @@ export function createTriageListWindowStore(deps: Readonly<{
     onUnexpectedError?: (error: unknown) => void;
     onRowProjected?: (entryRef: TriageListWindowV1['rows'][number]['entryRef']) => void;
 }>): TriageListWindowStoreV1 {
-    const listeners = new Set<() => void>();
+    const listeners = new Set<(change: TriageListWindowChangeV1) => void>();
+    const changedRowKeys = new Set<string>();
     const rowSubscriptions = new Map<string, { row: TriageListRowV1 | null; listeners: Set<() => void> }>();
     const lanes = new Map<string, LaneState>();
     const foldBaseline = createTriageListFoldBaselineV1();
@@ -579,14 +588,34 @@ export function createTriageListWindowStore(deps: Readonly<{
         });
         // Nothing a subscriber can read changed: notifying would only make every consumer recompute.
         const snapshotChanged = !sameTriageListWindowSnapshot(snapshot, next);
-        if (snapshotChanged) snapshot = next;
+        if (snapshotChanged) {
+            const previousWindow = snapshot.window;
+            const nextWindow = next.window;
+            const structureChanged = previousWindow === undefined || nextWindow === undefined
+                ? previousWindow !== nextWindow
+                : previousWindow.coverage !== nextWindow.coverage
+                    || previousWindow.lanes !== nextWindow.lanes
+                    || previousWindow.facetCensus !== nextWindow.facetCensus
+                    || previousWindow.rows.length !== nextWindow.rows.length
+                    || previousWindow.rows.some((row, index) => triageEntryRowKey(row.entryRef)
+                        !== triageEntryRowKey(nextWindow.rows[index]!.entryRef));
+            const metadataChanged = !sameTriageListWindowSnapshot(snapshot, { ...next, window: snapshot.window });
+            snapshot = next;
+            const changedRows = [...changedRowKeys].flatMap(key => {
+                const row = foldBaseline.entries.get(key)?.row;
+                return row === undefined ? [] : [row];
+            });
+            const change = { changedRows, structureChanged, metadataChanged };
+            // Display producers adopt changed facts before keyed readers are notified.
+            for (const listener of [...listeners]) listener(change);
+        }
+        changedRowKeys.clear();
         for (const [key, subscription] of rowSubscriptions) {
             const row = foldBaseline.entries.get(key)?.row ?? null;
             if (subscription.row === row) continue;
             subscription.row = row;
             for (const listener of [...subscription.listeners]) listener();
         }
-        if (snapshotChanged) for (const listener of [...listeners]) listener();
     }
 
     /**
@@ -620,7 +649,10 @@ export function createTriageListWindowStore(deps: Readonly<{
         return foldTriageListWindow({
             // A one-off reader shares admitted rows, but does not replace the mounted lens's window baseline.
             baseline: retainWindow ? foldBaseline : { ...foldBaseline },
-            ...(deps.onRowProjected === undefined ? {} : { onRowProjected: deps.onRowProjected }),
+            onRowProjected: entryRef => {
+                if (retainWindow) changedRowKeys.add(triageEntryRowKey(entryRef));
+                deps.onRowProjected?.(entryRef);
+            },
             observations,
             // Every configured source is a lane of this window, including one no
             // pass could ask: this mount set out to cover it either way.
@@ -646,13 +678,13 @@ export function createTriageListWindowStore(deps: Readonly<{
     /** Provider acquisition follows task scope and page geometry. Text, facets,
      * order and Smart policy project retained rows locally, including appended pages. */
     function scanInputFor(
-        sourceInstanceIds: readonly string[],
+        sourceInstances: Extract<TriageListEntriesInputV1['sources'], { kind: 'selected' }>['sourceInstances'],
         /**
          * The frontier set this invocation resumes from, already paired with the
          * lanes it belongs to.
          *
          * It is the caller's set rather than one token this function fans out
-         * over `sourceInstanceIds`, because a continuation belongs to the walk
+             * over `sourceInstances`, because a continuation belongs to the walk
          * that produced it: handing the same token to every named connection is
          * exactly the confusion the per-lane map exists to make impossible.
          */
@@ -661,7 +693,7 @@ export function createTriageListWindowStore(deps: Readonly<{
     ): TriageListEntriesInputV1 {
         return {
             v: 1,
-            sources: { kind: 'selected', sourceInstanceIds },
+            sources: { kind: 'selected', sourceInstances },
             /*
              * Where the preceding mounted window stopped, when this is Load
              * More.
@@ -866,6 +898,7 @@ export function createTriageListWindowStore(deps: Readonly<{
         // own result, never the rows another source has already returned.
         const rowShare = Math.floor(MAX_TRIAGE_LIST_WINDOW_ROWS_V1 / input.sourceInstanceIds.length);
         const extraRows = MAX_TRIAGE_LIST_WINDOW_ROWS_V1 % input.sourceInstanceIds.length;
+        const configuredBySourceInstanceId = new Map(configuredSources.map(source => [source.sourceInstanceId, source]));
         await Promise.all(input.sourceInstanceIds.map(async (sourceInstanceId, index) => {
             if (!isCurrent() || input.signal.aborted) return;
             const sourceInstanceIds = [sourceInstanceId];
@@ -882,7 +915,10 @@ export function createTriageListWindowStore(deps: Readonly<{
             let result: TriageListEntriesResultV1;
             try {
                 result = await deps.readEntries(
-                    scanInputFor(sourceInstanceIds, resume, batchRowBudget),
+                    scanInputFor(sourceInstanceIds.map(id => {
+                        const source = configuredBySourceInstanceId.get(id)!;
+                        return { sourceInstanceId: id, configurationRowId: source.configurationRowId };
+                    }), resume, batchRowBudget),
                     { signal: input.signal },
                 );
             } catch (cause) {
@@ -1385,7 +1421,10 @@ export function createTriageListWindowStore(deps: Readonly<{
             // The exact fold also owns last-good presentation for an unresolved read.
             // Reuse that row in the retained fold rather than qualifying its observations twice.
             foldBaseline.entries.set(key, { row, searchText: projectTriageEntrySearchText(row.observations) });
-            if (row !== previous) deps.onRowProjected?.(row.entryRef);
+            if (row !== previous) {
+                changedRowKeys.add(key);
+                deps.onRowProjected?.(row.entryRef);
+            }
             rebuild();
             publish();
             return foldBaseline.entries.get(key)?.row ?? null;

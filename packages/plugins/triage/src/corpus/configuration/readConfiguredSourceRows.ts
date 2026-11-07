@@ -7,7 +7,18 @@ import {
 } from '../collections/ids.js';
 import { fromCorpusStoredRow, type CorpusRowV1 } from '../collections/rowCodec.js';
 import type { CorpusSourceInstanceRowV1 } from '../collections/rows.js';
-import { advanceConfiguredSourceCollectionCursor } from './administerConfiguredSourceInstance.js';
+import { advanceConfiguredSourceCollectionCursor, readExactConfiguredSourceInstanceRow } from './administerConfiguredSourceInstance.js';
+import { projectInternalTaskSourceCatalogV1 } from '../../internalTasks/configuration.js';
+
+/** The selected-detail counterpart of the active catalog read below. */
+export async function readActiveConfiguredSourceRow(
+    sourceInstances: Pick<CorpusCollectionHandleV1, 'get' | 'identityTag'>,
+    exact: Parameters<typeof readExactConfiguredSourceInstanceRow>[1],
+    options?: PluginCancellationOptions,
+): Promise<CorpusRowV1<CorpusSourceInstanceRowV1> | null> {
+    const record = await readExactConfiguredSourceInstanceRow(sourceInstances, exact, options);
+    return record?.value.lifecycle === CORPUS_SOURCE_INSTANCE_LIFECYCLE.active ? record : null;
+}
 
 /**
  * The canonical active configured-source read.
@@ -22,7 +33,7 @@ export async function readActiveConfiguredSourceRowPage(
     options?: PluginCancellationOptions,
 ): Promise<Readonly<{
     rows: readonly CorpusSourceInstanceRowV1[];
-    /** The same rows with their server-authoritative configuration revisions. */
+    /** Stored revisions, or the immutable built-in configuration's revision. */
     records: readonly CorpusRowV1<CorpusSourceInstanceRowV1>[];
     status: 'complete' | 'truncated';
     nextCursor?: string;
@@ -31,12 +42,13 @@ export async function readActiveConfiguredSourceRowPage(
         index: CORPUS_SOURCE_INSTANCES_INDEX_ID.byLifecycle,
         prefix: [CORPUS_SOURCE_INSTANCE_LIFECYCLE.active],
         order: 'asc',
-        limit: input.limit,
+        // The first catalog page reserves one place for the built-in source.
+        limit: input.limit - (input.cursor === undefined ? 1 : 0),
         ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
     }, options);
-    const records = Object.freeze(page.rows.map(
+    const records = projectInternalTaskSourceCatalogV1(page.rows.map(
         (row) => fromCorpusStoredRow<CorpusSourceInstanceRowV1>(row),
-    ));
+    ), input.cursor === undefined);
     return Object.freeze({
         rows: Object.freeze(records.map((record) => record.value)),
         records,
@@ -51,7 +63,7 @@ export async function readActiveConfiguredSourceRows(
     options?: PluginCancellationOptions,
 ): Promise<Readonly<{
     rows: readonly CorpusSourceInstanceRowV1[];
-    /** The same rows with their server-authoritative configuration revisions. */
+    /** Stored revisions, or the immutable built-in configuration's revision. */
     records: readonly CorpusRowV1<CorpusSourceInstanceRowV1>[];
     status: 'complete';
 }>> {
@@ -71,9 +83,10 @@ export async function readActiveConfiguredSourceRows(
         cursor = advanceConfiguredSourceCollectionCursor(seenCursors, page.nextCursor);
     } while (cursor !== undefined);
 
+    const catalog = projectInternalTaskSourceCatalogV1(records);
     return Object.freeze({
-        rows: Object.freeze(records.map((record) => record.value)),
-        records: Object.freeze(records),
+        rows: Object.freeze(catalog.map((record) => record.value)),
+        records: catalog,
         status: 'complete',
     });
 }

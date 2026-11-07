@@ -11,6 +11,8 @@ import {
 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it, vi } from 'vitest';
 import { PluginError } from '@happier-dev/plugin-sdk';
+import { createTriageListPublicationV1 } from '../ui/list/publication.js';
+import { planTriageListItemsV1 } from '../ui/list/sections.js';
 import { fileURLToPath } from 'node:url';
 import { fixtureCommandTimeoutMs, runBoundedFixtureCommand } from '../../../../plugin-sdk/src/test-support/boundedFixtureCommand.js';
 
@@ -568,7 +570,7 @@ function createHarness(options: Readonly<{
         if (
             state.sourceBInvocationRejected
             && input.sources.kind === 'selected'
-            && input.sources.sourceInstanceIds.includes(INSTANCE_B)
+            && input.sources.sourceInstances.map(source => source.sourceInstanceId).includes(INSTANCE_B)
         ) {
             throw new Error('The other forge action was refused.');
         }
@@ -645,6 +647,60 @@ describe('the mounted PRs & Issues window store', () => {
             expect(unresolved?.attention).toBe(published?.attention);
             expect(unresolved?.presence.kind).toBe('unresolved');
         } finally { store.dispose(); }
+    });
+
+    it('builds one display item for a title change in a 1,000-row mounted publication', async () => {
+        const harness = createHarness({ configureSourceB: false, scanA: async input => {
+            const offset = input.page.kind === 'initial' ? 0 : Number(input.page.continuation.token);
+            const observations = Array.from({ length: Math.min(MAX_TRIAGE_LIST_WINDOW_ROWS_V1, 1_000 - offset) }, (_, index) => presentObservation({
+                entryId: `entry-${offset + index}`, title: `Entry ${offset + index}`, sourceUpdatedAtMs: 10_000 - offset - index,
+            }));
+            return offset + observations.length === 1_000
+                ? { kind: 'complete', evidence: { kind: 'walkFinished' }, observations }
+                : { kind: 'page', evidence: { kind: 'partial', reason: 'more-pages' }, observations,
+                    continuation: { v: 1, token: `${offset + observations.length}` } };
+        } });
+        const store = createTriageListWindowStore({ readEntries: harness.readEntries, nowMs: () => harness.clock.nowMs });
+        const publication = createTriageListPublicationV1();
+        let builds = 0;
+        publication.setPlanner((rows, previous) => planTriageListItemsV1({ rows, pins: [], workflowSubjectOf: () => {
+            builds += 1;
+            return 'pullRequest';
+        } }, previous));
+        const unsubscribe = store.subscribe(change => publication.synchronize(store.getSnapshot(), change));
+        try {
+            await store.refresh('view');
+            while ((store.getSnapshot().window?.rows.length ?? 0) < 1_000) {
+                expect(store.getSnapshot().loadMore).toEqual({ kind: 'available' });
+                await store.loadMore();
+            }
+            expect(publication.getItems()).toHaveLength(1_000);
+            const before = publication.getItems();
+            const revision = publication.getRevision();
+            const row = store.getSnapshot().window!.rows[0]!;
+            const sibling = store.getSnapshot().window!.rows[1]!;
+            const siblingReads = vi.fn();
+            store.subscribeRow(triageEntryRowKey(sibling.entryRef), siblingReads);
+            builds = 0;
+            const updated = store.publishObservation({ ...row.observations[0]!, entryRef: row.entryRef,
+                outcome: { ...row.content!.outcome, snapshot: { ...row.content!.outcome.snapshot, title: 'Changed title' } } });
+            expect(updated?.content?.outcome.snapshot.title).toBe('Changed title');
+            expect(builds).toBe(1);
+            expect(publication.getRevision()).toBe(revision);
+            expect(publication.getItems()).toBe(before);
+            expect(publication.getItem(triageEntryRowKey(row.entryRef))?.row.title).toBe('Changed title');
+            expect(siblingReads).not.toHaveBeenCalled();
+            // Activation uses the display projection's selected connection, including a connection-only change.
+            const selected = { ...updated!, selected: { kind: 'selected' as const, sourceInstanceId: INSTANCE_B,
+                reason: 'onlyPresent' as const } };
+            const current = store.getSnapshot();
+            publication.synchronize({ ...current, window: { ...current.window!,
+                rows: current.window!.rows.map(value => value === updated ? selected : value) } }, {
+                changedRows: [selected], metadataChanged: false, structureChanged: false,
+            });
+            expect(publication.getItems().find(item => item.key === triageEntryRowKey(row.entryRef))?.row.sourceInstanceId).toBe(INSTANCE_B);
+            expect(builds).toBe(2);
+        } finally { unsubscribe(); store.dispose(); }
     });
 
     it.each(['complete', 'partial'] as const)('filters 2,000 retained %s rows without provider scans and keeps Load more independent of text', async coverage => {
@@ -821,10 +877,10 @@ describe('the mounted PRs & Issues window store', () => {
             reason: 'attention',
         });
         const transportPages = harness.actionInputs.filter((input) => (
-            input.sources.kind === 'selected' && input.sources.sourceInstanceIds.length > 0
+            input.sources.kind === 'selected' && input.sources.sourceInstances.length > 0
         ));
         expect(transportPages.map(input => input.sources)).toEqual([INSTANCE_A, INSTANCE_B, INSTANCE_A]
-            .map(id => ({ kind: 'selected', sourceInstanceIds: [id] })));
+            .map(id => ({ kind: 'selected', sourceInstances: [{ sourceInstanceId: id, configurationRowId: instanceRow(id === INSTANCE_A ? 'a' : 'b', SOURCE_A, id, 1).instanceTag }] })));
         expect(transportPages[2]?.resume?.map(entry => entry.sourceInstanceId)).toEqual([INSTANCE_A]);
         store.dispose();
     });
@@ -864,14 +920,14 @@ describe('the mounted PRs & Issues window store', () => {
         });
 
         const batches = harness.actionInputs.filter((input) => (
-            input.sources.kind === 'selected' && input.sources.sourceInstanceIds.length > 0
+            input.sources.kind === 'selected' && input.sources.sourceInstances.length > 0
         ));
         expect(batches.map((input) => (
-            input.sources.kind === 'selected' ? input.sources.sourceInstanceIds.length : 0
+            input.sources.kind === 'selected' ? input.sources.sourceInstances.length : 0
         ))).toEqual(Array.from({ length: MAX_TRIAGE_LIST_SOURCE_BATCH_V1 + 2 }, () => 1));
         expect(batches.reduce((sum, input) => sum + input.limit, 0)).toBe(MAX_TRIAGE_LIST_WINDOW_ROWS_V1);
         expect(new Set(batches.flatMap((input) => (
-            input.sources.kind === 'selected' ? input.sources.sourceInstanceIds : []
+            input.sources.kind === 'selected' ? input.sources.sourceInstances.map(source => source.sourceInstanceId) : []
         ))).size).toBe(MAX_TRIAGE_LIST_SOURCE_BATCH_V1 + 2);
         store.dispose();
     });
@@ -900,7 +956,7 @@ describe('the mounted PRs & Issues window store', () => {
         const visible = new Set(snapshot.window?.rows.map((row) => row.entryRef.entryId) ?? []);
         const hiddenAcquired = harness.state.acquiredEntryIds.filter((entryId) => !visible.has(entryId));
         const sourceBudgets = harness.actionInputs.filter(input => input.sources.kind === 'selected'
-            && input.sources.sourceInstanceIds.some(id => id !== INTERNAL_INSTANCE_ID));
+            && input.sources.sourceInstances.map(source => source.sourceInstanceId).some(id => id !== INTERNAL_INSTANCE_ID));
         expect(harness.state.acquiredEntryIds).toHaveLength(sourceBudgets.reduce((sum, input) => sum + input.limit, 0));
         expect(harness.state.acquiredEntryIds.length).toBeLessThanOrEqual(MAX_TRIAGE_LIST_WINDOW_ROWS_V1);
         expect(hiddenAcquired.length === 0 || snapshot.loadMore?.kind === 'available').toBe(true);
@@ -929,10 +985,10 @@ describe('the mounted PRs & Issues window store', () => {
 
         const first = store.getSnapshot();
         const firstBatches = harness.actionInputs.filter((input) => (
-            input.sources.kind === 'selected' && input.sources.sourceInstanceIds.length > 0
+            input.sources.kind === 'selected' && input.sources.sourceInstances.length > 0
         ));
         expect(firstBatches.map((input) => input.sources.kind === 'selected'
-            ? [input.sources.sourceInstanceIds.length, input.limit]
+            ? [input.sources.sourceInstances.length, input.limit]
             : [])).toEqual(Array.from({ length: MAX_TRIAGE_LIST_WINDOW_ROWS_V1 }, () => [1, 1]));
         expect(harness.state.acquiredEntryIds).toHaveLength(MAX_TRIAGE_LIST_WINDOW_ROWS_V1 - 1);
         expect(first.window?.rows).toHaveLength(MAX_TRIAGE_LIST_WINDOW_ROWS_V1 - 1);
@@ -942,10 +998,10 @@ describe('the mounted PRs & Issues window store', () => {
         await store.loadMore();
 
         const allBatches = harness.actionInputs.filter((input) => (
-            input.sources.kind === 'selected' && input.sources.sourceInstanceIds.length > 0
+            input.sources.kind === 'selected' && input.sources.sourceInstances.length > 0
         ));
         expect(allBatches.at(-1)?.sources.kind === 'selected'
-            ? allBatches.at(-1)?.sources.sourceInstanceIds.length
+            ? allBatches.at(-1)?.sources.sourceInstances.length
             : null).toBe(1);
         const visible = new Set(store.getSnapshot().window?.rows.map((row) => row.entryRef.entryId) ?? []);
         expect(harness.state.acquiredEntryIds.every((entryId) => visible.has(entryId))).toBe(true);
@@ -958,10 +1014,10 @@ describe('the mounted PRs & Issues window store', () => {
         expect(store.getSnapshot().loadMore).toEqual({ kind: 'available' });
         await store.loadMore();
         const refreshedBatches = harness.actionInputs.filter((input) => (
-            input.sources.kind === 'selected' && input.sources.sourceInstanceIds.length > 0
+            input.sources.kind === 'selected' && input.sources.sourceInstances.length > 0
         ));
         expect(refreshedBatches.at(-1)?.sources.kind === 'selected'
-            ? refreshedBatches.at(-1)?.sources.sourceInstanceIds.length
+            ? refreshedBatches.at(-1)?.sources.sourceInstances.length
             : null).toBe(1);
         expect(store.getSnapshot().loadMore).toEqual({ kind: 'exhausted' });
         store.dispose();
@@ -1025,7 +1081,7 @@ describe('the mounted PRs & Issues window store', () => {
                 expect(store.getSnapshot().loadMore).toEqual({ kind: 'exhausted' });
                 const batches = harness.actionInputs.filter((input) => input.sources.kind === 'selected');
                 expect(batches.every((input) => input.sources.kind === 'selected'
-                    && input.sources.sourceInstanceIds.length <= MAX_TRIAGE_LIST_SOURCE_BATCH_V1
+                    && input.sources.sourceInstances.length <= MAX_TRIAGE_LIST_SOURCE_BATCH_V1
                     && input.limit <= MAX_TRIAGE_LIST_WINDOW_ROWS_V1)).toBe(true);
             } finally {
                 store.dispose();
@@ -1138,7 +1194,7 @@ describe('the mounted PRs & Issues window store', () => {
         const held = new Promise<void>(resolve => { release = resolve; });
         const store = createTriageListWindowStore({
             readEntries: async input => {
-                if (input.sources.kind === 'selected' && input.sources.sourceInstanceIds.includes(INSTANCE_B)) await held;
+                if (input.sources.kind === 'selected' && input.sources.sourceInstances.map(source => source.sourceInstanceId).includes(INSTANCE_B)) await held;
                 return harness.readEntries(input);
             },
             nowMs: () => harness.clock.nowMs,
@@ -1836,12 +1892,12 @@ describe('the mounted PRs & Issues window store', () => {
 
         await store.refresh('manual');
         const transportPages = harness.actionInputs.filter(
-            (input) => input.sources.kind === 'selected' && input.sources.sourceInstanceIds.length > 0,
+            (input) => input.sources.kind === 'selected' && input.sources.sourceInstances.length > 0,
         );
         // A manual press retries both lanes when neither provider supplied a
         // retry deadline. Local failure pacing cannot refuse explicit demand.
         expect(transportPages.slice(-2).flatMap(input => input.sources.kind === 'selected'
-            ? input.sources.sourceInstanceIds : [])).toEqual([INSTANCE_A, INSTANCE_B]);
+            ? input.sources.sourceInstances.map(source => source.sourceInstanceId) : [])).toEqual([INSTANCE_A, INSTANCE_B]);
         store.dispose();
     });
 
@@ -2025,7 +2081,7 @@ describe('the mounted PRs & Issues window store', () => {
         await store.refresh('view');
         await store.loadMore();
         const readsBeforeLensChange = harness.actionInputs.filter(
-            (input) => input.sources.kind === 'selected' && input.sources.sourceInstanceIds.length > 0,
+            (input) => input.sources.kind === 'selected' && input.sources.sourceInstances.length > 0,
         ).length;
         const publishedDuringLensChange: Array<ReturnType<typeof store.getSnapshot>['loadMore']> = [];
         let changingLens = false;
@@ -2045,7 +2101,7 @@ describe('the mounted PRs & Issues window store', () => {
         await store.loadMore();
 
         const readsAfterAttempt = harness.actionInputs.filter(
-            (input) => input.sources.kind === 'selected' && input.sources.sourceInstanceIds.length > 0,
+            (input) => input.sources.kind === 'selected' && input.sources.sourceInstances.length > 0,
         );
         expect(readsAfterAttempt).toHaveLength(readsBeforeLensChange + 1);
         expect(store.getSnapshot().pending).not.toBe('append');
@@ -2076,7 +2132,7 @@ describe('the mounted PRs & Issues window store', () => {
         const append = store.loadMore();
         await vi.waitFor(() => {
             const providerReads = harness.actionInputs.filter(
-                (input) => input.sources.kind === 'selected' && input.sources.sourceInstanceIds.length > 0,
+                (input) => input.sources.kind === 'selected' && input.sources.sourceInstances.length > 0,
             );
             expect(providerReads).toHaveLength(2);
             expect(providerReads.at(-1)?.resume).toHaveLength(1);
@@ -2124,7 +2180,7 @@ describe('the mounted PRs & Issues window store', () => {
         const append = store.loadMore();
         await vi.waitFor(() => {
             const providerReads = harness.actionInputs.filter(
-                (input) => input.sources.kind === 'selected' && input.sources.sourceInstanceIds.length > 0,
+                (input) => input.sources.kind === 'selected' && input.sources.sourceInstances.length > 0,
             );
             expect(providerReads).toHaveLength(2);
             expect(providerReads.at(-1)?.resume).toHaveLength(1);
@@ -2146,7 +2202,7 @@ describe('the mounted PRs & Issues window store', () => {
         expect(publishedAfterReplacement.some((ids) => ids.some((id) => id.startsWith('p0-'))))
             .toBe(false);
         const providerReads = harness.actionInputs.filter(
-            (input) => input.sources.kind === 'selected' && input.sources.sourceInstanceIds.length > 0,
+            (input) => input.sources.kind === 'selected' && input.sources.sourceInstances.length > 0,
         );
         expect(providerReads.at(-1)?.resume).toBeUndefined();
 
@@ -2178,7 +2234,7 @@ describe('the mounted PRs & Issues window store', () => {
         // first page, and retain no row or frontier from the former Account.
         expect(harness.scanCalls.count).toBeGreaterThan(readsBeforeReconfigure);
         const lastProviderInput = harness.actionInputs.filter(
-            (input) => input.sources.kind === 'selected' && input.sources.sourceInstanceIds.length > 0,
+            (input) => input.sources.kind === 'selected' && input.sources.sourceInstances.length > 0,
         ).at(-1);
         expect(lastProviderInput?.resume).toBeUndefined();
         expect(store.getSnapshot().window?.rows.map((row) => row.entryRef.entryId))
@@ -2220,7 +2276,7 @@ describe('the mounted PRs & Issues window store', () => {
         await store.refresh('view');
         expect(harness.scanCalls.count).toBeGreaterThan(readsBeforeReadmission);
         const readmittedInput = harness.actionInputs.filter(
-            (input) => input.sources.kind === 'selected' && input.sources.sourceInstanceIds.length > 0,
+            (input) => input.sources.kind === 'selected' && input.sources.sourceInstances.length > 0,
         ).at(-1);
         expect(readmittedInput?.resume).toBeUndefined();
 
@@ -2362,7 +2418,7 @@ describe('the mounted PRs & Issues window store', () => {
             expect(harness.scanCalls.count).toBe(scans);
             await store.loadMore();
             const resumed = harness.actionInputs.filter(input => input.sources.kind === 'selected'
-                && input.sources.sourceInstanceIds.length > 0).at(-1);
+                && input.sources.sourceInstances.length > 0).at(-1);
             expect(resumed?.resume?.[0]?.continuation?.token).toBe('3');
             expect(harness.scanCalls.count).toBe(scans + 1);
             expect(store.getSnapshot().window?.rows).toHaveLength(MAX_TRIAGE_LIST_WINDOW_ROWS_V1 * 3);
@@ -2439,7 +2495,7 @@ describe('the mounted PRs & Issues window store', () => {
         });
 
         const providerReads = () => harness.actionInputs.filter(
-            (input) => input.sources.kind === 'selected' && input.sources.sourceInstanceIds.length > 0,
+            (input) => input.sources.kind === 'selected' && input.sources.sourceInstances.length > 0,
         );
         expect(store.getSnapshot().loadMore).toEqual({ kind: 'available' });
         expect(store.getSnapshot().window?.rows).toHaveLength(acquiredDepth!);
@@ -2504,7 +2560,7 @@ describe('the mounted PRs & Issues window store', () => {
 
         store.setLens({ ...TRIAGE_LIST_DEFAULT_LENS_V1, tasks: { completedSinceMs: 123 } });
         const providerReads = () => harness.actionInputs.filter(
-            (input) => input.sources.kind === 'selected' && input.sources.sourceInstanceIds.length > 0,
+            (input) => input.sources.kind === 'selected' && input.sources.sourceInstances.length > 0,
         );
         await vi.waitFor(() => {
             expect(providerReads()).toHaveLength(3);
@@ -2712,11 +2768,11 @@ describe('appending another bounded window to one mount', () => {
         harness.state.mixedSourcesNeverFinish = true;
         const store = createTriageListWindowStore({ readEntries: harness.readEntries, nowMs: () => harness.clock.nowMs });
         const reads = () => harness.actionInputs.filter(input => input.sources.kind === 'selected'
-            && input.sources.sourceInstanceIds.length > 0);
+            && input.sources.sourceInstances.length > 0);
         try {
             await store.refresh('view');
             expect(reads().map(input => input.sources)).toEqual([INSTANCE_A, INSTANCE_B]
-                .map(id => ({ kind: 'selected', sourceInstanceIds: [id] })));
+                .map(id => ({ kind: 'selected', sourceInstances: [{ sourceInstanceId: id, configurationRowId: instanceRow(id === INSTANCE_A ? 'a' : 'b', SOURCE_A, id, 1).instanceTag }] })));
             let precedingPages = [1, 1];
             for (let append = 0; append < 2; append += 1) {
                 const before = reads().length;
@@ -2745,21 +2801,21 @@ describe('appending another bounded window to one mount', () => {
         await store.loadMore();
 
         const transportPages = harness.actionInputs.filter(
-            (input) => input.sources.kind === 'selected' && input.sources.sourceInstanceIds.length > 0,
+            (input) => input.sources.kind === 'selected' && input.sources.sourceInstances.length > 0,
         );
         // Source B cannot join A's prior frontier: a configured-set change is
         // a new mixed acquisition generation, so both start from their first
         // page through their independent Actions.
         expect(transportPages).toHaveLength(3);
         expect(transportPages.slice(1).map(input => input.sources)).toEqual([INSTANCE_A, INSTANCE_B]
-            .map(id => ({ kind: 'selected', sourceInstanceIds: [id] })));
+            .map(id => ({ kind: 'selected', sourceInstances: [{ sourceInstanceId: id, configurationRowId: instanceRow(id === INSTANCE_A ? 'a' : 'b', SOURCE_A, id, 1).instanceTag }] })));
         expect(transportPages.slice(1).every(input => input.resume === undefined)).toBe(true);
         expect(store.getSnapshot().window?.rows.map((row) => row.entryRef.entryId))
             .toEqual(expect.arrayContaining(['a-1', 'b-1']));
 
         await store.loadMore();
         const resumed = harness.actionInputs.filter(
-            (input) => input.sources.kind === 'selected' && input.sources.sourceInstanceIds.length > 0,
+            (input) => input.sources.kind === 'selected' && input.sources.sourceInstances.length > 0,
         ).slice(-2);
         expect(resumed.flatMap(input => input.resume?.map(entry => entry.sourceInstanceId) ?? []))
             .toEqual([INSTANCE_A, INSTANCE_B]);
@@ -2775,7 +2831,7 @@ describe('appending another bounded window to one mount', () => {
         harness.state.mixedSourcesNeverFinish = true;
         const store = createTriageListWindowStore({ readEntries: harness.readEntries, nowMs: () => harness.clock.nowMs });
         const reads = () => harness.actionInputs.filter(input => input.sources.kind === 'selected'
-            && input.sources.sourceInstanceIds.length > 0);
+            && input.sources.sourceInstances.length > 0);
         try {
             await store.refresh('view');
             await store.loadMore();
@@ -2797,7 +2853,7 @@ describe('appending another bounded window to one mount', () => {
             await store.loadMore();
             const appended = reads().slice(beforeAppend);
             expect(appended).toHaveLength(1);
-            expect(appended[0]?.sources).toEqual({ kind: 'selected', sourceInstanceIds: [INSTANCE_A] });
+            expect(appended[0]?.sources).toEqual({ kind: 'selected', sourceInstances: [{ sourceInstanceId: INSTANCE_A, configurationRowId: instanceRow('a', SOURCE_A, INSTANCE_A, 1).instanceTag }] });
             // The replacement returned page one's frontier, not the old cut's next page.
             expect(appended[0]?.resume?.[0]?.continuation?.token).toBe('2');
             expect(store.getSnapshot().window?.rows.map(row => row.entryRef.entryId))
@@ -2840,7 +2896,7 @@ describe('appending another bounded window to one mount', () => {
         const store = createTriageListWindowStore({
             readEntries: async input => {
                 inputs.push(input);
-                if (input.sources.kind === 'selected' && input.sources.sourceInstanceIds.includes(INSTANCE_A)
+                if (input.sources.kind === 'selected' && input.sources.sourceInstances.map(source => source.sourceInstanceId).includes(INSTANCE_A)
                     && input.limit < 10) {
                     // The Action transport can defer a source before its first
                     // provider call, returning its required geometry without a cursor.
@@ -2865,7 +2921,7 @@ describe('appending another bounded window to one mount', () => {
             const beforeAppend = inputs.length;
             await store.loadMore();
             const resumed = inputs.slice(beforeAppend).find(input => input.sources.kind === 'selected'
-                && input.sources.sourceInstanceIds.includes(INSTANCE_A));
+                && input.sources.sourceInstances.map(source => source.sourceInstanceId).includes(INSTANCE_A));
             expect(resumed?.limit).toBe(10);
             expect(resumed?.resume).toEqual([{ sourceInstanceId: INSTANCE_A, pageLimit: 10 }]);
             expect(store.getSnapshot().window?.rows.map(row => row.entryRef.entryId)).toContain(`${INSTANCE_A}-1-0`);
@@ -2882,7 +2938,7 @@ describe('appending another bounded window to one mount', () => {
 
         await store.refresh('view');
         const initialFrontiers = harness.actionInputs.filter(
-            (input) => input.sources.kind === 'selected' && input.sources.sourceInstanceIds.length > 0,
+            (input) => input.sources.kind === 'selected' && input.sources.sourceInstances.length > 0,
         ).at(-1)?.resume;
         harness.state.sourceBFails = true;
         await store.loadMore();
@@ -2903,11 +2959,11 @@ describe('appending another bounded window to one mount', () => {
 
         await store.loadMore();
         const transportPages = harness.actionInputs.filter(
-            (input) => input.sources.kind === 'selected' && input.sources.sourceInstanceIds.length > 0,
+            (input) => input.sources.kind === 'selected' && input.sources.sourceInstances.length > 0,
         );
         expect(transportPages.at(-1)?.sources).toEqual({
             kind: 'selected',
-            sourceInstanceIds: [INSTANCE_A],
+            sourceInstances: [{ sourceInstanceId: INSTANCE_A, configurationRowId: instanceRow('a', SOURCE_A, INSTANCE_A, 1).instanceTag }],
         });
         expect(transportPages.at(-1)?.resume).toHaveLength(1);
         expect(Number(transportPages.at(-1)?.resume?.[0]?.continuation?.token))
@@ -2956,7 +3012,7 @@ describe('appending another bounded window to one mount', () => {
         expect(harness.scanCalls.count).toBe(callsAtDepthTwo + 1);
         expect(store.getSnapshot().window?.rows).toHaveLength(MAX_TRIAGE_LIST_WINDOW_ROWS_V1);
         const lastProviderInput = harness.actionInputs.filter(
-            (input) => input.sources.kind === 'selected' && input.sources.sourceInstanceIds.length > 0,
+            (input) => input.sources.kind === 'selected' && input.sources.sourceInstances.length > 0,
         ).at(-1);
         expect(lastProviderInput?.resume).toBeUndefined();
 

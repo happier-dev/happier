@@ -3,6 +3,11 @@ import { formatTriageTimestampV1 } from '@happier-dev/triage-protocol/v1';
 
 import type { TriageListWindowV1 } from '../../projection/listWindow.js';
 import type { TriageListWindowSnapshotV1 } from '../../projection/listWindowStore.js';
+import { INTERNAL_TASK_SOURCE_RECORD_V1 } from '../../internalTasks/configuration.js';
+import { INTERNAL_TASK_DESCRIPTOR_V1 } from '../../internalTasks/contribution.js';
+import { planTriageConfigureSourceOffersV1 } from './configureSources.js';
+import { TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
+  TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1 } from '@happier-dev/triage-protocol/v1';
 import {
   readTriageListFailureLine,
   readTriageListFailureNotice,
@@ -34,12 +39,45 @@ function snapshot(overrides: Partial<TriageListWindowSnapshotV1> = {}): TriageLi
     freshness: 'fresh',
     pending: 'idle',
     passes: 1,
-    configuredSources: [{ sourceInstanceId: INSTANCE, source: SOURCE, available: true }],
+    configuredSources: [{ sourceInstanceId: INSTANCE, configurationRowId: INSTANCE, source: SOURCE, available: true }],
     ...overrides,
   };
 }
 
 describe('resolveTriageListShellState', () => {
+  it('surfaces a partial-family denial in a retained window with its typed reason and remedy', () => {
+    const failure = { class: 'permission' as const, code: 'insufficient_scope',
+      detail: 'Dependabot alerts could not be read. Reconnect GitHub with security_events access.' };
+    const state = resolveTriageListShellState(snapshot({ window: window({ coverage: 'partial', lanes: [{
+      sourceInstanceId: INSTANCE, source: SOURCE, exhausted: false, health: { kind: 'partial',
+        reason: 'github-alerts-dependabot-permission', failure },
+    }] }) }));
+    expect(state).toMatchObject({ kind: 'window', showReadWarning: true, failure: { kind: 'sources',
+      sources: [{ sourceInstanceId: INSTANCE, code: failure.code, reason: failure.detail }] } });
+  });
+  it('offers trackers without asking to connect the already-built-in personal source', () => {
+    const protocol = { id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1, version: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1 };
+    const offers = planTriageConfigureSourceOffersV1({
+      target: { pluginId: 'happier.triage', occurrenceId: 'triage', sourceCustody: { kind: 'development', registeredRootId: 'triage' } },
+      points: [{ pointId: TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, protocols: [{ protocol, contributions: [
+        { pluginId: 'happier.triage', localId: 'internal', descriptor: INTERNAL_TASK_DESCRIPTOR_V1 },
+        { pluginId: 'acme.tracker', localId: 'issues', descriptor: { ...INTERNAL_TASK_DESCRIPTOR_V1,
+          purpose: 'tracker', displayName: 'Acme', settingsPageId: 'sources' } },
+      ].map(source => ({ contributor: { pluginId: source.pluginId, contributionId: source.localId, occurrenceId: 'source',
+        sourceCustody: { kind: 'development' as const, registeredRootId: 'source' } }, protocol, descriptor: source.descriptor, operations: [], surfaces: [] })) }] }],
+    });
+    expect(offers.map(offer => offer.destination.pluginId)).toEqual(['acme.tracker']);
+  });
+  it('decides first run from the sources serving the current page', () => {
+    const builtin = INTERNAL_TASK_SOURCE_RECORD_V1.value.configured.instance;
+    const personalOnly = snapshot({ window: window(), configuredSources: [{ ...builtin,
+      configurationRowId: INTERNAL_TASK_SOURCE_RECORD_V1.rowId, available: true }] });
+    expect(resolveTriageListShellState(personalOnly).kind).toBe('configureSources');
+    expect(resolveTriageListShellState(personalOnly, { tasks: true }).kind).toBe('window');
+    expect(resolveTriageListShellState({ ...personalOnly, configuredSources: [
+      ...personalOnly.configuredSources, { sourceInstanceId: INSTANCE, configurationRowId: INSTANCE, source: SOURCE, available: true },
+    ] }).kind).toBe('window');
+  });
   it('keeps source invocation codes in details rather than the translated explanation', () => {
     const failure = { kind: 'sources' as const, sources: [{ sourceInstanceId: INSTANCE, displayName: 'Personal tasks',
       reason: 'Could not be reached just now.', code: 'source_unavailable' }] };
@@ -67,16 +105,22 @@ describe('resolveTriageListShellState', () => {
       { sourceInstanceId: 'a', displayName: 'GitHub', reason: 'Could not be reached just now.' },
     ] } as const;
     expect(readTriageListFailureLine(transient)).toEqual({
-      label: 'GitHub could not be read. Could not be reached just now.', recovery: 'retry',
+      label: 'GitHub could not be read. Their entries may be missing or out of date. Could not be reached just now.', recovery: 'retry',
     });
     // Several causes: all named, reasons left to Manage sources, and the sentence that told the reader nothing is gone.
     expect(readTriageListFailureLine({ kind: 'sources', sources: [
       { sourceInstanceId: 'a', displayName: 'GitHub', reason: 'Needs you to sign in again.', needsConnectionChange: true },
       { sourceInstanceId: 'b', displayName: 'Linear', reason: 'Could not be reached just now.', retryable: false, needsConnectionChange: true },
-    ] }, undefined, 'en')).toEqual({ label: 'GitHub and Linear could not be read.', recovery: 'manageSources' });
+    ] }, undefined, 'en')).toEqual({ label: 'GitHub and Linear could not be read. Their entries may be missing or out of date.', recovery: 'retry' });
     expect(readTriageListFailureLine({ kind: 'sources', sources: [
       { sourceInstanceId: 'b', displayName: 'Linear', reason: 'Could not be reached just now.', retryable: false, needsConnectionChange: true },
-    ] }).label).toBe('Linear could not be read.');
+    ] }).label).toBe('Linear could not be read. Their entries may be missing or out of date.');
+  });
+  it('offers inline retry for a retryable read even beside a connection that needs repair', () => {
+    expect(readTriageListFailureLine({ kind: 'sources', sources: [
+      { sourceInstanceId: 'a', displayName: 'GitHub', reason: 'Needs you to sign in again.', needsConnectionChange: true },
+      { sourceInstanceId: 'b', displayName: 'Linear', reason: 'Could not be reached just now.', retryable: true },
+    ] }).recovery).toBe('retry');
   });
   it('offers inline retry for timed-out list reads despite generic outcome-unknown retry advice', () => {
     const state = resolveTriageListShellState(snapshot({
@@ -160,14 +204,14 @@ describe('resolveTriageListShellState', () => {
   it('says the wait out loud instead of leaving Refresh to do nothing', () => {
     const blocked = snapshot({
       window: window(),
-      refreshBlocked: { reason: 'failureBackoff', nextEligibleAtMs: 9_000 },
+      refreshBlocked: { reason: 'sourceRetryDeadline', nextEligibleAtMs: 9_000 },
     });
 
     // `core/CORPUS.md` §4.2: a Refresh the coordinator is already refusing must
     // be stated, not silently ignored. The deadline is the coordinator's answer,
     // read rather than recomputed from lane health.
     expect(resolveTriageListRefreshV1(blocked, 8_999))
-      .toEqual({ kind: 'blocked', reason: 'failureBackoff', nextEligibleAtMs: 9_000 });
+      .toEqual({ kind: 'blocked', reason: 'sourceRetryDeadline', nextEligibleAtMs: 9_000 });
     // At the deadline the refusal is over; a surface that kept disabling the
     // control here would strand the reader behind an expired wait.
     expect(resolveTriageListRefreshV1(blocked, 9_000)).toEqual({ kind: 'available' });
@@ -177,21 +221,8 @@ describe('resolveTriageListShellState', () => {
     expect(resolveTriageListRefreshV1(snapshot({
       window: window(),
       pending: 'refresh',
-      refreshBlocked: { reason: 'minimumInterval', nextEligibleAtMs: 9_000 },
+      refreshBlocked: { reason: 'sourceRetryDeadline', nextEligibleAtMs: 9_000 },
     }), 1).kind).toBe('running');
-  });
-
-  it('gives each pacing reason its own words rather than one generic wait', () => {
-    const reasons = ['minimumInterval', 'sourceRetryDeadline', 'failureBackoff'] as const;
-    const descriptions = reasons.map(
-      (reason) => readTriageRefreshPacingNotice(reason, 9_000, 'en-US').description,
-    );
-
-    // Three different refusals: "read a moment ago", "the source asked us to
-    // wait" and "the last read failed" are different things to a reader, and
-    // one shared sentence would hide which of them is happening.
-    expect(new Set(descriptions).size).toBe(reasons.length);
-    expect(descriptions.every((description) => description.length > 0)).toBe(true);
   });
 
   it('shows the coordinator deadline as the exact retry time', () => {
@@ -299,9 +330,9 @@ describe('resolveTriageListShellState', () => {
     });
     const state = resolveTriageListShellState(snapshot({
       configuredSources: [
-        { sourceInstanceId: INSTANCE, source: SOURCE, displayLabel: 'acme/widgets', available: true },
+        { sourceInstanceId: INSTANCE, configurationRowId: INSTANCE, source: SOURCE, displayLabel: 'acme/widgets', available: true },
         {
-          sourceInstanceId: OTHER_INSTANCE,
+          sourceInstanceId: OTHER_INSTANCE, configurationRowId: OTHER_INSTANCE,
           source: OTHER_SOURCE,
           displayLabel: 'globex/service',
           available: true,
@@ -400,9 +431,9 @@ describe('resolveTriageListShellState', () => {
     });
     const state = resolveTriageListShellState(snapshot({
       configuredSources: [
-        { sourceInstanceId: INSTANCE, source: SOURCE, displayLabel: 'acme/widgets', available: true },
+        { sourceInstanceId: INSTANCE, configurationRowId: INSTANCE, source: SOURCE, displayLabel: 'acme/widgets', available: true },
         {
-          sourceInstanceId: OTHER_INSTANCE,
+          sourceInstanceId: OTHER_INSTANCE, configurationRowId: OTHER_INSTANCE,
           source: OTHER_SOURCE,
           displayLabel: 'globex/service',
           available: true,
@@ -464,9 +495,9 @@ describe('resolveTriageListShellState', () => {
     });
     const state = resolveTriageListShellState(snapshot({
       configuredSources: [
-        { sourceInstanceId: INSTANCE, source: SOURCE, displayLabel: 'acme/widgets', available: true },
+        { sourceInstanceId: INSTANCE, configurationRowId: INSTANCE, source: SOURCE, displayLabel: 'acme/widgets', available: true },
         {
-          sourceInstanceId: OTHER_INSTANCE,
+          sourceInstanceId: OTHER_INSTANCE, configurationRowId: OTHER_INSTANCE,
           source: OTHER_SOURCE,
           displayLabel: 'globex/service',
           available: true,
@@ -513,7 +544,7 @@ describe('resolveTriageListShellState', () => {
     });
     const state = resolveTriageListShellState(snapshot({
       configuredSources: [
-        { sourceInstanceId: OTHER_INSTANCE, source: OTHER_SOURCE, available: true },
+        { sourceInstanceId: OTHER_INSTANCE, configurationRowId: OTHER_INSTANCE, source: OTHER_SOURCE, available: true },
       ],
       window: partial,
       freshness: 'stale',
@@ -539,9 +570,9 @@ describe('resolveTriageListShellState', () => {
     // the fold supplies a coverage lane; this is separate from read freshness.
     const state = resolveTriageListShellState(snapshot({
       configuredSources: [
-        { sourceInstanceId: INSTANCE, source: SOURCE, displayLabel: 'acme/widgets', available: true },
+        { sourceInstanceId: INSTANCE, configurationRowId: INSTANCE, source: SOURCE, displayLabel: 'acme/widgets', available: true },
         {
-          sourceInstanceId: OTHER_INSTANCE,
+          sourceInstanceId: OTHER_INSTANCE, configurationRowId: OTHER_INSTANCE,
           source: OTHER_SOURCE,
           displayLabel: 'globex/service',
           available: false,

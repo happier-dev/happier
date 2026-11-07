@@ -195,10 +195,9 @@ export const TriageSmartPolicyV1Schema = defineProtocolObject({
 /**
  * The configured-source selection.
  *
- * An empty `selected` list is a real and useful request: it enumerates the
- * configured sources without reading any provider, which is exactly what a
- * cold mount and the Composer picker need in order to be visibly
- * unsynchronized rather than falsely empty (`REQ-14`).
+ * Catalog enumeration uses `allConfigured` with a zero row limit. Selected
+ * refreshes carry the existing opaque Collection address discovered there;
+ * a stable private source id alone cannot address its tuple-keyed row.
  */
 const TriageListSourceSelectionV1Schema = defineProtocolUnion([
     defineProtocolObject({
@@ -208,7 +207,10 @@ const TriageListSourceSelectionV1Schema = defineProtocolUnion([
     }, { policy: 'closed' }),
     defineProtocolObject({
         kind: defineProtocolLiteral('selected'),
-        sourceInstanceIds: defineProtocolArray(TriageSourceInstanceIdV1Schema, {
+        sourceInstances: defineProtocolArray(defineProtocolObject({
+            sourceInstanceId: TriageSourceInstanceIdV1Schema,
+            configurationRowId: triageIdentifier,
+        }, { policy: 'closed' }), {
             maxItems: MAX_TRIAGE_LIST_SOURCE_BATCH_V1,
         }),
     }, { policy: 'closed' }),
@@ -464,6 +466,8 @@ const TriageListLaneV1Schema = defineProtocolObject({
  */
 const TriageConfiguredSourceSummaryV1Schema = defineProtocolObject({
     sourceInstanceId: TriageSourceInstanceIdV1Schema,
+    /** Existing opaque Collection row address; no configured payload is disclosed. */
+    configurationRowId: triageIdentifier,
     source: PluginContributionIdentityV1Schema,
     /**
      * Server-authoritative revision of the exact configured Collection row.

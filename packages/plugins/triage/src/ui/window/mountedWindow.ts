@@ -12,6 +12,7 @@ import { TRIAGE_TASKS_LIST_ACTION_LOCAL_ID_V1 } from '../../actions/tasksProtoco
 import {
   createTriageListWindowStore,
   type TriageListWindowSnapshotV1,
+  type TriageListWindowChangeV1,
   type TriageListWindowStoreV1,
 } from '../../projection/listWindowStore.js';
 import type { TriageRefreshTriggerV1 } from '../../refresh/refreshEligibility.js';
@@ -286,7 +287,7 @@ export function acquireTriageListWindow(
 /** Observe the shared window through this artifact's lease. */
 export function subscribeToTriageListWindow(
   host: TriageListWindowHostV1,
-  listener: () => void,
+  listener: (change?: TriageListWindowChangeV1) => void,
   scope: PluginUiEphemeralSharedScope | null,
 ): () => void {
   const shared = mountedFor(host, scope)?.shared;

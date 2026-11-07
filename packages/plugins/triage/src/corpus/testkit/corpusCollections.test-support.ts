@@ -14,6 +14,7 @@ import {
 import type { CorpusStoredValueV1 } from '../collections/handles.js';
 import type { TriageListEntriesInputV1 } from '../../actions/listEntriesProtocol.js';
 import { readActiveConfiguredSourceRows } from '../configuration/readConfiguredSourceRows.js';
+import { findConfiguredSourceInstanceRow } from '../configuration/administerConfiguredSourceInstance.js';
 import { INTERNAL_TASK_SOURCE_RECORD_V1 } from '../../internalTasks/configuration.js';
 
 /** Explicit external-only scope for fixtures whose admitted inventory excludes
@@ -24,9 +25,21 @@ export async function selectTestkitExternalSourceInput(
 ): Promise<TriageListEntriesInputV1> {
     if (input.sources.kind !== 'allConfigured') return input;
     const configured = await readActiveConfiguredSourceRows(sourceInstances);
-    return { ...input, sources: { kind: 'selected', sourceInstanceIds: configured.rows
-        .filter(row => row.configured.instance.sourceInstanceId !== INTERNAL_TASK_SOURCE_RECORD_V1.value.configured.instance.sourceInstanceId)
-        .map(row => row.configured.instance.sourceInstanceId) } };
+    return { ...input, sources: { kind: 'selected', sourceInstances: configured.records
+        .filter(row => row.value.configured.instance.sourceInstanceId !== INTERNAL_TASK_SOURCE_RECORD_V1.value.configured.instance.sourceInstanceId)
+        .map(row => ({ sourceInstanceId: row.value.configured.instance.sourceInstanceId, configurationRowId: row.rowId })) } };
+}
+
+/** Resolve test selection from its seeded catalog before measuring the selected read. */
+export async function selectTestkitConfiguredSources(
+    sourceInstanceIds: readonly string[],
+    sourceInstances: CorpusCollectionsV1['sourceInstances'],
+): Promise<Extract<TriageListEntriesInputV1['sources'], { kind: 'selected' }>> {
+    return { kind: 'selected', sourceInstances: await Promise.all(sourceInstanceIds.map(async sourceInstanceId => {
+        const record = await findConfiguredSourceInstanceRow(sourceInstances, sourceInstanceId);
+        if (record === null) throw new Error(`Configured source fixture is absent: ${sourceInstanceId}`);
+        return { sourceInstanceId, configurationRowId: record.rowId };
+    })) };
 }
 
 /** Account-scoped material for a test E2EE Account. Test bytes only. */

@@ -35,7 +35,7 @@ import {
   readTriageEntryGlyphV1,
   type TriageEntryDisplayTextV1,
 } from '../window/entryDisplay.js';
-import { readTriageTaskBlockerNamesV1, type TriageListGroupIdV1, type TriageListItemV1, type TriageListRowSignalV1, type TriageListTaskFactsV1 } from './sections.js';
+import { readTriageTaskBlockerNameV1, type TriageListGroupIdV1, type TriageListItemV1, type TriageListRowSignalV1, type TriageListTaskFactsV1 } from './sections.js';
 import { TriageTaskRowStatusControl, useTriageTaskStatusLabel } from '../detail/taskFields.js';
 import { createTriageTaskColumnsV1, createTriageTaskListFactV1 } from './taskColumns.js';
 import { triageEntryRowKey } from '../../projection/listWindow.js';
@@ -558,6 +558,8 @@ export function useTriageListAnatomyV1(input: Readonly<{
   tasks?: boolean;
   taskAudience?: 'mine' | 'agents' | 'everyone';
   taskItems?: readonly TriageListItemV1[];
+  /** The mounted keyed projection supplies current names without replacing the anatomy. */
+  readBlockerName?: (ref: TriageListItemV1['row']['entryRef']) => string | null;
   personalTaskOrder?: PersonalTaskOrder | null;
   onTaskOrderOutcome?: () => void;
   /** After a row's status control wrote at the source: the list's authoritative reread. */
@@ -574,7 +576,7 @@ export function useTriageListAnatomyV1(input: Readonly<{
   const { withAgent = true, organizing = false, sharedGroupReasons = NO_SHARED_GROUP_REASONS, tasks = false, onTaskApplied = NO_TASK_REREAD, pinMarks = false } = input;
   const withSignal = input.withSignal && !tasks;
   const withReason = (input.withReason ?? true) && !tasks;
-  const { taskItems, personalTaskOrder, onTaskOrderOutcome, taskAudience = 'mine' } = input;
+  const { taskItems, readBlockerName, personalTaskOrder, onTaskOrderOutcome, taskAudience = 'mine' } = input;
   return React.useMemo<CollectionAnatomy<TriageListItemV1>>(() => {
     const descriptorOf = (item: TriageListItemV1) => resolveTriageSourceDescriptorV1(targetedContributions, item.row.entryRef.source);
     const agent = (item: TriageListItemV1) => {
@@ -585,8 +587,8 @@ export function useTriageListAnatomyV1(input: Readonly<{
         leading={item.agent.agent?.brand === undefined ? undefined : <BrandMark pluginId={item.agent.agent.brand.pluginId} size="small" pixelSize={resolveHappierIconSize('small')} externallyLabelled />} />;
     };
     // A blocker the list holds is named by its designation, else its title; one it does not hold stays unnamed.
-    const listedNames = readTriageTaskBlockerNamesV1(taskItems ?? []);
-    const blockerName = (blocker: TriageListItemV1['row']['entryRef']) => listedNames.get(triageEntryRowKey(blocker)) ?? null;
+    const blockerName = readBlockerName ?? ((blocker: TriageListItemV1['row']['entryRef']) =>
+      readTriageTaskBlockerNameV1(taskItems?.find(item => item.key === triageEntryRowKey(blocker))));
     const unfinished = new Set(personalTaskOrder?.undoneOrder ?? []);
     const orderByGroup = new Map<TriageListGroupIdV1, string[]>();
     for (const item of taskItems ?? []) {
@@ -758,5 +760,5 @@ export function useTriageListAnatomyV1(input: Readonly<{
         age: text('plugins.triage.surface.column.age', 'Age'),
       },
     };
-  }, [contributionSnapshotJson, locale, onTaskApplied, organizing, pinMarks, sharedGroupReasons, tasks, taskAudience, text, withAgent, withReason, withSignal, taskItems, personalTaskOrder, onTaskOrderOutcome]);
+  }, [contributionSnapshotJson, locale, onTaskApplied, organizing, pinMarks, sharedGroupReasons, tasks, taskAudience, text, withAgent, withReason, withSignal, taskItems, readBlockerName, personalTaskOrder, onTaskOrderOutcome]);
 }

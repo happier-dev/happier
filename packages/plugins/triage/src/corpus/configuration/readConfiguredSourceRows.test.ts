@@ -5,7 +5,11 @@ import { TriageConfiguredSourceInstanceV1Schema } from '@happier-dev/triage-prot
 import { CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../collections/ids.js';
 import { toCorpusStoredValue } from '../collections/rowCodec.js';
 import { createTestkitCorpusCollections } from '../testkit/corpusCollections.test-support.js';
+import { INTERNAL_TASK_DRAFT_V1, INTERNAL_TASK_SOURCE_V1 } from '../../internalTasks/source.js';
+import { INTERNAL_TASK_SOURCE_RECORD_V1 } from '../../internalTasks/configuration.js';
+import { findConfiguredSourceInstanceRow } from './administerConfiguredSourceInstance.js';
 import {
+    readActiveConfiguredSourceRow,
     readActiveConfiguredSourceRowPage,
     readActiveConfiguredSourceRows,
 } from './readConfiguredSourceRows.js';
@@ -38,6 +42,57 @@ function sourceRow(seed: number) {
 }
 
 describe('the canonical active configured-source read', () => {
+    it('resolves exact catalog addresses with current revisions, matching identity and lifecycle, including built-in Tasks', async () => {
+        const { collections, control } = createTestkitCorpusCollections();
+        const first = sourceRow(1);
+        const other = sourceRow(2);
+        control.sourceInstances.seed(toCorpusStoredValue(first));
+        control.sourceInstances.seed(toCorpusStoredValue(other));
+        const exact = { sourceInstanceId: first.configured.instance.sourceInstanceId, configurationRowId: first.instanceTag };
+        expect(await readActiveConfiguredSourceRow(collections.sourceInstances, exact)).toMatchObject({
+            rowId: first.instanceTag, revision: 1, value: first,
+        });
+        const updated = { ...first, configured: { ...first.configured,
+            locator: { v: 1 as const, displayLabel: 'Updated connection' } } };
+        control.sourceInstances.seed(toCorpusStoredValue(updated));
+        expect(await readActiveConfiguredSourceRow(collections.sourceInstances, exact)).toMatchObject({
+            revision: 2, value: { configured: { locator: { displayLabel: 'Updated connection' } } },
+        });
+        expect(await readActiveConfiguredSourceRow(collections.sourceInstances, {
+            ...exact, configurationRowId: other.instanceTag,
+        })).toBeNull();
+        control.sourceInstances.seed(toCorpusStoredValue({ ...updated, lifecycle: CORPUS_SOURCE_INSTANCE_LIFECYCLE.retired }));
+        expect(await readActiveConfiguredSourceRow(collections.sourceInstances, exact)).toBeNull();
+        const beforeBuiltin = control.sourceInstances.getCallCount();
+        expect(await readActiveConfiguredSourceRow(collections.sourceInstances, {
+            sourceInstanceId: INTERNAL_TASK_SOURCE_RECORD_V1.value.configured.instance.sourceInstanceId,
+            configurationRowId: INTERNAL_TASK_SOURCE_RECORD_V1.rowId,
+        })).toEqual(INTERNAL_TASK_SOURCE_RECORD_V1);
+        expect(control.sourceInstances.getCallCount()).toBe(beforeBuiltin);
+    });
+
+    it('always includes one built-in personal source without storing a connection, including after old setup was retired', async () => {
+        const { collections, control } = createTestkitCorpusCollections();
+        const empty = await readActiveConfiguredSourceRows(collections.sourceInstances);
+        expect(empty.rows).toHaveLength(1);
+        const builtin = empty.rows[0]!;
+        expect(builtin.configured).toMatchObject({ instance: { source: INTERNAL_TASK_SOURCE_V1 }, binding: { source: 'accountData' } });
+        const old = { ...sourceRow(2), sourceQualifiedId: 'happier.triage/internal',
+            configured: { v: 1 as const, instance: { source: INTERNAL_TASK_SOURCE_V1, sourceInstanceId: sourceRow(2).configured.instance.sourceInstanceId },
+                binding: INTERNAL_TASK_DRAFT_V1.binding, configuration: INTERNAL_TASK_DRAFT_V1.configuration,
+                localInstanceKey: INTERNAL_TASK_DRAFT_V1.localInstanceKey, locator: INTERNAL_TASK_DRAFT_V1.locator } };
+        control.sourceInstances.seed(toCorpusStoredValue(sourceRow(1)));
+        control.sourceInstances.seed(toCorpusStoredValue(old));
+        const active = await readActiveConfiguredSourceRows(collections.sourceInstances);
+        expect(active.rows.map(row => row.configured.instance.sourceInstanceId)).toEqual([
+            builtin.configured.instance.sourceInstanceId, sourceRow(1).configured.instance.sourceInstanceId,
+        ]);
+        control.sourceInstances.seed(toCorpusStoredValue({ ...old, lifecycle: CORPUS_SOURCE_INSTANCE_LIFECYCLE.retired }));
+        expect((await readActiveConfiguredSourceRows(collections.sourceInstances)).rows).toEqual(active.rows);
+        expect((await findConfiguredSourceInstanceRow(collections.sourceInstances, old.configured.instance.sourceInstanceId))?.value)
+            .toMatchObject({ lifecycle: CORPUS_SOURCE_INSTANCE_LIFECYCLE.active, configured: old.configured });
+        expect((await collections.sourceInstances.query({ index: 'by-lifecycle', order: 'asc' })).rows).toHaveLength(2);
+    });
     it('pages the Collection cursor while the full reader carries every configured source', async () => {
         const { collections, control } = createTestkitCorpusCollections();
         const count = 34;
@@ -55,11 +110,12 @@ describe('the canonical active configured-source read', () => {
         expect(first.rows).toHaveLength(32);
         expect(first.status).toBe('truncated');
         expect(first.nextCursor).toBeDefined();
-        expect(second.rows).toHaveLength(2);
+        expect(second.rows).toHaveLength(3);
         expect(second.status).toBe('complete');
         expect(second.nextCursor).toBeUndefined();
         expect(read.status).toBe('complete');
-        expect(read.rows).toHaveLength(count);
+        expect(read.rows).toHaveLength(count + 1);
+        expect([...first.rows, ...second.rows]).toEqual(read.rows);
         expect(read.rows.at(-1)?.configured.instance.sourceInstanceId)
             .toBe(`00000000-0000-4000-8000-${String(count).padStart(12, '0')}`);
     });

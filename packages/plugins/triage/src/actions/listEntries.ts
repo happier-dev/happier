@@ -20,7 +20,7 @@ import type { InternalTaskListProjection } from '../internalTasks/listProjection
 import { entryReferenceComponents } from '../corpus/identity/components.js';
 import {
     readActiveConfiguredSourceRowPage,
-    readActiveConfiguredSourceRows,
+    readActiveConfiguredSourceRow,
 } from '../corpus/configuration/readConfiguredSourceRows.js';
 import type { CorpusCollectionHandleV1 } from '../corpus/collections/handles.js';
 import { renderSourceQualifiedId } from '../corpus/identity/components.js';
@@ -103,7 +103,7 @@ export type TriageAdmittedOperationExecutorV1 = (
 
 export type TriageListEntriesDepsV1 = Readonly<{
     /** The `source-instances` Collection. This Action never writes it. */
-    sourceInstances: Pick<CorpusCollectionHandleV1, 'query'>;
+    sourceInstances: Pick<CorpusCollectionHandleV1, 'query' | 'get' | 'identityTag'>;
     /** The current admitted view of this target's own sources point. */
     readAdmittedSources: (options?: PluginCancellationOptions) => Promise<readonly TriageAdmittedSourceV1[]>;
     executeScan: TriageAdmittedOperationExecutorV1;
@@ -145,7 +145,7 @@ function lensFrom(
 
 function selectionAdmits(input: TriageListEntriesInputV1, sourceInstanceId: string): boolean {
     return input.sources.kind === 'allConfigured'
-        || input.sources.sourceInstanceIds.includes(sourceInstanceId);
+        || input.sources.sourceInstances.some(source => source.sourceInstanceId === sourceInstanceId);
 }
 
 function walkAdmits(input: TriageListEntriesInputV1, sourceInstanceId: string): boolean {
@@ -210,19 +210,17 @@ export async function assembleTriageListPass(
                 limit: MAX_TRIAGE_LIST_SOURCE_BATCH_V1,
                 ...(sources.cursor === undefined ? {} : { cursor: sources.cursor }),
             }, options)
-            : readActiveConfiguredSourceRows(deps.sourceInstances, options),
+            : Promise.all(
+                [...new Map(sources.sourceInstances.map(exact => [exact.sourceInstanceId, exact])).values()]
+                    .map(exact => readActiveConfiguredSourceRow(deps.sourceInstances, exact, options)),
+            ).then(records => {
+                const active = records.filter(record => record !== null);
+                return { rows: active.map(record => record.value), records: active, status: 'complete' as const };
+            }),
         deps.readAdmittedSources(options),
     ]);
-    const configuredRows = sources.kind === 'allConfigured'
-        ? configured.rows
-        : configured.rows.filter((row) => sources.sourceInstanceIds.includes(
-            row.configured.instance.sourceInstanceId,
-        ));
-    const configuredRecords = sources.kind === 'allConfigured'
-        ? configured.records
-        : configured.records.filter((record) => sources.sourceInstanceIds.includes(
-            record.value.configured.instance.sourceInstanceId,
-        ));
+    const configuredRows = configured.rows;
+    const configuredRecords = configured.records;
     const configuredSourcesStatus = configured.status;
     const configuredSourcesNextCursor = 'nextCursor' in configured ? configured.nextCursor : undefined;
 
@@ -234,9 +232,9 @@ export async function assembleTriageListPass(
     const lanes: TriageScanLaneV1[] = [];
     let taskList: TaskList | null = null;
     const unknownCompletedCoverage = new Set<string>();
-    const configurationRevisionBySourceInstanceId = new Map(configuredRecords.map((record) => [
+    const configurationBySourceInstanceId = new Map(configuredRecords.map((record) => [
         record.value.configured.instance.sourceInstanceId,
-        record.revision,
+        record,
     ]));
     const configuredScopes = new Map<string, NonNullable<TriageListEntriesResultV1['configuredSources'][number]['scope']>>();
     await Promise.all(configuredRows.map(async (row) => {
@@ -281,9 +279,9 @@ export async function assembleTriageListPass(
         // stays exactly as it is, because absence from the admitted view is
         // never retirement evidence.
         const available = contribution !== undefined && declaredKindIds.length > 0;
-        const configurationRevision = configurationRevisionBySourceInstanceId.get(
+        const configuration = configurationBySourceInstanceId.get(
             row.configured.instance.sourceInstanceId,
-        );
+        )!;
         const connectionLabel = row.configured.locator?.displayLabel;
         const sourceName = contribution?.descriptor?.displayName;
         const displayLabel = connectionLabel === undefined
@@ -292,8 +290,9 @@ export async function assembleTriageListPass(
                 ? connectionLabel : `${sourceName} · ${connectionLabel}`);
         configuredSources.push({
             sourceInstanceId: row.configured.instance.sourceInstanceId,
+            configurationRowId: configuration.rowId,
             source,
-            ...(configurationRevision === undefined ? {} : { configurationRevision }),
+            configurationRevision: configuration.revision,
             ...(displayLabel === undefined
                 ? {}
                 : { displayLabel: displayLabel.value, ...(displayLabel.truncated ? { projectionTruncated: true as const } : {}) }),

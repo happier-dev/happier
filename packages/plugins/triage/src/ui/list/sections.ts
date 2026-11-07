@@ -87,11 +87,9 @@ export type TriageListTaskFactsV1 = Readonly<{
     state?: TriageEntryStateV1; requiredFields?: readonly TriageTaskTransitionRequiredFieldV1[] }>[];
 }>;
 
-/** Only names referenced by a listed task's blocker hint are shared row facts. */
-export function readTriageTaskBlockerNamesV1(items: readonly TriageListItemV1[]): ReadonlyMap<string, string> {
-  const referenced = new Set(items.flatMap(item => item.task?.relations?.blockedBy?.map(triageEntryRowKey) ?? []));
-  return new Map(items.filter(item => referenced.has(item.key))
-    .map(item => [item.key, item.row.designation ?? item.row.title]));
+/** A retained blocker's short name; an entry outside the displayed lens stays unnamed. */
+export function readTriageTaskBlockerNameV1(item: TriageListItemV1 | undefined): string | null {
+  return item === undefined ? null : item.row.designation ?? item.row.title;
 }
 
 function readTaskFacts(row: TriageListRowV1 | null, declared?: TriageTaskCapabilitiesV1): TriageListTaskFactsV1 | null {

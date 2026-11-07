@@ -2,6 +2,31 @@
 
 This document defines when Happier preserves old behavior across UI, CLI, daemon, server, installers, and persisted state. The goal is safe upgrades and mixed-version operation without turning undeployed implementation history into permanent compatibility debt.
 
+## Deployment Domain, binding and preview facts (unreleased 0.3)
+
+Domain health extends the existing current-health read with exact Domain
+selection and typed retained HTTP/certificate facts. Deploy review compares its
+resolved reference addresses with private receipt evidence already read by that
+review; receipts may record the reference addresses already resolved at launch.
+Receipts without address
+evidence remain unknown. Saved-secret comparison reuses existing approved-input
+revision evidence and does not change secret envelopes or encryption authority.
+
+Preview Environment queries accept canonical repository identity alongside the
+existing exact pull-request selector. The GitHub preview read and status
+publication share receipt/provenance/Domain readiness rather than accepting a
+caller-owned URL. The canonical GET binder encodes the structured repository
+selector as JSON; the Home route decodes it before strict input validation.
+
+Matching development Protocol, Home, daemon/CLI, SDK, UI and GitHub plugin must
+load together. Older strict development readers may reject the new fields or
+Actions. An additive preview lookup index serves the exact PR query on each
+database provider; no stored data shape, wire epoch, polling transport or
+compatibility fallback changes. The inspected 0.2 frontier at
+`b92a92801425868f22ac911d0f11327c37e1f43f` has neither the Protocol/CLI deployment
+directories nor the GitHub preview-status admission path, including local
+changes in those paths, so no released predecessor adapter is added.
+
 ## Event source failure codes (unreleased 0.3)
 
 Event source status keeps the existing persisted `code` column and accepts all
@@ -405,6 +430,12 @@ last-active time. Opening a Machine page or popover pulls that timestamp once;
 periodic heartbeats cause no current-client UI work. The existing keyed activity owner publishes
 presence transitions without replacing inventory rows or lists.
 
+An Account socket loss retains each known Machine's last online/offline verdict.
+Reconnect and inventory revalidation do not introduce an intermediate Unknown
+state. New activity observations, request outcomes and revocation update the
+shared reachability verdict; wall-clock passage alone does not expire a
+Home-owned presence observation.
+
 Machine admission retains a content-free availability diagnostic when the
 requester has access: its closed `reason`, `requiredFact`, and `remedy` distinguish
 an offline Machine, a missing installation, revocation, and replacement. External
@@ -547,6 +578,18 @@ HTTP 431 is a typed `request_headers_too_large` transport refusal, not a
 deployment output schema failure; no server header limit is raised.
 
 ## Deployment output diagnostics (unreleased 0.3)
+
+The public receipt-list read accepts either its existing closed header or that
+header plus the closed `requiredFact`/`remedy` recovery pair. The Action adapter
+projects the pair for failed, cancelled and unknown rows using existing receipt
+state. Stored receipt headers, private content and terminal states are unchanged.
+Matching development Protocol, CLI/daemon and clients must reload together;
+older strict development list readers reject the added presentation fields.
+There is no new wire epoch, admission input, credential or persistence format.
+The inspected 0.2 frontier `33f6528a541872654370d84bd316261e8f7cacb6`
+has none of the Protocol/CLI deployment directories or Cloudflare deployment
+plugin (and no local changes in those paths); no released predecessor adapter
+is needed.
 
 An accepted deployment's signed metadata read is authorized once against its
 exact active receipt and Environment. Later HTTP purpose dispatch consumes that
@@ -1243,7 +1286,7 @@ producer still compares against the shared-Agent default and refuses that child.
 Home, controller and guest must load the updated enrollment producer together
 for new dedicated enrollment. This preserves a typed policy refusal rather than
 silently claiming member separation on an older guest. The inspected 0.2 frontier
-at `b92a92801425868f22ac911d0f11327c37e1f43f` has no isolation or managed
+at `f760eedfec477fef70f56f30c7f250e5ccb23e7d` has no isolation or managed
 enrollment Actions; its CLI Machine metadata reader drops unknown fields. That
 reader can ignore the metadata safely but cannot establish member separation or
 execute these children. Guests predating the member-policy contract need an
@@ -1707,9 +1750,8 @@ change birth identity; ambiguous matches remain unresolved.
 New migrations are additive for PostgreSQL, SQLite and MySQL. Existing requests
 without the carrier remain accepted. Existing rows retain null rather than an
 inferred backfill from private content. Absent or ambiguous relations leave that
-source unresolved; Machine detail can
-still use an existing FIN rule's source. A resolved durable birth takes precedence:
-Machine detail selects only FIN rules for that exact source and managed target.
+source unresolved. Machine detail reads its retained Home scope policy and the
+exact birth; it does not read or author FIN recipes to decide retention.
 Other HTTP failures and malformed responses propagate. The scoped UI birth reader
 keeps pending, ready and failed states distinct and exposes demanded Retry; Check
 now and existing Run-change notifications can re-arm unresolved exact reads.
@@ -1717,6 +1759,25 @@ No Session or Run inventory scan supplies a missing relation.
 Current managed creation requires the matching development Home; silently dropping
 the carrier is not an older-server creation adapter. The immutable private recipe
 remains the retry-meaning owner, not a second writer of the server relationship.
+
+The unreleased 0.3 acquisition input can also admit a closed optional
+`creationScopeRetention: { effect: 'stop' | 'delete' }` choice. The birth owner
+binds its exact Session or workflow Run only when that acquisition already
+admitted the choice for the creating Account and exact guest. Birth cannot add
+an effect to a Keep acquisition. The existing custodian retention-update Action
+can edit or remove the choice under its ordinary authority and review.
+The Session archive and Run terminal owners publish their end into that retained
+policy; the existing Home retention admission and controller drain/native-effect
+path execute it. Delete keeps its existing shared Action review. There is no
+second FIN deletion decision, timer or settlement receipt.
+
+The retained admitted-input JSON optionally carries the choice, source and source
+end timestamp. Ordinary retention stays intact for Keep. Runtime `unused` policy
+accepts zero delay for an ended source; reusable settings still require positive
+delay. Protected managed detail can read the scope source; public Machine runtime
+projections carry only derived presentation. These closed development shapes
+require matching 0.3 Home, Protocol, SDK and clients; omission preserves prior
+rows and acquisitions. This does not add a released 0.2 seam or rollback adapter.
 
 The moving predecessor inspected on 2026-10-24 is `../0.2` HEAD
 `3482a9101ebb7ee2983608ef0deb00831dfcb2e7`, with clean scoped status/diff for
@@ -5690,6 +5751,14 @@ initializes the same acknowledgement as direct admission; otherwise it remains
 null. An exact acceptance replay uses the frozen scope and delivery choice,
 preserves an advanced acknowledgement, and does not reread a later scope edit.
 
+Development Discussion-origin Runs freeze a nullable `originDiscussionId` beside
+`originSessionId` at direct admission. `originKind` remains `direct`; the new
+field records provenance, without changing Run access or execution kind. Run
+again retains the whole accepted origin. The existing Run-list storage owner
+selects the exact Discussion relation using its `(originDiscussionId, createdAt,
+id)` index and binds that selector into the cursor. Apply the additive migration
+before loading this server code. Existing Runs keep null: there is no backfill.
+
 Development Run projections retain a nullable `sourceArtifactId` frozen at
 direct admission or Automation accepted-snapshot attachment, plus
 `ownerAccountId`. Inline/catalog Runs retain a null source; private snapshots
@@ -6952,6 +7021,34 @@ the routing identity is not an ignorable extension for older closed readers.
 No migration, alternate routing owner or wire epoch is added.
 
 ## SDK protocol evolution
+
+The unreleased 0.3 mounted Workflow trigger snapshot adds optional
+`roleOverrides` and `visibleTeamId`, using the existing trigger-context schemas.
+The snapshot and its nested mutation envelopes remain closed. Matching Protocol
+and UI readers reload together: older strict development readers reject these
+fields, while the new reader accepts snapshots that omit them. The existing
+trigger add/update Actions already carry both settings; the snapshot preserves
+them through agent reads, edits and undo until Save. The inspected `../0.2`
+frontier at `33f6528a541872654370d84bd316261e8f7cacb6` has no mounted Workflow
+authoring or trigger-draft contract, including scoped local changes. This direct
+development cut adds no Action, route, persisted format or wire epoch.
+
+Unreleased 0.3 Browser login-import results retain the existing
+`app_bound_encryption` code and skipped status. Their optional closed `reason`
+vocabulary also accepts the canonical app-bound recovery copy. Matching
+Protocol, daemon and UI readers reload together: older strict development
+readers reject this additional reason. No persisted format or released adapter
+changes.
+
+The unreleased 0.3 Saved Secret catalog adds optional derived
+`capabilities.reveal`, produced from qualified access and ready material. Its
+closed schema accepts retained projections without that capability; the current
+UI offers Reveal only when it is explicitly true. Older strict development
+readers reject the additional projection, so Protocol, Home and UI reload
+together. This changes no persisted grant, encryption envelope or Action id.
+The inspected 0.2 frontier at `b92a92801425868f22ac911d0f11327c37e1f43f` has no
+Saved Secret resource catalog contract, including local changes in those paths;
+no released compatibility adapter is needed.
 
 Unreleased 0.3 encrypted Browser Action envelopes add optional non-content
 `browserSessionId` routing. The shared sealer derives it from the Browser operand;
@@ -9239,3 +9336,15 @@ canonical read. Omission in a legacy full row has ordinary-Machine meaning:
 the inspected 0.2 frontier `1321319f311da3d44931afd39eeac7252b6350a4` has no
 managed-resource producer. This preserves the Home-presence coexistence contract
 above; it does not promise managed wake against an older development Home.
+
+Current development Machine reads and new/update events also publish optional
+`managedInputRuntime: { nativeReady, wakeState } | null`. The managed runtime
+owner derives native qualification independently of connectivity; existing
+guest presence still decides reachability. `wakeState` is `asleep`, `starting`
+or null and makes a wake claim only while the owner enables accepted-input
+wake. Neither this projection nor Can use on the guest grants manual power or
+access to the controller's managed allocation. Missing or null projections make
+no readiness or wake claim. This changes no retained database field or protocol
+epoch. The inspected 0.2 frontier `ead3f779118d6a3d17e167517a64660f9e2c2c0d`
+has passthrough new/update Machine readers and no managed-input producer; that
+parser tolerance does not establish managed wake support against an older Home.

@@ -23,7 +23,7 @@ import {
 } from '../corpus/collections/ids.js';
 import { toCorpusStoredValue } from '../corpus/collections/rowCodec.js';
 import type { CorpusSourceInstanceRowV1 } from '../corpus/collections/rows.js';
-import { createTestkitCorpusCollections } from '../corpus/testkit/corpusCollections.test-support.js';
+import { createTestkitCorpusCollections, selectTestkitConfiguredSources } from '../corpus/testkit/corpusCollections.test-support.js';
 import { testkitLocator, testkitSnapshot, testkitViewer } from '../corpus/testkit/observations.test-support.js';
 import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../manifest.js';
 import { INTERNAL_TASK_SOURCE_RECORD_V1 } from '../internalTasks/configuration.js';
@@ -148,7 +148,7 @@ describe('the aggregate list Action handler', () => {
 
         const result = await createTriageListEntriesActionHandler()({
             v: 1,
-            sources: { kind: 'selected', sourceInstanceIds: [INSTANCE_ID] },
+            sources: await selectTestkitConfiguredSources([INSTANCE_ID], collections.sourceInstances),
             limit: 10,
             order: 'newest',
         }, context);
@@ -160,6 +160,7 @@ describe('the aggregate list Action handler', () => {
         expect(dispatched).toEqual([scanHandle]);
         expect(result.configuredSources).toEqual([{
             sourceInstanceId: INSTANCE_ID,
+            configurationRowId: paddedInstanceTag('a'),
             source: SOURCE,
             configurationRevision: 1,
             displayLabel: 'Example forge',
@@ -180,7 +181,7 @@ describe('the aggregate list Action handler', () => {
                 if (listReadFailure) throw listReadFailure;
                 return TriageListEntriesResultV1Schema.parse(
                     await createTriageListEntriesActionHandler()({ ...input,
-                        sources: { kind: 'selected', sourceInstanceIds: [INSTANCE_ID] } }, context),
+                        sources: await selectTestkitConfiguredSources([INSTANCE_ID], collections.sourceInstances) }, context),
                 );
             },
             nowMs: () => 1000,
@@ -343,6 +344,48 @@ const finishedWalk: TriageAdmittedOperationExecutorV1 = async () => ({
 });
 
 describe('the aggregate list coverage claim', () => {
+    it('reads only the exact configured rows for independently refreshed selected sources', async () => {
+        const { collections, control } = createTestkitCorpusCollections();
+        const catalogSize = MAX_TRIAGE_LIST_SOURCE_BATCH_V1 + 3;
+        const selected = Array.from({ length: catalogSize }, (_, index) => {
+            const row = configuredRow({ instanceTag: paddedInstanceTag(`s${String(index).padStart(3, '0')}`),
+                sourceInstanceId: numberedInstanceId(index), configuredAtMs: index + 1 });
+            control.sourceInstances.seed(toCorpusStoredValue(row));
+            return { sourceInstanceId: row.configured.instance.sourceInstanceId, configurationRowId: row.instanceTag };
+        }).filter((_, index) => index === 0 || index === MAX_TRIAGE_LIST_SOURCE_BATCH_V1 || index === catalogSize - 1);
+        let configuredRowsRead = 0;
+        const sourceInstances = {
+            ...collections.sourceInstances,
+            query: async (...args: Parameters<typeof collections.sourceInstances.query>) => {
+                const page = await collections.sourceInstances.query(...args);
+                configuredRowsRead += page.rows.length;
+                return page;
+            },
+            get: async (...args: Parameters<typeof collections.sourceInstances.get>) => {
+                const row = await collections.sourceInstances.get(...args);
+                if (row !== null) configuredRowsRead += 1;
+                return row;
+            },
+        };
+        const scanned: string[] = [];
+        const results = await Promise.all(selected.map(async (source) => listTriageEntries({
+            v: 1, sources: { kind: 'selected', sourceInstances: [source] },
+            limit: 1, order: 'newest',
+        }, {
+            sourceInstances, readAdmittedSources: async () => [ADMITTED_SOURCE],
+            executeScan: async (_handle, input) => {
+                scanned.push(input.instance.instance.sourceInstanceId);
+                return { kind: 'complete', observations: [{ kind: 'present',
+                    localRef: { kindId: 'pull-request', collisionScope: 'example/repository', entryId: input.instance.instance.sourceInstanceId },
+                    locator: testkitLocator(), snapshot: testkitSnapshot(), viewer: testkitViewer() }],
+                    evidence: { kind: 'walkFinished' } };
+            }, nowMs: () => 1000,
+        })));
+        expect(scanned.sort()).toEqual(selected.map(source => source.sourceInstanceId).sort());
+        expect(results.flatMap(result => result.window.rows)).toHaveLength(selected.length);
+        expect(configuredRowsRead).toBe(selected.length);
+    });
+
     it('qualifies a connection login with its source name without changing the stored label', async () => {
         const { collections, control } = createTestkitCorpusCollections();
         const retained = configuredRow({ instanceTag: paddedInstanceTag('a'), sourceInstanceId: INSTANCE_ID, configuredAtMs: 1 });
@@ -411,7 +454,7 @@ describe('the aggregate list coverage claim', () => {
             readEntries: async (input) => {
                 limits.push(input.limit);
                 return TriageListEntriesResultV1Schema.parse(await listTriageEntries({ ...input,
-                    sources: { kind: 'selected', sourceInstanceIds: [INSTANCE_ID] } }, {
+                    sources: await selectTestkitConfiguredSources([INSTANCE_ID], collections.sourceInstances) }, {
                     sourceInstances: collections.sourceInstances,
                     readAdmittedSources: async () => [admitted],
                     executeScopeUnits: async () => {
@@ -481,7 +524,7 @@ describe('the aggregate list coverage claim', () => {
         let started = false;
         const resultPromise = listTriageEntries({
             v: 1,
-            sources: { kind: 'selected', sourceInstanceIds: [INSTANCE_ID] },
+            sources: await selectTestkitConfiguredSources([INSTANCE_ID], collections.sourceInstances),
             limit: 10,
             order: 'newest',
         }, {
@@ -743,7 +786,7 @@ describe('the aggregate list continuation set', () => {
             },
             nowMs: () => 1000,
         } satisfies Parameters<typeof listTriageEntries>[1];
-        const input = { v: 1, sources: { kind: 'selected', sourceInstanceIds: [INSTANCE_ID] }, limit, order: 'newest' } as const;
+        const input = { v: 1, sources: await selectTestkitConfiguredSources([INSTANCE_ID], collections.sourceInstances), limit, order: 'newest' } as const;
         const first = TriageListEntriesResultV1Schema.parse(await listTriageEntries(input, deps));
         expect(submitted).toEqual([minimum]);
         expect(first.window.rows).toHaveLength(Math.min(minimum, total));
@@ -823,9 +866,9 @@ describe('the aggregate list continuation set', () => {
         let admissionReads = 0;
         let providerPages = 0;
         const deps = {
-            sourceInstances: { query: async (...args) => {
+            sourceInstances: { ...collections.sourceInstances, get: async (...args) => {
                 configurationReads++;
-                return collections.sourceInstances.query(...args);
+                return collections.sourceInstances.get(...args);
             } },
             readAdmittedSources: async () => { admissionReads++; return [ADMITTED_SOURCE]; },
             executeScan: async (): Promise<TriageScanResultV1> => {
@@ -841,7 +884,7 @@ describe('the aggregate list continuation set', () => {
             },
             nowMs: () => 1000,
         } satisfies Parameters<typeof listTriageEntries>[1];
-        const input = { v: 1, sources: { kind: 'selected', sourceInstanceIds: ids }, limit: 10, order: 'newest',
+        const input = { v: 1, sources: await selectTestkitConfiguredSources(ids, collections.sourceInstances), limit: 10, order: 'newest',
             resume: [{ sourceInstanceId: ids[0]!, continuation: { v: 1, token: 'page-1' }, pageLimit: 1 }],
         } as const;
         const result = await listTriageEntries(input, deps);
@@ -889,7 +932,7 @@ describe('the aggregate list continuation set', () => {
 
         await listTriageEntries({
             v: 1,
-            sources: { kind: 'selected', sourceInstanceIds: [first, second, third] },
+            sources: await selectTestkitConfiguredSources([first, second, third], collections.sourceInstances),
             limit: 10,
             order: 'newest',
             resume: [
@@ -975,7 +1018,7 @@ describe('the aggregate list continuation set', () => {
 
         const compacted = await listTriageEntries({
             v: 1,
-            sources: { kind: 'selected', sourceInstanceIds: [second] },
+            sources: await selectTestkitConfiguredSources([second], collections.sourceInstances),
             limit: 10,
             order: 'newest',
             resume: firstPage.window.continuations,
@@ -1070,7 +1113,7 @@ describe('the aggregate list continuation set', () => {
             fetchedThisPress = new Set<string>();
             const result: TriageListEntriesResultV1 = await listTriageEntries({
                 v: 1,
-                sources: { kind: 'selected', sourceInstanceIds: ids },
+                sources: await selectTestkitConfiguredSources(ids, collections.sourceInstances),
                 limit: MAX_TRIAGE_LIST_WINDOW_ROWS_V1,
                 order: 'newest',
                 ...(resume === undefined ? {} : { resume }),

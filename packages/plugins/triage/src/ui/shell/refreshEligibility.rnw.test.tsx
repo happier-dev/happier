@@ -125,7 +125,7 @@ function rateLimitedListResult(
         exhausted: false,
     });
     const configured = (sourceInstanceId: string, displayLabel: string) => ({
-        sourceInstanceId,
+        sourceInstanceId, configurationRowId: sourceInstanceId,
         source: SOURCE,
         displayLabel,
         available: true,
@@ -185,7 +185,7 @@ async function executeAction(
     }
     if (action === TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1) return { v: 1, pins: [] };
     if (action === TRIAGE_READ_SAVED_VIEWS_ACTION_LOCAL_ID_V1) {
-        return { v: 1, availability: 'absent', views: [], selectedViewId: null, revision: 'revision-1' };
+        return { v: 1, availability: 'absent', views: [], revision: 'revision-1' };
     }
     throw new Error(`unexpected action ${action}`);
 }
@@ -290,9 +290,14 @@ describe('the Refresh control while a source has asked us to wait', () => {
         // coordinator silently refuses.
         const shell = await mountShell({ rows: 'none' });
 
-        const controls = await shell.getAllByRole('button', { name: 'Refresh' });
-        expect(controls.length).toBeGreaterThan(1);
-        expect(controls.every((control) => control.state?.disabled === true)).toBe(true);
+        expect(await refreshDisabled(shell)).toBe(true);
+        // The empty slot says the same one failure line the rows would carry, with its own Try again.
+        const retry = await shell.getByRole('button', { name: 'Try again' });
+        expect(retry.state?.disabled).toBe(true);
+        const lines = [...document.querySelectorAll('[role="status"]')].filter(node =>
+            node.textContent?.includes('could not be read'));
+        expect(lines).toHaveLength(1);
+        expect(lines[0]?.textContent).toContain('Their entries may be missing or out of date.');
     });
 
     it('does not wake while the refusal is still running', async () => {

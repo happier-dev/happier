@@ -63,7 +63,7 @@ function snapshot(overrides: Partial<TriageListWindowSnapshotV1> = {}): TriageLi
         freshness: 'fresh',
         pending: 'idle',
         configuredSources: [{
-            sourceInstanceId: INSTANCE,
+            sourceInstanceId: INSTANCE, configurationRowId: INSTANCE,
             source: SOURCE,
             displayLabel: 'forge/repo',
             available: true,
@@ -158,12 +158,12 @@ describe('projectTriagePickerCorpusFacts', () => {
         const blocked = projectTriagePickerCorpusFacts({
             snapshot: snapshot({
                 window: window(),
-                refreshBlocked: { reason: 'failureBackoff', nextEligibleAtMs: 9_000 },
+                refreshBlocked: { reason: 'sourceRetryDeadline', nextEligibleAtMs: 9_000 },
             }),
             nowMs: 1,
         });
 
-        expect(blocked.refreshBlocked).toEqual({ reason: 'failureBackoff', nextEligibleAtMs: 9_000 });
+        expect(blocked.refreshBlocked).toEqual({ reason: 'sourceRetryDeadline', nextEligibleAtMs: 9_000 });
         expect(projectTriagePickerCorpusFacts({ snapshot: snapshot(), nowMs: 1 }).refreshBlocked).toBeNull();
     });
 });
