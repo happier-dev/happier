@@ -15,6 +15,7 @@ import { useLayoutPresentationActive } from '@/components/ui/presentation/Plugin
 import { GlassEnvironmentHold } from '@/components/ui/glass/glassRuntimeEnvironment';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { HomeHubFrame } from './HomeHubFrame';
+import { HomeHubLoading } from './HomeHubLoading';
 import { PhoneTabNavRowLine, usePhoneTabNavRow } from '@/components/navigation/shell/phoneTabNavRow';
 import { PAGE_ROW_TOUCH_MIN_HEIGHT_PX } from '@/components/ui/lists/pageRowMetrics';
 import { useWidgetFrameStyle } from '@/components/widgets/frame/useWidgetFrameStyle';
@@ -567,13 +568,13 @@ const HomeHubContent = React.memo(function HomeHubContent() {
     useSessionSurfaceGeometryRefresh(homeDrop.refresh);
     const homeListRef = React.useCallback((node: ScrollView | null) => { listRef.current = node; homeDrop.ref(node); }, [homeDrop.ref]);
 
-    // Until the model knows, the pane holds a quiet page: neither the hub (which could swap to the
-    // guidance) nor the guidance's mark draws before the answer, so nothing moves on arrival.
+    // Until the model knows, the pane holds Home's own shape (the greeting, the composer, the rows under it), the
+    // same placeholder the shell draws while Home's page loads, so the two waits read as one and nothing is blank.
     if (homeLoading) {
         // A Home that does not answer turns this into "Can't reach {Home}" with Retry, not an endless wait.
         return framed(
             <HomeReachabilityGate variant="pane">
-                <ItemList testID="home-hub.loading">{null}</ItemList>
+                <HomeHubLoading testID="home-hub.loading" />
             </HomeReachabilityGate>
         );
     }

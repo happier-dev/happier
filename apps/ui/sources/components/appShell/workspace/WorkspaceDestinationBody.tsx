@@ -11,6 +11,7 @@ import { useAppShellLocation } from '@/components/navigation/shell/appRail/useAp
 import { workspaceSettingsLayoutKeys } from './workspaceRouteContext';
 import { WorkspaceRouteOutlet } from './WorkspaceRouteOutlet';
 import { DestinationBodyLoading } from './DestinationBodyLoading';
+import { HomeHubLoading } from '@/components/hub/HomeHubLoading';
 
 // Routes that share one editor loader also share its lazy identity: promotion
 // after Save must not suspend an already mounted editor on another route chunk.
@@ -33,6 +34,9 @@ function hostedLayout(key: string) {
     }
     return Layout;
 }
+/** Home's route (`/`): where a reload lands, so while its page loads it holds Home's own shape. */
+const HOME_ROUTE_KEY = '';
+
 const PluginAppPageScreen = retryableLazy(async () => ({
     default: (await import('@/components/appShell/plugins/PluginAppPageScreen')).PluginAppPageScreen,
 }));
@@ -64,7 +68,9 @@ export const WorkspaceDestinationBody = React.memo(function WorkspaceDestination
         const Layout = hostedLayout(key);
         content = <WorkspaceRouteOutlet.Provider key={key} value={content}><Layout /></WorkspaceRouteOutlet.Provider>;
     }
-    return <React.Suspense fallback={<DestinationBodyLoading />}>
+    // Home draws the same Home-shaped placeholder until its own model answers, so the two waits read as one.
+    const fallback = match?.routeKey === HOME_ROUTE_KEY ? <HomeHubLoading testID="home-hub.loading" /> : <DestinationBodyLoading />;
+    return <React.Suspense fallback={fallback}>
         {machineKey ? <MachinesDoorFromShell pathname={props.pathname}>{content}</MachinesDoorFromShell> : content}
     </React.Suspense>;
 });

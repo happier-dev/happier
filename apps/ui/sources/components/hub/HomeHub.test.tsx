@@ -466,8 +466,9 @@ describe('HomeHub', () => {
     it('holds a quiet page while it is not known yet whether a machine can run a session', async () => {
         settings.guidanceKind = 'loading';
         const loading = await renderHome();
-        // Neither the hub nor the getting-started guidance (and its mark) draws until the answer.
-        expect(loading.findByTestId('home-hub.loading') ?? loading.findByTestId('home-unreachable')).toBeTruthy();
+        // Neither the hub nor the getting-started guidance (and its mark) draws until the answer; the page holds
+        // Home's own shape (greeting, composer), the same placeholder the shell draws while Home's page loads.
+        expect(loading.findByTestId('home-hub.loading-composer') ?? loading.findByTestId('home-unreachable')).toBeTruthy();
         expect(loading.getTextContent()).not.toContain('guidance');
         expect(shownSections(loading.getTextContent())).toEqual([]);
         standardCleanup();

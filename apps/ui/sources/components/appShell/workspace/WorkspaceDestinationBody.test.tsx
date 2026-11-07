@@ -41,6 +41,7 @@ function WorkflowBody() {
     return React.createElement('HostedWorkflow', { params: useLocalSearchParams(), draft, setDraft });
 }
 function BoardsBody() { return React.createElement('HostedBoards'); }
+function HomeBody() { return React.createElement('HostedHome'); }
 function RunSettingsBody() { return React.createElement('HostedRunSettings', { params: useLocalSearchParams() }); }
 function MachineBody() {
     const [draft, setDraft] = React.useState('');
@@ -81,6 +82,7 @@ beforeAll(async () => {
         './(app)/workflows/settings.tsx': { WorkspaceRouteBody: RunSettingsBody },
         './(app)/automations/settings.tsx': { WorkspaceRouteBody: AutomationSettingsRoute },
         './(app)/boards/index.tsx': { WorkspaceRouteBody: BoardsBody },
+        './(app)/index.tsx': { WorkspaceRouteBody: HomeBody },
         './(app)/boards/[boardId].tsx': { WorkspaceRouteBody: BoardsBody },
     };
     registerWorkspaceRouteContext(Object.assign((key: string) => {
@@ -136,6 +138,26 @@ describe('workspace destination route composition', () => {
         expect(renderer.root.findAllByType(SurfaceStateCard)).toHaveLength(cards);
         await act(async () => {});
         expect(renderer.root.findAllByType('HostedBoards')).toHaveLength(1);
+        act(() => renderer.unmount());
+    });
+    // Home is where a reload lands: while its page loads it holds Home's own shape (greeting, composer, the
+    // rows under it), not the generic page rows, and the Home that mounts draws the same shape until its model answers.
+    it('holds a loading Home in Home\'s own shape, not the generic page rows', async () => {
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
+            externalSessions: false, inbox: false, workflows: true, friends: false,
+        } });
+        const target = resolveDestinationRefFromHref(catalog, '/')!;
+        let renderer!: ReturnType<typeof create>;
+        act(() => {
+            renderer = create(<WorkspaceDestinationBody target={target} pathname="/" renderSession={() => null} renderSessionDetails={() => null} />);
+        });
+        const hosts = (testID: string) => renderer.root.findAll(node => typeof node.type === 'string' && node.props.testID === testID);
+        expect(renderer.root.findAllByType('HostedHome')).toHaveLength(0);
+        expect(hosts('workspace-destination-body-loading')).toHaveLength(0);
+        expect(hosts('home-hub.loading-greeting')).toHaveLength(1);
+        expect(hosts('home-hub.loading-composer')).toHaveLength(1);
+        await act(async () => {});
+        expect(renderer.root.findAllByType('HostedHome')).toHaveLength(1);
         act(() => renderer.unmount());
     });
     it('adjudicates the retired settings alias as Run settings rather than a Workflow entity or collection', async () => {
