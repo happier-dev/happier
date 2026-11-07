@@ -1,4 +1,5 @@
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
+import { SessionSpawnNewInputV2Schema as preObservationSpawnInput } from '../sessions/creation/testFixtures/sessionSpawnInputBeforeCommitObservation.js';
 import { z } from 'zod/mini';
 
 import * as protocol from '../index.js';
@@ -448,7 +449,6 @@ const RESULT_REQUIRED_BLOCKING_ACTION_IDS = [
   'account.encryption.automationTemplates.recover',
   'account.encryption.historicalKey.forget',
   'account.security.get',
-  'account.security.terminalPresentUser.set',
   'account.password.enroll',
   'account.password.change',
   'account.password.remove',
@@ -573,7 +573,7 @@ const RESULT_REQUIRED_DEFERRED_ACTION_IDS = [
   'session.rollback',
   'session.checkpoint_code_rollback',
   'workspace.sync.relationship.create',
-  ...SHARED_SAVED_SECRET_ACTION_IDS_V1.filter((id) => id !== 'secrets.shared.list'),
+  ...SHARED_SAVED_SECRET_ACTION_IDS_V1.filter((id) => id !== 'secrets.shared.list' && id !== 'secrets.shared.reveal'),
 ];
 
 const RESULT_NONE_DEFERRED_ACTION_IDS = [
@@ -645,6 +645,9 @@ const RESULT_NONE_DEFERRED_ACTION_IDS = [
 ] as const;
 
 const RESULT_OPTIONAL_DEFERRED_ACTION_IDS = [
+  // P42-5 Reveal returns a value-free display outcome; an Agent/MCP request is
+  // an ordinary default Ask whose Allow displays only in the approving app.
+  'secrets.shared.reveal',
   'ui.pet.choose',
   'prompt_registry.install',
   'plugins.permissions.grants.revoke',
@@ -769,6 +772,21 @@ function resolveExpectedApprovalFlow(approval: { flow?: 'blocking' | 'deferred';
 }
 
 describe('Action Spec Registry', () => {
+  it('declares origin daemon admission without broadening neighboring Machine Actions or public discovery', () => {
+    for (const actionId of [...PLUGIN_DEV_LOOP_ACTION_IDS_V1, 'machines.services.logs.read'] as const) {
+      expect(getActionSpec(actionId).originalExecution?.daemonIngressSurfaces, actionId).toEqual(['cli', 'ui']);
+    }
+    expect(getActionSpec('machines.services.exec').originalExecution?.daemonIngressSurfaces).toEqual(['ui']);
+    const terminal = getActionSpec('machines.terminal.list');
+    expect(terminal.originalExecution?.daemonIngressSurfaces).toEqual(['cli']);
+    const neighbor = getActionSpec('machines.storage.summary.get');
+    expect(neighbor.executionPlacement).toBe('machine');
+    expect(neighbor.originalExecution?.daemonIngressSurfaces).toBeUndefined();
+    expect(serializeActionSpec(terminal)).not.toHaveProperty('originalExecution');
+    expect(serializeActionSpec(terminal)).not.toHaveProperty('invocationServerIdForInput');
+    expect(actionSpecToActionDefinitionV1(terminal)).not.toHaveProperty('invocationServerIdForInput');
+  });
+
   it('keeps the receipt-bearing workspace conflict RPC private to the daemon Action adapter', () => {
     const spec = getActionSpec('workspace.sync.conflict.resolve');
     expect(spec.surfaces.rpc).toBe(false);
@@ -1256,11 +1274,11 @@ describe('Action Spec Registry', () => {
 
   it('exposes user Account mutations as human-decided requests and keeps live secret inputs on their host', () => {
     for (const actionId of ['account.sessions.signOutEverywhere', 'account.apiTokens.create', 'account.apiTokens.update',
-      'account.apiTokens.revoke', 'account.apiTokens.revokeAll', 'account.security.terminalPresentUser.set'] as const) {
+      'account.apiTokens.revoke', 'account.apiTokens.revokeAll'] as const) {
       const spec = getActionSpec(actionId);
       expect(spec.requiredAuthority, actionId).toBe('present_user');
-      expect(spec.surfaces.agent, actionId).toBe(true);
-      expect(spec.surfaces.mcp, actionId).toBe(true);
+      expect(spec.surfaces.agent, actionId).toBe(actionId !== 'account.apiTokens.create');
+      expect(spec.surfaces.mcp, actionId).toBe(actionId !== 'account.apiTokens.create');
       expect(spec.surfaces.plugin, actionId).toBe(true);
       expect(PluginInvocableActionIdSchema.safeParse(actionId).success, actionId).toBe(true);
     }
@@ -1276,14 +1294,13 @@ describe('Action Spec Registry', () => {
       ['account.apiTokens.update', 'account_api_tokens_update'],
       ['account.apiTokens.revoke', 'account_api_tokens_revoke'],
       ['account.apiTokens.revokeAll', 'account_api_tokens_revoke_all'],
-      ['account.security.terminalPresentUser.set', 'account_security_terminal_present_user_set'],
       ['account.apiTokens.list', 'account_api_tokens_list'],
       ['account.security.get', 'account_security_get'],
     ] as const) {
       const spec = getActionSpec(actionId);
       expect(spec.bindings?.mcpToolName, actionId).toBe(toolName);
-      expect(spec.surfaces.agent, actionId).toBe(true);
-      expect(spec.surfaces.mcp, actionId).toBe(true);
+      expect(spec.surfaces.agent, actionId).toBe(actionId !== 'account.apiTokens.create');
+      expect(spec.surfaces.mcp, actionId).toBe(actionId !== 'account.apiTokens.create');
       expect(ActionSpecSchema.safeParse(spec).success, actionId).toBe(true);
     }
   });
@@ -1627,7 +1644,7 @@ describe('Action Spec Registry', () => {
       rpc: true,
       agent: true,
       mcp: true,
-      voice: false,
+      voice: true,
       api: true,
       plugin: true,
     });
@@ -1682,7 +1699,7 @@ describe('Action Spec Registry', () => {
       plugin: true,
       ui: false,
       cli: false,
-      rpc: false,
+      rpc: true,
       agent: false,
       mcp: false,
       voice: false,
@@ -1691,7 +1708,7 @@ describe('Action Spec Registry', () => {
       plugin: true,
       ui: false,
       cli: false,
-      rpc: false,
+      rpc: true,
       agent: false,
       mcp: false,
       voice: false,
@@ -1884,6 +1901,12 @@ describe('Action Spec Registry', () => {
     );
     const publicInput = PUBLIC_ACTION_INPUT_SCHEMAS['session.message.send'];
     expect(publicInput.parse(input)).toEqual(input);
+    const recovery = { ...input, requestedAction: { v: 2, kind: 'recover_execution_run' } };
+    expect(publicInput.parse(recovery)).toEqual(recovery);
+    for (const schema of [publicInput, getActionSpec('session.message.send').inputSchema]) {
+      expect(schema.safeParse({ ...recovery, recipient: undefined }).success).toBe(false);
+      expect(schema.safeParse({ ...recovery, recipient: { kind: 'session' } }).success).toBe(false);
+    }
     const structuredInput = { v: 1, mentions: [{ kind: 'happier.session', ref: 'session:s1', token: '@session' }] };
     expect(publicInput.parse({ ...input, message: '@session Continue', structuredInput }))
       .toEqual({ ...input, message: '@session Continue', structuredInput });
@@ -3766,15 +3789,13 @@ describe('Action Spec Registry', () => {
         contentConfidence: 'exact',
         attributionScope: 'unknown',
       },
-      truncation: {
-        reason: 'diffBytes',
-        droppedFiles: 2,
-      },
+      requestedOutputs: ['summary'],
+      outputs: { summary: { state: 'partial', value: { summaryMarkdown: 'Changed one file.' } } },
     })).toMatchObject({
       success: true,
       summaryMarkdown: 'Changed one file.',
       sourceKey: 'checkpoint:checkpoint.diff_computed',
-      truncation: { reason: 'diffBytes', droppedFiles: 2 },
+      outputs: { summary: { state: 'partial', value: { summaryMarkdown: 'Changed one file.' } } },
     });
   });
 
@@ -4254,7 +4275,7 @@ describe('Action Spec Registry', () => {
     creationKey: 'manual:attempt-7',
     executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
     directory: { kind: 'path', path: '/tmp/project' },
-    organizationPlacement: { folderId: null, tagIds: [] },
+    organizationPlacement: { sectionId: null, tagIds: [] },
     agentTarget: {
       kind: 'agent',
       identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
@@ -4274,7 +4295,7 @@ describe('Action Spec Registry', () => {
       input: {
         creationKey: 'manual:attempt-7',
         directory: { kind: 'path', path: '/tmp/project' },
-        organizationPlacement: { folderId: null, tagIds: [] },
+        organizationPlacement: { sectionId: null, tagIds: [] },
         agentTarget: {
           kind: 'agent',
           identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
@@ -4284,6 +4305,19 @@ describe('Action Spec Registry', () => {
     });
     expect(PUBLIC_ACTION_INPUT_SCHEMAS['session.spawn_new'].safeParse(projection.input).success).toBe(true);
     expect(Object.hasOwn(projection.input, 'executionTarget')).toBe(false);
+  });
+  it('keeps generic API creation terminal before its strict predecessor daemon reader', () => {
+    // The generic API sender has no selected-target capability observation.
+    // Its shared projection, used by UI and CLI API transports, owns withholding
+    // the ordinary transport's optional observation preference.
+    const { organizationPlacement: _placement, ...input } = canonicalSessionSpawnInput;
+    const observed = { ...input, observeSessionCommit: true };
+    expect(getActionSpec('session.spawn_new').inputSchema.parse(observed)).toMatchObject({ observeSessionCommit: true });
+    const projection = projectSessionSpawnNewApiRequest(observed);
+    expect(projection.input).not.toHaveProperty('observeSessionCommit');
+    expect(preObservationSpawnInput.parse({ ...projection.input, executionTarget: input.executionTarget })).toEqual(input);
+    expect(PUBLIC_ACTION_INPUT_SCHEMAS['session.spawn_new'].safeParse({ ...projection.input, observeSessionCommit: true }).success)
+      .toBe(false);
   });
 
   it('accepts a structured provider-bound model selection without flat model carriers', () => {

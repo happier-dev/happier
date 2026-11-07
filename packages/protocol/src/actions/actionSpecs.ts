@@ -926,6 +926,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly (
 // user UI capability. Grant/dismiss remain human-owned approval proposals;
 // list/revoke are user administration and are exposed to Agent and MCP.
 export const AGENT_ACTION_EXCLUSION_REASONS = Object.freeze({
+  'account.apiTokens.create': 'Token creation is human-only: the new bearer secret must never enter an Agent or MCP flow (owner ruling 2026-11-07).',
   'plugins.permissions.grants.request': 'Permission requests originate from host-stamped plugin provenance, not a user UI operation.',
   'session.view.toolCalls.set': 'Plan 60 §6 reserves transcript visibility for human UI, user Voice and genuine CLI callers.',
 } as const satisfies Readonly<Partial<Record<ActionId, string>>>);

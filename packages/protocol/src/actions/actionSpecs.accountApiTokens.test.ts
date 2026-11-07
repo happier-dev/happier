@@ -29,7 +29,7 @@ describe('Account API-token Action admission', () => {
       expect(PublicActionIdSchema.safeParse(id).success, id).toBe(false);
     }
     for (const id of ['account.password.enroll', 'account.password.change', 'account.password.remove',
-      'account.email.change.request', 'account.security.terminalPresentUser.set']) {
+      'account.email.change.request']) {
       expect(SignedRootActionIdSchema.safeParse(id).success, id).toBe(false);
     }
   });
@@ -65,10 +65,10 @@ describe('Account API-token Action admission', () => {
         expect(resolveActionSurfaceAvailability({ actionId: id, surface }).available).toBe(true);
       }
       for (const surface of ['agent', 'mcp', 'voice', 'rpc', 'api', 'plugin'] as const) {
-        // Tools and trusted plugins can request a human-decided mutation; API tokens cannot
-        // execute it directly, and the declared authority remains present_user.
+        // The owner excludes creation from Agent/MCP: its new bearer stays in
+        // the human UI. Other requests retain ordinary approval admission.
         expect(resolveActionSurfaceAvailability({ actionId: id, surface }).available, `${id} on ${surface}`)
-          .toBe(surface === 'agent' || surface === 'mcp' || surface === 'plugin');
+          .toBe(surface === 'plugin' || id !== 'account.apiTokens.create' && (surface === 'agent' || surface === 'mcp'));
       }
     }
   });

@@ -286,8 +286,8 @@ function createAccountSecurityActionSpecs() {
     surfaces: {
       ui: true,
       voice: false,
-      agent: false,
-      mcp: false,
+      agent: true,
+      mcp: true,
       cli: true,
       rpc: false,
     },
