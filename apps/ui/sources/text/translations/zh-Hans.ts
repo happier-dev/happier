@@ -1952,6 +1952,7 @@ export const zhHans: TranslationStructure = {
   },
 
   approvals: {
+    requestMachineOffline: ({ machine }: { machine: string }) => `${machine} 已离线。请求将等待；确认之前不会写入任何内容。`,
     confidential: {
       review: "审核凭据",
       title: "凭据",

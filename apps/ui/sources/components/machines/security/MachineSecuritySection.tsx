@@ -1,11 +1,13 @@
 import * as React from 'react';
 import { View } from 'react-native';
+import { useUnistyles } from 'react-native-unistyles';
 
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
 import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { openActionOperationDetail } from '@/components/inbox/actionOperations/openActionOperationDetail';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -13,6 +15,9 @@ import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
+import { UpdateRow } from '@/components/updates/UpdateRow';
+import type { UpdateItem } from '@/updates/items/updateItem';
+import { useUpdatesContentModel } from '@/updates/useUpdatesContentModel';
 import { joinList } from '@/utils/text/joinList';
 
 import { MachineAdminPowerSection } from './MachineAdminPowerSection';
@@ -71,6 +76,7 @@ export function MachineSecuritySection(
     reachable: props.online,
   });
   const { refresh } = updates;
+  const happier = useMachineHappierUpdate(props.machineId);
   const onSettled = React.useCallback(() => {
     void refresh();
   }, [refresh]);
@@ -132,6 +138,7 @@ export function MachineSecuritySection(
         online={props.online}
         controls={controls}
         canManage={props.canManage}
+        happier={happier}
       />
     </>
   );
@@ -145,9 +152,12 @@ export function MachineSecurityView(
     controls: MachineSecurityControls;
     /** Installing, restarting and checking need Manage (10-31); a Use grantee reads the pushed facts only. */
     canManage?: boolean;
+    /** Happier on this Machine: the Updates surface's own row for it, last in the section. */
+    happier?: MachineHappierUpdate | null;
   }>,
 ) {
   const { updates, controls } = props;
+  const { theme } = useUnistyles();
   const canManage = props.canManage ?? true;
   const machine = props.machineName;
   const status = describeUpdatesStatus(updates, machine, props.online, canManage);
@@ -186,9 +196,11 @@ export function MachineSecurityView(
         <Item
           testID="machine-security-updates"
           title={status.title}
+          icon={<Icon name="shield-check" size={ICON_SIZE.xl} color={theme.colors.text.secondary} />}
           subtitle={status.subtitle}
           loading={status.loading}
           showChevron={false}
+          accessoryLayout="adaptive"
           rightElement={
             status.install && canManage && props.online === true ? (
               <RoundButton
@@ -211,9 +223,41 @@ export function MachineSecurityView(
             canManage={canManage}
           />
         ) : null}
+        {props.happier ? (
+          <UpdateRow
+            item={props.happier.item}
+            where={machine}
+            presentation="screen"
+            secondaryAction
+            onRun={props.happier.onRun}
+            sessionsRunning={props.happier.sessionsRunning}
+          />
+        ) : null}
       </ItemGroup>
       <UpdatesReviewCard machineName={machine} controls={controls} />
     </View>
+  );
+}
+
+export type MachineHappierUpdate = Readonly<{
+  item: UpdateItem;
+  onRun: (item: UpdateItem) => void;
+  sessionsRunning: boolean;
+}>;
+
+/**
+ * Happier on this Machine: the Updates surface's own row for it (`machines.cli.update`), read for this one
+ * Machine only. Decided here, not inside the group: a row that renders nothing would still draw its divider.
+ */
+function useMachineHappierUpdate(machineId: string): MachineHappierUpdate | null {
+  const model = useUpdatesContentModel({ machineId });
+  const item = model.groups.find((group) => group.machineId === machineId)
+    ?.items.find((candidate) => candidate.subject.kind === 'happier-cli') ?? null;
+  const sessionsRunning = model.sessionsRunningOn.has(machineId);
+  const { runItem } = model;
+  return React.useMemo(
+    () => item ? { item, onRun: (next: UpdateItem) => { void runItem(next); }, sessionsRunning } : null,
+    [item, runItem, sessionsRunning],
   );
 }
 
@@ -416,6 +460,9 @@ function RestartRow(
 ) {
   const { reboot } = props.controls;
   const machine = props.machineName;
+  const { theme } = useUnistyles();
+  // Every row in Updates names what it updates with its mark, as the Updates surface's own rows do.
+  const restartIcon = <Icon name="arrows-clockwise" size={ICON_SIZE.xl} color={theme.colors.text.secondary} />;
   const s = 'machineDetailPage.security' as const;
   const restartButton = !props.canManage ? undefined : (
     <RoundButton
@@ -433,6 +480,7 @@ function RestartRow(
       return (
         <Item
           testID="machine-security-restart"
+          icon={restartIcon}
           title={t(`${s}.restartingTitle`, { machine })}
           subtitle={t(`${s}.restartingReason`)}
           loading
@@ -444,18 +492,21 @@ function RestartRow(
       return (
         <Item
           testID="machine-security-restart"
+          icon={restartIcon}
           title={t(`${s}.restartBlockedTitle`, { machine })}
           subtitle={t(`${s}.restartBlockedReason`, {
             reasons: joinList(reboot.reasons.map((reason) => t(BLOCKED_KEYS[reason]))),
           })}
           showChevron={false}
           rightElement={restartButton}
+          accessoryLayout="adaptive"
         />
       );
     case 'settled':
       return (
         <Item
           testID="machine-security-restart"
+          icon={restartIcon}
           title={t(
             reboot.state === 'succeeded'
               ? `${s}.restarted`
@@ -475,10 +526,12 @@ function RestartRow(
       return (
         <Item
           testID="machine-security-restart"
+          icon={restartIcon}
           title={t(`${s}.restartFailed`, { machine })}
           subtitle={t(`${s}.restartFailedReason`)}
           showChevron={false}
           rightElement={restartButton}
+          accessoryLayout="adaptive"
         />
       );
     default:
@@ -486,12 +539,15 @@ function RestartRow(
         <>
           <Item
             testID="machine-security-restart"
+            icon={restartIcon}
+          icon={restartIcon}
             title={t(`${s}.restartNeededTitle`)}
             subtitle={t(
               props.controls.canReboot ? `${s}.restartNeededReason` : `${s}.restartNoInstallation`,
             )}
             showChevron={false}
             rightElement={restartButton}
+          accessoryLayout="adaptive"
           />
           {reboot.kind === 'starting' && reboot.approval ? (
             <ActionApprovalPendingNotice

@@ -2121,6 +2121,7 @@ export const ja: TranslationStructure = {
   },
 
   approvals: {
+    requestMachineOffline: ({ machine }: { machine: string }) => `${machine} はオフラインです。リクエストは待機し、確認するまで書き込みは行われません。`,
     confidential: {
       review: "認証情報を確認",
       title: "認証情報",

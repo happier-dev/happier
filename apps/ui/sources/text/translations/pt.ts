@@ -2175,6 +2175,7 @@ export const pt: TranslationStructure = {
   },
 
   approvals: {
+    requestMachineOffline: ({ machine }: { machine: string }) => `${machine} está offline. O pedido aguarda; nada é escrito antes de você confirmar.`,
     confidential: {
       review: "Revisar credencial",
       title: "Credencial",

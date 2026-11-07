@@ -20,6 +20,7 @@ import {
 import type {
   MachineAdminPowerControls,
   MachineAuthorityModel,
+  MachineSeparateUsersControl,
 } from './MachineAdminPowerSection';
 import { settleAdminAccessSave } from './useMachineAdminAccessSave';
 
@@ -72,7 +73,8 @@ async function render(
   options: Readonly<{
     canManage?: boolean;
     control?: MachineAdminPowerControls;
-    offer?: React.ReactNode;
+    separateUsers?: MachineSeparateUsersControl | null;
+    online?: boolean | null;
   }> = {},
 ) {
   const { MachineAdminPowerView } = await import('./MachineAdminPowerSection');
@@ -81,10 +83,10 @@ async function render(
       authority: model,
       saved: model.desiredAdminAccess ?? { version: 1, mode: 'none' },
       machineName: 'shop-prod',
-      online: true,
+      online: options.online === undefined ? true : options.online,
       canManage: options.canManage ?? true,
       controls: options.control ?? controls(),
-      isolationOffer: options.offer ?? null,
+      separateUsers: options.separateUsers ?? null,
     }),
   );
 }
@@ -183,7 +185,7 @@ describe('Machine → Security → Administrator power', () => {
       authority({ observation: observation(), desiredAdminAccess: ask }),
       {
         canManage: false,
-        offer: React.createElement('View', { testID: 'offer' }),
+        separateUsers: { value: 'sharedAgent', busy: false, onChoose: vi.fn(), step: React.createElement('View', { testID: 'offer' }) },
       },
     );
     expect(segmented(screen)?.props.disabled).toBe(true);
@@ -195,11 +197,39 @@ describe('Machine → Security → Administrator power', () => {
       t('machineDetailPage.security.admin.readOnly', { machine: 'shop-prod' }),
     );
     expect(screen.findAllByTestId('offer')).toHaveLength(0);
+    expect(findTestInstanceByTypeWithProps(screen, SegmentedChoiceItem, { testID: 'machine-security-admin-isolation' })?.props.disabled).toBe(true);
     expect(
       findTestInstanceByTypeWithProps(screen, RoundButton, {
         testID: 'machine-security-admin-save',
       }),
     ).toBeUndefined();
+  });
+
+  it('shows how agents run as one choice (Happier’s user, shared agent user, a user per person); choosing asks for the review', async () => {
+    const onChoose = vi.fn();
+    const model = authority({ platform: 'linux', isolationPolicy: { enabled: true, memberProvisioning: 'linuxUsersV1' },
+      isolation: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' } });
+    const screen = await render(model, { separateUsers: { value: 'member', busy: false, onChoose, step: null } });
+    const row = findTestInstanceByTypeWithProps(screen, SegmentedChoiceItem, { testID: 'machine-security-admin-isolation' });
+    expect(row?.props.title).toBe(t('machineDetailPage.security.admin.isolationTitle'));
+    expect(row?.props.subtitle).toBe(t('machineDetailPage.security.admin.isolationMember'));
+    expect(row?.props.value).toBe('member');
+    expect(row?.props.options.map((option: { id: string }) => option.id)).toEqual(['daemon', 'sharedAgent', 'member']);
+    expect(row?.props.disabled).toBe(false);
+    row?.props.onChange('sharedAgent');
+    expect(onChoose).toHaveBeenCalledWith('sharedAgent');
+    // Offline or mid-change, the choice stays visible and can't be changed.
+    const offline = await render(model, { online: false, separateUsers: { value: 'member', busy: false, onChoose, step: null } });
+    expect(findTestInstanceByTypeWithProps(offline, SegmentedChoiceItem, { testID: 'machine-security-admin-isolation' })?.props.disabled).toBe(true);
+    const busy = await render(model, { separateUsers: { value: 'sharedAgent', busy: true, onChoose, step: null } });
+    expect(findTestInstanceByTypeWithProps(busy, SegmentedChoiceItem, { testID: 'machine-security-admin-isolation' })?.props.disabled).toBe(true);
+  });
+
+  it('says a switched-on policy the Machine is not running yet as such, never as Off', async () => {
+    const screen = await render(authority({ platform: 'linux', isolationPolicy: { enabled: true, memberProvisioning: 'linuxUsersV1' },
+      isolation: { kind: 'disabled' } }));
+    expect(findTestInstanceByTypeWithProps(screen, Item, { testID: 'machine-security-admin-isolation' })?.props.subtitle)
+      .toBe(t('machineDetailPage.security.admin.isolationPending'));
   });
 
   it('saves Ask only once a valid administrator is named', async () => {

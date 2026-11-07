@@ -1760,6 +1760,7 @@ export const de: TranslationStructure = {
     },
 
   approvals: {
+    requestMachineOffline: ({ machine }: { machine: string }) => `${machine} ist offline. Die Anfrage wartet; vor deiner Bestätigung wird nichts geschrieben.`,
     confidential: {
       review: "Zugangsdaten prüfen",
       title: "Zugangsdaten",

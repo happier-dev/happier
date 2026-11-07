@@ -4,7 +4,10 @@ import { useUnistyles } from 'react-native-unistyles';
 import type { MachineAdminAccessV1 } from '@happier-dev/protocol/machines/adminAccessV1';
 
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
-import { MachineSeparateUsersOffer } from '@/components/sharing/machines/MachineSeparateUsersOffer';
+import {
+  SeparateUsersChangeStep,
+  useSeparateUsersChange,
+} from '@/components/sharing/machines/MachineSeparateUsersOffer';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Item } from '@/components/ui/lists/Item';
@@ -18,8 +21,7 @@ import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessL
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { InlineCode } from '@/components/ui/text/InlineCode';
 import { Text } from '@/components/ui/text/Text';
-import { useMachineGuestExecution } from '@/hooks/machine/useMachineGuestExecution';
-import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { useMachineGuestExecution, type MachineAgentRunAs } from '@/hooks/machine/useMachineGuestExecution';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { t } from '@/text';
@@ -39,6 +41,18 @@ import {
 import { useMachineAuthority } from './useMachineAuthority';
 
 export type MachineAuthorityModel = ReturnType<typeof useMachineAuthority>;
+
+/**
+ * How agents run on this Machine, one per-Machine policy: Happier's user, the shared agent user, or a user per
+ * person. `value` is the choice under review, else the Machine's policy (`null`: not changeable here); choosing
+ * opens the reviewed change, whose step (review, approval, result) sits under the section.
+ */
+export type MachineSeparateUsersControl = Readonly<{
+  value: MachineAgentRunAs | null;
+  busy: boolean;
+  onChoose: (next: MachineAgentRunAs) => void;
+  step: React.ReactNode;
+}>;
 
 export type MachineAdminPowerControls = Readonly<{
   draftMode: AdminAccessMode | null;
@@ -99,6 +113,32 @@ export function MachineAdminPowerSection(
     if (save.kind === 'saved' || save.kind === 'conflict') setDraft(null);
   }, [save.kind]);
   const { binding } = useServerCredentialAccountScopeBinding(props.serverId);
+  const guest = useMachineGuestExecution({
+    machineId: props.machineId,
+    scope: binding?.isCurrent() ? binding.scope : null,
+    execute,
+    canManage: props.canManage,
+  });
+  // The choice under review; the Machine's own policy otherwise.
+  const [draftRunAs, setDraftRunAs] = React.useState<MachineAgentRunAs | null>(null);
+  const change = useSeparateUsersChange({
+    machine: props.machineName,
+    guestExecution: guest,
+    target: draftRunAs ?? guest.runAs ?? 'member',
+  });
+  const reviewRef = React.useRef(change.review);
+  reviewRef.current = change.review;
+  React.useEffect(() => {
+    if (draftRunAs !== null) void reviewRef.current();
+  }, [draftRunAs]);
+  // Cancel or Close returns the control to the Machine's own policy.
+  const phaseKind = change.phase.kind;
+  const lastPhaseKind = React.useRef(phaseKind);
+  React.useEffect(() => {
+    if (phaseKind === 'offer' && lastPhaseKind.current !== 'offer') setDraftRunAs(null);
+    lastPhaseKind.current = phaseKind;
+  }, [phaseKind]);
+  const { reset: resetChange } = change;
   const controls: MachineAdminPowerControls = {
     draftMode: draft?.mode ?? null,
     draftUsername:
@@ -135,16 +175,25 @@ export function MachineAdminPowerSection(
       online={props.online}
       canManage={props.canManage}
       controls={controls}
-      isolationOffer={
-        props.canManage && binding?.isCurrent() ? (
-          <IsolationOffer
-            machineId={props.machineId}
-            machineName={props.machineName}
-            scope={binding.scope}
-            onOpenApproval={props.onOpenApproval}
+      separateUsers={{
+        value: guest.runAs === null ? null : draftRunAs ?? guest.runAs,
+        busy: phaseKind === 'previewing' || phaseKind === 'applying' || phaseKind === 'approval',
+        onChoose: (next) => {
+          if (next === guest.runAs) {
+            resetChange();
+            setDraftRunAs(null);
+          } else setDraftRunAs(next);
+        },
+        step: (
+          <SeparateUsersChangeStep
+            change={change}
+            machine={props.machineName}
+            testID="machine-security-separate-users"
+            presentation="section"
+            openApproval={props.onOpenApproval}
           />
-        ) : null
-      }
+        ),
+      }}
     />
   );
 }
@@ -157,34 +206,6 @@ export function readSavedAdminAccess(
   return desired ?? (metadataReadable ? { version: 1, mode: 'none' } : null);
 }
 
-/** Turning isolation on is the one existing review (Sharing's separate-users offer), not a second copy. */
-function IsolationOffer(
-  props: Readonly<{
-    machineId: string;
-    machineName: string;
-    scope: ServerAccountScope;
-    onOpenApproval: (artifactId: string) => void;
-  }>,
-) {
-  const guest = useMachineGuestExecution({
-    machineId: props.machineId,
-    scope: props.scope,
-    execute,
-    canManage: true,
-  });
-  if (!guest.canEnableSeparateUsers) return null;
-  return (
-    <ItemGroup surface="none">
-      <MachineSeparateUsersOffer
-      machine={props.machineName}
-      guestExecution={guest}
-      idPrefix="machine-security-"
-      openApproval={props.onOpenApproval}
-    />
-    </ItemGroup>
-  );
-}
-
 export function MachineAdminPowerView(
   props: Readonly<{
     authority: MachineAuthorityModel;
@@ -193,10 +214,10 @@ export function MachineAdminPowerView(
     online: boolean | null;
     canManage: boolean;
     controls: MachineAdminPowerControls;
-    isolationOffer: React.ReactNode;
+    separateUsers: MachineSeparateUsersControl | null;
   }>,
 ) {
-  const { authority, saved, controls } = props;
+  const { authority, saved, controls, separateUsers } = props;
   const machine = props.machineName;
   const headline = describeAdminPowerHeadline(authority, machine);
   const observation = authority.observation;
@@ -229,6 +250,12 @@ export function MachineAdminPowerView(
         ? { unavailableReason: t(`${s}.platformUnsupported`) }
         : {}),
     },
+  ];
+  // Both working policies named plainly, beside Happier's own user (owner ruling 2026-11-07, managed Machines).
+  const runAsOptions: SegmentedChoiceOption<MachineAgentRunAs>[] = [
+    { id: 'daemon', label: t(`${s}.agentsRunAsDaemon`) },
+    { id: 'sharedAgent', label: t(`${s}.agentsRunAsShared`) },
+    { id: 'member', label: t(`${s}.agentsRunAsMember`) },
   ];
   const next = controls.draftMode
     ? draftAdminAccess(controls.draftMode, controls.draftUsername)
@@ -312,12 +339,27 @@ export function MachineAdminPowerView(
             }
           />
         ) : null}
-        <Item
-          testID="machine-security-admin-isolation"
-          title={t(`${s}.isolationTitle`)}
-          subtitle={describeIsolation(authority)}
-          showChevron={false}
-        />
+        {separateUsers?.value ? (
+          <SegmentedChoiceItem<MachineAgentRunAs>
+            testID="machine-security-admin-isolation"
+            testIDPrefix="machine-security-agents-run-as"
+            title={t(`${s}.isolationTitle`)}
+            subtitle={describeIsolation(authority)}
+            subtitleLines={0}
+            options={runAsOptions}
+            value={separateUsers.value}
+            disabled={!props.canManage || props.online !== true || separateUsers.busy}
+            onChange={separateUsers.onChoose}
+          />
+        ) : (
+          <Item
+            testID="machine-security-admin-isolation"
+            title={t(`${s}.isolationTitle`)}
+            subtitle={describeIsolation(authority)}
+            subtitleLines={0}
+            showChevron={false}
+          />
+        )}
       </ItemGroup>
       {!props.canManage ? (
         <ItemGroup surface="none">
@@ -328,7 +370,7 @@ export function MachineAdminPowerView(
           />
         </ItemGroup>
       ) : null}
-      {props.canManage ? props.isolationOffer : null}
+      {props.canManage ? separateUsers?.step : null}
       <AdminAccessSaveFoot
         machineName={machine}
         controls={controls}
@@ -353,6 +395,9 @@ function describeIsolation(
     ? `${s}.isolationUnknown` : `${s}.isolationUnavailable`);
   if (availability.kind === 'can_turn_on'
     && (authority.isolation == null || authority.isolation.kind === 'unavailable')) return t(`${s}.isolationOff`);
+  // Asked for, not observed running: the switch is on, the Machine hasn't caught up.
+  if (availability.kind === 'available' && authority.isolation != null && authority.isolation.kind !== 'effective'
+    && authority.isolation.kind !== 'applying') return t(`${s}.isolationPending`);
   switch (authority.isolation?.kind) {
     case 'effective':
       return t(authority.separateUsers.placement === 'member' ? `${s}.isolationMember` : `${s}.isolationEffective`);

@@ -1953,6 +1953,7 @@ export const it: TranslationStructure = {
   },
 
   approvals: {
+    requestMachineOffline: ({ machine }: { machine: string }) => `${machine} è offline. La richiesta resta in attesa; nulla viene scritto prima della conferma.`,
     confidential: {
       review: "Verifica credenziale",
       title: "Credenziale",

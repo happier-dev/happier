@@ -1974,6 +1974,7 @@ export const ca: TranslationStructure = {
     },
 
   approvals: {
+    requestMachineOffline: ({ machine }: { machine: string }) => `${machine} és fora de línia. La sol·licitud espera; no s’escriu res fins que confirmis.`,
     confidential: {
       review: "Revisar credencial",
       title: "Credencial",

@@ -1975,6 +1975,7 @@ export const fr: TranslationStructure = {
   },
 
   approvals: {
+    requestMachineOffline: ({ machine }: { machine: string }) => `${machine} est hors ligne. La demande attend ; rien n’est écrit avant votre confirmation.`,
     confidential: {
       review: "Examiner le secret",
       title: "Identifiant secret",

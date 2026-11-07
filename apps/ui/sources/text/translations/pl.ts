@@ -1967,6 +1967,7 @@ export const pl: TranslationStructure = {
   },
 
   approvals: {
+    requestMachineOffline: ({ machine }: { machine: string }) => `${machine} jest offline. Prośba czeka; nic nie zostanie zapisane przed potwierdzeniem.`,
     confidential: {
       review: "Sprawdź dane dostępowe",
       title: "Dane logowania",

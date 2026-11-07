@@ -1481,6 +1481,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
   },
   approvals: {
+    requestMachineOffline: ({ machine }: { machine: string }) => `${machine} 已離線。請求將等待；確認之前不會寫入任何內容。`,
     staleFailure: "請求發出後，其目標已發生變化，因此未執行任何操作。",
     conflictFailure: "審閱後它已變更，因此未套用任何內容。請查看目前版本後重試。",
     transientFailure: "伺服器忙碌中，因此未做任何變更。請重試。",

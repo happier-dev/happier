@@ -2140,6 +2140,7 @@ export const es: TranslationStructure = {
   },
 
   approvals: {
+    requestMachineOffline: ({ machine }: { machine: string }) => `${machine} está sin conexión. La solicitud espera; no se escribe nada hasta que confirmes.`,
     confidential: {
       review: "Revisar credencial",
       title: "Credencial",

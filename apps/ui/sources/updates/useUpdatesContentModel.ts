@@ -2,26 +2,28 @@ import * as React from 'react';
 
 import { useReleaseNotesLauncher, useReleaseNotesUnread } from '@/changelog/releaseNotes';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
-import { useMachineAgentsByMachine } from '@/agents/machineAgents/useMachineAgents';
+import { selectMachineAgentUpdateFacts, useMachineAgentsByMachine } from '@/agents/machineAgents/useMachineAgents';
 import { useMachineUpdateFactsBackground } from './useMachineUpdateFactsBackground';
-import { useActiveServerAccountScope, useAllMachines } from '@/sync/domains/state/storage';
+import { useActiveMachineFacts, useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { isMachineSelectableForFleet } from '@/sync/domains/machines/administration/fleetUnion';
 import { isMachineVisibleForLaunchSelection } from '@/sync/domains/machines/identity/filterVisibleMachines';
 import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
 import { useMachinePresenceNowMs } from '@/hooks/machine/useMachinePresenceNowMs';
+import { useMachinePresenceSummaries } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import { storage } from '@/sync/domains/state/storageStore';
 import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { registerUpdatesActionOwner, type UpdatesActionOwner } from './updatesActionRuntime';
 import { isUpdateItemActionable } from './items/updateItem';
 import { getInstallablesRegistryEntries } from '@/capabilities/installablesRegistry';
+import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import { selectActiveServerAccountScopeForServer } from '@/sync/domains/scope/activeServerAccountScope';
 
 import { buildMachineUpdateGroups, readUpdatableInstallables, type UpdatesGroup } from './buildMachineUpdateGroups';
 import { buildUpdatesSummary, type UpdatesSummary } from './items/buildUpdatesSummary';
 import type { UpdateItem } from './items/updateItem';
 import { useMachinesCapabilitySnapshots } from './machineCapabilitySnapshots';
-import { markUpdateCompletionsSeen, refreshMachineUpdateFacts, runMachineItemUpdate, useMachineUpdateRuns, useUnseenUpdateCompletions, useUpdateBatch, type UpdateAllProgress } from './machineUpdateRuns';
+import { markUpdateCompletionsSeen, refreshMachineUpdateFacts, runMachineItemUpdate, useMachineUpdateRuns, useUnseenUpdateCompletions, useUpdateBatch, useUpdateCheck, type UpdateAllProgress } from './machineUpdateRuns';
 import { useAppUpdateStatus } from './useAppUpdateStatus';
 import { useThisComputerCliUpdate } from './useThisComputerCliUpdate';
 
@@ -44,6 +46,7 @@ export type UpdatesContentModel = Readonly<{
     updateAll: () => Promise<void>;
     stopAfterCurrent: () => void;
     batch: UpdateAllProgress | null;
+    checking: boolean;
     checkNow: () => void;
     skipAppVersion: (() => void) | null;
     /** Release notes stay reachable from the This app group (R13 (e)). */
@@ -67,11 +70,22 @@ function selectSessionsRunningKey(state: ReturnType<typeof storage.getState>): s
  * the machine capability cache's own freshness policy, lists every row in the fixed order
  * This app → This computer → other machines, and runs actions through their canonical executors.
  */
-export function useUpdatesContentModel(): UpdatesContentModel {
+export function useUpdatesContentModel(options: Readonly<{
+    /**
+     * One Machine's rows only (its Security tab): only that Machine is read and asked, the This app group is
+     * left out, and the Updates surface keeps the one registered action owner and the completions it marks seen.
+     */
+    machineId?: string;
+}> = {}): UpdatesContentModel {
+    const only = options.machineId ?? null;
     const app = useAppUpdateStatus();
     const appItem = app.model.item;
     const thisComputer = useThisComputerCliUpdate();
-    const machines = useAllMachines();
+    const allMachines = useActiveMachineFacts();
+    const machines = React.useMemo(
+        () => only === null ? allMachines : allMachines.filter((machine) => machine.id === only),
+        [allMachines, only],
+    );
     // One server scope for the rows, their facts, their runs and their refreshes.
     const serverId = useActiveServerSnapshot().serverId;
     const activeScope = useActiveServerAccountScope();
@@ -90,38 +104,45 @@ export function useUpdatesContentModel(): UpdatesContentModel {
 
     const onlineMachineIds = React.useMemo(() => {
         const ids = machines.filter((machine) => machine.id !== thisComputer.machineId && isMachineSelectableForFleet(updateScope, machine, presenceNowMs)).map((machine) => machine.id);
-        if (thisComputer.machineId) ids.unshift(thisComputer.machineId);
+        if (thisComputer.machineId && (only === null || only === thisComputer.machineId)) ids.unshift(thisComputer.machineId);
         return ids;
-    }, [machines, thisComputer.machineId, updateScope, reachabilityRevision, presenceNowMs]);
+    }, [machines, only, thisComputer.machineId, updateScope, reachabilityRevision, presenceNowMs]);
     // Every machine's cached detect (offline ones keep their last-known rows); only online ones are asked.
     const machineIds = React.useMemo(() => machines.map((machine) => machine.id), [machines]);
-    const machineAgents = useMachineAgentsByMachine({ serverId, machineIds, load: true });
+    // Only the open surface displays last-seen values. Canonical presence
+    // summaries publish those timestamps only while a Machine is unreachable.
+    const presence = useMachinePresenceSummaries(serverId, machineIds);
+    // One Machine's Security tab shows only its Happier row, so it never asks for its agents.
+    const machineAgents = useMachineAgentsByMachine({ serverId, machineIds, load: only === null,
+        alwaysOnlineMachineId: thisComputer.machineId }, selectMachineAgentUpdateFacts);
     const snapshots = useMachinesCapabilitySnapshots(serverId, machineIds, activeHomeScope?.accountId);
     // Opening the surface asks each online machine through the cache's existing freshness policy.
     useMachineUpdateFactsBackground({ serverId, accountId: activeHomeScope?.accountId, machineIds: onlineMachineIds });
 
+    // This computer's group belongs to the surface only when it is the selected Machine (or no Machine is).
+    const ownsThisComputer = only === null || only === thisComputer.machineId;
     const { groups, remotes, uncheckedMachineCount, factsCheckedAt } = React.useMemo(() => {
         const built = buildMachineUpdateGroups({
             accountScope: updateScope,
             machines,
-            thisMachineId: thisComputer.machineId,
-            thisComputerItem: thisComputer.item,
+            thisMachineId: ownsThisComputer ? thisComputer.machineId : null,
+            thisComputerItem: ownsThisComputer ? thisComputer.item : null,
             runs,
             machineAgents,
             snapshots,
             installables,
         });
         const app: UpdatesGroup = { id: 'app', kind: 'app', machineName: null, machineId: null, online: true, lastSeenAt: null, items: [appItem] };
-        return { groups: [app, ...built.groups], remotes: built.remotes, uncheckedMachineCount: built.uncheckedMachineCount, factsCheckedAt: built.checkedAt };
-    }, [appItem, installables, machineAgents, machines, runs, snapshots, thisComputer.item, thisComputer.machineId, updateScope, reachabilityRevision, presenceNowMs]);
+        return { groups: only === null ? [app, ...built.groups] : built.groups, remotes: built.remotes, uncheckedMachineCount: built.uncheckedMachineCount, factsCheckedAt: built.checkedAt };
+    }, [appItem, installables, machineAgents, machines, only, ownsThisComputer, runs, snapshots, thisComputer.item, thisComputer.machineId, updateScope, reachabilityRevision, presenceNowMs, presence]);
 
     const allItems = React.useMemo(() => groups.flatMap((group) => group.items), [groups]);
     // Open Updates shows every result, so the pill's "Updated" is seen; a completion that lands
     // while the surface stays open is seen too (its row says so).
     const completions = useUnseenUpdateCompletions(updateScope);
     React.useEffect(() => {
-        markUpdateCompletionsSeen(updateScope);
-    }, [completions, updateScope]);
+        if (only === null) markUpdateCompletionsSeen(updateScope);
+    }, [completions, only, updateScope]);
     // The same coverage the always-mounted summary ranks with, so the open header never says
     // "Up to date" while the pill says some tools were not checked.
     const summary = React.useMemo(
@@ -180,22 +201,24 @@ export function useUpdatesContentModel(): UpdatesContentModel {
 
     const check = React.useCallback(async () => {
         if (!updateScope || !isCurrent()) return;
-        const appCheck = app.checkNow();
+        const requests = [app.checkNow()];
         // Explicit Check is also recovery: its reply can clear a failed request observation.
         for (const machine of machines) {
             if (isMachineVisibleForLaunchSelection(machine) && machine.availability?.kind !== 'locked') {
-                refreshMachineUpdateFacts(serverId, machine.id, { accountScope: updateScope });
+                requests.push(refreshMachineUpdateFacts(serverId, machine.id, { accountScope: updateScope }));
             }
         }
-        await appCheck;
-    }, [app, isCurrent, machines, serverId, updateScope]);
+        const results = await Promise.allSettled(requests);
+        for (const result of results) if (result.status === 'rejected') throw result.reason;
+    }, [app.checkNow, isCurrent, machines, serverId, updateScope]);
+    const { checking, checkNow: runCheck } = useUpdateCheck(updateScope ? serverAccountScopeKeySuffix(updateScope) : serverId, check);
     const checkNow = React.useCallback(() => { void executeAction('updates.check', {}); }, [executeAction]);
     const skipAppVersion = React.useCallback(() => {
         if (appItem.latestVersion) void executeAction('app.updates.skip', { version: appItem.latestVersion });
     }, [appItem.latestVersion, executeAction]);
-    const actionOwner = React.useRef<UpdatesActionOwner>({ scope: updateScope, groups, check, executeItem });
-    actionOwner.current = { scope: updateScope, groups, check, executeItem };
-    React.useEffect(() => registerUpdatesActionOwner(() => actionOwner.current), []);
+    const actionOwner = React.useRef<UpdatesActionOwner>({ scope: updateScope, groups, check: runCheck, executeItem });
+    actionOwner.current = { scope: updateScope, groups, check: runCheck, executeItem };
+    React.useEffect(() => only === null ? registerUpdatesActionOwner(() => actionOwner.current) : undefined, [only]);
 
     const sessionsRunningKey = storage(selectSessionsRunningKey);
     const sessionsRunningOn = React.useMemo(
@@ -216,8 +239,9 @@ export function useUpdatesContentModel(): UpdatesContentModel {
         stopAfterCurrent,
         batch,
         checkNow,
+        checking,
         skipAppVersion: app.skipVersion ? skipAppVersion : null,
         openWhatsNew: releaseNotesLauncher.openWhatsNew,
         whatsNewUnread: releaseNotes.hasUnread,
-    }), [app.skipVersion, batch, checkNow, checkedAt, groups, releaseNotesLauncher.openWhatsNew, releaseNotes.hasUnread, runItem, sessionsRunningOn, skipAppVersion, stopAfterCurrent, summary, uncheckedMachineCount, updateAll, updateGroup]);
+    }), [app.skipVersion, batch, checkNow, checkedAt, checking, groups, releaseNotesLauncher.openWhatsNew, releaseNotes.hasUnread, runItem, sessionsRunningOn, skipAppVersion, stopAfterCurrent, summary, uncheckedMachineCount, updateAll, updateGroup]);
 }

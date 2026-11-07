@@ -1968,6 +1968,7 @@ export const ru: TranslationStructure = {
   },
 
   approvals: {
+    requestMachineOffline: ({ machine }: { machine: string }) => `${machine} не в сети. Запрос ожидает; до вашего подтверждения ничего не будет записано.`,
     confidential: {
       review: "Проверить учётные данные",
       title: "Учётные данные",

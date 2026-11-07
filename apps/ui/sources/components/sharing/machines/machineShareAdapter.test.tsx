@@ -40,7 +40,7 @@ const initial: MachineAccessGrantsListResponseV1 = {
 };
 
 describe('Machine sharing through the canonical controller and sheet', () => {
-    it.each(['full', 'inline'] as const)('projects guest placement from the exact Machine policy without changing grants (%s)', async (presentation) => {
+    it.each(['full', 'inline'] as const)('keeps isolation pending until the supported Machine policy arrives without changing grants (%s)', async (presentation) => {
         const home = await serveActionHomes({ homes: [{ key: 'machine', serverUrl: 'https://guest-placement.test', accountId: 'alice' }],
             route: request => request.path === '/v1/machines/machine/access' && request.method === 'GET' ? Response.json(initial) : undefined });
         let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
@@ -61,6 +61,10 @@ describe('Machine sharing through the canonical controller and sheet', () => {
             // measurement fallback) describes execution trust instead.
             expect(screen.getTextContent()).not.toContain(t('machines.sharing.description', { machine: 'Devbox' }));
             expect(current?.guestExecution.placement).toBeNull();
+            // A cold isolation fact says it is pending, never the shared-user fallback.
+            const pendingTrust = createMachineShareAdapter({ machineName: 'Devbox', online: true, controller: current! });
+            expect(pendingTrust.notes).toContain(t('machineDetailPage.security.admin.isolationUnknown'));
+            expect(pendingTrust.notes).not.toContain(t('machines.sharing.recipientTrustDetail', { machine: 'Devbox' }));
             for (const [platform, agentIsolation, placement, offer] of [
                 ['linux', undefined, 'daemon', true],
                 ['linux', { enabled: true }, 'sharedAgent', true],
@@ -94,7 +98,8 @@ describe('Machine sharing through the canonical controller and sheet', () => {
             // A successor's unavailable observation does not hide explicit review/repair.
             expect(current?.guestExecution.canEnableSeparateUsers).toBe(true);
             expect(screen.findAllByTestId('machine-share-separate-users-turn-on').length).toBeGreaterThan(0);
-            await vi.waitFor(() => expect(screen!.findAllByTestId('machine-security-machine-share-separate-users-turn-on').length).toBeGreaterThan(0));
+            // Security offers the same policy as its one run-as choice.
+            await vi.waitFor(() => expect(screen!.findAllByTestId('machine-security-agents-run-as:member').length).toBeGreaterThan(0));
             expect(findTestInstanceByTypeWithProps(screen, Item, { testID: 'machine-security-admin-isolation' })?.props.subtitle)
                 .toBe(t('machineDetailPage.security.admin.isolationOff'));
             expect(home.requests.filter(request => request.path.startsWith('/v1/machines/') && request.method !== 'GET')).toEqual([]);
