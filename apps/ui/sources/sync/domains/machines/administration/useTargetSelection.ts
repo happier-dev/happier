@@ -146,16 +146,39 @@ export type MachineAdministrationTargetSelectionOptions = Readonly<{
 
 /** Presentation-only canonical Administration rows, without creating a persisted selection. */
 export function useMachineAdministrationTargetPickerRows(): readonly MachineAdministrationTargetPickerRowV1[] {
-    const snapshots = useAllProfileMachineInventorySnapshots();
-    const rows = useMachineAdministrationInventoryRows(snapshots);
-    return React.useMemo(() => buildMachineAdministrationTargetPickerRows(rows), [rows]);
+    return useMachineAdministrationTargetRows().pickerRows;
+}
+
+/** Retained identities and selectable choices share one inventory projection and explicit resource demand. */
+export function useMachineAdministrationTargetRows(options?: Readonly<{
+    accountScope?: ServerAccountScope;
+    selectedMachineId?: string;
+    managedInventoryDemand?: boolean;
+}>): Readonly<{
+    inventoryRows: readonly MachineAdministrationTargetPickerRowV1[];
+    pickerRows: readonly MachineAdministrationTargetPickerRowV1[];
+}> {
+    const selection = React.useMemo(() => options?.accountScope
+        ? { scope: options.accountScope, machineId: null } : undefined,
+    [options?.accountScope?.serverId, options?.accountScope?.accountId]);
+    // A closed named scope keeps its initial choices, but only its selected
+    // record's facts can change its presentation. Opening reads the full chooser.
+    const selectedMachineId = options?.selectedMachineId;
+    const selectFacts = React.useCallback<typeof readMachineAdministrationTargetFacts>((machine, scope, nowMs) =>
+        selectedMachineId && machine.id !== selectedMachineId ? [machine.id]
+            : readMachineAdministrationTargetFacts(machine, scope, nowMs), [selectedMachineId]);
+    const snapshots = useAllProfileMachineInventorySnapshots(true, selection, options ? selectFacts : undefined);
+    const inventoryRows = useMachineAdministrationInventoryRows(snapshots, options?.managedInventoryDemand !== false);
+    const pickerRows = React.useMemo(() => buildMachineAdministrationTargetPickerRows(inventoryRows), [inventoryRows]);
+    return React.useMemo(() => ({ inventoryRows, pickerRows }), [inventoryRows, pickerRows]);
 }
 
 /** Inventory owns content; the shared presence owner advances only changed availability facts. */
-function useMachineAdministrationInventoryRows(snapshots: readonly ServerMachineInventorySnapshotV1[]): readonly MachineAdministrationTargetPickerRowV1[] {
+function useMachineAdministrationInventoryRows(snapshots: readonly ServerMachineInventorySnapshotV1[], managedInventoryDemand = true): readonly MachineAdministrationTargetPickerRowV1[] {
     // Keep the resource receipt demanded even when its last choice disappears.
     // The shared list borrows this same loader; it does not issue another census.
-    const managedHomes = React.useMemo(() => snapshots.flatMap(snapshot => snapshot.kind === 'resolved' ? [snapshot.profileId] : []), [snapshots]);
+    const managedHomes = React.useMemo(() => managedInventoryDemand
+        ? snapshots.flatMap(snapshot => snapshot.kind === 'resolved' ? [snapshot.profileId] : []) : [], [managedInventoryDemand, snapshots]);
     const { machinesByEnrolledMachineIdByServerId } = useManagedMachineInventory(managedHomes);
     // Carry the incumbent projection into its next input instead of rebuilding unchanged members.
     const retainedProjection = React.useRef<{

@@ -1,7 +1,8 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
+import { derivePluginAccountExecutionArtifactSlots } from '@happier-dev/protocol/plugins/contributions/catalog';
 import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityIntentReadActionOutputV1Schema,
     PluginAvailabilityUiArtifactReadActionInputV1Schema, PluginAvailabilityUiArtifactReadActionOutputV1Schema,
     PluginAvailabilityIntentsListActionOutputV1Schema, PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE,
@@ -26,7 +27,7 @@ import type { PluginActivationSource } from './activationSources';
 import { collectActivationTargets } from './lifecycle/activation/targets';
 import type { PluginDaemonModuleNamespace } from './types';
 import { bindPluginRuntimeSourceAuthority, resolvePluginSourceCustody } from './sourceAuthority';
-import { loadPluginModule } from './loadPluginModule';
+import { isImmutablePluginModuleLoaded, loadPluginModule } from './loadPluginModule';
 import type { createBundledActivationSourceResolver } from './bundledActivationSource';
 import { loadCurrentBundledPluginLocatorResult } from '@/plugins/projection/registry/builtIn/locators';
 import { resolveBundledPluginEnablement } from '@/plugins/projection/registry/builtIn/enablement';
@@ -93,6 +94,7 @@ async function readCurrentAccountPluginIntentReads(input: AccountReadBinding & R
                 ...(cursor ? { cursor } : {}),
             }));
         if (input.isCurrent?.() === false) throw new Error('plugin_account_execution_retired');
+        if (page.failedPluginIds.length > 0) throw new Error('plugin_account_execution_unavailable');
         for (const entry of page.intentReads) {
             const response = snapshotIntentRead(entry.pluginId, entry.response);
             if (reads.has(entry.pluginId)) throw new Error('plugin_account_execution_duplicate_read');
@@ -101,6 +103,7 @@ async function readCurrentAccountPluginIntentReads(input: AccountReadBinding & R
         if (page.nextCursor && cursor && page.nextCursor <= cursor) throw new Error('plugin_account_execution_invalid_cursor');
         cursor = page.nextCursor ?? undefined;
     } while (cursor);
+    if (knownPluginIds.some(pluginId => !reads.has(pluginId))) throw new Error('plugin_account_execution_unavailable');
     return reads;
 }
 
@@ -109,11 +112,7 @@ export async function readCurrentAccountPluginEnablements(input: AccountReadBind
     pluginIds: readonly string[];
 }>): Promise<ReadonlyMap<string, boolean>> {
     const reads = await readCurrentAccountPluginIntentReads(input);
-    return new Map(input.pluginIds.map(pluginId => {
-        const read = reads.get(pluginId);
-        if (!read) throw new Error('plugin_account_execution_unavailable');
-        return [pluginId, read.intent?.enabled ?? true];
-    }));
+    return new Map(input.pluginIds.map(pluginId => [pluginId, reads.get(pluginId)!.intent?.enabled ?? true]));
 }
 
 /** One strict Account read for provenance consumers; it owns no cache or occurrence. */
@@ -122,6 +121,29 @@ export async function readCurrentAccountPluginExecutionSelection(input: AccountR
 }>): Promise<PluginAccountExecutionSelectionV1> {
     return resolvePluginAccountExecutionSelectionV1({ pluginId: input.pluginId, intentRead: await readIntent(input),
         ...(input.bundled ? { bundled: input.bundled } : {}) });
+}
+
+/** Cold discovery uses Account custody without loading or activating a daemon module. */
+export async function readCurrentAccountPluginExecutionDeclarations(input: AccountReadBinding & Readonly<{
+    family: 'machineProvisioners' | 'connectedAccountDescriptors'; pluginId?: string;
+}>): Promise<Readonly<{ kind: 'available'; declarations: readonly Extract<PluginAccountExecutionSelectionV1, { kind: 'available' }>[] }>
+    | Extract<PluginAccountExecutionSelectionV1, { kind: 'unavailable' }>> {
+    const bundled = loadCurrentBundledPluginLocatorResult(input.pluginId ? { pluginIds: [input.pluginId] } : undefined).loadedPlugins
+        .filter(plugin => input.pluginId !== undefined || (plugin.manifest.contributes[input.family]?.length ?? 0) > 0);
+    const bundledById = new Map(bundled.map(plugin => [plugin.pluginId, createPluginAccountBundledSelectionV1({
+        packageName: plugin.sourceSpec.locator, manifest: plugin.manifest,
+    })]));
+    if (input.pluginId !== undefined) {
+        const selection = await readCurrentAccountPluginExecutionSelection({ ...input,
+            pluginId: input.pluginId, bundled: bundledById.get(input.pluginId) });
+        return selection.kind === 'available' ? { kind: 'available', declarations: [selection] } : selection;
+    }
+    const reads = await readCurrentAccountPluginIntentReads({ ...input, pluginIds: [...bundledById.keys()] });
+    const declarations = [...reads].flatMap(([pluginId, intentRead]) => {
+        const selection = resolvePluginAccountExecutionSelectionV1({ pluginId, intentRead, bundled: bundledById.get(pluginId) });
+        return selection.kind === 'available' && (selection.manifest.contributes[input.family]?.length ?? 0) > 0 ? [selection] : [];
+    });
+    return { kind: 'available', declarations };
 }
 
 /** Mounted callers use the authenticated runtime's Account, independently of the Machine plugin source. */
@@ -195,18 +217,25 @@ export async function resolveAccountPluginActivationSources(input: AccountPlugin
                 return false;
             }
             return true;
-        } catch { retired.add(pluginId); return false; }
+        } catch {
+            // Only an authoritative custody answer retires the selected Account
+            // release; a cancelled or failed read refuses this one admission.
+            return false;
+        }
     };
     const external: LoadedPlugin[] = [];
     const bundled: LoadedPlugin[] = [];
     for (const [pluginId, read] of reads) {
         const hostDeclaration = bundledDeclarations.find(plugin => plugin.pluginId === pluginId);
-        const hostAccountAction = hostDeclaration?.manifest.contributes.actions.find(action => action.execution.target === 'account');
+        const hostAccountTarget = hostDeclaration && derivePluginAccountExecutionArtifactSlots(
+            hostDeclaration.manifest.contributes,
+        )[0]?.registrationRight.target;
         const hostTarget = hostDeclaration ? { pluginId, manifest: hostDeclaration.manifest,
             manifestPath: hostDeclaration.manifestPath, sourceSpec: hostDeclaration.sourceSpec,
             pluginRootPath: hostDeclaration.pluginRootPath,
             daemonEntryPath: hostDeclaration.daemonEntryPath, devDaemonEntryPath: hostDeclaration.devDaemonEntryPath,
-            ...(hostAccountAction?.execution.target === 'account' ? { account: hostAccountAction.execution.account } : {}),
+            ...(hostAccountTarget
+                ? { account: { artifactId: hostAccountTarget.artifactId, exportName: hostAccountTarget.exportName } } : {}),
             provenance: 'first_party' as const, source: { kind: 'bundled' as const } } : null;
         let accountSelection: PluginAccountExecutionSelectionV1 = pluginEnablementById[pluginId]?.enabled === false
             ? { kind: 'unavailable', code: 'plugin_disabled' }
@@ -251,17 +280,25 @@ export async function resolveAccountPluginActivationSources(input: AccountPlugin
         const sourceAuthority = bindPluginRuntimeSourceAuthority({ custody: selection.sourceCustody, resolvedRoot: root });
         sourcesByPluginId.set(pluginId, { kind: 'bundled', moduleId: selection.custodyId, sourceAuthority,
             load: async () => { throw new Error('Account execution requires its declared artifact'); },
+            // Module loading belongs to the request that admitted this Account
+            // custody (the census above, plus the Action/Resource admission).
             resolveRelativeModule: async artifactId => {
-                if (!(await revalidate(pluginId, input.signal))) throw new Error('plugin_account_execution_retired');
+                if (!isCurrent(pluginId)) throw new Error('plugin_account_execution_retired');
                 const graph = graphs.get(artifactId);
                 if (!graph || graph.tier !== 'reactNative') throw new Error('plugin_account_execution_artifact_unavailable');
-                let entryPath: string;
-                if (selection.release) {
-                    const release = selection.release;
-                    const slot = release.uiSlots.find(slot => slot.artifactId === artifactId && slot.platform === 'web' && slot.tier === 'reactNative');
-                    const link = slot ? read.uiArtifacts.find(link => link.release.version === release.ref.version
-                        && isPluginUiReleaseSlotCompatibleWithArtifactLinkV1(slot, link)) : null;
-                    if (!slot || !link) throw new Error('plugin_account_execution_artifact_unavailable');
+                const release = selection.release;
+                const slot = release?.uiSlots.find(slot => slot.artifactId === artifactId && slot.platform === 'web' && slot.tier === 'reactNative');
+                const link = release && slot ? read.uiArtifacts.find(link => link.release.version === release.ref.version
+                    && isPluginUiReleaseSlotCompatibleWithArtifactLinkV1(slot, link)) : null;
+                if (release && (!slot || !link)) throw new Error('plugin_account_execution_artifact_unavailable');
+                const artifactRoot = resolve(root, GENERATED_PLUGIN_UI_ARTIFACTS_ROOT_RELATIVE_PATH);
+                const entryPath = resolve(release ? root : artifactRoot, graph.entry);
+                const accountScopeKey = runWithServerHttpBaseUrl(input.serverUrl, () => resolveAccountSettingsScopeKey(input.credentials));
+                const cacheKey = JSON.stringify([accountScopeKey, selection.custodyId]);
+                // This call's census decided use above. The custody identity pins the
+                // content, so a module already held in process needs no bytes again.
+                const held = isImmutablePluginModuleLoaded({ entryPath, cacheKey });
+                if (!held && release && slot && link) {
                     const response = PluginAvailabilityUiArtifactReadActionOutputV1Schema.parse(await postAvailability(input,
                         PluginAvailabilityActionHttpPathsV1['account.plugins.availability.uiArtifact.read'],
                         PluginAvailabilityUiArtifactReadActionInputV1Schema.parse({ release: release.ref,
@@ -281,25 +318,21 @@ export async function resolveAccountPluginActivationSources(input: AccountPlugin
                         const path = join(root, relativePath);
                         await mkdir(dirname(path), { recursive: true });
                         try { await writeFile(path, bytes, { flag: 'wx' }); }
-                        catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
-                        if (!Buffer.from(await readFile(path)).equals(Buffer.from(bytes))) throw new Error('plugin_account_execution_cache_invalid');
+                        catch (error) {
+                            if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+                            // Only a file this write did not produce needs comparing.
+                            if (!Buffer.from(await readFile(path)).equals(Buffer.from(bytes))) throw new Error('plugin_account_execution_cache_invalid');
+                        }
                     }
-                    entryPath = resolve(root, graph.entry);
-                } else {
+                } else if (!held) {
                     if (hostSource?.kind === 'bundled') await hostSource.prepare?.();
-                    const artifactRoot = resolve(root, GENERATED_PLUGIN_UI_ARTIFACTS_ROOT_RELATIVE_PATH);
                     const files = await Promise.all(graph.files.map(async file => ({ relativePath: file.relativePath,
                         bytes: await readFile(resolve(artifactRoot, file.relativePath)) })));
                     if (!createPluginUiArtifactArchiveV1({ pluginId, artifactGraph: graph, files })) {
                         throw new Error('plugin_account_execution_artifact_invalid');
                     }
-                    entryPath = resolve(artifactRoot, graph.entry);
                 }
-                if (!(await revalidate(pluginId, input.signal))) throw new Error('plugin_account_execution_retired');
-                const accountScopeKey = runWithServerHttpBaseUrl(input.serverUrl, () => resolveAccountSettingsScopeKey(input.credentials));
-                const module = await loadPluginModule({ source: { kind: 'file_backed', entryPath, sourceAuthority },
-                    cacheKey: JSON.stringify([accountScopeKey, selection.custodyId]) });
-                if (!isCurrent(pluginId)) throw new Error('plugin_account_execution_retired');
+                const module = await loadPluginModule({ source: { kind: 'file_backed', entryPath, sourceAuthority }, cacheKey });
                 return { module, normalizedModulePath: entryPath, loadMode: 'immutable-js' };
             } });
     }
@@ -307,10 +340,11 @@ export async function resolveAccountPluginActivationSources(input: AccountPlugin
         loadResult: { loadedPlugins: external, diagnosticsByPluginId: {} } }), projectLoadedPluginContributes({ provenance: 'first_party',
         loadResult: { loadedPlugins: bundled, diagnosticsByPluginId: {} } }));
     const activationTargets = collectActivationTargets(contributes, 'account');
-    // Agents and Resources have only a Machine/daemon execution host. Keep
-    // their declarations in the selected manifest without synthesizing an
-    // executable Agent runtime or demanding an Account Resource registration.
-    return { contributes: { ...contributes, agents: [], resources: [], activationTargets, pluginEnablementById,
+    // Scope is contextual identity, not placement. Only explicitly portable
+    // producers belong to this Account-selected execution projection.
+    const resources = contributes.resources.filter(resource => 'execution' in resource.definition
+        && resource.definition.execution?.target === 'account');
+    return { contributes: { ...contributes, agents: [], resources, activationTargets, pluginEnablementById,
         unavailableAgentPluginsByBackendId: getResolvedContributionRegistry({ pluginEnablementById }).unavailableAgentPluginsByBackendId,
     }, sourcesByPluginId, isCurrent, revalidate,
         readSelection: pluginId => selected.get(pluginId)?.selection ?? null };

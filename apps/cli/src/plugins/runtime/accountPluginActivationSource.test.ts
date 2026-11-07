@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import fastify from 'fastify';
@@ -82,6 +82,60 @@ describe('Account activation source assembly', () => {
                     packagedRuntime: { kind: 'source_declaration', packageName: declaration.sourceSpec.locator } } });
         } finally { restore(); await app.close(); await rm(directory, { recursive: true, force: true }); }
     });
+    it('does not retire selected Account custody when an individual revalidation is cancelled', async () => {
+        const home = await mkdtemp(join(tmpdir(), 'account-resource-cancel-'));
+        const app = fastify();
+        const fixture = await registerAuthoredAccountActionRelease(app, 'owner');
+        await app.ready();
+        const restore = installAxiosFastifyAdapter({ app, origin: 'http://account-resource-cancel.test' });
+        try {
+            const sources = await resolveAccountPluginActivationSources({
+                contributes: createResolvedContributionRegistry({}), paths: resolvePluginStorePaths({ happyHomeDir: home }),
+                credentials: { token: 'fixture', encryption: null }, serverUrl: 'http://account-resource-cancel.test',
+                isCurrent: () => true, resolveBundledActivationSource: () => null,
+            });
+            const aborted = new AbortController();
+            aborted.abort();
+            expect(await sources.revalidate(fixture.pluginId, aborted.signal)).toBe(false);
+            expect(sources.isCurrent(fixture.pluginId)).toBe(true);
+            expect(await sources.revalidate(fixture.pluginId)).toBe(true);
+        } finally { restore(); await app.close(); await rm(home, { recursive: true, force: true }); }
+    });
+    it('loads Account modules under the request admission and does not latch a transient custody read failure', async () => {
+        const home = await mkdtemp(join(tmpdir(), 'account-module-admission-'));
+        const app = fastify();
+        const { pluginId } = await registerAuthoredAccountActionRelease(app, 'owner');
+        let intentReads = 0;
+        let failNextIntentRead = false;
+        app.addHook('onRequest', async (request, reply) => {
+            if (request.url !== PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read']) return;
+            intentReads += 1;
+            if (failNextIntentRead) {
+                failNextIntentRead = false;
+                return reply.code(503).send({ error: 'unavailable' });
+            }
+        });
+        app.get('/v1/account/encryption/currentness', async () => ({ mode: 'plain', version: 1,
+            signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }));
+        app.get('/v1/account/encryption', async () => ({ mode: 'plain', updatedAt: 1 }));
+        await app.ready();
+        const restore = installAxiosFastifyAdapter({ app, origin: 'http://account-module-admission.test' });
+        try {
+            const sources = await resolveAccountPluginActivationSources({
+                contributes: createResolvedContributionRegistry({}), paths: resolvePluginStorePaths({ happyHomeDir: home }),
+                credentials: { token: 'fixture', encryption: null }, serverUrl: 'http://account-module-admission.test',
+                isCurrent: () => true, resolveBundledActivationSource: () => null,
+            });
+            const module = await sources.sourcesByPluginId.get(pluginId)?.resolveRelativeModule?.('account-runtime');
+            expect(typeof module?.module.activate).toBe('function');
+            expect(intentReads).toBe(0);
+
+            failNextIntentRead = true;
+            expect(await sources.revalidate(pluginId)).toBe(false);
+            expect(sources.isCurrent(pluginId)).toBe(true);
+            expect(await sources.revalidate(pluginId)).toBe(true);
+        } finally { restore(); await app.close(); await rm(home, { recursive: true, force: true }); }
+    });
     it('resolves an authored authentication-only Account artifact without a Machine or native runtime', async () => {
         const home = await mkdtemp(join(tmpdir(), 'account-portable-authentication-'));
         const app = fastify();
@@ -145,7 +199,33 @@ describe('Account activation source assembly', () => {
             expect(selected.isCurrent()).toBe(false);
         } finally { await runtime?.dispose(); restore(); await app.close(); await rm(home, { recursive: true, force: true }); }
     });
-
+    it('reads the selected portable Resource without a Machine and refuses disabled Account custody', async () => {
+        const home = await mkdtemp(join(tmpdir(), 'account-portable-resource-'));
+        const app = fastify();
+        const fixture = await registerAuthoredAccountActionRelease(app, 'owner');
+        app.get('/v1/account/encryption/currentness', async () => ({ mode: 'plain', version: 1,
+            signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }));
+        app.get('/v1/account/encryption', async () => ({ mode: 'plain', updatedAt: 1 }));
+        await app.ready();
+        const restore = installAxiosFastifyAdapter({ app, origin: 'http://account-portable-resource.test' });
+        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | undefined;
+        try {
+            runtime = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir: home,
+                accountExecution: { credentials: { token: 'fixture', encryption: null },
+                    serverUrl: 'http://account-portable-resource.test', isCurrent: () => true } });
+            const occurrenceId = runtime.readPluginOccurrenceId?.(fixture.pluginId);
+            if (!occurrenceId) throw new Error('Missing admitted portable occurrence');
+            const request = { callerPluginId: fixture.pluginId, expectedCallerOccurrenceId: occurrenceId, resourceId: 'personal-context' };
+            const result = await runtime.readUiResource?.(request);
+            expect(JSON.parse(new TextDecoder().decode(result?.bytes))).toEqual({ kind: 'global' });
+            await runtime.openUiResourceWatch?.({ ...request, subscriptionId: 'portable-watch' });
+            fixture.setEnabled(false);
+            await expect(runtime.pollUiResourceWatch?.({ callerPluginId: fixture.pluginId,
+                expectedCallerOccurrenceId: occurrenceId, subscriptionId: 'portable-watch', waitMs: 0 }))
+                .rejects.toMatchObject({ code: 'plugin_generation_stale' });
+            await expect(runtime.readUiResource?.(request)).rejects.toMatchObject({ code: 'plugin_generation_stale' });
+        } finally { await runtime?.dispose(); restore(); await app.close(); await rm(home, { recursive: true, force: true }); }
+    });
     it('keeps Machine Agents and daemon-only Resources out of Account execution while retaining their package custody', async () => {
         const home = await mkdtemp(join(tmpdir(), 'account-resource-realm-'));
         const app = fastify();
@@ -161,18 +241,6 @@ describe('Account activation source assembly', () => {
                 sourceSpec: { ...bundled.sourceSpec, kind: 'bundled' as const, locator: packageName,
                     resolvedVersion: bundled.manifest.version, trustPolicy: 'prompt' as const, installPolicy: 'copy' as const } };
         }));
-        app.addHook('onSend', async (request, _reply, payload) => {
-            if (request.url !== PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list']
-                || typeof payload !== 'string') return payload;
-            const page = JSON.parse(payload);
-            for (const { pluginId: peerId } of declarations) {
-                page.pluginIds.push(peerId);
-                page.intentReads.push({ pluginId: peerId, response: { availabilityCursor: 1,
-                    hostingCapability: { enabled: false }, intent: null, release: null, uiArtifacts: [], packageAssets: [] } });
-            }
-            page.pluginIds.sort();
-            return JSON.stringify(page);
-        });
         await app.ready();
         const restore = installAxiosFastifyAdapter({ app, origin: 'http://account-resource-realm.test' });
         let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | undefined;
@@ -196,7 +264,9 @@ describe('Account activation source assembly', () => {
             }
             expect(runtime.readAccountExecutionSelection?.('happier.agent.qwen'))
                 .toMatchObject({ kind: 'available', manifest: { contributes: { agents: [expect.objectContaining({ id: 'qwen' })] } } });
-            expect(runtime.contributes.resources).toEqual([]);
+            expect(runtime.contributes.resources).toMatchObject([{ pluginId,
+                definition: { id: 'personal-context', execution: { target: 'account' } } }]);
+            expect(runtime.contributes.resources).toHaveLength(1);
             expect(runtime.agentRuntimesByAgentId.size).toBe(0);
         } finally { await runtime?.dispose(); restore(); await app.close(); await rm(home, { recursive: true, force: true }); }
     });
@@ -338,13 +408,48 @@ describe('Account activation source assembly', () => {
             deps: createUnavailableActionTransportDeps(), actionId: 'action.invoke',
             input: { action: { pluginId: action.pluginId, localId: action.definition.id }, input: {} }, context: { surface: 'cli' } });
         try {
-            for (let i = 0; i < 3; i++) expect(await invoke()).toEqual({ matched: false, accountSelectionUnavailable: true });
+            for (let i = 0; i < 3; i++) expect(await invoke()).toEqual({ matched: false, accountSelectionUnavailable: true, executionPlacement: 'machine' });
             enabled = false;
             expect(await invoke()).toMatchObject({ matched: true, result: { ok: false, errorCode: 'plugin_disabled' } });
             expect(censusReads).toBe(0);
             expect(exactReads).toBe(4);
         } finally { restore(); await app.close(); await rm(home, { recursive: true, force: true }); }
     });
+    it('holds admitted Account module content once: repeated use redownloads nothing and disable still refuses', async () => {
+        const home = await mkdtemp(join(tmpdir(), 'account-held-source-'));
+        // The released module imports the SDK; a real import needs this package's resolution root.
+        await symlink(join(process.cwd(), 'node_modules'), join(home, 'node_modules'));
+        const app = fastify();
+        const { pluginId, setEnabled } = await registerAuthoredAccountActionRelease(app, 'owner');
+        let hostedArtifactReads = 0;
+        app.addHook('onRequest', async request => {
+            if (request.url === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.uiArtifact.read']) hostedArtifactReads += 1;
+        });
+        app.get('/v1/account/encryption/currentness', async () => ({ mode: 'plain', version: 1,
+            signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }));
+        app.get('/v1/account/encryption', async () => ({ mode: 'plain', updatedAt: 1 }));
+        await app.ready();
+        const restore = installAxiosFastifyAdapter({ app, origin: 'http://account-held-source.test' });
+        const census = () => resolveAccountPluginActivationSources({ contributes: createResolvedContributionRegistry({}),
+            paths: resolvePluginStorePaths({ happyHomeDir: home }), credentials: { token: 'fixture', encryption: null },
+            serverUrl: 'http://account-held-source.test', isCurrent: () => true, resolveBundledActivationSource: () => null });
+        try {
+            const first = await census();
+            const loaded = await first.sourcesByPluginId.get(pluginId)?.resolveRelativeModule?.('account-runtime');
+            expect(typeof loaded?.module.activate).toBe('function');
+            expect(hostedArtifactReads).toBe(1);
+            // A later invocation's census re-decides use; only the bytes are reused.
+            const second = await census();
+            const repeated = await second.sourcesByPluginId.get(pluginId)?.resolveRelativeModule?.('account-runtime');
+            expect(repeated?.module).toBe(loaded?.module);
+            expect(hostedArtifactReads).toBe(1);
+            setEnabled(false);
+            const disabled = await census();
+            await expect(disabled.sourcesByPluginId.get(pluginId)?.resolveRelativeModule?.('account-runtime') ?? Promise.reject(new Error('unavailable')))
+                .rejects.toThrow();
+        } finally { restore(); await app.close(); await rm(home, { recursive: true, force: true }); }
+    });
+
     it('refuses cold corrupt Account bytes through the CLI ingress without replaying on a Machine', async () => {
         const home = await mkdtemp(join(tmpdir(), 'account-corrupt-source-'));
         const app = fastify();
@@ -454,7 +559,7 @@ describe('Account activation source assembly', () => {
             expect(source.readSelection(pluginId)).toMatchObject({ kind: 'available',
                 sourceCustody: { kind: 'bundled_first_party', packagedRuntime: { kind: 'source_declaration', packageName } } });
             expect(source.contributes.activationTargets).toMatchObject([{ daemonEntryPath: null,
-                account: { artifactId: 'account-runtime', exportName: 'activate' } }]);
+                account: { artifactId: 'account-runtime', exportName: 'activateAccount' } }]);
             expect(typeof (await source.sourcesByPluginId.get(pluginId)?.resolveRelativeModule?.('account-runtime'))?.module.activate).toBe('function');
             if (retirement === 'Account disable') {
                 setBundledFallback(false);
@@ -494,7 +599,7 @@ describe('Account activation source assembly', () => {
                 expect(Object.isFrozen(selection.release.uiSlots)).toBe(true);
             }
             expect(result.contributes.actions.map(action => action.definition.id).sort()).toEqual(manifest.contributes.actions.map(action => action.id).sort());
-            expect(result.contributes.activationTargets).toMatchObject([{ account: { artifactId: 'account-runtime', exportName: 'activate' } }]);
+            expect(result.contributes.activationTargets).toMatchObject([{ account: { artifactId: 'account-runtime', exportName: 'activateAccount' } }]);
             const module = await result.sourcesByPluginId.get(pluginId)?.resolveRelativeModule?.('account-runtime');
             expect(typeof module?.module.activate).toBe('function');
             expect(result.isCurrent(pluginId)).toBe(true);
@@ -525,9 +630,6 @@ describe('Account activation source assembly', () => {
                 });
                 expect(await executor.execute('action.invoke', { action: { pluginId, localId: 'echo' }, input: { key: 'retained' } }, { surface: 'cli' }))
                     .toMatchObject({ ok: true, result: { key: 'retained', surface: 'cli' } });
-                setEnabled(false);
-                expect(await executor.execute('action.invoke', { action: { pluginId, localId: 'echo' }, input: { key: 'retained' } }, { surface: 'cli' }))
-                    .toMatchObject({ ok: false, errorCode: 'plugin_action_generation_retired' });
             } finally { await registry.dispose(); }
             setEnabled(false);
             expect(await cli.execute('action.invoke', { action: { pluginId, localId: 'echo' }, input: { key: 'disabled' } }, { surface: 'cli' }))

@@ -2,9 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fastify from 'fastify';
 import { AccountSettingsSchema, ActionIdSchema, FeaturesResponseSchema, normalizeActionsSettingsV1, type ActionId } from '@happier-dev/protocol';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { QualifiedConnectedAccountListResponseV4Schema, QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import { createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
-import { PluginAvailabilityActionHttpPathsV1 } from '@happier-dev/protocol/plugins/availability';
+import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityIntentsListActionInputV1Schema, PluginAvailabilityIntentsListActionOutputV1Schema, PluginAvailabilityIntentReadActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { fixture as managedFixture, pluginId as managedPluginId } from '@/plugins/runtime/invocation/actions/managedCustody.testkit';
 import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
@@ -15,6 +16,8 @@ import axios from '@/api/client/credentialAxios';
 
 import { createAccountServerActionDeps } from './accountServerActionDeps';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
+import { listCompiledActionCliCommands } from '@/cli/actions/compiledCommands';
+import { runCompiledActionCliCommand } from '@/cli/actions/executeCommand';
 import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
@@ -92,6 +95,130 @@ describe('managed inventory CLI Home adapter', () => {
       }),
     });
   }
+
+  it.each([undefined, 'controller-1'])('discovers Account provisioner declarations through CLI composition with transport Machine %s', async machineId => {
+    let inventoryReads = 0;
+    app.post(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'], async request => {
+      inventoryReads++;
+      const input = PluginAvailabilityIntentsListActionInputV1Schema.parse(request.body);
+      const pluginIds = input.knownPluginIds ?? [];
+      return PluginAvailabilityIntentsListActionOutputV1Schema.parse({ availabilityCursor: 1,
+        pluginIds, failedPluginIds: [], intentReads: pluginIds.map(pluginId => ({
+          pluginId, response: PluginAvailabilityIntentReadActionOutputV1Schema.parse({ availabilityCursor: 1,
+            hostingCapability: { enabled: false }, intent: null, release: null, uiArtifacts: [], packageAssets: [] }),
+        })),
+      });
+    });
+    const features = FeaturesResponseSchema.parse({ features: {}, capabilities: { serverIdentity: { serverIdentityId: 'srv_home' } } });
+    app.get('/v1/features/authenticated', async request => {
+      expect(request.headers.authorization).toBe('Bearer bound');
+      return features;
+    });
+    app.get('/v1/features', async () => features);
+    await app.ready();
+    const command = listCompiledActionCliCommands().find(candidate => candidate.actionId === 'machines.provisioners.list');
+    if (!command) throw new Error('The provisioner list Action must advertise its CLI command');
+    // Replace only HTTP and credential/profile persistence. The compiled command,
+    // credential-based composition and Action executor remain the production path.
+    const fetchBoundary = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      expect(url.origin).toBe('http://home.test');
+      const response = await app.inject({ method: 'GET', url: url.pathname,
+        headers: Object.fromEntries(new Headers(init?.headers).entries()) });
+      return new Response(response.payload, { status: response.statusCode, headers: { 'Content-Type': 'application/json' } });
+    });
+    const output: string[] = [];
+    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(value => { output.push(String(value)); return true; });
+    const previousExitCode = process.exitCode;
+    let result: unknown;
+    try {
+      await runCompiledActionCliCommand({ command,
+        argv: ['machines', 'provisioners', 'list', '--home-id', 'srv_home', '--server-id', 'route-home', '--json',
+          ...(machineId ? ['--machine-id', machineId] : [])],
+        deps: {
+          readCredentialsFn: async () => ({ token: 'bound', encryption: null }),
+          readCredentialsForServerIdFn: async () => ({ token: 'bound', encryption: null }),
+          getServerProfileFn: async () => ({ id: 'route-home', name: 'Home', serverUrl: 'http://home.test', webappUrl: 'http://home.test',
+            createdAt: 1, updatedAt: 1, lastUsedAt: 1 }),
+        },
+        consumeSuccess: value => { result = value; return true; },
+      });
+    } finally {
+      fetchBoundary.mockRestore(); stdout.mockRestore(); process.exitCode = previousExitCode;
+    }
+    expect(result, output.join('')).toMatchObject({ provisioners: expect.arrayContaining([
+      expect.objectContaining({ contribution: { pluginId: 'happier.machine.lima', localId: 'lima' } }),
+      expect.objectContaining({ contribution: { pluginId: 'happier.machine.vercel', localId: 'vercel' } }),
+      expect.objectContaining({ contribution: { pluginId: 'happier.machine.agent37', localId: 'agent37' } }),
+      expect.objectContaining({ contribution: { pluginId: 'happier.machine.docker-sandboxes', localId: 'docker-sandboxes' } }),
+    ]) });
+    // The chooser needs one declaration census, no per-plugin reads or provider activation.
+    expect(inventoryReads).toBe(1);
+    expect(socketBoundary.connections).toEqual([]);
+  });
+
+  it.each(['failed', 'missing'] as const)('refuses a %s Account declaration census instead of silently hiding a bundled provider', async failure => {
+    app.post(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'], async request => {
+      const { knownPluginIds = [] } = PluginAvailabilityIntentsListActionInputV1Schema.parse(request.body);
+      const unread = 'happier.machine.agent37';
+      const successful = knownPluginIds.filter(pluginId => pluginId !== unread);
+      return PluginAvailabilityIntentsListActionOutputV1Schema.parse({ availabilityCursor: 1,
+        pluginIds: failure === 'failed' ? knownPluginIds : successful,
+        failedPluginIds: failure === 'failed' ? [unread] : [],
+        intentReads: successful.map(pluginId => ({ pluginId,
+          response: PluginAvailabilityIntentReadActionOutputV1Schema.parse({ availabilityCursor: 1,
+            hostingCapability: { enabled: false }, intent: null, release: null, uiArtifacts: [], packageAssets: [] }),
+        })),
+      });
+    });
+    await app.ready();
+    await expect(executor().execute('machines.provisioners.list', { homeId: 'srv_home' }, context))
+      .resolves.toMatchObject({ ok: false, errorCode: 'action_failed', error: 'plugin_account_execution_unavailable' });
+  });
+
+  it('uses the selected Account declaration for exact provisioner discovery and preserves a disabled refusal', async () => {
+    let enabled = true;
+    app.post(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read'], async request => {
+      expect(request.body).toEqual({ pluginId: 'happier.machine.lima' });
+      return PluginAvailabilityIntentReadActionOutputV1Schema.parse({ availabilityCursor: 1,
+        hostingCapability: { enabled: false }, release: null, uiArtifacts: [], packageAssets: [],
+        intent: enabled ? null : { pluginId: 'happier.machine.lima', desiredVersion: null, enabled: false,
+          offlineUiHosting: 'disabled', writableCollections: [], revision: 'disabled' },
+      });
+    });
+    await app.ready();
+    const cli = executor();
+    const input = { homeId: 'srv_home', contribution: { pluginId: 'happier.machine.lima', localId: 'lima' } };
+    const result = await cli.execute('machines.provisioners.list', input, context);
+    expect(result).toMatchObject({ ok: true, result: { provisioners: [expect.objectContaining({ contribution: input.contribution })] } });
+    enabled = false;
+    await expect(cli.execute('machines.provisioners.list', input, context))
+      .resolves.toMatchObject({ ok: false, errorCode: 'plugin_disabled' });
+  });
+
+  it('includes connected Account metadata only for the exact provisioner form', async () => {
+    const contribution = { pluginId: 'happier.machine.vercel', localId: 'vercel' };
+    const service = { pluginId: contribution.pluginId, localId: 'vercel-account' };
+    const profile = QualifiedConnectedAccountProfileV4Schema.parse({ ref: { service, accountId: 'selected-account' },
+      status: 'connected', authenticationModeId: 'token', revisionSemantics: 'revisioned',
+      credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', configurationRevision: 'selected-config',
+      configurationReady: true, displayName: 'Selected', scopes: [] });
+    app.post(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read'], async () =>
+      PluginAvailabilityIntentReadActionOutputV1Schema.parse({ availabilityCursor: 1, hostingCapability: { enabled: false },
+        intent: null, release: null, uiArtifacts: [], packageAssets: [] }));
+    let metadataReads = 0;
+    app.get('/v4/connect/qualified/accounts', async request => {
+      metadataReads++;
+      expect(JSON.parse(new URL(request.url, 'http://home.test').searchParams.get('service')!)).toEqual(service);
+      return QualifiedConnectedAccountListResponseV4Schema.parse({ service, accounts: [profile] });
+    });
+    await app.ready();
+    const result = await executor().execute('machines.provisioners.list', { homeId: 'srv_home', contribution }, context);
+    expect(result).toMatchObject({ ok: true, result: { provisioners: [expect.objectContaining({ contribution,
+      credentialPurposes: [expect.objectContaining({ options: [{ value: profile.ref, label: 'Selected' }] })],
+    })] } });
+    expect(metadataReads).toBe(1);
+  });
 
   it('reports unavailable guest diagnostics when Account inspection cannot reach the retained controller', async () => {
     const retained = { ...machine, enrolledMachineId: 'offline-guest' };

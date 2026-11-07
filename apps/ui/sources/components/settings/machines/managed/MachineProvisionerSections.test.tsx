@@ -13,6 +13,8 @@ import type { ManagedProvisionerCard } from './managedMachineDisplay';
 installSettingsViewCommonModuleMocks({
   text: async () => vi.importActual<typeof import('@/text')>('@/text'),
 });
+// Module preparation is outside each presentation interaction's time budget.
+const { MachineProvisionerSections } = await import('./MachineProvisionerSections');
 afterEach(() => standardCleanup());
 
 function card(
@@ -38,8 +40,6 @@ async function renderSections(
   onHandoff: () => void,
   perCardHandoff = vi.fn(),
 ) {
-  const { MachineProvisionerSections } =
-    await import('./MachineProvisionerSections');
   const needsApp = { tone: 'none', label: 'Needs the app' } as const;
   const handoff = {
     kind: 'handoff',
@@ -87,6 +87,25 @@ describe('MachineProvisionerSections when the browser cannot reach a provider (R
       expect(page).toContain('No account yet');
       await act(async () => screen.pressByTestId('p.cloud.handoff.action'));
       expect(onHandoff).toHaveBeenCalledTimes(1);
+      await screen.unmount();
+    });
+  }
+});
+
+describe('MachineProvisionerSections order (lab m-add)', () => {
+  for (const compact of [false, true]) {
+    it(`leads with the no-cost machines on the managing computer before the cloud (${compact ? 'phone' : 'wide'})`, async () => {
+      const choose = { kind: 'choose', label: 'Choose', onPress: vi.fn() } as const;
+      const ready = { tone: 'ready', label: 'Ready' } as const;
+      const screen = await renderScreen(
+        <MachineProvisionerSections testID="p" compact={compact} localTitle="On this machine" localDescription=""
+          cards={[card('hetzner', choose, ready), { ...card('lima', choose, ready), location: 'local', acquire: 'daemon' }]} />,
+      );
+      const order = screen.tree.root.findAll((node) => typeof node.type === 'string'
+        && typeof node.props.testID === 'string' && /^p\.(local|cloud)\./.test(node.props.testID))
+        .map((node) => (node.props.testID as string).split('.')[1]);
+      expect(order[0]).toBe('local');
+      expect(order).toContain('cloud');
       await screen.unmount();
     });
   }

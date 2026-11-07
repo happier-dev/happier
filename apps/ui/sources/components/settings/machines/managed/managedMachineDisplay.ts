@@ -32,13 +32,14 @@ export type ManagedProvisionerCard = Readonly<{
   status: Readonly<{ tone: ManagedStatusTone; label: string }>;
   /**
    * `choose` opens the configurator; `repair` runs the provisioner's own prerequisite or account step;
-   * `handoff` sends the person to the app that can reach the provider (web, Needs the app).
+   * `handoff` sends the person to the app that can reach the provider (web, Needs the app);
+   * `retry` re-reads an unavailable catalog or check without entering configuration.
    */
   action: Readonly<{
-    kind: 'choose' | 'repair' | 'handoff';
+    kind: 'choose' | 'repair' | 'handoff' | 'retry';
     label: string;
     onPress: () => void;
-    /** No step can start (its check could not be read, or the tool is missing): the card draws no button and ignores presses. */
+    /** No configuration step can start yet (for example, a missing tool without a repair Action). */
     disabled?: boolean;
   }>;
 }>;
@@ -103,6 +104,8 @@ export type ManagedReceiptCost =
   | Readonly<{
       kind: 'price';
       prices: readonly [ProviderPrice, ...ProviderPrice[]];
+      /** The provider the prices come from, by name ("Hetzner"); `null` when it is not known. */
+      provider?: string | null;
       /** Who pays, when the receipt is about a shared account ("Billed to Acme’s DigitalOcean team"). */
       billedTo?: string;
     }>
@@ -135,13 +138,16 @@ export function presentManagedCost(cost: ManagedCost): Readonly<{ value: string;
   return presentSharedManagedCost(cost, priceLabels());
 }
 
+/**
+ * When a price was read, credited to the provider by name. A price's `source` is the provider's evidence
+ * reference (an API URL or an id), never a name to show; without a provider name the line keeps only its time.
+ */
 export function formatPriceSource(
-  price: Pick<ProviderPrice, 'source' | 'observedAt'>,
+  price: Pick<ProviderPrice, 'observedAt'>,
+  provider: string | null,
 ): string {
-  return t('managedMachines.price.checked', {
-    provider: price.source,
-    time: formatAsOfTime(price.observedAt),
-  });
+  const time = formatAsOfTime(price.observedAt);
+  return provider ? t('managedMachines.price.checked', { provider, time }) : t('surfaceState.asOf', { time });
 }
 
 /**

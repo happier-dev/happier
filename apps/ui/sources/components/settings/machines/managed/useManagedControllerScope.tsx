@@ -1,13 +1,15 @@
 import * as React from 'react';
 import type { ManagedControllerV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { ManagedMachinePresetDelegatedAcquireV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { isMachineReplaced } from '@happier-dev/protocol/machines/identity/canonicalMachineId';
 import { supportsMachineOperationProtocolCapabilityV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
+import { resolveManagedMachineWakeStateV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 
 import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
 import { useThisComputerMachineId } from '@/components/machines/add/useMachineAddPaths';
-import { isMachineAdministrationCandidateExplicitlySelectable, isMachineAdministrationCandidateSelectable, resolveMachineAdministrationTargetState } from '@/sync/domains/machines/administration/targetSelection';
+import { isMachineAdministrationCandidateExplicitlySelectable, machineAdministrationTargetsEqual, resolveMachineAdministrationTargetState } from '@/sync/domains/machines/administration/targetSelection';
 import {
-  useMachineAdministrationTargetPickerRows,
+  useMachineAdministrationTargetRows,
   resolveFreshMachineAdministrationExecutionTarget,
   doesMachineAdministrationTargetMatchActiveAccount,
   type MachineAdministrationTargetSelectionV1,
@@ -15,18 +17,19 @@ import {
 } from '@/sync/domains/machines/administration/useTargetSelection';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
-import { useMachineListForServer, useActiveServerAccountScope, useSetting } from '@/sync/domains/state/storage';
+import { storage, useActiveServerAccountScope, useSetting, useMachineListForServer, useMachineListForServerSelection, useServerScopedMachine } from '@/sync/domains/state/storage';
+import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import { useIsMachineListSettled, useMachineListStatusForServer } from '@/sync/store/hooks';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { t } from '@/text';
-import { storage } from '@/sync/domains/state/storageStore';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
-import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/accountSettingsScope';
-import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1, setMachineAdministrationTargetPreference } from '@/sync/domains/machines/administration/selectionPreferences';
+import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1, readMachineAdministrationTargetPreference } from '@/sync/domains/machines/administration/selectionPreferences';
+import { rememberMachineAdministrationTargetObservation, useMachineAdministrationTargetObservation } from '@/sync/domains/state/machineAdministrationUiState';
 import { readMachineRequestReachabilityObservation } from '@/sync/domains/machines/reachability/machineReachability';
 import { readPluginAccountAvailability } from '@/sync/domains/plugins/availability/projection';
-import { useAdmittedManagedMachineAbsentEnrolledIds } from './useManagedMachineInventory';
+import { useAdmittedManagedMachineAbsentEnrolledIds, useManagedMachineInventory } from './useManagedMachineInventory';
+import { readMachineActivity } from '@/sync/domains/machines/machineActivity';
 
 export type ManagedControllerScope = Readonly<{
   /** The machine whose installation runs provider calls: the person's choice, else the preselected default. */
@@ -51,12 +54,17 @@ export type ManagedControllerScope = Readonly<{
  * (lab `m-add` / `m-config`). It is shown through the canonical header chip
  * (`MachineAdministrationTargetSelector presentation="chip"`), offering only machines that can manage,
  * and starts on an online controller admitted by the Action protocol, preferring held installed
- * provisioners and the person's last choice. The choice is page-local, as the
+ * provisioners and the person's last choice. Managed guests require an existing selection intent;
+ * their presence in this Home is not an invitation to use them as a controller. The choice is page-local, as the
  * draft it scopes is.
  */
 /** Installed controllers, including asleep ones, but never retired identities. */
 export function isManagedControllerCandidate(machine: Machine): boolean {
   return !!machine.installationId && !machine.revokedAt && !isMachineReplaced(machine);
+}
+
+function readControllerIds(machines: readonly Machine[]): string {
+  return JSON.stringify(machines.filter(isManagedControllerCandidate).map(machine => machine.id));
 }
 
 /** Provisioner calls use the same operation protocol required by external Action admission. */
@@ -70,21 +78,26 @@ export function useManagedControllerScope(
     serverId: string;
     /** A machine the page already names (a preset's controller, the picker's handoff), used until the person picks. */
     preferred?: ManagedControllerV1;
+    /** Exact preset authority fixes the controller without granting a Machine picker. */
+    delegatedAcquire?: ManagedMachinePresetDelegatedAcquireV1;
     disabled?: boolean;
     onSelect?: (controller: ManagedControllerV1) => void;
     testIDPrefix: string;
   }>,
 ): ManagedControllerScope {
-  const machines = useMachineListForServer(input.serverId);
   const listSettled = useIsMachineListSettled(input.serverId);
   const listStatus = useMachineListStatusForServer(input.serverId);
   const activeAccountScope = useActiveServerAccountScope();
   const { binding } = useServerCredentialAccountScopeBinding(input.serverId);
-  const rows = useMachineAdministrationTargetPickerRows();
   const thisMachineId = useThisComputerMachineId();
-  // The person's last explicit pick on this device, so re-entering Add starts where they left off.
-  const rememberedTarget = useSetting('machineAdministrationTargetsLocalV1')[MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.managedMachines];
+  const preferences = useSetting('machineAdministrationTargetsLocalV1');
   const settingsScope = useAccountSettingsScope();
+  const observationScope = binding?.isCurrent() ? binding.scope : null;
+  const lastPickedTarget = useMachineAdministrationTargetObservation(observationScope, MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.managedMachines);
+  // An explicit named default and a last visit are distinct intents and owners.
+  const defaultTarget = areAccountSettingsScopesEqual(settingsScope, observationScope)
+    ? readMachineAdministrationTargetPreference(preferences, MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.managedMachines) : null;
+  const rememberedTarget = defaultTarget ?? lastPickedTarget;
   const [chosen, setChosen] = React.useState<Readonly<{
     serverId: string; accountId: string | undefined; controller: ManagedControllerV1; explicit: boolean;
   }>>();
@@ -97,11 +110,24 @@ export function useManagedControllerScope(
     : preferredMachineId && preferredInstallationId ? input.preferred : undefined;
   const { onSelect } = input;
 
-  // The open shared chooser already demands this Home's managed inventory. Observe its
-  // admitted absence facts without opening or retaining a second list read.
+  // The chooser owns its inventory demand, including an answer that removes its last row.
+  // Row-owned demand alone would release that answer as soon as filtering unmounts the rows.
+  const [pickerOpen, setPickerOpen] = React.useState(false);
+  const closedMachineId = !pickerOpen ? namedRetained?.machineId : undefined;
+  const allMachines = useMachineListForServer(input.serverId, !closedMachineId);
+  const namedMachine = useServerScopedMachine(input.serverId, closedMachineId);
+  const machines = React.useMemo(() => closedMachineId ? namedMachine ? [namedMachine] : [] : allMachines,
+    [allMachines, closedMachineId, namedMachine]);
+  const controllerIdsKey = useMachineListForServerSelection(input.serverId, readControllerIds);
+  const { inventoryRows: rows, pickerRows } = useMachineAdministrationTargetRows({
+    accountScope: observationScope ?? undefined, selectedMachineId: closedMachineId, managedInventoryDemand: pickerOpen,
+  });
+  const inventoryHomes = React.useMemo(() => pickerOpen ? [input.serverId] : [], [input.serverId, pickerOpen]);
+  const { machinesByEnrolledMachineIdByServerId } = useManagedMachineInventory(inventoryHomes);
+  const managedByMachineId = machinesByEnrolledMachineIdByServerId[input.serverId];
   const absentMachineIds = useAdmittedManagedMachineAbsentEnrolledIds(input.serverId, binding);
   const controllerMachines = React.useMemo(() => (machines ?? []).filter(isManagedControllerCandidate), [machines]);
-  const controllerIds = React.useMemo(() => new Set(controllerMachines.map(machine => machine.id)), [controllerMachines]);
+  const controllerIds = React.useMemo(() => new Set(JSON.parse(controllerIdsKey) as string[]), [controllerIdsKey]);
   const eligible = React.useMemo(
     () =>
       controllerMachines.filter(machine => !absentMachineIds.has(machine.id)),
@@ -123,12 +149,12 @@ export function useManagedControllerScope(
       const platform = eligibleById.get(materialization.machineId)?.metadata?.platform;
       if (platform && provisioners.some(provisioner => provisioner.platforms.some(supported => supported === platform))) {
         declarations.set(materialization.machineId, 'supported');
-      } else if (installation.declarationState === 'preparing' || !platform && provisioners.length > 0) {
+      } else if (installation.declarationState !== 'known' || !platform && provisioners.length > 0) {
         declarations.set(materialization.machineId, 'unknown');
       }
     }
-    // A missing/preparing declaration is unknown. Only a complete admitted census can
-    // establish no installed provisioner; the primitive projection ignores cursor/heartbeat churn.
+    // Missing or unavailable declarations are not absence. Only a complete admitted census can
+    // exclude a controller; the primitive result ignores renewal/heartbeat churn.
     return eligible.map(machine => declarations.get(machine.id) === 'supported' ? 'supported'
       : installed.completeness === 'complete' && declarations.get(machine.id) !== 'unknown' ? 'unsupported' : 'unknown').join('|');
   }, [availabilityReader, binding, eligible, eligibleById, input.serverId]);
@@ -137,49 +163,63 @@ export function useManagedControllerScope(
   const installedProvisionerMachines = React.useMemo(() => new Set(eligible.filter((_machine, index) => capabilityStates[index] === 'supported').map(machine => machine.id)), [capabilityStates, eligible]);
   const unsupportedProvisionerMachines = React.useMemo(() => new Set(eligible.filter((_machine, index) => capabilityStates[index] === 'unsupported').map(machine => machine.id)), [capabilityStates, eligible]);
   const scopedRows = React.useMemo(() => {
-      const scoped = rows.filter(
+      const isWakeable = (machineId: string) => {
+        const managed = managedByMachineId?.[machineId];
+        return !!managed && resolveManagedMachineWakeStateV1(managed, machineId) !== null;
+      };
+      const scoped = pickerRows.filter(
         (row) =>
           areServerProfileIdentifiersEquivalent(row.serverId, input.serverId) &&
+          !absentMachineIds.has(row.candidate.target.machineId) &&
           (row.candidate.target.machineId === namedRetained?.machineId || controllerIds.has(row.candidate.target.machineId)),
       );
-      // Absence withdraws admission, not the row's stable position or chooser lifetime.
-      return scoped.map(row => absentMachineIds.has(row.candidate.target.machineId)
-        ? { ...row, candidate: { ...row.candidate, availability: 'missing' as const } } : row);
-    }, [absentMachineIds, controllerIds, input.serverId, namedRetained?.machineId, rows],
+      return scoped.sort((left, right) =>
+        Number(right.candidate.availability === 'online') - Number(left.candidate.availability === 'online')
+        || Number(isMachineAdministrationCandidateExplicitlySelectable(right.candidate, 'lastKnown'))
+          - Number(isMachineAdministrationCandidateExplicitlySelectable(left.candidate, 'lastKnown'))
+        || Number(isWakeable(right.candidate.target.machineId)) - Number(isWakeable(left.candidate.target.machineId))
+        || (left.candidate.availability === 'offline' && right.candidate.availability === 'offline'
+          ? (readMachineActivity(right.machine).activeAt ?? 0) - (readMachineActivity(left.machine).activeAt ?? 0) : 0));
+    }, [absentMachineIds, controllerIds, input.serverId, managedByMachineId, namedRetained?.machineId, pickerRows],
   );
-  const automaticCandidates = React.useMemo(() => {
-    const onlineIds = new Set(scopedRows.filter(row => isMachineAdministrationCandidateSelectable(row.candidate)).map(row => row.candidate.target.machineId));
+  const automaticState = React.useMemo(() => {
     const readScope = binding?.isCurrent() ? binding.scope : null;
-    const online = eligible.filter(machine => onlineIds.has(machine.id) && supportsManagedControllerActions(machine)
-      && !unsupportedProvisionerMachines.has(machine.id)
-      && readMachineRequestReachabilityObservation(readScope, machine.id)?.outcome !== 'failed');
-    const knownCapable = online.filter(machine => installedProvisionerMachines.has(machine.id));
-    return (knownCapable.length > 0 ? knownCapable : online).sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0);
-  }, [binding, eligible, installedProvisionerMachines, scopedRows, unsupportedProvisionerMachines]);
-  const automaticRetainedRow = !namedRetained && scopedChoice && !scopedChoice.explicit
-    ? scopedRows.find((row) => row.candidate.target.machineId === scopedChoice.controller.machineId)
-    : undefined;
-  // An automatic pick is kept across presence churn only while its machine is still selectable; one that went
-  // offline (a first frame from warm cache, a stale beat) yields to the next online controller.
-  const automaticRetained = automaticRetainedRow && scopedChoice
-    && automaticCandidates.some(machine => machine.id === scopedChoice.controller.machineId
-      && machine.installationId === scopedChoice.controller.installationId)
-    ? scopedChoice.controller
-    : undefined;
-  const retained = namedRetained ?? automaticRetained;
+    const retainedAutomatic = scopedChoice && !scopedChoice.explicit ? scopedChoice.controller : undefined;
+    return resolveMachineAdministrationTargetState({
+      storedTarget: null,
+      candidates: scopedRows.map(row => row.candidate),
+      automaticSelection: {
+        isEligible: candidate => {
+          const machine = eligibleById.get(candidate.target.machineId);
+          return !!machine && supportsManagedControllerActions(machine)
+            && (!machine.managedMachineRef || machine.id === thisMachineId
+              || !!rememberedTarget && machineAdministrationTargetsEqual(candidate.target, rememberedTarget))
+            && !unsupportedProvisionerMachines.has(machine.id)
+            && readMachineRequestReachabilityObservation(readScope, machine.id)?.outcome !== 'failed';
+        },
+        compare: (left, right) => {
+          const leftId = left.target.machineId;
+          const rightId = right.target.machineId;
+          return Number(installedProvisionerMachines.has(rightId)) - Number(installedProvisionerMachines.has(leftId))
+            || Number(rightId === retainedAutomatic?.machineId && eligibleById.get(rightId)?.installationId === retainedAutomatic?.installationId)
+              - Number(leftId === retainedAutomatic?.machineId && eligibleById.get(leftId)?.installationId === retainedAutomatic?.installationId)
+            || Number(!!rememberedTarget && machineAdministrationTargetsEqual(right.target, rememberedTarget))
+              - Number(!!rememberedTarget && machineAdministrationTargetsEqual(left.target, rememberedTarget))
+            || Number(rightId === thisMachineId) - Number(leftId === thisMachineId);
+        },
+      },
+    });
+  }, [binding, eligibleById, installedProvisionerMachines, rememberedTarget, scopedChoice, scopedRows, thisMachineId, unsupportedProvisionerMachines]);
   // Kept identity-stable by its ids: presence updates must not restart the reads it scopes.
   const preferred = React.useMemo(() => {
     // A draft keeps its exact installation even when asleep, missing or replaced; fresh execution
     // admission decides whether it can run. Inventory churn must never silently redirect it.
-    if (retained) return retained;
-    const remembered = rememberedTarget ? automaticCandidates.find((candidate) => candidate.id === rememberedTarget.machineId
-      && scopedRows.some((row) => row.candidate.target.machineId === candidate.id
-        && row.candidate.target.serverIdentityId === rememberedTarget.serverIdentityId)) : undefined;
-    const machine = remembered ?? automaticCandidates.find((candidate) => candidate.id === thisMachineId) ?? automaticCandidates[0];
+    if (namedRetained) return namedRetained;
+    const machine = automaticState.kind === 'online' ? eligibleById.get(automaticState.target.machineId) : undefined;
     return machine?.installationId
       ? { machineId: machine.id, installationId: machine.installationId }
       : undefined;
-  }, [retained?.machineId, retained?.installationId, automaticCandidates, scopedRows, thisMachineId, rememberedTarget?.machineId, rememberedTarget?.serverIdentityId]);
+  }, [namedRetained?.machineId, namedRetained?.installationId, automaticState, eligibleById]);
   const controllerMachineId = preferred?.machineId;
   const controllerInstallationId = preferred?.installationId;
   const controller = React.useMemo(
@@ -190,15 +230,17 @@ export function useManagedControllerScope(
     [controllerMachineId, controllerInstallationId],
   );
   React.useEffect(() => {
-    if (!retained && controller) setChosen({ serverId: input.serverId, accountId, controller, explicit: false });
-  }, [retained?.machineId, retained?.installationId, controller, input.serverId, accountId]);
+    if (!namedRetained && controller) setChosen({ serverId: input.serverId, accountId, controller, explicit: false });
+  }, [namedRetained?.machineId, namedRetained?.installationId, controller, input.serverId, accountId]);
 
   const selection =
     React.useMemo((): MachineAdministrationTargetSelectionV1 => {
-      const candidates = scopedRows.map(row => row.candidate);
+      const candidates = rows.filter(row => areServerProfileIdentifiersEquivalent(row.serverId, input.serverId))
+        .map(row => row.candidate);
       const selectedTarget =
-        scopedRows.find(
-          (row) => row.candidate.target.machineId === controller?.machineId,
+        rows.find(
+          (row) => areServerProfileIdentifiersEquivalent(row.serverId, input.serverId)
+            && row.candidate.target.machineId === controller?.machineId,
         )?.candidate.target ?? null;
       const matchesAccount = doesMachineAdministrationTargetMatchActiveAccount({ target: selectedTarget, activeAccountServerId: activeAccountScope?.serverId });
       const resolveExecutionTarget = (options?: MachineAdministrationExecutionTargetOptions) => {
@@ -214,6 +256,7 @@ export function useManagedControllerScope(
           storedTarget: selectedTarget,
           candidates,
           allowSoleCandidate: false,
+          isInventoryKnown: () => listSettled,
         }),
         selectedTarget,
         selectedTargetServerMatchesActiveAccount: matchesAccount,
@@ -223,45 +266,42 @@ export function useManagedControllerScope(
           if (!scopedRows.some(row => row.candidate.target.machineId === target.machineId
             && row.candidate.target.serverIdentityId === target.serverIdentityId
             && isMachineAdministrationCandidateExplicitlySelectable(row.candidate, 'lastKnown'))) return;
-          const machine = eligible.find(
-            (candidate) => candidate.id === target.machineId,
-          );
-          if (!machine?.installationId) return;
+          const machine = resolveServerScopedMachine(storage.getState(), input.serverId, target.machineId);
+          if (!machine || !isManagedControllerCandidate(machine) || !machine.installationId) return;
           const next = {
             machineId: machine.id,
             installationId: machine.installationId,
           };
           setChosen({ serverId: input.serverId, accountId, controller: next, explicit: true });
-          const current = storage.getState();
-          if (settingsScope && areAccountSettingsScopesEqual(settingsScope, current.settingsScope)) {
-            getSyncSingleton().applySettings({ machineAdministrationTargetsLocalV1: setMachineAdministrationTargetPreference(
-              current.settings.machineAdministrationTargetsLocalV1, MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.managedMachines, target) },
-              { expectedSettingsScope: settingsScope, source: 'ui' });
+          if (binding?.isCurrent()) {
+            rememberMachineAdministrationTargetObservation(binding.scope, MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.managedMachines, target);
           }
           onSelect?.(next);
         },
         clearTarget: () => {},
         resolveExecutionTarget,
       };
-    }, [absentMachineIds, binding, controller?.machineId, controller?.installationId, eligible, onSelect, scopedRows, activeAccountScope?.serverId, input.serverId, accountId, settingsScope]);
+    }, [absentMachineIds, binding, controller?.machineId, controller?.installationId, eligible, onSelect, scopedRows, rows, listSettled, activeAccountScope?.serverId, input.serverId, accountId]);
 
   const chip =
-    scopedRows.length > 0 ? (
+    controllerMachines.length > 0 || controller ? (
       <MachineAdministrationTargetSelector
         presentation="chip"
         selection={selection}
         groupTitle={t('managedMachines.config.managedFrom')}
         selectionPolicy="lastKnown"
+        chipOpen={pickerOpen}
+        onChipOpenChange={setPickerOpen}
         disabled={input.disabled}
         testIDPrefix={input.testIDPrefix}
       />
     ) : null;
   return {
-    controller,
+    controller: input.delegatedAcquire ? input.preferred : controller,
     machine: machines?.find((machine) => machine.id === controller?.machineId),
     hasCandidates: controllerMachines.length > 0,
     machineList: listSettled ? 'settled' : listStatus === 'error' || listStatus === 'signedOut' ? 'unavailable' : 'loading',
-    chip,
-    selection,
+    chip: input.delegatedAcquire ? null : chip,
+    selection: input.delegatedAcquire ? undefined : selection,
   };
 }

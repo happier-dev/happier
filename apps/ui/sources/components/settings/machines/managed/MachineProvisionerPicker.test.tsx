@@ -523,8 +523,9 @@ describe('provisioner picker demand', () => {
     await act(async () => publishMachineActivity(machines[0]!, { active: false, activeAt: 0 }, []));
     expect(hook.getCurrent().managed.controller?.machineId).toBe('controller-001');
     expect(hook.getCurrent().managed.selection!.pickerRows.at(-1)!.candidate.availability).toBe('offline');
-    expect(hook.getCurrent().administration.pickerRows[0]!.candidate.availability).toBe('offline');
-    expect(hook.getCurrent().administration.pickerRows[1]).toBe(originalAdministrationRows[1]);
+    expect(hook.getCurrent().administration.pickerRows.find(row => row.candidate.target.machineId === machines[0]!.id)
+      ?.candidate.availability).toBe('offline');
+    expect(hook.getCurrent().administration.pickerRows[0]).toBe(originalAdministrationRows[1]);
     expect(hook.getCurrent().managed.selection!.pickerRows[0]).toBe(originalRows[1]);
     expect(harness.requests.length - baselineRequests).toBe(0);
     await hook.unmount();
@@ -612,7 +613,7 @@ describe('provisioner picker demand', () => {
       { serviceInstalled: true, daemonRunning: true, needsAuth: false, machineId: guest.id });
     const hook = await renderHook(() => useManagedControllerScope({ serverId, testIDPrefix: 'scope-probe' }));
     try {
-      expect(hook.getCurrent().controller?.machineId).toBe(intent === 'default' ? guest.id : computer.id);
+      expect(hook.getCurrent().controller?.machineId).toBe(intent === 'none' ? computer.id : guest.id);
       if (intent === 'none') {
         await act(async () => storage.setState({ machineListByServerId: { srv_build: [guest] } }));
         expect(hook.getCurrent().controller).toBeUndefined();

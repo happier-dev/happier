@@ -1,10 +1,8 @@
 import { prepareManagedAcquireProvisionerAdmissionV1, prepareManagedPowerProvisionerAdmissionV1, projectAccountManagedProvisioners,
     type ManagedProvisionerDiscoveryEntry } from '@happier-dev/cli-common/machines/managed/provisioners';
-import { createPluginAccountBundledSelectionV1 } from '@happier-dev/protocol/plugins/availability';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import type { StoredCredentials } from '@/persistence';
-import { loadCurrentBundledPluginLocatorResult } from '@/plugins/projection/registry/builtIn/locators';
-import { readCurrentAccountPluginExecutionSelection } from '@/plugins/runtime/accountPluginActivationSource';
+import { readCurrentAccountPluginExecutionDeclarations } from '@/plugins/runtime/accountPluginActivationSource';
 import { ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 
@@ -35,16 +33,10 @@ export async function readCliManagedProvisioners(pluginId: string,
     account: Readonly<{ credentials?: StoredCredentials | null; serverUrl: string }>, signal?: AbortSignal): Promise<readonly ManagedProvisionerDiscoveryEntry[] | null> {
     if (!account.credentials) return null;
     try {
-        const declaration = loadCurrentBundledPluginLocatorResult({ pluginIds: [pluginId] }).loadedPlugins
-            .find(plugin => plugin.pluginId === pluginId);
-        const bundled = declaration ? createPluginAccountBundledSelectionV1({
-            packageName: declaration.sourceSpec.locator, manifest: declaration.manifest,
-        }) : undefined;
-        const selection = await readCurrentAccountPluginExecutionSelection({ pluginId,
-            credentials: account.credentials, serverUrl: account.serverUrl,
-            ...(bundled ? { bundled } : {}), ...(signal ? { signal } : {}),
+        const selected = await readCurrentAccountPluginExecutionDeclarations({ pluginId, family: 'machineProvisioners',
+            credentials: account.credentials, serverUrl: account.serverUrl, ...(signal ? { signal } : {}),
         });
-        return selection.kind !== 'available' ? null : projectAccountManagedProvisioners([selection]);
+        return selected.kind !== 'available' ? null : projectAccountManagedProvisioners(selected.declarations);
     } catch {
         return null;
     }

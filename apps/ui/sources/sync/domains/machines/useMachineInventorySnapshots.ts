@@ -15,6 +15,7 @@ import {
 import { useMachinePresenceSnapshot } from './reachability/useMachinePresenceSummary';
 import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { resolveServerScopedMachineInventory } from './resolveServerScopedMachines';
+import { areSnapshotProjectionsEquivalent } from '@/sync/domains/state/structuralSharing';
 
 const EMPTY_MACHINE_INVENTORY_SNAPSHOTS: readonly ServerMachineInventorySnapshotV1[] = Object.freeze([]);
 const EMPTY_MACHINES: readonly Machine[] = Object.freeze([]);
@@ -80,5 +81,5 @@ export function useAllProfileMachineInventorySnapshots(enabled = true, selection
         nowMs,
         loadWarmEntries: loadMachineDisplayWarmCacheEntries,
     }) : EMPTY_MACHINE_INVENTORY_SNAPSHOTS, [enabled, readInputs, accountScopesByServerId, profiles, serverId, machineId]);
-    return useMachinePresenceSnapshot(readMachines, readSnapshot, targets, undefined, readDemandedInputs);
+    return useMachinePresenceSnapshot(readMachines, readSnapshot, targets, areSnapshotProjectionsEquivalent, readDemandedInputs);
 }

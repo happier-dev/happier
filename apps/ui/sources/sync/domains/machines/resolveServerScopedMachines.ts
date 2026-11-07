@@ -1,4 +1,4 @@
-import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol';
+import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
 
 import {
     areServerProfileIdentifiersEquivalent,
@@ -195,7 +195,8 @@ function resolveMachineInventorySource(
     // A refresh does not surrender the canonical Home's retained answer to an
     // older profile-alias snapshot. Rows and readiness resolve the same ordered keys.
     const scopedServerId = serverIds.find((serverId) => Array.isArray(params.machineListByServerId[serverId]));
-    if (scopedServerId && params.machineListStatusByServerId?.[scopedServerId] === 'idle') {
+    if (scopedServerId && (params.machineListStatusByServerId?.[scopedServerId] === 'idle'
+        || params.machineListStatusByServerId?.[scopedServerId] === 'error')) {
         return { kind: 'scoped', serverId: scopedServerId, status };
     }
     const targetsActiveServer = activeServerId.length > 0

@@ -162,6 +162,20 @@ describe('resolveServerScopedMachines', () => {
         }
     });
 
+    it('retains scoped rows after a failed reread instead of the active display fallback', () => {
+        const retained = createMachine('machine-retained', 200);
+        const other = createMachine('machine-other', 200);
+        const stale = createMachine(retained.id, 100);
+        const scopedRows = [retained, other];
+        for (const serverId of [identity, profile.id]) {
+            const context = { serverId, activeServerId: profile.id, activeMachines: [stale],
+                machineListByServerId: { [identity]: scopedRows },
+                machineListStatusByServerId: { [identity]: 'error' as const } };
+            expect(resolveServerScopedMachines(context)).toBe(scopedRows);
+            expect(resolveExactServerScopedMachine({ ...context, machineId: other.id })).toBe(other);
+        }
+    });
+
     it('keeps canonical priority without list-status evidence instead of selecting a nonempty alias', () => {
         const machine = createMachine('machine-stale', 100);
         for (const serverId of [identity, profile.id]) {

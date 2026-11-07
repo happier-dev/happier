@@ -32,6 +32,7 @@ import { MachinePresetActionInputSchemasV1, MachinePresetActionOutputSchemasV1, 
 import { ManagedErrorV1Schema, ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { executeCliManagedAccountPower } from '@/machines/managed/accountPower';
 import { readCliManagedAccountGuestDiagnostics } from '@/machines/managed/accountDiagnostics';
+import { executeCliManagedProvisionerList } from '@/machines/managed/provisionerDiscovery';
 import { ManagedMachineControllerError } from '@happier-dev/cli-common/machines/managed';
 import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import { MachinePoolErrorV1Schema } from '@happier-dev/protocol/machines/pools/v1';
@@ -888,6 +889,17 @@ export function createAccountServerActionDeps(input: Readonly<{
       if (!('homeId' in body)) throw new TypeError('Account-placed managed Actions require an explicit Home');
       const unavailable = await qualifiedHomeActionFailure({ actionId, homeId: body.homeId, context: actionContext, signal });
       if (unavailable) return unavailable;
+      if (actionId === 'machines.provisioners.list') {
+        if (actionContext.externalActionCredential || actionContext.externalActionExecutionAuthorization) return externalAuthorizationUnavailable();
+        const result = await executeCliManagedProvisionerList({
+          value: ManagedMachineActionInputSchemasV1['machines.provisioners.list'].parse(body),
+          credentials: input.credentials?.token === input.token ? input.credentials : { token: input.token, encryption: null },
+          serverUrl: serverHttpBaseUrl, signal,
+        });
+        if (input.isCredentialCurrent && !await input.isCredentialCurrent())
+          return { ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
+        return result;
+      }
       if (actionId === 'machines.managed.power.set' && 'when' in body && body.when === 'now') {
         try {
           return await executeCliManagedAccountPower({ body: ManagedMachineActionInputSchemasV1['machines.managed.power.set'].parse(body),

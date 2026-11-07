@@ -1,9 +1,15 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { adoptHomeProfile, removeServerProfile, setActiveServerId, upsertServerProfile, type ServerProfile } from '@/sync/domains/server/serverProfiles';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { storage } from '@/sync/domains/state/storageStore';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { selectActiveTestHomeForTests } from '@/dev/testkit/fixtures/persistedHomeProfiles';
+
+const {
+    advanceMachineAdministrationSelectionRevision,
+    resolveFreshMachineAdministrationExecutionTarget,
+    doesMachineAdministrationTargetMatchActiveAccount,
+} = await import('./useTargetSelection');
 
 type TestMachine = ReturnType<typeof createMachineFixture>;
 
@@ -45,7 +51,6 @@ function machine(id: string, active: boolean): TestMachine {
 
 describe('machine administration selection revision', () => {
     it('advances monotonically across A-to-B-to-A', async () => {
-        const { advanceMachineAdministrationSelectionRevision } = await import('./useTargetSelection');
         const targetA = { serverIdentityId: 'server-a', machineId: 'machine-a' };
         const targetB = { serverIdentityId: 'server-b', machineId: 'machine-b' };
         const initial = { selectionKey: 'relay', target: targetA, revision: 0 };
@@ -74,7 +79,6 @@ describe('resolveFreshMachineAdministrationExecutionTarget', () => {
     });
 
     it('resolves only the exact fresh non-active server row', async () => {
-        const { resolveFreshMachineAdministrationExecutionTarget } = await import('./useTargetSelection');
 
         const result = resolveFreshMachineAdministrationExecutionTarget({
             serverIdentityId: 'srv_server_b',
@@ -89,7 +93,6 @@ describe('resolveFreshMachineAdministrationExecutionTarget', () => {
     });
 
     it('fails closed when the exact row is stale, offline, or replaced', async () => {
-        const { resolveFreshMachineAdministrationExecutionTarget } = await import('./useTargetSelection');
         const target = { serverIdentityId: 'srv_server_b', machineId: 'machine-b' };
 
         storage.setState({ machineListStatusByServerId: { 'srv_server_b': 'signedOut' } });
@@ -111,7 +114,6 @@ describe('resolveFreshMachineAdministrationExecutionTarget', () => {
     });
 
     it('uses the admitted Home row during refresh instead of the active display copy', async () => {
-        const { resolveFreshMachineAdministrationExecutionTarget } = await import('./useTargetSelection');
         await setActiveServerId(profileB.id);
         const admitted = machine('machine-b', true);
         storage.setState({
@@ -133,7 +135,6 @@ describe('resolveFreshMachineAdministrationExecutionTarget', () => {
     });
 
     it('does not revive a retained scoped row when the Home is signed out and the active inventory is empty', async () => {
-        const { resolveFreshMachineAdministrationExecutionTarget } = await import('./useTargetSelection');
         await setActiveServerId(profileB.id);
         storage.setState({
             machines: {},
@@ -146,11 +147,55 @@ describe('resolveFreshMachineAdministrationExecutionTarget', () => {
             machineId: 'machine-b',
         }, { accountScope: { serverId: profileB.id, accountId: 'account-b' } })).toBeNull();
     });
+
+    it('re-checks only the requested row while the inventory is unchanged, and still fails closed on presence or inventory changes', async () => {
+        // Host currentness checks call this once per candidate on every context read.
+        // Count the inventory rows each check reads, excluding the requested one.
+        const touched = new Set<string>();
+        const tracked = (row: TestMachine): TestMachine => new Proxy(row, {
+            get(target, key, receiver) { touched.add(target.id); return Reflect.get(target, key, receiver); },
+        });
+        const rows = Array.from({ length: 60 }, (_, index) => tracked(machine(`machine-${index}`, true)));
+        storage.setState({
+            machines: Object.fromEntries(rows.map(row => [row.id, row])),
+            machineListByServerId: { 'srv_server_b': rows },
+            machineListStatusByServerId: { 'srv_server_b': 'idle' },
+        });
+        const target = { serverIdentityId: 'srv_server_b', machineId: 'machine-7' };
+        const accountScope = { serverId: profileB.id, accountId: 'account-b' };
+        expect(resolveFreshMachineAdministrationExecutionTarget(target, { accountScope })?.machine).toBe(rows[7]);
+        const otherRowsRead: number[] = [];
+        for (let check = 0; check < 3; check += 1) {
+            touched.clear();
+            expect(resolveFreshMachineAdministrationExecutionTarget(target, { accountScope })?.machine).toBe(rows[7]);
+            otherRowsRead.push([...touched].filter(id => id !== target.machineId).length);
+        }
+        expect(otherRowsRead).toEqual([0, 0, 0]);
+
+        // Presence lapses with no inventory publication: the same check refuses.
+        const now = Date.now();
+        const clock = vi.spyOn(Date, 'now').mockReturnValue(now + 61_000);
+        try {
+            expect(resolveFreshMachineAdministrationExecutionTarget(target, { accountScope })).toBeNull();
+        } finally {
+            clock.mockRestore();
+        }
+        expect(resolveFreshMachineAdministrationExecutionTarget(target, { accountScope })?.machine).toBe(rows[7]);
+        // A real inventory change re-resolves: the revoked row is refused, a new row is admitted.
+        const revoked = { ...machine('machine-7', true), revokedAt: 5 };
+        storage.setState({ machineListByServerId: { 'srv_server_b': rows.map((row, index) => index === 7 ? revoked : row) } });
+        expect(resolveFreshMachineAdministrationExecutionTarget(target, { accountScope })).toBeNull();
+        const replacement = machine('machine-7', true);
+        storage.setState({ machineListByServerId: { 'srv_server_b': rows.map((row, index) => index === 7 ? replacement : row) } });
+        expect(resolveFreshMachineAdministrationExecutionTarget(target, { accountScope })?.machine).toBe(replacement);
+        // The list status withdrawing membership also re-resolves.
+        storage.setState({ machineListStatusByServerId: { 'srv_server_b': 'signedOut' } });
+        expect(resolveFreshMachineAdministrationExecutionTarget(target, { accountScope })).toBeNull();
+    }, 180_000);
 });
 
 describe('doesMachineAdministrationTargetMatchActiveAccount', () => {
     it('uses real profile equivalence for portable and device-local identifiers', async () => {
-        const { doesMachineAdministrationTargetMatchActiveAccount } = await import('./useTargetSelection');
         const target = { serverIdentityId: 'srv_server_b', machineId: 'machine-b' };
 
         expect(doesMachineAdministrationTargetMatchActiveAccount({
