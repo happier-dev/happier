@@ -307,10 +307,14 @@ describe('typed workflow definition edits', () => {
     const wait = createWorkflowLeafBlock({ kind: 'wait' }, taken);
     expect(action).toMatchObject({ kind: 'action', id: 'action-2', actionId: 'notifications.notify_me', input: {} });
     expect(nested).toMatchObject({ kind: 'workflow', id: 'workflow-2', workflowRef: 'builtin:review-and-converge', input: {} });
-    expect(wait).toMatchObject({ kind: 'wait', id: 'wait-2', result: { kind: 'text' } });
+    expect(wait).toMatchObject({ kind: 'wait', id: 'wait-2' });
+    // FIN-JOURNEY-OPUS-1107 F6: Continue is the default; a result is authored explicitly.
+    expect(wait).not.toHaveProperty('result');
     // Like a new Agent step, a Wait for you parses once it says what to do.
     const authoredWait = wait.kind === 'wait' ? { ...wait, document: { ...wait.document, text: 'Check the notes' } } : wait;
     for (const block of [action, nested, authoredWait]) expect(WorkflowBlockSchema.safeParse(block).error?.issues ?? []).toEqual([]);
+    expect(WorkflowBlockSchema.parse({ ...authoredWait, result: { kind: 'text' } }))
+      .toMatchObject({ kind: 'wait', result: { kind: 'text' } });
     // Composition is a Workflow leaf, never a workflow.run.* Action.
     expect(() => createWorkflowLeafBlock({ kind: 'action', actionId: 'workflow.run.start' }, taken)).toThrow();
   });

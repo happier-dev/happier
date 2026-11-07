@@ -6,6 +6,7 @@ import { formatWorkflowStepSessionTitle, listWorkflowBlockOrdinalsV1, readWorkfl
 import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '../machines/managed/actionIdsV1.js';
 import type { WorkflowBlock } from './workflowV1.js';
 import { createDeepWorkflowDefinition } from './workflowDefinition.testkit.js';
+import { validateWorkflowDefinition } from './workflowValidationV1.js';
 
 const step: WorkflowStep = {
   kind: 'step', id: 'work', document: { text: '', references: [], attachments: [] },
@@ -13,6 +14,33 @@ const step: WorkflowStep = {
 };
 
 describe('workflow step label', () => {
+  it.each([
+    { first: { kind: 'action', id: 'notify', actionId: 'notifications.notify_me',
+      input: { message: { kind: 'literal', value: 'Done' } } }, title: 'Do an action' },
+    { first: { ...step, inputMode: 'none' }, title: 'Agent step' },
+  ])('keeps a valid unnamed first $first.kind as the Run title instead of a later named step (FIN F9)', ({ first, title }) => {
+    const result = validateWorkflowDefinition({ defaults: { agentTarget: {
+      kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
+    }, conversation: { kind: 'fresh' } }, blocks: [first,
+      { ...step, id: 'inspect', name: 'Inspect the release', document: { ...step.document, text: 'Inspect the release' } },
+    ] });
+    expect(result.valid).toBe(true);
+    if (!result.normalizedDefinition) throw new Error('valid_definition_required');
+    expect(workflowDefinitionDisplayTitleV1(result.normalizedDefinition.blocks.slice(0, 1))).toBe(title);
+    expect(workflowDefinitionDisplayTitleV1(result.normalizedDefinition.blocks)).toBe(`${title} and 1 more`);
+  });
+  it('names an unnamed Run after its first executable step and remaining authored steps', () => {
+    const named = { ...step, name: 'Inspect the release' };
+    const rest = { ...step, id: 'publish', name: 'Publish the summary' };
+    const grouped: WorkflowBlock[] = [{ kind: 'parallel', id: 'lanes', name: 'Side by side', failurePolicy: 'collect_outcomes',
+      branches: [{ id: 'left', blocks: [named] }, { id: 'right', blocks: [rest] }] }];
+    expect(workflowDefinitionDisplayTitleV1([named])).toBe('Inspect the release');
+    expect(workflowDefinitionDisplayTitleV1(grouped)).toBe('Inspect the release and 1 more');
+    expect(workflowDefinitionDisplayTitleV1([{ kind: 'loop', id: 'repeat', body: [named],
+      repetition: { kind: 'evaluate', maxIterations: 2, history: 'none',
+        evaluator: { ...rest, result: { kind: 'decision', decisions: ['continue', 'done'] } } },
+    }])).toBe('Publish the summary and 1 more');
+  });
   it('numbers deep valid bodies without consuming the JavaScript call stack', () => {
     const definition = createDeepWorkflowDefinition(12_000);
     expect([...listWorkflowBlockOrdinalsV1(definition.blocks)]).toEqual([['leaf', '1']]);
@@ -101,7 +129,7 @@ describe('Machine setup install naming', () => {
     expect(readWorkflowSetupInstallPackagesV1(setupLeaf([pkg([{ name: 'sl' }])]))).toEqual({ requested: ['sl'], installs: ['sl'] });
   });
 
-  it('skips what is already there and names nothing it cannot say plainly', () => {
+  it('keeps package install names specific and uses the ordinary Action title for other Setup changes', () => {
     // A package already there is still what the Run is for, but not something it installs.
     expect(readWorkflowSetupInstallPackagesV1(setupLeaf([pkg([{ name: 'sl' }]), pkg([{ name: 'jq' }])],
       [{ stepId: 'a', status: 'satisfied' }, { stepId: 'b', status: 'drifted' }]))).toEqual({ requested: ['sl', 'jq'], installs: ['jq'] });
@@ -110,6 +138,6 @@ describe('Machine setup install naming', () => {
     // Removals and other kinds of change keep the ordinary wording.
     expect(readWorkflowSetupInstallPackagesV1(setupLeaf([pkg([{ name: 'sl' }], 'absent')]))).toBeNull();
     expect(readWorkflowSetupInstallPackagesV1(setupLeaf([pkg([{ name: 'sl' }]), { id: 'f', kind: 'file', path: '/etc/x' }]))).toBeNull();
-    expect(workflowDefinitionDisplayTitleV1([setupLeaf([{ id: 'f', kind: 'file', path: '/etc/x' }])])).toBeNull();
+    expect(workflowDefinitionDisplayTitleV1([setupLeaf([{ id: 'f', kind: 'file', path: '/etc/x' }])])).toBe('Do an action');
   });
 });

@@ -8,6 +8,7 @@ import { RoleOverrideV1Schema, WorkflowRoleV1Schema } from '../prompts/roles/rol
 import {
   WorkflowBlockSchema, WorkflowDefinitionV1Schema, WorkflowInputDefinitionSchema, WorkflowStepExecutionSelectionSchema,
   WorkflowStepSchema, WorkflowActionLeafV1Schema, WorkflowInsertBlockV1Schema, WorkflowBlockNameV1Schema,
+  walkWorkflowBlocks,
 } from './workflowV1.js';
 import type { WorkflowCondition, WorkflowAuthoredProducerRef, WorkflowValueReference } from './workflowReferenceV1.js';
 import type { WorkflowActionLeafV1 } from './workflowLeafV1.js';
@@ -23,6 +24,7 @@ import type {
 } from './workflowV1.js';
 
 export { WorkflowInsertBlockV1Schema, type WorkflowInsertBlockV1 } from './workflowV1.js';
+export { walkWorkflowBlocks } from './workflowV1.js';
 
 export type WorkflowDefinitionDraftV1 = Readonly<{
   name: string;
@@ -39,38 +41,6 @@ export type WorkflowBlockListRef =
   | Readonly<{ kind: 'ifThen'; ifId: string }>
   | Readonly<{ kind: 'ifOtherwise'; ifId: string }>
   | Readonly<{ kind: 'parallelBranch'; parallelId: string; branchId: string }>;
-
-/** Every block in authored order, depth-first, including evaluator steps. */
-export function walkWorkflowBlocks(blocks: readonly WorkflowBlock[]): readonly WorkflowBlock[] {
-  const collected: WorkflowBlock[] = [];
-  const pending = [...blocks].reverse();
-  while (pending.length > 0) {
-    const block = pending.pop()!;
-    collected.push(block);
-    switch (block.kind) {
-      case 'step':
-      case 'action':
-      case 'workflow':
-      case 'wait':
-        break;
-      case 'parallel':
-        for (let branchIndex = block.branches.length - 1; branchIndex >= 0; branchIndex -= 1) {
-          const list = block.branches[branchIndex]!.blocks;
-          for (let index = list.length - 1; index >= 0; index -= 1) pending.push(list[index]!);
-        }
-        break;
-      case 'loop':
-        for (let index = block.body.length - 1; index >= 0; index -= 1) pending.push(block.body[index]!);
-        if (block.repetition.kind === 'evaluate') pending.push(block.repetition.evaluator);
-        break;
-      case 'if':
-        for (let index = block.otherwise.length - 1; index >= 0; index -= 1) pending.push(block.otherwise[index]!);
-        for (let index = block.then.length - 1; index >= 0; index -= 1) pending.push(block.then[index]!);
-        break;
-    }
-  }
-  return collected;
-}
 
 export function collectWorkflowBlockIds(draft: WorkflowDefinitionDraftV1): ReadonlySet<string> {
   const ids = new Set<string>();
@@ -883,7 +853,7 @@ export function createWorkflowLeafBlock(seed: WorkflowLeafBlockSeed, takenIds: R
     case 'wait':
       return {
         kind: 'wait', id: createWorkflowBlockId('wait', takenIds),
-        document: { text: '', references: [], attachments: [] }, result: { kind: 'text' },
+        document: { text: '', references: [], attachments: [] },
       };
   }
 }

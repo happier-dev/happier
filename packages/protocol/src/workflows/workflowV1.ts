@@ -495,6 +495,26 @@ function workflowChildLists(value: unknown): { blocks: unknown[]; path: (string 
   return keys.flatMap((key) => Array.isArray(value[key]) ? [{ blocks: value[key], path: [key] }] : []);
 }
 
+/** Authored depth-first order, including evaluators; stored projections need no full block admission. */
+export function walkWorkflowBlocks(blocks: readonly WorkflowBlock[]): readonly WorkflowBlock[];
+export function walkWorkflowBlocks(blocks: readonly unknown[]): readonly unknown[];
+export function walkWorkflowBlocks(blocks: readonly unknown[]): readonly unknown[] {
+  const collected: unknown[] = [];
+  const pending = [...blocks].reverse();
+  while (pending.length > 0) {
+    const block = pending.pop();
+    collected.push(block);
+    const lists = workflowChildLists(block);
+    for (let listIndex = lists.length - 1; listIndex >= 0; listIndex -= 1) {
+      const list = lists[listIndex]!.blocks;
+      for (let index = list.length - 1; index >= 0; index -= 1) pending.push(list[index]);
+    }
+    if (isBlockRecord(block) && block.kind === 'loop' && isBlockRecord(block.repetition)
+      && block.repetition.kind === 'evaluate') pending.push(block.repetition.evaluator);
+  }
+  return collected;
+}
+
 function workflowFieldsWithOptionalId<T extends z.core.$ZodShape>(schema: z.ZodMiniObject<T>) {
   // Rebuild the same strict field shape before changing id: Zod's partial()
   // rejects object overwrite checks. The variant retains the canonical fields.

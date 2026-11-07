@@ -829,7 +829,7 @@ describe('shared Account workflow run owner', () => {
     expect(operations).toEqual(['list']);
   });
 
-  it('uses the first named step after an unnamed block consistently in list and detail (FIN M3)', async () => {
+  it('names the first unnamed Action before a later named step in the lean list (FIN F9)', async () => {
     const snapshot = runSnapshot();
     const envelope = JSON.parse(snapshot.acceptedEnvelope);
     const step = envelope.v.content.authoredDefinition.blocks[0];
@@ -847,7 +847,7 @@ describe('shared Account workflow run owner', () => {
       throw new Error('unexpected_storage_operation');
     } }));
     expect(await owner.execute({ actionId: 'workflow.run.list', input: {}, context: {} }))
-      .toMatchObject({ metadataByRunId: { [runId]: { kind: 'available', value: { title: 'Inspect the parser and 1 more' } } } });
+      .toMatchObject({ metadataByRunId: { [runId]: { kind: 'available', value: { title: 'Do an action and 1 more' } } } });
     expect(await owner.execute({ actionId: 'workflow.run.get', input: { runId }, context: {} }))
       .toMatchObject({ authoredDefinition: { blocks: [{ id: 'unnamed' }, { id: 'named', name: 'Inspect the parser' }] } });
   });

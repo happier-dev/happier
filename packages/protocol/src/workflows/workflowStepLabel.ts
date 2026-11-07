@@ -1,11 +1,22 @@
 import type { WorkflowBlock, WorkflowStep } from './workflowV1.js';
 import type { JsonValue } from '../json/strictJsonValue.js';
-import { walkWorkflowBlocks } from './workflowDefinitionEditV1.js';
+import { walkWorkflowBlocks } from './workflowV1.js';
 import type { TriggerTargetV1 } from './triggers/triggerTargetV1.js';
 import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '../machines/managed/actionIdsV1.js';
 
 /** Executable trigger sets retain this storage label; it is never an authored display name. */
 export const WORKFLOW_TRIGGER_SET_STORAGE_NAME = 'Workflow triggers';
+
+const DEFAULT_TRIGGER_THEN_LABELS = { runWorkflow: 'Run a workflow', sendPrompt: 'Send a prompt', notifyMe: 'Notify me', doAction: 'Do an action' };
+
+function workflowExecutableLeafDefaultLabel(kind: 'step' | 'wait' | 'action' | 'workflow', labels = DEFAULT_TRIGGER_THEN_LABELS): string {
+  switch (kind) {
+    case 'step': return 'Agent step';
+    case 'wait': return 'Wait for you';
+    case 'action': return labels.doAction;
+    case 'workflow': return labels.runWorkflow;
+  }
+}
 
 /** One name rule for the Account Library projection, its presenters and trigger-started Runs. */
 export function workflowTriggerDisplayNameV1(input: Readonly<{ name?: string; target?: TriggerTargetV1 }>, presentation?: Readonly<{
@@ -17,7 +28,7 @@ export function workflowTriggerDisplayNameV1(input: Readonly<{ name?: string; ta
   if (input.name !== undefined && input.name !== WORKFLOW_TRIGGER_SET_STORAGE_NAME) return input.name;
   const target = input.target;
   if (target === undefined) return undefined;
-  const labels = presentation?.then ?? { runWorkflow: 'Run a workflow', sendPrompt: 'Send a prompt', notifyMe: 'Notify me', doAction: 'Do an action' };
+  const labels = presentation?.then ?? DEFAULT_TRIGGER_THEN_LABELS;
   if (target.kind === 'workflow') return presentation?.resolveWorkflowTitle(target.ref) ?? labels.runWorkflow;
   const definition = target.definition;
   const first = definition.blocks[0];
@@ -34,10 +45,10 @@ export function workflowTriggerDisplayNameV1(input: Readonly<{ name?: string; ta
   if (presentation) return presentation.block(first);
   if (first.name?.trim()) return first.name.trim();
   switch (first.kind) {
-    case 'step': return 'Agent step';
-    case 'wait': return 'Wait for you';
-    case 'action': return labels.doAction;
-    case 'workflow': return labels.runWorkflow;
+    case 'step':
+    case 'wait':
+    case 'action':
+    case 'workflow': return workflowExecutableLeafDefaultLabel(first.kind, labels);
     case 'parallel': return 'Side by side';
     case 'if': return 'If';
     case 'loop': return first.repetition.kind === 'items' ? 'Once for each item'
@@ -62,7 +73,11 @@ export function workflowBlockReferenceLabel(block: WorkflowBlock): string {
 
 /** Prompt-derived fallback for private authoring and Run detail when no name is authored. */
 export function workflowStepPromptLabel(step: Pick<WorkflowStep, 'document'>): string | null {
-  const firstNonemptyLine = step.document.text
+  return workflowPromptTextLabel(step.document.text);
+}
+
+function workflowPromptTextLabel(text: string): string | null {
+  const firstNonemptyLine = text
     .split(/\r?\n/u)
     .map((line) => line.trim())
     .find((line) => line.length > 0);
@@ -73,18 +88,26 @@ export function workflowStepPromptLabel(step: Pick<WorkflowStep, 'document'>): s
     : firstNonemptyLine;
 }
 
-/** An unnamed Run uses the first authored name, prompt or software install in execution order. */
-export function workflowDefinitionDisplayTitleV1(blocks: readonly WorkflowBlock[]): string | null {
-  for (const block of walkWorkflowBlocks(blocks)) {
-    const title = block.name?.trim() || (block.kind === 'step' || block.kind === 'wait' ? workflowStepPromptLabel(block)
-      : block.kind === 'action' ? workflowSetupInstallTitle(block) : null);
-    if (title) return title;
+/** An unnamed Run names its first executable leaf and the remaining authored steps. */
+export function workflowDefinitionDisplayTitleV1(blocks: readonly unknown[]): string | null {
+  let title: string | null = null;
+  let steps = 0;
+  for (const candidate of walkWorkflowBlocks(blocks)) {
+    const block = readJsonRecord(candidate);
+    if (block === null || (block.kind !== 'step' && block.kind !== 'wait' && block.kind !== 'action' && block.kind !== 'workflow')) continue;
+    steps += 1;
+    if (title !== null) continue;
+    const name = typeof block.name === 'string' ? block.name.trim() : '';
+    const text = readJsonRecord(block.document)?.text;
+    title = name || ((block.kind === 'step' || block.kind === 'wait') && typeof text === 'string'
+      ? workflowPromptTextLabel(text) : block.kind === 'action' ? workflowSetupInstallTitle(block) : null)
+      || workflowExecutableLeafDefaultLabel(block.kind);
   }
-  return null;
+  return title !== null && steps > 1 ? `${title} and ${steps - 1} more` : title;
 }
 
 /** A Setup Run's title names its software: "Install sl", or "Install 3 packages" when there are several. */
-function workflowSetupInstallTitle(block: WorkflowBlock): string | null {
+function workflowSetupInstallTitle(block: unknown): string | null {
   const packages = readWorkflowSetupInstallPackagesV1(block)?.requested;
   if (packages === undefined) return null;
   return packages.length === 1 ? `Install ${packages[0]}` : `Install ${packages.length} packages`;
@@ -105,12 +128,13 @@ function readJsonArray(value: unknown): readonly unknown[] {
  * `installs` leaves out those the Plan already found satisfied (what it changes). A package source only
  * says where packages come from, so it is neither an install nor another kind of change.
  */
-export function readWorkflowSetupInstallPackagesV1(block: WorkflowBlock): Readonly<{
+export function readWorkflowSetupInstallPackagesV1(block: unknown): Readonly<{
   requested: readonly string[];
   installs: readonly string[];
 }> | null {
-  if (block.kind !== 'action' || block.actionId !== MACHINE_SETUP_APPLY_ACTION_ID_V1) return null;
-  const binding = block.input.targets;
+  const action = readJsonRecord(block);
+  if (action?.kind !== 'action' || action.actionId !== MACHINE_SETUP_APPLY_ACTION_ID_V1) return null;
+  const binding = readJsonRecord(readJsonRecord(action.input)?.targets);
   if (binding?.kind !== 'literal') return null;
   const requested: string[] = [];
   const installs: string[] = [];
