@@ -6,12 +6,14 @@ import { sealWorkflowAcceptedSnapshotStoredEnvelopeV1, serializeWorkflowStoredCo
 import { WorkflowRunSummaryV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { decodeBase64 } from 'privacy-kit';
 import { db, initDbPostgres, shutdownDbClient } from '@/storage/db';
+import { inTx } from '@/storage/inTx';
 import { clearAutomationRunHistory, deleteAutomation } from '@/app/automations/automationCrudService';
 import { encodeAutomationRunCause } from '@/app/automations/automationRunCauseCodec';
 import { createAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { registerWorkflowRunStorageRoutes } from '@/app/api/routes/automations/registerWorkflowRunStorageRoutes';
 import { materializeWorkflowAcceptedSnapshotFixture } from '@/testkit/workflowAcceptedSnapshot';
 import { listWorkflowRuns } from './workflowRunService';
+import { resolveWorkflowRunVisibilityScopesInTx } from './workflowRunAccess';
 
 describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Workflow audience demand costs (PostgreSQL)', () => {
     const queries: Prisma.QueryEvent[] = [];
@@ -86,8 +88,58 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Workflow audien
     }
 
     function sourceReads() {
-        return queries.filter(query => /^SELECT\b/.test(query.query.trimStart()) && /FROM\s+"public"\."Artifact"(?:\s|$)/.test(query.query));
+        return queries.filter(query => /^SELECT\b/.test(query.query.trimStart()) && /FROM\s+(?:"public"\.)?"Artifact"(?:\s|$)/.test(query.query));
     }
+
+    it.each([undefined, 'required'] as const)('admits default lists with attention=%s in set reads even without Runs', async attention => {
+        const f = await fixture();
+        const read = async (projection?: 'membership') => {
+            queries.length = 0;
+            const page = await listWorkflowRuns({ accountId: f.viewer.id, ...(attention ? { attention } : {}),
+                ...(projection ? { projection } : {}), pageByteLimit: 1_000_000 });
+            return { page, accessStatements: sourceReads().length,
+                maxBindings: Math.max(0, ...sourceReads().map(query => (JSON.parse(query.params) as unknown[]).length)) };
+        };
+        const one = await read();
+        const additionalIds = Array.from({ length: 100 }, () => randomUUID());
+        await db.artifact.createMany({ data: additionalIds.map(f.artifactData) });
+        await db.artifactTeamGrant.createMany({ data: additionalIds.map(artifactId => ({ artifactId, teamId: f.team.id,
+            accessLevel: 'view', createdByAccountId: f.owner.id })) });
+        const many = await read();
+        console.info('WORKFLOW_DEFAULT_SOURCE_SQL', JSON.stringify({ attention, sources: 101,
+            one: one.accessStatements, many: many.accessStatements, maxBindings: many.maxBindings }));
+        expect(one.page.runs).toEqual([]);
+        expect(many.page.runs).toEqual([]);
+        expect(one.accessStatements).toBe(1);
+        expect(many.accessStatements).toBe(one.accessStatements);
+
+        const overflowIds = Array.from({ length: 900 }, () => randomUUID());
+        await db.artifact.createMany({ data: overflowIds.map(f.artifactData) });
+        await db.artifactTeamGrant.createMany({ data: overflowIds.map(artifactId => ({ artifactId, teamId: f.team.id,
+            accessLevel: 'view', createdByAccountId: f.owner.id })) });
+        const overflow = await read();
+        console.info('WORKFLOW_DEFAULT_SOURCE_BIND_SQL', JSON.stringify({ attention, sources: 1001,
+            statements: overflow.accessStatements, maxBindings: overflow.maxBindings }));
+        expect(overflow.page.runs).toEqual([]);
+        expect(overflow.accessStatements).toBe(2);
+        expect(overflow.maxBindings).toBeLessThanOrEqual(999);
+        const scopes = await inTx(tx => resolveWorkflowRunVisibilityScopesInTx(tx, { actorAccountId: f.viewer.id }));
+        expect(new Set(scopes.map(scope => scope.sourceArtifactId)))
+            .toEqual(new Set([f.sourceArtifactId, ...additionalIds, ...overflowIds]));
+
+        const [runId] = await f.createRuns(1);
+        if (attention) await db.workflowRunInvocation.create({ data: { id: randomUUID(), runId: runId!, sequence: 0n,
+            memberOrdinal: 0n, attempt: 0n, lifecycle: 'waiting_for_review', contentEnvelope: '{}' } });
+        const visibleProjection = attention ? 'membership' : undefined;
+        expect((await read(visibleProjection)).page.runs.map(run => run.id)).toEqual([runId]);
+        // Source lifecycle remains part of the same access owner, even though a live Team grant remains.
+        await db.artifact.update({ where: { id: f.sourceArtifactId }, data: { deletedAt: new Date() } });
+        expect((await read(visibleProjection)).page.runs).toEqual([]);
+        await db.artifact.update({ where: { id: f.sourceArtifactId }, data: { deletedAt: null } });
+        await db.teamMembership.update({ where: { teamId_accountId: { teamId: f.team.id, accountId: f.viewer.id } },
+            data: { status: 'suspended' } });
+        expect((await read(visibleProjection)).page.runs).toEqual([]);
+    });
 
     it.each(['clear', 'delete'] as const)('keeps %s publication authority reads constant for 101 retained Runs sharing a source', async operation => {
         const f = await fixture();
@@ -125,6 +177,29 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Workflow audien
         expect(one.sourceReadCount).toBeGreaterThan(0);
         expect(many.sourceReadCount).toBe(one.sourceReadCount);
         expect(many.runFactReads).toBe(one.runFactReads);
+    });
+
+    it('selects Discussion Runs before pagination in one indexed PostgreSQL read', async () => {
+        const f = await fixture();
+        const [selectedId, unrelatedId] = await f.createRuns(2);
+        const discussionId = randomUUID();
+        await db.automationRun.update({ where: { id: selectedId }, data: { originDiscussionId: discussionId } });
+        await db.automationRun.update({ where: { id: unrelatedId }, data: { createdAt: new Date(Date.now() + 1000) } });
+        queries.length = 0;
+        const page = await listWorkflowRuns({ accountId: f.viewer.id, originDiscussionId: discussionId,
+            limit: 1, pageByteLimit: 1_000_000 });
+        expect(page.runs.map(run => run.id)).toEqual([selectedId]);
+        expect(page.nextCursor).toBeUndefined();
+        const reads = queries.filter(query => /^SELECT\b/.test(query.query.trimStart())
+            && /FROM\s+"public"\."AutomationRun"(?:\s|$)/.test(query.query)
+            && /"originDiscussionId"\s*=/.test(query.query));
+        expect(reads).toHaveLength(1);
+        const plan = await db.$transaction(async tx => {
+            await tx.$executeRawUnsafe('SET LOCAL enable_seqscan = off');
+            return tx.$queryRawUnsafe<Array<{ 'QUERY PLAN': string }>>(
+                'EXPLAIN SELECT "id" FROM "AutomationRun" WHERE "originDiscussionId" = $1 ORDER BY "createdAt" DESC, "id" DESC', discussionId);
+        });
+        expect(plan.some(row => row['QUERY PLAN'].includes('AutomationRun_originDiscussion_created_id_idx'))).toBe(true);
     });
 
     it('admits only the demanded source for exact Run selectors through the storage route, retaining live revocation', async () => {

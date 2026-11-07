@@ -8,11 +8,14 @@ import { type AccessibleMachineAccessV1 } from '@happier-dev/protocol/machines/m
 import * as privacyKit from 'privacy-kit';
 import type { MachineKeyBasisV1 } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
 import type { DevcontainerChildProjectionV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
-import type { ManagedMachineRefV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { ManagedMachineRefV1, ManagedMachineInputRuntimeV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { resolveManagedMachineRuntimeV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
+import { projectManagedMachine } from './managed/managedMachineProjection';
+import type { StoredManagedMachine } from './managed/managedRows';
 
 export type MachineSerializationRow = Readonly<{
     id: string;
-    managedResource: Readonly<{ id: string; homeId: string }> | null;
+    managedResource: Readonly<{ id: string; homeId: string }> | StoredManagedMachine | null;
     kind?: MachineKind;
     metadata: string;
     metadataVersion: number;
@@ -40,6 +43,22 @@ export type MachineSerializationRow = Readonly<{
 
 export function serializeManagedMachineRef(row: Pick<MachineSerializationRow, 'managedResource'>): ManagedMachineRefV1 | null {
     return row.managedResource === null ? null : { homeId: row.managedResource.homeId, managedId: row.managedResource.id };
+}
+
+/** The managed lifecycle owner decides native eligibility; Machine readers receive no custody data. */
+export function serializeManagedInputRuntime(row: Pick<MachineSerializationRow, 'id' | 'managedResource'>
+    & Partial<Pick<MachineSerializationRow, 'revokedAt' | 'replacedByMachineId'>>): ManagedMachineInputRuntimeV1 | null {
+    const managed = row.managedResource;
+    if (row.revokedAt || row.replacedByMachineId || !managed || !('wakeOnAcceptedMessage' in managed)
+        || managed.enrolledMachineId !== row.id) return null;
+    try {
+        // Factor native qualification from connectivity. The guest presence
+        // owner still decides whether this exact enrolled daemon is reachable.
+        const runtime = resolveManagedMachineRuntimeV1(projectManagedMachine(managed), row.id, true);
+        return { nativeReady: runtime.ready, wakeState: managed.wakeOnAcceptedMessage ? runtime.wakeState : null,
+            acceptedInputWakeOwner: runtime.acceptedInputWakeOwner };
+    }
+    catch { return null; }
 }
 
 /** Publish the owner envelope, never the caller's recipient-specific wrapping. */
@@ -111,6 +130,7 @@ export function serializeMachineRow(
     return {
         id: row.id,
         managedMachineRef: serializeManagedMachineRef(row),
+        managedInputRuntime: serializeManagedInputRuntime(row),
         devcontainerChild: row.revokedAt === null && row.replacedByMachineId == null ? options.devcontainerChild ?? null : null,
         kind,
         ...(options.storageMode ? { storageMode: options.storageMode } : {}),
@@ -148,7 +168,8 @@ export function serializeMachineHostFacts(
     row: Pick<MachineSerializationRow, 'id' | 'managedResource' | 'kind' | 'active' | 'lastActiveAt' | 'revokedAt' | 'replacedByMachineId'>,
     access: AccessibleMachineAccessV1,
 ) {
-    return { id: row.id, managedMachineRef: serializeManagedMachineRef(row), kind: MachineKindFromLegacyProjectionSchema.parse(row.kind), ...serializeMachinePresence(row),
+    return { id: row.id, managedMachineRef: serializeManagedMachineRef(row), managedInputRuntime: serializeManagedInputRuntime(row),
+        kind: MachineKindFromLegacyProjectionSchema.parse(row.kind), ...serializeMachinePresence(row),
         revokedAt: row.revokedAt?.getTime() ?? null,
         replacedByMachineId: row.replacedByMachineId ?? null, access };
 }

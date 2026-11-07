@@ -178,33 +178,35 @@ export async function readWorkflowRunRolePrefill(params: Readonly<{
 
 /** Lean batch for the rendered saved-workflow page; no Run-detail cache or reads. */
 export async function summarizeWorkflowRuns(params: Readonly<{
-    sourceArtifactIds: readonly string[]; recent: number; signal?: AbortSignal;
+    sourceArtifactIds: readonly string[]; recent: number; signal?: AbortSignal; accountLifetime?: ServerAccountScopeLifetime | null;
 }>): Promise<WorkflowRunSourceSummariesResultV1> {
     return await callWorkflowAction({
         actionId: 'workflow.run.summaries',
         input: WorkflowRunSummariesRequestV1Schema.parse({ sourceArtifactIds: params.sourceArtifactIds, recent: params.recent }),
         parseResult: (value) => WorkflowRunSourceSummariesResultV1Schema.parse(value),
         fallbackMessage: 'Workflow run summaries request failed',
+        ...(params.accountLifetime === undefined ? {} : { accountLifetime: params.accountLifetime }),
         ...(params.signal ? { signal: params.signal } : {}),
     });
 }
 
 /** Public latest-status facts for demanded Automations; never acquires private Run content. */
 export async function summarizeWorkflowAutomationRuns(params: Readonly<{
-    automationIds: readonly string[]; signal?: AbortSignal;
+    automationIds: readonly string[]; signal?: AbortSignal; accountLifetime?: ServerAccountScopeLifetime | null;
 }>): Promise<WorkflowRunAutomationSummariesResultV1> {
     return await callWorkflowAction({
         actionId: 'workflow.run.summaries',
         input: WorkflowRunAutomationSummariesRequestV1Schema.parse({ automationIds: params.automationIds }),
         parseResult: (value) => WorkflowRunAutomationSummariesResultV1Schema.parse(value),
         fallbackMessage: 'Workflow run summaries request failed',
+        ...(params.accountLifetime === undefined ? {} : { accountLifetime: params.accountLifetime }),
         ...(params.signal ? { signal: params.signal } : {}),
     });
 }
 
 /** Shared read windows; starter membership belongs to SessionListFilterV1. */
 export const WORKFLOW_RUN_LIST_FILTERS = ['all', 'active', 'attention'] as const;
-export type WorkflowRunListFilterId = (typeof WORKFLOW_RUN_LIST_FILTERS)[number] | `automation:${string}` | `trigger:${string}` | `destination:${string}` | `under:${string}` | `exact:${string}` | `session-origin:${string}` | `session-destination:${string}`;
+export type WorkflowRunListFilterId = (typeof WORKFLOW_RUN_LIST_FILTERS)[number] | `automation:${string}` | `trigger:${string}` | `destination:${string}` | `under:${string}` | `exact:${string}` | `session-origin:${string}` | `session-destination:${string}` | `discussion-origin:${string}`;
 
 export function exactWorkflowRunWindowId(runIds: readonly string[]): `exact:${string}` {
     return `exact:${JSON.stringify([...new Set(runIds)].sort())}`;
@@ -218,6 +220,7 @@ export function exactWorkflowRunWindowId(runIds: readonly string[]): `exact:${st
  * Boundary-paused alone is deliberately not attention.
  */
 export function buildWorkflowRunListFilter(id: WorkflowRunListFilterId): WorkflowRunListFilter {
+    if (id.startsWith('discussion-origin:')) return { originDiscussionId: id.slice('discussion-origin:'.length) };
     if (id.startsWith('session-origin:')) return { originSessionId: id.slice('session-origin:'.length) };
     if (id.startsWith('session-destination:')) return { targetSessionId: id.slice('session-destination:'.length) };
     if (id.startsWith('exact:')) return { runIds: WorkflowRunListRequestV1Schema.shape.runIds.parse(JSON.parse(id.slice('exact:'.length))) };

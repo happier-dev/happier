@@ -14,6 +14,7 @@ import type { DiscussionRepository } from '@/sync/ops/discussions/discussionRepo
 import { discussionMutationBlocksComposer } from '@/sync/ops/discussions/discussionRepository';
 import { getDiscussionRepository } from '@/sync/ops/discussions/discussionRepositoryRegistry';
 import { useDiscussionRepositorySnapshot } from '@/sync/ops/discussions/useDiscussionRepositorySnapshot';
+import { getSessionComposerDraftSnapshot } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { buildDiscussionContent } from './discussionComposerDocument';
 import { useDiscussionDraft } from './useDiscussionDraft';
 import { useDiscussionWorkflowRunStarted } from './useDiscussionManagedWorkflowRuns';
@@ -87,11 +88,14 @@ function DiscussionWorkflowStartBody(props: Readonly<{
             for (const refusal of otherPosts) repository.dismissFailure(refusal.localId);
         }
         // This is ordinary unaddressed content. Workflow admission owns execution; ordinary Ask must not fan out too.
+        const composerText = request.submittedDraft === null
+            ? getSessionComposerDraftSnapshot(accountLifetime.scope, draftAddress)?.composer.text.value : undefined;
+        const submittedDraft = request.submittedDraft ?? (typeof composerText === 'string' ? composerText : '');
         let content: ReturnType<typeof buildDiscussionContent>;
-        try { content = buildDiscussionContent(request.submittedDraft, []); }
+        try { content = buildDiscussionContent(submittedDraft, []); }
         catch { throw new WorkflowActionError({ message: 'discussion_invalid_content', rawCode: 'discussion_invalid_content' }); }
         const draftSubmission = draft.captureSubmittedCurrentness({ kind: 'post', discussionId, localId },
-            { content, retainedCurrentness: retained.currentness });
+            { content, ...(request.submittedDraft === null ? {} : { retainedCurrentness: retained.currentness }) });
         const outcome = await repository.post({ discussionId, localId, content, draftSubmission });
         const messageId = outcome.kind === 'succeeded' ? outcome.value.message.id
             : outcome.kind === 'checking' ? await observeCommittedPost(repository, discussionId, localId)
@@ -102,7 +106,7 @@ function DiscussionWorkflowStartBody(props: Readonly<{
         }
         if (!accountLifetime.isCurrent()) throw new WorkflowActionError({ message: 'action_account_scope_changed', rawCode: 'action_account_scope_changed' });
         return { kind: 'discussion', discussion, addressingMessageId: messageId };
-    }, [accountLifetime, discussion, discussionId, draft, repository, retained.currentness]);
+    }, [accountLifetime, discussion, discussionId, draft, draftAddress, repository, retained.currentness]);
     const onStarted = React.useCallback<React.ComponentProps<typeof WorkflowStartDetailsBody>['onStarted']>((result, serverId) => {
         publishStarted(result);
         props.input.callbacks.replaceTab?.(props.input.tab.key,

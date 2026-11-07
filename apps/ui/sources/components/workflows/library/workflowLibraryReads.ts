@@ -676,10 +676,11 @@ function runWindowReader(windowId: WorkflowRunListWindowId, lifetime: ActiveServ
 /**
  * The fixed windows (`all`, `active`, `attention`, `automationAttention`) keep observing their
  * Account's Run wakes for the reader's lifetime, so a reopen serves the shared Run store without a
- * read. Exact Run-set windows are per-detail demand and stop observing with their last reader.
+ * read. Exact Run-set and contextual origin/destination windows stop observing with their last reader.
  */
 function observesWhileClosed(windowId: WorkflowRunListWindowId): boolean {
-    return !windowId.startsWith('exact:') && !windowId.startsWith('session-origin:') && !windowId.startsWith('session-destination:');
+    return !windowId.startsWith('exact:') && !windowId.startsWith('session-origin:') && !windowId.startsWith('session-destination:')
+        && !windowId.startsWith('discussion-origin:');
 }
 
 /** Two pending changes share one read; a coarse change (no named Runs or sources) supersedes them. */

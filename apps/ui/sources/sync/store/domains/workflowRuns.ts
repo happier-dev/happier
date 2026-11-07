@@ -17,16 +17,16 @@ export function workflowRunStoreKey(id: string, scope: ServerAccountScope | null
 export function workflowRunListWindowStoreKey(id: WorkflowRunListWindowId, scope: ServerAccountScope): `account:${string}` {
     return `account:${serverAccountScopedResourceKey(scope, id)}`;
 }
-export type WorkflowRunListWindowStoreId = WorkflowRunListWindowId | `account:${string}` | `session:${string}` | `discussion:${string}`;
+export type WorkflowRunListWindowStoreId = WorkflowRunListWindowId | `account:${string}`;
 
-/** Session relation membership is query evidence, independent of the retained Run bodies. */
-export function sessionWorkflowRunWindowId(scope: ServerAccountScope, sessionId: string, relation: 'origin' | 'destination'): `session:${string}` {
-    return `session:${serverAccountScopedResourceKey(scope, sessionId, relation)}`;
+/** Complete contextual relations include finished Runs, unlike the active destination chip. */
+export function sessionWorkflowRunListFilterId(sessionId: string, relation: 'origin' | 'destination'): `session-origin:${string}` | `session-destination:${string}` {
+    return relation === 'origin' ? `session-origin:${sessionId}` : `session-destination:${sessionId}`;
 }
 
-/** Discussion membership uses the same retained query windows as Session relations. */
-export function discussionWorkflowRunWindowId(scope: ServerAccountScope, discussionId: string): `discussion:${string}` {
-    return `discussion:${serverAccountScopedResourceKey(scope, discussionId, 'origin')}`;
+/** The storage owner's complete Discussion provenance relation, including finished Runs. */
+export function discussionWorkflowRunListFilterId(discussionId: string): `discussion-origin:${string}` {
+    return `discussion-origin:${discussionId}`;
 }
 
 /**
@@ -574,7 +574,7 @@ export function workflowRunRowFromAutomationRun(run: AutomationDefinitionRun): W
 /**
  * Which of two reads of one projection slot is authoritative.
  *
- * The server increments `revision` on every Run mutation, so a strictly older
+ * The server increments `revision` on operational Run mutations, so a strictly older
  * revision is a delayed page and must not regress the row it lands on. Within
  * one revision the newer `updatedAt` still wins, which is the incumbent
  * last-write rule and keeps a transport that reports progress without a
@@ -622,12 +622,22 @@ function selectCurrentSummaryProjection(
             summary = { ...summary, origin: { ...summary.origin, discussion } };
         }
     }
-    // Attention is an indexed child-row fact. A demanded server read can
-    // refresh it without moving the parent's control revision or timestamp.
-    // Projections that did not read membership cannot clear known attention.
-    const attentionRequired = parentCurrent ? incoming.summary.attentionRequired ?? stored.summary.attentionRequired : stored.summary.attentionRequired;
-    if (attentionRequired !== undefined && summary.attentionRequired !== attentionRequired) {
-        summary = { ...summary, attentionRequired };
+    // Seen is monotonic for one failure occurrence, independently of operational
+    // revision. A delayed pre-acknowledgement read cannot undo the committed fact.
+    const storedSeen = stored.summary.attentionSeenFailureAt;
+    const incomingSeen = incoming.summary.attentionSeenFailureAt;
+    const sameFailure = incoming.summary.state === 'failed' && stored.summary.state === 'failed'
+        && incoming.summary.finishedAt === stored.summary.finishedAt;
+    const incomingAckNewer = sameFailure && incomingSeen !== null && (storedSeen === null || incomingSeen > storedSeen);
+    const storedAckNewer = sameFailure && storedSeen !== null && (incomingSeen === null || incomingSeen < storedSeen);
+    const failureSource = incomingAckNewer ? incoming.summary
+        : !parentCurrent || storedAckNewer ? stored.summary : incoming.summary;
+    const invocationAttentionRequired = parentCurrent ? incoming.summary.invocationAttentionRequired : stored.summary.invocationAttentionRequired;
+    const attentionRequired = failureSource.failureUnseen || invocationAttentionRequired;
+    if (summary.failureUnseen !== failureSource.failureUnseen || summary.attentionSeenFailureAt !== failureSource.attentionSeenFailureAt
+        || summary.invocationAttentionRequired !== invocationAttentionRequired || summary.attentionRequired !== attentionRequired) {
+        summary = { ...summary, failureUnseen: failureSource.failureUnseen,
+            attentionSeenFailureAt: failureSource.attentionSeenFailureAt, invocationAttentionRequired, attentionRequired };
     }
     // Private list projections are opened by the authorized list host, including
     // progress which can advance without a parent control revision. Omission by
@@ -869,7 +879,7 @@ export function createWorkflowRunsDomain<S extends WorkflowRunsDomain>({
                         ? previous.sourceArtifactIdsByRunId : sourceArtifactIdsByRunId,
                     ...(projection === undefined ? {} : { projection }),
                     ...(frontier === undefined ? {} : { frontier: previous?.frontier && sameStrictJsonValue(previous.frontier, frontier) ? previous.frontier : frontier }),
-                    ...((windowId.startsWith('account:') || windowId.startsWith('session:') || windowId.startsWith('discussion:')) && scope ? { scope } : {}),
+                    ...(windowId.startsWith('account:') && scope ? { scope } : {}),
                     ...(attentionRunIds === undefined ? {} : { attentionRunIds: previous?.attentionRunIds && sameStrictJsonValue(previous.attentionRunIds, attentionRunIds) ? previous.attentionRunIds : attentionRunIds }),
                     ...(lastSuccessfulReadAt === undefined ? {} : { lastSuccessfulReadAt }),
                 };

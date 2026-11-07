@@ -24,7 +24,7 @@ type PendingStart = Readonly<{
     origin?: WorkflowRunNowRequest['origin'];
     onComplete?: WorkflowRunNowRequest['onComplete'];
     prepareOrigin?: (request: Readonly<{ runId: string; inputs: Readonly<Record<string, JsonValue>> | undefined;
-        retainedDraft: string; submittedDraft: string }>) => Promise<NonNullable<WorkflowRunNowRequest['origin']>>;
+        retainedDraft: string; submittedDraft: string | null }>) => Promise<NonNullable<WorkflowRunNowRequest['origin']>>;
     retainedDraft: string;
     mainInputName: string | null;
     values: Readonly<Record<string, JsonValue | undefined>>;
@@ -73,7 +73,7 @@ export function useWorkflowComposerStart(params: Readonly<{
         const { entry } = selected;
         const runId = params.intentKey === undefined ? pendingRunIdRef.current ?? randomUUID() : undefined;
         if (runId !== undefined) pendingRunIdRef.current = runId;
-        const submittedDraft = selected.mainInputName === null ? selected.retainedDraft : inputs?.[selected.mainInputName];
+        const submittedDraft = selected.mainInputName === null ? null : inputs?.[selected.mainInputName];
         const prepared: WorkflowRunNowRequest = {
             source: entry.source.kind === 'catalog' || visibleTeamId === undefined ? entry.source : { ...entry.source, visibleTeamId },
             reviewedDefinition: entry.definition,
@@ -89,7 +89,7 @@ export function useWorkflowComposerStart(params: Readonly<{
             runId,
             ...(selected.prepareOrigin ? { prepareRequest: async (runId: string) => ({ ...prepared,
                 origin: await selected.prepareOrigin!({ runId, inputs, retainedDraft: selected.retainedDraft,
-                    submittedDraft: typeof submittedDraft === 'string' ? submittedDraft : '' }) }) } : prepared),
+                    submittedDraft: submittedDraft === null ? null : typeof submittedDraft === 'string' ? submittedDraft : '' }) }) } : prepared),
             isInvocationCurrent: isCurrent,
             // The start form stays open and says why beside Start, with its inputs and draft kept (lab T4-ST).
             refusal: 'inline',
@@ -190,6 +190,7 @@ export function useWorkflowComposerStart(params: Readonly<{
         workflowName: pending.entry.title,
         preview: pending.entry.description,
         machineId: pending.project.machineId,
+        directory: pending.project.directory,
         serverId: pending.lifetime.scope.serverId,
         originSession: pending.originSession ? { serverId: pending.originSession.serverId ?? pending.lifetime.scope.serverId,
             sessionId: pending.originSession.sessionId } : undefined,

@@ -2631,7 +2631,6 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
             let origin = run.origin;
             let matchesResource = !(target?.kind === 'machine' && target.project);
             let matchesDestination = args.input.targetSessionId === undefined;
-            let matchesDiscussion = args.input.originDiscussionId === undefined;
             let matchesUnder = underSessionIds === null || (run.origin.originSessionId !== undefined
               && underSessionIds.has(run.origin.originSessionId));
             let projected: WorkflowRunPrivateMetadataV1 | null;
@@ -2672,9 +2671,6 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
               origin = projectAcceptedOrigin(accepted.origin, run.origin) ?? run.origin;
               callerAccessByRunId[run.id] = projectRunCallerAccess(census);
               supportsAnotherRoundByRunId[run.id] = supportsWorkflowAnotherRoundV1(accepted.authoredDefinition);
-              matchesDiscussion = args.input.originDiscussionId === undefined || Boolean(args.context.serverId
-                && accepted.origin?.discussion?.discussion.discussionId === args.input.originDiscussionId
-                && isSameHome(args.context, accepted.origin.discussion.discussion.serverId));
               assertRunResourceRestriction(args.context, { machineId: accepted.machineId,
                 project: accepted.workspaceTarget.project }, deps.normalizeAbsolutePath);
               matchesResource = true;
@@ -2758,7 +2754,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
               const reason = WorkflowOperationErrorCodeV1Schema.safeParse(code);
               projected = { kind: 'unavailable', reason: reason.success ? reason.data : 'content_unavailable' };
             }
-            if (!matchesResource || !matchesDestination || !matchesUnder || !matchesDiscussion) continue;
+            if (!matchesResource || !matchesDestination || !matchesUnder) continue;
             // Storage/control rows cannot author this private accepted-source fact.
             const { sourceSavedBy: _unopenedSavedBy, ...publicRun } = run;
             runs.push({ ...publicRun, origin, where, startedBy, stepProgress, stepProgressCurrentness, heldStep,
@@ -2779,13 +2775,12 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
         let cursor = args.input.cursor;
         for (;;) {
           args.context.signal?.throwIfAborted();
-          const { originDiscussionId: _privateDiscussionFilter, ...storageInput } = args.input;
-          const request = { ...storageInput, ...(target?.kind === 'machine' ? { machineId: target.machineId } : {}),
+          const request = { ...args.input, ...(target?.kind === 'machine' ? { machineId: target.machineId } : {}),
             ...(cursor === undefined ? {} : { cursor }) };
           const page = await projectPage(await deps.storage.execute({ operation: 'list', request,
             pageByteLimit: EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
           }, args.context.signal ? { signal: args.context.signal } : {}));
-          if ((args.input.originDiscussionId === undefined && args.input.targetSessionId === undefined && args.input.underSessionId === undefined && !(target?.kind === 'machine' && target.project))
+          if ((args.input.targetSessionId === undefined && args.input.underSessionId === undefined && !(target?.kind === 'machine' && target.project))
             || page.runs.length > 0 || !page.nextCursor) return page;
           cursor = page.nextCursor;
         }

@@ -327,6 +327,7 @@ model Team {
     defaultSessionHistoryAccess SessionHistoryAccess      @default(from_membership)
     admissionMode               TeamAdmissionMode         @default(invite_only)
     authenticationPolicy        Json?
+    managedDefaults             Json?
     archivedAt                  DateTime?
     createdAt                   DateTime                  @default(now())
     updatedAt                   DateTime                  @updatedAt
@@ -3100,6 +3101,7 @@ model AutomationRun {
     automationScopeSessionId   String?
     originSessionId            String?
     originSession              Session? @relation("WorkflowRunOriginSession", fields: [originSessionId], references: [id], onDelete: SetNull)
+    originDiscussionId         String?
     workflowAcceptedSnapshotEnvelope String?
     sourceArtifactId           String?
     visibleTeamId              String?
@@ -3200,6 +3202,7 @@ model AutomationRun {
     @@index([accountId, createdAt(sort: Desc), id(sort: Desc)], map: "AutomationRun_account_created_id_idx")
     @@index([sourceArtifactId, createdAt(sort: Desc), id(sort: Desc)], map: "AutomationRun_source_created_id_idx")
     @@index([originSessionId, createdAt(sort: Desc), id(sort: Desc)], map: "AutomationRun_originSession_created_id_idx")
+    @@index([originDiscussionId, createdAt(sort: Desc), id(sort: Desc)], map: "AutomationRun_originDiscussion_created_id_idx")
 }
 
 model WorkflowRunDataKeyEnvelope {
@@ -3705,6 +3708,7 @@ model DeploymentEnvironment {
     @@index([controllerMachineId, deletedAt, id])
     @@index([buildMachineId, deletedAt, id])
     @@index([edgeMachineId, deletedAt, id])
+    @@index([previewPullRequestId, purpose, deletedAt, id], map: "DeploymentEnvironment_preview_scope_idx")
 }
 
 model DeploymentEnvironmentDeployer {

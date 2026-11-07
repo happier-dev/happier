@@ -1,8 +1,10 @@
+import { readManagedController, readManagedAdmissionState, projectManagedMachine } from './managedMachineProjection';
+export { readManagedController, readManagedAdmissionState, projectManagedMachine } from './managedMachineProjection';
 import type { Prisma } from "@prisma/client";
 import * as z from "zod/mini";
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
-import { createManagedMachineV1Schema, ManagedMachineV1Schema, RetainedManagedLaunchSnapshotV1Schema, type ManagedMachineV1, type ValidatedLaunchSnapshotV1, type RetainedManagedLaunchSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ManagedCreationScopeRetentionV1Schema, createManagedMachineV1Schema, RetainedManagedLaunchSnapshotV1Schema, type ManagedMachineV1, type ValidatedLaunchSnapshotV1, type RetainedManagedLaunchSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ManagedAdmissionComputeInputV1Schema, ManagedControllerCurrentnessV1Schema, ManagedControlAdmissionInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedPolicyAdmissionInputV1Schema, type ManagedMachinePolicyChangeHintV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { SupportedNativeIntentSchema, ManagedResourceV1Schema, type ManagedRefusalCodeV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
@@ -31,14 +33,9 @@ import { jsonPathEquals } from '@/storage/jsonPathFilter';
 import { ManagedConfigurationFactsV1ReadSchema } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import type { ManagedControllerV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { resolveEffectiveMachineRoleInTx } from '@/app/machines/machineAccess';
-import { serializeManagedMachineRef } from '@/app/machines/machineSerialization';
+import { serializeManagedMachineRef, serializeManagedInputRuntime } from '@/app/machines/machineSerialization';
 
 export type StoredManagedMachine = Prisma.ManagedMachineGetPayload<Record<string, never>>;
-/** The persisted pair is absent for Account-controlled cloud resources. */
-export function readManagedController(row: Readonly<{ controllerMachineId: string | null; controllerInstallationId: string | null }>): ManagedControllerV1 | undefined {
-    return row.controllerMachineId && row.controllerInstallationId
-        ? { machineId: row.controllerMachineId, installationId: row.controllerInstallationId } : undefined;
-}
 
 /** Vendor control belongs to custody when no actual controller was selected. */
 export function resolveManagedMachineRole(row: Pick<StoredManagedMachine, 'custodianAccountId' | 'controllerMachineId'>,
@@ -108,6 +105,7 @@ const StoredManagedComputeInputSchema = z.union([
 ]);
 const StoredManagedAdmissionSchema = z.strictObject({
     bootstrapInstalled: z.optional(z.literal(true)),
+    creationScopeRetention: z.optional(ManagedCreationScopeRetentionV1Schema),
     enrollmentAccountId: z.optional(z.string().check(z.minLength(1))),
     requestEnvelopeDigest: z.optional(z.string().check(z.minLength(1))),
     computeInput: z.optional(StoredManagedComputeInputSchema),
@@ -123,15 +121,8 @@ const StoredManagedAdmissionSchema = z.strictObject({
     replacementEnrollment: z.optional(z.strictObject({ machineId: z.string().check(z.minLength(1)) })),
 });
 const StoredManagedAdmissionReadSchema = createStoredReadSchema(StoredManagedAdmissionSchema);
-type StoredManagedAdmission = z.infer<typeof StoredManagedAdmissionSchema>;
+export type StoredManagedAdmission = z.infer<typeof StoredManagedAdmissionSchema>;
 
-/** Server-owned JSON written only after acquire/control/policy or native-result admission.
- * Carry those admitted types rather than re-admitting every retained request on reads.
- * Historical acquisitions preserve the absence of enrollment identity.
- */
-export function readManagedAdmissionState(value: unknown): StoredManagedAdmission {
-    return value as StoredManagedAdmission;
-}
 export function readManagedAcquisitionIdentity(value: unknown) {
     // Request correlation is a new admission boundary. Normalize retained
     // additive fields here so they cannot turn a legitimate replay into a conflict.
@@ -255,44 +246,6 @@ export async function readManagedProjectionFactsInTx(tx: Tx, inputs: readonly Ma
     return { controllers, declarationFor: input => input.controller ? declarations.get(keyOf(input)) ?? null : null };
 }
 
-/** Project admitted storage through the generic stored reader, never today's provider declaration. */
-export function projectManagedMachine(row: StoredManagedMachine): ManagedMachineV1 {
-    const admission = readManagedAdmissionState(row.admittedInput);
-    const submitted = admission.submittedEffect;
-    const enrollmentIdentity = admission.computeInput?.enrollmentIdentity;
-    const resource = row.resource === null ? undefined : row.resource as ManagedMachineV1['resource'];
-    const controller = readManagedController(row);
-    const devcontainerChild = controller ? deriveManagedDevcontainerChildProjectionV1({ managedMachineId: row.id,
-        controllerMachineId: controller.machineId, enrolledMachineId: row.enrolledMachineId ?? undefined, resource }) : undefined;
-    const value = {
-        id: row.id, homeId: row.homeId, custodianAccountId: row.custodianAccountId,
-        ...(admission.enrollmentAccountId ? { enrollmentAccountId: admission.enrollmentAccountId } : {}),
-        ...(row.presetId && row.presetRevision !== null ? { preset: { id: row.presetId, revision: row.presetRevision } } : {}),
-        launch: row.launch, ...(controller ? { controller } : {}),
-        ...(enrollmentIdentity ? { enrollmentIdentity } : {}),
-        ...(row.reviewedFacts !== null ? { reviewedFacts: row.reviewedFacts } : {}),
-        ...(row.machineSetup !== null ? { machineSetup: row.machineSetup } : {}),
-        allocation: row.allocation, creationState: row.creationState,
-        ...(resource ? { resource } : {}),
-        ...(devcontainerChild ? { devcontainerChild } : {}),
-        ...(row.nativeOperationRef !== null ? { nativeOperationRef: row.nativeOperationRef } : {}),
-        ...(row.recovery !== null ? { recovery: row.recovery } : {}),
-        ...(row.bootstrapCredentialRef !== null ? { bootstrapCredentialRef: row.bootstrapCredentialRef } : {}),
-        ...(admission.bootstrapInstalled ? { bootstrapInstalled: admission.bootstrapInstalled } : {}),
-        ...(row.enrolledMachineId !== null ? { enrolledMachineId: row.enrolledMachineId } : {}),
-        desired: row.desired, desiredWhen: row.desiredWhen,
-        ...(row.desiredAfterMs !== null ? { desiredAfterMs: Number(row.desiredAfterMs) } : {}),
-        intentRevision: row.intentRevision,
-        ...(submitted ? { submittedNativeEffect: { intentRevision: submitted.expectedIntentRevision, requestId: submitted.requestId,
-            intent: submitted.intent, controller: submitted.controller,
-            ...(submitted.reviewedEffectDigest ? { reviewedEffectDigest: submitted.reviewedEffectDigest } : {}) } } : {}),
-        ...(row.archivedAt !== null ? { archivedAt: row.archivedAt.getTime() } : {}),
-        retention: row.retention, wakeOnAcceptedMessage: row.wakeOnAcceptedMessage,
-        ...(row.observation !== null ? { observation: row.observation } : {}),
-        ...(row.cleanup !== null ? { cleanup: row.cleanup } : {}),
-    };
-    return createStoredReadSchema(ManagedMachineV1Schema).parse(value);
-}
 export async function projectManagedMachineInTx(tx: Tx, row: StoredManagedMachine): Promise<ManagedMachineV1> {
     return (await projectManagedMachinesInTx(tx, [row]))[0];
 }
@@ -541,12 +494,16 @@ export async function invalidateManagedMachineInTx(tx: Tx, row: StoredManagedMac
             select: { id: true, managedResource: { select: { id: true, homeId: true } } } }) : [];
         const enrollmentReferences = new Map(observedMachines.map(machine => [machine.id, serializeManagedMachineRef(machine)]));
         const children: Array<{ machineId: string; child: Awaited<ReturnType<typeof readMachineDevcontainerChildInTx>>;
-            managedMachineRef?: ReturnType<typeof serializeManagedMachineRef>; accountIds: string[] }> = [];
+            managedMachineRef?: ReturnType<typeof serializeManagedMachineRef>;
+            managedInputRuntime: ReturnType<typeof serializeManagedInputRuntime>; accountIds: string[] }> = [];
         for (const machineId of machineIds) {
             const child = await readMachineDevcontainerChildInTx(tx, machineId);
             const before = row.enrolledMachineId === machineId ? previous : null;
-            if (!enrollmentReferences.has(machineId) && managedDevcontainerChildProjectionsEqualV1(before ?? undefined, child ?? undefined)) continue;
-            children.push({ machineId, child, ...(enrollmentReferences.has(machineId) ? { managedMachineRef: enrollmentReferences.get(machineId) } : {}),
+            const beforeWake = serializeManagedInputRuntime({ id: machineId, managedResource: row });
+            const managedInputRuntime = serializeManagedInputRuntime({ id: machineId, managedResource: fresh });
+            if (!enrollmentReferences.has(machineId) && pluginJsonValuesEqual(beforeWake, managedInputRuntime)
+                && managedDevcontainerChildProjectionsEqualV1(before ?? undefined, child ?? undefined)) continue;
+            children.push({ machineId, child, managedInputRuntime, ...(enrollmentReferences.has(machineId) ? { managedMachineRef: enrollmentReferences.get(machineId) } : {}),
                 accountIds: await resolveCurrentMachineRecipientAccountIdsInTx(tx, machineId) });
         }
         return { accountIds: [...resourceAccountIds, ...children.flatMap(child => child.accountIds)], controllerAccountIds, resourceAccountIds,
@@ -559,7 +516,7 @@ export async function invalidateManagedMachineInTx(tx: Tx, row: StoredManagedMac
     if (controllerReplaced && row.controllerMachineId) await markAccountsChanged(tx, {
         accountIds: controllerAccountIds, kind: 'machine', entityId: row.controllerMachineId,
     });
-    for (const { machineId, child, managedMachineRef, accountIds: childAccountIds } of children) {
+    for (const { machineId, child, managedMachineRef, managedInputRuntime, accountIds: childAccountIds } of children) {
         const cursors = await markAccountsChanged(tx, { accountIds: childAccountIds, kind: 'machine', entityId: machineId });
         for (const publication of cursors) {
             const { accountId } = publication;
@@ -567,7 +524,7 @@ export async function invalidateManagedMachineInTx(tx: Tx, row: StoredManagedMac
             const devcontainerChild = access?.accessState === 'ready' ? child : null;
             afterTx(tx, () => eventRouter.emitUpdate({ userId: accountId,
                 payload: buildUpdateMachineUpdate(machineId, publication.resolveCursor(), randomKeyNaked(12), undefined, undefined, {
-                    devcontainerChild, ...(managedMachineRef !== undefined ? { managedMachineRef } : {}),
+                    devcontainerChild, managedInputRuntime, ...(managedMachineRef !== undefined ? { managedMachineRef } : {}),
                 }),
                 recipientFilter: { type: 'machine-scoped-only', machineId } }));
         }

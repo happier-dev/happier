@@ -192,8 +192,16 @@ describe("Workflow Run live Team access (real SQLite)", () => {
             request: { participant: { kind: 'session', sessionId: target.id } } })).toMatchObject({ ok: true });
         const origin = { kind: 'direct' as const, discussion: { discussion: { serverId: 'home', discussionId },
             messageId: created.value.firstMessage.id, throughSeq: created.value.firstMessage.seq } };
+        const opened = openWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
+            binding: { v: 1, purpose: 'accepted_snapshot', accountId: f.owner.id, runId: f.runId },
+            envelope: parseWorkflowStoredContentEnvelopeV1(f.acceptedEnvelope) });
+        if (opened.kind !== 'available') throw new Error('fixture accepted snapshot unavailable');
+        const acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
+            mode: 'plain', binding: { v: 1, purpose: 'accepted_snapshot', accountId: f.owner.id, runId: f.runId },
+            acceptedSnapshot: { ...opened.content, origin },
+        }));
         const input = { accountId: f.owner.id, runId: f.runId, origin, machineId: f.machine.id,
-            acceptedEnvelope: f.acceptedEnvelope, discussionTargetSessionIds: [target.id],
+            acceptedEnvelope, discussionTargetSessionIds: [target.id],
             resultDelivery: { kind: 'originating_discussion' as const },
             accountCurrentness: { mode: 'plain' as const, version: f.owner.seq, contentKeyFingerprint: null },
             discussionAuthentication: authentication,
@@ -223,7 +231,61 @@ describe("Workflow Run live Team access (real SQLite)", () => {
         await expect(admitWorkflowRun({ ...input, discussionTargetSessionIds: [foreign.id] }))
             .rejects.toMatchObject({ code: 'run_access_denied' });
         await expect(admitWorkflowRun(input)).resolves.toMatchObject({ kind: 'created', run: { origin: { kind: 'direct' } } });
-        expect((await db.automationRun.findUniqueOrThrow({ where: { id: f.runId } })).originDeliveryAckRevision).toBeNull();
+        expect(await db.automationRun.findUniqueOrThrow({ where: { id: f.runId } }))
+            .toMatchObject({ originDeliveryAckRevision: null, originDiscussionId: discussionId });
+        const unrelatedId = crypto.randomUUID();
+        await db.automationRun.create({ data: { id: unrelatedId, accountId: f.owner.id, originKind: 'direct', causeKind: null,
+            state: 'queued', scheduledAt: new Date(), dueAt: new Date(), createdAt: new Date(Date.now() + 1000),
+            workflowAcceptedSnapshotEnvelope: f.acceptedEnvelope, workflowCustodyState: 'pending',
+            assignments: { create: { machineId: f.machine.id, priority: 0 } } } });
+        const selected = { accountId: f.owner.id, originDiscussionId: discussionId, limit: 1, pageByteLimit: 1_000_000 };
+        const reads: unknown[] = [];
+        const stop = observeSqliteRequests({ before: request => {
+            const args = request.args as { where?: { originDiscussionId?: unknown } };
+            if (request.model === 'AutomationRun' && request.action === 'findMany'
+                && args.where?.originDiscussionId !== undefined) reads.push(request.args);
+        } });
+        try {
+            const page = await listWorkflowRuns(selected);
+            expect(page.runs.map(run => run.id)).toEqual([f.runId]);
+            expect(page.nextCursor).toBeUndefined();
+            expect(reads).toHaveLength(1);
+        } finally { stop(); }
+        expect(await db.automationRun.findUniqueOrThrow({ where: { id: unrelatedId } }))
+            .toMatchObject({ originDiscussionId: null });
+        expect((await listWorkflowRuns({ ...selected, accountId: f.viewer.id })).runs).toEqual([]);
+        const all = await listWorkflowRuns({ accountId: f.owner.id, limit: 1, pageByteLimit: 1_000_000 });
+        expect(all.nextCursor).toEqual(expect.any(String));
+        await expect(listWorkflowRuns({ ...selected, cursor: all.nextCursor })).rejects.toMatchObject({ code: 'invalid_input' });
+        const plan = await db.$queryRawUnsafe<Array<{ detail: string }>>(
+            'EXPLAIN QUERY PLAN SELECT "id" FROM "AutomationRun" WHERE "originDiscussionId" = ? ORDER BY "createdAt" DESC, "id" DESC', discussionId);
+        expect(plan.some(row => row.detail.includes('AutomationRun_originDiscussion_created_id_idx'))).toBe(true);
+        await withAuthenticatedTestApp(app => registerWorkflowRunStorageRoutes(app), async app => {
+            const requests: unknown[] = [];
+            const actionOwner = createWorkflowAccountRunActionOwner({
+                resolveAccountId: async () => f.owner.id,
+                storage: { execute: async operation => {
+                    if (operation.operation !== 'list') throw new Error('unexpected storage operation');
+                    requests.push(operation.request);
+                    const response = await app.inject({ method: 'POST', url: '/v3/automations/runs/workflow-storage',
+                        headers: { 'x-test-user-id': f.owner.id }, payload: operation });
+                    expect(response.statusCode, response.body).toBe(200);
+                    const page: unknown = response.json();
+                    return page;
+                } },
+                definitions: { get: async () => { throw new Error('list does not read mutable definitions'); } },
+                resolveEncryption: async () => ({ kind: 'available', witness: {
+                    mode: 'plain', version: f.owner.seq, contentKeyFingerprint: null,
+                } }),
+                resolveRunReportPolicy: async () => ({ preset: 'important' }),
+                normalizeAbsolutePath: directory => directory.startsWith('/') ? directory : null,
+                randomBytes: () => { throw new Error('list does not prepare keys'); },
+            });
+            const request = { originDiscussionId: discussionId, limit: 1 };
+            expect(await actionOwner.execute({ actionId: 'workflow.run.list', input: request,
+                context: { serverId: 'home' } })).toMatchObject({ runs: [{ id: f.runId, origin }] });
+            expect(requests).toEqual([request]);
+        });
         await db.discussion.update({ where: { id: discussionId }, data: { archivedAt: new Date() } });
         await expect(admitWorkflowRun(input)).rejects.toMatchObject({ code: 'run_access_denied' });
     });

@@ -223,7 +223,7 @@ export const WorkflowRunListRequestV1Schema = lazyZodSchema(() => z.strictObject
   states: z.optional(z.array(WorkflowRunStateV1Schema).check(z.minLength(1))),
   attention: z.optional(WorkflowRunAttentionFilterV1Schema),
   originSessionId: zMini.optional(preservedBoundedNfcString(191, 'Session ids')),
-  /** Private accepted-origin filter; the Action owner opens authorized pages before matching. */
+  /** Exact non-content origin selector captured by the Run storage owner at admission. */
   originDiscussionId: z.optional(DiscussionAddressV1Schema.shape.discussionId),
   targetSessionId: zMini.optional(preservedBoundedNfcString(191, 'Session ids')),
   /** Server-proved root and readable descendants of this managed Session. */
@@ -570,11 +570,17 @@ export const WorkflowDefinitionImportResultV1Schema = lazyZodSchema(() => z.disc
   z.strictObject({ ok: z.literal(true), classification: z.literal('unsaved_definition'), document: WorkflowDocumentV1Schema }),
   WorkflowDocumentParseFailureV1Schema,
 ]));
-export const WorkflowDefinitionExportRequestV1Schema = WorkflowDefinitionGetRequestV1Schema;
-export const WorkflowDefinitionExportResultV1Schema = lazyZodSchema(() => z.strictObject({
-  definitionId: WorkflowDefinitionIdV1Schema, revision: WorkflowArtifactRevisionV1Schema,
-  metadata: WorkflowDefinitionMetadataV1Schema, document: WorkflowDocumentV1Schema, json: z.string(),
-}));
+export const WorkflowDefinitionExportRequestV1Schema = lazyZodSchema(() => z.union([
+  WorkflowDefinitionGetRequestV1Schema,
+  z.strictObject({ draft: WorkflowIngressCarrierV1Schema }),
+]));
+export const WorkflowDefinitionExportResultV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({
+    definitionId: WorkflowDefinitionIdV1Schema, revision: WorkflowArtifactRevisionV1Schema,
+    metadata: WorkflowDefinitionMetadataV1Schema, document: WorkflowDocumentV1Schema, json: z.string(),
+  }),
+  z.strictObject({ document: WorkflowDocumentV1Schema, json: z.string() }),
+]));
 
 export { WORKFLOW_ACTION_IDS_V1, type WorkflowActionIdV1 };
 

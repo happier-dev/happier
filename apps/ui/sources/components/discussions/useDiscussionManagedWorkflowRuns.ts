@@ -1,63 +1,33 @@
 import type { DiscussionAddressV1 } from '@happier-dev/protocol/discussions';
-import type { DiscussionOpenedMessageV1 } from '@happier-dev/protocol/discussions/actions';
 import type { WorkflowRunStartResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import * as React from 'react';
 import { useContextManagedWorkflowRuns } from '@/components/workflows/run/useContextManagedWorkflowRuns';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
-import { getStorage, useWorkflowRunRows } from '@/sync/domains/state/storage';
-import { discussionWorkflowRunWindowId } from '@/sync/store/domains/workflowRuns';
-import { resolveDiscussionWorkflowAttribution } from './discussionTimelineProjection';
-import { readDiscussionWorkflowQuestionRunId } from './discussionWorkflowQuestionReference';
-
-const NO_RUN_IDS: readonly string[] = Object.freeze([]);
+import { getStorage } from '@/sync/domains/state/storage';
+import { discussionWorkflowRunListFilterId, workflowRunListWindowStoreKey } from '@/sync/store/domains/workflowRuns';
 
 /** Demand-mounted timeline data, including Runs that have not published their first reply yet. */
 export function useDiscussionManagedWorkflowRuns(params: Readonly<{
     discussion: DiscussionAddressV1;
     accountLifetime: ServerAccountScopeLifetime;
-    messages?: readonly (Pick<DiscussionOpenedMessageV1, 'id' | 'producerV1'> & Partial<Pick<DiscussionOpenedMessageV1, 'localId'>>)[];
     enabled?: boolean;
 }>) {
     const { accountLifetime, discussion } = params;
-    const windowId = discussionWorkflowRunWindowId(accountLifetime.scope, discussion.discussionId);
-    const retainedIds = getStorage()(state => state.workflowRunListWindows[windowId]?.runIds ?? NO_RUN_IDS);
-    const retainedRows = useWorkflowRunRows(retainedIds, accountLifetime.scope);
-    // Protected attribution is already on loaded replies (including external-plugin replies). The
-    // retained window also keeps an acknowledged start before its first reply; no Account scan.
-    const runIdsKey = React.useMemo(() => {
-        const messageIds = new Set(params.messages?.map(message => message.id));
-        const ids = new Set<string>();
-        for (const row of retainedRows) {
-            const origin = row.summary?.origin.kind === 'direct' ? row.summary.origin.discussion : undefined;
-            if (origin?.discussion.discussionId === discussion.discussionId
-                && areServerProfileIdentifiersEquivalent(origin.discussion.serverId, discussion.serverId)
-                && messageIds.has(origin.messageId)) ids.add(row.id);
-        }
-        for (const message of params.messages ?? []) {
-            const questionRunId = readDiscussionWorkflowQuestionRunId(message.localId);
-            if (questionRunId) ids.add(questionRunId);
-            const attribution = resolveDiscussionWorkflowAttribution(message);
-            if (attribution) ids.add(attribution.runId);
-        }
-        return JSON.stringify([...ids].sort());
-    }, [discussion.discussionId, discussion.serverId, params.messages, retainedRows]);
-    const runIds = React.useMemo<readonly string[]>(() => JSON.parse(runIdsKey), [runIdsKey]);
-    const state = useContextManagedWorkflowRuns({ resource: { kind: 'discussion', id: params.discussion.discussionId },
-        serverId: params.discussion.serverId, accountLifetime: params.accountLifetime,
-        runIds,
-        enabled: params.enabled !== false && areServerProfileIdentifiersEquivalent(params.accountLifetime.scope.serverId, params.discussion.serverId) });
+    const state = useContextManagedWorkflowRuns({ resource: { kind: 'discussion', id: discussion.discussionId },
+        serverId: discussion.serverId, accountLifetime,
+        enabled: params.enabled !== false && areServerProfileIdentifiersEquivalent(accountLifetime.scope.serverId, discussion.serverId) });
     const onStarted = useDiscussionWorkflowRunStarted(params);
     return { ...state, onStarted };
 }
 
-/** The thread and its mounted Start share one acknowledged-Run projection owner. */
+/** Acknowledged Starts join the same relation window that reloads read from storage. */
 export function useDiscussionWorkflowRunStarted(params: Readonly<{
     discussion: DiscussionAddressV1;
     accountLifetime: ServerAccountScopeLifetime;
 }>) {
     const { accountLifetime, discussion } = params;
-    const windowId = discussionWorkflowRunWindowId(accountLifetime.scope, discussion.discussionId);
+    const windowId = workflowRunListWindowStoreKey(discussionWorkflowRunListFilterId(discussion.discussionId), accountLifetime.scope);
     return React.useCallback((result: WorkflowRunStartResultV1) => {
         if (!accountLifetime.isCurrent()) return;
         const origin = result.run.origin.kind === 'direct' ? result.run.origin.discussion : undefined;

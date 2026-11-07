@@ -1,5 +1,6 @@
 import * as z from 'zod/mini';
 export { classifyManagedMachineAllocationV1, type ManagedMachineAllocationPresentationV1 } from './managedAllocationPresentationV1.js';
+import { ManagedMachineBirthSourceV1Schema } from './birthSourceV1.js';
 import { lazyDefinition } from '../../lazyZodSchema.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
 import { PluginContributionIdentityV1Schema } from '../../plugins/contributionIdentity.js';
@@ -20,6 +21,18 @@ const id = () => z.string().check(z.trim(), z.minLength(1));
 /** Home's exact enrolled resource identity; absence is an observed null on Machine projections. */
 export const ManagedMachineRefV1Schema = lazyDefinition(() => z.strictObject({ homeId: id(), managedId: id() }));
 export type ManagedMachineRefV1 = z.infer<typeof ManagedMachineRefV1Schema>;
+/** Recipient-safe accepted-input wake presentation; it grants no manual power authority. */
+export const ManagedMachineInputWakeV1Schema = lazyDefinition(() => z.enum(['asleep', 'starting']));
+export type ManagedMachineInputWakeV1 = z.infer<typeof ManagedMachineInputWakeV1Schema>;
+
+/** Native qualification is independent of the exact guest's live reachability. */
+export const ManagedMachineInputRuntimeV1Schema = lazyDefinition(() => z.strictObject({
+    nativeReady: z.boolean(),
+    wakeState: z.nullable(ManagedMachineInputWakeV1Schema),
+    /** Native wake placement only; the Home Pending record retains input ownership. */
+    acceptedInputWakeOwner: z.optional(z.enum(['home', 'caller'])),
+}));
+export type ManagedMachineInputRuntimeV1 = z.infer<typeof ManagedMachineInputRuntimeV1Schema>;
 /** Released 0.2 Home rows omit this projection; explicit invalid references still fail. */
 export const ManagedMachineRefReadV1Schema = lazyDefinition(() => z._default(z.nullable(ManagedMachineRefV1Schema), null));
 /** Setup belongs to the immutable admitted preset snapshot, independently of Join. */
@@ -36,13 +49,24 @@ export const ManagedMachineSetupV1Schema = lazyDefinition(() => z.strictObject({
 export type ManagedMachineSetupV1 = z.infer<typeof ManagedMachineSetupV1Schema>;
 export const RetentionV1Schema = lazyDefinition(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('until-delete') }),
-  z.strictObject({ kind: z.literal('unused'), afterMs: z.number().check(z.gt(0)), effect: z.enum(['stop', 'delete']) }),
+  z.strictObject({ kind: z.literal('unused'), afterMs: z.number().check(z.gte(0)), effect: z.enum(['stop', 'delete']) }),
   z.strictObject({ kind: z.literal('deadline'), at: z.number().check(z.gte(0)), effect: z.enum(['stop', 'delete']) }),
 ]));
 /** Reusable choices cannot carry an absolute time from another allocation. */
 export const ReusableRetentionV1Schema = lazyDefinition(() => z.discriminatedUnion('kind', [
-  RetentionV1Schema.def.options[0], RetentionV1Schema.def.options[1],
+  RetentionV1Schema.def.options[0],
+  z.strictObject({ ...RetentionV1Schema.def.options[1].def.shape, afterMs: z.number().check(z.gt(0)) }),
 ]));
+/** Chosen with acquisition; the existing birth owner binds its exact source once. */
+export const ManagedCreationScopeRetentionChoiceV1Schema = lazyDefinition(() => z.strictObject({ effect: z.enum(['stop', 'delete']) }));
+export const ManagedCreationScopeRetentionV1Schema = lazyDefinition(() => z.strictObject({
+  ...ManagedCreationScopeRetentionChoiceV1Schema.def.shape,
+  afterMs: z.optional(z.number().check(z.gt(0))),
+  source: z.optional(ManagedMachineBirthSourceV1Schema),
+  /** The source lifecycle selected this policy; this is not effect settlement. */
+  endedAt: z.optional(z.number().check(z.gte(0))),
+}));
+export type ManagedCreationScopeRetentionV1 = z.infer<typeof ManagedCreationScopeRetentionV1Schema>;
 export const ManagedControllerV1Schema = lazyDefinition(() => z.strictObject({ machineId: id(), installationId: id() }));
 /** Public carrier for one admitted preset/resource, never ordinary Machine access. */
 export const ManagedControllerAccessV1Schema = lazyDefinition(() => z.strictObject({
@@ -104,7 +128,8 @@ export function createManagedMachineV1Schema<Launch extends z.core.$ZodType, Nat
     desiredWhen: z.enum(['now', 'after-idle']), desiredAfterMs: z.optional(z.number().check(z.gt(0))),
     intentRevision: z.int().check(z.gte(0)), archivedAt: z.optional(z.number().check(z.gte(0))),
     submittedNativeEffect: z.optional(SubmittedNativeEffectV1Schema),
-    retention: RetentionV1Schema, wakeOnAcceptedMessage: z.boolean(), observation: z.optional(ProviderObservationV1Schema),
+    retention: RetentionV1Schema, wakeOnAcceptedMessage: z.boolean(),
+    creationScopeRetention: z.optional(ManagedCreationScopeRetentionV1Schema), observation: z.optional(ProviderObservationV1Schema),
     cleanup: z.optional(z.strictObject({ disposition: z.enum(['pending', 'unavailable']), reason: id() })),
   }).check(z.superRefine((value, context) => {
     if (value.machineSetup && !value.preset) {

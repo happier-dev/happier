@@ -17,7 +17,7 @@ import { resolveWorkflowRunAdmissionVisibilityInTx, storeWorkflowRunInitialKeyEn
 import type { TeamOperationAuthenticationContext } from "@/app/teams/actorContext";
 import type { SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
 import { SessionManagedCreationV1Schema, type SessionManagedCreationV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
-import { validateManagedCreationBirthInTx } from '@/app/machines/managed/managedCreationBirth';
+import { applyManagedCreationScopeEndInTx, bindManagedCreationScopeRetentionInTx, validateManagedCreationBirthInTx } from '@/app/machines/managed/managedCreationBirth';
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { buildMachineAdmissionFactsSelect, resolveMachineAdmissionFromFactsInTx } from '@/app/machines/machineAccess';
 import { publishWorkflowRunMachineWakeInTx } from './workflowRunMachineRouting';
@@ -316,8 +316,10 @@ async function markWorkflowRunChangedTx(tx: Tx, accountId: string, runId: string
     if (!ownerCursor) throw new Error("Workflow owner is missing from its publication audience");
     if (deliveryBefore !== undefined) await reconcileWorkflowRunAttentionAndHintTx(tx, accountId, runId, deliveryBefore, inputDeliverable);
     await admitWorkflowRunLifecycleAutomationRunsTx(tx, runId);
-    const run = await tx.automationRun.findUnique({ where: { id: runId }, select: { state: true, workflowCustodyState: true } });
-    if (run?.workflowCustodyState !== null && run && ['succeeded', 'failed', 'cancelled', 'interrupted'].includes(run.state)) {
+    const run = await tx.automationRun.findUnique({ where: { id: runId }, select: { state: true, workflowCustodyState: true, managedCreationId: true, finishedAt: true } });
+    if (run?.workflowCustodyState !== null && run && AUTOMATION_RUN_TERMINAL_STATES.some(state => state === run.state)) {
+        await applyManagedCreationScopeEndInTx(tx, { managedId: run.managedCreationId, accountId,
+            source: { kind: 'run', source: { kind: 'workflow_run', runId } }, endedAt: (run.finishedAt ?? new Date()).getTime() });
         await invalidateRunFollowDestinationsInTx(tx, { kind: 'workflow_run', runId });
     }
     return ownerCursor;
@@ -418,9 +420,10 @@ export async function admitWorkflowRunTx(tx: Tx, params: AdmitWorkflowRunInput):
             return { kind: "existing", run: await projectRunInTx(tx, existing as WorkflowRunProjectionRow, params.accountId) };
         }
         const mode = await loadCurrentWorkflowAccountModeTx(tx, params.accountId, params.accountCurrentness, params.runId);
-        if (params.managedCreation && !await validateManagedCreationBirthInTx(tx, {
+        const managedBirth = params.managedCreation ? await validateManagedCreationBirthInTx(tx, {
             accountId: params.accountId, birth: params.managedCreation, executionMachineId: params.machineId,
-        })) throw new WorkflowRunServiceError('run_access_denied');
+        }) : undefined;
+        if (managedBirth === false) throw new WorkflowRunServiceError('run_access_denied');
         assertWorkflowStoredEnvelopeOuterForMode({ raw: params.acceptedEnvelope, mode, binding: { v: 1, purpose: "accepted_snapshot", accountId: params.accountId, runId: params.runId } });
         const machine = await tx.machine.findUnique({ where: { id: params.machineId },
             select: buildMachineAdmissionFactsSelect(params.accountId) });
@@ -449,6 +452,7 @@ export async function admitWorkflowRunTx(tx: Tx, params: AdmitWorkflowRunInput):
                     originKind: "direct",
                     automationId: null,
                     originSessionId: params.origin.originSessionId ?? null,
+                    originDiscussionId: params.origin.discussion?.discussion.discussionId ?? null,
                     causeKind: null,
                     causeOccurredAt: null,
                     state: "queued",
@@ -469,6 +473,7 @@ export async function admitWorkflowRunTx(tx: Tx, params: AdmitWorkflowRunInput):
                 },
                 select: workflowRunSelect,
             });
+        if (managedBirth) await bindManagedCreationScopeRetentionInTx(tx, managedBirth, { kind: 'run', source: { kind: 'workflow_run', runId: params.runId } });
         await withWorkflowRunAccess(() => storeWorkflowRunInitialKeyEnvelopesInTx(tx, {
             actorAccountId: params.accountId, runId: params.runId, sourceArtifactId: params.sourceArtifactId ?? null,
             visibleTeamId, encryptionMode: mode, recipientKeyEnvelopes: params.recipientKeyEnvelopes ?? [],
@@ -1087,7 +1092,7 @@ export async function listWorkflowRuns(params: PageOptions & Readonly<{
     accountId: string; runId?: string; origin?: "automation" | "direct"; states?: readonly WorkflowRunState[]; attention?: "required";
     runIds?: readonly string[];
     invocationProvenance?: readonly Readonly<{ runId: string; invocationRecordIds: readonly string[] }>[];
-    originSessionId?: string; targetSessionId?: string; underSessionId?: string; automationId?: string; triggerId?: string; machineId?: string; sourceArtifactId?: string;
+    originSessionId?: string; originDiscussionId?: string; targetSessionId?: string; underSessionId?: string; automationId?: string; triggerId?: string; machineId?: string; sourceArtifactId?: string;
     projection?: "membership";
 }>) {
     if (params.limit !== undefined && (!Number.isSafeInteger(params.limit) || params.limit <= 0)) throw new WorkflowRunServiceError("invalid_input");
@@ -1107,6 +1112,7 @@ export async function listWorkflowRuns(params: PageOptions & Readonly<{
         runIds: params.runIds ? [...params.runIds].sort() : null, invocationProvenance: params.invocationProvenance ?? null,
         origin: params.origin ?? null, states: [...(params.states ?? [])].sort(), attention: params.attention ?? null, originSessionId: params.originSessionId ?? null, targetSessionId: params.targetSessionId ?? null, underSessionId: params.underSessionId ?? null, automationId: params.automationId ?? null, machineId: params.machineId ?? null,
         ...(params.triggerId ? { triggerId: params.triggerId } : {}),
+        ...(params.originDiscussionId ? { originDiscussionId: params.originDiscussionId } : {}),
         ...(membershipOnly ? { projection: params.projection } : {}) });
     const decoded = params.cursor ? decodeKeysetCursorV1(params.cursor, queryKey) : null;
     const afterDate = decoded?.status === "ok" ? readKeysetCursorTextV1(decoded.parts[0]) : null;
@@ -1137,6 +1143,7 @@ export async function listWorkflowRuns(params: PageOptions & Readonly<{
                 ...(params.origin ? { originKind: params.origin } : {}),
                 ...(params.states ? { state: { in: [...params.states] } } : {}),
                 ...(params.originSessionId ? { originSessionId: params.originSessionId } : {}),
+                ...(params.originDiscussionId ? { originDiscussionId: params.originDiscussionId } : {}),
                 ...(params.automationId ? { automationId: params.automationId } : {}),
                 ...(params.triggerId ? { triggerId: params.triggerId } : {}),
                 ...(params.machineId ? { assignments: { some: { machineId: params.machineId } } } : {}),

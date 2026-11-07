@@ -1,7 +1,4 @@
 import * as React from 'react';
-import { DISCUSSION_MAX_PAGE_SIZE_V1 } from '@happier-dev/protocol/discussions/api';
-import { DiscussionLocalIdSchema } from '@happier-dev/protocol/discussions/references';
-import { SessionIndexedIdentifierMaxLengthV1 } from '@happier-dev/protocol/sessions/idsV1';
 import { SERVER_HTTP_REQUEST_MAX_BODY_UTF8_BYTES_V1, readServerHttpRequestBodyUtf8ByteLengthV1 } from '@happier-dev/protocol/server/http/requestBodyBoundsV1';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -40,6 +37,7 @@ const { workflowRunRowFromSummary, workflowRunStoreKey } = await import('@/sync/
 const { useSessionManagedWorkflowRuns } = await import('@/components/workflows/run/useContextManagedWorkflowRuns');
 const { useSessionManagedWorkflowRunFlow } = await import('@/components/workflows/run/useContextManagedWorkflowRuns');
 const { retireActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+const { resetWorkflowLibraryReadsForTests } = await import('@/components/workflows/library/workflowLibraryReads');
 
 const accountId = 'account-a';
 const route = '/v3/automations/runs/workflow-storage';
@@ -55,6 +53,7 @@ beforeEach(async () => {
     previousState = storage.getState();
     previousSnapshot = getActiveServerSnapshot();
     await home.reset();
+    resetWorkflowLibraryReadsForTests();
     serverId = await home.addHome({ name: 'Managed runs Home', serverUrl: 'https://session-managed-runs.test', accountId });
     home.answer(serverId, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture() });
     readPage.mockReset();
@@ -106,6 +105,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
     await standardCleanup();
+    resetWorkflowLibraryReadsForTests();
     await home.reset();
     storage.setState(previousState, true);
     publishAppliedActiveServerSnapshot(previousSnapshot);
@@ -115,7 +115,28 @@ afterEach(async () => {
 let latest: SessionManagedWorkflowRunsState | null = null;
 let probeRenders = 0;
 
-it('restores composer-started Discussion Runs from persisted question ids and refreshes only their pushed changes', async () => {
+it('reloads Run again without a message reference through one exact Discussion query', async () => {
+    const { useDiscussionManagedWorkflowRuns } = await import('@/components/discussions/useDiscussionManagedWorkflowRuns');
+    const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+    const lifetime = captureActiveServerAccountScopeLifetime();
+    if (!lifetime) throw new Error('Missing test Account lifetime');
+    const discussion = { serverId, discussionId: 'discussion-again' };
+    const origin = { discussion, messageId: 'original-question', throughSeq: 1 };
+    const run = createWorkflowRunSummaryFixture({ ownerAccountId: accountId, id: 'run-again', state: 'running',
+        origin: { kind: 'direct', discussion: origin } });
+    discussionOrigins.set(run.id, origin);
+    readPage.mockImplementation(async ({ filter }) => ({ runs: filter?.originDiscussionId === discussion.discussionId ? [run] : [],
+        metadataByRunId: {}, nextCursor: undefined }));
+    // No onStarted call, composer localId, reply attribution, or retained start window survives reload.
+    const hook = await renderHookState(() => useDiscussionManagedWorkflowRuns({ discussion, accountLifetime: lifetime }));
+    await flushHookEffects({ cycles: 40 });
+    expect(hook.getCurrent().runs.map(value => value.id)).toEqual([run.id]);
+    expect(readPage.mock.calls.map(([request]) => request.filter)).toEqual([{ originDiscussionId: discussion.discussionId }]);
+    expect(readStorage).not.toHaveBeenCalled();
+    await hook.unmount();
+});
+
+it('restores Discussion Runs by origin and checks pushed identities through that same exact relation', async () => {
     const { useDiscussionManagedWorkflowRuns } = await import('@/components/discussions/useDiscussionManagedWorkflowRuns');
     const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
     const lifetime = captureActiveServerAccountScopeLifetime();
@@ -125,20 +146,10 @@ it('restores composer-started Discussion Runs from persisted question ids and re
         origin: { kind: 'direct', discussion: origin } });
     discussionOrigins.set(run.id, origin);
     readPage.mockImplementation(async ({ filter }) => ({
-        runs: Array.isArray(filter?.runIds) && filter.runIds.includes(run.id) ? [run] : [],
+        runs: filter?.originDiscussionId === origin.discussion.discussionId && (!filter.runIds || filter.runIds.includes(run.id)) ? [run] : [],
         metadataByRunId: {}, nextCursor: undefined,
     }));
-    // The composer deliberately uses its Run id as the committed question's local id.
-    // Match the existing 300-message Discussion fixture: three full owner-sized pages.
-    const messages = [{ id: 'question', localId: run.id, producerV1: null },
-        ...Array.from({ length: DISCUSSION_MAX_PAGE_SIZE_V1 * 3 - 3 }, (_, index) => ({
-            id: `ordinary-message-${index}`, localId: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`, producerV1: null,
-        }))];
-    const exactIds = messages.map(message => message.localId).sort();
-    // Valid ordinary Discussion identities are not necessarily valid Run identities.
-    messages.push({ id: 'unicode-post', localId: DiscussionLocalIdSchema.parse('界'.repeat(SessionIndexedIdentifierMaxLengthV1)), producerV1: null },
-        { id: 'decomposed-post', localId: DiscussionLocalIdSchema.parse('e\u0301'), producerV1: null });
-    const useRuns = () => useDiscussionManagedWorkflowRuns({ discussion: origin.discussion, accountLifetime: lifetime, messages });
+    const useRuns = () => useDiscussionManagedWorkflowRuns({ discussion: origin.discussion, accountLifetime: lifetime });
     const first = await renderHookState(useRuns);
     await act(async () => { first.getCurrent().onStarted({ run, admission: 'created' }); });
     await flushHookEffects({ cycles: 40 });
@@ -150,7 +161,7 @@ it('restores composer-started Discussion Runs from persisted question ids and re
     await flushHookEffects({ cycles: 40 });
     expect(reloaded.getCurrent().runs.map(value => [value.id, value.state])).toEqual([[run.id, 'running']]);
     expect(readPage.mock.calls.map(([request]) => request.filter)).toEqual([
-        expect.objectContaining({ runIds: exactIds }),
+        { originDiscussionId: origin.discussion.discussionId },
     ]);
     const listRequests = home.requestsFor(route);
     expect(listRequests.every(request => request.method === 'POST')).toBe(true);
@@ -163,12 +174,13 @@ it('restores composer-started Discussion Runs from persisted question ids and re
         publishHomeAccountChange('another-home', [`workflow-run:${run.id}`], { changeKinds: ['account'] });
     });
     await flushHookEffects({ cycles: 10 });
-    expect(readPage).toHaveBeenCalledTimes(reads);
+    expect(readPage).toHaveBeenCalledTimes(reads + 1);
+    expect(readPage.mock.calls.at(-1)?.[0].filter).toEqual({ originDiscussionId: origin.discussion.discussionId, runIds: ['unrelated-run'] });
     run = { ...run, state: 'paused', revision: run.revision + 1 };
     await act(async () => { publishHomeAccountChange(serverId, [`workflow-run:${run.id}`], { changeKinds: ['account'] }); });
     await flushHookEffects({ cycles: 40 });
     expect(reloaded.getCurrent().runs[0]?.state).toBe('paused');
-    expect(readPage).toHaveBeenCalledTimes(reads + 1);
+    expect(readPage).toHaveBeenCalledTimes(reads + 2);
 });
 
 it('discovers a composer Run creation pushed after the committed question initially has no Run', async () => {
@@ -182,8 +194,7 @@ it('discovers a composer Run creation pushed after the committed question initia
     discussionOrigins.set(run.id, origin);
     let admitted = false;
     readPage.mockImplementation(async () => ({ runs: admitted ? [run] : [], metadataByRunId: {}, nextCursor: undefined }));
-    const hook = await renderHookState(() => useDiscussionManagedWorkflowRuns({ discussion: origin.discussion, accountLifetime: lifetime,
-        messages: [{ id: 'question', localId: run.id, producerV1: null }] }));
+    const hook = await renderHookState(() => useDiscussionManagedWorkflowRuns({ discussion: origin.discussion, accountLifetime: lifetime }));
     await flushHookEffects({ cycles: 40 });
     expect(hook.getCurrent().phase).toBe('loaded');
     expect(hook.getCurrent().runs).toEqual([]);
@@ -192,45 +203,17 @@ it('discovers a composer Run creation pushed after the committed question initia
     await act(async () => { publishHomeAccountChange(serverId, [`workflow-run:${run.id}`], { changeKinds: ['account'] }); });
     await flushHookEffects({ cycles: 40 });
     expect(hook.getCurrent().runs.map(value => value.id)).toEqual([run.id]);
-    expect(readPage).toHaveBeenCalledTimes(2);
+    // The list owner checks the pushed identity, then restates the exact
+    // relation when that answer proves its membership changed.
+    expect(readPage.mock.calls.map(([request]) => request.filter)).toEqual([
+        { originDiscussionId: origin.discussion.discussionId },
+        { originDiscussionId: origin.discussion.discussionId, runIds: [run.id] },
+        { originDiscussionId: origin.discussion.discussionId },
+    ]);
     expect(readStorage).not.toHaveBeenCalled();
 });
 
-it('reads no Run for an unreferenced Discussion and retains its acknowledged start before a first reply', async () => {
-    const { useDiscussionManagedWorkflowRuns } = await import('@/components/discussions/useDiscussionManagedWorkflowRuns');
-    const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
-    const lifetime = captureActiveServerAccountScopeLifetime();
-    if (!lifetime) throw new Error('Missing test Account lifetime');
-    const origin = { discussion: { serverId, discussionId: 'discussion-start' }, messageId: 'question', throughSeq: 1 };
-    const run = createWorkflowRunSummaryFixture({ ownerAccountId: accountId, id: 'started-run', state: 'running',
-        origin: { kind: 'direct', discussion: origin } });
-    const { discussionWorkflowRunWindowId } = await import('@/sync/store/domains/workflowRuns');
-    storage.getState().applyWorkflowRunListPage({ scope: lifetime.scope, windowId: discussionWorkflowRunWindowId(lifetime.scope, origin.discussion.discussionId),
-        runs: [createWorkflowRunSummaryFixture({ ...run, id: 'off-page-run',
-            origin: { kind: 'direct', discussion: { ...origin, messageId: 'not-loaded' } } })], mode: 'replace', nextCursor: null });
-    discussionOrigins.set(run.id, origin);
-    const requested = createDeferred<void>();
-    readPage.mockImplementation(async () => { requested.resolve(); return { runs: [run], metadataByRunId: {}, nextCursor: undefined }; });
-    const hook = await renderHookState(() => useDiscussionManagedWorkflowRuns({ discussion: origin.discussion,
-        accountLifetime: lifetime, messages: [{ id: 'question', producerV1: null }] }));
-    await flushHookEffects({ cycles: 40 });
-    expect(readPage).not.toHaveBeenCalled();
-    await act(async () => { hook.getCurrent().onStarted({ run, admission: 'created' }); });
-    await requested.promise;
-    await flushHookEffects({ cycles: 40 });
-    expect(hook.getCurrent().runs.map(value => value.id)).toEqual([run.id]);
-    expect(readPage.mock.calls.map(([request]) => request.filter)).toEqual([expect.objectContaining({ runIds: [run.id] })]);
-    await hook.unmount();
-    const initialMessages: { id: string; producerV1: null }[] = [];
-    const reopened = await renderHookState(({ messages }: { messages: { id: string; producerV1: null }[] }) => useDiscussionManagedWorkflowRuns({ discussion: origin.discussion,
-        accountLifetime: lifetime, messages }), { initialProps: { messages: initialMessages } });
-    await flushHookEffects({ cycles: 40 });
-    await reopened.rerender({ messages: [{ id: 'question', producerV1: null }] });
-    expect(reopened.getCurrent().runs.map(value => value.id)).toEqual([run.id]);
-    expect(reopened.getCurrent().pending).toBe(false);
-});
-
-it('opens Discussion bands with their messages using one exact summary batch and no inventory pages', async () => {
+it('keeps Discussion messages visible while the exact origin query adds their Run bands', async () => {
     const { useDiscussionManagedWorkflowRuns } = await import('@/components/discussions/useDiscussionManagedWorkflowRuns');
     const { buildDiscussionTimelineItems } = await import('@/components/discussions/discussionTimelineProjection');
     const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
@@ -244,17 +227,17 @@ it('opens Discussion bands with their messages using one exact summary batch and
             invocationRecordId: 'invocation', invocationAttempt: '1', execution: { kind: 'detached_run' as const, executionRunId: 'native-run' }, outcome: 'answer' as const } },
     ];
     const pending = createDeferred<WorkflowRunListPage>();
-    readPage.mockImplementation(async ({ filter }) => filter?.runIds ? pending.promise : {
+    readPage.mockImplementation(async ({ filter }) => filter?.originDiscussionId === 'discussion-band' ? pending.promise : {
         runs: [], metadataByRunId: {}, nextCursor: undefined,
     });
     let previous: ReturnType<typeof buildDiscussionTimelineItems<typeof messages[number]>> = [];
     const commits: string[][] = [];
     const hook = await renderHookState(({ threadMessages }: { threadMessages: typeof messages }) => {
         const state = useDiscussionManagedWorkflowRuns({ discussion: { serverId, discussionId: 'discussion-band' },
-            accountLifetime: lifetime, messages: threadMessages });
+            accountLifetime: lifetime });
         const items = buildDiscussionTimelineItems({ serverId, discussionId: 'discussion-band', messages: threadMessages,
             subagents: [], readExecutionRunEntry: () => null, workflowRuns: state.runs,
-            workflowRunsPending: state.pending, workflowRunAnswerIds: new Map([[run.id, ['answer']]]) }, previous);
+            workflowRunAnswerIds: new Map([[run.id, ['answer']]]) }, previous);
         React.useLayoutEffect(() => {
             previous = items;
             commits.push(items.map(item => item.kind === 'human_message' ? item.message.id
@@ -263,18 +246,18 @@ it('opens Discussion bands with their messages using one exact summary batch and
         return state;
     }, { initialProps: { threadMessages: messages } });
     await flushHookEffects({ cycles: 40 });
-    expect(readPage.mock.calls.map(([request]) => request.filter)).toEqual([expect.objectContaining({ runIds: [run.id] })]);
-    expect(commits.every(items => items.length === 0)).toBe(true);
+    expect(readPage.mock.calls.map(([request]) => request.filter)).toEqual([{ originDiscussionId: 'discussion-band' }]);
+    expect(commits.every(items => items.join(',') === 'question,answer')).toBe(true);
     const loaded = waitForTestEvent(hook.subscribe, () => expect(hook.getCurrent().phase).toBe('loaded'));
     await act(async () => { pending.resolve({ runs: [run], metadataByRunId: {}, nextCursor: undefined }); });
     await loaded;
     await flushHookEffects({ cycles: 40 });
     const expected = ['question', `run:${run.id}`, 'answer', `end:${run.id}`];
-    for (const items of commits.filter(items => items.length > 0)) expect(items).toEqual(expected);
+    for (const items of commits.filter(items => items.includes(`run:${run.id}`))) expect(items).toEqual(expected);
     expect(commits.at(-1)).toEqual(expected);
-    expect(hook.getCurrent().pending).toBe(false);
+    expect(hook.getCurrent().phase).toBe('loaded');
     expect(readPage).toHaveBeenCalledTimes(1);
-    // Unrelated messages do not re-read the same exact Run ids.
+    // Unrelated messages do not re-read the unchanged origin relation.
     await hook.rerender({ threadMessages: [...messages, { id: 'unrelated', seq: 3, producerV1: null }] });
     await flushHookEffects({ cycles: 10 });
     expect(readPage).toHaveBeenCalledTimes(1);
@@ -312,8 +295,6 @@ describe('useSessionManagedWorkflowRuns', () => {
         readPage.mockImplementation(async ({ filter }) => ({ runs: filter?.cursor ? [run] : [],
             metadataByRunId: {}, nextCursor: filter?.cursor ? undefined : 'filtered-next' }));
         const hook = await renderHookState(({ enabled }: { enabled: boolean }) => useDiscussionManagedWorkflowRuns({
-            messages: [{ id: 'answer', producerV1: { v: 1, kind: 'workflow', runId: run.id, invocationRecordId: 'invocation', invocationAttempt: '1',
-                execution: { kind: 'detached_run', executionRunId: 'native-run' }, outcome: 'answer' } }],
             discussion: { serverId, discussionId: 'discussion-1' }, accountLifetime: lifetime, enabled,
         }), { initialProps: { enabled: false } });
         expect(readPage).not.toHaveBeenCalled();
@@ -321,8 +302,7 @@ describe('useSessionManagedWorkflowRuns', () => {
         await hook.rerender({ enabled: true });
         await flushHookEffects({ cycles: 40 });
         await waitForTestEvent(hook.subscribe, () => expect(hook.getCurrent().phase).toBe('loaded'));
-        // The Action filters the opened accepted origin; private membership never reaches storage.
-        expect(readPage.mock.calls.every(([request]) => request.filter?.originDiscussionId === undefined)).toBe(true);
+        expect(readPage.mock.calls.every(([request]) => request.filter?.originDiscussionId === 'discussion-1')).toBe(true);
         expect(hook.getCurrent().runs.map(value => value.id)).toEqual(['discussion-run']);
         expect(hook.getCurrent().supportsAnotherRoundByRunId?.[run.id]).toBe(true);
         expect(hook.getCurrent().callerAccessByRunId?.[run.id]).toEqual({ canEdit: true });

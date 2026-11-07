@@ -809,6 +809,26 @@ describe('shared Account workflow run owner', () => {
     });
   });
 
+  it('names a multi-step unnamed Run from its frozen program in the lean list (FIN F9)', async () => {
+    const snapshot = runSnapshot();
+    const envelope = JSON.parse(snapshot.acceptedEnvelope);
+    const first = envelope.v.content.authoredDefinition.blocks[0];
+    envelope.v.content.authoredDefinition.blocks = [
+      { ...first, id: 'inspect', name: 'Inspect the release' },
+      { ...first, id: 'publish', name: 'Publish the summary' },
+    ];
+    const operations: string[] = [];
+    const owner = createWorkflowAccountRunActionOwner(ownerDeps({ execute: async operation => {
+      operations.push(operation.operation);
+      if (operation.operation !== 'list') throw new Error('run_title_must_stay_lean');
+      return { runs: [snapshot.run], acceptedEnvelopesByRunId: { [runId]: JSON.stringify(envelope) },
+        keyCensusByRunId: { [runId]: snapshot.keyCensus } };
+    } }));
+    expect(await owner.execute({ actionId: 'workflow.run.list', input: {}, context: {} }))
+      .toMatchObject({ metadataByRunId: { [runId]: { kind: 'available', value: { title: 'Inspect the release and 1 more' } } } });
+    expect(operations).toEqual(['list']);
+  });
+
   it('uses the first named step after an unnamed block consistently in list and detail (FIN M3)', async () => {
     const snapshot = runSnapshot();
     const envelope = JSON.parse(snapshot.acceptedEnvelope);
@@ -827,7 +847,7 @@ describe('shared Account workflow run owner', () => {
       throw new Error('unexpected_storage_operation');
     } }));
     expect(await owner.execute({ actionId: 'workflow.run.list', input: {}, context: {} }))
-      .toMatchObject({ metadataByRunId: { [runId]: { kind: 'available', value: { title: 'Inspect the parser' } } } });
+      .toMatchObject({ metadataByRunId: { [runId]: { kind: 'available', value: { title: 'Inspect the parser and 1 more' } } } });
     expect(await owner.execute({ actionId: 'workflow.run.get', input: { runId }, context: {} }))
       .toMatchObject({ authoredDefinition: { blocks: [{ id: 'unnamed' }, { id: 'named', name: 'Inspect the parser' }] } });
   });
@@ -898,7 +918,7 @@ describe('shared Account workflow run owner', () => {
       expect(normalizeWorkflowActionThrownError(error)).toMatchObject({ ok: false, errorCode: 'run_access_denied' });
     }
   });
-  it('discovers Discussion runs after an irrelevant first page without forwarding a private origin filter to storage', async () => {
+  it('discovers Discussion runs through one exact storage page with an indexed origin selector', async () => {
     const first = runSnapshot();
     const targetId = '22222222-2222-4222-8222-222222222222';
     if (!acceptedSnapshotResult.ok) throw new Error('snapshot_fixture_failed');
@@ -912,21 +932,26 @@ describe('shared Account workflow run owner', () => {
     const targetEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
       binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account-1', runId: targetId }, acceptedSnapshot: accepted }));
     const requests: unknown[] = [];
+    let contentAvailable = true;
     const owner = createWorkflowAccountRunActionOwner(ownerDeps({ execute: async operation => {
       if (operation.operation !== 'list') throw new Error('unexpected_storage_operation');
       requests.push(operation.request);
-      const next = (operation.request as { cursor?: string }).cursor === 'next-page';
+      const next = (operation.request as { originDiscussionId?: string; cursor?: string }).originDiscussionId === 'discussion-1'
+        || (operation.request as { cursor?: string }).cursor === 'next-page';
       const run = next ? { ...first.run, id: targetId } : first.run;
-      return { runs: [run], acceptedEnvelopesByRunId: { [run.id]: next ? targetEnvelope : first.acceptedEnvelope },
+      return { runs: [run], acceptedEnvelopesByRunId: contentAvailable ? { [run.id]: next ? targetEnvelope : first.acceptedEnvelope } : {},
         keyCensusByRunId: { [run.id]: { ...first.keyCensus, runId: run.id } }, ...(next ? {} : { nextCursor: 'next-page' }) };
     } }));
     const page = await owner.execute({ actionId: 'workflow.run.list', input: { originDiscussionId: 'discussion-1' },
       context: { surface: 'ui', serverId: 'home' } });
     expect(page).toMatchObject({ runs: [{ id: targetId, origin: accepted.origin }], supportsAnotherRoundByRunId: { [targetId]: true },
       callerAccessByRunId: { [targetId]: { canEdit: true } } });
-    expect(requests).toEqual([{}, { cursor: 'next-page' }]);
-    await expect(owner.execute({ actionId: 'workflow.run.list', input: { originDiscussionId: 'discussion-1' },
-      context: { surface: 'ui', serverId: 'other-home' } })).resolves.toMatchObject({ runs: [] });
+    expect(requests).toEqual([{ originDiscussionId: 'discussion-1' }]);
+    contentAvailable = false;
+    requests.length = 0;
+    expect(await owner.execute({ actionId: 'workflow.run.list', input: { originDiscussionId: 'discussion-1' },
+      context: { surface: 'ui', serverId: 'home' } })).toMatchObject({ runs: [{ id: targetId }] });
+    expect(requests).toEqual([{ originDiscussionId: 'discussion-1' }]);
   });
   it.each([
     { name: 'a lost admission reply', failure: Object.assign(new Error('timeout of 30000ms exceeded'), { code: 'ECONNABORTED' }), code: 'workflow_outcome_unresolved' },
@@ -1027,10 +1052,6 @@ describe('shared Account workflow run owner', () => {
       input: WorkflowRunListRequestV1Schema.parse({ originDiscussionId: discussion.discussionId }) };
     await expect(owner.execute({ ...discussionList, context }))
       .resolves.toMatchObject({ runs: [{ id: runId, origin: projectedOrigin }] });
-    for (const serverId of ['srv_foreign', 'stack_unknown']) {
-      await expect(owner.execute({ ...discussionList,
-        context: { ...context, serverId, serverIdentityId: undefined } })).resolves.toMatchObject({ runs: [] });
-    }
     const unused = (): never => { throw new Error('capture_must_not_save_or_start'); };
     const definitions = createWorkflowDefinitionActions({ artifactStore: { read: unused, list: unused, create: unused, update: unused, delete: unused },
       encodeListCursor: unused, assertDefinitionWriteAllowed: unused });
@@ -2511,13 +2532,14 @@ describe('shared Account workflow run owner', () => {
 
   it.each(['inline', 'saved', 'catalog', 'plugin', 'automation'] as const)('repeats through inline start from the authenticated snapshot and retains %s lineage', async kind => {
     if (!acceptedSnapshotResult.ok) throw new Error('snapshot_fixture_failed');
+    const discussion = { discussion: { serverId: 'home', discussionId: 'discussion-1' }, messageId: 'question-1', throughSeq: 7 };
     const savedBy = { kind: 'person' as const, accountId: 'editor' };
     const source = kind === 'inline' ? { kind, sourceArtifactId: 'def-1' } : kind === 'catalog' || kind === 'plugin'
       ? { kind: 'catalog', ref: kind === 'plugin' ? 'plugin:com.acme.workflows/review' : 'builtin:child', version: kind === 'plugin' ? '1.2.3' : 7 }
       : { kind, ...(kind === 'automation' ? { automationId: 'automation-1' } : {}),
         definitionId: 'def-1', revision: { headerVersion: 1, bodyVersion: 1 }, savedBy };
     const originalAccepted = WorkflowAcceptedSnapshotV1Schema.parse({ ...acceptedSnapshotResult.snapshot,
-      source,
+      source, origin: { ...acceptedSnapshotResult.snapshot.origin, discussion },
     });
     const original = { ...runSnapshot(), acceptedEnvelope: serializeWorkflowStoredContentEnvelopeV1(
       sealWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
@@ -2546,11 +2568,12 @@ describe('shared Account workflow run owner', () => {
     } }), definitions: { get: async () => { throw new Error('saved_definition_was_deleted'); } },
       prepareWorkspace: async () => ({ ok: true, workspaceTarget: originalAccepted.workspaceTarget }),
       resolveMaterializationContext: async () => ({ effects: { resolveTargetAvailability: async () => true } }),
+      resolveDiscussionOrigin: async () => discussion,
     });
     const input = WorkflowRunStartRequestV1Schema.parse({ runId: newRunId, source: { kind: 'inline',
       definition: { blocks: ['This carrier must not replace the accepted graph'] },
       replay: { runId } } });
-    const actionContext = { surface: 'ui' as const, authority: 'present_user' as const, callerPermissionMode: 'default',
+    const actionContext = { surface: 'ui' as const, authority: 'present_user' as const, callerPermissionMode: 'default', serverId: 'home',
       approvalProfileId: 'profile:current-review',
       defaultSessionId: 'origin-1', externalActionTarget: { kind: 'machine' as const, machineId: 'machine-a',
         project: { machineId: 'machine-a', directory: '/repo' } } };
@@ -2563,7 +2586,8 @@ describe('shared Account workflow run owner', () => {
     const replayed = openWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
       binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account-1', runId: newRunId },
       envelope: parseWorkflowStoredContentEnvelopeV1(committed.acceptedEnvelope) });
-    expect(replayed).toMatchObject({ kind: 'available', content: { origin: { actionPolicy: { approvalProfileId: 'profile:current-review' } } } });
+    expect(replayed).toMatchObject({ kind: 'available', content: { origin: { discussion,
+      actionPolicy: { approvalProfileId: 'profile:current-review' } } } });
     expect(admittedSourceArtifactId).toBe(kind === 'catalog' || kind === 'plugin' ? null : 'def-1');
     if (kind === 'inline') expect(admittedVisibleTeamId).toBe('team-a');
     await expect(owner.execute({ actionId: 'workflow.run.start', input, context: actionContext }))
@@ -2571,6 +2595,7 @@ describe('shared Account workflow run owner', () => {
   });
   it.each(['succeeded', 'cancelled'] as const)('starts Another round from a %s source with accepted inputs and durable outcomes, and rejoins the same new Run', async state => {
     if (!acceptedSnapshotResult.ok) throw new Error('snapshot_fixture_failed');
+    const discussion = { discussion: { serverId: 'home', discussionId: 'discussion-1' }, messageId: 'question-1', throughSeq: 7 };
     const roundDefinition = { ...definition, inputs: [
       { name: 'question', valueType: 'string' as const, required: true },
       { name: 'participants', valueType: 'json' as const, required: true },
@@ -2578,6 +2603,7 @@ describe('shared Account workflow run owner', () => {
     ] };
     const originalAccepted = WorkflowAcceptedSnapshotV1Schema.parse({ ...acceptedSnapshotResult.snapshot,
       authoredDefinition: roundDefinition, definition: roundDefinition,
+      origin: { ...acceptedSnapshotResult.snapshot.origin, discussion },
       inputs: { question: 'What should we do?', participants: ['original-session', 'original-model'] },
       authorization: { ...acceptedSnapshotResult.snapshot.authorization,
         principal: { kind: 'session', sessionId: 'retired-starter' } },
@@ -2627,17 +2653,18 @@ describe('shared Account workflow run owner', () => {
         keyCensus: { ...runSnapshot().keyCensus, runId: nextId }, acceptedEnvelope: String(operation.acceptedEnvelope) };
       return { kind: 'created', run: committed.run };
     } }), resolveMaterializationContext: async () => ({ effects: { resolveTargetAvailability: async () => targetAvailable } }),
+      resolveDiscussionOrigin: async () => discussion,
       // The current person can still read this historical Run. A new start is
       // admitted as that person, not under its retired original starter.
       isAcceptedAuthorizationCurrent: async ({ authorization }) => authorization.principal.kind === 'host',
     });
     const input = WorkflowRunStartRequestV1Schema.parse({ runId: nextId, source: { kind: 'inline',
       definition: { blocks: ['This carrier is not execution authority'] }, replay: { runId, intent: 'another_round' } } });
-    const context = { surface: 'voice' as const, authority: 'present_user' as const, callerPermissionMode: 'default',
+    const context = { surface: 'voice' as const, authority: 'present_user' as const, callerPermissionMode: 'default', serverId: 'home',
       externalActionTarget: { kind: 'machine' as const, machineId: 'machine-a', project: { machineId: 'machine-a', directory: '/repo' } } };
     await expect(owner.execute({ actionId: 'workflow.run.start', input, context })).resolves.toMatchObject({ admission: 'created' });
     const opened = await owner.execute({ actionId: 'workflow.run.get', input: { runId: nextId }, context });
-    expect(opened).toMatchObject({ acceptedContext: { inputs: {
+    expect(opened).toMatchObject({ acceptedContext: { origin: { discussion }, inputs: {
       ...originalAccepted.inputs, previousRoundContext: { runId, state, outcomes: rows.map(({ index, progress }) => ({
         invocationRecordId: index.id, attempt: '0', blockId: 'work', lifecycle: index.lifecycle,
         ...(progress.result ? { result: progress.result } : { reason: progress.reason }),

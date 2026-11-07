@@ -242,20 +242,6 @@ it.each(['pending', 'failed'] as const)('shows readable cold-thread messages whe
     }
 });
 
-it('does not read Runs for ordinary post UUID local ids', async () => {
-    const { serverId, fixture, accountLifetime } = await prepareLongDiscussion();
-    const root = { ...fixture.messages[0]!, localId: 'bd8bdc54-b179-4ac7-a28a-5dfcdf390a53', producerV1: null };
-    const before = homes.requestsFor('/v3/automations/runs/workflow-storage').length;
-    const { useDiscussionManagedWorkflowRuns } = await import('./useDiscussionManagedWorkflowRuns');
-    const hook = await renderHook(() => useDiscussionManagedWorkflowRuns({
-        discussion: { serverId, discussionId: 'committed-thread' }, accountLifetime, messages: [root],
-    }));
-    await flushHookEffects({ cycles: 10 });
-    expect(hook.getCurrent()).toMatchObject({ phase: 'idle', runs: [] });
-    expect(homes.requestsFor('/v3/automations/runs/workflow-storage')).toHaveLength(before);
-    await hook.unmount();
-});
-
 it.each(['inventory-page', 'catch-up'] as const)('mounts a cold private Post from %s before historical approval paging settles', async arrival => {
     const sockets: Socket[] = [];
     const { serverId, repository, fixture, newMessage } = await prepareLongDiscussion(value => {
@@ -833,11 +819,50 @@ it('advances a visible message age without rerendering its message body', async 
     } finally { unsubscribe(); }
 });
 
+it('starts a no-input Pattern with the current Discussion draft after its panel opened empty', async () => {
+    const { DiscussionWorkflowStartDetails } = await import('./DiscussionWorkflowStartDetails');
+    const { WorkflowStartDetailsBody, createWorkflowStartDetailsTab } = await import('@/components/workflows/run/WorkflowStartDetails');
+    const { useWorkflowComposerStart } = await import('@/components/workflows/run/useWorkflowComposerStart');
+    const { serverId, fixture, accountLifetime, repository } = await prepareLongDiscussion();
+    const discussion = { serverId, discussionId: 'committed-thread' };
+    const address = { kind: 'discussion' as const, discussionId: discussion.discussionId };
+    writeDiscussionSessionDraft({ scope: accountLifetime.scope, address, patch: { text: '' } });
+    const tab = { ...createWorkflowStartDetailsTab({ kind: 'catalog', workflow: 'builtin:plan-with-a-panel' }, 'Panel',
+        { kind: 'discussion', discussion }), isPinned: true, isPreview: false };
+    const scope = { kind: 'global' as const };
+    const screen = await renderScreen(<DiscussionWorkflowStartDetails input={{ tab, active: true, scope, region: 'details', callbacks: {},
+        descriptor: { surfaceId: 'discussion-workflow-start', resourceKey: tab.key, scope, region: 'details', status: 'available' } }} />);
+    await vi.waitFor(() => expect(screen.root.findAllByType(WorkflowStartDetailsBody)).toHaveLength(1));
+    const body: React.ComponentProps<typeof WorkflowStartDetailsBody> = screen.root.findByType(WorkflowStartDetailsBody).props;
+    expect(body.retainedDraft).toBe('');
+    const start = await renderHook(() => useWorkflowComposerStart({ accountLifetime, project: { machineId: 'machine-1', directory: '/repo' },
+        prepareOrigin: body.prepareOrigin, onStarted: () => undefined }));
+    const definition = createWorkflowDefinitionFixture({ inputs: [], blocks: [{ kind: 'wait', id: 'wait',
+        document: { text: 'Continue when ready', references: [], attachments: [] } }] });
+    await act(async () => { start.getCurrent().start({ id: 'wait-pattern', name: 'Pause for thought', description: '', definition,
+        source: { kind: 'inline', definition } }, { retainedDraft: '' }); });
+    await act(async () => { writeDiscussionSessionDraft({ scope: accountLifetime.scope, address, patch: { text: 'A fresh question' } }); });
+    const postsBefore = homes.requestsFor('/v1/discussions/committed-thread/messages').filter(request => request.method === 'POST').length;
+    await act(async () => { start.getCurrent().composerProps!.onRun(undefined); });
+    await vi.waitFor(() => expect(fixture.messages.some(message => message.localId?.startsWith('workflow-run:')
+        && JSON.stringify(message.content).includes('A fresh question'))).toBe(true));
+    expect(homes.requestsFor('/v1/discussions/committed-thread/messages').filter(request => request.method === 'POST')).toHaveLength(postsBefore + 1);
+    const submission = Object.values(repository.getSnapshot().mutations).find(mutation => mutation.localId.startsWith('workflow-run:'))?.draftSubmission;
+    expect(submission).toBeDefined();
+    const { useDiscussionDraft } = await import('./useDiscussionDraft');
+    const draft = await renderHook(() => useDiscussionDraft({ scope: accountLifetime.scope, address }));
+    await act(async () => { await draft.getCurrent().clearAfterObservedSuccess(submission!); });
+    expect(draft.getCurrent().text).toBe('');
+    await draft.unmount();
+    await start.unmount();
+    await screen.unmount();
+});
+
 it.each([false, true])('lets the mounted Workflow Start commit and rejoin its ordinary question before returning the Discussion origin (lost response=%s)', async losePost => {
     const { DiscussionPaneHost } = await import('./DiscussionRightSidebar');
     const { useAppPaneScope } = await import('@/components/appShell/panes/hooks/useAppPaneScope');
     const { WorkflowStartDetailsBody, createWorkflowStartDetailsTab } = await import('@/components/workflows/run/WorkflowStartDetails');
-    const { discussionWorkflowRunWindowId } = await import('@/sync/store/domains/workflowRuns');
+    const { discussionWorkflowRunListFilterId, workflowRunListWindowStoreKey } = await import('@/sync/store/domains/workflowRuns');
     const { serverId, repository, fixture, accountLifetime } = await prepareLongDiscussion(undefined, { losePost });
     const discussion = { serverId, discussionId: 'committed-thread' };
     const address = { kind: 'discussion' as const, discussionId: discussion.discussionId };
@@ -881,7 +906,7 @@ it.each([false, true])('lets the mounted Workflow Start commit and rejoin its or
     await act(async () => body.onStarted({ admission: 'created', run }, serverId));
     expect(paneRef.current!.scopeState?.details.tabs).toEqual([expect.objectContaining({
         resource: { kind: 'workflowRunPeek', serverId, runId: run.id } })]);
-    const windowId = discussionWorkflowRunWindowId(accountLifetime.scope, discussion.discussionId);
+    const windowId = workflowRunListWindowStoreKey(discussionWorkflowRunListFilterId(discussion.discussionId), accountLifetime.scope);
     const { getStorage } = await import('@/sync/domains/state/storage');
     expect(getStorage().getState().workflowRunListWindows[windowId]?.runIds).toContain(run.id);
     await screen.unmount();
@@ -897,8 +922,7 @@ it.each([false, true])('lets the mounted Workflow Start commit and rejoin its or
         return { body: coldRows };
     } });
     const { useDiscussionManagedWorkflowRuns } = await import('./useDiscussionManagedWorkflowRuns');
-    const reloaded = await renderHook(() => useDiscussionManagedWorkflowRuns({ discussion, accountLifetime,
-        messages: [committed!] }));
+    const reloaded = await renderHook(() => useDiscussionManagedWorkflowRuns({ discussion, accountLifetime }));
     await flushHookEffects({ cycles: 40 });
     expect(reloaded.getCurrent().runs.map(value => value.id)).toEqual([run.id]);
     await reloaded.unmount();

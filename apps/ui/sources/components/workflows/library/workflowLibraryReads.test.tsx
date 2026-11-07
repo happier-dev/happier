@@ -285,7 +285,7 @@ describe('unified Workflow Library', () => {
         const summary = run('addressed-run');
         home.answer(serverId, route, { body: await runPage([summary]) });
         const hook = await renderHook(() => useContextManagedWorkflowRuns({ resource: { kind: 'discussion', id: 'addressed' },
-            serverId, accountLifetime: lifetime, runIds: [summary.id] }));
+            serverId, accountLifetime: lifetime }));
         await waitForHomeGovernance(() => expect(hook.getCurrent().runs).toHaveLength(1));
         await act(async () => retireActiveServerAccountScopeLifetime());
         expect(hook.getCurrent().runs).toEqual([]);
@@ -1006,10 +1006,13 @@ describe('Workflow library reads through real Account Actions and HTTP', () => {
 
     it('reads nothing without demand and serves the current Account after enable', async () => {
         await saved();
-        const before = home.requests.length;
+        const libraryReads = () => home.requests.filter(request => request.path.startsWith('/v1/artifacts'));
+        const before = libraryReads().length;
+        const beforeMachineReads = machineRpc.mock.calls.length;
         const hook = await renderHook((props: { enabled: boolean }) => useWorkflowDefinitionLibrary(props), { initialProps: { enabled: false } });
         expect(hook.getCurrent().definitions).toEqual([]);
-        expect(home.requests.length).toBe(before);
+        expect(libraryReads()).toHaveLength(before);
+        expect(machineRpc).toHaveBeenCalledTimes(beforeMachineReads);
         await hook.rerender({ enabled: true }); await waitLoaded(hook);
         expect(hook.getCurrent().definitions.map(row => row.definitionId)).toEqual([definitionId]);
     });
@@ -1418,7 +1421,8 @@ describe('Workflow Run windows through real Account storage', () => {
         });
         const selected = { ...run('selected-run'), sourceArtifactId: definitionId };
         const untouched = { ...run('untouched-run'), sourceArtifactId: definitionId };
-        home.answer(serverId, route, { body: await runPage(windowId === 'all' ? [selected, untouched] : [selected], 'retained-tail') });
+        home.answer(serverId, route, { body: await runPage(windowId === 'all' ? [selected, untouched] : [selected],
+            windowId === 'all' ? 'retained-tail' : undefined) });
         const hook = await renderHook(() => useWorkflowRunWindow(windowId));
         await waitLoaded(hook);
         const before = home.requestsFor(route).length;
@@ -1438,7 +1442,7 @@ describe('Workflow Run windows through real Account storage', () => {
         expect(home.requestsFor(route)).toHaveLength(before + 1);
         expect(home.requestsFor(route).at(-1)?.input).toMatchObject({ request: { runIds: [selected.id] } });
         expect(hook.getCurrent().runIds).toEqual(windowId === 'all' ? [selected.id, untouched.id] : [selected.id]);
-        expect(hook.getCurrent().hasMore).toBe(true);
+        expect(hook.getCurrent().hasMore).toBe(windowId === 'all');
         const current = { ...changed, revision: changed.revision + 1 };
         home.answer(serverId, route, { body: await runPage(windowId === 'all' ? [current, untouched] : [current]) });
         await act(async () => publishHomeAccountChange(serverId, [definitionId], { changeKinds: ['artifact'] }));
