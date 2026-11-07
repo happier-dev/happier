@@ -225,6 +225,8 @@ type ProjectShellHeaderHostProps = ProjectShellScope & Readonly<{
         /** Context's body is Fork D's 65s2; the tab stays a destination either way (D44). */
         pages?: readonly ProjectPageV1[];
         menuActions?: readonly PageHeaderMenuAction[];
+        /** The key the shown plugin tab lends its actions under (`projectPageActionsKey`). */
+        pageActionsKey?: string;
       }>;
 
 export const ProjectShellHeaderHost = React.memo(function ProjectShellHeaderHost(props: ProjectShellHeaderHostProps) {
@@ -291,6 +293,7 @@ function ProjectShellHeaderContent(props: ProjectShellHeaderHostProps) {
           onSelectPage={selectPage}
           onNewSession={newSession.open}
           menuActions={menuActions}
+          {...(props.pageActionsKey === undefined ? {} : { pageActionsKey: props.pageActionsKey })}
           look={<ProjectAtmosphereLookChip />}
         />;
         }}</ProjectPageChromeCounts>

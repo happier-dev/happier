@@ -23,6 +23,16 @@ export type HappierPageChrome = Readonly<{
 /** Where a page header's actions live under navigation chrome that shows the title. */
 export type HappierPageActionsPlacement = 'navigation' | 'page';
 
+/**
+ * A toolbar's `⋯`, handed to the host with its actions: the menu as drawn in the toolbar's row, and its rows, so a
+ * header above the page that claims the page's actions puts them in its own `⋯` instead (a Project's header).
+ */
+export type HappierPageLentMenu = Readonly<{
+  menu: ReactNode;
+  items: readonly Readonly<{ id: string; label: string; icon?: string; disabled?: boolean }>[];
+  onSelect: (id: string) => void;
+}>;
+
 /** Same-realm host binding only; not part of the public page-chrome contract. */
 export type HappierPageChromeInternal = HappierPageChrome & Readonly<{
   /**
@@ -30,7 +40,7 @@ export type HappierPageChromeInternal = HappierPageChrome & Readonly<{
    * own actions. `navigation` (the default) lets the host hoist them into navigation chrome that shows the title;
    * `page` keeps them in the page header row, as an entity header keeps its actions by its identity.
    */
-  renderNavigationActions?: (actions: ReactNode, placement?: HappierPageActionsPlacement) => ReactNode;
+  renderNavigationActions?: (actions: ReactNode, placement?: HappierPageActionsPlacement, more?: HappierPageLentMenu) => ReactNode;
   /**
    * The navigation's own Back is showing and would return the page to a step it declared rather than leave it,
    * so a pushed detail draws no Back of its own beside it.

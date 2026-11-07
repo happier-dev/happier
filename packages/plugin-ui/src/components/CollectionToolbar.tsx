@@ -25,6 +25,7 @@ import {
 import { Status } from './Status.js';
 import type { TextTone } from './Text.js';
 import { usePluginTheme } from './PluginUiProvider.js';
+import { usePluginUiSurfaceBridge } from './surfaceBridge.js';
 
 /**
  * Whether the Collection around a toolbar is phone-narrow. Collection provides it from its measured width (and,
@@ -193,6 +194,10 @@ function SearchWithFunnel(props: Readonly<{ search: ReactNode; refine: Collectio
 function WideToolbar(props: CollectionToolbarProps): ReactElement {
   const { slots, freshness, refresh } = props;
   const chrome = useHappierPageChromeInternal();
+  const bridgeSurface = usePluginUiSurfaceBridge();
+  // On a host page the ⋯ goes to the host with the primary, so a header above the page that claims the page's
+  // actions (a Project's header) draws both and this row draws neither; unclaimed, the host draws them here.
+  const hostActions = slots?.pageActions != null && chrome?.renderNavigationActions !== undefined;
   const fit = useContext(CollectionToolbarOverflowContext);
   const { spacing } = usePluginTheme();
   // A healthy freshness ("Updated just now") or a read in flight ("Refreshing") is the first thing the one row gives up:
@@ -272,12 +277,14 @@ function WideToolbar(props: CollectionToolbarProps): ReactElement {
             onPress={refresh.onPress}
           />
         )}
-        <MoreMenu {...props} folded={false} />
+        {hostActions ? null : <MoreMenu {...props} folded={false} />}
         <Views views={props.views} compact={false} />
         {/* The host's page actions take the primary in their place, as a page header's actions do (route
             controls, then the page's own, then the column's Hide last). */}
-        {slots?.pageActions != null && chrome?.renderNavigationActions !== undefined
-          ? chrome.renderNavigationActions(primary)
+        {hostActions
+          ? chrome?.renderNavigationActions?.(primary === null ? null : bridgeSurface(primary), undefined,
+            props.more === undefined ? undefined
+              : { menu: <MoreMenu {...props} folded={false} />, items: props.more.items, onSelect: props.more.onSelect })
           : <>{slots?.pageActions ?? null}{primary}</>}
       </View>
     </View>

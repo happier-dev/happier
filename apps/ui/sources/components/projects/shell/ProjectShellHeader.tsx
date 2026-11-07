@@ -48,6 +48,7 @@ import { t } from '@/text';
 import { useHeaderHeight } from '@/utils/platform/responsive';
 import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
+import { useClaimedStackHeaderActions, useLentHeaderMenuRows } from '@/components/navigation/stackHeaderActions';
 import type { PluginRightSidebarLabelledCount } from '@/components/appShell/rightSidebar/rightSidebarPluginCount';
 
 import { useAtmosphereBandBoundary } from '@/components/atmosphere/atmosphereBandBoundary';
@@ -95,6 +96,11 @@ const ACTIONS_GAP_PX = 6;
  */
 const TWO_ROW_BAND_WIDTH_PX = 720;
 
+/** The key a Project's plugin tab lends its actions under and this header claims them by (D11). */
+export function projectPageActionsKey(scopeId: string): string {
+  return `project-page-actions:${scopeId}`;
+}
+
 /**
  * The Project page header (12s1, lab `p-overview` HOME/FIT): the Project's name, the checkout chip,
  * the six page tabs on one route-owned selection, then New session and the Project's `⋯`. Tabs that
@@ -120,6 +126,11 @@ export const ProjectShellHeader = React.memo(function ProjectShellHeader(
     changeCount?: number;
     onNewSession: (() => void) | null;
     menuActions: readonly PageHeaderMenuAction[];
+    /**
+     * The key the shown page lends its actions under (`PageActionsLendScope`): a plugin tab's primary becomes this
+     * header's + and its ⋯ rows join this header's ⋯, with New session moving there (D11).
+     */
+    pageActionsKey?: string;
     look?: React.ReactNode;
     testID?: string;
   }>,
@@ -171,6 +182,18 @@ export const ProjectShellHeader = React.memo(function ProjectShellHeader(
   const overflowTabs = React.useMemo(() => props.overflowPages?.map(renderTab), [props.overflowPages, renderTab]);
   const testID = props.testID ?? 'project-shell-header';
   const pointer = useHoverCapablePrimaryPointer();
+  // One + and one ⋯: the shown page's primary takes the +, and New session joins its ⋯ rows here.
+  const pageActionsKey = props.pageActionsKey ?? null;
+  const pagePrimary = useClaimedStackHeaderActions({ claimKey: pageActionsKey, drawsMenuRows: true });
+  const pageMenuRows = useLentHeaderMenuRows({ claimKey: pageActionsKey });
+  const pageOwnsPrimary = pagePrimary != null;
+  const onNewSession = props.onNewSession;
+  const menuActions = React.useMemo((): readonly PageHeaderMenuAction[] => {
+    const newSession: readonly PageHeaderMenuAction[] = pageOwnsPrimary && onNewSession
+      ? [{ id: 'newSession', title: t('projects.open.newSession'), testID: `${testID}.menu.newSession`, onSelect: onNewSession }] : [];
+    return pageMenuRows === null && newSession.length === 0 ? props.menuActions
+      : [...(pageMenuRows ?? []), ...newSession, ...props.menuActions];
+  }, [onNewSession, pageMenuRows, pageOwnsPrimary, props.menuActions, testID]);
   const binding = React.useMemo(() => {
     const placement = props.placement;
     if (!placement) return null;
@@ -262,7 +285,7 @@ export const ProjectShellHeader = React.memo(function ProjectShellHeader(
   const actionsNode = (
     <View style={styles.actions}>
       {props.look}
-      {props.onNewSession ? (
+      {pageOwnsPrimary ? pagePrimary : props.onNewSession ? (
         compact ? (
           <IconButton
             testID={`${testID}.newSession`}
@@ -290,8 +313,8 @@ export const ProjectShellHeader = React.memo(function ProjectShellHeader(
           />
         )
       ) : null}
-      {props.menuActions.length > 0 ? (
-        <PageHeaderMenu actions={props.menuActions} testID={`${testID}.menu`} interactiveTargetGapPx={ACTIONS_GAP_PX} />
+      {menuActions.length > 0 ? (
+        <PageHeaderMenu actions={menuActions} testID={`${testID}.menu`} interactiveTargetGapPx={ACTIONS_GAP_PX} />
       ) : null}
       {/* "Hide project": the main column's own header holds it (lab ade-shell HB). */}
       <PaneMainHideButton testID={`${testID}.hideMain`} interactiveTargetGapPx={ACTIONS_GAP_PX} />

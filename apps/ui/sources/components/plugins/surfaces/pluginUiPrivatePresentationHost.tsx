@@ -105,8 +105,10 @@ import {
     type InstalledPluginBrandPresentationInput,
 } from '@/components/plugins/shared/installedPluginBrandPresentation';
 
+type PluginPageLentMenu = import('./pluginPageHeaderActions').PluginPageLentMenu;
+
 type PluginUiPrivatePageChrome = HappierPageChrome & Readonly<{
-    renderNavigationActions?: (actions: React.ReactNode, placement?: 'navigation' | 'page') => React.ReactNode;
+    renderNavigationActions?: (actions: React.ReactNode, placement?: 'navigation' | 'page', more?: PluginPageLentMenu) => React.ReactNode;
 }>;
 
 const MATCHING_PLUGIN_POPOVER_PORTAL_OPTIONS = Object.freeze({

@@ -21,7 +21,7 @@ import { PageHeaderMenu } from '@/components/ui/layout/PageHeaderEntityParts';
  * `⋯`, unless it has a `⋯` of its own and puts them there (`drawsMenuRows`, {@link useLentHeaderMenuRows}).
  */
 /** One row a pane lends to the header of what it shows, drawn in that header's `⋯`. */
-export type LentHeaderMenuRow = Readonly<{ id: string; title: string; testID: string; iconName: IconName; onSelect: () => void }>;
+export type LentHeaderMenuRow = Readonly<{ id: string; title: string; testID: string; iconName: IconName; disabled?: boolean; onSelect: () => void }>;
 
 /** `claimants` in claim order: the first draws the actions, so two headers never both draw them. */
 type Entry = Readonly<{ render: () => React.ReactNode; menuRows: readonly LentHeaderMenuRow[] | null; claimants: readonly object[] }>;
@@ -95,9 +95,27 @@ export function useEnclosingHeaderActionsScope(): string | null | undefined {
 }
 
 /** The menu rows the enclosing pane lends with its controls, for a header that draws them in its own `⋯`; null when none. */
-export function useLentHeaderMenuRows(): readonly LentHeaderMenuRow[] | null {
-    const scopeKey = React.useContext(HeaderActionsScopeContext);
+export function useLentHeaderMenuRows(options?: Readonly<{ claimKey: string | null }>): readonly LentHeaderMenuRow[] | null {
+    const contextKey = React.useContext(HeaderActionsScopeContext);
+    const scopeKey = options === undefined ? contextKey : options.claimKey;
     return React.useSyncExternalStore(subscribe, () => (scopeKey ? entries.get(scopeKey)?.menuRows ?? null : null), () => null);
+}
+
+/**
+ * The other direction: a header that stands above the pages it hosts (a Project's header over its plugin
+ * tab) claims what the shown page lends, its primary and its `⋯` rows, so the page draws neither in its own
+ * row and the header has one `+` and one `⋯`. The header claims by this key (`claimKey`); the page lends
+ * through `usePageActionsLendKey`. A page with no claiming header draws its actions where it always did.
+ */
+const PageActionsLendContext = React.createContext<string | null>(null);
+
+export function PageActionsLendScope(props: Readonly<{ scopeKey: string; children: React.ReactNode }>) {
+    return <PageActionsLendContext.Provider value={props.scopeKey}>{props.children}</PageActionsLendContext.Provider>;
+}
+
+/** The key the enclosing header claims a hosted page's actions under; null where no header does. */
+export function usePageActionsLendKey(): string | null {
+    return React.useContext(PageActionsLendContext);
 }
 
 /** A pane that lends its controls to the header of what it shows; pair it with the publisher hooks above. */
@@ -112,12 +130,14 @@ export function HeaderActionsScope(props: Readonly<{ scopeKey: string | null; ch
  * the route's own actions bar draws them instead. Lent menu rows come in a `⋯` after the controls, unless
  * the header puts them in its own `⋯` (`drawsMenuRows`), so a page never shows two.
  */
-export function useClaimedStackHeaderActions(options?: Readonly<{ scopeOnly?: boolean; release?: boolean; drawsMenuRows?: boolean }>): React.ReactNode {
+export function useClaimedStackHeaderActions(options?: Readonly<{ scopeOnly?: boolean; release?: boolean; drawsMenuRows?: boolean;
+    /** Claim exactly this key (a header over its hosted pages, `PageActionsLendScope`); `null` claims nothing. */
+    claimKey?: string | null }>): React.ReactNode {
     const route = React.useContext(RouteContext);
     const scopeKey = React.useContext(HeaderActionsScopeContext);
     const hosted = useDestinationInstanceKey() !== null;
     // Hosted pages own their actions; the inherited Expo context belongs to a retained route.
-    const routeKey = options?.release ? null : scopeKey !== undefined
+    const routeKey = options?.release ? null : options?.claimKey !== undefined ? options.claimKey : scopeKey !== undefined
         ? scopeKey
         : hosted || options?.scopeOnly ? null : route?.key ?? null;
     const [claimant] = React.useState(() => ({}));

@@ -26,6 +26,7 @@ import { ProjectRightPanel, ProjectRightSidebarProvider, ProjectRightSidebarRail
 import { ProjectWorktreeRecoveryToast } from './detail/ProjectWorktreeRecoveryToast';
 import { ProjectOpenResolutionPage } from './ProjectOpenResolution';
 import { ProjectPhoneCheckoutRow, ProjectShellHeaderHost } from './shell/ProjectShellHeaderHost';
+import { projectPageActionsKey } from './shell/ProjectShellHeader';
 import { ListPresentationProvider, PageColumnProvider } from '@/components/ui/lists/listPresentation';
 import { useProjectRouteActions } from './detail/useProjectRouteActions';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
@@ -330,6 +331,7 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
                                         onSelectRootPath={handleSelectRootPath}
                                         onSelectPage={handleSelectPage}
                                         onSelectWorkspace={handleSelectWorkspace}
+                                        pageActionsKey={projectPageActionsKey(scopeId)}
                                         menuActions={[{ id: 'terminal', title: t('settings.terminal'),
                                             onSelect: () => pane.openBottom({ tabId: 'terminal' }) }]}
                                     />

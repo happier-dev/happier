@@ -1,6 +1,13 @@
 import * as React from 'react';
 
-import { useClaimedStackHeaderActions } from '@/components/navigation/stackHeaderActions';
+import {
+  useClaimedStackHeaderActions,
+  usePageActionsLendKey,
+  useStackHeaderActionsClaimed,
+  useStackHeaderActionsPublisher,
+  type LentHeaderMenuRow,
+} from '@/components/navigation/stackHeaderActions';
+import { resolvePluginUiIconName } from '@/components/plugins/surfaces/iconToken/resolvePluginUiIconToken';
 import { useNavigationTitleChromeShowsTitle } from '@/components/ui/layout/PageHeader';
 import { NavigationHeaderActions } from '@/components/ui/layout/NavigationHeaderActions';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
@@ -10,9 +17,20 @@ import { PaneMainHideButton } from '@/components/appShell/panes/mainColumn/PaneM
 import { t } from '@/text';
 import { splitHappierPagePrimaryOperation } from '@happier-dev/plugin-ui/presentation';
 
+/** The page chrome's placement argument (same-realm binding; the chrome assignment type-checks it). */
+type PageActionsPlacement = 'navigation' | 'page';
+
+/** A Collection toolbar's `⋯` handed with its actions (plugin-ui `HappierPageLentMenu`). */
+export type PluginPageLentMenu = Readonly<{
+  menu: React.ReactNode;
+  items: readonly Readonly<{ id: string; label: string; icon?: string; disabled?: boolean }>[];
+  onSelect: (id: string) => void;
+}>;
+
 /** The host's `renderNavigationActions` for a plugin page header or Collection toolbar. */
-export function renderPluginNavigationActions(actions: React.ReactNode) {
-  return <PluginPageHeaderActions actions={actions} />;
+export function renderPluginNavigationActions(actions: React.ReactNode, placement: PageActionsPlacement = 'navigation',
+  more?: PluginPageLentMenu) {
+  return <PluginPageHeaderActions actions={actions} placement={placement} more={more ?? null} />;
 }
 
 type PluginArtifactHostingStatus = Readonly<{
@@ -101,16 +119,35 @@ function PluginArtifactHostingChip(
 
 /**
  * The route's own actions (the machine a page runs on) joined to the plugin's header row, or the
- * plugin's actions handed to the native header on a phone. While the plugin is offline its row is a
+ * plugin's actions handed to the native header on a phone; a `page` placement (an entity header)
+ * keeps them in the row there too, as a core entity page does. While the plugin is offline its row is a
  * read-only snapshot, so the route's actions go back to the route's own bar: choosing another
  * machine is the way out of an offline one and must stay usable.
  */
 function PluginPageHeaderActions(
-  props: Readonly<{ actions: React.ReactNode }>,
+  props: Readonly<{ actions: React.ReactNode; placement: PageActionsPlacement; more: PluginPageLentMenu | null }>,
 ) {
-  const chromeShowsTitle = useNavigationTitleChromeShowsTitle();
+  const chromeShowsTitle = useNavigationTitleChromeShowsTitle() && props.placement === 'navigation';
   const live = usePluginSurfaceInteractionAvailable();
   const routeActions = useClaimedStackHeaderActions({ release: !live });
+  // A header above this page that claims its actions (a Project's header over its plugin tab) draws the page's
+  // primary as its + and the page's ⋯ rows in its own ⋯; this row then draws neither (D11). A read-only snapshot
+  // and an entity header's row keep theirs here.
+  const lendKey = usePageActionsLendKey();
+  const more = props.more;
+  const lends = lendKey !== null && live && props.placement === 'navigation' && !chromeShowsTitle
+    && (props.actions != null || more !== null);
+  const lentRender = React.useMemo(() => (lends ? () => props.actions ?? null : null), [lends, props.actions]);
+  const lentRows = React.useMemo(() => (!lends || more === null ? null : more.items.map((item): LentHeaderMenuRow => ({
+    id: `plugin-page-more:${item.id}`,
+    title: item.label,
+    testID: `plugin-page-more.${item.id}`,
+    iconName: resolvePluginUiIconName(item.icon),
+    ...(item.disabled === true ? { disabled: true } : {}),
+    onSelect: () => more.onSelect(item.id),
+  }))), [lends, more]);
+  useStackHeaderActionsPublisher(lendKey ?? '', lentRender, lentRows);
+  const claimed = useStackHeaderActionsClaimed(lendKey ?? '') && lends;
   const hosting = React.useContext(PluginArtifactHostingStatusContext);
   // The page's one filled action stays on the header's trailing side; the rest fold into overflow.
   const phone = React.useMemo(() => {
@@ -128,12 +165,16 @@ function PluginPageHeaderActions(
     };
   }, [chromeShowsTitle, props.actions]);
   return phone !== null ? (
-    <NavigationHeaderActions primary={phone.primary} actions={phone.rest} />
+    <>
+      {more?.menu ?? null}
+      <NavigationHeaderActions primary={phone.primary} actions={phone.rest} />
+    </>
   ) : (
     <>
+      {claimed ? null : more?.menu ?? null}
       {hosting ? <PluginArtifactHostingChip status={hosting} /> : null}
       {routeActions}
-      {props.actions}
+      {claimed ? null : props.actions}
       {/* A plugin page that is a pane host's main column offers Hide like every page header there (D14); it draws nothing elsewhere. */}
       <PaneMainHideButton />
     </>
