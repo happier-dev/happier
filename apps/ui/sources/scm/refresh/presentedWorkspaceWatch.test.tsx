@@ -276,9 +276,12 @@ describe('presented workspace push through Session and Project demand', () => {
         await hook.unmount();
     });
 
-    it('keeps the snapshot and fallback when the watch limit settles unavailable, without retrying observation', async () => {
-        const { hook } = await mount();
+    it('runs fallback only while the shared watch is unavailable and disarms it when presentation reacquires a ready watch', async () => {
+        const { hook, setPresented } = await mount();
         expect(liveSubscriptions).toBe(1);
+        const readyReads = statusReads();
+        await advance(600_000);
+        expect(statusReads() - readyReads).toBe(0);
         const acquisitions = rpc.mock.calls.filter(([request]) => request.method === 'scm.workspace.watch.v1'
             && (request.payload as { observationOnly?: boolean }).observationOnly).length;
         await act(async () => {
@@ -295,6 +298,11 @@ describe('presented workspace push through Session and Project demand', () => {
         expect(hook.getCurrent().error?.errorCode).toBe('ENOSPC');
         expect(rpc.mock.calls.filter(([request]) => request.method === 'scm.workspace.watch.v1'
             && (request.payload as { observationOnly?: boolean }).observationOnly)).toHaveLength(acquisitions);
+        await setPresented(false);
+        await setPresented(true);
+        const recoveredReads = statusReads();
+        await advance(600_000);
+        expect(statusReads() - recoveredReads).toBe(0);
         await hook.unmount();
     });
 });

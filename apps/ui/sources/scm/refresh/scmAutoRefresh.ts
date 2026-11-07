@@ -24,6 +24,8 @@ type Target = Readonly<{
     onUnavailable?(reason: ScmWorkspaceWatchUnavailable): void;
 }>;
 type Consumer = { demand: ScmAutoRefreshDemand; poll: Poll };
+type WatchState = { status: 'idle' | 'pending' | 'ready' }
+    | { status: 'unavailable'; reason: ScmWorkspaceWatchUnavailable };
 type Poll = {
     key: string;
     consumers: Set<Consumer>;
@@ -31,9 +33,8 @@ type Poll = {
     running: boolean;
     delayMs: number;
     snapshot: ScmWorkingSnapshot | null;
-    watchStarted: boolean;
+    watchState: WatchState;
     stopWatch: (() => void) | null;
-    unavailable: ScmWorkspaceWatchUnavailable | null;
 };
 
 /** One presented observation and external-editor fallback per repository. */
@@ -44,7 +45,10 @@ export class ScmAutoRefresh {
     constructor(private resolve: (demand: ScmAutoRefreshDemand) => Target | null) {}
 
     hasDemand(key: string): boolean { return this.polls.has(key); }
-    getUnavailable(key: string): ScmWorkspaceWatchUnavailable | null { return this.polls.get(key)?.unavailable ?? null; }
+    getUnavailable(key: string): ScmWorkspaceWatchUnavailable | null {
+        const state = this.polls.get(key)?.watchState;
+        return state?.status === 'unavailable' ? state.reason : null;
+    }
 
     /** The status owner has published the first snapshot (and possibly discovered its repository root). */
     reconcile(key: string): void {
@@ -61,7 +65,7 @@ export class ScmAutoRefresh {
         let poll = this.polls.get(target.key);
         if (!poll) {
             poll = { key: target.key, consumers: new Set(), timer: null, running: false,
-                delayMs: demand.intervalMs, snapshot: null, watchStarted: false, stopWatch: null, unavailable: null };
+                delayMs: demand.intervalMs, snapshot: null, watchState: { status: 'idle' }, stopWatch: null };
             this.polls.set(target.key, poll);
         }
         const previousInterval = this.policy(poll)?.intervalMs;
@@ -116,8 +120,9 @@ export class ScmAutoRefresh {
     private isActive(): boolean { return isRuntimeActive() && readHostWindowFocus() !== false; }
 
     private reconcileWatch(poll: Poll, target: Target): void {
-        if (!this.isActive() || poll.consumers.size === 0 || poll.watchStarted || !target.watch) return;
-        poll.watchStarted = true;
+        if (!this.isActive() || poll.consumers.size === 0 || poll.watchState.status !== 'idle' || !target.watch) return;
+        poll.watchState = { status: 'pending' };
+        this.clearTimer(poll);
         const revalidate = () => {
             // The shared status queue preserves changes arriving after an in-flight read started.
             void target.read('filesystem').catch(() => {
@@ -127,11 +132,16 @@ export class ScmAutoRefresh {
         poll.stopWatch = target.watch({
             onChange: revalidate,
             // A read after native enrollment closes the initial snapshot-to-attachment window.
-            onReady: revalidate,
+            onReady: () => {
+                poll.watchState = { status: 'ready' };
+                this.clearTimer(poll);
+                revalidate();
+            },
             onUnavailable: reason => {
-                poll.unavailable = reason;
+                poll.watchState = { status: 'unavailable', reason };
                 target.onUnavailable?.(reason);
-                // Keep watchStarted until presentation ends; the fallback remains, without a watch retry.
+                // Settles until presentation ends: use the incumbent fallback without a watch retry.
+                if (this.policy(poll)?.intervalMs) this.schedule(poll, poll.delayMs);
             },
         });
     }
@@ -139,8 +149,7 @@ export class ScmAutoRefresh {
     private releaseWatch(poll: Poll): void {
         poll.stopWatch?.();
         poll.stopWatch = null;
-        poll.watchStarted = false;
-        poll.unavailable = null;
+        poll.watchState = { status: 'idle' };
     }
 
     private policy(poll: Poll): ScmAutoRefreshDemand | undefined {
@@ -166,6 +175,8 @@ export class ScmAutoRefresh {
 
     private schedule(poll: Poll, delayMs: number): void {
         if (poll.timer !== null || poll.running || poll.consumers.size === 0
+            || poll.watchState.status === 'ready'
+            || poll.watchState.status === 'pending' && (poll.snapshot !== null || delayMs > 0)
             || this.policy(poll)?.intervalMs === 0 && poll.snapshot !== null || !this.isActive()) return;
         poll.timer = setTimeout(() => { void this.run(poll); }, delayMs);
     }

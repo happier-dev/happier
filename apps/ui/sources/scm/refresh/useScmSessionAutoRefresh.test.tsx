@@ -30,9 +30,9 @@ vi.mock('react-native', async () => {
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
     const { createServerScopedMachineRpcBoundaryMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
     return createServerScopedMachineRpcBoundaryMock(request => {
-        // Fallback cadence remains meaningful while the remote watcher is still enrolling.
-        if (request.method === RPC_METHODS.SCM_WORKSPACE_WATCH) return new Promise(resolve => {
-            request.signal?.addEventListener('abort', () => resolve({ status: 'cancelled' }), { once: true });
+        // These cadence cases exercise the unavailable-watch fallback, not native enrollment.
+        if (request.method === RPC_METHODS.SCM_WORKSPACE_WATCH) return Promise.resolve({
+            status: 'unavailable', reason: { code: 'WATCH_UNAVAILABLE', message: 'Native watch unavailable' },
         });
         return machineRpc(request);
     });
