@@ -1,68 +1,17 @@
+import { sentryDetailTabDeclaration } from './ui/detail/tabDeclarations.js';
+import { SENTRY_ACCOUNT_ACTIONS, READ_HOST_ACCESS } from './accountActions.js';
 import { defineComposerReference, definePlugin } from '@happier-dev/plugin-sdk';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
-import { withTriageSourceSettingsTranslationsV1 } from '@happier-dev/triage-sources/translations';
-import {
-  TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
-  TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
-  TriageSourcesContributionProtocolV1,
-  TriageSourceConnectedAccountInputsV1,
-  TriageTaskWriteResultV1Schema,
-} from '@happier-dev/triage-protocol/v1';
+import { createPluginEventAutomationSetupResultV1JsonSchema, PluginEventAutomationHistoryGapResetActionInputV1JsonSchema, PluginEventAutomationHistoryGapResetActionResultV1JsonSchema } from '@happier-dev/plugin-sdk/events';
+import { createTriageIssueEventSourceSetupV1, TriageIssueEventSetupInputV1Schema, TriageIssueEventSourceConfigV1Schema, TriageIssueTransitionV1Schema, TRIAGE_ISSUE_EVENT_SETUP_INPUT_HINTS_V1, TRIAGE_ISSUE_CHECKPOINT_COLLECTION_V1 } from '@happier-dev/triage-sources/runtime';
+import { runSentryIssueObserver, resetSentryIssueHistoryGap } from './source/issueObserver.js';
 
-import {
-  SENTRY_ACCOUNT_NETWORK_HOST_ACCESS_ID,
-  SENTRY_ACTION_IDS,
-  SENTRY_CLOUD_NETWORK_HOST_ACCESS_ID,
-  SENTRY_CLOUD_REGIONS,
-  SENTRY_CLOUD_REGION_ORIGINS,
-  SENTRY_CONNECTED_ACCOUNT_ID,
-  SENTRY_CONNECTED_ACCOUNT_PURPOSE,
-  SENTRY_CONTRIBUTION_ID,
-  SENTRY_ENTRY_KIND_ID,
-  SENTRY_EVIDENCE_REFERENCE_ID,
-  SENTRY_SOURCE_DISPLAY_NAME,
-  SENTRY_TRIAGE_SETTINGS_ARTIFACT_ID,
-  SENTRY_TRIAGE_SETTINGS_GROUP_ID,
-  SENTRY_TRIAGE_SETTINGS_PAGE_ID,
-  SENTRY_TRIAGE_SETTINGS_RENDERER_ID,
-  SENTRY_PLUGIN_ID,
-} from './sentryContracts.js';
-import {
-  SENTRY_CLOUD_MODE_ID,
-  SENTRY_ORIGIN_CONFIGURATION_FIELD,
-  SENTRY_REGION_CONFIGURATION_FIELD,
-  SENTRY_SELF_HOSTED_MODE_ID,
-  sentryConnectedAccountRuntime,
-} from './auth/connectedAccountRuntime.js';
-import { SENTRY_UI_TRANSLATIONS } from './ui/translations.js';
-import {
-  SentryIssueEventsInputV1Schema,
-  SentryIssueEventsResultV1Schema,
-  SentryReadEventInputV1Schema,
-  SentryReadEventResultV1Schema,
-  SentryReadIssueInputV1Schema,
-  SentryReadIssueResultV1Schema,
-  SentryTagValuesInputV1Schema,
-  SentryTagValuesResultV1Schema,
-} from './detail/detailContracts.js';
-import {
-  listSentryIssueEvents,
-  listSentryTagValues,
-  readSentryEvent,
-  readSentryIssue,
-} from './source/detailOperations.js';
-import {
-  getSentrySourceEntry,
-  listSentryInstances,
-  scanSentrySource,
-} from './source/operations.js';
-import {
-  resolveSentryEvidenceReference,
-  searchSentryEvidenceReferences,
-} from './composer/reference.js';
-import { SentryIssueAssignInputV1Schema, SentryIssueWriteInputV1Schema } from './source/writeContracts.js';
-import { archiveSentryIssue, assignSentryIssue, resolveSentryIssue } from './source/writeOperations.js';
-import { listSentryScopeUnits } from './source/scopeUnits.js';
+import { TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, TriageSourcesContributionProtocolV1 } from '@happier-dev/triage-protocol/v1';
+
+import { SENTRY_ACCOUNT_NETWORK_HOST_ACCESS_ID, SENTRY_ACTION_IDS, SENTRY_CLOUD_NETWORK_HOST_ACCESS_ID, SENTRY_CLOUD_REGIONS, SENTRY_CLOUD_REGION_ORIGINS, SENTRY_CONNECTED_ACCOUNT_ID, SENTRY_CONNECTED_ACCOUNT_PURPOSE, SENTRY_CONTRIBUTION_ID, SENTRY_ENTRY_KIND_ID, SENTRY_EVIDENCE_REFERENCE_ID, SENTRY_SOURCE_DISPLAY_NAME, SENTRY_TRIAGE_SETTINGS_ARTIFACT_ID, SENTRY_TRIAGE_SETTINGS_GROUP_ID, SENTRY_TRIAGE_SETTINGS_PAGE_ID, SENTRY_TRIAGE_SETTINGS_RENDERER_ID, SENTRY_PLUGIN_ID } from './sentryContracts.js';
+import { SENTRY_CLOUD_MODE_ID, SENTRY_ORIGIN_CONFIGURATION_FIELD, SENTRY_REGION_CONFIGURATION_FIELD, SENTRY_SELF_HOSTED_MODE_ID, sentryConnectedAccountRuntime, sentryPortableAccountRuntime } from './auth/connectedAccountRuntime.js';
+
+import { resolveSentryEvidenceReference, searchSentryEvidenceReferences } from './composer/reference.js';
 
 /** The detail surface's declared renderer and the UI artifact it mounts. */
 export const SENTRY_DETAIL_RENDERER_ID = 'sentry-detail';
@@ -170,13 +119,16 @@ const SENTRY_SOURCE_DESCRIPTOR = {
     // each as a panel. Files and Checks come from the linked fix PR; this
     // source's own views follow the shared tabs.
     detailTabs: [
-      { kind: 'shared' as const, id: 'overview' as const },
-      { kind: 'shared' as const, id: 'activity' as const },
-      { kind: 'source' as const, id: 'stack-trace', title: 'Stack trace', titleKey: 'plugins.sentry.ui.tab.stackTrace' },
+      { kind: 'shared' as const, id: 'overview' as const, scrollOwner: sentryDetailTabDeclaration('overview').scrollOwner },
+      { kind: 'shared' as const, id: 'activity' as const, scrollOwner: sentryDetailTabDeclaration('activity').scrollOwner },
+      { kind: 'source' as const, id: 'stack-trace', scrollOwner: sentryDetailTabDeclaration('stack-trace').scrollOwner, title: 'Stack trace', titleKey: 'plugins.sentry.ui.tab.stackTrace' },
       // The row's own event count is the Occurrences tab's summary.
-      { kind: 'source' as const, id: 'occurrences', title: 'Occurrences', titleKey: 'plugins.sentry.ui.tab.occurrences', summaryFact: 'events' },
-      { kind: 'source' as const, id: 'release', title: 'Release', titleKey: 'plugins.sentry.ui.tab.release' },
+      { kind: 'source' as const, id: 'occurrences', scrollOwner: sentryDetailTabDeclaration('occurrences').scrollOwner, title: 'Occurrences', titleKey: 'plugins.sentry.ui.tab.occurrences', summaryFact: 'events' },
+      { kind: 'source' as const, id: 'release', scrollOwner: sentryDetailTabDeclaration('release').scrollOwner, title: 'Release', titleKey: 'plugins.sentry.ui.tab.release' },
     ],
+    // Resolve and Archive are the issue's own actions: the frame places them in its header (its ⋯), not under
+    // the story.
+    detailActions: true as const,
   }],
 };
 
@@ -196,15 +148,6 @@ const SENTRY_SOURCE_DESCRIPTOR = {
  * `listInstances` still carries no account at all, because producing account
  * references is what it performs.
  */
-const READ_HOST_ACCESS = [
-  SENTRY_CONNECTED_ACCOUNT_PURPOSE,
-  SENTRY_CLOUD_NETWORK_HOST_ACCESS_ID,
-  SENTRY_ACCOUNT_NETWORK_HOST_ACCESS_ID,
-];
-const INSTANCE_ACCOUNT_BINDINGS = [{
-  path: 'instance.binding.account',
-  purpose: SENTRY_CONNECTED_ACCOUNT_PURPOSE,
-}];
 
 export const SENTRY_PLUGIN = definePlugin({
   id: SENTRY_PLUGIN_ID,
@@ -214,9 +157,19 @@ export const SENTRY_PLUGIN = definePlugin({
   brand: { iconResourceId: 'brand-icon', monochrome: true },
   resources: {
     'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' },
+    "i18n-en": { kind: 'asset', path: "assets/i18n/en.json", contentType: 'application/json' },
+    "i18n-ru": { kind: 'asset', path: "assets/i18n/ru.json", contentType: 'application/json' },
+    "i18n-pl": { kind: 'asset', path: "assets/i18n/pl.json", contentType: 'application/json' },
+    "i18n-es": { kind: 'asset', path: "assets/i18n/es.json", contentType: 'application/json' },
+    "i18n-fr": { kind: 'asset', path: "assets/i18n/fr.json", contentType: 'application/json' },
+    "i18n-it": { kind: 'asset', path: "assets/i18n/it.json", contentType: 'application/json' },
+    "i18n-pt": { kind: 'asset', path: "assets/i18n/pt.json", contentType: 'application/json' },
+    "i18n-de": { kind: 'asset', path: "assets/i18n/de.json", contentType: 'application/json' },
+    "i18n-ca": { kind: 'asset', path: "assets/i18n/ca.json", contentType: 'application/json' },
+    "i18n-zh-hans": { kind: 'asset', path: "assets/i18n/zh-Hans.json", contentType: 'application/json' },
+    "i18n-zh-hant": { kind: 'asset', path: "assets/i18n/zh-Hant.json", contentType: 'application/json' },
+    "i18n-ja": { kind: 'asset', path: "assets/i18n/ja.json", contentType: 'application/json' },
   },
-  engines: { happier: '^0.0.0' },
-  runtime: { apiVersion: 1 },
   entrypoints: { daemon: './.happier-plugin/daemon.js' },
   composer: {
     references: {
@@ -228,8 +181,34 @@ export const SENTRY_PLUGIN = definePlugin({
       }),
     },
   },
+  notifications: {
+    'issue-alerts': { kind: 'plugin', title: 'Issue alerts', eventIds: ['issue-transition'] },
+  },
+  events: {
+    'issue-transition': { declaration: {
+      kind: 'event', title: 'Sentry issue changed', description: 'A watched issue opened, changed, or resolved.',
+      payloadSchema: TriageIssueTransitionV1Schema.jsonSchema,
+      automation: { v: 1, eligible: true, source: {
+        sourceContractVersion: 1, supportedObservationTransports: ['checkpointedPull'],
+        sourceConfigSchema: TriageIssueEventSourceConfigV1Schema.jsonSchema,
+        setupActionRef: { pluginId: SENTRY_PLUGIN_ID, localId: SENTRY_ACTION_IDS.setupIssueEvent },
+        historyGapResetActionRef: { pluginId: SENTRY_PLUGIN_ID, localId: SENTRY_ACTION_IDS.resetIssueEvent },
+        connectedAccountPurposeBindings: [{ path: 'instance.binding.account', purpose: SENTRY_CONNECTED_ACCOUNT_PURPOSE }],
+      } },
+    } },
+  },
+  accountCollections: { [TRIAGE_ISSUE_CHECKPOINT_COLLECTION_V1.id]: TRIAGE_ISSUE_CHECKPOINT_COLLECTION_V1 },
+  backgroundServices: [{ declaration: { id: 'issue-observer', title: 'Sentry issue observer' }, runner: runSentryIssueObserver }],
+  webhooks: { 'issue-attention': {
+    title: 'Sentry assignment attention', description: 'Receives verified issue assignment and resolution deliveries.',
+    verifier: { kind: 'sentry_hmac_sha256_v1', routing: 'accountEndpoint' },
+    handlerAction: { localId: 'sentry/accept-attention-webhook' },
+  } },
   hostAccess: {
     required: [{
+      id: 'issue-checkpoint-storage', capability: 'storage.account',
+      reason: 'Retain issue transition checkpoints for enabled source observers.', scope: { enabled: true },
+    }, {
       id: SENTRY_CLOUD_NETWORK_HOST_ACCESS_ID,
       capability: 'network',
       reason: 'Read Sentry organizations, issues, events and tags, and update individual issues on the two Sentry Cloud regions.',
@@ -321,163 +300,43 @@ export const SENTRY_PLUGIN = definePlugin({
       defaultRank: 10,
       renderer: SENTRY_TRIAGE_SETTINGS_RENDERER_ID,
     }],
-    translations: withTriageSourceSettingsTranslationsV1([
-      { locale: 'en', messages: { ...SENTRY_UI_TRANSLATIONS.en, 'plugins.sentry.settings.group': 'Sentry', 'plugins.sentry.settings.sources': 'PRs & Issues', 'plugins.sentry.settings.sources.subtitle': 'Choose which Sentry organizations appear in PRs & Issues.' } },
-      { locale: 'ru', messages: { ...SENTRY_UI_TRANSLATIONS.ru, 'plugins.sentry.settings.group': 'Sentry', 'plugins.sentry.settings.sources': 'PR и задачи', 'plugins.sentry.settings.sources.subtitle': 'Выберите организации Sentry, которые будут отображаться в разделе PR и задач.' } },
-      { locale: 'pl', messages: { ...SENTRY_UI_TRANSLATIONS.pl, 'plugins.sentry.settings.group': 'Sentry', 'plugins.sentry.settings.sources': 'PR-y i zgłoszenia', 'plugins.sentry.settings.sources.subtitle': 'Wybierz organizacje Sentry wyświetlane w sekcji PR-ów i zgłoszeń.' } },
-      { locale: 'es', messages: { ...SENTRY_UI_TRANSLATIONS.es, 'plugins.sentry.settings.group': 'Sentry', 'plugins.sentry.settings.sources': 'PR e incidencias', 'plugins.sentry.settings.sources.subtitle': 'Elige qué organizaciones de Sentry aparecen en PR e incidencias.' } },
-      { locale: 'fr', messages: { ...SENTRY_UI_TRANSLATIONS.fr, 'plugins.sentry.settings.group': 'Sentry', 'plugins.sentry.settings.sources': 'PR et tickets', 'plugins.sentry.settings.sources.subtitle': 'Choisis les organisations Sentry affichées dans PR et tickets.' } },
-      { locale: 'it', messages: { ...SENTRY_UI_TRANSLATIONS.it, 'plugins.sentry.settings.group': 'Sentry', 'plugins.sentry.settings.sources': 'PR e segnalazioni', 'plugins.sentry.settings.sources.subtitle': 'Scegli le organizzazioni Sentry da mostrare in PR e segnalazioni.' } },
-      { locale: 'pt', messages: { ...SENTRY_UI_TRANSLATIONS.pt, 'plugins.sentry.settings.group': 'Sentry', 'plugins.sentry.settings.sources': 'PRs e problemas', 'plugins.sentry.settings.sources.subtitle': 'Escolha as organizações Sentry apresentadas em PRs e problemas.' } },
-      { locale: 'de', messages: { ...SENTRY_UI_TRANSLATIONS.de, 'plugins.sentry.settings.group': 'Sentry', 'plugins.sentry.settings.sources': 'PRs & Tickets', 'plugins.sentry.settings.sources.subtitle': 'Wähle aus, welche Sentry-Organisationen unter PRs & Tickets angezeigt werden.' } },
-      { locale: 'ca', messages: { ...SENTRY_UI_TRANSLATIONS.ca, 'plugins.sentry.settings.group': 'Sentry', 'plugins.sentry.settings.sources': 'PR i incidències', 'plugins.sentry.settings.sources.subtitle': 'Tria les organitzacions de Sentry que es mostren a PR i incidències.' } },
-      { locale: 'zh-Hans', messages: { ...SENTRY_UI_TRANSLATIONS['zh-Hans'], 'plugins.sentry.settings.group': 'Sentry', 'plugins.sentry.settings.sources': 'PR 和问题', 'plugins.sentry.settings.sources.subtitle': '选择要在 PR 和问题中显示的 Sentry 组织。' } },
-      { locale: 'zh-Hant', messages: { ...SENTRY_UI_TRANSLATIONS['zh-Hant'], 'plugins.sentry.settings.group': 'Sentry', 'plugins.sentry.settings.sources': 'PR 與問題', 'plugins.sentry.settings.sources.subtitle': '選擇要在 PR 與問題中顯示的 Sentry 組織。' } },
-      { locale: 'ja', messages: { ...SENTRY_UI_TRANSLATIONS.ja, 'plugins.sentry.settings.group': 'Sentry', 'plugins.sentry.settings.sources': 'PR と課題', 'plugins.sentry.settings.sources.subtitle': 'PR と課題に表示する Sentry 組織を選択します。' } },
-    ]),
+    translations: [
+      { locale: "en", resourceId: "i18n-en" },
+      { locale: "ru", resourceId: "i18n-ru" },
+      { locale: "pl", resourceId: "i18n-pl" },
+      { locale: "es", resourceId: "i18n-es" },
+      { locale: "fr", resourceId: "i18n-fr" },
+      { locale: "it", resourceId: "i18n-it" },
+      { locale: "pt", resourceId: "i18n-pt" },
+      { locale: "de", resourceId: "i18n-de" },
+      { locale: "ca", resourceId: "i18n-ca" },
+      { locale: "zh-Hans", resourceId: "i18n-zh-hans" },
+      { locale: "zh-Hant", resourceId: "i18n-zh-hant" },
+      { locale: "ja", resourceId: "i18n-ja" },
+    ],
   },
   actions: {
-    [SENTRY_ACTION_IDS.resolve]: {
-      title: 'Resolve Sentry issue',
-      description: 'Resolves one exact Sentry issue and confirms its live state.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
-      placementBindings: ['detailsPanel'],
-      dangerLevel: 'writesRemote',
-      confirmation: { title: 'Resolve this Sentry issue?', body: 'Changes this issue to Resolved in Sentry. Requires event:write.', confirmLabel: 'Resolve' },
-      inputSchema: SentryIssueWriteInputV1Schema.jsonSchema,
-      resultSchema: TriageTaskWriteResultV1Schema.jsonSchema,
-      hostAccess: READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-      run: resolveSentryIssue,
+    ...SENTRY_ACCOUNT_ACTIONS,
+    'sentry/accept-attention-webhook': {
+      title: 'Accept verified Sentry attention', description: 'Projects a verified assignment delivery into Triage attention.',
+      surfaces: ['plugin'], dangerLevel: 'writesRemote',
+      inputSchema: PluginWebhookActionInputSchema.jsonSchema, resultSchema: PluginWebhookActionResultSchema.jsonSchema,
+      hostAccess: READ_HOST_ACCESS, run: acceptSentryAttentionWebhook,
     },
-    [SENTRY_ACTION_IDS.archive]: {
-      title: 'Archive Sentry issue',
-      description: 'Archives one exact Sentry issue forever and confirms its live state.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
-      placementBindings: ['detailsPanel'],
-      dangerLevel: 'writesRemote',
-      confirmation: { title: 'Archive this Sentry issue forever?', body: 'Sets this issue to Archived forever in Sentry. This does not discard incoming events. Requires event:write.', confirmLabel: 'Archive' },
-      inputSchema: SentryIssueWriteInputV1Schema.jsonSchema,
-      resultSchema: TriageTaskWriteResultV1Schema.jsonSchema,
-      hostAccess: READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-      run: archiveSentryIssue,
+    [SENTRY_ACTION_IDS.resetIssueEvent]: {
+      title: 'Check Sentry issue baseline', surfaces: ['plugin'], dangerLevel: 'safe',
+      inputSchema: PluginEventAutomationHistoryGapResetActionInputV1JsonSchema,
+      resultSchema: PluginEventAutomationHistoryGapResetActionResultV1JsonSchema,
+      run: resetSentryIssueHistoryGap,
     },
-    [SENTRY_ACTION_IDS.assign]: {
-      title: 'Assign Sentry issue',
-      description: 'Assigns one exact Sentry issue to the selected native user or team id.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
-      placementBindings: ['detailsPanel'],
-      dangerLevel: 'writesRemote',
-      confirmation: { title: 'Assign this Sentry issue?', body: 'Changes the assignee in Sentry and may notify that user or team. Requires event:write.', confirmLabel: 'Assign' },
-      inputSchema: SentryIssueAssignInputV1Schema.jsonSchema,
-      resultSchema: TriageTaskWriteResultV1Schema.jsonSchema,
-      hostAccess: READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-      run: assignSentryIssue,
-    },
-    [SENTRY_ACTION_IDS.listInstances]: {
-      title: 'Discover Sentry organizations',
-      description: 'Lists the Sentry organizations each connected Sentry account can reach.',
-      surfaces: sources.operations.listInstances.declaration.surfaces,
-      // Mounted-only placement. `plugin` stays because the Triage daemon
-      // consumes it and `ui` because this source's own mounted surfaces hold
-      // present-user authority; the explicit empty list only withdraws the
-      // Action from global placement discovery — it disables no invocation.
-      placementBindings: [],
-      dangerLevel: sources.operations.listInstances.declaration.dangerLevel,
-      inputSchema: sources.operations.listInstances.declaration.input.schema.jsonSchema,
-      resultSchema: sources.operations.listInstances.declaration.resultSchema.jsonSchema,
-      hostAccess: READ_HOST_ACCESS,
-      run: listSentryInstances,
-    },
-    [SENTRY_ACTION_IDS.listScopeUnits]: {
-      title: 'List Sentry projects',
-      description: 'Lists searchable projects in this organization, or reads its saved project selection.',
-      surfaces: sources.operations.listScopeUnits.declaration.surfaces,
-      placementBindings: [],
-      dangerLevel: sources.operations.listScopeUnits.declaration.dangerLevel,
-      inputSchema: TriageSourceConnectedAccountInputsV1.listScopeUnits.jsonSchema,
-      resultSchema: sources.operations.listScopeUnits.declaration.resultSchema.jsonSchema,
-      hostAccess: READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: [{ path: 'draft.binding.account', purpose: SENTRY_CONNECTED_ACCOUNT_PURPOSE }],
-      run: listSentryScopeUnits,
-    },
-    [SENTRY_ACTION_IDS.scan]: {
-      title: 'Scan Sentry issues',
-      description: 'Reads one page of the configured Sentry organization issue walk.',
-      surfaces: sources.operations.scan.declaration.surfaces,
-      dangerLevel: sources.operations.scan.declaration.dangerLevel,
-      inputSchema: TriageSourceConnectedAccountInputsV1.scan.jsonSchema,
-      resultSchema: sources.operations.scan.declaration.resultSchema.jsonSchema,
-      hostAccess: READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-      run: scanSentrySource,
-    },
-    [SENTRY_ACTION_IDS.readIssue]: {
-      title: 'Read one Sentry issue projection',
-      description: 'Reads the live summary, the tag distribution, or the recorded activity of'
-        + ' one Sentry issue.',
-      // Native reads share the configured-account owner across UI and agent
-      // surfaces; the empty list only removes global placement discovery.
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
-      placementBindings: [],
-      inputSchema: SentryReadIssueInputV1Schema.jsonSchema,
-      resultSchema: SentryReadIssueResultV1Schema.jsonSchema,
-      hostAccess: READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-      run: readSentryIssue,
-    },
-    [SENTRY_ACTION_IDS.listIssueEvents]: {
-      title: 'Read retained Sentry occurrences',
-      description: 'Reads one page of the events Sentry retained for one issue in the queried'
-        + ' window.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
-      placementBindings: [],
-      inputSchema: SentryIssueEventsInputV1Schema.jsonSchema,
-      resultSchema: SentryIssueEventsResultV1Schema.jsonSchema,
-      hostAccess: READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-      run: listSentryIssueEvents,
-    },
-    [SENTRY_ACTION_IDS.readEvent]: {
-      title: 'Read one Sentry occurrence',
-      description: 'Reads the representative or one selected occurrence of a Sentry issue as a'
-        + ' redacted projection.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
-      placementBindings: [],
-      inputSchema: SentryReadEventInputV1Schema.jsonSchema,
-      resultSchema: SentryReadEventResultV1Schema.jsonSchema,
-      hostAccess: READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-      run: readSentryEvent,
-    },
-    [SENTRY_ACTION_IDS.listTagValues]: {
-      title: 'Read one Sentry tag distribution',
-      description: 'Reads one page of the value distribution of a single tag key on one issue.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
-      placementBindings: [],
-      inputSchema: SentryTagValuesInputV1Schema.jsonSchema,
-      resultSchema: SentryTagValuesResultV1Schema.jsonSchema,
-      hostAccess: READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-      run: listSentryTagValues,
-    },
-    [SENTRY_ACTION_IDS.get]: {
-      title: 'Read a Sentry issue',
-      description: 'Reads one Sentry issue authoritatively through its configured organization.',
-      surfaces: sources.operations.get.declaration.surfaces,
-      // Mounted-only placement. `plugin` stays because the Triage daemon
-      // consumes it and `ui` because this source's own mounted surfaces hold
-      // present-user authority; the explicit empty list only withdraws the
-      // Action from global placement discovery — it disables no invocation.
-      placementBindings: [],
-      dangerLevel: sources.operations.get.declaration.dangerLevel,
-      inputSchema: TriageSourceConnectedAccountInputsV1.get.jsonSchema,
-      resultSchema: sources.operations.get.declaration.resultSchema.jsonSchema,
-      hostAccess: READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-      run: getSentrySourceEntry,
+    [SENTRY_ACTION_IDS.setupIssueEvent]: {
+      title: 'Watch Sentry issues',
+      description: 'Prepares an existing configured source for issue alerts without changing it.',
+      surfaces: ['plugin', 'ui', 'agent', 'mcp', 'cli'], dangerLevel: 'safe',
+      inputSchema: TriageIssueEventSetupInputV1Schema.jsonSchema,
+      inputHints: TRIAGE_ISSUE_EVENT_SETUP_INPUT_HINTS_V1,
+      resultSchema: createPluginEventAutomationSetupResultV1JsonSchema(1, TriageIssueEventSourceConfigV1Schema.jsonSchema),
+      run: createTriageIssueEventSourceSetupV1({ pluginId: SENTRY_PLUGIN_ID, sourceLocalId: SENTRY_CONTRIBUTION_ID, displayName: 'Sentry' }),
     },
   },
   connectedAccountDescriptors: {
@@ -489,10 +348,17 @@ export const SENTRY_PLUGIN = definePlugin({
           fallback: 'Sentry deployment and auth token used to read organizations and issues.',
         },
         authentication: {
+          account: { artifactId: 'sentry-account-runtime', exportName: 'activate' },
           defaultModeId: SENTRY_CLOUD_MODE_ID,
           modes: [{
             id: SENTRY_CLOUD_MODE_ID,
             kind: 'manual',
+            setup: {
+              url: 'https://sentry.io',
+              checklist: ['In your Sentry organization settings, create an internal integration and its auth token, or use a personal auth token.', 'Give the token org:read and event:read; issue updates also need event:write.', 'Copy the token and select the region that stores your organization data.'],
+              createKeyTitle: 'Open Sentry',
+            },
+            credentialOrigin: 'authentication',
             directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 },
             title: { key: 'plugins.sentry.auth.cloud.title', fallback: 'Sentry Cloud token' },
             outcomeReconciliation: 'none',
@@ -508,6 +374,12 @@ export const SENTRY_PLUGIN = definePlugin({
           }, {
             id: SENTRY_SELF_HOSTED_MODE_ID,
             kind: 'manual',
+            setup: {
+              url: 'https://docs.sentry.io/api/auth/',
+              checklist: ['Create an internal-integration or personal auth token on your own Sentry deployment.', 'Give the token org:read and event:read; issue updates also need event:write.', 'Paste the token and enter the URL of that same deployment.'],
+              createKeyTitle: 'Read Sentry authentication instructions',
+            },
+            credentialOrigin: 'authentication',
             directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 },
             title: {
               key: 'plugins.sentry.auth.selfHosted.title',
@@ -523,7 +395,7 @@ export const SENTRY_PLUGIN = definePlugin({
           }],
         },
       },
-      runtime: sentryConnectedAccountRuntime,
+      runtime: sentryConnectedAccountRuntime, accountRuntime: sentryPortableAccountRuntime,
     },
   },
   contributesTo: {
@@ -551,3 +423,6 @@ export const SENTRY_PLUGIN = definePlugin({
 
 /** The sole Sentry plugin manifest. */
 export const PLUGIN_MANIFEST = SENTRY_PLUGIN.manifest;
+export const collectionMigrations = SENTRY_PLUGIN.collectionMigrations;
+import { acceptSentryAttentionWebhook } from './source/attentionWebhook.js';
+import { PluginWebhookActionInputSchema, PluginWebhookActionResultSchema } from '@happier-dev/plugin-sdk/webhooks';
