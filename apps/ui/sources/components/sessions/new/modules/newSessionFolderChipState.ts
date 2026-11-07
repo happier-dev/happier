@@ -17,6 +17,8 @@ export function resolveNewSessionFolderChipState(params: Readonly<{
     machineUnavailableReason: string | null;
     /** The requester-directory owner's settled failure; the composer owns Retry. */
     directoryReadFailure?: string | null;
+    /** The directory owner says deliberate launch will prepare this requester. */
+    launchPreparable?: boolean;
 }>): AgentInputFolderChipState {
     const path = formatSessionPath(params.selectedPath.trim(), params.machineHomeDir ?? undefined);
     const lastKnownPath = formatSessionPath(params.lastKnownPath?.trim() ?? '', params.machineHomeDir ?? undefined);
@@ -29,6 +31,7 @@ export function resolveNewSessionFolderChipState(params: Readonly<{
         };
     }
     if (params.directoryKind === 'managed') return { kind: 'none' };
+    if (params.launchPreparable) return { kind: 'launch_preparable' };
     if (!path && params.directoryReadFailure) return { kind: 'failed', reason: params.directoryReadFailure };
     return path ? { kind: 'folder', path } : { kind: 'resolving',
         lastKnownPath: lastKnownPath || null };

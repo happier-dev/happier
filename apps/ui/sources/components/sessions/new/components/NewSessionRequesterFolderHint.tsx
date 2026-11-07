@@ -16,7 +16,7 @@ import { t } from '@/text';
  */
 export function NewSessionRequesterFolderHint(
   props: Readonly<{
-    isolation: ReturnType<typeof useMachineOwnIsolationStatus> | undefined;
+    isolation: Pick<ReturnType<typeof useMachineOwnIsolationStatus>, 'status' | 'loading' | 'failed' | 'retry'> | undefined;
     testID?: string;
   }>,
 ): React.ReactElement | null {

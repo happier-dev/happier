@@ -6,6 +6,7 @@ export type FolderlessSessionTranslations = typeof en;
 
 export const en = {
     composer: {
+        workspaceOnStart: 'Your workspace is set up when you start',
         addFolder: 'Add folder',
         noFolder: 'No folder',
         noFolderDescription: 'Happier keeps a private folder for this chat',

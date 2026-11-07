@@ -10,7 +10,17 @@ type MachineDirectoryInput = Readonly<{
     ownStatus?: MachineAgentIsolationOwnStatusV1 | null;
 }>;
 
+/** Deliberate launch prepares a missing member; status and folder reads never do. */
+export function isRequesterDirectoryLaunchPreparable({ machine, ownStatus }: MachineDirectoryInput): boolean {
+    if (ownStatus?.protection !== 'unavailable' || ownStatus.status.code !== 'agent_user_missing') return false;
+    const policy = readMachineAgentIsolationPolicyV1(machine?.metadata);
+    return policy.status === 'ready' && resolveMachineAgentExecutionPlacementV1({
+        policy: policy.policy, platform: machine?.metadata?.platform ?? '',
+    }) === 'member';
+}
+
 export function hasUnresolvedRequesterDirectories({ machine, ownStatus }: MachineDirectoryInput): boolean {
+    if (isRequesterDirectoryLaunchPreparable({ machine, ownStatus })) return false;
     if (ownStatus?.protection === 'member_separated') return !ownStatus.directories;
     if (!machine) return false;
     if (!machine.metadata) return machine.isShared === true;
@@ -30,6 +40,7 @@ export function hasUnresolvedRequesterDirectories({ machine, ownStatus }: Machin
 /** Home expansion and automatic placement consume the same requester-owned fact. */
 export function resolveMachineHomeDirectory({ machine, ownStatus }: MachineDirectoryInput): string {
     if (ownStatus?.protection === 'member_separated') return ownStatus.directories?.home ?? '';
+    if (isRequesterDirectoryLaunchPreparable({ machine, ownStatus })) return '';
     if (hasUnresolvedRequesterDirectories({ machine, ownStatus })) return '';
     return machine?.metadata?.homeDir ?? '';
 }
@@ -55,6 +66,7 @@ export function resolveDefaultDirectoryForMachine(input: Readonly<{
     if (!machineId) return '';
     const machine = input.machines.find((machine) => machine.id === machineId);
     if (input.ownStatus?.protection === 'member_separated') return input.ownStatus.directories?.workspace ?? '';
+    if (isRequesterDirectoryLaunchPreparable({ machine, ownStatus: input.ownStatus })) return '~';
     if (hasUnresolvedRequesterDirectories({ machine, ownStatus: input.ownStatus })) return '';
     const recent = input.recentPaths.find((path) => typeof path === 'string' && path.trim().length > 0);
     if (recent !== undefined) return recent;

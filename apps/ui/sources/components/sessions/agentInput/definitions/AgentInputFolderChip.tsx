@@ -46,6 +46,7 @@ export type AgentInputFolderChipState =
     | Readonly<{ kind: 'none' }>
     | Readonly<{ kind: 'resolving'; lastKnownPath: string | null }>
     | Readonly<{ kind: 'failed'; reason: string }>
+    | Readonly<{ kind: 'launch_preparable' }>
     | Readonly<{
         kind: 'machine_unavailable';
         label: Readonly<{ kind: 'folder'; path: string }> | Readonly<{ kind: 'none' }>;
@@ -104,6 +105,8 @@ function resolveChipAccessibilityLabel(state: AgentInputFolderChipState): string
             return t('newSession.folder.a11y.loading');
         case 'failed':
             return state.reason;
+        case 'launch_preparable':
+            return t('newSession.folder.workspaceOnStart');
         case 'machine_unavailable':
             return state.label.kind === 'folder'
                 ? t('newSession.folder.a11y.folder', { path: state.label.path })
@@ -201,7 +204,9 @@ export function AgentInputFolderChip(props: AgentInputFolderChipProps): React.Re
         ? labelState.path
         : labelState.kind === 'none' || labelState.kind === 'failed'
             ? t('newSession.folder.addFolder')
-            : labelState.lastKnownPath;
+            : labelState.kind === 'launch_preparable'
+                ? t('newSession.folder.workspaceOnStart')
+                : labelState.lastKnownPath;
 
     return (
         <Animated.View

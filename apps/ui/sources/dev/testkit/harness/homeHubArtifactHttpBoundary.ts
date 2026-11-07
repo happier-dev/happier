@@ -3,13 +3,14 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encod
 import { AUTHORING_MEMORY_ROUTE_V1, AuthoringMemoryListResponseV1Schema } from '@happier-dev/protocol/account/authoringMemory';
 import { type ArtifactCallerAccessV1, type ArtifactAccessGrantRowV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { deriveArtifactCoarseKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
-import { buildHomeHubArtifactIdV1, HOME_HUB_ARTIFACT_KIND_V1, HOME_HUB_DEFAULT_LAYOUT, HomeHubLayoutV1Schema, type HomeHubLayoutV1 } from '@happier-dev/protocol/home';
+import { buildHomeHubArtifactIdV1, HOME_HUB_ARTIFACT_KIND_V1, getHomeHubDefaultLayoutV1, HomeHubLayoutV1Schema, type HomeHubLayoutV1 } from '@happier-dev/protocol/home';
 import type { Artifact } from '@/sync/domains/artifacts/artifactTypes';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import type { FetchedMachineRow } from '@/sync/engine/machines/syncMachines';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1, ProjectAccountRowListResponseV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
+import { createArtifactListHttpResponse, createArtifactReadBatchHttpResponse } from './artifactStoreBoundary';
 
 /** HTTP persistence boundary: the real Account mode, Artifact codec, Action and Home owners run above it. */
 export function createHomeHubArtifactHttpBoundary(
@@ -18,7 +19,7 @@ export function createHomeHubArtifactHttpBoundary(
     options?: Readonly<{ machines?: readonly FetchedMachineRow[] }>,
 ): ReturnType<typeof createLayoutArtifactHttpBoundary<HomeHubLayoutV1>> {
     const boundary = createLayoutArtifactHttpBoundary(accountId, { artifactId: buildHomeHubArtifactIdV1(accountId), kind: HOME_HUB_ARTIFACT_KIND_V1,
-        defaultLayout: HOME_HUB_DEFAULT_LAYOUT, parseLayout: value => HomeHubLayoutV1Schema.parse(value) });
+        defaultLayout: getHomeHubDefaultLayoutV1(), parseLayout: value => HomeHubLayoutV1Schema.parse(value) });
     return { ...boundary, request: async (input: RequestInfo | URL, init?: RequestInit) => {
         // The signed-in Account establishes the Home lifetime. A shared layout's
         // owner is a different principal and must never supply this Profile.
@@ -88,16 +89,15 @@ export function createLayoutArtifactHttpBoundary<T>(accountId: string, definitio
             ? ProjectAccountRowListResponseV1Schema.parse({ status: 'listed', rows: [], coverage: 'complete' })
             : createPlainProjectAccountRowListFixture({ workspaceRefs }));
         if (path === AUTHORING_MEMORY_ROUTE_V1 && (!init?.method || init.method === 'GET')) return Response.json(AuthoringMemoryListResponseV1Schema.parse({ rows: [] }));
+        if (path === '/v1/artifacts/read' && init?.method === 'POST') {
+            return createArtifactReadBatchHttpResponse(JSON.parse(String(init.body)), id => !artifact || id !== artifactId
+                ? { artifactId: id, ok: false, error: 'artifact_not_found', status: 404, retryable: false }
+                : callerAccess === null
+                    ? { artifactId: id, ok: false, error: 'artifact_access_forbidden', status: 403, retryable: false }
+                    : { artifactId: id, ok: true, artifact: { ...served(artifact), access: callerAccess }, recipientCensus: null });
+        }
         if (path === '/v1/artifacts' && init?.method !== 'POST') {
-            const query = new URL(String(input)).searchParams;
-            const kind = query.get('kind');
-            const encodedKinds = query.get('kinds');
-            const items = artifact ? [served(artifact)] : [];
-            if (kind === null && encodedKinds === null) return Response.json(items);
-            // Filtered reads answer the filtered wire: a coarse kind, or exact kinds by stored kind hint.
-            const kinds: unknown = encodedKinds === null ? null : JSON.parse(encodedKinds);
-            return Response.json({ items: items.filter(row => kind !== null ? row.kind === kind
-                : Array.isArray(kinds) && typeof row.kindHint === 'string' && kinds.includes(row.kindHint)), hasUnclassified: false });
+            return createArtifactListHttpResponse(new URL(String(input)), artifact ? [served(artifact)] : []);
         }
         // The server's grants reader admits every current grantee; management is separate.
         if (path === `/v1/artifacts/${artifactId}/access/grants`) return artifact && callerAccess !== null

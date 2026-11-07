@@ -166,13 +166,16 @@ export function buildCoreCollapsedControlActions(opts: Readonly<{
         const labelState = folderState.kind === 'machine_unavailable' ? folderState.label : folderState;
         const pathLabel = labelState.kind === 'folder'
             ? labelState.path
-            : labelState.kind === 'none'
+            : labelState.kind === 'none' || labelState.kind === 'failed'
                 ? t('newSession.folder.addFolder')
-                : labelState.lastKnownPath ?? t('newSession.folder.a11y.loading');
+                : labelState.kind === 'launch_preparable'
+                    ? t('newSession.folder.workspaceOnStart')
+                    : labelState.lastKnownPath ?? t('newSession.folder.a11y.loading');
         const pathActions: ActionListItem[] = [{
             id: 'path',
             label: pathLabel,
-            icon: <Icon name={labelState.kind === 'none' ? 'folder-plus' : 'folder'} size={16} color={opts.tint} />,
+            ...(folderState.kind === 'failed' ? { subtitle: folderState.reason } : {}),
+            icon: <Icon name={labelState.kind === 'none' || labelState.kind === 'failed' ? 'folder-plus' : 'folder'} size={16} color={opts.tint} />,
             disabled: folderState.kind === 'machine_unavailable',
             onPress: () => {
                 hapticsLight();
