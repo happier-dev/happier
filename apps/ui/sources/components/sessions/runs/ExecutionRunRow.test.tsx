@@ -52,7 +52,7 @@ describe('ExecutionRunRow', () => {
         const screen = await renderScreen(<ExecutionRunRow run={{ ...run, status: 'failed', error: { code: 'usage_limit', runtimeIssueV1: {
             v: 1, scope: 'primary_session', status: 'failed', occurredAt: 1, code: 'usage_limit', source: 'usage_limit',
             sanitizedPreview: 'Codex usage limit reached' } } }} subtitle="PID 123" />);
-        expect(screen.getTextContent()).toContain('Codex usage limit reached');
+        expect(screen.getTextContent()).toContain('session.usageLimitRecovery.banner.title');
         expect(screen.getTextContent()).not.toContain('PID 123');
         standardCleanup();
     });

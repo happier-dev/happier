@@ -183,7 +183,10 @@ export function presentSessionRuntimeIssue(issue: SessionRuntimeIssueV1 | null |
     const localized = presentSessionStartupFailureCause(issue?.code, issue ?? undefined);
     const message = localized ?? issue?.sanitizedPreview ?? null;
     const requestId = issue?.failureCause?.requestId;
-    const summary = issue ? localized ?? readRuntimeIssueTextLine(issue.sanitizedPreview) ?? readRuntimeIssueTextLine(context?.failureText) : null;
+    // A usage limit is said as the limit itself; the provider's advice stays in Details.
+    const usageLimited = issue?.source === 'usage_limit' || issue?.code === 'usage_limit';
+    const summary = issue ? localized ?? (usageLimited ? t('session.usageLimitRecovery.banner.title') : null)
+        ?? readRuntimeIssueTextLine(issue.sanitizedPreview) ?? readRuntimeIssueTextLine(context?.failureText) : null;
     const raw = context?.failureText ?? issue?.sanitizedPreview ?? null;
     return {
         summary,

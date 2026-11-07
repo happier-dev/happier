@@ -77,6 +77,23 @@ describe('resolveTranscriptMessageDisplayText', () => {
         expect(resolveTranscriptMessageDisplayText(agent({ ...message, isThinking: true })).text).toBe(message.text);
     });
 
+    it('words a usage-limit failure row like the card\'s cause, with its reset and no native prefix', () => {
+        const normalized = normalizeRawMessage('quota-failure', 'quota-failure', 1794000000000, {
+            role: 'agent', content: { type: 'acp', agentId: 'codex', data: {
+                type: 'message', message: 'codex turn failed: Usage limit reached',
+            } }, meta: { source: 'runtime', runtimeIssueV1: { v: 1, scope: 'primary_session', status: 'failed',
+                code: 'usage_limit', source: 'usage_limit', occurredAt: 1794000000000, agentId: 'codex',
+                sanitizedPreview: 'Codex usage limit reached. Try another connected account or try again after your limit resets.',
+                usageLimit: { v: 1, resetAtMs: 1794056400000, retryAfterMs: null, quotaScope: 'account', recoverability: 'wait' } } },
+        });
+        const message = agent({ meta: normalized?.meta, text: 'codex turn failed: Usage limit reached' });
+        const issue = presentSessionRuntimeIssue(readRuntimeIssueMessageMeta(message.meta));
+        const text = resolveTranscriptMessageDisplayText(message).text;
+        expect(text).toBe(`${issue.summary} · ${issue.reset}`);
+        expect(text).not.toContain('codex turn failed');
+        expect(text).not.toContain('Try another connected account');
+    });
+
     it('gives rendering, Find and copy the same named Team refusal instead of the native fallback', () => {
         const normalized = normalizeRawMessage('failure', 'failure', 1000, {
             role: 'agent', content: { type: 'acp', agentId: 'codex', data: {

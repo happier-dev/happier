@@ -254,6 +254,18 @@ describe('closed startup-failure recovery copy', () => {
     });
 });
 
+describe('a usage-limit failure, said once', () => {
+    it('summarizes as the limit itself, keeping provider advice for Details', async () => {
+        await useLanguage('en');
+        const quota = issue({ code: 'usage_limit', source: 'usage_limit',
+            sanitizedPreview: 'Codex usage limit reached. Try another connected account or try again after your limit resets.',
+            usageLimit: { v: 1, resetAtMs: null, retryAfterMs: null, quotaScope: 'account', recoverability: 'wait' } });
+        const presented = presentSessionRuntimeIssue(quota);
+        expect(presented.summary).toBe(t('session.usageLimitRecovery.banner.title'));
+        expect(presented.details).toContain('Try another connected account');
+    });
+});
+
 describe('a Session whose Agent account refused queued input: one message and one next action', () => {
     const failed = { requestId: 'first-input', requestedAt: 200, status: 'failed' as const, failureCode: 'runtime_start_failed' as const };
     const reconnect = { reason: 'spawn-rejected' as const, spawnErrorCode: 'SPAWN_VALIDATION_FAILED' as const,

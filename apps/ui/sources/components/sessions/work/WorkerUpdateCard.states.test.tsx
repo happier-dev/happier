@@ -71,7 +71,8 @@ describe('WorkerUpdateCard states (lab cards-T1/T2)', () => {
                 occurredAt: 1000, sanitizedPreview: 'Account quota exhausted', usageLimit: { v: 1, resetAtMs,
                     retryAfterMs: null, quotaScope: 'provider', recoverability: 'wait' } } };
         const card = await renderCard(update, getActiveServerSnapshot().serverId);
-        expect(card.getTextContent()).toContain('Account quota exhausted');
+        // A usage limit is said as the limit itself; the provider's words stay under Details.
+        expect(card.getTextContent()).toContain(t('session.usageLimitRecovery.banner.title'));
         expect(card.getTextContent()).toContain(t('sessionWork.workerUpdate.state.failed'));
         expect(card.findAllHostsByTestId('worker-update-reset')).toHaveLength(resetAtMs === null ? 0 : 1);
         if (resetAtMs !== null) expect(card.getTextContent()).toContain(new Date(resetAtMs).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }));

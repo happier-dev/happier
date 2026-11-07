@@ -81,7 +81,12 @@ export function prepareTranscriptMessageBody(
     const agentAuth = message.kind === 'agent-text' && !message.isThinking
         ? presentSessionAgentAuthRequired(runtimeIssue)
         : null;
-    const runtimeFailure = runtimeIssue?.code === 'provider_model_not_found' || readAgentStartupFailureCode(runtimeIssue?.code) !== null
+    const usageLimitIssue = runtimeIssue?.source === 'usage_limit' || runtimeIssue?.code === 'usage_limit'
+        ? presentSessionRuntimeIssue(runtimeIssue) : null;
+    const runtimeFailure = usageLimitIssue
+        // Worded like the usage card's cause; the card owns the recovery action.
+        ? [usageLimitIssue.summary, usageLimitIssue.reset].filter(Boolean).join(' · ') || null
+        : runtimeIssue?.code === 'provider_model_not_found' || readAgentStartupFailureCode(runtimeIssue?.code) !== null
         ? [presentSessionRuntimeIssue(runtimeIssue).message, runtimeIssue?.failureCause?.providerErrorMessage]
             .filter(Boolean).join('\n') || null : null;
     let text: string | null;
