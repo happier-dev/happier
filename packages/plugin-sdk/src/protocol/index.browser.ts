@@ -40,6 +40,7 @@ export { ProtocolComposerReferenceResolutionV1Schema } from './composerReference
 export { ProtocolCurrentUiContextSnapshotV1Schema } from './currentUiContext.js';
 export { ProtocolDeploymentEnvironmentGetResultV1Schema } from './accountNotice.js';
 export { ProtocolDeploymentPreviewProvenanceV1Schema } from './deployment.js';
+export { ProtocolDeploymentReceiptOperationV1Schema } from './deployment.js';
 export { ProtocolDeploymentSourceIntentV1Schema } from './deployment.js';
 export { ProtocolEnvVarRequirementV1Schema } from './environmentVariables.js';
 export type { ProtocolJsonValue } from './protocolFacade.js';
