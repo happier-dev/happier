@@ -26,17 +26,11 @@ import type { SessionAccessAuthentication } from "@/app/session/access/sessionAc
 import type { PluginCollectionHostReferenceKind } from "./hostReferences";
 import {
     findPluginCollectionBatchQuotaIncompatibility,
-    findPluginCollectionMutationQuotaIncompatibility,
     measurePluginCollectionStoredRowEncodedBytes as measureStoredRowEncodedBytes,
-    readPluginCollectionAccountUsageInTx,
-    readPluginCollectionPrefixQuotaUsageInTx,
     PluginCollectionQuotaCensusInconsistencyError,
-    type PluginCollectionPrefixQuotaPolicy,
-    type PluginCollectionPrefixQuotaUsage,
     type PluginCollectionQuotaIncompatibility,
-    type PluginCollectionQuotaPolicy,
 } from "./quota";
-
+import { createPluginCollectionMutationQuotaInTx, type PluginCollectionQuotaRowWrite } from './mutationQuota';
 import { endCollectionSharingInTx, publishCollectionSharingRowsChangedInTx, readCollectionSharingAudienceInTx } from './sharingStorage';
 
 export { measurePluginCollectionStoredRowEncodedBytes } from "./quota";
@@ -88,72 +82,6 @@ type RelationRestriction = Readonly<{
     dependentCount: number;
     continuation: PluginCollectionRelationRestrictionContinuationV1;
 }>;
-
-function quotaPolicyIdentity(input: Readonly<{
-    pluginId: string;
-    collectionId: string;
-    contractDigest: string;
-}>): string {
-    return `${input.pluginId}\u0000${input.collectionId}\u0000${input.contractDigest}`;
-}
-
-function collectPluginCollectionQuotaPolicies(input: Readonly<{
-    usages: readonly Awaited<ReturnType<typeof readPluginCollectionAccountUsageInTx>>[];
-    resolved: readonly ResolvedWritableCollection[];
-}>): Readonly<{
-    collections: readonly PluginCollectionQuotaPolicy[];
-    prefixes: readonly PluginCollectionPrefixQuotaPolicy[];
-}> {
-    const contracts = new Map<string, Readonly<{
-        id: string;
-        contract: NormalizedPluginAccountCollectionContractV1;
-    }>>();
-    const add = (candidate: Readonly<{
-        id: string;
-        contract: NormalizedPluginAccountCollectionContractV1;
-    }>): void => {
-        const identity = quotaPolicyIdentity(candidate.contract);
-        const existing = contracts.get(identity);
-        if (existing && existing.id !== candidate.id) {
-            throw new PluginCollectionQuotaCensusInconsistencyError(
-                "Collection quota policy has two immutable contract records for one digest.",
-            );
-        }
-        contracts.set(identity, candidate);
-    };
-    for (const usage of input.usages) {
-        for (const persisted of usage.contracts.values()) {
-            add({
-                id: persisted.id,
-                contract: readMaterializedPluginCollectionContract(persisted as StoredCollectionContract),
-            });
-        }
-    }
-    for (const current of input.resolved) {
-        add({ id: current.contractId, contract: current.contract });
-    }
-    const materialized = [...contracts.values()].sort((left, right) => (
-        left.contract.pluginId.localeCompare(right.contract.pluginId)
-        || left.contract.collectionId.localeCompare(right.contract.collectionId)
-        || left.contract.contractDigest.localeCompare(right.contract.contractDigest)
-    ));
-    return {
-        collections: materialized.map(({ contract }) => ({
-            pluginId: contract.pluginId,
-            collectionId: contract.collectionId,
-            quota: contract.quota,
-        })),
-        prefixes: materialized.map(({ id, contract }) => ({
-            pluginId: contract.pluginId,
-            collectionId: contract.collectionId,
-            contractId: id,
-            contractDigest: contract.contractDigest,
-            quota: contract.quota,
-            schema: contract.schema,
-            indexes: contract.indexes,
-        })),
-    };
-}
 
 function rethrowPluginCollectionQuotaCensusError(error: unknown): never {
     if (
@@ -785,7 +713,7 @@ export async function preparePluginCollectionDerivedStateForPromotionInTx(input:
         }
         await input.tx.pluginCollectionIndexState.update({
             where: { id: state.id },
-            data: { buildState: "building", indexedThroughRevision: null },
+            data: { buildState: "building", indexedThroughRevision: null, quotaPrefixCounts: {} },
         });
         await input.tx.pluginCollectionIndexEntry.deleteMany({ where: { indexStateId: state.id } });
     }
@@ -932,7 +860,7 @@ export async function replaceIndexEntriesForRowTx(input: Readonly<{
     rowId: string;
     revision: number;
     projection: PluginCollectionProjectionV1 | null;
-}>): Promise<void> {
+}>): Promise<readonly PluginCollectionIndexEntryWrite[]> {
     const entries = buildPluginCollectionIndexEntries(input);
     for (const index of input.resolved.contract.indexes) {
         const state = input.resolved.indexStates.find((candidate) => candidate.indexId === index.id);
@@ -944,6 +872,7 @@ export async function replaceIndexEntriesForRowTx(input: Readonly<{
     if (entries.length > 0) {
         await input.tx.pluginCollectionIndexEntry.createMany({ data: [...entries] });
     }
+    return entries;
 }
 
 function hostRelationTargetKind(hostKind: PluginCollectionHostReferenceKind): string {
@@ -1411,6 +1340,8 @@ async function applyIncomingRelationDeletesTx(input: Readonly<{
     accountId: string;
     resolved: ResolvedWritableCollection;
     targetRowIds: readonly string[];
+    beforeRowChange: (change: Readonly<{ resolved: ResolvedWritableCollection; rowId: string }>) => Promise<void>;
+    afterRowChange: (change: PluginCollectionQuotaRowWrite) => void;
 }>): Promise<readonly Readonly<{
     resolved: ResolvedWritableCollection;
     rowDbId: string;
@@ -1611,6 +1542,7 @@ async function applyIncomingRelationDeletesTx(input: Readonly<{
             contract: pending.sourceContract,
         });
         const revision = advancePluginCollectionRevision(pending.sourceRow.revision);
+        await input.beforeRowChange({ resolved, rowId: pending.sourceRow.rowId });
         await input.tx.pluginCollectionRow.update({
             where: { id: pending.sourceRow.id },
             data: { revision },
@@ -1634,13 +1566,15 @@ async function applyIncomingRelationDeletesTx(input: Readonly<{
         if (projectionUpdate.count !== pending.fields.size) {
             throw new PluginCollectionMutationOperationError("collection_contract_inconsistent");
         }
-        await replaceIndexEntriesForRowTx({
+        const indexEntries = await replaceIndexEntriesForRowTx({
             tx: input.tx,
             resolved,
             rowId: pending.sourceRow.rowId,
             revision,
             projection,
         });
+        input.afterRowChange({ resolved, rowId: pending.sourceRow.rowId,
+            contentEnvelope: pending.sourceRow.contentEnvelope, projection, indexEntries });
         await replaceRelationEdgesForRowTx({
             tx: input.tx,
             accountId: input.accountId,
@@ -1693,18 +1627,21 @@ export async function updateIndexReadinessInTx(input: Readonly<{
     resolved: ResolvedWritableCollection;
 }>): Promise<void> {
     if (input.resolved.indexStates.length === 0) return;
-    const revision = await input.tx.pluginCollectionRow.aggregate({
+    const latest = await input.tx.pluginCollectionRow.findFirst({
         where: {
             accountId: input.accountId,
             pluginId: input.resolved.contract.pluginId,
             collectionId: input.resolved.contract.collectionId,
             deletedAt: null,
         },
-        _max: { revision: true },
+        // All matches have deletedAt = null. Naming that constant ordering
+        // lets PostgreSQL use the nullable live-index prefix for revision too.
+        orderBy: [{ deletedAt: 'desc' }, { revision: 'desc' }],
+        select: { revision: true },
     });
     await input.tx.pluginCollectionIndexState.updateMany({
         where: { id: { in: input.resolved.indexStates.map((state) => state.id) } },
-        data: { indexedThroughRevision: revision._max.revision ?? 0 },
+        data: { indexedThroughRevision: latest?.revision ?? 0 },
     });
 }
 
@@ -1766,30 +1703,25 @@ async function mutatePluginCollectionAfterAdmissionInTx(input: Readonly<{
         return result;
     }
 
-    let beforeQuotaUsage: Awaited<ReturnType<typeof readPluginCollectionAccountUsageInTx>>;
-    let beforeQuotaPolicies: ReturnType<typeof collectPluginCollectionQuotaPolicies>;
-    let beforePrefixUsage: PluginCollectionPrefixQuotaUsage;
+    const quota = createPluginCollectionMutationQuotaInTx(input);
     try {
-        beforeQuotaUsage = await readPluginCollectionAccountUsageInTx({
-            tx: input.tx,
-            accountId: input.accountId,
-            deployment: input.deployment,
-        });
-        beforeQuotaPolicies = collectPluginCollectionQuotaPolicies({
-            usages: [beforeQuotaUsage],
-            resolved: [resolved],
-        });
-        beforePrefixUsage = await readPluginCollectionPrefixQuotaUsageInTx({
-            tx: input.tx,
-            accountId: input.accountId,
-            usage: beforeQuotaUsage,
-            policies: beforeQuotaPolicies.prefixes,
-        });
+        await quota.captureBefore([{ pluginId: resolved.contract.pluginId, collectionId: resolved.contract.collectionId,
+            rowIds: operations.filter(operation => operation.kind !== 'assert').map(operation => operation.rowId),
+            indexStateIds: resolved.indexStates.map(state => state.id) }]);
     } catch (error) {
         rethrowPluginCollectionQuotaCensusError(error);
     }
 
     const results: Array<{ rowId: string; revision: number; deleted: boolean }> = [];
+    // Capture both sides of membership before replacing index entries. Keys
+    // already belong to the server-readable projection; private bodies never
+    // enter the invalidation. Assertions do not publish changes.
+    const changedRowIds = operations.filter(operation => operation.kind !== "assert").map(operation => operation.rowId);
+    const previousIndexEntries = changedRowIds.length === 0 ? [] : await input.tx.pluginCollectionIndexEntry.findMany({
+        where: { indexStateId: { in: resolved.indexStates.map(state => state.id) }, rowId: { in: changedRowIds } },
+        select: { indexStateId: true, encodedSortKey: true },
+    });
+    const currentIndexEntries: PluginCollectionIndexEntryWrite[] = [];
     const relationChanges: RelationRowChange[] = [];
     // One resolved contract serves the whole batch: prepare its validators once
     // here, not per field per row inside the write transaction.
@@ -1858,13 +1790,15 @@ async function mutatePluginCollectionAfterAdmissionInTx(input: Readonly<{
                     rowRevision: revision,
                 })),
             });
-            await replaceIndexEntriesForRowTx({
+            const indexEntries = await replaceIndexEntriesForRowTx({
                 tx: input.tx,
                 resolved,
                 rowId: operation.rowId,
                 revision,
                 projection,
             });
+            currentIndexEntries.push(...indexEntries);
+            quota.recordAfter({ resolved, rowId: operation.rowId, contentEnvelope: operation.content, projection, indexEntries });
             relationChanges.push({
                 rowDbId: row.id,
                 rowId: operation.rowId,
@@ -1897,6 +1831,7 @@ async function mutatePluginCollectionAfterAdmissionInTx(input: Readonly<{
             revision,
             projection: null,
         });
+        quota.recordAfter({ resolved, rowId: operation.rowId, contentEnvelope: null, projection: null, indexEntries: [] });
         relationChanges.push({
             rowDbId: existing.id,
             rowId: operation.rowId,
@@ -1922,6 +1857,11 @@ async function mutatePluginCollectionAfterAdmissionInTx(input: Readonly<{
         tx: input.tx,
         accountId: input.accountId,
         resolved,
+        beforeRowChange: ({ resolved: source, rowId }) => quota.captureBefore([{
+            pluginId: source.contract.pluginId, collectionId: source.contract.collectionId, rowIds: [rowId],
+            indexStateIds: source.indexStates.map(state => state.id),
+        }]),
+        afterRowChange: quota.recordAfter,
         targetRowIds: relationChanges
             .filter((change) => change.projection === null)
             .map((change) => change.rowId),
@@ -1963,36 +1903,18 @@ async function mutatePluginCollectionAfterAdmissionInTx(input: Readonly<{
     }
     for (const change of nullifiedChanges) recordCollectionChange(change);
 
-    let afterQuotaUsage: Awaited<ReturnType<typeof readPluginCollectionAccountUsageInTx>>;
-    let afterQuotaPolicies: ReturnType<typeof collectPluginCollectionQuotaPolicies>;
-    let afterPrefixUsage: PluginCollectionPrefixQuotaUsage;
+    let quotaIncompatibility: PluginCollectionQuotaIncompatibility | null;
     try {
-        afterQuotaUsage = await readPluginCollectionAccountUsageInTx({
-            tx: input.tx,
-            accountId: input.accountId,
-            deployment: input.deployment,
-        });
-        afterQuotaPolicies = collectPluginCollectionQuotaPolicies({
-            usages: [beforeQuotaUsage, afterQuotaUsage],
-            resolved: [resolved],
-        });
-        afterPrefixUsage = await readPluginCollectionPrefixQuotaUsageInTx({
-            tx: input.tx,
-            accountId: input.accountId,
-            usage: afterQuotaUsage,
-            policies: afterQuotaPolicies.prefixes,
+        quotaIncompatibility = await quota.check({
+            resolved: [resolved, ...[...changesByCollection.values()].map(change => change.resolved)],
+            changedRows: [...changesByCollection.values()].map(change => ({
+                pluginId: change.resolved.contract.pluginId, collectionId: change.resolved.contract.collectionId,
+                rowIds: [...change.rows.keys()],
+            })),
         });
     } catch (error) {
         rethrowPluginCollectionQuotaCensusError(error);
     }
-    const quotaIncompatibility = findPluginCollectionMutationQuotaIncompatibility({
-        deployment: input.deployment,
-        before: beforeQuotaUsage,
-        after: afterQuotaUsage,
-        collections: afterQuotaPolicies.collections,
-        beforePrefixUsage,
-        afterPrefixUsage,
-    });
     if (quotaIncompatibility) {
         throw new PluginCollectionMutationOperationError(
             "collection_quota_incompatible",
@@ -2012,6 +1934,11 @@ async function mutatePluginCollectionAfterAdmissionInTx(input: Readonly<{
         left.resolved.contract.pluginId.localeCompare(right.resolved.contract.pluginId)
         || left.resolved.contract.collectionId.localeCompare(right.resolved.contract.collectionId)
     ));
+    const indexIdByStateId = new Map(resolved.indexStates.map(state => [state.id, state.indexId]));
+    const indexKeys = [
+        ...previousIndexEntries.map(entry => ({ indexId: indexIdByStateId.get(entry.indexStateId)!, key: Buffer.from(entry.encodedSortKey).toString('hex') })),
+        ...currentIndexEntries.map(entry => ({ indexId: indexIdByStateId.get(entry.indexStateId)!, key: Buffer.from(entry.encodedSortKey).toString('hex') })),
+    ];
     for (const collection of orderedChanges) {
         const rows = [...collection.rows.entries()];
         const retiredCollection = input.physicallyRetiresRequestedRow === true
@@ -2025,6 +1952,11 @@ async function mutatePluginCollectionAfterAdmissionInTx(input: Readonly<{
                 contractDigest: collection.resolved.contract.contractDigest,
                 revision: Math.max(...rows.map(([, revision]) => revision)),
                 rowIds: rows.map(([rowId]) => rowId),
+                // Relation nullification can change additional rows; retain the
+                // existing broad invalidation unless both sides are known.
+                ...(nullifiedChanges.length === 0 && collection.resolved === resolved ? {
+                    indexChanges: { previousCursor: 0, keys: indexKeys },
+                } : {}),
             }
             : {
                 pluginDomain: "dataCollection" as const,

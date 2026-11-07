@@ -1,9 +1,10 @@
 import type { Tx } from '@/storage/inTx';
 
-/** Observe model acquisitions at the real database boundary without replacing queries. */
+/** Observe model reads and affected update rows at the real database boundary without replacing queries. */
 export function observePrismaReads(tx: Tx, models: readonly (keyof Tx)[]) {
     const reads: string[] = [];
     const rows: Array<{ model: string; ids: string[]; count: number }> = [];
+    const updates: Array<{ model: string; rows: number }> = [];
     const observed = new Proxy(tx, {
         get(target, model, receiver) {
             const delegate: unknown = Reflect.get(target, model, receiver);
@@ -17,6 +18,11 @@ export function observePrismaReads(tx: Tx, models: readonly (keyof Tx)[]) {
                         const reading = typeof operation === 'string' && operation.startsWith('find');
                         if (reading) reads.push(`${String(model)}.${operation}`);
                         const result: unknown = await Reflect.apply(method, owner, args);
+                        if (operation === 'update') updates.push({ model: String(model), rows: 1 });
+                        if (operation === 'updateMany' && result !== null && typeof result === 'object'
+                            && 'count' in result && typeof result.count === 'number') {
+                            updates.push({ model: String(model), rows: result.count });
+                        }
                         if (reading) {
                             const transferred = (Array.isArray(result) ? result : [result])
                                 .filter((row): row is object => row !== null && typeof row === 'object');
@@ -34,5 +40,5 @@ export function observePrismaReads(tx: Tx, models: readonly (keyof Tx)[]) {
             });
         },
     });
-    return { tx: observed, reads, rows };
+    return { tx: observed, reads, rows, updates };
 }

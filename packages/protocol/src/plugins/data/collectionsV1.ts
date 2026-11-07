@@ -872,27 +872,36 @@ export function splitPluginCollectionCandidatePreparationStageRequestsForKnownLi
   }>;
 }>): readonly PluginCollectionCandidatePreparationStageRequestV1[] {
   const requests: PluginCollectionCandidatePreparationStageRequestV1[] = [];
+  if (input.items.length === 0) return requests;
+
+  const binding = PluginCollectionCandidatePreparationBindingV1Schema.parse(input.binding);
+  const overheadEncodedBytes = encodedJsonUtf8ByteLength({ binding, items: [] });
   let pending: PluginCollectionCandidatePreparationStageRequestV1['items'][number][] = [];
-  const toRequest = (items: readonly PluginCollectionCandidatePreparationStageRequestV1['items'][number][]) => (
-    PluginCollectionCandidatePreparationStageRequestV1Schema.parse({
-      binding: input.binding,
-      items,
-    })
-  );
+  let pendingEncodedBytes = overheadEncodedBytes;
 
   for (const item of input.items) {
-    const candidate = toRequest([...pending, item]);
-    const exceedsKnownLimit = candidate.items.length > input.limits.maxBatchRows
-      || measurePluginCollectionCandidatePreparationStageRequestEncodedBytesV1(candidate)
-        > input.limits.maxBatchBytes;
+    if (pending.length === PLUGIN_COLLECTION_LIMITS_V1.maximumMutationBatchRows) {
+      // Preserve the existing protocol-ceiling refusal before advisory
+      // deployment splitting. The schema remains the rejection authority.
+      PluginCollectionCandidatePreparationStageRequestV1Schema.parse({ binding, items: [...pending, item] });
+    }
+    const parsedItem = PluginCollectionCandidatePreparationStageItemV1Schema.parse(item);
+    const itemEncodedBytes = encodedJsonUtf8ByteLength(parsedItem);
+    // JSON array members add only their exact spelling and, after the first,
+    // one comma; the parsed binding and empty array shell are paid once.
+    const candidateEncodedBytes = pendingEncodedBytes + itemEncodedBytes + (pending.length > 0 ? 1 : 0);
+    const exceedsKnownLimit = pending.length + 1 > input.limits.maxBatchRows
+      || candidateEncodedBytes > input.limits.maxBatchBytes;
     if (exceedsKnownLimit && pending.length > 0) {
-      requests.push(toRequest(pending));
-      pending = [item];
+      requests.push({ binding, items: pending });
+      pending = [parsedItem];
+      pendingEncodedBytes = overheadEncodedBytes + itemEncodedBytes;
     } else {
-      pending.push(item);
+      pending.push(parsedItem);
+      pendingEncodedBytes = candidateEncodedBytes;
     }
   }
-  if (pending.length > 0) requests.push(toRequest(pending));
+  if (pending.length > 0) requests.push({ binding, items: pending });
   return requests;
 }
 
@@ -1244,28 +1253,101 @@ export function isPluginCollectionSchemaWideningV1(input: Readonly<{
       && canonicalJson(source.quota) !== canonicalJson(target.quota))
   ) return false;
 
+  if (canonicalJson(source.schema) === canonicalJson(target.schema)) return true;
+  // Unchanged reference text can acquire different meaning when another part
+  // of its document widens, including under not. Structural inclusion proves
+  // references only when every pointer in either document still resolves to
+  // identical bytes in both; otherwise retain the migration path.
+  const references = new Set([...collectSchemaReferences(source.schema), ...collectSchemaReferences(target.schema)]);
+  for (const pointer of references) {
+    const before = resolveSchemaPointer(source.schema, pointer);
+    const after = resolveSchemaPointer(target.schema, pointer);
+    if (before === undefined || after === undefined || canonicalJson(before) !== canonicalJson(after)) return false;
+  }
   return isCollectionSchemaWidening(source.schema, target.schema);
 }
 
-/** Proves inclusion for the declared structural vocabulary; unproved changes stay conflicts. */
-function isCollectionSchemaWidening(source: PluginJsonSchemaV2, target: PluginJsonSchemaV2): boolean {
+function schemaChildren(schema: PluginJsonSchemaV2): PluginJsonSchemaV2[] {
+  return [
+    ...Object.values(schema.properties ?? {}), ...Object.values(schema.definitions ?? {}), ...Object.values(schema.$defs ?? {}),
+    ...(schema.allOf ?? []), ...(schema.anyOf ?? []), ...(schema.oneOf ?? []),
+    schema.items, schema.not, schema.propertyNames,
+    typeof schema.additionalProperties === 'object' ? schema.additionalProperties : undefined,
+  ].filter(child => child !== undefined);
+}
+
+function collectSchemaReferences(schema: PluginJsonSchemaV2): string[] {
+  return [...(schema.$ref === undefined ? [] : [schema.$ref]), ...schemaChildren(schema).flatMap(collectSchemaReferences)];
+}
+
+/** Resolves an admitted document-local JSON Pointer the way the stored validator does. */
+function resolveSchemaPointer(root: PluginJsonSchemaV2, pointer: string): unknown {
+  // Percent-encoded fragments are valid JSON Schema but unproved here.
+  if (pointer.includes('%')) return undefined;
+  let node: unknown = root;
+  for (const segment of pointer === '#' ? [] : pointer.slice(2).split('/')) {
+    const key = segment.replace(/~1/g, '/').replace(/~0/g, '~');
+    if (!node || typeof node !== 'object' || !Object.hasOwn(node, key)) return undefined;
+    node = (node as Readonly<Record<string, unknown>>)[key];
+  }
+  return node;
+}
+
+/**
+ * Proves inclusion for the declared structural vocabulary; unproved changes stay conflicts.
+ * `objectInstance` records that an enclosing same-instance source schema
+ * already requires every retained value to be an object.
+ */
+function isCollectionSchemaWidening(source: PluginJsonSchemaV2, target: PluginJsonSchemaV2, objectInstance = false): boolean {
   if (canonicalJson(source) === canonicalJson(target)) return true;
   if (Object.keys(target).every(key => ['title', 'description', 'default', '$schema'].includes(key))) return true;
+  const object = objectInstance || source.type === 'object';
+  if (source.allOf || target.allOf) {
+    const { allOf: sourceMembers, ...sourceRest } = source;
+    const { allOf: targetMembers, ...targetRest } = target;
+    return !!sourceMembers && !!targetMembers && sourceMembers.length === targetMembers.length
+      && isCollectionSchemaWidening(sourceRest, targetRest, object)
+      && sourceMembers.every((member, index) => isCollectionSchemaWidening(member, targetMembers[index]!, object));
+  }
+  // A single schema is its own one-arm union; appending to it uses the oneOf proof.
+  if (!source.oneOf && target.oneOf && Object.keys(target).length === 1) {
+    return isCollectionSchemaWidening({ oneOf: [source] }, target, objectInstance);
+  }
+  if (source.oneOf || target.oneOf) {
+    const { oneOf: sourceMembers, ...sourceRest } = source;
+    const { oneOf: targetMembers, ...targetRest } = target;
+    // Unlike anyOf, an overlapping append invalidates old exactly-one matches.
+    // A retained arm changes only by nested union appends, enum supersets, optional additions or fewer required fields and
+    // must still exclude every other arm; each addition must exclude them all.
+    return !!sourceMembers && !!targetMembers && targetMembers.length >= sourceMembers.length
+      && isCollectionSchemaWidening(sourceRest, targetRest, object)
+      && sourceMembers.every((member, index) => {
+        const candidate = targetMembers[index]!;
+        return canonicalJson(member) === canonicalJson(candidate) || (
+          isRetainedUnionArmWidening(member, candidate)
+          && isCollectionSchemaWidening(member, candidate, object)
+          && sourceMembers.every((other, otherIndex) => otherIndex === index
+            || areCollectionSchemasDisjoint(candidate, other, object)));
+      })
+      && targetMembers.slice(sourceMembers.length).every(addition => sourceMembers.every(member => (
+        areCollectionSchemasDisjoint(member, addition, object)
+      )));
+  }
   if (source.anyOf || target.anyOf) {
     const { anyOf: sourceMembers, ...sourceRest } = source;
     const { anyOf: targetMembers, ...targetRest } = target;
     if (sourceMembers && targetMembers) {
-      return isCollectionSchemaWidening(sourceRest, targetRest)
-        && sourceMembers.every(member => targetMembers.some(candidate => isCollectionSchemaWidening(member, candidate)));
+      return isCollectionSchemaWidening(sourceRest, targetRest, object)
+        && sourceMembers.every(member => targetMembers.some(candidate => isCollectionSchemaWidening(member, candidate, object)));
     }
     if (targetMembers) {
-      return isCollectionSchemaWidening(source, targetRest)
-        && targetMembers.some(member => isCollectionSchemaWidening(source, member));
+      return isCollectionSchemaWidening(source, targetRest, object)
+        && targetMembers.some(member => isCollectionSchemaWidening(source, member, object));
     }
     // Either the shared constraints or every former arm must imply the target
     // constraints when dropping the union restriction.
-    return isCollectionSchemaWidening(sourceRest, target)
-      || sourceMembers!.every(member => isCollectionSchemaWidening(member, target));
+    return isCollectionSchemaWidening(sourceRest, target, object)
+      || sourceMembers!.every(member => isCollectionSchemaWidening(member, target, object));
   }
   const handled = new Set<keyof PluginJsonSchemaV2>([
     'type', 'enum', 'const', 'properties', 'required', 'additionalProperties', 'items',
@@ -1274,7 +1356,7 @@ function isCollectionSchemaWidening(source: PluginJsonSchemaV2, target: PluginJs
     'title', 'description', 'default',
     'pattern', 'format', 'multipleOf',
   ]);
-  // References/definitions, oneOf/allOf/not and property-name constraints
+  // References/definitions, not and property-name constraints
   // are retained exactly rather than guessed.
   const remainder = (schema: PluginJsonSchemaV2) => Object.fromEntries(Object.entries(schema)
     .filter(([key]) => !handled.has(key as keyof PluginJsonSchemaV2)));
@@ -1320,6 +1402,74 @@ function isCollectionSchemaWidening(source: PluginJsonSchemaV2, target: PluginJs
     if (!isCollectionSchemaWidening(previous, target.additionalProperties)) return false;
   }
   return true;
+}
+
+/**
+ * A finite literal domain, a required object discriminator, or a field one
+ * side requires and the other closed object forbids proves exclusion.
+ */
+function areCollectionSchemasDisjoint(left: PluginJsonSchemaV2, right: PluginJsonSchemaV2, objectInstance = false): boolean {
+  const leftValues = Object.hasOwn(left, 'const') ? [left.const] : left.enum;
+  const rightValues = Object.hasOwn(right, 'const') ? [right.const] : right.enum;
+  if (leftValues && rightValues) {
+    return leftValues.every(value => rightValues.every(candidate => canonicalJson(value) !== canonicalJson(candidate)));
+  }
+  // properties/required do not constrain non-objects. The value must be known
+  // to be an object, and one side must require the discriminating field.
+  if (!objectInstance && left.type !== 'object' && right.type !== 'object') return false;
+  const forbids = (closed: PluginJsonSchemaV2, open: PluginJsonSchemaV2) => closed.additionalProperties === false
+    && (open.required ?? []).some(field => !Object.hasOwn(closed.properties ?? {}, field));
+  if (forbids(left, right) || forbids(right, left)) return true;
+  return Object.entries(left.properties ?? {}).some(([field, schema]) => {
+    const candidate = right.properties?.[field];
+    return candidate !== undefined && ((left.required ?? []).includes(field) || (right.required ?? []).includes(field))
+      && areCollectionSchemasDisjoint(schema, candidate);
+  });
+}
+
+/**
+ * A retained union arm may gain branches or properties, widen a finite enum or drop required
+ * fields at the same nested path. Every other keyword stays byte-identical.
+ */
+function isRetainedUnionArmWidening(source: PluginJsonSchemaV2, target: PluginJsonSchemaV2): boolean {
+  if (canonicalJson(source) === canonicalJson(target)) return true;
+  const left = source as Readonly<Record<string, unknown>>;
+  const right = target as Readonly<Record<string, unknown>>;
+  // A former single schema becomes the first branch of a new union.
+  for (const key of ['anyOf', 'oneOf'] as const) {
+    const members = target[key];
+    if (!source[key] && Object.keys(target).length === 1 && members?.length && canonicalJson(members[0]) === canonicalJson(source)) return true;
+  }
+  return [...new Set([...Object.keys(left), ...Object.keys(right)])].every((key) => {
+    const before = left[key];
+    const after = right[key];
+    if (key === 'required') {
+      return (target.required ?? []).every(field => (source.required ?? []).includes(field));
+    }
+    if (before === undefined || after === undefined) return false;
+    if (key === 'enum') {
+      return !!source.enum && !!target.enum
+        && isCollectionSchemaWidening({ enum: source.enum }, { enum: target.enum });
+    }
+    if (key === 'anyOf' || key === 'oneOf' || key === 'allOf') {
+      const members = before as readonly PluginJsonSchemaV2[];
+      const candidates = after as readonly PluginJsonSchemaV2[];
+      return (key === 'allOf' ? candidates.length === members.length : candidates.length >= members.length)
+        && members.every((member, index) => isRetainedUnionArmWidening(member, candidates[index]!));
+    }
+    if (key === 'properties') {
+      const fields = before as Readonly<Record<string, PluginJsonSchemaV2>>;
+      const candidates = after as Readonly<Record<string, PluginJsonSchemaV2>>;
+      // Ordinary inclusion checks required fields and the source catchall for
+      // additions; retained fields must still exist and satisfy this proof.
+      return Object.entries(fields).every(([field, schema]) => Object.hasOwn(candidates, field)
+        && isRetainedUnionArmWidening(schema, candidates[field]!));
+    }
+    if ((key === 'items' || key === 'additionalProperties') && typeof before === 'object' && typeof after === 'object') {
+      return isRetainedUnionArmWidening(before as PluginJsonSchemaV2, after as PluginJsonSchemaV2);
+    }
+    return canonicalJson(before) === canonicalJson(after);
+  });
 }
 
 function normalizeSchema(value: PluginJsonSchemaV2): PluginJsonSchemaV2 {

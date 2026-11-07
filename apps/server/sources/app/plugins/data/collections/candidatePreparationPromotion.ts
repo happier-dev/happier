@@ -13,6 +13,12 @@ import {
     type PluginCollectionPreparedRelationReplacement,
     type ResolvedWritableCollection,
 } from "./mutation";
+import {
+    applyPluginCollectionUsageDeltaInTx,
+    buildPluginCollectionUsageSnapshot,
+    capturePluginCollectionUsageInTx,
+    createPluginCollectionUsageDelta,
+} from "./usageTotals";
 
 type CandidatePromotionContract = Readonly<{
     contractId: string;
@@ -40,6 +46,7 @@ type CandidatePromotionMaterializedRow = Readonly<{
     id: string;
     rowId: string;
     expectedRevision: number;
+    contentEnvelope: unknown;
     contentEnvelopeJson: string;
     projections: readonly Readonly<{
         fieldId: string;
@@ -320,6 +327,7 @@ export function prepareCandidatePromotionMaterializedRows(input: Readonly<{
         id: row.id,
         rowId: row.rowId,
         expectedRevision: row.expectedRevision,
+        contentEnvelope: row.contentEnvelope,
         contentEnvelopeJson: jsonParameter(row.contentEnvelope),
         projections: input.contract.serverReadable.map((fieldId) => ({
             fieldId,
@@ -341,6 +349,16 @@ export function prepareCandidatePromotionMaterializedRows(input: Readonly<{
 export async function materializeCandidatePromotionSetwiseInTx(
     input: CandidatePromotionMaterializationInput,
 ): Promise<boolean> {
+    const usageInput = {
+        tx: input.tx,
+        accountId: input.accountId,
+        collections: [{
+            pluginId: input.resolved.contract.pluginId,
+            collectionId: input.resolved.contract.collectionId,
+            rowIds: input.rows.map(row => row.rowId),
+        }],
+    };
+    const beforeUsage = await capturePluginCollectionUsageInTx(usageInput);
     const sourceRowIds = input.rows.map((row) => row.id);
     // One allocation per promoted row, through the canonical Collection
     // allocator, so the row and every derived witness carry the same next
@@ -439,5 +457,23 @@ export async function materializeCandidatePromotionSetwiseInTx(
             resolved: input.resolved,
         });
     }
+    await applyPluginCollectionUsageDeltaInTx({
+        tx: input.tx,
+        accountId: input.accountId,
+        delta: createPluginCollectionUsageDelta({
+            before: beforeUsage,
+            after: buildPluginCollectionUsageSnapshot({
+                rows: input.rows.map(row => ({
+                    pluginId: input.resolved.contract.pluginId,
+                    collectionId: input.resolved.contract.collectionId,
+                    rowId: row.rowId,
+                    contractId: input.target.contractId,
+                    contentEnvelope: row.contentEnvelope,
+                    projections: row.projections,
+                })),
+                indexEntries: [...beforeUsage.indexEntries, ...indexEntries],
+            }),
+        }),
+    });
     return true;
 }

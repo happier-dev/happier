@@ -13,6 +13,7 @@ import { RECIPIENT_READINESS_SELECT, type RecipientReadinessRow } from '@/app/se
 import { materializeDirectCollectionRow, resolveCurrentContract } from './uiQuery';
 import { mutatePluginCollectionInTx } from './mutation';
 import { readPluginsFeatureEnv } from '@/app/features/catalog/readFeatureEnv';
+import { diagnosePluginCollectionReadRefusal } from './readRefusal';
 import type { SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
 
 export class CollectionSharingError extends Error {
@@ -49,7 +50,8 @@ export async function readSharedCollectionResourceInTx(tx: Tx, input: Collection
     const { row, access } = admitted;
     const resolved = current ?? await resolveCurrentContract({ accountId: input.ownerAccountId, request: input.request }, tx);
     if (row.contractDigest !== resolved.storageContract.contractDigest || row.schemaVersion !== resolved.storageContract.schemaVersion) {
-        throw new CollectionSharingError('collection_update_required');
+        throw diagnosePluginCollectionReadRefusal(new CollectionSharingError('collection_update_required'),
+            'shared_row_writer_mismatch', input.request, resolved.storageContract);
     }
     const materialized = materializeDirectCollectionRow({ current: resolved, row });
     let encryptedDataKey: string | null = null;

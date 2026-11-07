@@ -18,6 +18,7 @@ import {
     assertPluginCollectionStoredContentForAccountTransition,
     PluginCollectionMutationOperationError,
 } from "./mutation";
+import { applyPluginCollectionUsageDeltaInTx, buildPluginCollectionUsageSnapshot, createPluginCollectionUsageDelta } from "./usageTotals";
 
 const COLLECTION_TRANSITION_PAGE_SIZE =
     ACCOUNT_ENCRYPTION_MIGRATE_TRANSITION_COLLECTION_PAGE_MAX_ITEMS;
@@ -771,6 +772,7 @@ export async function applyPluginCollectionAccountEncryptionTransitionInTx(
         }
     }
 
+    const beforeUsage = buildPluginCollectionUsageSnapshot({ rows: loaded.rows.map(row => row.persisted) });
     for (const row of loaded.rows) {
         const target = targetContentByRowId.get(row.persisted.id);
         if (!target) throw new PluginCollectionAccountEncryptionTransitionConflictError();
@@ -839,6 +841,18 @@ export async function applyPluginCollectionAccountEncryptionTransitionInTx(
             }
         }
     }
+
+    await applyPluginCollectionUsageDeltaInTx({
+        tx: params.tx,
+        accountId: params.accountId,
+        delta: createPluginCollectionUsageDelta({
+            before: beforeUsage,
+            after: buildPluginCollectionUsageSnapshot({ rows: loaded.rows.map(row => ({
+                ...row.persisted,
+                contentEnvelope: targetContentByRowId.get(row.persisted.id),
+            })) }),
+        }),
+    });
 
     for (const group of groups) {
         const states = statesByGroup.get(group.key) ?? [];

@@ -1,12 +1,15 @@
-import { encodePluginCollectionIndexTuplePrefixV1, getPluginCollectionScalarKindV1, nextPluginCollectionIndexPrefixV1, resolveEffectivePluginCollectionLimitsV1, type NormalizedPluginAccountCollectionContractV1, type PluginCollectionIndexScalarV1, type PluginCollectionQuotaDimensionV1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
+import { nextPluginCollectionIndexPrefixV1, resolveEffectivePluginCollectionLimitsV1, type NormalizedPluginAccountCollectionContractV1, type PluginCollectionQuotaDimensionV1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
 import { type PluginCollectionQuotaRequestV1 } from '@happier-dev/protocol/plugins/data/collectionContributionV1';
 import { type PluginDataCollectionsCapabilities } from '@happier-dev/protocol/features/payload/capabilities/pluginDataCollectionsCapabilities';
 
 import type { Tx } from '@/storage/inTx';
+import { getDbProviderFromEnv } from '@/storage/prisma';
 
 import { countPluginCollectionIndexEntriesByRawOrdinalKey } from './rawOrdinalIndex';
-
-const textEncoder = new TextEncoder();
+import { readPluginCollectionPostgresQuotaAggregateInTx } from './quotaPostgres';
+import { measurePluginCollectionStoredRowEncodedBytes, PluginCollectionQuotaCensusInconsistencyError } from './storedRowUsage';
+import { readPluginCollectionIndexUsageTransitionInTx, readPluginCollectionQuotaPrefixCount, resolvePluginCollectionDeclaredQuotaPrefixes, type PluginCollectionIndexUsageTransition, type PluginCollectionUsageDelta } from './usageTotals';
+export { measurePluginCollectionStoredRowEncodedBytes, PluginCollectionQuotaCensusInconsistencyError } from './storedRowUsage';
 
 export type PluginCollectionQuotaIncompatibility = Readonly<{
     dimension: PluginCollectionQuotaDimensionV1;
@@ -29,8 +32,8 @@ export type PluginCollectionAccountUsage = Readonly<{
 
 /**
  * The activation path needs aggregate row measurements, not the identity of
- * every retained row. Mutation keeps the fuller census above because its
- * monotonic transition rule compares individual row identities.
+ * every retained row. Mutation supplies only changed row identities alongside
+ * its persisted totals for the monotonic transition rule.
  */
 export type PluginCollectionActivationUsage = Readonly<{
     rows: number;
@@ -86,14 +89,6 @@ export type PluginCollectionPrefixQuotaUsage = readonly Readonly<{
     rows: number;
 }>[];
 
-/** A persisted Collection census/contract fact is semantically inconsistent. */
-export class PluginCollectionQuotaCensusInconsistencyError extends Error {
-    constructor(message: string) {
-        super(message);
-        this.name = 'PluginCollectionQuotaCensusInconsistencyError';
-    }
-}
-
 /** Immutable contract columns retained once by the live-row quota census. */
 export type PluginCollectionPersistedContractForQuota = Readonly<{
     id: string;
@@ -130,7 +125,7 @@ function emptyUsage(): PluginCollectionUsage {
 }
 
 function usageForCollection(
-    usage: PluginCollectionAccountUsage,
+    usage: Pick<PluginCollectionAccountUsage, 'collections'>,
     pluginId: string,
     collectionId: string,
 ): PluginCollectionUsage {
@@ -151,32 +146,6 @@ function activationUsageForCollection(
     collectionId: string,
 ): PluginCollectionActivationUsage {
     return usage.collections.get(collectionKey(pluginId, collectionId)) ?? emptyActivationUsage();
-}
-
-/**
- * The sole persisted-row measurement used by Collection quota enforcement.
- * It includes row identity, the complete plain/encrypted envelope, and every
- * typed projection value exactly as they are stored.
- */
-export function measurePluginCollectionStoredRowEncodedBytes(input: Readonly<{
-    rowId: string;
-    contentEnvelope: unknown;
-    projections: readonly Readonly<{ fieldId: string; typedEncodedValue: string }>[];
-}>): number {
-    const payload = JSON.stringify({
-        rowId: input.rowId,
-        contentEnvelope: input.contentEnvelope,
-        projections: [...input.projections]
-            .sort((left, right) => left.fieldId.localeCompare(right.fieldId))
-            .map((projection) => ({
-                fieldId: projection.fieldId,
-                typedEncodedValue: projection.typedEncodedValue,
-            })),
-    });
-    if (payload === undefined) {
-        throw new PluginCollectionQuotaCensusInconsistencyError('Collection stored row is not JSON serializable.');
-    }
-    return textEncoder.encode(payload).byteLength;
 }
 
 /**
@@ -484,6 +453,9 @@ export async function readPluginCollectionAccountActivationUsageInTx(input: Read
     accountId: string;
     deployment: PluginDataCollectionsCapabilities;
 }>): Promise<PluginCollectionAccountActivationUsage> {
+    if (getDbProviderFromEnv(process.env, 'postgres') === 'postgres') {
+        return await readPostgresActivationUsageInTx({ ...input, includeStages: false });
+    }
     const mutableCollections = new Map<string, {
         rows: number;
         encodedBytes: number;
@@ -518,6 +490,54 @@ export async function readPluginCollectionAccountActivationUsageInTx(input: Read
         }));
     }
     return Object.freeze({ rows: accountRows, encodedBytes: accountEncodedBytes, collections, contracts });
+}
+
+/** Candidate staging shares the live-row metric and includes all retained target custody. */
+export async function readPluginCollectionAccountCandidateStageUsageInTx(input: Readonly<{
+    tx: Tx;
+    accountId: string;
+}>): Promise<PluginCollectionAccountActivationUsage> {
+    return await readPostgresActivationUsageInTx({ ...input, includeStages: true });
+}
+
+async function readPostgresActivationUsageInTx(input: Readonly<{
+    tx: Tx;
+    accountId: string;
+    includeStages: boolean;
+}>): Promise<PluginCollectionAccountActivationUsage> {
+    const aggregates = await readPluginCollectionPostgresQuotaAggregateInTx(input);
+    const contracts = new Map<string, PluginCollectionPersistedContractForQuota>();
+    const collections = new Map<string, PluginCollectionActivationUsage>();
+    if (aggregates.length === 0) return { rows: 0, encodedBytes: 0, collections, contracts };
+    const persisted = await input.tx.pluginCollectionContract.findMany({
+        where: { OR: [
+            { rows: { some: { accountId: input.accountId, deletedAt: null } } },
+            ...(input.includeStages ? [{ candidatePreparationTargetStages: { some: { accountId: input.accountId } } }] : []),
+        ] },
+        select: { id: true, pluginId: true, collectionId: true, schemaVersion: true,
+            contractDigest: true, normalizedSchema: true, indexes: true, relations: true, privacyProjection: true },
+    });
+    for (const contract of persisted) recordPluginCollectionQuotaCensusContract({ contracts, contract });
+    let rows = 0;
+    let encodedBytes = 0;
+    for (const aggregate of aggregates) {
+        const contract = contracts.get(aggregate.contractId);
+        if (!contract || (aggregate.staged && (contract.pluginId !== aggregate.pluginId || contract.collectionId !== aggregate.collectionId))) {
+            throw new PluginCollectionQuotaCensusInconsistencyError('Collection quota aggregate has an inconsistent contract.');
+        }
+        const measured = { rows: Number(aggregate.rows), encodedBytes: Number(aggregate.encodedBytes),
+            maximumRowEncodedBytes: Number(aggregate.maximumRowEncodedBytes) };
+        if (Object.values(measured).some(value => !Number.isSafeInteger(value) || value < 0)) {
+            throw new PluginCollectionQuotaCensusInconsistencyError('Collection quota aggregate is not safely representable.');
+        }
+        const key = collectionKey(aggregate.pluginId, aggregate.collectionId);
+        const previous = collections.get(key) ?? emptyActivationUsage();
+        collections.set(key, { rows: previous.rows + measured.rows, encodedBytes: previous.encodedBytes + measured.encodedBytes,
+            maximumRowEncodedBytes: Math.max(previous.maximumRowEncodedBytes, measured.maximumRowEncodedBytes) });
+        rows += measured.rows;
+        encodedBytes += measured.encodedBytes;
+    }
+    return { rows, encodedBytes, collections, contracts };
 }
 
 function prefixQuotaUsageIdentity(input: Readonly<{
@@ -555,46 +575,39 @@ type PluginCollectionAccountRowsUsage = Readonly<{
     collections: ReadonlyMap<string, Readonly<{ rows: number }>>;
 }>;
 
-/**
- * Counts normalized indexed-prefix quota membership through the one raw-byte
- * range primitive. Both compact activation and mutation census shapes pass
- * their current Account rows here, so no consumer owns a competing prefix
- * decision.
- */
-export async function readPluginCollectionPrefixQuotaUsageInTx(input: Readonly<{
-    tx: Tx;
-    accountId: string;
-    usage: PluginCollectionAccountRowsUsage;
-    policies: readonly PluginCollectionPrefixQuotaPolicy[];
-}>): Promise<PluginCollectionPrefixQuotaUsage> {
-    const policies = [...input.policies].sort((left, right) => (
+function relevantPrefixPolicies(
+    policies: readonly PluginCollectionPrefixQuotaPolicy[],
+    usages: readonly PluginCollectionAccountRowsUsage[],
+): readonly PluginCollectionPrefixQuotaPolicy[] {
+    return [...policies].sort((left, right) => (
         left.pluginId.localeCompare(right.pluginId)
         || left.collectionId.localeCompare(right.collectionId)
         || left.contractDigest.localeCompare(right.contractDigest)
     )).filter((policy) => (
         policy.quota?.maxRowsByIndexPrefix !== undefined
-        && (input.usage.collections.get(collectionKey(policy.pluginId, policy.collectionId))?.rows ?? 0) > 0
+        && usages.some(usage => (usage.collections.get(collectionKey(policy.pluginId, policy.collectionId))?.rows ?? 0) > 0)
     ));
-    if (policies.length === 0) return Object.freeze([]);
-    const states = await input.tx.pluginCollectionIndexState.findMany({
-        where: { accountId: input.accountId },
-        select: {
-            id: true,
-            pluginId: true,
-            collectionId: true,
-            indexId: true,
-            contractId: true,
-            contractDigest: true,
-            buildState: true,
-            indexedThroughRevision: true,
-        },
-    });
+}
+
+type PrefixQuotaIndexState = Pick<PluginCollectionIndexUsageTransition,
+    'id' | 'pluginId' | 'collectionId' | 'indexId' | 'contractId' | 'contractDigest' | 'buildState' | 'indexedThroughRevision'>;
+
+/** Readiness and canonical prefix identity are decided once for either usage source. */
+function resolvePrefixQuotaDescriptors(input: Readonly<{
+    policies: readonly PluginCollectionPrefixQuotaPolicy[];
+    states: readonly PrefixQuotaIndexState[];
+}>) {
+    const { policies, states } = input;
     const statesByIdentity = new Map(states.map((state) => [prefixQuotaStateIdentity(state), state]));
-    const usages: Array<PluginCollectionPrefixQuotaUsage[number]> = [];
+    const descriptors: Array<Readonly<{
+        stateId: string;
+        key: string;
+        encodedPrefix: Uint8Array;
+        usage: Omit<PluginCollectionPrefixQuotaUsage[number], 'rows'>;
+    }>> = [];
     const seen = new Set<string>();
     for (const policy of policies) {
-        const declared = policy.quota?.maxRowsByIndexPrefix;
-        if (!declared) continue;
+        const declared = resolvePluginCollectionDeclaredQuotaPrefixes({ contract: policy });
         for (const prefixQuota of declared) {
             const identity = prefixQuotaUsageIdentity({
                 pluginId: policy.pluginId,
@@ -606,7 +619,6 @@ export async function readPluginCollectionPrefixQuotaUsageInTx(input: Readonly<{
             if (seen.has(identity)) continue;
             seen.add(identity);
 
-            const index = policy.indexes.find((candidate) => candidate.id === prefixQuota.indexId);
             const state = statesByIdentity.get(prefixQuotaStateIdentity({
                 pluginId: policy.pluginId,
                 collectionId: policy.collectionId,
@@ -614,65 +626,79 @@ export async function readPluginCollectionPrefixQuotaUsageInTx(input: Readonly<{
                 contractDigest: policy.contractDigest,
             }));
             if (
-                !index
-                || !state
+                !state
                 || state.contractId !== policy.contractId
                 || state.buildState !== 'ready'
                 || state.indexedThroughRevision === null
-                || prefixQuota.prefix.length > index.fields.length
             ) {
                 throw new PluginCollectionQuotaCensusInconsistencyError('Collection prefix quota index is not ready.');
             }
-            let encodedPrefix: Uint8Array;
-            try {
-                encodedPrefix = encodePluginCollectionIndexTuplePrefixV1({
-                    fields: prefixQuota.prefix.map((value, position) => {
-                        const indexField = index.fields[position];
-                        if (!indexField) {
-                            throw new PluginCollectionQuotaCensusInconsistencyError(
-                                'Collection prefix quota exceeds its index.',
-                            );
-                        }
-                        return {
-                            kind: getPluginCollectionScalarKindV1({ schema: policy.schema, field: indexField.field }),
-                            value,
-                            direction: indexField.direction,
-                        } satisfies PluginCollectionIndexScalarV1;
-                    }),
-                });
-            } catch {
-                throw new PluginCollectionQuotaCensusInconsistencyError(
-                    'Collection prefix quota is inconsistent with its immutable contract.',
-                );
-            }
-            const upper = nextPluginCollectionIndexPrefixV1(encodedPrefix);
-            const count = await countPluginCollectionIndexEntriesByRawOrdinalKey({
-                tx: input.tx,
-                indexStateId: state.id,
-                bounds: {
-                    lower: encodedPrefix,
-                    ...(upper ? { upper } : {}),
-                },
-            });
-            if (count === null || count > BigInt(Number.MAX_SAFE_INTEGER)) {
-                throw new PluginCollectionQuotaCensusInconsistencyError(
-                    'Collection prefix quota count is not safely representable.',
-                );
-            }
-            usages.push({
+            descriptors.push({ stateId: state.id, key: prefixQuota.key, encodedPrefix: prefixQuota.encodedPrefix, usage: {
                 pluginId: policy.pluginId,
                 collectionId: policy.collectionId,
                 contractDigest: policy.contractDigest,
                 indexId: prefixQuota.indexId,
                 prefix: prefixQuota.prefix,
                 maxRows: prefixQuota.maxRows,
-                rows: Number(count),
-            });
+            } });
         }
     }
-    return Object.freeze(usages.sort((left, right) => (
-        prefixQuotaUsageIdentity(left).localeCompare(prefixQuotaUsageIdentity(right))
-    )));
+    return descriptors.sort((left, right) => prefixQuotaUsageIdentity(left.usage).localeCompare(prefixQuotaUsageIdentity(right.usage)));
+}
+
+/** Activation deliberately counts actual indexed bytes rather than mutation summaries. */
+export async function readPluginCollectionPrefixQuotaUsageInTx(input: Readonly<{
+    tx: Tx;
+    accountId: string;
+    usage: PluginCollectionAccountRowsUsage;
+    policies: readonly PluginCollectionPrefixQuotaPolicy[];
+}>): Promise<PluginCollectionPrefixQuotaUsage> {
+    const policies = relevantPrefixPolicies(input.policies, [input.usage]);
+    if (policies.length === 0) return Object.freeze([]);
+    const states = await input.tx.pluginCollectionIndexState.findMany({ where: { accountId: input.accountId }, select: {
+        id: true, pluginId: true, collectionId: true, indexId: true, contractId: true, contractDigest: true,
+        buildState: true, indexedThroughRevision: true,
+    } });
+    const usages: Array<PluginCollectionPrefixQuotaUsage[number]> = [];
+    for (const descriptor of resolvePrefixQuotaDescriptors({ policies, states })) {
+        const upper = nextPluginCollectionIndexPrefixV1(descriptor.encodedPrefix);
+        const count = await countPluginCollectionIndexEntriesByRawOrdinalKey({ tx: input.tx, indexStateId: descriptor.stateId,
+            bounds: { lower: descriptor.encodedPrefix, ...(upper ? { upper } : {}) } });
+        if (count === null || count > BigInt(Number.MAX_SAFE_INTEGER)) {
+            throw new PluginCollectionQuotaCensusInconsistencyError('Collection prefix quota count is not safely representable.');
+        }
+        usages.push({ ...descriptor.usage, rows: Number(count) });
+    }
+    return Object.freeze(usages);
+}
+
+/** Mutation reads each summary once and derives both quota facts from actual entry changes. */
+export async function readPluginCollectionPrefixQuotaTransitionInTx(input: Readonly<{
+    tx: Tx;
+    accountId: string;
+    before: PluginCollectionAccountRowsUsage;
+    after: PluginCollectionAccountRowsUsage;
+    policies: readonly PluginCollectionPrefixQuotaPolicy[];
+    delta: PluginCollectionUsageDelta;
+}>): Promise<Readonly<{
+    before: PluginCollectionPrefixQuotaUsage;
+    after: PluginCollectionPrefixQuotaUsage;
+    indexUsage: readonly PluginCollectionIndexUsageTransition[];
+}>> {
+    const policies = relevantPrefixPolicies(input.policies, [input.before, input.after]);
+    const indexUsage = await readPluginCollectionIndexUsageTransitionInTx({ ...input, policies });
+    const states = new Map(indexUsage.map(state => [state.id, state]));
+    const before: Array<PluginCollectionPrefixQuotaUsage[number]> = [];
+    const after: Array<PluginCollectionPrefixQuotaUsage[number]> = [];
+    for (const descriptor of resolvePrefixQuotaDescriptors({ policies, states: indexUsage })) {
+        const state = states.get(descriptor.stateId)!;
+        const key = collectionKey(descriptor.usage.pluginId, descriptor.usage.collectionId);
+        if ((input.before.collections.get(key)?.rows ?? 0) > 0) before.push({ ...descriptor.usage,
+            rows: readPluginCollectionQuotaPrefixCount(state.beforePrefixCounts, descriptor.key) });
+        if ((input.after.collections.get(key)?.rows ?? 0) > 0) after.push({ ...descriptor.usage,
+            rows: readPluginCollectionQuotaPrefixCount(state.afterPrefixCounts, descriptor.key) });
+    }
+    return { before: Object.freeze(before), after: Object.freeze(after), indexUsage };
 }
 
 function isMonotonicallyAllowed(input: Readonly<{
@@ -766,18 +792,22 @@ function findPluginCollectionPrefixMutationQuotaIncompatibility(input: Readonly<
 }
 
 /**
- * Evaluates a complete mutation transition after all relation cascades. Old
- * overages may only move strictly toward compliance; fresh/non-reducing state
- * is rejected before any transaction side effects can commit.
+ * Evaluates a mutation after all relation cascades. Changed oversized rows
+ * must strictly shrink; untouched rows do not veto another row's write.
+ * Collection, prefix and Account aggregate transitions retain their limits.
  */
 export function findPluginCollectionMutationQuotaIncompatibility(input: Readonly<{
     deployment: PluginDataCollectionsCapabilities;
-    before: PluginCollectionAccountUsage;
-    after: PluginCollectionAccountUsage;
+    before: Pick<PluginCollectionAccountUsage, 'rows' | 'encodedBytes' | 'collections'>;
+    after: Pick<PluginCollectionAccountUsage, 'rows' | 'encodedBytes' | 'collections'>;
     collections: readonly PluginCollectionQuotaPolicy[];
+    changedRows: readonly Readonly<{ pluginId: string; collectionId: string; rowIds: readonly string[] }>[];
     beforePrefixUsage: PluginCollectionPrefixQuotaUsage;
     afterPrefixUsage: PluginCollectionPrefixQuotaUsage;
 }>): PluginCollectionQuotaIncompatibility | null {
+    const changedRowsByCollection = new Map(input.changedRows.map(change => [
+        collectionKey(change.pluginId, change.collectionId), change.rowIds,
+    ]));
     const collections = [...input.collections].sort((left, right) => (
         left.pluginId.localeCompare(right.pluginId) || left.collectionId.localeCompare(right.collectionId)
     ));
@@ -803,10 +833,7 @@ export function findPluginCollectionMutationQuotaIncompatibility(input: Readonly
         });
         if (collectionBytes) return collectionBytes;
 
-        for (const rowId of [...new Set([
-            ...before.rowEncodedBytesByRowId.keys(),
-            ...after.rowEncodedBytesByRowId.keys(),
-        ])].sort((left, right) => left.localeCompare(right))) {
+        for (const rowId of changedRowsByCollection.get(collectionKey(collection.pluginId, collection.collectionId)) ?? []) {
             const row = incompatibilityForTransition({
                 dimension: 'maxRowEncodedBytes',
                 effectiveMaximum: limits.maxRowEncodedBytes,

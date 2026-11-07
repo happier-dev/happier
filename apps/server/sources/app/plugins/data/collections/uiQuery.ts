@@ -1,7 +1,7 @@
-import { readCollectionRecipientKeysInTx } from "./sharingStorage";
 import { PluginAccountPluginIntentV1Schema } from '@happier-dev/protocol/plugins/availability/v1';
 import { PluginCollectionContractReadResultV1Schema, PluginCollectionGetResultV1Schema, PluginCollectionQueryResultV1Schema, PluginCollectionRowV1Schema, PluginCollectionUiQueryTransportResultV1Schema, PLUGIN_COLLECTION_INDEX_SORT_KEY_MAX_BYTES_V1, assertPluginCollectionContentEnvelopeForModeV1, comparePluginCollectionIndexSortKeysV1, encodePluginCollectionIndexTuplePrefixV1, getPluginCollectionScalarKindV1, nextPluginCollectionIndexPrefixV1, resolvePluginCollectionContractAccessV1, validatePluginCollectionUiQueryResultV1, type NormalizedPluginAccountCollectionContractV1, type PluginCollectionContractReadRequestV1, type PluginCollectionContractReadResultV1, type PluginCollectionIndexScalarV1, type PluginCollectionGetRequestV1, type PluginCollectionGetResultV1, type PluginCollectionIndexScalarValueV1, type PluginCollectionQueryRequestV1, type PluginCollectionQueryResultV1, type PluginCollectionReadErrorCodeV1, type PluginCollectionRowV1, type PluginCollectionUiQueryTransportResultV1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
-import { PluginCollectionContractRefV1Schema, type PluginCollectionContractRefV1 } from '@happier-dev/protocol/plugins/data/collectionContractRefV1';
+import { PluginCollectionContractRefV1Schema, pluginCollectionContractKeyV1, type PluginCollectionContractRefV1 } from '@happier-dev/protocol/plugins/data/collectionContractRefV1';
+import { PluginCollectionPresenceResultV1Schema, type PluginCollectionPresenceRequestV1, type PluginCollectionPresenceResultV1 } from '@happier-dev/protocol/plugins/data/collectionPresenceV1';
 import { PluginCollectionUiQueryResultV1Schema, isCanonicalPluginCollectionIndexedInstantV1, validatePluginCollectionUiQueryParametersV1, type NormalizedPluginCollectionUiQueryDescriptorV1, type PluginCollectionUiQueryRequestV1 } from '@happier-dev/protocol/plugins/data/collectionUiQueryWireV1';
 import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
 import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
@@ -11,8 +11,12 @@ import { z } from "zod/mini";
 import { deriveAccountEncryptionCurrentnessFromRow } from "@/app/encryption/accountContentKeyAdmission";
 import { db } from "@/storage/db";
 import { inReadSnapshot, inTx, type Tx } from "@/storage/inTx";
+import { getActivePrismaRuntime, getDbProviderFromEnv } from "@/storage/prisma";
+import { resolveDbSqlDialect } from "@/config/databaseProvider";
 import { findExactMaterializedPluginCollectionContractTx, readMaterializedPluginCollectionContract } from "./contracts";
+import { readCollectionRecipientKeysInTx } from "./sharingStorage";
 import { readPluginCollectionIndexEntriesByRawOrdinalKey } from "./rawOrdinalIndex";
+import { diagnosePluginCollectionReadRefusal } from "./readRefusal";
 
 const COLLECTION_CURSOR_VERSION = 1;
 const COLLECTION_CURSOR_FINGERPRINT_BYTES = 32;
@@ -505,8 +509,17 @@ export async function resolveCurrentContract(input: Readonly<{
             seq: true,
         },
     });
-    if (!account) throw new PluginCollectionUiQueryOperationError("collection_unavailable");
-    const currentAccount = parseCurrentAccount(account);
+    if (!account) throw diagnosePluginCollectionReadRefusal(
+        new PluginCollectionUiQueryOperationError("collection_unavailable"), "account_missing", input.request);
+    let currentAccount: AccountQueryCurrentness;
+    try {
+        currentAccount = parseCurrentAccount(account);
+    } catch (error) {
+        if (error instanceof PluginCollectionReadOperationError) {
+            throw diagnosePluginCollectionReadRefusal(error, "account_content_mode_mismatch", input.request);
+        }
+        throw error;
+    }
 
     const intent = await database.accountPluginIntent.findUnique({
         where: {
@@ -524,7 +537,8 @@ export async function resolveCurrentContract(input: Readonly<{
             revision: true,
         },
     });
-    if (!intent) throw new PluginCollectionUiQueryOperationError("collection_unavailable");
+    if (!intent) throw diagnosePluginCollectionReadRefusal(
+        new PluginCollectionUiQueryOperationError("collection_unavailable"), "intent_missing", input.request);
     const parsedIntent = PluginAccountPluginIntentV1Schema.safeParse({
         pluginId: intent.pluginId,
         desiredVersion: intent.desiredVersion,
@@ -534,15 +548,18 @@ export async function resolveCurrentContract(input: Readonly<{
         revision: intent.revision.toString(),
     });
     if (!parsedIntent.success || !parsedIntent.data.enabled) {
-        throw new PluginCollectionUiQueryOperationError("collection_unavailable");
+        throw diagnosePluginCollectionReadRefusal(new PluginCollectionUiQueryOperationError("collection_unavailable"),
+            "intent_invalid_or_disabled", input.request);
     }
     const writer = parsedIntent.data.writableCollections.find((candidate) => (
         candidate.collectionId === input.request.collectionId
     ));
-    if (!writer) throw new PluginCollectionUiQueryOperationError("collection_unavailable");
+    if (!writer) throw diagnosePluginCollectionReadRefusal(
+        new PluginCollectionUiQueryOperationError("collection_unavailable"), "writer_not_selected", input.request);
 
     const persisted = await findExactMaterializedPluginCollectionContractTx({ tx: database, ref: writer });
-    if (!persisted) throw new PluginCollectionUiQueryOperationError("collection_unavailable");
+    if (!persisted) throw diagnosePluginCollectionReadRefusal(
+        new PluginCollectionUiQueryOperationError("collection_unavailable"), "writer_not_materialized", input.request, writer);
     try {
         const currentWriter = readMaterializedPluginCollectionContract(persisted);
         const requestedRef = input.request.readerContext;
@@ -550,34 +567,53 @@ export async function resolveCurrentContract(input: Readonly<{
             requestedRef.pluginId !== input.request.pluginId
             || requestedRef.collectionId !== input.request.collectionId
         ) {
-            throw new PluginCollectionReadOperationError("collection_unavailable");
+            throw diagnosePluginCollectionReadRefusal(new PluginCollectionReadOperationError("collection_unavailable"),
+                "reader_scope_mismatch", input.request, writer);
         }
         // A retained portable release admits its older reader ref. A
         // release-less claim has no retained releases: the current writer
         // plus the contract access resolver alone decide the reader.
         if (parsedIntent.data.desiredVersion !== null) {
-            const retainedReleases = await database.accountPluginRelease.findMany({
-                where: {
-                    accountId: input.accountId,
-                    pluginId: input.request.pluginId,
-                },
-                select: { collectionContracts: true },
-            });
-            const retained = retainedReleases.some((release) => {
-                const refs = z.array(PluginCollectionContractRefV1Schema).safeParse(release.collectionContracts);
-                return refs.success && refs.data.some((candidate) => refsMatch(candidate, requestedRef));
-            });
-            if (!retained) throw new PluginCollectionReadOperationError("collection_unavailable");
+            const prisma = getActivePrismaRuntime();
+            const provider = resolveDbSqlDialect(getDbProviderFromEnv(process.env, "postgres"));
+            const quote = provider === "mysql" ? "`" : '"';
+            const identifier = (name: string) => prisma.raw(`${quote}${name}${quote}`);
+            const contracts = identifier("collectionContracts");
+            // Availability admits these immutable arrays against the manifest
+            // before publication. Test one exact ref in storage rather than
+            // transferring every retained declaration back to this reader.
+            const membership = provider === "postgres"
+                ? prisma.sql`${contracts} @> ${JSON.stringify([requestedRef])}::jsonb`
+                : provider === "mysql"
+                    ? prisma.sql`JSON_CONTAINS(${contracts}, ${JSON.stringify(requestedRef)})`
+                    : prisma.sql`EXISTS (
+                        SELECT 1 FROM json_each(${contracts}) AS retained_ref
+                        WHERE json_extract(retained_ref.value, '$.pluginId') = ${requestedRef.pluginId}
+                            AND json_extract(retained_ref.value, '$.collectionId') = ${requestedRef.collectionId}
+                            AND json_extract(retained_ref.value, '$.schemaVersion') = ${requestedRef.schemaVersion}
+                            AND json_extract(retained_ref.value, '$.contractDigest') = ${requestedRef.contractDigest}
+                    )`;
+            const retained = await database.$queryRaw<readonly { retained: number | bigint }[]>(prisma.sql`
+                SELECT 1 AS ${identifier("retained")} FROM ${identifier("AccountPluginRelease")}
+                WHERE ${identifier("accountId")} = ${input.accountId}
+                    AND ${identifier("pluginId")} = ${input.request.pluginId}
+                    AND ${membership}
+                LIMIT 1
+            `);
+            if (retained.length === 0) throw diagnosePluginCollectionReadRefusal(
+                new PluginCollectionReadOperationError("collection_unavailable"), "reader_release_not_retained", input.request, writer);
         }
         const requestedRow = refsMatch(currentWriter, requestedRef)
             ? persisted
             : await findExactMaterializedPluginCollectionContractTx({ tx: database, ref: requestedRef });
-        if (!requestedRow) throw new PluginCollectionReadOperationError("collection_update_required");
+        if (!requestedRow) throw diagnosePluginCollectionReadRefusal(
+            new PluginCollectionReadOperationError("collection_update_required"), "reader_not_materialized", input.request, writer);
         const requested = requestedRow === persisted
             ? currentWriter
             : readMaterializedPluginCollectionContract(requestedRow);
         const access = resolvePluginCollectionContractAccessV1({ currentWriter, requested });
-        if (!access) throw new PluginCollectionReadOperationError("collection_update_required");
+        if (!access) throw diagnosePluginCollectionReadRefusal(
+            new PluginCollectionReadOperationError("collection_update_required"), "reader_writer_incompatible", input.request, writer);
         return {
             account: currentAccount,
             storageContractId: persisted.id,
@@ -587,7 +623,8 @@ export async function resolveCurrentContract(input: Readonly<{
         };
     } catch (error) {
         if (error instanceof PluginCollectionReadOperationError) throw error;
-        throw new PluginCollectionUiQueryOperationError("collection_contract_inconsistent");
+        throw diagnosePluginCollectionReadRefusal(new PluginCollectionUiQueryOperationError("collection_contract_inconsistent"),
+            "materialized_contract_invalid", input.request, writer);
     }
 }
 
@@ -616,36 +653,62 @@ export async function readCurrentPluginCollectionContract(input: Readonly<{
         accountId: input.accountId,
         request: { pluginId: ref.pluginId, collectionId: ref.collectionId, readerContext: ref },
     }, tx), { readOnly: true });
-    await readCurrentAccountChangeCursor({
-        accountId: input.accountId,
-        expectedMode: snapshot.account.encryptionMode,
-    });
     return PluginCollectionContractReadResultV1Schema.parse({
         access: snapshot.access,
         contract: snapshot.contract,
     });
 }
 
-async function readCurrentAccountChangeCursor(input: Readonly<{
+/**
+ * Content-free startup demand across retained contracts. This does not admit a
+ * Collection reader or writer: activation must still use the normal owners.
+ */
+export async function readPluginCollectionPresence(input: Readonly<{
     accountId: string;
-    expectedMode: "plain" | "e2ee";
-}>, database: Pick<Tx, "account"> = db): Promise<number> {
-    const account = await database.account.findUnique({
-        where: { id: input.accountId },
-        select: {
-            publicKey: true,
-            encryptionMode: true,
-            contentPublicKey: true,
-            contentPublicKeySig: true,
-            seq: true,
-        },
+    request: PluginCollectionPresenceRequestV1;
+}>): Promise<PluginCollectionPresenceResultV1> {
+    const collections = [...new Map(input.request.collections.map(collection => (
+        [pluginCollectionContractKeyV1(collection), collection] as const
+    ))).values()];
+    const snapshot = await inReadSnapshot(async tx => {
+        const account = await tx.account.findUnique({ where: { id: input.accountId }, select: {
+            publicKey: true, encryptionMode: true, contentPublicKey: true, contentPublicKeySig: true, seq: true,
+        } });
+        if (!account) throw new PluginCollectionReadOperationError("collection_unavailable");
+        const current = parseCurrentAccount(account);
+        if (collections.length === 0) return { result: { collections: [], changeCursor: current.changeCursor }, current };
+        const prisma = getActivePrismaRuntime();
+        const provider = getDbProviderFromEnv(process.env, "postgres");
+        const quote = provider === "mysql" ? "`" : '"';
+        const identifier = (name: string) => prisma.raw(`${quote}${name}${quote}`);
+        const pluginId = identifier("pluginId");
+        const collectionId = identifier("collectionId");
+        // The existing Data JSON-table pattern keeps bind count constant and
+        // performs one indexed EXISTS per requested key, never a body census.
+        const encoded = JSON.stringify(collections);
+        const requested = provider === "mysql"
+            ? prisma.sql`JSON_TABLE(${encoded}, '$[*]' COLUMNS (pluginId TEXT PATH '$.pluginId', collectionId TEXT PATH '$.collectionId'))`
+            : provider === "sqlite"
+                ? prisma.sql`(SELECT json_extract(value, '$.pluginId') AS ${pluginId}, json_extract(value, '$.collectionId') AS ${collectionId} FROM json_each(${encoded}))`
+                : prisma.sql`jsonb_to_recordset(${encoded}::jsonb)`;
+        const columns = provider === "postgres" ? prisma.sql`(${pluginId} text, ${collectionId} text)` : prisma.empty;
+        const rows = await tx.$queryRaw<Array<{ pluginId: string; collectionId: string; present: number | bigint }>>(prisma.sql`
+            SELECT requested.${pluginId}, requested.${collectionId}, CASE WHEN EXISTS (
+                SELECT 1 FROM ${identifier("PluginCollectionRow")} AS presence_row
+                WHERE presence_row.${identifier("accountId")} = ${input.accountId}
+                    AND presence_row.${pluginId} = requested.${pluginId}
+                    AND presence_row.${collectionId} = requested.${collectionId}
+                    AND presence_row.${identifier("deletedAt")} IS NULL
+            ) THEN 1 ELSE 0 END AS ${identifier("present")}
+            FROM ${requested} AS requested${columns}
+        `);
+        const presenceByKey = new Map(rows.map(row => [pluginCollectionContractKeyV1(row), row.present === 1 || row.present === 1n]));
+        return { current, result: PluginCollectionPresenceResultV1Schema.parse({
+            collections: collections.map(collection => ({ ...collection, present: presenceByKey.get(pluginCollectionContractKeyV1(collection)) })),
+            changeCursor: current.changeCursor,
+        }) };
     });
-    if (!account) throw new PluginCollectionUiQueryOperationError("collection_unavailable");
-    const current = parseCurrentAccount(account);
-    if (current.encryptionMode !== input.expectedMode) {
-        throw new PluginCollectionUiQueryOperationError("collection_content_mode_mismatch");
-    }
-    return current.changeCursor;
+    return snapshot.result;
 }
 
 function directIndexScalar(input: Readonly<{
@@ -870,7 +933,13 @@ export async function getPluginCollection(input: Readonly<{
     accountId: string;
     request: PluginCollectionGetRequestV1;
 }>): Promise<PluginCollectionGetResultV1> {
-    const snapshot = await inReadSnapshot(async (tx) => {
+    return await inReadSnapshot(tx => getPluginCollectionInTx(tx, input));
+}
+
+/** Sharing admission consumes this same snapshot reader after grant authorization. */
+export async function getPluginCollectionInTx(tx: Tx, input: Readonly<{
+    accountId: string; request: PluginCollectionGetRequestV1;
+}>): Promise<PluginCollectionGetResultV1> {
         const current = await resolveCurrentContract(input, tx);
         const row = await tx.pluginCollectionRow.findFirst({
             where: {
@@ -907,20 +976,13 @@ export async function getPluginCollection(input: Readonly<{
         const keys = row ? await readCollectionRecipientKeysInTx(tx, { ownerAccountId: input.accountId, actorAccountId: input.accountId,
             pluginId: input.request.pluginId, collectionId: input.request.collectionId, rowIds: [row.rowId] }) : new Map<string, string>();
         return {
-            result: PluginCollectionGetResultV1Schema.parse({
-                row: row
-                    ? { ...materializeDirectCollectionRow({ current, row }), ...(keys.has(row.rowId) ? { encryptedDataKey: keys.get(row.rowId)! } : {}) }
-                    : null,
-                absenceEpoch: absenceEpoch?.epoch ?? 0,
-            }),
-            expectedMode: current.account.encryptionMode,
-        };
-    });
-    await readCurrentAccountChangeCursor({
-        accountId: input.accountId,
-        expectedMode: snapshot.expectedMode,
-    });
-    return snapshot.result;
+            // Rows were admitted at the persisted-row boundary. Only the
+            // separately stored scalar still needs admission here.
+            row: row
+                ? { ...materializeDirectCollectionRow({ current, row }), ...(keys.has(row.rowId) ? { encryptedDataKey: keys.get(row.rowId)! } : {}) }
+                : null,
+            absenceEpoch: PluginCollectionGetResultV1Schema.shape.absenceEpoch.parse(absenceEpoch?.epoch ?? 0),
+        } satisfies PluginCollectionGetResultV1;
 }
 
 /**
@@ -961,23 +1023,16 @@ export async function queryPluginCollection(input: Readonly<{
             return { ...materializeDirectCollectionRow({ current, row }), ...(keys.has(row.rowId) ? { encryptedDataKey: keys.get(row.rowId)! } : {}) };
         });
         return {
-            result: PluginCollectionQueryResultV1Schema.parse({
+            result: {
                 rows: resultRows,
-                ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+                ...(page.nextCursor ? {
+                    nextCursor: PluginCollectionQueryResultV1Schema.shape.nextCursor.parse(page.nextCursor),
+                } : {}),
                 // Rows and this cursor are read from this one transaction
                 // snapshot. A later mutation remains observable to watch.
-                changeCursor: current.account.changeCursor,
-            }),
-            expectedMode: current.account.encryptionMode,
+                changeCursor: PluginCollectionQueryResultV1Schema.shape.changeCursor.parse(current.account.changeCursor),
+            } satisfies PluginCollectionQueryResultV1,
         };
-    });
-    // Recheck the Account mode after materializing row content so a mode
-    // transition cannot disclose data under the no-longer-current policy.
-    // Deliberately discard this later cursor: the response rows and cursor
-    // already belong to the one transaction snapshot above.
-    await readCurrentAccountChangeCursor({
-        accountId: input.accountId,
-        expectedMode: snapshot.expectedMode,
     });
     return snapshot.result;
 }
@@ -991,7 +1046,7 @@ export async function queryPluginCollectionUiQuery(input: Readonly<{
     accountId: string;
     request: PluginCollectionUiQueryRequestV1;
 }>): Promise<PluginCollectionUiQueryTransportResultV1> {
-    const snapshot = await inReadSnapshot(async (tx) => {
+    return await inReadSnapshot(async (tx) => {
         const current = await resolveCurrentContract(input, tx);
         const descriptor = current.contract.uiQueries.find((candidate) => candidate.id === input.request.uiQueryId);
         if (!descriptor) throw new PluginCollectionUiQueryOperationError("collection_query_invalid");
@@ -1081,27 +1136,12 @@ export async function queryPluginCollectionUiQuery(input: Readonly<{
             // contract; it is not an independent cursor owner.
             changeCursor: current.account.changeCursor,
         });
-        if (hasPrivateProjectedFields) {
-            return {
-                result: transportResult,
-                expectedMode: current.account.encryptionMode,
-            };
-        }
+        if (hasPrivateProjectedFields) return transportResult;
         const result = PluginCollectionUiQueryResultV1Schema.parse(transportResult);
         try {
-            return {
-                result: validatePluginCollectionUiQueryResultV1(descriptor, result),
-                expectedMode: current.account.encryptionMode,
-            };
+            return validatePluginCollectionUiQueryResultV1(descriptor, result);
         } catch {
             throw new PluginCollectionUiQueryOperationError("collection_contract_inconsistent");
         }
     });
-    // Match the direct reader's post-materialization mode validation without
-    // advancing the cursor returned from its transaction snapshot.
-    await readCurrentAccountChangeCursor({
-        accountId: input.accountId,
-        expectedMode: snapshot.expectedMode,
-    });
-    return snapshot.result;
 }

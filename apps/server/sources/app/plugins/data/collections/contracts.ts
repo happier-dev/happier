@@ -47,6 +47,18 @@ type StoredPluginCollectionContractRow = Readonly<{
     privacyProjection: unknown;
 }>;
 
+type PreparedMaterializedCollectionContract = ReturnType<typeof preparePluginAccountCollectionContractV1>;
+
+// Materialized contract versions are immutable, global declaration facts:
+// Account writer changes do not retire a version another Account or retained
+// reader still uses. Keep one preparation per qualified version for this server
+// lifetime, shared by reads, mutations, readiness and migration declarations.
+// Account admission and persisted-row existence are still read by each caller.
+const preparedMaterializedContracts = new Map<string, Readonly<{
+    stored: string;
+    prepared: PreparedMaterializedCollectionContract;
+}>>();
+
 export class PluginCollectionContractMaterializationError extends Error {
     constructor(readonly code: "collection_contract_invalid" | "collection_contract_inconsistent") {
         super(code);
@@ -270,8 +282,15 @@ async function prepareIndexStateTx(input: Readonly<{
  */
 function reconstructMaterializedPluginCollectionContract(
     row: StoredPluginCollectionContractRow,
-) {
+): PreparedMaterializedCollectionContract {
     try {
+        const key = JSON.stringify([row.pluginId, row.collectionId, row.schemaVersion, row.contractDigest]);
+        // Prisma returns fresh JSON objects. Compare their stored representation,
+        // without parsing or normalizing the schema again. A changed/corrupt row
+        // under the same digest must still pass the original consistency check.
+        const stored = JSON.stringify([row.normalizedSchema, row.indexes, row.relations, row.privacyProjection]);
+        const admitted = preparedMaterializedContracts.get(key);
+        if (admitted?.stored === stored) return admitted.prepared;
         const privacy = PersistedPrivacyProjectionV1Schema.parse(row.privacyProjection);
         const { contribution, normalized } = preparePluginAccountCollectionContractV1({
             pluginId: row.pluginId,
@@ -293,7 +312,9 @@ function reconstructMaterializedPluginCollectionContract(
         if (normalized.contractDigest !== row.contractDigest) {
             throw new PluginCollectionContractMaterializationError("collection_contract_inconsistent");
         }
-        return { contribution, normalized };
+        const prepared = Object.freeze({ contribution, normalized });
+        preparedMaterializedContracts.set(key, Object.freeze({ stored, prepared }));
+        return prepared;
     } catch (error) {
         if (error instanceof PluginCollectionContractMaterializationError) throw error;
         throw new PluginCollectionContractMaterializationError("collection_contract_inconsistent");

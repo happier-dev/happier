@@ -1,6 +1,7 @@
 import { getTransactionContext, TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
 import { getDbProviderFromEnv } from "@/storage/prisma";
 import { resolveDbSqlDialect } from "@/config/databaseProvider";
+import type { DbProvider } from "@/storage/db";
 
 export type AccountAdmissionIntent = "content" | "serializing" | "exclusive";
 
@@ -110,8 +111,9 @@ export async function acquireAccountSessionOwnerMetadataFenceInTx(
     tx: Tx,
     accountId: string,
     intent: AccountAdmissionIntent,
+    provider: DbProvider = getDbProviderFromEnv(process.env, "postgres"),
 ): Promise<void> {
-    const ids = await acquireAccountSessionOwnerMetadataFencesInTx(tx, [accountId], intent);
+    const ids = await acquireAccountSessionOwnerMetadataFencesInTx(tx, [accountId], intent, provider);
     assertExactlyOneAccountRow(ids.length, accountId);
 }
 
@@ -120,10 +122,11 @@ export async function acquireAccountSessionOwnerMetadataFencesInTx(
     tx: Tx,
     accountIds: readonly string[],
     intent: AccountAdmissionIntent,
+    provider: DbProvider = getDbProviderFromEnv(process.env, "postgres"),
 ): Promise<readonly string[]> {
     const ids = [...new Set(accountIds)].sort();
     if (ids.length === 0) return [];
-    const dialect = resolveDbSqlDialect(getDbProviderFromEnv(process.env, "postgres"));
+    const dialect = resolveDbSqlDialect(provider);
     const admitted = dialect !== "sqlite"
         ? assertManagedAdmissionAudience(tx, ids, admissionStrength[dialect === "mysql" ? "exclusive" : intent]) : undefined;
     // Native row locks survive until the containing attempt ends. Nested

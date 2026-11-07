@@ -16,7 +16,7 @@ import { acquireAccountEncryptionTransitionFenceInTx } from "@/app/encryption/ac
 import type { AccountAdmissionIntent } from "@/app/encryption/accountSessionOwnerMetadataFence";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { readPluginsFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
-import { isPrismaErrorCode } from "@/storage/db";
+import { getDbProviderFromEnv } from "@/storage/prisma";
 import { inTx, type Tx } from "@/storage/inTx";
 
 import {
@@ -40,6 +40,7 @@ import {
     materializeCandidatePromotionSetwiseInTx,
     prepareCandidatePromotionMaterializedRows,
 } from "./candidatePreparationPromotion";
+import { transferPluginCollectionUsageContractInTx } from "./usageTotals";
 import { retirePluginCollectionCandidatePreparationStagesTx } from "./candidatePreparationLifecycle";
 import {
     extendPluginCollectionAccountActivationUsageWithStoredRows,
@@ -47,6 +48,7 @@ import {
     findPluginCollectionBatchQuotaIncompatibility,
     PluginCollectionQuotaCensusInconsistencyError,
     readPluginCollectionAccountActivationUsageInTx,
+    readPluginCollectionAccountCandidateStageUsageInTx,
     type PluginCollectionQuotaIncompatibility,
     type PluginCollectionQuotaPolicy,
 } from "./quota";
@@ -109,6 +111,9 @@ type CandidatePreparationStageQuotaRecord = Readonly<{
     targetProjection: unknown;
     targetContract: StoredCollectionContract;
 }>;
+
+type CandidatePreparationStageBindingRecord = Omit<CandidatePreparationStageQuotaRecord,
+    "targetContentEnvelope" | "targetProjection" | "targetContract">;
 
 type CandidatePreparationSourcePageRow = Readonly<{
     id: string;
@@ -693,7 +698,7 @@ function exactStageWhere(input: Readonly<{
 }
 
 function stageMatchesExactBinding(input: Readonly<{
-    stage: CandidatePreparationStageQuotaRecord;
+    stage: CandidatePreparationStageBindingRecord;
     accountId: string;
     resolved: ResolvedCandidatePreparationBinding;
     binding: PluginCollectionCandidatePreparationBindingV1;
@@ -715,7 +720,7 @@ function stageMatchesExactBinding(input: Readonly<{
         sourceRevision: input.sourceRevision,
     };
     return Object.entries(expected).every(([field, value]) => (
-        input.stage[field as keyof CandidatePreparationStageQuotaRecord] === value
+        input.stage[field as keyof CandidatePreparationStageBindingRecord] === value
     ));
 }
 
@@ -799,23 +804,24 @@ async function assertCandidateStageBatchQuotaInTx(input: Readonly<{
     tx: Tx;
     accountId: string;
     deployment: ReturnType<typeof readPluginsFeatureEnv>["collectionLimits"];
-    stages: readonly CandidatePreparationStageQuotaRecord[];
     prospective: readonly CandidatePreparationProspectiveStage[];
     candidateIdentity: string;
 }>): Promise<void> {
     try {
-        const usage = await readPluginCollectionAccountActivationUsageInTx({
-            tx: input.tx,
-            accountId: input.accountId,
-            deployment: input.deployment,
-        });
+        const postgres = getDbProviderFromEnv(process.env, "postgres") === "postgres";
+        const usage = postgres
+            ? await readPluginCollectionAccountCandidateStageUsageInTx(input)
+            : await readPluginCollectionAccountActivationUsageInTx({
+                tx: input.tx, accountId: input.accountId, deployment: input.deployment,
+            });
+        const stages = postgres ? [] : await readCandidateStageQuotaSnapshotInTx(input);
         const policies = new Map<string, PluginCollectionQuotaPolicy>();
         for (const persisted of usage.contracts.values()) {
             addCandidateQuotaPolicy(policies, readMaterializedPluginCollectionContract(
                 persisted as StoredCollectionContract,
             ));
         }
-        const stageRows = input.stages.map((stage) => {
+        const stageRows = stages.map((stage) => {
             const contract = readMaterializedPluginCollectionContract(
                 stage.targetContract as StoredCollectionContract,
             );
@@ -1029,6 +1035,13 @@ async function adoptCompatibleSchemaContractIdentityInTx(input: Readonly<{
         },
     });
     if (adoptedRows.count !== input.liveRowCount) promotionNotReady();
+    await transferPluginCollectionUsageContractInTx({
+        tx: input.tx,
+        accountId: input.accountId,
+        fromContractId: input.source.id,
+        toContractId: input.target.id,
+        rows: adoptedRows.count,
+    });
 
     for (const state of sourceDerived.indexStates) {
         const targetState = await input.tx.pluginCollectionIndexState.findUnique({
@@ -1761,11 +1774,15 @@ export async function stagePluginCollectionCandidatePreparation(input: Readonly<
             target: resolved.target,
         });
 
-        const stages = await readCandidateStageQuotaSnapshotInTx({
-            tx,
-            accountId: input.accountId,
+        const stages = await tx.pluginCollectionCandidatePreparationStage.findMany({
+            where: { accountId: input.accountId, candidateIdentity: resolved.candidateIdentity,
+                targetContractId: resolved.target.id, sourceRowDbId: { in: sourceRows.map(row => row.id) } },
+            select: { id: true, accountId: true, pluginId: true, collectionId: true, rowId: true,
+                candidateIdentity: true, sourceRowDbId: true, sourceContractId: true, sourceSchemaVersion: true,
+                sourceContractDigest: true, sourceRevision: true, targetContractId: true, targetSchemaVersion: true,
+                targetContractDigest: true, candidateReleaseVersion: true, candidateArtifactDigest: true },
         });
-        const existingBySourceRowDbId = new Map<string, CandidatePreparationStageQuotaRecord>();
+        const existingBySourceRowDbId = new Map<string, CandidatePreparationStageBindingRecord>();
         for (const stage of stages) {
             if (
                 stage.candidateIdentity === resolved.candidateIdentity
@@ -1822,56 +1839,34 @@ export async function stagePluginCollectionCandidatePreparation(input: Readonly<
                 tx,
                 accountId: input.accountId,
                 deployment,
-                stages,
                 prospective,
                 candidateIdentity: resolved.candidateIdentity,
             });
-            for (const stage of prospective) {
-                const stageWhere = exactStageWhere({
+            // The serializing Account fence precedes both the exact identity
+            // read and this write. Conforming stage producers cannot race here;
+            // a uniqueness failure aborts the same all-or-nothing transaction.
+            await tx.pluginCollectionCandidatePreparationStage.createMany({
+                data: prospective.map(stage => ({
                     accountId: input.accountId,
-                    resolved,
-                    binding: request.binding,
+                    pluginId: resolved.source.ref.pluginId,
+                    collectionId: resolved.source.ref.collectionId,
+                    rowId: stage.rowId,
+                    candidateIdentity: resolved.candidateIdentity,
                     sourceRowDbId: stage.sourceRowDbId,
+                    sourceContractId: resolved.source.id,
+                    sourceSchemaVersion: resolved.source.ref.schemaVersion,
+                    sourceContractDigest: resolved.source.ref.contractDigest,
                     sourceRevision: stage.sourceRevision,
-                });
-                try {
-                    await tx.pluginCollectionCandidatePreparationStage.create({
-                        data: {
-                            accountId: input.accountId,
-                            pluginId: resolved.source.ref.pluginId,
-                            collectionId: resolved.source.ref.collectionId,
-                            rowId: stage.rowId,
-                            candidateIdentity: resolved.candidateIdentity,
-                            sourceRowDbId: stage.sourceRowDbId,
-                            sourceContractId: resolved.source.id,
-                            sourceSchemaVersion: resolved.source.ref.schemaVersion,
-                            sourceContractDigest: resolved.source.ref.contractDigest,
-                            sourceRevision: stage.sourceRevision,
-                            targetContractId: resolved.target.id,
-                            targetSchemaVersion: resolved.target.ref.schemaVersion,
-                            targetContractDigest: resolved.target.ref.contractDigest,
-                            candidateReleaseVersion: request.binding.candidate.releaseVersion,
-                            candidateArtifactDigest: request.binding.candidate.artifactDigest,
-                            targetContentEnvelope: stage.targetContentEnvelope,
-                            targetProjection: stage.targetProjection,
-                        },
-                    });
-                } catch (error) {
-                    if (!isPrismaErrorCode(error, "P2002")) throw error;
-                    // The compact candidateIdentity is only an implementation
-                    // key. A race must re-prove every persisted binding fact;
-                    // accepting a different raw record would make that key an
-                    // authority boundary.
-                    const raced = await tx.pluginCollectionCandidatePreparationStage.findFirst({
-                        where: stageWhere,
-                        select: { id: true },
-                    });
-                    if (!raced) {
-                        throw new PluginCollectionCandidatePreparationOperationError(
-                            "collection_candidate_preparation_invalid",
-                        );
-                    }
-                }
+                    targetContractId: resolved.target.id,
+                    targetSchemaVersion: resolved.target.ref.schemaVersion,
+                    targetContractDigest: resolved.target.ref.contractDigest,
+                    candidateReleaseVersion: request.binding.candidate.releaseVersion,
+                    candidateArtifactDigest: request.binding.candidate.artifactDigest,
+                    targetContentEnvelope: stage.targetContentEnvelope,
+                    targetProjection: stage.targetProjection,
+                })),
+            });
+            for (const stage of prospective) {
                 results[stage.index] = { status: "staged" };
             }
         }

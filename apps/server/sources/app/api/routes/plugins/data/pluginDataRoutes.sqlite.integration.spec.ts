@@ -1,15 +1,15 @@
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { compilePluginJsonSchema, isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { encodePluginCollectionLogicalValueV1, type PluginCollectionLogicalValueV1 } from '@happier-dev/protocol/plugins/data/collectionLogicalCodecV1';
 import { PLUGIN_MANIFEST as CHANNELS_MANIFEST, collectionMigrations as channelsCollectionMigrations } from '../../../../../../../../packages/plugins/channels/src/manifest';
-import { promotePluginCollectionCandidatePreparationInTx, stagePluginCollectionCandidatePreparation } from '@/app/plugins/data/collections/candidatePreparation';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { randomBytes } from 'node:crypto';
 import { createPluginCollectionSharingClientV1 } from '@happier-dev/protocol/plugins/data/collectionSharingClientV1';
 import { PLUGIN_COLLECTION_SHARING_HTTP_PATHS_V1 } from '@happier-dev/protocol/plugins/data/collectionSharingV1';
-import { openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import { PluginCollectionRowV1Schema } from '@happier-dev/protocol/plugins/data/collectionsV1';
+import { PluginCollectionPresenceResultV1Schema } from '@happier-dev/protocol/plugins/data/collectionPresenceV1';
 import tweetnacl from "tweetnacl";
+import { openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 
 import {
     signAccountContentKeyBindingV1,
@@ -26,6 +26,7 @@ import {
     encodeBase64,
     encodePluginCollectionIndexSortKeyV1,
     normalizePluginAccountCollectionContractV1,
+    measurePluginCollectionMutationRequestEncodedBytesV1,
     sealPluginCollectionPrivatePayloadV1,
 } from "@happier-dev/protocol";
 import type { Prisma } from "@prisma/client";
@@ -35,6 +36,9 @@ import {
     preparePluginCollectionWritableContractsTx,
 } from "@/app/plugins/data/collections/contracts";
 import { mutatePluginCollection as mutatePluginCollectionWithAuthentication } from "@/app/plugins/data/collections/mutation";
+import { backfillPluginCollectionUsageTotalsInTx } from "@/app/plugins/data/collections/usageTotals";
+import { promotePluginCollectionCandidatePreparationInTx, stagePluginCollectionCandidatePreparation } from '@/app/plugins/data/collections/candidatePreparation';
+import { measurePluginCollectionStoredRowEncodedBytes } from "@/app/plugins/data/collections/storedRowUsage";
 import { createPresentUserSessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication.testkit";
 import {
     acquireAccountEncryptionTransitionFenceInTx,
@@ -50,6 +54,9 @@ import { withAuthenticatedTestApp } from "../../../testkit/sqliteFastify";
 import { pluginDataRoutes } from "./pluginDataRoutes";
 import { holdSqliteWriteLock } from "@/testkit/sqliteWriteLock";
 import { observeSqliteRequests } from "@/testkit/observeSqliteRequests";
+import { observePrismaReads } from "@/testkit/observePrismaReads";
+import { logger } from "@/utils/logging/log";
+import { enableMonitoring } from "../../../utils/enableMonitoring";
 
 const PLUGIN_ID = "example.tasks";
 const COLLECTION_ID = "tasks";
@@ -613,6 +620,15 @@ async function commitValidE2eeAccountModeForTest(input: Readonly<{
     });
 }
 
+/** Direct fixture writes model a database after its canonical totals backfill. */
+async function backfillCurrentCollectionUsage(accountId: string): Promise<void> {
+    await inTx(async tx => {
+        const fence = await acquireAccountEncryptionTransitionFenceInTx(tx, accountId, "serializing");
+        expect(fence.status).toBe("ready");
+        await backfillPluginCollectionUsageTotalsInTx({ tx, accountId });
+    });
+}
+
 async function seedCurrentCollectionAccount(params: Readonly<{
     accountId: string;
     mode?: "plain" | "e2ee";
@@ -726,6 +742,7 @@ async function seedCurrentCollectionAccount(params: Readonly<{
         });
     }
 
+    await backfillCurrentCollectionUsage(params.accountId);
     return { ref, contract, indexState };
 }
 
@@ -853,20 +870,22 @@ async function seedAdditionalCurrentCollectionRow(params: Readonly<{
             rowRevision: params.row.revision,
         },
     });
+    await backfillCurrentCollectionUsage(params.accountId);
     return { ref };
 }
 
 /**
- * Injects a provider timeout at the persisted quota-census boundary while
+ * Injects a provider timeout at the persisted quota-usage boundary while
  * keeping every other operation on the real SQLite transaction path.
  */
-function failPluginCollectionQuotaCensusRead(input: Readonly<{
+function failPluginCollectionQuotaUsageOperation(input: Readonly<{
     accountId: string;
-    occurrence: number;
+    phase: "read" | "write";
     error: Error;
 }>) {
     const originalTransaction = db.$transaction.bind(db);
-    let censusReads = 0;
+    let usageReads = 0;
+    let usageWrites = 0;
     let restored = false;
 
     Reflect.set(db, "$transaction", async (...args: Parameters<typeof db.$transaction>) => {
@@ -875,32 +894,47 @@ function failPluginCollectionQuotaCensusRead(input: Readonly<{
             return await originalTransaction(...args);
         }
         return await originalTransaction(async (tx) => {
-            const censusTx: typeof tx = Object.create(tx);
-            const censusRows = Object.create(tx.pluginCollectionRow);
-            const originalFindMany = tx.pluginCollectionRow.findMany.bind(tx.pluginCollectionRow);
-            Object.defineProperty(censusRows, "findMany", {
-                value: async (...findManyArgs: Parameters<typeof tx.pluginCollectionRow.findMany>) => {
-                    const where = (findManyArgs[0] as Readonly<{
-                        where?: Readonly<{ accountId?: unknown; deletedAt?: unknown }>;
-                    }> | undefined)?.where;
+            const usageTx: typeof tx = Object.create(tx);
+            const usageAccount = Object.create(tx.account);
+            const originalRead = tx.account.findUniqueOrThrow.bind(tx.account);
+            Object.defineProperty(usageAccount, "findUniqueOrThrow", {
+                value: async (...readArgs: Parameters<typeof tx.account.findUniqueOrThrow>) => {
+                    const request = readArgs[0];
                     if (
-                        where?.accountId === input.accountId
-                        && where.deletedAt === null
-                        && Object.keys(where).length === 2
+                        request?.where.id === input.accountId
+                        && request.select?.pluginCollectionRows === true
+                        && request.select?.pluginCollectionEncodedBytes === true
                     ) {
-                        censusReads += 1;
-                        if (censusReads === input.occurrence) throw input.error;
+                        usageReads += 1;
+                        if (input.phase === "read") throw input.error;
                     }
-                    return await originalFindMany(...findManyArgs);
+                    return await originalRead(...readArgs);
                 },
             });
-            Object.defineProperty(censusTx, "pluginCollectionRow", { value: censusRows });
-            return await callback(censusTx);
+            const originalWrite = tx.account.update.bind(tx.account);
+            Object.defineProperty(usageAccount, "update", {
+                value: async (...writeArgs: Parameters<typeof tx.account.update>) => {
+                    const request = writeArgs[0];
+                    const result = await originalWrite(...writeArgs);
+                    if (request.where.id === input.accountId
+                        && request.data.pluginCollectionRows !== undefined
+                        && request.data.pluginCollectionEncodedBytes !== undefined) {
+                        usageWrites += 1;
+                        // The real counter update has executed in this transaction;
+                        // a provider failure here must roll it back with row effects.
+                        if (input.phase === "write") throw input.error;
+                    }
+                    return result;
+                },
+            });
+            Object.defineProperty(usageTx, "account", { value: usageAccount });
+            return await callback(usageTx);
         }, options);
     });
 
     return {
-        censusReads: () => censusReads,
+        usageReads: () => usageReads,
+        usageWrites: () => usageWrites,
         restore: () => {
             if (restored) return;
             restored = true;
@@ -1312,41 +1346,6 @@ const ACCOUNT_MODE_CURRENTNESS_QUERY_CASES = [{
  * than pausing a global row delegate that transaction-scoped readers no
  * longer use.
  */
-function flipAccountModeBeforePostQueryCurrentnessRead(input: Readonly<{
-    accountId: string;
-    seq: number;
-}>) {
-    const accountDelegate = db.account;
-    const originalFindUnique = accountDelegate.findUnique.bind(accountDelegate);
-    let flipped = false;
-    let restored = false;
-
-    Object.defineProperty(accountDelegate, "findUnique", {
-        configurable: true,
-        writable: true,
-        value: async (...args: Parameters<typeof accountDelegate.findUnique>) => {
-            if (!flipped) {
-                flipped = true;
-                await commitValidE2eeAccountModeForTest(input);
-            }
-            return await originalFindUnique(...args);
-        },
-    });
-
-    return {
-        wasFlipped: () => flipped,
-        restore: () => {
-            if (restored) return;
-            restored = true;
-            Object.defineProperty(accountDelegate, "findUnique", {
-                configurable: true,
-                writable: true,
-                value: originalFindUnique,
-            });
-        },
-    };
-}
-
 /**
  * Commit a real mutation after the query has established its read snapshot.
  * Every subsequent row/index read must still observe that same snapshot.
@@ -1380,92 +1379,77 @@ function racePluginCollectionQuerySnapshot(input: Readonly<{
 }
 
 describe("plugin collection UI query route", () => {
-    it("promotes retained Channels census custody to v20 and serves new input through its exact HTTP reader", async () => {
-        const accountId = 'channels-v20-retained-census';
-        const captured = JSON.parse(readFileSync(new URL(
-            '../../../../../../../../packages/protocol/src/plugins/data/__fixtures__/channelStateV19Qa86.json', import.meta.url,
-        ), 'utf8'));
-        const sourceContract = PluginCollectionContractReadResultV1Schema.parse({ access: 'writable', contract: captured.writer }).contract;
-        const { pluginId, collectionId, contractDigest: _digest, ...sourceDeclaration } = sourceContract;
-        const targetDeclaration = CHANNELS_MANIFEST.contributes?.accountCollections?.find(item => item.id === collectionId);
-        if (!targetDeclaration) throw new Error('Missing current Channels state declaration');
-        const manifest = (version: string, collection: unknown) => PluginManifestV2Schema.parse({
-            ...CHANNELS_MANIFEST, version, contributes: { accountCollections: [collection] },
+    it("admits direct rows once and prepares an unchanged stored contract only once per immutable version", async () => {
+        const accountId = "account-direct-admission-cost";
+        const { ref } = await seedCurrentCollectionAccount({
+            accountId,
+            retainRelease: false,
+            desiredVersion: null,
+            rows: [
+                { rowId: "cost-a", status: "open", title: "A", revision: 1 },
+                { rowId: "cost-b", status: "open", title: "B", revision: 1 },
+            ],
         });
-        const sourceManifest = manifest('1.0.0', { ...sourceDeclaration, id: collectionId });
-        const targetManifest = manifest('2.0.0', targetDeclaration);
-        const [source] = await inTx(tx => materializePluginCollectionContractsFromManifestTx({ tx, manifest: sourceManifest }));
-        const [target] = await inTx(tx => materializePluginCollectionContractsFromManifestTx({ tx, manifest: targetManifest }));
-        if (!source || !target) throw new Error('Missing Channels migration contracts');
-        const targetContract = normalizePluginAccountCollectionContractV1({ pluginId,
-            contribution: PluginAccountCollectionContributionV1Schema.parse(targetDeclaration) });
-        await createAccount({ id: accountId, mode: 'plain', seq: 1 });
-        await retainCollectionRelease({ accountId, manifest: sourceManifest, refs: [source] });
-        await retainCollectionRelease({ accountId, manifest: targetManifest, refs: [target] });
-        await db.accountPluginIntent.create({ data: { accountId, pluginId, desiredVersion: '1.0.0', enabled: true,
-            offlineUiHosting: 'disabled', writableCollections: toPrismaJson([source]), revision: BigInt(1) } });
-        await inTx(tx => preparePluginCollectionWritableContractsTx({ tx, accountId, pluginId, contracts: [source] }));
-        const historical = { id: 'A'.repeat(43), 'record-kind': 'ingress-obligation', v: 1,
-            'connection-id': 'connection-1', 'created-at': 1, 'updated-at': 1, 'due-at': 100,
-            terminal: false, attention: false, payload: { censusId: 'C'.repeat(43), occurrenceIds: ['observation-1'], target: null,
-                sourceAuthority: { connectionAuthorityEpoch: 1 }, lifecycle: { phase: 'retryDue', attemptCount: 1, dueAt: 100 },
-                disposition: null, nonAdmission: null } };
-        const encode = (contract: typeof sourceContract, value: PluginCollectionLogicalValueV1) => {
-            const validate = compilePluginJsonSchema(contract.schema);
-            const result = encodePluginCollectionLogicalValueV1({ contract, value, encryptionMode: 'plain', material: null,
-                isValidLogicalValue: candidate => isValidPluginJsonSchemaValue(validate, candidate), randomBytes });
-            if (result.status === 'failed') throw new Error(`Channels fixture rejected: ${result.reason}`);
-            return result;
-        };
-        const sourceValue = encode(sourceContract, historical);
-        await mutatePluginCollection({ accountId, request: { pluginId, collectionId,
-            writerContext: { schemaVersion: source.schemaVersion, contractDigest: source.contractDigest },
-            operations: [{ kind: 'put', rowId: historical.id, expectedRevision: 'absent', expectedAbsenceEpoch: 0,
-                content: sourceValue.content, projection: sourceValue.projection }] } });
-        const edge = channelsCollectionMigrations['channel-state']?.find(step => step.fromSchemaVersion === source.schemaVersion);
-        if (!edge) throw new Error('Missing Channels v19-to-v20 migration');
-        const migrated = await edge.migrate(historical, { currentRevision: 1 });
-        expect(migrated).toEqual(historical);
-        const staged = encode(targetContract, migrated);
-        await stagePluginCollectionCandidatePreparation({ accountId, request: {
-            binding: { source, target, candidate: { releaseVersion: '2.0.0', artifactDigest: `sha256:${'f'.repeat(64)}` } },
-            items: [{ source: { rowId: historical.id, revision: 1 },
-                target: { content: staged.content, projection: staged.projection } }],
-        } });
-        await inTx(async tx => {
-            const currentIntent = await tx.accountPluginIntent.findUniqueOrThrow({ where: { accountId_pluginId: { accountId, pluginId } } });
-            await promotePluginCollectionCandidatePreparationInTx({ tx, accountId, pluginId, currentIntent,
-                targetReleaseVersion: '2.0.0', targetContracts: [target] });
-            await preparePluginCollectionWritableContractsTx({ tx, accountId, pluginId, contracts: [target] });
-            await tx.accountPluginIntent.update({ where: { accountId_pluginId: { accountId, pluginId } },
-                data: { desiredVersion: '2.0.0', writableCollections: toPrismaJson([target]), revision: { increment: 1 } } });
-        });
-        const { censusId: _censusId, ...payload } = historical.payload;
-        const current = { ...historical, id: 'B'.repeat(43), payload: { ...payload, normalizedIngress: null,
-            observationShell: { v: 1, occurrenceId: 'observation-1', occurredAt: 1, transport: { kind: 'poll' },
-                endpoint: { kind: 'direct', audience: 'direct', id: 'provider:chat:1' },
-                actor: { kind: 'human', principalId: 'person-1', isIntegrationSelf: false },
-                message: { id: 'provider:message:1', providerTimestamp: 1, addressingEvidence: 'none', contentProvenance: 'original' } } } };
-        const encoded = encode(targetContract, current);
-        const headers = { 'content-type': 'application/json', 'x-test-user-id': accountId, ...V3_HEADERS };
         await withPluginDataApp(async app => {
-            const mutation = await app.inject({ method: 'POST', url: '/v1/plugins/data/mutate', headers,
-                payload: { pluginId, collectionId, writerContext: { schemaVersion: target.schemaVersion, contractDigest: target.contractDigest }, operations: [{ kind: 'put', rowId: current.id,
-                    expectedRevision: 'absent', expectedAbsenceEpoch: 0, content: encoded.content, projection: encoded.projection }] } });
-            expect(mutation.statusCode).toBe(200);
-            const contract = await app.inject({ method: 'POST', url: '/v1/plugins/data/contract', headers, payload: { ref: target } });
-            expect(contract.statusCode).toBe(200);
-            expect(PluginCollectionContractReadResultV1Schema.parse(contract.json()).contract.schemaVersion).toBe(20);
-            const get = await app.inject({ method: 'POST', url: '/v1/plugins/data/get', headers,
-                payload: { pluginId, collectionId, readerContext: target, rowId: current.id } });
-            expect(get.statusCode).toBe(200);
-            expect(PluginCollectionGetResultV1Schema.parse(get.json()).row?.content).toEqual(encoded.content);
+            const rowAdmissions = vi.spyOn(PluginCollectionRowV1Schema._zod, "run");
+            // Standalone persistence admission uses the lazy facade; containing
+            // schemas use native run. Observe both without replacing validation.
+            const rowParses = vi.spyOn(PluginCollectionRowV1Schema, "parse");
+            const contractAdmissions = vi.spyOn(PluginAccountCollectionContributionV1Schema, "parse");
+            try {
+                const selections = [
+                    ["/v1/plugins/data/get", { rowId: "cost-a" }, 1],
+                    ["/v1/plugins/data/query", { indexId: "by-status", prefix: ["open"], order: "asc", limit: 50 }, 2],
+                ] as const;
+                // Warm through the real authenticated route before measuring
+                // unchanged persisted-version reads, never through a helper.
+                await app.inject({ method: "POST", url: selections[0][0],
+                    headers: { ...V3_HEADERS, "x-test-user-id": accountId },
+                    payload: { pluginId: PLUGIN_ID, collectionId: COLLECTION_ID, readerContext: ref, ...selections[0][1] },
+                });
+                for (const [url, selection, rowCount] of Array.from({ length: 16 }, (_, index) => selections[index % selections.length]!)) {
+                    rowAdmissions.mockClear();
+                    rowParses.mockClear();
+                    contractAdmissions.mockClear();
+                    const response = await app.inject({
+                        method: "POST", url,
+                        headers: { ...V3_HEADERS, "x-test-user-id": accountId },
+                        payload: { pluginId: PLUGIN_ID, collectionId: COLLECTION_ID, readerContext: ref, ...selection },
+                    });
+                    expect(response.statusCode, response.body).toBe(200);
+                    expect(contractAdmissions).not.toHaveBeenCalled();
+                    // Facade entry also invokes native run: do not count that
+                    // one admission twice. Containing reparses only add runs.
+                    expect(rowParses).toHaveBeenCalledTimes(rowCount);
+                    expect(rowAdmissions).toHaveBeenCalledTimes(rowCount);
+                }
+                // The same Collection's next immutable version requires a new
+                // preparation; subsequent reads carry that admitted result.
+                const [next] = await inTx(tx => materializePluginCollectionContractsFromManifestTx({ tx, manifest: {
+                    ...COLLECTION_MANIFEST, version: "2.0.0",
+                    contributes: { accountCollections: [{ ...COLLECTION_MANIFEST.contributes.accountCollections[0], schemaVersion: 2 }] },
+                } }));
+                if (!next) throw new Error("Expected the next immutable contract");
+                await db.accountPluginIntent.update({ where: { accountId_pluginId: { accountId, pluginId: PLUGIN_ID } },
+                    data: { writableCollections: toPrismaJson([next]), revision: { increment: 1 } },
+                });
+                contractAdmissions.mockClear();
+                for (let read = 0; read < 16; read++) {
+                    const response = await app.inject({ method: "POST", url: "/v1/plugins/data/get",
+                        headers: { ...V3_HEADERS, "x-test-user-id": accountId },
+                        payload: { pluginId: PLUGIN_ID, collectionId: COLLECTION_ID, readerContext: next, rowId: "cost-a" },
+                    });
+                    expect(response.statusCode, response.body).toBe(200);
+                    expect(response.json()).toMatchObject({ row: null });
+                }
+                expect(contractAdmissions).toHaveBeenCalledTimes(1);
+            } finally {
+                rowAdmissions.mockRestore();
+                rowParses.mockRestore();
+                contractAdmissions.mockRestore();
+            }
         });
-        const retained = await db.pluginCollectionRow.findFirstOrThrow({ where: { accountId, rowId: historical.id } });
-        expect(retained).toMatchObject({ schemaVersion: 20, contractDigest: target.contractDigest, deletedAt: null });
-        expect(retained.contentEnvelope).toEqual(staged.content);
     });
-
 
     it("registers candidate-preparation routes behind authenticated Data transport and maps malformed/currentness failures", async () => {
         const accountId = "account-candidate-preparation-routes";
@@ -1885,6 +1869,122 @@ describe("plugin collection UI query route", () => {
             expect(recreatedWithoutResourceKey.statusCode).toBe(200);
             await expect(peerClient.get({ ownerAccountId: owner, rowId: second.id })).rejects.toMatchObject({ code: "collection_unavailable" });
             expect((await peerClient.sharedWithMe({})).rows).toEqual([]);
+        });
+    });
+
+    it("reads content-free retained collection presence without claiming a writer or scanning rows", async () => {
+        const accountId = "account-collection-presence";
+        await seedCurrentCollectionAccount({ accountId, seq: 77, rows: [
+            { rowId: "retained", status: "open", title: "Private retained body", revision: 1 },
+        ] });
+        await createAccount({ id: "account-collection-presence-other", mode: "plain", seq: 91 });
+        // A dormant plugin has not admitted its current writer. Retained rows
+        // must still wake it so that normal activation can perform migration.
+        await db.accountPluginIntent.deleteMany({ where: { accountId } });
+        const retained = await db.pluginCollectionRow.findFirstOrThrow({ where: { accountId } });
+        await inTx(tx => materializePluginCollectionContractsFromManifestTx({ tx, manifest: {
+            ...COLLECTION_MANIFEST, contributes: { accountCollections: [
+                { ...COLLECTION_MANIFEST.contributes.accountCollections[0], schemaVersion: 2, readableSchemaVersions: [2] },
+                ...["deleted", "foreign", "unrelated"].map(id => ({ ...COLLECTION_MANIFEST.contributes.accountCollections[0], id })),
+            ] },
+        } }));
+        const contracts = await db.pluginCollectionContract.findMany({ where: { pluginId: PLUGIN_ID } });
+        const physicalContract = (collectionId: string) => contracts.find(contract => contract.collectionId === collectionId)!;
+        await db.pluginCollectionRow.createMany({ data: [
+            { accountId, pluginId: PLUGIN_ID, collectionId: "deleted", rowId: "deleted", schemaVersion: retained.schemaVersion,
+                revision: 1, contractId: physicalContract("deleted").id, contractDigest: physicalContract("deleted").contractDigest,
+                contentEnvelope: { t: "plain", v: {} }, deletedAt: new Date() },
+            { accountId: "account-collection-presence-other", pluginId: PLUGIN_ID, collectionId: "foreign", rowId: "foreign",
+                schemaVersion: retained.schemaVersion, revision: 1, contractId: physicalContract("foreign").id,
+                contractDigest: physicalContract("foreign").contractDigest, contentEnvelope: { t: "plain", v: {} } },
+            ...Array.from({ length: 1005 }, (_, index) => ({ accountId, pluginId: PLUGIN_ID,
+                collectionId: "unrelated", rowId: `unrelated-${index}`, schemaVersion: retained.schemaVersion,
+                revision: 1, contractId: physicalContract("unrelated").id, contractDigest: physicalContract("unrelated").contractDigest,
+                contentEnvelope: { t: "plain", v: { title: "Unrequested private body" } } })),
+        ] });
+        const requests: Array<{ model?: string; action: string; args: unknown }> = [];
+        const restore = observeSqliteRequests({ before: request => {
+            requests.push({ model: request.model, action: request.action, args: request.args });
+        } });
+        try {
+            await withPluginDataApp(async app => {
+                const selected = [COLLECTION_ID, "deleted", "foreign", "empty", COLLECTION_ID]
+                    .map(collectionId => ({ pluginId: PLUGIN_ID, collectionId }));
+                const response = await app.inject({ method: "POST", url: "/v1/plugins/data/presence",
+                    headers: { "x-test-user-id": accountId, ...V3_HEADERS }, payload: { collections: selected } });
+                expect(response.statusCode).toBe(200);
+                expect(PluginCollectionPresenceResultV1Schema.parse(response.json())).toEqual({ collections: [
+                    { pluginId: PLUGIN_ID, collectionId: COLLECTION_ID, present: true },
+                    { pluginId: PLUGIN_ID, collectionId: "deleted", present: false },
+                    { pluginId: PLUGIN_ID, collectionId: "foreign", present: false },
+                    { pluginId: PLUGIN_ID, collectionId: "empty", present: false },
+                ], changeCursor: 77 });
+            });
+        } finally { restore(); }
+        const selections = requests.filter(request => request.action === "queryRaw"
+            && JSON.stringify(request.args).includes("PluginCollectionRow"));
+        expect(selections).toHaveLength(1);
+        expect(requests.filter(request => request.model?.startsWith("PluginCollection")
+            || request.model === "AccountPluginIntent" || request.model === "AccountPluginRelease")).toEqual([]);
+        expect(JSON.stringify(selections)).not.toContain("contentEnvelope");
+    });
+
+    it("pairs presence with its snapshot cursor and answers the next request from the new Account state", async () => {
+        const accountId = "account-collection-presence-snapshot";
+        await seedCurrentCollectionAccount({ accountId, seq: 12, rows: [
+            { rowId: "retained", status: "open", title: "Retained", revision: 1 },
+        ] });
+        let changed = false;
+        let restore = observeSqliteRequests({ after: async request => {
+            if (!changed && request.model === "Account" && request.action === "findUnique") {
+                changed = true;
+                await db.pluginCollectionRow.updateMany({ where: { accountId }, data: { deletedAt: new Date() } });
+                await db.account.update({ where: { id: accountId }, data: { seq: 13 } });
+            }
+        } });
+        try {
+            await withPluginDataApp(async app => {
+                const response = await app.inject({ method: "POST", url: "/v1/plugins/data/presence",
+                    headers: { "x-test-user-id": accountId, ...V3_HEADERS },
+                    payload: { collections: [{ pluginId: PLUGIN_ID, collectionId: COLLECTION_ID }] } });
+                expect(response.statusCode).toBe(200);
+                expect(response.json()).toEqual({ collections: [
+                    { pluginId: PLUGIN_ID, collectionId: COLLECTION_ID, present: true },
+                ], changeCursor: 12 });
+            });
+        } finally { restore(); }
+        expect(changed).toBe(true);
+        await commitValidE2eeAccountModeForTest({ accountId, seq: 14 });
+        await withPluginDataApp(async app => {
+            const response = await app.inject({ method: "POST", url: "/v1/plugins/data/presence",
+                headers: { "x-test-user-id": accountId, ...V3_HEADERS }, payload: { collections: [] } });
+            // Presence is content-free, so a valid mode change only moves its cursor.
+            expect(response.statusCode).toBe(200);
+            expect(response.json()).toEqual({ collections: [], changeCursor: 14 });
+        });
+    });
+
+    it("admits only authenticated own-Account presence requests and keeps unavailable mode explicit", async () => {
+        const accountId = "account-collection-presence-admission";
+        await createAccount({ id: accountId, mode: "plain", seq: 4 });
+        await withPluginDataApp(async app => {
+            const payload = { collections: [] };
+            const headers = { "x-test-user-id": accountId, ...V3_HEADERS };
+            const empty = await app.inject({ method: "POST", url: "/v1/plugins/data/presence", headers, payload });
+            expect(empty.statusCode).toBe(200);
+            expect(PluginCollectionPresenceResultV1Schema.parse(empty.json())).toEqual({ collections: [], changeCursor: 4 });
+            const unauthenticated = await app.inject({ method: "POST", url: "/v1/plugins/data/presence", payload });
+            expect(unauthenticated.statusCode).toBe(401);
+            const unsupported = await app.inject({ method: "POST", url: "/v1/plugins/data/presence",
+                headers: { "x-test-user-id": accountId }, payload });
+            expect(unsupported.statusCode).toBe(426);
+            const selector = await app.inject({ method: "POST", url: "/v1/plugins/data/presence", headers,
+                payload: { ...payload, accountId: "another-account" } });
+            expect(selector.statusCode).toBe(400);
+            await db.account.update({ where: { id: accountId }, data: { encryptionMode: "e2ee" } });
+            const inconsistent = await app.inject({ method: "POST", url: "/v1/plugins/data/presence", headers, payload });
+            expect(inconsistent.statusCode).toBe(409);
+            expect(inconsistent.json()).toEqual({ error: "collection_content_mode_mismatch" });
         });
     });
 
@@ -2412,7 +2512,13 @@ describe("plugin collection UI query route", () => {
             })),
         ]);
 
-        await withPluginDataApp(async (app) => {
+        await withAuthenticatedTestApp((app) => {
+            enableMonitoring(app);
+            app.addHook("onSend", async (request: { id: string }, reply: { header(name: string, value: string): unknown }) => {
+                reply.header("x-test-request-id", request.id);
+            });
+            pluginDataRoutes(app);
+        }, async (app) => {
             const headers = {
                 "content-type": "application/json",
                 "x-test-user-id": accountId,
@@ -2486,14 +2592,93 @@ describe("plugin collection UI query route", () => {
             expect(staleMutation.statusCode).toBe(409);
             expect(staleMutation.json()).toEqual({ error: "collection_writer_contract_unavailable" });
 
-            const incompatible = await app.inject({
-                method: "POST",
-                url: "/v1/plugins/data/contract",
-                headers,
-                payload: { ref: incompatibleRef },
-            });
-            expect(incompatible.statusCode).toBe(409);
-            expect(incompatible.json()).toEqual({ error: "collection_update_required" });
+            // The logging sink is the external boundary; contract admission,
+            // storage and the HTTP route remain real.
+            const warnings = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+            const refusalEntries = () => warnings.mock.calls.flatMap(([fields]) => (
+                typeof fields === "object" && fields !== null && "module" in fields
+                && fields.module === "plugin-collection-read" ? [fields] : []
+            ));
+            try {
+                for (const [url, payload] of [
+                    ["/v1/plugins/data/contract", { ref: incompatibleRef }],
+                    ["/v1/plugins/data/get", { pluginId: PLUGIN_ID, collectionId: COLLECTION_ID,
+                        readerContext: incompatibleRef, rowId: "retained-task" }],
+                    ["/v1/plugins/data/query", { pluginId: PLUGIN_ID, collectionId: COLLECTION_ID,
+                        readerContext: incompatibleRef, indexId: "by-status", order: "asc" }],
+                ] as const) {
+                    warnings.mockClear();
+                    const incompatible = await app.inject({ method: "POST", url, headers, payload });
+                    expect(incompatible.statusCode).toBe(409);
+                    expect(incompatible.json()).toEqual({ error: "collection_update_required" });
+                    expect(refusalEntries()).toEqual([{
+                        level: "warn",
+                        module: "plugin-collection-read",
+                        httpRequestId: incompatible.headers["x-test-request-id"],
+                        responseCode: "collection_update_required",
+                        decisionBranch: "reader_writer_incompatible",
+                        collectionRef: { pluginId: PLUGIN_ID, collectionId: COLLECTION_ID },
+                        readerRef: incompatibleRef,
+                        writerRef: targetRef,
+                    }]);
+                    expect(incompatible.headers["x-test-request-id"]).toMatch(/^req-/);
+                }
+                warnings.mockClear();
+                const compatible = await app.inject({ method: "POST", url: "/v1/plugins/data/contract", headers,
+                    payload: { ref: retainedReaderRef } });
+                expect(compatible.statusCode).toBe(200);
+                expect(refusalEntries()).toEqual([]);
+
+                await db.pluginCollectionRow.updateMany({ where: { accountId, rowId: "retained-task" },
+                    data: { contractId: sourceContract.id, schemaVersion: sourceRef.schemaVersion, contractDigest: sourceRef.contractDigest } });
+                const shared = await app.inject({ method: "POST", url: PLUGIN_COLLECTION_SHARING_HTTP_PATHS_V1.get, headers,
+                    payload: { ownerAccountId: accountId, pluginId: PLUGIN_ID, collectionId: COLLECTION_ID,
+                        rowId: "retained-task", readerContext: targetRef } });
+                expect(shared.statusCode).toBe(409);
+                expect(shared.json()).toEqual({ error: "collection_update_required" });
+                expect(refusalEntries()).toEqual([expect.objectContaining({
+                    httpRequestId: shared.headers["x-test-request-id"],
+                    responseCode: "collection_update_required",
+                    decisionBranch: "shared_row_writer_mismatch",
+                    collectionRef: { pluginId: PLUGIN_ID, collectionId: COLLECTION_ID },
+                    readerRef: targetRef,
+                    writerRef: targetRef,
+                })]);
+
+                warnings.mockClear();
+                await db.pluginCollectionContract.deleteMany({ where: incompatibleRef });
+                const missing = await app.inject({ method: "POST", url: "/v1/plugins/data/contract", headers,
+                    payload: { ref: incompatibleRef } });
+                expect(missing.statusCode).toBe(409);
+                expect(missing.json()).toEqual({ error: "collection_update_required" });
+                expect(refusalEntries()).toEqual([expect.objectContaining({
+                    httpRequestId: missing.headers["x-test-request-id"],
+                    responseCode: "collection_update_required",
+                    decisionBranch: "reader_not_materialized",
+                    readerRef: incompatibleRef,
+                    writerRef: targetRef,
+                })]);
+                await inTx(async (tx) => await materializePluginCollectionContractsFromManifestTx({ tx, manifest: incompatibleManifest }));
+
+                warnings.mockClear();
+                const unavailable = await app.inject({ method: "POST", url: "/v1/plugins/data/contract", headers,
+                    payload: { ref: { ...incompatibleRef, pluginId: "example.absent" } } });
+                expect(unavailable.statusCode).toBe(404);
+                expect(unavailable.json()).toEqual({ error: "collection_unavailable" });
+                expect(refusalEntries()).toEqual([expect.objectContaining({
+                    httpRequestId: unavailable.headers["x-test-request-id"],
+                    responseCode: "collection_unavailable",
+                    decisionBranch: "intent_missing",
+                })]);
+
+                warnings.mockImplementation(() => { throw new Error("Fixture logging sink unavailable"); });
+                const withoutSink = await app.inject({ method: "POST", url: "/v1/plugins/data/contract", headers,
+                    payload: { ref: incompatibleRef } });
+                expect(withoutSink.statusCode).toBe(409);
+                expect(withoutSink.json()).toEqual({ error: "collection_update_required" });
+            } finally {
+                warnings.mockRestore();
+            }
 
             // Independently upgraded daemon writer -> older app-compiled reader.
             // The writer moves forward; an app cannot borrow its contract.
@@ -2984,7 +3169,7 @@ describe("plugin collection UI query route", () => {
     });
 
     for (const queryCase of ACCOUNT_MODE_CURRENTNESS_QUERY_CASES) {
-        it(`rejects ${queryCase.name} query rows when Account encryption mode changes after the row read`, async () => {
+        it(`admits ${queryCase.name} once per request and refuses the next request after an Account mode change`, async () => {
             const accountId = `account-query-mode-currentness-${queryCase.name}`;
             const secretTitle = `Must not disclose ${queryCase.name}`;
             const secretNote = `secret-after-${queryCase.name}`;
@@ -3000,29 +3185,23 @@ describe("plugin collection UI query route", () => {
                 }],
             });
             await withPluginDataApp(async (app) => {
-                const modeFlip = flipAccountModeBeforePostQueryCurrentnessRead({
-                    accountId,
-                    seq: 78,
+                const request = () => app.inject({
+                    method: "POST",
+                    url: queryCase.url,
+                    headers: {
+                        "content-type": "application/json",
+                        "x-test-user-id": accountId,
+                        ...V3_HEADERS,
+                    },
+                    payload: queryCase.payload,
                 });
-                try {
-                    const response = await app.inject({
-                        method: "POST",
-                        url: queryCase.url,
-                        headers: {
-                            "content-type": "application/json",
-                            "x-test-user-id": accountId,
-                            ...V3_HEADERS,
-                        },
-                        payload: queryCase.payload,
-                    });
-                    expect(modeFlip.wasFlipped()).toBe(true);
-                    expect(response.statusCode).toBe(409);
-                    expect(response.json()).toEqual({ error: "collection_content_mode_mismatch" });
-                    expect(response.body).not.toContain(secretTitle);
-                    expect(response.body).not.toContain(secretNote);
-                } finally {
-                    modeFlip.restore();
-                }
+                expect((await request()).statusCode).toBe(200);
+                await commitValidE2eeAccountModeForTest({ accountId, seq: 78 });
+                const refused = await request();
+                expect(refused.statusCode).toBe(409);
+                expect(refused.json()).toEqual({ error: "collection_content_mode_mismatch" });
+                expect(refused.body).not.toContain(secretTitle);
+                expect(refused.body).not.toContain(secretNote);
             });
         });
     }
@@ -3652,6 +3831,85 @@ describe("plugin collection UI query route", () => {
         });
     });
 
+    it.each(["plain", "e2ee"] as const)("rejects an undeclared provider projection before persisting any %s Collection state", async (mode) => {
+        const accountId = `account-provider-projection-refused-${mode}`;
+        const { ref } = await seedCurrentCollectionAccount({ accountId, mode, rows: [] });
+        const content = mode === "plain"
+            ? { t: "plain" as const, v: { privateNote: "private provider detail" } }
+            : { t: "encrypted" as const, c: sealPluginCollectionPrivatePayloadV1({
+                material: { type: "legacy", secret: new Uint8Array(32).fill(9) },
+                payload: { privateNote: "private provider detail" },
+                randomBytes,
+            }) };
+
+        await withPluginDataApp(async (app) => {
+            const refused = await app.inject({
+                method: "POST",
+                url: "/v1/plugins/data/mutate",
+                headers: { "x-test-user-id": accountId, ...V3_HEADERS },
+                payload: {
+                    pluginId: PLUGIN_ID,
+                    collectionId: COLLECTION_ID,
+                    writerContext: { schemaVersion: ref.schemaVersion, contractDigest: ref.contractDigest },
+                    operations: [{
+                        kind: "put", rowId: "provider-entry", expectedRevision: "absent", expectedAbsenceEpoch: 0,
+                        content,
+                        projection: { status: "open", title: "Provider entry", providerObservation: "must stay ephemeral" },
+                    }],
+                },
+            });
+            expect(refused.statusCode).toBe(400);
+            expect(refused.json()).toEqual({ error: "collection_mutation_invalid" });
+        });
+
+        expect(await Promise.all([
+            db.pluginCollectionRow.count({ where: { accountId } }),
+            db.pluginCollectionProjection.count({ where: { accountId } }),
+            db.pluginCollectionIndexEntry.count({ where: { indexState: { accountId } } }),
+            db.accountChange.count({ where: { accountId } }),
+        ])).toEqual([0, 0, 0, 0]);
+        expect(await db.account.findUniqueOrThrow({ where: { id: accountId }, select: { seq: true } })).toEqual({ seq: 41 });
+    });
+
+    it.each(["plain", "e2ee"] as const)("rejects an opposite-mode envelope before persisting any %s Collection state", async (mode) => {
+        const accountId = `account-mutation-mode-refused-${mode}`;
+        const { ref } = await seedCurrentCollectionAccount({ accountId, mode, rows: [] });
+        const content = mode === "e2ee"
+            ? { t: "plain" as const, v: { privateNote: "wrong Account mode" } }
+            : { t: "encrypted" as const, c: sealPluginCollectionPrivatePayloadV1({
+                material: { type: "legacy", secret: new Uint8Array(32).fill(9) },
+                payload: { privateNote: "wrong Account mode" },
+                randomBytes,
+            }) };
+
+        await withPluginDataApp(async (app) => {
+            const refused = await app.inject({
+                method: "POST",
+                url: "/v1/plugins/data/mutate",
+                headers: { "x-test-user-id": accountId, ...V3_HEADERS },
+                payload: {
+                    pluginId: PLUGIN_ID,
+                    collectionId: COLLECTION_ID,
+                    writerContext: { schemaVersion: ref.schemaVersion, contractDigest: ref.contractDigest },
+                    operations: [{
+                        kind: "put", rowId: "mode-refused", expectedRevision: "absent", expectedAbsenceEpoch: 0,
+                        content, projection: { status: "open", title: "Wrong Account mode" },
+                    }],
+                },
+            });
+            expect(refused.statusCode).toBe(409);
+            expect(refused.json()).toEqual({ error: "collection_content_mode_mismatch" });
+        });
+
+        expect(await Promise.all([
+            db.pluginCollectionRow.count({ where: { accountId } }),
+            db.pluginCollectionProjection.count({ where: { accountId } }),
+            db.pluginCollectionIndexEntry.count({ where: { indexState: { accountId } } }),
+            db.accountChange.count({ where: { accountId } }),
+        ])).toEqual([0, 0, 0, 0]);
+        expect(await db.account.findUniqueOrThrow({ where: { id: accountId }, select: { seq: true } })).toEqual({ seq: 41 });
+    });
+
     it("admits the current writer contract and atomically makes a row visible to its static UI query", async () => {
         const accountId = "account-collection-mutation";
         const { ref } = await seedCurrentCollectionAccount({
@@ -3746,8 +4004,104 @@ describe("plugin collection UI query route", () => {
                 contractDigest: ref.contractDigest,
                 revision: 1,
                 rowIds: ["task-written"],
+                indexChanges: {
+                    previousCursor: 0,
+                    keys: [{
+                        indexId: "by-status",
+                        key: Buffer.from(encodePluginCollectionIndexSortKeyV1({
+                            fields: [{ kind: "string", value: "open" }],
+                            rowId: "task-written",
+                        })).toString("hex"),
+                    }],
+                },
             },
         });
+    });
+
+    it("promotes retained Channels census custody to v20 and serves new input through its exact HTTP reader", async () => {
+        const accountId = 'channels-v20-retained-census';
+        const captured = JSON.parse(readFileSync(new URL(
+            '../../../../../../../../packages/protocol/src/plugins/data/__fixtures__/channelStateV19Qa86.json', import.meta.url,
+        ), 'utf8'));
+        const sourceContract = PluginCollectionContractReadResultV1Schema.parse({ access: 'writable', contract: captured.writer }).contract;
+        const { pluginId, collectionId, contractDigest: _digest, ...sourceDeclaration } = sourceContract;
+        const targetDeclaration = CHANNELS_MANIFEST.contributes?.accountCollections?.find(item => item.id === collectionId);
+        if (!targetDeclaration) throw new Error('Missing current Channels state declaration');
+        const manifest = (version: string, collection: unknown) => PluginManifestV2Schema.parse({
+            ...CHANNELS_MANIFEST, version, contributes: { accountCollections: [collection] },
+        });
+        const sourceManifest = manifest('1.0.0', { ...sourceDeclaration, id: collectionId });
+        const targetManifest = manifest('2.0.0', targetDeclaration);
+        const [source] = await inTx(tx => materializePluginCollectionContractsFromManifestTx({ tx, manifest: sourceManifest }));
+        const [target] = await inTx(tx => materializePluginCollectionContractsFromManifestTx({ tx, manifest: targetManifest }));
+        if (!source || !target) throw new Error('Missing Channels migration contracts');
+        const targetContract = normalizePluginAccountCollectionContractV1({ pluginId,
+            contribution: PluginAccountCollectionContributionV1Schema.parse(targetDeclaration) });
+        await createAccount({ id: accountId, mode: 'plain', seq: 1 });
+        await retainCollectionRelease({ accountId, manifest: sourceManifest, refs: [source] });
+        await retainCollectionRelease({ accountId, manifest: targetManifest, refs: [target] });
+        await db.accountPluginIntent.create({ data: { accountId, pluginId, desiredVersion: '1.0.0', enabled: true,
+            offlineUiHosting: 'disabled', writableCollections: toPrismaJson([source]), revision: BigInt(1) } });
+        await inTx(tx => preparePluginCollectionWritableContractsTx({ tx, accountId, pluginId, contracts: [source] }));
+        const historical = { id: 'A'.repeat(43), 'record-kind': 'ingress-obligation', v: 1,
+            'connection-id': 'connection-1', 'created-at': 1, 'updated-at': 1, 'due-at': 100,
+            terminal: false, attention: false, payload: { censusId: 'C'.repeat(43), occurrenceIds: ['observation-1'], target: null,
+                sourceAuthority: { connectionAuthorityEpoch: 1 }, lifecycle: { phase: 'retryDue', attemptCount: 1, dueAt: 100 },
+                disposition: null, nonAdmission: null } };
+        const encode = (contract: typeof sourceContract, value: PluginCollectionLogicalValueV1) => {
+            const validate = compilePluginJsonSchema(contract.schema);
+            const result = encodePluginCollectionLogicalValueV1({ contract, value, encryptionMode: 'plain', material: null,
+                isValidLogicalValue: candidate => isValidPluginJsonSchemaValue(validate, candidate), randomBytes });
+            if (result.status === 'failed') throw new Error(`Channels fixture rejected: ${result.reason}`);
+            return result;
+        };
+        const sourceValue = encode(sourceContract, historical);
+        await mutatePluginCollection({ accountId, request: { pluginId, collectionId,
+            writerContext: { schemaVersion: source.schemaVersion, contractDigest: source.contractDigest },
+            operations: [{ kind: 'put', rowId: historical.id, expectedRevision: 'absent', expectedAbsenceEpoch: 0,
+                content: sourceValue.content, projection: sourceValue.projection }] } });
+        const edge = channelsCollectionMigrations['channel-state']?.find(step => step.fromSchemaVersion === source.schemaVersion);
+        if (!edge) throw new Error('Missing Channels v19-to-v20 migration');
+        const migrated = await edge.migrate(historical, { currentRevision: 1 });
+        expect(migrated).toEqual(historical);
+        const staged = encode(targetContract, migrated);
+        await stagePluginCollectionCandidatePreparation({ accountId, request: {
+            binding: { source, target, candidate: { releaseVersion: '2.0.0', artifactDigest: `sha256:${'f'.repeat(64)}` } },
+            items: [{ source: { rowId: historical.id, revision: 1 },
+                target: { content: staged.content, projection: staged.projection } }],
+        } });
+        await inTx(async tx => {
+            const currentIntent = await tx.accountPluginIntent.findUniqueOrThrow({ where: { accountId_pluginId: { accountId, pluginId } } });
+            await promotePluginCollectionCandidatePreparationInTx({ tx, accountId, pluginId, currentIntent,
+                targetReleaseVersion: '2.0.0', targetContracts: [target] });
+            await preparePluginCollectionWritableContractsTx({ tx, accountId, pluginId, contracts: [target] });
+            await tx.accountPluginIntent.update({ where: { accountId_pluginId: { accountId, pluginId } },
+                data: { desiredVersion: '2.0.0', writableCollections: toPrismaJson([target]), revision: { increment: 1 } } });
+        });
+        const { censusId: _censusId, ...payload } = historical.payload;
+        const current = { ...historical, id: 'B'.repeat(43), payload: { ...payload, normalizedIngress: null,
+            observationShell: { v: 1, occurrenceId: 'observation-1', occurredAt: 1, transport: { kind: 'poll' },
+                endpoint: { kind: 'direct', audience: 'direct', id: 'provider:chat:1' },
+                actor: { kind: 'human', principalId: 'person-1', isIntegrationSelf: false },
+                message: { id: 'provider:message:1', providerTimestamp: 1, addressingEvidence: 'none', contentProvenance: 'original' } } } };
+        const encoded = encode(targetContract, current);
+        const headers = { 'content-type': 'application/json', 'x-test-user-id': accountId, ...V3_HEADERS };
+        await withPluginDataApp(async app => {
+            const mutation = await app.inject({ method: 'POST', url: '/v1/plugins/data/mutate', headers,
+                payload: { pluginId, collectionId, writerContext: { schemaVersion: target.schemaVersion, contractDigest: target.contractDigest }, operations: [{ kind: 'put', rowId: current.id,
+                    expectedRevision: 'absent', expectedAbsenceEpoch: 0, content: encoded.content, projection: encoded.projection }] } });
+            expect(mutation.statusCode).toBe(200);
+            const contract = await app.inject({ method: 'POST', url: '/v1/plugins/data/contract', headers, payload: { ref: target } });
+            expect(contract.statusCode).toBe(200);
+            expect(PluginCollectionContractReadResultV1Schema.parse(contract.json()).contract.schemaVersion).toBe(20);
+            const get = await app.inject({ method: 'POST', url: '/v1/plugins/data/get', headers,
+                payload: { pluginId, collectionId, readerContext: target, rowId: current.id } });
+            expect(get.statusCode).toBe(200);
+            expect(PluginCollectionGetResultV1Schema.parse(get.json()).row?.content).toEqual(encoded.content);
+        });
+        const retained = await db.pluginCollectionRow.findFirstOrThrow({ where: { accountId, rowId: historical.id } });
+        expect(retained).toMatchObject({ schemaVersion: 20, contractDigest: target.contractDigest, deletedAt: null });
+        expect(retained.contentEnvelope).toEqual(staged.content);
     });
 
     it("admits a release-less claimed writer for contract reads, mutations and static UI queries", async () => {
@@ -5108,17 +5462,17 @@ describe("plugin collection UI query route", () => {
         })).resolves.toEqual({ revision: freshAbsenceEpoch + 1, deletedAt: null });
     });
 
-    it("preserves a provider timeout from the pre-mutation quota census", async () => {
+    it("preserves a provider timeout from the pre-mutation quota usage read", async () => {
         harness.resetEnv({ HAPPIER_DB_TX_MAX_RETRIES: "0" });
-        const accountId = "account-collection-pre-census-provider-timeout";
+        const accountId = "account-collection-pre-usage-provider-timeout";
         const { ref } = await seedCurrentCollectionAccount({ accountId, rows: [] });
         const providerTimeout = Object.assign(
-            new Error("Timed out fetching a new connection during the quota census."),
+            new Error("Timed out fetching a new connection during the quota usage read."),
             { code: "P2024" },
         );
-        const boundary = failPluginCollectionQuotaCensusRead({
+        const boundary = failPluginCollectionQuotaUsageOperation({
             accountId,
-            occurrence: 1,
+            phase: "read",
             error: providerTimeout,
         });
 
@@ -5142,7 +5496,7 @@ describe("plugin collection UI query route", () => {
                     }],
                 },
             })).rejects.toBe(providerTimeout);
-            expect(boundary.censusReads()).toBe(1);
+            expect(boundary.usageReads()).toBe(1);
             await expect(db.pluginCollectionRow.count({
                 where: { accountId, rowId: "task-new" },
             })).resolves.toBe(0);
@@ -5151,20 +5505,22 @@ describe("plugin collection UI query route", () => {
         }
     });
 
-    it("preserves a provider timeout from the post-mutation quota census and rolls back", async () => {
+    it("preserves a provider timeout after the quota counter write and rolls back rows and usage", async () => {
         harness.resetEnv({ HAPPIER_DB_TX_MAX_RETRIES: "0" });
-        const accountId = "account-collection-post-census-provider-timeout";
+        const accountId = "account-collection-usage-write-provider-timeout";
         const { ref } = await seedCurrentCollectionAccount({
             accountId,
             rows: [{ rowId: "task-existing", status: "open", title: "Before", revision: 1 }],
         });
         const providerTimeout = Object.assign(
-            new Error("Timed out fetching a new connection during the quota census."),
+            new Error("Timed out completing the quota counter write."),
             { code: "P2024" },
         );
-        const boundary = failPluginCollectionQuotaCensusRead({
+        const beforeUsage = await db.account.findUniqueOrThrow({ where: { id: accountId },
+            select: { pluginCollectionRows: true, pluginCollectionEncodedBytes: true } });
+        const boundary = failPluginCollectionQuotaUsageOperation({
             accountId,
-            occurrence: 2,
+            phase: "write",
             error: providerTimeout,
         });
 
@@ -5187,7 +5543,8 @@ describe("plugin collection UI query route", () => {
                     }],
                 },
             })).rejects.toBe(providerTimeout);
-            expect(boundary.censusReads()).toBe(2);
+            expect(boundary.usageReads()).toBe(1);
+            expect(boundary.usageWrites()).toBe(1);
             await expect(db.pluginCollectionRow.findFirstOrThrow({
                 where: { accountId, rowId: "task-existing" },
                 select: { revision: true, contentEnvelope: true },
@@ -5195,13 +5552,15 @@ describe("plugin collection UI query route", () => {
                 revision: 1,
                 contentEnvelope: { t: "plain", v: { privateNote: "secret-task-existing" } },
             });
+            await expect(db.account.findUniqueOrThrow({ where: { id: accountId },
+                select: { pluginCollectionRows: true, pluginCollectionEncodedBytes: true } })).resolves.toEqual(beforeUsage);
         } finally {
             boundary.restore();
         }
     });
 
-    it("keeps a malformed persisted contract observed by the quota census typed as contract inconsistency", async () => {
-        const accountId = "account-collection-census-malformed-contract";
+    it("keeps a malformed persisted contract retained by quota usage typed as contract inconsistency", async () => {
+        const accountId = "account-collection-usage-malformed-contract";
         const { ref } = await seedCurrentCollectionAccount({ accountId, rows: [] });
         const additional = await seedAdditionalCurrentCollectionRow({
             accountId,
@@ -5358,7 +5717,7 @@ describe("plugin collection UI query route", () => {
         })).resolves.toBe(2);
     });
 
-    it("does not let a small write in another current Collection bypass a retained declared row overage", async () => {
+    it("admits a small write in another current Collection beside an unchanged declared row overage", async () => {
         const accountId = "account-collection-untouched-declared-overage";
         const { ref } = await seedCurrentCollectionAccount({ accountId, rows: [] });
         await seedAdditionalCurrentCollectionRow({
@@ -5391,17 +5750,13 @@ describe("plugin collection UI query route", () => {
                     projection: { status: "open", title: "Small" },
                 }],
             },
-        })).rejects.toMatchObject({
-            code: "collection_quota_incompatible",
-            dimension: "maxRowEncodedBytes",
-            effectiveMaximum: 256,
-        });
+        })).resolves.toMatchObject({ status: "updated" });
         await expect(db.pluginCollectionRow.count({
             where: { accountId, pluginId: ref.pluginId, collectionId: ref.collectionId, rowId: "small-write" },
-        })).resolves.toBe(0);
+        })).resolves.toBe(1);
     });
 
-    it("does not let an unrelated write bypass a retained row after the deployment row ceiling is lowered", async () => {
+    it("admits an unrelated write beside an unchanged row after the deployment row ceiling is lowered", async () => {
         harness.resetEnv({ HAPPIER_COLLECTION_MAX_ROW_ENCODED_BYTES: String(512 * 1024) });
         const accountId = "account-collection-untouched-deployment-overage";
         const { ref } = await seedCurrentCollectionAccount({ accountId, rows: [] });
@@ -5435,11 +5790,7 @@ describe("plugin collection UI query route", () => {
                     projection: { status: "open", title: "Small" },
                 }],
             },
-        })).rejects.toMatchObject({
-            code: "collection_quota_incompatible",
-            dimension: "maxRowEncodedBytes",
-            effectiveMaximum: 512 * 1024,
-        });
+        })).resolves.toMatchObject({ status: "updated" });
         await expect(db.pluginCollectionRow.count({
             where: {
                 accountId,
@@ -5447,10 +5798,10 @@ describe("plugin collection UI query route", () => {
                 collectionId: ref.collectionId,
                 rowId: "unrelated-small-write",
             },
-        })).resolves.toBe(0);
+        })).resolves.toBe(1);
     });
 
-    it("measures the complete Account state through one shared persisted-row metric and returns typed effective-limit failures", async () => {
+    it("reads only changed rows beside retained Account totals and returns typed effective-limit failures", async () => {
         const accountId = "account-collection-row-and-count-quota";
         const { ref } = await seedCurrentCollectionAccount({
             accountId,
@@ -5463,7 +5814,7 @@ describe("plugin collection UI query route", () => {
             })),
         });
         const originalTransaction = db.$transaction.bind(db);
-        const findManyInputs: unknown[] = [];
+        const observations: ReturnType<typeof observePrismaReads>[] = [];
         let restored = false;
         Reflect.set(db, "$transaction", async (...args: Parameters<typeof db.$transaction>) => {
             const [callback, options] = args;
@@ -5471,21 +5822,9 @@ describe("plugin collection UI query route", () => {
                 return await originalTransaction(...args);
             }
             return await originalTransaction(async (tx) => {
-                // This narrow database-boundary observer retains the actual
-                // transaction and mutation path while recording only quota IO.
-                const observedTx: typeof tx = Object.create(tx);
-                const observedRows = Object.create(tx.pluginCollectionRow);
-                const originalFindMany = tx.pluginCollectionRow.findMany.bind(tx.pluginCollectionRow);
-                Object.defineProperties(observedRows, {
-                    findMany: {
-                        value: async (...findManyArgs: Parameters<typeof tx.pluginCollectionRow.findMany>) => {
-                            findManyInputs.push(findManyArgs[0]);
-                            return await originalFindMany(...findManyArgs);
-                        },
-                    },
-                });
-                Object.defineProperty(observedTx, "pluginCollectionRow", { value: observedRows });
-                return await callback(observedTx);
+                const observed = observePrismaReads(tx, ["pluginCollectionRow"]);
+                observations.push(observed);
+                return await callback(observed.tx);
             }, options);
         });
 
@@ -5513,38 +5852,24 @@ describe("plugin collection UI query route", () => {
                 results: [{ rowId: "task-new", revision: 1, deleted: false }],
             });
 
-            // One Account-wide census reads every live row through the same
-            // stored-row metric — envelope plus typed projections plus the
-            // contract that owns the quota — instead of measuring each
-            // Collection separately. It is paged, and the page is bounded and
-            // walked in the supporting index's own column order.
-            const censusPages = findManyInputs.filter((input): input is Readonly<{
-                where: Readonly<{ accountId?: unknown; pluginId?: unknown; deletedAt?: unknown }>;
-                orderBy?: unknown;
-                take?: unknown;
-                select?: Readonly<Record<string, unknown>>;
-            }> => {
-                if (typeof input !== "object" || input === null || !("where" in input)) return false;
-                const where = (input as Readonly<{ where?: Readonly<Record<string, unknown>> }>).where;
-                return where?.accountId === accountId
-                    && where?.deletedAt === null
-                    && where?.pluginId === undefined;
-            });
-            expect(censusPages.length).toBeGreaterThan(0);
-            for (const page of censusPages) {
-                expect(page.select).toMatchObject({
-                    contentEnvelope: true,
-                    projections: { select: { fieldId: true, typedEncodedValue: true } },
-                    contract: { select: { normalizedSchema: true, privacyProjection: true } },
-                });
-                expect(page.orderBy).toEqual([
-                    { accountId: "asc" },
-                    { deletedAt: "asc" },
-                    { id: "asc" },
-                ]);
-                expect(typeof page.take).toBe("number");
-                expect(page.take as number).toBeGreaterThanOrEqual(1);
-            }
+            await expect(mutatePluginCollection({
+                accountId,
+                request: {
+                    pluginId: ref.pluginId,
+                    collectionId: ref.collectionId,
+                    writerContext: { schemaVersion: ref.schemaVersion, contractDigest: ref.contractDigest },
+                    operations: [{ kind: "put", rowId: "task-new", expectedRevision: 1,
+                        content: { t: "plain", v: { privateNote: "updated" } },
+                        projection: { status: "open", title: "Updated task" } }],
+                },
+            })).resolves.toMatchObject({ status: "updated", results: [{ rowId: "task-new", revision: 2, deleted: false }] });
+
+            // Reading the changed stored row proves the observer is live;
+            // reading any of the 50 unchanged rows would reveal an Account census.
+            const changed = await db.pluginCollectionRow.findFirstOrThrow({ where: { accountId, rowId: "task-new" }, select: { id: true } });
+            const transferred = observations.flatMap(value => value.rows).flatMap(value => value.ids);
+            expect(transferred.length).toBeGreaterThan(0);
+            expect(transferred.every(id => id === "task-new" || id === changed.id)).toBe(true);
             await expect(mutatePluginCollection({
                 accountId,
                 request: {
@@ -5792,6 +6117,7 @@ describe("plugin collection UI query route", () => {
             });
         }
 
+        await backfillCurrentCollectionUsage(accountId);
         const startedAt = performance.now();
         const outcome = await Promise.allSettled([mutatePluginCollection({
             accountId,

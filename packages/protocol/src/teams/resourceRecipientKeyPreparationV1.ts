@@ -5,8 +5,34 @@ import { sealEncryptedDataKeyEnvelopeV1 } from '../crypto/encryptedDataKeyEnvelo
 import type { ResourceAccessRecipientCensusV1, ResourceRecipientCensusRowV1,
   ResourceRecipientKeyEnvelopeInputV1, ResourceRecipientKeyEnvelopeCommitInputV1,
   ResourceRecipientKeyEnvelopeCommitResponseV1 } from './resourceGrantAccessV1.js';
+import type { AccountRecipientEnvelopeUnavailableReason } from '../account/encryptionMode.js';
 
-/** Verify once before resource-specific key channels are prepared. This never grants access. */
+export type ResourceRecipientReadinessSummaryV1 = Readonly<{
+  readyCount: number;
+  pendingCount: number;
+  unavailableCounts: Readonly<Record<AccountRecipientEnvelopeUnavailableReason, number>>;
+}>;
+
+/** Summarize already projected census facts; the caller selects the audience and excludes its implicit owner. */
+export function summarizeResourceRecipientReadinessV1(encryptionMode: ResourceAccessRecipientCensusV1['encryptionMode'],
+  recipients: readonly ResourceRecipientCensusRowV1[]): ResourceRecipientReadinessSummaryV1 {
+  const unavailableCounts = { plain_account: 0, encryption_setup_required: 0, encryption_inconsistent: 0 };
+  if (encryptionMode === 'plain') return { readyCount: recipients.length, pendingCount: 0, unavailableCounts };
+  let readyCount = 0, pendingCount = 0;
+  for (const recipient of recipients) {
+    if (recipient.contentKey.status === 'unavailable') unavailableCounts[recipient.contentKey.reason]++;
+    else if (recipient.encryptedDataKey !== null) readyCount++;
+    else pendingCount++;
+  }
+  return { readyCount, pendingCount, unavailableCounts };
+}
+
+/**
+ * Verify a recipient's key binding only when sealing to it, so an unchanged audience
+ * costs no signature check. A current wrap reaches `prepare` for its other key channels;
+ * any seal it asks for verifies first, and a binding that fails leaves that recipient out.
+ * This never grants access.
+ */
 export function prepareVerifiedResourceRecipientEnvelopesV1<Recipient extends ResourceRecipientCensusRowV1, Keys extends { encryptedDataKey: string }>(
   params: Readonly<{ recipients: readonly Recipient[]; randomBytes: (length: number) => Uint8Array; replaceExisting?: boolean }>,
   prepare: (recipient: Recipient, current: boolean, seal: (dataKey: Uint8Array) => string) => Keys | null,
@@ -14,22 +40,29 @@ export function prepareVerifiedResourceRecipientEnvelopesV1<Recipient extends Re
   const prepared: (Keys & Pick<ResourceRecipientKeyEnvelopeInputV1, 'recipientAccountId' | 'recipientContentPublicKeyFingerprint'>)[] = [];
   for (const recipient of params.recipients) {
     if (recipient.contentKey.status !== 'available') continue;
-    let verified: ReturnType<typeof verifyAccountContentKeyBindingV1>;
-    try {
-      verified = verifyAccountContentKeyBindingV1({
-        accountSigningPublicKey: hexToBytes(recipient.contentKey.accountSigningPublicKey),
-        contentPublicKey: decodeBase64(recipient.contentKey.contentPublicKey),
-        signature: decodeBase64(recipient.contentKey.contentPublicKeySignature),
-      });
-    } catch { continue; }
-    if (!verified || verified.contentPublicKeyFingerprint !== recipient.contentPublicKeyFingerprint) continue;
-    const current = !params.replaceExisting && recipient.recipientContentPublicKeyFingerprint === verified.contentPublicKeyFingerprint;
-    const binding = verified;
-    const keys = prepare(recipient, current, dataKey => encodeBase64(sealEncryptedDataKeyEnvelopeV1({
-      dataKey, recipientPublicKey: binding.contentPublicKey, randomBytes: params.randomBytes,
-    })));
-    if (keys) prepared.push({ ...keys, recipientAccountId: recipient.recipientAccountId,
-      recipientContentPublicKeyFingerprint: verified.contentPublicKeyFingerprint });
+    const contentKey = recipient.contentKey;
+    const verifyBinding = () => {
+      let verified: ReturnType<typeof verifyAccountContentKeyBindingV1>;
+      try {
+        verified = verifyAccountContentKeyBindingV1({
+          accountSigningPublicKey: hexToBytes(contentKey.accountSigningPublicKey),
+          contentPublicKey: decodeBase64(contentKey.contentPublicKey),
+          signature: decodeBase64(contentKey.contentPublicKeySignature),
+        });
+      } catch { return null; }
+      return verified?.contentPublicKeyFingerprint === recipient.contentPublicKeyFingerprint ? verified : null;
+    };
+    const current = !params.replaceExisting && recipient.recipientContentPublicKeyFingerprint === recipient.contentPublicKeyFingerprint;
+    let binding = current ? null : verifyBinding();
+    if (!current && !binding) continue;
+    let unverifiable = false;
+    const keys = prepare(recipient, current, dataKey => {
+      binding ??= verifyBinding();
+      if (!binding) { unverifiable = true; return ''; }
+      return encodeBase64(sealEncryptedDataKeyEnvelopeV1({ dataKey, recipientPublicKey: binding.contentPublicKey, randomBytes: params.randomBytes }));
+    });
+    if (keys && !unverifiable) prepared.push({ ...keys, recipientAccountId: recipient.recipientAccountId,
+      recipientContentPublicKeyFingerprint: recipient.contentPublicKeyFingerprint! });
   }
   return prepared;
 }

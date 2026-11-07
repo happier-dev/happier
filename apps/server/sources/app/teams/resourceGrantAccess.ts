@@ -12,8 +12,7 @@ import type { AccountStatus, TeamMembershipStatus } from '@/storage/enums.genera
 import { EFFECTIVE_TEAM_MEMBERSHIP_WHERE, isEffectiveTeamMembership } from './memberships/effectiveMembership';
 import { EFFECTIVE_TEAM_GROUP_MEMBERSHIP_WHERE, isEffectiveTeamGroupMembership } from './groups/effectiveGroupMembership';
 import { getDbProviderFromEnv, prismaRuntime } from '@/storage/prisma';
-
-import { resolveShareSubjectInTx, type ShareSubjectError } from './shareEligibility';
+import { resolveShareAccountSubjectsInTx, resolveShareSubjectInTx, type ShareSubjectError } from './shareEligibility';
 
 type Member = Readonly<{ accountId: string; status: TeamMembershipStatus; account: Readonly<{ status: AccountStatus }> }>;
 
@@ -58,6 +57,17 @@ export function resourceGrantRelationsSelect(actorAccountId?: string) {
 
 const accessRank = { view: 1, edit: 2, admin: 3, owner: 4 } as const;
 
+function hasEffectiveTeamGrant(grant: ResourceGrantAccessFacts['teamGrants'][number], actorAccountId: string): boolean {
+    return grant.team.memberships.some(member => member.accountId === actorAccountId && isEffectiveTeamMembership({
+        accountStatus: member.account.status, membershipStatus: member.status, teamArchivedAt: grant.team.archivedAt,
+    }));
+}
+
+/** The caller's direct Team audience, using the same membership policy as access admission. */
+export function resolveResourceGrantTeamIdsFromFacts(row: ResourceGrantAccessFacts, actorAccountId: string): string[] {
+    return row.teamGrants.flatMap(grant => grant.teamId !== undefined && hasEffectiveTeamGrant(grant, actorAccountId) ? [grant.teamId] : []);
+}
+
 /** Database projection of the same grant policy below, for candidate lists and aggregate counts.
  * The actor and lifecycle predicates must match the SAME membership row.
  * Resource adapters still own visibility and final private-content admission.
@@ -71,23 +81,23 @@ export function resourceGrantArmWheres(actorAccountId: string) {
     };
 }
 
+/**
+ * The same grant policy for an ordered candidate page: a correlated grant EXISTS
+ * inside the access OR cannot use any resource index, so PostgreSQL scanned every
+ * Account's resources. The adapter reads each grant arm through its principal
+ * index in the caller's snapshot; the page then combines the owner index with
+ * exact resource ids.
+ */
+export async function resolveResourceGrantPageAccessWhere(actorAccountId: string,
+    readGrantedResourceIds: (grants: ReturnType<typeof resourceGrantArmWheres>) => Promise<readonly (readonly string[])[]>) {
+    return { OR: [{ accountId: actorAccountId }, await resolveReceivedResourceGrantWhere(actorAccountId, readGrantedResourceIds)] };
+}
+
 /** The non-owner arm alone, for lists that already exclude the caller's own resources. */
 export async function resolveReceivedResourceGrantWhere(actorAccountId: string,
     readGrantedResourceIds: (grants: ReturnType<typeof resourceGrantArmWheres>) => Promise<readonly (readonly string[])[]>) {
     const granted = await readGrantedResourceIds(resourceGrantArmWheres(actorAccountId));
     return { id: { in: [...new Set(granted.flat())] } };
-}
-
-export function resourceGrantAccessWhere(actorAccountId: string) {
-    const member = { ...EFFECTIVE_TEAM_MEMBERSHIP_WHERE, accountId: actorAccountId };
-    return { OR: [
-        { accountId: actorAccountId },
-        { accountGrants: { some: { accountId: actorAccountId, account: { status: 'active' as const } } } },
-        { teamGrants: { some: { team: { memberships: { some: member } } } } },
-        { groupGrants: { some: { teamGroup: { memberships: { some: {
-            ...EFFECTIVE_TEAM_GROUP_MEMBERSHIP_WHERE, teamMembership: member,
-        } } } } } },
-    ] };
 }
 
 /** SQL projection for bounded candidate queries that Prisma cannot express.
@@ -152,9 +162,7 @@ export function resolveResourceGrantAccessFromFacts(row: ResourceGrantAccessFact
         if (grant.accountId === actorAccountId && grant.account.status === 'active') include(grant.accessLevel);
     }
     for (const grant of row.teamGrants) {
-        if (grant.team.memberships.some(member => member.accountId === actorAccountId && isEffectiveTeamMembership({
-            accountStatus: member.account.status, membershipStatus: member.status, teamArchivedAt: grant.team.archivedAt,
-        }))) include(grant.accessLevel);
+        if (hasEffectiveTeamGrant(grant, actorAccountId)) include(grant.accessLevel);
     }
     for (const grant of row.groupGrants) {
         if (grant.teamGroup.memberships.some(({ teamMembership: member }) => member.accountId === actorAccountId && isEffectiveTeamGroupMembership({
@@ -215,6 +223,18 @@ export type ResourceGrantPrincipalError = 'owner_grant_invalid' | 'subject_not_f
 /** Resource wire codes have no self-share code; a self-share is simply not an eligible subject. */
 function resourceGrantPrincipalError(error: ShareSubjectError): ResourceGrantPrincipalError {
     return error === 'self_grant_invalid' ? 'subject_ineligible' : error;
+}
+
+/** Batched Account form of the one share-eligibility rule, for grant previews. */
+export async function validateResourceGrantAccountPrincipalsInTx(tx: Tx, input: Readonly<{
+    actorAccountId: string; ownerAccountId: string; accountIds: readonly string[];
+}>): Promise<ReadonlyMap<string, ResourceGrantPrincipalError | null>> {
+    const resolutions = await resolveShareAccountSubjectsInTx(tx, { actorAccountId: input.actorAccountId,
+        resourceOwnerAccountId: input.ownerAccountId, subjectAccountIds: input.accountIds, hasExistingGrant: false });
+    return new Map(input.accountIds.map((accountId, index) => {
+        const resolution = resolutions[index]!;
+        return [accountId, resolution.ok ? null : resourceGrantPrincipalError(resolution.error)];
+    }));
 }
 
 /** A resource grant writer's subject admission: the one share-eligibility rule; an existing grant stays editable. */
@@ -364,20 +384,3 @@ export async function applyResourceRecipientKeyEnvelopesInTx<Envelope extends Re
     await adapter.publishRecipientsChangedInTx(tx, input.resourceId, appliedRecipientAccountIds);
     return { appliedRecipientAccountIds, skippedRecipientAccountIds };
 }
-
-function hasEffectiveTeamGrant(grant: ResourceGrantAccessFacts['teamGrants'][number], actorAccountId: string): boolean {
-    return grant.team.memberships.some(member => member.accountId === actorAccountId && isEffectiveTeamMembership({
-        accountStatus: member.account.status, membershipStatus: member.status, teamArchivedAt: grant.team.archivedAt,
-    }));
-}
-
-/** The caller's direct Team audience, using the same membership policy as access admission. */
-
-export function resolveResourceGrantTeamIdsFromFacts(row: ResourceGrantAccessFacts, actorAccountId: string): string[] {
-    return row.teamGrants.flatMap(grant => grant.teamId !== undefined && hasEffectiveTeamGrant(grant, actorAccountId) ? [grant.teamId] : []);
-}
-
-/** Database projection of the same grant policy below, for candidate lists and aggregate counts.
- * The actor and lifecycle predicates must match the SAME membership row.
- * Resource adapters still own visibility and final private-content admission.
- */

@@ -5,6 +5,12 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { renderPrismaCompatibleSqliteDatabaseUrl } from "@happier-dev/cli-common/firstPartyRuntime/server";
 import { resolveServerScriptCommandInvocation } from "../../scripts/runCommand";
+import {
+    createServerLightTemplateCacheKey,
+    prepareCachedDataDir,
+    resolveServerLightTemplateCacheRoot,
+} from "../../../../packages/tests/src/testkit/process/serverLightTemplateCache.mjs";
+import { resolveSqliteMigrationsDir } from "@/flavors/light/sqliteMigrations";
 
 import { applyLightDefaultEnv, ensureHandyMasterSecret } from "@/flavors/light/env";
 import { initEncrypt } from "@/modules/encrypt";
@@ -36,7 +42,20 @@ export type LightSqliteHarness = {
     close: () => Promise<void>;
 };
 
+export type LightSqliteSetupPhase =
+    | 'sqlite_storage_prepare_started'
+    | 'sqlite_storage_prepare_returned'
+    | 'sqlite_migration_started'
+    | 'sqlite_migration_returned'
+    | 'sqlite_prisma_init_started'
+    | 'sqlite_prisma_init_returned'
+    | 'sqlite_prisma_connect_started'
+    | 'sqlite_prisma_connect_returned'
+    | 'sqlite_auth_init_started'
+    | 'sqlite_auth_init_returned';
+
 export type LightSqliteHarnessOptions = Readonly<{
+    observeSetup?: (phase: LightSqliteSetupPhase) => void;
     tempDirPrefix: string;
     tempDirBase?: string;
     sqliteConnectionLimit?: number;
@@ -46,8 +65,11 @@ export type LightSqliteHarnessOptions = Readonly<{
     env?: EnvValues;
 }>;
 
-function runSqliteMigrations(params: { cwd: string; env: NodeJS.ProcessEnv }): void {
+function runSqliteMigrations(params: { cwd: string; env: NodeJS.ProcessEnv;
+    observeSetup?: LightSqliteHarnessOptions['observeSetup'];
+}): void {
     const invocation = resolveServerScriptCommandInvocation("pnpm", ["--silent", "run", "migrate:sqlite:deploy"], params.env);
+    params.observeSetup?.('sqlite_migration_started');
     const res = spawnSync(
         invocation.command,
         invocation.args,
@@ -59,6 +81,7 @@ function runSqliteMigrations(params: { cwd: string; env: NodeJS.ProcessEnv }): v
             ...(invocation.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
         },
     );
+    params.observeSetup?.('sqlite_migration_returned');
     if (res.status !== 0) {
         const spawnErr = res.error ? ` Spawn error: ${res.error.message}.` : "";
         const out = `${res.stdout ?? ""}\n${res.stderr ?? ""}`.trim();
@@ -72,7 +95,7 @@ export async function createLightSqliteHarness(options: LightSqliteHarnessOption
         ? options.tempDirBase
         : tmpdir();
     const baseDir = await mkdtemp(join(tempDirBase, options.tempDirPrefix));
-    const dbPath = join(baseDir, "test.sqlite");
+    const dbPath = join(baseDir, "happier-server-light.sqlite");
     try {
         applyEnvValues({
             HAPPIER_DB_PROVIDER: "sqlite",
@@ -92,13 +115,46 @@ export async function createLightSqliteHarness(options: LightSqliteHarnessOption
         await ensureHandyMasterSecret(process.env);
         const envBase = snapshotEnv();
 
-        runSqliteMigrations({ cwd: resolve(dirname(fileURLToPath(import.meta.url)), '../..'), env: process.env });
+        options.observeSetup?.('sqlite_storage_prepare_started');
+        const serverRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+        const templateKey = await createServerLightTemplateCacheKey({
+            rootDir: resolve(serverRoot, '../..'),
+            provider: 'sqlite',
+            migrationsDir: resolveSqliteMigrationsDir(envBase, '') || undefined,
+        });
+        await prepareCachedDataDir({
+            cacheRootDir: resolveServerLightTemplateCacheRoot(resolve(serverRoot, '../..')),
+            templateKey,
+            targetDir: baseDir,
+            buildTemplateInto: async (templateDataDir) => {
+                runSqliteMigrations({
+                    cwd: serverRoot,
+                    observeSetup: options.observeSetup,
+                    env: {
+                        ...envBase,
+                        HAPPIER_SERVER_LIGHT_DATA_DIR: templateDataDir,
+                        HAPPY_SERVER_LIGHT_DATA_DIR: templateDataDir,
+                        DATABASE_URL: renderPrismaCompatibleSqliteDatabaseUrl({
+                            dbPath: join(templateDataDir, 'happier-server-light.sqlite'),
+                            platform: process.platform,
+                        }),
+                    },
+                });
+            },
+        });
+        options.observeSetup?.('sqlite_storage_prepare_returned');
+        options.observeSetup?.('sqlite_prisma_init_started');
         await initDbSqlite();
+        options.observeSetup?.('sqlite_prisma_init_returned');
+        options.observeSetup?.('sqlite_prisma_connect_started');
         await db.$connect();
+        options.observeSetup?.('sqlite_prisma_connect_returned');
 
         if (options.initAuth) {
+            options.observeSetup?.('sqlite_auth_init_started');
             const { auth } = await import("@/app/auth/auth");
             await auth.init();
+            options.observeSetup?.('sqlite_auth_init_returned');
         }
         if (options.initEncrypt) {
             await initEncrypt();

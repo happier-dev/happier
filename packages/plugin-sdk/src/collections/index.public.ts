@@ -24,6 +24,7 @@ export type { PluginCollectionPage } from '../collections.js';
 export type { PluginCollectionPutMutation } from '../collections.js';
 export type { PluginCollectionQuery } from '../collections.js';
 export type { PluginCollectionRow } from '../collections.js';
+export type { PluginCollectionSharing, PluginSharedCollectionRow } from '../collections.js';
 export type { PluginCollectionUiQueryErrorV1 } from '../collections.js';
 export type { PluginCollectionUiQueryParameterV1 } from '../collections.js';
 export type { PluginCollectionUiQueryRequestV1 } from '../collections.js';
@@ -32,6 +33,7 @@ export type { PluginCollectionUiQueryValueV1 } from '../collections.js';
 export type { PluginCollectionWatchQuery } from '../collections.js';
 export { PluginMachineExecutionOriginV1JsonSchema } from '../collections.js';
 export { defineAccountCollection } from '../collections.js';
+export { projectPluginAccountCollectionDeclaration } from '../definePlugin.js';
 export {
     PLUGIN_COLLECTION_MUTATION_BATCH_MAX_ROWS_V1,
     PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1,
