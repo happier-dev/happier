@@ -1,5 +1,6 @@
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
+import { type AxiosError } from 'axios';
 import type { ManagedConnectionSupervisor } from '@happier-dev/connection-supervisor';
 import { Agent as HttpAgent } from 'node:http';
 import { Agent as HttpsAgent } from 'node:https';
@@ -12,8 +13,10 @@ import { readAuthenticationStatus, readHttpStatus } from '@/api/client/httpStatu
 import { isNetworkConnectionErrorCode } from '@/api/client/classifyServerEndpointError';
 import { TranscriptRecoveryCoordinator } from './recovery/TranscriptRecoveryCoordinator';
 import { openSessionEventSource } from '@/session/transport/socket/sessionSocketAgentState';
-import { SessionInputAdmissionReceiptV1Schema, type SessionInputAdmissionReceiptV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { SessionInputAdmissionReceiptV1Schema, SessionInputRefusalDispositionV1Schema, type SessionInputAdmissionReceiptV1, type SessionInputRefusalDispositionV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { SessionMessageRoleSchema, type SessionMessageRole } from '@happier-dev/protocol/sessions/messages/sessionMessageRole';
+import { SessionTurnV1Schema, type SessionTurnV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
+import { readStoredSessionMessageDeliveryResolutionV1, type SessionMessageDeliveryResolutionV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageDeliveryResolutionV1';
 
 const KEEP_ALIVE_HTTP_AGENT = new HttpAgent({ keepAlive: true, maxSockets: 16 });
 const KEEP_ALIVE_HTTPS_AGENT = new HttpsAgent({ keepAlive: true, maxSockets: 16 });
@@ -28,11 +31,15 @@ export type TranscriptMessageLookupResult = {
     content: SessionMessageContent;
     messageRole?: SessionMessageRole;
     inputAdmissionReceipt?: SessionInputAdmissionReceiptV1;
+    deliveryResolution?: SessionMessageDeliveryResolutionV1;
+    acceptedTurnId?: string;
+    turnStartWitnessId?: string;
+    turn?: SessionTurnV1;
 };
 
 export type TranscriptLookupOutcome =
     | { type: 'found'; message: TranscriptMessageLookupResult }
-    | { type: 'not_found' }
+    | { type: 'not_found'; inputDisposition?: SessionInputRefusalDispositionV1['result'] }
     | { type: 'auth_failed'; statusCode: 401 | 403; error: unknown }
     | { type: 'unhealthy'; reason: 'timeout' | 'network' | 'server_5xx'; error: unknown }
     | { type: 'protocol_error'; error: unknown };
@@ -71,7 +78,7 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     return value as Record<string, unknown>;
 }
 
-function isV2MessageNotFoundError(error: unknown): boolean {
+function isV2MessageNotFoundError(error: unknown): error is AxiosError<unknown> {
     if (!axios.isAxiosError(error)) return false;
     if (error.response?.status !== 404) return false;
     const record = asRecord(error.response?.data);
@@ -144,6 +151,15 @@ function parseTranscriptLookupMessageFromUnknown(found: unknown): TranscriptMess
     const receipt = record.inputAdmissionReceipt === undefined ? null
         : SessionInputAdmissionReceiptV1Schema.safeParse(record.inputAdmissionReceipt);
     if (receipt && !receipt.success) return null;
+    const turn = record.turn === undefined ? null : SessionTurnV1Schema.safeParse(record.turn);
+    if (turn && !turn.success) return null;
+    const deliveryResolution = record.deliveryResolution === undefined ? null
+        : readStoredSessionMessageDeliveryResolutionV1(record.deliveryResolution);
+    if (record.deliveryResolution !== undefined && !deliveryResolution) return null;
+    for (const key of ['acceptedTurnId', 'turnStartWitnessId']) {
+        const value = record[key];
+        if (value !== undefined && (typeof value !== 'string' || value.length === 0)) return null;
+    }
     if (typeof record.id !== 'string') return null;
     if (typeof record.seq !== 'number') return null;
     const foundLocalId = typeof record.localId === 'string' ? record.localId : null;
@@ -163,6 +179,10 @@ function parseTranscriptLookupMessageFromUnknown(found: unknown): TranscriptMess
         content: content.data,
         ...(role?.success ? { messageRole: role.data } : {}),
         ...(receipt?.success ? { inputAdmissionReceipt: receipt.data } : {}),
+        ...(deliveryResolution ? { deliveryResolution } : {}),
+        ...(typeof record.acceptedTurnId === 'string' ? { acceptedTurnId: record.acceptedTurnId } : {}),
+        ...(typeof record.turnStartWitnessId === 'string' ? { turnStartWitnessId: record.turnStartWitnessId } : {}),
+        ...(turn?.success ? { turn: turn.data } : {}),
     };
 }
 
@@ -201,7 +221,15 @@ export async function findTranscriptEncryptedMessageByLocalIdV2(params: {
         if (!parsed || parsed.localId !== params.localId) return { type: 'protocol_error', error: createMalformedTranscriptLookupResponseError() };
         return { type: 'found', message: parsed };
     } catch (error) {
-        if (isV2MessageNotFoundError(error)) return { type: 'not_found' };
+        if (isV2MessageNotFoundError(error)) {
+            const rawDisposition = asRecord(error.response?.data)?.inputDisposition;
+            if (rawDisposition === undefined) return { type: 'not_found' };
+            const disposition = SessionInputRefusalDispositionV1Schema.safeParse(rawDisposition);
+            if (!disposition.success || disposition.data.localId !== params.localId) {
+                return { type: 'protocol_error', error: createMalformedTranscriptLookupResponseError() };
+            }
+            return { type: 'not_found', inputDisposition: disposition.data.result };
+        }
         const authStatus = readAuthenticationStatus(error);
         if (authStatus !== null) return { type: 'auth_failed', statusCode: authStatus, error };
         const unhealthy = classifyUnhealthyTranscriptLookup(error);

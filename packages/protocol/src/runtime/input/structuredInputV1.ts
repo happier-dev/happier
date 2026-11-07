@@ -4,6 +4,7 @@ import { createStoredReadSchema, defineStoredReadProjection } from '../../json/s
 import { BrowserContextMessageMetaV1Schema, BrowserContextMessagePayloadV1Schema } from '../../browser/context/v1.js';
 
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
+import { SessionInputForgeEvidenceV1Schema } from '../../sessions/messages/sessionInputForgeEvidenceV1.js';
 import { readNonBlankOpaqueIdentifier } from '../../strings/opaqueIdentifier.js';
 import { ExecutionRunCompletionV1Schema } from '../../execution/runs/completionInputV1.js';
 import { DiscussionSelectionSourceV1Schema } from '../../discussions/references.js';
@@ -770,6 +771,17 @@ export function readHappierStructuredInputV1FromMeta(
   });
 }
 
+/** Normalize only the recognized descriptive evidence field; retain all other metadata. */
+export function sanitizeSessionInputForgeEvidenceMetaV1(value: MetadataRecord): MetadataRecord {
+  const meta: MetadataRecord = { ...value };
+  if (Object.prototype.hasOwnProperty.call(meta, 'forgeEvidence')) {
+    const parsed = SessionInputForgeEvidenceV1Schema.safeParse(meta.forgeEvidence);
+    if (parsed.success) meta.forgeEvidence = parsed.data;
+    else delete meta.forgeEvidence;
+  }
+  return meta;
+}
+
 /**
  * `text` is the composed admission input. The sanitizer above parses metadata independently
  * of the message it accompanies, so the half of the token contract that needs the text — the
@@ -781,7 +793,7 @@ export function sanitizeSessionStructuredInputMeta(
   value: MetadataRecord,
   options: Readonly<{ allowedLocalImagePaths?: ReadonlySet<string>; text?: string }> = {},
 ): MetadataRecord {
-  const meta: MetadataRecord = { ...value };
+  const meta = sanitizeSessionInputForgeEvidenceMetaV1(value);
   const structuredInput = readHappierStructuredInputV1FromMeta(meta, options);
   if (structuredInput) {
     meta[HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1] = typeof options.text === 'string'

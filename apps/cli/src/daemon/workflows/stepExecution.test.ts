@@ -27,7 +27,10 @@ import type { sendSessionMessage } from '@/session/services/sendSessionMessage';
 const http = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
 const machineRpc = vi.hoisted(() => ({ callMachineRpc: vi.fn() }));
 const machineSockets = vi.hoisted(() => ({ connect: vi.fn() }));
-vi.mock('axios', () => ({ default: { ...http, isAxiosError: () => false } }));
+vi.mock('axios', async importOriginal => {
+  const actual = await importOriginal<typeof import('axios')>();
+  return { ...actual, default: { ...actual.default, ...http } };
+});
 vi.mock('@/api/session/sockets', async importOriginal => ({
   ...await importOriginal<typeof import('@/api/session/sockets')>(),
   createUserScopedSocketConnection: machineSockets.connect,
@@ -100,17 +103,20 @@ describe('Workflow Session step execution', () => {
   });
 
   it.each([
-    { outcome: { kind: 'pass' as const }, classified: { kind: 'completed', result: '' } },
+    { outcome: { kind: 'pass' as const }, acceptedTurnId: 'accepted-turn', classified: { kind: 'completed', result: '' } },
     { outcome: { kind: 'answer' as const, publicationRef: { kind: 'session' as const,
       session: { serverId: 'home', sessionId: 'other-session' }, messageId: 'explicit-publication' } },
+      acceptedTurnId: 'accepted-turn',
       classified: { kind: 'needs_attention', code: 'session_input_result_unavailable' } },
-  ])('admits a Workflow reply under its existing V2 local id and rejoins explicit $outcome.kind', async ({ outcome, classified }) => {
+    { outcome: { kind: 'failed' as const }, acceptedTurnId: undefined, classified: { kind: 'failed', code: 'session_input_failed' } },
+  ])('admits a Workflow reply under its existing V2 local id and rejoins explicit $outcome.kind', async ({ outcome, acceptedTurnId, classified }) => {
     const previousGet = http.get.getMockImplementation()!;
+    const workflow = { purpose: 'invocation', runId: 'run-1', invocationRecordId: 'reply-invocation' } as const;
     let originalLocalId = '';
     http.get.mockImplementation(async (url: string) => {
       if (url.endsWith('/reply-capability')) return { status: 200, data: { v: 1, protocolVersions: [1] } };
       if (url.endsWith(`/by-local-id/${encodeURIComponent(originalLocalId)}/reply`)) return { status: 200, data: { v: 1, status: 'available',
-        progress: { v: 1, mode: 'wait', disposition: 'observing', acceptedTurnId: 'accepted-turn', outcome } } };
+        progress: { v: 1, mode: 'wait', disposition: 'observing', workflow, ...(acceptedTurnId ? { acceptedTurnId } : {}), outcome } } };
       if (url.endsWith(`/by-local-id/${encodeURIComponent(originalLocalId)}`)) return { status: 200, data: { message: {
         id: 'original-row', localId: originalLocalId, seq: 1, createdAt: 100, updatedAt: 100,
         content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'Review' } } },
@@ -119,14 +125,14 @@ describe('Workflow Session step execution', () => {
     });
     const admitted: unknown[] = [];
     const admission = await enqueueWorkflowSessionInput({ credentials: { token: 'token', encryption: null }, sessionId,
-      workflow: { purpose: 'invocation', runId: 'run-1', invocationRecordId: 'reply-invocation' }, text: 'Review',
+      workflow, text: 'Review',
       machineAdmissionTransport: async request => {
         originalLocalId = request.localId;
         admitted.push(request);
         return { status: 'accepted', localId: request.localId };
       } });
     expect(admission).toEqual({ status: 'accepted', localId: originalLocalId });
-    expect(admitted).toEqual([expect.objectContaining({ reply: { mode: 'wait' }, content: { t: 'plain', v: expect.objectContaining({
+    expect(admitted).toEqual([expect.objectContaining({ reply: { mode: 'wait', workflow }, content: { t: 'plain', v: expect.objectContaining({
       meta: expect.objectContaining({ happierInputRequestV1: expect.objectContaining({ v: 2, producer: 'workflow',
         workflow: { purpose: 'invocation', runId: 'run-1', invocationRecordId: 'reply-invocation' }, replyIntent: { mode: 'wait' } }) }),
     }) } })]);

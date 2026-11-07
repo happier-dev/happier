@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import { projectUsageSessionMessageTimingV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
-import { materializeActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
+import { materializeActionRequestAttributionV1, readAuthenticatedActionRequesterAccountIdV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ActionSessionAddressV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
 import { FILE_REVIEW_NOTE_KIND, readFileReviewNoteV1 } from '@happier-dev/protocol/messages/structured/fileReviewNoteV1';
@@ -11,6 +12,9 @@ import {
   type PermissionIntent,
 } from '@happier-dev/agents';
 import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
+import { assertSessionInputAdmissionReceiptForAuthorityV1, type SessionInputResultGetResultV1,
+    type SessionInputResultV1, type SessionInputUsageV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+export type { SessionInputResultV1, SessionInputUsageV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { resolveLinkedExternalSessionAuthorityV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
 import { SESSION_MESSAGE_PROVENANCE_META_KEY, SessionInputRequestSchema, SessionMessageProvenanceSchema, stripSessionInputProtectedMeta, readSessionInputAuthority, readSessionInputSenderSessionIdV1, deriveWorkflowSessionInputLocalIdV2, buildTrustedHostSessionInputAdmissionV1, type SessionInputReplyIntentV1, type SessionInputEnqueueResultV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { withSessionMessageModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
@@ -19,6 +23,7 @@ import { SessionInputAdmissionRejectionCodeV1Schema } from '@happier-dev/protoco
 import { normalizeParticipantRecipientRoutingIdentityV1, withParticipantRecipientV1 } from '@happier-dev/protocol/messages/structured/participantMessageV1';
 import { ExecutionRunGetResponseSchema, ExecutionRunInputTurnV1Schema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
+import { sanitizeSessionInputForgeEvidenceMetaV1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 import { SessionMessageRefV1Schema, type SessionMessageRefV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageRefV1';
 import type { SessionMessageReplyOutcomeV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
 import { resolveSessionReceiverDeliveryV1, type SessionReceiverDeliveryDecisionV1 } from '@happier-dev/protocol/sessions/follow/sessionReceiverDeliveryV1';
@@ -38,6 +43,7 @@ import {
 } from '@/api/session/pendingQueueV2Transport';
 import {
   findTranscriptEncryptedMessageByLocalId,
+  findTranscriptEncryptedMessageByLocalIdV2,
   waitForTranscriptEncryptedMessageByLocalId,
   type TranscriptMessageLookupResult,
 } from '@/api/session/transcriptMessageLookup';
@@ -56,6 +62,7 @@ import {
 } from '@/session/query/detectSessionTurnInFlight';
 import { fetchSessionById, fetchSessionTurnsProjection, type RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import type { SessionTurnV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
+import { createSessionInputAttentionObserver } from './sessionInputAttention';
 import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { openSessionEventSource, waitForIdleViaSocket } from '@/session/transport/socket/sessionSocketAgentState';
 import {
@@ -87,6 +94,7 @@ import { resolveSessionUserMessageRequestedAction } from './resolveSessionUserMe
 import { buildImmutableSessionInputEqualityEnvelopeV1 } from './sessionInputEqualityEnvelope';
 import { decodeTranscriptBody } from './transcript/transcriptBodyDecoder';
 import { configuration } from '@/configuration';
+import { resolveSessionIdOrPrefix } from '@/session/query/resolveSessionId';
 
 export type SendSessionMessageResult =
   | Readonly<{
@@ -110,7 +118,7 @@ export type SendSessionMessageResult =
        * from `unsupported`, which claims this Session or daemon cannot do it at
        * all — see `InactiveSessionResumeResult`.
        */
-      code: 'session_not_found' | 'session_id_ambiguous' | 'session_lookup_timeout' | 'session_archived' | 'session_inactive' | 'held_by_person' | 'authority_unavailable' | 'machine_target_not_current' | 'takeover_required' | 'unsupported' | 'resume_failed' | 'plugin_disabled' | 'encryption_material_unavailable' | 'timeout' | 'wait_failed' | 'provider_switch_unsupported' | 'admission_rejected' | 'cancelled' | 'machine_admission_transport_unavailable';
+      code: 'session_not_found' | 'session_id_ambiguous' | 'session_lookup_timeout' | 'session_archived' | 'session_inactive' | 'held_by_person' | 'authority_unavailable' | 'machine_target_not_current' | 'takeover_required' | 'unsupported' | 'resume_failed' | 'encryption_material_unavailable' | 'timeout' | 'wait_failed' | 'provider_switch_unsupported' | 'admission_rejected' | 'cancelled' | 'machine_admission_transport_unavailable';
       candidates?: string[];
       message?: string;
       providerError?: ProviderErrorV1;
@@ -124,23 +132,6 @@ export type SendSessionMessageResult =
  * service returns the canonical final text and does not invent a
  * consumer-specific result ceiling.
  */
-export type SessionInputUsageV1 = Readonly<{
-  inputTokens?: number;
-  outputTokens?: number;
-  costUsd?: number;
-}>;
-
-export type SessionInputResultV1 =
-  | Readonly<{ kind: 'pending' }>
-  | Readonly<{ kind: 'final_text'; text: string; usage?: SessionInputUsageV1; messageRef?: SessionMessageRefV1 }>
-  | Readonly<{
-      kind: 'terminal_no_result';
-      reason: 'missing_final_assistant_text';
-      usage?: SessionInputUsageV1;
-    }>
-  | Readonly<{ kind: 'failed'; message: string; runtimeIssueV1?: SessionRuntimeIssueV1; usage?: SessionInputUsageV1 }>
-  | Readonly<{ kind: 'cancelled'; message: string; partialText?: string; messageRef?: SessionMessageRefV1; usage?: SessionInputUsageV1 }>;
-
 export type WaitForSessionInputResult =
   | Readonly<{
       ok: true;
@@ -196,6 +187,8 @@ export type WaitForSessionInputResultParams = Readonly<{
   beforeInputObservation?: () => Promise<void>;
   /** The input owner's committed transcript timestamp is the accepted fact. */
   onInputMaterialized?: (acceptedAtMs: number) => Promise<void>;
+  /** Live Session request attention while observing this admitted input. */
+  onAttentionRequired?: (required: boolean) => Promise<void>;
 }> & (
   | Readonly<{
       /** Incumbent bounded observer contract retained for Automation V1. */
@@ -222,6 +215,9 @@ type SendSessionMessageParams = Readonly<{
   wait: boolean;
   timeoutMs: number;
   localId?: string;
+  /** Host-admitted exact Session reader, bound locally or to the original requester. */
+  readExecutionRun?: (request: Readonly<{ sessionId: string; runId: string;
+    crypto: SessionStoredContentCryptoContext; signal?: AbortSignal }>) => Promise<unknown>;
   recipient?: ParticipantRecipientV1;
   resumeInactiveSession?: boolean;
   /** Host result owner only. Never populated from authored Action or message metadata. */
@@ -637,6 +633,8 @@ async function readPromptDeliveryFailureReason(params: Readonly<{
   token: string;
   sessionId: string;
   localId: string;
+  recipient?: Readonly<{ kind: 'execution_run'; runId: string }>;
+  signal?: AbortSignal;
   resolveAuthorizationHeaders?: ResolveSessionMessageAuthorizationHeaders;
 }>): Promise<PendingQueueDeliveryFailure['reason'] | null> {
   try {
@@ -650,6 +648,7 @@ type CurrentPromptDeliveryObservationParams = Readonly<{
   token: string;
   sessionId: string;
   localId: string;
+  recipient?: Readonly<{ kind: 'execution_run'; runId: string }>;
   deadlineMs: number | null;
   signal?: AbortSignal;
   resolveAuthorizationHeaders?: ResolveSessionMessageAuthorizationHeaders;
@@ -690,6 +689,7 @@ async function waitForCurrentPromptDelivery(params: CurrentPromptDeliveryObserva
         }
       }
       const failureReason = await readPromptDeliveryFailureReason(params);
+      params.signal?.throwIfAborted();
       if (failureReason === 'session_input_cancelled') return { kind: 'cancelled' };
       if (failureReason) return { kind: 'blocked', reason: failureReason };
       if (!(await events.waitForChange(revision, params))) break;
@@ -705,6 +705,7 @@ async function scanAssistantTurnAfterCurrentUserTurn(params: Readonly<{
   sessionId: string;
   localId: string;
   materializedSeq: number;
+  signal?: AbortSignal;
   /** Host-owned correspondence takes precedence over transcript adjacency. */
   turn?: SessionTurnV1;
   precedingTurnEndSeq?: number;
@@ -756,11 +757,13 @@ async function scanAssistantTurnAfterCurrentUserTurn(params: Readonly<{
   const currentUsage = (): SessionInputUsageV1 | undefined => exactTurnUsage.current();
 
   while (true) {
+    params.signal?.throwIfAborted();
     const rows = await fetchEncryptedTranscriptPageAfterSeq({
       token: params.token,
       sessionId: params.sessionId,
       afterSeq,
       limit: ASSISTANT_TURN_SCAN_PAGE_LIMIT,
+      ...(params.signal ? { signal: params.signal } : {}),
       ...(params.resolveAuthorizationHeaders
         ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders }
         : {}),
@@ -858,17 +861,21 @@ async function readAssistantTurnOutcomeAfterCurrentUserTurn(params: Readonly<{
   sessionId: string;
   localId: string;
   materializedSeq: number;
+  signal?: AbortSignal;
   materializedContent?: TranscriptMessageLookupResult['content'];
   resultMessageId?: string;
   /** Original input custody, never supplied by transcript content. */
   acceptedTurnId?: string;
+  /** Exact admitted server snapshot, never a message-authored turn claim. */
+  hostTurn?: SessionTurnV1;
   ctx: Readonly<{
     encryptionKey: Uint8Array;
     encryptionVariant: 'legacy' | 'dataKey';
   }> | null;
   resolveAuthorizationHeaders?: ResolveSessionMessageAuthorizationHeaders;
 }>): Promise<AssistantTurnOutcome> {
-  const projection = params.resultMessageId ? null : await fetchSessionTurnsProjection(params);
+  const projection: Readonly<{ turns: readonly SessionTurnV1[] }> | null = params.hostTurn ? { turns: [params.hostTurn] }
+    : params.resultMessageId ? null : await fetchSessionTurnsProjection(params);
   const input = params.materializedContent
     ? asRecord(decryptTranscriptRowContent({ content: params.materializedContent, ctx: params.ctx })) : null;
   const inputAuthority = readSessionInputAuthority(input?.meta, 'stored');
@@ -876,7 +883,7 @@ async function readAssistantTurnOutcomeAfterCurrentUserTurn(params: Readonly<{
   const matchesWorkflowInput = (candidate: SessionTurnV1) => Boolean(candidate.workflowInvocation && deriveWorkflowSessionInputLocalIdV2({
       purpose: 'invocation', ...candidate.workflowInvocation,
     }) === params.localId);
-  const turn = projection?.turns.find(candidate => params.acceptedTurnId
+  const turn = params.hostTurn ?? projection?.turns.find(candidate => params.acceptedTurnId
     ? candidate.turnId === params.acceptedTurnId && matchesWorkflowInput(candidate)
       && (inputAuthority?.producer === 'workflow'
         ? deriveWorkflowSessionInputLocalIdV2(inputAuthority.workflow) === params.localId
@@ -888,7 +895,7 @@ async function readAssistantTurnOutcomeAfterCurrentUserTurn(params: Readonly<{
   if (!params.resultMessageId && (
     params.acceptedTurnId && !turn
     || !projection && (workflowInput || isSessionContextOnlyHostInput(input))
-    || projection && (!turn || turn.status === 'in_progress')
+    || projection && (!turn || turn.status === 'in_progress' || turn.status === 'waiting')
   )) return { kind: 'missing' };
   const precedingTurnEndSeq = turn && projection ? projection.turns.reduce((latest, candidate) => {
     const end = candidate.transcriptAnchors?.endSeqInclusive;
@@ -943,6 +950,8 @@ type AssistantCompletionObservationParams = Readonly<{
   deadlineMs: number | null;
   signal?: AbortSignal;
   resolveAuthorizationHeaders?: ResolveSessionMessageAuthorizationHeaders;
+  initialSession?: RawSessionRecord;
+  onAttentionRequired?: (required: boolean) => Promise<void>;
 }>;
 type ReplyObservation = Readonly<{
   credentials: StoredCredentials;
@@ -951,10 +960,15 @@ type ReplyObservation = Readonly<{
 function waitForAssistantCompletionAfterCurrentUserTurn(params: AssistantCompletionObservationParams & { reply: ReplyObservation }): Promise<AssistantTurnOutcome | FulfilledReplyObservation>;
 function waitForAssistantCompletionAfterCurrentUserTurn(params: AssistantCompletionObservationParams): Promise<AssistantTurnOutcome>;
 async function waitForAssistantCompletionAfterCurrentUserTurn(params: AssistantCompletionObservationParams & { reply?: ReplyObservation }): Promise<AssistantTurnOutcome | FulfilledReplyObservation> {
-  const events = openSessionEventSource(params);
+  const attention = params.onAttentionRequired
+    ? createSessionInputAttentionObserver({ ...params, onAttentionRequired: params.onAttentionRequired }) : undefined;
+  const events = openSessionEventSource({ ...params, ...(attention ? {
+    onSessionUpdate: attention.onSessionUpdate, onConnected: attention.onConnected,
+  } : {}) });
   try {
     while (!params.signal?.aborted) {
       const revision = events.currentRevision();
+      if (attention) await attention.publish();
       try {
         let replyOutcome: SessionMessageReplyOutcomeV1 | undefined;
         let originalHasNoReply = false;
@@ -1048,6 +1062,67 @@ function resultFromAssistantTurnOutcome(
   };
 }
 
+/** One nonblocking read of an original input; unavailable proof never means completion. */
+export async function readSessionInputResult(params: Readonly<{
+  credentials: StoredCredentials; serverId?: string; idOrPrefix: string; localId: string;
+  projection?: 'reply';
+  callerPluginId?: string; signal?: AbortSignal; resolveAuthorizationHeaders?: ResolveSessionMessageAuthorizationHeaders;
+}>): Promise<SessionInputResultGetResultV1> {
+  const localId = readPendingLocalId(params.localId);
+  if (!localId) return { ok: false, code: 'invalid_local_id' };
+  try {
+    const readReply = async (sessionId: string): Promise<SessionInputResultGetResultV1> => {
+      const reply = await readOriginalReply({ credentials: params.credentials, sessionId, localId,
+        ...(params.signal ? { signal: params.signal } : {}),
+        ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}) });
+      params.signal?.throwIfAborted();
+      return { ok: true, sessionId, localId, projection: 'reply', reply };
+    };
+    if (params.projection === 'reply' && !params.callerPluginId) {
+      // Original progress contains no body. Reuse canonical identity/access
+      // resolution without requiring keys for an unopened result transcript.
+      const target = await resolveSessionIdOrPrefix({ ...params, reason: 'session-query' });
+      if (!target.ok) return { ok: false, code: target.code, ...(target.candidates ? { candidates: target.candidates } : {}) };
+      return await readReply(target.sessionId);
+    }
+    const target = await resolveSessionTransportContext({ ...params, reason: 'session-query' });
+    if (!target.ok) return { ok: false, code: target.code, ...(target.candidates ? { candidates: target.candidates } : {}) };
+    const lookup = await findTranscriptEncryptedMessageByLocalIdV2({ serverUrl: resolveServerHttpBaseUrl(), token: params.credentials.token,
+      sessionId: target.sessionId, localId, ...(params.signal ? { signal: params.signal } : {}),
+      ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}) });
+    params.signal?.throwIfAborted();
+    if (lookup.type === 'not_found' && lookup.inputDisposition && !params.callerPluginId) {
+      return { ok: false, code: lookup.inputDisposition.code };
+    }
+    const message = lookup.type === 'found' ? lookup.message : null;
+    if (!message || message.localId !== localId || message.sidechainId !== null) return { ok: false, code: 'result_read_failed' };
+    if (params.callerPluginId) {
+      const opened = asRecord(decryptTranscriptRowContent({ content: message.content, ctx: target.ctx }));
+      const authority = readSessionInputAuthority(opened?.meta, 'stored');
+      if (authority?.producer !== 'pluginSession' || authority.caller?.kind !== 'plugin'
+        || authority.caller.pluginId !== params.callerPluginId) return { ok: false, code: 'result_read_failed' };
+      assertSessionInputAdmissionReceiptForAuthorityV1({ authority, inputAdmissionReceipt: message.inputAdmissionReceipt });
+    }
+    if (params.projection === 'reply') return await readReply(target.sessionId);
+    if (message.turn && message.turn.turnId !== message.turnStartWitnessId) return { ok: false, code: 'result_read_failed' };
+    const outcome = message.turn ? await readAssistantTurnOutcomeAfterCurrentUserTurn({
+      token: params.credentials.token, sessionId: target.sessionId, localId, materializedSeq: message.seq,
+      materializedContent: message.content, hostTurn: message.turn, ctx: target.ctx,
+      ...(params.signal ? { signal: params.signal } : {}),
+      ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
+    }) : { kind: 'missing' as const };
+    params.signal?.throwIfAborted();
+    return { ok: true, sessionId: target.sessionId, localId,
+      ...(message.acceptedTurnId ? { acceptedTurnId: message.acceptedTurnId } : {}),
+      ...(message.turnStartWitnessId ? { turnStartWitnessId: message.turnStartWitnessId } : {}),
+      ...(message.turn ? { turnStatus: message.turn.status } : {}),
+      result: resultFromAssistantTurnOutcome(outcome, { serverId: params.serverId ?? configuration.activeServerId, sessionId: target.sessionId }),
+    };
+  } catch {
+    return { ok: false, code: params.signal?.aborted ? 'cancelled' : 'result_read_failed' };
+  }
+}
+
 /**
  * Reads one admitted input's exact retained-runtime turn state from the run's
  * public projection. The projection exposes only the current occurrence's
@@ -1095,6 +1170,7 @@ async function readExecutionRunInputTranscriptOutcome(params: Readonly<{
       sessionId: params.sessionId,
       afterSeq,
       limit: ASSISTANT_TURN_SCAN_PAGE_LIMIT,
+      sidechainId: params.sidechainId,
       timeoutMs: Math.max(1, Math.trunc(remainingMs)),
       ...(params.signal ? { signal: params.signal } : {}),
       ...(params.resolveAuthorizationHeaders
@@ -1114,7 +1190,12 @@ async function readExecutionRunInputTranscriptOutcome(params: Readonly<{
       const failure = readAssistantTurnFailure(decrypted);
       if (failure?.kind === 'failed') return 'failed';
       if (failure?.kind === 'cancelled') return 'cancelled';
-      if (isAssistantTurnCompletionProof(decrypted)) return 'completed';
+      // Streaming text carries the current (active) input identity too. It is
+      // not terminal unless the owner marks completion or emits task_complete.
+      if (isAssistantTurnCompletionProof(decrypted)
+        && (inputTurn.data.state === 'completed' || detectSessionTurnLifecycleEvent(decrypted) === 'task_complete')) {
+        return 'completed';
+      }
     }
     if (orderedRows.length < ASSISTANT_TURN_SCAN_PAGE_LIMIT) return null;
     const lastSeq = orderedRows[orderedRows.length - 1]?.seq;
@@ -1140,25 +1221,33 @@ async function waitForExecutionRunInputTurnOutcome(params: Readonly<{
   runId: string;
   localId: string;
   timeoutMs: number;
+  readExecutionRun?: SendSessionMessageParams['readExecutionRun'];
   signal?: AbortSignal;
   resolveAuthorizationHeaders?: ResolveSessionMessageAuthorizationHeaders;
-}>): Promise<ExecutionRunInputTurnV1['state'] | 'observation_cancelled' | null> {
+}>): Promise<ExecutionRunInputTurnV1['state'] | 'observation_cancelled' | Extract<CurrentPromptDeliveryOutcome, { kind: 'blocked' }> | null> {
   const deadlineMs = Date.now() + Math.max(1, Math.trunc(params.timeoutMs));
   // The accepted transcript anchor is shared Session storage, but Pending
   // status is target-scoped. Do not call the main Pending reader here: a
   // nested wait must never borrow main-Session blocked/settled evidence.
-  const materialized = await waitForTranscriptEncryptedMessageByLocalId({
+  const delivery = await waitForCurrentPromptDelivery({
     token: params.credentials.token,
     sessionId: params.sessionId,
     localId: params.localId,
-    maxWaitMs: Math.max(1, deadlineMs - Date.now()),
+    recipient: { kind: 'execution_run', runId: params.runId },
+    deadlineMs,
     ...(params.signal ? { signal: params.signal } : {}),
     ...(params.resolveAuthorizationHeaders
       ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders }
       : {}),
+  }).catch((error: unknown) => {
+    if (params.signal?.aborted) return { kind: 'missing' as const };
+    throw error;
   });
   if (params.signal?.aborted) return 'observation_cancelled';
-  if (!materialized) return null;
+  if (delivery.kind === 'blocked') return delivery;
+  if (delivery.kind === 'cancelled') return 'cancelled';
+  if (delivery.kind !== 'materialized') return null;
+  const materialized = delivery.message;
   const events = openSessionEventSource({ token: params.credentials.token, sessionId: params.sessionId });
   try {
     while (true) {
@@ -1166,7 +1255,7 @@ async function waitForExecutionRunInputTurnOutcome(params: Readonly<{
       if (params.signal?.aborted) return 'observation_cancelled';
       let turnState: ExecutionRunInputTurnV1['state'] | null = null;
       try {
-        if (params.resolveAuthorizationHeaders) {
+        if (params.resolveAuthorizationHeaders && !params.readExecutionRun) {
           turnState = materialized.sidechainId
             ? await readExecutionRunInputTranscriptOutcome({
                 token: params.credentials.token,
@@ -1181,13 +1270,23 @@ async function waitForExecutionRunInputTurnOutcome(params: Readonly<{
               })
             : null;
         } else {
-          const readResult = await getExecutionRun({
-            ...params.crypto,
-            token: params.credentials.token,
-            sessionId: params.sessionId,
-            request: { runId: params.runId },
-            ...(params.signal ? { signal: params.signal } : {}),
-          });
+          const readResult = params.readExecutionRun
+            ? {
+                ok: true,
+                data: await params.readExecutionRun({
+                  sessionId: params.sessionId,
+                  runId: params.runId,
+                  crypto: params.crypto,
+                  ...(params.signal ? { signal: params.signal } : {}),
+                }),
+              }
+            : await getExecutionRun({
+                ...params.crypto,
+                token: params.credentials.token,
+                sessionId: params.sessionId,
+                request: { runId: params.runId },
+                ...(params.signal ? { signal: params.signal } : {}),
+              });
           if (readResult.ok) {
             const parsed = ExecutionRunGetResponseSchema.safeParse(readResult.data);
             if (parsed.success) {
@@ -1205,6 +1304,7 @@ async function waitForExecutionRunInputTurnOutcome(params: Readonly<{
                   ctx: params.crypto.ctx,
                   deadlineMs,
                   ...(params.signal ? { signal: params.signal } : {}),
+                  ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
                 });
               }
             }
@@ -1323,6 +1423,8 @@ export async function waitForSessionInputResult(params: WaitForSessionInputResul
       materializedContent: promptDelivery.message.content,
       ctx: sessionTarget.ctx,
       deadlineMs: acceptedDeadlineMs,
+      ...(params.onAttentionRequired ? { initialSession: sessionTarget.rawSession,
+        onAttentionRequired: params.onAttentionRequired } : {}),
       ...(params.signal ? { signal: params.signal } : {}),
       ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
     };
@@ -1365,6 +1467,7 @@ export async function sendSessionMessage(
       reason: 'session-control',
       credentials: params.credentials,
       idOrPrefix: params.idOrPrefix,
+      ...(params.expectedSessionAddress ? { expectedSessionAddress: params.expectedSessionAddress } : {}),
       ...(params.resolveAuthorizationHeaders
         ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders }
         : {}),
@@ -1486,18 +1589,26 @@ export async function sendSessionMessage(
     mode: sessionTarget.mode,
     ...(params.callerInputAuthorization ? { callerInputAuthorization: params.callerInputAuthorization } : {}),
   });
+  const hostOnboarding = protectedAdmission?.request.v === 1
+    && protectedAdmission.request.producer === 'hostOnboarding';
   if (requiresMachineAdmission
-    && protectedAdmission?.request.v === 1 && protectedAdmission.request.producer === 'cli') {
+    && protectedAdmission?.request.v === 1
+    && (protectedAdmission.request.producer === 'cli' || protectedAdmission.request.producer === 'happierApp'
+      || protectedAdmission.request.producer === 'voiceInput'
+      || (protectedAdmission.request.producer === 'sessionAction' && params.executionAuthority === 'present_user'
+        && protectedAdmission.request.caller.kind === 'host' && !protectedAdmission.request.sourceSession
+        && !protectedAdmission.request.actionRequestAttributionV1))) {
     // The preceding Home reads authenticate this credential. A routed send also
     // retains Home's admitted Account binding; the Machine custodian is never
-    // the requester. Paired terminals retain that Account identity without
+    // the requester. This includes UI/voice first input handed off by Session
+    // creation, including present-person RPC creation, whose encrypted content
+    // also requires Machine admission. Automatic host Actions cannot establish
+    // a new human requester from the host's credential.
+    // Paired terminals retain that Account identity without
     // upgrading their automation authority; API-token roots do not establish it.
     const credentialAccountId = readAccountIdFromToken(params.credentials.token);
     const binding = params.callerInputAuthorization?.binding;
-    const accountId = binding
-      ? 'authentication' in binding && (binding.authentication?.kind === 'account'
-        || binding.authentication?.kind === 'terminal') ? binding.accountId : null
-      : credentialAccountId;
+    const accountId = binding ? readAuthenticatedActionRequesterAccountIdV1(binding) : credentialAccountId;
     const serverId = params.expectedSessionAddress?.serverId ?? params.serverId
       ?? params.callerInputAuthorization?.requesterAccountProjection?.serverId
       ?? params.callerInputAuthorization?.requesterHttpProjection?.serverId ?? configuration.activeServerId;
@@ -1529,7 +1640,7 @@ export async function sendSessionMessage(
   const replyAdmission = replyIntent ? { ...replyIntent,
     ...(protectedAdmission?.request.discussionAddressing
       ? { discussion: protectedAdmission.request.discussionAddressing } : {}),
-    ...(protectedAdmission?.request.v === 2 && protectedAdmission.request.discussionAddressing
+    ...(protectedAdmission?.request.v === 2
       ? { workflow: protectedAdmission.request.workflow } : {}),
     ...(protectedAdmission?.request.actionRequestAttributionV1
       ? { actionRequestAttributionV1: protectedAdmission.request.actionRequestAttributionV1 } : {}),
@@ -1538,6 +1649,8 @@ export async function sendSessionMessage(
   // causal turn. Display-only answer attribution never selects receiver policy.
   const senderSessionId = protectedAdmission ? readSessionInputSenderSessionIdV1(protectedAdmission.request) : undefined;
   const discussionAddressing = protectedAdmission?.request.discussionAddressing;
+  const followOriginal = protectedAdmission?.request.v === 1
+    && (discussionAddressing !== undefined || protectedAdmission.request.followDeliveryV1 !== undefined);
   let receiverPolicyAvailable = true;
   if (senderSessionId || discussionAddressing) {
     const scopes = await readSessionDeliveryMutedScopes({
@@ -1549,7 +1662,7 @@ export async function sendSessionMessage(
     // It can still create original Pending custody, but cannot wake from an
     // unknown policy. The target owner rechecks after opening protected input.
     receiverPolicyAvailable = scopes !== null;
-    if (scopes !== null && isFollowDeliveryMutedV1(scopes, { ...(senderSessionId ? { senderSessionId } : {}),
+    if (!followOriginal && scopes !== null && isFollowDeliveryMutedV1(scopes, { ...(senderSessionId ? { senderSessionId } : {}),
       source: discussionAddressing ? { kind: 'discussion', discussionId: discussionAddressing.discussionId }
         : { kind: 'session', sessionId: senderSessionId! } })) {
       return { ok: true, sessionId, localId, waited: false, suppressed: true,
@@ -1588,7 +1701,7 @@ export async function sendSessionMessage(
           : Date.now()),
       })
     : { modelId: '', selection: null };
-  const callerMeta = stripSessionInputProtectedMeta(params.messageMeta);
+  const callerMeta = stripSessionInputProtectedMeta(sanitizeSessionInputForgeEvidenceMetaV1(params.messageMeta ?? {}));
   delete callerMeta[SESSION_MESSAGE_PROVENANCE_META_KEY];
   const baseMeta = {
     ...callerMeta,
@@ -1664,6 +1777,8 @@ export async function sendSessionMessage(
       }
     : undefined;
 
+  const usageTimingV1 = projectUsageSessionMessageTimingV1({ sessionId,
+    message: { id: localId, localId, content: record } });
   const content = sealSessionStoredContent({
     ...sessionTarget,
     payload: record,
@@ -1686,7 +1801,8 @@ export async function sendSessionMessage(
   let admissionResult: SessionInputEnqueueResultV1 | undefined;
   let machineAdmissionInvoked = false;
   try {
-    if (requiresMachineAdmission) {
+    if (requiresMachineAdmission || hostOnboarding) {
+      const admissionTransport = params.machineAdmissionTransport;
       const targetMachineId = resolveSessionInputTargetMachineId({
         decryptedMetadata,
         rawSession: sessionTarget.rawSession as Readonly<Record<string, unknown>>,
@@ -1700,8 +1816,8 @@ export async function sendSessionMessage(
           admissionResult: { status: 'rejected', code: 'session_input_cancelled' },
         };
       }
-      if (!params.machineAdmissionTransport || !targetMachineId) {
-        const transportError = !params.machineAdmissionTransport
+      if (!admissionTransport || !targetMachineId) {
+        const transportError = !admissionTransport
           ? new MachineAdmissionTransportUnavailableError()
           : null;
         return {
@@ -1721,6 +1837,7 @@ export async function sendSessionMessage(
         targetMachineId,
         localId,
         content,
+        usageTimingV1,
         requestedAction,
         ...(nextTurnNote ? { nextTurnNote } : {}),
         ...(replyAdmission ? { reply: replyAdmission } : {}),
@@ -1731,7 +1848,7 @@ export async function sendSessionMessage(
           ? { followRelations: params.followRelations } : {}),
         ...(requestEqualityEvidenceV1 ? { requestEqualityEvidenceV1 } : {}),
       } satisfies SessionPendingEnqueueByMachineRequestV1 | SessionPendingExecutionRunEnqueueByMachineRequestV2;
-      const result = await params.machineAdmissionTransport(machineAdmissionRequest, {
+      const result = await admissionTransport(machineAdmissionRequest, {
         timeoutMs: params.timeoutMs,
         ...(params.signal ? { signal: params.signal } : {}),
         ...(params.callerInputAuthorization ? { callerInputAuthorization: params.callerInputAuthorization } : {}),
@@ -1811,7 +1928,7 @@ export async function sendSessionMessage(
       enqueueResult = await enqueuePendingExecutionRunMessageViaHttp({
         token: params.credentials.token, sessionId, recipient: executionRunRecipient,
         timeoutMs: params.timeoutMs,
-        body: { v: 1, localId, targetMachineId, content, messageRole: 'user', requestedAction,
+        body: { v: 1, localId, targetMachineId, content, usageTimingV1, messageRole: 'user', requestedAction,
           ...(replyAdmission ? { reply: replyAdmission } : {}) },
         ...(params.resolveAuthorizationHeaders
           ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders }
@@ -1832,6 +1949,7 @@ export async function sendSessionMessage(
           ? {
               localId,
               ciphertext: content.c,
+              usageTimingV1,
               ...(targetMachineId ? { targetMachineId } : {}),
               messageRole: 'user',
               requestedAction,
@@ -1848,6 +1966,7 @@ export async function sendSessionMessage(
           : {
               localId,
               content,
+              usageTimingV1,
               ...(targetMachineId ? { targetMachineId } : {}),
               messageRole: 'user',
               requestedAction,
@@ -1872,6 +1991,11 @@ export async function sendSessionMessage(
       ? readProvenPreWriteHttpAdmissionRejectionCode(error, status)
       : null;
     if (admissionRejectionCode !== null) {
+      if (followOriginal && admissionRejectionCode === 'session_input_muted') return {
+        ok: true, sessionId, localId, waited: false, suppressed: true,
+        receiverDelivery: { disposition: 'drop', reason: 'muted' },
+        admissionResult: { status: 'rejected', code: admissionRejectionCode },
+      };
       return {
         ok: false,
         code: 'admission_rejected',
@@ -1962,8 +2086,9 @@ export async function sendSessionMessage(
       sessionId,
       localId,
       rawSession: sessionTarget.rawSession,
-      ...((params.executionAuthority ?? (receiverControlled ? 'account_automation' : undefined))
-        ? { executionAuthority: params.executionAuthority ?? 'account_automation' as const } : {}),
+      // Message admission never grants explicit Resume, even for a person.
+      // Reuse automatic admission so Stop holds survive every next-message wake.
+      executionAuthority: 'account_automation',
       ...(params.incomingResumeOptions ? { incomingOptions: params.incomingResumeOptions } : {}),
       metadata: decryptedMetadata && typeof decryptedMetadata === 'object' && !Array.isArray(decryptedMetadata)
         ? decryptedMetadata as Record<string, unknown>
@@ -2035,6 +2160,7 @@ export async function sendSessionMessage(
       runId: executionRunRecipient.runId,
       localId,
       timeoutMs: params.timeoutMs,
+      ...(params.readExecutionRun ? { readExecutionRun: params.readExecutionRun } : {}),
       ...(params.signal ? { signal: params.signal } : {}),
       ...(params.resolveAuthorizationHeaders
         ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders }
@@ -2055,6 +2181,15 @@ export async function sendSessionMessage(
         localId,
         waited: true,
         ...(admissionResult ? { admissionResult } : {}),
+      };
+    }
+    if (typeof turnOutcome === 'object' && turnOutcome?.kind === 'blocked') {
+      const rejection = SessionInputAdmissionRejectionCodeV1Schema.safeParse(turnOutcome.reason);
+      return {
+        ok: false,
+        code: 'wait_failed',
+        message: formatBlockedPromptDeliveryFailure(turnOutcome.reason),
+        admissionResult: { status: 'rejected', code: rejection.success ? rejection.data : 'session_input_target_unavailable' },
       };
     }
     if (turnOutcome === 'failed' || turnOutcome === 'cancelled') {

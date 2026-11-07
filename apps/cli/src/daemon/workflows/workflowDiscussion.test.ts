@@ -9,7 +9,10 @@ import type { WorkflowCoordinatorInvocation } from './coordinator';
 import { deriveWorkflowDiscussionReplyLocalIdV1 } from '@happier-dev/protocol/workflows/workflowInvocationIdentityV1';
 import { createProductionWorkflowDiscussionContextReader, resolveWorkflowDiscussionOrigin } from './workflowDiscussion';
 
-vi.mock('axios', () => ({ default: { request: vi.fn(), get: vi.fn() } }));
+vi.mock('axios', async importOriginal => {
+  const actual = await importOriginal<typeof import('axios')>();
+  return { ...actual, default: { ...actual.default, request: vi.fn(), get: vi.fn() } };
+});
 const discussion = { serverId: 'server-1', discussionId: 'discussion-1' };
 const origin = { discussion, messageId: 'question', throughSeq: 2 };
 const serverHttpBaseUrl = 'https://workflow-discussion.test';

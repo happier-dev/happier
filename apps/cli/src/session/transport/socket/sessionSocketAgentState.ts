@@ -13,6 +13,7 @@ import {
   detectSessionTurnActivityFromProjection,
   isSessionAgentThreadTextUserMessage,
   isSessionAgentMessage,
+  readSessionProjectedPendingInputCount,
   readSessionProjectedPendingRequestCount,
   readSessionProjectedTurnStatus,
   type SessionTurnActivity,
@@ -63,7 +64,11 @@ export function observeSessionSocketEvents(
 }
 
 /** Transport invalidation only. Readers retain authority over every wait predicate. */
-export function openSessionEventSource(opts: { token: string; sessionId: string; scope?: 'user' }): Readonly<{
+export function openSessionEventSource(opts: {
+    token: string; sessionId: string; scope?: 'user';
+    onSessionUpdate?: (body: Extract<UpdateContainer['body'], { t: 'update-session' }>) => void;
+    onConnected?: () => void;
+}): Readonly<{
     currentRevision: () => number;
     waitForChange: (observedRevision: number, params: { deadlineMs: number | null; signal?: AbortSignal }) => Promise<boolean>;
     close: () => Promise<void>;
@@ -80,6 +85,7 @@ export function openSessionEventSource(opts: { token: string; sessionId: string;
         const parsed = UpdateContainerSchema.safeParse(raw);
         if (!parsed.success) return;
         const body = parsed.data.body;
+        if (body.t === 'update-session' && body.id === opts.sessionId) opts.onSessionUpdate?.(body);
         if ((body.t === 'new-session' || body.t === 'update-session' || body.t === 'delete-session')
             && body.id === opts.sessionId) changed();
         if ((body.t === 'new-message' || body.t === 'message-updated' || body.t === 'pending-changed')
@@ -94,7 +100,7 @@ export function openSessionEventSource(opts: { token: string; sessionId: string;
             || (event.type === 'activity' && event.id === opts.sessionId)) changed();
     };
     const observation = observeSessionSocketEvents(opts, {
-      onUpdate, onEphemeral, onConnected: changed,
+      onUpdate, onEphemeral, onConnected: () => { opts.onConnected?.(); changed(); },
       onError: (error) => { failure = error; changed(); },
     });
     return {
@@ -268,15 +274,17 @@ export async function waitForIdleViaSocket(params: Readonly<{
   let pendingUserTurns = params.initialTurnActivity.pendingUserTurns;
   let activeTaskInFlight = params.initialTurnActivity.activeTaskInFlight;
   let requiresTranscriptIdleEvidence = params.initialTurnActivityRequiresTranscriptIdleEvidence === true;
-  const preferProjectionUpdates = params.preferProjectionUpdates === true;
+  let preferProjectionUpdates = params.preferProjectionUpdates === true;
   const readyCompletesPendingUserTurns = params.readyCompletesPendingUserTurns !== false;
   let observedTurnProgress = activeTaskInFlight;
-  // `pendingCount` counts queue rows, not rows already claimed for delivery. Retain the known
-  // input count until its successor is observed, otherwise the delivery transition can look idle.
+  // Pending retirement can precede observation of the successor turn. Retain the known
+  // input count until that successor is observed, including with older producers
+  // that lack exact publication correlation.
   let pendingInputTurnsAwaitingMaterialization =
     preferProjectionUpdates && pendingUserTurns > 0 ? pendingUserTurns : 0;
-  const hasTurnInFlight = () => activeTaskInFlight || pendingUserTurns > 0;
+  const hasTurnInFlight = () => activeTaskInFlight || pendingUserTurns > 0 || pendingInputTurnsAwaitingMaterialization > 0;
   const initiallyIdle = isIdle(initial) && !hasTurnInFlight();
+  if (initiallyIdle && params.recheckTurnActivity) requiresTranscriptIdleEvidence = true;
   const idleConfirmMs = initiallyIdle ? resolveSessionControlWaitIdleConfirmMs() : 0;
 
   const timeoutMs = Math.max(1, Math.trunc(params.timeoutMs));
@@ -325,8 +333,9 @@ export async function waitForIdleViaSocket(params: Readonly<{
       }
       pendingUserTurns = latestTurnActivity.pendingUserTurns;
       activeTaskInFlight = latestTurnActivity.activeTaskInFlight;
+      if (activeTaskInFlight) pendingInputTurnsAwaitingMaterialization = latestTurnActivity.pendingUserTurns;
       if (latestTurnActivity.turnInFlight) {
-        requiresTranscriptIdleEvidence = true;
+        requiresTranscriptIdleEvidence = !preferProjectionUpdates || requiresTranscriptIdleEvidence;
         waitingForIdleAfterFreshBusy = true;
         return false;
       }
@@ -334,7 +343,7 @@ export async function waitForIdleViaSocket(params: Readonly<{
       return true;
     };
 
-    const resolveIdle = () => {
+    const completeIdle = () => {
       if (settled) return;
       clearTimeout(timer);
       cleanup();
@@ -344,19 +353,20 @@ export async function waitForIdleViaSocket(params: Readonly<{
     const recheckRequiredTranscriptIdleEvidence = async (): Promise<boolean> => {
       if (!requiresTranscriptIdleEvidence) return true;
       if (!params.recheckTurnActivity) return false;
-      const revision = observationRevision;
+      const revision = ++observationRevision;
       const latestTurnActivity = await params.recheckTurnActivity();
       if (settled || revision !== observationRevision) return false;
       return applyRecheckedTurnActivity(latestTurnActivity);
     };
 
-    const resolveIdleAfterRequiredTranscriptEvidence = () => {
+    const resolveIdle = () => {
       void (async () => {
         try {
           if (!(await recheckRequiredTranscriptIdleEvidence())) {
             return;
           }
-          resolveIdle();
+          if (settled || hasTurnInFlight() || (!isIdle(latestSummary) && hasFreshAgentStateObservation)) return;
+          completeIdle();
         } catch {
           // Wait for the next transcript/projection event or reconnect.
         }
@@ -394,13 +404,29 @@ export async function waitForIdleViaSocket(params: Readonly<{
             waitingForIdleAfterFreshBusy = true;
             return;
           }
-          resolveIdleAfterRequiredTranscriptEvidence();
+          resolveIdle();
         } catch {
           // The managed transport owns reconnection; missing evidence is not idle.
         }
       })();
     };
 
+
+    const observePendingInputCount = (body: unknown) => {
+      const count = readSessionProjectedPendingInputCount(body);
+      if (count === null || count === 0) return;
+      pendingUserTurns = Math.max(pendingUserTurns, count);
+      if (preferProjectionUpdates) {
+        pendingInputTurnsAwaitingMaterialization = Math.max(pendingInputTurnsAwaitingMaterialization, count);
+      } else {
+        requiresTranscriptIdleEvidence = true;
+      }
+      waitingForIdleAfterFreshBusy = true;
+      if (idleConfirmTimer) {
+        clearTimeout(idleConfirmTimer);
+        idleConfirmTimer = null;
+      }
+    };
 
     const onUpdate = (raw: unknown) => {
       const parsed = UpdateContainerSchema.safeParse(raw);
@@ -412,26 +438,12 @@ export async function waitForIdleViaSocket(params: Readonly<{
       if (sessionId === params.sessionId) observationRevision += 1;
 
       if (update.body?.t === 'pending-changed') {
-        if (!preferProjectionUpdates) return;
+        if (!preferProjectionUpdates && !readyCompletesPendingUserTurns) return;
         const body = update.body;
         const sessionId = body.sid ?? body.sessionId;
         if (sessionId !== params.sessionId) return;
-
-        const projectedActivity = detectSessionTurnActivityFromProjection(body);
-        if (!projectedActivity?.turnInFlight) return;
-
-        pendingUserTurns = projectedActivity.pendingUserTurns;
-        activeTaskInFlight = projectedActivity.activeTaskInFlight;
-        pendingInputTurnsAwaitingMaterialization = Math.max(
-          pendingInputTurnsAwaitingMaterialization,
-          projectedActivity.pendingUserTurns,
-        );
-        observedTurnProgress = true;
-        waitingForIdleAfterFreshBusy = true;
-        if (idleConfirmTimer) {
-          clearTimeout(idleConfirmTimer);
-          idleConfirmTimer = null;
-        }
+        observePendingInputCount(body);
+        if (readSessionProjectedPendingInputCount(body) === 0 && waitingForIdleAfterFreshBusy) resolveIdle();
         return;
       }
 
@@ -439,8 +451,10 @@ export async function waitForIdleViaSocket(params: Readonly<{
         const body = update.body;
         if (String(body.id ?? '') !== params.sessionId) return;
 
-        const shouldReadProjection = preferProjectionUpdates || !readyCompletesPendingUserTurns;
-        const projectedActivity = shouldReadProjection ? detectSessionTurnActivityFromProjection(body) : null;
+        if (preferProjectionUpdates || readyCompletesPendingUserTurns) observePendingInputCount(body);
+        const observedTurnStatus = readSessionProjectedTurnStatus(body.latestTurnStatus);
+        const projectedActivity = observedTurnStatus ? detectSessionTurnActivityFromProjection(body) : null;
+        const shouldReadProjection = preferProjectionUpdates || !readyCompletesPendingUserTurns || projectedActivity !== null;
         const projectedSummary = shouldReadProjection
           ? mergeProjectedPendingRequestCount(
               summarizeProjectedPendingRequests(body),
@@ -451,7 +465,7 @@ export async function waitForIdleViaSocket(params: Readonly<{
               }) ?? latestSummary,
             )
           : null;
-        const projectedTurnStatus = shouldReadProjection ? readSessionProjectedTurnStatus(body.latestTurnStatus) : null;
+        const projectedTurnStatus = shouldReadProjection ? observedTurnStatus : null;
         const canUseTerminalProjection =
           preferProjectionUpdates
           || readyCompletesPendingUserTurns
@@ -459,6 +473,8 @@ export async function waitForIdleViaSocket(params: Readonly<{
           || activeTaskInFlight
           || projectedTurnStatus === 'in_progress';
         if (projectedActivity && projectedSummary) {
+          if (readyCompletesPendingUserTurns) preferProjectionUpdates = true;
+          if (projectedActivity.activeTaskInFlight) pendingInputTurnsAwaitingMaterialization = projectedActivity.pendingUserTurns;
           const nextPendingUserTurns = projectedActivity.pendingUserTurns;
           const nextActiveTaskInFlight = projectedActivity.activeTaskInFlight;
           const nextTurnInFlight = nextActiveTaskInFlight || nextPendingUserTurns > 0;
@@ -489,14 +505,13 @@ export async function waitForIdleViaSocket(params: Readonly<{
             return;
           }
 
-          resolveIdleAfterRequiredTranscriptEvidence();
+          resolveIdle();
           return;
         }
         if (projectedTurnStatus || projectedSummary) {
           let nextPendingUserTurns = pendingUserTurns;
           let nextActiveTaskInFlight = activeTaskInFlight;
           if (projectedTurnStatus) {
-            nextPendingUserTurns = 0;
             nextActiveTaskInFlight = projectedTurnStatus === 'in_progress';
           }
           const nextSummary = projectedSummary ?? latestSummary;
@@ -533,7 +548,7 @@ export async function waitForIdleViaSocket(params: Readonly<{
             return;
           }
 
-          resolveIdleAfterRequiredTranscriptEvidence();
+          resolveIdle();
           return;
         }
 
@@ -562,9 +577,7 @@ export async function waitForIdleViaSocket(params: Readonly<{
           return;
         }
 
-        clearTimeout(timer);
-        cleanup();
-        resolve({ idle: true, observedAt: Math.min(Date.now(), deadlineMs) });
+        resolveIdle();
         return;
       }
 
@@ -651,7 +664,7 @@ export async function waitForIdleViaSocket(params: Readonly<{
         return;
       }
 
-      resolveIdleAfterRequiredTranscriptEvidence();
+      resolveIdle();
     };
 
     observation = observeSessionSocketEvents(params, {
@@ -662,16 +675,14 @@ export async function waitForIdleViaSocket(params: Readonly<{
     if (initiallyIdle) {
       idleConfirmTimer = setTimeout(() => {
         idleConfirmTimer = null;
-        const revision = observationRevision;
+        const revision = ++observationRevision;
         void (async () => {
           if (params.recheckTurnActivity) {
             try {
               const latestTurnActivity = await params.recheckTurnActivity();
               if (settled || revision !== observationRevision) return;
-              pendingUserTurns = latestTurnActivity.pendingUserTurns;
-              activeTaskInFlight = latestTurnActivity.activeTaskInFlight;
-              if (latestTurnActivity.turnInFlight) {
-                requiresTranscriptIdleEvidence = true;
+              requiresTranscriptIdleEvidence = false;
+              if (!applyRecheckedTurnActivity(latestTurnActivity)) {
                 waitingForIdleAfterFreshBusy = true;
                 return;
               }
@@ -683,7 +694,7 @@ export async function waitForIdleViaSocket(params: Readonly<{
             }
           }
 
-          resolveIdleAfterRequiredTranscriptEvidence();
+          resolveIdle();
         })();
       }, Math.min(idleConfirmMs, timeoutMs));
     }
