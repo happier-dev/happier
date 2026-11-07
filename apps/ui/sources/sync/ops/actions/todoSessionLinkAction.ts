@@ -8,9 +8,9 @@ export async function executeTodoSessionLinkAction(args: Readonly<{ input: unkno
     if (!parsed.success) return { status: 'refused', reason: 'invalid_input' };
     const credentials = sync?.getCredentials();
     if (!credentials) return { status: 'unavailable' };
-    const { scope, taskId, session, linked } = parsed.data;
+    const { scope, taskId, ownerAccountId, session, linked } = parsed.data;
     try {
-        await applyTodoSessionLinkIntent(credentials, { source: { scope, taskId }, linked,
+        await applyTodoSessionLinkIntent(credentials, { source: { scope, taskId, ...(ownerAccountId ? { ownerAccountId } : {}) }, linked,
             session: { scope: { serverId: session.serverId, accountId: session.accountId }, sessionId: session.sessionId } }, { signal: args.signal });
         return { status: linked === false ? 'unlinked' : 'linked' };
     } catch (error) { return projectTodoSessionLinkFailureV1(error); }

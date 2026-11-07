@@ -22,3 +22,7 @@ export const MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1 = canonical.MAX_TRIAGE_IDENTIFI
 export const MAX_TRIAGE_COLLISION_SCOPE_UTF8_BYTES_V1 = canonical.MAX_TRIAGE_COLLISION_SCOPE_UTF8_BYTES_V1;
 export const TRIAGE_SINGLE_LINE_STRING_PATTERN_V1 = canonical.TRIAGE_SINGLE_LINE_STRING_PATTERN_V1;
 export const TRIAGE_COMPOSITE_IDENTIFIER_PATTERN_V1 = canonical.TRIAGE_COMPOSITE_IDENTIFIER_PATTERN_V1;
+export const INTERNAL_TASK_SOURCE_V1: Readonly<PluginContributionIdentity> = canonical.INTERNAL_TASK_SOURCE_V1;
+export const internalTaskLocalRefV1: (taskId: string, ownerAccountId?: string) => Omit<TriageEntryRefV1, 'source'> = canonical.internalTaskLocalRefV1;
+export const internalTaskOwnerAccountIdV1: (ref: Pick<TriageEntryRefV1, 'kindId' | 'collisionScope'>, viewerAccountId: string) => string | null = canonical.internalTaskOwnerAccountIdV1;
+export const isInternalTaskReferenceV1: (ref: TriageEntryRefV1) => boolean = canonical.isInternalTaskReferenceV1;

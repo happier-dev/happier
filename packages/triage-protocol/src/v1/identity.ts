@@ -20,6 +20,10 @@ import { defineTriageSingleLineStringV1 } from './strings.js';
 // Preserve the feature ABI while Protocol consumers use the dependency-safe
 // owner directly. The SDK facade publishes these exact parser instances.
 export {
+    INTERNAL_TASK_SOURCE_V1,
+    internalTaskLocalRefV1,
+    internalTaskOwnerAccountIdV1,
+    isInternalTaskReferenceV1,
     TriageEntryRefV1Schema,
     TriageEntryRefV1JsonSchema,
     TriageIdentifierV1ProtocolSchema,

@@ -24,6 +24,7 @@ describe('Todo reads through Account currentness', () => {
             configureSocket: socket => { configureConnectedServerSocketBoundary(socket); connectedSocket = socket; },
             request: async input => {
                 const path = new URL(String(input)).pathname;
+                if (path === '/v1/tasks' || path.startsWith('/v1/tasks/')) return Response.json({ statusCode: 404, error: 'Not Found', message: `Route GET:${path} not found` }, { status: 404 });
                 if (path === '/v1/account/encryption/currentness') {
                     currentnessReads += 1;
                     return refuseCurrentness ? Response.json({ error: 'forbidden' }, { status: 403 })
@@ -112,6 +113,7 @@ describe('Todo reads through Account currentness', () => {
             accountId: 'todo-account',
             request: async (input, init) => {
                 const path = new URL(String(input)).pathname;
+                if (path === '/v1/tasks' || path.startsWith('/v1/tasks/')) return Response.json({ statusCode: 404, error: 'Not Found', message: `Route GET:${path} not found` }, { status: 404 });
                 if (path === '/v1/account/encryption/currentness') {
                     if (currentnessUnavailable) {
                         todoRequests.push({ path, method: init?.method ?? 'GET' });

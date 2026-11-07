@@ -1,16 +1,70 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  applyTodoSessionLinkV1, buildTodoSessionLinkKeyV1, TodoItemV1Schema,
+  applyTodoSessionLinkV1, buildTodoSessionLinkKeyV1, TodoItemV1Schema, TodoItemV1StoredSchema,
   TodoSessionLinkInputV1Schema, type TodoItemV1,
   createTodoItemV1, updateTodoItemV1, transitionTodoItemV1, resolveTodoStateV1,
+  projectTodoSessionLinkFailureV1,
+  resolveTodoSessionLinkInputV1,
 } from './todoSessionLinkV1.js';
 
 describe('stored Todo session linking', () => {
+  it('defaults omitted Session qualifiers even when an adapter supplies optional undefined properties', () => {
+    const scope = { serverId: 'home', accountId: 'viewer' };
+    const input = TodoSessionLinkInputV1Schema.parse({ taskId: 'task', session: {
+      sessionId: 'accepted', serverId: undefined, accountId: undefined,
+    } });
+    expect(resolveTodoSessionLinkInputV1(input, scope)).toEqual({ scope, taskId: 'task', session: { ...scope, sessionId: 'accepted' } });
+  });
+  it('keeps the task owner separate from the viewer when interpreting predecessor bare Session links', async () => {
+    const input = { scope: { serverId: 'home', accountId: 'viewer' }, ownerAccountId: 'owner', taskId: 'task',
+      session: { serverId: 'home', accountId: 'viewer', sessionId: 'existing' } };
+    expect(TodoSessionLinkInputV1Schema.safeParse(input).success).toBe(true);
+    let published: TodoItemV1 | undefined;
+    await applyTodoSessionLinkV1(input, {
+      read: async () => ({ value: predecessor, version: 1 }),
+      compareAndSet: async () => ({ success: true, version: 2 }),
+    }, { requireCurrent: () => {}, publish: todo => { published = todo; } });
+    expect(published?.linkedSessions).toMatchObject({ existing: predecessor.linkedSessions.existing,
+      [buildTodoSessionLinkKeyV1(input.session)]: { session: input.session } });
+  });
+
+  it('preserves a next-request task denial instead of reporting an uncertain link write', async () => {
+    const input = { scope: { serverId: 'home', accountId: 'viewer' }, taskId: 'task',
+      session: { serverId: 'home', accountId: 'viewer', sessionId: 'existing' } };
+    try {
+      await applyTodoSessionLinkV1(input, {
+        read: async () => { throw Object.assign(new Error('task_not_found'), { code: 'task_not_found' }); },
+        compareAndSet: async () => { throw new Error('denied read cannot write'); },
+      }, { requireCurrent: () => {} });
+      throw new Error('Denied read must fail');
+    } catch (error) { expect(projectTodoSessionLinkFailureV1(error)).toEqual({ status: 'refused', reason: 'task_not_found' }); }
+  });
   // Vector from the clean live 0.2 todoOps.ts producer contract at
   // f16a3759a3944bc4be4bbb7e14a3e6a01397f7b5 (addTodo/toggleTodo/updateTodoLinkedSessions).
   const predecessor = { id: 'task', title: 'Task', done: false, createdAt: 1, updatedAt: 2,
     linkedSessions: { existing: { title: 'Existing', linkedAt: 2 } } };
+
+  it('retains qualified blockers beside personal ids and validates them through the shared identity owner', () => {
+    const external = { source: { pluginId: 'acme.tracker', localId: 'issues' },
+      kindId: 'issue', collisionScope: 'project-1', entryId: 'blocker' };
+    const created = createTodoItemV1({ id: 'new', title: 'New', blockedBy: ['blocker', external] }, 10);
+    expect(created.blockedBy).toEqual(['blocker', external]);
+    expect(TodoItemV1Schema.parse(JSON.parse(JSON.stringify(created)))).toEqual(created);
+    expect(updateTodoItemV1(created, { title: 'Edited' }, 11).blockedBy).toEqual(['blocker', external]);
+    expect(transitionTodoItemV1(created, 'completed', 12).blockedBy).toEqual(['blocker', external]);
+    const retained = { ...created, retired: true, blockedBy: ['blocker', {
+      ...external, retired: true, source: { ...external.source, retired: true },
+    }] };
+    expect(TodoItemV1StoredSchema.parse(retained)).toEqual(created);
+    expect(TodoItemV1Schema.safeParse(retained).success).toBe(false);
+    for (const blocker of [
+      { ...external, entryId: '' }, { ...external, source: { pluginId: 'acme.tracker' } },
+      { ...external, sourceInstanceId: 'not-identity' },
+    ]) expect(TodoItemV1Schema.safeParse({ ...created, blockedBy: [blocker] }).success).toBe(false);
+    expect(TodoItemV1StoredSchema.safeParse({ ...created, blockedBy: [{ ...external, entryId: '' }] }).success).toBe(false);
+    expect(TodoItemV1StoredSchema.parse(predecessor)).toEqual(predecessor);
+  });
 
   it('retains predecessor records and projects task state into the existing done fields', () => {
     expect(TodoItemV1Schema.parse(predecessor)).toEqual(predecessor);

@@ -55,3 +55,7 @@ export type { FileDownloadDestinationV1 } from './fileDownload.js';
 export { FileDownloadDestinationV1ProtocolSchema } from './fileDownload.js';
 export type { FileDownloadResultV1 } from './fileDownload.js';
 export { FileDownloadResultV1ProtocolSchema } from './fileDownload.js';
+export { INTERNAL_TASK_SOURCE_V1 } from './triageEntryRef.js';
+export { internalTaskLocalRefV1 } from './triageEntryRef.js';
+export { internalTaskOwnerAccountIdV1 } from './triageEntryRef.js';
+export { isInternalTaskReferenceV1 } from './triageEntryRef.js';

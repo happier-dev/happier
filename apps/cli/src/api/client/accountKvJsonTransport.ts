@@ -70,7 +70,9 @@ export function createCliAccountKvJsonTransport(params: CliAccountKvJsonTranspor
 }
 
 /** The same raw Account namespace and mode admission, including atomic multi-key intents. */
-export function createCliAccountKvJsonCollectionTransport(params: Omit<CliAccountKvJsonTransportParams, 'key'>): AccountJsonKvCollectionPort {
+export function createCliAccountKvJsonCollectionTransport(params: Omit<CliAccountKvJsonTransportParams, 'key'>): AccountJsonKvCollectionPort & Readonly<{
+  openRow: (row: Readonly<{ key: string; value: string | null; version: number }>) => ReturnType<typeof openAccountKvJsonRow>;
+}> {
   const base = (params.serverBaseUrl ?? resolveServerHttpBaseUrl()).replace(/\/+$/, '');
   const check = () => {
     if (params.signal?.aborted || params.shouldContinue?.() === false) throw new AccountKvJsonTransportError('account_kv_scope_retired', 'The captured Account KV scope retired');
@@ -128,7 +130,9 @@ export function createCliAccountKvJsonCollectionTransport(params: Omit<CliAccoun
       return { success: false, value: conflict.value, version: conflict.version };
     },
   });
+  let rowAdmission: Promise<Context> | undefined;
   return {
+    openRow: async row => { check(); return openRow(row, await (rowAdmission ??= context('identity'))); },
     read: async key => {
       check(); const admitted = await context('identity'); const path = `/v1/kv/${encodeURIComponent(key)}`;
       const response = await axios.get(`${base}${path}`, { headers: headers({ method: 'GET', path }), validateStatus: () => true,

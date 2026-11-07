@@ -14,6 +14,8 @@ import type { ServerFetch } from '@/sync/http/client';
 
 const LEGACY_SECRET_BYTES = new Uint8Array(32).fill(7);
 const LEGACY_SECRET = encodeBase64(LEGACY_SECRET_BYTES, 'base64url');
+const TOKEN = `header.${Buffer.from(JSON.stringify({ sub: 'todo-account' })).toString('base64url')}.signature`;
+const unknownTasksRoute = () => Response.json({ statusCode: 404, error: 'Not Found', message: 'Route GET:/v1/tasks not found' }, { status: 404 });
 const LEGACY_ACCOUNT_MIGRATION_KEY_FINGERPRINT =
     computeAccountEncryptionMigrateKeyFingerprintV1(
         tweetnacl.box.keyPair.fromSecretKey(
@@ -71,7 +73,7 @@ vi.mock('@/sync/domains/state/storage', () => ({
 
 vi.mock('@/sync/runtime/getSyncSingleton', () => ({
     getSyncSingleton: () => ({ encryption: mocks.accountEncryption,
-        getCredentials: () => ({ token: 'token', secret: LEGACY_SECRET }) }),
+        getCredentials: () => ({ token: TOKEN, secret: LEGACY_SECRET }) }),
 }));
 
 import {
@@ -101,6 +103,7 @@ describe('todoOps plaintext account storage', () => {
         setRuntimeFetch(async input => {
             const path = new URL(String(input)).pathname;
             if (path === '/v1/account/encryption/currentness') return Response.json(await mocks.currentnessHttp());
+            if (path === '/v1/tasks') return unknownTasksRoute();
             return new Response(null, { status: 404 });
         });
         mocks.kvGet.mockReset();
@@ -159,7 +162,7 @@ describe('todoOps plaintext account storage', () => {
             ],
         });
 
-        await expect(fetchTodos({ token: 'token-only' })).resolves.toEqual({
+        await expect(fetchTodos({ token: TOKEN })).resolves.toEqual({
             todos: {
                 'item-1': expect.objectContaining({ title: 'Plain todo' }),
             },
@@ -184,13 +187,13 @@ describe('todoOps plaintext account storage', () => {
                 undoneOrder: ['z-last', ...first.map(row => row.key.slice('todo.'.length))], completedOrder: [],
             } }) }, item('z-last'),
         ] });
-        const request = vi.fn<ServerFetch>(async () => Response.json(await mocks.currentnessHttp()));
-        const state = await fetchTodos({ token: 'token-only' }, { retry: 'none', request });
+        const request = vi.fn<ServerFetch>(async path => path === '/v1/tasks' ? unknownTasksRoute() : Response.json(await mocks.currentnessHttp()));
+        const state = await fetchTodos({ token: TOKEN }, { retry: 'none', request });
         expect(Object.keys(state.todos)).toHaveLength(1001);
         expect(state.undoneOrder[0]).toBe('z-last');
         expect(state.todos['z-last']?.linkedSessions).toEqual({ session: { title: 'Linked session', linkedAt: 1 } });
         expect(state.versions['todo.index']).toBe(3);
-        expect(mocks.kvList).toHaveBeenLastCalledWith({ token: 'token-only' }, expect.objectContaining({
+        expect(mocks.kvList).toHaveBeenLastCalledWith({ token: TOKEN }, expect.objectContaining({
             afterKey: 'todo.a-0999', limit: 1000, retry: 'none', request,
         }));
     });
@@ -205,7 +208,7 @@ describe('todoOps plaintext account storage', () => {
             } }) });
         mocks.kvList.mockResolvedValueOnce({ items: Array.from({ length: 1000 }, (_, n) => item(`a-${String(n).padStart(4, '0')}`)) })
             .mockRejectedValueOnce(new Error('later page unavailable'));
-        await expect(initializeTodoSync({ token: 'token-only' })).rejects.toThrow('later page unavailable');
+        await expect(initializeTodoSync({ token: TOKEN })).rejects.toThrow('later page unavailable');
         expect(mocks.todoState).toBe(prior);
         expect(mocks.applyTodos).not.toHaveBeenCalled();
     });
@@ -232,7 +235,7 @@ describe('todoOps plaintext account storage', () => {
         });
 
         await expect(fetchTodos({
-            token: 'token',
+            token: TOKEN,
             secret: LEGACY_SECRET,
         })).resolves.toMatchObject({
             todos: {
@@ -260,7 +263,7 @@ describe('todoOps plaintext account storage', () => {
         };
 
         await expect(fetchTodos({
-            token: 'token',
+            token: TOKEN,
             secret: LEGACY_SECRET,
         })).rejects.toMatchObject({
             code: 'todo_stored_content_unavailable',
@@ -275,7 +278,7 @@ describe('todoOps plaintext account storage', () => {
         {
             accountMode: 'plain' as const,
             value: 'released-encrypted-ciphertext',
-            credentials: { token: 'token-only' },
+            credentials: { token: TOKEN },
             encryption: {
                 encryptRaw: vi.fn(),
                 decryptRaw: vi.fn(async () => ({
@@ -290,7 +293,7 @@ describe('todoOps plaintext account storage', () => {
                 t: 'plain',
                 v: { undoneOrder: [], completedOrder: [] },
             }),
-            credentials: { token: 'token', secret: LEGACY_SECRET },
+            credentials: { token: TOKEN, secret: LEGACY_SECRET },
             encryption: {
                 encryptRaw: vi.fn(),
                 decryptRaw: vi.fn(),
@@ -335,7 +338,7 @@ describe('todoOps plaintext account storage', () => {
             }],
         });
 
-        await expect(fetchTodos({ token: 'token-only' })).rejects.toBeInstanceOf(
+        await expect(fetchTodos({ token: TOKEN })).rejects.toBeInstanceOf(
             TodoStoredContentUnavailableError,
         );
     });
@@ -352,7 +355,7 @@ describe('todoOps plaintext account storage', () => {
             }],
         });
 
-        await expect(fetchTodos({ token: 'token-only' })).rejects.toMatchObject({
+        await expect(fetchTodos({ token: TOKEN })).rejects.toMatchObject({
             code: 'todo_stored_content_unavailable',
             key: 'todo.item-1',
         });
@@ -385,7 +388,7 @@ describe('todoOps plaintext account storage', () => {
             }],
         });
 
-        await expect(initializeTodoSync({ token: 'token-only' })).rejects.toMatchObject({
+        await expect(initializeTodoSync({ token: TOKEN })).rejects.toMatchObject({
             code: 'todo_stored_content_unavailable',
             key: 'todo.index',
         });

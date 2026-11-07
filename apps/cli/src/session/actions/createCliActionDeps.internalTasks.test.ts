@@ -10,12 +10,65 @@ import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { createAccountScopedCryptoMaterialSnapshotV1, deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import { encrypt, decryptResult, encodeBase64, decodeBase64 } from '@/api/encryption';
+import { TaskResourceV1Schema, TaskResourceMutateRequestV1Schema, TaskAccessGrantSetRequestV1Schema } from '@happier-dev/protocol/actions/internalTaskActions';
 
 const scope = { serverId: 'task-home', accountId: 'task-account' };
 const token = `header.${Buffer.from(JSON.stringify({ sub: scope.accountId })).toString('base64url')}.signature`;
 const encode = (value: unknown) => Buffer.from(JSON.stringify({ t: 'plain', v: value })).toString('base64');
 const decode = (value: string) => JSON.parse(Buffer.from(value, 'base64').toString()).v;
+function unsupportedTaskResourceApi() {
+  vi.spyOn(axios, 'request').mockImplementation(async configuration => ({ status: 404,
+    data: { statusCode: 404, error: 'Not Found', message: `Route ${configuration.method}:${configuration.url} not found` } }));
+}
 afterEach(() => vi.restoreAllMocks());
+
+it('runs share, collaborator read/edit/transition/link and next-request revoke through the public executor and real HTTP adapter', async () => {
+  const app = fastify(), endpoint = 'http://shared-task.test';
+  const features = registerAccountHomeHttp(app, { accountId: scope.accountId, serverId: scope.serverId });
+  const peerToken = `header.${Buffer.from(JSON.stringify({ sub: 'peer' })).toString('base64url')}.signature`;
+  let granted = false, resource = TaskResourceV1Schema.parse({ ownerAccountId: scope.accountId, taskId: 'shared', version: 1,
+    content: { t: 'plain', v: { id: 'shared', title: 'Shared task', notes: 'Retain', done: false, createdAt: 1, updatedAt: 1 } },
+    access: 'owner', encryptionMode: 'plain', encryptedDataKey: null });
+  const path = `/v1/tasks/${scope.accountId}/shared`;
+  const isPeer = (authorization: string | undefined) => authorization === `Bearer ${peerToken}`;
+  app.get(path, async (request, reply) => isPeer(request.headers.authorization) && !granted
+    ? reply.code(404).send({ error: 'task_not_found' }) : { ...resource, access: isPeer(request.headers.authorization) ? 'edit' : 'owner' });
+  app.put(path, async (request, reply) => {
+    if (isPeer(request.headers.authorization) && !granted) return reply.code(404).send({ error: 'task_not_found' });
+    const mutation = TaskResourceMutateRequestV1Schema.parse(request.body);
+    if (mutation.expectedVersion !== resource.version) return reply.code(409).send({ error: 'task_version_conflict' });
+    resource = TaskResourceV1Schema.parse({ ...resource, content: mutation.content, version: resource.version + 1 });
+    return { ...resource, access: isPeer(request.headers.authorization) ? 'edit' : 'owner' };
+  });
+  app.put(`${path}/grants`, async request => {
+    const grant = TaskAccessGrantSetRequestV1Schema.parse(request.body);
+    expect(grant).toEqual({ principal: { kind: 'account', accountId: 'peer' }, accessLevel: 'edit' });
+    granted = true; return { changed: true };
+  });
+  app.delete(`${path}/grants`, async () => { granted = false; return { changed: true }; });
+  app.get(`${path}/grants`, async () => ({ ownerAccountId: scope.accountId, taskId: 'shared', access: 'owner', grants: [] }));
+  await app.ready();
+  const restore = installAxiosFastifyAdapter({ app, origin: endpoint });
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json(features));
+  const executor = (bearer: string) => createActionExecutor(createCliActionDeps({ token: bearer, credentials: { token: bearer, encryption: null },
+    sessionId: 'cli-global', mode: 'plain', ctx: null, serverId: scope.serverId, serverHttpBaseUrl: endpoint }));
+  const owner = executor(token), peer = executor(peerToken), context = { surface: 'agent', authority: 'account_automation', bypassApprovals: true } as const;
+  const address = { taskId: 'shared', ownerAccountId: scope.accountId }, viewerScope = { serverId: scope.serverId, accountId: 'peer' };
+  try {
+    expect(await owner.execute('tasks.internal.share', { scope, ...address, principal: { kind: 'account', accountId: 'peer' }, accessLevel: 'edit' }, context))
+      .toMatchObject({ ok: true, result: { status: 'applied', todo: { ownerAccountId: scope.accountId } } });
+    expect(await peer.execute('tasks.internal.read', address, context)).toMatchObject({ ok: true, result: { status: 'applied', scope: viewerScope, todo: { title: 'Shared task', access: 'edit' } } });
+    expect(await peer.execute('tasks.internal.edit', { scope: viewerScope, ...address, fields: { title: 'Peer edit' } }, context)).toMatchObject({ ok: true, result: { status: 'applied' } });
+    expect(await peer.execute('tasks.internal.transition', { scope: viewerScope, ...address, state: 'completed' }, context)).toMatchObject({ ok: true, result: { status: 'applied', todo: { done: true } } });
+    expect(await peer.execute('tasks.internal.session.link', { scope: viewerScope, ...address, session: { ...viewerScope, sessionId: 'session' } }, context))
+      .toMatchObject({ ok: true, result: { status: 'linked' } });
+    expect(await owner.execute('tasks.internal.read', address, context)).toMatchObject({ ok: true, result: { status: 'applied', todo: { title: 'Peer edit', notes: 'Retain', done: true, linkedSessions: expect.any(Object) } } });
+    expect(await owner.execute('tasks.internal.unshare', { scope, ...address, principal: { kind: 'account', accountId: 'peer' } }, context)).toMatchObject({ ok: true, result: { status: 'access', grants: [] } });
+    expect(await peer.execute('tasks.internal.read', address, context)).toMatchObject({ ok: true, result: { status: 'refused', reason: 'task_not_found' } });
+    expect(await peer.execute('tasks.internal.edit', { scope: viewerScope, ...address, fields: { title: 'Denied' } }, context)).toMatchObject({ ok: true, result: { status: 'refused', reason: 'task_not_found' } });
+    expect(resource.content).toMatchObject({ t: 'plain', v: { title: 'Peer edit' } });
+  } finally { restore(); await app.close(); }
+});
 
 it.each(['cli', 'agent'] as const)('persists personal reorder through the public %s executor without a Machine', async surface => {
   const app = fastify();
@@ -58,6 +111,7 @@ it.each(['cli', 'agent'] as const)('persists personal reorder through the public
 });
 
 it('executes public task Actions against released Account rows, rebasing atomic index changes and refusing ambiguous create replay', async () => {
+  unsupportedTaskResourceApi();
   const rows = new Map<string, { value: string; version: number }>([
     ['todo.index', { value: encode({ undoneOrder: ['old'], completedOrder: [] }), version: 1 }],
     ['todo.old', { value: encode({ id: 'old', title: 'Predecessor task', done: false, createdAt: 1, updatedAt: 1 }), version: 1 }],
@@ -94,6 +148,9 @@ it('executes public task Actions against released Account rows, rebasing atomic 
   const context = { surface: 'agent', authority: 'account_automation', bypassApprovals: true } as const;
   expect(await executor.execute('tasks.internal.list', {}, context)).toMatchObject({ ok: true, result: { status: 'ok', scope,
     todos: [{ id: 'old', state: 'unstarted' }], undoneOrder: ['old'] } });
+  expect(await executor.execute('tasks.internal.create', { fields: { title: 'New task', notes: 'Notes' } }, context))
+    .toMatchObject({ ok: true, result: { status: 'refused', reason: 'task_conflict' } });
+  // A known atomic refusal applied nothing. A fresh explicit invocation can now use the current index.
   const created = await executor.execute('tasks.internal.create', { fields: { title: 'New task', notes: 'Notes' } }, context);
   expect(created).toMatchObject({ ok: true, result: { status: 'applied', todo: { title: 'New task', notes: 'Notes', state: 'unstarted' } } });
   const index = decode(rows.get('todo.index')!.value);
@@ -112,6 +169,7 @@ it('executes public task Actions against released Account rows, rebasing atomic 
 });
 
 it('fails explicit on mode disagreement and refuses cross-Account mutations before HTTP writes', async () => {
+  unsupportedTaskResourceApi();
   vi.spyOn(axios, 'get').mockImplementation(async url => url.endsWith('/currentness')
     ? { status: 200, data: { mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } }
     : { status: 200, data: { items: [{ key: 'todo.old', value: 'encrypted-predecessor-bytes', version: 1 }] } });
@@ -126,6 +184,7 @@ it('fails explicit on mode disagreement and refuses cross-Account mutations befo
 });
 
 it('opens predecessor E2EE records and retains their encryption and bare Session links through a public edit', async () => {
+  unsupportedTaskResourceApi();
   const secret = new Uint8Array(32).fill(7);
   const machineKey = deriveAccountMachineKeyFromRecoverySecret(secret);
   let version = 1;

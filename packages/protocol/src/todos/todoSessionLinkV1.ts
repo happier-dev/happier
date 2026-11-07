@@ -1,6 +1,9 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
+import { TriageEntryRefV1Schema } from '../tasks/entryRefV1.js';
+import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
+import { TaskResourceErrorV1Schema } from './taskResourceV1.js';
 export * from './todoLabelColoursV1.js';
 const scopeIdentity = z.strictObject({ serverId: z.string().check(z.minLength(1)), accountId: z.string().check(z.minLength(1)) });
 const sessionIdentity = (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(scopeIdentity, { sessionId: z.string().check(z.minLength(1)) }));
@@ -9,7 +12,10 @@ export const TodoStateV1Schema = lazyZodSchema(() => z.enum(['backlog', 'unstart
 export type TodoStateV1 = z.infer<typeof TodoStateV1Schema>;
 const taskFields = {
   notes: z.optional(z.string()), owner: z.optional(z.string().check(z.minLength(1))), dueAt: z.optional(z.number()),
-  parentId: z.optional(z.string().check(z.minLength(1))), blockedBy: z.optional(z.array(z.string().check(z.minLength(1)))),
+  parentId: z.optional(z.string().check(z.minLength(1))),
+  // Personal ids retain their existing stored shape; other sources keep their
+  // complete canonical identity, never a provider id stripped of its scope.
+  blockedBy: z.optional(z.array(z.union([z.string().check(z.minLength(1)), asProtocolZod(TriageEntryRefV1Schema)]))),
   labels: z.optional(z.array(z.string())), links: z.optional(z.array(z.strictObject({ url: z.string(), title: z.optional(z.string()) }))),
 };
 /** The existing todo.<id> record, including released bare Session-key links. */
@@ -66,22 +72,41 @@ export function transitionTodoItemV1(todo: TodoItemV1, state: TodoStateV1, now: 
   return TodoItemV1Schema.parse(updated);
 }
 export const TodoSessionLinkInputV1Schema = lazyZodSchema(() => z.strictObject({
-  scope: scopeIdentity, taskId: z.string().check(z.minLength(1)), session: sessionIdentity,
-  linked: z.optional(z.boolean()),
+  scope: z.optional(scopeIdentity), taskId: z.string().check(z.minLength(1)), session: z.strictObject({
+    serverId: z.optional(scopeIdentity.shape.serverId), accountId: z.optional(scopeIdentity.shape.accountId),
+    sessionId: z.string().check(z.minLength(1)),
+  }),
+  linked: z.optional(z.boolean()), ownerAccountId: z.optional(z.string().check(z.minLength(1))),
 }));
 export type TodoSessionLinkInputV1 = z.infer<typeof TodoSessionLinkInputV1Schema>;
+export type ResolvedTodoSessionLinkInputV1 = Omit<TodoSessionLinkInputV1, 'scope' | 'session'> & Readonly<{
+  scope: z.infer<typeof scopeIdentity>; session: z.infer<typeof sessionIdentity>;
+}>;
+const linkRefusalReason = lazyZodSchema(() => z.union([TaskResourceErrorV1Schema,
+  z.enum(['task_deleted', 'task_scope_mismatch', 'invalid_input', 'task_resource_unsupported', 'recipient_key_pending', 'resource_encryption_material_unavailable', 'task_content_invalid']),
+]));
+type LinkRefusalReason = z.infer<typeof linkRefusalReason>;
 export const TodoSessionLinkOutputV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.strictObject({ status: z.literal('linked') }),
   z.strictObject({ status: z.literal('unlinked') }),
   z.strictObject({ status: z.literal('unavailable') }),
-  z.strictObject({ status: z.literal('refused'), reason: z.enum(['task_deleted', 'task_scope_mismatch', 'invalid_input']) }),
+  z.strictObject({ status: z.literal('refused'), reason: linkRefusalReason }),
   z.strictObject({ status: z.literal('unknown'), reason: z.literal('task_link_failed') }),
 ]));
 export type TodoSessionLinkOutputV1 = z.infer<typeof TodoSessionLinkOutputV1Schema>;
 export class TodoSessionLinkErrorV1 extends Error {
-  constructor(readonly code: 'task_deleted' | 'task_scope_mismatch' | 'task_link_failed', readonly cause?: unknown) {
+  constructor(readonly code: LinkRefusalReason | 'task_link_failed', readonly cause?: unknown) {
     super(code); this.name = 'TodoSessionLinkError';
   }
+}
+/** Omitted qualifiers come only from the authenticated host invocation. Explicit Session destinations stay qualified. */
+export function resolveTodoSessionLinkInputV1(input: TodoSessionLinkInputV1,
+  scope: ResolvedTodoSessionLinkInputV1['scope']): ResolvedTodoSessionLinkInputV1 {
+  if (input.scope && (input.scope.serverId !== scope.serverId || input.scope.accountId !== scope.accountId)) {
+    throw new TodoSessionLinkErrorV1('task_scope_mismatch');
+  }
+  return { ...input, scope, session: { serverId: input.session.serverId ?? scope.serverId,
+    accountId: input.session.accountId ?? scope.accountId, sessionId: input.session.sessionId } };
 }
 export type TodoSessionLinkJsonPortV1 = Readonly<{
   read: () => Promise<Readonly<{ value: unknown; version: number }>>;
@@ -90,11 +115,11 @@ export type TodoSessionLinkJsonPortV1 = Readonly<{
     | Readonly<{ success: false; value: unknown; version: number }>>;
 }>;
 /** Existing length-prefixed identity; persisted keys do not change in this extraction. */
-export function buildTodoSessionLinkKeyV1(session: TodoSessionLinkInputV1['session']): string {
+export function buildTodoSessionLinkKeyV1(session: ResolvedTodoSessionLinkInputV1['session']): string {
   return [session.serverId, session.accountId, session.sessionId].map(part => `${part.length}:${part}`).join('');
 }
 /** One semantic KV/CAS owner, shared by accepted creation and Action execution. Never marks Done. */
-export async function applyTodoSessionLinkV1(input: TodoSessionLinkInputV1, port: TodoSessionLinkJsonPortV1,
+export async function applyTodoSessionLinkV1(input: ResolvedTodoSessionLinkInputV1, port: TodoSessionLinkJsonPortV1,
   options: Readonly<{ requireCurrent: () => void; title?: string; publish?: (todo: TodoItemV1, version: number) => void }>): Promise<void> {
   const check = options.requireCurrent;
   try {
@@ -107,7 +132,7 @@ export async function applyTodoSessionLinkV1(input: TodoSessionLinkInputV1, port
       check();
       const predecessor = todo.linkedSessions?.[input.session.sessionId];
       const bareMatches = input.scope.serverId === input.session.serverId
-        && input.scope.accountId === input.session.accountId && predecessor && predecessor.session === undefined;
+        && (input.ownerAccountId ?? input.scope.accountId) === input.session.accountId && predecessor && predecessor.session === undefined;
       const qualifiedMatches = todo.linkedSessions?.[key]?.session !== undefined;
       const linked = input.linked !== false;
       if (linked ? (qualifiedMatches || bareMatches) : (!qualifiedMatches && !bareMatches)) {
@@ -127,6 +152,8 @@ export async function applyTodoSessionLinkV1(input: TodoSessionLinkInputV1, port
     }
   } catch (error) {
     if (error instanceof TodoSessionLinkErrorV1) throw error;
+    const refusal = linkRefusalReason.safeParse(error !== null && typeof error === 'object' && 'code' in error ? error.code : undefined);
+    if (refusal.success) throw new TodoSessionLinkErrorV1(refusal.data, error);
     throw new TodoSessionLinkErrorV1('task_link_failed', error);
   }
 }

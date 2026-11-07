@@ -34,6 +34,7 @@ function server(ids = ['a', 'b']) {
     let conflict = false;
     const request: ServerFetch = async (path, init) => {
         expect(new Headers(init?.headers).get('Authorization')).toBe(`Bearer ${token}`);
+        if (path.startsWith('/v1/tasks/')) return Response.json({ statusCode: 404, error: 'Not Found', message: `Route GET:${path} not found` }, { status: 404 });
         if (path === '/v1/account/encryption/currentness') {
             onRead(path);
             return Response.json(createPlainAccountEncryptionCurrentnessFixture());

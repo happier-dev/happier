@@ -1,9 +1,12 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import { applyTodoSessionLinkV1, TodoSessionLinkErrorV1 as TodoSessionLinkError } from '@happier-dev/protocol/todos/todoSessionLinkV1';
+import { applyTodoSessionLinkV1, resolveTodoSessionLinkInputV1, TodoSessionLinkErrorV1 as TodoSessionLinkError } from '@happier-dev/protocol/todos/todoSessionLinkV1';
 import { resolveAnchoredListMoveV1, type AnchoredListPositionV1 } from '@happier-dev/protocol/actions/anchoredListOrderV1';
 import { applyInternalTaskReorder, InternalTaskReorderError } from '@happier-dev/protocol/todos/todoActionOperationsV1';
 import { storage } from '@/sync/domains/state/storage';
-import { kvList } from '@/sync/api/account/apiKv';
+import { kvGet, kvList } from '@/sync/api/account/apiKv';
+import { TaskResourceClientErrorV1, createTaskResourceSessionLinkPortV1, resolveTodoIndexForItemsV1 } from '@happier-dev/protocol/todos/todoActionOperationsV1';
+import { createUiTaskResourceClient, createUiTaskResourceOptions } from './taskResourceTransport';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import type { AccountEncryptionReadUsage } from '@/sync/api/account/apiAccountEncryptionMode';
 import { createServerFetchForActiveServer, type ServerFetch } from '@/sync/http/client';
 import { bindAccountEncryptionObservation, readAccountEncryptionObservationBinding } from '@/sync/http/accountEncryptionObservationBinding';
@@ -98,10 +101,38 @@ export async function fetchTodos(
         versions: {}
     };
 
+    let resourceRows = false;
+    try {
+        const accountId = parseToken(credentials.token);
+        const result = await createUiTaskResourceClient({ credentials, accountId, serverId: getActiveServerSnapshot().serverId,
+            request, requireCurrent }).list({ ownerAccountId: accountId });
+        requireCurrent();
+        if (result.unavailableTasks.length) throw new TaskResourceClientErrorV1(result.unavailableTasks[0]!.reason);
+        for (const task of result.tasks) {
+            state.todos[task.todo.id] = task.todo;
+            state.versions[getTodoKey(task.todo.id)] = task.resource.version;
+        }
+        const index = await kvGet(credentials, TODO_INDEX_KEY, { request, retry: opts.retry ?? 'none' });
+        requireCurrent();
+        if (index) {
+            const opened = await openUiAccountKvJsonRow({ credentials, context, row: index, request, requireCurrent });
+            state.versions[TODO_INDEX_KEY] = opened.version;
+            if (!opened.tombstone) {
+                const content = parseTodoStoredContent(TODO_INDEX_KEY, opened.value, true);
+                if (content.kind !== 'index') throw new TodoStoredContentUnavailableError(TODO_INDEX_KEY, 'schema_invalid');
+                state.undoneOrder = content.value.undoneOrder;
+                state.doneOrder = content.value.completedOrder;
+            }
+        }
+        resourceRows = true;
+    } catch (error) {
+        if (!(error instanceof TaskResourceClientErrorV1) || error.code !== 'task_resource_unsupported') throw error;
+    }
+
     // The KV server owns a 1,000-row request maximum, not an Account Task cap.
     const pageSize = 1000;
     let afterKey: string | undefined;
-    for (;;) {
+    for (; !resourceRows;) {
         const response = await kvList(credentials, {
             prefix: TODO_PREFIX,
             limit: pageSize,
@@ -130,22 +161,9 @@ export async function fetchTodos(
         afterKey = response.items[response.items.length - 1]!.key;
     }
 
-    // Clean up orders - remove IDs that don't exist in todos
-    state.undoneOrder = state.undoneOrder.filter(id => id in state.todos);
-    state.doneOrder = state.doneOrder.filter(id => id in state.todos);
-
-    // Add any todos that exist but aren't in any order list
-    const allOrderedIds = new Set([...state.undoneOrder, ...state.doneOrder]);
-    for (const todoId in state.todos) {
-        if (!allOrderedIds.has(todoId)) {
-            const todo = state.todos[todoId];
-            if (todo.done) {
-                state.doneOrder.push(todoId);
-            } else {
-                state.undoneOrder.push(todoId);
-            }
-        }
-    }
+    const order = resolveTodoIndexForItemsV1(Object.values(state.todos), { undoneOrder: state.undoneOrder, completedOrder: state.doneOrder });
+    state.undoneOrder = order.undoneOrder;
+    state.doneOrder = order.completedOrder;
 
     return state;
 }
@@ -163,8 +181,8 @@ export async function initializeTodoSync(credentials: AuthCredentials): Promise<
 //
 
 export type TodoSessionLinkIntent = Readonly<{
-    source: Readonly<{ scope: ServerAccountScope; taskId: string; title?: string }>;
-    session: Readonly<{ scope: ServerAccountScope; sessionId: string }>;
+    source: Readonly<{ scope?: ServerAccountScope; taskId: string; ownerAccountId?: string; title?: string }>;
+    session: Readonly<{ scope?: Partial<ServerAccountScope>; sessionId: string }>;
     linked?: boolean;
 }>;
 
@@ -182,7 +200,7 @@ function withTodoStoredContentFailures(key: string, transport: AccountKvJsonTran
 }
 
 /** Apply one accepted Session to the current task, never a captured replacement map. */
-export async function applyTodoSessionLinkIntent(credentials: AuthCredentials, intent: TodoSessionLinkIntent,
+export async function applyTodoSessionLinkIntent(credentials: AuthCredentials, input: TodoSessionLinkIntent,
     options: Readonly<{ signal?: AbortSignal; request?: ServerFetch }> = {}): Promise<void> {
     const [{ captureActiveServerAccountScopeLifetime }, { getActiveServerSnapshot }] = await Promise.all([
         import('@/sync/domains/scope/activeServerAccountScope'),
@@ -196,6 +214,12 @@ export async function applyTodoSessionLinkIntent(credentials: AuthCredentials, i
     } catch (error) {
         throw new TodoSessionLinkError('task_scope_mismatch', error);
     }
+    const resolved = resolveTodoSessionLinkInputV1({ scope: input.source.scope, taskId: input.source.taskId,
+        ownerAccountId: input.source.ownerAccountId, linked: input.linked,
+        session: { ...input.session.scope, sessionId: input.session.sessionId } },
+        { serverId: snapshot.serverId, accountId: credentialAccountId });
+    const intent = { ...input, source: { ...input.source, scope: resolved.scope },
+        session: { scope: { serverId: resolved.session.serverId, accountId: resolved.session.accountId }, sessionId: resolved.session.sessionId } };
     const requireCurrent = () => {
         if (options.signal?.aborted || !lifetime?.isCurrent() || !areServerAccountScopesEqual(lifetime.scope, intent.source.scope)
             || snapshot.serverId !== intent.source.scope.serverId
@@ -216,12 +240,19 @@ export async function applyTodoSessionLinkIntent(credentials: AuthCredentials, i
         await todoLock.inLock(async () => {
             requireCurrent();
             const key = getTodoKey(intent.source.taskId);
+            const personalPort = withTodoStoredContentFailures(key, createAccountKvJsonTransport({ credentials, key, request, shouldContinue: () => { requireCurrent(); return true; } }));
+            const taskPort = createTaskResourceSessionLinkPortV1(createUiTaskResourceClient({ credentials, accountId: credentialAccountId,
+                serverId: intent.source.scope.serverId, request, requireCurrent, signal: options.signal }),
+                { ownerAccountId: intent.source.ownerAccountId ?? credentialAccountId, taskId: intent.source.taskId },
+                { accountId: credentialAccountId, port: personalPort });
             await applyTodoSessionLinkV1({ scope: intent.source.scope, taskId: intent.source.taskId,
+                ...(intent.source.ownerAccountId ? { ownerAccountId: intent.source.ownerAccountId } : {}),
                 session: { ...intent.session.scope, sessionId: intent.session.sessionId }, ...(intent.linked === undefined ? {} : { linked: intent.linked }) },
-                withTodoStoredContentFailures(key, createAccountKvJsonTransport({ credentials, key, request, shouldContinue: () => { requireCurrent(); return true; } })),
+                taskPort,
                 { requireCurrent, title: intent.source.title,
                 publish: (item, version) => {
                     requireCurrent();
+                    if (intent.source.ownerAccountId && intent.source.ownerAccountId !== credentialAccountId) return;
                     const current = storage.getState().todoState;
                     if (!current?.todos[item.id]) return;
                     storage.getState().applyTodos({
@@ -268,6 +299,7 @@ export async function reorderTodos(
         });
         await applyInternalTaskReorder({ input: { scope, sourceId: todoId, position }, scope, requireCurrent,
             port: createTodoAccountKvTransport({ credentials, request, requireCurrent }),
+            resources: createUiTaskResourceOptions({ credentials, request, requireCurrent, ...scope, signal: options.signal }),
             onApplied: (_order, version) => {
                 // Acknowledgement survives retirement; only publication is suppressed.
                 if (options.signal?.aborted || options.isCurrent?.() === false) return;

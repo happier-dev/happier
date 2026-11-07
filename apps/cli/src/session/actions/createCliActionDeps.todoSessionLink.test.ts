@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createActionExecutor, getActionSpec, resolveActionSurfaceAvailability } from '@happier-dev/protocol';
 import { createCliActionDeps } from './createCliActionDeps';
 
@@ -8,6 +8,15 @@ const token = `header.${Buffer.from(JSON.stringify({ sub: scope.accountId })).to
 const input = { scope, taskId: 'task-a', session: { ...scope, sessionId: 'accepted-session' } };
 const encode = (value: unknown) => Buffer.from(JSON.stringify({ t: 'plain', v: value })).toString('base64');
 const decode = (value: string) => JSON.parse(Buffer.from(value, 'base64').toString()).v;
+beforeEach(() => {
+    // This Home has the predecessor KV routes, not the new Task-resource route.
+    vi.spyOn(axios, 'request').mockImplementation(async request => {
+        const url = new URL(request.url!);
+        expect(url.origin).toBe('https://task-home.test');
+        expect(url.pathname).toMatch(/^\/v1\/tasks\//);
+        return { status: 404, data: { statusCode: 404, error: 'Not Found', message: `Route GET:${url.pathname} not found` } };
+    });
+});
 afterEach(() => vi.restoreAllMocks());
 
 describe('agent task association through the CLI Account executor and real KV/CAS owner', () => {
@@ -41,7 +50,8 @@ describe('agent task association through the CLI Account executor and real KV/CA
         const executor = createActionExecutor(createCliActionDeps({ token, credentials: { token, encryption: null },
             sessionId: 'cli-global', mode: 'plain', ctx: null, serverId: scope.serverId, serverHttpBaseUrl: 'https://task-home.test' }));
         const context = { surface: 'agent', authority: 'account_automation', bypassApprovals: true } as const;
-        expect(await executor.execute('tasks.internal.session.link', input, context)).toEqual({ ok: true, result: { status: 'linked' } });
+        expect(await executor.execute('tasks.internal.session.link', { taskId: input.taskId,
+            session: { sessionId: input.session.sessionId } }, context)).toEqual({ ok: true, result: { status: 'linked' } });
         expect(todo).toMatchObject({ done: true, title: 'Human renamed', linkedSessions: {
             '9:task-home12:task-account16:accepted-session': { session: input.session },
         } });
@@ -59,9 +69,12 @@ describe('agent task association through the CLI Account executor and real KV/CA
 
     it('refuses deleted tasks and another Account before any write', async () => {
         const post = vi.spyOn(axios, 'post');
-        vi.spyOn(axios, 'get').mockImplementation(async url => url.endsWith('/currentness')
-            ? { status: 200, data: { mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } }
-            : { status: 404 });
+        vi.spyOn(axios, 'get').mockImplementation(async url => {
+            const path = new URL(url).pathname;
+            return path.endsWith('/currentness')
+                ? { status: 200, data: { mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } }
+                : { status: 404 };
+        });
         const executor = createActionExecutor(createCliActionDeps({ token, credentials: { token, encryption: null },
             sessionId: 'cli-global', mode: 'plain', ctx: null, serverId: scope.serverId, serverHttpBaseUrl: 'https://task-home.test' }));
         const context = { surface: 'agent', authority: 'account_automation', bypassApprovals: true } as const;

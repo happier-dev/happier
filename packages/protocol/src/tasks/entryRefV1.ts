@@ -62,6 +62,22 @@ export const TriageEntryRefV1Schema: ProtocolComposableSchema<TriageEntryRefV1> 
 }, { policy: 'closed' });
 export const TriageEntryRefV1JsonSchema: PluginJsonSchemaV2 = /* @__PURE__ */ (() => TriageEntryRefV1Schema.jsonSchema)();
 
+/** Personal aliases use the authenticated viewer; explicit owners remain stable across viewers. */
+export const INTERNAL_TASK_SOURCE_V1 = Object.freeze({ pluginId: 'happier.triage', localId: 'internal' });
+export function internalTaskLocalRefV1(taskId: string, ownerAccountId?: string): Omit<TriageEntryRefV1, 'source'> {
+  return { kindId: 'task', collisionScope: ownerAccountId === undefined ? 'personal' : `account:${ownerAccountId}`, entryId: taskId };
+}
+export function internalTaskOwnerAccountIdV1(ref: Pick<TriageEntryRefV1, 'kindId' | 'collisionScope'>, viewerAccountId: string): string | null {
+  if (ref.kindId !== 'task') return null;
+  if (ref.collisionScope === 'personal') return viewerAccountId;
+  return ref.collisionScope.startsWith('account:') && ref.collisionScope.length > 'account:'.length
+    ? ref.collisionScope.slice('account:'.length) : null;
+}
+export function isInternalTaskReferenceV1(ref: TriageEntryRefV1): boolean {
+  return ref.source.pluginId === INTERNAL_TASK_SOURCE_V1.pluginId && ref.source.localId === INTERNAL_TASK_SOURCE_V1.localId
+    && internalTaskOwnerAccountIdV1(ref, '') !== null;
+}
+
 export const TRIAGE_SOURCE_INSTANCE_ID_PATTERN_V1 =
   '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
 

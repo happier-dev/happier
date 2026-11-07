@@ -64,6 +64,10 @@ export { encodeBase64, decodeBase64 } from './encoding.js';
 /** Minimal Task/entry identity and the single V1 identity/string grammar owner. */
 export type { TriageEntryRefV1 } from './triageEntryRef.js';
 export {
+    INTERNAL_TASK_SOURCE_V1,
+    internalTaskLocalRefV1,
+    internalTaskOwnerAccountIdV1,
+    isInternalTaskReferenceV1,
     TriageEntryRefV1Schema,
     TriageEntryRefV1JsonSchema,
     TriageIdentifierV1ProtocolSchema,

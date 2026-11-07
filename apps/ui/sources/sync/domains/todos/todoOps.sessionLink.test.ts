@@ -17,13 +17,19 @@ beforeEach(async () => {
     await resetPendingQueueState(scope);
 });
 describe('accepted-create association through the same semantic owner as the Action', () => {
-    it('rebases on human Done, publishes the qualified link, and an accepted retry is write-free', async () => {
+    it.each([false, true])('rebases on human Done and preserves explicit or host-default Session scope without replay (implicit=%s)', async implicit => {
+        const association = implicit ? { source: { taskId: intent.source.taskId, title: intent.source.title },
+            // The Action adapter projects these optional wire fields without inventing scope.
+            session: { scope: { serverId: undefined, accountId: undefined }, sessionId: intent.session.sessionId } } : intent;
+        const sessionScope = implicit ? scope : intent.session.scope;
+        const linkKey = implicit ? '8:server-a9:account-a8:accepted' : '10:other-home13:other-account8:accepted';
         let item: TodoItem = { id: 'task-a', title: 'Task', done: false, createdAt: 1, updatedAt: 1 };
         let version = 1;
         let writes = 0;
         const encoded = () => encodeBase64StoredJsonContentEnvelope({ t: 'plain', v: item });
         storage.getState().applyTodos({ todos: { 'task-a': item }, undoneOrder: ['task-a'], doneOrder: [], versions: {} });
         const request: ServerFetch = async (path, init) => {
+            if (path.startsWith('/v1/tasks/')) return Response.json({ statusCode: 404, error: 'Not Found', message: `Route GET:${path} not found` }, { status: 404 });
             if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
             if (path === '/v1/kv/todo.task-a') return Response.json({ key: 'todo.task-a', value: encoded(), version });
             if (path === '/v1/kv' && init?.method === 'POST') {
@@ -42,17 +48,18 @@ describe('accepted-create association through the same semantic owner as the Act
             }
             throw new Error(`Unexpected path ${path}`);
         };
-        await applyTodoSessionLinkIntent(credentials, intent, { request });
+        await applyTodoSessionLinkIntent(credentials, association, { request });
         expect(item).toMatchObject({ done: true, completedAt: 2, title: 'Human renamed', linkedSessions: {
-            '10:other-home13:other-account8:accepted': { session: { ...intent.session.scope, sessionId: 'accepted' } },
+            [linkKey]: { session: { ...sessionScope, sessionId: 'accepted' } },
         } });
         expect(storage.getState().todoState?.todos['task-a']).toEqual(item);
-        expect(projectTaskSessionLinks(item, scope)).toMatchObject([{ ...intent.session.scope, sessionId: intent.session.sessionId }]);
-        await applyTodoSessionLinkIntent(credentials, intent, { request });
+        expect(projectTaskSessionLinks(item, scope)).toMatchObject([{ ...sessionScope, sessionId: intent.session.sessionId }]);
+        await applyTodoSessionLinkIntent(credentials, association, { request });
         expect(writes).toBe(2);
     });
     it('rejects Account retirement after reading without disclosing into or writing the new Account', async () => {
         const request: ServerFetch = async path => {
+            if (path.startsWith('/v1/tasks/')) return Response.json({ statusCode: 404, error: 'Not Found', message: `Route GET:${path} not found` }, { status: 404 });
             if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
             if (path === '/v1/kv/todo.task-a') {
                 storage.getState().activateProfileScope({ ...scope, accountId: 'new-account' });

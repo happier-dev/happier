@@ -1,12 +1,10 @@
-import type { TriageEntryRefV1, TriageSourceEntryLocalRefV1 } from '@happier-dev/triage-protocol/v1';
+import { internalTaskOwnerAccountIdV1, isInternalTaskReferenceV1, type TriageEntryRefV1 } from '@happier-dev/triage-protocol/v1';
+export { INTERNAL_TASK_SOURCE_V1, internalTaskLocalRefV1, internalTaskOwnerAccountIdV1, isInternalTaskReferenceV1 } from '@happier-dev/triage-protocol/v1';
 
-export const INTERNAL_TASK_SOURCE_V1 = Object.freeze({ pluginId: 'happier.triage', localId: 'internal' });
+export const INTERNAL_TASK_SOURCE_LABEL_V1 = 'Happier tasks';
 
-export function internalTaskLocalRefV1(taskId: string): TriageSourceEntryLocalRefV1 {
-  return { kindId: 'task', collisionScope: 'personal', entryId: taskId };
-}
-
-export function isInternalTaskReferenceV1(ref: TriageEntryRefV1): boolean {
-  return ref.source.pluginId === INTERNAL_TASK_SOURCE_V1.pluginId && ref.source.localId === INTERNAL_TASK_SOURCE_V1.localId
-    && ref.kindId === 'task' && ref.collisionScope === 'personal';
+/** Ordering is private Account data, regardless of shared-task edit access. */
+export function isPersonalTaskReferenceV1(ref: TriageEntryRefV1, viewerAccountId?: string): boolean {
+  return isInternalTaskReferenceV1(ref) && (ref.collisionScope === 'personal'
+    || viewerAccountId !== undefined && internalTaskOwnerAccountIdV1(ref, viewerAccountId) === viewerAccountId);
 }

@@ -8,6 +8,7 @@ import { bindAccountEncryptionObservation, readAccountEncryptionObservationBindi
 import { sync } from '@/sync/sync';
 import { parseToken } from '@/utils/auth/parseToken';
 import { randomUUID } from '@/platform/randomUUID';
+import { createUiTaskResourceOptions } from '@/sync/domains/todos/taskResourceTransport';
 
 export async function executeInternalTaskHostAction(args: Readonly<{
   actionId: InternalTaskActionId; input: unknown; signal?: AbortSignal;
@@ -18,7 +19,7 @@ export async function executeInternalTaskHostAction(args: Readonly<{
   const snapshot = getActiveServerSnapshot();
   const requireCurrent = () => {
     if (args.signal?.aborted || !lifetime.isCurrent() || snapshot.serverId !== lifetime.scope.serverId
-      || sync?.getCredentials()?.token !== credentials.token || parseToken(credentials.token) !== lifetime.scope.accountId) {
+      || parseToken(credentials.token) !== lifetime.scope.accountId) {
       throw Object.assign(new Error('task_scope_mismatch'), { code: 'task_scope_mismatch' });
     }
   };
@@ -32,5 +33,6 @@ export async function executeInternalTaskHostAction(args: Readonly<{
   bindAccountEncryptionObservation(request, readAccountEncryptionObservationBinding(capturedRequest, credentials) ?? undefined);
   return executeInternalTaskAction({ ...args, scope: lifetime.scope, requireCurrent, createId: randomUUID,
     port: createTodoAccountKvTransport({ credentials, request, requireCurrent }),
+    resources: createUiTaskResourceOptions({ credentials, request, requireCurrent, ...lifetime.scope, signal: args.signal }),
   });
 }
