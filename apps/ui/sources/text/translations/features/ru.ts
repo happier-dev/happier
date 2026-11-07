@@ -11031,6 +11031,8 @@ const ru: typeof en = {
     continueEditing: 'Продолжить редактирование',
     startAnother: 'Начать ещё один',
     startingInBackground: "Запуск сессии…",
+    // The receipt for a Session started from the composer, once it has a title.
+    startedTitled: ({ title }) => `Запущена · ${title}`,
     executionRunStart: {
         starting: 'Запуск разговора с агентом…',
         reconciling: 'Проверяем, начался ли этот разговор с агентом…',

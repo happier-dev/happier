@@ -11007,6 +11007,8 @@ const fr: typeof en = {
     continueEditing: 'Continuer la modification',
     startAnother: 'En démarrer un autre',
     startingInBackground: "Démarrage de la session…",
+    // The receipt for a Session started from the composer, once it has a title.
+    startedTitled: ({ title }) => `Démarrée · ${title}`,
     executionRunStart: {
         starting: 'Démarrage de la conversation avec l’agent…',
         reconciling: 'Vérification du démarrage de cette conversation avec l’agent…',

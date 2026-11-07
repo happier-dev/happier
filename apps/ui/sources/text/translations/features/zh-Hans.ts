@@ -10990,6 +10990,8 @@ const zhHans: typeof en = {
     continueEditing: '继续编辑',
     startAnother: '再开一个',
     startingInBackground: "正在启动会话…",
+    // The receipt for a Session started from the composer, once it has a title.
+    startedTitled: ({ title }) => `已启动 · ${title}`,
     executionRunStart: {
         starting: '正在启动与代理的对话…',
         reconciling: '正在检查这次代理对话是否已启动…',

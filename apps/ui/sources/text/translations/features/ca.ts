@@ -11006,6 +11006,8 @@ const ca: typeof en = {
     continueEditing: 'Continua editant',
     startAnother: 'Comença’n un altre',
     startingInBackground: "S’està iniciant la sessió…",
+    // The receipt for a Session started from the composer, once it has a title.
+    startedTitled: ({ title }) => `Iniciada · ${title}`,
     executionRunStart: {
         starting: 'S’està iniciant la conversa amb l’agent…',
         reconciling: 'S’està comprovant si aquesta conversa amb l’agent s’ha iniciat…',

@@ -14,6 +14,8 @@ export const en = {
     continueEditing: 'Continue editing',
     startAnother: 'Start another',
     startingInBackground: "Starting session…",
+    // The receipt for a Session started from the composer, once it has a title.
+    startedTitled: ({ title }: { title: string }) => `Started · ${title}`,
     // Run-start outcome states for the interactive Agent-conversation draft. An unknown outcome
     // is never presented as a failure: it may already have started, so a second Start is a
     // deliberate, informed choice.

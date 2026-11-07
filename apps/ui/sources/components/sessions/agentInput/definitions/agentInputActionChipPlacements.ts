@@ -20,7 +20,8 @@ export function getTemporaryComputerTeamAccessActionChipPlacement(): AgentInputC
 }
 
 export function getConnectedServicesAuthActionChipPlacement(params: Readonly<{ scoped?: boolean }> = {}): AgentInputControlPlacement {
-    return { id: params.scoped ? 'connectedServices:new-session-connected-services-auth' : 'connectedServices', title: t('connectedServices.authChip.popoverTitle'), icon: 'path', defaultPlacement: 'overflow' };
+    // Its default placement is the registry's (`agentInputControlRegistry`), decided once there.
+    return { id: params.scoped ? 'connectedServices:new-session-connected-services-auth' : 'connectedServices', title: t('connectedServices.authChip.popoverTitle'), icon: 'path' };
 }
 
 export function getReviewCommentsActionChipPlacement(): AgentInputControlPlacement {

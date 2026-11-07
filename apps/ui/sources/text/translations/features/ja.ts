@@ -10995,6 +10995,8 @@ const ja: typeof en = {
     continueEditing: '編集を続ける',
     startAnother: '別の下書きを開始',
     startingInBackground: "セッションを開始しています…",
+    // The receipt for a Session started from the composer, once it has a title.
+    startedTitled: ({ title }) => `開始しました · ${title}`,
     executionRunStart: {
         starting: 'エージェントとの会話を開始しています…',
         reconciling: 'このエージェントとの会話が開始されたか確認しています…',

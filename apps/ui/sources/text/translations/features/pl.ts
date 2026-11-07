@@ -11020,6 +11020,8 @@ const pl: typeof en = {
     continueEditing: 'Kontynuuj edycję',
     startAnother: 'Rozpocznij kolejny',
     startingInBackground: "Uruchamianie sesji…",
+    // The receipt for a Session started from the composer, once it has a title.
+    startedTitled: ({ title }) => `Uruchomiono · ${title}`,
     executionRunStart: {
         starting: 'Uruchamianie rozmowy z agentem…',
         reconciling: 'Sprawdzanie, czy ta rozmowa z agentem się rozpoczęła…',

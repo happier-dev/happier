@@ -10990,6 +10990,8 @@ const zhHant: typeof en = {
     continueEditing: '繼續編輯',
     startAnother: '再開一個',
     startingInBackground: "正在啟動工作階段…",
+    // The receipt for a Session started from the composer, once it has a title.
+    startedTitled: ({ title }) => `已啟動 · ${title}`,
     executionRunStart: {
         starting: '正在啟動與代理的對話…',
         reconciling: '正在檢查這次代理對話是否已啟動…',

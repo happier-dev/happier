@@ -49,7 +49,8 @@ export function useNewSessionBackgroundLaunchStatus(actions: Readonly<{
         }
         if (latest?.kind === 'started') {
             return {
-                text: title || t('session.transcriptNavigation.sessionStarted'),
+                // The receipt keeps saying it started once the title arrives; Open is the one way to watch it.
+                text: title ? t('sessionDrafts.startedTitled', { title }) : t('session.transcriptNavigation.sessionStarted'),
                 color: theme.colors.text.primary,
                 dotColor: theme.colors.state.success.foreground,
                 transitionKey: latest.href,

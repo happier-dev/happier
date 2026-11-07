@@ -10991,6 +10991,8 @@ const de: typeof en = {
     continueEditing: 'Weiter bearbeiten',
     startAnother: 'Weiteren starten',
     startingInBackground: "Sitzung wird gestartet…",
+    // The receipt for a Session started from the composer, once it has a title.
+    startedTitled: ({ title }) => `Gestartet · ${title}`,
     executionRunStart: {
         starting: 'Agentengespräch wird gestartet…',
         reconciling: 'Es wird geprüft, ob dieses Agentengespräch gestartet wurde…',

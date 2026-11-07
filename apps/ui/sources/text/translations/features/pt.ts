@@ -11006,6 +11006,8 @@ const pt: typeof en = {
     continueEditing: 'Continuar a editar',
     startAnother: 'Começar outro',
     startingInBackground: "Iniciando sessão…",
+    // The receipt for a Session started from the composer, once it has a title.
+    startedTitled: ({ title }) => `Iniciada · ${title}`,
     executionRunStart: {
         starting: 'A iniciar a conversa com o agente…',
         reconciling: 'A verificar se esta conversa com o agente foi iniciada…',
