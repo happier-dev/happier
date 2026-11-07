@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { z } from 'zod/mini';
 import {
   AccountNameUpdateRequestV1Schema, AccountNameUpdateResponseV1Schema,
@@ -19,7 +20,10 @@ import { readRecord } from '../../inputs/inputRecords.js';
 
 // Unapplied metadata choices, computed facts and pixels stay with the live invocation.
 // The prepared review already carries the resolved, consented metadata, not the private candidate selection.
-const projectPublicProfileReviewInput = redactObservationInputPaths('metadataSelection', 'snapshot', 'appearance.atmosphere.picture.content');
+const projectPublicProfilePublicReviewInput = redactObservationInputPaths('metadataSelection', 'snapshot', 'appearance.atmosphere.picture.content');
+const projectPublicProfilePrivateReviewInput = redactObservationInputPaths('metadataSelection', 'snapshot', 'appearance.atmosphere.picture.content', 'layout');
+const projectPublicProfileReviewInput = (input: unknown) => 'surface' in readRecord(readRecord(input).layout)
+  ? projectPublicProfilePrivateReviewInput(input) : projectPublicProfilePublicReviewInput(input);
 export function projectPublicProfilePreparedReview(request: PublicProfilePreparedRequestV1): Readonly<{
   operation: PublicProfilePreparedRequestV1['operation']; body: unknown;
 }> {
@@ -27,7 +31,8 @@ export function projectPublicProfilePreparedReview(request: PublicProfilePrepare
 }
 
 /** Self-only profile intents; the answering Home owns policy and the authenticated Account. */
-export const ACCOUNT_PROFILE_ACTION_SPECS_V1 = Object.freeze([
+function createAccountProfileActionSpecsV1() {
+  return Object.freeze([
   homeDomainActionRow({
     id: 'account.profile.get', approval: {result: 'required'}, title: 'Read your profile',
     description: 'Read your own name, username and avatar on this Home.',
@@ -63,7 +68,7 @@ export const ACCOUNT_PROFILE_ACTION_SPECS_V1 = Object.freeze([
   }),
   homeDomainActionRow({
     id: 'account.username.release', approval: { result: 'required', flow: 'deferred' }, title: 'Release your username',
-    description: 'Clear your username on this Home and hold the released name for 30 days against all claims.',
+    description: 'Clear your username on this Home and make the released name immediately available.',
     safety: 'danger', sideEffectClass: 'write', cliPath: ['account', 'username', 'release'],
     path: '/v1/account/username/release', inputSchema: AccountUsernameReleaseRequestV1Schema,
     outputSchema: AccountUsernameReleaseResponseV1Schema,
@@ -89,15 +94,15 @@ export const ACCOUNT_PROFILE_ACTION_SPECS_V1 = Object.freeze([
     id: 'account.public_profile.publish', approval: { result: 'required', flow: 'blocking' }, title: 'Publish your public profile',
     irreversible: true,
     approvalInputCustody: 'live_only', projectObservationInput: projectPublicProfileReviewInput,
-    description: 'Publish a Public profile draft as reviewed plaintext facts and presentation on this Account service. Supply policy for visible fields, metadataSelection for bio, links and repositories, query for the period, layout for blocks and appearance for the visitor theme or background. Unsubmitted form edits are not read automatically. Daily refresh requires its own Action authorization.',
+    description: 'Publish a Public profile draft as reviewed plaintext facts and presentation on this Account service. Supply policy for visible fields, metadataSelection for bio, links and repositories, query for the period, layout for blocks and appearance for the visitor theme or background. Unsubmitted form edits are not read automatically. Publishing includes daily facts refresh while a device runs Happier, subject to explicit Action Off or Ask settings.',
     safety: 'danger', sideEffectClass: 'external', cliPath: ['account', 'public-profile', 'publish'],
     method: 'POST', path: '/v1/account/public-profile/publish', inputSchema: PublicProfilePublishIntentV1Schema, outputSchema: PublicProfileMutationResultV1Schema,
   }),
   homeDomainActionRow({
     id: 'account.public_profile.resume', approval: { result: 'required', flow: 'blocking' }, title: 'Resume your public profile',
-    irreversible: true,
+    approvalPolicy: { uiConfirmation: 'direct' },
     approvalInputCustody: 'live_only', projectObservationInput: projectPublicProfileReviewInput,
-    approvalPresentation: { summary: () => 'Recomputes your page from the same items and shows it again' },
+    approvalPresentation: { summary: () => 'Your page comes back with fresh numbers. What it shares stays the same' },
     description: 'Refresh and resume the existing applied public edition without applying a draft or changing consent.',
     safety: 'danger', sideEffectClass: 'external', cliPath: ['account', 'public-profile', 'resume'],
     path: '/v1/account/public-profile/resume', inputSchema: z.strictObject({}), outputSchema: PublicProfileMutationResultV1Schema,
@@ -106,17 +111,17 @@ export const ACCOUNT_PROFILE_ACTION_SPECS_V1 = Object.freeze([
     id: 'account.public_profile.update', approval: { result: 'required', flow: 'blocking' }, title: 'Update your public profile',
     approvalInputCustody: 'live_only', projectObservationInput: projectPublicProfileReviewInput,
     approvalPolicy: { uiConfirmation: 'direct' },
-    description: 'Apply Public profile changes: hide or show a field such as tokens through policy.fields, edit bio, links or repositories through metadataSelection, change the period through query, blocks through layout, or visitor theme and background through appearance. Submit the chosen draft values explicitly; this does not edit an open form. An acknowledged change survives any follow-on refresh failure.',
+    description: 'Apply Public profile changes: hide or show a field such as tokens through policy.fields, edit bio, links or repositories through metadataSelection, change the period through query, blocks through layout, or visitor theme and background through appearance. Submit the chosen draft values explicitly; this does not edit an open form. New facts for wider fields or a changed query are prepared and applied in the same update.',
     safety: 'danger', sideEffectClass: 'external', cliPath: ['account', 'public-profile', 'update'],
     method: 'PUT', path: '/v1/account/public-profile/policy', inputSchema: PublicProfileUpdateIntentV1Schema, outputSchema: PublicProfileUpdateResultV1Schema,
   }),
   homeDomainActionRow({
     id: 'account.public_profile.refresh', approval: { result: 'required', flow: 'blocking' }, title: 'Refresh your public profile',
-    irreversible: true,
+    approvalPolicy: { uiConfirmation: 'direct' },
     approvalInputCustody: 'live_only', projectObservationInput: projectPublicProfileReviewInput,
-    approvalPresentation: { summary: () => 'Recomputes your page from the same items and shows it again' },
+    approvalPresentation: { summary: () => 'Your page gets fresh numbers. What it shares stays the same' },
     description: 'Replace facts under the existing consent and prune previously selected project links. Never publish, resume or apply a private draft.',
-    safety: 'danger', sideEffectClass: 'external', cliPath: ['account', 'public-profile', 'refresh'],
+    safety: 'safe', sideEffectClass: 'external', cliPath: ['account', 'public-profile', 'refresh'],
     method: 'PUT', path: '/v1/account/public-profile/snapshot', inputSchema: z.strictObject({}), outputSchema: PublicProfileMutationResultV1Schema,
   }),
   homeDomainActionRow({
@@ -128,7 +133,8 @@ export const ACCOUNT_PROFILE_ACTION_SPECS_V1 = Object.freeze([
   }),
   homeDomainActionRow({
     id: 'account.public_profile.unpublish', approval: { result: 'required', flow: 'deferred' }, title: 'Unpublish your public profile',
-    irreversible: true,
+    confirmVerb: { key: 'publicIdentity.profile.unpublishTitle', fallback: 'Unpublish' }, irreversible: true,
+    approvalPresentation: { summary: () => 'Your page, its JSON and badges stop working. Your handle stays yours' },
     description: 'Withdraw and erase the public edition, keeping your Account username and private layouts.',
     safety: 'danger', sideEffectClass: 'write', cliPath: ['account', 'public-profile', 'unpublish'],
     method: 'DELETE', path: '/v1/account/public-profile', inputSchema: z.strictObject({}), outputSchema: PublicProfileMutationResultV1Schema,
@@ -148,3 +154,6 @@ export const ACCOUNT_PROFILE_ACTION_SPECS_V1 = Object.freeze([
     outputSchema: PublicEmbedResultV1Schema,
   }),
 ]);
+}
+
+export const ACCOUNT_PROFILE_ACTION_SPECS_V1: ReturnType<typeof createAccountProfileActionSpecsV1> = lazyActionSpecArray(createAccountProfileActionSpecsV1);

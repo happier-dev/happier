@@ -1,7 +1,8 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 import { projectNativeJsonValueForTransport } from '../../json/strictJsonValue.js';
 import { MCP_SERVER_ACTION_INPUT_SCHEMAS_V1 as inputs, MCP_SERVER_ACTION_OUTPUT_SCHEMAS_V1 as outputs,
-  type McpServerActionIdV1 } from '../../mcp/servers/serverActionsV1.js';
+  type McpServerActionIdV1 } from '../../mcp/servers/actionSchemasV1.js';
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
 import { z } from 'zod/mini';
 import type { ValueRefV1 } from '../../valueRefs/valueRefV1.js';
@@ -216,7 +217,8 @@ function mcpSpec<TId extends McpServerActionIdV1>(id: TId, title: string, summar
     cli: { acceptsServerId: true, commands: [{ path: id.split('.'), visibility: 'canonical' }] },
   };
 }
-export const MCP_SERVER_ACTION_SPECS_V1 = [
+function createMcpServerActionSpecsV1() {
+  return [
   { ...mcpSpec('mcp.servers.signIn.start', 'Sign in to MCP server',
     'Sign in once to use this remote server from your machines.', { danger: true, direct: true }),
     approvalResultCustody: 'live_only' as const,
@@ -313,3 +315,6 @@ export const MCP_SERVER_ACTION_SPECS_V1 = [
       commands: [{ path: ['mcp', 'found'], visibility: 'canonical' as const },
         { path: ['mcp', 'servers', 'detect'], visibility: 'alias' as const }] } },
 ] as const satisfies readonly PreNormalizedActionSpec[];
+}
+
+export const MCP_SERVER_ACTION_SPECS_V1: ReturnType<typeof createMcpServerActionSpecsV1> = lazyActionSpecArray(createMcpServerActionSpecsV1);

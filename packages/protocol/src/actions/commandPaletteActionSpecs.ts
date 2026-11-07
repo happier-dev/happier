@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from './lazyActionSpecValue.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import type { PreNormalizedActionSpec } from './actionSpecs.js';
@@ -17,7 +18,8 @@ export const CommandPaletteInvokeOutputSchema = lazyZodSchema(() => z.strictObje
 const surfaces = { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false } as const;
 
 /** The mounted palette remains the only command catalog and dispatch owner. */
-export const COMMAND_PALETTE_ACTION_SPECS = [
+function createCommandPaletteActionSpecs() {
+  return [
   {
     id: 'ui.command_palette.list', approval: {result: 'required'}, title: 'List command palette entries',
     description: 'List the current client’s available commands. Requires a mounted app shell.',
@@ -43,3 +45,6 @@ export const COMMAND_PALETTE_ACTION_SPECS = [
     cli: { commands: [{ path: ['ui', 'command-palette', 'invoke'], visibility: 'canonical', positionals: ['commandId'] }] },
   },
 ] as const satisfies readonly PreNormalizedActionSpec[];
+}
+
+export const COMMAND_PALETTE_ACTION_SPECS: ReturnType<typeof createCommandPaletteActionSpecs> = lazyActionSpecArray(createCommandPaletteActionSpecs);

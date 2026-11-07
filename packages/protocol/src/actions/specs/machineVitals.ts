@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { MACHINE_VITALS_ACTION_IDS } from './machineVitalsActionIdsV1.js';
 export { MACHINE_VITALS_ACTION_IDS } from './machineVitalsActionIdsV1.js';
 import { z } from 'zod/mini';
@@ -7,6 +8,7 @@ import { MachineVitalsHistoryV1Schema } from '../../machines/vitals/machineVital
 import { MachineResourceAttentionV1Schema, MachineResourceSummaryV1Schema } from '../../machines/resources/machineResourceSummaryV1.js';
 import { RPC_METHODS } from '../../rpc/methods.js';
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
+import { actionInputServerId } from './definition.js';
 export type MachineVitalsActionId = typeof MACHINE_VITALS_ACTION_IDS[number];
 export const MachineVitalsActionIdSchema = lazyZodSchema(() => z.enum(MACHINE_VITALS_ACTION_IDS));
 export const MachineVitalsSummariesListInputV1Schema = lazyZodSchema(() => z.strictObject({ serverId: z.optional(z.string().check(z.trim(), z.minLength(1))) }));
@@ -28,7 +30,8 @@ const fields = [
 ] as const;
 const surfaces = { ui: true, cli: true, agent: true, mcp: true, voice: true, rpc: false } as const;
 const read = { safety: 'safe', sideEffectClass: 'read', placements: [], surfaces } as const;
-export const MACHINE_VITALS_ACTION_SPECS = [
+function createMachineVitalsActionSpecs() {
+  return [
   {
     ...read, id: 'machines.vitals.get', approval: {result: 'required'}, title: 'Read machine vitals',
     toolExposure: { agent: 'direct' },
@@ -37,6 +40,7 @@ export const MACHINE_VITALS_ACTION_SPECS = [
     executionPlacement: 'machine',
     bindings: { mcpToolName: 'machines_vitals_get', voiceClientToolName: 'getMachineVitals', rpcMethod: RPC_METHODS.MACHINES_VITALS_GET },
     inputSchema: MACHINE_VITALS_ACTION_INPUT_SCHEMAS['machines.vitals.get'], outputSchema: MachineVitalsSnapshotV1Schema,
+    invocationServerIdForInput: actionInputServerId(MACHINE_VITALS_ACTION_INPUT_SCHEMAS['machines.vitals.get'], input => input.serverId),
     cli: { acceptsServerId: true, commands: [{ path: ['machines', 'vitals', 'get'], visibility: 'canonical' }] },
     inputHints: { fields: [...fields, { path: 'view', title: 'View', widget: 'select', options: [{ value: 'summary', label: 'Summary' }, { value: 'overview', label: 'Overview' }] }] },
   },
@@ -48,6 +52,7 @@ export const MACHINE_VITALS_ACTION_SPECS = [
     surfaces: { ...surfaces, voice: false },
     bindings: { mcpToolName: 'machines_vitals_history_get', rpcMethod: RPC_METHODS.MACHINES_VITALS_HISTORY_GET },
     inputSchema: MACHINE_VITALS_ACTION_INPUT_SCHEMAS['machines.vitals.history.get'], outputSchema: MachineVitalsHistoryV1Schema,
+    invocationServerIdForInput: actionInputServerId(MACHINE_VITALS_ACTION_INPUT_SCHEMAS['machines.vitals.history.get'], input => input.serverId),
     cli: { acceptsServerId: true, commands: [{ path: ['machines', 'vitals', 'history', 'get'], visibility: 'canonical' }] },
     inputHints: { fields: [...fields, { path: 'range', title: 'History range', widget: 'select', required: true, options: [{ value: '1h', label: '1 hour' }, { value: '24h', label: '24 hours' }, { value: '7d', label: '7 days' }] }] },
   },
@@ -58,7 +63,11 @@ export const MACHINE_VITALS_ACTION_SPECS = [
     description: 'A short summary of every machine: which need a look, and which are offline or not reporting.',
     executionPlacement: 'account', bindings: { mcpToolName: 'machines_vitals_summaries_list', voiceClientToolName: 'listMachineVitalsSummaries' },
     inputSchema: MachineVitalsSummariesListInputV1Schema, outputSchema: MachineVitalsSummariesListOutputV1Schema,
+    invocationServerIdForInput: actionInputServerId(MachineVitalsSummariesListInputV1Schema, input => input.serverId),
     cli: { acceptsServerId: true, commands: [{ path: ['machines', 'vitals', 'summaries', 'list'], visibility: 'canonical' }] },
     inputHints: { fields: [fields[0]] },
   },
 ] as const satisfies readonly PreNormalizedActionSpec[];
+}
+
+export const MACHINE_VITALS_ACTION_SPECS: ReturnType<typeof createMachineVitalsActionSpecs> = lazyActionSpecArray(createMachineVitalsActionSpecs);

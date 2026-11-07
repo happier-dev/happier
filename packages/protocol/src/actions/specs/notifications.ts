@@ -1,8 +1,10 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { NotificationsNotifyMeInputV1Schema, NotificationsNotifyMeResultV1Schema } from '../../account/notifications/notifyMeV1.js';
 import type { PreNormalizedActionSpec } from './definition.js';
 
 
-export const NOTIFICATION_DELIVERY_ACTION_SPECS = Object.freeze([
+function createNotificationDeliveryActionSpecs() {
+  return Object.freeze([
   {
     id: 'notifications.notify_me', approval: {result: 'required'},
     title: 'Notify me',
@@ -39,4 +41,7 @@ export const NOTIFICATION_DELIVERY_ACTION_SPECS = Object.freeze([
     outputSchema: NotificationsNotifyMeResultV1Schema,
   } satisfies PreNormalizedActionSpec,
 ] as const);
+}
+
+export const NOTIFICATION_DELIVERY_ACTION_SPECS: ReturnType<typeof createNotificationDeliveryActionSpecs> = lazyActionSpecArray(createNotificationDeliveryActionSpecs);
 

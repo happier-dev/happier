@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import {
@@ -7,7 +8,8 @@ import {
 import { UsersSearchQueryV1Schema, UsersSearchResponseSchema } from '../../../social/friends.js';
 import type { PreNormalizedActionSpec } from '../../actionSpecs.js';
 
-export const SESSION_ACCESS_DISCOVERY_ACTION_SPECS_V1 = Object.freeze([
+function createSessionAccessDiscoveryActionSpecsV1() {
+  return Object.freeze([
   {
     id: 'session.access.candidates.inspect', approval: {result: 'none'},
     title: 'Inspect Session access candidates',
@@ -57,3 +59,6 @@ export const SESSION_ACCESS_DISCOVERY_ACTION_SPECS_V1 = Object.freeze([
     serverTransport: { method: 'GET', path: '/v1/user/search' },
   },
 ] as const satisfies readonly PreNormalizedActionSpec[]);
+}
+
+export const SESSION_ACCESS_DISCOVERY_ACTION_SPECS_V1: ReturnType<typeof createSessionAccessDiscoveryActionSpecsV1> = lazyActionSpecArray(createSessionAccessDiscoveryActionSpecsV1);

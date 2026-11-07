@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { PLUGIN_SESSION_HOOK_STATUS_INPUT_FIELDS, PLUGIN_SESSION_HOOK_INSTALL_INPUT_FIELDS, PLUGIN_SESSION_HOOK_MUTATION_INPUT_FIELDS } from './pluginSessionHookInputHints.js';
 import { requirePluginBindingCaller } from './pluginPermissions.js';
 import type { ActionSurfaceBindingContext, PreNormalizedActionSpec } from './definition.js';
@@ -75,7 +76,8 @@ export const PluginSessionHookRpcSurfaceBinding = {
   encodeOutput: (value: unknown) => value,
 } as const;
 
-export const PLUGIN_SESSION_HOOK_MANAGEMENT_ACTION_SPECS_V1 = [
+function createPluginSessionHookManagementActionSpecsV1() {
+  return [
   {
     id: 'plugins.sessionHooks.status.get', executionPlacement: 'machine', cli: { commands: [] }, approval: {result: 'required'},
     title: 'Get Agent session-hook status inventory',
@@ -244,3 +246,6 @@ export const PLUGIN_SESSION_HOOK_MANAGEMENT_ACTION_SPECS_V1 = [
     inputHints: { fields: PLUGIN_SESSION_HOOK_MUTATION_INPUT_FIELDS },
   },
 ] as const satisfies readonly PreNormalizedActionSpec[];
+}
+
+export const PLUGIN_SESSION_HOOK_MANAGEMENT_ACTION_SPECS_V1: ReturnType<typeof createPluginSessionHookManagementActionSpecsV1> = lazyActionSpecArray(createPluginSessionHookManagementActionSpecsV1);

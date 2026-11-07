@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { LaunchProfilePublishInputV1Schema, LaunchProfilePublishOutputV1Schema } from '../../launchProfiles/publishLaunchProfile.js';
 import {
   PROFILE_ACTION_INPUT_SCHEMAS_V1 as inputs, PROFILE_ACTION_OUTPUT_SCHEMAS_V1 as outputs,
@@ -66,7 +67,8 @@ function profileSpec<TId extends ProfileActionIdV1>(id: TId, title: string, summ
   } satisfies ProfileActionSpec<TId>;
 }
 
-export const PROFILE_ACTION_SPECS_V1 = [
+function createProfileActionSpecsV1() {
+  return [
   profileSpec('launch_profiles.read', 'Read launch profile',
     'See one launch profile and what it sets for the sessions it starts.', { read: true }),
   profileSpec('launch_profiles.search', 'Search launch profiles',
@@ -100,9 +102,13 @@ export const PROFILE_ACTION_SPECS_V1 = [
   profileSpec('launch_profiles.draft.discard', 'Discard launch profile draft',
     'Throw away unsaved changes to a launch profile.', { placement: 'client' }),
 ] as const satisfies readonly PreNormalizedActionSpec[];
+}
+
+export const PROFILE_ACTION_SPECS_V1: ReturnType<typeof createProfileActionSpecsV1> = lazyActionSpecArray(createProfileActionSpecsV1);
 
 
-export const PROFILE_PUBLICATION_ACTION_SPECS = Object.freeze([
+function createProfilePublicationActionSpecs() {
+  return Object.freeze([
   {
     id: 'launch_profiles.publish', executionPlacement: 'account', approval: {result: 'required'}, title: 'Publish launch profile', safety: 'danger',
     placements: [], bindings: { rpcMethod: 'launch_profiles.publish', mcpToolName: 'launch_profiles_publish' },
@@ -115,4 +121,7 @@ export const PROFILE_PUBLICATION_ACTION_SPECS = Object.freeze([
     cli: { acceptsServerId: true, commands: [{ path: ['launch_profiles', 'publish'], visibility: 'canonical' }] },
   } satisfies PreNormalizedActionSpec,
 ] as const);
+}
+
+export const PROFILE_PUBLICATION_ACTION_SPECS: ReturnType<typeof createProfilePublicationActionSpecs> = lazyActionSpecArray(createProfilePublicationActionSpecs);
 

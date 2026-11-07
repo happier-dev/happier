@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from './lazyActionSpecValue.js';
 import type { ActionSpecProjectionMetadata, PreNormalizedActionSpec } from './actionSpecs.js';
 import { AutomationEventTestInputV1Schema, AutomationEventTestResultV1Schema } from '../automations/automationEventTestV1.js';
 import { WorkflowStartersListInputV1Schema, WorkflowStartersListResultV1Schema,
@@ -20,7 +21,7 @@ type WorkflowDiagnosticActionSpec = {
     approval: { result: 'required' };
   }>;
 }[keyof WorkflowDiagnosticActionSchemas];
-export const WORKFLOW_DIAGNOSTIC_ACTION_SPECS: readonly WorkflowDiagnosticActionSpec[] = [{
+export const WORKFLOW_DIAGNOSTIC_ACTION_SPECS: readonly WorkflowDiagnosticActionSpec[] = lazyActionSpecArray(() => [{
   ...readMetadata, id: 'workflow.trigger.test', approval: {result: 'required'}, title: 'Test workflow trigger',
   description: 'Compare supplied Event facts with a trigger using the canonical source, age and filter evaluators. This diagnostic does not admit an Event or attest retained occurrence custody.',
   bindings: { mcpToolName: 'workflow_trigger_test', voiceClientToolName: 'workflow_trigger_test' },
@@ -45,4 +46,4 @@ export const WORKFLOW_DIAGNOSTIC_ACTION_SPECS: readonly WorkflowDiagnosticAction
       description: 'For a Session-bound starter supply {sessionId, machineId} for the selected Session. Use its actual Happier Machine id, or the exact id from machines.list; host names, dev-target names and server profile ids are not Machine ids. Omit session for templates that do not require a Session.' },
     { path: 'timezone', title: 'Timezone', widget: 'text' }] },
   cli: { commands: [{ path: ['workflow', 'starters', 'resolve'], visibility: 'canonical' }] },
-}] as const satisfies readonly PreNormalizedActionSpec[];
+}] as const satisfies readonly PreNormalizedActionSpec[]);

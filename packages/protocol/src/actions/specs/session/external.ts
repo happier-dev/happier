@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { ExternalSessionAttachRequestSchema, ExternalSessionAttachResponseSchema, ExternalSessionBackgroundFollowActionInputV1Schema, ExternalSessionDetachRequestSchema, ExternalSessionDetachResponseSchema, ExternalSessionFollowPolicySetRequestSchema, ExternalSessionLinkEnsureRequestSchema, ExternalSessionLinkEnsureResponseSchema, ExternalSessionCandidateDeleteRequestSchema, ExternalSessionCandidateDeleteResponseSchema, ExternalSessionsCandidatesListRequestSchema, ExternalSessionsCandidatesListResponseSchema, ExternalSessionStatusGetRequestSchema, ExternalSessionStatusActionInputV1Schema, ExternalSessionTranscriptPageRequestSchema, ExternalSessionTranscriptPageResponseSchema, ExternalSessionTranscriptReadAfterRequestSchema, ExternalSessionTranscriptReadAfterResponseSchema, ExternalSessionViewerFollowActionInputV1Schema, ExternalSessionViewerFollowActionResultV1Schema, ExternalSessionViewerUnfollowActionInputV1Schema, ExternalSessionViewerUnfollowActionResultV1Schema } from '../../../sessions/external/daemonRpcV1.js';
@@ -100,7 +101,8 @@ export function projectExternalSessionBackgroundFollowResult(value: unknown): un
       });
 }
 
-export const EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1 = [
+function createExternalSessionOperationActionSpecsV1() {
+  return [
   {
     id: 'sessions.external.materialize.start', executionPlacement: 'machine', approval: {result: 'optional',flow: 'deferred'},
     title: 'Materialize external session',
@@ -350,11 +352,15 @@ export const EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1 = [
     },
   },
 ] as const satisfies readonly PreNormalizedActionSpec[];
+}
+
+export const EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1: ReturnType<typeof createExternalSessionOperationActionSpecsV1> = lazyActionSpecArray(createExternalSessionOperationActionSpecsV1);
 
 
 export const ExternalSessionTakeoverActionInputSchema = ExternalSessionTakeoverInputV1Schema;
 
-export const EXTERNAL_SESSION_ACTION_SPECS = Object.freeze([
+function createExternalSessionActionSpecs() {
+  return Object.freeze([
   {
     id: 'sessions.external.candidates.list', executionPlacement: 'machine', approval: {result: 'required'},
     title: 'List external session candidates',
@@ -558,7 +564,10 @@ export const EXTERNAL_SESSION_ACTION_SPECS = Object.freeze([
     },
     surfaceBindings: {
       rpc: {
-        inputSchema: ExternalSessionFollowPolicySetRequestSchema,
+        inputSchema: lazyZodSchema(() => z.union([
+          ExternalSessionBackgroundFollowActionInputV1Schema,
+          ExternalSessionFollowPolicySetRequestSchema,
+        ])),
         decodeInput: identityActionSurfaceValue,
         outputSchema: ExternalSessionFollowPolicySetResponseSchema,
         encodeOutput: identityActionSurfaceValue,
@@ -755,4 +764,7 @@ export const EXTERNAL_SESSION_ACTION_SPECS = Object.freeze([
     },
   } satisfies PreNormalizedActionSpec,
 ] as const);
+}
+
+export const EXTERNAL_SESSION_ACTION_SPECS: ReturnType<typeof createExternalSessionActionSpecs> = lazyActionSpecArray(createExternalSessionActionSpecs);
 

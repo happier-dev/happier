@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { PLUGIN_ACCOUNT_ADMINISTRATION_ACTION_IDS,
   PluginAccountAdministrationActionInputSchemas as inputs,
   PluginAccountAdministrationActionOutputSchemas as outputs } from '../pluginAccountAdministrationActionFamily.js';
@@ -9,7 +10,8 @@ const titles = {
   'plugins.account.hosting.remove': 'Disable and remove hosted plugin artifacts',
   'plugins.account.cache.clear': 'Clear downloaded plugin artifacts on this device',
 };
-export const PLUGIN_ACCOUNT_ADMINISTRATION_ACTION_SPECS = PLUGIN_ACCOUNT_ADMINISTRATION_ACTION_IDS.map((id): PreNormalizedActionSpec => ({
+function createPluginAccountAdministrationActionSpecs() {
+  return PLUGIN_ACCOUNT_ADMINISTRATION_ACTION_IDS.map((id): PreNormalizedActionSpec => ({
   id, title: titles[id], approval: { result: 'required' },
   ...(id === 'plugins.account.hosting.remove' ? { irreversible: true as const } : {}),
   description: 'Use the answering app’s Account Availability selector, intent CAS, exact hosted artifact removal and device download cache owners.',
@@ -29,3 +31,6 @@ export const PLUGIN_ACCOUNT_ADMINISTRATION_ACTION_SPECS = PLUGIN_ACCOUNT_ADMINIS
     ...(id === 'plugins.account.hosting.set' ? [{ path: 'enabled', title: 'Enable Account hosting', widget: 'boolean' as const, required: true }] : []),
   ] },
 }));
+}
+
+export const PLUGIN_ACCOUNT_ADMINISTRATION_ACTION_SPECS: ReturnType<typeof createPluginAccountAdministrationActionSpecs> = lazyActionSpecArray(createPluginAccountAdministrationActionSpecs);

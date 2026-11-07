@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { z } from 'zod/mini';
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
 
@@ -29,7 +30,8 @@ const common = {
   toolExposure: { agent: 'discoverable_only', mcp: 'discoverable_only' },
 } as const;
 
-export const DESKTOP_SHELL_ACTION_SPECS = [{
+function createDesktopShellActionSpecs() {
+  return [{
   ...common,
   id: 'desktop.notch.set',
   placements: ['command_palette'],
@@ -49,3 +51,6 @@ export const DESKTOP_SHELL_ACTION_SPECS = [{
   inputSchema: z.strictObject({}),
   outputSchema: DesktopDisplaysListResultSchema,
 }] as const satisfies readonly PreNormalizedActionSpec[];
+}
+
+export const DESKTOP_SHELL_ACTION_SPECS: ReturnType<typeof createDesktopShellActionSpecs> = lazyActionSpecArray(createDesktopShellActionSpecs);

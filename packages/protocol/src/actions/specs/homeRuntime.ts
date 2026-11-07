@@ -1,8 +1,10 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { HOME_RUNTIME_ACTION_IDS_V1, HOME_RUNTIME_ACTION_INPUT_SCHEMAS_V1 as inputs,
   HOME_RUNTIME_ACTION_OUTPUT_SCHEMAS_V1 as outputs } from '../../home/runtime/actionsV1.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
 import { stripBrowserDiagnosticUrlValues } from '../../browser/diagnostics/egress/url.js';
+import { projectRelayAccessConfigV1 } from '../../system/tasks/relayAccessConfigV1.js';
 
 const titles = {
   'relay.access.status': 'Get relay access status', 'relay.access.configure': 'Configure relay access',
@@ -25,28 +27,24 @@ const reads: ReadonlySet<string> = new Set(['relay.access.status', 'relay.runtim
 const presentation: ReadonlySet<string> = new Set(['relay.runtime.personal_home.choose_archive',
   'relay.runtime.personal_home.choose_backup_destination', 'relay.runtime.reveal_output']);
 
-/** Credential-bearing relay config remains exclusively in the admitted live invocation. */
+/** User-supplied URLs may contain credentials, even with reference-only provider credentials. */
 function projectRelayAccessInput(value: unknown): unknown {
   const input = readRecord(value);
-  const config = readRecord(input.config);
   return {
-    ...(typeof input.providerId === 'string' ? { providerId: input.providerId } : {}),
-    config: {
-      ...(typeof config.providerId === 'string' ? { providerId: config.providerId } : {}),
-      ...(typeof config.url === 'string' ? { url: stripBrowserDiagnosticUrlValues(config.url) } : {}),
-      ...(typeof config.hostname === 'string' ? { hostname: config.hostname } : {}),
-    },
+    config: projectRelayAccessConfigV1(input.config),
     ...(typeof input.upstreamUrl === 'string' ? { upstreamUrl: stripBrowserDiagnosticUrlValues(input.upstreamUrl) } : {}),
   };
 }
 
-export const HOME_RUNTIME_ACTION_SPECS_V1 = HOME_RUNTIME_ACTION_IDS_V1.map((id): PreNormalizedActionSpec => {
+function createHomeRuntimeActionSpecsV1() {
+  return HOME_RUNTIME_ACTION_IDS_V1.map((id): PreNormalizedActionSpec => {
   const read = reads.has(id);
   const danger = !read && !presentation.has(id);
   return {
     id, approval: { result: 'required' }, title: titles[id], description: 'Use the addressed Home or answering client’s existing runtime and SystemTask owner.',
     ...(id === 'home.runtime.restart' || id === 'relay.runtime.restart'
       ? { approvalPolicy: { uiConfirmation: 'direct' as const } } : {}),
+    ...(id === 'relay.runtime.personal_home.claim' ? { irreversible: true as const } : {}),
     safety: danger ? 'danger' : 'safe', sideEffectClass: read ? 'read' : danger ? 'danger' : 'write',
     requiredAuthority: 'account_automation', executionPlacement: id === 'home.runtime.restart' ? 'machine' : 'client',
     placements: [], surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: id === 'home.runtime.restart', rpc: false },
@@ -68,9 +66,7 @@ export const HOME_RUNTIME_ACTION_SPECS_V1 = HOME_RUNTIME_ACTION_IDS_V1.map((id):
       ...(id === 'relay.runtime.personal_home.backup' ? [{ path: 'personalHomeOperation.outputPath', title: 'Backup output', widget: 'text' as const }] : []),
       ...(id === 'relay.runtime.personal_home.claim' ? [{ path: 'personalHomeOperation.accountId', title: 'Account', widget: 'text' as const, required: true }] : []),
       ...(id === 'relay.access.configure' ? [
-        { path: 'providerId', title: 'Access provider', widget: 'text' as const, required: true },
-        { path: 'config.url', title: 'Relay URL', widget: 'url' as const },
-        { path: 'config.hostname', title: 'Relay hostname', widget: 'text' as const },
+        { path: 'config', title: 'Access selection', widget: 'json' as const, required: true },
       ] : []),
       ...(id === 'relay.runtime.open_path' || id === 'relay.runtime.reveal_output' ? [{ path: 'path', title: 'Path', widget: 'text' as const, required: true }] : []),
       ...(id === 'relay.runtime.task.cancel' ? [{ path: 'taskId', title: 'Local task', widget: 'text' as const, required: true }] : []),
@@ -78,3 +74,6 @@ export const HOME_RUNTIME_ACTION_SPECS_V1 = HOME_RUNTIME_ACTION_IDS_V1.map((id):
     ...(id === 'relay.access.configure' ? { approvalInputCustody: 'live_only', projectObservationInput: projectRelayAccessInput } : {}),
   };
 });
+}
+
+export const HOME_RUNTIME_ACTION_SPECS_V1: ReturnType<typeof createHomeRuntimeActionSpecsV1> = lazyActionSpecArray(createHomeRuntimeActionSpecsV1);

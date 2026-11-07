@@ -1,4 +1,4 @@
-import { teamCredentialMutationRequiresUiConfirmation, teamCredentialNativeDisclosureApprovalSummary } from './teamCredentialApproval.js';
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import type { z } from 'zod/mini';
 
 import type { TeamIdentityActionIdV1 } from '../../teams/actionsV1.js';
@@ -89,6 +89,7 @@ import {
 } from './homeDomainRow.js';
 import { redactObservationInputPaths } from './observationRedaction.js';
 import { readRecord } from '../../inputs/inputRecords.js';
+import { teamCredentialMutationRequiresUiConfirmation, teamCredentialNativeDisclosureApprovalSummary } from './teamCredentialApproval.js';
 import { TeamMembershipHistoryInputV1Schema, TeamMembershipHistoryReadinessV1Schema,
   TeamMembershipHistoryPreparationResultV1Schema } from '../../teams/membershipHistoryPreparationV1.js';
 
@@ -97,6 +98,9 @@ const MEMBERSHIP_ID_FIELD = approvalField('membershipId', 'Membership ID', { req
 const GROUP_ID_FIELD = approvalField('groupId', 'Group ID', { required: true });
 const ACCOUNT_ID_FIELD = approvalField('accountId', 'Account ID', { required: true });
 const INVITATION_ID_FIELD = approvalField('invitationId', 'Invitation ID', { required: true });
+// Input grammar may name the bearer, but never offer a value/default/example.
+// Observation custody below still drops it before plugins or durable approval.
+const INVITATION_TOKEN_FIELD = approvalField('token', 'Invitation token', { widget: 'secret' });
 
 function projectTeamInvitationCreateObservation(output: unknown): unknown {
   const parsed = TeamInvitationCreateResultV1Schema.safeParse(output);
@@ -246,7 +250,8 @@ function teamCredentialActionRow<TActionId extends TeamCredentialHomeActionIdV1>
  * Invitation preview and accept live under the public `/v1/team-invitations`
  * prefix because preview is the pre-authentication transport of the same owner.
  */
-export const TEAM_ACTION_SPECS = Object.freeze([
+function createTeamActionSpecs() {
+  return Object.freeze([
   {
     id: 'teams.credentials.usage.export', approval: {result: 'required'}, title: 'Export Team credential usage',
     description: 'Return CSV file bytes from the authorized Team credential usage query, preserving the selected ranked-row scope and measurement coverage. Saving and sharing remain explicit client operations.',
@@ -855,6 +860,7 @@ export const TEAM_ACTION_SPECS = Object.freeze([
     path: '/v1/team-invitations/preview',
     inputSchema: TeamInvitationPreviewInputV1Schema,
     outputSchema: TeamInvitationPreviewResultV1Schema,
+    inputHints: { fields: [{ ...INVITATION_TOKEN_FIELD, required: true }] },
     projectObservationInput: redactObservationInputPaths('token'),
   }),
   {
@@ -867,7 +873,7 @@ export const TEAM_ACTION_SPECS = Object.freeze([
     placements: [],
     surfaces: { ui: false, voice: false, agent: false, mcp: false, cli: false, rpc: false },
     sideEffectClass: 'write',
-    inputHints: { fields: [] },
+    inputHints: { fields: [{ ...INVITATION_TOKEN_FIELD, required: true }] },
     inputSchema: TeamInvitationAcceptApprovalPrepareInputV1Schema,
     outputSchema: TeamInvitationAcceptApprovalPrepareResultV1Schema,
     projectObservationInput: redactObservationInputPaths('token'),
@@ -885,6 +891,8 @@ export const TEAM_ACTION_SPECS = Object.freeze([
     inputSchema: TeamInvitationAcceptInputV1Schema,
     outputSchema: TeamInvitationAcceptResultV1Schema,
     inputHints: { fields: [
+      INVITATION_TOKEN_FIELD,
+      approvalField('continuation.reference', 'Invitation continuation', { widget: 'secret' }),
       approvalField('homeServerId', 'Home ID'),
       approvalField('continuation.teamId', 'Team ID', { required: true }),
       approvalField('teamName', 'Team name'),
@@ -1250,3 +1258,6 @@ export const TEAM_ACTION_SPECS = Object.freeze([
     sdkMethod: 'teams.directory.sources.remove.execute',
   }),
 ]) satisfies readonly PreNormalizedActionSpec[];
+}
+
+export const TEAM_ACTION_SPECS: ReturnType<typeof createTeamActionSpecs> = lazyActionSpecArray(createTeamActionSpecs);

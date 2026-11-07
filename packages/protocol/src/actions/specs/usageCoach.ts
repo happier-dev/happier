@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { UsageCoachApplyInputSchema, UsageCoachApplyResultSchema, UsageCoachUndoInputSchema, UsageCoachUndoResultSchema,
     UsageCoachDismissInputSchema, UsageCoachSnoozeInputSchema, UsageCoachPreferenceResultSchema } from '../../usage/coach/coachActions.js';
 import type { ActionSpecProjectionMetadata, PreNormalizedActionSpec } from '../actionSpecs.js';
@@ -22,7 +23,7 @@ type UsageCoachActionSpec = {
         approval: { result: 'required' };
     }>;
 }[keyof UsageCoachActionSchemas];
-export const USAGE_COACH_ACTION_SPECS: readonly UsageCoachActionSpec[] = [
+export const USAGE_COACH_ACTION_SPECS: readonly UsageCoachActionSpec[] = lazyActionSpecArray(() => [
     { ...common, id: 'usage.coach.apply', approval: {result: 'required'}, title: 'Apply a Coach remedy',
         description: 'Re-read the exact authorized query and apply its current supported finding remedy through the canonical owner. Caller-supplied effects and confirmation flags are refused.',
         bindings: { mcpToolName: 'usage_coach_apply' }, inputSchema: UsageCoachApplyInputSchema, outputSchema: UsageCoachApplyResultSchema },
@@ -30,9 +31,9 @@ export const USAGE_COACH_ACTION_SPECS: readonly UsageCoachActionSpec[] = [
         description: 'Restore an exact captured owner value under its atomic conditional mutation and captured Home/Account authority. Incompatible intervening writes refuse restoration even when the original finding is no longer reported.',
         bindings: { mcpToolName: 'usage_coach_undo' }, inputSchema: UsageCoachUndoInputSchema, outputSchema: UsageCoachUndoResultSchema },
     { ...common, id: 'usage.coach.dismiss', approval: {result: 'required'}, title: 'Dismiss or re-enable a Coach finding',
-        description: 'Persist dismissal for this exact finding evidence through Account settings. Materially different evidence remains visible.',
+        description: 'Persist dismissal for this exact finding evidence in Account KV. Materially different evidence remains visible.',
         bindings: { mcpToolName: 'usage_coach_dismiss' }, inputSchema: UsageCoachDismissInputSchema, outputSchema: UsageCoachPreferenceResultSchema },
     { ...common, id: 'usage.coach.snooze', approval: {result: 'required'}, title: 'Snooze a Coach finding',
-        description: 'Persist an explicit snooze deadline for this exact finding evidence through Account settings.',
+        description: 'Persist an explicit snooze deadline for this exact finding evidence in Account KV.',
         bindings: { mcpToolName: 'usage_coach_snooze' }, inputSchema: UsageCoachSnoozeInputSchema, outputSchema: UsageCoachPreferenceResultSchema },
-] as const satisfies readonly PreNormalizedActionSpec[];
+] as const satisfies readonly PreNormalizedActionSpec[]);

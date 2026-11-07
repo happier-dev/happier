@@ -1,9 +1,10 @@
+import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
 import { redactObservationInputPaths } from '../observationRedaction.js';
 import { MANAGED_GITHUB_APP_ACTION_IDS_V1, MANAGED_GITHUB_APP_ACTION_INPUT_SCHEMAS_V1, MANAGED_GITHUB_APP_ACTION_OUTPUT_SCHEMAS_V1, MANAGED_GITHUB_APP_ACTION_PATHS_V1, type ManagedGitHubAppActionIdV1 } from '../../../identity/githubApps.js';
 import type { PreNormalizedActionSpec } from '../definition.js';
 
 
-export const MANAGED_GITHUB_APP_ACTION_SPECS: PreNormalizedActionSpec[] = MANAGED_GITHUB_APP_ACTION_IDS_V1.map(
+export const MANAGED_GITHUB_APP_ACTION_SPECS: PreNormalizedActionSpec[] = lazyActionSpecArray(() => MANAGED_GITHUB_APP_ACTION_IDS_V1.map(
   (id): PreNormalizedActionSpec => {
     const metadata: Readonly<Record<ManagedGitHubAppActionIdV1, Readonly<{
       title: string;
@@ -125,4 +126,4 @@ export const MANAGED_GITHUB_APP_ACTION_SPECS: PreNormalizedActionSpec[] = MANAGE
       serverTransport: { method: 'POST', path: MANAGED_GITHUB_APP_ACTION_PATHS_V1[id] },
     };
   },
-);
+));

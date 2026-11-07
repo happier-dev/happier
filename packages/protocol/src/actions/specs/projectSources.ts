@@ -1,5 +1,7 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 export { PROJECT_SOURCE_ACTION_IDS_V1 } from './projectSourcesActionIdsV1.js';
 import type { ActionSpecProjectionMetadata, PreNormalizedActionSpec } from '../actionSpecs.js';
+import { actionInputServerId } from './definition.js';
 import {
   ProjectSourcesListInputV1Schema, ProjectSourcesListOutputV1Schema,
   ProjectSourcesReadInputV1Schema, ProjectSourcesReadOutputV1Schema,
@@ -34,7 +36,7 @@ type ProjectSourceActionSpec = {
     approval: { result: 'required' };
   }>;
 }[keyof ProjectSourceActionSchemas];
-export const PROJECT_SOURCE_ACTION_SPECS_V1: readonly ProjectSourceActionSpec[] = [
+export const PROJECT_SOURCE_ACTION_SPECS_V1: readonly ProjectSourceActionSpec[] = lazyActionSpecArray(() => [
   {
     ...common, id: 'projects.deploymentDefaults.set', approval: { result: 'required' },
     title: 'Set Project deployment defaults',
@@ -46,6 +48,7 @@ export const PROJECT_SOURCE_ACTION_SPECS_V1: readonly ProjectSourceActionSpec[] 
     cli: { acceptsServerId: true, commands: [{ path: ['projects', 'deployment-defaults', 'set'], visibility: 'canonical' }] },
     serverTransport: { method: 'PUT', path: '/v1/projects/:projectSourceId/deployment-defaults', preservePathFieldsInBody: true },
     inputSchema: ProjectDeploymentDefaultsSetInputV1Schema, outputSchema: ProjectDeploymentDefaultsOutputV1Schema,
+    invocationServerIdForInput: actionInputServerId(ProjectDeploymentDefaultsSetInputV1Schema, input => input.serverId),
     inputHints: { fields: [{ path: 'serverId', title: 'Home id', widget: 'text', required: true },
       { path: 'projectSourceId', title: 'Project source', widget: 'text', required: true },
       { path: 'expectedSourceRevision', title: 'Source revision', widget: 'number', required: true },
@@ -57,9 +60,11 @@ export const PROJECT_SOURCE_ACTION_SPECS_V1: readonly ProjectSourceActionSpec[] 
     title: 'Move Source to Team',
     description: 'Move a personal Source through one signed-in client review covering Machine access, used secrets, bindings, Source ownership, CI tokens, trigger approvals and previews. Unknown or partial steps must settle before personal access is withdrawn.',
     safety: 'danger', sideEffectClass: 'write', permissionChanging: true,
+    approvalPolicy: { uiConfirmation: 'policy' },
     bindings: { mcpToolName: 'projects_sources_move_to_team', voiceClientToolName: 'moveProjectSourceToTeam' },
     cli: { acceptsServerId: true, commands: [{ path: ['projects', 'sources', 'move-to-team'], visibility: 'canonical' }] },
     inputSchema: ProjectSourcesMoveToTeamInputV1Schema, outputSchema: ProjectSourcesMoveToTeamOutputV1Schema,
+    invocationServerIdForInput: actionInputServerId(ProjectSourcesMoveToTeamInputV1Schema, input => input.serverId),
     inputHints: { fields: [{ path: 'serverId', title: 'Home id', widget: 'text', required: true },
       { path: 'sourceId', title: 'Source id', widget: 'text', required: true },
       { path: 'expectedRevision', title: 'Current revision', widget: 'number', required: true },
@@ -73,6 +78,7 @@ export const PROJECT_SOURCE_ACTION_SPECS_V1: readonly ProjectSourceActionSpec[] 
     safety: 'safe', sideEffectClass: 'read',
     bindings: { mcpToolName: 'projects_sources_list', voiceClientToolName: 'listProjectSources' },
     inputSchema: ProjectSourcesListInputV1Schema, outputSchema: ProjectSourcesListOutputV1Schema,
+    invocationServerIdForInput: actionInputServerId(ProjectSourcesListInputV1Schema, input => input.serverId),
     inputHints: { fields: [{ path: 'serverId', title: 'Home id', widget: 'text', required: true },
       { path: 'query', title: 'Search', widget: 'text' }, { path: 'audience', title: 'Audience', widget: 'json' },
       { path: 'cursor', title: 'Page cursor', widget: 'text' }, { path: 'limit', title: 'Page size', widget: 'text' }] },
@@ -83,6 +89,7 @@ export const PROJECT_SOURCE_ACTION_SPECS_V1: readonly ProjectSourceActionSpec[] 
     safety: 'safe', sideEffectClass: 'read',
     bindings: { mcpToolName: 'projects_sources_read', voiceClientToolName: 'readProjectSource' },
     inputSchema: ProjectSourcesReadInputV1Schema, outputSchema: ProjectSourcesReadOutputV1Schema,
+    invocationServerIdForInput: actionInputServerId(ProjectSourcesReadInputV1Schema, input => input.serverId),
     inputHints: { fields: [{ path: 'serverId', title: 'Home id', widget: 'text', required: true },
       { path: 'sourceId', title: 'Source id', widget: 'text', required: true }] },
   },
@@ -92,10 +99,11 @@ export const PROJECT_SOURCE_ACTION_SPECS_V1: readonly ProjectSourceActionSpec[] 
     safety: 'danger', sideEffectClass: 'write',
     bindings: { mcpToolName: 'projects_sources_create', voiceClientToolName: 'createProjectSource' },
     inputSchema: ProjectSourcesCreateInputV1Schema, outputSchema: ProjectSourcesCreateOutputV1Schema,
+    invocationServerIdForInput: actionInputServerId(ProjectSourcesCreateInputV1Schema, input => input.serverId),
     inputHints: { fields: [{ path: 'serverId', title: 'Home id', widget: 'text', required: true },
       { path: 'requestKey', title: 'Create intent key', widget: 'text', required: true },
       { path: 'name', title: 'Name', widget: 'text', required: true },
-      { path: 'repository', title: 'Repository selector', widget: 'json', required: true },
+      { path: 'repository', title: 'Repository selector', widget: 'json' },
       { path: 'defaultRef', title: 'Default revision', widget: 'text' }, { path: 'subdir', title: 'Contained folder', widget: 'text' },
       { path: 'audience', title: 'Audience', widget: 'json' }] },
   },
@@ -105,6 +113,7 @@ export const PROJECT_SOURCE_ACTION_SPECS_V1: readonly ProjectSourceActionSpec[] 
     safety: 'danger', sideEffectClass: 'write',
     bindings: { mcpToolName: 'projects_sources_update', voiceClientToolName: 'updateProjectSource' },
     inputSchema: ProjectSourcesUpdateInputV1Schema, outputSchema: ProjectSourcesUpdateOutputV1Schema,
+    invocationServerIdForInput: actionInputServerId(ProjectSourcesUpdateInputV1Schema, input => input.serverId),
     inputHints: { fields: [{ path: 'serverId', title: 'Home id', widget: 'text', required: true },
       { path: 'sourceId', title: 'Source id', widget: 'text', required: true },
       { path: 'expectedRevision', title: 'Current revision', widget: 'text', required: true },
@@ -117,8 +126,9 @@ export const PROJECT_SOURCE_ACTION_SPECS_V1: readonly ProjectSourceActionSpec[] 
     safety: 'danger', sideEffectClass: 'write',
     bindings: { mcpToolName: 'projects_sources_delete', voiceClientToolName: 'deleteProjectSource' },
     inputSchema: ProjectSourcesDeleteInputV1Schema, outputSchema: ProjectSourcesDeleteOutputV1Schema,
+    invocationServerIdForInput: actionInputServerId(ProjectSourcesDeleteInputV1Schema, input => input.serverId),
     inputHints: { fields: [{ path: 'serverId', title: 'Home id', widget: 'text', required: true },
       { path: 'sourceId', title: 'Source id', widget: 'text', required: true },
       { path: 'expectedRevision', title: 'Current revision', widget: 'text', required: true }] },
   },
-] as const satisfies readonly PreNormalizedActionSpec[];
+] as const satisfies readonly PreNormalizedActionSpec[]);

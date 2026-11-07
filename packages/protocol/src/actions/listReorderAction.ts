@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from './lazyActionSpecValue.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { EntityDragScopeV1Schema } from '../plugins/ui/entityDragDrop.js';
@@ -35,7 +36,8 @@ const shared = {
     { path: 'position', title: 'Current anchor', widget: 'json', required: true },
   ] },
 } as const;
-export const LIST_REORDER_ACTION_SPECS = [
+function createListReorderActionSpecs() {
+  return [
   { ...shared, id: 'session.pending.reorder', approval: {result: 'required'}, title: 'Reorder pending input',
     cli: { commands: [{ path: ['session', 'pending', 'reorder'], visibility: 'canonical' }] },
     description: 'Move pending input relative to current membership of an exact Session and recipient queue. Does not transfer input custody or recipients.',
@@ -51,3 +53,6 @@ export const LIST_REORDER_ACTION_SPECS = [
     description: 'Move an undone todo relative to current undone membership. Does not change completion status.',
     bindings: { mcpToolName: 'tasks_internal_reorder' }, inputSchema: TodoReorderInputV1Schema },
 ] as const satisfies readonly PreNormalizedActionSpec[];
+}
+
+export const LIST_REORDER_ACTION_SPECS: ReturnType<typeof createListReorderActionSpecs> = lazyActionSpecArray(createListReorderActionSpecs);

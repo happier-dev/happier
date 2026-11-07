@@ -1,10 +1,13 @@
+import { lazyActionSpecArray , type ActionSpecArrayConcat } from '../lazyActionSpecValue.js';
 import { ROLE_ACTION_IDS_V1, type RoleActionIdV1 } from '../../prompts/roles/roleActionIdsV1.js';
 import { RoleActionTargetInputSchemasV1, RoleActionOutputSchemasV1, isAccountRoleMutationV1 } from '../../prompts/roles/roleActionsV1.js';
 import { type ActionInputFieldHint } from '../actionInputHints.js';
 import type { PreNormalizedActionSpec } from './definition.js';
 
 
-export const ROLE_ACTION_SPECS = Object.freeze([
+export const ROLE_ACTION_SPECS: ActionSpecArrayConcat<readonly [
+  PreNormalizedActionSpec[],
+]> = lazyActionSpecArray(() => Object.freeze([
   ...(ROLE_ACTION_IDS_V1.map((id): PreNormalizedActionSpec => {
     const accountMutation = isAccountRoleMutationV1(id);
     const read = id === 'roles.list' || id === 'roles.get';
@@ -92,5 +95,5 @@ export const ROLE_ACTION_SPECS = Object.freeze([
       cli: { acceptsServerId: true, commands: [{ path: id.split('.'), visibility: 'canonical' }] },
     };
   }) satisfies readonly PreNormalizedActionSpec[]),
-] as const);
+] as const));
 

@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { ACCOUNT_LIFECYCLE_ACTION_INPUT_SCHEMAS as inputs, ACCOUNT_LIFECYCLE_ACTION_OUTPUT_SCHEMAS as outputs } from '../accountLifecycleActionFamily.js';
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
 import type { AccountLifecycleActionId } from '../accountLifecycleActionFamily.js';
@@ -21,7 +22,7 @@ const common = {
     { path: 'accountId', title: 'Your Account', widget: 'text', required: true },
   ] },
 } as const;
-export const ACCOUNT_LIFECYCLE_ACTION_SPECS: readonly AccountLifecycleActionSpec[] = [
+export const ACCOUNT_LIFECYCLE_ACTION_SPECS: readonly AccountLifecycleActionSpec[] = lazyActionSpecArray(() => [
   { ...common, id: 'account.signOut', approval: {result: 'required'}, title: 'Sign out of this Home',
     accountAuthorityRetirementStatuses: ['signed_out'],
     description: 'Forget this Account’s sign-in on this device. Other Homes and the sign-in service remain signed in.',
@@ -41,4 +42,4 @@ export const ACCOUNT_LIFECYCLE_ACTION_SPECS: readonly AccountLifecycleActionSpec
     description: 'Permanently erase your Account on this Home, reviewing retained resources before removing its local credentials.',
     safety: 'danger', sideEffectClass: 'danger', bindings: { mcpToolName: 'account_delete' },
     inputSchema: inputs['account.delete'], outputSchema: outputs['account.delete'] },
-] as const satisfies readonly PreNormalizedActionSpec[];
+] as const satisfies readonly PreNormalizedActionSpec[]);

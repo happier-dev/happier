@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { ScopeActionInputSchemas, ScopeActionOutputSchemas } from '../scopeActionFamily.js';
 import type { ActionSpecProjectionMetadata, PreNormalizedActionSpec } from '../actionSpecs.js';
 
@@ -23,7 +24,7 @@ type ScopeActionSpec = {
     outputSchema: (typeof ScopeActionOutputSchemas)[Id];
   }>;
 }[keyof typeof ScopeActionInputSchemas];
-export const SCOPE_ACTION_SPECS: readonly ScopeActionSpec[] = [
+export const SCOPE_ACTION_SPECS: readonly ScopeActionSpec[] = lazyActionSpecArray(() => [
   { ...clientView, id: 'file.editor.save', safety: 'danger', approval: { result: 'required' }, title: 'Save open file edits',
     examples: { voice: { argsExample: '{}' } }, bindings: { sdkMethod: 'file.editor.save' },
     cli: { acceptsServerId: true, commands: [] },
@@ -128,11 +129,13 @@ export const SCOPE_ACTION_SPECS: readonly ScopeActionSpec[] = [
     description: 'Clear all conditions from the exact mounted Settings column through the same controller as its filter editor, preserving its search query. This changes only the transient column filter.', sideEffectClass: 'write',
     inputSchema: ScopeActionInputSchemas['settings.column.filter.clear'], outputSchema: ScopeActionOutputSchemas['settings.column.filter.clear'] },
   { ...clientView, id: 'shell.column.get', approval: {result: 'required'}, title: 'Read column state',
+    cli: { commands: [{ path: ['shell', 'column', 'get'], visibility: 'canonical' }] },
     examples: { voice: { argsExample: '{}' } },
     description: 'Read the navigation (default), main or side column on this client, including its visibility, availability, host label and offered side-panel tabs.', sideEffectClass: 'read',
     inputSchema: ScopeActionInputSchemas['shell.column.get'], outputSchema: ScopeActionOutputSchemas['shell.column.get'] },
   { ...clientView, id: 'shell.column.set', approval: {result: 'required'}, title: 'Show or hide column',
+    cli: { commands: [{ path: ['shell', 'column', 'set'], visibility: 'canonical' }] },
     examples: { voice: { argsExample: '{"visible":true}' } },
     description: 'Show or hide the navigation (default), main or side column through its mounted owner. On the side column, an offered tab id selects that tab and opens the panel, including plugin tabs. Absent surfaces and unavailable controls fail explicitly.', sideEffectClass: 'write',
     inputSchema: ScopeActionInputSchemas['shell.column.set'], outputSchema: ScopeActionOutputSchemas['shell.column.set'] },
-] as const satisfies readonly PreNormalizedActionSpec[];
+] as const satisfies readonly PreNormalizedActionSpec[]);

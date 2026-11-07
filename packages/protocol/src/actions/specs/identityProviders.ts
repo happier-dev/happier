@@ -1,3 +1,6 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
+import { z } from 'zod/mini';
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import {
   MANAGED_IDENTITY_PROVIDER_ACTION_IDS_V1,
   MANAGED_IDENTITY_PROVIDER_ACTION_INPUT_SCHEMAS_V1,
@@ -68,9 +71,14 @@ export type ManagedIdentityProviderRequiredAuthority<
   ? 'present_user'
   : 'account_automation';
 
-export const MANAGED_IDENTITY_PROVIDER_ACTION_SPECS: readonly PreNormalizedActionSpec[] = Object.freeze(
+export const MANAGED_IDENTITY_PROVIDER_ACTION_SPECS: readonly PreNormalizedActionSpec[] = lazyActionSpecArray(() => Object.freeze(
   MANAGED_IDENTITY_PROVIDER_ACTION_IDS_V1.map((id): PreNormalizedActionSpec => {
     const metadata = METADATA[id];
+    const reviewSchema = id === 'identity.providers.create'
+      ? lazyZodSchema(() => z.omit(MANAGED_IDENTITY_PROVIDER_ACTION_INPUT_SCHEMAS_V1['identity.providers.create'], { clientSecret: true }))
+      : id === 'identity.providers.secret.replace'
+        ? lazyZodSchema(() => z.omit(MANAGED_IDENTITY_PROVIDER_ACTION_INPUT_SCHEMAS_V1['identity.providers.secret.replace'], { clientSecret: true }))
+        : undefined;
     return {
       id, approval: { result: 'required' },
       ...(id === 'identity.providers.secret.replace' || id === 'identity.providers.remove'
@@ -98,6 +106,11 @@ export const MANAGED_IDENTITY_PROVIDER_ACTION_SPECS: readonly PreNormalizedActio
       sideEffectClass: metadata.sideEffectClass,
       inputSchema: MANAGED_IDENTITY_PROVIDER_ACTION_INPUT_SCHEMAS_V1[id],
       outputSchema: MANAGED_IDENTITY_PROVIDER_ACTION_OUTPUT_SCHEMAS_V1[id],
+      // The executable input retains the write-only secret. Review declares
+      // only its safe operands, rather than requiring the redacted material.
+      ...(reviewSchema ? { approvalPresentation: { summary: () => null, inputSchema: reviewSchema, inputHints: { fields: [] },
+        projectInput: (input: unknown) => reviewSchema.parse(redactObservationInputPaths('clientSecret')(input)),
+      } } : {}),
       ...(id === 'identity.providers.test.start'
         ? { projectObservationOutput: () => ({ redacted: true }) }
         : {}),
@@ -122,4 +135,4 @@ export const MANAGED_IDENTITY_PROVIDER_ACTION_SPECS: readonly PreNormalizedActio
       serverTransport: { method: 'POST', path: MANAGED_IDENTITY_PROVIDER_ACTION_PATHS_V1[id] },
     };
   }),
-);
+));

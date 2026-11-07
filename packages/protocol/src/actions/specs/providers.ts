@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { PROVIDER_ACTION_INPUT_SCHEMAS_V1 as inputs, PROVIDER_ACTION_OUTPUT_SCHEMAS_V1 as outputs,
   isProviderActionMachineRequiredV1, resolveProviderActionExecutionPlacementsV1, parseProviderActionRequestV1, type ProviderActionIdV1 } from '../../providers/providerActionsV1.js';
 import type { ActionInputFieldHint, PreNormalizedActionSpec } from '../actionSpecs.js';
@@ -44,7 +45,6 @@ function projectProviderInputObservation(input: unknown): unknown {
     const headers = ProviderPublicHeadersV1Schema.safeParse(value.publicHeaders);
     if (headers.success) projected.publicHeaders = headers.data;
   }
-  if (typeof value.policyReviewFingerprint === 'string' && value.policyReviewFingerprint.startsWith('authoring-review:v1:')) projected.policyReviewFingerprint = value.policyReviewFingerprint;
   const template = CustomProviderTemplateV1Schema.safeParse(value.template);
   if (template.success) {
     projected.template = { ...template.data, credential: template.data.credential ?? null };
@@ -99,6 +99,12 @@ const templateFields = (prefix: string) => [
   { path: `${prefix}.catalog`, title: 'Model catalog', widget: 'json' },
 ] satisfies readonly ActionInputFieldHint[];
 
+// The Deployment choice is read by these declared labels, never by its stored id (`managedLocal`).
+const deploymentKindField = { path: 'deployment.kind', title: 'Deployment', widget: 'select', options: [
+  { value: 'external', label: 'Existing server', labelKey: 'actionPresentation.options.external' },
+  { value: 'managedLocal', label: 'Gateway managed by Happier', labelKey: 'actionPresentation.options.managedLocal' },
+] } satisfies ActionInputFieldHint;
+
 function providerFields(id: ProviderActionIdV1): readonly ActionInputFieldHint[] {
   if (id === 'providers.binding.status') return [
     { path: 'machineId', title: 'Computer', widget: 'text', required: true },
@@ -120,6 +126,7 @@ function providerFields(id: ProviderActionIdV1): readonly ActionInputFieldHint[]
   if (id === 'providers.models.experimental.confirm') return [
     { path: 'modelId', title: 'Model', widget: 'text' },
     { path: 'agentTargetKey', title: 'Agent', widget: 'text', required: true },
+    { path: 'subject', title: 'Team credential and reviewed source', widget: 'json' },
     ...target,
   ];
   const fields: Partial<Record<ProviderActionIdV1, readonly ActionInputFieldHint[]>> = {
@@ -129,12 +136,12 @@ function providerFields(id: ProviderActionIdV1): readonly ActionInputFieldHint[]
     'providers.connections.create_contribution': [
       { path: 'contributionKey', title: 'Provider', widget: 'text' }, { path: 'displayName', title: 'Connection name', widget: 'text' },
       { path: 'authoringReview.endpointOverrides', title: 'Provider addresses', widget: 'json' }, { path: 'enable', title: 'Enable connection', widget: 'boolean' },
-      { path: 'deployment.kind', title: 'Deployment', widget: 'text' },
+      deploymentKindField,
       { path: 'deployment.purposeBindingDefaults', title: 'Subscription slots', widget: 'json' },
     ],
     'providers.connections.update': [
       { path: 'displayName', title: 'Connection name', widget: 'text' }, { path: 'expectedRevision', title: 'Connection revision', widget: 'text' },
-      ...templateFields('template'), { path: 'deployment.kind', title: 'Deployment', widget: 'text' },
+      ...templateFields('template'), deploymentKindField,
       { path: 'deployment.purposeBindingDefaults', title: 'Subscription slots', widget: 'json' },
       { path: 'gatewayPlacement', title: 'Gateway runs on', widget: 'json' }, { path: 'claudeHelperModels', title: 'Claude Code helper models', widget: 'json' },
       { path: 'modelSettings', title: 'Model generation settings', widget: 'json' },
@@ -159,6 +166,7 @@ type ProviderActionSpec<Id extends ProviderActionIdV1> = PreNormalizedActionSpec
 function providerSpec<Id extends ProviderActionIdV1>(id: Id, title: string, summary: string, options: Readonly<{
   danger?: boolean; read?: boolean; external?: boolean;
 }>): ProviderActionSpec<Id> {
+  const inputHints = { description: summary, fields: providerFields(id) };
   return {
     id, approvalPolicy: { uiConfirmation: 'policy',
       ...(id === 'providers.models.experimental.confirm' ? { retainUiFieldIntent: true } : {}),
@@ -178,10 +186,11 @@ function providerSpec<Id extends ProviderActionIdV1>(id: Id, title: string, summ
     inputSchema: inputs[id], outputSchema: outputs[id],
     projectObservationInput: projectProviderInputObservation, projectObservationOutput: projectProviderObservation,
     approvalPresentation: { summary: () => summary, projectInput: input => projectProviderApprovalInput(id, input) },
-    inputHints: { description: summary, fields: providerFields(id) }, cli: { acceptsServerId: true, commands: [{ path: id.split('.'), visibility: 'canonical' }] },
+    inputHints, cli: { acceptsServerId: true, commands: [{ path: id.split('.'), visibility: 'canonical' }] },
   } satisfies ProviderActionSpec<Id>;
 }
-export const PROVIDER_ACTION_SPECS_V1 = [
+function createProviderActionSpecsV1() {
+  return [
   providerSpec('providers.gateways.choose', 'Choose a gateway contribution',
     'Choose an admitted gateway contribution without creating a connection. Several candidates require an explicit qualified contribution key.', { read: true }),
   providerSpec('providers.connections.describe', 'List Provider connections',
@@ -241,3 +250,6 @@ export const PROVIDER_ACTION_SPECS_V1 = [
   providerSpec('providers.defaults.set', 'Set default Provider model',
     'Choose the model an agent starts with when nothing else picks one.', {}),
 ] as const satisfies readonly PreNormalizedActionSpec[];
+}
+
+export const PROVIDER_ACTION_SPECS_V1: ReturnType<typeof createProviderActionSpecsV1> = lazyActionSpecArray(createProviderActionSpecsV1);

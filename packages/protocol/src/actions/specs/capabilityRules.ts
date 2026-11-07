@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { ReachRuleDraftV1Schema, ReachRuleV1Schema } from '../../reach/reachRuleV1.js';
@@ -107,10 +108,14 @@ export function createCapabilityRulesActionSpecV1<TId extends ActionId, TInput e
       inputHints: { fields: [{ path: 'rules', title: 'Replacement rules', widget: 'json' }] } },
   };
 }
-export const CAPABILITY_RULES_ACTION_SPECS_V1 = [createCapabilityRulesActionSpecV1({
+function createCapabilityRulesActionSpecsV1() {
+  return [createCapabilityRulesActionSpecV1({
   id: 'mcp.rules.set', title: 'Change where MCP servers are on', itemKind: 'mcp', idField: 'serverId',
   inputSchema: McpRulesSetInputV1Schema, outputSchema: McpRulesSetOutputV1Schema,
 }), createCapabilityRulesActionSpecV1({
   id: 'skills.rules.set', title: 'Change where skills are on', itemKind: 'skills', idField: 'skillId',
   inputSchema: SkillsRulesSetInputV1Schema, outputSchema: SkillsRulesSetOutputV1Schema,
 })] as const;
+}
+
+export const CAPABILITY_RULES_ACTION_SPECS_V1: ReturnType<typeof createCapabilityRulesActionSpecsV1> = lazyActionSpecArray(createCapabilityRulesActionSpecsV1);

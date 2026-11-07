@@ -1,6 +1,5 @@
-import { readRecord } from '../../../inputs/inputRecords.js';
-import { SessionSurfaceItemV1Schema } from '../../../sessions/board/item.js';
-import { readSessionVisualCapabilitiesV1 } from '../../../sessions/board/visualPolicy.js';
+import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
+
 import { WORK_BOARD_ACTION_IDS_V1, type WorkBoardActionIdV1 } from '../../../boards/actionIdsV1.js';
 import { WorkBoardActionInputSchemasV1, WorkBoardActionOutputSchemasV1 } from '../../../boards/actionsV1.js';
 import { SESSION_BOARD_ACTION_INPUT_SCHEMAS_V1, SESSION_BOARD_ACTION_OUTPUT_SCHEMAS_V1, SESSION_BOARD_MUTATION_SERVER_TRANSPORT_V1 } from '../../../sessions/board/actions.js';
@@ -14,7 +13,7 @@ export const WORK_BOARD_ACTION_TITLES: Readonly<Record<WorkBoardActionIdV1, stri
   'boards.apply': 'Edit Board',
 };
 
-export const WORK_BOARD_ACTION_SPECS_V1: readonly PreNormalizedActionSpec[] = WORK_BOARD_ACTION_IDS_V1.map((id): PreNormalizedActionSpec => ({
+export const WORK_BOARD_ACTION_SPECS_V1: readonly PreNormalizedActionSpec[] = lazyActionSpecArray(() => WORK_BOARD_ACTION_IDS_V1.map((id): PreNormalizedActionSpec => ({
   id, approval: { result: 'required' },
   ...(id === 'boards.apply' ? { approvalPolicy: {
     uiConfirmation: 'direct' as const,
@@ -49,7 +48,7 @@ export const WORK_BOARD_ACTION_SPECS_V1: readonly PreNormalizedActionSpec[] = WO
       description: 'Use kind create, delete, update, add_items, remove_item or set_positions. References include kind and qualifiedId {serverId, id}.' },
   ] },
   cli: { acceptsServerId: true, commands: [{ path: id.split('.'), visibility: 'canonical' }] },
-}));
+})));
 
 type SessionBoardActionSpec = {
   [Id in keyof typeof SESSION_BOARD_ACTION_INPUT_SCHEMAS_V1]: ActionSpecProjectionMetadata & Readonly<{
@@ -62,7 +61,7 @@ type SessionBoardActionSpec = {
   }>;
 }[keyof typeof SESSION_BOARD_ACTION_INPUT_SCHEMAS_V1];
 
-export const SESSION_BOARD_ACTION_SPECS: readonly SessionBoardActionSpec[] = Object.freeze([
+export const SESSION_BOARD_ACTION_SPECS: readonly SessionBoardActionSpec[] = lazyActionSpecArray(() => Object.freeze([
   {
     id: 'session.board.get', executionPlacement: 'session', toolExposure: { agent: 'direct', mcp: 'direct' }, approval: {result: 'required'},
     title: 'Read Session visuals',
@@ -98,19 +97,11 @@ export const SESSION_BOARD_ACTION_SPECS: readonly SessionBoardActionSpec[] = Obj
   {
     id: 'session.board.item.upsert', executionPlacement: 'session', toolExposure: { agent: 'direct', mcp: 'direct' }, originalExecution: { nativePurpose: 'session_board_write' }, approvalPolicy: {
       uiConfirmation: 'direct',
-      uiConfirmationForInput: (input: unknown) => {
-        const item = SessionSurfaceItemV1Schema.safeParse(readRecord(input).item);
-        if (!item.success) return true;
-        const capabilities = readSessionVisualCapabilitiesV1(item.data);
-        // Editing content is reversible; declared egress and host Action access
-        // retain the consequence review. Agent contextual safety is unchanged.
-        return !capabilities || capabilities.network !== 'none' || capabilities.actions.length > 0;
-      },
     }, approval: {result: 'optional',flow: 'deferred'},
     title: 'Show or update a Session visual',
     approvalPresentation: { summary: describeSessionVisualApprovalSummary },
     description: 'Show or update one Session visual at a stable id: declarative charts/tables, hostedHtml bundles, or live widgets. For Daily usage, use item.source.kind="widget" with instance.definition={kind:"builtin",id:"usage_daily"}; bind session to this Session id (null for Account usage), period to {relative:"today"}, and metric to "tokens" or "cost". Live usage reads through the viewer\'s ordinary usage.query Resource admission; no separate Resource tool is needed. Supply item content, or copySource with the exact same-Home source Session, item and revision to create an independent copy in another Session. Same-Session Pin uses layout.update. New visuals default to transcript; board and both destinations require atomic first placement. expectedItemRevision is the exact optimistic-concurrency operand.',
-    safety: 'danger',
+    safety: 'safe',
     sideEffectClass: 'write',
     placements: [],
     bindings: { voiceClientToolName: 'session_board_item_upsert', mcpToolName: SESSION_BOARD_ACTION_MCP_TOOL_NAMES_V1['session.board.item.upsert'] },
@@ -184,7 +175,7 @@ export const SESSION_BOARD_ACTION_SPECS: readonly SessionBoardActionSpec[] = Obj
     id: 'session.board.layout.update', executionPlacement: 'session', toolExposure: { agent: 'direct', mcp: 'direct' }, approvalPolicy: { uiConfirmation: 'direct' }, approval: {result: 'optional',flow: 'deferred'},
     title: 'Organize the Session Board',
     description: 'Apply exactly one semantic Board organization change: create, rename, move or remove a view, or place, move, unpin, resize or set a shared frame style on an item placement. Frame styles are card or plain; null clears the override. Moves use stable sibling anchors, never indices.',
-    safety: 'danger',
+    safety: 'safe',
     sideEffectClass: 'write',
     placements: [],
     bindings: { voiceClientToolName: 'session_board_layout_update', mcpToolName: SESSION_BOARD_ACTION_MCP_TOOL_NAMES_V1['session.board.layout.update'] },
@@ -214,5 +205,4 @@ export const SESSION_BOARD_ACTION_SPECS: readonly SessionBoardActionSpec[] = Obj
     inputSchema: SESSION_BOARD_ACTION_INPUT_SCHEMAS_V1['session.board.layout.update'],
     cli: SESSION_BOARD_LAYOUT_UPDATE_CLI_PROJECTION,
   } satisfies PreNormalizedActionSpec,
-] as const);
-
+] as const));

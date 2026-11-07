@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { StrictJsonValueSchema } from '../../../json/strictJsonValue.js';
@@ -22,7 +23,8 @@ export const MachinesListCliInputSchema = lazyZodSchema(() => z.strictObject({
   refresh: z.optional(z.boolean()),
 }));
 
-export const MACHINE_DISCOVERY_ACTION_SPECS = Object.freeze([
+function createMachineDiscoveryActionSpecs() {
+  return Object.freeze([
   {
     id: 'machines.presence.read', executionPlacement: 'account', approval: { result: 'required' },
     title: 'Read Machine presence transitions', description: 'Read the latest committed offline and online occurrences through current Machine access.',
@@ -71,4 +73,7 @@ export const MACHINE_DISCOVERY_ACTION_SPECS = Object.freeze([
     },
   } satisfies PreNormalizedActionSpec,
 ] as const);
+}
+
+export const MACHINE_DISCOVERY_ACTION_SPECS: ReturnType<typeof createMachineDiscoveryActionSpecs> = lazyActionSpecArray(createMachineDiscoveryActionSpecs);
 

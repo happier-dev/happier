@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { DocCollaborationActionInputSchemasV1 as inputs, DocCollaborationActionOutputSchemasV1 as outputs } from '../../artifacts/artifactCollaborationActionsV1.js';
 import type { ActionSpecProjectionMetadata, PreNormalizedActionSpec } from '../actionSpecs.js';
 
@@ -15,7 +16,7 @@ type DocCollaborationActionSpec = {
   }>;
 }[keyof typeof inputs];
 
-export const DOC_COLLABORATION_ACTION_SPECS_V1: readonly DocCollaborationActionSpec[] = [
+export const DOC_COLLABORATION_ACTION_SPECS_V1: readonly DocCollaborationActionSpec[] = lazyActionSpecArray(() => [
   { id: 'doc.read', title: 'Read document',
     description: 'Read an authorized prose Doc through the canonical Artifact reader. A supplied full revision must still be current. An unavailable comment count is explicit. Reading does not mark a Discussion read.',
     safety: 'safe', sideEffectClass: 'read', requiredAuthority: 'account_automation', executionPlacement: 'account',
@@ -46,7 +47,7 @@ export const DOC_COLLABORATION_ACTION_SPECS_V1: readonly DocCollaborationActionS
     cli: { acceptsServerId: true, commands: [{ path: ['doc', 'edit', 'propose'], visibility: 'canonical' }] },
   },
   { id: 'doc.edit.accept', title: 'Accept a document edit',
-    description: 'Ask the present entitled person to accept the exact stored proposal against the full expected document revision. Approval waivers never supply person authority. The caller cannot provide replacement text.',
+    description: 'Accept the exact stored proposal against the full expected document revision. Agents ask the entitled person by default; the person can allow it. The caller cannot provide replacement text.',
     safety: 'danger', sideEffectClass: 'danger', requiredAuthority: 'present_user', executionPlacement: 'account',
     approval: { result: 'optional', flow: 'deferred' }, approvalPolicy: { uiConfirmation: 'direct' },
     placements: [],
@@ -56,7 +57,7 @@ export const DOC_COLLABORATION_ACTION_SPECS_V1: readonly DocCollaborationActionS
     cli: { acceptsServerId: true, commands: [{ path: ['doc', 'edit', 'accept'], visibility: 'canonical' }] },
   },
   { id: 'doc.edit.decline', title: 'Decline a document edit',
-    description: 'Ask the present entitled person to decline the stored proposal. Declining settles the Discussion message without writing the document body; approval waivers never supply person authority.',
+    description: 'Decline the stored proposal. Declining settles the Discussion message without writing the document body. Agents ask the entitled person by default; the person can allow it.',
     safety: 'danger', sideEffectClass: 'danger', requiredAuthority: 'present_user', executionPlacement: 'account',
     approval: { result: 'optional', flow: 'deferred' }, approvalPolicy: { uiConfirmation: 'direct' },
     placements: [],
@@ -65,4 +66,4 @@ export const DOC_COLLABORATION_ACTION_SPECS_V1: readonly DocCollaborationActionS
     inputSchema: inputs['doc.edit.decline'], outputSchema: outputs['doc.edit.decline'], inputHints: { fields: [] },
     cli: { acceptsServerId: true, commands: [{ path: ['doc', 'edit', 'decline'], visibility: 'canonical' }] },
   },
-] as const satisfies readonly PreNormalizedActionSpec[];
+] as const satisfies readonly PreNormalizedActionSpec[]);

@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { DaemonWorkspaceFileSearchRequestSchema, DaemonWorkspaceFileSearchResponseSchema } from '../../machines/workspaceFiles.js';
@@ -27,7 +28,8 @@ export const WorkspaceFilesSearchActionInputSchema = lazyZodSchema(() => (<T ext
   machineId: z.string().check(z.trim(), z.minLength(1)),
 })));
 
-export const WORKSPACE_FILE_ACTION_SPECS = Object.freeze([
+function createWorkspaceFileActionSpecs() {
+  return Object.freeze([
   {
     id: 'workspace.files.search', executionPlacement: 'machine', approval: {result: 'required'},
     title: 'Search text in workspace files',
@@ -84,4 +86,7 @@ export const WORKSPACE_FILE_ACTION_SPECS = Object.freeze([
     ] },
   } satisfies PreNormalizedActionSpec,
 ] as const);
+}
+
+export const WORKSPACE_FILE_ACTION_SPECS: ReturnType<typeof createWorkspaceFileActionSpecs> = lazyActionSpecArray(createWorkspaceFileActionSpecs);
 

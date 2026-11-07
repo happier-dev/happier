@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { ExternalSessionsRpcErrorCodeSchema } from '../../sessions/external/rpcErrorCodes.js';
@@ -72,7 +73,8 @@ export const MemoryEnsureUpToDateOutputSchema = lazyZodSchema(() => z.looseObjec
   ok: z.boolean(),
 }));
 
-export const MEMORY_ACTION_SPECS = Object.freeze([
+function createMemoryActionSpecs() {
+  return Object.freeze([
   {
     id: 'memory.search', executionPlacement: 'machine', approval: {result: 'required'},
     title: 'Search memory',
@@ -253,4 +255,7 @@ export const MEMORY_ACTION_SPECS = Object.freeze([
     inputSchema: MemoryEnsureUpToDateInputSchema,
   } satisfies PreNormalizedActionSpec,
 ] as const);
+}
+
+export const MEMORY_ACTION_SPECS: ReturnType<typeof createMemoryActionSpecs> = lazyActionSpecArray(createMemoryActionSpecs);
 

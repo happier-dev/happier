@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
 import { requirePluginBindingCaller } from '../pluginPermissions.js';
 import type { ActionSurfaceBindingContext, PreNormalizedActionSpec } from '../definition.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
@@ -7,7 +8,8 @@ import { z } from 'zod/mini';
 import { SessionPermissionRespondActionDecisionV1Schema, SessionPermissionRespondRpcParamsV1Schema } from '../../../sessions/permissions/respondRpcParamsV1.js';
 import { SessionConnectedServiceAuthSwitchRpcParamsSchema } from '../../../connect/sessionConnectedServiceAuthSwitch.js';
 import { SessionPermissionRemoteGrantRevokeInputV1Schema, SessionPermissionRemoteGrantRevokeOutputV1Schema, SessionPermissionRemoteGrantsListInputV1Schema, SessionPermissionRemoteGrantsListOutputV1Schema, SessionPermissionRemotePendingListInputV1Schema, SessionPermissionRemotePendingListOutputV1Schema, SessionPermissionRemoteRespondInputV1Schema, SessionPermissionRemoteRespondOutputV1Schema, SessionUserActionRemoteAnswerInputV1Schema, SessionUserActionRemoteAnswerOutputV1Schema } from '../../../sessions/permissions/v1.js';
-import { VoiceTrackedSessionAddressV1Schema, VoiceTrackedTargetsActionResultV1Schema } from '../../../sessions/follow/voiceTrackedTargetsCompatibilityV1.js';
+import { VoiceTrackedTargetsActionResultV1Schema } from '../../../sessions/follow/voiceTrackedTargetsCompatibilityV1.js';
+import { VoiceTrackedSessionAddressV1Schema } from '../../../sessions/follow/voiceTrackedSessionAddressV1.js';
 import { StructuredQuestionAnswersV1Schema } from '../../../tools/structuredQuestionAnswersV1.js';
 import { SESSION_ATTENTION_STANDING_HTTP_PATH_V1, SessionAttentionSetInputV1Schema, SessionAttentionSetResultV1Schema } from '../../../sessions/organization/attentionAction.js';
 import { StrictJsonValueSchema } from '../../../json/strictJsonValue.js';
@@ -141,7 +143,7 @@ export const SessionControlSwitchOutputSchema = lazyZodSchema(() => z.strictObje
 export const SessionConfigOptionSetInputSchema = lazyZodSchema(() => z.strictObject({
   sessionId: z.optional(z.string().check(z.minLength(1))),
   configId: NonBlankOpaqueIdentifierSchema,
-  valueId: z.string(),
+  valueId: z.nullable(z.string()),
 }));
 
 export const SessionConnectedServicesAuthSetInputSchema = lazyZodSchema(() => z.extend(SessionConnectedServiceAuthSwitchRpcParamsSchema, {
@@ -190,7 +192,8 @@ export function projectPluginSessionInteractionResponse(value: unknown): unknown
   return parsed.data;
 }
 
-export const SESSION_INTERACTION_ACTION_SPECS = Object.freeze([
+function createSessionInteractionActionSpecs() {
+  return Object.freeze([
   {
     id: 'session.permission.respond', executionPlacement: 'session', approvalPolicy: { agentDefault: 'authority', requiredSurfaces: ['mcp', 'plugin'] }, approval: {result: 'optional',flow: 'deferred'},
     prompting: { voiceHotPath: true },
@@ -599,7 +602,7 @@ export const SESSION_INTERACTION_ACTION_SPECS = Object.freeze([
     executionPlacement: 'client',
     title: 'Set session configuration option',
     sideEffectClass: 'write',
-    description: 'Set one provider-owned configuration option for the current session.',
+    description: 'Set one provider-owned configuration option for the current session. Pass null as valueId to withdraw its override, including when the option is no longer available.',
     safety: 'safe',
     placements: [],
     bindings: { mcpToolName: 'session_config_option_set' },
@@ -696,4 +699,7 @@ export const SESSION_INTERACTION_ACTION_SPECS = Object.freeze([
     inputSchema: SessionTrackedTargetsInputSchema,
   } satisfies PreNormalizedActionSpec,
 ] as const);
+}
+
+export const SESSION_INTERACTION_ACTION_SPECS: ReturnType<typeof createSessionInteractionActionSpecs> = lazyActionSpecArray(createSessionInteractionActionSpecs);
 

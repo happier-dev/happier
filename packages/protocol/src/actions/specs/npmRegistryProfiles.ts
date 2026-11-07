@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
 import { NPM_REGISTRY_PROFILE_ACTION_IDS_V1, NpmRegistryProfileActionInputSchemasV1 as inputs,
   NpmRegistryProfileActionOutputSchemasV1 as outputs } from '../npmRegistryProfileActionFamily.js';
@@ -11,7 +12,8 @@ const titles = {
   'plugins.npm_registry_profiles.logout': 'Sign out of npm registry',
   'plugins.npm_registry_profiles.test': 'Test npm registry profile',
 };
-export const NPM_REGISTRY_PROFILE_ACTION_SPECS_V1 = NPM_REGISTRY_PROFILE_ACTION_IDS_V1.map((id): PreNormalizedActionSpec => ({
+function createNpmRegistryProfileActionSpecsV1() {
+  return NPM_REGISTRY_PROFILE_ACTION_IDS_V1.map((id): PreNormalizedActionSpec => ({
   id, title: titles[id], description: 'Manage the exact selected Machine’s revisioned npm registry profiles. Sign-in credentials are acquired privately by the answering app.',
   approval: { result: 'required' }, safety: id.endsWith('.remove') ? 'danger' : 'safe',
   ...(id === 'plugins.npm_registry_profiles.remove' ? { irreversible: true as const } : {}),
@@ -32,3 +34,6 @@ export const NPM_REGISTRY_PROFILE_ACTION_SPECS_V1 = NPM_REGISTRY_PROFILE_ACTION_
       ? [{ path: 'profile', title: 'Registry profile settings', widget: 'json' as const, required: true }] : []),
   ] },
 }));
+}
+
+export const NPM_REGISTRY_PROFILE_ACTION_SPECS_V1: ReturnType<typeof createNpmRegistryProfileActionSpecsV1> = lazyActionSpecArray(createNpmRegistryProfileActionSpecsV1);

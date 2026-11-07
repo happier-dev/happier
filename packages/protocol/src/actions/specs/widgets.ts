@@ -1,3 +1,5 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
+
 import type { ApprovalPresentationContext, PreNormalizedActionSpec } from '../actionSpecs.js';
 import type { InputFieldHint } from '../../inputs/inputFields.js';
 import { WIDGET_SIZE_ORDER_V1, WidgetGroupWidthV1Schema, WidgetProjectAreaV1Schema } from '../../widgets/widgetPresentationV1.js';
@@ -44,7 +46,7 @@ const WIDGET_INSTANCE_ACTION_COPY = {
   'widgets.area.layout.list': ['List dashboards', 'See the dashboards a place has.'],
   'widgets.area.layout.create': ['Create dashboard', 'Add a dashboard, empty or as a copy of the current one.'],
   'widgets.area.layout.rename': ['Rename dashboard', 'Change a dashboard\'s name.'],
-  'widgets.area.layout.delete': ['Delete dashboard', 'Remove a dashboard with its widgets. People it was shared with lose it too.'],
+  'widgets.area.layout.delete': ['Delete view', 'Remove a view with its widgets. People it was shared with lose it too.'],
   'widgets.area.layout.reorder': ['Reorder dashboards', 'Change the order dashboards are listed in.'],
 } as const satisfies Record<WidgetInstanceActionIdV1, readonly [title: string, summary: string]>;
 
@@ -77,7 +79,7 @@ const refField = { path: 'ref', title: 'Widget or group', widget: 'json', requir
 const accountField = { path: 'account', title: 'Library Account', widget: 'json', required: true,
   description: 'The library owner, qualified by serverId and accountId.' } as const satisfies InputFieldHint;
 const artifactField = { path: 'artifactId', title: 'Library item id', widget: 'text', required: true,
-  description: 'Artifact id from the library list, or a new unique id when creating an item.' } as const satisfies InputFieldHint;
+  description: 'Artifact id from the library list, or a new UUID when creating an item. Keep that UUID for retries of the same creation.' } as const satisfies InputFieldHint;
 const bindingsField = { path: 'bindings', title: 'Input bindings', widget: 'json', required: true,
   description: 'Bindings by declared field path: value, context or viewer intent. A value must satisfy the widget’s inputSchema from widgets.catalog.list. Viewer intent uses the current viewer’s existing Connected Account purpose selection.' } as const satisfies InputFieldHint;
 const pathsField = { path: 'paths', title: 'Input paths', widget: 'text_list', listSeparator: 'newline',
@@ -187,7 +189,7 @@ function describeWidgetActionApprovalSummary(actionId: WidgetInstanceActionIdV1,
     case 'widgets.group.inputs.set': return `Change shared settings for ${quote(groupName)} on ${target}.`;
     case 'widgets.area.layout.create': return `Create ${quote(sentenceCaseIdentifier(value.name, 'dashboard'))} on ${target}.`;
     case 'widgets.area.layout.rename': return `Rename the dashboard to ${quote(sentenceCaseIdentifier(value.name, 'dashboard'))} on ${target}.`;
-    case 'widgets.area.layout.delete': return `Delete the selected dashboard from ${target}.`;
+    case 'widgets.area.layout.delete': return `Delete the selected view from ${target}.`;
     case 'widgets.area.layout.reorder': return `Reorder the selected dashboard on ${target}.`;
     case 'widgets.area.layout.reset': return `Reset ${target} to its preset.`;
     case 'widgets.area.layout.undo': return `Undo the dashboard reset on ${widgetSurfaceApprovalLabel(captureSurface)}.`;
@@ -253,7 +255,8 @@ const WIDGET_DEFINITION_ACTION_FIELDS = {
     description: 'Draft with name, declared sizes, body, input hints and inputSchema; omit persisted id, version and provenance.' }],
   'widgets.definition.update': [accountField, artifactField, { path: 'patch', title: 'Definition changes', widget: 'json', required: true,
     description: 'Only fields to change. This updates every referencing placement; duplicate first for an independent widget.' }],
-  'widgets.definition.duplicate': [accountField, artifactField, { path: 'newArtifactId', title: 'Copy id', widget: 'text', required: true },
+  'widgets.definition.duplicate': [accountField, artifactField, { path: 'newArtifactId', title: 'Copy id', widget: 'text', required: true,
+    description: 'New UUID for the independent copy. Keep that UUID for retries of the same duplication.' },
     { ...nameField, required: false, description: 'Optional name for the independent copy.' }],
   'widgets.definition.delete': [accountField, artifactField],
   'widgets.definition.saveFromSession': [accountField, { path: 'session', title: 'Source Session', widget: 'select', optionsSourceId: 'sessions', required: true },
@@ -275,7 +278,7 @@ const WIDGET_LAYOUT_FRAGMENT_ACTION_FIELDS = {
 
 export const WIDGET_INSTANCE_ACTION_SPECS_V1: readonly (PreNormalizedActionSpec & Readonly<{
   id: WidgetInstanceActionIdV1; requiredAuthority: 'account_automation';
-}>)[] = WIDGET_INSTANCE_ACTION_IDS_V1.map(id => {
+}>)[] = lazyActionSpecArray(() => WIDGET_INSTANCE_ACTION_IDS_V1.map(id => {
   const read = id.endsWith('.list') || id.endsWith('.get') || id.endsWith('.validate');
   const select = id === 'widgets.area.layout.select';
   const refresh = id.endsWith('.refresh');
@@ -296,6 +299,9 @@ export const WIDGET_INSTANCE_ACTION_SPECS_V1: readonly (PreNormalizedActionSpec 
           || source.serverId !== destination.serverId || source.owner.sessionId !== destination.owner.sessionId);
       } } : {}),
     },
+    ...(id === 'widgets.area.layout.delete' ? { confirmVerb: {
+      key: 'actionPresentation.titles.widgets_area_layout_delete', fallback: 'Delete view',
+    } } : {}),
     approval: { result: 'required' }, title: WIDGET_INSTANCE_ACTION_COPY[id][0], description: id === 'widgets.area.layout.reset'
       ? 'Reset a Public profile preset or another host-declared area layout immediately and return a guarded Undo for the acknowledged change. Public profile presets include Minimal, Data-rich, Story and Night owl; the layout stays private until reviewed Publish or Apply.'
       : id === 'widgets.area.layout.undo'
@@ -338,21 +344,21 @@ export const WIDGET_INSTANCE_ACTION_SPECS_V1: readonly (PreNormalizedActionSpec 
     inputHints: { description: WIDGET_INSTANCE_ACTION_COPY[id][1], fields: WIDGET_INSTANCE_ACTION_FIELDS[id] },
     cli: { acceptsServerId: true, commands: [{ path: id.split('.'), visibility: 'canonical' }] },
   } as const satisfies PreNormalizedActionSpec;
-});
+}));
 
 const WIDGET_DEFINITION_VOICE_EXAMPLES = {
   'widgets.definition.list': '{"account":{"serverId":"home","accountId":"owner"}}',
   'widgets.definition.get': '{"account":{"serverId":"home","accountId":"owner"},"artifactId":"definition-1"}',
-  'widgets.definition.create': '{"account":{"serverId":"home","accountId":"owner"},"artifactId":"definition-1","definition":{"name":"Checks","sizeDeclaration":{"sizes":["medium"],"defaultSize":"medium"},"body":{"kind":"declarative","document":{"version":1,"root":{"kind":"text","text":"Checks"}}},"inputs":{"fields":[]},"inputSchema":{"type":"object","additionalProperties":false}}}',
+  'widgets.definition.create': '{"account":{"serverId":"home","accountId":"owner"},"artifactId":"49cc4eca-1ed6-4abe-bf70-e3be06cb0730","definition":{"name":"Checks","sizeDeclaration":{"sizes":["medium"],"defaultSize":"medium"},"body":{"kind":"declarative","document":{"version":1,"root":{"kind":"text","text":"Checks"}}},"inputs":{"fields":[]},"inputSchema":{"type":"object","additionalProperties":false}}}',
   'widgets.definition.update': '{"account":{"serverId":"home","accountId":"owner"},"artifactId":"definition-1","patch":{"name":"Updated checks"}}',
-  'widgets.definition.duplicate': '{"account":{"serverId":"home","accountId":"owner"},"artifactId":"definition-1","newArtifactId":"definition-2"}',
+  'widgets.definition.duplicate': '{"account":{"serverId":"home","accountId":"owner"},"artifactId":"definition-1","newArtifactId":"b5e2a136-e890-46bf-9ff4-f2fd042ad8eb"}',
   'widgets.definition.delete': '{"account":{"serverId":"home","accountId":"owner"},"artifactId":"definition-1"}',
-  'widgets.definition.saveFromSession': '{"account":{"serverId":"home","accountId":"owner"},"session":{"serverId":"home","sessionId":"session-1"},"itemId":"item-1","artifactId":"definition-1"}',
+  'widgets.definition.saveFromSession': '{"account":{"serverId":"home","accountId":"owner"},"session":{"serverId":"home","sessionId":"session-1"},"itemId":"item-1","artifactId":"49cc4eca-1ed6-4abe-bf70-e3be06cb0730"}',
 } as const satisfies Record<WidgetDefinitionActionIdV1, string>;
 
 export const WIDGET_DEFINITION_ACTION_SPECS_V1: readonly (PreNormalizedActionSpec & Readonly<{
   id: WidgetDefinitionActionIdV1; requiredAuthority: 'account_automation';
-}>)[] = WIDGET_DEFINITION_ACTION_IDS_V1.map(id => {
+}>)[] = lazyActionSpecArray(() => WIDGET_DEFINITION_ACTION_IDS_V1.map(id => {
   const read = id === 'widgets.definition.list' || id === 'widgets.definition.get';
   return {
     id, approvalPolicy: {
@@ -384,12 +390,12 @@ export const WIDGET_DEFINITION_ACTION_SPECS_V1: readonly (PreNormalizedActionSpe
     cli: { acceptsServerId: true, commands: [{ path: id === 'widgets.definition.saveFromSession'
       ? ['widgets', 'definition', 'save-from-session'] : id.split('.'), visibility: 'canonical' }] },
   } as const satisfies PreNormalizedActionSpec;
-});
+}));
 
 export const WIDGET_SNAPSHOT_ACTION_SPECS_V1: readonly (PreNormalizedActionSpec & Readonly<{
   id: 'widgets.snapshot.post'; requiredAuthority: 'account_automation';
   inputSchema: typeof WidgetSnapshotPostInputV1Schema; outputSchema: typeof WidgetSnapshotPostOutputV1Schema;
-}>)[] = [{
+}>)[] = lazyActionSpecArray(() => [{
   id: 'widgets.snapshot.post', approvalPolicy: { uiConfirmation: 'policy' }, approval: {result: 'required'}, title: 'Post a widget snapshot',
   description: 'Publish the exact previewed frozen output and as-of provenance as an inert shared Session Board item. The approved payload is never queried again.',
   safety: 'danger', sideEffectClass: 'write', executionPlacement: 'account', requiredAuthority: 'account_automation',
@@ -408,11 +414,11 @@ export const WIDGET_SNAPSHOT_ACTION_SPECS_V1: readonly (PreNormalizedActionSpec 
   ] },
   cli: { acceptsServerId: true, commands: [{ path: ['widgets', 'snapshot', 'post'], visibility: 'canonical' }] },
   examples: { voice: { argsExample: '{"surface":{"serverId":"home","accountId":"owner","owner":{"kind":"sessionBoard","sessionId":"session-1"}},"itemId":"snapshot-1","title":"Checks","preview":{"v":1,"document":{"version":1,"root":{"kind":"text","text":"All checks passed."}},"asOf":"2026-10-05T10:42:00.000Z","provenance":[{"label":"Checks"}]},"placement":{}}' } },
-}] as const satisfies readonly PreNormalizedActionSpec[];
+}] as const satisfies readonly PreNormalizedActionSpec[]);
 
 export const WIDGET_LAYOUT_FRAGMENT_ACTION_SPECS_V1: readonly (PreNormalizedActionSpec & Readonly<{
   id: WidgetLayoutFragmentActionIdV1; requiredAuthority: 'account_automation';
-}>)[] = WIDGET_LAYOUT_FRAGMENT_ACTION_IDS_V1.map(id => {
+}>)[] = lazyActionSpecArray(() => WIDGET_LAYOUT_FRAGMENT_ACTION_IDS_V1.map(id => {
   const read = id.endsWith('.list') || id.endsWith('.get');
   return {
     id, approvalPolicy: { uiConfirmation: id === 'widgets.fragment.delete' ? 'policy' : 'direct' }, approval: { result: 'required' }, title: WIDGET_LAYOUT_FRAGMENT_ACTION_COPY[id][0], description: 'Read or author an Account saved group through its mode-aware Artifact owner. Adding it makes independent copies.',
@@ -442,4 +448,4 @@ export const WIDGET_LAYOUT_FRAGMENT_ACTION_SPECS_V1: readonly (PreNormalizedActi
     } },
     inputHints: { description: WIDGET_LAYOUT_FRAGMENT_ACTION_COPY[id][1], fields: WIDGET_LAYOUT_FRAGMENT_ACTION_FIELDS[id] }, cli: { acceptsServerId: true, commands: [{ path: id.split('.'), visibility: 'canonical' }] },
   } as const satisfies PreNormalizedActionSpec;
-});
+}));

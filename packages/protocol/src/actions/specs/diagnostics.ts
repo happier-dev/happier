@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { DiagnosticsActionInputSchemas, DiagnosticsActionOutputSchemas } from '../diagnosticsActionFamily.js';
 import type { ActionSpecProjectionMetadata, PreNormalizedActionSpec } from '../actionSpecs.js';
 
@@ -15,7 +16,7 @@ type DiagnosticsActionSpec = {
     outputSchema: (typeof DiagnosticsActionOutputSchemas)[Id];
   }>;
 }[keyof typeof DiagnosticsActionInputSchemas];
-export const DIAGNOSTICS_ACTION_SPECS: readonly DiagnosticsActionSpec[] = [
+export const DIAGNOSTICS_ACTION_SPECS: readonly DiagnosticsActionSpec[] = lazyActionSpecArray(() => [
   { ...diagnosticRead, id: 'diagnostics.diagnosis.run', approval: {result: 'required'}, title: 'Run diagnosis',
     description: 'Run the mounted Diagnosis page checks on its current Home and Account, including its pasted doctor document. Return sanitized findings without native logs.',
     inputSchema: DiagnosticsActionInputSchemas['diagnostics.diagnosis.run'], outputSchema: DiagnosticsActionOutputSchemas['diagnostics.diagnosis.run'],
@@ -32,4 +33,4 @@ export const DIAGNOSTICS_ACTION_SPECS: readonly DiagnosticsActionSpec[] = [
       return parsed.success ? { status: parsed.data.status } : null;
     },
     cli: { acceptsServerId: true, commands: [{ path: ['diagnostics', 'status', 'get'], visibility: 'canonical' }] } },
-] as const satisfies readonly PreNormalizedActionSpec[];
+] as const satisfies readonly PreNormalizedActionSpec[]);

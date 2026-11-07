@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from './lazyActionSpecValue.js';
 import { SESSION_AGENT_TRANSITION_ACTION_IDS } from './sessionAgentTransitionActionIdsV1.js';
 export { SESSION_AGENT_TRANSITION_ACTION_IDS } from './sessionAgentTransitionActionIdsV1.js';
 import { z } from 'zod/mini';
@@ -25,7 +26,8 @@ const common = {
   surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
   approval: { result: 'required' },
 } as const;
-export const SESSION_AGENT_TRANSITION_ACTION_SPECS = [
+function createSessionAgentTransitionActionSpecs() {
+  return [
   { ...common, id: 'session.continuation.inspect', title: 'Inspect Agent continuation',
     description: 'Inspect one exact Agent selection for this Session through the hosting machine. Eligibility grants no mutation authority; switching rechecks it.',
     safety: 'safe', sideEffectClass: 'read', bindings: { mcpToolName: 'session_continuation_inspect' },
@@ -45,3 +47,6 @@ export const SESSION_AGENT_TRANSITION_ACTION_SPECS = [
       { path: 'input', title: 'Exact first input and retained localId', widget: 'json', required: true }] },
   },
 ] as const satisfies readonly PreNormalizedActionSpec[];
+}
+
+export const SESSION_AGENT_TRANSITION_ACTION_SPECS: ReturnType<typeof createSessionAgentTransitionActionSpecs> = lazyActionSpecArray(createSessionAgentTransitionActionSpecs);

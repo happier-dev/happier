@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
 import { USAGE_SOURCE_ACTION_INPUT_SCHEMAS as inputs, USAGE_SOURCE_ACTION_OUTPUT_SCHEMAS as outputs,
   USAGE_SOURCE_CONSENT_DISCLOSURE, type UsageSourceActionId } from '../../usage/usageSources.js';
@@ -40,7 +41,8 @@ function spec<K extends UsageSourceActionId>(id: K, title: string, summary: stri
     inputHints: { fields: [] }, cli: { acceptsServerId: true, commands: [] },
   };
 }
-export const USAGE_SOURCE_ACTION_SPECS = [
+function createUsageSourceActionSpecs() {
+  return [
   spec('usage.sources.discover', 'Find usage records on a machine',
     'Look for usage records that agents keep on a machine, such as token counts. Nothing is collected yet.', true),
   spec('usage.sources.get', 'Read usage source',
@@ -55,3 +57,6 @@ export const USAGE_SOURCE_ACTION_SPECS = [
   spec('usage.sources.history.delete', 'Delete collected usage',
     'Permanently delete the usage Happier collected from a source.'),
 ] as const;
+}
+
+export const USAGE_SOURCE_ACTION_SPECS: ReturnType<typeof createUsageSourceActionSpecs> = lazyActionSpecArray(createUsageSourceActionSpecs);

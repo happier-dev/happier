@@ -1,14 +1,24 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { ArtifactSavedByV1Schema } from '../../artifacts/artifactBinaryV1.js';
-import { PromptDocRevisionV1Schema, PromptDocCreateActionInputV1Schema } from '../../prompts/library/promptDocV2.js';
+import { PromptDocRevisionV1Schema, PromptDocCreateActionInputV1Schema, PromptDocReadResultV1Schema } from '../../prompts/library/promptDocV2.js';
 import { PromptBundleUpdateActionInputV1Schema } from '../../prompts/library/promptBundleSchemas.js';
 import { PromptLibrarySaveOrganizationFieldsV1, isPromptLibrarySaveFolderAssignmentV1 } from '../../prompts/library/promptFolderActionSchemasV1.js';
 import { PromptLibraryStackUpdateInputV1Schema, PromptLibraryStackUpdateResultV1Schema } from '../../prompts/library/promptStacksV1.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 import { z } from 'zod/mini';
 import { PromptAssetInstallModeV1Schema, PromptAssetScopeV1Schema } from '../../prompts/library/promptAssetsV1.js';
-import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
+import { StrictJsonValueSchema, projectNativeJsonValueForTransport } from '../../json/strictJsonValue.js';
 import type { PreNormalizedActionSpec } from './definition.js';
+import type { HostReviewedChildrenPlanV1 } from '../executor/types.js';
+
+/** All three Save inputs share the canonical organization fields, already admitted by their schema. */
+function reviewedPromptFolder(input: unknown): HostReviewedChildrenPlanV1['children'] {
+  const createFolder = input !== null && typeof input === 'object' && 'createFolder' in input
+    ? input.createFolder : undefined;
+  return createFolder ? [{ action: 'artifact.folders.create', role: 'folder',
+    input: projectNativeJsonValueForTransport(createFolder) }] : [];
+}
 
 
 /**
@@ -63,7 +73,8 @@ export const PromptRegistryInstallInputSchema = lazyZodSchema(() => (<I extends 
   return input;
 }), PromptRegistryInstallCanonicalInputSchema));
 
-export const PROMPT_DOCUMENT_ACTION_SPECS = Object.freeze([
+function createPromptDocumentActionSpecs() {
+  return Object.freeze([
   {
     id: 'prompt_doc.get', executionPlacement: 'account', approval: {result: 'required'},
     title: 'Read prompt document',
@@ -74,14 +85,14 @@ export const PROMPT_DOCUMENT_ACTION_SPECS = Object.freeze([
     bindings: { mcpToolName: 'prompt_doc_get', voiceClientToolName: 'getPromptDoc' },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
     inputSchema: lazyZodSchema(() => z.strictObject({ artifactId: z.string().check(z.minLength(1)) })),
-    outputSchema: lazyZodSchema(() => z.strictObject({ ok: z.literal(true), artifactId: z.string().check(z.minLength(1)), title: z.string().check(z.minLength(1)), markdown: z.string(),
-      revision: PromptDocRevisionV1Schema, provenance: z.optional(z.strictObject({ savedBy: ArtifactSavedByV1Schema })) })),
+    outputSchema: PromptDocReadResultV1Schema,
     inputHints: { title: 'Read prompt document', fields: [
       { path: 'artifactId', title: 'Prompt artifact id', widget: 'text', required: true },
     ] },
   } satisfies PreNormalizedActionSpec,
   {
     id: 'prompt_doc.create', executionPlacement: 'account', approval: {result: 'none'},
+    hostReviewedChildren: reviewedPromptFolder,
     approvalPolicy: { uiConfirmation: 'direct' },
     title: 'Create prompt document',
     description: 'Create an Account-private prompt document in the Happier prompt library.',
@@ -106,9 +117,13 @@ export const PROMPT_DOCUMENT_ACTION_SPECS = Object.freeze([
     ] },
   } satisfies PreNormalizedActionSpec,
 ] as const);
+}
+
+export const PROMPT_DOCUMENT_ACTION_SPECS: ReturnType<typeof createPromptDocumentActionSpecs> = lazyActionSpecArray(createPromptDocumentActionSpecs);
 
 
-export const PROMPT_INVOCATION_ACTION_SPECS = Object.freeze([
+function createPromptInvocationActionSpecs() {
+  return Object.freeze([
   {
     id: 'prompts.invocations.list', executionPlacement: 'account', approval: {result: 'required'},
     title: 'List prompt invocations',
@@ -163,9 +178,13 @@ export const PROMPT_INVOCATION_ACTION_SPECS = Object.freeze([
     inputSchema: PromptInvocationResolveInputSchema,
   } satisfies PreNormalizedActionSpec,
 ] as const);
+}
+
+export const PROMPT_INVOCATION_ACTION_SPECS: ReturnType<typeof createPromptInvocationActionSpecs> = lazyActionSpecArray(createPromptInvocationActionSpecs);
 
 
-export const PROMPT_LIBRARY_ACTION_SPECS = Object.freeze([
+function createPromptLibraryActionSpecs() {
+  return Object.freeze([
   {
     id: 'prompt_doc.favorite.set', executionPlacement: 'account', approval: {result: 'none'},
     title: 'Set prompt favourite',
@@ -215,6 +234,7 @@ export const PROMPT_LIBRARY_ACTION_SPECS = Object.freeze([
   } satisfies PreNormalizedActionSpec,
   {
     id: 'prompt_doc.update', executionPlacement: 'account', approval: {result: 'none'},
+    hostReviewedChildren: reviewedPromptFolder,
     title: 'Update prompt document',
     description: 'Update a prompt document. Supply the reviewed Artifact revision to refuse changed content without rebasing the edit.',
     safety: 'danger',
@@ -247,6 +267,7 @@ export const PROMPT_LIBRARY_ACTION_SPECS = Object.freeze([
   } satisfies PreNormalizedActionSpec,
   {
     id: 'prompt_bundle.update', executionPlacement: 'account', approval: {result: 'none'},
+    hostReviewedChildren: reviewedPromptFolder,
     title: 'Update prompt bundle',
     description: 'Update a skill bundle stored in the Happier prompt library.',
     safety: 'danger', sideEffectClass: 'write',
@@ -305,4 +326,7 @@ export const PROMPT_LIBRARY_ACTION_SPECS = Object.freeze([
     },
   } satisfies PreNormalizedActionSpec,
 ] as const);
+}
+
+export const PROMPT_LIBRARY_ACTION_SPECS: ReturnType<typeof createPromptLibraryActionSpecs> = lazyActionSpecArray(createPromptLibraryActionSpecs);
 

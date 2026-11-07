@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { LOCAL_DAEMON_SERVICE_ACTION_IDS } from './localDaemonServiceActionIdsV1.js';
 export { LOCAL_DAEMON_SERVICE_ACTION_IDS } from './localDaemonServiceActionIdsV1.js';
 import { z } from 'zod/mini';
@@ -25,7 +26,8 @@ const surfaces = { ui: true, voice: false, agent: true, mcp: true, cli: true, rp
 const clientCli = { commands: [] };
 const common = { executionPlacement: 'client', placements: [], surfaces, cli: clientCli, approval: { result: 'required' },
   inputHints: { fields: [{ path: 'serverId', title: 'Home ID', widget: 'text', required: true }] } } as const;
-export const LOCAL_DAEMON_SERVICE_ACTION_SPECS = [
+function createLocalDaemonServiceActionSpecs() {
+  return [
   { ...common, id: 'machines.local.service.status', title: 'Read local background service', description: 'Read the native user service for this Home on the invoking desktop.', safety: 'safe', sideEffectClass: 'read', bindings: { mcpToolName: 'machines_local_service_status' }, inputSchema: LocalDaemonServiceInputSchema, outputSchema: LocalDaemonServiceOutputSchema },
   { ...common, id: 'machines.local.service.start', title: 'Start local background service', description: 'Start the existing native user service for this Home.', safety: 'safe', sideEffectClass: 'write', bindings: { mcpToolName: 'machines_local_service_start' }, inputSchema: LocalDaemonServiceInputSchema, outputSchema: LocalDaemonServiceOutputSchema },
   { ...common, id: 'machines.local.service.stop', title: 'Stop local background service', description: 'Stop the native user service for this Home; this can interrupt its sessions.', safety: 'danger', sideEffectClass: 'danger', bindings: { mcpToolName: 'machines_local_service_stop' }, inputSchema: LocalDaemonServiceInputSchema, outputSchema: LocalDaemonServiceOutputSchema },
@@ -34,3 +36,6 @@ export const LOCAL_DAEMON_SERVICE_ACTION_SPECS = [
   { ...common, id: 'machines.local.service.update', title: 'Update desktop-managed CLI', description: 'Use the shared managed-CLI update task and its scoped completion/readback.', safety: 'danger', sideEffectClass: 'danger', bindings: { mcpToolName: 'machines_local_service_update' }, inputSchema: LocalDaemonServiceInputSchema, outputSchema: LocalDaemonServiceOutputSchema },
   { ...common, id: 'machines.local.service.disconnect', title: 'Disconnect local service from Home', description: 'Remove only the desktop-managed service for this Home. Preserve user-owned services and the saved Home profile.', safety: 'danger', sideEffectClass: 'danger', bindings: { mcpToolName: 'machines_local_service_disconnect' }, inputSchema: LocalDaemonServiceInputSchema, outputSchema: LocalDaemonServiceDisconnectOutputSchema },
 ] as const satisfies readonly PreNormalizedActionSpec[];
+}
+
+export const LOCAL_DAEMON_SERVICE_ACTION_SPECS: ReturnType<typeof createLocalDaemonServiceActionSpecs> = lazyActionSpecArray(createLocalDaemonServiceActionSpecs);

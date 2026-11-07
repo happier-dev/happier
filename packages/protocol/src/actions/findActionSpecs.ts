@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from './lazyActionSpecValue.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import type { PreNormalizedActionSpec } from './actionSpecs.js';
@@ -27,12 +28,14 @@ export const UiFindOutputSchema = lazyZodSchema(() => z.union([
 ]));
 
 /** Additive client Action: no persistence, remote corpus or second Find decision owner. */
-export const FIND_ACTION_SPECS = [{
+function createFindActionSpecs() {
+  return [{
   id: 'ui.find', approval: {result: 'required'}, title: 'Find in the current surface',
   clientPresenter: 'session',
   description: 'Read or control Find on a mounted client surface. Every operation may address a mounted surface id; omission uses the focused surface. Returns coverage/counts when available, or host-known query/options with typed engine-owned count status. Never returns corpus text.',
   safety: 'safe', sideEffectClass: 'external', executionPlacement: 'client', placements: [],
-  surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: false, rpc: false },
+  surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
+  cli: { commands: [{ path: ['ui', 'find'], visibility: 'canonical' }] },
   bindings: { voiceClientToolName: 'findInSurface', mcpToolName: 'ui_find' },
   inputSchema: UiFindInputSchema, outputSchema: UiFindOutputSchema,
   inputHints: { fields: [
@@ -47,3 +50,6 @@ export const FIND_ACTION_SPECS = [{
   ] },
   examples: { voice: { argsExample: '{"op":"set","query":"TODO"}' } },
 }] as const satisfies readonly PreNormalizedActionSpec[];
+}
+
+export const FIND_ACTION_SPECS: ReturnType<typeof createFindActionSpecs> = lazyActionSpecArray(createFindActionSpecs);

@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { defineActionSpecs } from './definition.js';
 import type { PreNormalizedActionSpec } from './definition.js';
 import { DISCUSSION_ACTION_INPUT_SCHEMAS_V1, DISCUSSION_ACTION_OUTPUT_SCHEMAS_V1 } from '../../discussions/actions.js';
@@ -5,7 +6,8 @@ import { DISCUSSION_HTTP_PATHS_V1 } from '../../discussions/api.js';
 import { DISCUSSION_ARCHIVE_CLI_PROJECTION, DISCUSSION_CREATE_CLI_PROJECTION, DISCUSSION_GET_CLI_PROJECTION, DISCUSSION_LIST_CLI_PROJECTION, DISCUSSION_POST_CLI_PROJECTION, DISCUSSION_READ_CLI_PROJECTION, DISCUSSION_READ_STATE_SET_CLI_PROJECTION, DISCUSSION_RENAME_CLI_PROJECTION, DISCUSSION_RESTORE_CLI_PROJECTION } from './discussionCli.js';
 
 
-export const DISCUSSION_ACTION_SPECS_V1 = Object.freeze(defineActionSpecs([
+function createDiscussionActionSpecsV1() {
+  return Object.freeze(defineActionSpecs([
   {
     id: 'discussion.second_opinion.start',
     title: 'Get a second opinion',
@@ -480,3 +482,6 @@ export const DISCUSSION_ACTION_SPECS_V1 = Object.freeze(defineActionSpecs([
     cli: { acceptsServerId: true, commands: [{ path: ['discussions', 'access', 'grants', 'remove'], positionals: ['discussionId'], visibility: 'canonical' }] },
   } satisfies PreNormalizedActionSpec,
 ] as const));
+}
+
+export const DISCUSSION_ACTION_SPECS_V1: ReturnType<typeof createDiscussionActionSpecsV1> = lazyActionSpecArray(createDiscussionActionSpecsV1);

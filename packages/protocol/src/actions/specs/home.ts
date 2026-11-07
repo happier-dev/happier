@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import {
   HomeAccountDeleteResultV1Schema,
   HomeAccountDetailV1Schema,
@@ -69,7 +70,8 @@ const ACCOUNT_ID_FIELD = approvalField('accountId', 'Account ID', { required: tr
  * a same-state mutation reports the unchanged current Account rather than an
  * acknowledgement the caller would have to re-read to trust.
  */
-export const HOME_GOVERNANCE_ACTION_SPECS = Object.freeze([
+function createHomeGovernanceActionSpecs() {
+  return Object.freeze([
   homeDomainActionRow({
     id: 'home.public_profiles.restrict', approval: { result: 'required', flow: 'deferred' },
     title: 'Restrict a public profile',
@@ -258,6 +260,10 @@ export const HOME_GOVERNANCE_ACTION_SPECS = Object.freeze([
     inputSchema: HomeAccountDeleteInputV1Schema,
     outputSchema: HomeAccountDeleteResultV1Schema,
     inputHints: { fields: [ACCOUNT_ID_FIELD] },
+    approvalPresentation: { summary: () => null, inputHints: { fields: [
+      ACCOUNT_ID_FIELD,
+      approvalField('managedResourceDispositions', 'Managed resource dispositions', { widget: 'json' }),
+    ] } },
   }),
   homeDomainActionRow({
     id: 'home.accounts.signOutEverywhere', approval: {result: 'required'},
@@ -426,3 +432,6 @@ export const HOME_GOVERNANCE_ACTION_SPECS = Object.freeze([
     outputSchema: HomeRetentionDryRunResultV1Schema,
   }),
 ]) satisfies readonly PreNormalizedActionSpec[];
+}
+
+export const HOME_GOVERNANCE_ACTION_SPECS: ReturnType<typeof createHomeGovernanceActionSpecs> = lazyActionSpecArray(createHomeGovernanceActionSpecs);

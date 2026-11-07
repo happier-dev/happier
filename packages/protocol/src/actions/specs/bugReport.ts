@@ -1,4 +1,6 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 export { BUG_REPORT_SUBMISSION_ACTION_IDS } from './bugReportActionIdsV1.js';
+import { BugReportDiagnosticsRequestSchema } from '../../bugs/reports/machineDiagnostics.js';
 import { PassthroughEmptyObjectSchema } from './common.js';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import { DAEMON_ADMIN_RPC_SURFACES, DAEMON_ADMIN_INPUT_HINTS } from './common.js';
@@ -6,6 +8,13 @@ import type { PreNormalizedActionSpec } from './definition.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { BUG_REPORT_DEFAULT_ISSUE_OWNER, BUG_REPORT_DEFAULT_ISSUE_REPO } from '../../bugs/reports/types.js';
+
+const BugReportEnvironmentInputSchema = lazyZodSchema(() => z.strictObject({
+  appVersion: z.string(), platform: z.string(),
+  osVersion: z.optional(z.string()), deviceModel: z.optional(z.string()),
+  serverUrl: z.optional(z.string()), serverVersion: z.optional(z.string()),
+  deploymentType: z.enum(['cloud', 'self-hosted', 'enterprise']),
+}));
 
 // This is the submission envelope, not a second form-validation policy. The
 // answering client's existing draft owner validates required fields and consent.
@@ -15,14 +24,14 @@ export const BugReportDraftInputSchema = lazyZodSchema(() => z.strictObject({
   reproductionStepsText: z.string(), whatChangedRecently: z.string(),
   frequency: z.optional(z.enum(['always', 'often', 'sometimes', 'once'])),
   severity: z.optional(z.enum(['blocker', 'high', 'medium', 'low'])),
-  environment: z.strictObject({
-    appVersion: z.string(), platform: z.string(),
-    osVersion: z.optional(z.string()), deviceModel: z.optional(z.string()),
-    serverUrl: z.optional(z.string()), serverVersion: z.optional(z.string()),
-    deploymentType: z.enum(['cloud', 'self-hosted', 'enterprise']),
-  }),
+  environment: BugReportEnvironmentInputSchema,
   includeDiagnostics: z.boolean(), diagnosticsKinds: z.optional(z.array(z.string())),
   acceptedPrivacyNotice: z.boolean(),
+}));
+
+const BugReportPreparedDiagnosticsSchema = lazyZodSchema(() => z.strictObject({
+  artifacts: z.array(z.strictObject({ filename: z.string(), sourceKind: z.string(), contentType: z.string(), content: z.string() })),
+  environment: BugReportEnvironmentInputSchema,
 }));
 
 export const BugReportSubmitInputSchema = lazyZodSchema(() => z.strictObject({
@@ -37,6 +46,7 @@ export const BugReportSubmitInputSchema = lazyZodSchema(() => z.strictObject({
     existingIssueNumber: z.optional(z.number().check(z.int(), z.positive())),
   }),
   pastedCliDoctorSnapshotJson: z.optional(z.string()),
+  preparedDiagnostics: z.optional(BugReportPreparedDiagnosticsSchema),
 }));
 
 export const BugReportSubmitOutputSchema = lazyZodSchema(() => z.discriminatedUnion('mode', [
@@ -59,6 +69,7 @@ export function projectBugReportSubmitInput(input: unknown) {
       acceptedPrivacyNotice: parsed.data.draft.acceptedPrivacyNotice,
     },
     ...(parsed.data.pastedCliDoctorSnapshotJson ? { pastedCliDoctorSnapshotJson: '[supplied privately]' } : {}),
+    ...(parsed.data.preparedDiagnostics ? { preparedDiagnostics: '[supplied privately]' } : {}),
     destination: parsed.data.destination,
   };
 }
@@ -71,7 +82,8 @@ export const BugReportUploadArtifactInputSchema = lazyZodSchema(() => z.looseObj
   uploadUrl: z.optional(z.string()),
 }));
 
-export const BUG_REPORT_ACTION_SPECS = Object.freeze([
+function createBugReportActionSpecs() {
+  return Object.freeze([
   {
     id: 'bugreport.submit', approvalPolicy: { uiConfirmation: 'policy' }, approval: {result: 'required'},
     confirmVerb: { key: 'common.send', fallback: 'Send' }, irreversible: true,
@@ -113,7 +125,7 @@ export const BUG_REPORT_ACTION_SPECS = Object.freeze([
     surfaces: DAEMON_ADMIN_RPC_SURFACES,
     sideEffectClass: 'read',
     outputSchema: StrictJsonValueSchema,
-    inputSchema: PassthroughEmptyObjectSchema,
+    inputSchema: BugReportDiagnosticsRequestSchema,
     inputHints: DAEMON_ADMIN_INPUT_HINTS,
   } satisfies PreNormalizedActionSpec,
   {
@@ -143,3 +155,6 @@ export const BUG_REPORT_ACTION_SPECS = Object.freeze([
     inputHints: DAEMON_ADMIN_INPUT_HINTS,
   } satisfies PreNormalizedActionSpec,
 ] as const);
+}
+
+export const BUG_REPORT_ACTION_SPECS: ReturnType<typeof createBugReportActionSpecs> = lazyActionSpecArray(createBugReportActionSpecs);

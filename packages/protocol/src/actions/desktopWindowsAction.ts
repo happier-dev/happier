@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from './lazyActionSpecValue.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import type { PreNormalizedActionSpec } from './actionSpecs.js';
@@ -33,7 +34,8 @@ export type DesktopWindowTarget = z.infer<typeof DesktopWindowTargetSchema>;
 export type DesktopWindowsOpenInput = z.infer<typeof DesktopWindowsOpenInputSchema>;
 export type DesktopWindowsOpenResult = z.infer<typeof DesktopWindowsOpenResultSchema>;
 
-export const DESKTOP_WINDOWS_ACTION_SPECS = [{
+function createDesktopWindowsActionSpecs() {
+  return [{
   id: 'desktop.windows.open', approval: { result: 'optional' },
   title: 'Open in a desktop window',
   description: 'Move a qualified workspace or pane tab, or open a destination in the answering desktop. Full chrome opens an independent workspace; an explicit window id retargets it.',
@@ -49,3 +51,6 @@ export const DESKTOP_WINDOWS_ACTION_SPECS = [{
     { path: 'windowId', title: 'Existing window', widget: 'text' },
   ] },
 }] as const satisfies readonly PreNormalizedActionSpec[];
+}
+
+export const DESKTOP_WINDOWS_ACTION_SPECS: ReturnType<typeof createDesktopWindowsActionSpecs> = lazyActionSpecArray(createDesktopWindowsActionSpecs);

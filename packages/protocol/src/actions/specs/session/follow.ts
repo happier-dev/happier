@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { FollowPolicyV1Schema } from '../../../sessions/follow/sessionFollowPolicyV1.js';
 import { z } from 'zod/mini';
@@ -43,7 +44,8 @@ export function deliveryMuteActionMetadata(operation: 'set' | 'remove' | 'list')
   } as const satisfies Omit<PreNormalizedActionSpec, 'id' | 'inputSchema' | 'outputSchema'>;
 }
 
-export const SESSION_FOLLOW_ACTION_SPECS = Object.freeze([
+function createSessionFollowActionSpecs() {
+  return Object.freeze([
   {
     id: 'follow.preferences.get', approval: {result: 'required'},
     title: 'Get Follow defaults',
@@ -169,9 +171,13 @@ export const SESSION_FOLLOW_ACTION_SPECS = Object.freeze([
     outputSchema: SessionFollowActionOutputSchemasV1['session.delivery.mute.list'],
   } satisfies PreNormalizedActionSpec,
 ] as const);
+}
+
+export const SESSION_FOLLOW_ACTION_SPECS: ReturnType<typeof createSessionFollowActionSpecs> = lazyActionSpecArray(createSessionFollowActionSpecs);
 
 
-export const SESSION_FOLLOW_RELATION_ACTION_SPECS = Object.freeze([
+function createSessionFollowRelationActionSpecs() {
+  return Object.freeze([
   {
     id: 'follow.get', approval: {result: 'required'},
     sessionTarget: { field: 'receiver.sessionId', cardinality: 'one' },
@@ -235,4 +241,7 @@ export const SESSION_FOLLOW_RELATION_ACTION_SPECS = Object.freeze([
     serverTransport: { method: 'DELETE', path: SESSION_FOLLOW_HTTP_PATHS_V1.follow },
   } satisfies PreNormalizedActionSpec,
 ] as const);
+}
+
+export const SESSION_FOLLOW_RELATION_ACTION_SPECS: ReturnType<typeof createSessionFollowRelationActionSpecs> = lazyActionSpecArray(createSessionFollowRelationActionSpecs);
 

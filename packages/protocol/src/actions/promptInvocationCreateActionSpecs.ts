@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from './lazyActionSpecValue.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { PromptInvocationAvailabilityV1Schema, PromptInvocationBehaviorV1Schema, PromptInvocationTargetV1Schema } from '../prompts/library/promptInvocationsV1.js';
@@ -36,7 +37,8 @@ export const PromptInvocationDeleteOutputSchema = lazyZodSchema(() => z.discrimi
 ]));
 // Shortcuts live in the Account catalog. Mounted composers only consume them;
 // authoring and approval replay use the same catalog port on every host.
-export const PROMPT_INVOCATION_CREATE_ACTION_SPECS = [{
+function createPromptInvocationCreateActionSpecs() {
+  return [{
   id: 'prompts.invocation.create', approval: {result: 'required'}, title: 'Create a prompt shortcut',
   description: 'Add a slash shortcut to an existing prompt document in the admitted Account. Uses the current invocations catalog, canonical token validation and revision CAS; conflicts are not retried.',
   safety: 'danger', sideEffectClass: 'write', executionPlacement: 'account', placements: [],
@@ -88,3 +90,6 @@ export const PROMPT_INVOCATION_CREATE_ACTION_SPECS = [{
     { path: 'expectedRevision', title: 'Catalog revision', widget: 'number', required: true },
   ] },
 }] as const satisfies readonly PreNormalizedActionSpec[];
+}
+
+export const PROMPT_INVOCATION_CREATE_ACTION_SPECS: ReturnType<typeof createPromptInvocationCreateActionSpecs> = lazyActionSpecArray(createPromptInvocationCreateActionSpecs);

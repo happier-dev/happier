@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { InputOptionsConsumerV1Schema } from '../../inputs/inputOptionsConsumer.js';
 import { z } from 'zod/mini';
@@ -92,7 +93,8 @@ export const ActionOptionsResolveResultSchema = lazyZodSchema(() => z.strictObje
   }
 })));
 
-export const ACTION_CATALOG_ACTION_SPECS = Object.freeze([
+function createActionCatalogActionSpecs() {
+  return Object.freeze([
   {
     id: 'action.spec.search', executionPlacement: 'account', toolExposure: { agent: 'direct', mcp: 'direct' }, approval: {result: 'required'},
     title: 'Search action specs',
@@ -188,9 +190,13 @@ export const ACTION_CATALOG_ACTION_SPECS = Object.freeze([
     inputSchema: ActionSpecGetInputSchema,
   } satisfies PreNormalizedActionSpec,
 ] as const);
+}
+
+export const ACTION_CATALOG_ACTION_SPECS: ReturnType<typeof createActionCatalogActionSpecs> = lazyActionSpecArray(createActionCatalogActionSpecs);
 
 
-export const ACTION_OPTIONS_ACTION_SPECS = Object.freeze([
+function createActionOptionsActionSpecs() {
+  return Object.freeze([
   {
     id: 'action.options.resolve', executionPlacement: 'machine', toolExposure: { agent: 'direct', mcp: 'direct' }, approval: {result: 'required'},
     title: 'Resolve action options',
@@ -262,4 +268,7 @@ export const ACTION_OPTIONS_ACTION_SPECS = Object.freeze([
     inputSchema: ActionInvokeInputSchema,
   } satisfies PreNormalizedActionSpec,
 ] as const);
+}
+
+export const ACTION_OPTIONS_ACTION_SPECS: ReturnType<typeof createActionOptionsActionSpecs> = lazyActionSpecArray(createActionOptionsActionSpecs);
 

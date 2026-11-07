@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import type { PreNormalizedActionSpec } from './definition.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { ApprovalQueueListResultV1Schema, ApprovalRequestGetResultV1Schema } from '../../approvals/approvalRequestPublicRead.js';
@@ -52,12 +53,13 @@ export const ApprovalRequestDecideInputSchema = lazyZodSchema(() => z.strictObje
   serverIdentityId: z.optional(z.string().check(z.minLength(1))),
 }));
 
-export const APPROVAL_REQUEST_ACTION_SPECS = Object.freeze([
+function createApprovalRequestActionSpecs() {
+  return Object.freeze([
   {
     id: 'approval.request.list', executionPlacement: 'account', approvalPolicy: { control: true }, approval: {result: 'required'},
     prompting: { voiceHotPath: true },
     title: 'List approval requests',
-    description: 'List approval queue entries from targeted approval artifact headers.',
+    description: 'List approval queue entries from targeted approval artifact headers, with the Automation and Discussion each request belongs to.',
     safety: 'safe',
     placements: [],
     bindings: { voiceClientToolName: 'approval_request_list', mcpToolName: 'approval_request_list', rpcMethod: 'approval.request.list' },
@@ -196,4 +198,7 @@ export const APPROVAL_REQUEST_ACTION_SPECS = Object.freeze([
     },
   } satisfies PreNormalizedActionSpec,
 ] as const);
+}
+
+export const APPROVAL_REQUEST_ACTION_SPECS: ReturnType<typeof createApprovalRequestActionSpecs> = lazyActionSpecArray(createApprovalRequestActionSpecs);
 

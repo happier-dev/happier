@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from './lazyActionSpecValue.js';
 import { UPDATES_ACTION_IDS } from './updatesActionIdsV1.js';
 export { UPDATES_ACTION_IDS } from './updatesActionIdsV1.js';
 import { z } from 'zod/mini';
@@ -54,7 +55,8 @@ export const UpdatesActionOutputSchemas = {
   'machines.cli.update': OperationResultSchema, 'updates.check': OperationResultSchema,
   'updates.batch.start': OperationResultSchema, 'updates.batch.stop': OperationResultSchema,
 } as const;
-export const UPDATES_ACTION_SPECS = UPDATES_ACTION_IDS.map((actionId): PreNormalizedActionSpec => ({
+function createUpdatesActionSpecs() {
+  return UPDATES_ACTION_IDS.map((actionId): PreNormalizedActionSpec => ({
   ...(actionId === 'machines.cli.update' || actionId === 'updates.batch.start'
     ? { confirmVerb: { key: 'common.update', fallback: 'Update' } } : {}),
   id: actionId, approval: { result: 'required' }, approvalPolicy: { uiConfirmation: 'policy' }, title: {
@@ -73,5 +75,13 @@ export const UPDATES_ACTION_SPECS = UPDATES_ACTION_IDS.map((actionId): PreNormal
   cli: { acceptsServerId: true, commands: [] },
   toolExposure: { agent: 'discoverable_only', mcp: 'discoverable_only' },
   inputSchema: UpdatesActionInputSchemas[actionId], outputSchema: UpdatesActionOutputSchemas[actionId],
-  inputHints: { fields: [] },
+  inputHints: { fields: actionId === 'machines.cli.update'
+    ? [{ path: 'target', title: 'Update target', widget: 'json', required: true, description: 'Use {kind:"local"} or {kind:"machine",machineId} from updates.get.' }]
+    : actionId === 'updates.batch.start' ? [
+      { path: 'groupId', title: 'Update group', widget: 'json', required: true, description: 'A group id from updates.get, or null for the selected items across groups.' },
+      { path: 'itemIds', title: 'Update items', widget: 'json', required: true, description: 'The exact batch-eligible item ids returned by updates.get.' },
+    ] : [] },
 }));
+}
+
+export const UPDATES_ACTION_SPECS: ReturnType<typeof createUpdatesActionSpecs> = lazyActionSpecArray(createUpdatesActionSpecs);

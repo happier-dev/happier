@@ -1,8 +1,10 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import { MachineGuardActivityFilterV1Schema, MachineGuardActivityListV1Schema, MachineGuardActivityRangeV1Schema } from '../../machines/guard/activityV1.js';
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
+import { actionInputServerId } from './definition.js';
 
 import { MACHINE_GUARD_ACTIVITY_ACTION_IDS } from '../../machines/guard/actionIdsV1.js';
 export { MACHINE_GUARD_ACTIVITY_ACTION_IDS } from '../../machines/guard/actionIdsV1.js';
@@ -25,7 +27,8 @@ export const MACHINE_GUARD_ACTIVITY_OUTPUT_SCHEMAS = {
 const fields = [{ path: 'serverId', title: 'Home ID', widget: 'text', required: false },
   { path: 'machineId', title: 'Machine ID', widget: 'text', required: true }] as const;
 const surfaces = { ui: true, cli: true, agent: true, mcp: true, voice: false, rpc: true } as const;
-export const MACHINE_GUARD_ACTIVITY_ACTION_SPECS = [
+function createMachineGuardActivityActionSpecs() {
+  return [
   {
     id: 'machines.guard.activity.list', approval: {result: 'required'}, title: 'Read guard activity',
     toolExposure: { agent: 'discoverable_only' },
@@ -34,6 +37,7 @@ export const MACHINE_GUARD_ACTIVITY_ACTION_SPECS = [
     safety: 'safe', sideEffectClass: 'read', executionPlacement: 'machine', placements: [], surfaces,
     bindings: { mcpToolName: 'machines_guard_activity_list', rpcMethod: 'machines.guard.activity.list' },
     inputSchema: MachineGuardActivityListInputV1Schema, outputSchema: MachineGuardActivityListV1Schema,
+    invocationServerIdForInput: actionInputServerId(MachineGuardActivityListInputV1Schema, input => input.serverId),
     cli: { acceptsServerId: true, commands: [{ path: ['machines', 'guard', 'activity', 'list'], visibility: 'canonical' }] },
     inputHints: { fields: [...fields, { path: 'range', title: 'Range', widget: 'select', required: true,
       options: [{ value: 'today', label: 'Today' }, { value: '7d', label: '7 days' }, { value: '30d', label: '30 days' }] },
@@ -48,7 +52,11 @@ export const MACHINE_GUARD_ACTIVITY_ACTION_SPECS = [
     safety: 'safe', sideEffectClass: 'write', executionPlacement: 'machine', placements: [], surfaces,
     bindings: { mcpToolName: 'machines_guard_activity_undo', rpcMethod: 'machines.guard.activity.undo' },
     inputSchema: MachineGuardActivityUndoInputV1Schema, outputSchema: StrictJsonValueSchema,
+    invocationServerIdForInput: actionInputServerId(MachineGuardActivityUndoInputV1Schema, input => input.serverId),
     cli: { acceptsServerId: true, commands: [{ path: ['machines', 'guard', 'activity', 'undo'], visibility: 'canonical' }] },
     inputHints: { fields: [...fields, { path: 'entryId', title: 'Activity entry ID', widget: 'text', required: true }] },
   },
 ] as const satisfies readonly PreNormalizedActionSpec[];
+}
+
+export const MACHINE_GUARD_ACTIVITY_ACTION_SPECS: ReturnType<typeof createMachineGuardActivityActionSpecs> = lazyActionSpecArray(createMachineGuardActivityActionSpecs);

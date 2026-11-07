@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from './lazyActionSpecValue.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import type { PreNormalizedActionSpec } from './actionSpecs.js';
@@ -23,7 +24,8 @@ export const SessionMessagePinsOutputSchema = lazyZodSchema(() => z.discriminate
   z.strictObject({ status: z.literal('ready'), sessionId: z.string().check(z.minLength(1)), pins: z.array(SessionMessagePinV1Schema) }),
   z.strictObject({ status: z.literal('unavailable'), reason: z.literal('noClient') }),
 ]));
-export const SESSION_MESSAGE_PIN_ACTION_SPECS = [{
+function createSessionMessagePinActionSpecs() {
+  return [{
   id: 'session.messages.pins', approval: { result: 'required' },
   cli: { commands: [] },
   approvalPolicy: { uiConfirmation: 'direct' },
@@ -35,3 +37,6 @@ export const SESSION_MESSAGE_PIN_ACTION_SPECS = [{
   bindings: { mcpToolName: 'session_messages_pins' },
   inputSchema: SessionMessagePinsInputSchema, outputSchema: SessionMessagePinsOutputSchema,
 }] as const satisfies readonly PreNormalizedActionSpec[];
+}
+
+export const SESSION_MESSAGE_PIN_ACTION_SPECS: ReturnType<typeof createSessionMessagePinActionSpecs> = lazyActionSpecArray(createSessionMessagePinActionSpecs);

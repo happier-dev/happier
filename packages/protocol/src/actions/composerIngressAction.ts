@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from './lazyActionSpecValue.js';
 import * as zMini from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
@@ -37,7 +38,8 @@ const addressHints = [
   { path: 'scope', title: 'Account scope', widget: 'json', required: true },
   { path: 'ref', title: 'Mounted composer', widget: 'json', required: true },
 ] as const;
-export const COMPOSER_INGRESS_ACTION_SPECS = [{
+function createComposerIngressActionSpecs() {
+  return [{
   ...client, id: 'composer.transaction.apply', approval: {result: 'required'}, title: 'Apply composer transaction',
   clientPresenter: 'session',
   cli: { commands: [{ path: ['composer', 'transaction', 'apply'], visibility: 'canonical' }] },
@@ -72,3 +74,6 @@ export const COMPOSER_INGRESS_ACTION_SPECS = [{
   ] },
   examples: { mcp: { argsExample: '{"scope":{"serverId":"home-a","accountId":"account-a"},"workspace":{"serverId":"home-a","machineId":"machine-a","rootPath":"/repo"},"destinationDir":"src","kind":"files"}' } },
 }] as const satisfies readonly PreNormalizedActionSpec[];
+}
+
+export const COMPOSER_INGRESS_ACTION_SPECS: ReturnType<typeof createComposerIngressActionSpecs> = lazyActionSpecArray(createComposerIngressActionSpecs);

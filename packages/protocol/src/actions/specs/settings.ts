@@ -1,3 +1,4 @@
+import { lazyActionSpecArray , type ActionSpecArrayConcat } from '../lazyActionSpecValue.js';
 import { SETTINGS_DECLARATION_ACTION_IDS_V1, SettingsDeclarationActionInputSchemasV1, SettingsDeclarationActionOutputSchemasV1 } from '../settingsDeclarationActionFamily.js';
 import { ACTION_POLICY_ACTION_IDS, ActionPolicyInputSchemas, ActionPolicyOutputSchemas } from '../actionPolicyActionFamily.js';
 import { BUILT_IN_SETTINGS_DECLARATIONS_V1, describeSettingsDeclarationApprovalSummaryV1, projectSettingsDeclarationApprovalInputV1, readBuiltInSettingDeclarationV1, readBuiltInSettingsOperationApprovalPolicyV1, readBuiltInSettingsWriteSafetyV1, readBuiltInSettingsPermissionChangingV1 } from '../settings/settingsDeclarations.js';
@@ -29,7 +30,9 @@ export const ACTION_POLICY_SPECS = Object.freeze([
 ] as const);
 
 
-export const SETTINGS_ADMINISTRATION_ACTION_SPECS = Object.freeze([
+export const SETTINGS_ADMINISTRATION_ACTION_SPECS: ActionSpecArrayConcat<readonly [
+  PreNormalizedActionSpec[],
+]> = lazyActionSpecArray(() => Object.freeze([
   ...(SETTINGS_DECLARATION_ACTION_IDS_V1.map((id): PreNormalizedActionSpec => ({
     id, approval: { result: 'required' }, originalExecution: { terminalRoot: 'host' },
     // The operation schema stays behind realtime discovery; the native Agent
@@ -84,4 +87,4 @@ export const SETTINGS_ADMINISTRATION_ACTION_SPECS = Object.freeze([
       ] },
     cli: { acceptsServerId: true, commands: [{ path: id.split('.'), visibility: 'canonical' }] },
   })) satisfies readonly PreNormalizedActionSpec[]),
-] as const);
+] as const));

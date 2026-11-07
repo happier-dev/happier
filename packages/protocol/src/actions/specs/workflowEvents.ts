@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { AutomationEligibleEventsCatalogV1Schema } from '../../daemon/automationEligibleEvents.js';
@@ -16,7 +17,8 @@ export const WorkflowEventsListOutputV1Schema = lazyZodSchema(() => z.strictObje
 }));
 export type WorkflowEventsListOutputV1 = z.output<typeof WorkflowEventsListOutputV1Schema>;
 
-export const WORKFLOW_EVENT_CATALOG_ACTION_SPECS_V1 = [{
+function createWorkflowEventCatalogActionSpecsV1() {
+  return [{
   id: 'workflow.events.list', approval: {result: 'none'},
   title: 'List eligible workflow events',
   description: 'List eligible trigger events from the selected Machine\'s current Event declarations. Returns event ids, titles, supported observation transports and source setup Actions. Use these declarations to discover Event trigger types; runWhen values are workflow block outcome conditions. This catalog does not configure, list or admit source instances.',
@@ -32,3 +34,6 @@ export const WORKFLOW_EVENT_CATALOG_ACTION_SPECS_V1 = [{
   inputSchema: WorkflowEventsListInputV1Schema,
   outputSchema: WorkflowEventsListOutputV1Schema,
 }] as const satisfies readonly PreNormalizedActionSpec[];
+}
+
+export const WORKFLOW_EVENT_CATALOG_ACTION_SPECS_V1: ReturnType<typeof createWorkflowEventCatalogActionSpecsV1> = lazyActionSpecArray(createWorkflowEventCatalogActionSpecsV1);

@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { MACHINE_PROCESS_INPUT_FIELDS } from './machineProcessesInputHints.js';
 import { MACHINE_PROCESSES_ACTION_IDS } from './machineProcessesActionIdsV1.js';
 export { MACHINE_PROCESSES_ACTION_IDS } from './machineProcessesActionIdsV1.js';
@@ -13,6 +14,7 @@ import {
 } from '../../machines/processes/machineProcessesV1.js';
 import { RPC_METHODS } from '../../rpc/methods.js';
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
+import { actionInputServerId } from './definition.js';
 export type MachineProcessesActionId = typeof MACHINE_PROCESSES_ACTION_IDS[number];
 export const MachineProcessesActionIdSchema = lazyZodSchema(() => z.enum(MACHINE_PROCESSES_ACTION_IDS));
 export const MACHINE_PROCESSES_ACTION_INPUT_SCHEMAS = {
@@ -71,6 +73,7 @@ function processSpec<const Id extends MachineProcessesActionId>([id, title, desc
     surfaces: { ui: true, cli: true, agent: true, mcp: true, voice: false, rpc: true },
     bindings: { rpcMethod, mcpToolName: id.replaceAll('.', '_') },
     inputSchema: MACHINE_PROCESSES_ACTION_INPUT_SCHEMAS[id], outputSchema: MACHINE_PROCESSES_ACTION_OUTPUT_SCHEMAS[id],
+    invocationServerIdForInput: actionInputServerId<(typeof MACHINE_PROCESSES_ACTION_INPUT_SCHEMAS)[MachineProcessesActionId]>(MACHINE_PROCESSES_ACTION_INPUT_SCHEMAS[id], input => input.serverId),
     cli: { acceptsServerId: true, commands: [{ path: ['machines', 'processes', command], visibility: 'canonical' }] },
     inputHints: { fields: [
       { path: 'serverId', title: 'Home ID', widget: 'text', required: false },
@@ -89,7 +92,8 @@ function processSpec<const Id extends MachineProcessesActionId>([id, title, desc
   };
 }
 
-export const MACHINE_PROCESSES_ACTION_SPECS = [
+function createMachineProcessesActionSpecs() {
+  return [
   processSpec(['machines.processes.list', 'Read machine processes', 'What Happier started on a machine, grouped by session and owner, with memory and CPU.', RPC_METHODS.MACHINES_PROCESSES_LIST, 'list', 'read', 'safe']),
   processSpec(['machines.processes.get', 'Read a machine process', 'One process Happier started: what it is, who started it and how sure Happier is.', RPC_METHODS.MACHINES_PROCESSES_GET, 'get', 'read', 'safe']),
   processSpec(['machines.processes.check', 'Check machine processes', 'Looks again at the chosen processes right before acting, so nothing changed underneath.', RPC_METHODS.MACHINES_PROCESSES_CHECK, 'check', 'read', 'safe']),
@@ -98,3 +102,6 @@ export const MACHINE_PROCESSES_ACTION_SPECS = [
   processSpec(['machines.processes.kill', 'Force-quit processes', 'Ends processes that would not stop, after checking they are still the ones you reviewed.', RPC_METHODS.MACHINES_PROCESSES_KILL, 'kill', 'danger', 'danger']),
   processSpec(['machines.processes.leftBehind.cleanUp', 'Clean up left-behind processes', 'Ends processes left behind by sessions that already ended, and says which it skipped.', RPC_METHODS.MACHINES_PROCESSES_LEFT_BEHIND_CLEAN_UP, 'clean-up', 'danger', 'danger']),
 ] as const satisfies readonly PreNormalizedActionSpec[];
+}
+
+export const MACHINE_PROCESSES_ACTION_SPECS: ReturnType<typeof createMachineProcessesActionSpecs> = lazyActionSpecArray(createMachineProcessesActionSpecs);

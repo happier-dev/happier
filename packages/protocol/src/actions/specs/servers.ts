@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
@@ -8,7 +9,8 @@ export const ServersListInputSchema = lazyZodSchema(() => z.looseObject({
   limit: z.optional(z.number().check(z.int(), z.minimum(1), z.maximum(200))),
 }));
 
-export const SERVER_DISCOVERY_ACTION_SPECS = Object.freeze([
+function createServerDiscoveryActionSpecs() {
+  return Object.freeze([
   {
     id: 'servers.list', executionPlacement: 'client', approval: {result: 'required'},
     title: 'List servers',
@@ -36,4 +38,7 @@ export const SERVER_DISCOVERY_ACTION_SPECS = Object.freeze([
     inputSchema: ServersListInputSchema,
   } satisfies PreNormalizedActionSpec,
 ] as const);
+}
+
+export const SERVER_DISCOVERY_ACTION_SPECS: ReturnType<typeof createServerDiscoveryActionSpecs> = lazyActionSpecArray(createServerDiscoveryActionSpecs);
 

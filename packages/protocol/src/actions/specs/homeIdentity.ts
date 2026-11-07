@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { z } from 'zod/mini';
 
 import type { HomeIdentityActionIdV1 } from '../../teams/identity/actionIds.js';
@@ -102,7 +103,8 @@ function homeIdentityActionRow(id: HomeIdentityActionIdV1): HomeIdentityActionRo
 
 // The scope adapter inherits authority, approval and bearer custody from the
 // canonical identity rows rather than maintaining another security policy.
-export const HOME_IDENTITY_ACTION_SPECS = Object.freeze([
+function createHomeIdentityActionSpecs() {
+  return Object.freeze([
   homeIdentityActionRow('home.identity.connections.list'),
   homeIdentityActionRow('home.identity.connections.create'),
   homeIdentityActionRow('home.identity.connections.settings.update'),
@@ -117,3 +119,6 @@ export const HOME_IDENTITY_ACTION_SPECS = Object.freeze([
   homeIdentityActionRow('home.identity.workos.reconcile'),
   homeIdentityActionRow('home.identity.workos.connection.set'),
 ]);
+}
+
+export const HOME_IDENTITY_ACTION_SPECS: ReturnType<typeof createHomeIdentityActionSpecs> = lazyActionSpecArray(createHomeIdentityActionSpecs);

@@ -1,10 +1,12 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { ModelFavoriteMutationV1Schema } from '../../providers/modelFavoritesV1.js';
 import { z } from 'zod/mini';
 import type { PreNormalizedActionSpec } from './definition.js';
 
 
-export const MODEL_FAVORITE_ACTION_SPECS = Object.freeze([
+function createModelFavoriteActionSpecs() {
+  return Object.freeze([
   {
     id: 'models.favorite.set', approval: {result: 'none'},
     title: 'Favorite model',
@@ -19,4 +21,7 @@ export const MODEL_FAVORITE_ACTION_SPECS = Object.freeze([
     cli: { acceptsServerId: true, commands: [{ path: ['models', 'favorite', 'set'], visibility: 'canonical' }] },
   } satisfies PreNormalizedActionSpec,
 ] as const);
+}
+
+export const MODEL_FAVORITE_ACTION_SPECS: ReturnType<typeof createModelFavoriteActionSpecs> = lazyActionSpecArray(createModelFavoriteActionSpecs);
 

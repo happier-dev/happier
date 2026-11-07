@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import type { PreNormalizedActionSpec } from '../../actionSpecs.js';
@@ -13,7 +14,8 @@ export const SessionPendingNextOutputSchema = lazyZodSchema(() => z.union([
 export type SessionPendingNextOutput = z.infer<typeof SessionPendingNextOutputSchema>;
 
 /** Navigation belongs to the current mounted client, never Session resume. */
-export const SESSION_PENDING_NEXT_ACTION_SPECS = [{
+function createSessionPendingNextActionSpecs() {
+  return [{
   id: 'session.pending.next', approval: {result: 'required'},
   title: 'Go to the next pending request',
   description: 'Focus the oldest answerable pending request on the mounted client. Returns unavailable when no client can navigate.',
@@ -31,3 +33,6 @@ export const SESSION_PENDING_NEXT_ACTION_SPECS = [{
   inputHints: { description: 'Jump to the oldest request that is waiting for your answer.', fields: [] },
   examples: { voice: { argsExample: '{}' } },
 }] as const satisfies readonly PreNormalizedActionSpec[];
+}
+
+export const SESSION_PENDING_NEXT_ACTION_SPECS: ReturnType<typeof createSessionPendingNextActionSpecs> = lazyActionSpecArray(createSessionPendingNextActionSpecs);

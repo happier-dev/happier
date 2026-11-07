@@ -1,10 +1,12 @@
+import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { defineActionSpecs } from '../definition.js';
 import type { PreNormalizedActionSpec } from '../definition.js';
 
 
-export const CAPTURE_VIEW_ACTION_SPECS = Object.freeze(defineActionSpecs([
+function createCaptureViewActionSpecs() {
+  return Object.freeze(defineActionSpecs([
   {
     id: 'capture.view', executionPlacement: 'client', approvalPolicy: { pluginCaptureWaiver: true, requiredSurfaces: ['ui', 'voice', 'agent', 'mcp', 'cli', 'rpc', 'api', 'plugin'] }, approval: {result: 'required'},
     title: 'View host capture',
@@ -20,3 +22,6 @@ export const CAPTURE_VIEW_ACTION_SPECS = Object.freeze(defineActionSpecs([
     inputHints: { fields: [] },
   } satisfies PreNormalizedActionSpec,
 ] as const));
+}
+
+export const CAPTURE_VIEW_ACTION_SPECS: ReturnType<typeof createCaptureViewActionSpecs> = lazyActionSpecArray(createCaptureViewActionSpecs);

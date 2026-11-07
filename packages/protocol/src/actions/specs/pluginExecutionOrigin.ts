@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { PLUGIN_EXECUTION_ORIGIN_ACTION_IDS, PluginExecutionOriginActionInputSchemas as inputs,
   PluginExecutionOriginActionOutputSchemas as outputs } from '../pluginExecutionOriginActionFamily.js';
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
@@ -7,7 +8,8 @@ const titles = {
   'plugins.execution_origin.set': 'Choose where a plugin runs',
   'plugins.execution_origin.clear': 'Clear plugin execution origin preference',
 };
-export const PLUGIN_EXECUTION_ORIGIN_ACTION_SPECS = PLUGIN_EXECUTION_ORIGIN_ACTION_IDS.map((id): PreNormalizedActionSpec => ({
+function createPluginExecutionOriginActionSpecs() {
+  return PLUGIN_EXECUTION_ORIGIN_ACTION_IDS.map((id): PreNormalizedActionSpec => ({
   id, approval: { result: 'required' }, title: titles[id], description: 'Read or change where a plugin runs on the answering device and Home, or an addressed mounted contextual choice. clientId selects an exact connected app; unselected mutations refuse when several apps can answer. List returns answeringClientId for subsequent calls. An unavailable explicit Machine blocks its operations; source custody is resolved for each operation.',
   safety: 'safe', sideEffectClass: id.endsWith('.list') ? 'read' : 'write',
   requiredAuthority: 'account_automation', executionPlacement: 'client', placements: [],
@@ -22,3 +24,6 @@ export const PLUGIN_EXECUTION_ORIGIN_ACTION_SPECS = PLUGIN_EXECUTION_ORIGIN_ACTI
     ...(id === 'plugins.execution_origin.set' ? [{ path: 'origin', title: 'Exact execution origin', widget: 'json' as const, required: true }] : []),
   ] },
 }));
+}
+
+export const PLUGIN_EXECUTION_ORIGIN_ACTION_SPECS: ReturnType<typeof createPluginExecutionOriginActionSpecs> = lazyActionSpecArray(createPluginExecutionOriginActionSpecs);

@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
 import type { PreNormalizedActionSpec } from '../definition.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod/mini';
@@ -150,7 +151,8 @@ export const SessionLogTailOutputSchema = lazyZodSchema(() => z.looseObject({
   error: z.optional(z.string()),
 }));
 
-export const PERSISTED_TRANSCRIPT_ACTION_SPECS = Object.freeze([
+function createPersistedTranscriptActionSpecs() {
+  return Object.freeze([
   {
     id: 'session.log.tail', executionPlacement: 'session', approval: {result: 'required'},
     title: 'Tail session log',
@@ -356,4 +358,7 @@ export const PERSISTED_TRANSCRIPT_ACTION_SPECS = Object.freeze([
     },
   } satisfies PreNormalizedActionSpec,
 ] as const);
+}
+
+export const PERSISTED_TRANSCRIPT_ACTION_SPECS: ReturnType<typeof createPersistedTranscriptActionSpecs> = lazyActionSpecArray(createPersistedTranscriptActionSpecs);
 

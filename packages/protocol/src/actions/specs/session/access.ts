@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { SessionAccessEncryptionPrepareInputV1Schema, SessionAccessEncryptionReprepareInputV1Schema, SessionAccessEncryptionPrepareResultV1Schema, SessionAccessLayoutUpdateResultV1Schema } from '../../../sessions/access/sessionAccessActionsV1.js';
 import { SessionTargetV1Schema } from '../../sessionTargetV1.js';
@@ -12,7 +13,8 @@ import { SessionIdRequiredInputSchema } from '../common.js';
 import type { PreNormalizedActionSpec } from '../definition.js';
 
 
-export const SESSION_ACCESS_ACTION_SPECS = Object.freeze([
+function createSessionAccessActionSpecs() {
+  return Object.freeze([
   {
     id: 'session.access.grants.list', approval: {result: 'none'},
     title: 'List Session access',
@@ -223,4 +225,7 @@ export const SESSION_ACCESS_ACTION_SPECS = Object.freeze([
     serverTransport: { method: 'DELETE', path: '/v1/sessions/:sessionId/public-share' },
   } satisfies PreNormalizedActionSpec,
 ] as const);
+}
+
+export const SESSION_ACCESS_ACTION_SPECS: ReturnType<typeof createSessionAccessActionSpecs> = lazyActionSpecArray(createSessionAccessActionSpecs);
 

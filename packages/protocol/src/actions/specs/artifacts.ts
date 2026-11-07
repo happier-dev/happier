@@ -1,14 +1,16 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import type { PreNormalizedActionSpec } from './definition.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 import { ACCOUNT_NOTICE_ARTIFACT_KIND_V1, USAGE_NOTICE_ARTIFACT_KIND_V1 } from '../../activity/accountNoticeArtifactKindsV1.js';
 import { redactPublicShareCapabilityUrl } from '../../crypto/publicShareCapabilityUrl.js';
 import { ARTIFACT_ACCESS_ACTION_IDS_V1, ArtifactAccessActionInputSchemasV1, ArtifactAccessActionOutputSchemasV1 } from '../../artifacts/artifactAccessV1.js';
 import { ARTIFACT_ACTION_IDS_V1, ArtifactActionInputSchemasV1, ArtifactActionOutputSchemasV1, type ArtifactActionIdV1 } from '../../artifacts/artifactActionsV1.js';
+import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
 
 
 export const ARTIFACT_ACCESS_ACTION_SPECS: readonly (PreNormalizedActionSpec & Readonly<{
   requiredAuthority: 'account_automation';
-}>)[] = ARTIFACT_ACCESS_ACTION_IDS_V1.map((id) => ({
+}>)[] = lazyActionSpecArray(() => ARTIFACT_ACCESS_ACTION_IDS_V1.map((id) => ({
   id, approval: { result: 'required' }, title: id === 'artifact.access.grants.list' ? 'List document sharing' : id === 'artifact.access.grants.set' ? 'Share document' : 'Remove document sharing',
   description: 'Manage sharing through the document kind owner and authenticated Artifact grants.',
   safety: id === 'artifact.access.grants.list' ? 'safe' : 'danger',
@@ -23,14 +25,13 @@ export const ARTIFACT_ACCESS_ACTION_SPECS: readonly (PreNormalizedActionSpec & R
   inputSchema: ArtifactAccessActionInputSchemasV1[id], outputSchema: ArtifactAccessActionOutputSchemasV1[id],
   inputHints: { title: 'Document sharing', fields: [] },
   cli: { acceptsServerId: true, commands: [{ path: id.split('.'), visibility: 'canonical' }] },
-}));
+})));
 
 export function projectPublicLinkCreationObservation(value: unknown): unknown {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
   const result = value as Record<string, unknown>;
   return { ...result,
     ...(typeof result.url === 'string' ? { url: redactPublicShareCapabilityUrl(result.url) } : {}),
-    ...(typeof result.previewUrl === 'string' ? { previewUrl: redactPublicShareCapabilityUrl(result.previewUrl) } : {}),
   };
 }
 
@@ -46,11 +47,11 @@ export const ARTIFACT_ACTION_COPY = {
   'artifact.revisions.list': ['List document versions', 'See the earlier versions of a document.'],
   'artifact.revisions.restore': ['Restore document version', 'Make an earlier version of a document the current one.'],
   'artifact.storage.usage': ['Read document storage', 'See how much space your documents take.'],
-  'artifact.public_link.create': ['Create document public link', 'Make a link that lets anyone who has it read a document.'],
-  'artifact.public_link.list': ['List document public links', 'See the public links a document has.'],
-  'artifact.public_link.join': ['Open signed-in document link', 'Join a signed-in document link with Can copy access.'],
+  'artifact.public_link.create': ['Create document link', 'Create an anonymous or signed-in link to a document.'],
+  'artifact.public_link.list': ['List document links', 'See a document’s links for the selected audience.'],
   'artifact.public_link.revoke': ['Turn off document public link', 'Stop a public link working. People who have it can no longer open the document.'],
   'artifact.public_link.audit': ['Read document public link activity', 'See when a document\'s public link was opened.'],
+  'artifact.public_link.join': ['Open signed-in document link', 'Join a signed-in document link with Can copy access.'],
 } as const satisfies Record<ArtifactActionIdV1, readonly [title: string, summary: string]>;
 
 export function isAnsweringClientArtifactExport(input: unknown): boolean {
@@ -59,7 +60,7 @@ export function isAnsweringClientArtifactExport(input: unknown): boolean {
 
 export const ARTIFACT_ACTION_SPECS: readonly (PreNormalizedActionSpec & Readonly<{
   requiredAuthority: 'account_automation';
-}>)[] = ARTIFACT_ACTION_IDS_V1.map((id): PreNormalizedActionSpec & Readonly<{ requiredAuthority: 'account_automation' }> => {
+}>)[] = lazyActionSpecArray(() => ARTIFACT_ACTION_IDS_V1.map((id): PreNormalizedActionSpec & Readonly<{ requiredAuthority: 'account_automation' }> => {
   const read = id === 'artifact.get' || id === 'artifact.list' || id === 'artifact.revisions.list' || id === 'artifact.storage.usage' || id === 'artifact.public_link.audit';
   const voice = id !== 'artifact.export';
   return {
@@ -67,6 +68,16 @@ export const ARTIFACT_ACTION_SPECS: readonly (PreNormalizedActionSpec & Readonly
     ...(id === 'artifact.delete'
       ? { irreversible: true as const, confirmVerb: { key: 'common.delete', fallback: 'Delete' } } : {}),
     ...(id === 'artifact.public_link.revoke' ? { irreversible: true as const } : {}),
+    ...(id === 'artifact.public_link.create' ? { approvalNarrowing: {
+      narrow(original: unknown, chosen: unknown) {
+        const source = ArtifactActionInputSchemasV1['artifact.public_link.create'].safeParse(original);
+        const selection = ArtifactActionInputSchemasV1['artifact.public_link.create'].safeParse(chosen);
+        if (!source.success || !selection.success || selection.data.networkOff !== true) return null;
+        const { networkOff: _originalOff, ...originalShare } = source.data;
+        const { networkOff: _chosenOff, ...chosenShare } = selection.data;
+        return sameStrictJsonValue(originalShare, chosenShare) ? selection.data : null;
+      },
+    } } : {}),
     ...(id === 'artifact.export' ? { approvalPolicy: {
       uiConfirmation: 'direct' as const,
       uiConfirmationForInput: (input: unknown) => !isAnsweringClientArtifactExport(input),
@@ -117,4 +128,4 @@ export const ARTIFACT_ACTION_SPECS: readonly (PreNormalizedActionSpec & Readonly
     ] : [] },
     cli: { acceptsServerId: true, commands: [{ path: id.split('.').map((segment) => segment.replaceAll('_', '-')), visibility: 'canonical' }] },
   };
-});
+}));

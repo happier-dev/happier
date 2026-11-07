@@ -7,7 +7,7 @@ import { TodoCreateInputV1Schema, TodoItemPatchV1Schema, TodoItemV1Schema, TodoS
 import type { PreNormalizedActionSpec } from './actionSpecs.js';
 import { ResourceAccessLevelV1Schema, ResourceCallerAccessV1Schema } from '../teams/resourceGrantAccessV1.js';
 import { PrincipalRefV1Schema } from '../teams/principal.js';
-import { TaskResourceUnavailableV1Schema, TaskResourceV1Schema, TaskAccessGrantRowV1Schema } from '../todos/taskResourceV1.js';
+import { TaskResourceUnavailableV1Schema, TaskResourceV1Schema, TaskAccessGrantRowV1Schema, TaskResourceSelectionV1Schema } from '../todos/taskResourceV1.js';
 import { TriageEntryRefV1Schema } from '../tasks/entryRefV1.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { TodoLabelColorV1Schema, TodoLabelColorTokenV1Schema } from '../todos/todoLabelColoursV1.js';
@@ -21,7 +21,7 @@ export const InternalTaskSnapshotSchema = lazyZodSchema(() => z.extend(TodoItemV
   ownerDisplayName: TaskResourceV1Schema.shape.ownerDisplayName,
   labelColors: z.optional(z.array(TodoLabelColorV1Schema)) }));
 const taskAddress = { taskId: z.string().check(z.minLength(1)), ownerAccountId: z.optional(z.string().check(z.minLength(1))) };
-export const InternalTaskListInputSchema = lazyZodSchema(() => z.strictObject({}));
+export const InternalTaskListInputSchema = lazyZodSchema(() => z.strictObject({ selection: z.optional(TaskResourceSelectionV1Schema) }));
 export const InternalTaskLabelClearColorInputSchema = lazyZodSchema(() => z.strictObject({
   scope: InternalTaskScopeSchema, name: z.string().check(z.minLength(1)),
 }));

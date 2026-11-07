@@ -1,7 +1,8 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { z } from 'zod/mini';
 import { readRecord } from '../../inputs/inputRecords.js';
 import { SKILL_ACTION_INPUT_SCHEMAS_V1 as inputs, SKILL_ACTION_OUTPUT_SCHEMAS_V1 as outputs, SkillFileInputV1Schema, SkillFileChangeV1Schema,
-  SkillInstallSourceV1Schema, type SkillLibraryActionIdV1, type SkillFileInputV1 } from '../../prompts/library/skills/skillActionSchemasV1.js';
+  SkillInstallSourceV1Schema, SkillUpdateCandidateV1Schema, type SkillLibraryActionIdV1, type SkillFileInputV1 } from '../../prompts/library/skills/skillActionSchemasV1.js';
 import { SKILL_MACHINE_ACTION_INPUT_SCHEMAS_V1 as machineInputs, SKILL_MACHINE_ACTION_OUTPUT_SCHEMAS_V1 as machineOutputs,
   type SkillMachineActionIdV1 } from '../../prompts/library/skills/skillActionSchemasV1.js';
 import { AgentIdV1Schema } from '../../agents/agentIdV1.js';
@@ -23,6 +24,11 @@ const reviewedFileInputs = {
     SkillInstallSourceV1Schema._zod.def.options[0], SkillInstallSourceV1Schema._zod.def.options[1],
     z.strictObject({ kind: z.literal('upload'), files: z.array(reviewedFile) }),
   ]) }))),
+  'skills.updates.apply': lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(inputs['skills.updates.apply'], {
+    candidate: z.optional((<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(SkillUpdateCandidateV1Schema, {
+      baseFiles: z.array(reviewedFile), files: z.array(reviewedFile),
+    }))),
+  }))),
 };
 
 function skillReviewFields(id: SkillLibraryActionIdV1): NonNullable<PreNormalizedActionSpec['inputHints']>['fields'] {
@@ -46,7 +52,8 @@ function skillReviewFields(id: SkillLibraryActionIdV1): NonNullable<PreNormalize
       { path: 'expectedRevision', title: 'Reviewed revision', widget: 'text', required: true }];
     case 'skills.updates.apply': return [{ path: 'skillId', title: 'Skill', widget: 'text', required: true },
       { path: 'expectedRevision', title: 'Reviewed revision', widget: 'text', required: true },
-      { path: 'choices', title: 'File choices', widget: 'json' }];
+      { path: 'candidate', title: 'Candidate files', widget: 'json' },
+      { path: 'choices', title: 'File choices', widget: 'json' }, { path: 'hunkChoices', title: 'Text choices', widget: 'json' }];
     default: return [];
   }
 }
@@ -74,6 +81,12 @@ function projectSkillApprovalInput(id: SkillLibraryActionIdV1, raw: unknown) {
     return { ...input, source: input.source.kind === 'upload'
       ? { ...input.source, files: input.source.files.map(reviewSkillFile) } : input.source };
   }
+  if (id === 'skills.updates.apply') {
+    const input = inputs[id].parse(raw);
+    return { ...input, ...(input.candidate ? { candidate: {
+      baseFiles: input.candidate.baseFiles.map(reviewSkillFile), files: input.candidate.files.map(reviewSkillFile),
+    } } : {}) };
+  }
   return inputs[id].parse(raw);
 }
 
@@ -95,7 +108,8 @@ function skillSpec<TId extends SkillLibraryActionIdV1>(id: TId, title: string, r
     approvalPresentation: { summary: () => null, projectInput: raw => projectSkillApprovalInput(id, raw),
       inputSchema: id === 'skills.create' ? reviewedFileInputs['skills.create']
         : id === 'skills.update' ? reviewedFileInputs['skills.update']
-          : id === 'skills.install' ? reviewedFileInputs['skills.install'] : inputs[id],
+          : id === 'skills.install' ? reviewedFileInputs['skills.install']
+            : id === 'skills.updates.apply' ? reviewedFileInputs['skills.updates.apply'] : inputs[id],
       ...(!read ? { retainInputOnSettlement: true as const } : {}) },
     cli: { acceptsServerId: true, commands: [{ path: id.split('.'), visibility: 'canonical' }] } };
 }
@@ -127,7 +141,8 @@ const machineSkillCliInput = z.strictObject({ itemId: z.string().check(z.minLeng
 const machineInstallCliInput = (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(machineSkillCliInput, { agents: z.optional(z.array(AgentIdV1Schema)) }));
 const machineUninstallCliInput = (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(machineSkillCliInput, { force: z.optional(z.boolean()) }));
 
-export const SKILL_ACTION_SPECS_V1 = [
+function createSkillActionSpecsV1() {
+  return [
   { id: 'skills.found.list', title: 'Find skills on a machine',
     description: 'Read native skill folders discovered by the machine’s agent contributions.',
     approval: { result: 'none' }, approvalPolicy: {}, safety: 'safe', sideEffectClass: 'read',
@@ -204,3 +219,6 @@ export const SKILL_ACTION_SPECS_V1 = [
     const input = itemCli.parse(raw); return { ...itemCliBinding(raw), choices: Object.fromEntries([...(input.keepMine ?? []).map(path => [path, 'mine']), ...(input.takeTheirs ?? []).map(path => [path, 'theirs'])]) }; },
     commands: [{ path: ['skills', 'updates', 'apply'], positionals: ['itemId'], visibility: 'canonical' }] } },
 ] as const satisfies readonly PreNormalizedActionSpec[];
+}
+
+export const SKILL_ACTION_SPECS_V1: ReturnType<typeof createSkillActionSpecsV1> = lazyActionSpecArray(createSkillActionSpecsV1);

@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { REGISTRY_INPUT_FIELDS } from './registryInputHints.js';
 import { z } from 'zod/mini';
 import { readRecord } from '../../inputs/inputRecords.js';
@@ -29,7 +30,8 @@ function registrySpec<TId extends RegistryActionIdV1>(id:TId,title:string,option
     cli:{acceptsServerId:true,commands:[{path:id.split('.'),visibility:'canonical'}]},
   };
 }
-export const REGISTRY_ACTION_SPECS_V1=[
+function createRegistryActionSpecsV1() {
+  return [
   {...registrySpec('registries.updates.check','Check registry updates',{write:true}),cli:{acceptsServerId:true,
     inputSchema:inputs['registries.updates.check'],
     bindInput:(raw:unknown,ctx)=>{const value=readRecord(raw);const kind=ctx.commandPath?.[0]==='skills'?'skill':ctx.commandPath?.[0]==='mcp'?'mcpServer':ctx.commandPath?.[0]==='agents'?'agent':undefined;
@@ -102,3 +104,6 @@ export const REGISTRY_ACTION_SPECS_V1=[
     {path:['plugins','marketplace','show'],positionals:['sourceId','itemId'],visibility:'alias' as const},
     {path:['agents','show'],positionals:['registryItem'],visibility:'alias' as const}]}},
 ] as const satisfies readonly PreNormalizedActionSpec[];
+}
+
+export const REGISTRY_ACTION_SPECS_V1: ReturnType<typeof createRegistryActionSpecsV1>=lazyActionSpecArray(createRegistryActionSpecsV1);

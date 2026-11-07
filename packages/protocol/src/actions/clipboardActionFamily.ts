@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from './lazyActionSpecValue.js';
 export { CLIPBOARD_ACTION_IDS } from './clipboardActionIdsV1.js';
 import { z } from 'zod/mini';
 
@@ -5,7 +6,8 @@ import type { PreNormalizedActionSpec } from './actionSpecs.js';
 export const ClipboardWriteInputSchema = z.strictObject({ text: z.string() });
 export const ClipboardWriteResultSchema = z.strictObject({ status: z.literal('copied') });
 
-export const CLIPBOARD_ACTION_SPECS = [{
+function createClipboardActionSpecs() {
+  return [{
   id: 'clipboard.write', approval: {result: 'required'},
   title: 'Copy text to this device',
   description: 'Write exact supplied text to the answering client’s clipboard. Refuses when that client or its clipboard is unavailable.',
@@ -21,3 +23,6 @@ export const CLIPBOARD_ACTION_SPECS = [{
   approvalPresentation: { summary: () => 'Copy text to the answering device clipboard. The copied content stays private to this live invocation.' },
   inputHints: { fields: [{ path: 'text', title: 'Text to copy', widget: 'text', required: true }] },
 }] as const satisfies readonly PreNormalizedActionSpec[];
+}
+
+export const CLIPBOARD_ACTION_SPECS: ReturnType<typeof createClipboardActionSpecs> = lazyActionSpecArray(createClipboardActionSpecs);

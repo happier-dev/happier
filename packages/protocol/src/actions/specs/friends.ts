@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { FriendsMutationInputSchema, FriendsMutationResponseSchema } from '../../social/friends.js';
 import { homeDomainActionRow, homeDomainApprovalField, type HomeDomainActionRow } from './homeDomainRow.js';
 
@@ -8,7 +9,7 @@ type FriendsActionSpec = {
 }[FriendsActionId];
 
 /** Relationship changes remain decided by the existing authenticated Home writers. */
-export const FRIENDS_ACTION_SPECS: readonly FriendsActionSpec[] = Object.freeze([
+export const FRIENDS_ACTION_SPECS: readonly FriendsActionSpec[] = lazyActionSpecArray(() => Object.freeze([
   {
     ...homeDomainActionRow({
       id: 'friends.add', approval: { result: 'required', flow: 'deferred' },
@@ -33,4 +34,4 @@ export const FRIENDS_ACTION_SPECS: readonly FriendsActionSpec[] = Object.freeze(
     }),
     bindings: { mcpToolName: 'friends_remove' },
   },
-]);
+]));

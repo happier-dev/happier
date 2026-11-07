@@ -1,8 +1,10 @@
+import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
 import { SessionAuthoringOpenV1Schema, SessionAuthoringOpenResultV1Schema } from '../../../plugins/ui/hostApiRequests.js';
 import type { PreNormalizedActionSpec } from '../definition.js';
 
 
-export const SESSION_AUTHORING_ACTION_SPECS = Object.freeze([
+function createSessionAuthoringActionSpecs() {
+  return Object.freeze([
   {
     id: 'session.authoring.open', approval: {result: 'required'},
     title: 'Open editable Session draft',
@@ -23,4 +25,7 @@ export const SESSION_AUTHORING_ACTION_SPECS = Object.freeze([
     outputSchema: SessionAuthoringOpenResultV1Schema,
   } satisfies PreNormalizedActionSpec,
 ] as const);
+}
+
+export const SESSION_AUTHORING_ACTION_SPECS: ReturnType<typeof createSessionAuthoringActionSpecs> = lazyActionSpecArray(createSessionAuthoringActionSpecs);
 

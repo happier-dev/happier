@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from './lazyActionSpecValue.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { EntityDragScopeV1Schema } from '../plugins/ui/entityDragDrop.js';
@@ -47,7 +48,8 @@ export type SessionOrganizationAppearanceActionInput =
   | z.infer<typeof ProjectOrganizationColorSetInputSchema>;
 export const SessionOrganizationAppearanceSetOutputSchema = lazyZodSchema(() => z.strictObject({ status: z.literal('applied') }));
 
-export const SESSION_ORGANIZATION_MOVE_ACTION_SPECS = [{
+function createSessionOrganizationMoveActionSpecs() {
+  return [{
   id: 'session.organization.move', approval: {result: 'required'}, title: 'Move Session organization item',
   cli: { commands: [{ path: ['session', 'organization', 'move'], visibility: 'canonical' }] },
   description: 'Move a Session, folder or workspace through the mounted Session list organization owner. Current membership, Home, Account and ordering policy are revalidated before writing. Session reporting relationships use session.manager.set.',
@@ -118,3 +120,6 @@ export const SESSION_ORGANIZATION_MOVE_ACTION_SPECS = [{
     { path: 'color', title: 'Named accent or custom hex color, or null to reset', widget: 'json', required: true },
   ] },
 }] as const satisfies readonly PreNormalizedActionSpec[];
+}
+
+export const SESSION_ORGANIZATION_MOVE_ACTION_SPECS: ReturnType<typeof createSessionOrganizationMoveActionSpecs> = lazyActionSpecArray(createSessionOrganizationMoveActionSpecs);

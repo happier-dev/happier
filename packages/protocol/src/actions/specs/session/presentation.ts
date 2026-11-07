@@ -1,9 +1,11 @@
+import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
 import { SessionUpdatePostInputV1Schema, SessionUpdatePostOutputV1Schema } from '../../../sessions/relations/workerUpdateV1.js';
 import { CurrentSessionPresentationActionInputV1Schema, CurrentSessionPresentationActionResultV1Schema } from '../../../sessions/presentation/currentSessionPresentationV1.js';
 import type { PreNormalizedActionSpec } from '../definition.js';
 
 
-export const SESSION_PRESENTATION_ACTION_SPECS = Object.freeze([
+function createSessionPresentationActionSpecs() {
+  return Object.freeze([
   {
     id: 'session.update.post', approval: {result: 'required'}, title: 'Post an update',
     safety: 'safe', sideEffectClass: 'write', requiredAuthority: 'account_automation', executionPlacement: 'session',
@@ -48,4 +50,7 @@ export const SESSION_PRESENTATION_ACTION_SPECS = Object.freeze([
     outputSchema: CurrentSessionPresentationActionResultV1Schema,
   } satisfies PreNormalizedActionSpec,
 ] as const);
+}
+
+export const SESSION_PRESENTATION_ACTION_SPECS: ReturnType<typeof createSessionPresentationActionSpecs> = lazyActionSpecArray(createSessionPresentationActionSpecs);
 

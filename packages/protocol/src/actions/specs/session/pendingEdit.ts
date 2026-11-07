@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { PendingLocalIdSchema } from '../../../sessions/pending/pendingLocalId.js';
@@ -23,7 +24,8 @@ export const SessionPendingEditResultV1Schema = lazyZodSchema(() => z.strictObje
 export type SessionPendingEditInputV1 = z.infer<typeof SessionPendingEditInputV1Schema>;
 export type SessionPendingEditResultV1 = z.infer<typeof SessionPendingEditResultV1Schema>;
 
-export const SESSION_PENDING_EDIT_ACTION_SPECS = [{
+function createSessionPendingEditActionSpecs() {
+  return [{
   id: 'session.pending.edit', approval: { result: 'required' },
   clientPresenter: 'session',
   title: 'Edit queued message',
@@ -44,3 +46,6 @@ export const SESSION_PENDING_EDIT_ACTION_SPECS = [{
       description: 'Retain this id when retrying the same prepared attachment edit. The owner allocates one when attachments need an identity and none was supplied.' },
   ] },
 }] as const satisfies readonly PreNormalizedActionSpec[];
+}
+
+export const SESSION_PENDING_EDIT_ACTION_SPECS: ReturnType<typeof createSessionPendingEditActionSpecs> = lazyActionSpecArray(createSessionPendingEditActionSpecs);

@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { z } from 'zod/mini';
 import { SavedSecretExternalSourceV1Schema } from '../../account/settings/savedSecretResourceContentSchemaV1.js';
 import { readRecord } from '../../inputs/inputRecords.js';
@@ -36,7 +37,8 @@ function secretSpec<TId extends PersonalSavedSecretActionIdV1>(id: TId, title: s
 // Values are admitted only by the stdin/hidden-prompt adapter after argv parsing.
 const secretCli = z.strictObject({ secretId: z.string().check(z.minLength(1)), rename: inputs['secrets.update'].shape.name,
   source: z.optional(SavedSecretExternalSourceV1Schema) });
-export const PERSONAL_SAVED_SECRET_ACTION_SPECS_V1 = [
+function createPersonalSavedSecretActionSpecsV1() {
+  return [
   secretSpec('secrets.list', 'List Saved Secrets'),
   { ...secretSpec('secrets.create', 'Create private Saved Secret'), cli: { acceptsServerId: true,
     inputSchema: z.strictObject({ name: inputs['secrets.create'].shape.name, kind: inputs['secrets.create'].shape.kind,
@@ -50,3 +52,6 @@ export const PERSONAL_SAVED_SECRET_ACTION_SPECS_V1 = [
   secretSpec('secrets.link', 'Link vault fields as Saved Secrets'),
   secretSpec('secrets.export', 'Export Saved Secrets to vault'),
 ] as const satisfies readonly PreNormalizedActionSpec[];
+}
+
+export const PERSONAL_SAVED_SECRET_ACTION_SPECS_V1: ReturnType<typeof createPersonalSavedSecretActionSpecsV1> = lazyActionSpecArray(createPersonalSavedSecretActionSpecsV1);

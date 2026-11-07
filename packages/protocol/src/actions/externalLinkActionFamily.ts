@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from './lazyActionSpecValue.js';
 export { EXTERNAL_LINK_ACTION_IDS } from './externalLinkActionIdsV1.js';
 import { z } from 'zod/mini';
 
@@ -7,7 +8,8 @@ export const ExternalUrlOpenInputSchema = z.strictObject({
 });
 export const ExternalUrlOpenResultSchema = z.strictObject({ status: z.literal('opened') });
 
-export const EXTERNAL_LINK_ACTION_SPECS = [{
+function createExternalLinkActionSpecs() {
+  return [{
   id: 'links.openExternal', approval: { result: 'required' }, approvalPolicy: { agentDefault: 'egress', uiConfirmation: 'direct', requiredSurfaces: ['voice'] },
   title: 'Open an external link',
   description: 'Open an HTTP(S) URL in the answering client’s system browser. clientId selects an exact connected app. URLs stay private to this live invocation; an unavailable client or opener refuses without a headless fallback.',
@@ -22,3 +24,6 @@ export const EXTERNAL_LINK_ACTION_SPECS = [{
   approvalPresentation: { summary: () => 'Open an external link on the answering device. Its URL stays private to this live invocation.' },
   inputHints: { fields: [{ path: 'url', title: 'HTTP(S) URL', widget: 'text', required: true }] },
 }] as const satisfies readonly PreNormalizedActionSpec[];
+}
+
+export const EXTERNAL_LINK_ACTION_SPECS: ReturnType<typeof createExternalLinkActionSpecs> = lazyActionSpecArray(createExternalLinkActionSpecs);

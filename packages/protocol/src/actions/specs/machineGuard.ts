@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { MACHINE_GUARD_ACTION_IDS } from '../../machines/guard/actionIdsV1.js';
@@ -5,6 +6,7 @@ import { MachineGuardGetInputV1Schema, MachineGuardViewV1Schema } from '../../ma
 import { RPC_METHODS } from '../../rpc/methods.js';
 import { MACHINE_GUARD_ACTIVITY_ACTION_SPECS, MACHINE_GUARD_ACTIVITY_INPUT_SCHEMAS, MACHINE_GUARD_ACTIVITY_OUTPUT_SCHEMAS } from './machineGuardActivity.js';
 import type { ApprovalPresentationContext, PreNormalizedActionSpec } from '../actionSpecs.js';
+import { actionInputServerId } from './definition.js';
 export { MACHINE_GUARD_ACTION_IDS } from '../../machines/guard/actionIdsV1.js';
 export type { MachineGuardActionId } from '../../machines/guard/actionIdsV1.js';
 export const MachineGuardActionIdSchema = lazyZodSchema(() => z.enum(MACHINE_GUARD_ACTION_IDS));
@@ -55,13 +57,15 @@ function presentSessionCeiling(input: unknown, context?: ApprovalPresentationCon
       : 'The session stops where it can resume. Send another message to continue.',
   };
 }
-export const MACHINE_GUARD_ACTION_SPECS = [
+function createMachineGuardActionSpecs() {
+  return [
   { id: 'machines.guard.get', approval: {result: 'required'}, title: 'Read the guard', description: 'What the guard watches on a machine, and what it would stop first if memory ran short.',
     toolExposure: { agent: 'direct' },
     prompting: { agentGuidance: 'Use this planner’s live ladder as the canonical source of stop candidates, sizes and why-not reasons. Explain what Guard would do without inventing a second process-selection heuristic.' },
     safety: 'safe', sideEffectClass: 'read', executionPlacement: 'machine', placements: [], surfaces,
     bindings: { mcpToolName: 'machines_guard_get', rpcMethod: RPC_METHODS.MACHINES_GUARD_GET },
     inputSchema: MachineGuardGetInputV1Schema, outputSchema: MachineGuardViewV1Schema,
+    invocationServerIdForInput: actionInputServerId(MachineGuardGetInputV1Schema, input => input.serverId),
     cli: { acceptsServerId: true, commands: [{ path: ['machines', 'guard', 'get'], visibility: 'canonical' }] }, inputHints: { fields } },
   ...MACHINE_GUARD_ACTIVITY_ACTION_SPECS,
   { id: 'machines.guard.idleStop.keepRunning', approval: {result: 'required'}, title: 'Keep this work running', description: 'Cancels a pending automatic stop and keeps this work running. Guard settings stay as they are.',
@@ -70,6 +74,7 @@ export const MACHINE_GUARD_ACTION_SPECS = [
     safety: 'safe', sideEffectClass: 'write', executionPlacement: 'machine', placements: [], surfaces,
     bindings: { mcpToolName: 'machines_guard_idle_stop_keep_running', rpcMethod: RPC_METHODS.MACHINES_GUARD_IDLE_STOP_KEEP_RUNNING },
     inputSchema: MachineGuardKeepRunningInputV1Schema, outputSchema: MachineGuardKeepRunningResultV1Schema,
+    invocationServerIdForInput: actionInputServerId(MachineGuardKeepRunningInputV1Schema, input => input.serverId),
     cli: { acceptsServerId: true, commands: [{ path: ['machines', 'guard', 'idle-stop', 'keep-running'], visibility: 'canonical' }] },
     inputHints: { fields: [...fields, { path: 'sessionId', title: 'Session ID', widget: 'text' }, { path: 'terminalKey', title: 'Terminal key', widget: 'text' }] } },
   { id: 'machines.guard.sessionCeiling.set', approvalPolicy: { agentDefault: 'authority', requiredSurfaces: ['mcp', 'plugin'] }, approval: {result: 'required'}, title: 'Change this session’s memory ceiling',
@@ -88,7 +93,11 @@ export const MACHINE_GUARD_ACTION_SPECS = [
     safety: 'safe', sideEffectClass: 'write', executionPlacement: 'machine', placements: [], surfaces,
     bindings: { mcpToolName: 'machines_guard_session_ceiling_set', rpcMethod: RPC_METHODS.MACHINES_GUARD_SESSION_CEILING_SET },
     inputSchema: MachineGuardSessionCeilingSetInputV1Schema, outputSchema: MachineGuardSessionCeilingSetResultV1Schema,
+    invocationServerIdForInput: actionInputServerId(MachineGuardSessionCeilingSetInputV1Schema, input => input.serverId),
     cli: { acceptsServerId: true, commands: [{ path: ['machines', 'guard', 'session-ceiling', 'set'], visibility: 'canonical' }] },
     inputHints: { fields: [...fields, { path: 'sessionId', title: 'Session ID', widget: 'text', required: true },
       { path: 'bytes', title: 'Ceiling bytes (null for no ceiling)', widget: 'json', required: true }] } },
 ] as const satisfies readonly PreNormalizedActionSpec[];
+}
+
+export const MACHINE_GUARD_ACTION_SPECS: ReturnType<typeof createMachineGuardActionSpecs> = lazyActionSpecArray(createMachineGuardActionSpecs);

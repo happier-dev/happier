@@ -1,10 +1,10 @@
-import { projectRelayAccessConfigV1 } from '../../system/tasks/relayAccessConfigV1.js';
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { REMOTE_HOST_ACTION_INPUT_SCHEMAS_V1 as inputs, REMOTE_HOST_ACTION_OUTPUT_SCHEMAS_V1 as outputs, RemoteHostCredentialSelectionV1Schema,
   type RemoteHostActionIdV1 } from '../../remoteHosts/remoteHostActionsV1.js';
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
 import type { ActionInputHints } from '../actionInputHints.js';
 import { readRecord } from '../../inputs/inputRecords.js';
-import { stripBrowserDiagnosticUrlValues } from '../../browser/diagnostics/egress/url.js';
+import { projectRelayAccessConfigV1 } from '../../system/tasks/relayAccessConfigV1.js';
 
 function projectRemoteHostObservation(value: unknown): unknown {
   const record = readRecord(value);
@@ -32,22 +32,13 @@ function projectRemoteHostObservation(value: unknown): unknown {
 }
 
 // The same safe fields feed the default preview and shared approval admission.
-// Credential values belong exclusively to the existing live-only invocation.
+// URLs can contain credentials; only the existing live-only invocation keeps them.
 const relayConfigurationFields: ActionInputHints['fields'] = [
   { path: 'hostId', title: 'Remote host', widget: 'text', required: true },
   { path: 'operation.kind', title: 'Operation', widget: 'select', required: true,
     options: [{ value: 'configure', label: 'Configure relay' }, { value: 'disable', label: 'Disable relay' }] },
-  { path: 'operation.config.providerId', title: 'Relay provider', widget: 'select', required: true,
-    visibleWhen: { op: 'eq', path: 'operation.kind', value: 'configure' },
-    options: [
-      { value: 'localOnly', label: 'Local only' }, { value: 'lan', label: 'LAN' },
-      { value: 'tailscaleServe', label: 'Tailscale Serve' }, { value: 'tailscaleFunnel', label: 'Tailscale Funnel' },
-      { value: 'cloudflareNamed', label: 'Cloudflare named tunnel' },
-    ] },
-  { path: 'operation.config.url', title: 'Relay URL', widget: 'url', required: true,
-    visibleWhen: { op: 'eq', path: 'operation.config.providerId', value: 'lan' } },
-  { path: 'operation.config.hostname', title: 'Relay hostname', widget: 'text', required: true,
-    visibleWhen: { op: 'eq', path: 'operation.config.providerId', value: 'cloudflareNamed' } },
+  { path: 'operation.config', title: 'Access selection', widget: 'json', required: true,
+    visibleWhen: { op: 'eq', path: 'operation.kind', value: 'configure' } },
 ];
 
 type RemoteHostActionSpec<Id extends RemoteHostActionIdV1> = PreNormalizedActionSpec & Readonly<{
@@ -108,7 +99,8 @@ function remoteHostSpec<Id extends RemoteHostActionIdV1>(id: Id, title: string, 
     ...(!options.client ? { cli: { acceptsServerId: true, commands: [{ path: id.split('.').map(segment => segment.replaceAll('_', '-')), visibility: 'canonical' as const }] } } : {}),
   };
 }
-export const REMOTE_HOST_ACTION_SPECS_V1 = [
+function createRemoteHostActionSpecsV1() {
+  return [
   remoteHostSpec('remote_hosts.trusted_keys.list', 'List trusted SSH host keys', 'Read this device’s trusted SSH host keys.', { client: true, read: true }),
   remoteHostSpec('remote_hosts.trusted_keys.remove', 'Remove trusted SSH host key', 'Remove the exact reviewed key from this device.', { client: true, danger: true }),
   remoteHostSpec('remote_hosts.trusted_keys.clear', 'Clear trusted SSH host keys', 'Remove only the reviewed set of trusted keys from this device.', { client: true, danger: true }),
@@ -165,3 +157,6 @@ export const REMOTE_HOST_ACTION_SPECS_V1 = [
   remoteHostSpec('remote_hosts.personal_home.erase', 'Erase personal Home on remote host',
     'Permanently delete the personal Home kept on this host, with everything in it.', { client: true, danger: true }),
 ] as const satisfies readonly PreNormalizedActionSpec[];
+}
+
+export const REMOTE_HOST_ACTION_SPECS_V1: ReturnType<typeof createRemoteHostActionSpecsV1> = lazyActionSpecArray(createRemoteHostActionSpecsV1);

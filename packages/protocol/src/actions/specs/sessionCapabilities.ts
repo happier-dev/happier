@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { CapabilityApplyTimingV1Schema } from '../../reach/capabilityApplyTimingV1.js';
@@ -71,7 +72,8 @@ const sessionCliInput = lazyZodSchema(() => z.strictObject({ sessionId: identity
 const common = { placements: [], requiredAuthority: 'account_automation',
   surfaces: { ui: true, cli: true, agent: true, mcp: true, rpc: true, voice: false }, approval: { result: 'required' },
 } as const;
-export const SESSION_CAPABILITIES_ACTION_SPECS_V1 = [
+function createSessionCapabilitiesActionSpecsV1() {
+  return [
   { ...common, id: 'sessions.spawn.capabilities.preview', title: 'Preview session capabilities', safety: 'safe', sideEffectClass: 'read',
     executionPlacement: 'machine', surfaces: { ...common.surfaces, voice: true },
     bindings: { mcpToolName: 'sessions_spawn_capabilities_preview', rpcMethod: 'sessions.spawn.capabilities.preview',
@@ -112,3 +114,6 @@ export const SESSION_CAPABILITIES_ACTION_SPECS_V1 = [
     },
   },
 ] as const satisfies readonly PreNormalizedActionSpec[];
+}
+
+export const SESSION_CAPABILITIES_ACTION_SPECS_V1: ReturnType<typeof createSessionCapabilitiesActionSpecsV1> = lazyActionSpecArray(createSessionCapabilitiesActionSpecsV1);

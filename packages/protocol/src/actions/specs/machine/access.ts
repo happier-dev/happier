@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
 import { MACHINE_ACCESS_ACTION_IDS } from './accessActionIdsV1.js';
 export { MACHINE_ACCESS_ACTION_IDS, MACHINE_WORK_SUMMARY_ACTION_IDS } from './accessActionIdsV1.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
@@ -10,6 +11,7 @@ import {
   MachineAccessGrantsListResponseV1Schema,
 } from '../../../machines/machineAccessV1.js';
 import type { PreNormalizedActionSpec } from '../../actionSpecs.js';
+import { actionInputServerId } from '../definition.js';
 import { MachineWorkSummaryGetInputV1Schema, MachineWorkSummaryGetResultV1Schema } from '../../../machines/machineWorkSummaryV1.js';
 import { asProtocolZod } from '../../../plugins/actions/internalProtocolZodAdapter.js';
 import { RPC_METHODS } from '../../../rpc/methods.js';
@@ -56,13 +58,15 @@ const surfaces = { ui: true, cli: true, agent: true, mcp: true, voice: true, rpc
 const accessPath = '/v1/machines/:machineId/access';
 const disclosure = machineAccessTrustedOsDisclosure('this machine');
 
-export const MACHINE_ACCESS_ACTION_SPECS = [
+function createMachineAccessActionSpecs() {
+  return [
   {
     id: 'machines.work.summary.get', approval: {result: 'required'}, title: 'Read machine work summary',
     description: 'Read current requester identities and numeric work counts as the custodian or someone with current Manage access. No work titles, identifiers, paths or content are returned.',
     safety: 'safe', sideEffectClass: 'read', executionPlacement: 'machine', placements: [], surfaces,
     bindings: { mcpToolName: 'machines_work_summary_get', voiceClientToolName: 'getMachineWorkSummary', rpcMethod: RPC_METHODS.MACHINES_WORK_SUMMARY_GET },
     inputSchema: MachineWorkSummaryGetInputV1Schema, outputSchema: asProtocolZod(MachineWorkSummaryGetResultV1Schema),
+    invocationServerIdForInput: actionInputServerId(MachineWorkSummaryGetInputV1Schema, input => input.serverId),
     inputHints: { fields: targetFields },
   },
   {
@@ -112,3 +116,6 @@ export const MACHINE_ACCESS_ACTION_SPECS = [
     inputHints: { fields: targetFields },
   },
 ] as const satisfies readonly PreNormalizedActionSpec[];
+}
+
+export const MACHINE_ACCESS_ACTION_SPECS: ReturnType<typeof createMachineAccessActionSpecs> = lazyActionSpecArray(createMachineAccessActionSpecs);

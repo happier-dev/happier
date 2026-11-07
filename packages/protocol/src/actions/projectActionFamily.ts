@@ -1,4 +1,4 @@
-export { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from './projectActionIdsV1.js';
+import { lazyActionSpecArray } from './lazyActionSpecValue.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema, lazyDefinition } from '../lazyZodSchema.js';
 import { WorkspaceAddressV1Schema } from '../workspaces/workspaceRefV1.js';
@@ -7,6 +7,7 @@ import { ProjectNativeRefV1Schema, ProjectMemoryDemandV1Schema } from '../worksp
 import { QualifiedProjectTrustProjectV1Schema, ProjectTrustValueV1Schema } from '../workspaces/projectSetup/projectTrustRowV1.js';
 import { ProjectCommandActionOutputV1Schema, createProjectCommandActionCompletionV1 } from './actionCompletion.js';
 import type { PreNormalizedActionSpec } from './actionSpecs.js';
+import { actionInputServerId } from './specs/definition.js';
 import { RPC_METHODS } from '../rpc/methods.js';
 import { SecretReferenceOverlayV1Schema } from '../profiles/secretReferenceOverlayV1.js';
 import { ActionExecuteFailureSchema } from './actionExecutionResult.js';
@@ -19,6 +20,7 @@ import { projectZodProtocolSchema } from '../plugins/actions/internalProtocolZod
 export { ProjectSetupConsentFailureDetailsV1Schema, ProjectSetupConsentScopeV1Schema,
   type ProjectSetupConsentFailureDetailsV1, type ProjectSetupConsentScopeV1 } from './projectSetupConsentFailure.js';
 import { PROJECT_ACTION_IDS_V1, PROJECT_FINITE_ACTION_RPC_METHODS_V1, type ProjectActionIdV1 } from './projectActionIdsV1.js';
+export { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from './projectActionIdsV1.js';
 export { PROJECT_ACTION_IDS_V1, isProjectActionIdV1, isProjectWorkspaceSyncPreparationActionV1, type ProjectActionIdV1 } from './projectActionIdsV1.js';
 export { ProjectWorkerNoAcceptanceFailureDetailsV1Schema, readProjectWorkerNoAcceptanceFailureV1,
   type ProjectWorkerNoAcceptanceFailureDetailsV1 } from './projectWorkerRefusal.js';
@@ -256,6 +258,10 @@ function row<const Id extends ProjectActionIdV1>(id: Id) {
           : PROJECT_FINITE_ACTION_RPC_METHODS_V1['projects.compute.exec'] } : {}) },
     cli: { acceptsServerId: true, commands: [{ path: ['project', ...id.split('.').slice(1)], visibility: 'canonical' }] },
     inputSchema: PROJECT_ACTION_INPUT_SCHEMAS_V1[id], outputSchema: PROJECT_ACTION_OUTPUT_SCHEMAS_V1[id],
+    ...(id !== 'projects.trust.list' && id !== 'projects.trust.revoke' ? {
+      invocationServerIdForInput: actionInputServerId<(typeof PROJECT_ACTION_INPUT_SCHEMAS_V1)[ProjectActionIdV1]>(PROJECT_ACTION_INPUT_SCHEMAS_V1[id], input =>
+        'workspace' in input ? input.workspace.serverId : 'serverId' in input ? input.serverId : undefined),
+    } : {}),
     ...(!clientRead && !id.startsWith('projects.trust.') ? {
       operation: { version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'current' } },
       completion: lazyDefinition(() => id === 'projects.prepare'
@@ -264,4 +270,8 @@ function row<const Id extends ProjectActionIdV1>(id: Id) {
     inputHints: { title: PROJECT_ACTION_COPY[id][0], description: PROJECT_ACTION_COPY[id][1], fields: PROJECT_ACTION_INPUT_FIELDS[id] },
   } satisfies PreNormalizedActionSpec;
 }
-export const PROJECT_ACTION_SPECS_V1 = PROJECT_ACTION_IDS_V1.map(id => row(id));
+function createProjectActionSpecsV1() {
+  return PROJECT_ACTION_IDS_V1.map(id => row(id));
+}
+
+export const PROJECT_ACTION_SPECS_V1: ReturnType<typeof createProjectActionSpecsV1> = lazyActionSpecArray(createProjectActionSpecsV1);

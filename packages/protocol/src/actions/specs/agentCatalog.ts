@@ -1,5 +1,6 @@
-import { RPC_METHODS } from '../../rpc/methods.js';
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { RPC_METHODS } from '../../rpc/methods.js';
 import { ScmDiffSummaryModelSelectorSchema } from '../../scm/diffSummary.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 import { readRegistryAgentCliLocatorV1 } from './registries.js';
@@ -156,6 +157,7 @@ export const AgentsConfigOptionsListInputSchema = lazyZodSchema(() => (<T extend
 
 export const SpawnConnectedServicesListInputSchema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.unknown() }) as z.ZodMiniObject<T['shape'], z.core.$loose>)(z.extend(AgentSpawnOptionsListInputBaseSchema, {
   includeUnavailable: z.optional(z.boolean()),
+  includeDefaults: z.optional(z.boolean()),
   serverId: z.optional(z.never()),
 })).check(z.superRefine((value, ctx) => {
   if (!value.agentId && !value.backendTargetKey) {
@@ -187,7 +189,8 @@ export const SpawnMcpServersPreviewInputSchema = lazyZodSchema(() => z.looseObje
   validateAgentIdAndBackendTargetKeySelection(value, ctx);
 })));
 
-export const AGENT_CATALOG_ACTION_SPECS = Object.freeze([
+function createAgentCatalogActionSpecs() {
+  return Object.freeze([
   {
     id: 'machines.agents.signIn.start', executionPlacement: 'machine', approval: {result: 'none'}, approvalPolicy: { uiConfirmation: 'direct' },
     title: 'Sign in to an agent',
@@ -248,7 +251,7 @@ export const AGENT_CATALOG_ACTION_SPECS = Object.freeze([
     description: 'Start a daemon-owned agent install or update job.',
     safety: 'danger',
     placements: [],
-    bindings: { mcpToolName: 'machines_agents_install', sdkMethod: 'machines.agents.install.start' },
+    bindings: { mcpToolName: 'machines_agents_install', sdkMethod: 'machines.agents.install.start', rpcMethod: RPC_METHODS.DAEMON_AGENTS_INSTALL_START },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
     inputSchema: lazyZodSchema(() => z.extend(z.omit(DaemonAgentInstallStartRequestSchema, { expectedDefinitionVersion: true }), {
       machineId: z.string().check(z.minLength(1)),
@@ -286,7 +289,7 @@ export const AGENT_CATALOG_ACTION_SPECS = Object.freeze([
     title: 'Remove an agent from a machine',
     sideEffectClass: 'danger', description: 'Remove a Happier-managed agent installation through the daemon job owner.',
     safety: 'danger', executionPlacement: 'machine', placements: [],
-    bindings: { mcpToolName: 'machines_agents_uninstall' },
+    bindings: { mcpToolName: 'machines_agents_uninstall', rpcMethod: RPC_METHODS.DAEMON_AGENTS_INSTALL_START },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
     inputSchema: lazyZodSchema(() => z.strictObject({ machineId: z.string().check(z.minLength(1)), agentId: z.string().check(z.minLength(1)),
       definitionId: z.optional(z.string().check(z.minLength(1))) })),
@@ -539,9 +542,13 @@ export const AGENT_CATALOG_ACTION_SPECS = Object.freeze([
     inputSchema: SpawnMcpServersPreviewInputSchema,
   } satisfies PreNormalizedActionSpec,
 ] as const);
+}
+
+export const AGENT_CATALOG_ACTION_SPECS: ReturnType<typeof createAgentCatalogActionSpecs> = lazyActionSpecArray(createAgentCatalogActionSpecs);
 
 
-export const AGENT_INVENTORY_ACTION_SPECS = Object.freeze([
+function createAgentInventoryActionSpecs() {
+  return Object.freeze([
   {
     id: 'agents.backends.list', executionPlacement: 'machine', approval: {result: 'required'},
     title: 'List agent backends',
@@ -598,9 +605,13 @@ export const AGENT_INVENTORY_ACTION_SPECS = Object.freeze([
     outputSchema: MachinesAgentsListOutputSchema,
   } satisfies PreNormalizedActionSpec,
 ] as const);
+}
+
+export const AGENT_INVENTORY_ACTION_SPECS: ReturnType<typeof createAgentInventoryActionSpecs> = lazyActionSpecArray(createAgentInventoryActionSpecs);
 
 
-export const ACP_BACKEND_ACTION_SPECS = Object.freeze([
+function createAcpBackendActionSpecs() {
+  return Object.freeze([
   {
     id: 'agents.acp.backends.installFromRegistry',
     approval: { result: 'required' }, approvalPolicy: { uiConfirmation: 'policy' },
@@ -733,4 +744,7 @@ export const ACP_BACKEND_ACTION_SPECS = Object.freeze([
     },
   } satisfies PreNormalizedActionSpec,
 ] as const);
+}
+
+export const ACP_BACKEND_ACTION_SPECS: ReturnType<typeof createAcpBackendActionSpecs> = lazyActionSpecArray(createAcpBackendActionSpecs);
 

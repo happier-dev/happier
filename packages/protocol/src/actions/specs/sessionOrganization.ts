@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import {
@@ -37,7 +38,8 @@ function row<
       ...(spec.id.startsWith('session.tags.') ? { voiceClientToolName: spec.id.replaceAll('.', '_') } : {}) } } as const;
 }
 
-export const SESSION_ORGANIZATION_RESOURCE_ACTION_SPECS = [
+function createSessionOrganizationResourceActionSpecs() {
+  return [
   row({ id: 'session.sections.list', approval: {result: 'none'}, title: 'List Session sections', description: 'Read all section definitions on the selected Home.',
     safety: 'safe', sideEffectClass: 'read', method: 'GET', path: '/v2/session-organization', cliPath: ['session', 'sections', 'list'], inputSchema: listInput, outputSchema: lazyZodSchema(() => SessionSectionsListResultV1Schema) }),
   row({ id: 'session.sections.create', approval: {result: 'none'}, title: 'Create Session section', description: 'Create a named Account section with an optional icon.',
@@ -69,3 +71,6 @@ export const SESSION_ORGANIZATION_RESOURCE_ACTION_SPECS = [
     ] },
     safety: 'danger', sideEffectClass: 'danger', method: 'DELETE', path: '/v2/session-organization/tags/:tagId', cliPath: ['session', 'tags', 'delete'], inputSchema: DeleteSessionOrganizationTagRequestSchema, outputSchema: DeleteSessionOrganizationTagResponseSchema }),
 ] as const;
+}
+
+export const SESSION_ORGANIZATION_RESOURCE_ACTION_SPECS: ReturnType<typeof createSessionOrganizationResourceActionSpecs> = lazyActionSpecArray(createSessionOrganizationResourceActionSpecs);
