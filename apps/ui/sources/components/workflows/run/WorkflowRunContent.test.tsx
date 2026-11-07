@@ -258,21 +258,6 @@ async function renderContent(overrides: Partial<ContentProps> = {}) {
   };
 }
 
-it('keeps the wide held result and its conversation available together', async () => {
-  const session = createSessionFixture({ id: 'held-conversation', access: createSessionAccessFixture({ canSendMessages: true }) });
-  getStorage().getState().applySessions([session]);
-  const invocation = createWorkflowInvocationIndexFixture({ id: 'held-step', parentRecordId: 'root', lifecycle: 'waiting_for_review' });
-  const screen = await renderContent({
-    invocations: [invocation], selectedInvocationId: invocation.id, selectedSessionId: session.id,
-    renderReviewCard: () => <WorkflowReviewCard progress={{ kind: 'happier.workflow-progress.v1', invocationPath: { blockId: 'agent', scope: [] },
-      blockKind: 'step', attempt: '0', logicalInvocationRecordId: invocation.id, result: 'Ready' }}
-      contract={{ kind: 'text' }} waitForYou={false} contentRevision="1" draft={undefined}
-      onChangeDraft={() => {}} onComplete={async () => {}} testIDPrefix="held-result" />,
-  });
-  expect(screen.findByTestId('held-result-use')).not.toBeNull();
-  expect(screen.findByTestId('session-in-pane')).not.toBeNull();
-});
-
 it('keeps pane consumers asleep across unrelated publications and local controls in a 500-item Run', async () => {
   const props: Partial<ContentProps> = {
     title: 'Large Run',
@@ -2063,6 +2048,18 @@ describe('WorkflowRunContent', () => {
   });
 
   describe('a held step, said once and reviewed in one scroller', () => {
+    it('walks the loaded attention window in its published order', async () => {
+      const onSelectInvocation = vi.fn();
+      const screen = await renderContent({
+        run: createWorkflowRunSummaryFixture({ state: 'waiting_for_review', attentionRequired: true }),
+        selectedInvocationId: 'first-hold', onSelectInvocation,
+        invocations: ['first-hold', 'next-hold'].map((id) => createWorkflowInvocationIndexFixture({ id, lifecycle: 'waiting_for_review' })),
+        renderReviewCard: () => React.createElement('ReviewSlot'),
+      });
+      expect(screen.findByTestId('workflow-run-previous-hold')?.props.disabled).toBe(true);
+      await screen.pressByTestIdAsync('workflow-run-next-hold');
+      expect(onSelectInvocation).toHaveBeenCalledWith('next-hold');
+    });
     const sessionProgress = (sessionId: string): NonNullable<ContentProps['selectedInvocationProgress']> => ({
       kind: 'happier.workflow-progress.v1',
       blockKind: 'step',
@@ -2083,7 +2080,7 @@ describe('WorkflowRunContent', () => {
       }
     };
 
-    it('gives a wide review the whole pane, with the conversation behind Discuss and back again', async () => {
+    it('keeps a wide held result and its conversation available together through Discuss and back', async () => {
       await withSession('owner', async () => {
         let discuss: (() => void) | undefined;
         const screen = await renderContent({
@@ -2096,7 +2093,7 @@ describe('WorkflowRunContent', () => {
           },
         });
         expect(screen.findAllByType('ReviewSlot' as never)).toHaveLength(1);
-        expect(screen.findByTestId('session-in-pane-inactive:review-session')).toBeNull();
+        expect(screen.findByTestId('session-in-pane-inactive:review-session')).toBeTruthy();
 
         await act(async () => discuss?.());
         expect(screen.findAllByType('ReviewSlot' as never)).toHaveLength(0);
@@ -2106,7 +2103,7 @@ describe('WorkflowRunContent', () => {
         const reopen = screen.findAll((node) => node.props.testID === 'workflow-run-open-review' && typeof node.props.onPress === 'function')[0];
         await act(async () => reopen?.props.onPress());
         expect(screen.findAllByType('ReviewSlot' as never)).toHaveLength(1);
-        expect(screen.findByTestId('session-in-pane-inactive:review-session')).toBeNull();
+        expect(screen.findByTestId('session-in-pane-inactive:review-session')).toBeTruthy();
       });
     });
 
@@ -2118,9 +2115,6 @@ describe('WorkflowRunContent', () => {
           selectedInvocationProgress: sessionProgress('review-session'),
           renderReviewCard: () => React.createElement('ReviewSlot'),
         });
-        expect(screen.findByTestId('session-in-pane-inactive:review-session')).toBeNull();
-
-        await screen.pressByTestIdAsync('workflow-run-show-conversation');
         expect(screen.findByTestId('session-in-pane-inactive:review-session')).toBeTruthy();
       });
     });
@@ -2954,7 +2948,8 @@ describe('WorkflowRunContent', () => {
     expect(
       screen.findByTestId('session-in-pane-inactive:stale-session'),
     ).toBeNull();
-    await screen.pressByTestIdAsync('workflow-run-open-execution-run');
+    expect(screen.findByTestId('workflow-run-open-execution-run')).toBeNull();
+    await screen.pressByTestIdAsync('workflow-run-selected-open-execution');
     expect(openExecutionRun).toHaveBeenCalledWith('execution/run 1');
     expect(screen.findByTestId('workflow-run-open-session')).toBeNull();
   });
@@ -3129,7 +3124,7 @@ describe('WorkflowRunContent', () => {
     );
   });
 
-  it("keeps a failed step's code under Technical details and never shows a reason beside a completed step", async () => {
+  it("keeps a failed step's cause in its open card, its code under Technical details, and completed steps quiet", async () => {
     const render = async (lifecycle: 'failed' | 'completed') => {
       const invocation = createWorkflowInvocationIndexFixture({
         id: 'inv-1',
@@ -3164,7 +3159,6 @@ describe('WorkflowRunContent', () => {
       .findAllByType(Item)
       .find((item) => item.props.testID === 'workflow-run-recovery-cause');
     expect(head?.props.title).toBe('The Run store could not be written.');
-    expect(head?.props.title).not.toContain('storage_unavailable');
     const { TechnicalDetailsDisclosure } =
       await import('@/components/ui/lists/TechnicalDetailsDisclosure');
     expect(
@@ -3180,8 +3174,8 @@ describe('WorkflowRunContent', () => {
         },
       ],
     ]);
-    // The inspector beside the header already says why, so the header does not repeat it.
-    expect(failed.findByTestId('workflow-run-failure-reason')).toBeNull();
+    // The open step's recovery card above owns the cause; the wide header does not repeat it.
+    expect(failed.findAllByTestId('workflow-run-failure-reason')).toHaveLength(0);
     await failed.unmount();
 
     // With no step open, the header is the one place that says why the Run failed.
@@ -4491,6 +4485,21 @@ describe('WorkflowRunContent', () => {
     expect(screen.findAllByTestId('workflow-run-open-result')).toHaveLength(0);
     await screen.pressByTestIdAsync('workflow-run-see-failures');
     expect(onSelectInvocation).toHaveBeenCalledWith('inv-2');
+  });
+
+  it.each([
+    { state: 'running' as const, availability: { cancel: true, pause: true }, then: 'workflow-run-pause' },
+    { state: 'paused' as const, availability: { cancel: true, pause: false, resumeBoundary: true }, then: 'workflow-run-resume' },
+  ])('leads a $state phone page\'s controls with Stop, so Pause and Resume never move it (REPLAY-1107-COORD)', async ({ state, availability, then }) => {
+    viewport.window = { width: 390, height: 844 };
+    const screen = await renderContent({
+      run: createWorkflowRunSummaryFixture({ state, availability }),
+      onPause: vi.fn(), onResume: vi.fn(), onCancel: vi.fn(), selectedInvocationId: null,
+    });
+    const controls = screen.findByTestId('workflow-run-page-controls')
+      ?.findAll((node) => node.props.testID === 'workflow-run-cancel' || node.props.testID === then)
+      .map((node) => node.props.testID as string) ?? [];
+    expect([...new Set(controls)]).toEqual(['workflow-run-cancel', then]);
   });
 
   it('keeps a failed Run\'s own actions in the phone page and links its origin from the meta line', async () => {
