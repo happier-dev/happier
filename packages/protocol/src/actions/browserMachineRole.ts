@@ -9,7 +9,8 @@ import { isBrowserExtensionMutationActionIdV1 } from './actionIds.js';
  * Input validation/defaults and Chromium's redirect policy retain their owners.
  */
 export function requiredMachineRoleForBrowserAction(actionId: string, input?: unknown): MachineAccessRoleV1 {
-  if (isBrowserExtensionMutationActionIdV1(actionId)) return 'manage';
+  if (isBrowserExtensionMutationActionIdV1(actionId)
+    || actionId === 'browser.profile.logins.import' || actionId === 'browser.sandbox.install') return 'manage';
   if (actionId !== 'browser.automation.navigate') return 'use';
 
   const url = (input as BrowserAutomationActionRequestV1 | undefined)?.payload?.url;

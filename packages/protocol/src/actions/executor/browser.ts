@@ -1,5 +1,6 @@
 import {
   ACTION_ID_FAMILIES_V1,
+  RuntimeActionIdV1Schema,
   type RuntimeActionIdV1,
 } from '../actionIds.js';
 import type { RuntimeActionDispatchArgs } from './types.js';
@@ -19,6 +20,15 @@ const BROWSER_RUNTIME_ACTION_ID_SET: ReadonlySet<RuntimeActionIdV1> = new Set(BR
 
 export function isBrowserRuntimeActionId(actionId: RuntimeActionIdV1): actionId is BrowserRuntimeActionId {
   return BROWSER_RUNTIME_ACTION_ID_SET.has(actionId);
+}
+
+/** Non-content Session routing, shared by sealed transport and Home admission. */
+export function projectExternalActionBrowserSessionIdV1(actionId: string, input: unknown): string | undefined {
+  const action = RuntimeActionIdV1Schema.safeParse(actionId);
+  if (!action.success || !isBrowserRuntimeActionId(action.data)
+    || !input || typeof input !== 'object' || Array.isArray(input)) return undefined;
+  const sessionId = (input as Readonly<Record<string, unknown>>).browserSessionId;
+  return typeof sessionId === 'string' && sessionId.trim() ? sessionId.trim() : undefined;
 }
 
 export async function executeBrowserRuntimeAction(args: RuntimeActionDispatchArgs<BrowserRuntimeActionId>): Promise<unknown> {

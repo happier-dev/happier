@@ -15,3 +15,12 @@ it.each(['view-source:file:///owner/private.txt', 'chrome://version/', 'devtools
 it.each(['https://example.test/', 'http://example.test/', 'about:blank'])('admits ordinary guest pages: %s', url => {
   expect(canExecuteSessionRuntimeAction({ actionId: 'browser.automation.navigate', input: { payload: { url } } }, () => guest)).toBe(true);
 });
+
+it.each(['browser.profile.logins.import', 'browser.sandbox.install'] as const)(
+  'keeps Machine-wide browser changes Manage-only through Session ingress: %s', actionId => {
+    expect(canExecuteSessionRuntimeAction({ actionId, input: {} }, () => guest)).toBe(false);
+    const manager = { bootstrap: { savedSecretOperationContext: { machineAdmission: { role: 'manage' } } } } as unknown as
+      NonNullable<TrackedSession['requesterSessionRuntimeContext']>;
+    expect(canExecuteSessionRuntimeAction({ actionId, input: {} }, () => manager)).toBe(true);
+    expect(canExecuteSessionRuntimeAction({ actionId, input: {} }, () => undefined)).toBe(true);
+  });

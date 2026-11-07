@@ -412,6 +412,11 @@ The streamed human viewer consumes this same owner in 0.3 development source.
 Managed Chromium runs as the Machine custodian. Protocol's browser Action role rule is
 consumed by server admission and by Session control with the Session's private custody
 role. Extension install/update/enable/disable/remove require Manage on both paths.
+For Use guests, the shared execution-authorization mint admits Browser Session
+operands only when the requester owns that Session or has effective shared access.
+HTTP issuance and direct dispatch consume this same admission. Encrypted Action
+envelopes project the non-content `browserSessionId`; the receiver binds it to the
+sealed command before execution. Issued commands do not repeat Session authorization.
 A requester without Manage can automate navigation only
 to HTTP(S) or `about:blank`; other schemes return `access_denied`. Owner and Manage
 Sessions retain their existing access. The managed source defaults to an ephemeral

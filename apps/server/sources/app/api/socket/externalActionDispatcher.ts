@@ -793,6 +793,7 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
                     : { environmentId: deploymentMetadataEnvironmentId },
                 deploymentNativeAdmission,
                 deploymentLinkEnvironmentId,
+                browserSessionId: request.envelope.v === 2 ? request.envelope.browserSessionId : undefined,
                 workspaceSyncAdmission: request.envelope.v === 2 ? request.envelope.workspaceSyncAdmission : undefined,
                 sessionSpawnInputKind: request.envelope.v === 1 ? 'public_api' as const : 'canonical_admission' as const,
                 ...(request.sessionActionSource ? { resolveCurrentSessionMachine: resolveSessionMachine } : {}) };

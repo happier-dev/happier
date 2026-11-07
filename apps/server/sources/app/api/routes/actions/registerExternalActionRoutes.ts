@@ -847,6 +847,7 @@ export function registerExternalActionRoutes(
                         ? { ...mintInput, authentication: mintInput.authentication }
                         : { ...mintInput, authentication: mintInput.authentication }
                     : mintInput, { ...(workflowAdmission ? { workflowAdmission } : {}),
+                    browserSessionId: body.data.envelope.v === 2 ? body.data.envelope.browserSessionId : undefined,
                     input: body.data.envelope.v === 1 ? body.data.envelope.input
                         : deploymentMetadataEnvironmentId === undefined
                             ? deploymentNativeAdmission ?? body.data.envelope.sessionSpawnAdmission ?? managedAdmission?.input

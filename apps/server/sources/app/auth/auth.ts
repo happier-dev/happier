@@ -10,7 +10,7 @@ import { isDeploymentReadActionIdV1, isDeploymentPreparationActionIdV1, projectD
     isDeploymentDomainNativeAdmissionV1, isDeploymentEnvironmentUpdateNativeAdmissionV1,
     createDeploymentCandidatePublicationV1, projectExternalActionDeploymentMetadataEnvironmentIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { isDeploymentDomainChildActionIdV1, isDeploymentChildRootActionIdV1, isDeploymentBackupActionIdV1 } from '@happier-dev/protocol';
-import { isDeploymentBackupInventoryActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { isDeploymentBackupReadActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { EmbedConfigV1Schema, StoredEmbedConfigV1Schema, type EmbedConfigV1 } from '@happier-dev/protocol/embed';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import { type AccountStatusV1 } from '@happier-dev/protocol/home/governance';
@@ -25,6 +25,7 @@ import { acquireAccountSessionOwnerMetadataFenceInTx } from "@/app/encryption/ac
 import { deriveAccountEncryptionCurrentnessFromRow } from "@/app/encryption/accountContentKeyAdmission";
 import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
 import { assertAccountActive } from "./accountStatus";
+import { admitExternalActionBrowserSessionInTx } from './externalActionBrowserAdmission';
 import { isActiveHomeAccountStatus } from '@happier-dev/protocol/home/governance';
 import { inTx, type Tx } from "@/storage/inTx";
 import { log } from "@/utils/logging/log";
@@ -321,6 +322,7 @@ type CreateApiTokenParams = Readonly<{
 export type ApiTokenRevocation = Readonly<{ revoked: boolean; revokedTokenIds: readonly string[] }>;
 export type ApiTokenRevokeAllResult = Readonly<{ revokedCount: number; revokedTokenIds: readonly string[] }>;
 export type ExternalActionGrantEvaluationContext = Readonly<{ input?: unknown;
+    browserSessionId?: string;
     workflowAdmission?: WorkflowExternalActionAdmission;
     deploymentLinkEnvironmentId?: string;
     workspaceSyncAdmission?: WorkspaceSyncAdmissionInputV1;
@@ -613,7 +615,7 @@ class AuthModule {
                     ? input.authentication.evidence : mintApiTokenPrincipal?.authenticationEvidence,
             });
             if (!environment.ok) throw new ApiTokenOperationError('credential_scope_denied');
-            if (input.actionId !== 'action.operations.get' && !isDeploymentBackupInventoryActionIdV1(input.actionId)) {
+            if (input.actionId !== 'action.operations.get' && !isDeploymentBackupReadActionIdV1(input.actionId)) {
                 if (!(ingressUpdateRoot ? environment.admission.canManage && !environment.row.deletedAt
                     : canDeployDeploymentEnvironment(environment.admission, environment.row))) {
                     throw new ApiTokenOperationError('credential_scope_denied');
@@ -741,7 +743,7 @@ class AuthModule {
         }
         if ('authentication' in supplied) {
             const { isOriginalTerminalExecutionAction, hasCurrentOriginalSessionActionTargetInTx, hasCurrentExternalActionSessionSource,
-                verifyCurrentExternalActionPrincipalInTx } = await import('./externalActionExecutionAuthorization');
+                verifyCurrentExternalActionPrincipalInTx, readExternalActionBindingAuthority } = await import('./externalActionExecutionAuthorization');
             if (supplied.authentication.kind === 'terminal'
                 && !isOriginalTerminalExecutionAction(supplied.actionId, supplied) && !supplied.workflowActionOrigin) {
                 throw new ApiTokenOperationError('credential_scope_denied');
@@ -792,6 +794,12 @@ class AuthModule {
                 if (!principal) throw new ApiTokenOperationError('invalid_token');
                 await bindWorkspaceSyncSource(principal.authority);
             }
+            if (!await admitExternalActionBrowserSessionInTx(db, { binding: supplied, actionInput: context.input,
+                browserSessionId: context.browserSessionId, authentication: { env: process.env,
+                    authority: readExternalActionBindingAuthority(supplied),
+                    authenticationEvidence: supplied.authentication.evidence, tokenEpoch: supplied.authentication.tokenEpoch } })) {
+                throw new ApiTokenOperationError('target_unavailable');
+            }
             const token = await this.externalActionExecutionAuthorizationTokens.generator.new({
                 user: supplied.accountId,
                 extras: { externalActionExecutionAuthorizationV1: supplied },
@@ -841,6 +849,11 @@ class AuthModule {
         });
         if (!admission.ok) throw new ApiTokenOperationError("credential_scope_denied", admission.reason);
         await bindWorkspaceSyncSource(principal.authority);
+        if (!await admitExternalActionBrowserSessionInTx(db, { binding: supplied, actionInput: context.input,
+            browserSessionId: context.browserSessionId, authentication: { env: process.env, authority: principal.authority,
+                authenticationEvidence: principal.authenticationEvidence, apiTokenGrant: principal.grant } })) {
+            throw new ApiTokenOperationError('target_unavailable');
+        }
         const binding = supplied;
         const token = await this.externalActionExecutionAuthorizationTokens.generator.new({
             user: binding.accountId,

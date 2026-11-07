@@ -39,6 +39,20 @@ const binding = {
 const randomBytes = (length: number) => new Uint8Array(length).fill(2);
 
 describe('whole external Action encryption', () => {
+  it('binds Browser Session routing to the sealed operands before execution', () => {
+    const browserBinding = { ...binding, actionId: 'browser.view.open' };
+    const input = { browserSessionId: 'owner-session', viewId: 'view' };
+    const request = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+      binding: browserBinding, input, material, randomBytes });
+    expect(request).toMatchObject({ browserSessionId: 'owner-session' });
+    const open = (envelope: unknown) => openExternalActionRequestV2({
+      projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+      binding: browserBinding, envelope, material });
+    expect(open(request)?.input).toEqual(input);
+    expect(open({ ...request, browserSessionId: 'guest-session' })).toBeNull();
+    const { browserSessionId: _session, ...missingProjection } = request;
+    expect(open(missingProjection)).toBeNull();
+  });
   it('binds the selected binding Environment while keeping authored values encrypted', () => {
     const bindingRequest = { ...binding, actionId: 'deployments.bindings.set' };
     const input = { serverId: 'home', environmentId: 'environment', expectedRevision: 2,

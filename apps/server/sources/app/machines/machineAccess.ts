@@ -14,7 +14,9 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { isRequesterProjectExecutionActionV1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { isStoredDeploymentExecutionActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { getActionSpec, SignedRootActionIdSchema, PluginPublicationActionOutputSchemas } from '@happier-dev/protocol/actions/actionSpecs';
-import { isBrowserExtensionActionIdV1, SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { RuntimeActionIdV1Schema, SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { isBrowserRuntimeActionId } from '@happier-dev/protocol/actions/executor/browser';
+import { isComputerRuntimeActionId } from '@happier-dev/protocol/actions/executor/computer';
 import { requiredMachineRoleForBrowserAction } from '@happier-dev/protocol/actions';
 import { NpmRegistryProfileActionOutputSchemasV1 } from '@happier-dev/protocol/actions/npmRegistryProfileActionFamily';
 import { isProviderActionIdV1 } from '@happier-dev/protocol/providers/providerActionsV1';
@@ -88,7 +90,7 @@ export function buildMachineAdmissionFactsSelect(actorAccountId: string) {
 }
 
 const MACHINE_OPENING_INCLUDE = {
-    managedResource: { select: { id: true, homeId: true } },
+    managedResource: true,
     account: MACHINE_RESOURCE_FACTS_SELECT.account,
     accountGrants: MACHINE_ACCESS_FACTS_SELECT.accountGrants,
     teamGrants: MACHINE_ACCESS_FACTS_SELECT.teamGrants,
@@ -516,7 +518,8 @@ export async function resolveMachineAdmissionFromFactsInTx(tx: Tx, row: MachineF
     const operationActionId = input.actionId === 'template.instantiate' ? 'session.spawn_new' : input.actionId;
     const spawnSetup = input.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 && input.sessionSpawnAdmission?.machineSetupRequested === true;
     let requiredRole = spawnSetup ? 'manage' : input.requiredRole ?? 'use';
-    const browserExtensionAction = input.actionId !== undefined && isBrowserExtensionActionIdV1(input.actionId);
+    const runtimeAction = RuntimeActionIdV1Schema.safeParse(input.actionId);
+    const browserAction = runtimeAction.success && isBrowserRuntimeActionId(runtimeAction.data);
     if (input.actionId && requiredMachineRoleForBrowserAction(input.actionId) === 'manage') requiredRole = 'manage';
     let method = input.rpcMethod;
     const requesterSessionLifecycle = operationActionId === 'session.spawn_new' || operationActionId === 'session.open';
@@ -531,9 +534,14 @@ export async function resolveMachineAdmissionFromFactsInTx(tx: Tx, row: MachineF
             : Object.hasOwn(NpmRegistryProfileActionOutputSchemasV1, input.actionId)
             ? spec?.sideEffectClass === 'read' ? RPC_METHODS.DAEMON_NPM_REGISTRY_PROFILES_GET
                 : RPC_METHODS.DAEMON_NPM_REGISTRY_PROFILES_MUTATE
+            : runtimeAction.success && isComputerRuntimeActionId(runtimeAction.data)
+            ? RPC_METHODS.DAEMON_COMPUTER_PERSONAL_ACTION_EXECUTE
             : requesterSessionLifecycle ? undefined : isProviderActionIdV1(input.actionId)
             ? resolveProviderActionRpcRouteV1(input.actionId)?.method : spec?.bindings?.rpcMethod;
-        if (!method && !access.owned && !requesterSessionLifecycle && !browserExtensionAction && !isRequesterProjectExecutionActionV1(input.actionId)
+        // Runtime Browser Actions use the signed Action executor rather than a
+        // raw RPC binding. Its role owner above and the receiver's profile owner
+        // govern guest access; absence of a raw binding is not a custody refusal.
+        if (!method && !access.owned && !requesterSessionLifecycle && !browserAction && !isRequesterProjectExecutionActionV1(input.actionId)
             && !isStoredDeploymentExecutionActionIdV1(input.actionId)) {
             return { kind: 'denied', code: 'unsupported_operation' };
         }
