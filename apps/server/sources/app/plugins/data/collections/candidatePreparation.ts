@@ -1,3 +1,4 @@
+import { publishCollectionSharingRowsChangedInTx, readCollectionRecipientKeysInTx } from "./sharingStorage";
 import type { Prisma } from "@prisma/client";
 import { PluginAccountPluginIntentV1Schema } from '@happier-dev/protocol/plugins/availability/v1';
 import { PluginCollectionCandidatePreparationErrorV1Schema, PluginCollectionCandidatePreparationRetireRequestV1Schema, PluginCollectionCandidatePreparationRetireResultV1Schema, PluginCollectionCandidatePreparationSourcePageRequestV1Schema, PluginCollectionCandidatePreparationSourcePageResultV1Schema, PluginCollectionCandidatePreparationStageRequestV1Schema, PluginCollectionCandidatePreparationStageResultV1Schema, PluginCollectionProjectionV1Schema, isPluginCollectionSchemaWideningV1, measurePluginCollectionCandidatePreparationStageRequestEncodedBytesV1, normalizePluginAccountCollectionContractsV1, type NormalizedPluginAccountCollectionContractV1, type PluginCollectionCandidatePreparationBindingV1, type PluginCollectionCandidatePreparationRetireResultV1, type PluginCollectionCandidatePreparationSourcePageResultV1, type PluginCollectionCandidatePreparationStageResultV1, type PluginCollectionProjectionV1, type PluginCollectionQuotaDimensionV1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
@@ -118,10 +119,21 @@ type CandidatePreparationSourcePageRow = Readonly<{
 }>;
 
 type CandidatePreparationSourceRevisionRow = Readonly<{
+    contentEnvelope: unknown;
     id: string;
     rowId: string;
     revision: number;
 }>;
+
+function resourceContent(content: unknown): boolean {
+    return content !== null && typeof content === 'object' && !Array.isArray(content)
+        && 'k' in content && content.k === 'collection';
+}
+function assertCandidateResourceLayout(source: unknown, target: unknown): void {
+    if (resourceContent(source) !== resourceContent(target)) {
+        throw new PluginCollectionCandidatePreparationOperationError('collection_candidate_preparation_content_mode_mismatch');
+    }
+}
 
 type CandidatePreparationStageRevisionRow = Readonly<{
     sourceRowDbId: string;
@@ -129,6 +141,7 @@ type CandidatePreparationStageRevisionRow = Readonly<{
 }>;
 
 type CandidatePreparationPromotableLiveRow = Readonly<{
+    contentEnvelope: unknown;
     id: string;
     rowId: string;
     revision: number;
@@ -959,6 +972,7 @@ function buildCandidatePromotionRows(input: Readonly<{
             if (error instanceof PluginCollectionCandidatePreparationOperationError) promotionNotReady();
             throw error;
         }
+        assertCandidateResourceLayout(row.contentEnvelope, targetValue.content);
         return {
             id: row.id,
             rowId: row.rowId,
@@ -1174,6 +1188,7 @@ export async function promotePluginCollectionCandidatePreparationInTx(input: Rea
                         contractId: true,
                         schemaVersion: true,
                         contractDigest: true,
+                        contentEnvelope: true,
                     },
                 });
                 if (rows.length === 0) break;
@@ -1215,6 +1230,7 @@ export async function promotePluginCollectionCandidatePreparationInTx(input: Rea
                         contractId: true,
                         schemaVersion: true,
                         contractDigest: true,
+                        contentEnvelope: true,
                     },
                 });
                 if (rows.length === 0) break;
@@ -1231,6 +1247,8 @@ export async function promotePluginCollectionCandidatePreparationInTx(input: Rea
                 target,
                 liveRowCount,
             });
+            await publishCollectionSharingRowsChangedInTx(input.tx, { accountId: input.accountId,
+                pluginId: target.ref.pluginId, collectionId: target.ref.collectionId });
             continue;
         }
         if (resolvePluginCollectionMigrationChainV1({
@@ -1283,6 +1301,7 @@ export async function promotePluginCollectionCandidatePreparationInTx(input: Rea
                     contractId: true,
                     schemaVersion: true,
                     contractDigest: true,
+                    contentEnvelope: true,
                 },
             });
             if (liveRows.length === 0) break;
@@ -1398,6 +1417,7 @@ export async function promotePluginCollectionCandidatePreparationInTx(input: Rea
                     contractId: true,
                     schemaVersion: true,
                     contractDigest: true,
+                    contentEnvelope: true,
                 },
             });
             if (liveRows.length === 0) break;
@@ -1480,6 +1500,8 @@ export async function promotePluginCollectionCandidatePreparationInTx(input: Rea
                 throw error;
             }
             if (!promoted) promotionNotReady();
+            await publishCollectionSharingRowsChangedInTx(input.tx, { accountId: input.accountId,
+                pluginId: target.ref.pluginId, collectionId: target.ref.collectionId, rowIds: liveRows.map(row => row.rowId) });
             await retirePluginCollectionCandidatePreparationStagesTx({
                 tx: input.tx,
                 accountId: input.accountId,
@@ -1637,6 +1659,8 @@ export async function pagePluginCollectionCandidatePreparationSource(input: Read
         const stagedRevisionBySourceRowId = new Map(
             stages.map((stage) => [stage.sourceRowDbId, stage.sourceRevision]),
         );
+        const recipientKeys = await readCollectionRecipientKeysInTx(tx, { ownerAccountId: input.accountId, actorAccountId: input.accountId,
+            pluginId: resolved.source.ref.pluginId, collectionId: resolved.source.ref.collectionId, rowIds: pageRows.map(row => row.rowId) });
         const response = {
             rows: pageRows.map((row) => {
                 const validated = readValidatedSourceRow({
@@ -1648,6 +1672,7 @@ export async function pagePluginCollectionCandidatePreparationSource(input: Read
                     rowId: row.rowId,
                     revision: row.revision,
                     content: validated.content,
+                    ...(recipientKeys.has(row.rowId) ? { encryptedDataKey: recipientKeys.get(row.rowId)! } : {}),
                     projection: validated.projection,
                     alreadyStaged: stagedRevisionBySourceRowId.get(row.id) === row.revision,
                 };
@@ -1703,7 +1728,7 @@ export async function stagePluginCollectionCandidatePreparation(input: Readonly<
                 rowId: { in: [...new Set(request.items.map((item) => item.source.rowId))] },
                 deletedAt: null,
             },
-            select: { id: true, rowId: true, revision: true },
+            select: { id: true, rowId: true, revision: true, contentEnvelope: true },
         });
         const sourceByRowId = new Map(sourceRows.map((row) => [row.rowId, row]));
         const prepared = request.items.map((item, index) => {
@@ -1715,6 +1740,7 @@ export async function stagePluginCollectionCandidatePreparation(input: Readonly<
                 content: item.target.content,
                 projection: item.target.projection,
             });
+            if (currentSource?.revision === item.source.revision) assertCandidateResourceLayout(currentSource.contentEnvelope, target.content);
             return {
                 index,
                 sourceRow: currentSource?.revision === item.source.revision ? currentSource : undefined,

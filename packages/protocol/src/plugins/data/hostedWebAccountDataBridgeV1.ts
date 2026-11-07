@@ -21,6 +21,8 @@ import {
 import { PluginUiJsonValueV1Schema } from '../contributions/ui/json.js';
 import { asProtocolZod } from '../actions/internalProtocolZodAdapter.js';
 
+import { PluginCollectionSharingSetGrantRequestV1Schema, PluginCollectionSharingRevokeGrantRequestV1Schema,
+  PluginCollectionSharingAddressV1Schema, PluginCollectionSharingListRequestV1Schema } from './collectionSharingV1.js';
 export { PLUGIN_HOSTED_WEB_ACCOUNT_DATA_BRIDGE_KIND_V1 } from './hostedWebAccountDataBridgeKindV1.js';
 
 export const OpaqueHostedWebAccountDataQueryIdV1Schema = lazyZodSchema(() => z.string().check(z.minLength(1), z.maxLength(128), z.regex(/^[A-Za-z0-9_-]+$/u)));
@@ -77,6 +79,25 @@ const AccountDataListOptionsV1Schema = lazyZodSchema(() => z.strictObject({ curs
 const AccountDataIdentityTagV1Schema = lazyZodSchema(() => z.strictObject({ field: PluginCollectionMemberNameV1Schema, components: z.array(z.string()).check(z.minLength(1), z.maxLength(16)) }));
 
 const PluginHostedWebAccountDataCollectionOperationV1Schema = lazyZodSchema(() => z.discriminatedUnion('operation', [
+  z.strictObject({ kind: z.literal('data'), operation: z.literal('collection.sharing.setGrant'),
+    definition: PluginHostedWebAccountDataDefinitionV1Schema,
+    arguments: z.tuple([PluginCollectionRowIdV1Schema, z.pick(PluginCollectionSharingSetGrantRequestV1Schema,
+      { principal: true, accessLevel: true, expectedRevision: true })]) }),
+  z.strictObject({ kind: z.literal('data'), operation: z.literal('collection.sharing.listGrants'),
+    definition: PluginHostedWebAccountDataDefinitionV1Schema, arguments: z.tuple([PluginCollectionRowIdV1Schema]) }),
+  z.strictObject({ kind: z.literal('data'), operation: z.literal('collection.sharing.revokeGrant'),
+    definition: PluginHostedWebAccountDataDefinitionV1Schema,
+    arguments: z.tuple([PluginCollectionRowIdV1Schema, z.pick(PluginCollectionSharingRevokeGrantRequestV1Schema, { principal: true })]) }),
+  z.strictObject({ kind: z.literal('data'), operation: z.literal('collection.sharing.sharedWithMe'),
+    definition: PluginHostedWebAccountDataDefinitionV1Schema,
+    arguments: z.tuple([z.pick(PluginCollectionSharingListRequestV1Schema, { cursor: true, limit: true })]) }),
+  z.strictObject({ kind: z.literal('data'), operation: z.literal('collection.sharing.get'),
+    definition: PluginHostedWebAccountDataDefinitionV1Schema,
+    arguments: z.tuple([z.pick(PluginCollectionSharingAddressV1Schema, { ownerAccountId: true, rowId: true })]) }),
+  z.strictObject({ kind: z.literal('data'), operation: z.literal('collection.sharing.put'),
+    definition: PluginHostedWebAccountDataDefinitionV1Schema,
+    arguments: z.tuple([z.strictObject({ ownerAccountId: PluginCollectionSharingAddressV1Schema.shape.ownerAccountId,
+      value: AccountDataCollectionValueV1Schema, expectedRevision: PluginCollectionSharingSetGrantRequestV1Schema.shape.expectedRevision })]) }),
   z.strictObject({
     kind: z.literal('data'),
     operation: z.literal('collection.identityTag'),

@@ -1,3 +1,6 @@
+import { readCollectionResourceRecipientCensusInTx } from '@/app/plugins/data/collections/sharingAccessService';
+import { readCollectionSharingAudienceInTx } from '@/app/plugins/data/collections/sharingStorage';
+import { ResourceRecipientKeyEnvelopesV1Schema } from '@happier-dev/protocol/teams/resourceGrantAccessV1';
 import { randomUUID } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { ACCOUNT_ENCRYPTION_MIGRATE_TRANSITION_COLLECTION_PAGE_MAX_ITEMS, type AccountEncryptionMigrateCollectionInventoryItem, type AccountEncryptionMigrateCollectionStageItem, type AccountEncryptionMigrateTransitionPrepareRequest, type AccountEncryptionMigrateTransitionPrepareResponse } from '@happier-dev/protocol/account/encryptionMigrate';
@@ -161,6 +164,7 @@ type AccountEncryptionTransitionStoredStage = AccountEncryptionTransitionStageSo
     & Readonly<{
         id: string;
         targetEnvelope: unknown | null;
+        recipientKeyEnvelopes: unknown | null;
         targetEncodedBytes: bigint | null;
     }>;
 
@@ -362,6 +366,7 @@ async function readAccountEncryptionTransitionAudienceInTx(tx: Tx, accountId: st
     for (const discussion of discussions) {
         for (const recipient of await resolveDiscussionAudienceInTx(tx, discussion.id)) accountIds.add(recipient);
     }
+    for (const recipient of await readCollectionSharingAudienceInTx(tx, { accountId, deletedAt: null })) accountIds.add(recipient);
     return [...accountIds].sort();
 }
 
@@ -750,6 +755,7 @@ const accountEncryptionTransitionStageSelect = {
     sourceRevision: true,
     sourceEnvelope: true,
     targetEnvelope: true,
+    recipientKeyEnvelopes: true,
     schemaVersion: true,
     contractDigest: true,
     sourceEncodedBytes: true,
@@ -1101,9 +1107,14 @@ function stageMatchesInventoryItem(
         && pluginJsonValuesEqual(stage.sourceEnvelope, item.sourceEnvelope);
 }
 
-function inventoryItemsFromStages(
+async function inventoryItemsFromStages(tx: Tx, accountId: string,
     stages: readonly AccountEncryptionTransitionStoredStage[],
-): readonly AccountEncryptionMigrateCollectionInventoryItem[] | null {
+): Promise<readonly AccountEncryptionMigrateCollectionInventoryItem[] | null> {
+    const managed = await tx.pluginCollectionRow.findMany({ where: { accountId, deletedAt: null,
+        OR: stages.map(stage => ({ pluginId: stage.pluginId, collectionId: stage.collectionId, rowId: stage.rowId })),
+        AND: [{ OR: [{ accountGrants: { some: {} } }, { teamGrants: { some: {} } }, { groupGrants: { some: {} } }, { keyEnvelopes: { some: {} } }] }] },
+        select: { pluginId: true, collectionId: true, rowId: true } });
+    const managedIds = new Set(managed.map(stageIdentityKey));
     const items: AccountEncryptionMigrateCollectionInventoryItem[] = [];
     for (const stage of stages) {
         const source = stage.sourceEnvelope;
@@ -1119,6 +1130,9 @@ function inventoryItemsFromStages(
             collectionId: stage.collectionId,
             rowId: stage.rowId,
             revision: stage.sourceRevision,
+            ...(managedIds.has(stageIdentityKey(stage)) ? { resource: await readCollectionResourceRecipientCensusInTx(tx, {
+                actorAccountId: accountId, ownerAccountId: accountId, pluginId: stage.pluginId, collectionId: stage.collectionId, rowId: stage.rowId,
+            }) } : {}),
             sourceEnvelope: source as PluginCollectionContentEnvelopeV1,
             schemaVersion: stage.schemaVersion,
             contractDigest: stage.contractDigest,
@@ -2250,7 +2264,7 @@ export async function inventoryAccountEncryptionTransitionCoordinatorInTx(
         transitionId: transition.id,
         ...(decodedCursor ? { cursor: decodedCursor.after } : {}),
     });
-    const items = inventoryItemsFromStages(page.stages);
+    const items = await inventoryItemsFromStages(params.tx, params.accountId, page.stages);
     if (!items) {
         await abandonAccountEncryptionTransitionInTx(params.tx, transition.id, now);
         return { status: "invalid_content" };
@@ -2455,6 +2469,7 @@ export async function stageAccountEncryptionTransitionCollectionsCoordinatorInTx
         accountId: params.accountId,
         fromMode: source.fromMode,
         toMode: source.toMode,
+        ownerContentPublicKeyFingerprint: transition.targetContentKeyFingerprint,
         limits: {
             participantLimit: capacity.participantLimit,
             encodedByteLimit: capacity.encodedByteLimit,
@@ -2482,6 +2497,7 @@ export async function stageAccountEncryptionTransitionCollectionsCoordinatorInTx
             if (
                 stage.targetEncodedBytes !== candidate.targetEncodedBytes
                 || !pluginJsonValuesEqual(stage.targetEnvelope, candidate.item.targetEnvelope)
+                || !pluginJsonValuesEqual(stage.recipientKeyEnvelopes, candidate.item.recipientKeyEnvelopes ?? null)
             ) {
                 return { status: "stage_conflict" };
             }
@@ -2528,6 +2544,7 @@ export async function stageAccountEncryptionTransitionCollectionsCoordinatorInTx
             where: { id: stage.id },
             data: {
                 targetEnvelope: toPrismaJson(candidate.item.targetEnvelope),
+                ...(candidate.item.recipientKeyEnvelopes ? { recipientKeyEnvelopes: toPrismaJson(candidate.item.recipientKeyEnvelopes) } : {}),
                 targetEncodedBytes: candidate.targetEncodedBytes,
             },
         });
@@ -2823,6 +2840,8 @@ function collectionDirectiveItemsFromStages(
         ) {
             return null;
         }
+        const keys = stage.recipientKeyEnvelopes === null ? null : ResourceRecipientKeyEnvelopesV1Schema.safeParse(stage.recipientKeyEnvelopes);
+        if (keys && !keys.success) return null;
         items.push({
             pluginId: stage.pluginId,
             collectionId: stage.collectionId,
@@ -2830,6 +2849,7 @@ function collectionDirectiveItemsFromStages(
             expectedRevision: stage.sourceRevision,
             sourceEnvelope: stage.sourceEnvelope as PluginCollectionContentEnvelopeV1,
             targetEnvelope: stage.targetEnvelope as PluginCollectionContentEnvelopeV1,
+            ...(keys?.success ? { recipientKeyEnvelopes: keys.data } : {}),
             schemaVersion: stage.schemaVersion,
             contractDigest: stage.contractDigest,
         });
@@ -3121,6 +3141,7 @@ export async function activateAccountEncryptionTransitionCoordinatorInTx(
         accountId: params.accountId,
         fromMode: source.fromMode,
         toMode: source.toMode,
+        ownerContentPublicKeyFingerprint: transition.targetContentKeyFingerprint,
         limits: {
             participantLimit: capacity.participantLimit,
             encodedByteLimit: capacity.encodedByteLimit,
@@ -3139,6 +3160,7 @@ export async function activateAccountEncryptionTransitionCoordinatorInTx(
         accountId: params.accountId,
         fromMode: source.fromMode,
         toMode: source.toMode,
+        ownerContentPublicKeyFingerprint: transition.targetContentKeyFingerprint,
         limits: {
             participantLimit: capacity.participantLimit,
             encodedByteLimit: capacity.encodedByteLimit,

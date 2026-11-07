@@ -166,6 +166,21 @@ function createClient(harness: ReturnType<typeof createTransportHarness>) {
 }
 
 describe('hosted-web Collection UI-query guest pager', () => {
+  it('carries sharing addresses and revision assertions through the hosted transport and preserves refusals', async () => {
+    const harness = createTransportHarness();
+    const row = { ownerAccountId: 'alice', rowId: 'task-1', revision: 4,
+      access: 'edit', value: { id: 'task-1', title: 'Shared task' } };
+    harness.request.mockResolvedValue({ kind: 'data', value: row });
+    const collection = createClient(harness).collection(taskCollectionDefinition);
+    await expect(collection.sharing.get({ ownerAccountId: 'alice', rowId: 'task-1' })).resolves.toEqual(row);
+    await expect(collection.sharing.put({ ownerAccountId: 'alice', value: row.value, expectedRevision: 4 })).resolves.toEqual(row);
+    harness.request.mockResolvedValue({ kind: 'error', error: { code: 'collection_access_forbidden', message: 'Revoked', retryable: false } });
+    await expect(collection.sharing.get({ ownerAccountId: 'alice', rowId: 'task-1' }))
+      .rejects.toMatchObject({ code: 'collection_access_forbidden', retryable: false });
+    const wire = harness.request.mock.calls[1]?.[0];
+    expect(wire).toMatchObject({ operation: 'collection.sharing.put', arguments: [{ ownerAccountId: 'alice', expectedRevision: 4 }] });
+  });
+
   it('projects the complete generic Account-data client through the host-owned bridge', async () => {
     const harness = createTransportHarness();
     const client = createClient(harness);

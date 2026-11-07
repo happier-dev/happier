@@ -152,6 +152,20 @@ export function createHostedWebPluginUiDataClient(input: Readonly<{
       ...(signal === undefined ? {} : { signal }),
     });
     return Object.freeze({
+      sharing: Object.freeze<PluginUiAccountCollectionForDefinition<TDefinition>['sharing']>({
+        setGrant: async (rowId, request, options) => await requestData('collection.sharing.setGrant',
+          [rowId, request], collectionOptions(options?.signal)),
+        listGrants: async (rowId, options) => await requestData('collection.sharing.listGrants',
+          [rowId], collectionOptions(options?.signal)),
+        revokeGrant: async (rowId, request, options) => await requestData('collection.sharing.revokeGrant',
+          [rowId, request], collectionOptions(options?.signal)),
+        sharedWithMe: async (request = {}, options) => await requestData('collection.sharing.sharedWithMe',
+          [request], collectionOptions(options?.signal)),
+        get: async (address, options) => await requestData('collection.sharing.get',
+          [address], collectionOptions(options?.signal)),
+        put: async (request, options) => await requestData('collection.sharing.put',
+          [request], collectionOptions(options?.signal)),
+      }),
       identityTag: async (request, options) => await requestData(
         'collection.identityTag',
         [request as unknown as JsonValue],

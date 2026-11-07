@@ -387,7 +387,7 @@ export function openPluginCollectionPrivatePayloadV1(params: Readonly<{
 
 export const PluginCollectionContentEnvelopeV1Schema = lazyZodSchema(() => z.discriminatedUnion('t', [
   z.strictObject({ t: z.literal('plain'), v: PluginCollectionPrivatePayloadV1Schema }),
-  z.strictObject({ t: z.literal('encrypted'), c: z.string().check(z.minLength(1)) }),
+  z.strictObject({ t: z.literal('encrypted'), k: z.optional(z.literal('collection')), c: z.string().check(z.minLength(1)) }),
 ]).check(z.superRefine((value, context) => {
   const encodedBytes = encodedJsonUtf8ByteLength(value);
   const effectiveMaximum = PLUGIN_COLLECTION_LIMITS_V1.maximumPrivateEnvelopeEncodedBytes;
@@ -695,6 +695,8 @@ export const PluginCollectionRowV1Schema = lazyZodSchema(() => z.strictObject({
   revision: PluginCollectionRevisionV1Schema,
   content: PluginCollectionContentEnvelopeV1Schema,
   projection: PluginCollectionProjectionV1Schema,
+  /** Present only for promoted resource-key rows; never grants access. */
+  encryptedDataKey: z.optional(z.nullable(z.string())),
 }));
 export type PluginCollectionRowV1 = z.infer<typeof PluginCollectionRowV1Schema>;
 
@@ -707,6 +709,7 @@ export const PluginCollectionUiQueryTransportRowV1Schema = lazyZodSchema(() => (
   logicalRow: z.optional(z.strictObject({
     content: PluginCollectionContentEnvelopeV1Schema,
     projection: PluginCollectionProjectionV1Schema,
+    encryptedDataKey: z.optional(z.nullable(z.string())),
   })),
 })));
 export type PluginCollectionUiQueryTransportRowV1 = z.infer<

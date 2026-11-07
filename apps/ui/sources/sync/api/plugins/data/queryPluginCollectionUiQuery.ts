@@ -242,6 +242,7 @@ async function executePrivatePluginCollectionUiQuery(
                     revision: row.context.revision,
                     content: row.logicalRow.content,
                     projection: row.logicalRow.projection,
+                    encryptedDataKey: row.logicalRow.encryptedDataKey,
                 },
                 encryptionMode: prepared.operation.encryptionMode,
                 material: prepared.operation.material,

@@ -19,6 +19,8 @@ export { PLUGIN_COLLECTION_MUTATION_BATCH_MAX_ROWS_V1, PLUGIN_COLLECTION_QUERY_M
 import type { JsonValue, PluginJsonSchema } from './identity.js';
 import type { Disposable, PluginCancellationOptions } from './lifecycle.js';
 import type { ProtocolComposableSchema, ProtocolSchemaOutput } from './protocol/protocolFacade.js';
+import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
+import type { ResourceAccessGrantRowV1, ResourceCallerAccessV1 } from '@happier-dev/protocol/teams/resourceGrantAccessV1';
 
 /**
  * Target-artifact code for one static Collection migration identity. The host
@@ -106,6 +108,30 @@ export type PluginCollectionRow<TValue extends Readonly<Record<string, JsonValue
     rowId: string;
     revision: number;
     value: TValue;
+}>;
+
+/** One item retains its owner's identity when read or edited by a grantee. */
+export type PluginSharedCollectionRow<TValue extends Readonly<Record<string, JsonValue>>> =
+    PluginCollectionRow<TValue> & Readonly<{ ownerAccountId: string; access: ResourceCallerAccessV1 }>;
+
+export type PluginCollectionSharing<TValue extends Readonly<Record<string, JsonValue>>> = Readonly<{
+    setGrant(rowId: string, request: Readonly<{
+        principal: PrincipalRefV1;
+        accessLevel: 'view' | 'edit';
+        expectedRevision: number;
+    }>, options?: PluginCancellationOptions): Promise<Readonly<{ changed: boolean }>>;
+    listGrants(rowId: string, options?: PluginCancellationOptions): Promise<Readonly<{
+        ownerAccountId: string;
+        access: ResourceCallerAccessV1;
+        grants: readonly ResourceAccessGrantRowV1[];
+    }>>;
+    revokeGrant(rowId: string, request: Readonly<{ principal: PrincipalRefV1 }>, options?: PluginCancellationOptions): Promise<Readonly<{ changed: boolean }>>;
+    sharedWithMe(request?: Readonly<{ cursor?: string; limit?: number }>, options?: PluginCancellationOptions): Promise<Readonly<{
+        rows: readonly PluginSharedCollectionRow<TValue>[];
+        nextCursor?: string;
+    }>>;
+    get(address: Readonly<{ ownerAccountId: string; rowId: string }>, options?: PluginCancellationOptions): Promise<PluginSharedCollectionRow<TValue>>;
+    put(request: Readonly<{ ownerAccountId: string; value: TValue; expectedRevision: number }>, options?: PluginCancellationOptions): Promise<PluginSharedCollectionRow<TValue>>;
 }>;
 
 /** One bounded keyset query against one statically declared collection index. */
@@ -241,6 +267,8 @@ export interface PluginAccountCollection<
     TValue extends Readonly<Record<string, JsonValue>>,
     TIndexes extends readonly PluginCollectionIndexV1[] = readonly PluginCollectionIndexV1[],
 > {
+    /** Item grants use the host's existing Account/Team/Group authority and key custody. */
+    readonly sharing: PluginCollectionSharing<TValue>;
     get(
         rowId: string,
         options?: PluginCancellationOptions,

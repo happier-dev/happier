@@ -9,7 +9,7 @@ import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/acti
 import { type PluginCollectionRelationV1 } from '@happier-dev/protocol/plugins/data/collectionContributionV1';
 import { type PluginDataCollectionsCapabilities } from '@happier-dev/protocol/features/payload/capabilities/pluginDataCollectionsCapabilities';
 
-import { markAccountChanged, type AccountChangePublication } from "@/app/changes/markAccountChanged";
+import { acquireAccountChangePublicationLocksInTx, markAccountChanged, type AccountChangePublication } from "@/app/changes/markAccountChanged";
 import { acquireAccountEncryptionTransitionFenceInTx } from "@/app/encryption/accountEncryptionTransition";
 import { readPluginsFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { isPrismaErrorCode } from "@/storage/db";
@@ -36,6 +36,8 @@ import {
     type PluginCollectionQuotaIncompatibility,
     type PluginCollectionQuotaPolicy,
 } from "./quota";
+
+import { endCollectionSharingInTx, publishCollectionSharingRowsChangedInTx, readCollectionSharingAudienceInTx } from './sharingStorage';
 
 export { measurePluginCollectionStoredRowEncodedBytes } from "./quota";
 
@@ -1132,6 +1134,7 @@ async function assertNoPersistedRelationUniquenessCollisionInTx(input: Readonly<
 export async function preparePluginCollectionRelationReplacementInTx(input: Readonly<{
     tx: Tx;
     accountId: string;
+    actorAccountId?: string;
     contract: NormalizedPluginAccountCollectionContractV1;
     changes: readonly RelationRowChange[];
     maximumBatchRows: number;
@@ -1143,6 +1146,30 @@ export async function preparePluginCollectionRelationReplacementInTx(input: Read
         throw new PluginCollectionMutationOperationError("collection_contract_inconsistent");
     }
     const edges = deriveRelationEdges({ contract: input.contract, changes: input.changes });
+    if (input.actorAccountId !== undefined && input.actorAccountId !== input.accountId && input.contract.relations.length > 0) {
+        // A grantee may preserve relations, but cannot probe the owner's private
+        // Collection or host targets (including private uniqueness collisions).
+        // Compare only the admitted source rows' existing edges, then retain them
+        // without resolving targets in the owner's authority.
+        const edgeIdentity = (sourceRowDbId: string, relationId: string, targetRowId: string) =>
+            JSON.stringify([sourceRowDbId, relationId, targetRowId]);
+        const retained = new Set(edges.map(edge => edgeIdentity(edge.change.rowDbId, edge.relation.id, edge.targetRowId)));
+        let existingCount = 0;
+        for (const rowDbIds of boundedChunks(sourceRowDbIds, input.maximumBatchRows)) {
+            const existing = await input.tx.pluginCollectionRelation.findMany({
+                where: { sourceRowDbId: { in: rowDbIds }, deletedAt: null },
+                select: { sourceRowDbId: true, relationId: true, targetRowId: true },
+            });
+            existingCount += existing.length;
+            if (existing.some(edge => !retained.has(edgeIdentity(edge.sourceRowDbId, edge.relationId, edge.targetRowId)))) {
+                throw new PluginCollectionMutationOperationError("collection_relation_unavailable");
+            }
+        }
+        if (existingCount !== retained.size) {
+            throw new PluginCollectionMutationOperationError("collection_relation_unavailable");
+        }
+        return { sourceRowDbIds, edges };
+    }
     await validateCollectionRelationTargetsInTx({
         tx: input.tx,
         accountId: input.accountId,
@@ -1270,6 +1297,7 @@ export async function materializePluginCollectionRelationReplacementInTx(input: 
 export async function replaceRelationEdgesForRowsTx(input: Readonly<{
     tx: Tx;
     accountId: string;
+    actorAccountId?: string;
     resolved: ResolvedWritableCollection;
     changes: readonly RelationRowChange[];
     maximumBatchRows: number;
@@ -1278,6 +1306,7 @@ export async function replaceRelationEdgesForRowsTx(input: Readonly<{
     const prepared = await preparePluginCollectionRelationReplacementInTx({
         tx: input.tx,
         accountId: input.accountId,
+        actorAccountId: input.actorAccountId,
         contract: input.resolved.contract,
         changes: input.changes,
         maximumBatchRows: input.maximumBatchRows,
@@ -1687,6 +1716,7 @@ type PluginCollectionMutationInTxResult =
 async function mutatePluginCollectionAfterAdmissionInTx(input: Readonly<{
     tx: Tx;
     accountId: string;
+    actorAccountId?: string;
     request: PluginCollectionMutationRequestV1;
     resolved: ResolvedWritableCollection;
     deployment: PluginDataCollectionsCapabilities;
@@ -1699,6 +1729,7 @@ async function mutatePluginCollectionAfterAdmissionInTx(input: Readonly<{
      * collections keep their exact hints.
      */
     physicallyRetiresRequestedRow?: boolean;
+    resourcePromotionRowId?: string;
 }>): Promise<PluginCollectionMutationInTxResult> {
     const resolved = input.resolved;
     const operations = input.request.operations;
@@ -1710,7 +1741,7 @@ async function mutatePluginCollectionAfterAdmissionInTx(input: Readonly<{
             collectionId: resolved.contract.collectionId,
             rowId: { in: rowIds },
         },
-        select: { id: true, rowId: true, revision: true, deletedAt: true },
+        select: { id: true, rowId: true, revision: true, deletedAt: true, contentEnvelope: true },
     });
     const existingByRowId = new Map(existingRows.map((row) => [row.rowId, row]));
     const absenceEpoch = await input.tx.pluginCollectionAbsenceEpoch.findUnique({
@@ -1774,6 +1805,13 @@ async function mutatePluginCollectionAfterAdmissionInTx(input: Readonly<{
             existing ? existing.revision : currentAbsenceEpoch,
         );
         if (operation.kind === "put") {
+            const previousContent = existing?.contentEnvelope;
+            const previousResource = previousContent !== null && typeof previousContent === 'object'
+                && !Array.isArray(previousContent) && 'k' in previousContent && previousContent.k === 'collection';
+            const nextResource = operation.content.t === 'encrypted' && operation.content.k === 'collection';
+            if (previousResource !== nextResource && !(nextResource && input.resourcePromotionRowId === operation.rowId)) {
+                throw new PluginCollectionMutationOperationError('collection_content_mode_mismatch');
+            }
             const projection = validatePutContent({
                 contract: resolved.contract,
                 validators: contractValidators,
@@ -1868,10 +1906,12 @@ async function mutatePluginCollectionAfterAdmissionInTx(input: Readonly<{
         results.push({ rowId: operation.rowId, revision, deleted: true });
     }
 
+    await endCollectionSharingInTx(input.tx, relationChanges.filter(change => change.projection === null).map(change => change.rowDbId));
     if (relationChanges.length > 0) {
         await replaceRelationEdgesForRowsTx({
             tx: input.tx,
             accountId: input.accountId,
+            actorAccountId: input.actorAccountId,
             resolved,
             changes: relationChanges,
             maximumBatchRows: input.deployment.maxBatchRows,
@@ -2000,6 +2040,9 @@ async function mutatePluginCollectionAfterAdmissionInTx(input: Readonly<{
             entityId: buildPluginDomainAccountChangeEntityId(hint),
             hint,
         });
+        await publishCollectionSharingRowsChangedInTx(input.tx, { accountId: input.accountId,
+            pluginId: collection.resolved.contract.pluginId, collectionId: collection.resolved.contract.collectionId,
+            rowIds: rows.map(([rowId]) => rowId) });
     }
     const result = { status: "updated" as const, results };
     return Object.assign(transactionResult(() => PluginCollectionMutationResultV1Schema.parse({
@@ -2008,18 +2051,38 @@ async function mutatePluginCollectionAfterAdmissionInTx(input: Readonly<{
     })), result);
 }
 
-async function mutatePluginCollectionInTx(input: Readonly<{
+export async function mutatePluginCollectionInTx(input: Readonly<{
     tx: Tx;
     accountId: string;
+    /** Omitted by owner-only writers; sharing supplies the admitted actor. */
+    actorAccountId?: string;
     request: PluginCollectionMutationRequestV1;
     deployment: PluginDataCollectionsCapabilities;
     authentication: SessionAccessAuthentication | undefined;
     physicallyRetiresRequestedRow?: boolean;
+    resourcePromotionRowId?: string;
 }>): Promise<PluginCollectionMutationInTxResult> {
+    const batchIncompatibility = findPluginCollectionBatchQuotaIncompatibility({
+        deployment: input.deployment,
+        operationCount: input.request.operations.length,
+        encodedBytes: measurePluginCollectionMutationRequestEncodedBytesV1(input.request),
+    });
+    if (batchIncompatibility) {
+        throw new PluginCollectionMutationOperationError("collection_quota_incompatible", batchIncompatibility);
+    }
     // Collection mutations share the Account-first transition fence with every
     // mode-bound writer. The returned currentness is the sole encryption-mode
     // authority for this transaction; do not re-read Account through a second
     // local mode path after the fence.
+    const deletedRowIds = input.request.operations.filter(operation => operation.kind === 'delete').map(operation => operation.rowId);
+    const audience = await readCollectionSharingAudienceInTx(input.tx, { accountId: input.accountId, OR: [
+        { pluginId: input.request.pluginId, collectionId: input.request.collectionId,
+            rowId: { in: input.request.operations.filter(operation => operation.kind !== 'assert').map(operation => operation.rowId) } },
+        ...(deletedRowIds.length ? [{ sourceRelations: { some: { targetKind: 'collection',
+            targetPluginId: input.request.pluginId, targetCollectionId: input.request.collectionId,
+            targetRowId: { in: deletedRowIds }, deletedAt: null } } }] : []),
+    ] });
+    await acquireAccountChangePublicationLocksInTx(input.tx, [input.accountId, ...audience], { intent: 'serializing' });
     const fence = await acquireAccountEncryptionTransitionFenceInTx(input.tx, input.accountId, "serializing");
     if (fence.status === "account_not_found") {
         throw new PluginCollectionMutationOperationError("collection_unavailable");
@@ -2048,17 +2111,6 @@ export async function mutatePluginCollection(input: Readonly<{
 }>): Promise<PluginCollectionMutationResultV1> {
     const request = PluginCollectionMutationRequestV1Schema.parse(input.request);
     const deployment = readPluginsFeatureEnv(process.env).collectionLimits;
-    const batchIncompatibility = findPluginCollectionBatchQuotaIncompatibility({
-        deployment,
-        operationCount: request.operations.length,
-        encodedBytes: measurePluginCollectionMutationRequestEncodedBytesV1(request),
-    });
-    if (batchIncompatibility) {
-        throw new PluginCollectionMutationOperationError(
-            "collection_quota_incompatible",
-            batchIncompatibility,
-        );
-    }
     return await inTx(async (tx) => await mutatePluginCollectionInTx({
         tx,
         accountId: input.accountId,

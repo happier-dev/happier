@@ -200,6 +200,11 @@ model Account {
     AccountSessionReadStates      AccountSessionReadState[]
     artifactSignedInLinks  ArtifactSignedInLink[]     @relation("ArtifactSignedInLinks")
     templateAcceptedVersions ArtifactTemplateAcceptedVersion[]
+    collectionAccountGrants PluginCollectionAccountGrant[] @relation("PluginCollectionAccountGrantRecipient")
+    createdCollectionAccountGrants PluginCollectionAccountGrant[] @relation("PluginCollectionAccountGrantCreator")
+    createdCollectionTeamGrants PluginCollectionTeamGrant[] @relation("PluginCollectionTeamGrantCreator")
+    createdCollectionGroupGrants PluginCollectionGroupGrant[] @relation("PluginCollectionGroupGrantCreator")
+    collectionKeyEnvelopes PluginCollectionKeyEnvelope[] @relation("PluginCollectionKeyEnvelopeRecipient")
 }
 
 enum HomeRole {
@@ -327,6 +332,7 @@ model Team {
     savedSecretTeamGrants SavedSecretTeamGrant[]
 
     @@index([name, id])
+    collectionGrants PluginCollectionTeamGrant[]
 }
 
 enum IdentityProviderKind {
@@ -638,6 +644,7 @@ model TeamGroup {
 
     @@unique([id, teamId])
     @@unique([teamId, nameKey])
+    collectionGrants PluginCollectionGroupGrant[]
 }
 
 // Team-owned credential references and consent; source material remains at its existing owner.
@@ -1154,6 +1161,7 @@ model AccountEncryptionTransitionCollectionStage {
 
     @@unique([transitionId, pluginId, collectionId, rowId], map: "AccountEncryptionTransitionCollectionStage_identity_key")
     @@index([transitionId, pluginId, collectionId, rowId], map: "AccountEncryptionTransitionCollectionStage_transition_page_idx")
+    recipientKeyEnvelopes Json?
 }
 
 /// Account-owned source/target census facts for the closed Automation participant.
@@ -4039,6 +4047,66 @@ model UserKVStore {
     @@index([accountId])
 }
 
+model PluginCollectionAccountGrant {
+    rowDbId String
+    accountId String
+    accessLevel ShareAccessLevel
+    createdByAccountId String
+    createdAt DateTime @default(now())
+
+    row PluginCollectionRow @relation(fields: [rowDbId], references: [id], onDelete: Cascade)
+    account Account @relation("PluginCollectionAccountGrantRecipient", fields: [accountId], references: [id], onDelete: Cascade)
+    createdBy Account @relation("PluginCollectionAccountGrantCreator", fields: [createdByAccountId], references: [id], onDelete: Cascade)
+
+    @@id([rowDbId, accountId])
+    @@index([accountId, rowDbId])
+}
+
+model PluginCollectionTeamGrant {
+    rowDbId String
+    teamId String
+    accessLevel ShareAccessLevel
+    createdByAccountId String
+    createdAt DateTime @default(now())
+
+    row PluginCollectionRow @relation(fields: [rowDbId], references: [id], onDelete: Cascade)
+    team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+    createdBy Account @relation("PluginCollectionTeamGrantCreator", fields: [createdByAccountId], references: [id], onDelete: Cascade)
+
+    @@id([rowDbId, teamId])
+    @@index([teamId, rowDbId])
+}
+
+model PluginCollectionGroupGrant {
+    rowDbId String
+    teamGroupId String
+    accessLevel ShareAccessLevel
+    createdByAccountId String
+    createdAt DateTime @default(now())
+
+    row PluginCollectionRow @relation(fields: [rowDbId], references: [id], onDelete: Cascade)
+    teamGroup TeamGroup @relation(fields: [teamGroupId], references: [id], onDelete: Cascade)
+    createdBy Account @relation("PluginCollectionGroupGrantCreator", fields: [createdByAccountId], references: [id], onDelete: Cascade)
+
+    @@id([rowDbId, teamGroupId])
+    @@index([teamGroupId, rowDbId])
+}
+
+model PluginCollectionKeyEnvelope {
+    rowDbId String
+    recipientAccountId String
+    encryptedDataKey Bytes
+    recipientContentPublicKeyFingerprint String
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    row PluginCollectionRow @relation(fields: [rowDbId], references: [id], onDelete: Cascade)
+    recipient Account @relation("PluginCollectionKeyEnvelopeRecipient", fields: [recipientAccountId], references: [id], onDelete: Cascade)
+
+    @@id([rowDbId, recipientAccountId])
+    @@index([recipientAccountId, rowDbId])
+}
+
 //
 // Plugin Account Collections
 //
@@ -4138,6 +4206,10 @@ model PluginCollectionRow {
     /// all lead with the collection identity, so without this one the census
     /// falls back to the primary key and filters out every other tenant's rows.
     @@index([accountId, deletedAt, id], map: "PluginCollectionRow_account_live_scan_idx")
+    accountGrants PluginCollectionAccountGrant[]
+    teamGrants PluginCollectionTeamGrant[]
+    groupGrants PluginCollectionGroupGrant[]
+    keyEnvelopes PluginCollectionKeyEnvelope[]
 }
 
 /// One compact absence-currentness floor per Account/plugin/Collection. It is

@@ -1,3 +1,4 @@
+import { readCollectionRecipientKeysInTx } from "./sharingStorage";
 import { PluginAccountPluginIntentV1Schema } from '@happier-dev/protocol/plugins/availability/v1';
 import { PluginCollectionContractReadResultV1Schema, PluginCollectionGetResultV1Schema, PluginCollectionQueryResultV1Schema, PluginCollectionRowV1Schema, PluginCollectionUiQueryTransportResultV1Schema, PLUGIN_COLLECTION_INDEX_SORT_KEY_MAX_BYTES_V1, assertPluginCollectionContentEnvelopeForModeV1, comparePluginCollectionIndexSortKeysV1, encodePluginCollectionIndexTuplePrefixV1, getPluginCollectionScalarKindV1, nextPluginCollectionIndexPrefixV1, resolvePluginCollectionContractAccessV1, validatePluginCollectionUiQueryResultV1, type NormalizedPluginAccountCollectionContractV1, type PluginCollectionContractReadRequestV1, type PluginCollectionContractReadResultV1, type PluginCollectionIndexScalarV1, type PluginCollectionGetRequestV1, type PluginCollectionGetResultV1, type PluginCollectionIndexScalarValueV1, type PluginCollectionQueryRequestV1, type PluginCollectionQueryResultV1, type PluginCollectionReadErrorCodeV1, type PluginCollectionRowV1, type PluginCollectionUiQueryTransportResultV1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
 import { PluginCollectionContractRefV1Schema, type PluginCollectionContractRefV1 } from '@happier-dev/protocol/plugins/data/collectionContractRefV1';
@@ -486,7 +487,7 @@ function projectionValue(input: Readonly<{
     throw new PluginCollectionUiQueryOperationError("collection_contract_inconsistent");
 }
 
-async function resolveCurrentContract(input: Readonly<{
+export async function resolveCurrentContract(input: Readonly<{
     accountId: string;
     request: Readonly<{
         pluginId: string;
@@ -809,7 +810,7 @@ function readContentEnvelopeForCurrentMode(value: unknown, encryptionMode: "plai
     }
 }
 
-function materializeDirectCollectionRow(input: Readonly<{
+export function materializeDirectCollectionRow(input: Readonly<{
     current: Readonly<{
         account: AccountQueryCurrentness;
         contract: NormalizedPluginAccountCollectionContractV1;
@@ -903,10 +904,12 @@ export async function getPluginCollection(input: Readonly<{
             } },
             select: { epoch: true },
         });
+        const keys = row ? await readCollectionRecipientKeysInTx(tx, { ownerAccountId: input.accountId, actorAccountId: input.accountId,
+            pluginId: input.request.pluginId, collectionId: input.request.collectionId, rowIds: [row.rowId] }) : new Map<string, string>();
         return {
             result: PluginCollectionGetResultV1Schema.parse({
                 row: row
-                    ? materializeDirectCollectionRow({ current, row })
+                    ? { ...materializeDirectCollectionRow({ current, row }), ...(keys.has(row.rowId) ? { encryptedDataKey: keys.get(row.rowId)! } : {}) }
                     : null,
                 absenceEpoch: absenceEpoch?.epoch ?? 0,
             }),
@@ -948,12 +951,14 @@ export async function queryPluginCollection(input: Readonly<{
             projectedFields: current.contract.serverReadable,
             error: (code) => new PluginCollectionReadOperationError(code),
         });
+        const keys = await readCollectionRecipientKeysInTx(tx, { ownerAccountId: input.accountId, actorAccountId: input.accountId,
+            pluginId: input.request.pluginId, collectionId: input.request.collectionId, rowIds: page.pageEntries.map(entry => entry.rowId) });
         const resultRows = page.pageEntries.map((entry) => {
             const row = page.rowsById.get(entry.rowId);
             if (!row || row.revision !== entry.rowRevision) {
                 throw new PluginCollectionReadOperationError("collection_index_not_ready");
             }
-            return materializeDirectCollectionRow({ current, row });
+            return { ...materializeDirectCollectionRow({ current, row }), ...(keys.has(row.rowId) ? { encryptedDataKey: keys.get(row.rowId)! } : {}) };
         });
         return {
             result: PluginCollectionQueryResultV1Schema.parse({
@@ -1014,6 +1019,8 @@ export async function queryPluginCollectionUiQuery(input: Readonly<{
             projectedFields: fields,
             error: (code) => new PluginCollectionUiQueryOperationError(code),
         });
+        const keys = await readCollectionRecipientKeysInTx(tx, { ownerAccountId: input.accountId, actorAccountId: input.accountId,
+            pluginId: input.request.pluginId, collectionId: input.request.collectionId, rowIds: page.pageEntries.map(entry => entry.rowId) });
         const resultRows = page.pageEntries.map((entry) => {
             const row = page.rowsById.get(entry.rowId);
             if (!row || row.revision !== entry.rowRevision) {
@@ -1048,6 +1055,7 @@ export async function queryPluginCollectionUiQuery(input: Readonly<{
                     ? {
                         logicalRow: {
                             content: row.contentEnvelope,
+                            ...(keys.has(row.rowId) ? { encryptedDataKey: keys.get(row.rowId)! } : {}),
                             projection: Object.fromEntries(current.contract.serverReadable.map((field) => {
                                 const projection = projections.get(field);
                                 if (!projection || projection.rowRevision !== row.revision) {

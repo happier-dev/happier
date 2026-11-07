@@ -14,8 +14,12 @@ import { AUTHORING_MEMORY_ROUTE_V1, AuthoringMemoryListResponseV1Schema } from '
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityCollectionWritersClaimActionInputV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { serveAccountHomes, createServedHomeAccountToken, type ServedHomeRequest } from '@/dev/testkit/harness/actionHomesHttpHarness';
-import { createAccountScopedCryptoMaterialSnapshotV1, derivePluginCollectionIdentityTagV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { createAccountScopedCryptoMaterialSnapshotV1, deriveAccountMachineKeyFromRecoverySecret, derivePluginCollectionIdentityTagV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
+import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import { encodePluginCollectionLogicalValueV1 } from '@happier-dev/protocol/plugins/data/collectionLogicalCodecV1';
+import { openPluginCollectionPrivatePayloadV1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
+import tweetnacl from 'tweetnacl';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { createDeferred, createPlainAccountEncryptionCurrentnessFixture, createPlainProjectAccountRowListFixture } from '@/dev/testkit';
 import { createPluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/reader';
@@ -124,6 +128,116 @@ async function withRowReadClient(
         await run(admitted.client, home);
     } finally { await home.dispose(); }
 }
+
+describe('Collection acquisition cursor publication', () => {
+    it('binds sharing to the active Account transport and preserves the server revocation refusal', async () => {
+        let revoked = false;
+        await withRowReadClient(request => {
+            if (request.path === '/v1/plugins/data/sharing/put') return Response.json({
+                error: 'collection_quota_incompatible', dimension: 'maxRowEncodedBytes', effectiveMaximum: 4096,
+            }, { status: 409 });
+            if (request.path !== '/v1/plugins/data/sharing/get') return undefined;
+            expect(request.accountId).toBe('alice');
+            expect(request.body).toMatchObject({ ownerAccountId: 'bob', rowId: 'link', readerContext: {
+                pluginId, collectionId: rowReadContract.collectionId, contractDigest: rowReadContract.contractDigest } });
+            return revoked ? Response.json({ error: 'collection_access_forbidden' }, { status: 403 })
+                : Response.json({ pluginId, collectionId: rowReadContract.collectionId, ownerAccountId: 'bob', rowId: 'link',
+                    access: 'edit', encryptionMode: 'plain', encryptedDataKey: null,
+                    row: { rowId: 'link', revision: 1, content: { t: 'plain', v: {} }, projection: { id: 'link' } } });
+        }, async (client, home) => {
+            await expect(client.sharing.get({ ownerAccountId: 'bob', rowId: 'link' })).resolves.toEqual({
+                ownerAccountId: 'bob', rowId: 'link', revision: 1, access: 'edit', value: { id: 'link' } });
+            const lifetime = captureActiveServerAccountScopeLifetime();
+            if (!lifetime) throw new Error('Expected the active Account lifetime');
+            const releaseManifest = PluginManifestV2Schema.parse({ ...manifest, contributes: {
+                accountCollections: [projectPluginAccountCollectionDeclaration(rowReadDefinition.id, rowReadDefinition)],
+            } });
+            const readAvailability = () => createPluginAccountAvailabilityReader({ scope: lifetime.scope, snapshot: {
+                availabilityCursor: 1, materializations: [], snapshots: [], intentReads: [{ pluginId, response: {
+                    availabilityCursor: 1, packageAssets: [], hostingCapability: { enabled: true, maxArtifactBytes: 1024, maxAccountBytes: 2048 },
+                    intent: { pluginId, desiredVersion: '1.0.0', enabled: true, offlineUiHosting: 'disabled', revision: 'one',
+                        writableCollections: [{ ...ref, contractDigest: rowReadContract.contractDigest }] },
+                    release: { ref: { pluginId, version: '1.0.0' }, archiveDigestSha256: `sha256:${'a'.repeat(64)}`,
+                        normalizedManifest: releaseManifest, collectionContracts: [{ ...ref, contractDigest: rowReadContract.contractDigest }], uiSlots: [],
+                        packageAssetArchive: { archiveDigestSha256: `sha256:${'b'.repeat(64)}`, resources: [] } }, uiArtifacts: [],
+                } }],
+            } });
+            const { createHostedWebAccountDataBridge } = await import('./hostedWebAccountDataBridge');
+            const bridge = createHostedWebAccountDataBridge({ dataClient: createPluginUiDataClient({
+                pluginId, accountLifetime: lifetime, readAvailability }), publish: () => undefined });
+            const hostedRead = () => bridge.handle({ kind: 'data', operation: 'collection.sharing.get',
+                definition: PluginAccountCollectionContributionV1Schema.parse(
+                    projectPluginAccountCollectionDeclaration(rowReadDefinition.id, rowReadDefinition)),
+                arguments: [{ ownerAccountId: 'bob', rowId: 'link' }] });
+            await expect(hostedRead()).resolves.toMatchObject({ kind: 'data', value: {
+                ownerAccountId: 'bob', rowId: 'link', access: 'edit', value: { id: 'link' } } });
+            const sharedEdit = { ownerAccountId: 'bob', value: { id: 'link' }, expectedRevision: 1 };
+            await expect(client.sharing.put(sharedEdit)).rejects.toMatchObject({ name: 'PluginError',
+                code: 'collection_quota_incompatible', details: { error: 'collection_quota_incompatible',
+                    dimension: 'maxRowEncodedBytes', effectiveMaximum: 4096, outcome: 'refused' } });
+            await expect(bridge.handle({ kind: 'data', operation: 'collection.sharing.put',
+                definition: PluginAccountCollectionContributionV1Schema.parse(
+                    projectPluginAccountCollectionDeclaration(rowReadDefinition.id, rowReadDefinition)),
+                arguments: [sharedEdit] })).resolves.toMatchObject({ kind: 'error', error: {
+                    code: 'collection_quota_incompatible', details: { dimension: 'maxRowEncodedBytes', effectiveMaximum: 4096 } } });
+            revoked = true;
+            await expect(client.sharing.get({ ownerAccountId: 'bob', rowId: 'link' }))
+                .rejects.toMatchObject({ name: 'PluginError', code: 'collection_access_forbidden',
+                    details: { error: 'collection_access_forbidden', outcome: 'refused' } });
+            await expect(hostedRead()).resolves.toMatchObject({ kind: 'error', error: { code: 'collection_access_forbidden' } });
+            bridge.dispose();
+            expect(home.requests.filter(request => request.path === '/v1/plugins/data/sharing/get')).toHaveLength(6);
+        });
+    });
+
+    it('opens promoted owner rows and preserves their resource key through ordinary writes and measurement', async () => {
+        const secret = new Uint8Array(32).fill(7);
+        const material = { type: 'legacy' as const, secret };
+        const sharedDefinition = defineAccountCollection({ ...rowReadDefinition,
+            schema: defineProtocolObject({ id: defineProtocolString(), note: defineProtocolString() }, { policy: 'closed' }) });
+        const sharedContract = normalizePluginAccountCollectionContractV1({ pluginId,
+            contribution: PluginAccountCollectionContributionV1Schema.parse(projectPluginAccountCollectionDeclaration(sharedDefinition.id, sharedDefinition)) });
+        const currentness: AccountEncryptionCurrentnessResponse = { mode: 'e2ee', version: 8,
+            signingKeyFingerprint: 'signing-key-8', contentKeyFingerprint:
+                convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(
+                    createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee', material }).contentPublicKeyFingerprint),
+            updatedAt: 12, recipientEnvelopeReadiness: { status: 'available' } };
+        const resourceDataKey = new Uint8Array(32).fill(29);
+        const value = { id: 'link', note: 'private' };
+        const encoded = encodePluginCollectionLogicalValueV1({ contract: sharedContract,
+            isValidLogicalValue: candidate => typeof candidate.id === 'string', value,
+            encryptionMode: 'e2ee', material, resourceDataKey, randomBytes: length => new Uint8Array(length).fill(31) });
+        if (encoded.status !== 'encoded') throw new Error('Expected resource fixture to seal');
+        const encryptedDataKey = Buffer.from(sealEncryptedDataKeyEnvelopeV1({ dataKey: resourceDataKey,
+            recipientPublicKey: tweetnacl.box.keyPair.fromSecretKey(deriveAccountMachineKeyFromRecoverySecret(secret)).publicKey,
+            randomBytes: length => new Uint8Array(length).fill(37) })).toString('base64');
+        const row = { rowId: 'link', revision: 1, content: encoded.content, projection: encoded.projection, encryptedDataKey };
+        await withRowReadClient(request => {
+            if (request.path.endsWith('/get')) return Response.json({ row, absenceEpoch: 0 });
+            if (request.path.endsWith('/query')) return Response.json({ rows: [row], changeCursor: 19 });
+            if (request.path.endsWith('/mutate')) {
+                const mutation = PluginCollectionMutationRequestV1Schema.parse(request.body);
+                const put = mutation.operations[0];
+                if (put?.kind !== 'put' || put.content.t !== 'encrypted') throw new Error('Expected encrypted put');
+                expect(put.content).toMatchObject({ t: 'encrypted', k: 'collection' });
+                expect(openPluginCollectionPrivatePayloadV1({ ciphertext: put.content.c,
+                    material: { type: 'dataKey', machineKey: resourceDataKey } })).toEqual({ note: 'changed' });
+                return Response.json({ status: 'updated', results: [{ rowId: 'link', revision: 2, deleted: false }], changeCursor: 20 });
+            }
+            return undefined;
+        }, async (client, home) => {
+            await expect(client.get('link')).resolves.toEqual({ status: 'ready',
+                row: { rowId: 'link', revision: 1, value }, absenceEpoch: 0 });
+            await expect(client.query({ indexId: 'by-id', order: 'asc' })).resolves.toMatchObject({ status: 'ready', rows: [{ value }] });
+            const operations = [{ kind: 'put' as const, value: { ...value, note: 'changed' }, expectedRevision: 1 }];
+            await expect(client.measureBatch(operations)).resolves.toMatchObject({ status: 'ready' });
+            await expect(client.mutate(operations)).resolves.toMatchObject({ status: 'updated' });
+            expect(home.requests.filter(request => request.path.endsWith('/mutate'))).toHaveLength(1);
+        }, () => currentness, { contract: sharedContract,
+            credentials: { token: createServedHomeAccountToken('alice'), secret: Buffer.from(secret).toString('base64url') } });
+    });
+
+});
 
 describe('Collection raw read acquisition after caller admission', () => {
     it('refreshes Plain identity tags while Data operations borrow admission and re-admit after a server mode refusal', async () => {

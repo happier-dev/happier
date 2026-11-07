@@ -17,6 +17,7 @@
  */
 import type { JsonValue } from '../../json/strictJsonValue.js';
 import type { AccountScopedCryptoMaterial } from '../../crypto/accountScopedCipher.js';
+import { ENCRYPTED_DATA_KEY_V1_BYTES } from '../../crypto/encryptedDataKeyEnvelopeV1.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import {
   PluginCollectionContentEnvelopeV1Schema,
@@ -183,6 +184,8 @@ export function encodePluginCollectionLogicalValueV1(input: Readonly<{
   value: PluginCollectionLogicalValueV1;
   encryptionMode: 'plain' | 'e2ee';
   material: AccountScopedCryptoMaterial | null;
+  /** Host-opened per-row key. It never falls back to Account material. */
+  resourceDataKey?: Uint8Array;
   randomBytes: (length: number) => Uint8Array;
 }>): PluginCollectionLogicalEncodeOutcomeV1 {
   if (!input.isValidLogicalValue(input.value)) {
@@ -212,7 +215,12 @@ export function encodePluginCollectionLogicalValueV1(input: Readonly<{
   for (const [field, value] of Object.entries(input.value)) {
     if (!reserved.has(field)) setJsonRecordValue(privatePayload, field, value);
   }
-  const material = input.material;
+  const material = input.resourceDataKey
+    ? { type: 'dataKey' as const, machineKey: input.resourceDataKey }
+    : input.material;
+  if (input.resourceDataKey && (input.encryptionMode !== 'e2ee' || input.resourceDataKey.length !== ENCRYPTED_DATA_KEY_V1_BYTES)) {
+    return { status: 'failed', reason: 'encryption-material-unavailable' };
+  }
   if (input.encryptionMode === 'e2ee' && !material) {
     return { status: 'failed', reason: 'encryption-material-unavailable' };
   }
@@ -220,6 +228,7 @@ export function encodePluginCollectionLogicalValueV1(input: Readonly<{
     const envelope = material && input.encryptionMode === 'e2ee'
       ? {
         t: 'encrypted' as const,
+        ...(input.resourceDataKey ? { k: 'collection' as const } : {}),
         c: sealPluginCollectionPrivatePayloadV1({
           material,
           payload: PluginCollectionPrivatePayloadV1Schema.parse(privatePayload),
@@ -268,6 +277,7 @@ export function preparePluginCollectionLogicalMutationRequestV1<
   operations: readonly PluginCollectionLogicalMutationV1<TValue>[];
   encryptionMode: 'plain' | 'e2ee';
   material: AccountScopedCryptoMaterial | null;
+  resourceDataKeys?: ReadonlyMap<string, Uint8Array>;
   randomBytes: (length: number) => Uint8Array;
   absenceEpoch?: number;
 }>): PluginCollectionLogicalMutationRequestOutcomeV1 {
@@ -287,6 +297,7 @@ export function preparePluginCollectionLogicalMutationRequestV1<
       value: operation.value,
       encryptionMode: input.encryptionMode,
       material: input.material,
+      resourceDataKey: input.resourceDataKeys?.get(String(operation.value[input.contract.rowIdField])),
       randomBytes: input.randomBytes,
     });
     if (encoded.status === 'failed') return encoded;
@@ -349,6 +360,7 @@ export function decodePluginCollectionLogicalRowV1<
   row: PluginCollectionRowV1;
   encryptionMode: 'plain' | 'e2ee';
   material: AccountScopedCryptoMaterial | null;
+  resourceDataKey?: Uint8Array;
 }>): PluginCollectionLogicalDecodeOutcomeV1<TValue> {
   let privatePayload: Readonly<Record<string, JsonValue>>;
   try {
@@ -356,11 +368,14 @@ export function decodePluginCollectionLogicalRowV1<
       createStoredReadSchema(PluginCollectionContentEnvelopeV1Schema).parse(input.row.content),
       input.encryptionMode,
     );
+    const material = envelope.t === 'encrypted' && envelope.k === 'collection'
+      ? input.resourceDataKey?.length === ENCRYPTED_DATA_KEY_V1_BYTES ? { type: 'dataKey' as const, machineKey: input.resourceDataKey } : null
+      : input.material;
     const opened = envelope.t === 'plain'
       ? envelope.v
-      : input.material
+      : material
         ? openPluginCollectionPrivatePayloadV1({
-          material: input.material,
+          material,
           ciphertext: envelope.c,
         })
         : null;

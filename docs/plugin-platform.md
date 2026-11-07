@@ -2310,6 +2310,45 @@ encoded together after all asynchronous callbacks and a fresh mode/key check.
 Additional stage chunks revalidate that sealing authority after the previous write.
 This avoids per-row currentness requests without dropping final write admission.
 
+Collection item sharing is being integrated in 0.3 development source. An Account
+Collection handle exposes `sharing.setGrant`, `listGrants`, `revokeGrant`,
+`sharedWithMe`, `get` and `put`. Shared reads and edits carry the owner's Account
+identity; edits assert the observed row revision. Account, Team and Group grants
+reuse the existing resource-grant owner. They do not create a second Collection,
+writer, or content row. The shared edit enters the ordinary Collection mutation
+owner, preserving its projection, index, relation and quota contracts. Revocation
+takes effect on the next request.
+
+Editors may change content while retaining existing relations. Changing a
+Collection or host relation field is owner-only; grantee attempts return
+`collection_relation_unavailable` for both existing and missing targets, without
+querying private targets or uniqueness collisions.
+
+Sharing discloses the whole logical item to its grantee. Its declared
+`serverReadable` fields remain the same plaintext projection the server already
+indexes for the owner; sharing does not introduce extra projected fields or hide
+those fields from an authorized reader. References inside an item grant no access
+to the referenced resource. Plain-owner sharing requires no encryption material.
+E2EE first-share conversion and recipient wraps are described in
+[encryption.md](encryption.md#shared-collection-items-03-development-integration).
+The CLI, installed UI and hosted UI bind the same logical sharing client; the
+host retains credentials and keys. Plugin-owned pages list shared items through
+`sharing.sharedWithMe` and open them through the SDK themselves. Collection
+sharing ships with this SDK-only entry contract. Existing host surfaces that
+list plugin content retain their missing-plugin presentation naming `pluginId`
+when the plugin is absent or disabled. A future Inbox share notification with a
+host link is the missing consumer for host-address navigation; it is not part
+of this integration. This follows Coordination's later 2026-11-02 ruling,
+which withdraws the proposed optional page declaration and address resolver.
+
+Logical deletion ends sharing: the same transaction removes the item's grants
+and recipient key wraps. Recreating the same row id creates a private item with
+no earlier audience. Recipients observe its disappearance on their next read or
+invalidation. Physical forget keeps its existing cascade. These entry and delete
+semantics follow Coordination's 2026-11-02 rulings. Security review and
+loaded-runtime replay remain integration prerequisites, not claims of released
+availability.
+
 In development native PostgreSQL deployments, candidate-stage quota admission aggregates
 retained live-row and staged-row byte measurements in the database. It transfers
 compact usage and immutable policies, then inserts the admitted stage batch in

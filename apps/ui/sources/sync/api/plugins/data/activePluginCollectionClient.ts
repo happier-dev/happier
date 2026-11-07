@@ -5,7 +5,10 @@ import { PluginCollectionRowIdV1Schema } from '@happier-dev/protocol/plugins/dat
 import { compilePluginJsonSchema, createPluginJsonSchemaZodValueAdapter } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
-import { createAccountScopedCryptoMaterialSnapshotV1, type AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { createAccountScopedCryptoMaterialSnapshotV1, deriveAccountMachineKeyFromRecoverySecret, type AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import { createPluginCollectionSharingClientV1 } from '@happier-dev/protocol/plugins/data/collectionSharingClientV1';
+import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import { decodePluginCollectionLogicalRowV1, encodePluginCollectionLogicalValueV1, preparePluginCollectionLogicalMutationRequestV1, type PluginCollectionLogicalMutationRequestOutcomeV1 } from '@happier-dev/protocol/plugins/data/collectionLogicalCodecV1';
 import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import type { PluginCollectionContractRefV1 } from '@happier-dev/protocol/plugins/data/collectionContractRefV1';
@@ -15,6 +18,7 @@ import { mergeAbortSignals } from '@happier-dev/plugin-sdk/async';
 import type {
     PluginAccountCollectionDefinition,
     PluginAccountCollectionValue,
+    PluginCollectionSharing,
 } from '@happier-dev/plugin-sdk/collections';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
@@ -210,6 +214,7 @@ export type ActivePluginCollectionClientForContractRefOutcomeV1<
 export type ActivePluginCollectionClientV1<
     TValue extends PluginAccountCollectionValue<PluginAccountCollectionDefinition> = PluginAccountCollectionValue<PluginAccountCollectionDefinition>,
 > = Readonly<{
+    sharing: PluginCollectionSharing<TValue>;
     /**
      * Derive this collection's Account-mode-aware identity value for one field
      * the admitted contract declares as a mode-derived identity. The contract,
@@ -594,7 +599,11 @@ export function encodePluginCollectionLogicalValue<TValue extends PluginAccountC
     value: TValue;
     encryptionMode: 'plain' | 'e2ee';
     material: AccountScopedCryptoMaterial | null;
+    sourceRow?: PluginCollectionRowV1;
 }>): EncodedPluginCollectionLogicalValueV1 | null {
+    const resourceDataKey = input.sourceRow?.encryptedDataKey
+        ? openCollectionResourceKey(input.sourceRow.encryptedDataKey, input.material) : null;
+    if (input.sourceRow?.content.t === 'encrypted' && input.sourceRow.content.k === 'collection' && !resourceDataKey) return null;
     const encoded = encodePluginCollectionLogicalValueV1({
         contract: input.contract,
         isValidLogicalValue: (value) => isValidPluginJsonSchemaValue(input.validate, value),
@@ -602,6 +611,7 @@ export function encodePluginCollectionLogicalValue<TValue extends PluginAccountC
         encryptionMode: input.encryptionMode,
         material: input.material,
         randomBytes: getRandomBytes,
+        ...(resourceDataKey ? { resourceDataKey } : {}),
     });
     return encoded.status === 'encoded'
         ? {
@@ -631,6 +641,8 @@ export function mergeLogicalRow<TValue extends PluginAccountCollectionValue<Plug
         row: input.row,
         encryptionMode: input.encryptionMode,
         material: input.material,
+        resourceDataKey: input.row.encryptedDataKey
+            ? openCollectionResourceKey(input.row.encryptedDataKey, input.material) ?? undefined : undefined,
     });
     return decoded.status === 'decoded'
         ? Object.freeze({
@@ -639,6 +651,16 @@ export function mergeLogicalRow<TValue extends PluginAccountCollectionValue<Plug
             value: decoded.value,
         })
         : null;
+}
+
+/** Resource wraps use the Account's existing recipient identity and envelope codec. */
+function openCollectionResourceKey(envelope: string, material: AccountScopedCryptoMaterial | null): Uint8Array | null {
+    if (!material) return null;
+    try {
+        return openEncryptedDataKeyEnvelopeV1({ envelope: decodeBase64(envelope, 'base64'),
+            recipientSecretKeyOrSeed: material.type === 'legacy'
+                ? deriveAccountMachineKeyFromRecoverySecret(material.secret) : material.machineKey });
+    } catch { return null; }
 }
 
 function isLogicalCollectionValue<TValue extends PluginAccountCollectionValue<PluginAccountCollectionDefinition>>(
@@ -934,6 +956,7 @@ export function createActivePluginCollectionClient<
         operations: readonly ActivePluginCollectionMutationInputV1<TValue>[],
         operation: PreparedCollectionOperation,
         absenceEpoch?: number,
+        resourceDataKeys?: ReadonlyMap<string, Uint8Array>,
     ) => preparePluginCollectionLogicalMutationRequestV1<TValue>({
         contract: params.contract,
         isValidLogicalValue: (value): value is TValue => isLogicalCollectionValue<TValue>(validate, value),
@@ -942,7 +965,37 @@ export function createActivePluginCollectionClient<
         material: operation.material,
         randomBytes: getRandomBytes,
         absenceEpoch,
+        resourceDataKeys,
     });
+
+    const readMutationResourceKeys = async (
+        operations: readonly ActivePluginCollectionMutationInputV1<TValue>[],
+        operation: PreparedCollectionOperation,
+        options?: ActivePluginCollectionOperationOptionsV1,
+    ): Promise<Readonly<{ status: 'ready'; keys: ReadonlyMap<string, Uint8Array> }> | ActivePluginCollectionUnavailableV1 | ActivePluginCollectionRejectedV1> => {
+        const keys = new Map<string, Uint8Array>();
+        if (operation.encryptionMode === 'plain') return { status: 'ready', keys };
+        const rowIds = new Set(operations.flatMap(candidate => candidate.kind === 'put' && candidate.expectedRevision !== 'absent'
+            && typeof candidate.value?.[params.contract.rowIdField] === 'string' ? [String(candidate.value[params.contract.rowIdField])] : []));
+        for (const rowId of rowIds) {
+            const response = await requestCollectionOperation({ operation, path: PLUGIN_COLLECTION_GET_HTTP_PATH_V1,
+                kind: 'read', fresh: true, options, body: { pluginId: params.contract.pluginId, collectionId: params.contract.collectionId,
+                    readerContext: { pluginId: params.contract.pluginId, collectionId: params.contract.collectionId,
+                        schemaVersion: params.contract.schemaVersion, contractDigest: params.contract.contractDigest }, rowId } });
+            if (response.status === 'unavailable') return response;
+            if (!response.ok) return mapReadError(response.body);
+            const result = PluginCollectionGetResultV1Schema.safeParse(response.body);
+            if (!result.success) return unavailable('response-invalid');
+            if (result.data.row?.encryptedDataKey) {
+                const key = openCollectionResourceKey(result.data.row.encryptedDataKey, operation.material);
+                if (!key) return unavailable('account-content-mismatch');
+                keys.set(rowId, key);
+            } else if (result.data.row?.content.t === 'encrypted' && result.data.row.content.k === 'collection') {
+                return unavailable('account-content-mismatch');
+            }
+        }
+        return { status: 'ready', keys };
+    };
 
     /**
      * An absent create is witnessed by the Collection-wide epoch, not by a
@@ -987,7 +1040,9 @@ export function createActivePluginCollectionClient<
         const prepared = await prepare(options);
         if (prepared.status === 'unavailable') return prepared;
         try {
-            const sealed = prepareMutationRequest(operations, prepared.operation, absence.absenceEpoch);
+            const resourceKeys = await readMutationResourceKeys(operations, prepared.operation, options);
+            if (resourceKeys.status !== 'ready') return resourceKeys;
+            const sealed = prepareMutationRequest(operations, prepared.operation, absence.absenceEpoch, resourceKeys.keys);
             if (sealed.status === 'failed') return mapEncodeFailure(sealed);
             const response = await requestCollectionOperation({
                 operation: prepared.operation,
@@ -1136,6 +1191,8 @@ export function createActivePluginCollectionClient<
             // additive and the shell is identical in every window, so the
             // reported decomposition stays exact for any subset.
             const window = PLUGIN_COLLECTION_LIMITS_V1.maximumMutationBatchRows;
+            const resourceKeys = await readMutationResourceKeys(operations, prepared.operation, options);
+            if (resourceKeys.status !== 'ready') return resourceKeys;
             const operationEncodedBytes: number[] = [];
             let overheadEncodedBytes = 0;
             for (let offset = 0; offset < operations.length; offset += window) {
@@ -1143,6 +1200,7 @@ export function createActivePluginCollectionClient<
                     operations.slice(offset, offset + window),
                     prepared.operation,
                     absence.absenceEpoch,
+                    resourceKeys.keys,
                 );
                 if (sealed.status === 'failed') return mapEncodeFailure(sealed);
                 overheadEncodedBytes = sealed.measurement.overheadEncodedBytes;
@@ -1160,7 +1218,51 @@ export function createActivePluginCollectionClient<
         }
     };
 
+    const withSharing = async <T>(options: ActivePluginCollectionOperationOptionsV1 | undefined,
+        run: (client: PluginCollectionSharing<TValue>) => Promise<T>): Promise<T> => {
+        const prepared = await prepare(options);
+        if (prepared.status !== 'ready') throw new PluginError({ code: prepared.reason, message: 'Collection sharing is unavailable', details: { outcome: 'refused' } });
+        const operation = prepared.operation;
+        try {
+            const client = createPluginCollectionSharingClientV1<TValue>({
+                accountId: operation.lifetime.scope.accountId,
+                contract: params.contract,
+                isValidLogicalValue: (value): value is TValue => isLogicalCollectionValue<TValue>(validate, value),
+                parseStoredLogicalValue: value => {
+                    const parsed = storedReadSchema.safeParse(value);
+                    return parsed.success && parsed.data !== null && typeof parsed.data === 'object' && !Array.isArray(parsed.data)
+                        ? parsed.data as TValue : null;
+                },
+                requireCurrent: () => {
+                    const reason = getPreparedCollectionOperationCurrentness(operation);
+                    if (reason) throw new PluginError({ code: reason, message: 'Collection sharing is unavailable', details: { outcome: 'refused' } });
+                },
+                request: async (path, body, requestOptions) => {
+                    const response = await requestCollectionOperation({ operation, path, kind: requestOptions.kind, body, options });
+                    if (response.status === 'unavailable') throw new PluginError({ code: response.reason, message: 'Collection sharing is unavailable',
+                        details: { outcome: requestOptions.kind === 'read' ? 'failed'
+                            : response.reason === 'mutation-outcome-unknown' ? 'uncertain' : 'refused' } });
+                    return { status: response.httpStatus, body: response.body };
+                },
+                crypto: { accountMaterial: operation.material, randomBytes: getRandomBytes,
+                    openKey: async envelope => openCollectionResourceKey(envelope, operation.material) },
+                createError: (code, outcome, details) => new PluginError({ code, message: 'Collection sharing operation failed', details: { ...details, outcome } }),
+                isTypedError: isPluginError,
+            });
+            return await run(client);
+        } finally { await operation.release(); }
+    };
+    const sharing: PluginCollectionSharing<TValue> = Object.freeze({
+        setGrant: (rowId, request, options) => withSharing(options, client => client.setGrant(rowId, request)),
+        listGrants: (rowId, options) => withSharing(options, client => client.listGrants(rowId)),
+        revokeGrant: (rowId, request, options) => withSharing(options, client => client.revokeGrant(rowId, request)),
+        sharedWithMe: (request, options) => withSharing(options, client => client.sharedWithMe(request)),
+        get: (address, options) => withSharing(options, client => client.get(address)),
+        put: (request, options) => withSharing(options, client => client.put(request)),
+    });
+
     return Object.freeze({
+        sharing,
         identityTag,
         get,
         query,

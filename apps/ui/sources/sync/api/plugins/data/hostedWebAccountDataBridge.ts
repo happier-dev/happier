@@ -330,6 +330,24 @@ export function createHostedWebAccountDataBridge(input: Readonly<{
                     operation.definition as unknown as PluginAccountCollectionDefinition,
                 ) as PluginUiAccountCollectionForDefinition<PluginAccountCollectionDefinition>;
                 switch (operation.operation) {
+                    case 'collection.sharing.setGrant':
+                        value = await collection.sharing.setGrant(operation.arguments[0], operation.arguments[1], signalOptions) as unknown as JsonValue;
+                        break;
+                    case 'collection.sharing.listGrants':
+                        value = await collection.sharing.listGrants(operation.arguments[0], signalOptions) as unknown as JsonValue;
+                        break;
+                    case 'collection.sharing.revokeGrant':
+                        value = await collection.sharing.revokeGrant(operation.arguments[0], operation.arguments[1], signalOptions) as unknown as JsonValue;
+                        break;
+                    case 'collection.sharing.sharedWithMe':
+                        value = await collection.sharing.sharedWithMe(operation.arguments[0], signalOptions) as unknown as JsonValue;
+                        break;
+                    case 'collection.sharing.get':
+                        value = await collection.sharing.get(operation.arguments[0], signalOptions) as unknown as JsonValue;
+                        break;
+                    case 'collection.sharing.put':
+                        value = await collection.sharing.put(operation.arguments[0], signalOptions) as unknown as JsonValue;
+                        break;
                     case 'collection.identityTag':
                         value = await collection.identityTag(args[0] as never, signalOptions);
                         break;

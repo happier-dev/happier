@@ -1,3 +1,4 @@
+import { endCollectionSharingInTx, readCollectionSharingAudienceInTx } from './collections/sharingStorage';
 import { publishNativeCredentialPolicyChangesInTx } from '@/app/teams/credentials/nativePolicyChanges';
 import { recordHomeAdministrationEventInTx } from "@/app/home/audit/homeAdministrationEvents";
 import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
@@ -5,7 +6,7 @@ import { type ManagedResourceDependencyV1, type ManagedResourceDispositionV1 } f
 import { acceptsManagedResourceDispositions, readManagedResourceDependenciesInTx } from "@/app/machines/managed/managedRead";
 import { buildPluginDomainAccountChangeEntityId } from '@happier-dev/protocol/changes/pluginDomain';
 
-import { enqueueAccountChangePublication, markAccountChanged } from "@/app/changes/markAccountChanged";
+import { acquireAccountChangePublicationLocksInTx, enqueueAccountChangePublication, markAccountChanged } from "@/app/changes/markAccountChanged";
 import { withdrawPublicProfileInTx } from '@/app/account/profile/publicProfileWithdrawal';
 import { readMachineAccessKeySessionBindingsInTx } from "@/app/accessKeys/sessionMachineAccessKeyMutations";
 import { resolveCurrentMachineRecipientAccountIdsInTx } from "@/app/machines/machineAccess";
@@ -186,6 +187,8 @@ export async function erasePluginAccountDataInTx(input: Readonly<{
     managedResourceDispositions?: readonly ManagedResourceDispositionV1[];
 }>): Promise<PluginAccountDataEraseResult> {
     const pluginId = PluginIdSchema.parse(input.pluginId);
+    const collectionAudience = await readCollectionSharingAudienceInTx(input.tx, { accountId: input.accountId, pluginId });
+    await acquireAccountChangePublicationLocksInTx(input.tx, [input.accountId, ...collectionAudience], { intent: 'exclusive' });
     const fence = await acquireAccountEncryptionTransitionFenceInTx(input.tx, input.accountId, "exclusive");
     if (fence.status === "account_not_found") return { status: "account-not-found" };
     if (fence.status === "account_inconsistent") {
@@ -279,6 +282,7 @@ export async function erasePluginAccountDataInTx(input: Readonly<{
             },
         });
         tombstonedRowCount += rowTombstone.count;
+        await endCollectionSharingInTx(input.tx, liveRows.map(row => row.id));
         lastLiveRowId = liveRows[liveRows.length - 1]!.id;
     }
 

@@ -272,6 +272,33 @@ function createPluginUiDataBindings(input: PluginUiDataBindingInput) {
             throw dataError(COLLECTION_UNDECLARED_CODE, 'The requested Account Collection is not declared');
         }
         return Object.freeze<PluginAccountCollectionForDefinition<TDefinition>>({
+            sharing: Object.freeze<PluginAccountCollectionForDefinition<TDefinition>['sharing']>({
+                async setGrant(rowId, request, options) {
+                    const active = await resolve<PluginAccountCollectionValue<TDefinition>>(requested, options?.signal);
+                    return await active.client.sharing.setGrant(rowId, request, options);
+                },
+                async listGrants(rowId, options) {
+                    const active = await resolve<PluginAccountCollectionValue<TDefinition>>(requested, options?.signal, false);
+                    return await active.client.sharing.listGrants(rowId, options);
+                },
+                async revokeGrant(rowId, request, options) {
+                    const active = await resolve<PluginAccountCollectionValue<TDefinition>>(requested, options?.signal);
+                    return await active.client.sharing.revokeGrant(rowId, request, options);
+                },
+                async sharedWithMe(request, options) {
+                    const active = await resolve<PluginAccountCollectionValue<TDefinition>>(requested, options?.signal, false);
+                    return await active.client.sharing.sharedWithMe(request, options);
+                },
+                async get(address, options) {
+                    const active = await resolve<PluginAccountCollectionValue<TDefinition>>(requested, options?.signal, false);
+                    return await active.client.sharing.get(address, options);
+                },
+                async put(request, options) {
+                    const active = await resolve<PluginAccountCollectionValue<TDefinition>>(requested, options?.signal);
+                    return await active.client.sharing.put(request, options);
+                },
+            }),
+
             watch(request, listener) {
                 admit(requested);
                 if (!('kind' in request) && !definition.indexes.some(index => index.id === request.index)) {

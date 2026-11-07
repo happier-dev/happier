@@ -8075,6 +8075,16 @@
       "types": "./dist/plugins/data/collectionQueryWireV1.d.ts",
       "default": "./dist/plugins/data/collectionQueryWireV1.js"
     },
+    "./plugins/data/collectionSharingClientV1": {
+      "happier-source": "./src/plugins/data/collectionSharingClientV1.ts",
+      "types": "./dist/plugins/data/collectionSharingClientV1.d.ts",
+      "default": "./dist/plugins/data/collectionSharingClientV1.js"
+    },
+    "./plugins/data/collectionSharingV1": {
+      "happier-source": "./src/plugins/data/collectionSharingV1.ts",
+      "types": "./dist/plugins/data/collectionSharingV1.d.ts",
+      "default": "./dist/plugins/data/collectionSharingV1.js"
+    },
     "./plugins/data/collectionUiQueryWireV1": {
       "happier-source": "./src/plugins/data/collectionUiQueryWireV1.ts",
       "types": "./dist/plugins/data/collectionUiQueryWireV1.d.ts",

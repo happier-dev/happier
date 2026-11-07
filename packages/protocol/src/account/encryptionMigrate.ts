@@ -31,6 +31,7 @@ import { ProjectAccountRowContentV1Schema, ProjectAccountRowKeyV1Schema, Project
 import { AccountEncryptionMigrateProfileRowsDirectiveSchema, AccountEncryptionMigrateProfileRowsResultSchema } from '../profiles/profileRecordSchemaV1.js';
 import { ProjectTrustContentV1Schema, ProjectTrustRowV1Schema, QualifiedProjectTrustProjectV1Schema } from '../workspaces/projectSetup/projectTrustRowV1.js';
 import { ArtifactRecipientKeyEnvelopesV1Schema } from '../artifacts/artifactAccessV1.js';
+import { ResourceAccessRecipientCensusV1Schema, ResourceRecipientKeyEnvelopesV1Schema } from '../teams/resourceGrantAccessV1.js';
 import { ArtifactQuotaExceededV1Schema } from '../artifacts/artifactActionsV1.js';
 import { sha256 } from '@noble/hashes/sha2';
 import { utf8ToBytes } from '@noble/hashes/utils';
@@ -1024,6 +1025,7 @@ const AccountEncryptionMigrateCollectionSourceShape = {
   sourceEnvelope: PluginCollectionContentEnvelopeV1Schema,
   schemaVersion: PluginCollectionSchemaVersionV1Schema,
   contractDigest: PluginCollectionContractDigestV1Schema,
+  resource: z.optional(ResourceAccessRecipientCensusV1Schema),
 } as const;
 
 /** The exact Collection row state from which a transition client derives a target. */
@@ -1038,6 +1040,7 @@ export const AccountEncryptionMigrateCollectionStageItemSchema = lazyZodSchema((
     expectedRevision: PluginCollectionRevisionV1Schema,
     sourceEnvelope: PluginCollectionContentEnvelopeV1Schema,
     targetEnvelope: PluginCollectionContentEnvelopeV1Schema,
+    recipientKeyEnvelopes: z.optional(ResourceRecipientKeyEnvelopesV1Schema),
     schemaVersion: PluginCollectionSchemaVersionV1Schema,
     contractDigest: PluginCollectionContractDigestV1Schema,
   }));

@@ -365,6 +365,40 @@ domain-separated Account ciphers and Session/Machine fallback encryption retain
 their own contracts. This is an owner-approved one-way 0.3 raw-KV transition;
 it does not promise that an older secretbox-only writer can read new AES rows.
 
+### Shared Collection items (0.3 development integration)
+
+Collection sharing retains the owner's single `PluginCollectionRow`. Explicit
+Account, Team and Group grants use the existing resource-access evaluator.
+Persisted `Account.encryptionMode` decides the content layout. Plain sharing adds
+grants without acquiring or fabricating Account keys. On first share of an E2EE
+row, its host opens the existing Account payload and re-seals it with a generated
+per-row data key. The row revision assertion, `{ t: 'encrypted', k: 'collection', c }`
+content, owner and recipient key envelopes, and grant commit together. The server
+receives neither the data key nor private logical fields.
+
+The shared Collection codec requires the opened row key for marked content; it
+never falls back to Account material. Ordinary owner reads and writes, UI query
+materialization and candidate migration retain that layout and key. The existing
+Account encryption transition carries recipient wraps when converting shared rows
+to E2EE and removes them when converting to Plain. Recipient key readiness uses
+the same signed Account content-key binding as other shared resources. An E2EE
+item remains unavailable to a keyless Plain recipient; a newly eligible member
+may need a holder to prepare an envelope.
+
+Grantees receive the complete logical item, including its declared server-readable
+projection. Those declared fields were already plaintext and indexable to the
+server; sharing adds no projection fields. Authorization precedes content and
+revision disclosure, and a revoked grant refuses the next read or write. Content
+already read cannot be retracted. Editors can preserve existing Collection and
+host relations while changing content, but changing relation fields returns
+`collection_relation_unavailable` without resolving the owner's private targets
+or uniqueness collisions. Only the owner can change those fields.
+Logical deletion removes the item's grants and
+recipient key wraps in the same transaction; recreating its row id starts with
+no audience and cannot re-expose new content to former recipients. Physical
+forget retains its existing cascade. This is unreleased integration work pending
+Coordination's encryption review and loaded-runtime replay.
+
 ### Usage accounting (0.3 development)
 
 Usage numbers, models, Agents and times remain server-queryable for both plain

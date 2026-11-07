@@ -3,7 +3,11 @@ import { ACCOUNT_ENCRYPTION_MIGRATE_TRANSITION_COLLECTION_PAGE_MAX_ITEMS, type A
 import { buildPluginDomainAccountChangeEntityId } from '@happier-dev/protocol/changes/pluginDomain';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import { type PluginCollectionContentEnvelopeV1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
+import type { PluginCollectionSharingCensusResponseV1 } from '@happier-dev/protocol/plugins/data/collectionSharingV1';
 
+import { readCollectionResourceRecipientCensusInTx } from './sharingAccessService';
+import { collectionRecipientEnvelopeStorageAdapter, publishCollectionSharingChangedInTx } from './sharingStorage';
+import { validateResourceAccountEncryptionMigrationKeys } from '@/app/teams/resourceGrantAccess';
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import type { Tx } from "@/storage/inTx";
 import { getActivePrismaRuntime } from "@/storage/prisma";
@@ -29,6 +33,7 @@ export type PluginCollectionAccountEncryptionTransitionRow = Readonly<
     CollectionIdentity & {
         revision: number;
         sourceEnvelope: PluginCollectionContentEnvelopeV1;
+        resource?: Omit<PluginCollectionSharingCensusResponseV1, 'pluginId' | 'collectionId' | 'rowId'>;
         schemaVersion: number;
         contractDigest: string;
     }
@@ -97,6 +102,7 @@ const pluginCollectionTransitionRowSelect = {
     contractId: true,
     contractDigest: true,
     contentEnvelope: true,
+    _count: { select: { accountGrants: true, teamGrants: true, groupGrants: true, keyEnvelopes: true } },
     contract: {
         select: {
             pluginId: true,
@@ -128,6 +134,27 @@ type ValidatedTransitionRow = Readonly<{
     sourceEnvelope: PluginCollectionContentEnvelopeV1;
     contract: ReturnType<typeof readMaterializedPluginCollectionContract>;
 }>;
+
+function hasResourceKeysOrGrants(row: PersistedTransitionRow): boolean {
+    return row._count.accountGrants + row._count.teamGrants + row._count.groupGrants + row._count.keyEnvelopes > 0;
+}
+
+async function transitionResourceInTx(tx: Tx, accountId: string, row: PersistedTransitionRow) {
+    return hasResourceKeysOrGrants(row) ? readCollectionResourceRecipientCensusInTx(tx, {
+        actorAccountId: accountId, ownerAccountId: accountId, ...identityOf(row),
+    }) : null;
+}
+
+async function validResourceTargetInTx(params: Readonly<{ tx: Tx; accountId: string; toMode: 'plain' | 'e2ee';
+    ownerContentPublicKeyFingerprint?: string | null }>, row: PersistedTransitionRow, item: AccountEncryptionMigrateCollectionStageItem): Promise<boolean> {
+    const resource = await transitionResourceInTx(params.tx, params.accountId, row);
+    if (!resource) return item.recipientKeyEnvelopes === undefined
+        && !(item.targetEnvelope.t === 'encrypted' && item.targetEnvelope.k === 'collection');
+    if (params.toMode === 'e2ee' && (item.targetEnvelope.t !== 'encrypted' || item.targetEnvelope.k !== 'collection')) return false;
+    return validateResourceAccountEncryptionMigrationKeys({ ownerAccountId: params.accountId, toMode: params.toMode,
+        ownerContentPublicKeyFingerprint: params.ownerContentPublicKeyFingerprint, recipients: resource.recipients,
+        recipientKeyEnvelopes: item.recipientKeyEnvelopes });
+}
 
 function identityOf(row: CollectionIdentity): CollectionIdentity {
     return {
@@ -339,13 +366,16 @@ export async function inspectPluginCollectionAccountEncryptionTransitionInTx(
     const loaded = await readValidatedTransitionPageInTx(params);
     if (loaded.status === "invalid_content") return loaded;
     if (loaded.status === "identity_relocation_unsupported") return loaded;
-    const items = loaded.rows.map((row) => ({
+    const items = await Promise.all(loaded.rows.map(async (row) => ({
         ...identityOf(row.persisted),
+        ...(hasResourceKeysOrGrants(row.persisted) ? { resource: await readCollectionResourceRecipientCensusInTx(params.tx, {
+            actorAccountId: params.accountId, ownerAccountId: params.accountId, ...identityOf(row.persisted),
+        }) } : {}),
         revision: row.persisted.revision,
         sourceEnvelope: row.sourceEnvelope,
         schemaVersion: row.persisted.schemaVersion,
         contractDigest: row.persisted.contractDigest,
-    }));
+    })));
     return {
         status: "complete",
         items,
@@ -384,6 +414,7 @@ export async function validatePluginCollectionAccountEncryptionTransitionStageIn
         accountId: string;
         fromMode: "plain" | "e2ee";
         toMode: "plain" | "e2ee";
+        ownerContentPublicKeyFingerprint?: string | null;
         limits: PluginCollectionAccountEncryptionTransitionLimits;
         items: readonly AccountEncryptionMigrateCollectionStageItem[];
     }>,
@@ -435,6 +466,7 @@ export async function validatePluginCollectionAccountEncryptionTransitionStageIn
             return { status: "migration_incomplete" };
         }
         try {
+            if (!await validResourceTargetInTx(params, row.persisted, requested)) return { status: "invalid_content" };
             const target = assertPluginCollectionStoredContentForAccountTransition({
                 contract: row.contract,
                 encryptionMode: params.toMode,
@@ -442,7 +474,8 @@ export async function validatePluginCollectionAccountEncryptionTransitionStageIn
                 contentEnvelope: requested.targetEnvelope,
                 projections: row.persisted.projections,
             });
-            const targetBytes = contentBytes(target.content);
+            const targetBytes = contentBytes(target.content)
+                + (requested.recipientKeyEnvelopes ? BigInt(textEncoder.encode(JSON.stringify(requested.recipientKeyEnvelopes)).byteLength) : 0n);
             targetEncodedBytes += targetBytes;
             if (targetEncodedBytes > params.limits.encodedByteLimit) {
                 return { status: "migration_incomplete" };
@@ -455,6 +488,7 @@ export async function validatePluginCollectionAccountEncryptionTransitionStageIn
                     expectedRevision: row.persisted.revision,
                     sourceEnvelope: row.sourceEnvelope,
                     targetEnvelope: target.content,
+                    ...(requested.recipientKeyEnvelopes ? { recipientKeyEnvelopes: requested.recipientKeyEnvelopes } : {}),
                     schemaVersion: row.persisted.schemaVersion,
                     contractDigest: row.persisted.contractDigest,
                 },
@@ -528,6 +562,7 @@ export async function applyPluginCollectionAccountEncryptionTransitionInTx(
         accountId: string;
         fromMode: "plain" | "e2ee";
         toMode: "plain" | "e2ee";
+        ownerContentPublicKeyFingerprint?: string | null;
         limits: PluginCollectionAccountEncryptionTransitionLimits;
         directive: PluginCollectionAccountEncryptionTransitionDirective;
     }>,
@@ -584,6 +619,7 @@ export async function applyPluginCollectionAccountEncryptionTransitionInTx(
             return { status: "migration_incomplete" };
         }
         try {
+            if (!await validResourceTargetInTx(params, row.persisted, item)) return { status: "invalid_content" };
             const target = assertPluginCollectionStoredContentForAccountTransition({
                 contract: row.contract,
                 encryptionMode: params.toMode,
@@ -591,7 +627,8 @@ export async function applyPluginCollectionAccountEncryptionTransitionInTx(
                 contentEnvelope: item.targetEnvelope,
                 projections: row.persisted.projections,
             });
-            targetContentBytes += contentBytes(target.content);
+            targetContentBytes += contentBytes(target.content)
+                + (item.recipientKeyEnvelopes ? BigInt(textEncoder.encode(JSON.stringify(item.recipientKeyEnvelopes)).byteLength) : 0n);
             if (targetContentBytes > params.limits.encodedByteLimit) {
                 return { status: "migration_incomplete" };
             }
@@ -757,6 +794,13 @@ export async function applyPluginCollectionAccountEncryptionTransitionInTx(
         if (updated.count !== 1) {
             throw new PluginCollectionAccountEncryptionTransitionConflictError();
         }
+        if (hasResourceKeysOrGrants(row.persisted)) {
+            await params.tx.pluginCollectionKeyEnvelope.deleteMany({ where: { rowDbId: row.persisted.id } });
+            const item = targetsByIdentity.get(identityKey(row.persisted));
+            for (const envelope of item?.recipientKeyEnvelopes ?? []) {
+                await collectionRecipientEnvelopeStorageAdapter.writeRecipientEnvelopeInTx(params.tx, row.persisted.id, envelope);
+            }
+        }
         const projections = await params.tx.pluginCollectionProjection.updateMany({
             where: {
                 rowDbId: row.persisted.id,
@@ -867,6 +911,9 @@ export async function applyPluginCollectionAccountEncryptionTransitionInTx(
             entityId: buildPluginDomainAccountChangeEntityId(hint),
             hint,
         });
+    }
+    for (const row of loaded.rows) {
+        if (hasResourceKeysOrGrants(row.persisted)) await publishCollectionSharingChangedInTx(params.tx, row.persisted.id);
     }
     return { status: "applied" };
 }

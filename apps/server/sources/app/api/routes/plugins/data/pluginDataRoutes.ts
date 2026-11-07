@@ -33,6 +33,8 @@ import {
 import { Fastify } from "../../../types";
 import { readSessionAccessAuthenticationFromRequest } from "@/app/session/access/sessionAccessAuthentication";
 
+import { collectionSharingRoutes } from './collectionSharingRoutes';
+
 const PLUGIN_COLLECTION_UI_QUERY_PATH_V1 = "/v1/plugins/data/ui-query";
 
 function didErasePluginAccountData(result: PluginAccountDataEraseResult): boolean {
@@ -100,6 +102,7 @@ function statusForCandidatePreparationError(
 
 /** The one authenticated direct producer for plugin Data reads, writes, and current-Account erasure. */
 export function pluginDataRoutes(app: Fastify): void {
+    collectionSharingRoutes(app);
     app.post(PLUGIN_ACCOUNT_DATA_ERASE_HTTP_PATH_V1, {
         preHandler: app.authenticate,
         attachValidation: true,

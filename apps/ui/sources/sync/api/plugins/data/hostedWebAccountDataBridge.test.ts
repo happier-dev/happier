@@ -276,7 +276,7 @@ async function loadBridge(input: Readonly<{
         },
         invalidate: () => {
             publishActivePluginCollectionUiQueryChanges([{
-                cursor: 8,
+                cursor: secondPage.changeCursor + 1,
                 kind: 'pluginDomain',
                 entityId: 'pluginDomain/example.tasks/data-collection/tasks',
                 changedAt: 12,

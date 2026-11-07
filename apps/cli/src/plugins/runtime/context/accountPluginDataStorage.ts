@@ -11,6 +11,8 @@ import type { PluginAccountStorageEntryV1, AccountEncryptionCurrentnessResponse,
 import { PLUGIN_COLLECTION_CANDIDATE_PREPARATION_RETIRE_HTTP_PATH_V1, PLUGIN_COLLECTION_CANDIDATE_PREPARATION_SOURCE_PAGE_HTTP_PATH_V1, PLUGIN_COLLECTION_CANDIDATE_PREPARATION_STAGE_HTTP_PATH_V1, PLUGIN_COLLECTION_GET_HTTP_PATH_V1, PLUGIN_COLLECTION_MUTATION_HTTP_PATH_V1, PLUGIN_COLLECTION_QUERY_HTTP_PATH_V1, PluginCollectionCandidatePreparationBindingV1Schema, PluginCollectionCandidatePreparationErrorV1Schema, PluginCollectionCandidatePreparationRetireRequestV1Schema, PluginCollectionCandidatePreparationRetireResultV1Schema, PluginCollectionCandidatePreparationSourcePageRequestV1Schema, PluginCollectionCandidatePreparationSourcePageResultV1Schema, PluginCollectionCandidatePreparationStageRequestV1Schema, PluginCollectionCandidatePreparationStageResultV1Schema, PluginCollectionGetRequestV1Schema, PluginCollectionGetResultV1Schema, PLUGIN_COLLECTION_FORGET_HTTP_PATH_V1, PluginCollectionForgetRequestV1Schema, PluginCollectionForgetResultV1Schema, PluginCollectionMutationErrorV1Schema, PluginCollectionMutationResultV1Schema, PluginCollectionQueryRequestV1Schema, PluginCollectionQueryResultV1Schema, PluginCollectionReadErrorV1Schema, normalizePluginAccountCollectionContractV1, resolveEffectivePluginCollectionLimitsV1, resolvePluginCollectionIdentityTagV1, splitPluginCollectionCandidatePreparationStageRequestsForKnownLimitsV1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
 import { PLUGIN_COLLECTION_LIMITS_V1 } from '@happier-dev/protocol/plugins/data/collectionLimitsV1';
 import { assertPluginCollectionContentEnvelopeForModeV1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
+import { createPluginCollectionSharingClientV1 } from '@happier-dev/protocol/plugins/data/collectionSharingClientV1';
+import { PluginCollectionSharingErrorV1Schema } from '@happier-dev/protocol/plugins/data/collectionSharingV1';
 import { PluginAccountCollectionContributionV1Schema, resolvePluginCollectionMigrationChainV1 } from '@happier-dev/protocol/plugins/data/collectionContributionV1';
 import { PluginCollectionRowIdV1Schema } from '@happier-dev/protocol/plugins/data/collectionUiQueryWireV1';
 import { compilePluginJsonSchema, createPluginJsonSchemaZodValueAdapter, preparePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
@@ -37,6 +39,7 @@ import type {
     PluginCollectionMutation,
     PluginCollectionQuery,
     PluginCollectionRow,
+    PluginCollectionSharing,
     PluginCollectionWatchQuery,
 } from '@happier-dev/plugin-sdk/collections';
 import type {
@@ -53,6 +56,8 @@ import { readObservedAccountEncryptionCurrentness, waitForObservation } from '@/
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { readStoredCredentials, type Credentials, type StoredCredentials } from '@/persistence';
 import { configuration } from '@/configuration';
+import { openResourceDataKey } from '@/api/encryption/resourceDataKey';
+import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import {
     getActiveAccountSettingsSnapshot,
     getActiveAccountSettingsSnapshotLifetimeToken,
@@ -278,6 +283,8 @@ function createUnavailableAccountCollection<
         message: 'Account plugin collection is not declared for this Account Data binding',
     }));
     return Object.freeze({
+        sharing: Object.freeze({ setGrant: unavailableAsync, listGrants: unavailableAsync, revokeGrant: unavailableAsync,
+            sharedWithMe: unavailableAsync, get: unavailableAsync, put: unavailableAsync }),
         identityTag: unavailableAsync,
         get: unavailableAsync,
         put: unavailableAsync,
@@ -536,6 +543,7 @@ function splitLogicalPut(input: Readonly<{
     value: PluginAccountCollectionValue<PluginAccountCollectionDefinition>;
     encryptionMode: 'plain' | 'e2ee';
     material: AccountScopedCryptoMaterial | null;
+    resourceDataKey?: Uint8Array;
     randomBytes: (length: number) => Uint8Array;
 }>): Pick<Extract<PluginCollectionMutationOperationV1, { kind: 'put' }>, 'kind' | 'rowId' | 'content' | 'projection'> {
     const value = asJsonObject(input.value);
@@ -551,6 +559,7 @@ function splitLogicalPut(input: Readonly<{
         value,
         encryptionMode: input.encryptionMode,
         material: input.material,
+        resourceDataKey: input.resourceDataKey,
         randomBytes: input.randomBytes,
     });
     if (encoded.status === 'failed') throw collectionEncodeFailureError(encoded);
@@ -562,24 +571,41 @@ function splitLogicalPut(input: Readonly<{
     };
 }
 
+function parseStoredCollectionValue<TValue extends PluginAccountCollectionValue<PluginAccountCollectionDefinition>>(
+    collection: BoundCollection,
+    value: PluginCollectionLogicalValueV1,
+): TValue | null {
+    const parsed = collection.storedValueSchema.safeParse(value);
+    if (!parsed.success || !parsed.data || typeof parsed.data !== 'object' || Array.isArray(parsed.data)) return null;
+    // The canonical stored-read parser validates the admitted logical schema.
+    return parsed.data as TValue;
+}
+
+async function openCollectionRowResourceDataKey(row: PluginCollectionRowV1, credentials: StoredCredentials): Promise<Uint8Array | undefined> {
+    if (row.content.t !== 'encrypted' || row.content.k !== 'collection') return undefined;
+    try {
+        const opened = await openResourceDataKey({ credentials, mode: 'e2ee', dataEncryptionKey: row.encryptedDataKey ?? null });
+        if (opened.mode === 'e2ee') return opened.dataKey;
+    } catch {
+        // A marked row never falls back to the Account content key.
+    }
+    throw collectionDecodeFailureError('content-mode-mismatch');
+}
+
 function mergeLogicalRow<TValue extends PluginAccountCollectionValue<PluginAccountCollectionDefinition>>(input: Readonly<{
     collection: BoundCollection;
     row: PluginCollectionRowV1;
     encryptionMode: 'plain' | 'e2ee';
     material: AccountScopedCryptoMaterial | null;
+    resourceDataKey?: Uint8Array;
 }>): PluginCollectionRow<TValue> {
     const decoded = decodePluginCollectionLogicalRowV1<TValue>({
         contract: input.collection.contract,
-        parseStoredLogicalValue: value => {
-            const parsed = input.collection.storedValueSchema.safeParse(value);
-            if (!parsed.success || !parsed.data || typeof parsed.data !== 'object' || Array.isArray(parsed.data)) return null;
-            // The canonical stored-read parser already validates the projected
-            // value against this Collection's admitted logical schema.
-            return parsed.data as TValue;
-        },
+        parseStoredLogicalValue: value => parseStoredCollectionValue<TValue>(input.collection, value),
         row: input.row,
         encryptionMode: input.encryptionMode,
         material: input.material,
+        resourceDataKey: input.resourceDataKey,
     });
     if (decoded.status === 'failed') throw collectionDecodeFailureError(decoded.reason);
     return Object.freeze({
@@ -1295,11 +1321,13 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
 
                         const sourceCredentials = await requestContext.currentCredentials();
                         const sourceEncryption = await requestContext.currentEncryption(sourceCredentials, undefined, 'observed');
+                        const resourceDataKey = await openCollectionRowResourceDataKey(sourceRow, sourceCredentials);
                         const logical = mergeLogicalRow<PluginAccountCollectionValue<PluginAccountCollectionDefinition>>({
                             collection: source,
                             row: sourceRow,
                             encryptionMode: sourceEncryption.mode,
                             material: sourceEncryption.material,
+                            resourceDataKey,
                         });
                         let targetValue = logical.value;
                         for (const migration of chain) {
@@ -1325,6 +1353,7 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                             value: targetValue,
                             encryptionMode: targetEncryption.mode,
                             material: targetEncryption.material,
+                            resourceDataKey,
                             randomBytes,
                         });
                         if (targetOperation.rowId !== sourceRow.rowId) {
@@ -1482,6 +1511,7 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                 currentCredentials,
                 currentEncryption,
                 ensureWriterClaim,
+                post,
                 request,
             } = createBoundRequestContext(lifecycle);
             // Activation claims too, so Plugin UI reads that reach Data directly
@@ -1845,6 +1875,30 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                     return createUnavailableAccountCollection<TDefinition>(COLLECTION_UNDECLARED_CODE);
                 }
 
+                const readWireRow = async (rowId: string, credentials: StoredCredentials, operationSignal?: AbortSignal) => {
+                    let body: ReturnType<typeof PluginCollectionGetRequestV1Schema.parse>;
+                    try {
+                        body = PluginCollectionGetRequestV1Schema.parse({
+                            pluginId: lifecycle.pluginId,
+                            collectionId: collection.contract.collectionId,
+                            readerContext: {
+                                pluginId: collection.contract.pluginId,
+                                collectionId: collection.contract.collectionId,
+                                schemaVersion: collection.contract.schemaVersion,
+                                contractDigest: collection.contract.contractDigest,
+                            },
+                            rowId,
+                        });
+                    } catch {
+                        throw dataError(COLLECTION_INVALID_VALUE_CODE, 'Collection row identity is invalid');
+                    }
+                    const response = await request({ path: PLUGIN_COLLECTION_GET_HTTP_PATH_V1,
+                        body, kind: 'read', credentials, operationSignal });
+                    const parsed = PluginCollectionGetResultV1Schema.safeParse(response);
+                    if (!parsed.success) throw dataError(COLLECTION_PROTOCOL_INVALID_CODE, 'Collection read response is invalid');
+                    return parsed.data;
+                };
+
                 /**
                  * The one place a plugin's logical mutations become wire
                  * operations. `measureBatch` and `batch` share it so a plugin
@@ -1864,37 +1918,20 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                     // Measurement and mutation share this fresh pre-sealing boundary.
                     const encryption = await currentEncryption(credentials, operationSignal);
                     let absenceEpoch: number | undefined;
+                    const resourceDataKeys = new Map<string, Uint8Array>();
                     for (const operation of operations) {
-                        if (operation.kind !== 'put' || operation.expectedRevision !== 'absent') continue;
-                        const snapshot = await request({
-                            path: PLUGIN_COLLECTION_GET_HTTP_PATH_V1,
-                            body: PluginCollectionGetRequestV1Schema.parse({
-                                pluginId: lifecycle.pluginId,
-                                collectionId: collection.contract.collectionId,
-                                readerContext: {
-                                    pluginId: collection.contract.pluginId,
-                                    collectionId: collection.contract.collectionId,
-                                    schemaVersion: collection.contract.schemaVersion,
-                                    contractDigest: collection.contract.contractDigest,
-                                },
-                                rowId: splitLogicalPut({
-                                    collection,
-                                    value: operation.value,
-                                    encryptionMode: encryption.mode,
-                                    material: encryption.material,
-                                    randomBytes,
-                                }).rowId,
-                            }),
-                            kind: 'read',
-                            credentials,
-                            operationSignal,
-                        });
-                        const parsedSnapshot = PluginCollectionGetResultV1Schema.safeParse(snapshot);
-                        if (!parsedSnapshot.success) {
-                            throw dataError(COLLECTION_PROTOCOL_INVALID_CODE, 'Collection currentness response is invalid');
+                        if (operation.kind !== 'put') continue;
+                        if (operation.expectedRevision === 'absent' && absenceEpoch !== undefined) continue;
+                        if (encryption.mode === 'plain' && operation.expectedRevision !== 'absent') continue;
+                        const rowId = splitLogicalPut({ collection, value: operation.value, encryptionMode: 'plain', material: null, randomBytes }).rowId;
+                        // Existing E2EE rows decide their own content key. This
+                        // exact-row read is a storage fact, not another access owner.
+                        const snapshot = await readWireRow(rowId, credentials, operationSignal);
+                        if (operation.expectedRevision === 'absent') absenceEpoch = snapshot.absenceEpoch;
+                        if (snapshot.row) {
+                            const key = await openCollectionRowResourceDataKey(snapshot.row, credentials);
+                            if (key) resourceDataKeys.set(rowId, key);
                         }
-                        absenceEpoch = parsedSnapshot.data.absenceEpoch;
-                        break;
                     }
                     const prepared = preparePluginCollectionLogicalMutationRequestV1({
                         contract: collection.contract,
@@ -1905,6 +1942,7 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                         operations,
                         encryptionMode: encryption.mode,
                         material: encryption.material,
+                        resourceDataKeys,
                         randomBytes,
                         absenceEpoch,
                     });
@@ -2010,11 +2048,12 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                     return parsed.data.status === 'forgotten';
                 };
 
-                const materialize = (
+                const materialize = async (
                     row: PluginCollectionRowV1,
                     mode: 'plain' | 'e2ee',
                     material: AccountScopedCryptoMaterial | null,
-                ): PluginCollectionRow<PluginAccountCollectionValue<TDefinition>> => {
+                    credentials: StoredCredentials,
+                ): Promise<PluginCollectionRow<PluginAccountCollectionValue<TDefinition>>> => {
                     // Transport and current Account admission still run for every
                     // read. Only the stored logical value is retained by this
                     // admitted contract, at its latest server-issued row revision.
@@ -2051,6 +2090,7 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                     }
                     const decoded = mergeLogicalRow<PluginAccountCollectionValue<TDefinition>>({
                         collection, row, encryptionMode: mode, material,
+                        resourceDataKey: await openCollectionRowResourceDataKey(row, credentials),
                     });
                     // Private immutable wire witness covers both the exact content
                     // envelope and its projection. Equal revisions alone do not
@@ -2063,7 +2103,56 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                     return decoded;
                 };
 
+                const sharingClient = async (operationSignal?: AbortSignal) => {
+                    const credentials = await currentCredentials(operationSignal);
+                    const encryption = await currentEncryption(credentials, operationSignal);
+                    const accountId = readAccountIdFromToken(credentials.token);
+                    if (!accountId) throw dataError(ACCOUNT_DATA_UNAVAILABLE_CODE, 'Collection sharing requires an authenticated Account identity');
+                    await ensureWriterClaim(credentials, operationSignal);
+                    return createPluginCollectionSharingClientV1<PluginAccountCollectionValue<TDefinition>>({
+                        accountId,
+                        contract: collection.contract,
+                        isValidLogicalValue: (value): value is PluginAccountCollectionValue<TDefinition> => isValidPluginJsonSchemaValue(collection.validate, value),
+                        parseStoredLogicalValue: value => parseStoredCollectionValue<PluginAccountCollectionValue<TDefinition>>(collection, value),
+                        requireCurrent: () => assertCurrentAccount(credentials, operationSignal),
+                        isTypedError: isPluginError,
+                        request: async (path, body, options) => ({ status: 200, body: await post({
+                            path, body, kind: options.kind, credentials, operationSignal,
+                            parseError: value => {
+                                const collectionError = parseCollectionError(value, options.kind);
+                                if (collectionError) return collectionError;
+                                const parsed = PluginCollectionSharingErrorV1Schema.safeParse(value);
+                                return parsed.success ? dataError(parsed.data.error, 'Collection sharing request was refused') : null;
+                            },
+                            unavailableMessage: 'Collection sharing transport is unavailable',
+                        }) }),
+                        crypto: {
+                            accountMaterial: encryption.material,
+                            randomBytes,
+                            openKey: async encryptedDataKey => {
+                                try {
+                                    const opened = await openResourceDataKey({ credentials, mode: 'e2ee', dataEncryptionKey: encryptedDataKey });
+                                    return opened.mode === 'e2ee' ? opened.dataKey : null;
+                                } catch { return null; }
+                            },
+                        },
+                        createError: (code, outcome) => dataError(
+                            outcome === 'uncertain' ? 'plugin_collection_outcome_unknown' : code,
+                            'Collection sharing operation failed', outcome === 'failed',
+                        ),
+                    });
+                };
+                const sharing: PluginCollectionSharing<PluginAccountCollectionValue<TDefinition>> = Object.freeze({
+                    async setGrant(rowId, input, options) { return await (await sharingClient(options?.signal)).setGrant(rowId, input); },
+                    async listGrants(rowId, options) { return await (await sharingClient(options?.signal)).listGrants(rowId); },
+                    async revokeGrant(rowId, input, options) { return await (await sharingClient(options?.signal)).revokeGrant(rowId, input); },
+                    async sharedWithMe(input, options) { return await (await sharingClient(options?.signal)).sharedWithMe(input); },
+                    async get(address, options) { return await (await sharingClient(options?.signal)).get(address); },
+                    async put(input, options) { return await (await sharingClient(options?.signal)).put(input); },
+                });
+
                 const bound: PluginAccountCollectionForDefinition<TDefinition> = Object.freeze({
+                    sharing,
                     async forget(
                         rowId: string,
                         options: Readonly<{ expectedRevision: number; signal?: AbortSignal }>,
@@ -2109,39 +2198,15 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                     async get(rowId: string, options?: Readonly<{ signal?: AbortSignal }>) {
                         const credentials = await currentCredentials(options?.signal);
                         const encryption = await currentEncryption(credentials, options?.signal, 'observed');
-                        let requestBody: ReturnType<typeof PluginCollectionGetRequestV1Schema.parse>;
-                        try {
-                            requestBody = PluginCollectionGetRequestV1Schema.parse({
-                                pluginId: lifecycle.pluginId,
-                                collectionId: collection.contract.collectionId,
-                                readerContext: {
-                                    pluginId: collection.contract.pluginId,
-                                    collectionId: collection.contract.collectionId,
-                                    schemaVersion: collection.contract.schemaVersion,
-                                    contractDigest: collection.contract.contractDigest,
-                                },
-                                rowId,
-                            });
-                        } catch {
-                            throw dataError(COLLECTION_INVALID_VALUE_CODE, 'Collection row identity is invalid');
-                        }
-                        const response = await request({
-                            path: PLUGIN_COLLECTION_GET_HTTP_PATH_V1,
-                            body: requestBody,
-                            kind: 'read',
-                            credentials,
-                            operationSignal: options?.signal,
-                        });
-                        const parsed = PluginCollectionGetResultV1Schema.safeParse(response);
-                        if (!parsed.success) {
-                            throw dataError(COLLECTION_PROTOCOL_INVALID_CODE, 'Collection read response is invalid');
-                        }
-                        await assertCurrentAccount(credentials, options?.signal);
-                        if (!parsed.data.row) {
+                        const snapshot = await readWireRow(rowId, credentials, options?.signal);
+                        if (!snapshot.row) {
+                            await assertCurrentAccount(credentials, options?.signal);
                             admitted?.reads?.rows.delete(rowId);
                             return null;
                         }
-                        return materialize(parsed.data.row, encryption.mode, encryption.material);
+                        const row = await materialize(snapshot.row, encryption.mode, encryption.material, credentials);
+                        await assertCurrentAccount(credentials, options?.signal);
+                        return row;
                     },
                     async put(
                         value: PluginAccountCollectionValue<TDefinition>,
@@ -2238,15 +2303,16 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                         if (!parsed.success) {
                             throw dataError(COLLECTION_PROTOCOL_INVALID_CODE, 'Collection query response is invalid');
                         }
+                        const rows = await Promise.all(parsed.data.rows.map((row) => (
+                            materialize(row, encryption.mode, encryption.material, credentials)
+                        )));
                         await assertCurrentAccount(credentials, options?.signal);
                         const accountScopeKey = currentAccountScopeKey();
                         if (accountScopeKey) {
                             recordCollectionQueryCursor(collection.contract, accountScopeKey, parsed.data.changeCursor);
                         }
                         return Object.freeze({
-                            rows: Object.freeze(parsed.data.rows.map((row) => (
-                                materialize(row, encryption.mode, encryption.material)
-                            ))),
+                            rows: Object.freeze(rows),
                             ...(parsed.data.nextCursor ? { nextCursor: parsed.data.nextCursor } : {}),
                             changeCursor: parsed.data.changeCursor,
                         });

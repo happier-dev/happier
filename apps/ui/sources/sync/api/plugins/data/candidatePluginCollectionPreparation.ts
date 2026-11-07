@@ -357,6 +357,7 @@ export function createActivePluginCollectionCandidatePreparation(input: Readonly
                     const encoded = encodePluginCollectionLogicalValue({
                         contract: input.candidate.targetContract,
                         validate: targetValidate,
+                        sourceRow: row,
                         value,
                         encryptionMode: operation.encryptionMode,
                         material: operation.material,

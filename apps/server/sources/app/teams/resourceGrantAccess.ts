@@ -303,6 +303,33 @@ export function validateResourceRecipientEnvelopeCommit(input: Readonly<{
     return validateResourceRecipientKeyEnvelopes(input.recipientKeyEnvelopes) ? null : 'invalid_recipient_envelope';
 }
 
+/** Account conversion prepares one complete target key set; the target owner's first-key proof supplies its binding. */
+export function validateResourceAccountEncryptionMigrationKeys(input: Readonly<{
+    ownerAccountId: string;
+    toMode: 'plain' | 'e2ee';
+    ownerContentPublicKeyFingerprint?: string | null;
+    recipients: readonly ReturnType<typeof projectResourceRecipientCensusRow>[];
+    recipientKeyEnvelopes?: readonly ResourceRecipientKeyEnvelopeInputV1[];
+}>): boolean {
+    const envelopes = input.recipientKeyEnvelopes;
+    if (!envelopes) return false;
+    if (input.toMode === 'plain') return envelopes.length === 0;
+    const owner = envelopes.find(envelope => envelope.recipientAccountId === input.ownerAccountId);
+    if (!input.ownerContentPublicKeyFingerprint || !owner
+        || owner.recipientContentPublicKeyFingerprint !== input.ownerContentPublicKeyFingerprint) return false;
+    const ready = input.recipients.filter(recipient => recipient.recipientAccountId !== input.ownerAccountId && recipient.contentKey.status === 'available');
+    if (envelopes.length !== ready.length + 1) return false;
+    const expected = new Map(ready.map(recipient => [recipient.recipientAccountId, recipient.contentPublicKeyFingerprint]));
+    const seen = new Set<string>();
+    for (const envelope of envelopes) {
+        if (seen.has(envelope.recipientAccountId) || !parseEncryptedDataKeyEnvelopeV1(privacyKit.decodeBase64(envelope.encryptedDataKey))) return false;
+        seen.add(envelope.recipientAccountId);
+        if (envelope.recipientAccountId !== input.ownerAccountId
+            && expected.get(envelope.recipientAccountId) !== envelope.recipientContentPublicKeyFingerprint) return false;
+    }
+    return true;
+}
+
 export interface ResourceRecipientEnvelopeStorageAdapter<Envelope extends ResourceRecipientKeyEnvelopeInputV1> extends ResourceGrantStorageAdapter {
     writeRecipientEnvelopeInTx(tx: Tx, resourceId: string, envelope: Envelope): Promise<void>;
     publishRecipientsChangedInTx(tx: Tx, resourceId: string, accountIds: readonly string[]): Promise<void>;

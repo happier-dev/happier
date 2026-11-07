@@ -1,5 +1,9 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { sealPluginCollectionPrivatePayloadV1 } from "@happier-dev/protocol";
+import { randomBytes } from 'node:crypto';
+import tweetnacl from 'tweetnacl';
+import { encodeBase64, signAccountContentKeyBindingV1, sealPluginCollectionPrivatePayloadV1 } from "@happier-dev/protocol";
+import { sealEncryptedDataKeyEnvelopeV1, openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
 import type { Prisma } from "@prisma/client";
 
 import { materializePluginCollectionContractsFromManifestTx } from "@/app/plugins/data/collections/contracts";
@@ -94,6 +98,64 @@ afterEach(async () => {
 });
 
 describe("Collection Account-encryption transition inventory", () => {
+    it("converts a shared row with complete resource wraps and removes them on the Plain roundtrip", async () => {
+        const owner = ACCOUNT_ID, peer = "collection-transition-peer";
+        const identities = [owner, peer].map(accountId => {
+            const signing = tweetnacl.sign.keyPair(), content = tweetnacl.box.keyPair();
+            return { accountId, secret: content.secretKey, fields: { publicKey: Buffer.from(signing.publicKey).toString('hex'),
+                contentPublicKey: new Uint8Array(content.publicKey), contentPublicKeySig: new Uint8Array(signAccountContentKeyBindingV1({
+                    accountSigningSecretKey: signing.secretKey, contentPublicKey: content.publicKey })) },
+                fingerprint: computeContentPublicKeyFingerprint(content.publicKey) };
+        });
+        await db.account.create({ data: { id: owner, encryptionMode: 'plain' } });
+        await db.account.create({ data: { id: peer, encryptionMode: 'e2ee', ...identities[1]!.fields } });
+        const [ref] = await inTx(tx => materializePluginCollectionContractsFromManifestTx({ tx, manifest: MANIFEST }));
+        if (!ref) throw new Error('Expected materialized collection');
+        const contract = await db.pluginCollectionContract.findFirstOrThrow({ where: { pluginId: PLUGIN_ID } });
+        const row = await db.pluginCollectionRow.create({ data: { accountId: owner, pluginId: PLUGIN_ID, collectionId: COLLECTION_ID,
+            rowId: 'shared-transition', revision: 1, schemaVersion: ref.schemaVersion, contractId: contract.id,
+            contractDigest: ref.contractDigest, contentEnvelope: { t: 'plain', v: {} } } });
+        await db.pluginCollectionProjection.create({ data: { rowDbId: row.id, accountId: owner, pluginId: PLUGIN_ID,
+            collectionId: COLLECTION_ID, rowId: row.rowId, fieldId: 'status', typedEncodedValue: JSON.stringify('open'), rowRevision: 1 } });
+        const index = await db.pluginCollectionIndexState.create({ data: { accountId: owner, pluginId: PLUGIN_ID,
+            collectionId: COLLECTION_ID, indexId: 'by-status', contractId: contract.id, contractDigest: ref.contractDigest,
+            buildState: 'ready', indexedThroughRevision: 1 } });
+        await db.pluginCollectionIndexEntry.create({ data: { indexStateId: index.id, rowId: row.rowId,
+            rowRevision: 1, encodedSortKey: new Uint8Array([1, 2, 3]) } });
+        await db.pluginCollectionAccountGrant.create({ data: { rowDbId: row.id, accountId: peer, accessLevel: 'edit', createdByAccountId: owner } });
+        const rowKey = randomBytes(32);
+        const wraps = identities.map(identity => ({ recipientAccountId: identity.accountId,
+            recipientContentPublicKeyFingerprint: identity.fingerprint, encryptedDataKey: encodeBase64(sealEncryptedDataKeyEnvelopeV1({
+                dataKey: rowKey, recipientPublicKey: identity.fields.contentPublicKey, randomBytes })) }));
+        const encrypted = { t: 'encrypted' as const, k: 'collection' as const, c: sealPluginCollectionPrivatePayloadV1({
+            material: { type: 'dataKey', machineKey: rowKey }, payload: {}, randomBytes }) };
+        const item = { pluginId: PLUGIN_ID, collectionId: COLLECTION_ID, rowId: row.rowId, expectedRevision: 1,
+            sourceEnvelope: { t: 'plain' as const, v: {} }, targetEnvelope: encrypted, schemaVersion: ref.schemaVersion, contractDigest: ref.contractDigest };
+        const parameters = { accountId: owner, fromMode: 'plain' as const, toMode: 'e2ee' as const,
+            ownerContentPublicKeyFingerprint: identities[0]!.fingerprint, limits: { participantLimit: 8, encodedByteLimit: 1024n * 1024n } };
+        await expect(inTx(tx => validatePluginCollectionAccountEncryptionTransitionStageInTx({ tx, ...parameters, items: [item] })))
+            .resolves.toEqual({ status: 'invalid_content' });
+        await expect(inTx(tx => applyPluginCollectionAccountEncryptionTransitionInTx({ tx, ...parameters,
+            directive: { action: 'migrate', items: [{ ...item, recipientKeyEnvelopes: wraps }] } }))).resolves.toEqual({ status: 'applied' });
+        // The coordinator activates Account mode after the domain adapter; this fixture supplies that established boundary.
+        await db.account.update({ where: { id: owner }, data: { encryptionMode: 'e2ee', ...identities[0]!.fields } });
+        const census = await inTx(tx => inspectPluginCollectionAccountEncryptionTransitionInTx({ tx, accountId: owner, sourceMode: 'e2ee' }));
+        expect(census).toMatchObject({ status: 'complete', items: [{ revision: 2, resource: { encryptionMode: 'e2ee' } }] });
+        const envelopes = await db.pluginCollectionKeyEnvelope.findMany({ where: { rowDbId: row.id } });
+        expect(envelopes).toHaveLength(2);
+        for (const identity of identities) {
+            const envelope = envelopes.find(candidate => candidate.recipientAccountId === identity.accountId)!;
+            expect(openEncryptedDataKeyEnvelopeV1({ envelope: envelope.encryptedDataKey, recipientSecretKeyOrSeed: identity.secret })).toEqual(new Uint8Array(rowKey));
+        }
+        const plain = { ...item, expectedRevision: 2, sourceEnvelope: encrypted, targetEnvelope: { t: 'plain' as const, v: {} }, recipientKeyEnvelopes: [] };
+        await expect(inTx(tx => applyPluginCollectionAccountEncryptionTransitionInTx({ tx, accountId: owner, fromMode: 'e2ee', toMode: 'plain',
+            limits: parameters.limits, directive: { action: 'migrate', items: [plain] } }))).resolves.toEqual({ status: 'applied' });
+        await db.account.update({ where: { id: owner }, data: { encryptionMode: 'plain', publicKey: null, contentPublicKey: null, contentPublicKeySig: null } });
+        expect(await db.pluginCollectionKeyEnvelope.count({ where: { rowDbId: row.id } })).toBe(0);
+        expect(await db.pluginCollectionAccountGrant.count({ where: { rowDbId: row.id } })).toBe(1);
+        expect(await db.pluginCollectionRow.findUniqueOrThrow({ where: { id: row.id } })).toMatchObject({ revision: 3, contentEnvelope: plain.targetEnvelope });
+    });
+
     it("censuses and applies only live rows while retaining a content-free tombstone unchanged", async () => {
         await db.account.create({
             data: {

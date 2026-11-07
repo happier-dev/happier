@@ -1,4 +1,8 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { randomBytes } from 'node:crypto';
+import { createPluginCollectionSharingClientV1 } from '@happier-dev/protocol/plugins/data/collectionSharingClientV1';
+import { PLUGIN_COLLECTION_SHARING_HTTP_PATHS_V1 } from '@happier-dev/protocol/plugins/data/collectionSharingV1';
+import { openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import tweetnacl from "tweetnacl";
 
 import {
@@ -1524,6 +1528,271 @@ describe("plugin collection UI query route", () => {
             () => db.machine.deleteMany(),
             () => db.account.deleteMany(),
         ]);
+    });
+
+    it("shares a Plain Collection row and enforces live view/edit access before conflicts", async () => {
+        const owner = "collection-sharing-owner", recipient = "collection-sharing-recipient";
+        const { ref } = await seedCurrentCollectionAccount({ accountId: owner, rows: [
+            { rowId: "shared-row", revision: 1, status: "open", title: "Shared" },
+            { rowId: "second-row", revision: 1, status: "open", title: "Second" },
+        ] });
+        await createAccount({ id: recipient, mode: "plain", seq: 1 });
+        const team = await db.team.create({ data: { name: "Collection team" } });
+        await db.teamMembership.create({ data: { teamId: team.id, accountId: owner, role: "owner" } });
+        const member = await db.teamMembership.create({ data: { teamId: team.id, accountId: recipient, role: "member" } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: "Editors", nameKey: "editors" } });
+        await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id, teamMembershipId: member.id, nativeContribution: true } });
+        const address = { ownerAccountId: owner, pluginId: PLUGIN_ID, collectionId: COLLECTION_ID, rowId: "shared-row" };
+        const principal = { kind: "account", accountId: recipient } as const;
+        await withPluginDataApp(async app => {
+            const call = (accountId: string, operation: string, payload: unknown) => app.inject({ method: "POST",
+                url: `/v1/plugins/data/sharing/${operation}`, headers: { ...V3_HEADERS, "x-test-user-id": accountId,
+                    "content-type": "application/json" }, payload: JSON.stringify(payload) });
+            const roster = await call(owner, "grants", address);
+            expect(roster.statusCode).toBe(200);
+            expect(roster.json()).toMatchObject({ ...address, access: "owner", grants: [] });
+            expect((await call(recipient, "get", { ...address, readerContext: ref })).statusCode).toBe(404);
+            expect((await call(owner, "set-grant", { ...address, principal, accessLevel: "view", expectedRevision: 1 })).statusCode).toBe(200);
+            const viewed = await call(recipient, "get", { ...address, readerContext: ref });
+            expect(viewed.statusCode).toBe(200);
+            expect(viewed.json()).toMatchObject({ ownerAccountId: owner, access: "view", encryptionMode: "plain", encryptedDataKey: null,
+                row: { revision: 1, projection: { title: "Shared" } } });
+            const edit = { ...address, writerContext: ref, expectedRevision: 1, content: { t: "plain", v: { privateNote: "Peer private edit" } },
+                projection: { status: "closed", title: "Edited" } };
+            expect((await call(recipient, "put", { ...edit, expectedRevision: 999 })).json()).toEqual({ error: "collection_unavailable" });
+            expect((await call(recipient, "set-grant", { ...address, principal: { kind: "team", teamId: team.id }, accessLevel: "edit", expectedRevision: 1 })).statusCode).toBe(403);
+            expect((await call(owner, "set-grant", { ...address, principal, accessLevel: "edit", expectedRevision: 1 })).statusCode).toBe(200);
+            const changed = await call(recipient, "put", edit);
+            expect(changed.statusCode).toBe(200);
+            expect(changed.json()).toMatchObject({ access: "edit", row: { revision: 2, content: edit.content, projection: edit.projection } });
+            expect((await call(recipient, "put", edit)).json()).toEqual({ error: "collection_revision_conflict" });
+            expect((await call(owner, "set-grant", { ...address, rowId: "second-row", principal, accessLevel: "view", expectedRevision: 1 })).statusCode).toBe(200);
+            const firstPage = await call(recipient, "shared-with-me", { pluginId: PLUGIN_ID, collectionId: COLLECTION_ID, readerContext: ref, limit: 1 });
+            expect(firstPage.statusCode).toBe(200);
+            expect(firstPage.json().resources).toHaveLength(1);
+            expect(firstPage.json().nextCursor).toEqual(expect.any(String));
+            const lastPage = await call(recipient, "shared-with-me", { pluginId: PLUGIN_ID, collectionId: COLLECTION_ID, readerContext: ref,
+                limit: 1, cursor: firstPage.json().nextCursor });
+            expect(lastPage.json().resources).toHaveLength(1);
+            expect(lastPage.json().resources[0].rowId).not.toBe(firstPage.json().resources[0].rowId);
+            expect(lastPage.json().nextCursor).toBeNull();
+            expect((await call(owner, "revoke-grant", { ...address, principal })).statusCode).toBe(200);
+            expect((await call(recipient, "put", edit)).json()).toEqual({ error: "collection_unavailable" });
+            for (const audience of [{ kind: "team", teamId: team.id }, { kind: "group", teamId: team.id, groupId: group.id }]) {
+                expect((await call(owner, "set-grant", { ...address, principal: audience, accessLevel: "view", expectedRevision: 2 })).statusCode).toBe(200);
+                expect((await call(recipient, "get", { ...address, readerContext: ref })).statusCode).toBe(200);
+                expect((await call(owner, "revoke-grant", { ...address, principal: audience })).statusCode).toBe(200);
+                expect((await call(recipient, "get", { ...address, readerContext: ref })).statusCode).toBe(404);
+            }
+            for (const audience of [principal, { kind: "team", teamId: team.id }, { kind: "group", teamId: team.id, groupId: group.id }]) {
+                expect((await call(owner, "set-grant", { ...address, principal: audience, accessLevel: "view", expectedRevision: 2 })).statusCode).toBe(200);
+            }
+            const beforeDelete = await db.account.findUniqueOrThrow({ where: { id: recipient }, select: { seq: true } });
+            const mutate = (operations: unknown[]) => app.inject({ method: "POST", url: "/v1/plugins/data/mutate",
+                headers: { ...V3_HEADERS, "x-test-user-id": owner }, payload: { pluginId: PLUGIN_ID, collectionId: COLLECTION_ID,
+                    writerContext: { schemaVersion: ref.schemaVersion, contractDigest: ref.contractDigest }, operations } });
+            expect((await mutate([{ kind: "delete", rowId: address.rowId, expectedRevision: 2 }])).statusCode).toBe(200);
+            expect((await db.account.findUniqueOrThrow({ where: { id: recipient }, select: { seq: true } })).seq).toBeGreaterThan(beforeDelete.seq);
+            expect((await mutate([{ kind: "put", rowId: address.rowId, expectedRevision: 3, content: edit.content, projection: edit.projection }])).statusCode).toBe(200);
+            expect((await call(recipient, "get", { ...address, readerContext: ref })).statusCode).toBe(404);
+            expect((await call(recipient, "shared-with-me", { pluginId: PLUGIN_ID, collectionId: COLLECTION_ID, readerContext: ref })).json().resources.map((row: { rowId: string }) => row.rowId)).toEqual(["second-row"]);
+            expect((await call(owner, "grants", address)).json().grants).toEqual([]);
+            const wakes = await db.accountChange.findMany({ where: { accountId: recipient, kind: "pluginDomain" } });
+            expect(wakes).not.toHaveLength(0);
+            expect(JSON.stringify(wakes)).not.toContain("Peer private edit");
+            expect(JSON.stringify(wakes)).not.toContain("Edited");
+            expect(await db.pluginCollectionKeyEnvelope.count()).toBe(0);
+        });
+    });
+
+    it("refuses editor relation changes identically for private and missing targets while preserving owner writes", async () => {
+        const owner = "collection-relation-owner", recipient = "collection-relation-editor";
+        const { projectRef, taskRef } = await seedReadyRelationCollectionAccount(owner);
+        await createAccount({ id: recipient, mode: "plain", seq: 0 });
+        const write = (ref: typeof projectRef, rowId: string, expectedRevision: number | null, projection: Record<string, string>) =>
+            mutatePluginCollection({ accountId: owner, request: { pluginId: ref.pluginId, collectionId: ref.collectionId,
+                writerContext: { schemaVersion: ref.schemaVersion, contractDigest: ref.contractDigest },
+                operations: [{ kind: "put", rowId, expectedRevision: expectedRevision ?? "absent",
+                    ...(expectedRevision === null ? { expectedAbsenceEpoch: 0 } : {}),
+                    content: { t: "plain", v: {} }, projection }] } });
+        for (const rowId of ["original", "private-free", "private-occupied"]) {
+            expect((await write(projectRef, rowId, null, { id: rowId, title: rowId })).status).toBe("updated");
+        }
+        const projection = (rowId: string, target: string) => ({ id: rowId, title: "Task", "project-id": target });
+        expect((await write(taskRef, "shared", null, projection("shared", "original"))).status).toBe("updated");
+        expect((await write(taskRef, "private-source", null, projection("private-source", "private-occupied"))).status).toBe("updated");
+        const source = await db.pluginCollectionRow.findFirstOrThrow({ where: { accountId: owner, collectionId: "tasks", rowId: "shared" } });
+        await db.pluginCollectionAccountGrant.create({ data: { rowDbId: source.id, accountId: recipient,
+            accessLevel: "edit", createdByAccountId: owner } });
+        await withPluginDataApp(async app => {
+            const put = (target: string, expectedRevision = 1) => app.inject({ method: "POST", url: "/v1/plugins/data/sharing/put",
+                headers: { ...V3_HEADERS, "x-test-user-id": recipient }, payload: { ownerAccountId: owner,
+                    pluginId: taskRef.pluginId, collectionId: taskRef.collectionId, rowId: "shared", writerContext: taskRef,
+                    expectedRevision, content: { t: "plain", v: {} }, projection: projection("shared", target) } });
+            const missing = await put("missing");
+            expect(missing.statusCode).toBe(409);
+            expect(missing.json()).toEqual({ error: "collection_relation_unavailable" });
+            for (const target of ["private-free", "private-occupied"]) {
+                const refused = await put(target);
+                expect(refused.statusCode).toBe(missing.statusCode);
+                expect(refused.json()).toEqual(missing.json());
+            }
+            // Editing content keeps the existing relation even when its target is private.
+            expect((await put("original")).statusCode).toBe(200);
+            // The owner can still change the relation, and private unique collisions still refuse.
+            expect((await write(taskRef, "shared", 2, projection("shared", "private-free"))).status).toBe("updated");
+            await expect(write(taskRef, "shared", 3, projection("shared", "private-occupied")))
+                .rejects.toMatchObject({ code: "collection_relation_unavailable" });
+            expect((await put("private-free", 3)).statusCode).toBe(200);
+        });
+    });
+
+    it("refuses editor host relation probes while allowing content edits with an unchanged host reference", async () => {
+        const owner = "collection-host-owner", recipient = "collection-host-editor";
+        const { ref } = await seedReadyHostMachineRelationCollectionAccount(owner);
+        await retainCollectionRelease({ accountId: owner, manifest: HOST_MACHINE_RELATION_COLLECTION_MANIFEST, refs: [ref] });
+        await createAccount({ id: recipient, mode: "plain", seq: 0 });
+        for (const id of ["host-original", "host-private"]) {
+            await db.machine.create({ data: { id, accountId: owner, metadata: "{}" } });
+        }
+        const projection = (machineId: string) => ({ id: "shared", title: "Task", "machine-id": machineId });
+        expect((await mutatePluginCollection({ accountId: owner, request: { pluginId: ref.pluginId, collectionId: ref.collectionId,
+            writerContext: { schemaVersion: ref.schemaVersion, contractDigest: ref.contractDigest }, operations: [{ kind: "put", rowId: "shared",
+                expectedRevision: "absent", expectedAbsenceEpoch: 0, content: { t: "plain", v: {} }, projection: projection("host-original") }] } })).status).toBe("updated");
+        const source = await db.pluginCollectionRow.findFirstOrThrow({ where: { accountId: owner, rowId: "shared" } });
+        await db.pluginCollectionAccountGrant.create({ data: { rowDbId: source.id, accountId: recipient,
+            accessLevel: "edit", createdByAccountId: owner } });
+        await withPluginDataApp(async app => {
+            for (const machineId of ["host-private", "host-missing", "host-original"]) {
+                const response = await app.inject({ method: "POST", url: "/v1/plugins/data/sharing/put",
+                    headers: { ...V3_HEADERS, "x-test-user-id": recipient }, payload: { ownerAccountId: owner,
+                        pluginId: ref.pluginId, collectionId: ref.collectionId, rowId: "shared", writerContext: ref,
+                        expectedRevision: 1, content: { t: "plain", v: {} }, projection: projection(machineId) } });
+                expect(response.statusCode).toBe(machineId === "host-original" ? 200 : 409);
+                if (machineId !== "host-original") expect(response.json()).toEqual({ error: "collection_relation_unavailable" });
+            }
+        });
+    });
+
+    it("applies the canonical deployment batch budget to grantee writes before persisting content", async () => {
+        const owner = "collection-sharing-budget-owner", recipient = "collection-sharing-budget-peer";
+        const { ref } = await seedCurrentCollectionAccount({ accountId: owner, rows: [
+            { rowId: "budget-row", revision: 1, status: "open", title: "Original" },
+        ] });
+        await createAccount({ id: recipient, mode: "plain", seq: 0 });
+        const row = await db.pluginCollectionRow.findFirstOrThrow({ where: { accountId: owner, rowId: "budget-row" } });
+        await db.pluginCollectionAccountGrant.create({ data: { rowDbId: row.id, accountId: recipient, accessLevel: "edit", createdByAccountId: owner } });
+        await withPluginDataApp(async app => {
+            const request = { ownerAccountId: owner, pluginId: PLUGIN_ID, collectionId: COLLECTION_ID, rowId: row.rowId,
+                writerContext: ref, expectedRevision: 1, content: { t: "plain", v: { privateNote: "Allowed after policy recovery" } },
+                projection: { status: "open", title: "Edited" } };
+            const put = () => app.inject({ method: "POST", url: "/v1/plugins/data/sharing/put",
+                headers: { ...V3_HEADERS, "x-test-user-id": recipient }, payload: request });
+            const canonicalRequest = { pluginId: PLUGIN_ID, collectionId: COLLECTION_ID,
+                writerContext: { schemaVersion: ref.schemaVersion, contractDigest: ref.contractDigest },
+                operations: [{ kind: "put" as const, rowId: row.rowId, expectedRevision: 1,
+                    content: { t: "plain" as const, v: request.content.v }, projection: request.projection }] };
+            const budget = measurePluginCollectionMutationRequestEncodedBytesV1(canonicalRequest) - 1;
+            expect(measurePluginCollectionStoredRowEncodedBytes({ rowId: row.rowId, contentEnvelope: request.content,
+                projections: Object.entries(request.projection).map(([fieldId, value]) => ({ fieldId, typedEncodedValue: JSON.stringify(value) })) })).toBeLessThan(budget);
+            harness.resetEnv({ HAPPIER_COLLECTION_MAX_ROW_ENCODED_BYTES: String(budget), HAPPIER_COLLECTION_MAX_BATCH_BYTES: String(budget) });
+            const refused = await put();
+            expect(refused.statusCode).toBe(409);
+            expect(refused.json()).toMatchObject({ error: "collection_quota_incompatible", dimension: "maxBatchBytes", effectiveMaximum: budget });
+            expect(await db.pluginCollectionRow.findUniqueOrThrow({ where: { id: row.id } })).toMatchObject({ revision: 1 });
+            harness.resetEnv();
+            expect((await put()).statusCode).toBe(200);
+            expect(await db.pluginCollectionRow.findUniqueOrThrow({ where: { id: row.id } })).toMatchObject({ revision: 2 });
+        });
+    });
+
+    it("shares E2EE Collection ciphertext through two real Account clients and ends sharing on deletion before private recreation", async () => {
+        const owner = "collection-e2ee-owner", recipient = "collection-e2ee-recipient";
+        const material = { type: "legacy" as const, secret: randomBytes(32) };
+        const initial = { id: "private-row", status: "open" as const, title: "Encrypted sharing", privateNote: "Owner private note" };
+        const second = { ...initial, id: "private-row-two", privateNote: "Second private note" };
+        const { ref } = await seedCurrentCollectionAccount({ accountId: owner, mode: "e2ee", rows: [initial, second].map(value => ({ rowId: value.id,
+            revision: 1, status: value.status, title: value.title, contentEnvelope: { t: "encrypted" as const,
+                c: sealPluginCollectionPrivatePayloadV1({ material, payload: { privateNote: value.privateNote }, randomBytes }) } })) });
+        await createAccount({ id: recipient, mode: "e2ee", seq: 1 });
+        const secretByAccount = new Map<string, Uint8Array>();
+        for (const accountId of [owner, recipient]) {
+            const signing = tweetnacl.sign.keyPair(), content = tweetnacl.box.keyPair();
+            secretByAccount.set(accountId, content.secretKey);
+            await db.account.update({ where: { id: accountId }, data: { publicKey: Buffer.from(signing.publicKey).toString("hex"),
+                contentPublicKey: copyBytes(content.publicKey), contentPublicKeySig: copyBytes(signAccountContentKeyBindingV1({
+                    accountSigningSecretKey: signing.secretKey, contentPublicKey: content.publicKey })) } });
+        }
+        await db.userRelationship.create({ data: { fromUserId: recipient, toUserId: owner, status: "friend" } });
+        const contract = normalizePluginAccountCollectionContractV1({ pluginId: PLUGIN_ID,
+            contribution: PluginAccountCollectionContributionV1Schema.parse(COLLECTION_MANIFEST.contributes.accountCollections[0]) });
+        type Value = { id: string; status: "open" | "closed"; title: string; privateNote: string };
+        const valid = (value: unknown): value is Value => value !== null && typeof value === "object" && "id" in value && typeof value.id === "string"
+            && "status" in value && (value.status === "open" || value.status === "closed") && "title" in value && typeof value.title === "string"
+            && "privateNote" in value && typeof value.privateNote === "string";
+        await withPluginDataApp(async app => {
+            const options = (accountId: string) => ({ accountId, contract, isValidLogicalValue: valid,
+                parseStoredLogicalValue: (value: unknown) => valid(value) ? value : null, requireCurrent: () => {},
+                crypto: { accountMaterial: accountId === owner ? material : null, randomBytes,
+                    openKey: async (envelope: string) => openEncryptedDataKeyEnvelopeV1({ envelope: decodeBase64(envelope),
+                        recipientSecretKeyOrSeed: secretByAccount.get(accountId)! }) },
+                request: async (path: string, body: unknown) => {
+                    const response = await app.inject({ method: "POST", url: path,
+                        headers: { ...V3_HEADERS, "x-test-user-id": accountId, "content-type": "application/json" }, payload: JSON.stringify(body) });
+                    return { status: response.statusCode, body: response.json() as unknown };
+                } });
+            const ownerClient = createPluginCollectionSharingClientV1<Value>(options(owner));
+            const peerClient = createPluginCollectionSharingClientV1<Value>(options(recipient));
+            await ownerClient.setGrant(initial.id, { principal: { kind: "account", accountId: recipient }, accessLevel: "edit", expectedRevision: 1 });
+            await ownerClient.setGrant(second.id, { principal: { kind: "account", accountId: recipient }, accessLevel: "view", expectedRevision: 1 });
+            const shared = await peerClient.get({ ownerAccountId: owner, rowId: initial.id });
+            expect(shared).toMatchObject({ ownerAccountId: owner, access: "edit", revision: 2, value: initial });
+            const edited = await peerClient.put({ ownerAccountId: owner, value: { ...initial, privateNote: "Peer encrypted note" }, expectedRevision: shared.revision });
+            expect(edited).toMatchObject({ revision: 3, value: { privateNote: "Peer encrypted note" } });
+            const ownerRead = await ownerClient.get({ ownerAccountId: owner, rowId: initial.id });
+            expect(ownerRead.value).toEqual(edited.value);
+            const recipientReads: unknown[] = [];
+            const restore = observeSqliteRequests({ before: request => {
+                if (request.model === "Account" && request.action === "findUnique" && JSON.stringify(request.args).includes(recipient)) {
+                    recipientReads.push(request.args);
+                }
+            } });
+            try {
+                const page = await peerClient.sharedWithMe({});
+                expect(page.rows).toHaveLength(2);
+                expect(page.rows).toEqual(expect.arrayContaining([edited]));
+                expect(recipientReads).toHaveLength(1);
+            } finally { restore(); }
+            const persisted = await db.pluginCollectionRow.findFirstOrThrow({ where: { accountId: owner, rowId: initial.id } });
+            expect(persisted.contentEnvelope).toMatchObject({ t: "encrypted", k: "collection" });
+            expect(JSON.stringify(persisted)).not.toContain("Peer encrypted note");
+            expect(await db.pluginCollectionKeyEnvelope.count({ where: { rowDbId: persisted.id } })).toBe(2);
+            const ordinary = await app.inject({ method: "POST", url: "/v1/plugins/data/get", headers: { ...V3_HEADERS, "x-test-user-id": owner },
+                payload: { pluginId: PLUGIN_ID, collectionId: COLLECTION_ID, readerContext: ref, rowId: initial.id } });
+            expect(ordinary.json().row.encryptedDataKey).toEqual(expect.any(String));
+            const replace = await app.inject({ method: "POST", url: "/v1/plugins/data/mutate", headers: { ...V3_HEADERS, "x-test-user-id": owner }, payload: {
+                pluginId: PLUGIN_ID, collectionId: COLLECTION_ID, writerContext: { schemaVersion: ref.schemaVersion, contractDigest: ref.contractDigest }, operations: [{ kind: "put", rowId: initial.id, expectedRevision: 3,
+                    content: { t: "encrypted", c: sealPluginCollectionPrivatePayloadV1({ material, payload: { privateNote: "Wrong key" }, randomBytes }) },
+                    projection: { status: initial.status, title: initial.title } }] } });
+            expect(replace.json()).toMatchObject({ error: "collection_content_mode_mismatch" });
+            await ownerClient.revokeGrant(initial.id, { principal: { kind: "account", accountId: recipient } });
+            await expect(peerClient.get({ ownerAccountId: owner, rowId: initial.id })).rejects.toMatchObject({ code: "collection_unavailable" });
+            await expect(peerClient.put({ ownerAccountId: owner, value: initial, expectedRevision: 3 })).rejects.toMatchObject({ code: "collection_unavailable" });
+            const deleted = await app.inject({ method: "POST", url: "/v1/plugins/data/mutate", headers: { ...V3_HEADERS, "x-test-user-id": owner },
+                payload: { pluginId: PLUGIN_ID, collectionId: COLLECTION_ID, writerContext: { schemaVersion: ref.schemaVersion, contractDigest: ref.contractDigest },
+                    operations: [{ kind: "delete", rowId: second.id, expectedRevision: 2 }] } });
+            expect(deleted.statusCode).toBe(200);
+            const deletedRow = await db.pluginCollectionRow.findFirstOrThrow({ where: { accountId: owner, rowId: second.id } });
+            expect(await db.pluginCollectionKeyEnvelope.count({ where: { rowDbId: deletedRow.id } })).toBe(0);
+            const recreatedWithoutResourceKey = await app.inject({ method: "POST", url: "/v1/plugins/data/mutate",
+                headers: { ...V3_HEADERS, "x-test-user-id": owner }, payload: { pluginId: PLUGIN_ID, collectionId: COLLECTION_ID, writerContext: { schemaVersion: ref.schemaVersion, contractDigest: ref.contractDigest },
+                    operations: [{ kind: "put", rowId: second.id, expectedRevision: 3,
+                        content: { t: "encrypted", c: sealPluginCollectionPrivatePayloadV1({ material, payload: { privateNote: "Private recreation" }, randomBytes }) },
+                        projection: { status: initial.status, title: initial.title } }] } });
+            expect(recreatedWithoutResourceKey.statusCode).toBe(200);
+            await expect(peerClient.get({ ownerAccountId: owner, rowId: second.id })).rejects.toMatchObject({ code: "collection_unavailable" });
+            expect((await peerClient.sharedWithMe({})).rows).toEqual([]);
+        });
     });
 
     it("serves concurrent collection reads while another process holds the SQLite writer lock", async () => {
@@ -6312,6 +6581,41 @@ describe("plugin collection UI query route", () => {
             { sourceRowId: "task-a", targetRowId: "project-b" },
             { sourceRowId: "task-b", targetRowId: "project-a" },
         ]);
+    });
+
+    it("invalidates a shared dependent when deleting a related row in another Collection", async () => {
+        const accountId = "collection-shared-nullify-owner", recipient = "collection-shared-nullify-peer";
+        const { projectRef, taskRef } = await seedReadyNullifyRelationCollectionAccount(accountId);
+        await createAccount({ id: recipient, mode: "plain", seq: 0 });
+        await withPluginDataApp(async app => {
+            const headers = { ...V3_HEADERS, "x-test-user-id": accountId };
+            const put = async (collectionId: string, writerContext: typeof projectRef, rowId: string, projection: Record<string, string>) => {
+                const response = await app.inject({ method: "POST", url: "/v1/plugins/data/mutate", headers,
+                    payload: { pluginId: NULLIFY_RELATION_COLLECTION_MANIFEST.id, collectionId,
+                        writerContext: { schemaVersion: writerContext.schemaVersion, contractDigest: writerContext.contractDigest },
+                        operations: [{ kind: "put", rowId, expectedRevision: "absent", expectedAbsenceEpoch: 0,
+                            content: { t: "plain", v: {} }, projection }] } });
+                expect(response.statusCode).toBe(200);
+            };
+            await put("projects", projectRef, "project-a", { id: "project-a", title: "Project A" });
+            await put("tasks", taskRef, "task-a", { id: "task-a", title: "Task A", "project-id": "project-a" });
+            const dependent = await db.pluginCollectionRow.findFirstOrThrow({ where: { accountId, collectionId: "tasks", rowId: "task-a" } });
+            await db.pluginCollectionAccountGrant.create({ data: { rowDbId: dependent.id, accountId: recipient,
+                accessLevel: "view", createdByAccountId: accountId } });
+            const removed = await app.inject({ method: "POST", url: "/v1/plugins/data/mutate", headers,
+                payload: { pluginId: NULLIFY_RELATION_COLLECTION_MANIFEST.id, collectionId: "projects",
+                    writerContext: { schemaVersion: projectRef.schemaVersion, contractDigest: projectRef.contractDigest },
+                    operations: [{ kind: "delete", rowId: "project-a", expectedRevision: 1 }] } });
+            expect(removed.statusCode).toBe(200);
+            const wake = await db.accountChange.findFirst({ where: { accountId: recipient, kind: "pluginDomain" }, select: { hint: true } });
+            expect(wake?.hint).toEqual({ pluginDomain: "dataCollection", pluginId: NULLIFY_RELATION_COLLECTION_MANIFEST.id,
+                collectionId: "tasks", contractDigest: taskRef.contractDigest, revision: 2, rowIds: ["task-a"] });
+            const refreshed = await app.inject({ method: "POST", url: "/v1/plugins/data/sharing/get",
+                headers: { ...V3_HEADERS, "x-test-user-id": recipient }, payload: { ownerAccountId: accountId,
+                    pluginId: NULLIFY_RELATION_COLLECTION_MANIFEST.id, collectionId: "tasks", rowId: "task-a", readerContext: taskRef } });
+            expect(refreshed.statusCode).toBe(200);
+            expect(refreshed.json().row).toMatchObject({ revision: 2, projection: { "project-id": null } });
+        });
     });
 
     it("nullifies an optional same-plugin relation through the dependent projection before deleting its target", async () => {

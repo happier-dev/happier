@@ -73,6 +73,25 @@ const material = { type: 'legacy' as const, secret: new Uint8Array(32).fill(5) }
 const randomBytes = (length: number): Uint8Array => new Uint8Array(length).fill(3);
 
 describe('plugin Collection logical row codec', () => {
+  it('opens a shared row only with its resource key and preserves its projection', () => {
+    const value = { id: 'shared', connectionId: 'connection-1', attention: true, privateNote: 'shared secret' };
+    const resourceDataKey = new Uint8Array(32).fill(17);
+    const encoded = encodePluginCollectionLogicalValueV1({ contract, isValidLogicalValue, value,
+      encryptionMode: 'e2ee', material: null, resourceDataKey, randomBytes });
+    expect(encoded.status).toBe('encoded');
+    if (encoded.status !== 'encoded') return;
+    expect(encoded.content).toMatchObject({ t: 'encrypted', k: 'collection' });
+    const row = { rowId: encoded.rowId, revision: 2, content: encoded.content, projection: encoded.projection };
+    const input = { contract, parseStoredLogicalValue, row, encryptionMode: 'e2ee' as const, material };
+    expect(decodePluginCollectionLogicalRowV1(input)).toEqual({ status: 'failed', reason: 'content-mode-mismatch' });
+    expect(decodePluginCollectionLogicalRowV1({ ...input, resourceDataKey: new Uint8Array(32).fill(18) }))
+      .toEqual({ status: 'failed', reason: 'content-mode-mismatch' });
+    expect(decodePluginCollectionLogicalRowV1({ ...input, material: null, resourceDataKey }))
+      .toMatchObject({ status: 'decoded', rowId: 'shared', revision: 2, value });
+    expect(decodePluginCollectionLogicalRowV1({ ...input, encryptionMode: 'plain', resourceDataKey }))
+      .toEqual({ status: 'failed', reason: 'content-mode-mismatch' });
+  });
+
   it.each(['plain', 'e2ee'] as const)('distinguishes the exact private envelope bound in %s mode', (encryptionMode) => {
     const maximum = PLUGIN_COLLECTION_LIMITS_V1.maximumPrivateEnvelopeEncodedBytes;
     const largeContract = { ...contract, schema: {
