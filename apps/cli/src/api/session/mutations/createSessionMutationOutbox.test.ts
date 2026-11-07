@@ -1447,13 +1447,15 @@ describe('createSessionMutationOutbox', () => {
 
             const scheduledDelays = setTimeoutSpy.mock.calls.map(([, delay]) => delay ?? 0);
             expect(scheduledDelays).not.toEqual([]);
-            // The head failed its first attempt: backoff is 1000 * 2^1 with no jitter.
+            // The automatic startup flush may also attempt the head, so it has failed at least
+            // once: its backoff is at least 1000 * 2^1 with no jitter, never 0.
             expect(Math.min(...scheduledDelays)).toBeGreaterThan(1_000);
             const persisted = await readPersistedOutboxMutations(sessionId);
             expect(persisted).toEqual([
-                expect.objectContaining({ mutationId: head.mutationId, attempts: 1 }),
+                expect.objectContaining({ mutationId: head.mutationId }),
                 expect.objectContaining({ mutationId: behind.mutationId, attempts: 0, nextAttemptAt: 0 }),
             ]);
+            expect((persisted[0] as { attempts: number }).attempts).toBeGreaterThanOrEqual(1);
         } finally {
             setTimeoutSpy.mockRestore();
             await outbox.close();
