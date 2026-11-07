@@ -311,10 +311,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.text.tertiary,
     },
     valueWarning: {
-        color: theme.colors.state.warning.foreground,
+        color: theme.colors.state.warning.textForeground,
     },
     valueDanger: {
-        color: theme.colors.state.danger.foreground,
+        color: theme.colors.state.danger.textForeground,
     },
     reset: {
         width: USAGE_METER_METRICS.resetWidthPx,

@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatPathRelativeToHome, formatSessionPath } from './formatPathRelativeToHome';
+import { formatPathRelativeToHome, formatSessionPath, readSessionPathName } from './formatPathRelativeToHome';
+
+// The linuxUsersV1 layout a separated member receives: home and workspace are separate roots.
+const MEMBER_DIGEST = '770cf64d44d259c85fd16505c1947428cd90e2221cf85cb580f86b68cc34fb1d';
+const MEMBER_WORKSPACE = `/srv/happier/members/${MEMBER_DIGEST}`;
+const MEMBER_HOME = `/var/lib/happier/members/${MEMBER_DIGEST}`;
 
 describe('formatPathRelativeToHome', () => {
     it('normalizes home-relative separator aliases through the canonical expansion owner', () => {
@@ -44,5 +49,26 @@ describe('formatSessionPath', () => {
         expect(formatSessionPath('/home/alice/repo', '/home/alice')).toBe('~/repo');
         expect(formatSessionPath('C:\\Users\\alice2', 'C:\\Users\\alice')).toBe('C:\\Users\\alice2');
         expect(formatSessionPath('/home/alice', undefined)).toBe('/home/alice');
+    });
+});
+
+describe('member workspace display', () => {
+    it('names a separated member\'s workspace root by a plain name and keeps subpaths relative to it', () => {
+        expect(formatSessionPath(MEMBER_WORKSPACE, MEMBER_HOME)).toBe('Your workspace');
+        expect(formatSessionPath(`${MEMBER_WORKSPACE}/`, MEMBER_HOME)).toBe('Your workspace');
+        expect(formatSessionPath(`${MEMBER_WORKSPACE}/api/src`, MEMBER_HOME)).toBe('Your workspace/api/src');
+        expect(formatPathRelativeToHome(`${MEMBER_WORKSPACE}/api`, undefined)).toBe('Your workspace/api');
+    });
+
+    it('leaves paths that only resemble the layout untouched', () => {
+        expect(formatSessionPath('/srv/happier/members/not-a-digest/api', MEMBER_HOME)).toBe('/srv/happier/members/not-a-digest/api');
+        expect(formatSessionPath(`/srv/happier/members/${MEMBER_DIGEST}x`, MEMBER_HOME)).toBe(`/srv/happier/members/${MEMBER_DIGEST}x`);
+    });
+
+    it('names a Session at the member workspace root by the workspace, never by its digest', () => {
+        expect(readSessionPathName(MEMBER_WORKSPACE)).toBe('Your workspace');
+        expect(readSessionPathName(`${MEMBER_WORKSPACE}/api`)).toBe('api');
+        expect(readSessionPathName('/home/alice/repo/')).toBe('repo');
+        expect(readSessionPathName('/')).toBeNull();
     });
 });

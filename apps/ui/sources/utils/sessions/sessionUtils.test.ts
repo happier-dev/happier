@@ -37,6 +37,8 @@ vi.mock('react-native-unistyles', async () => {
                     error: '#CC3333',
                     default: '#555555',
                 },
+                text: { secondary: '#454545' },
+                state: { danger: { textForeground: '#992222' }, attention: { textForeground: '#885511' } },
             },
         },
     });
@@ -143,7 +145,7 @@ describe('nullable static session presentation', () => {
             presence: 'online', thinking: true, thinkingAt: Date.now(),
         });
         const hook = await renderHook(({ bound }: { bound: boolean }) => useSessionStatus(bound ? session : null, {
-            workingTextMode: 'static', subscribeToSession: false, subscribeToTranscript: false,
+            subscribeToSession: false, subscribeToTranscript: false,
         }), { initialProps: { bound: false } });
         expect(hook.getCurrent()).toBeNull();
         await hook.rerender({ bound: true });
@@ -216,6 +218,16 @@ function createPendingUserMessage(overrides: Partial<PendingMessage> = {}): Pend
 }
 
 describe('shared transient session titles', () => {
+    it('seeds Bots per Session, retains supplied rerolls and preserves ordinary folder identity', async () => {
+        const { getSessionAvatarId } = await import('./sessionUtils');
+        const metadata = { path: '/same-folder', host: 'host', machineId: 'machine' };
+        const a = createBaseSession({ id: 'bot-a', metadata: { ...metadata, bot: { kind: 'bot' } } });
+        const b = createBaseSession({ id: 'bot-b', metadata: { ...metadata, bot: { kind: 'bot' } } });
+        expect(getSessionAvatarId(a)).toBe('bot-a');
+        expect(getSessionAvatarId(b, 'another-local-profile')).toBe('bot-b');
+        expect(getSessionAvatarId({ ...a, metadata: { ...a.metadata!, botFace: { seed: 'preview-seed' } } })).toBe('preview-seed');
+        expect(getSessionAvatarId(createBaseSession({ metadata }))).toBe('machine:/same-folder');
+    });
     it('can name a freshly authorized snapshot without adopting a cached same-id title', async () => {
         const { getSessionName, readSessionNameIfNamed } = await import('./sessionUtils');
         const session = createBaseSession({ serverId: 'home-a', metadata: { path: '/project', host: 'devbox' } });
@@ -228,6 +240,14 @@ describe('shared transient session titles', () => {
         });
         expect(getSessionName(session, 'home-a')).toBe('Previous Account private title');
         expect(readSessionNameIfNamed(session, 'home-a', { snapshotOnly: true })).toBe('project');
+    });
+
+    it('names a separated member\'s Session at its workspace root by the workspace, never by the member digest', async () => {
+        const { getSessionName } = await import('./sessionUtils');
+        const digest = '770cf64d44d259c85fd16505c1947428cd90e2221cf85cb580f86b68cc34fb1d';
+        const metadata = { path: `/srv/happier/members/${digest}`, homeDir: `/var/lib/happier/members/${digest}`, host: 'lima' };
+        expect(getSessionName(createBaseSession({ metadata }), undefined, { snapshotOnly: true })).not.toContain(digest.slice(0, 8));
+        expect(getSessionName(createBaseSession({ metadata: { ...metadata, path: `${metadata.path}/api` } }), undefined, { snapshotOnly: true })).toBe('api');
     });
 
     it('names full Sessions and their roster/list/Talk rows consistently before a summary arrives', async () => {
@@ -444,7 +464,7 @@ describe('getSessionStatus', () => {
         expect(status.state).toBe('waiting');
     });
 
-    it('uses the current theme status colors in the status hook', async () => {
+    it('uses the current theme status colors in the status hook: the dot keeps the state colour, the words take a text role', async () => {
         const { useSessionStatus } = await import('./sessionUtils');
         const hook = await renderHook(() => useSessionStatus(createBaseSession({
             thinking: true,
@@ -453,7 +473,7 @@ describe('getSessionStatus', () => {
 
         expect(hook.getCurrent()).toMatchObject({
             state: 'thinking',
-            statusColor: '#555555',
+            statusColor: '#454545',
             statusDotColor: '#555555',
             isPulsing: true,
         });
@@ -471,6 +491,21 @@ describe('getSessionStatus', () => {
             state: 'thinking',
             statusText: 'status.working',
         });
+    });
+
+    it('presents the host-published retry of the working turn and keeps Stop available', async () => {
+        const { getSessionStatus, shouldShowAbortButtonForSessionState } = await import('./sessionUtils');
+        const nowMs = Date.now();
+        const retrying = getSessionStatus(createBaseSession({ thinking: true, thinkingAt: nowMs, metadata: { path: '/workspace', host: 'dev',
+            sessionTurnProgressV1: { turnId: 'turn-1', phase: 'retrying', attempt: 3, reason: 'connection_failed' } } as Session['metadata'] }), nowMs);
+        expect(retrying).toMatchObject({ state: 'thinking', statusText: 'status.retryingAttempt',
+            turnRetry: { attempt: 3, reason: 'connection_failed' } });
+        expect(shouldShowAbortButtonForSessionState(retrying.state)).toBe(true);
+        // The fact describes the working turn only; an idle Session never shows a stale retry.
+        const idle = getSessionStatus(createBaseSession({ thinking: false, metadata: { path: '/workspace', host: 'dev',
+            sessionTurnProgressV1: { turnId: 'turn-1', phase: 'retrying', attempt: 3, reason: 'connection_failed' } } as Session['metadata'] }), nowMs);
+        expect(idle).not.toHaveProperty('turnRetry');
+        expect(getSessionStatus(createBaseSession({ thinking: true, thinkingAt: nowMs }), nowMs)).not.toHaveProperty('turnRetry');
     });
 
     it('returns action_required when the agent has pending user-action requests', async () => {
@@ -693,7 +728,6 @@ describe('getSessionStatus', () => {
         const session = createBaseSession({ thinking: true, thinkingAt: 900 });
         const status = getSessionStatus(session, 1_000, {
             vibingIndex: 0,
-            workingTextMode: 'static',
         });
 
         expect(status.state).toBe('thinking');
@@ -704,7 +738,6 @@ describe('getSessionStatus', () => {
         const { getSessionStatus } = await import('./sessionUtils');
         const session = createBaseSession({ thinking: true, thinkingAt: 900 });
         const status = getSessionStatus(session, 1_000, {
-            workingTextMode: 'static',
             statusColors: {
                 connected: '#connected',
                 connecting: '#connecting',
@@ -734,7 +767,6 @@ describe('getSessionStatus', () => {
         });
 
         const status = getSessionStatus(session, now, {
-            workingTextMode: 'static',
             statusColors: {
                 connected: '#connected',
                 connecting: '#connecting',
@@ -858,7 +890,7 @@ describe('getSessionStatus', () => {
             runtimeActivityActiveCount: 2,
             runtimeActivityObservedAt: now - 300_000,
         });
-        const status = getSessionStatus(session, now, { workingTextMode: 'static' });
+        const status = getSessionStatus(session, now);
         expect(status).toMatchObject({
             state: 'background_active', bucket: 'working', statusText: 'status.awaitingUpdates',
             isPulsing: false, awareness: { runtime: 'background_active', freshness: 'stale' },
@@ -866,8 +898,7 @@ describe('getSessionStatus', () => {
         expect(presentSessionAwarenessV1(status.awareness)).toMatchObject({
             state: 'background_active', statusText: 'status.awaitingUpdates',
         });
-        expect(getSessionStatus({ ...session, activeAt: now, runtimeActivityObservedAt: now }, now,
-            { workingTextMode: 'static' })).toMatchObject({
+        expect(getSessionStatus({ ...session, activeAt: now, runtimeActivityObservedAt: now }, now)).toMatchObject({
             state: 'background_active', bucket: 'working', statusText: 'status.backgroundActive',
             awareness: { freshness: 'live' },
         });
@@ -882,7 +913,7 @@ describe('getSessionStatus', () => {
             presence: now - 10_000,
             runtimeActivityState: 'active',
             runtimeActivityActiveCount: 1,
-        }), now, { workingTextMode: 'static' })).toMatchObject({
+        }), now)).toMatchObject({
             state: 'disconnected',
             isConnected: false,
         });
@@ -899,7 +930,7 @@ describe('getSessionStatus', () => {
             pendingRequestObservedAt: now - 2,
             runtimeActivityState: 'active',
             runtimeActivityActiveCount: 1,
-        }), now, { workingTextMode: 'static' })).toMatchObject({
+        }), now)).toMatchObject({
             state: 'archived',
             shouldShowStatus: false,
         });
@@ -957,7 +988,6 @@ describe('getSessionStatus', () => {
         const now = 1_000_000;
         const session = createBaseSession({ optimisticThinkingAt: now - 1_000 });
         const status = getSessionStatus(session, now, {
-            workingTextMode: 'static',
             hasPendingUserMessages: true,
         });
         expect(status.state).toBe('thinking');
@@ -2183,6 +2213,27 @@ describe('getSessionCarriedLine', () => {
 });
 
 describe('getSessionName', () => {
+    it('uses Voice only until the ordinary Session title projection names its carrier', async () => {
+        const { getSessionName } = await import('./sessionUtils');
+        const { buildSystemSessionMetadataV1 } = await import('@happier-dev/protocol/sessions/control/contract');
+        const metadata = { path: '/private/voice-agent', host: 'mac',
+            ...buildSystemSessionMetadataV1({ key: 'voice_conversation', hidden: true }) };
+        const session = createBaseSession({ serverId: 'voice-home', metadata });
+        const row = buildSessionListRenderableFromSession(session);
+        expect(getSessionName(session)).toBe('voicePresence.title');
+        expect(getSessionName(row, null, { snapshotOnly: true })).toBe('voicePresence.title');
+        const contentRow = buildSessionListRenderableFromSession(session, undefined, [{
+            id: 'voice-input', kind: 'user-text', localId: null, createdAt: 1,
+            text: 'Internal prompt', displayText: 'Plan the release',
+        }]);
+        storage.setState({ sessionListRowsByServerId: { 'voice-home': { [session.id]: contentRow } } });
+        expect(getSessionName(session)).toBe('Plan the release');
+        expect(getSessionName(contentRow, 'voice-home', { snapshotOnly: true })).toBe('Plan the release');
+        const named = createBaseSession({ metadata: { ...metadata, summary: { text: 'Plan the release', updatedAt: 1 } } });
+        expect(getSessionName(named)).toBe('Plan the release');
+        expect(getSessionName(buildSessionListRenderableFromSession(named), null, { snapshotOnly: true })).toBe('Plan the release');
+    });
+
     it('presents work identity from the named machine, then the workspace owner, without an unknown placeholder', async () => {
         const { getSessionWorkContext } = await import('./sessionUtils');
         const row = createSessionListRenderableSessionFixture({ metadata: {
@@ -2341,7 +2392,7 @@ describe('getSessionName for a list row', () => {
 });
 
 describe('reachable target session display helpers', () => {
-    it('keeps the ordinary avatar seed through registered Bot promotion, demotion and reload', async () => {
+    it('uses Session identity on Bot promotion and reload, restoring ordinary identity on demotion', async () => {
         const { getSessionAvatarId } = await import('./sessionUtils');
         const { MetadataSchema } = await import('@happier-dev/session-core/state');
         const { writeSessionStateFieldToMetadata } = await import('@happier-dev/agents/session/state/metadataWriters');
@@ -2357,9 +2408,10 @@ describe('reachable target session display helpers', () => {
             const seed = getSessionAvatarId(session);
             const promoted = MetadataSchema.parse(writeSessionStateFieldToMetadata(metadata, 'display.bot', { kind: 'bot' }));
             const demoted = MetadataSchema.parse(writeSessionStateFieldToMetadata(promoted, 'display.bot', null));
-            for (const next of [promoted, demoted, MetadataSchema.parse(JSON.parse(JSON.stringify(promoted)))]) {
-                expect(getSessionAvatarId({ ...session, metadata: next })).toBe(seed);
+            for (const next of [promoted, MetadataSchema.parse(JSON.parse(JSON.stringify(promoted)))]) {
+                expect(getSessionAvatarId({ ...session, metadata: next })).toBe(session.id);
             }
+            expect(getSessionAvatarId({ ...session, metadata: demoted })).toBe(seed);
         }
         expect(getSessionAvatarId(createBaseSession({ id: 'same-session', metadata: null }))).toBe('same-session');
     });

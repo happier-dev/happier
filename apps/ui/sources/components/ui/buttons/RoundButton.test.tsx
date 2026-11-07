@@ -10,6 +10,7 @@ import { Platform } from 'react-native';
 import { lightTheme } from '@/theme';
 import Color from 'color';
 import { useGlassMaterialColorResolver } from '@/components/ui/glass/useGlassSurfaceColor';
+import { resolveHappierMinimumInteractiveTargetSize } from '@happier-dev/plugin-ui/environment';
 
 function FloatingButtonScene() {
     const resolveMaterialColor = useGlassMaterialColorResolver('floating');
@@ -120,7 +121,6 @@ describe('RoundButton', () => {
 
     it('takes its touch target from the shared pressable as hit area: drawn at its own size on every platform', async () => {
         const { HappierUiPlatformProvider } = await import('@happier-dev/plugin-ui/environment');
-        const { resolveMinimumInteractiveTargetSize } = await import('@/components/ui/interactiveTargetSize');
         const flatten = (style: unknown): Record<string, unknown> => (Array.isArray(style)
             ? style.reduce((acc: Record<string, unknown>, next) => ({ ...acc, ...(flatten(next)) }), {})
             : ((style as Record<string, unknown> | null | undefined) ?? {}));
@@ -145,7 +145,7 @@ describe('RoundButton', () => {
                             host.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 120, height: drawnHeight } } });
                         });
                         const slop = screen.findHostByTestId(testID)!.props.hitSlop as Record<string, number>;
-                        expect(drawnHeight + slop.top + slop.bottom, `${testID} hit height`).toBe(resolveMinimumInteractiveTargetSize(platform));
+                        expect(drawnHeight + slop.top + slop.bottom, `${testID} hit height`).toBe(resolveHappierMinimumInteractiveTargetSize(platform));
                     }
                     await screen.unmount();
                 }

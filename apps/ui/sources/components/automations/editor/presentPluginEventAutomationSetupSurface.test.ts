@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createPluginEventAutomationSetupSurfaceBinding } from './presentPluginEventAutomationSetupSurface';
+import {
+    createPluginEventAutomationSetupSurfaceBinding,
+    resolvePluginEphemeralInputSurfaceChrome,
+} from './presentPluginEventAutomationSetupSurface';
 
 function request(payload: unknown) {
     return {
@@ -58,5 +61,26 @@ describe('createPluginEventAutomationSetupSurfaceBinding', () => {
             kind: 'cancelled',
         })))).resolves.toMatchObject({ code: 'stale_surface' });
         expect(settle).not.toHaveBeenCalled();
+    });
+});
+
+describe('resolvePluginEphemeralInputSurfaceChrome', () => {
+    it('titles an automation setup surface with its event description at every width (RU2 residual)', () => {
+        for (const phone of [false, true]) {
+            const chrome = resolvePluginEphemeralInputSurfaceChrome({
+                title: 'New pull request', description: 'Runs when a pull request opens.', presentation: 'setup', phone, footer: null,
+            });
+            expect(chrome.header).not.toBe('none');
+            expect(chrome.title).toBe('New pull request');
+            expect(chrome.subtitle).toBe('Runs when a pull request opens.');
+        }
+    });
+
+    it('draws no second title band for an Action picker on a wide screen, and keeps the phone sheet band', () => {
+        const wide = resolvePluginEphemeralInputSurfaceChrome({ title: 'Repository', presentation: 'picker', phone: false, footer: null });
+        expect(wide.header).toBe('none');
+        expect(wide.title).toBe('Repository');
+        const phone = resolvePluginEphemeralInputSurfaceChrome({ title: 'Repository', presentation: 'picker', phone: true, footer: null });
+        expect(phone.header).toBe('band');
     });
 });

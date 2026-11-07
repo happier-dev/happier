@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
@@ -14,13 +14,17 @@ import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { formatResetAtTime } from '@/utils/time/formatResetAtTime';
 import { ConnectedServiceIdSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import type {
-    ConnectedServiceId,
-    ConnectedServiceQuotaRecoveryCreditsV1,
-    ProviderAccountSubscriptionV1,
+    ConnectedServiceId} from '@happier-dev/protocol/connect/connected-service-bindings';
+import type {
+    ConnectedServiceQuotaRecoveryCreditsV1} from '@happier-dev/protocol/connect/connected-service-schemas';
+import type {
+    ProviderAccountSubscriptionV1} from '@happier-dev/protocol/connect/accountSubscription';
+import type {
     ProviderAccountUsageRecordId,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/account-usage-primitives';
 
 import { useAccountUsageResetAction } from './useAccountUsageResetAction';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 const EMPTY_RECORD_IDS: readonly string[] = [];
 
@@ -189,19 +193,18 @@ const UseOnePressable = React.memo(function UseOnePressable(props: Readonly<{
 }>) {
     const { theme } = useUnistyles();
     return (
-        <Pressable
+        <HappierPressable
             testID={props.testID}
             accessibilityRole="button"
             accessibilityLabel={t('connectedServicesCollection.useOneReset')}
-            accessibilityState={{ busy: props.pending }}
+            busy={props.pending}
             disabled={props.pending}
-            hitSlop={8}
             onPress={props.onPress}
             style={styles.link}
         >
             {props.pending ? <ActivitySpinner size={12} color={theme.colors.text.secondary} /> : null}
             <Text style={styles.linkLabel}>{t('connectedServicesCollection.useOne')}</Text>
-        </Pressable>
+        </HappierPressable>
     );
 });
 
@@ -225,7 +228,7 @@ const styles = StyleSheet.create((theme) => ({
         color: theme.colors.text.secondary,
     },
     warning: {
-        color: theme.colors.state.warning.foreground,
+        color: theme.colors.state.warning.textForeground,
     },
     strong: {
         ...Typography.default('semiBold'),

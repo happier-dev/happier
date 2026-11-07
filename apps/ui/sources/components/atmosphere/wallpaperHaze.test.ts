@@ -71,6 +71,17 @@ describe('the Wallpaper haze is the head lines\' legibility device', () => {
         expect(sky.mix(Color(veil.color), veil.alpha).lch().array()[1]!).toBeGreaterThan(sky.mix(Color(page), neutral.veil!.alpha).lch().array()[1]! + 4);
     });
 
+    it('holds the quieter head-line ink too: a secondary action beside the greeting reads at AA in dark', () => {
+        const page = '#1b1919';
+        const ink = '#f2efed';
+        const secondary = '#9a918c';
+        // A dusk sky the primary ink reads over unveiled, where the quieter ink would not.
+        const dusk = { dark: 0.02, light: 0.1, focus: 0.05 };
+        const haze = resolveWallpaperHaze({ heads: dusk, page, primary: ink, secondary, column: band, at, adaptive: true });
+        expect(Color(secondary).contrast(veiled(dusk.light, haze.veil))).toBeGreaterThanOrEqual(4.5);
+        expect(Color(ink).contrast(veiled(dusk.light, haze.veil))).toBeGreaterThanOrEqual(4.5);
+    });
+
     it('keeps light light: the veil keeps the white page\'s lightness, where an orange band holds no tint', () => {
         const haze = resolveWallpaperHaze({ heads: { dark: 0.035, light: 0.82, focus: 0.5 }, page: PAGE, primary: INK, column: band, at, adaptive: true, bandColor: 'rgb(226, 150, 104)' });
         expect(Color(haze.veil!.color).hex()).toBe(Color(PAGE).hex());

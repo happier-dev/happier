@@ -3,7 +3,7 @@ import type { AtmosphereBackdrop } from './atmosphereBandBoundary';
 import { atmosphereSurfaceKey, type AtmosphereSurface } from './resolveAtmosphere';
 
 /**
- * The surface on screen that carries the atmosphere (Home now; new session and projects later) tells the
+ * The presented destination that carries the atmosphere tells the
  * shell's one atmosphere layer where it is and how its hero is laid out. The layer draws the picture at
  * the shell, under the planes; the surface keeps its content. Scroll and send are high-frequency or
  * transient facts, so they live here rather than in either component's state.
@@ -33,13 +33,14 @@ export type AtmosphereStage = Readonly<{
 type Snapshot = Readonly<{
   stage: AtmosphereStage | null;
   panes: readonly AtmosphereStage[];
-  /** Visible panes whose owner excluded artwork; the shell paints their page backing. */
+  /** Visible panes whose owner excluded the artwork; the shell paints their page backing. */
   excludedPanes: readonly AtmosphereStage[];
   sending: boolean;
+  sendDissolving: boolean;
   pictureShown: boolean;
 }>;
 
-let snapshot: Snapshot = { stage: null, panes: [], excludedPanes: [], sending: false, pictureShown: false };
+let snapshot: Snapshot = { stage: null, panes: [], excludedPanes: [], sending: false, sendDissolving: false, pictureShown: false };
 const scrollOffsets = new Map<number, number>();
 let nextStageId = 1;
 const stages = new Map<number, Readonly<{ stage: AtmosphereStage; focused: boolean; carriesAtmosphere: boolean }>>();
@@ -98,7 +99,11 @@ export const atmosphereStageStore = {
   },
   /** A session start from the composer on an atmosphere surface; false again when it settles. */
   setSending(sending: boolean) {
-    if (snapshot.sending !== sending) emit({ ...snapshot, sending });
+    if (snapshot.sending !== sending) emit({ ...snapshot, sending, sendDissolving: sending });
+  },
+  /** The one-shot animation ended; an unfinished launch must leave its source pane intact. */
+  finishSendDissolve() {
+    if (snapshot.sendDissolving) emit({ ...snapshot, sendDissolving: false });
   },
   /** The layer reports when its picture is on screen, so Home can hand the planet over to it. */
   setPictureShown(pictureShown: boolean) {
@@ -183,6 +188,10 @@ export function useAtmosphereSendSignal(sending: boolean) {
 export function useAtmosphereSending(): boolean {
     return React.useSyncExternalStore(atmosphereStageStore.subscribe, () => snapshot.sending, () => false);
 }
+/** The send's decorative departure, independently of the actual creation activity. */
+export function useAtmosphereSendDissolving(): boolean {
+    return React.useSyncExternalStore(atmosphereStageStore.subscribe, () => snapshot.sendDissolving, () => false);
+}
 export function useAtmospherePictureShown(): boolean {
     return React.useSyncExternalStore(atmosphereStageStore.subscribe, () => snapshot.pictureShown, () => false);
 }
@@ -229,6 +238,18 @@ let resettle: AtmosphereResettle | null = null;
 let nextResettleId = 1;
 let resettlePaused = true;
 const resettleListeners = new Set<() => void>();
+// One admitted clock sample for the current Home selection, including readers mounted later.
+// The last reader leaving ends this arrival; a later arrival samples the current window afresh.
+let displaySample: Readonly<{ selection: string; nowMs: number }> | null = null;
+const displayListeners = new Set<() => void>();
+function subscribeDisplaySample(listener: () => void) {
+  displayListeners.add(listener);
+  return () => {
+    displayListeners.delete(listener);
+    if (displayListeners.size === 0) displaySample = null;
+  };
+}
+const subscribeNoDisplaySample = () => () => {};
 function subscribeResettle(listener: () => void) {
   resettleListeners.add(listener);
   return () => { resettleListeners.delete(listener); };
@@ -237,6 +258,9 @@ export const atmosphereResettleFact = {
   get: () => resettle,
   announce(localId: string, reducedMotion: boolean) {
     resettle = { id: nextResettleId++, localId, reducedMotion };
+    if (displaySample) displaySample = { ...displaySample, nowMs: Date.now() };
+    displayListeners.forEach(listener => listener());
+    resettleListeners.forEach(listener => listener());
   },
   clear() {
     resettle = null;
@@ -247,6 +271,16 @@ export const atmosphereResettleFact = {
     resettleListeners.forEach(listener => listener());
   },
 };
+
+/** Selection changes and admitted resettles advance the shared sample; previews and later mounts do not. */
+export function useAtmosphereDisplaySample(selection: string | null): number {
+  const read = React.useCallback(() => {
+    if (selection === null) return 0;
+    if (displaySample?.selection !== selection) displaySample = { selection, nowMs: Date.now() };
+    return displaySample.nowMs;
+  }, [selection]);
+  return React.useSyncExternalStore(selection === null ? subscribeNoDisplaySample : subscribeDisplaySample, read, read);
+}
 
 /** Home's current playback posture; this stays paused when its admission leaf leaves Home. */
 export function useAtmosphereResettlePaused(): boolean {

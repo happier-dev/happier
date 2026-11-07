@@ -6,6 +6,9 @@ import { resolveSessionAwarenessContentLabel } from '@/sync/domains/session/awar
 import { isSessionAwarenessContentReadableV1 } from '@happier-dev/protocol/sessions/awareness/availability';
 import { readSessionAwarenessWorkStatusV1, type SessionAwarenessPresentationFactsV1, type SessionAwarenessPresentationStateV1 } from '@happier-dev/protocol/sessions/awareness/presentationV1';
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
+import { readSessionBotV1, readSessionBotFaceV1 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
+import { SessionTurnProgressV1Schema, type SessionTurnProgressV1 } from '@happier-dev/protocol/sessions/state/valueSchemas/turnProgress';
+import { isVoiceConversationCustodySessionMetadata } from '@/voice/persistence/voiceConversationSystemSessionLookup';
 import * as React from 'react';
 import { Message } from "@happier-dev/session-core/messages";
 import { readLatestLocalOutboundPendingUserMessageAt } from '@/sync/domains/messages/outgoingUserMessage';
@@ -48,7 +51,7 @@ import { readSessionListRenderableOwnerMetadataView, readSessionListRenderableSh
 import { readSessionListRowForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
 import { t } from '@/text';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
-import { formatSessionPath } from './formatPathRelativeToHome';
+import { formatSessionPath, readSessionPathName } from './formatPathRelativeToHome';
 import { useUnistyles } from 'react-native-unistyles';
 export { formatPathRelativeToHome } from './formatPathRelativeToHome';
 
@@ -76,7 +79,7 @@ export interface SessionStatus {
      * that has a `SessionStatus` always has the semantic answer too, so none of them needs a
      * second derivation path to fall back to.
      */
-    awareness: import('@happier-dev/protocol').SessionAwarenessProjectionV1;
+    awareness: import('@happier-dev/protocol/sessions/awareness/projectionV1').SessionAwarenessProjectionV1;
     state: SessionAwarenessPresentationStateV1;
     isConnected: boolean;
     bucket: ReturnType<typeof readSessionAwarenessWorkStatusV1>['bucket'];
@@ -86,6 +89,8 @@ export interface SessionStatus {
     statusColor: string;
     statusDotColor: string;
     isPulsing?: boolean;
+    /** The host-published retry of the working turn (unreachable Provider, rate limit…); Stop cancels it. */
+    turnRetry?: Readonly<Pick<SessionTurnProgressV1, 'attempt' | 'reason'>>;
 }
 export const OPTIMISTIC_SESSION_THINKING_TIMEOUT_MS = SESSION_OPTIMISTIC_PENDING_THINKING_MS;
 export { SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS };
@@ -111,7 +116,12 @@ type SessionStatusColors = Readonly<{
     error: string;
     default: string;
 }>;
-export type SessionWorkingTextMode = 'animated' | 'static';
+/** Text roles for the status words; the dot keeps the state colour, small text needs the deeper ink. */
+type SessionStatusTextColors = Readonly<{
+    danger: string;
+    attention: string;
+    default: string;
+}>;
 type GetSessionStatusOptions = Readonly<{
     presentationSource?: SessionListPresentationSource;
     archiving?: boolean;
@@ -119,8 +129,9 @@ type GetSessionStatusOptions = Readonly<{
     /** Work rows already carry an age, while Session-list rows can retain Last seen. */
     disconnectedTextMode?: 'lastSeen' | 'offline';
     vibingIndex?: number;
-    workingTextMode?: SessionWorkingTextMode;
     statusColors?: SessionStatusColors;
+    /** Without text roles the words reuse the dot colour. */
+    statusTextColors?: SessionStatusTextColors;
     hasPendingUserMessages?: boolean;
     optimisticPendingUserMessageAt?: number | null;
 }>;
@@ -128,8 +139,6 @@ type GetSessionStatusOptionsInput = number | GetSessionStatusOptions;
 type UseSessionStatusOptions = Readonly<{
     subscribeToSession?: boolean;
     subscribeToTranscript?: boolean;
-    /** Compact status/announcement consumers use stable words, independent of list-row animation. */
-    workingTextMode?: SessionWorkingTextMode;
 }>;
 
 /** Hook inputs while no Session is bound. Never published as a Session or rendered as a status. */
@@ -442,6 +451,13 @@ export function presentSessionAwarenessStateV1(
     }
 }
 
+function readSessionTurnRetry(session: Parameters<typeof readSessionOwnerMetadataView>[0]): SessionStatus['turnRetry'] | null {
+    const metadata: unknown = readSessionOwnerMetadataView(session);
+    if (metadata === null || typeof metadata !== 'object') return null;
+    const progress = SessionTurnProgressV1Schema.safeParse(Reflect.get(metadata, 'sessionTurnProgressV1'));
+    return progress.success ? { attempt: progress.data.attempt, reason: progress.data.reason } : null;
+}
+
 export function getSessionStatus(session: SessionStatusSource, nowMs: number = Date.now(), options?: GetSessionStatusOptionsInput): SessionStatus {
     const resolvedOptions = resolveGetSessionStatusOptions(options);
     const source = resolvedOptions.presentationSource;
@@ -468,17 +484,24 @@ export function getSessionStatus(session: SessionStatusSource, nowMs: number = D
     });
     const color = status.tone === 'danger' ? statusColors.error
         : status.tone === 'attention' ? statusColors.actionRequired : statusColors.default;
+    const textColors = resolvedOptions.statusTextColors;
+    const textColor = !textColors ? color
+        : status.tone === 'danger' ? textColors.danger
+            : status.tone === 'attention' ? textColors.attention : textColors.default;
+    // The host clears this fact when the turn ends, so only a working turn reads it.
+    const turnRetry = presented.state === 'thinking' ? readSessionTurnRetry(source?.baseSession ?? session) : null;
     return {
         awareness,
         state: presented.state,
         ...(status.actionRequiredReason ? { actionRequiredReason: status.actionRequiredReason } : {}),
         bucket: status.bucket,
         tone: status.tone,
-        statusText: presented.statusText,
+        statusText: turnRetry ? t('status.retryingAttempt', { attempt: turnRetry.attempt }) : presented.statusText,
+        ...(turnRetry ? { turnRetry } : {}),
         ...(awareness.statusReason ? { statusReason: awareness.statusReason } : {}),
         isConnected: status.bucket === 'offline' ? false : connected,
         shouldShowStatus: !presented.quiet,
-        statusColor: color,
+        statusColor: textColor,
         statusDotColor: color,
         isPulsing: status.bucket === 'working' && awareness.runtime === 'working' && canAnimate,
     };
@@ -498,7 +521,8 @@ export function useSessionStatus(session: SessionStatusSource | null, options: U
     const shouldSubscribeToSession = options.subscribeToSession !== false && sessionId.length > 0;
     const rawSession = useSession(shouldSubscribeToSession ? sessionId : '');
     const shouldSubscribeToTranscript = options.subscribeToTranscript !== false && sessionId.length > 0;
-    const transcriptVersion = useSessionMessagesVersion(sessionId, shouldSubscribeToTranscript);
+    // Pending-request status changes with request rows (structure), never with streamed text.
+    const transcriptVersion = useSessionMessagesVersion(sessionId, shouldSubscribeToTranscript, { textUpdates: false });
     const pendingMessagesState = useSessionPendingMessages(shouldSubscribeToTranscript ? sessionId : '');
     void transcriptVersion;
 
@@ -522,6 +546,11 @@ export function useSessionStatus(session: SessionStatusSource | null, options: U
     return getSessionStatus(resolvedSession, now, {
         archiving: archivePending || Boolean(session && 'archiving' in session && session.archiving === true),
         statusColors: theme.colors.status as SessionStatusColors,
+        statusTextColors: {
+            danger: theme.colors.state.danger.textForeground,
+            attention: theme.colors.state.attention.textForeground,
+            default: theme.colors.text.secondary,
+        },
         hasPendingUserMessages,
         optimisticPendingUserMessageAt,
     });
@@ -590,6 +619,9 @@ export function getSessionName(
         }).value;
         if (title) return title;
     }
+    if (isVoiceConversationCustodySessionMetadata(ownerMetadata)) {
+        return t('voicePresence.title');
+    }
     if (readSessionDirectoryKind(ownerMetadata) === 'managed') {
         // A no-folder session is not named after its private folder.
         return t('session.folderless.untitledChat');
@@ -601,12 +633,7 @@ export function getSessionName(
             sessionId: null,
             metadata: displayMetadata ?? null,
         });
-        const segments = displayPath.split('/').filter(Boolean);
-        const lastSegment = segments.pop();
-        if (!lastSegment) {
-            return t('session.untitled');
-        }
-        return lastSegment;
+        return readSessionPathName(displayPath) ?? t('session.untitled');
     }
     return t('session.untitled');
 }
@@ -627,10 +654,13 @@ export function readSessionNameIfNamed(
 }
 
 /**
- * Generates a deterministic avatar ID from machine ID and path.
- * This ensures the same machine + path combination always gets the same avatar.
+ * Bots have a Session identity; ordinary sessions retain their workspace identity.
  */
 export function getSessionAvatarId(session: SessionDisplayNameSource, serverId?: string | null): string {
+    const sharedMetadata = readSessionListRenderableSharedMetadata(session);
+    if (readSessionBotV1(sharedMetadata?.bot)) {
+        return readSessionBotFaceV1(sharedMetadata?.botFace)?.seed ?? session.id;
+    }
     const ownerMetadata = readDisplayOwnerMetadata(session);
     const displayMetadata = ownerMetadata;
     const reachableTarget = readPrivateDisplayMachineTarget(session, ownerMetadata, serverId);
@@ -694,7 +724,10 @@ export function getSessionWorkContextParts(session: SessionDisplayNameSource, se
 
 /** Compact Work identity: Agent · named machine, otherwise the workspace owner's display name. */
 export function getSessionWorkContext(session: SessionDisplayNameSource, serverId?: string | null): string | null {
-    const parts = getSessionWorkContextParts(session, serverId);
+    return formatSessionWorkContext(getSessionWorkContextParts(session, serverId));
+}
+
+export function formatSessionWorkContext(parts: Readonly<{ agentLabel: string | null; locationLabel: string | null }>): string | null {
     return [parts.agentLabel, parts.locationLabel].filter(Boolean).join(' · ') || null;
 }
 

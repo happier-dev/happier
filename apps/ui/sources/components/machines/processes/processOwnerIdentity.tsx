@@ -2,12 +2,14 @@ import * as React from 'react';
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 import type {
   OwnerRowV1,
+  ProcessOwnerRefV1,
   ProcessRowV1,
 } from '@happier-dev/protocol/machines/processes/machineProcessesV1';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { MachineAgentMark } from '@/components/machines/agents/MachineAgentMark';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import { useSession } from '@/sync/store/hooks';
 import { t } from '@/text';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
@@ -89,12 +91,37 @@ export function describeOwnerFallbackTitle(owner: OwnerRowV1): string {
   }
 }
 
+/**
+ * What a left-behind row's owner was once it is gone and has no name to show (a Session whose title is not
+ * loaded, a closed terminal, a stopped service): the one wording every Left behind surface and review uses.
+ */
+export function describeEndedOwner(owner: ProcessOwnerRefV1): string {
+  switch (owner.kind) {
+    case 'session':
+      return t('machineProcesses.endedOwner.session');
+    case 'terminal':
+      return t('machineProcesses.endedOwner.terminal');
+    case 'service':
+    case 'container':
+      return t('machineProcesses.endedOwner.service');
+    case 'run':
+      return t('machineProcesses.endedOwner.run');
+    case 'browser_sidecar':
+      return t('machineProcesses.endedOwner.browserSidecar');
+    case 'workspace_sync':
+      return t('machineProcesses.endedOwner.workspaceSync');
+    case 'happier':
+      return t('machineProcesses.endedOwner.happier');
+  }
+}
+
 /** Every owner's title through one session-title subscription (the store owner batches the reads). */
 export function useProcessOwnerTitles(
   owners: readonly OwnerRowV1[] | undefined,
   serverId: string,
 ): ReadonlyMap<string, string> {
   const language = usePreferredLanguage();
+  const isSessionVisible = useSessionRecordingVisibility();
   const sessions = React.useMemo(
     () =>
       (owners ?? []).flatMap((owner) =>
@@ -108,14 +135,14 @@ export function useProcessOwnerTitles(
   return React.useMemo(() => {
     const byRow = new Map<string, string>();
     sessions.forEach((session, index) => {
-      const title = titles[index];
+      const title = isSessionVisible(session) ? titles[index] : t('machineProcesses.owners.session');
       if (title) byRow.set(session.rowId, title);
     });
     for (const owner of owners ?? [])
       if (!byRow.has(owner.rowId))
         byRow.set(owner.rowId, describeOwnerFallbackTitle(owner));
     return byRow;
-  }, [language, owners, sessions, titles]);
+  }, [language, owners, sessions, titles, isSessionVisible]);
 }
 
 const OWNER_ICONS: Readonly<
@@ -217,20 +244,14 @@ export function useProcessOwnerStatus(
   owner: OwnerRowV1['owner'],
   serverId: string,
 ): ProcessOwnerStatus | null {
-  const { theme } = useUnistyles();
   const sessionId = owner.kind === 'session' ? owner.sessionId : '';
   const session = useSession(sessionId, serverId);
   const status = useSessionStatus(session, {
-    workingTextMode: 'static',
     subscribeToTranscript: false,
   });
   if (!status || !status.shouldShowStatus) return null;
-  const quietColors = [
-    theme.colors.status.connected,
-    theme.colors.status.default,
-  ];
   return {
     text: status.statusText,
-    color: quietColors.includes(status.statusColor) ? null : status.statusColor,
+    color: status.tone === 'neutral' ? null : status.statusColor,
   };
 }

@@ -13,6 +13,24 @@ it('publishes the frame’s existing picture and replacement without acquiring i
 });
 
 describe('one shell atmosphere across visible panes', () => {
+    it('ends only the decorative departure, publishing once and arming again only on a new send', () => {
+        atmosphereStageStore.setSending(false);
+        atmosphereStageStore.setSending(true);
+        let notifications = 0;
+        const stop = atmosphereStageStore.subscribe(() => { notifications++; });
+        try {
+            atmosphereStageStore.finishSendDissolve();
+            expect(atmosphereStageStore.get()).toMatchObject({ sending: true, sendDissolving: false });
+            expect(notifications).toBe(1);
+            atmosphereStageStore.finishSendDissolve();
+            atmosphereStageStore.setSending(true);
+            expect(notifications).toBe(1);
+            expect(atmosphereStageStore.get().sendDissolving).toBe(false);
+            atmosphereStageStore.setSending(false);
+            atmosphereStageStore.setSending(true);
+            expect(atmosphereStageStore.get()).toMatchObject({ sending: true, sendDissolving: true });
+        } finally { stop(); atmosphereStageStore.setSending(false); }
+    });
     it('keeps scroll local to each stage and preserves it when focus changes', () => {
         const home = { id: -1, surface: 'home' as const, geometry: null };
         const project = { id: -2, surface: { project: { serverId: 'home-a', projectKey: 'project-a' } }, geometry: null };

@@ -2,12 +2,12 @@ import * as React from 'react';
 import type { ComputerAccessV1, ComputerSelectedTargetResponseV1 } from '@happier-dev/protocol/computer/v1';
 import { computerTargetKeyV1 } from '@happier-dev/protocol/computer/v1';
 
-import { createComputerControlClient, type ComputerActionExecute, type ComputerSessionScope } from '@/sync/domains/computer/computerControlClient';
+import { createComputerControlClient, type ComputerActionExecute, type ComputerScope } from '@/sync/domains/computer/computerControlClient';
 import { needsComputerPermission, resolveComputerRecovery, resolveSuggestedTargetKey, type ComputerTargetEntry, type ComputerTargetPickerState } from '@/sync/domains/computer/targets';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 
 export type ComputerTargetPickerInput = Readonly<{
-    scope: ComputerSessionScope;
+    scope: ComputerScope;
     execute: ComputerActionExecute;
     accountLifetime?: ServerAccountScopeLifetime | null;
     currentTargetKey: string | null;
@@ -16,17 +16,18 @@ export type ComputerTargetPickerInput = Readonly<{
     refusalCode?: string;
     onChosen?: (entry: ComputerTargetEntry, access: ComputerAccessV1) => void;
     onSelected: (selection: ComputerSelectedTargetResponseV1) => void;
-    onStoppedSharing?: () => void;
     onClose: () => void;
 }>;
 
 /** The picker has one data owner; each intent uses the ordinary Machine's Computer Actions. */
 export function useComputerTargetPicker(input: ComputerTargetPickerInput) {
-    const { execute, onChosen, onClose, onSelected, onStoppedSharing } = input;
+    const { execute, onChosen, onClose, onSelected } = input;
     const { serverId, sessionId, machineId } = input.scope;
+    const personId = 'source' in input.scope ? input.scope.source.personId : null;
     const accountLifetime = input.accountLifetime;
-    const client = React.useMemo(() => createComputerControlClient({ serverId, sessionId, machineId }, execute, accountLifetime),
-        [accountLifetime, execute, machineId, serverId, sessionId]);
+    const client = React.useMemo(() => createComputerControlClient(sessionId ? { serverId, sessionId, machineId }
+        : { serverId, source: { kind: 'machine-person', personId: personId! }, machineId }, execute, accountLifetime),
+        [accountLifetime, execute, machineId, personId, serverId, sessionId]);
     const [state, setState] = React.useState<ComputerTargetPickerState>(
         input.refusalCode ? { kind: 'failed', code: input.refusalCode } : { kind: 'loading' });
     const [selectedKey, setSelectedKey] = React.useState<string | null>(input.currentTargetKey);
@@ -77,7 +78,9 @@ export function useComputerTargetPicker(input: ComputerTargetPickerInput) {
             if (result.ok) {
                 const suggested = resolveSuggestedTargetKey(result.value.targets, requestedTarget);
                 setSuggestedKey(suggested);
-                const initialSuggestion = !choiceResolved.current ? suggested : null;
+                // The agent's suggestion, or the only choice there is (one display, no windows).
+                const only = result.value.targets.length === 1 ? computerTargetKeyV1(result.value.targets[0]!.target) : null;
+                const initialSuggestion = !choiceResolved.current ? suggested ?? only : null;
                 choiceResolved.current = true;
                 setSelectedKey(current => {
                     if (current && result.value.targets.some(entry => computerTargetKeyV1(entry.target) === current)) return current;
@@ -111,10 +114,10 @@ export function useComputerTargetPicker(input: ComputerTargetPickerInput) {
         if (currentClient.current !== client || !client.isCurrent()) return;
         void client.stopSharing().then(result => {
             if (currentClient.current !== client || !client.isCurrent()) return;
-            if (result.ok && result.value.status === 'dispatched') { onStoppedSharing?.(); onClose(); return; }
+            if (result.ok && result.value.status === 'dispatched') { onClose(); return; }
             setNoticeCode(result.ok ? result.value.status === 'failed' ? result.value.code : 'control_not_drained' : result.code);
         });
-    }, [client, onClose, onStoppedSharing]);
+    }, [client, onClose]);
     const requestSettings = React.useCallback((permission: 'capture' | 'input') => {
         if (currentClient.current !== client || !client.isCurrent()) return;
         setOpenSettings('opening');

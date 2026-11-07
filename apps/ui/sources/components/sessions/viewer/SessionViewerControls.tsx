@@ -5,6 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
   HAPPIER_CONTROL_CAPSULE_BUTTON_SIZE,
   HAPPIER_CONTROL_CAPSULE_METRICS,
+  HAPPIER_FLOATING_FRAME_METRICS,
   HappierControlCapsule,
   HappierIdentityCapsule,
 } from '@happier-dev/plugin-ui/presentation';
@@ -41,8 +42,6 @@ const SOURCE_PICKER_WIDTH = 360;
 const IDENTITY_MAX_WIDTH = 176;
 
 const stylesheet = StyleSheet.create((theme) => ({
-  // The window's own header: the row stands on the floating paint, so the transcript under a floating
-  // frame never reads through the gaps between its capsules (lab LV's solid header).
   row: {
     flex: 1,
     minWidth: 0,
@@ -50,7 +49,18 @@ const stylesheet = StyleSheet.create((theme) => ({
     flexDirection: 'row',
     alignItems: 'center',
     gap: ROW_GAP,
-    borderRadius: HAPPIER_CONTROL_CAPSULE_METRICS.height / 2,
+  },
+  // The window's own header (lab LV's solid header): one floating paint under the capsules that runs
+  // down through the frame's gap to the picture, so the window reads as one solid surface and what lies
+  // under a floating frame never shows between its capsules or between the header and the picture.
+  header: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: -HAPPIER_FLOATING_FRAME_METRICS.gap,
+    borderTopLeftRadius: HAPPIER_CONTROL_CAPSULE_METRICS.height / 2,
+    borderTopRightRadius: HAPPIER_CONTROL_CAPSULE_METRICS.height / 2,
     backgroundColor: theme.colors.edge.floatingFill,
   },
   identity: {
@@ -220,6 +230,7 @@ export function SessionViewerControls(
     // Its menus and the source picker open over the viewer's live picture.
     <GlassLivePictureBackdropContext.Provider value>
     <View style={stylesheet.row}>
+      <View pointerEvents="none" style={stylesheet.header} />
       <CompanionNoDragRegion>
       <View ref={sourceAnchorRef}>
         <HappierControlCapsule

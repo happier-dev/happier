@@ -23,10 +23,12 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { PluginMachineExecutionOriginPickerProvider } from '@/components/settings/machines/PluginMachineExecutionOriginSelector';
 import { Modal } from '@/modal';
 import type { CustomModalInjectedProps } from '@/modal';
+import { createAnchoredSheetChrome } from '@/modal/components/card/anchoredSheetChrome';
 import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { subscribeMachineContributionRegistryProjectionInvalidation } from '@/sync/ops/machineContributionRegistryProjection';
 import { t } from '@/text';
+import { useDeviceType } from '@/utils/platform/responsive';
 
 export type PluginEventAutomationSetupSurfaceSettlement = PluginUiEphemeralInputSettlementV1;
 
@@ -58,10 +60,36 @@ export function createPluginEventAutomationSetupSurfaceBinding(params: Readonly<
     });
 }
 
+/**
+ * `setup`: an Automation's event setup page, which draws no title of its own: the card's band carries the
+ * event title and its description at every width. `picker`: an Action form's input picker, which continues
+ * the form it opens from; its page draws its own title on a wide screen, so the card draws no second band
+ * there (the title stays the dialog's accessible name; Cancel and Esc close it). A phone sheet keeps its band.
+ */
+export type PluginEphemeralInputSurfacePresentation = 'setup' | 'picker';
+
+export function resolvePluginEphemeralInputSurfaceChrome(input: Readonly<{
+    title: string;
+    description?: string;
+    presentation: PluginEphemeralInputSurfacePresentation;
+    phone: boolean;
+    footer: React.ReactNode;
+}>) {
+    return {
+        ...createAnchoredSheetChrome({
+            title: input.title,
+            ...(input.presentation === 'setup' && input.description ? { subtitle: input.description } : {}),
+        }),
+        header: input.presentation === 'picker' && !input.phone ? 'none' as const : 'band' as const,
+        footer: input.footer,
+    };
+}
+
 type SetupSurfaceModalProps = Readonly<{
     surface: DaemonContributionRegistryProjectionAutomationEligibleEventSetupSurfaceV1;
     title: string;
     description?: string;
+    presentation: PluginEphemeralInputSurfacePresentation;
     launchInput?: PluginUiLaunchInputV1;
     projection: DaemonMergedProjectionInputs;
     machineId: string;
@@ -107,17 +135,10 @@ function PluginEventAutomationSetupSurfaceModal(
             />
         </View>
     ), [settle]);
-    const chrome = React.useMemo(() => ({
-        kind: 'card' as const,
-        title: props.title,
-        ...(props.description
-            ? { subtitle: props.description }
-            : {}),
-        footer,
-        dimensions: { size: 'lg' as const, maxHeightRatio: 0.9 },
-        scrollHost: 'body' as const,
-        bodyScroll: 'auto' as const,
-    }), [footer, props.description, props.title]);
+    const phone = useDeviceType() === 'phone';
+    const chrome = React.useMemo(() => resolvePluginEphemeralInputSurfaceChrome({
+        title: props.title, description: props.description, presentation: props.presentation, phone, footer,
+    }), [footer, phone, props.description, props.presentation, props.title]);
     useModalCardChrome(props.setChrome, chrome);
 
     React.useEffect(() => () => {
@@ -168,6 +189,7 @@ export async function presentPluginEphemeralInputSurface(params: Readonly<{
     surface: DaemonContributionRegistryProjectionAutomationEligibleEventSetupSurfaceV1;
     title: string;
     description?: string;
+    presentation: PluginEphemeralInputSurfacePresentation;
     launchInput?: PluginUiLaunchInputV1;
     projection: DaemonMergedProjectionInputs;
     machineId: string;
@@ -221,6 +243,7 @@ export async function presentPluginEphemeralInputSurface(params: Readonly<{
                 surface: params.surface,
                 title: params.title,
                 description: params.description,
+                presentation: params.presentation,
                 launchInput: params.launchInput,
                 projection: params.projection,
                 machineId: params.machineId,
@@ -250,5 +273,6 @@ export function presentPluginEventAutomationSetupSurface(params: Readonly<{
     return presentPluginEphemeralInputSurface({
         ...params, surface, title: params.eligibleEvent.event.title,
         description: params.eligibleEvent.event.description ?? undefined,
+        presentation: 'setup',
     });
 }

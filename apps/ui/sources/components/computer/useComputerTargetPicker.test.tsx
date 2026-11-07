@@ -34,3 +34,17 @@ describe('useComputerTargetPicker initial access', () => {
         await hook.unmount();
     });
 });
+
+describe('useComputerTargetPicker initial choice', () => {
+    it('preselects the only choice the Machine offers, so Share is one press', async () => {
+        const display = { target: { kind: 'display', displayId: 'display-1' }, title: 'Built-in display' };
+        const oneDisplay: ComputerTargetPickerInput['execute'] = async () => ({
+            ok: true,
+            result: { targets: [display], grants: { capture: 'granted', input: 'granted' } },
+        } as never);
+        const hook = await renderHook(useComputerTargetPicker, { initialProps: pickerInput({ execute: oneDisplay }) });
+        await vi.waitFor(() => expect(hook.getCurrent().state.kind).toBe('ready'));
+        expect(hook.getCurrent().selectedKey).toBe(JSON.stringify(['display-1', 'display']));
+        await hook.unmount();
+    });
+});

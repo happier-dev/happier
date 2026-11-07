@@ -11,7 +11,7 @@ import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback
 import { resolveThemeControlEdge, resolveThemeGloss, resolveThemeSurfaceFinish } from '@/components/ui/surfaces/themeRaisedEdge';
 import { HappierSurfaceGradientLayer, happierSurfaceGradientWebStyle } from '@happier-dev/plugin-ui/presentation';
 import { usePressFeedback } from '@/components/ui/interactions/usePressFeedback';
-import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE } from '@happier-dev/plugin-ui/environment';
+import { type HappierHitReach } from '@happier-dev/plugin-ui/environment';
 import { happierMaterialGradient, useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 import { readSurfaceStyleProperty } from '@/components/ui/surfaces/surfaceStyle';
 import { parseThemeColor } from '@/theme/parseThemeColor';
@@ -55,15 +55,23 @@ export type RoundButtonSize = 'large' | 'normal' | 'small' | 'mini';
 const RoundButtonDefaultSizeContext = React.createContext<Readonly<{
     size: RoundButtonSize;
     presentation: 'contextual' | 'uniform';
+    hitReach?: HappierHitReach;
 }>>({ size: 'large', presentation: 'contextual' });
 
 export function RoundButtonSizeScope(props: Readonly<{
     size: RoundButtonSize;
     /** `uniform` gives an action group one geometry across primary, secondary and destructive fills. */
     presentation?: 'contextual' | 'uniform';
+    /**
+     * How far the group's hit areas may reach past their drawn pills: a group inside a pressable row keeps
+     * to the row's gaps (`{ top: 0, bottom: 0 }`). A nested scope keeps the enclosing group's bound.
+     */
+    hitReach?: HappierHitReach;
     children: React.ReactNode;
 }>) {
-    const value = React.useMemo(() => ({ size: props.size, presentation: props.presentation ?? 'contextual' }), [props.size, props.presentation]);
+    const enclosing = React.useContext(RoundButtonDefaultSizeContext);
+    const hitReach = props.hitReach ?? enclosing.hitReach;
+    const value = React.useMemo(() => ({ size: props.size, presentation: props.presentation ?? 'contextual', hitReach }), [props.size, props.presentation, hitReach]);
     return <RoundButtonDefaultSizeContext.Provider value={value}>{props.children}</RoundButtonDefaultSizeContext.Provider>;
 }
 /**
@@ -73,11 +81,11 @@ export function RoundButtonSizeScope(props: Readonly<{
  * role a WebAlert action also uses, so all dialog actions are one family. `pad` is the native lift
  * measured against each platform's line box; web centres the role's line box as it is.
  */
-const sizes: { [key in RoundButtonSize]: { role: HappierTypeRole, hitSlop: number, pad: number } } = {
-    large: { role: 'heading', hitSlop: 0, pad: Platform.select({ ios: 0, android: -1, default: 0 }) },
-    normal: { role: 'label', hitSlop: 8, pad: Platform.select({ ios: 1, android: -2, default: 0 }) },
-    small: { role: 'body', hitSlop: 12, pad: Platform.select({ ios: -1, android: -1, default: 0 }) },
-    mini: { role: 'meta', hitSlop: 8, pad: 0 },
+const sizes: { [key in RoundButtonSize]: { role: HappierTypeRole, pad: number } } = {
+    large: { role: 'heading', pad: Platform.select({ ios: 0, android: -1, default: 0 }) },
+    normal: { role: 'label', pad: Platform.select({ ios: 1, android: -2, default: 0 }) },
+    small: { role: 'body', pad: Platform.select({ ios: -1, android: -1, default: 0 }) },
+    mini: { role: 'meta', pad: 0 },
 }
 /**
  * The drawn height of the sizes that follow the page control metrics, the same two the plugin-ui button
@@ -118,6 +126,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderRadius: theme.borderRadius.md,
         overflow: 'hidden',
     },
+    joinedEnd: { borderTopEndRadius: 0, borderBottomEndRadius: 0 },
+    joinedStart: { borderTopStartRadius: 0, borderBottomStartRadius: 0 },
     loadingContainer: {
         position: 'absolute',
         top: 0,
@@ -276,8 +286,15 @@ export const RoundButton = React.memo((props: {
     controlRef?: HappierPressableProps['controlRef'],
     /** Disclosure state for buttons that reveal inline detail. */
     expanded?: boolean,
+    /** Bounds the hit area's reach past the pill (a button inside a pressable row keeps to its own gaps). */
+    hitReach?: HappierHitReach,
+    /**
+     * The side this pill shares with a sibling in a split button (Deploy | ⌄): that side is drawn square so the two
+     * read as one control. Logical, so it follows the reading direction.
+     */
+    joinedEdge?: 'start' | 'end',
     onPress?: HappierPressableProps['onPress'],
-    action?: () => Promise<any>
+    action?: (event?: Parameters<HappierPressableProps['onPress']>[0]) => Promise<unknown>
 }) => {
     const { theme } = useUnistyles();
     const scopedSizing = React.useContext(RoundButtonDefaultSizeContext);
@@ -294,7 +311,7 @@ export const RoundButton = React.memo((props: {
             props.onPress(event);
             return undefined;
         }
-        return props.action?.();
+        return props.action?.(event);
     }, [props.onPress, props.action]);
     const paintColor = useHappierMaterialColorResolver();
     const secondaryFill = paintColor(theme.colors.edge.fill);
@@ -318,7 +335,8 @@ export const RoundButton = React.memo((props: {
         destructive: {
             backgroundColor: secondaryFill,
             borderColor: theme.colors.state.danger.border,
-            textColor: theme.colors.state.danger.foreground,
+            // The border keeps the state red; label text takes the deeper danger text role (AA at small sizes).
+            textColor: theme.colors.state.danger.textForeground,
         },
         inverted: {
             backgroundColor: 'transparent',
@@ -328,7 +346,7 @@ export const RoundButton = React.memo((props: {
         quietDestructive: {
             backgroundColor: 'transparent',
             borderColor: 'transparent',
-            textColor: theme.colors.state.danger.foreground,
+            textColor: theme.colors.state.danger.textForeground,
         },
     }
 
@@ -353,10 +371,7 @@ export const RoundButton = React.memo((props: {
     const textTypography = Typography.variant(resolveRoundButtonTextRole(size.role, compactInlineDisplay), 'semiBold');
     // The pill draws at its design size under every pointer. Under a finger the shared Pressable reaches
     // the touch target with its hit area (native hitSlop, the web's invisible frame), never by growing
-    // the button (DESIGN.md → touch targets are hit areas). The slop below is a precise pointer's extra
-    // reach only, and none when a caller's own box (a header action) is already the target.
-    const callerMinHeight = readSurfaceStyleProperty(props.style, 'minHeight');
-    const slopDeclared = !(typeof callerMinHeight === 'number' && callerMinHeight >= HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE);
+    // the button (DESIGN.md → touch targets are hit areas).
     const baseDisplay = displays[props.display || 'default'];
     // A disabled primary is still the primary: its own fill and words, receded into the page
     // (unified-work lab `.uwr-dis`), so the one action of a view stays recognisable while it waits
@@ -398,7 +413,7 @@ export const RoundButton = React.memo((props: {
             expanded={props.expanded}
             disabled={props.disabled}
             busy={props.loading}
-            hitSlop={slopDeclared ? size.hitSlop : undefined}
+            hitReach={props.hitReach ?? scopedSizing.hitReach}
             // The pressable keeps the caller's layout and the hit area; the visible
             // pill is the animated frame inside it, so the tactile press moves the
             // whole fill rather than only its label.
@@ -427,6 +442,7 @@ export const RoundButton = React.memo((props: {
                         props.capsuleHeight !== undefined
                             ? { flexGrow: 0, height: props.capsuleHeight, borderRadius: props.capsuleHeight / 2 }
                             : { minHeight: DRAWN_HEIGHT_PX[resolvedSize] },
+                        props.joinedEdge === 'end' ? styles.joinedEnd : props.joinedEdge === 'start' ? styles.joinedStart : null,
                         focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
                         happierRaisedEdgeStyle(resolveRoundButtonEdge(theme, props.display ?? 'default', { pressed: state.pressed, focused: state.focused, disabled: state.disabled })),
                         Platform.OS === 'web' && !display.gradient ? happierSurfaceGradientWebStyle(resolveThemeSurfaceFinish(theme, (props.display ?? 'default') === 'default' ? 'primaryButton' : 'secondaryButton', { pressed: state.pressed, focused: state.focused, disabled: state.disabled || props.display === 'inverted' || props.display === 'quietDestructive' }), !theme.dark) : null,

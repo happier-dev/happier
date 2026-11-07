@@ -48,8 +48,10 @@ export function resolveWallpaperHaze(input) {
   }
   const ink = Color(input.primary), page = Color(input.page);
   const color = veilColor(input.page, input.bandColor), veil = Color(color);
+  // Every ink the head lines carry holds AA: the primary and, when given, the quieter secondary.
+  const inks = input.secondary ? [ink, Color(input.secondary)] : [ink];
   const worst = greyOf(page.luminosity() > ink.luminosity() ? input.heads.dark : input.heads.light);
-  const holds = alpha => ink.contrast(worst.mix(veil, alpha)) >= 4.5 * 1.03;
+  const holds = alpha => inks.every(each => each.contrast(worst.mix(veil, alpha)) >= 4.5 * 1.03);
   if (holds(0)) return { layers, veil: null, ink: 'theme' };
   let low = 0, high = 1;
   for (let step = 0; step < 20; step++) {

@@ -13,6 +13,8 @@ import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/us
 import { resolveUiAccountActionFallbackMachineId } from '@/sync/ops/actions/accountActionDeps';
 import { readPluginSurfaceEphemeralMountBinding } from '@/components/plugins/surfaces/pluginSurfaceMountBinding';
 import { resolvePluginLocalizedText } from '@/sync/domains/plugins/ui/i18n';
+import { readCurrentAppShellPluginUiTranslationRuntime } from '@/components/appShell/plugins/committedPluginUiProjection';
+import { getPreferredLanguage } from '@/text';
 import { createInputTypePickerPort } from './inputTypePickerPort';
 import { createHostInputTypePickerForm } from './hostInputTypePickerForm';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
@@ -45,6 +47,7 @@ type HostProps = InputTypePickerHostContext & Readonly<{
         selected?: ExecutableParticipantSelectionV1 | readonly ExecutableParticipantSelectionV1[];
         multiple: boolean;
         serverId: string;
+        machineId: string | null;
         accountLifetime: ActiveServerAccountScopeLifetime;
         signal: AbortSignal;
     }>) => Promise<ExecutableParticipantSelectionV1 | readonly ExecutableParticipantSelectionV1[] | null>;
@@ -167,6 +170,7 @@ export function InputTypePickerHostProvider(props: HostProps): React.ReactElemen
                     if (request.value !== undefined && selected === null) return { kind: 'cancelled' };
                     const choice = await pick({ ...(selected === undefined ? {} : { selected: selected! }),
                         multiple: field.widget === 'multiselect',
+                        machineId: admitted.props.machineId ?? admitted.machineId,
                         serverId: admitted.accountLifetime.scope.serverId, accountLifetime: admitted.accountLifetime,
                         signal: request.signal });
                     if (!readHost()?.accountLifetime?.isCurrent() || request.signal.aborted || choice === null) return { kind: 'cancelled' };
@@ -212,16 +216,28 @@ export function InputTypePickerHostProvider(props: HostProps): React.ReactElemen
                 if (!currentEntry || !inputs || request.signal.aborted) return { kind: 'cancelled' };
                 const admitted = { ...currentEntry, now: { ...currentEntry.now, inputs } };
                 const surface = admitted?.entry.pickerSurface;
-                if (!admitted || !surface || admitted.entry.occurrenceId !== request.type.occurrenceId
+                if (!admitted || !surface || !admitted.now.accountLifetime || admitted.entry.occurrenceId !== request.type.occurrenceId
                     || surface.selectedRenderer.availability.state !== 'available') return { kind: 'cancelled' };
+                const projection = admitted.now.inputs.pluginUiProjection;
+                const runtime = readCurrentAppShellPluginUiTranslationRuntime(projection,
+                    { scope: admitted.now.accountLifetime.scope, declarationsOnly: true });
+                const sourceRuntime = runtime?.matchesSource(projection, admitted.entry.pluginId) ? runtime : runtime?.createScopedRuntime(projection);
+                const locale = getPreferredLanguage();
+                let title: string;
+                try {
+                    await sourceRuntime?.demand(admitted.entry.pluginId, locale);
+                    const currentEntry = entryFor(request.type.identity, field, true);
+                    if (request.signal.aborted || !currentEntry || currentEntry.entry !== admitted.entry) return { kind: 'cancelled' };
+                    title = resolvePluginLocalizedText({ projection, runtime: sourceRuntime, locale,
+                        pluginId: admitted.entry.pluginId, value: admitted.entry.definition.title });
+                } finally {
+                    if (sourceRuntime !== runtime) sourceRuntime?.dispose();
+                }
                 // The presenter imports PluginSurfaceHost, whose forms consume this provider.
                 // Load the existing presenter only on demand rather than introduce an import cycle.
                 const { presentPluginEphemeralInputSurface } = await import('@/components/automations/editor/presentPluginEventAutomationSetupSurface');
                 return presentPluginEphemeralInputSurface({
-                    surface, title: resolvePluginLocalizedText({
-                        projection: admitted.now.inputs.pluginUiProjection,
-                        pluginId: admitted.entry.pluginId, value: admitted.entry.definition.title,
-                    }),
+                    surface, title, presentation: 'picker',
                     launchInput: request.launchInput,
                     projection: admitted.now.inputs,
                     machineId: admitted.now.machineId!, serverId: admitted.now.serverId,
