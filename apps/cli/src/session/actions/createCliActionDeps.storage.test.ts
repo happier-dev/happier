@@ -54,7 +54,7 @@ describe('CLI storage Action transport', () => {
         // Both development policy ports read the same real metadata owner. This
         // fixture does not depend on the pending Storage policy-port migration.
         const readPolicy = () => policySnapshot.policy.storage;
-        const catalog = { happyHomeDir: directory, activeServerDir: join(directory, 'server'), readPolicy };
+        const catalog = { happyHomeDir: directory, activeServerDir: join(directory, 'server'), tempRoot: join(directory, 'tmp'), readPolicy };
         const activityLog = await createActivityLog({ activeServerDir: directory,
             resourceSummary: { reportAutomaticAction() { throw new Error('A Storage read must not report an automatic effect'); } } });
         const volumes = [{ id: 'home-volume', label: 'Home', mount: directory, totalBytes: 100, availableBytes: 50 },
