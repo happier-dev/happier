@@ -66,7 +66,7 @@ import { markVoiceConversationAssistantTurnInterrupted } from '@/voice/transcrip
 import { createTtsPlaybackClock } from '@/voice/output/ttsPlaybackTiming';
 import { warmDaemonVoiceInferenceOnVoiceHomeAttach } from '@/voice/runtime/daemonInference/warmDaemonVoiceInferenceOnVoiceHomeAttach';
 import { readDaemonVoiceInferenceClientErrorCode } from '@/voice/runtime/daemonInference/daemonVoiceInferenceErrors';
-import { readSafeVoiceRuntimeFailureCode } from '@/voice/runtime/voiceRuntimeFailureCode';
+import { readSafeVoiceRuntimeFailureCode, recordVoiceRuntimeFailure } from '@/voice/runtime/voiceRuntimeFailureCode';
 import {
   isVoiceBargeInEnabled,
   isLocalVoiceProviderSelected,
@@ -899,7 +899,17 @@ async function runVoiceTurnWithSendFailureHandling(
       });
       activeNativePermissionInput = permissionInput;
     }
-    await runAbortableVoiceTurn(sessionId, runner);
+    try {
+      await runAbortableVoiceTurn(sessionId, runner);
+    } catch (error) {
+      // The native SDK can reject the model turn after an acknowledged No.
+      // That ends the declined work, not this connected Voice conversation.
+      // Transport, playback and unapproved execution failures still fail below.
+      const code = readSafeVoiceRuntimeFailureCode(error);
+      if (code !== 'claude_error_during_execution'
+        || await permissionInput?.waitForResponseSettlement() !== 'denied') throw error;
+      recordVoiceRuntimeFailure('local_conversation', 'provider_error', 'provider_error', code);
+    }
     beginAutomaticCurrentUiContextUpdates(sessionId);
     if (admission && captureAttempt
       && isCaptureAttemptCurrent(admission, captureAttempt)

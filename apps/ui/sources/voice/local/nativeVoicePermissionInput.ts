@@ -14,6 +14,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 export type NativeVoicePermissionInput = Readonly<{
   canAccept(): boolean;
   captureResponse(): ((text: string) => Promise<void>) | null;
+  waitForResponseSettlement(): Promise<'approved' | 'denied' | null>;
   dispose(): void;
 }>;
 
@@ -31,6 +32,7 @@ export function createNativeVoicePermissionInput(params: Readonly<{
   let disposed = false;
   let prompt: NativePermissionPrompt | null = null;
   let reading = false;
+  let responseSettlement: Promise<'approved' | 'denied' | null> = Promise.resolve(null);
   const question = () => t('voice.readiness.permissionQuestion', { approve: t('common.yes'), deny: t('common.no') });
   const readPrompt = async (selected: NativePermissionPrompt, text: string, listen: boolean): Promise<void> => {
     reading = true;
@@ -88,15 +90,20 @@ export function createNativeVoicePermissionInput(params: Readonly<{
           return;
         }
         params.onResponding();
-        const result = await execute('session.permission.respond', {
+        const responding = execute('session.permission.respond', {
           sessionId: params.address.sessionId, requestId: selected.request.id,
           ...(selected.request.turnId ? { turnId: selected.request.turnId } : {}), decision,
         }, { surface: 'voice', serverId: params.address.serverId, signal: params.signal });
+        // The native turn can finish before the permission RPC acknowledges.
+        // Report the Action's settled decision to the turn lifecycle owner.
+        responseSettlement = responding.then(result => result.ok ? decision : null, () => null);
+        const result = await responding;
         if (!result.ok && !disposed && !params.signal.aborted) {
           await readPrompt(selected, t('voice.readiness.permissionTapRequired'), false);
         }
       };
     },
+    waitForResponseSettlement: () => responseSettlement,
     dispose() { disposed = true; prompt = null; unsubscribe?.(); },
   };
 }
