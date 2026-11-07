@@ -284,8 +284,8 @@ export async function queryTeamCredentialUsage(
     accountId: string,
     input: TeamCredentialUsageQueryInputV1,
     authentication: TeamOperationAuthenticationContext,
-): Promise<TeamCredentialUsageQueryResultV1 | { ok: false; error: 'not_found_or_not_visible' | 'invalid_resource_input' | 'team_authentication_required' | 'team_authentication_policy_unavailable' | 'cost_limit_unavailable' }> {
-    return await inTx<TeamCredentialUsageQueryResultV1 | { ok: false; error: 'not_found_or_not_visible' | 'invalid_resource_input' | 'team_authentication_required' | 'team_authentication_policy_unavailable' | 'cost_limit_unavailable' }>(async (tx) => {
+): Promise<TeamCredentialUsageQueryResultV1 | { ok: false; error: 'not_found_or_not_visible' | 'forbidden' | 'invalid_resource_input' | 'team_authentication_required' | 'team_authentication_policy_unavailable' | 'cost_limit_unavailable' }> {
+    return await inTx<TeamCredentialUsageQueryResultV1 | { ok: false; error: 'not_found_or_not_visible' | 'forbidden' | 'invalid_resource_input' | 'team_authentication_required' | 'team_authentication_policy_unavailable' | 'cost_limit_unavailable' }>(async (tx) => {
         const auth = await authorizeTeamCredentialUsageSubjectInTx(tx, accountId, input, authentication);
         if (!auth.ok) return auth;
         const resourceIds = auth.resourceIds === null ? null : new Set(auth.resourceIds);

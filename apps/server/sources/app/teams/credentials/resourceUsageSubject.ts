@@ -1,4 +1,5 @@
 import type { TeamCredentialUsageQueryInputV1 } from '@happier-dev/protocol/teams';
+import { isActiveHomeAccountStatus } from '@happier-dev/protocol/home/governance';
 import type { Tx } from '@/storage/inTx';
 import { AccountStatus } from '@/storage/enums.generated';
 import { readHomeGovernanceAccountInTx, resolveHomeGovernanceAuthority } from '@/app/home/governance/homeCapabilities';
@@ -68,8 +69,13 @@ export async function authorizeTeamCredentialUsageSubjectInTx(tx: Tx, accountId:
     // The ingress schema already requires exactly one resource or subject.
     const subject = input.subject!;
     if (subject.kind === 'home') {
-        const authority = resolveHomeGovernanceAuthority(await readHomeGovernanceAccountInTx(tx, accountId));
-        if (!authority.viewAdministration) return { ok: false as const, error: 'not_found_or_not_visible' as const };
+        const account = await readHomeGovernanceAccountInTx(tx, accountId);
+        const authority = resolveHomeGovernanceAuthority(account);
+        if (!authority.viewAdministration) return {
+            ok: false as const,
+            error: account && isActiveHomeAccountStatus(account.status)
+                ? 'forbidden' as const : 'not_found_or_not_visible' as const,
+        };
     } else {
         const actor = await resolveTeamActorContextInTx(tx, { teamId: subject.teamId, actorAccountId: accountId });
         if (!actor || actor.accountStatus !== AccountStatus.active

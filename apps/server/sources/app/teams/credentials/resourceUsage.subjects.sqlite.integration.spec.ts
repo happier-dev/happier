@@ -70,7 +70,7 @@ describe('Team and Home subjects through the credential usage HTTP query', () =>
         expect((await query(f.admin.id, { subject: { kind: 'team', teamId: f.teams[0]!.id }, ...range })).statusCode).toBe(404);
     });
 
-    it('admits Home administrators and refuses a Team admin without Home administration', async () => {
+    it('admits Home administrators, forbids visible Home members, and hides Home usage from inactive or absent Accounts', async () => {
         const f = await fixture();
         const payload = { subject: { kind: 'home' }, startMs: f.startMs, endMs: f.endMs };
         const response = await query(f.admin.id, payload);
@@ -80,10 +80,14 @@ describe('Team and Home subjects through the credential usage HTTP query', () =>
             observedAt: new Date(f.startMs) }, _sum: { totalTokens: true } });
         expect(TeamCredentialUsageQueryResultV1Schema.parse(response.json()).totals.tokens.total).toBe(total._sum.totalTokens);
         const denied = await query(f.member.id, payload);
-        expect(denied.statusCode).toBe(404);
-        expect(denied.json()).toMatchObject({ error: 'not_found_or_not_visible' });
+        expect(denied.statusCode).toBe(403);
+        expect(denied.json()).toEqual({ error: 'forbidden' });
         await db.account.update({ where: { id: f.admin.id }, data: { status: 'suspended' } });
-        expect((await query(f.admin.id, payload)).statusCode).toBe(404);
+        for (const accountId of [f.admin.id, randomUUID()]) {
+            const hidden = await query(accountId, payload);
+            expect(hidden.statusCode).toBe(404);
+            expect(hidden.json()).toEqual({ error: 'not_found_or_not_visible' });
+        }
     });
 
     it('qualifies a restricted Team once before disclosing its aggregate', async () => {
