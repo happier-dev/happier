@@ -38,15 +38,52 @@ prechange evidence while preserving management access, then runs
 `machines.reachability.inspect` with the intended posture again. Configure
 requires the resulting fresh reviewed plan; it is not a repair for missing facts.
 
-Domain Caddy reconciliation uses `preserveSsh`: both firewall stages preserve
-the observed SSH addresses, ports, interfaces and accepted source ranges,
-including when stored posture says SSH is closed. Only an explicitly reviewed
-`retainSsh` posture-transition intent may remove those allows or ensure a declared new endpoint.
-The broad host/Docker closure from Plan 21 remains in effect for undeclared
-ingress; foreign tables are preserved. Domain setup does not authorize closing
-an existing management path.
-
 ## Managed bootstrap settlement (0.3 development)
+
+Isolation Apply compares the reviewed policy and target native plan. The native
+digest binds desired effects, native principal identity (including retained
+account UID/GID and home) and whether workspace Git configuration is required,
+while the field CAS owns policy comparison. Publishing the
+requested enable, a changed user-manager PID or a new workspace tree snapshot
+does not change that target. Native owners still check prerequisites, provenance
+and each effect before mutation. CHECK/APPLY differences are retained in the
+daemon log as field names and hashes; a later re-review also names its stage.
+After Apply, one finite native CHECK observes the applied effects. Satisfied
+effects proceed through native launch qualification to effective readiness.
+An unchanged target that remains pending settles unavailable with its native
+required fact and observed cause (such as a starting user manager or stale
+manager groups), plus the registered `machines.agentIsolation.preview` repair
+that reviews the remaining setup. It does not remain `applying.workspace` or
+request a new review merely because a fact is pending. An unavailable CHECK
+retains its typed cause. Changed target effects still require review.
+For pending traversal, that result names the reviewed ancestor path and whether
+its ACL entry or mask denies access. Recovery Preview and status retain the
+current native cause; the reviewed plan grants traversal before Apply checks it
+again. Internal CHECK and RunAs entry, including successful child termination,
+do not initialize Account configuration or reset that grant's ACL mask.
+A member setup refusal retains closed native failure, readiness and operation
+causes through the Session result. Its remedy consumes the already admitted
+Machine role: Use requesters see informational guidance to ask the Machine
+manager for separate-user setup; Manage requesters can open the existing
+Machine Security page. This presentation neither grants setup authority nor
+creates a member repair Action.
+A successful member setup followed by failed native launch qualification keeps
+the readiness owner's reason instead of claiming member setup is missing. The
+existing unavailable status and Session refusal retain the fixed probe's check,
+exit code or transport classification, and selected username, UID/GID, home and
+cwd. Raw native output and environment values never enter this diagnostic.
+These closed diagnostic fields require matching development Protocol, daemon
+and UI readers; the inspected 0.2 frontier has neither isolation contract.
+Unrelated Machine
+metadata publications rebase through field-semantic CAS and do not invalidate
+the review. Action admission does not repeat Preview, and Set retains its own
+signed effect identity. Security and Sharing keep Review available after a
+successor publishes unavailable isolation; Preview supplies the actual native
+prerequisite and remedy.
+The shared authority presenter exposes separate-user availability as available,
+can-turn-on, or unavailable with a reason. Security and Sharing consume that same
+decision; a pending or unavailable native setup observation is not a platform
+availability decision.
 
 An isolation conflict after installation does not undo the installed CLI or
 stop the enrolled daemon. The bootstrap operation remains failed and retains
@@ -96,17 +133,35 @@ installs the promoted CLI and explicitly restarts its existing background servic
 before waiting for registration. An unchanged service definition or CLI version
 does not prove that its running process adopted the promoted payload.
 
-Dedicated enrollment requests `enabled: true` without inferring Linux member
-provisioning from the daemon identity; member provisioning requires explicit
-isolation template intent. A matching effective preview with no administrator
-effects or Sessions to replace completes bootstrap without a set or approval.
-Isolation set refuses a stale reviewed metadata version as a typed conflict at
-Action admission before creating approval, and at the direct RPC effect boundary.
-A new daemon runtime retains policy and native setup but cannot reuse an old
-runtime's readiness proof. An unchanged shared-Agent preview needing no native
-changes refreshes that proof through the existing finite native readiness owner.
-Cancelling bootstrap withdraws its still-open child approval through the existing
-conditional approval transition; a completed decision is never overwritten.
+Approval replay in 0.3 development retains the credentialed executor's captured
+Account and Home. A mutable default profile cannot replace that identity: the
+installed daemon supplies its existing credential holder to replay and nested
+effects, including registry plugin-source projection. The replay selector accepts
+refreshed credentials only for the same Account. Unavailable custody or a mismatch with authenticated ingress returns
+`account_mismatch` before reading the approval or attempting an effect, with a
+remedy to sign in to the recorded origin profile and retry the same approval.
+This uses the existing in-memory holder and credential files, without another
+credential store or automatic Account switch.
+
+Admitted deployment roots retain their exact signed request envelope through
+daemon ingress and private approval-origin capture. Mint decides child-dispatch
+eligibility once from the root and preparation admission and seals
+`deploymentChildRoot: true` on the execution binding. Ingress, approval origins
+and dispatch consume that fact; preview and apply without deploy intent do not
+acquire it. Native child transport still verifies the requester, reviewed child
+input and the root's Environment and exact request path. Once a receipt accepts
+the root, signed controller calls use its captured custody rather than repeating
+requester eligibility and Machine admission. Daemon work retains its local abort
+signal across credential-file changes and uses the receipt's admitted placement;
+activation retains the approved-basis comparison for encrypted content.
+Native deployment children receive installed Account material from the owning
+`ApiClient`'s captured credential holder and are unavailable when that holder is
+absent. Operation snapshot publication separately checks current Account custody
+before publishing private state.
+Accepted Environment and receipt reads carry the verifier's exact read scope to
+the Source owner instead of repeating Team membership checks. Artifact recipients
+and current content heads retain their existing disclosure checks; acceptance
+does not grant access to newly changed content.
 
 Agent isolation is an optional enrollment capability. An unavailable isolation
 preview does not fail acquisition or retained bootstrap retry. The guest publishes
@@ -127,13 +182,76 @@ closed `reason` and `requiredFact`, plus a concrete `remedy`. The intent owner
 distinguishes an unavailable workspace census from a valid empty one and reports
 filesystem inspection failures without publishing paths or OS error text.
 
+## Typed Machine firewall effects (0.3 development)
 
-This document describes the Happier CLI (`apps/cli`) and its daemon. The CLI is both an interactive tool and a background session manager that keeps machine state in sync with the server.
+The Machine setup interpreter in `packages/cli-common/src/machineSetup` owns
+protected file publication and the native firewall. Connector-token grants are
+root-only files: literal root owner/group, mode 0600, and root-owned ancestors
+without group/world write or symlinks. Metadata checks precede target-content
+reads and grant materialization. Portable non-secret recipe files retain their
+declared ownership contract. The originating daemon identity comes from P10;
+a root daemon cannot satisfy isolation from root-owned files.
+
+The firewall persists only `/etc/happier/firewall/rules.nft` and the independent
+`happier-firewall.service`. Its boot command is the trusted system executable
+`/usr/sbin/nft -f /etc/happier/firewall/rules.nft`, not an updateable Happier
+helper. The native owner confines the candidate to `table inet happier`, rejects
+includes before native validation, validates and activates the same candidate,
+and checks persistence, effective owned-table state and boot enablement. Native
+syntax remains nft's responsibility. Unsupported or failed observations never
+establish a closed posture.
 
 Native SSH observation includes systemd socket activation before `sshd` starts.
 For PID 1 listeners, it joins the actual socket address to its activated service
 and verifies that service's protected `sshd` executable. It does not infer SSH
 from port 22 or a unit name. Unreadable activation facts remain unavailable.
+
+Domain Caddy reconciliation uses `preserveSsh`: both firewall stages preserve
+the observed SSH addresses, ports, interfaces and accepted source ranges,
+including when stored posture says SSH is closed. Only an explicitly reviewed
+`retainSsh` posture-transition intent may remove those allows or ensure a declared new endpoint.
+The broad host/Docker closure from Plan 21 remains in effect for undeclared
+ingress; foreign tables are preserved. Domain setup does not authorize closing
+an existing management path.
+
+The Network public-SSH switch and `machines.reachability.configure` posture
+input retain their explicit close choice. Inspect binds the actual SSH facts,
+setup revision, Docker impact identities and all configured owned Caddy
+publications (including a stopped container) into the review. Configure rebuilds
+that basis before its one native admission, then executes the existing
+`retainSsh` transaction: retain SSH in A, verify Home-routed daemon ACK and native
+enforcement in both stages, and write posture only after FINAL verification.
+Existing Domain permits survive; unavailable private scope refuses the change.
+Without confirmed independent recovery, the review warns that Happier may be
+the only management path and offers Keep SSH open. It consumes the reviewed
+native close intent even when saved metadata already declares SSH closed.
+Posture saves that need no native transition remain metadata writes. Opening a
+changed saved SSH posture remains unsupported rather than reporting a native
+effect it did not apply.
+
+`runElevatedMachineFirewallPlans` uses P10's existing installed root entry and
+the original reviewed `plans[]`. Stage A and FINAL share one elevated invocation;
+indexed private control frames cannot substitute later plans. The interpreter
+keeps the original undo through caller verification and posture CAS. Failure,
+cancellation or closed input unwinds FINAL then A; only final commit releases
+the complete undo stack. Ordinary typed firewall Apply verifies and commits
+without leaving a retained stage. P21 owns the actual posture transition and
+reachability verification, not this native port.
+
+The staged caller can verify the current native firewall through the same
+installed root invocation before committing its posture transition. P21 owns
+reviewed rules, interface/source-range/posture facts and reachability; the native
+interpreter applies the exact reviewed steps and retains their undo until
+settlement. Recipe declarations do not include the unused `portRequirement`
+vocabulary or a separate port-to-firewall renderer. The P21 caller and live
+Linux reboot/Docker qualification remain separate integration boundaries.
+
+In 0.3 development source, interactive turn silence produces a file-only notice
+through the host-owned [turn lifecycle observer](runtime-core.md#session-and-turn-lifecycle).
+The linked contract owns its native-ingress classification, default interval,
+disable setting and resource lifetime; it authorizes no automatic recovery.
+
+This document describes the Happier CLI (`apps/cli`) and its daemon. The CLI is both an interactive tool and a background session manager that keeps machine state in sync with the server.
 
 ## Managed Linux Computer desktop (0.3 development)
 
@@ -152,6 +270,34 @@ survives Session closure and ends with daemon disposal, including its D-Bus
 activation children. Restarting the daemon loses its windows. Existing displays,
 Windows and macOS retain their current paths.
 
+Computer selection belongs to a typed Session or Machine-person source in the same capture
+registry. A person can open Computer on a Machine without starting an agent Session; the
+existing owner/Manage route or guest personal-desktop route derives the person from verified
+RPC admission. Capture, stream and native input use the same source. Session closure retires
+only Session-owned selections. A Machine-person selection lasts until Stop sharing or daemon
+disposal, and a still capture returns an ephemeral inline PNG without a Session media record.
+
+Use guests get a separate Linux bot desktop per person, Home and Machine
+installation, even when placement uses a shared OS user. The Computer route
+consumes the existing requester identity and execution placement owners; its
+private `computer-effect` child runs the same desktop and driver owners through
+authorized Exec/native preparation. Member placement runs as that person's
+`hpm-` user, with the X cookie under their private runtime folder. Other Linux
+placements still create separate Xvfb, D-Bus, WM and cookie instances. Guest
+requests through Happier's Computer controls cannot select the custodian's real
+display or another person's desktop. These controls do not restrict OS display
+access: in fallback mode, a guest's Agent runs as you and can do anything you can
+do on this Machine, including seeing your screen.
+The raw person-facing Computer RPC remains Manage-only; the scoped personal RPC
+admits Use and delegates target scope to this same route owner. macOS and Windows
+guest requests return `computer_display_unavailable`. Desktop lifetime remains
+daemon-owned; closing a Session retires its drivers without stopping the desktop.
+The existing live-stream mint consumes an installation-signed admission for the
+guest's exact personal capture-source occurrence. The actor can view that admitted
+source through the existing relay and shared-Machine cipher; owner displays and
+other people's sources cannot supply that admission. Capture retirement still
+ends the stream through the existing source lifecycle.
+
 Linux X11 input checks OS grants once per native driver connection; native input
 still enforces the OS boundary, capture-bound geometry stays checked, and explicit
 permission/status reads stay fresh. Reselection opens a new connection.
@@ -161,6 +307,171 @@ Standing Session/turn ownership is documented in [runtime core](runtime-core.md)
 In 0.3 development, automatic Guard stops re-admit the selected target and current policy before
 the native stop; an unrelated inventory edge wakes the loop without vetoing an
 otherwise eligible due stop.
+
+## Claude pool launch settings (0.3 development)
+
+Claude's existing plugin launch-settings overlay merges `autoContinueAtUsageLimit: false`
+for connected-account pool launches. The pool's optional
+`claudeCodeAutoContinueAtUsageLimit: true` preference instead lets Claude wait and
+continue when its native limit resets. Absence keeps Happier-managed recovery.
+The plugin reads the existing admitted selection environment before subprocess
+isolation strips its metadata, and merges the preference with permission, hook,
+and ultracode settings through `resolveClaudeLaunchSettingsOverlayArgs`.
+
+Native terminal, unified terminal, SDK queries and resumed local terminal launches
+consume that same owner. The setting applies to newly launched Claude processes;
+individual connected accounts and native login keep their normal behavior. It
+does not rewrite shared Claude settings. The data-only Claude UI declaration
+renders the optional pool control through the qualified pool's existing policy
+mutation owner. Qualified pool readers use the stored-read policy projection,
+which drops unknown additive policy fields for predecessor readers.
+
+## Usage-limit recovery (0.3 development)
+
+Claude's plugin-owned usage mapper reads structured reset timing from
+`apiErrorParams.rate_limit_info` and `quotaLimits`, converts epoch seconds to
+milliseconds, and carries the allowance identity into failure classification.
+An explicit usage-limit rejection remains a usage limit even when utilization
+is below 100 percent. Claude's request owner captures native account and credential
+provenance before issuing a request. Its transcript owner separately reads
+`credential_org` attachments; a failure uses the latest organization observation
+at or before its timestamp. Intake resolves that organization through pool-member
+credential identity. Unknown, ambiguous or contradictory evidence remains
+unattributed and produces a default local warning; recovery cannot exhaust a
+guessed member. Organization evidence alone establishes neither a credential
+revision nor a pool generation.
+
+Fresh group-bound observations use the strict public SDK
+`connected-account-identity-observed` event and the existing admitted runtime
+daemon service channel. The daemon checks the current runner, qualified service,
+native session and requester context before resolving the account. Historical
+replay and profile-only observations do not publish live account changes. Failed
+delivery produces a default warning; it does not alter failed-request identity.
+Observation delivery preserves observation order independently of transcript
+durability and checkpoints. Retiring the loop cancels its pending observations.
+
+The failed request's classification stays separate from the recovery intent's
+pending or adopted target. Report replay and scheduled retries retain that source;
+current registration can authorize recovery without replacing an issued tuple.
+Session group metadata carries optional `appliedProfileId` for the observed
+account. Session labels retain the pool name and show that account when available;
+`profileId` keeps its fallback meaning and the pool's active member remains desired
+state. Auth-choice writes omit the observation.
+
+Accepted live qualified quota polls reconcile persisted member blockers through
+the existing positive-evidence owner. Evidence must be fresh, identify the failed
+allowance and follow the group's policy cooldown. Passive hydration and pre-turn
+quota reads do not perform this persisted clear.
+
+The installed Codex app-server 0.162.1 protocol has no account or organization
+identity on turn/error events. Its current-account and quota reads cannot attest
+an earlier turn. The 0.3 request owner captures accepted auth after asynchronous
+request preparation; an in-turn auth change invalidates attribution until the next
+request rather than restoring a previous account's proof.
+
+Standard account-switch continuations use neutral resume
+text; only continuations after a reset claim that limits are lifted. Custom
+resume text and disabled continuation retain their existing behavior.
+
+The host Session lifecycle is the accepted-failure reporting owner for user and
+provider-started turns. The runner and its report outbox send sanitized evidence
+to the daemon; daemon source authorization decides whether a tracked Connected
+Account binding permits recovery. An unattributed provider-started failure may
+select its registered pool, but it cannot identify a failed member. The switch
+pipeline preserves that null attribution and never persists a limiter for an
+unproven member. Pool wait projections likewise permit a null profile.
+
+With no Connected Account binding, intake returns `not_applicable` before
+allocating a runtime-auth recovery attempt. That response retires the report
+outbox item, leaving ordinary native-login waits with the Session controller.
+Ordinary Session waits schedule only a reported reset or retry-after deadline.
+Unknown timing and unavailable readiness remain held for an actual recovery
+edge or an explicit Check now, without polling feature configuration. Check now
+has no additional host throttle, and cancellation stays attached to the exact
+intent until supersession or explicit rearming. Runtime-auth recovery retains
+its separately owned quota backoff. A newer accepted failure replaces an older
+wait through the canonical usage-limit metadata merge; the presence of an older
+daemon attempt alone cannot suppress it.
+
+Registered Session `check_now` controls route a current daemon-owned intent to
+the Machine's existing recovery endpoint, including for active Sessions. The
+current failure fingerprint qualifies that route; a superseded attempt cannot
+capture a new failure's check. An unavailable daemon check retains its custody
+instead of starting another provider-local scheduler.
+
+After local daemon-state publication, runtime-auth recovery re-arms persisted
+deadlines and initial in-band attempts restored from a previous process. Initial
+attempts created in the current process stay with their live in-band owner.
+Replacement keeps the same durable attempt and continuation identity. Startup
+also drains failure reports in process through the HTTP route's same
+authorization, intake and report-ID custody. Machine bootstrap likewise re-arms
+inactive usage-limit waits after installing their runners. Hydration only arms
+the existing durable timers; recovery never runs synchronously during it.
+
+A scheduler retry for an inactive failed pool member observes the current
+member's quota through the existing probe owner without selecting another
+account or attributing the old failure to it. Unavailable quota proof retains
+the wait through the existing unknown-quota backoff, extended to a later retry
+boundary supplied by the qualified quota owner. Per-profile probes and scheduled
+polling honor that owner's provider-directed backoff. The quota owner makes the
+final admission decision synchronously at the provider quota callback, after
+awaited source initialization and credential/currentness work; a concurrent
+Retry-After suppresses a prepared provider call. An explicit quota-refresh request
+still passes current credential/source admission and publishes an
+`error_last_known_good` deferred outcome with the existing retry boundary, without
+provider HTTP or extending backoff. Ordinary scheduled work remains deferred.
+The outcome retains the last provider observation and meters; a failed attempt's
+diagnostic time settles the request independently of provider freshness.
+Confirmed resets retain the existing transient-backoff bypass and still honor
+provider-directed backoff. Observing another member
+does not inherit the probed member's boundary. Fresh exhaustion waits on
+the current member's own evidence. A different current member never inherits
+the failed member's reset or prior wait. Continuation requires
+exact runtime adoption through the generation consumer and carries its actual
+settled target, including a redirected newer generation. Both settlement paths
+enter the provider-proof wait; provider activity still owns recovery success.
+Initial intake and replacement replay use one durable continuation origin.
+Quota-reset receipts and fresh quota snapshots establish eligibility only; they
+do not change the target-based continuation identity. A late in-band report
+against an already-adopted successor returns superseded without authoring,
+including when the report omits its generation. Only an admitted scheduler
+recovery can continue that interrupted work on the current group.
+Quota observations retain their source's `staleAfterMs` through Pool selection
+and lifecycle projection. Spawn and daemon startup do not impose a second
+freshness ceiling. A Pool's deliberate pre-turn probe preference may request
+an earlier observation without shortening the retained observation's validity.
+A same-account credential refresh retains the authorized group generation in
+the continuation identity, including on replacement replay.
+Same-account quota fan-out reads effective Pool bindings from the runtime
+registry for both the reporting Session and its siblings. Exact application
+adoption updates those bindings even when launch selections were absent or
+older. A provider-observed account change alone leaves its applied generation
+unknown; launch selections cannot restore that proof. Shared-surface candidate
+proof excludes unknown or mismatched generations and retains the live
+credential-surface probe. A captured failed generation remains the comparison
+basis when the reporting Session has since advanced. Committed Pool convergence
+remains with the existing generation consumer, independent of candidate count.
+Pending admission protects newer consumed user work, while a delayed projection
+of the same failed turn remains retryable until its failure is visible.
+
+The revision recovery awaits comes from exact recipient application proof when
+available, otherwise from the credential actually materialized and handed to
+that recipient. A handed target does not establish provider adoption: restart
+and weaker account verification still require later provider activity. Pool
+observations and commit revisions cannot substitute for either fact. If neither
+fact is available, the target stays unproven until the existing retry and
+recipient-settlement path reconstructs it; a null revision never matches any
+activity as a wildcard. Restart completion currently carries process identity,
+not the replacement's credential selection. Its pre-restart staged revision is
+therefore not returned as a handed target: replacement launch resolves credentials
+again, and recovery reconstructs its target through retry and registration.
+
+After successful Codex work, the native runtime re-reads a previously
+`usageLimited` goal and reactivates it through the same status-only setter used
+by Goal controls. The native objective, budget and accumulated counters remain
+intact. A fresh Pause, Complete or Clear is authoritative; failed or interrupted
+work cannot reactivate the goal. This is development-source behavior, not a
+release-availability claim.
 
 ## System overview
 
@@ -198,10 +509,47 @@ graph TB
     Agents --> API
 ```
 
+In 0.3 development, local daemon state/listener publication and Machine-control
+RPC readiness are separate milestones. `ApiMachineClient` registers handlers
+after any required reconnect content refresh, without waiting for connection-owned
+Account identity warming. Registration does not grant execution authority:
+existing request admission and currentness checks remain in place. The running
+publication still requires core registration acknowledgements, current operation
+capabilities and successful daemon-state publication. The server's existing
+packet-admission owner holds early packets until its handlers and admission are
+ready; the client does not add another handshake or readiness owner.
+
+Memory initialization is a separate readiness boundary in current 0.3 development.
+Daemon composition obtains the Memory worker handle, binds deletion/revocation/
+reset consumers, and connects without joining Memory's settings read or indexer
+process and policy initialization. The Memory owner retains that work in its
+existing serialized settings operation. Memory RPCs, including status and
+settings reads, wait for that operation; they do not report disabled or ready state
+before admission. Pre-ready purges join the same queue immediately, ahead of waiting
+readers; admission failure remains visible until an explicit settings recovery
+succeeds. A failed authoritative withdrawal stays blocking until its replay
+succeeds; unrelated changes or settings reload cannot clear it. Searchable indexes
+still require retained-access and archive-policy qualification. Shutdown cancels
+and joins the worker's work before releasing its process and observations.
+
 In 0.3 development, `persistence.ts` owns the local Account changes-feed
 checkpoint in `changes-cursors.json` beneath the CLI home, keyed by server and
 Account. Cursor acknowledgements atomically replace that file only when progress
-changes; they do not rewrite `settings.json`. Logout clears the selected server's
+changes; they do not rewrite `settings.json`. Machine catch-up advances its
+in-memory cursor per fully materialized page and checkpoints once at operation
+exit, including the last complete page on failure or cancellation. A crash before
+publication resumes from the previous checkpoint and replays those invalidations.
+Follower and requester recovery cursors stay in memory and do not advance the
+Machine checkpoint. Machine catch-up requests only its consumed change kinds
+through the shared server query owner, retaining Session/share transcript hints,
+access witnesses and durable removals. Older servers may ignore the optional
+selector and return the ordinary feed; the client still consumes that response.
+Equal acknowledged live wakes retain their zero-read path; a physical reconnect
+re-establishes currentness. Connect/reconnect recovery (the connected-services
+reconcile and the reconnect Machine snapshot fallback) runs once per transport:
+when the feed read then fails, the retry owner retries only the feed, with the
+cursor unadvanced and reconnect page semantics retained; the next transport
+recovers again. Logout clears the selected server's
 checkpoint, profile adoption copies it through the same owner, and diagnostics
 read the checkpoint directly. The first access imports 0.2 cursor fields from
 settings when the checkpoint file is absent. Settings publications preserve that
@@ -268,6 +616,11 @@ preserve multiple questions, checkboxes, freeform answers, exact permission scop
 and plan-revision feedback. Unknown forms and conflicting terminal drafts require
 terminal interaction.
 
+Failed native answers log their specific conflict or verification reason and the
+existing capture's structural state: page, focus, answered tabs, notes state,
+text lengths and line counts, and last input action. Question, choice, answer
+and terminal text are excluded; no additional capture is taken.
+
 After native `ExitPlanMode` acceptance, the Claude plugin calls the optional typed
 host operation `modes.complete({ modeId: 'plan' })`. The existing
 `createNativeAgentSessionPublications` owner uses the current Session metadata
@@ -288,12 +641,21 @@ wake the participant, offline scheduling pauses it, and Account retirement or
 shutdown aborts and drains its work. Requester Session bootstrap does not attach
 this Account maintenance participant.
 
-Refresh requires the canonical refresh Action to be Allowed for the **CLI**
-surface; UI or Agent approval waivers do not transfer. It refreshes permitted
-facts only and cannot apply private drafts, publish or resume. The development
-data-preparation and public rendering integration is incomplete, so this wiring
-does not establish a working automatic-publication workflow. Unavailable
-preparation returns a typed refusal rather than uploading invented totals.
+Publishing covers daily refresh, and the canonical refresh Action defaults to
+Allowed on CLI as on other surfaces. Explicit CLI Off or Ask overrides still
+prevent unattended execution; the existing Action executor refuses interactive
+review without opening a background prompt. The participant consumes that
+admission rather than evaluating policy a second time. It refreshes permitted
+facts only and cannot apply private drafts, widen consent, publish or resume.
+The captured Account's retirement signal cancels work without repeated credential
+reads at each preparation step. The shared preparation owner now builds eligible
+facts through `UsageQuery.population: 'public_eligible_personal'`, and the server
+serves the applied edition through its anonymous renderer. This source wiring
+does not establish loaded daily-daemon execution or supported mixed-version
+behavior; those integration checks remain open. Unavailable preparation returns
+a typed refusal rather than uploading invented totals. See the
+[development user flow](../apps/docs/content/docs/accounts/public-profiles.mdx)
+and [compatibility boundary](compatibility.md#public-profile-integration-boundary-03-development).
 
 ## On-demand language intelligence (0.3 development source)
 
@@ -342,10 +704,11 @@ existing guarded writer. Project checks use workspace pull when advertised,
 otherwise the definition's declared checker through managed execution. They
 settle as completed (including completed with problems), failed or cancelled;
 the controller derives checking only while the explicit request is in flight.
-The checker parses all output without a diagnostic-count cap. If a projected
-diagnostic reply exceeds the existing Machine tunnel byte budget, the host
-returns a fitting prefix with explicit `hasMore: true`; Problems must present
-that answer as incomplete rather than an empty or complete project check.
+The checker parses all output without a diagnostic-count cap. The host returns
+complete normalized references and diagnostics through the server-routed RPC;
+Socket.IO's transport owner enforces its own payload limits. The host does not
+slice results against another transport's budget. References and Problems retain
+the response's completeness fact, including genuinely partial answers.
 
 ## Explicit session creation targets (0.3 development)
 
@@ -359,6 +722,20 @@ from uncertain submissions. A launch with an unknown outcome retains its submitt
 nonce and returns `pending`; callers retry with the same creation key to recover
 that launch. A proven refusal remains a definite error, and cancellation of a
 proven unsent request remains cancelled.
+
+The development Action-operation owner also supports per-observer committed
+Session receipts when Machine spawn protocol epoch 3 is negotiated. An opted-in
+observer can receive accepted `pending` with the committed, attached `sessionId`
+before native startup finishes, then observe its exact operation address once
+through the existing terminal-waiting get. This never re-executes a spawn; a
+same-key creation call remains an explicit user Retry. CLI, MCP, Workflow, Voice
+and current live manual-creation callers remain unopted and terminal. Ordinary
+CLI authoring rejects the observer preference through its declared whole-input
+schema, including raw Session Action execution. MCP discovery and standalone
+named/generic admission use the same Action-owned terminal projection; the
+standalone factory checks it before either Account or API-token dispatch.
+Bound Session callers keep their existing Agent authoring rules. A receipt never admits the initial input or
+converts a later startup refusal into success. See [the wire contract](compatibility.md#action-operation-observation-epochs-development).
 
 Seeded creation commits the Session before launching its runner. The private
 spawn transport accepts that existing-row attach without requiring another
@@ -401,6 +778,16 @@ the executing UID through pinned, no-follow directory access. Retained Session
 homes keep their existing retention policy. This unreleased development contract
 requires matching daemon and installed shim bytes; it adds no background reaper
 and does not sweep historical operation directories.
+
+Piped isolated Agent launches retain a redacted native stderr tail within the
+existing Session runtime-issue preview budget. The shim reports the first
+observed failure stage (frame read, exec, child exit, or stream) and preserves
+native exit code or signal separately from caller cancellation. It emits the
+bounded failure diagnostic through stderr so outer exec capture and the existing
+`failureCause.providerErrorMessage` projection retain the same reason. Successful
+piped children emit their retained stderr tail when they settle; protocol stdout
+remains binary and streams normally. Interactive terminals retain inherited
+stdio. This is unreleased 0.3 behavior and requires updated guest shim bytes.
 
 ## Compose service prerequisites (0.3 development)
 
@@ -492,6 +879,16 @@ command-line ordering, with the last flag taking effect. For OpenCode, automatic
 mode approves reads and edits; other tools may still require approval. `--yolo`
 requests full access. The managed Session's permission policy takes precedence over
 the native Agent's defaults.
+
+
+The Codex plugin's `runtime/appServer/permissionProfile.ts` keeps explicit
+approval policy when selecting a native profile. Read-only requests send
+`permissions: ":read-only"` with `approvalPolicy: "never"`, preserving restricted
+network access for sandboxed commands without inheriting approval escalation from
+native configuration. The existing legacy adapter retains the same approval
+policy; omitted legacy read-only network access defaults to disabled in Codex.
+Workspace policies continue through the existing adapter when their explicit
+approval or sandbox settings cannot be represented by a named profile.
 
 ## High-level layout
 
@@ -831,7 +1228,8 @@ Completed setup remains the exact target-local success owner's fact, and Agent
 launch still performs the independent setup admission/recheck.
 
 Saved-Source Open uses `projects/sources/projectSourceV1.ts#admitProjectSourceSelectionV1`
-at both the retained UI draft and the admitted daemon boundary. The existing
+at the admitted daemon boundary. The UI submits its captured Source selection
+through `projects.open` without a separate Source-read preflight. The existing
 authenticated Source read route rechecks current visibility on the exact Home.
 Admission compares effective hosting/repository/clone-protocol selection, ref
 and contained subdirectory, applying explicit overrides to captured and current
@@ -844,6 +1242,25 @@ copy also reauthorizes at the existing source-host Sync route. Foreign or
 restricted requester Open still requires the original requester carriers and
 cannot borrow the daemon's full Account credential.
 
+In 0.3 development source, the Open chooser offers accepted checkouts on the
+selected Home by Source provenance or resolved hosting repository identity,
+using `findWorkspaceProjectCandidatesV1`. Remote strings and folder names are
+not identity evidence. Multiple candidates require an exact choice. Confirming
+an existing checkout uses the same `projects.open` attach and private-row writer
+to record Source provenance without changing its accepted Project anchor.
+Attached dashboards open directly within an accepted Source-bound checkout.
+Without one, clicking an attachment on a repository Source opens that same retained
+Source Open chooser, carrying the dashboard selection. Only explicit Open confirms
+the checkout through `projects.open`; after acceptance the client opens the selected
+dashboard. Changing to another Source drops the original dashboard intent. Choosing
+a repository candidate alone does not bind it or grant Artifact access.
+
+Open keeps request and pre-effect admission. Once Account-row acceptance is
+acknowledged, later revocation does not turn the completed Open into an unknown
+outcome; a new Open is admitted afresh. Cancellation and lost row acknowledgements
+retain the existing unknown-outcome recovery. Account-switch display isolation
+remains the UI lifetime owner's responsibility.
+
 In 0.3 development source, Source clone uses the contributed Git materializer
 and GitHub's existing REST metadata owner. Public GitHub repositories can be
 discovered anonymously for HTTPS cloning only when the credential owner reports
@@ -853,7 +1270,20 @@ rejected bound credentials do not fall back to anonymous or ambient machine
 credentials. The forge's observed public visibility, not the saved locator,
 authorizes no-auth cloning.
 Known failures before checkout publication refuse with their typed code.
-Unconfirmed publication, ref selection after clone, and Account row submission
+For a fresh clone, the optional `initialCheckout: { branch, commit }`
+operand establishes local `main` when `branch` is `'main'`, or a detached HEAD
+when `branch` is `null`, at the reviewed full commit before the private clone
+is published. It never repoints an existing destination. The SCM clone
+route verifies the returned snapshot without another Git read. A mismatched
+branch/head returns `SCM_SOURCE_CHANGED`; missing head evidence returns
+`COMMAND_OUTCOME_UNKNOWN`. Both preserve the created `destinationPath` for
+reconciliation. The internal Project materializer forwards this operand and
+skips its later branch checkout. A full commit in Open's `ref` uses this same
+operand with a detached HEAD; branch names retain ordinary branch selection.
+A terminal branch-selection failure after cloning returns `refused` with its
+SCM code and a content-free `failureCause` naming `project_open.checkout_ref`.
+The retained operation carries the same cause and original Open receipt.
+Unconfirmed publication, uncertain worktree effects, and Account row submission
 retain `outcomeUnknown` rather than authorizing replay. Open's existing redacting
 file logger records failed and uncertain settlements, including the underlying
 materialization error. Forge throttling stays `REMOTE_RATE_LIMITED` through SCM,
@@ -931,7 +1361,7 @@ the original text rather than serializing the stripped projection, preserving
 untouched known and unknown values. Raw saves submit the intended text unchanged.
 
 CLI `workspaces/projectSetup/projectDefinitionInspection.ts` owns passive native
-detection. It returns tool/file/target references and separate environment and
+detection. It returns tool/file/target references and separate toolchain and
 Devcontainer selections, never copied command bodies. Unreadable, invalid or
 dynamically unresolved sources produce per-file partial diagnostics while keeping
 successfully detected entries. Inspection does not evaluate project code, launch
@@ -940,25 +1370,64 @@ package-manager selection live in `nativePackageScripts.ts`, shared with Local
 Services rather than reconstructed by each consumer. Detection is not proof of
 installed-tool availability or completed setup.
 
-The strict `projects.inspect` Action takes the qualified checkout address
-`{serverId, workspaceId, machineId, rootPath}` under `workspace` and returns
-`{definition, detection, importCandidates, commands, tools}` and the development
-`setupReadiness` projection. The definition includes exact file
-text and its absent/present basis. CLI
+In unreleased 0.3 source, the strict `projects.inspect` Action takes the qualified
+checkout address `{serverId, workspaceId, machineId, rootPath}` under `workspace`.
+Its optional `read` selects demand at the same query owner: Overview and rail pass
+their displayed `detectedRows`; Scripts (the default) reads every undeclared finite
+Script reference (name and file, no per-row native resolution) and named Script
+availability. Package discovery inside a repository skips paths its SCM ignores
+(Git's standard exclude sources; tracked force-added files stay); a folder without a
+repository is walked completely. A repository that cannot answer (for example Git's
+`safe.directory` refusal) also keeps the complete walk, and
+`scm/readRepositoryIgnoredPaths.ts` logs one warn per root to the local log file.
+The ignore read does not wait behind the Git worktree mutation queue. Every result carries a `revision` hash of its
+projection; a caller that passes the `revision` it holds as `ifRevision` gets
+`{unchanged: true, revision}` with no body when the current projection is equal.
+The UI keeps the last-good Scripts read per checkout and credential (a credential
+mutation evicts it) and revalidates it that way on revisit.
+`imports` reads complete compact offers across usages; `guidance` reads known
+Script/Service declarations and exact native counts, files, coverage and diagnostics.
+The editor reads only the lossless author document. Explicit `create` reads the
+lossless document and complete qualified offers for available, unambiguous
+preselection. Opened native rows request `detail` with exact `{source, usage}`
+selections, while `tools` reads toolchain alternatives and every observed tool
+requirement, including package managers, without native invocation rows.
+Services selects service invocations; setup reads requester-bound review/readiness;
+placement reads the manifest projection; execution reads an exact named command's
+execution-input hashes and selected toolchain hashes. An execution read without a
+command needs only the toolchain basis. Editor, Create, import/detail/tool/guidance,
+placement and execution reads do not request setup readiness; their execution
+owners retain fresh admission checks.
+Overview and rail return only displayed detected rows when the project file is
+absent or invalid, with aggregate counts, displayed file-group counts and distinct
+source filenames in `detectionSummary`. Valid compact Scripts views keep script,
+toolchain and setup facts but omit unrelated Service declarations; the Services,
+editor and execution readers retain their own complete manifest. A valid declared
+widget needs only named script invocations and fresh readiness. Full discovery still owns coverage and
+diagnostics; selecting fewer rows does not hide a partial read or change import
+ambiguity. Every read retains the exact absent/present file basis. Import, detail
+and tools reads explicitly mark their declaration projection
+`definitionScope: 'statusOnly'`; consumers cannot treat that status as a complete declaration list.
+Only editor and Create reads include lossless raw text/original fields; Add requests
+the editor read on click before its guarded write. Compact Scripts/import reads
+omit invocation previews, and presentation reads omit execution hashes. The shared
+UI reader keys demand by
+checkout, credential scope and read selection so a preview cannot satisfy editor
+demand. CLI
 `projectNativeResolution.ts#inspectProjectImportCandidates` owns the import
 selection projection: offers are available, unavailable, unresolved or ambiguous,
 and only verified available, unambiguous offers are preselected. Passive PATH
 resolution proves tool presence, not a pinned version; an unproved requested
 version stays unresolved. Plugin detection offers also stay unresolved until
 admitted effect resolution. Inspection runs neither version commands nor plugin
-command/environment effects. Native import offers and named manifest native
+command/toolchain effects. Native import offers and named manifest native
 commands carry optional `invocation` facts (`tool`, native `args`, `cwd`, requested
 version), supplied by the same static intent owner as launch, even when the
 installed tool is unavailable. They never copy a package script body into argv.
 Tool rows derive from those references, detected toolchains and static Mise
 tool declarations, not a fixed prerequisite inventory. `requestedVersion` is
 the declaration; optional `version` is an observed installed fact, and
-availability reports host presence, not satisfaction inside a native environment.
+availability reports host presence, not satisfaction inside a native toolchain.
 The managed JS-runtime owner resolves installed npm/yarn/pnpm metadata to the
 actual JS entrypoint and an absolute runtime tuple, preserving its PATH overlay;
 arbitrary PATH/Corepack shims do not establish installed manager/version facts.
@@ -995,11 +1464,22 @@ revision-qualified environment binding references, not secret values. Configured
 Action invocation approval and actual human setup consent remain independent.
 The approving-Account client in `projectSetupTrust.ts` consumes the reserved-row
 and persisted Account-mode contract in [encryption](encryption.md#project-setup-trust-03-development-source).
+Finite setup admits consent once at entry and carries it through the run; withdrawing
+a remembered grant affects the next invocation that needs setup effects. Exact
+reviewed-byte comparisons, adapter leases and local Stop/cancellation still apply
+before each command. If every command succeeds but the final review finds changed
+bytes, the run returns success without recording completion, so the next invocation
+reviews and runs the new setup. Environment-only preparation still refuses changed
+configuration.
 
 The safe `reviewedEffect.presentation` carries authenticated saved-secret display
-names and read-only provenance from the incumbent SCM backend: the project-file
-path, repository HEAD, branch and observed modified/untracked state. Missing
-labels stay null and unavailable SCM stays explicit. Repository HEAD is context,
+names and explicit provenance availability. In current 0.3 development, the
+preparation owner consumes the host-selected execution identity: only an
+unrestricted host owner reads repository HEAD, branch and modified/untracked
+state through the incumbent SCM backend. Member or unknown identities receive
+unavailable provenance without daemon SCM execution. Open, passive inspection,
+Services and Agent preparation share that owner; later execution reviews reuse
+the admitted presentation. Missing labels stay null. Repository HEAD is context,
 not proof that the reviewed file bytes were committed; clean or ignored files
 without that proof remain unknown. These labels and repository context are
 excluded from the semantic effect and execution-environment digests. Renaming a
@@ -1013,8 +1493,10 @@ installed tool identity/version; execution still consumes the complete resolved
 launch tuple. Equal installed versions in different directories do not invalidate
 cross-Machine setup consent. Selected config overlays and contained executable
 bytes remain reviewed inputs. The ordinary setup-authoring prompt and read-only
-GUIDE disclosure forward `projects.inspect`'s same commands/tools facts without
-guessing installed versions or treating advisory availability as admission.
+GUIDE disclosure consume `projects.inspect`'s `guidance` selection: known
+declarations, exact native counts/files and partial-read diagnostics, alongside
+current worker preferences. They do not qualify native invocations or guess
+installed versions, and advisory facts never supply admission.
 
 The strict `projects.prepare` input can retain a review preference as
 `consentScope:'thisTime'|'untilChanged'`, only beside the existing
@@ -1056,7 +1538,8 @@ Development `projects.inspect` readiness uses `projectSetupPreparation.ts#inspec
 to compare target completion with the current passive `successBasis`, using the
 captured requester's private review context, never custodian settings. Retained
 operation success is history, not current readiness. Inspection captures contained
-files, native references, adapter versions and provenance without acquiring native
+files, native references and adapter versions, with SCM provenance only for an
+unrestricted host owner, without acquiring native
 production or invoking a plugin's effect-capable command resolver. When those facts
 cannot establish readiness, including unresolved plugin-native setup, it returns
 typed `unknown`. Native evaluation belongs to the admitted execution lifetime after
@@ -1083,9 +1566,33 @@ the requested command settle only on actual exit. Unconfirmed Stop or native
 cleanup retains custody rather than settling cancellation. These finite commands
 do not manufacture Sessions or enter Agent-start admission. The incumbent mounted
 `session.terminals.run_script` path consumes this same finite owner instead of a
-private shell `initialCommand`; literal interactive terminals remain unchanged.
+private shell startup command. Current terminal writers use typed launch intents.
+The shared request parser accepts the 0.2 `initialCommand` field only as a reader
+seam and normalizes it to `shell_command` before admission. The same platform
+shell resolver and PTY owner consume that intent; it does not grant Agent
+interactive authority. An older daemon's rejection of a typed `package_script`
+request surfaces the existing daemon-update result for that operation, without
+retrying as shell text or disabling ordinary shell and attach operations.
 These are development-source contracts, not a claim of released availability or
 completed package and loaded-runtime certification.
+
+Development `machines.services.exec` enters the same Action-operation lifecycle
+for finite service commands. Its default is Ask with `danger` safety. The target
+daemon selects the current mounted service and exact generation, checks the
+requester's current Environment permission, and repeats that check at the native
+spawn boundary. Literal argv reaches the existing Compose/Exec owner without a
+PTY or caller-selected host context. Finite results retain the existing bounded,
+redacted stdout/stderr and exit code; Workflow completion classifies a nonzero
+exit as a command failure while preserving that output.
+
+Cancellation or a lost native exit acknowledgement is `outcome_unknown`, not a
+successful cancellation or permission to replay. The existing native admission
+retains uncertain custody. Withdrawal of requester/read authority withholds
+finite output even when the native effect has settled. The closed wire target
+also names a Deployment candidate, but candidate execution and current-service
+`run` remain typed unavailable until P41 admission and P42's application-versus-host
+environment carrier are consumed by this same executor. This is an unverified
+development-source slice, not a claim of released or loaded-runtime support.
 
 Fresh Project-custody interactive terminals and Restart use that same current
 preparation owner before opening a shell. The PTY consumes B4's complete
@@ -1094,6 +1601,414 @@ a login shell or restoring variables removed by native resolution. Restart revie
 before Stop and revalidates after retirement; refusal leaves the incumbent intact.
 Warm exact-custody reuse does not reactivate setup. Literal non-Project terminals
 retain their existing launch behavior.
+
+Interactive Machine terminal RPC requires host-stamped `present_user` authority;
+a current Machine grant does not turn Agent automation into a person, and a
+Session-origin call cannot borrow interactive custody. This applies
+to discovery, reconnect/output, input, resize, restart and close at the same PTY
+owner. A typed `package_script` launch still delegates to `projects.script.run`
+and its finite approval/output lifecycle rather than granting interactive custody.
+Its installed runtime passes the same held isolation context through setup,
+native environment evaluation, Script and explicit-argv final launch; unavailable
+isolation refuses the effect rather than falling back to the custodian identity.
+After person, requester and root admission, Project shells pass the daemon's same
+held isolation context to the shared Exec finalizer. The host-private
+`person_break_glass` kind is reserved for the present Machine custodian under the
+shared-Machine contract below; SDK requests and terminal DTOs cannot supply it.
+Installed native plugin and built-in environment helpers retain the admitted
+request's local cancellation and physical custody. They do not re-read Home
+authorization at each helper effect; the next request observes revocation.
+The raw Machine Bash RPC likewise refuses automation, including Action-bound
+requests; finite Agent commands must use their owning Workspace execution path.
+
+### Shared-Machine execution and filesystem custody (unreleased 0.3)
+
+The Workflow Run composer identifies the selected Machine's custodian before
+Start through `WorkflowRequesterDisclosure`; this is presentation of admitted
+Machine facts, not a second admission check. `Can manage` includes Machine use
+and administration, but neither Use nor Manage adds a private Run reader.
+Revocation is enforced at the next Start or fresh Machine read. Already-admitted
+finite work is not cancelled by withdrawing the grant.
+
+Machine `use` admission also permits requester-owned Workflows and schedules.
+Each direct Run and scheduled occurrence consumes the existing Machine-grant
+owner; revocation refuses the next admission while admitted Runs finish. The
+review discloses full Account sign-in custody for the Run or trigger lifetime.
+The daemon selects the guest's retained context and own Connected Account
+credentials, never the custodian's profile or native login. Lost custody returns
+`requester_custody_unavailable` with re-save-on-this-Machine recovery (start again
+for a direct Run). Machine access grants neither Account server access to the
+other's private Runs. See [requester custody](encryption.md#access-keys) for
+delivery, lifetime and terminal cleanup.
+
+MI-1 extends that existing launch boundary to admitted non-owner execution,
+including person PTYs, raw argv/shell execution and third-party stdio MCP Test,
+probe and ordinary Session launches. Ownership comes from the verified Machine
+admission's requester and custodian on the same Home/installation; a Team role,
+Manage grant, caller-selected username or Session editor does not establish it.
+Only an authenticated present custodian may receive the host-private
+`person_break_glass` path. Non-owner execution selects the canonical requester
+identity before policy-off, neutral-cwd and trusted-system-tool exemptions.
+The 2026-11-02 owner ruling amends MI-1's mandatory member placement: sharing
+is for trusted people, not a sandbox against malicious guests. Localhost reach
+is accepted, including other people's development servers.
+
+`resolveHostRequesterAgentPlacementForHost` consumes the shared
+`resolveMachineAgentExecutionPlacementV1` policy projection. Linux with enabled
+`memberProvisioning: 'linuxUsersV1'` selects `member`; otherwise every requester
+uses the owner's Agent placement (`sharedAgent` when isolation is enabled,
+`daemon` when disabled). macOS and Windows do not provision member users.
+Native readiness is still required for an enabled isolation transport; a broken
+member setup never silently falls back. Unknown requester custody still refuses.
+Placement changes neither requester credentials nor Session ownership or the
+Session's role at the Computer gate. Happier's Computer controls require Manage
+to access the owner's real display. In fallback mode, a guest's Agent runs as you
+and can do anything you can do on this Machine, including seeing your screen.
+The grant controller exposes this same policy projection and the existing
+preview/set Actions for the disclosure and Linux separate-user setup; visual
+composition is a separate UI pass. Older daemons keep returning their typed
+isolation refusal, which newer clients present without a private-RPC retry.
+
+Public `session.spawn_new` preserves the original receiving Machine ingress through
+the existing Session lifecycle owner, including its requester attribution and
+launch currentness verifier. An ordinary custodian Session without private requester
+birth still uses the same independent Account, held Home, physical Machine and
+installation, and exact Session-owner qualification for native invocation. Any
+retained attribution must match those qualified facts; its presence alone neither
+grants authority nor makes that ordinary owner unknown. Scoped credentials and
+foreign, malformed or incomplete private birth cannot take this ordinary Account
+path. Qualification does not rewrite historical birth or create a second stamp.
+Owner Agents retain isolated Agent custody with `separationRequired: false`;
+direct or Team-brokered model selection does not confer person break-glass.
+
+The installed Session Account Action preparer projects captured Account readers
+from either admitted private birth or that independently qualified ordinary owner
+custody. The latter still requires literal absence of the private capsule and
+retains the exact Home, Session, installation and credential-currentness checks.
+Home's wire authorization alone carries no private Account reader; Projects and
+other Account consumers do not recover one from ambient daemon credentials.
+
+Cold resume acquires any original retained requester runtime before Account or
+Provider preparation and before constructing the child environment. The same
+runtime/bootstrap publishes the exact existing Session's private credential
+path, and automatic resume's final eligibility read uses those original
+credentials too. Failed recovery never selects ordinary sign-in merely because
+its Account matches: ordinary fallback requires independently qualified exact
+owner custody and literal absence of the private capsule. Retained, foreign,
+incomplete or withdrawn custody refuses without a child; historical Home facts
+are not reconstructed from today's profile. Final launch rechecks that same
+runtime before and after the private automatic eligibility read and after the
+captured caller hook, so withdrawal there cannot reach child birth.
+
+Home capability admission does not block ordinary verified Machine-custodian
+person or non-Session Account automation solely because the new daemon
+enforcement leaf is absent. This applies across the guarded families, not only
+typed Session minting. Genuine Session-origin raw/file deputies still require
+enforcement; an owner Account stamp cannot lend copied Session custody an old
+daemon's file authority. Finalized typed Project/Session payloads consume the
+existing canonical family/root proof and retain their native baseline, with
+independent approval, scope/currentness and native-effect checks. Protected
+non-owner Session admission still requires the leaf.
+
+In current 0.3 development, guarded routed SOURCE and seed raw deputies consume
+Home's admitted `receivingMachineAdmission`, not the role on the retained SOURCE
+child. The receiver matches the original requester and its actual physical
+Machine and installation before consuming receiving `manage` as full Machine
+control, including for a non-custodian; Home already owns the carrier's
+custodian fact. The fact comes only from the
+authenticated Home socket or the existing peer-admission verification result;
+there is no second grant lookup. Use, foreign and mismatched receiving claims do
+not grant raw execution. Typed native children keep their existing member
+isolation. The identity owner reconciles retained roots through one receiving
+child projection from the WorkspaceSync witness, reviewed-child issuer proof or
+admitted deployment child's existing private facet; that projection alone never
+promotes a Session/Agent or a non-custodian to unrestricted owner custody.
+
+Detached approval replay reacquires private requester custody through the
+shared `daemon/externalActions/approvalExecutionAuthorization.ts` preparer and
+the incumbent ingress owner. The Action executor decides Service Start approval
+once, consuming the host-issued exact operation for a reviewed Move child.
+The admitted Start consumes that decision without routing Ask again; explicit
+reviewed-effect digest mismatch refusals remain in force.
+
+The existing Machine capability publication owner advertises enforcement/refusal
+only after its existing resolved Home snapshot accepts protocol v1. Older, malformed or
+unavailable Home facts omit only this leaf; native readiness is a separate fact.
+This projection reuses the incumbent feature-refresh owner and adds no direct
+feature request, timer or independent publication owner.
+
+The metadata-only `capabilities.describe` response supplies protocol descriptors
+for Run support preflight; it grants no execution authority. In current 0.3
+development, capability definitions classify their detect and invoke effects at
+the existing capability-service owner. The service resolves the selected method
+or effective checklist/overrides before shared discovery, then consumes the
+requester effect executor once for the complete operation. Private reads, file
+writes and native probes consume the canonical Machine placement or the existing
+requester-native filesystem-effect child. The disabled-policy fallback uses the
+daemon's operating-system user while retaining the admitted requester. The child
+receives the selected Account id and launch PATH, not daemon credentials or
+settings; Account-backed probes without requester material remain unavailable. Machine installation consumes the admitted Manage role at its
+existing owner. Unclassified effects remain
+protected. Memory-only facts do not require filesystem custody; a model-list
+probe is not assumed public merely because its result is a list. Finite work
+observes local cancellation without a second effect-admission decision.
+
+First-use requester-native operations prepare the member identity through the
+existing reviewed `linuxUsersV1` policy and setup owner before probing that
+identity with the native member-readiness owner. Their operation snapshot carries
+that observed member readiness; an unavailable shared-user readiness projection
+does not prevent member preparation. This does not publish global effectiveness,
+infer member consent from legacy enablement, or admit a failed native probe.
+
+The direct Machine Action transport retains the accepted Action context's
+authority when no separate authority argument is supplied, together with its
+Session/Workflow caller provenance and original Machine receipt/currentness.
+Local execution alone establishes neither owner nor person authority. This
+preserves owner inventory probes without lending copied Session or member
+contexts the daemon's filesystem/process authority. These source contracts are
+not proof of complete registered-ingress enforcement or native readiness.
+
+The shared `selectHostRequesterExecutionIdentity` selector qualifies the custodian
+and admitted Manage grantees on the physical Machine for unrestricted execution. A present person consumes
+the existing `owner_person` classification; no native isolation provisioning is
+required for their own terminal or other Machine execution. Use retains its
+requester custody and consumes the Machine placement policy; unknown requesters
+still refuse. Non-Session Account
+automation retains its existing filesystem, SCM and Machine MCP operations; it does
+not become `owner_person` or receive interactive break-glass. Existing local
+caller/attribution, requester bootstrap and signed Session origin survive the
+manager-to-authorizer projection and disqualify Agent/Session execution from
+that owner-automation path. Filesystem and MCP effect owners consume this one
+qualification, rather than deciding ownership independently. Existing Agent
+Bash and person-only interactive-terminal restrictions remain unchanged.
+
+The installed Machine filesystem admission consumes the receiving connection's
+authenticated Home together with its physical custodian/installation and the
+original verified requester custody. Raw Machine RPC carries Home's derived
+requester receipt outside encrypted operands. The HTTP Action relay retains the
+same Action-aware receipt under its exact installed-daemon guard; its reserved
+transport is not reinterpreted as a new raw grant. The canonical external-Action
+owner verifies the original principal, Home, installation, envelope, effect and
+target before producing its host-private requester facet and currentness closure.
+Supported older-Home and direct authenticated Action HTTP callers without a raw
+receipt use that same verified root, reconciled with the actual physical receiver;
+no Machine role or custodian requester is invented. Mere authorization-object
+presence, unsigned local control, or a mismatching supplied receipt cannot take
+that path. Currentness rechecks the original effect/target and local installation,
+and Session/Agent provenance still goes through the one requester selector.
+Approval replay retains that original requester proof on its host-private
+authorization carrier, including the existing private Account execution ports;
+it does not adopt the approving person's identity. Physical filesystem effects
+check both the receiving context's currentness and the original requester proof,
+including when the original Action context is nested in a Machine RPC context.
+The proof establishes requester custody, not permission for a different effect:
+the existing signed approval-origin and Home effect verifier still authorize the
+actual requested operation. Serialized authorization alone carries no private
+proof and must pass canonical preparation again.
+A missing advisory saved-profile Home
+descriptor does not discard that held identity. This single admission covers
+legacy and semantic file IO, browser/search, diagnostic log bytes and mounted transfer
+preparation; a caller-selected root does not supply custody. Missing or foreign
+Home, non-owner or genuine Session-origin custody, and withdrawn admission still
+refuse before private bytes or mutations. Refusals retain a typed error and a
+closed file-only phase/reason diagnostic without paths, contents or credentials.
+
+Protected owner calls targeting a Session retain the existing Home-stamped
+Machine receipt, checked against the physical Machine custodian and current
+Session binding, rather than assuming that the target's Session owner is the
+caller or the Machine owner. The receiving Session uses the held Home and local
+installation for the existing currentness verification. Genuine Agent sources
+remain restricted, and absent receipt/identity facts are not adopted as owner
+authority.
+
+The immutable requester attribution's `serverId` identifies a saved CLI server
+profile, not the canonical Home. The existing private requester custody,
+bootstrap and credential scope therefore carry a separate optional
+`homeServerIdentityId`, captured from the held or verified Home at birth.
+Recovery preserves and compares that retained Home; a historical record without
+it cannot acquire a Home identity from the currently selected profile. This is
+host-private custody, not a new public Session birth field or SDK serialization.
+
+Ordinary native owner Sessions can lack requester-child custody, including on
+resume, but absence of in-memory scope does not bypass an existing protected
+custody file. MCP and native Exec/SCM share the exact-file discriminator: only
+genuine `ENOENT` or the exact retained original tuple/Home with the same original
+credentials can constrain an independently proved current Account/Machine/exact-
+Session source. Malformed custody, missing or foreign birth Home/Account, and a
+different unrecovered bearer refuse before MCP effects. Successful canonical
+scoped recovery, including a different bearer, retains its existing path.
+The Session-open context supplies its original held profile id and Home, not
+the ambient profile, to that exact read. Nothing adopts old credentials, a
+different catalog or today's Home. This produces owner-Agent identity, never
+present-person authority.
+
+That same qualified ordinary owner custody enters the existing Project native
+launch preparer for accepted associated Projects as well as unassociated
+directories. Project trust, setup review, selected-secret resolution and native
+environment preparation still run; missing historical birth is not manufactured
+to satisfy them. The preparer captures settings from that qualified runtime's
+Account and held Home, never an ambient Account snapshot.
+
+Native invocation resolves identity lazily after requester recovery, before
+native preparation hooks or execution, and reuses that qualification within the
+invocation. This identity requirement is independent of the optional native
+isolation-policy port: an absent port supplies no policy snapshot, not a claim
+of disabled or effective isolation. Qualified owners remain usable; members
+without the required transport and unknown requester custody refuse.
+It rechecks the tracked Session, held Home, local credentials and
+installation at use; their withdrawal cannot retain the qualified identity.
+Existing requester attribution or private scope, including malformed or
+incomplete historical custody, cannot fall back to the ordinary-owner path.
+Enabled or applying isolation still requires observed readiness and its supported
+launch transport. Loaded replay and usable member isolation remain unverified.
+
+Grant-based PluginExec and resolved-Agent native launches carry that same
+host-private invocation identity into the existing Exec owner. A plugin's process
+grant is not requester identity. The Machine policy alone selects the shared-user
+or daemon fallback when separate users are not enabled/available; a plugin grant
+cannot turn unknown custody into an owner identity. Cold requester recovery and a subsequent
+invocation preserve the original custody rather than creating an owner fallback.
+Project launch refusals retain the outer error code and their closed causal leaf
+through the existing private `{code, stage}` carrier. Runner startup file logs
+project only the closed reason at `agent_runtime_open`; callback qualification
+logs identify the refused phase and Session without credential or path values.
+These diagnostics do not establish the cause of a loaded failure until that
+Session's actual launch is replayed.
+
+The canonical Machine reader also recognizes the complete validated response
+generation of the supported `.17` owner-only exact GET. That private legacy
+proof preserves ordinary Account-Session startup against an older Home without
+inventing an access grant. Missing access on a modern/mixed row is not proof;
+the same exact installation, held Home, Account currentness and revocation
+checks remain. API automation does not use this legacy Session seam.
+
+Closed local API-token custom-tool commands qualify their own Account through
+the existing authenticated Self reader and the same exact Machine-row/local
+installation boundary before catalog access. Opaque API tokens are not decoded
+as Session JWTs. This path carries owner Account automation through the existing
+MCP source reader; it cannot replace retained Session custody or grant person
+break-glass.
+
+Filesystem admission is the corresponding no-spawn boundary. The existing
+filesystem path/effect owners must consume requester identity and host-granted
+extents through actual read/write/search/copy and transfer byte custody. Explicit
+roots, additional directories and accepted Workspace references do not grant
+host rights. Session MCP and legacy aliases retain their transport shapes but
+delegate to these same owners; copied Agent context cannot acquire unrestricted
+present-owner filesystem authority. Until identity-bound effects are supported,
+a typed no-effect refusal is the safe result, not effective usable isolation.
+
+The daemon and trusted Session runner retain credential, transport and lifecycle
+custody. The Machine owner can inspect keys and selected material actually
+delivered there, including after per-member identities are introduced. MI-1's
+isolated payloads still share `happier-agent`, including the owner's isolated
+Agent: selected Provider material, Direct-delivered keys and readable Session
+MCP context can be copied by peers. This is not full Account confidentiality.
+MI-2 owns separate requester users and private checkouts. Native readiness and
+the composed Linux execution/file/MCP journey remain required evidence; desired
+enablement, a registered adapter or a typed refusal does not close that gate.
+
+MI-2's unreleased development wiring carries the admitted requester and separate
+canonical Home through the existing setup, selected-material and Exec owners.
+The explicit reviewed `memberProvisioning: 'linuxUsersV1'` template authorizes
+provision-on-use; historical `{ enabled: true }` alone does not. The existing
+P10 member provisioner owns the deterministic `hpm-` user, private home and
+checkout root, exact fixed-binary RunAs rule, and host-private pinned UID
+binding. Session birth remains authoritative on resume. Owner-person and
+supported owner legacy execution do not adopt another member's identity.
+Under the explicit reviewed template, the owner's Agent also receives its own
+derived identity. Historical enabled-only execution uses the shared Agent user
+for owners and use guests alike; disabled isolation uses the daemon user. An ordinary owner Session without private birth uses
+its exact admitted Session and physical Account custody; failed requester
+recovery never supplies permission to borrow the current viewer's credentials.
+
+An admitted Manage grantee can open or restart their own unqualified Machine
+shell without an accepted Project checkout or provisioned isolation. Machine
+custody retains the requester; Manage does not permit attaching to another
+person's live terminal.
+An unqualified shell remains Machine intent even when its working directory is
+inside an accepted Project.
+Explicit Project and Session targets keep their requester Account owners.
+Use retains its admitted Project/Workspace Sessions, requester terminals and
+finite Project operations. In development source, Project Open Sync uses only the
+requester's prepared private checkout; its target bootstrap and Sync agents run
+through the native member process, and the requester-owned relationship retains
+that captured identity for later transfers and reconnects. Its credentials use a
+Sync relationship scope in the existing private requester-custody store;
+automatic conflict recovery
+requires that exact retained relationship capture at daemon ingress.
+Machine-level shell, setup scripts, package installs,
+service execution/control, reboot, elevation and firewall configuration require
+Manage. Home decides the role once; the terminal intent/custody owner consumes
+that admitted role to distinguish Machine shells from Project terminals.
+Raw command Actions retain the same Home admission and requester classification
+while preserving captured stdout and stderr. Manage permits host execution;
+requesters without Manage retain their native execution protection. Project package-script terminals
+consume the requester's accepted Project and finite Action owner.
+Machine Manage is full Machine administration, not ownership of another
+Account's Saved Secrets or Sessions on other Machines. Default member separation
+does not restrict a privileged Machine administrator.
+
+In development source, routed Project SOURCE and seed transports keep their
+original root context and carry a separate receiving Machine admission. Only an
+admission matching the requester and actual receiving Machine/installation
+supplies that authority; a role for another Machine or actor cannot substitute.
+Typed-native bind phases retain their existing admission without a second
+receiving-role lookup.
+
+Single-actor Machine admission, opening and role queries project only that
+actor's direct grants and Team/Group memberships. Grant editing, recipient-envelope
+preparation and publication still read their complete audiences through the same
+role evaluator.
+
+The own-requester isolation-status read uses the existing Home admission even
+when invoked from the owner's local CLI or daemon root-control path. The
+receiver accepts the selected profile label or its held canonical Home identity;
+the read neither provisions an identity nor infers native readiness from access.
+
+The member workspace is mode `2770`, owned by the member and the daemon's
+primary group. Operators should use a daemon-only primary group: unrelated
+local accounts in that group retain workspace read/write access. Root and the
+Machine owner remain trusted; member identities do not restrict ordinary
+world-readable host files.
+
+Set and own-status qualify native readiness through the real noninteractive
+launch shim. Native operations consume the admitted member binding, and Agent
+CLI resolution consumes the selected managed runtime, without a readiness probe
+per operation or tool resolution. Missing member bindings retain the existing
+owner setup flow. An actual failed launch can invoke the same readiness/repair
+owner; Ask may prompt and None may refuse. A repaired launch remains a visible
+failure for retry, with no automatic payload replay. RunAs authorization is
+enforced by the actual shim launch, without a separate `sudo -l` query or
+privileged sudoers-file comparison.
+
+Requester identity and placement are admitted once per operation and carried
+through preparation. Member preparation checks local custody once without
+rereading Machine policy. Prepared native material and workspace roots feed the
+same admission; withdrawal applies at the next admission and cancellation stays
+local. The ACL owner writes the complete access ACL, closing normal group/other
+grants and replacing directory defaults in the same `setfacl` invocation. Its
+nonzero exit detects unavailable ACL support; no `getfacl` read-back is required.
+Access loss closes open-ended interactive access; already-admitted
+finite work finishes before native retirement. An idle terminal viewer's byte
+read may stay one held RPC for up to half its RPC budget, so it never outlives
+its next Home admission by more than that. A Manage→Use downgrade closes the
+requester's Machine-custody interactive terminals through the existing Home
+access-change cleanup, with the existing typed stop cause; Project/Session Use
+terminals and member identity remain available. Reconnect cleanup consumes the
+same current-role projection. Full Machine access loss ends every held
+read of that requester's terminals at once, including a finite PTY that keeps
+running, and only a Machine-admitted read with an RPC budget is held. An idle hosted Session is not
+an exited process. PID-map absence alone does not prove forced-death material
+cleanup. These source-level boundaries do not themselves prove kernel
+confidentiality; the composed Linux and loaded-runtime checks own that evidence.
+
+Machine-native lifecycle captures use a separate host-private `machine_native`
+execution kind at the existing Exec finalizer. Only their declared system tools
+with no requested cwd or Agent/Project launch intent retain daemon identity
+without a Workspace proof. Plugins cannot supply this classification in an SDK
+request. Explicit cwd, Agent launches and package/managed binaries retain their
+normal isolation admission; this is not the person's terminal break-glass path.
 
 The existing operation attachment separates original admitted
 `sourceWorkspace` and actual Script `{name?,source}` from the current output
@@ -1109,38 +2024,190 @@ Ordinary Action Wait returns an already-recorded uncertain observation even whil
 the operation retains process custody. Retirement still waits for actual physical
 settlement; observing uncertainty neither claims an exit nor releases that custody.
 
-OS updates use the same development setup owner. A Plan request with
-`updates: { scope: 'security' | 'all' }` checks the target's native package
-metadata; `mode: 'effects'` also returns exact candidate versions for review.
-`machines.setup.updates.apply` consumes that reviewed plan through the existing
-finite setup task and administrator interpreter. It never rewrites desired
-Software and never reboots. Package updates may restart services; review reports
-possible downtime when packages will change.
+### Managed guest display names (0.3 development)
 
-The native owner publishes counts and the reboot-needed fact at
-`daemonState.setup.updates`, through the normal Machine publication owner. Equal
-observations produce no publication. Reads occur on explicit Security demand
-(open, reconnect or refresh), before an updates Apply, and after native
-setup/Software/updates settlement, without a polling timer. A missing count or
-reboot fact stays unknown. Native unavailable/unverifiable observations retain
-last-known counts and reboot state at the publication owner; the Security hook
-labels those facts stale, as it does during refresh or while offline. The data port also exposes explicit refresh for the separately composed P30
-reboot consumer to call after reboot settlement.
-Linux APT uses python-apt's native security classification and the
-`/var/run/reboot-required` marker. DNF4 uses its security advisory query and
-`needs-restarting -r`. Missing native inspection support is typed unavailable;
-unrepresentable package candidates are not silently omitted. macOS, Windows and
-unsupported native managers return typed unsupported. These are 0.3 development
-contracts; the Security page composition is owned separately from the data hook.
+The portable managed driver in `packages/cli-common/src/machines/managed/`
+owns paid submission, retained-identity recovery, native bootstrap readiness and
+enrollment sequencing. The CLI supplies its Home transport, selected credentials,
+native role invocation and private system-task adapters rather than a second
+driver. `runManagedMachineEnrollment` in the shared system-task owner is the one
+SSH/native install and ordinary pairing recipe; CLI source-payload upload remains
+an installation IO strategy, not another recipe. These source contracts do not
+by themselves establish a complete app-host creation journey.
+
+The same portable owner validates submitted and recovered native identity facts
+against their captured Home row and provisioner schemas before factual reporting.
+It also joins each host's selected role-purpose declarations to the admitted
+launch's exact Account selections, retaining configuration revisions; host adapters
+do not resolve another default or duplicate either decision. Transport authority
+and operation lifetime remain with the invoking host.
+The shared `prepareManagedMachineSetupApplyInput` constructs the reviewed preset
+setup operand for both hosts, and `applyManagedMachineEnrollmentIsolation` derives
+the enrollment isolation change from its preview. Their existing checks remain
+one owner rather than separate app-side planners.
+
+In 0.3 development source, `machines.managed.inspect` accepts an explicit
+`includeGuestDiagnostics: true` read from the managed receipt. CLI, browser Account
+and daemon adapters use the same portable disclosure owner. It admits only the
+custodian, invokes the installed `doctor --json --include-daemon-log` collector
+through native exec with `allowWake: false`, and returns selected redacted daemon
+tails only after the reported daemon Machine id matches `enrolledMachineId`.
+Ordinary inspect performs no diagnostic read. This path never bootstraps, installs
+or wakes the guest. A missing installed CLI, absent identity, unsupported offline
+SSH transport or an unavailable ambient guest namespace yields typed unavailable.
+Installer operation phase/failure facts remain separate from installed daemon logs.
+
+Managed enrollment supplies the retained launch name as the guest Machine's
+initial `displayName`. Both streaming SSH and buffered native request/wait
+enrollment use the existing Account-mode-aware Machine registration writer;
+the label does not change the guest's OS hostname. Retried registration keeps
+incumbent metadata, and daemon refreshes preserve the person's later rename.
+
+Managed sandbox enrollment uses the admitted `guestProcess` identity to start
+the daemon as a process, on both SSH and native carriers. It does not require a
+user-service manager. Dedicated server and deploy-target identities retain their
+user-service lifecycle. Retained native installation retries reuse the existing
+Machine identity and readiness owner rather than requesting new pairing.
+
+Enrollment preparation and installation have no fixed initial time budget;
+the person can still cancel them. Once the pairing request exists, its actual
+expiry bounds enrollment. A slow installation does not consume pairing time
+before that request is created.
+
+Once native Delete confirms that a managed Machine is absent, the controller's
+existing Account-scoped operation runner requests cancellation of that Machine's
+in-flight acquisition or bootstrap retry, including work started in another
+Session. The operation's existing signal ends its isolation-approval wait.
+An uncertain Delete does not establish absence or trigger this cancellation.
+
+### Standalone SSH identity (0.3 development)
+
+`machine enroll --ssh` accepts an explicit personal, adopted, sandbox, server or
+deploy-target role. Dedicated server/deploy-target enrollment uses the same
+installer, bootstrap recipe and elevated interpreter as managed creation, with
+the standalone task's admitted identity as its basis; it never manufactures a
+managed resource. The captured role and administrator choice cannot change
+after task admission.
+
+`cli-common/systemTasks/ssh/installRemoteCli.ts` owns the installation placement
+and bootstrap sequence. Its shared `dedicatedDaemonBootstrap.ts` composes the
+same setup steps and transient IPC codec for the CLI, desktop `hsetup` and mobile
+SSH adapters. The adapters provide command execution, payload transfer and prompt
+identifiers; they do not choose another identity or implement another installer.
+Node-only SSH/file operations stay in `openSshRemoteCliTransport.ts`. The general
+SSH JSON executor owns ordinary enrollment commands' dedicated-user invocation;
+both streamed and labelled commands consume the captured identity.
+The shared `sshCommandFailure.ts` owns closed SSH failure codes and process
+facts, not reflected native output. CLI service adapters contribute only their
+daemon-owned service reason; payload probes and transfers use the same classifier.
+
+Server SSH drafts Ask with a named non-root administrator. An attended root
+bootstrap asks for that name; headless Ask refuses before starting the task.
+Preauthorized and None are explicit alternatives. Human CLI output explains that
+None requires an administrator terminal or console recovery for later
+administrator work, before starting the task. Ask uses the chosen existing
+administrator's sudo password when privileged work runs; setup does not replace
+that account's password. Only an administrator account created by setup receives
+a named new-account password prompt. That establishment uses the existing
+transient secret prompt, never a password flag, generated
+command or retained draft. Dedicated enrollment fixes its user-service
+lifecycle rather than accepting a service-mode override. An omitted identity
+keeps the existing personal enrollment path and generated-command arguments.
+App Ask uses the existing Action attendance boundary: unavailable interactive
+presentation refuses before execution, while a present person answers through
+the secure prompt. A cancelled answer sends no password, and a later response
+to the same still-pending question obtains a fresh answer. The password crosses
+the finite CHECK/prompt/APPLY flow only in APPLY's transient stdin, not its plan,
+arguments or events. Native SSH can carry that initial stdin without a new
+interactive-stdin channel. Loaded native-platform validation remains separate
+from these development source contracts.
+
+### Preset controller labels (0.3 development)
+
+On Plain Accounts, an explicit author Save of a delegated Team Preset records
+the locally known controller display name in the Preset's existing content.
+E2EE Accounts and Account-owned Presets never publish this label. Delegated clients
+consume the saved label only
+for the same controller and installation; they do not read the controller's
+private Machine metadata or substitute an Account name. The label follows the
+same visibility and content protection as the rest of the Preset and remains
+author-asserted, not a verified Machine identity. A missing label uses the neutral
+Team-shared Machine presentation; it never triggers a metadata grant or decryption path.
+Readers accept older Presets without the optional field. A controller change
+without a replacement label clears the previous controller's saved name.
+
+### Agent isolation review and recovery (0.3 development)
+
+The target-daemon handler in `rpc/handlers/daemonMachineAgentIsolation.ts` owns
+`machines.agentIsolation.preview` and `machines.agentIsolation.set`. Preview
+returns the exact workspace/ancestor effects, replacement count and administrator
+requirement without applying them. Set consumes the reviewed policy, metadata
+version and plan digest, then uses the common Machine-field CAS and existing
+elevated-effect owner. A policy conflict or changed plan requires its returned
+current review; an unavailable or uncertain outcome is not permission to replay
+host effects. Desired enablement and accepted work do not establish effective
+isolation while replacement or native observation remains incomplete.
+
+An Off review inventories the shared bootstrap and member RunAs rules derived
+from the existing private bindings, even when desired policy is already disabled.
+An unresolved binding scope or incomplete inventory adds one retained
+`native_check_unavailable` item; Off remains ready and does not claim the member
+rules were fully inspected.
+Its optional `plan.retirement` lists native presence, exact
+managed RunAs removal, and typed remedies for retained resources. The legacy
+bootstrap recorded neither exclusive user/group ownership nor prior permissions
+or Git values. Those identities, shared tools and authored home/workspace data
+are retained with explicit administrator guidance. A changed or foreign sudoers
+file is retained too; removal requires the producer's exact content digest,
+root:root ownership, mode 0440 and no symlinks through the native file owner.
+Member revoke withdraws that exact rule after the natural lifecycle boundary
+even if account or binding state has drifted; retained identities and data remain.
+Accepted/unchanged results report removed
+step ids and retained remedies. Off inventory uses the same read-only elevated
+CHECK owner as enabling. If identity or elevation is unavailable, Off stays ready
+with uninspected resources retained and no native removal; the policy can still
+be disabled. This is an unreleased 0.3 development contract.
+
+An unavailable preview may include `setup`, the existing elevation owner's typed
+`not_applied` result and recovery. Preparation preserves that result instead of
+collapsing it to a missing plan. The sharing offer names its prerequisite and
+remedy; native unavailability does not hide the read-only review entry. Older
+preview results without `setup` retain their typed isolation-status explanation.
+Preview never prompts for an administrator password or applies setup effects.
+When administrator access is None, the read-only elevation CHECK returns
+`setup.recovery: { kind: 'configure_admin_access', mode: 'preauthorized' }`.
+The person can open the Machine's Security settings, choose Preauthorized under
+Administrator access, review/save that change, then retry the preview. This
+mode permits administrator commands without asking; the preview does not change
+it. Ask remains supported for attended effects, but cannot satisfy this
+password-free CHECK.
+
+`machines.agentIsolation.status` reads only the admitted requester's protection.
+Its member-separated result is distinct from the aggregate shared-user Machine
+observation. Under Linux member provisioning, the Machine owner and admitted
+Manage requesters also receive their own member projection: administrator
+filesystem authority does not select the Agent's execution identity. Other
+placements retain the trusted-administrator result for administrators. It neither
+provisions members nor supplies a new launch authority. Windows reports
+unsupported isolation and macOS has no supported provisioning path here; these
+results do not remove ordinary personal-Machine functionality or imply root
+power. The common observed-power presenter, not desired admin mode or isolation
+availability, owns that separate disclosure. Admin attention, approved SCM
+Actions and person terminals keep their existing owners and approval policies;
+an Agent cannot gain the person's terminal authority through copied context.
+
+In 0.3 development, automatic folder selection consumes the canonical execution
+placement policy. With isolation disabled, shared-Machine Sessions run as the
+daemon user: the most recent folder, or that user's Machine home, is the default.
+An unavailable isolation observation does not leave this non-isolated folder
+loading. Member-separated placement instead consumes the requester's projected
+workspace and home; it never substitutes the custodian's history or home.
+Before Send, the composer checks an explicit separated-user folder through the
+existing directory preflight RPC under that Agent identity. An inaccessible path
+returns `invalid_directory` and a visible blocked reason; missing accessible
+folders retain the existing creation-approval flow.
 
 ### Sessionless Project Services (0.3 development)
-
-In 0.3 development source, source-runtime reload refusals retain their existing
-code and optional `launchError.subtype` through source preflight, Session spawn
-serialization and the Action operation result. The subtype distinguishes an
-unfinished writer, missing closure evidence, a changed closure and a failed
-check. It adds diagnostic context without changing admission or retry behavior.
-
 
 `daemon/local/services/launch/projectDeclarations.ts` owns reviewed declaration
 Start and fresh-review Restart. It consumes the accepted WorkspaceRef and exact
@@ -1150,10 +2217,12 @@ effect is not a setup-trust grant. Restart reviews the current declaration befor
 Stop and then uses the independent full Start Action; it never replays captured
 argv after a changed declaration or treats failed replacement as rollback.
 
-Each declaration review freshly admits authority before its private reads and
-before returning its result. Awaited passive reads retain requester custody,
-cancellation and service eligibility checks; effect-capable preparation and native
-command resolution retain their fresh authority fences. Worker Start reviews
+Approval preparation and Start each admit the receiving requester once. The
+selected declaration carries that request's runtime through its finite preparation;
+passive reads and effect reviews keep local cancellation without repeating Machine
+entitlement or undefined-demand eligibility reads. Each Home call authorizes its
+own request, and actual Service admission retains memory and drain checks. Later
+revocation refuses the next request; accepted finite work may finish. Worker Start reviews
 SOURCE at approval, launcher admission and executor entry. After that invocation's
 clean copy, destination reviews compare current manifest and execution inputs with
 the approved SOURCE basis, while rereading placement, linked roots, setup and native
@@ -1187,6 +2256,18 @@ invent an address or prevent a portless service from running. Normal Stop preser
 Compose containers, networks and volumes; fixture cleanup removes its own resources.
 This is development-source Linux qualification for Docker 29.9.0 / Compose 5.6.0,
 not stable/preview availability or macOS/Windows certification.
+
+Environment deployments use the same Compose codec with an explicit admitted
+Compose-service selection. Their Docker listing, inspection and diagnostic logs
+retain that service's container identities, so another service's failure does not
+become its health or log output. P41 owns one project activation; observation
+captures accept its Compose prefix without issuing `up`. Existing-generation
+controls use [Compose start](https://docs.docker.com/reference/cli/docker/compose/start/),
+[stop](https://docs.docker.com/reference/cli/docker/compose/stop/) and
+[restart --no-deps](https://docs.docker.com/reference/cli/docker/compose/restart/)
+for the selected service. A replaced or absent generation refuses Start/Restart and
+requires deployment recovery. Workspace declaration restart retains the separate
+fresh-review path described above.
 
 Builtin Flox 1.18.1 uses the owned-process mode: Happier owns a foreground
 `flox activate --no-start-services -c ...` which starts only the selected service,
@@ -1254,10 +2335,10 @@ in [peer mediation](peer-mediation.md#sessionless-managed-service-admission-03-d
 These source-tested contracts are not completed package, loaded-runtime or native
 device qualification, and the later Services visual composition remains separate.
 
-### Project native environment production (0.3 development)
+### Project native toolchain preparation (0.3 development)
 
-`workspaces/environment/produceProjectNativeEnvironment.ts` owns admitted native
-environment effects, separately from passive definition inspection. Its ready
+`workspaces/toolchain/prepareProjectNativeToolchain.ts` owns admitted native
+toolchain effects, separately from passive definition inspection. Its ready
 result is the complete environment, not an additive patch: launch integration
 must replace the inherited environment so native removals survive, then apply
 exact Saved Secret bindings. Development-qualified Linux x64 contracts are Mise
@@ -1269,14 +2350,14 @@ missing or escaping files refuse. Config paths are resolved against the reviewed
 Project root, separately from a command's nested working directory. Native process IO retains the incumbent
 process-tree custody owner, not parent-only cancellation. Unverified native
 cleanup remains `outcome_uncertain`; a structured termination error is preserved
-as the host-private `ProjectNativeEnvironmentUncertainError`, never a settled
+as the host-private `ProjectNativeToolchainUncertainError`, never a settled
 cancellation refusal. Operation-local IO retains the actual supervised resources,
 publishes uncertainty and keeps production pending until physical settlement;
 repeated Stop reaches that same capture. Consumers retain accepted reservations.
 
 Plugin toolchains consume a real retained production from the canonical admitted
-occurrence lease. Command and environment productions retain their own selected
-invocations, including when they belong to different plugins. Environment-only
+occurrence lease. Command and toolchain preparations retain their own selected
+invocations, including when they belong to different plugins. Toolchain-only
 preparation omits launch intent; supporting adapters return a complete environment
 without a wrapper. Wrapper-only adapters explicitly refuse that intent, and a
 wrapper returned without an admitted command is never silently discarded or run
@@ -1291,9 +2372,9 @@ actual versions through each descriptor's installed version-only CLI command
 (`version` for Devbox, `--version` for the others) using the same operation-scoped supervised IO as environment production;
 the retained invocation covers the version probe too. It does not probe during inspect, infer
 a version from a declaration or download a missing tool. Only the qualified
-versions are activated by the environment owner above. Passive inspection never
+versions are activated by the toolchain owner above. Passive inspection never
 runs version probes or activation. Machine-global installation remains Mise-only;
-Project environment qualification does not imply a native global-setup contract.
+Project toolchain qualification does not imply a native global-setup contract.
 
 Devbox `shellenv` emits shell export statements, while devenv/Nix
 `print-dev-env --json` emits typed variables and shell functions. These plans do
@@ -1372,6 +2453,24 @@ the existing content-free runtime cause through child stderr capture into option
 The same spawn-result owner serves separated members and the shared isolated Agent.
 This presentation leaf does not change admission, retry or Session identity.
 
+In 0.3 development, `CHILD_EXITED_BEFORE_WEBHOOK` retains optional closed
+`launchError.childExit` presentation evidence: observed code/signal, a redacted
+stderr head within the existing 2,048-byte child-diagnostic budget, and a
+`module_not_found` cause containing only the missing specifier's basename when
+recognized. The process observer and startup custody share the same projection;
+the existing stderr listener owns capture. CLI JSON, CLI errors and the Session
+creation failure presenter retain this reason. Missing evidence remains absent;
+it does not authorize a new launch or automatic retry. The existing failure code
+and message remain available to older readers. This is an optional extension of
+the unreleased closed V1 launch-error object, with no wire epoch, SDK ABI,
+persistence or released-client update-floor change.
+
+In 0.3 development source, source-runtime reload refusals retain their existing
+code and optional `launchError.subtype` through source preflight, Session spawn
+serialization and the Action operation result. The subtype distinguishes an
+unfinished writer, missing closure evidence, a changed closure and a failed
+check. It adds diagnostic context without changing admission or retry behavior.
+
 In 0.3 development source, saving startup correspondence may outlast the
 Workflow claim. The original Action operation's cancellation signal owns its
 admitted launch after that handoff; claim loss ends only Workflow observation.
@@ -1389,6 +2488,12 @@ alone cannot complete the step. Interrupted uncertainty remains in the recovery
 index until exact terminal evidence resolves the child. This observation leaves
 the interrupted parent and its explicit recovery controls unchanged.
 
+In unreleased 0.3 development source, an offered `fresh_agent` invocation retry
+with `input: { kind: 'original' }` consumes the frozen authored input, including
+its retained `renderedText` when present. It does not re-render the input from
+current Workflow content or append newer Discussion context. Completed effects
+remain recorded rather than being replayed by recovery.
+
 Cancellation recovery keeps an exact-Machine parent with pending custody in its
 index after the root becomes cancelled, even when every child has already
 settled. Invocation facts and parent settlement are separate writes; a later
@@ -1396,6 +2501,10 @@ startup or reconnect pass can finish the parent after a failed settlement write.
 A cancelled child alone does not establish whole-Run cancellation. The existing
 recovery reader verifies the root and current child custody before committing
 the terminal parent state, after which ordinary history deletion is available.
+For a terminal parent, this same recovery pass also retires remaining structural
+frames, including a running loop under a cancelled Run. Startup recovery does
+not restart the interpreter; unresolved leaf effects, outcome uncertainty and
+owed publication still retain custody.
 
 In 0.3 development source, the same recovery owner publishes accepted Discussion
 results before retiring custody. Its publisher projects the accepted tagged
@@ -1419,13 +2528,13 @@ A publication failure affects its own Run; recovery
 continues through independent candidates and pages. These source contracts
 still require the integrated loaded-runtime replay.
 
-Environment-only setup uses the same environment body without inventing a
+Toolchain-only setup uses the same preparation body without inventing a
 command. The plugin request's launch is optional; an adapter that returns a
 wrapper without a real command explicitly refuses
-`native_environment_launch_required`. When finite Script/Exec preparation has no
-setup commands, it retains consent/current-effect checks and defers environment
-production to the actual final launch. That prerequisite does not record setup
-completion. Explicit `projects.prepare` retains environment-only production;
+`native_toolchain_launch_required`. When finite Script/Exec preparation has no
+setup commands, it retains consent/current-effect checks and defers toolchain
+preparation to the actual final launch. That prerequisite does not record setup
+completion. Explicit `projects.prepare` retains toolchain-only preparation;
 nonempty setup still prepares each actual setup command. Finite PTY launches preserve the complete final environment under
 the existing token-filtering policy, without interactive prompt defaults. On
 Windows, an already-rendered verbatim argv passes unchanged as a command-line
@@ -1436,6 +2545,13 @@ the canonical Windows renderer or establish native Windows tool qualification.
 for Profile, Execution Run and Project launches, delegating value admission to
 the existing Saved Secret catalog. The historical Profile module re-exports
 the generic API and retains only Profile-specific defaults and recovery policy.
+In 0.3 development, daemon Session launch and inactive Session control await
+`resolveLaunchProfileSavedSecretEnvironment` before launch effects. It refreshes
+shared bindings through the admitted Account's Saved Secret catalog and uses that
+snapshot for materialization. A required unresolved binding refuses with the
+existing typed Provider secret error; an unresolvable optional default may be
+omitted after a successful catalog read. Persisted defaults follow the current resource revision, while explicit
+one-launch overlays retain their selected revision checks.
 Stored binding readers discard additive unknown fields; ingress remains strict
 and malformed known references refuse rather than acquiring launch authority.
 
@@ -1444,12 +2560,320 @@ Cold-launch integration, plugin adapter qualification and composed process
 validation remain separate obligations; this internal source contract does not
 establish an available end-to-end Project execution flow.
 
-### Preset Machine environments (0.3 development)
+### Preset Machine setup (0.3 development)
 
-`workspaces/environment/applyMachineEnvironment.ts` owns Machine-wide preset
-setup. It consumes the revisioned preset environment, writes the selected native
-tool's global configuration as the Happier OS user, then runs native installation
-and the setup script through the existing finite terminal/process owner. It does
+The existing `ManagedMachinePresetV1` record can contain creation, setup, or
+both; at least one part is required. Creation requires `launch`; a personal
+Account-owned portable launch may omit `controller`. Installed local providers
+and delegated Team creation still require the actual Machine/installation pair.
+The creation guard establishes launch presence, not controller presence.
+Setup-only Presets use the same Account/Team CRUD, revisions
+and list/get results without inventing a provider or controller. Saving them
+requires Preset-owner authority, not creation-provider validation. Removing
+creation explicitly clears both fields and withdraws delegated acquisition;
+the existing controller-authority checks still protect that withdrawal. A
+setup-only Preset cannot acquire a Machine. The additive nullable-column
+migration retains existing setup bytes; it does not convert script content.
+Presets owned by an archived Team inherit that Team's archive timestamp in
+get/list results and cannot be selected for a new Create or Apply. Active lists
+omit them; archived-inclusive lists retain them. An explicit archive by a retained
+Team administrator is an unchanged success: it neither rewrites the Preset nor
+increments its revision. Restoring the Team restores only Presets not independently
+archived. Already admitted creation keeps its exact captured setup snapshot.
+These are development schema/CRUD contracts, not a claim that the setup-only
+editor or the complete live journey has been verified.
+
+#### Machine setup and bootstrap ownership
+
+Enrollment is a bootstrap flow owned by
+`packages/cli-common/src/systemTasks/flows/enrollMachineFlow.ts#runEnrollMachineFlow`
+and its executor adapters. It configures the Home connection, authenticates and
+establishes the daemon service through existing system-task custody. Its private
+historical “setup recipe” names do not define the public Machine recipe contract.
+Bootstrap task ids, events, prompts and transport mechanics retain their owners.
+
+In current 0.3 development, the terminal-auth verifier identifies a
+`HOME_AUTHORITY_MISMATCH` with a closed comparison label, verification phase,
+carrier kind and observed-descriptor-present boolean. The shared SSH failure
+projection preserves those same facts through controller approval tasks and
+streaming or buffered guest commands into current Action operation details.
+Unknown diagnostic values are omitted; URLs, identities, tokens and native
+output are never part of these facts. Released V1 operation projections omit
+the details. These diagnostics explain the existing refusal without changing
+endpoint authority or authorizing an enrollment retry.
+
+Managed enrollment verifies the service's existing `daemon.healthy` observation
+before completing bootstrap: a running local process and valid credentials do
+not prove that Home has admitted its socket and acknowledged machine-control
+RPC registrations. This finite native-process observation uses the remaining
+enrollment/pairing lifetime, not the standalone setup's shorter local-service
+deadline. Missing readiness remains unproved; cancellation ends observation.
+Only then may the controller dispatch the enrolled guest's creation-policy
+Actions. A later bootstrap retry of an already-enrolled guest does not regrant
+its creation administrator policy; recovering that policy uses the ordinary
+reviewed `machines.setup.adminAccess.set` Action on that same Machine.
+The enrolled service-managed update path likewise waits for acknowledged
+machine-control readiness after replacing its service, and confirms the same
+retained Machine ID before dispatching policy children. It repeats only the
+existing native status observation, never the installation or sign-in effect.
+
+Dedicated Linux bootstrap and online isolation provisioning share
+`daemon/service/userManagerGroups.ts` for the final user-manager credential
+check. The cli-common native `userManagerGroups` check compares current account
+membership with the active manager's actual `/proc` credentials. An active but
+stale manager is drifted, not ready; the existing system service owner refreshes
+`user@<uid>.service` after group effects. A cold or activating manager is also
+drifted: the same synchronous refresh starts it and waits for startup before
+the interpreter verifies its actual credentials. This replaces the old active-unit-only
+bootstrap check. The setup interpreter reobserves subsequent steps after an
+effect, so an initially satisfied credential check cannot survive a preceding
+membership change. Unknown process identity fails closed. Online manager
+replacement may interrupt the requesting daemon; lost confirmation retains the
+existing unknown outcome, never automatic replay or synthesized effective
+isolation. This source contract still requires loaded-runtime qualification.
+
+
+Managed admission retains one server-derived `enrollmentAccountId` from the admitted
+requester; historical rows without it retain custodian enrollment. This is separate
+from the guest OS role in `enrollmentIdentity`. Registration, replacement and linking
+check that exact Account before creating the ordinary Machine. The CLI registers
+managed enrollment before persisting its credential. Custodian-created Machines
+keep controller-local `auth/terminalAuthApproval.ts` approval.
+
+In current 0.3 development, the strict acquire schema requires the reviewed
+`enrollmentIdentity`; downstream enrollment does not repeat its presence check.
+The controller reads the retained acquisition at entry and once before releasing
+requester pairing context or approving pairing locally. SSH/native installation
+steps use the linked abort signal. Registration and managed linking still share
+the server transaction that refuses retired acquisitions before Machine writes
+or guest credential persistence.
+
+For a non-custodian creation, the existing managed installation approval Action
+delivers the guest's terminal-pairing v3 context only to the admitted requester's
+authenticated client. The same `CAPABILITIES_INVOKE` / `tool.systemTasks/respond`
+transport carries a transient result, not an Action operation or task observation.
+Home checks the current creation, the requester's present-user Account token,
+controller installation and resource once, then relays the purpose only over the
+custodian controller's authenticated Home socket. The controller accepts that
+stamp from no other ingress and makes no callback to Home; the live task closure
+additionally binds the managed row and operation/task/question. Both delivery and the final
+answer are checked. No controller Machine grant, key copy or new pairing issuer is
+created. Home necessarily sees this transient context over its authenticated
+transport; it must not be logged or retained.
+
+The client calls `auth/terminal/approveTerminalPairing.ts` inside the existing Create
+confirmation with its own captured Account credentials and authenticated encryption
+currentness. Plain Accounts provision token-only credentials; E2EE Accounts provision
+their own current machine key. The existing guest claim/registration flow resumes.
+Missing/rejected/expired/cancelled or mismatched approval fails closed, including
+unsupported older components; it never falls back to custodian sealing. Pairing
+context is absent from retained prompts, task events/snapshots, settings and Action
+results. A person with guest shell access can read the guest's own persisted
+credential, never the company controller's bearer or Account key through this flow.
+
+The requester owns and can use the resulting ordinary Machine. The company retains
+the managed resource/controller and its cloud credential, resource status and native
+stop/resume/delete for cost control. Resource custody grants no automatic access to
+requester Sessions, keys or guest shell. Scoped creation progress/cancel/recovery
+belongs to delegated acquisition, not a controller Machine grant. This is unreleased
+0.3 development work; integrated requester UI and package/live validation remain
+tracked in the VD-GUEST/VD-DELEG lane reports, not a claim of shipped availability.
+
+Machine-wide setup uses the existing strict `MachineSetupV1` value at
+`packages/protocol/src/machines/managed/machineSetupV1.ts` and the online owner
+below. The [unreleased recipe/Presets extension](plugin-platform.md#machine-setup-declarations-unreleased-development-contract)
+adds typed effects through that setup owner. It does not add a generic serialized
+system-task runner or make raw task starts an online setup entry point.
+
+#### Existing toolchain and script path
+
+`machines/setup/applyMachineSetup.ts` owns Machine-wide setup. The development
+`machines.setup.plan` Action reads the Machine's current desired setup field.
+Without an explicit `mode`, unchanged attached-copy reads require no catalog or
+native observation. Explicit `check`/`effects` modes prepare the exact retained
+recipe selections as well as new ones, returning their unchanged effect plans
+and desired revision. An explicit empty plan is returned as `recipePlans: []`.
+The development API also accepts a combined `targets` list and returns each
+target's plan plus the existing Workflow host review. Exact reviewed app children
+travel in that target's existing Plan request. The receiving target prepares new
+catalog apps through its local P45 template owner, using its real installation
+and admitted requester. It returns the unchanged executable children and actual
+typed app reviews; the parent only aggregates them into one review and approval.
+Apply materializes one literal template-instantiation child on that app's target.
+
+In 0.3 development, APT prerequisite checks, repository changes and package
+effects share `cli-common/machineSetup/nativePackageBackend.ts`'s lock observer.
+When `lslocks` cannot resolve another process's file path, the observer compares
+the kernel lock table with the APT lock files' device/inode identities. An
+unrelated unresolved path does not make APT unavailable. Unreadable evidence
+retains `needs_admin_to_check`; an observed APT lock retains
+`package_manager_busy`. Inspection never acquires or removes a lock, and APT
+still owns locking at the actual effect.
+
+OS updates use the same development setup owner. A Plan request with
+`updates: { scope: 'security' | 'all' }` checks the target's native package
+metadata; `mode: 'effects'` also returns exact candidate versions for review.
+`machines.setup.updates.apply` consumes that reviewed plan through the existing
+finite setup task and administrator interpreter. It never rewrites desired
+Software and never reboots. Package updates may restart services; review reports
+possible downtime when packages will change.
+
+The native owner publishes counts and the reboot-needed fact at
+`daemonState.setup.updates`, through the normal Machine publication owner. Equal
+observations produce no publication. Reads occur on explicit Security demand
+(open, reconnect or refresh), before an updates Apply, and after native
+setup/Software/updates settlement, without a polling timer. A missing count or
+reboot fact stays unknown. Native unavailable/unverifiable observations retain
+last-known counts and reboot state at the publication owner; the Security hook
+labels those facts stale, as it does during refresh or while offline. The data port also exposes explicit refresh for the separately composed P30
+reboot consumer to call after reboot settlement.
+Linux APT uses python-apt's native security classification and the
+`/var/run/reboot-required` marker. DNF4 uses its security advisory query and
+`needs-restarting -r`. Missing native inspection support is typed unavailable;
+unrepresentable package candidates are not silently omitted. macOS, Windows and
+unsupported native managers return typed unsupported. These are 0.3 development
+contracts; the Security page composition is owned separately from the data hook.
+
+An admitted finite Apply captures its installed runtime and desired snapshot
+once. Its native stages and accepted-app association read consume those admitted
+facts plus the local cancellation signal, without rereading desired policy or
+Account currentness between stages. The root helper still admits its policy and
+validates the reviewed native plan at the privilege boundary. Final desired
+publication retains the revision-aware CAS and fresh incumbent observation merge;
+a competing desired edit is a publication conflict, not a mid-operation veto.
+Actual secret acquisition and Home requests retain their owning custody and
+signed-request boundaries.
+
+Target observations live in the optional `MachineSetupDesiredV1.sourceFacts`
+sibling map, not inside Home-certified source copies. The owning Machine is the
+target; map entries use the canonical source-origin key. Each entry can carry
+`firstPresence` keyed by the canonical setup/software item and `acceptedAppRuns`
+for exact app intent/accepted Run-child correspondence. Setup Workflow leaves
+carrying app children use the existing sealed requester Account path, also used
+by deployment leaves, so the native correspondence reader retains the
+requester's custody rather than borrowing the installation custodian's Account.
+The receiving Plan RPC opens and reviews its target child once; catalog
+preparation consumes that target's admitted Manage role rather than reviewing
+the transport ciphertext again. A catalog composite Workflow leaf uses the
+normal template authorization mint before dispatch, retaining its template
+preparation admission through the same sealed requester path.
+Home admits cross-Machine Workflow placement from the existing accepted Run,
+its assigned publisher and the active receiving installation. This is the same
+placement owner for Setup and Deployment in plain and E2EE Accounts; Home does
+not open the accepted snapshot to decide child approval. The receiving daemon
+opens that Run through its existing key owner, matches the exact invocation and
+uses the existing reviewed-child issuer before native effects.
+Source copies contain
+only certified content, so no observation stripping or reinitialization is
+needed when certifying or replacing them. Only receiving native settlement
+writes facts through the existing desired-field CAS, preserving fresh incumbent
+facts while disregarding caller provenance. First-presence values are `present`
+or `absent`; a missing entry is unknown and later observations never promote an
+incumbent unknown item. There is no legacy-Boolean reader or row migration.
+Declared Remove requires native first-`absent` evidence; first-`present` and
+unknown are never removal authority. Detaching defaults to keeping native items
+in the implicit direct source, carrying their facts at the same canonical owner.
+The existing UI setup preparation accepts per-target `removeItemKeys`, asks the
+same effects Plan, and carries its exact selection and `removalPlans` into
+Apply. Preset updates use the canonical source-change projection before that
+Plan, so default-kept detached items do not look like substituted source copies.
+Optional Plan `recipeTitles` contains only exact referenced declarations from
+the catalog that Plan already admitted; it creates no extra catalog demand and
+missing titles remain unknown. These localized labels are review data, never
+persisted eligibility or executable Apply operands.
+Catalog app continuity uses its existing catalog source/item identity, not its
+version or content pin. The sibling-map writer retains the native correspondence
+when only that pin changes; it preserves ambiguous candidates rather than
+selecting the first one. A newly authored non-catalog app receives an
+`authoredKey` when it joins the editor draft; Save persists it with that item,
+and copying or editing the item preserves it. Opening, Cancel and retained
+reads do not assign keys to legacy items. Those keyless items remain unknown.
+The target Plan derives compact `appOrigins` from its current admitted copies:
+only a genuinely new identity can use a new reviewed app child; a retained app
+with missing or ambiguous correspondence is unknown, not permission to replay.
+App references are addresses, not deployment completion. The CLI setup
+`acceptedAppRuns.ts` reader matches the requested app through
+`readMachineSetupAppIdentityV1` within its Home and Machine, then authenticates
+the retained intent and optional authored key against the accepted native leaf.
+It opens that Run and follows its current invocation ancestry and deployment
+completion contract. An optional Environment id comes from the authenticated
+accepted Action input. It shares reads for apps in the same Run within one
+operation; a missing reference or legacy Compose key causes no private Run
+read. Missing or unreadable evidence stays unknown, and template preparation
+does not prove a completed deployment. This remains an unreleased development
+contract.
+
+The target Setup Plan consumes those native facts, batching outcome
+reads once per target through the admitted requester's Account executor (or the
+local credentialed Workflow owner). Explicit review projects the authenticated
+outcome and optional Environment destination in `review.apps`. Only native
+`appOrigins.new` entries can dispatch explicitly reviewed new app children;
+retained, ambiguous and legacy-unknown apps stay attached without a new deploy.
+Their unfinished work remains under the existing Run's recovery owner. Plan
+returns the executable child subset while preserving every authored source
+copy. Apply preparation re-reads the native facts and refuses a changed reviewed
+subset instead of silently rewriting the approved input. Omitted-mode reads do
+not open private Runs, and no completion cache or Environment scan is involved.
+
+Explicit Plan modes also return optional per-target `review` facts: the exact
+Home/Machine operand, the existing native execution requirement for administrator
+access, and downtime as `none`, `possible` or `unknown`. Support remains the
+indexed native `support` observations, not a second readiness decision. Declared
+Docker-engine or Service impacts mean downtime is possible; arbitrary scripts,
+toolchain work and uninspected effects are not claimed safe. These facts do not
+grant execution authority. The public scalar review can include the same
+Workflow host choices used by the combined review; an unavailable Account roster
+does not invalidate an otherwise valid native Plan. Omitted-mode current-copy
+reads do not fetch host choices or add native observations. This remains an
+unreleased development contract, not a shipped installer or availability claim.
+
+`machines.setup.apply` uses `{ homeId, machineId, targets }` for both one and
+several targets. Root `machineId` is the reviewed existing Workflow host; each
+target carries its own Home/Machine, exact sources, desired revision and ordered
+`recipePlans`. Each source list includes one implicit direct source. New Account
+Preset copies with personal Saved Secret references retain the existing Home
+resolver's source-Account custody check. Other ordinary approved copies need no
+live Preset certification; retained copies do not require the original Preset
+revision to remain current or a revision-history store. Managed creation still
+resolves its exact admitted snapshot through that same Home owner.
+The parent uses the existing Workflow materialization, exact approved snapshot,
+storage and coordinator. Its native children use the identical public shape
+with a singleton target list. They re-plan before effects, preserve completed
+target outcomes on recovery, and keep current target policy and Manage checks.
+An explicit terminal native failure settles as failed even after earlier steps
+applied, retaining its typed step, exit cause and restoration result. Missing or
+unconfirmed native outcomes remain uncertain.
+Prepared app children retain their canonical deployment input and receipt
+owners, run after setup children release native admission, and do not create a
+second setup consent store or app writer. Catalog preparation runs inside each
+existing target Plan child, using that target daemon's ordinary P45 dependencies;
+the routing host only aggregates the prepared results. The parent review retains
+each target-prepared catalog child's actual preparation facts, indexed by target, source and item,
+including resolved creation defaults and finite capacity observations. It reuses
+the existing preparation read without creating resources. Each catalog app is one
+P45 `deployments.templates.instantiate` composite with `deploy`; Setup refuses
+definition-only children before catalog preparation reads, without restricting P45's
+standalone definition-only use. P45 owns its Environment creation and accepted
+deployment child, rather than Setup appending another deployment block. The signed
+setup preparation projection carries only the selected catalog Source references
+and existing stored-deployment references.
+Its finite read purpose admits those exact Sources, their deployment defaults
+and the defaults' named private Artifact, never a Source or Environment inventory.
+These are unreleased development contracts.
+
+The native owner preflights the whole source list, merges equal toolchain and
+Saved Secret declarations, and refuses conflicts before effects. It writes the
+selected native tool's global configuration as the Happier OS user, then runs
+native installation once and each `setup.scripts` item in attachment order
+through the existing finite terminal/process owner. Each item carries its exact
+`body` and optional `affects`/`check`; bodies are not concatenated or trimmed.
+The canonical stored reader translates a retained singular `setupScript` and
+its metadata into one list item without rewriting the row. Current writes use
+only the list. Each script/check receives only its own source's Saved Secret
+overlay. Capturing several sources into one new Preset copies every script in
+order and combines compatible declarations into that Preset's one reviewed
+overlay; it does not retain separate source overlays inside the new Preset.
+This toolchain/script stage does
 not create a Project or Session, escalate privileges, or install a missing native
 adapter binary. The native install may download the runtimes requested by its
 configuration.
@@ -1457,8 +2881,46 @@ Global installation is characterized only for the same Linux Mise version as
 native environment production above. A script without a toolchain uses the
 ordinary platform shell. Exact Saved Secret bindings are added only to the setup
 process after native environment production, never to tool installation.
+Omitted script impact stays unknown; explicit Docker-engine, `none` and exact
+managed-service impacts use the same single full-key native admission. Service
+keys are read again under that admission before execution. A satisfied script
+check skips that body; an explicitly unsatisfied check runs and verifies the
+unchanged body.
 
-Managed acquisition retains the admitted environment on its existing creation
+Recipe plans also accept literal `script` steps with `shell: 'sh' | 'bash'`,
+exact `body`, optional `check: { body, unsatisfiedExitCodes }` and optional
+`affects`. Their bodies and checks remain verbatim in Plan and its digest; they
+are not templates. The Machine review and agent/MCP approval card share one
+renderer for those literal Plan bodies and checks without resolving Saved Secret
+bindings. The existing elevated recipe interpreter passes those bytes
+to the selected shell on stdin. Native Apply compares each reviewed recipe's
+source/item coordinates and digest with the installed recipe plan before app
+preparation, secret acquisition or native effects; changes return `plan_changed`.
+A zero check skips the effect; a declared
+unsatisfied exit runs and verifies it; other check exits are unavailable.
+Script and check output is drained without retention or an output buffering limit.
+Without a check, successful process exit completes that step, and a later Apply
+executes it again. Windows reports these POSIX shell steps unsupported.
+Ordinary `setup.scripts` remain daemon-user processes. Script checks do not
+invent installation presence: removal uses the existing native footprint's
+proven initial absence; script-only presence stays unknown. Explicit
+recipe-script Docker impact uses the existing native engine impact owner,
+including a positively missing Docker executable on a fresh host. These
+additions are unreleased 0.3 development contracts.
+The bundled Coolify and Dokploy recipes keep the official installer bodies
+literal and check Linux eligibility before the interpreter makes any change.
+Their removals name only vendor resources and retain Docker and shared networks.
+
+Recipe plans use the one setup interpreter and one operation's
+elevated process: all reviewed digests are checked before its first mutation,
+then validated programs execute in order without rejecting their own preceding
+changes. After an effect completes, remaining steps are observed again, including
+steps that were initially satisfied: changing account groups can invalidate a
+running user manager's credentials within the same program. Unsupported native facts refuse execution; schema admission is not
+native support. App intents remain in the saved source copies but execute only
+through the separately admitted app children.
+
+Managed acquisition retains the admitted setup on its existing creation
 row. Set up follows Join; the original first-message continuation waits for
 observed success or an explicit skip. Retry addresses the enrolled guest rather
 than acquiring another resource. Failed-setup Delete reviews the actual Machine
@@ -1466,10 +2928,42 @@ reference census and uses the ordinary Delete Action on that same retained row.
 Declining review preserves recovery; an acknowledged Delete retires the local
 composer continuation without creating a Session or discarding its prompt.
 Apply uses the ordinary Ask-first
-`machines.environment.apply` Action and exact-Machine authorization; managed
+`machines.setup.apply` Action and exact-Machine authorization; managed
 creation delegates through its existing signed creation proof, without granting
-Session admission. Installation and setup output remain associated with that
+Session admission. Its current-only Plan read supplies the actual desired
+revision; an exact retained-source effects Plan prepares the child without
+granting report or unrelated-source authority. The singleton child Apply is
+restricted to the admitted creation snapshot and
+an empty direct source. Installation and setup output remain associated with that
 same Action operation and actual guest, not a fabricated Workspace.
+The current toolchain/script path runs as the host-admitted internal task
+`machine.setup.apply.v1`. Its id is retained in `machineSetup.setupTask` alongside
+the existing installation/setup terminal associations; raw system-task start
+does not expose or accept setup task kinds. Task cancellation reaches the same
+native process owner, which stops the interpreter's owned subprocess tree before
+confirming cancellation. Unverified process termination retains native admission
+and a nonterminal uncertain operation observation. Cancellation leaves already
+created vendor Docker resources in place. The task does not add another native admission or
+replay interrupted work.
+
+Correlated `machines.setup.adminAccess.set` reconciliation uses that same task
+owner. Ask adds the existing nonsecret `sudo.password` descriptor to
+`machineSetup.setupTask`, keeping the original operation running until its answer,
+cancellation or currentness loss. The shared reboot/setup response validator
+consumes Home-admitted person authority and exact original admission; Account
+automation is not person attendance. The password travels only through the
+existing private capabilities response to local sudo. Legacy operation pushes
+remain projected: the existing qualified V2 read supplies the current descriptor
+to the semantic response hook. The secure rendered answer consumer remains an
+integration handoff, not a completed UI claim.
+
+Before native effects, Apply rechecks the captured desired field; unrelated
+outer metadata writes remain compatible with the existing field CAS. Equal
+desired sources do not republish metadata. An optional operation Preset reference
+identifies only a real managed creation origin, not an arbitrary attachment.
+After a failed completion report, reviewed retry can read that exact pending or
+failed snapshot's origin through the existing signed Home Resolve purpose. This
+read neither certifies supplied attachment copies nor reloads a live Preset.
 Retained snapshot reads require access to the managed row's controller; setup
 stage reports require controller Manage as well as guest Manage. A guest-only
 grant does not disclose a private controller preset or mutate its creation row.
@@ -1477,6 +2971,225 @@ grant does not disclose a private controller preset or mutate its creation row.
 These are development-source contracts. Shared-development migration deployment,
 integrated package validation and composed loaded-runtime qualification are
 owned by the corridor integration boundary, not evidence of released availability.
+
+### Privileged Machine effects (0.3 development)
+
+The fixed `machine effect-internal` entry consumes one closed CHECK or APPLY
+request on stdin and delegates to cli-common's Machine setup interpreter and
+digest owner. Already admitted administrator transitions and reboot send their
+closed native intent in one APPLY frame. The same interpreter observes current
+native state and executes it, without a host CHECK→APPLY round trip or fabricated
+plan observations. Isolation retains its reviewed native-identity dialogue.
+Bootstrap binds retained enrollment admission; online requests
+also correlate Machine, installation and operation. Isolation uses its reviewed
+Machine field intent (`enabled` and `expectedPolicy`), not a fabricated
+desired-setup revision. Its own subsequent metadata CAS does not change that
+accepted basis. For setup, bootstrap, administrator transitions and reboot, the
+digest binds the operation's basis, steps and selected checks; native
+observations do not change it. An edited operation refuses before native reads.
+Each elevated batch entry carries its plan and that plan's single digest.
+Accepted Workflow and approval inputs with the earlier full-plan digest remain
+readable through the same integrity owner, without rewriting their recorded
+input. New plans use the operation digest.
+Apply observes the current native state once before its first effect, and native
+ownership, identity and support refusals still apply. Isolation retains its
+existing observed-facts digest until its retained UID/home and retirement-lock
+proof moves into the root-side admitted intent.
+This development wire does not establish isolation runtime readiness or native
+material-lifetime correctness.
+
+In 0.3 development, connector-token retirement uses the existing file step with
+`state: 'absent'` and `content: { kind: 'secretGrant', grantRef }`. The same
+invocation-private grant session and installed materializer open the expected
+bytes once per Apply invocation, reusing that opening for comparison, mutation
+and verification until the invocation disposes it. A separate Check has its own
+opening. The native file owner requires the existing root:root `0600` protected
+path and removes only an exact byte match; a foreign file stays a typed conflict
+and a missing file is already satisfied. Current and expected private buffers
+are zeroed and the materializer disposed on success or refusal. No secret-derived
+digest, plaintext, new grant kind or retirement store enters the plan or events.
+Ordinary nonsecret file retirement retains its prior reviewed-digest contract.
+This is the existing closed V1 development grammar, not a released compatibility
+or loaded Domain-consumer claim; earlier strict readers refuse the new pairing.
+
+An ordered reviewed package-source change may establish availability for later
+packages using that manager. Preflight retains the admitted operation and
+defers that specific package-availability refusal until after the
+source effect, when the interpreter rechecks the package before installation.
+An already satisfied source does not excuse missing packages, and packages still
+unavailable after the source update remain refused. Manager, pin, architecture,
+authority and native-lock refusals retain their existing checks.
+
+If effects change after the desired-field CAS, the existing Action operation
+retains the committed intent and fresh exact-Machine review. Resubmission uses
+the same Action request identity: its declaration admits only the newly reviewed
+policy, version, requested value and digest, then resumes that operation rather
+than creating another receipt. Unknown elevated outcomes are not replayed.
+Isolation's unconfirmed native result uses the shared `outcome_unknown` failure
+contract, retaining the original operation's uncertainty. A successor daemon
+observes current native facts through a fresh CHECK; a newly reviewed request
+does not repeat already-satisfied native effects. No restart receipt or
+successor reconciliation store is introduced.
+The existing V1 operation projection omits these development-only observations.
+
+The isolation review also binds canonical Workspace references, exact ancestor
+traversal additions and the current runtime-replacement count. The target daemon
+rechecks that review before the field CAS and the same elevated interpreter
+checks native facts before APPLY. The typed workspace effect preserves owners
+and executable bits while configuring shared group access. Exact Git trust and
+shared-repository configuration apply only when Git metadata exists at that
+reviewed Workspace root. Plain folder Workspaces need no Git configuration;
+initializing a repository changes the native review basis. Setup never configures
+an enclosing repository outside that root and does not enroll another path.
+Provisioning publishes `applying`, not
+`effective`: native launch, custody, socket/bearer and admin-denial observations
+remain necessary. In the current 0.3 development source, the daemon's ordinary
+isolation Apply path then invokes `observeAgentIsolationNativeReadiness` only
+after a fresh satisfied setup CHECK and zero unreplaced Sessions. It uses the
+same managed RunAs shim/frame and local socket ACL/bearer owner for a finite
+native capability probe: separate UID/groups, HOME and umask, binary access,
+private-state/root-sudo/host-Docker denial, binary output, authenticated socket
+access and shared Workspace create/edit. The probe endpoint has no Session
+tools or Account authority, retires before publication, and creates no Session
+record. Missing native tools or a failed boundary stay typed unavailable; no
+timer retries the probe. The handler rechecks current admission, policy and
+Workspace census before publishing through the existing daemon-state field.
+Already-effective/satisfied Apply does not probe or republish. A daemon reload
+still needs fresh qualification; retained prior-runtime facts never admit a
+launch. Connection-ready publication claims the current daemon runtime and
+withdraws predecessor isolation proof; reconnecting that same runtime retains
+its qualification. The replacement census counts every retained Session until
+the existing actual-exit observer completes retirement, including stop-requested
+and paused runners. Equal satisfied Applies waiting on those Sessions publish
+no artificial phases. Probe cleanup failures are logged separately while
+preserving the native refusal or cancellation, and cannot establish effectiveness.
+This source contract is not a completed loaded-native certification.
+Native Session launch consumes the incumbent materialization
+lease and live Session MCP context through the host-issued native qualifier and
+private runner transport; the public Exec request cannot supply either authority.
+Turning isolation off reviews the current replacement count and retires only the
+verified managed bootstrap and member RunAs sudoers drop-ins through the reviewed
+elevated plan. Member inventory comes from the existing private bindings. Revoke
+withdraws the exact producer-derived member rule at its natural lifecycle boundary;
+damaged account or binding state does not prevent exact-file withdrawal. Every
+removal requires matching Happier content, root:root ownership, mode 0440 and no
+symlinks through the existing native file owner. An
+unavailable checkout census, daemon identity or elevated CHECK does not block this
+explicit policy recovery; unavailable native inspection leaves every resource
+retained with `native_check_unavailable` and removes nothing. Other residue is
+reported with retention reasons and administrator remedies; existing permissions
+are not rolled back or reported as such.
+
+Dedicated enrollment uses the same entry for Ask's reviewed administrator
+account. APPLY carries a nonsecret step/user selector, followed by one transient
+`administrator.establish` stdin frame bound to the operation, plan digest, step
+and username, then EOF, only when setup creates that account. Existing accounts
+keep their OS password verifier; the ordinary sudo-password prompt uses their
+existing credential. Plans, argv, environment and retained events contain no password.
+After Join, the creation driver records the reviewed mode through the ordinary
+`machines.setup.adminAccess.set` Action on that exact guest. It extends the
+existing managed-creation continuation, keeps its request correlation, and uses
+field comparison against initial None. Home checks plaintext policy against the
+retained review; the receiving daemon checks opened E2EE input against the same
+row before metadata CAS. Desired publication does not prove a host grant or
+native launch readiness.
+
+Administrator and isolation children can require ordinary Action approval.
+Creation observes the exact child's recorded execution through the existing
+requester-private approval observer and Account change push path. An approval
+Artifact or dispatch ACK is neither a mutation receipt nor an unknown native
+effect; acquisition waits for the actual decision and execution result. Missing
+requester observation context refuses rather than bypassing consent.
+
+Dedicated server and deployment-Target creation also initializes desired Agent
+isolation through the guest's ordinary preview/set Actions, after administrator
+policy recording and before the first Agent. Dedicated enrollment requests
+`enabled: true`; it does not infer `memberProvisioning: linuxUsersV1` from the
+daemon identity. Member provisioning requires an explicitly declared isolation
+template. A preview matching the effective policy, with no administrator effects
+or Sessions to replace, completes this bootstrap step without set or approval.
+The isolation set Action refuses an outdated reviewed metadata version as a typed
+conflict at admission, before requesting approval. A daemon restart retains the
+policy and native setup but invalidates readiness proof from the old runtime.
+When preview finds the unchanged shared-Agent setup needs no administrator
+effects or Session replacement, it runs the existing finite native qualification
+and publishes its actual result; it never resets native setup to make status fit.
+Cancelling the containing bootstrap withdraws an open child approval through the
+approval owner's conditional transition, without overwriting a completed decision.
+Retry recovers the retained original
+creation identity and uses that same isolation initialization. When recovery
+first enrolls the guest, it records the reviewed administrator policy first;
+an already-enrolled retry never replays that writer or regrants a deliberately
+changed policy. The new retry request id and retained original creation id stay
+distinct. Home and the receiving guest check the retained
+dedicated role, controller installation, intent revision and enrolled target.
+Both signed and local Account creation carry the existing managed-continuation
+marker. At the field owner, this restricts automatic initialization to an absent
+policy or resuming its own enabled policy: an explicitly stored off policy returns
+conflict, including during field-CAS rebasing. Personal/adopted enrollment keeps
+the ordinary missing-field off default. Initialization can remain `applying`;
+native readiness and runtime replacement still own effective status and first-Agent
+admission. A previously enrolled guest whose administrator policy was never
+established still needs that existing administrator setup prerequisite.
+
+Daemon startup or reload does not upgrade an enabled-only isolation policy into
+member-provisioning consent. An explicit bootstrap Retry can apply that reviewed
+policy to an already-enrolled dedicated guest through the same preview/set
+Actions; a fresh Create is not required.
+
+The native apt observer treats dpkg's known `not-installed` rows as installable
+drift even when their version and architecture columns are empty. Installed
+rows still require both fields; malformed observations remain unavailable.
+The shared setup interpreter, not enrollment, owns the resulting installation.
+
+### Machine reboot admission and recovery (0.3 development)
+
+`machines.reboot` is the sole reboot effect, bound to the reviewed Home,
+Machine and `expectedInstallationId`. It uses the existing dangerous-Action
+default Ask policy and P10 `runElevatedEffect`, never a raw reboot command or
+carrier power operation. Linux/systemd is the implemented native path; other
+platforms explicitly refuse unsupported effects rather than using a fallback.
+
+The existing confirmation preparation reads the initiating Account's exact
+deployment references and ordinary Machine service observations. Its
+`machineRebootReview` includes the reviewed installation, paged deployment
+Environment names and roles (including edge), and the service-list result.
+Missing or partial reference coverage remains visible; it is not proof of no
+roles and does not create another approval floor or maintenance veto. This read
+does not require managed-allocation, Artifact, Profile or pool access. The current
+service observation does not supply a restart-policy fact; presenters must not
+infer one from a running service or a native unit name.
+
+Before reading fresh maintenance eligibility, the target acquires its own
+temporary contribution at the existing `DaemonAdmissionDrain` and closes the
+same native-effect admission owner. Incumbent asynchronous Session/Execution
+Run startup remains visible to the all-owner inventory. Only the requesting
+reboot operation is excluded; other finite work, transitions and unknown
+maintenance coverage block. Settled long-running services do not. Ask's final
+dispatch boundary rechecks maintenance and the exact installation. Pre-dispatch
+refusal or cancellation releases only this operation's contribution; possible
+dispatch retains closure until OS handoff. It is never automatically retried.
+
+Acceptance identifies the existing Action operation and the captured pre-boot
+`host.bootedAt`; it does not mean the Machine or its services have recovered.
+Before the irreversible dispatch frame, the existing encrypted/plain operation
+push carries that boot fact and the expected running service identities to an
+admitted holder outside the rebooting host. The target daemon's in-memory
+operation store is expected to disappear. A surviving initiating client
+(`useActionOperation`) or controller re-observes ordinary admitted Machine boot
+and service facts after reconnect: changed boot, the same installation and
+positively restored expected services settle success. Healthless running is
+reported as running-unverified, not invented health. Missing before-facts,
+unavailable or failed restoration, or loss without a surviving holder remains
+explicit `outcome_unknown`. Service and Domain recovery stay independently
+observable. There is no reboot ledger, persisted token, timer, replay or new
+server-visible operation fact.
+
+An administrator password question is the existing parent-operation
+`sudo.password` continuation, not another Action or reboot argument. Its task
+reference and nonsecret administrator username are operation presentation data;
+the password is transient through the existing admitted system-task response
+path, never saved in operation metadata, argv, environment or logs.
 
 Development Software Apply retains the elevation owner's closed failure kind and
 optional native reason in `error.details` with `kind: 'machineSetup'`. Combined
@@ -1523,11 +3236,12 @@ Shared Docker state has no automatic Remove.
 `machineProvisioners` family. Its acquire role runs Devcontainer `up`; native
 Docker inspection and child execution then establish the actual container id,
 OS user, workspace root, bind source and named volumes. Discovery never runs
-initialization or lifecycle hooks. Running namespace inspection uses Devcontainer
-exec, which may execute configured environment-probe shell startup; the same
-reviewed-effect guard therefore runs before inspection IO. Stopped/paused
-inspection remains passive. Private bootstrap exec/file roles address the
-retained container id and recheck its namespace before delivering bytes. Binary
+initialization or lifecycle hooks. Retained-resource inspection uses Docker
+facts and remains passive for running, stopped and paused children. Private
+bootstrap exec/file roles address the retained container id and recheck its
+namespace before delivering bytes. That namespace check uses Devcontainer exec,
+which may evaluate configured environment-probe shell startup, so its reviewed
+effects are checked before the native command. Binary
 installation, credentials and registration remain with the ordinary managed
 enrollment owner in `machines/managed/enrollment.ts`.
 
@@ -1565,13 +3279,21 @@ triggers placed on the admitted controller, not fields on the managed row. Their
 single managed Action selects the row's current revision when it fires. The
 installed controller operation owns after-idle waiting even after FIN accepts
 the leaf. Its signed Action root retains the assigned FIN Run and exact request;
-Home rechecks the canonical trigger revision, exact admitted workflow recipe
-receipt and source occurrence. Replacing or resealing that stored recipe retires
-the old unused effect; Home does not decrypt it or infer content equivalence.
-Clearing or changing that trigger, unarchiving its source Session, or revoking the admitted
-authority closes the pending effect. A later archive cannot revive the earlier
-occurrence. Native custody rechecks currentness after credential and idle awaits,
-before Stop/Delete IO. A definite pre-IO refusal retires its submitted tuple and
+Home admits the canonical trigger revision, exact workflow recipe receipt and
+source occurrence once for the finite operation. Native roles consume that
+admitted custody and local cancellation, without another managed-row read.
+Replacing or resealing that stored recipe before admission retires the old
+unused effect; Home does
+not decrypt it or infer content equivalence. Clearing or changing the trigger,
+unarchiving its source Session, or withdrawing authority refuses the next
+admission. A later archive cannot revive the earlier occurrence.
+Home admission precedes the final guest idle confirmation; FIN source retirement
+is checked through the requester source projection after that confirmation,
+without another managed-row read. A controller change during an admitted drain
+does not reopen it: the drain completes under its captured controller, and the
+next request refuses. Fresh and recovered accepted Delete share one observer
+with one authoritative row read per deadline wake. Explicit cancellation still
+stops local work. A definite pre-IO refusal retires its submitted tuple and
 reopens the drain; an uncertain issued effect retains recovery custody. Reporting
 the exact already-submitted native fact is permitted without renewing effect
 authority. Existing FIN lifecycle, Action operations and Account socket changes
@@ -1751,9 +3473,18 @@ dictation. `voice/modelPacks/catalog.ts` owns the default; the Local STT setting
 schema and Dictation's shared STT schema resolve through it. Explicit persisted
 pack choices are preserved, including the still-published February 2023 20M pack.
 No model is installed automatically; the Settings installer fetches the canonical
-integrity-declared manifest. Parakeet v3 is an optional multilingual batch pack;
-Parakeet v2 remains unavailable until its publication and runtime prerequisites
-are met.
+integrity-declared manifest. In 0.3 development, Parakeet TDT 0.6B v3 int8 is an
+optional multilingual **batch** STT pack through the same installer and daemon
+runtime. It does not provide streaming partials or replace the conversation
+default. Its normalized files, CC-BY-4.0 license and attribution notice are
+published in the existing model-packs release. Parakeet v2 remains unavailable.
+Catalog language codes and compressed upstream archive bytes are distinct from
+the normalized install transfer size, loaded model-file bytes and process memory.
+Unknown catalog facts stay unknown. The daemon model-status snapshot's optional
+`inUse` fact comes from its existing active/queued inference and stream leases;
+selection and loaded readiness do not imply use, and older omission is unknown.
+The model picker and model-inspection Action consume the same catalog projection;
+Download and Retry share the existing install operation, and Delete shares remove.
 Binary speech grants authorize the speech application, not a TCP destination port;
 see [peer mediation](peer-mediation.md).
 Streaming PCM capture shares the sender's existing packet coalescer on binary
@@ -1789,6 +3520,22 @@ serialized diagnostics remain redacted.
 Semantic output segmentation and character/UTF-8 budgets are owned by the shared
 Protocol speech policy and the selected provider's declaration, described in
 [plugin platform](plugin-platform.md#batch-speech-output-03-development).
+
+In 0.3 development, the file-transfer owner enforces the STT upload byte limit
+when admitting an upload. Live PCM streams, including the batch-inference upload
+bridge, use outstanding frame/byte credit rather than a cumulative upload limit;
+the worker validates the resulting audio file without reapplying upload admission.
+Provider settings catalogs preserve valid results without host-invented item,
+serialized-byte or preview-URL length ceilings. Preview URLs still require HTTPS
+and cannot contain username/password credentials.
+
+Model-pack downloads accept HTTPS mirrors, including private-network destinations,
+without DNS pinning, origin fences or a custom elapsed-time deadline. Cancellation,
+streamed SHA-256 and declared-size verification remain at the installer. Installed
+packs are read without repeated file hashing or fingerprint caches; explicit
+adoption from another directory retains its integrity admission. A pending public
+pack promotion from another Account/Machine scope remains untouched until that
+scope returns to recover it, and does not block unrelated Voice worker startup.
 
 Public daemon model-pack metadata retains optional `lastUsedAt` (epoch
 milliseconds), exposed by `DaemonPublicVoiceModelPackRuntime.list()`. The voice
@@ -1828,6 +3575,44 @@ whose Account custody is proven by the incumbent requester owner. Inventory and
 scan paths remain in Machine RPC payloads, not Machine metadata or broadcast Sync;
 the user's protected-folder policy is the exception described below.
 
+Storage summary and category discovery skip paths denied by native `EACCES` or
+`EPERM` while retaining readable items and totals. Their optional `incomplete`
+issues identify only the affected category, `permission_denied`, and the remedy
+`grant_admin_access_or_run_as_machine_owner`; they never disclose the denied path.
+Affected category sizes are lower bounds, not known-empty storage. The UI keeps
+readable data visible with the permission explanation and access remedy; retry
+replaces the incomplete result once access is restored. Effect failures still
+settle at the Storage RPC owner as `storage_permission_denied`, retaining the
+native code and `storage.owner` phase in the existing Action failure-cause carrier.
+The shared Action result projector carries legacy typed
+`details.kind: actionException` into `failureCause` before an RPC wrapper can
+replace it; an explicit current `failureCause` takes precedence. The UI translates
+typed `EACCES`/`EPERM` causes into the same permission explanation and retry remedy.
+An old daemon may instead return only an untyped error string. Storage displays
+that Machine's error reason without inferring a native code, and adds the existing
+CLI update guidance when the published version is below the supported minimum.
+
+Scan reads apply the same partial-read contract to the selected volume's Trash.
+Each platform's native filesystem classifier also applies to the selected scan
+root, including resumed scans. On Linux, read-only and pseudo/cloud filesystem
+boundaries are skipped before directory enumeration. Darwin's sealed root remains
+scannable; this change adds no Windows read-only volume policy. A refused root
+retains its native reason and incomplete coverage,
+instead of a completed empty scan. The UI explains that reason and offers a
+writable folder or disk. Trash discovery never creates per-mount Trash directories;
+mutating Trash operations retain their existing eligibility and permission checks.
+Storage parses incoming RPC inputs at the request boundary and returns the
+service's typed replies without re-validating its own results. Recipient filtering
+and the canonical public-item projection still remove private owner bindings
+before disclosure; removing redundant reply parsing does not remove that projection.
+
+The pile store retains dropped-item reasons until explicitly acknowledged; summary
+and detail reads never consume them. The existing dock's Done action sends the
+displayed item ids through `machines.storage.pile.set` (`acknowledgeDropped`),
+clearing those reasons in the Account's machine-local pile for every projection.
+A prune detected by a read advances Storage once; reading retained reasons again
+does not advance the revision or wake parked watches.
+
 Storage keeps the dispatcher's initial Home admission, then verifies current
 Machine authority at two boundaries: the service's effect callback, after local
 owner initialization, policy and Session-custody awaits, and the RPC handler
@@ -1843,6 +3628,12 @@ recording, process-use and temporary-custody facts. Worktree retention goes thro
 the canonical SCM registry and repository queue. Main checkouts, live use, changed
 files, unpushed commits, unsaved drafts and open pull requests produce Keep reasons;
 unknown change facts remain unavailable rather than an invented stable fingerprint.
+Deployment roots and their release/shared bytes remain Forbidden to generic
+Storage, including aliases into active or retained server-profile deployments.
+The deployment path owner supplies their placement; Storage may resolve a symlink
+leaf only to recognize this exception. Cleanup still retains the original leaf
+identity, and ordinary symlink leaves keep their existing no-follow behavior.
+Deployment retention, not the generic pile or Trash, owns removal of these bytes.
 An unavailable or partially resolved Project snapshot marks affected category
 sizes `atLeast`; it is not reported as a known-empty catalog. Resident model packs
 borrow the actual inference worker's ready/warming state, including paths passed
@@ -1875,22 +3666,50 @@ The existing Keep confirmation/approval rules still apply, and Forbidden is
 never removed.
 The daemon projects the ownership runtime's existing census through
 `daemon/resources/projectStorageProcessUse.ts`: Happier-owned work holds its
-workspace, cwd, executable and absolute arguments, with live Session bindings;
-other processes hold their cwd. The census exposes cwd only for same-principal
+explicit workspace, executable and absolute arguments, with live Session bindings;
+all processes hold their cwd and its ancestors. The census exposes cwd only for same-principal
 processes on Linux/macOS; Windows has no per-folder cwd protection for other
-programs. Standalone cwd facts protect the held folder and its ancestors, rather
-than every child folder below a program's working directory. The private
+programs. A daemon or helper's ambient cwd does not protect every child folder;
+an explicit Session workspace still protects its subtree. A plain
+terminal's initial workspace is also a cwd fact, not a recursive workspace hold;
+opening a terminal in the home folder does not mark all new descendants in use.
+The private
 `StoragePathUse.cwdPaths` observation flows through category, physical-protection
-and scan projections; Happier's existing subtree holds remain `paths`.
+and scan projections; workspace and executable/argument holds remain `paths`.
+Directional cwd Session bindings retain the holder's loss/stop attribution without
+promoting that cwd into a workspace hold.
 This projection performs no second census.
+Summary RPCs and watches publish two previews of at most eight rows each: the
+largest verified suggestions and the largest Safe suggestions. Eight matches the
+largest bounded Suggestion widget presentation; the Storage tab shows three.
+Safe-only widget readers use `suggestionsSafeTop` (falling back to the mixed
+preview on older replies), so larger Caution items cannot imply no Safe items exist.
+The Safe preview's total count and summed frees bytes retain the Suggestion
+widget's full-inventory headline while its rows and collect operand stay bounded.
+`suggestionsTotalCount` reports the full eligible count after Account visibility,
+fresh protection and declined-item filtering. The existing `suggestions.list`
+Action serves the full inventory. The service retains its verified inventory with
+the sizing observation so filtering precedes preview selection and does not
+truncate category or per-volume Safe-union measurements.
 Resource proposal cards, pile group/range sweeps, low-disk preparation and Review
 share `storageVerdictSelection.ts`: only Safe starts selected. Caution, Keep and
 Check start unticked; Forbidden is listed as staying, without a checkbox.
 An unchanged verdict preserves an explicit Review choice across a re-check;
 a changed verdict takes its new default. Category and protection loss facts
 are merged at `storageOperations.ts`, retaining detailed holder facts once.
-`parkWatch` parks on revision edges without a storage sizing timer. The UI storage
-data store shares demand/subscriptions through `createSharedSubscriptionStore`.
+While Review is open, the pile dock uses Review's selected-plan frees preview,
+including its native full-selection union rather than summing exclusive root sizes.
+Outside Review, the pile remains the daemon's collected-inventory forecast.
+Folder shortcuts come from the daemon's verified existing directories: known OS
+folders, project roots and tracked session folders. Historical client session paths
+are not a second shortcut source. These checks run with measured Storage summaries,
+not on a client timer or once per rendered row.
+`parkWatch` parks on revision edges without a storage sizing timer. Scan progress
+advances that watch cursor, while the producer retains independent content revisions
+for each category, item lists and the Account-scoped pile projection. The UI storage
+data store shares demand/subscriptions through `createSharedSubscriptionStore` and
+uses those producer revisions to refresh only changed details. Scan pages still
+follow scan progress; unchanged Logs, Trash and pile facts require no detail reads.
 Storage forwards `availableIncludingPurgeableBytes` only when that sampler reports it.
 The capacity bar distinguishes this reclaimable space from free-now space and from
 Happier's cleanup candidates; an absent fact remains unknown. Review's disk-attention
@@ -1925,6 +3744,13 @@ effects can continue without accepting a new or changed descendant. Only exact r
 loss contributions of successfully retired children are normalized; a fresh Safe empty-folder
 proof can account for the generic unknown-content fallback becoming empty, but cannot
 hide changed holder or protection facts.
+The catalog owns descendant verdicts and nested worktree fingerprints; category readers
+produce intrinsic facts. Pile selection, Review and Apply share the Pile owner's minimal
+physical union. Each cleanup operation acquires one initial catalog inventory, then uses
+page-scoped current target/descendant facts and lifecycle binding at subsequent effect
+boundaries. It does not reuse an old file identity, SCM fingerprint or protection verdict
+as effect authority. Suggestion reads observe Account declines once per candidate batch;
+person-facing suggestions do not read decline history.
 Batch Undo restores the container before its nested owners. Main-checkout removal
 remains unavailable at the current SCM owner: moving its common Git directory would
 invalidate retained registrations. Review exposes that specific lifecycle limitation;
@@ -1940,6 +3766,9 @@ Category adapters preserve managed-session/model-pack/SCM ownership rather
 than bypassing it with generic filesystem mutation. Restore uses the existing native
 helper's atomic no-overwrite operation; an occupied destination is refused. Move,
 empty and Undo receipts consume the shared Activity log, not a storage-local journal.
+Manifest receipt flags suppress ordinary retries. A crash between Activity append
+and manifest/cleanup settlement may replay a deterministic receipt ID; the Activity
+reader folds that ID once, so receipt writes do not reread the retained journal.
 Generic temporary-directory retirement moves the validated sibling owner marker
 beside the payload inside that entry. Put back moves the same marker to the restored
 path without replacing an existing file, preserving the creator's process witness
@@ -2052,6 +3881,17 @@ baseline stays inside the current database; it does not advance the previous
 complete scan. Prior-size hints are streamed into a transient NDJSON projection
 for the helper and disposed after the invocation, not retained as a third index or
 loaded as a daemon-side tree.
+Completed child scans retain their parent's complete comparison snapshot while
+the replacement baseline and completed target both belong below that parent.
+Returning to the parent
+uses that snapshot for both `previousScanAt` and node deltas; repeated child
+scans do not silently advance the parent's baseline. This reuses the current
+database's baseline tables and the existing previous database. A retained
+snapshot of another target does not supply that target's comparison date;
+existing row-level comparisons still admit independently readable subtrees.
+While a scan runs, its progress is at least the committed target-root size and item
+count already visible in the index; a late native heartbeat cannot reset that
+visible work to zero. Interrupted and completed scans report the retained target.
 
 Replacement admission still copies the retained baseline, so its total work is
 proportional to that baseline. It yields by a row count derived from the actual
@@ -2181,6 +4021,25 @@ carrier, not permission to bypass current Pile admission or physical classificat
 
 ### Local-service Machine summary (0.3 development)
 
+Adopted native-service intent lives in Machine metadata's `serviceWatchesV1`
+field. Its closed declarations contain a watch id, name, plugin-qualified native
+identity and deliberate lifecycle purpose, not observed health, generations,
+logs or Environment ownership. Writes use the existing metadata-field CAS owner;
+the UI reads the retained field through `useMachineField`. The managed-services
+owner places adopted observations in its existing semantic entries. Unwatch and
+daemon observation disposal detach without stopping the native resource; an
+unsettled admitted control retains custody until it settles.
+
+In development source, native Compose observations share an event connection
+per resolved Docker endpoint and reconcile changed container ids in batches.
+Disconnect makes observations unknown; recovery uses the existing health
+cadence only while disconnected. Native accounting is a finite, demand-only
+sample of admitted full container ids, distinct from host process attribution.
+Concurrent readers share only the pending sample, not a metrics cache; list and
+snapshot reads do not sample. Missing native metrics remain null. This source
+contract does not establish built-in Machine adapter availability, P41 readiness
+window integration, Processes-tab attribution or loaded-runtime certification.
+
 Plugin managed-service lifetime remains at
 `plugins/runtime/invocation/services/managedServicesOwner.ts` and the incumbent
 `managedProcessSupervisor.ts`. An owned endpoint-free process is Running without
@@ -2192,6 +4051,14 @@ stop retains custody. Runner transport is not a second native-lifetime owner.
 These contracts do not establish that the Project declaration starter, accepted
 root discovery, requester attribution or shared sessionless previews are complete.
 
+Retained Session-runner managed-service cleanup also retries on the daemon's
+existing serialized heartbeat. The durability owner requires fresh native
+ownership proving the exact server generation belongs to an ended owner; live
+Session replacements, unknown ownership and independently live descendants
+prevent retirement. It rechecks that authority before signalling and retains
+the projection until process/containment absence is verified. This does not stop
+idle Sessions or enable Guard's separate Left-behind policy.
+
 The daemon pushes `daemonState.localServices` through the existing Machine-state
 transport. `LocalServiceMachineSummaryV1` is a small strict presentation union:
 `ready` carries a nonnegative `runningCount`; `unknown`, `error`, and `disabled`
@@ -2199,8 +4066,9 @@ carry no count. Missing or malformed projections remain unknown to readers.
 This is a retained presentation observation, not an independently refreshed live count.
 
 The local-service inventory runtime owns the projection and its stable reference.
-It counts current listening user services with the shared listener grouping rule,
-combining loopback/wildcard bindings and excluding proven Happier internal services.
+It counts recognized development-server listeners through the same Protocol-owned
+candidate rule as the Services launcher, combining loopback/wildcard bindings with
+the shared listener grouping rule. Unclassified and low-signal sockets are not Services.
 Preview registration alone does not establish a listener. The Machine publisher
 subscribes passively to that runtime; publishing a Machine row does not demand
 inventory polling. Parked inventory readers demand the existing scan loop, and
@@ -2210,6 +4078,24 @@ reconnect and Machine-client replacement republish the current projection. Defer
 transport/CAS handlers read the current runtime summary when they execute.
 
 ### Agent installation commands (0.3 development)
+
+Managed Agent binaries, runtime dependencies, archive/wheel installs and the
+configured ACP install inventory share
+`packages/cli-common/src/agents/managedToolsRoot.ts#resolveManagedToolsRoot`.
+It appends `tools` to the first-party install-home owner's result. Dedicated
+installations therefore use `HAPPIER_FIRST_PARTY_INSTALL_HOME` for both CLI and
+tools payloads while `HAPPIER_HOME_DIR` continues to locate private daemon state.
+Without the install-home override, personal installations retain their existing
+`<Happier home>/tools` layout. Installation, validation, detection and launch
+consume this resolver; consumers do not construct a private-home fallback.
+
+This layout agreement is a development-source contract, not proof of native
+payload permissions or update continuity. The daemon must be able to replace its
+managed payload while the Agent can read/execute it without writing tools, CLI
+versions, activation links or shims. The existing person-triggered Updates task
+`cli.update.v1` remains the updater; there is no automatic-update path implied
+by this layout. The composed managed-update check must observe the replacement
+daemon and a new isolated Agent while the same deployed app continues serving.
 
 The dedicated `happier agents install <agentId>`, `happier agents update <agentId>`,
 and `happier agents setup` commands submit software mutations to the local daemon's
@@ -2476,27 +4362,30 @@ this is not an automatic orphan sweep or evidence that their children stopped.
 
 The successful claim grants the Automation executor its existing lease duration;
 renewals use the existing heartbeat endpoint and retain its server-returned expiry.
+Current development claim and renewal requests honor the requested positive
+integer duration, without a separate local minimum or maximum lease policy.
 Transient transport/server failures keep observation alive only within that
-confirmed lease; a successful renewal replaces the expiry. Definitive refusal,
-revocation, worker cancellation or expiry ends observation. The heartbeat's one
+confirmed lease; a successful renewal replaces the expiry. Definitive lease refusal,
+worker cancellation or expiry ends observation. The heartbeat's one
 timer also observes expiry while a renewal request is pending, so a lost
 or late response cannot extend the lease or resurrect an expired claim.
 In 0.3 development, healthy renewals retain the configured cadence (15 seconds
 for the default 30-second lease). A claim delivered with less than one cadence
-remaining renews immediately. Each attempt gets half the remaining confirmed
-lease. Only transient retries shorten their spacing, using one third of the
-remaining lease at attempt start, bounded by the configured cadence and the
-existing one-second floor. The same timer cancels publisher-proof waiting and
-HTTP at that deadline; proof preparation consumes the HTTP budget,
-which also retains its existing request ceiling. A transient failure resumes a
-missed retry tick serially; requests never overlap.
+remaining renews immediately. Publisher-proof waiting and HTTP share the
+confirmed lease expiry, without a shorter attempt or HTTP ceiling. Proof
+preparation consumes that same remaining budget. After a transient failure,
+the next serialized attempt uses the configured cadence or half the remaining
+lease, whichever is sooner; there is no separate minimum retry interval.
+Requests never overlap.
 Neither an unavailable server nor a late proof extends the confirmed lease.
-Authorization and control reads remain serialized independently of renewal;
-a slow read cannot withhold the next heartbeat, and its eventual refusal still
-aborts the claimed execution.
+New Run and Action admissions authorize their caller at the owning ingress.
+Already-admitted Workflow leaves and lease renewals do not re-list API tokens
+or re-evaluate accepted authority. Input release retains the server's active-Run
+admission check; pushed Stop closes the executor's local abort signal, including
+during preparation. Revocation is enforced at the next new admission.
 Local-file observations carry the Run, Machine and claim attempt with each
 failure, expiry, stop and late response; healthy starts and successes stay quiet.
-Timer due time, last confirmed expiry and pending renewal/currentness state distinguish a late
+Timer due time, last confirmed expiry and pending renewal state distinguish a late
 timer from a pending request. The existing transport separately records
 publisher-proof preparation, HTTP dispatch, response or decode failure, using
 only timings, status and structural error classification. No proof, token,
@@ -2565,6 +4454,11 @@ iteration does not claim that the whole loop is complete. This uses the existing
 lean root envelope, not a per-row history/detail read. Active rows reuse R22 and
 the existing viewport-demanded live map. Neither scheduled
 occurrences nor transcript event order manufacture a Run or step identity.
+In 0.3 development, the executing store also projects `stepProgress.skipped`:
+within settled authored stages, only observed completed leaves count as finished;
+untaken alternatives and unexecuted empty-loop bodies count as skipped. Run detail
+and lean rows consume that projection without inferring skips from a count gap.
+Older retained projections without the field leave the skipped count unknown.
 Upcoming occurrences open the existing trigger or workflow detail; admitted
 occurrences open their Run. Transcript first display batches exact Run ids and
 invocation references through the same lean `workflow.run.list` owner, including
@@ -2605,12 +4499,67 @@ still active. `scopeSessionId` retains Session-trigger identity and serializatio
 not capacity authority. Old accepted snapshots derive these projections from
 their frozen leaves when the added fields are absent.
 
+In 0.3 development source, initial direct Workflow Run admission freezes its
+per-Run Machine assignment and publishes the queued hint to that exact Machine
+after commit through the existing Automation Run publisher. It needs neither an
+Automation definition nor a managed-controller target. The separate managed
+controller wake retains its power-activation purpose; it does not deliver work
+to an ordinary Machine's claim loop.
+
+Machine startup, reconnect and publication resume request authoritative work
+catch-up through that same worker claim loop before unrelated peer/metadata
+publications. Changes-feed recovery delivers one work invalidation per consumed
+Automation or Workflow Run batch, including cursor resync and an accepted prefix
+before a later-page failure, before acknowledging its cursor. Broad settings,
+provider and webhook invalidations do not request claims. A later real work batch
+can request another catch-up; these hints carry no per-Machine queued-state proof.
+Successful assignment reads arm no periodic reconciliation. Push carries assignment
+changes; reconnect and changes-feed recovery request authoritative catch-up. The
+worker's single claim timer serves scheduled assignment deadlines, retained direct
+Run lease deadlines, and error-triggered recovery through the incumbent retry policy.
+
+An Automation-origin Run with an accepted Workflow snapshot can reclaim its
+expired lease after its causal Session or turn disappears. Claim admission reads
+cause depth only before the first accepted snapshot exists; recovery uses the
+depth already frozen there. Current Account, Machine, envelope and accepted
+authorization checks still apply. Deleting a definition does not revoke its
+accepted Runs, and a failed authorization read remains unknown rather than
+revocation. Recovery and settlement stay with the existing Workflow coordinator.
+
+The V3 assignment response optionally carries `directRunClaimDeadlines`, a list of
+closed `{ runId, nextClaimAt }` facts projected by the server claim service for
+retained direct Runs this Machine may reclaim. `nextClaimAt` is the retained lease
+expiry plus one millisecond, or the Run's later due time: equality at lease expiry
+remains ineligible. The executor owns its lease while active. The worker retains
+the authoritative deadline snapshot so a failed dispatch that leaves a lease
+reclaimable can wake after execution releases local work. Catch-up replaces the
+snapshot; another Machine's lease or a released claim leaves no wake armed. Each
+deadline requests a fresh signed claim, never execution authority or replay of an
+earlier empty claim receipt.
+
+The field is optional on read. Omission means no known direct-lease deadline on an
+older development server; it does not install a fallback poll. Such development
+skew cannot guarantee retained direct-lease recovery after an empty catch-up.
+Released 0.2.17 CLIs use V2 assignments, whose response is unchanged. This is a
+0.3 development contract, not a new released availability claim.
+
+Failed assignment reads and lifecycle-source wait, parse or report failures use
+the same error-triggered assignment recovery. The incumbent retry policy honors
+Retry-After, and a later observer failure cannot shorten an existing read deadline.
+A successful refresh rearms the failed observer, preserves unrelated source
+subscriptions and disarms recovery without clearing an independent claim retry.
+An aborted observer requests no recovery. Null-claim cooldown runs only while an
+assignment or retained direct-lease deadline is due; a future or empty refreshed
+snapshot clears it. Drain, cancellation, capacity and claim currentness retain
+their existing owners.
+
 Automation warnings use the single daemon telemetry owner. Error messages,
 causes and transport payloads remain redacted; diagnostics retain a typed error
 name/code, the failing operation and recognized repository, packaged-runtime or
 Node code locations. Absolute user paths and function labels are not logged.
-Assignment-refresh failures leave the worker's last successful assignment
-cache intact; the existing reconciliation loop owns retries.
+Assignment-refresh failures preserve the last successful assignment cache. The
+single claim timer owns error-triggered recovery and stops it after the first
+successful read; a settled worker with no deadlines makes no reads or claims.
 
 In 0.3 development, Workflow Action failures keep their typed public result. The shared failure
 normalizer emits `workflow_action_failure` through the CLI file logger when
@@ -2657,14 +4606,26 @@ foreign Run/owner binding or changed Account currentness. Ordinary Automation
 results and conversation reply context retain their distinct Account envelopes;
 they are not Workflow content-key fallbacks.
 
-After opening a claimed Workflow, the coordinator and heartbeat share one
-currentness check: Account mode/key identity must remain unchanged and the
-accepted credential/source authority must remain current. The Account-wide
-change cursor is not revocation evidence: Workflow initialization and ordinary
-fact writes advance it. Ordinary Automation work admission retains its
-exact-witness contract. Terminal failure and pre-start refusal compare Account
-mode/key identity under the exact Run claim/attempt/lease CAS, so unrelated
-publications cannot leave a deterministic refusal available for reclaim.
+Workflow authority is checked at the new Run or Action admission, not again
+by the coordinator, plugin leaf, Session Role mutation or lease heartbeat.
+The server's input admission checks that the admitted Run is still active;
+pushed Stop reaches the executor's local abort signal. Revoking the original
+principal takes effect at the next new admission, not while observing an
+already-recorded result. Recorded approval observation always binds the
+Account, origin, target and Artifact access; managed requesters additionally
+retain their host-local custody predicate. Session Role transport signs the
+captured Run/start baseline, and the receiver verifies the exact Home-bound
+Account, Session, request, Run and accepted authorization proof.
+The Account-wide change cursor is not revocation evidence: Workflow initialization
+and ordinary fact writes advance it. Ordinary Automation work admission retains its
+own permission owner, while Account content uses the same mode/key identity
+comparison at claim, start, Session dispatch, Event admission and reply custody.
+The witness's transported change version is informational, not revocation;
+claim/start/reply responses do not capture a post-publication successor, and
+transport-bounded Event requests do not chain successor versions. Exact Run
+claim/attempt/revision/state/lease correspondence and actual mode/key changes
+still refuse stale work. Unrelated publications cannot prevent unchanged starts
+or leave a deterministic refusal available for reclaim.
 
 In 0.3 development, a successful Run claim starts the existing lease-duration
 budget, and successful renewals supply the server's next expiry. The shared
@@ -2687,8 +4648,9 @@ After a pre-input refusal, the next explicit Generate resolves the last retained
 correspondence through the same slot's same-conversation attempt lineage; it
 does not fabricate correspondence on the refused attempt or cross a fresh-agent
 boundary. The worker checks live continuation/material, without a cached
-capability fallback, and repeats the full controller/current-authority check
-immediately before generation input admission, after asynchronous preparation.
+capability fallback. The answering caller is authorized at the new Generate
+Action boundary; preparation and input release do not repeat that permission
+evaluation. Server active-Run admission and the local Stop signal still apply.
 A typed pre-input refusal re-holds the replacement without fabricating execution
 correspondence. A Wait-for-you
 leaf holds without an agent input and cannot Generate. Row writers carry exact
@@ -2732,6 +4694,28 @@ invocation's intermediate progress result. Start failures pass through
 `resolveWorkflowProblemPresentation`, whose technical details retain the typed
 Workflow code and a supplied reason; unrecognized transport failures remain
 generic rather than acquiring an invented code.
+
+Collaboration patterns use this same Workflow coordinator, catalog and accepted
+snapshot materializer. Input-bound participants resolve through the canonical
+selection owner and preserve exact target Machine and Session identity. A
+Discussion start carries its qualified address and addressing message; context
+reads and publication recheck their existing source authority. A bounded
+Discussion context read does not erase retained native conversation history.
+
+`workflowDiscussionPublication.ts` is the leaf-result publication owner for
+execution and recovery. Session results consume C2's original-input return;
+Action/detached outcomes carry typed result values and actual Workflow execution
+provenance through the existing installed-Machine C3 append. Authored
+`discussionReplyTo` resolves an exact accepted producer into host progress before
+reviewer admission; caller-editable retry input does not supply that authority.
+Private held drafts are not published merely because an Agent turn ended.
+Recovery repairs publication without executing a completed native effect again.
+
+Public start/control/capture calls use the same Action front door. Capture
+reconstructs only explicitly selected authorized messages at the Workflow
+definition owner, then the normal editor/create identity owns saving. Another
+round is an explicit new `workflow.run.start` with retained participants and
+authorized previous-round context, not a second scheduler or continuation mode.
 
 Agent-step engines may bind a declared input or the current item value, with an
 optional field path. `resolveWorkflowStepSelectionV1` resolves those choices at
@@ -2868,6 +4852,14 @@ than rendering it again. Definition authoring does not require a future Run orig
 
 ## Streamed transcript recovery (development)
 
+Raw Session transcript and history reads preserve complete stored tool results by
+default. `session.transcript.get` also accepts `maxRawPayloadChars: null` for a
+complete raw read; an explicit numeric preview limit retains `rawTruncated` and
+payload-truncation diagnostics. Complete reads use the existing Action response
+transport limit rather than a second per-message or raw-page cutoff. A caller
+can select one message by `messageId` or page history to narrow a response that
+exceeds the transport limit.
+
 `api/session/streamedTranscriptWriter` retains a closed segment until the existing
 session outbox accepts its full snapshot into durable local custody. Its original
 completion or interruption intent and local id survive a failed admission; later
@@ -2876,6 +4868,22 @@ including when output arrives during a flush. Unresolved terminal admission is
 recorded in the default file log and can be retried by a subsequent flush.
 Before local admission succeeds, that retained text is process-local. Once admitted,
 the existing session outbox owns reconnect delivery and restart recovery.
+
+## Request publication recovery (development)
+
+`AgentStateRequestStore` retains unacknowledged best-effort permission and dialog
+publications in the running process. The Session's existing online event retries
+them through the owner-authorized metadata tuple CAS writer, preserving the
+original occurrence and newer terminal answers. The deferred Session adapter
+forwards the same event after attachment. Push delivery follows acknowledgement;
+failed attempts report `publish_request` with sanitized context in the default
+file log. Disposal, Session replacement and admitted cancellation retire retained
+work. Pre-effect cancellation still requires its ordinary acknowledgement, and
+`publishRequestAndWait` still reports failure to its durable interaction producer.
+Ordinary observed local retirement passes the retained occurrence to the existing
+cancellation journal even when publication reached Home but its ACK was lost.
+Publication retention does not survive process exit and adds no broker retry,
+timer or disk journal.
 
 ## Permission cancellation recovery (development)
 
@@ -2888,6 +4896,13 @@ local entry, may retain exact unclaimed request cancellations in the existing
 runtime mutation journal before attempting delivery. The caller still succeeds
 only after acknowledgement; a failed attempt is reported while the journal
 retains the cancellation for later delivery and same-Session reconstruction.
+
+Journal and dead-letter reads treat only a missing file (`ENOENT`) as absent.
+Other filesystem failures reject startup or the pending persistence operation
+without replacing unread data. This includes queue reads used to retain
+dead-letter prerequisites. Startup failures include the filesystem error code in
+the normal file log. Once access is restored, reconstructing the runtime retries
+the original journal. Existing handling of readable malformed data is unchanged.
 
 The journal replays exact request occurrences through the canonical owner
 metadata tuple CAS, preserving newer requests, claims and neighboring background
@@ -2992,6 +5007,22 @@ malformed, or mismatched definition never falls back to looser parsing.
 Input precedence has one rule: `--input-json` supplies the base object, distinct
 field flags and positionals overlay it, and a second source for the same field is
 rejected in either order rather than silently winning.
+
+In current 0.3 development source, generic `actions invoke` accepts the CLI-owned
+`--wait` flag for deployment deploy/rollback/promote/teardown and
+`action.operations.get`. It never becomes deployment input. Direct operation
+reads use the existing `waitForTerminal: true` transport; deployment calls retain
+their existing receipt-settlement path. The CLI does not resubmit an effect or
+invent an operation handle when a receipt has none. Finite mode exits 0 for a
+settled successful operation or a `succeeded`/`running_unverified` deployment
+receipt, 1 for failure/cancellation,
+3 for an observed approval hold, 4 for `machine_unavailable`, and 5 when settlement is
+unconfirmed; unexpected CLI failures remain 2. JSON failures retain their typed
+code and details. Without `--wait`, existing invocation behavior is unchanged.
+This is not yet the compact Environment/SHA CI helper: its candidate producer,
+Environment-only operation custody and emitted step remain separate integration
+prerequisites. The existing operation wait does not yet return early for every
+active approval phase, so this slice does not certify the full CI Ask-exit flow.
 
 The same compiler owns the one-shot execution-run lifecycle commands (`list`,
 `get`, `start`, `stop`, `wait`, and bounded stream `start`/`read`/`cancel`).
@@ -3136,6 +5167,58 @@ The host-owned turn witness supplies admission facts; missing depth refuses
 depth-dependent Actions rather than assuming zero. Missing daemon authority,
 including a daemonless restricted runner, returns typed `target_unavailable`.
 An uncertain dispatched outcome is not automatically retried.
+
+Current 0.3 development source routes marked Agent `happier tools` and friendly
+Action commands on POSIX through the host-private Session MCP client before any stored
+Account credential read or local Account executor. `startHappyServer` owns
+authenticated local transport and retirement. Cross-UID Linux Sessions and the
+native isolation probe place their private socket directories under `/tmp`,
+independent of a custodian-private `TMPDIR`. The existing ACL admits only the
+selected shared Agent or member UID to that Session leaf and socket; the Session
+bearer and tool authority remain unchanged. No custodian ancestor permissions or
+daemon group membership are widened. Standard MCP source metadata is
+handled by the existing tool-handler decoration owner and delegates selected
+custom profiles to `resolveRunnerMcpServers` and its permission/currentness
+adapters. Native advertisements remain separate from explicit custom discovery.
+The development `happierToolsEnabled` MCP-selection field defaults to enabled
+when absent. Strict CLI authoring uses `SessionMcpSelectionAuthoringV1Schema`;
+stored V1 ingress remains tolerant. The existing capability-selection carrier,
+spawn environment, metadata codec and coalescer preserve the field. The applied
+baseline reader owns built-in delivery through startup and pending restarts.
+`createHappierMcpBridge` omits native built-in advertisements when disabled;
+the shared inventory and native-extension descriptor owners omit registrations,
+including resource-backed `watch`, and prompt owners omit unavailable tool
+guidance. A required local Session transport remains for independently selected
+custom MCP tools and ordinary explicit CLI operations. Empty native inventory
+still uses the existing MCP cache/custom dispatch owner. This changes delivery,
+not Action authorization. Older 0.2.17 runners at
+`a2c45c86804b24e60ac0b76146a3ef36dfcaa15b` ignore this field, so the opt-out
+requires an updated target daemon as well as the initiating CLI.
+Native-extension bridge launches now forward the current opaque Agent
+environment. Generated POSIX shell commands no longer inject custodian Home/server
+context. Windows retains the existing opt-in `home`/`full` shell context mode for
+its current-user credentialed bridge; this does not enable Windows isolation.
+Foreground and Session-owned Run preparation, opaque bridge environments,
+recovery and awaited context cleanup have source integration coverage.
+`publishAgentLaunchMaterials` atomically replaces only selected files through
+the existing file publisher, preserving provider-created native state and
+unchanged file identities. Shim exit cleanup removes only lease-transient
+`files/` and the Session MCP context; the incumbent materializer retains native
+home lifetime and currentness. Native launch wiring and actual guest containment
+still need their remaining gates. Genuine
+detached Pi Runs remain unchanged: supplied MCP servers only, with no owning
+Session bridge. Existing non-isolated Windows transport and credentialed command
+delivery remain separate compatibility paths; Windows isolation is unavailable.
+
+The local HTTP owner now offers an SDK-issued MCP notification-session id while
+retaining fresh request servers and catalogs. Its watch scope, not the subscribe
+response, owns passive feeds; unsubscribe, notification-stream disconnect and
+Session retirement release them. The Session-native Run adapter forwards the
+existing snapshot sink to the canonical wait owner. Bound Session/Run watches
+stay on that live host; a single-result daemon Action channel is not a watch
+transport for other targets. Focused authenticated Unix HTTP coverage verifies
+later updates, fresh reads, unsubscribe/disconnect cleanup and no idle feed reads;
+broader package and loaded-native integration remain separate gates.
 
 In 0.3 development source, Happier MCP input discovery and native Session tool
 descriptors share `projectMcpToolInputJsonSchema`. It presents an object root
@@ -3361,6 +5444,16 @@ Local state lives under `~/.happier` (or `HAPPIER_HOME_DIR`):
 - `daemon.state.json`: daemon PID + control port + version.
 - `logs/`: CLI/daemon logs.
 
+In development source, settings reads and updates share the parser, migrations,
+and derived-field normalization in `persistence.ts`. Read-only `readSettings()`
+callers retain a warning and defaults when loading fails. Under the settings
+lock, `updateSettings()` uses that same loader without the fallback: only an
+`ENOENT` from reading the file permits initialization from defaults. Other read,
+parse, and migration errors reject before the updater or temporary write runs,
+preserving the existing file and releasing the lock. Repair invalid JSON or retry
+after a file lock clears before updating again. The persisted schema and existing
+atomic-write/rename retry policy are unchanged; this is not a released guarantee.
+
 In current development source, protected local files and MCP runtime
 configuration use the shared Windows ACL boundary in
 `packages/cli-common/src/fs/windowsProtectedAcl.ts`. It grants only the current
@@ -3378,8 +5471,10 @@ Configuration lives in `src/configuration.ts`:
 - Recovery-key login failures retain the originating error code and operation phase (plus HTTP status when present). The CLI writes a local-only, redacted error diagnostic; attached HTTP bodies and credentials are never serialized into that diagnostic.
 - `HAPPIER_VARIANT` and `HAPPIER_EXPERIMENTAL` control behavior.
 - In 0.3 development source, the machine's `resourcesPolicyV1.guard.keepAwake` controls sleep prevention (`off`, `on`, `on_power`; absent = `on`). One daemon-owned inhibitor preserves idle reachability without keeping the display awake: macOS uses `caffeinate`, Linux uses logind's stdin-bound `systemd-inhibit` where available, and Windows uses the shipped native helper's system execution requirement. On power consumes the canonical vitals AC facts without requiring a viewer; unknown power does not report holding. macOS also enforces AC-only assertion behavior in the OS; closing the lid follows the OS. Inhibitors release on daemon shutdown or pipe closure. The former environment override is replaced by this single policy authority.
-- The same development-source resources document owns the full Guard policy. The daemon's Guard composition shares the existing minute sampler, live-work inventory, native ownership verdicts and parked-watch primitive. Guard Activity is a local 30-day append-only journal; only committed guard-kind effects light the shared automatic-action indicator. Activity-only pages and widgets use `daemon.guard.activity.watch` through the shared subscription store, scoped by Home, Account, Machine, range and filter, without Guard preview, sampler or census demand. The log's projection revision changes after committed appends (including Undo outside Today's displayed rows) or a real query-time boundary. List reads retain only the next deadline for each of the three ranges, derived from UTC midnight, record expiry or future-record visibility; the existing 25-second parked-watch re-arm checks these without a timer or journal read. The numeric cursor carries no receipt timestamp. Undo invokes the receipt's original Action with fresh admission and that Action's approval policy. Recipient views expose their own work totals and Activity, plus counts for other work; withheld or unavailable left-behind sizes are `null`, not measured zero. The visual Guard tab and composed loaded-daemon certification are separate integration work.
+- A denied keep-awake acquisition stays unavailable until a real reconciliation edge: a policy change or an actual AC change while On power. Identical vitals samples do not retry it; On and Off have no keep-awake vitals subscription. Native holder readiness and release still publish their own state, with no retry timer or backoff.
+- The same development-source resources document owns the full Guard policy. The daemon's Guard composition shares the existing minute sampler, live-work inventory, native ownership verdicts and parked-watch primitive. Guard Activity is a local 30-day append-only journal; only committed guard-kind effects light the shared automatic-action indicator. Activity-only pages and widgets use `daemon.guard.activity.watch` through the shared subscription store, scoped by Home, Account, Machine, range and filter, without Guard preview, sampler or census demand. The log's projection revision changes only after committed appends, including Undo outside Today's displayed rows. Range filtering uses the current query time, but midnight, expiry and a future-dated row becoming visible do not republish an otherwise unchanged journal. The numeric cursor carries no receipt timestamp. A successful Session start consults Activity only when that Session carries an existing Guard stopped/requested marker; failed-wake receipts and replacement-before-stop-receipt recovery remain owned by the same restoration observer, not a launch gate. Undo invokes the receipt's original Action with fresh admission and that Action's approval policy. Recipient views expose their own work totals and Activity, plus counts for other work; withheld or unavailable left-behind sizes are `null`, not measured zero. Guard row identity and its Process Action ref use the same native `processRef` encoding. The visual Guard tab and composed loaded-daemon certification are separate integration work.
 - Automatic memory Guard observes accepted minute records and meaningful policy/owner changes; another surface's live demand does not accelerate candidate reads. Unrelated inventory edges can retire an auxiliary plan read without vetoing due memory admission, which still checks current policy and fresh target-specific identity, eligibility, pressure and sustain. Post-action verification still observes the next required sample, and idle/cooldown deadlines keep their existing owner. Auxiliary policies use the sampler's minute frontiers and reporting-state edges, including failed-reader retries; cheap Guard-state refresh remains on every completed tick. A viewed ladder consumes the sampler's summary cadence without inheriting a simultaneous Overview's two-second clock.
+- After an awaited stop notice, the Session actuator performs the final exact-runner admission rather than re-reading every Session first. It pins the captured native root across same-object runner promotion or replacement and retains fresh draft, work and resume checks. Ceiling enforcement reads eligibility once after its notice and notification settle; PTY closing similarly leaves final native foreground, activity and policy admission with the captured terminal owner. Initial planning's conservative unknown-work veto is unchanged.
 - Development-source idle Session, left-behind, Session ceiling and idle-terminal rules share that same Guard loop and earliest deadline. Session stop requires current draft, subagent, question and resume eligibility plus an acknowledged runner marker; next-message activation remains the existing activation owner's decision. Left-behind grace consumes the Processes owner's confirmed identities and cleanup Action, including its original Account approval. Linux Session ceilings use `MemoryHigh`, not `MemoryMax`; live enforcement requires a canonical Session-scope containment verdict, never an arbitrary runner cgroup. The root owner joins retained physical launch custody to the exact runner generation and observed native containment, including fresh launches whose unit name does not encode the accepted Session ID; Guard consumes that verdict without reclassifying the unit name. macOS and Windows expose an unavailable reason. Plain terminals have no count eviction or background reaper: the Off-by-default rule closes through the PTY owner, preserves its left-behind retirement, and records Activity without lighting the Guard-acted dot. Missing native foreground or authenticated notification facts prevent a commanded-terminal close.
   Near-ceiling notices carry the observed usage and actually applied limit from
   that existing ceiling owner. Preview-disabled notifications omit those
@@ -3395,6 +5490,19 @@ owns admission and semantic mutations; the CLI `mcpServerStore`/`hydrateMcpServe
 and UI `apiMcpServerCatalog` consume that same contract. This Account row is
 distinct from the daemon's executable plugin-contribution catalog.
 
+Package-backed stdio MCP launches use the shared managed-tools normalizer and
+may prepare the pinned pnpm prerequisite on first use. In 0.3 development,
+managed pnpm download failures are scoped to the affected server: non-strict launches omit
+that server and publish its typed failure in the Session capability notice;
+strict MCP mode refuses startup with the server name and the original download
+failure code. Unrelated materialization errors still propagate. Acquisition is
+not retried in a loop. Existing managed pnpm or a valid explicit override needs
+no network request.
+
+Creator-reviewed ephemeral runner material requires the complete admitted server
+selection. That path delegates to strict materialization and retains the same
+typed refusal, even when ordinary Account MCP profiles are non-strict.
+
 Current development definitions use the neutral
 `valueRefs/valueRefV1.ts` owner for literals, personal or qualified shared Saved
 Secrets, and single-pass templates. Only used template variables resolve;
@@ -3403,6 +5511,11 @@ select the Session folder or an explicit path; per-Machine overrides configure
 values and an explicit folder, never enablement. Resolved env values stay in
 private launcher files, not Agent configuration. Remote bridge env is applied
 at process startup, while headers stay in its private configuration file.
+Native Session and Execution Run launch environments preserve the host's
+`NODE_EXTRA_CA_CERTS` alongside command lookup and the shared Windows machine
+path baseline, so native MCP children retain the host's additional trust roots
+and Windows tool installation paths. Explicit launch values and unsets still win;
+ambient credentials and host controls are not inherited.
 
 The `mcp servers` command tree and help are compiled from Action specs. Add
 stamps an entry and uses the observed catalog revision before invoking the same
@@ -3413,6 +5526,15 @@ List still reads the Account catalog independently of the accepted directory.
 The adapters do not write Settings or probe servers themselves; `mcp serve`
 remains the handwritten runtime entry point. The retired `mcp.servers.probe`
 Action and `mcp.servers` feature gate are absent from current development source.
+
+For explicit Home selection, `mcp serve` uses the runtime origin chosen by
+`configuration/serverSelection.ts#resolveServerProfileApiUrl`, also consumed by
+CLI selection application and daemon Home transport. A saved `localServerUrl`
+can reach the Home through a forward when the profile's server URL matches the
+descriptor's canonical URL; it changes neither the descriptor nor the credential
+audience. For identity-bound profiles, MCP observes Home identity anonymously at
+that runtime origin before reading credentials, and refuses missing or mismatched
+identity.
 
 `mcp.servers.test` has one daemon pipeline; the retained CLI spelling dispatches
 the compiled Action instead of running a second probe. A saved-server Test
@@ -3608,6 +5730,13 @@ enabled-state reversal receipt.
 
 ### One default channel per Happier home
 
+In current 0.3 development, an explicit `HAPPIER_FIRST_PARTY_INSTALL_HOME` moves
+this installation state together: payloads, shims, default-channel selection and
+activation locks share that home. Private credentials and daemon state remain
+under `HAPPIER_HOME_DIR`. Service installation and replacement preserve this
+install-home input, so the existing updater and Agent tools
+resolver continue to address the same public payload roots after a restart.
+
 A Happier home has one default `happier` command and one default-following background service, and
 both belong to the **default release channel** (`default-cli-release-channel.json`; the service runs
 that channel's `~/.happier/bin/happier` shim). Installing another channel never takes the default:
@@ -3800,6 +5929,19 @@ reader use the update-check cache's one ring-filtered reader (`readCachedCliUpda
 `packages/cli-common/src/update`); `self check` is its only writer (`recordCliUpdateCheck`) and
 doctor repair never writes it or calls npm itself.
 
+The development Updates UI labels cached CLI release answers, with their channel when known.
+Check for updates refreshes app and capability checks, not that cached lookup. A cached version
+equal to or older than the running CLI therefore leaves latest-version status unknown; a known
+newer cached release keeps the existing update action. Both desktop shared status and remote
+metadata feed the same row builders; the local status does not currently report a channel.
+The grouped popover uses that row presenter for a single cached unknown result, and manual-only
+unknown rows remain visible on the Updates page with the producer's command and interruption
+warning. Remote completion follows the changed outcome and running target version separately
+from release freshness. There is no new release lookup, cache writer or Windows remote updater.
+
+An explicit Updates check stays busy until the app check and every requested machine fact refresh settle. Helper update runs keep their running state through the canonical post-update capability refresh; Agent update settlement awaits the install-job owner’s existing inventory refresh. The local desktop CLI already holds its shared rereading state until status is published. Remote CLI admission remains distinct from completion: its row stays reconnecting until daemon-owned metadata reports the result and running version.
+
+
 In current development UI, an explicit failed update remains failed even when the answering CLI
 already reports the target version; equality settles only a reconnecting outcome. Retry still
 follows the existing remote-capability decision. CLI actions show the existing session-reconnect
@@ -3894,7 +6036,7 @@ pairing. Stack seeding does not manufacture a descriptor or copy routing trust
 from another Home.
 
 Managed enrollment in 0.3 development extends this normal terminal ceremony.
-The admitted Home, controller, intent revision, request and retained resource
+The admitted Home, optional controller pair, intent revision, request and retained resource
 are carried through protected guest stdin into normal Machine registration;
 the server validates and links the managed row in that registration transaction.
 The guest receives the ordinary terminal bearer (`terminal` kind,
@@ -3910,6 +6052,18 @@ existing protected pending state. The request returns a non-secret profile id;
 wait selects that exact profile without focusing it until successful enrollment.
 Both lifetimes use the credential owner's same managed registration-before-save
 policy and emit only non-secret bootstrap completion facts.
+
+Creation progress in current 0.3 development uses the existing managed row and
+Action operation. A bound `allocation` with its `resource` records allocation;
+the shared native installer reports `bootstrapInstalled: true` through the
+existing controller report owner after installation succeeds, before pairing.
+Normal Machine registration writes `enrolledMachineId`. Reads and list
+publications expose the same row facts. Missing `bootstrapInstalled` means
+unknown; it does not prove installation failed. Rebuild clears the old
+resource's installation fact. A bound, unenrolled row with no running creation
+on the initiating device (and no active creation operation) is interrupted;
+there is no durable paused state or separate progress channel. Daemon SSH
+creation keeps its existing Action operation phases.
 
 In current 0.3 development, ordinary `auth wait` success returns authentication
 and Machine facts without the saved bearer. Default API-token creation output
@@ -3982,9 +6136,7 @@ equality does not make argv or the current exec environment immutable. Shared
 captures coalesce only identical field and command-root demand. These changes
 neither add a census timer nor alter the inventory/watch owners' cadence.
 
-The first launcher read discovers its requested workspace roots. Later ordinary
-reads project those admitted observations without repeating discovery. The feed
-retains those observations without a discovery TTL. In 0.3 development, Local Services observes native listeners at the inventory
+In 0.3 development, Local Services observes native listeners at the inventory
 runtime's existing cadence while a consumer is subscribed. One cancellation-owned
 `inventory.watch` request with `observationOnly: true` holds that demand across
 the ordinary value-watch replies. Last-consumer departure or transport disconnect
@@ -3996,14 +6148,39 @@ cache paths. A successful scoped package-discovery read admits only requested ro
 inside a current accepted project Workspace to the existing package traversal.
 A Session ancestor does not inherit its child project's watch scope. Admitted scope identities
 survive an inactive interval, but their native watches do not. The updated 0.3 UI
-and daemon load together for the optional observation-only request field. An unchanged
-watch waits for a material change or caller cancellation without a periodic
-unchanged reply. Native inventory discovery retains its existing cadence
-while readers are parked. Its registry advances `generatedAt` and wakes that
-Machine's watch only for material inventory or launcher changes; `lastSeenAt`
-and endpoint `probedAt` remain current on demand without publishing each scan.
-The runtime compares the canonical launcher projection as well, so declaration
-changes and endpoint-free managed starts/stops retain scan-driven freshness.
+and daemon load together for the optional observation-only request field.
+Inventory does not probe
+every listener's HTTP protocol or page title. Preview Open resolves the selected
+listener under its caller's cancellation, without a separate probe timeout or
+cross-request endpoint cache. Happier control endpoints remain excluded.
+
+The Services launcher admits detected listeners only when the shared process
+classifier recognizes a development server. Generic runtimes, agent CLIs, browsers
+and SSH/tmux listeners do not become Services merely by opening a socket. Project
+declarations and managed Services retain their own existing discovery and lifetime,
+including URL-less workers. Raw listener inventory remains available to Processes,
+Guard and Provider discovery. A failed Open retains the endpoint owner's typed
+reason rather than replacing it with a generic unknown-scheme result.
+
+The first launcher read discovers its requested workspace roots. Later ordinary
+reads project those admitted observations without repeating discovery. Explicit Machine scope discovers declared Services without
+walking package trees or offering automatic package-script suggestions. Workspace
+scope retains that checkout's package suggestions; declared package-script Services
+and supervised occurrences remain visible at Machine scope. The feed owns this
+scope policy for both fresh discovery and retained projections. Shared declaration
+notifications still include Workspace package changes.
+The feed retains admitted projections for native
+publications and ordinary reads, without a discovery TTL. Mounted inventory subscriptions
+attach declaration filesystem observers until their shared observation is cancelled;
+the last viewer releases them. Each new observation reconciles edits made
+while detached. Material replies re-arm value watches within that observation;
+there is no periodic unchanged reply or renewal. Unrelated
+file-content events perform no declaration discovery. Observation failure adds
+an explicit warning while retaining native listener facts; a fresh attachment
+reconciles and clears it. Managed starts and stops reproject supervisor facts.
+
+The registry advances `generatedAt` and wakes that Machine's watch only for
+material inventory or launcher changes; observation timestamps alone stay quiet.
 Missing-listener transitions use the latest observation, not the last publication.
 Action identity probes consume the existing fresh native observation stage;
 neither their freshness proof nor discovery admission uses the material cursor.
@@ -4024,6 +6201,16 @@ process name, role and generation reference. External rows retain their existing
 name-only privacy boundary.
 Ownership evidence records containment, parent chain, host marker and group/port hints,
 each as met, not met or unavailable.
+
+In current unreleased 0.3 source, admitted built-in Compose observations also feed
+that same root projector through `readNativeContainerSources()`. The strict Process
+owner's `container` arm retains the actual Home, Machine, service and full native
+container identity; it is not a process marker or a new requester. Environment
+witnesses have no requester. Their process rows require current Account read access
+to the exact Home/Environment as well as current Machine admission, including for
+the machine custodian. Each disclosure rechecks that authority, shared once across
+the Environment's members, without retaining a permission fact or taking another
+census. Workspace services retain their actual admitted requester attribution.
 
 Owner totals sum each attributed member once; they are not cgroup/Job accounting totals.
 CPU is the cumulative-time delta as a percentage of the whole machine and is absent
@@ -4061,6 +6248,48 @@ Membership comes from the census cgroup path, not a persisted containment regist
 Unavailable user-manager/cgroup support is an unavailable fence, not fabricated proof.
 macOS has no such fence and uses exact tree, marker and group/port evidence.
 
+In unreleased 0.3 source, Stack's executor and native-admission payload entry share
+`apps/stack/scripts/utils/proc/native_process_priority.sh`. Classified background
+work keeps the same scheduling floor during explicit `--local` execution.
+A missing user manager falls back to niceness without a second capacity decision;
+relative `nice` adjustments do not accumulate across nested launches.
+Linux remote admission owns its payload's priority rather than adding another
+relative adjustment outside that owner.
+
+The Ubuntu provisioner's `resources` profile owns the existing user slice
+definitions. Host toolchain onboarding runs it through a fresh SSH connection as
+the final worker account, after any account change, separately from root package
+installation. It reloads an available user manager even when noninteractive SSH
+does not export an explicit bus address. Existing processes are not migrated.\nEffective CPU/I/O weights require the corresponding delegated cgroup controllers;\nmissing delegation does not refuse ordinary jobs or add per-payload weight probes.
+
+
+Native Compose attribution joins an admitted engine observation's PID and full
+container ID to the same census's exact process birth and cgroup membership.
+The Linux reader currently decodes cgroup v2. The root projector recognizes only
+the complete ID at the documented cgroupfs `/docker/<longid>` or systemd
+`/system.slice/docker-<longid>.scope` boundary, including descendants within that
+fence ([Docker's primary contract](https://docs.docker.com/engine/containers/runmetrics/#find-the-cgroup-for-a-given-container)).
+A PID alone, an ID prefix, an engine inspection on another host, Docker Desktop's
+VM or an unsupported/unreadable cgroup supplies no host-process containment proof.
+Native detail ancestry and classification stop at that proven fence rather than
+disclosing host or another container's ancestors. This consumes the existing native
+observation lifecycle and launch-discovery invalidation, not another Docker reader,
+census, timer or publication stream. It does not establish P41 activated-resolved-
+configuration attribution or freshness.
+
+In 0.3 development, an available systemd user manager supplies the scope for
+ordinary launches as well as Sessions with a memory ceiling, even if the jobs
+slice lacks the provisioned governor policy. Manager observation is shared with
+the ceiling capability; ordinary containment does not require its memory
+controller. Unbounded launches add no memory properties. An explicit ceiling
+adds `MemoryAccounting=yes` and the requested `MemoryHigh`, never `MemoryMax`,
+and must be enforced before the target runs. Without a usable user manager, the
+self-migration fallback remains. Ordinary launches can run uncontained when
+neither route succeeds; only observed containment, chain and marker evidence
+authorizes attribution. An explicit ceiling cannot silently become unbounded.
+Accepted-spawn persistence still requires a fresh PID and process-start witness
+before the launch can succeed.
+
 Linux launch custody retains the exact physical scope name in the incumbent
 in-memory tracked Session. A fresh launch can encode the launching Happier owner
 before its runner reports a canonical Session ID. The canonical process-root
@@ -4085,9 +6314,16 @@ Left-behind paths. Job absence is not evidence that all its former members exite
 
 [`processes/terminate/terminateProcessTree.ts`](../apps/cli/src/processes/terminate/terminateProcessTree.ts)
 is the typed entry to the one shipped algorithm in `scripts/process_tree.cjs`.
-Discovery uses the census/tree owner; every signal round revalidates PID and start
-identity. Ownership-sensitive callers also re-derive current ownership and containment
-authority through their authorization callback. Per-PID signals protect
+Discovery uses the census/tree owner; every signal round validates PID and start
+identity against one census, with no per-member census or awaited callback in the
+POSIX signal volley. In development source, parents are frozen before descendants,
+the termination signal is delivered to every admitted member, then the frozen
+members are resumed so graceful handlers can finish. This prevents a waiting shell
+from advancing after its child is killed. Windows uses the existing native Job
+termination or root-first `taskkill /T` for a wholly admitted subtree. A failed
+gentle Windows request leaves the subtree for the existing force round.
+Ownership-sensitive callers establish current ownership and containment
+authority through their authorization callback before the volley. Per-PID signals protect
 the reader and its ancestors by generation; only group signals additionally protect
 groups containing them. A non-detached child sharing the reader's group can still be
 ended individually. Listener termination keeps its existing TOCTOU and port-release
@@ -4204,6 +6440,11 @@ service custody; explicit daemon preflight and shared-provider producers borrow
 the startup Machine/Account authority. A missing Session is not requester evidence.
 Unavailable requester or display identity withholds only the affected rows,
 including their commands and history, while known rows remain available.
+An Environment's admitted native-container fence is the explicit exception to
+same-OS-principal row visibility: current Environment read authority can disclose
+contained process names and resources even when its OS user differs. This does not
+assert equal OS principals or broaden procfs command, cwd or environment reads to
+other users. Unrelated host processes retain the aggregate-only other-user boundary.
 In current 0.3 development, the custodian's Machine view also reports an
 `unverifiableCount` for ownerless unknown census rows and withheld requester rows. These rows supply no
 commands or cleanup operands; recipients and Session-scoped reads omit the count.
@@ -4214,7 +6455,13 @@ unknown, not zero. No second census, timer or process-memory estimate supplies
 these facts.
 The same policy's nullable `processes.toolIdleCloseMs` controls documented tool-idle
 environment injection at the next Session start; Off adds nothing, and authored
-environment values win over the default five minutes. Guard's Agent tools controls
+environment values win over the default five minutes. The shared native Agent
+launch-environment projection carries only the documented variables selected by
+`processes/toolIdleTimeouts.ts` from that captured Session environment, preserving
+explicit overrides and unsets through Exec admission. Session, execution-Run and
+inactive-Session producers use that projection; native Agent children inherit
+those values without a new policy read or general ambient-environment access.
+Guard's Agent tools controls
 write idle-close and browser concurrency through the existing resources-policy
 Action; they do not introduce another policy store or approval floor.
 
@@ -4257,6 +6504,47 @@ adapters, including scoped Home commands. Task cancellation still terminates the
 immediate command child; it does not promise OS-service rollback. Read-only checks,
 install dry-runs, authentication claims and SSH execution retain their existing
 deadlines. The local adapters keep their distinct release-environment behavior.
+
+### Desktop startup and renderer admission (development)
+
+In unreleased development source, Tauri's `desktop_startup.rs` owns setup ordering and
+required-versus-optional failure handling. Autostart, updater and debug logging failures return
+unavailable reasons through the existing tray notice rather than aborting the shell. A failed
+Windows configuration-directory lookup retains default chrome and reports incomplete persistence.
+Actual main-window creation remains required. Tray setup remains required on Windows and Linux,
+where it owns Quit, and for a tray-only launch; the normal macOS window can use its app menu.
+The updater retains its setup failure so later checks return that reason instead of accessing
+missing plugin state.
+
+Electron's selected renderer origin is shared by its window and IPC admission owner. Main-window
+navigation and redirects stay at that origin; new windows are denied and HTTP(S) links open in
+the external browser. Only the actual main frame of the owning window can invoke native commands.
+Ordinary invocation no longer performs evaluation logging. Both desktop hsetup stdout transports
+pass valid first-party JSON lines without the former 16 KiB line cap; protocol validation,
+cancellation and retained-event/stderr boundaries remain with their existing owners.
+
+These source contracts still require loaded native-platform validation; they do not establish
+release availability or independent security approval.
+
+### Desktop main-window chrome (development)
+
+Current development source keeps compact integrated window controls in the left sidebar by
+default on Windows and Linux; macOS keeps its native traffic lights. Windows users can opt into
+**Use Windows title bar** in desktop app settings. The UI derives effective controls and drag
+regions from the host's returned policy; a saved choice does not claim the frame already changed.
+
+Tauri's native policy in `apps/ui/src-tauri/src/window_chrome.rs` owns its main-window frame. Its
+preference owner, `window_chrome_preferences.rs`, loads the channel-local AppConfig file
+`window-state/main-window-chrome.json` before creation, including tray recreation. A setting change
+applies immediately; a failed save retains the applied runtime mode and exposes the persistence
+failure for retry. Both modes preserve Tauri's close-to-tray behavior.
+
+The experimental Electron host uses its main-process `apps/desktop/src/main/windowChrome.ts`
+owner for creation and policy replies. It saves the Windows choice in `window-chrome.json` under
+Electron's user-data directory. Electron's frame is set at creation, so settings show
+**Restart Happier to apply this change.** while the saved choice differs from the current frame.
+Changing the preference keeps the current window and webviews alive; a failed save remains visible.
+These are unreleased development changes. ActualTitleButtons compatibility has not been tested.
 
 ### One CLI per computer (desktop setup, plan R12)
 
@@ -4484,6 +6772,56 @@ Account profile or Account changes cursor.
 - Updates machine metadata/daemon state with optimistic concurrency.
 - Receives machine updates and merges them locally.
 
+In 0.3 development source, ordinary Machine publishers authenticate their
+credential once at connect. After joining the revocation room, Auth checks that
+the verified token's retained epoch and Account status are still current before
+protected rooms or handlers become usable. This closes an in-flight-connect
+sign-out window without verifying the token again. Later beats and Machine
+publication handlers consume
+that admission; Account revocation closes the open stream through the existing
+socket eviction owner. Presence still checks the installed publisher's custody,
+installation and availability under the Machine write lock, and retains its
+monotonic observation/deadline fence. Semantic beats advance only `active` and
+`lastActiveAt`, not content timestamps, versions or Account changes. Each beat
+still pushes a content-free `machine-activity` fact to current recipients:
+released UI 0.2.19 and the prospective 0.2 reader require advancing `activeAt`
+within their 60-second online grace. Reconnect and changed-work hints remain
+explicit additions to that same delivery, not content or another transport.
+
+In 0.3 development, any observed daemon socket disconnect withdraws Online
+presence immediately, including transport close or ping timeout. The current
+socket owner prevents a retiring predecessor from taking its replacement offline.
+An authenticated reconnect pushes its existing recovery hint even when the stored
+active bit survived, so current recipients can clear a prior unavailable verdict.
+Heartbeat deadlines cover loss that Home has not yet observed; native VM power
+never supplies daemon presence. A running resource awaiting its started daemon
+uses the existing Starting presentation.
+
+Current development UI does not independently expire a Machine from the age of
+`activeAt`. The server's Machine-presence deadline owns expiry, commits
+`active=false`, and publishes that content-free fact with the last admitted
+heartbeat time. A Home/Account transport withdrawal makes retained presence
+unknown; a fresh scoped inventory read or activity ingress restores observation.
+The UI's intentional visibility pause is not such a withdrawal: retained presence
+stays until the resumed transport's fresh presence replaces it.
+These rules differ from the released age-based readers above. They do not
+guarantee recovery from a failed cross-node Redis publication while the reader's
+transport stays connected; that gap belongs to cluster transport reconciliation,
+not to a second client expiry clock.
+
+In 0.3 development, daemon-state publication has one in-flight write per Machine
+client. Pending owner updates compose against the latest admitted state; newer
+values replace older pending values for the same field. A version conflict rebases
+those updates on the server's returned version and state. Transport and content-key
+failures settle the current demand instead of starting a timed retry loop; a later
+owner change or reconnect can request publication again.
+
+Managed activity publishes only changed aggregate decisions. Operation progress
+and healthy observations preserve the established idle interval; material work
+edges invalidate it. Per-item planners subscribe to the inventory's facts channel,
+so one Session settling still wakes its planner while another keeps the Machine
+busy. Liveness remains in `machine-alive`, outside daemon-state content versions.
+
 ### Encryption
 
 ```mermaid
@@ -4514,55 +6852,6 @@ matching material.
   local secrets but are never uploaded or substituted for Account material.
 - Some plain and encrypted values use base64 on byte-oriented routes; base64 is an
   encoding, not an encryption claim. See `encryption.md`.
-
-### Shared-Machine execution and filesystem custody (unreleased 0.3)
-
-The Workflow Run composer identifies the selected Machine's custodian before
-Start through `WorkflowRequesterDisclosure`; this is presentation of admitted
-Machine facts, not a second admission check. `Can manage` includes Machine use
-and administration, but neither Use nor Manage adds a private Run reader.
-Revocation is enforced at the next Start or fresh Machine read. Already-admitted
-finite work is not cancelled by withdrawing the grant.
-
-The shared `selectHostRequesterExecutionIdentity` selector qualifies the custodian
-and admitted Manage grantees on the physical Machine for unrestricted execution. A present person consumes
-the existing `owner_person` classification; no native isolation provisioning is
-required for their own terminal or other Machine execution. Use and unknown
-requesters keep their execution protection. Non-Session Account
-automation retains its existing filesystem, SCM and Machine MCP operations; it does
-not become `owner_person` or receive interactive break-glass. Existing local
-caller/attribution, requester bootstrap and signed Session origin survive the
-manager-to-authorizer projection and disqualify Agent/Session execution from
-that owner-automation path. Filesystem and MCP effect owners consume this one
-qualification, rather than deciding ownership independently. Existing Agent
-Bash and person-only interactive-terminal restrictions remain unchanged.
-
-An admitted Manage grantee can open or restart their own unqualified Machine
-shell without an accepted Project checkout or provisioned isolation. Machine
-custody retains the requester; Manage does not permit attaching to another
-person's live terminal.
-An unqualified shell remains Machine intent even when its working directory is
-inside an accepted Project.
-Explicit Project and Session targets keep their requester Account owners.
-Use retains its admitted Project/Workspace Sessions, requester terminals and
-finite Project operations. In development source, Project Open Sync uses only the
-requester's prepared private checkout; its target bootstrap and Sync agents run
-through the native member process, and the requester-owned relationship retains
-that captured identity for later transfers and reconnects. Its credentials use a
-Sync relationship scope in the existing private requester-custody store;
-automatic conflict recovery
-requires that exact retained relationship capture at daemon ingress.
-Machine-level shell, setup scripts, package installs,
-service execution/control, reboot, elevation and firewall configuration require
-Manage. Home decides the role once; the terminal intent/custody owner consumes
-that admitted role to distinguish Machine shells from Project terminals.
-Raw command Actions retain the same Home admission and requester classification
-while preserving captured stdout and stderr. Manage permits host execution;
-requesters without Manage retain their native execution protection. Project package-script terminals
-consume the requester's accepted Project and finite Action owner.
-Machine Manage is full Machine administration, not ownership of another
-Account's Saved Secrets or Sessions on other Machines. Default member separation
-does not restrict a privileged Machine administrator.
 
 ## Terminal hosting (development)
 
@@ -4610,6 +6899,11 @@ is ineligible. Closure uses the PTY owner and records surviving detached work
 with the existing process owner, without a process-tree kill. The
 `closed_terminal` Activity receipt offers Reopen and does not publish a
 rail automatic-action dot.
+Keep running uses the requester's existing Use admission and the warning owner's
+attribution: recipients can cancel their own Session or PTY warning, while the
+Machine custodian can cancel any warning. Session idle and memory warnings share
+the same Guard visibility check and warning record. This does not permit Guard
+policy, Session ceiling or Activity Undo writes, which remain custodian-only.
 `waitForExit` observes real exit, including nonzero, rather than shell readiness;
 abandoning an observer leaves the process running. `requestStop` delegates to
 the existing cross-platform process-tree owner and keeps retained output and
@@ -4668,6 +6962,12 @@ The development parser distinguishes Claude's automatic usage-limit wait footer
 from the interactive usage-limit chooser. An empty composer still accepts a new
 prompt, as Claude permits during the wait. Clearing an owned leftover draft with
 Escape waits for the provider wait to end; it must not cancel automatic continuation.
+The interactive chooser belongs to serialized prompt injection. The injector
+freshly checks visibility, sends one Escape when needed, and verifies closure
+before writing prompt bytes; failed closure defers delivery through the existing
+retry owner. Exact Connected Account application only wakes Pending, even without
+a terminal control port. The dialog broker retires inherited app questions for
+this chooser and leaves its keys to the injector.
 The Rewind message selector owns keyboard input even when its only focused row is
 `(current)`, so that row is never treated as a prompt draft. These keyboard semantics
 follow [Claude's interactive-mode contract](https://code.claude.com/docs/en/interactive-mode).
@@ -4820,6 +7120,19 @@ remain in the existing disposition owner.
 If required descriptor removal fails, Stop reports incomplete retirement and retains
 the exact local evidence for retry without disposing a borrowed pane.
 
+In current 0.3 development, the daemon Session exit-wait grace governs physical
+exit observation before escalation. Owned children supply their process exit
+event; adopted runners without a child handle require OS death observation.
+After positive death proof for every captured runner, Stop joins the canonical
+exit lifecycle, including remainder cleanup and durable retirement, without
+applying the shorter physical exit grace to that work. The original caller
+receives the settled result; concurrent Stops join the same retirement rather
+than duplicating cleanup.
+Unconfirmed physical exit still returns `runner_exit_timeout`, and incomplete
+retirement retains its tracked runner and cleanup custody. Daemon-wide Stop
+with Session cleanup reports `session_cleanup_incomplete` when a Session refuses
+completion, so the daemon remains available for recovery.
+
 For Claude Runtime Activity, the development unified terminal subscribes to the
 current owned host's existing completion path. The foreground launch runner sends
 private native-close proof only after its provider child closes. The host drains
@@ -4943,6 +7256,12 @@ An incomplete termination keeps its exact process custody: concurrent callers sh
 the current attempt, while a rejected attempt can be retried rather than permanently
 replaying its rejection. Successful termination remains idempotent.
 
+In development source, the tmux host adapter uses the requested `TMUX_TMPDIR` for
+host creation and records it in the attachment for subsequent control and attach.
+The shared tmux spawn owner creates a missing socket root before contacting tmux;
+passing the root only into the pane's environment would create the host on the
+ambient server while recording a different attachment endpoint.
+
 Tmux terminal commands retain the exact owning session together with the window
 ID. Window IDs survive window renames but are reused when the tmux server restarts;
 a bare ID cannot establish recovered ownership. The shared liveness probe resolves
@@ -5028,6 +7347,14 @@ and exact package exports feed one esbuild compiler, which emits a minified
 platform-neutral CommonJS bundle and a V2 digest manifest. Hosted web files are
 staged separately as static artifacts. Clients fetch admitted bytes by digest;
 there is no platform-specific build selector or parallel Vite/Re.Pack loader.
+
+In current 0.3 development source, the lazy finite-transfer listener defaults
+to OS port allocation (`0`), so independent daemons and Stacks do not compete
+for one fixed loopback port. The existing lifecycle-owned registry advertises
+the actual bound port, including after an idle listener restart.
+`HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT` retains an explicit positive
+port override; an occupied explicit port fails without stopping its owner.
+This changes no transfer wire shape, authorization or byte-integrity contract.
 
 The same daemon owner also holds one process-local slot per plugin. Managed
 third-party packages load from immutable installation generations, bundled
@@ -5131,6 +7458,16 @@ flowchart TD
 3. It starts a local **control server** for IPC.
 4. It keeps a map of tracked child sessions and updates daemon state on the server.
 
+In 0.3 development, the daemon's shutdown controller records closed fatal reasons
+for uncaught exceptions, unhandled rejections and nonzero process exits through
+the shared file-only fatal logger. It synchronously drains those records even
+when ordinary logging is disabled. Shutdown requests and successful exits also
+drain their ordinary file diagnostics. Fatal records omit rejected values,
+exception payloads and materialization paths. This is best-effort diagnostic
+custody: an external SIGKILL, native abort or unavailable log storage still needs
+evidence outside the victim process, and a last materialization phase does not
+identify the cause of death.
+
 In current development source, primary CLI runners own Session locks through a lexical scope in
 `sessionRunnerLock.ts`. Fresh startup claims the resolved Session id before
 constructing its realtime client or committing pending first input; existing
@@ -5183,6 +7520,21 @@ Configured Home addresses still identify profiles, credential audiences,
 enrollment destinations, diagnostics and child-process configuration; they do
 not select the default live HTTP destination after a runtime carrier is published.
 
+In 0.3 development, long-lived daemon consumers use
+`captureServerHttpBaseUrl()` to follow replacements of that verified publication
+within their captured Home. Machine socket recreation and retained HTTP readers
+therefore use the replacement carrier instead of a retired loopback origin.
+An invocation-scoped finite destination stays fixed, and a publication for a
+different Home cannot retarget the captured reader. Once Iroh is selected,
+`daemon/peer/iroh/homeCarrierOrigin.ts` owns one loopback listener until daemon
+Home transport release. Verified carrier replacements, including HTTPS fallback,
+change only its upstream. Children retain that published URL in
+`HAPPIER_LOCAL_SERVER_URL`; daemon consumers that captured the URL as a string
+also continue to use it after reconnect. HTTP and WebSocket traffic share this
+listener. Existing streams close with their retired carrier and reconnect through
+the same origin; the existing Home identity and authenticated readiness probes
+still verify each replacement before it becomes the listener's upstream.
+
 A self-restart successor waits for verified bootstrap before publishing its local
 control state. The incumbent confirms that state through authenticated local ping
 and resumes after an expired confirmation wait if it can reacquire the lifecycle
@@ -5222,6 +7574,27 @@ when process inventory is incomplete, but cannot override recorded foreign-home
 or foreign-scope facts. `prepareDaemonSpawnLifecycle` publishes the resolved home
 in the protected child environment even without an inherited home override.
 Force-stop retains its additional recorded endpoint agreement requirement.
+
+### Connected Account pool option policy (0.3 development)
+
+Explicit CLI `--auth cs:<id>` resolves profile/group identity through the same
+inventory with `includeDefaults: false`. It does not consult the purpose-default
+catalog; default selection still requires that catalog. Qualified selectors
+already name their identity. Every selected identity is admitted by spawn.
+
+Admitted purpose readers consume the last settled Account catalog publication
+during a refresh. The first publication awaits the existing loader; a published
+clear or refusal replaces the prior value. New admission retains fresh catalog
+reads. Selection and reconciliation writers retain fresh catalog/CAS reads and
+serialize with each other.
+
+`sessions.spawn.connected_services.list` reads policy from the qualified V4
+Account profile's `connectedAccountGroupsV4` rows. The default-authentication
+row consumes the same V4 policy through the qualified Session-option projection;
+its adoption suggestion requires an enabled member of a ready auto-switch pool.
+Neither path fetches a separate V3 policy list. The legacy V2 option builder
+reports `autoSwitch: null` because its lightweight profile groups carry no
+policy; voice selection/readiness consumers do not acquire policy they do not use.
 
 ### Model-capacity recovery (development)
 
@@ -5293,8 +7666,7 @@ Session, or retired grant cannot borrow that custody. Original terminal requests
 through this requester facade and explicit
 automation contexts keep their original bearer, kind, epoch and automation ceiling
 through Home's existing Account/Session owners or Machine carrier, rather than
-borrowing a local daemon's Account connection. The configured interactive CLI
-terminal-present-user policy remains unchanged outside that facade.
+borrowing a local daemon's Account connection.
 
 CLI Stop delegates acknowledgement expiry to the relay's existing finite
 forwarding deadline rather than imposing the generic machine-RPC timer. Fork
@@ -5324,6 +7696,29 @@ Machine socket alone cannot keep that local Stop incomplete; missing death or
 marker proof and incomplete local cleanup still retain custody.
 
 ### Session spawning
+
+In current 0.3 development source, Provider prerequisites retain the original
+typed Agent or Provider refusal through the ordinary spawn result. Native
+process failures likewise retain their validated OS code in the existing
+`launchError` diagnostic. Cleanup after a definite failure to start attempts
+both launch-resource and pending-attachment cleanup; a cleanup exception is
+logged with a content-free step code and does not replace the original refusal.
+This does not relax cancellation or uncertain-child custody: an unconfirmed
+physical launch still requires the existing same-key observation.
+
+In 0.3 development, a setup-authoring origin can ride the existing private spawn
+request only after `sessionSpawnAuthoringOrigin` protocol version 1 is advertised
+by the canonical Machine operation-capability owner. The daemon passes the
+admitted origin through runner startup custody; `initializeBackendRunSession`
+places it in `work.authoringOriginV1` before `getOrCreateSession`. The existing
+Account-mode metadata-envelope builder owns plain/E2EE representation and keeps
+this destination out of shared metadata and server-visible creation hints.
+The UI's exact owner read proves persistence before the existing checkout
+relationship POST. The UI sends no origin PATCH after a birth handoff, including
+when confirmation fails. Older-daemon creation and Temporary-computer creation
+retain the explicit private checkpoint; recovery consumes the writer choice in
+existing local spawn-attempt custody. See the [compatibility contract](compatibility.md#project-checkout-authoring-relationship-03-development)
+and [private metadata classification](encryption.md#metadata).
 
 In 0.3 development, the Claude plugin retains its effective native account directory in the existing native runtime descriptor. Its daemon environment hook restores that directory before the ambient daemon default; explicit profile and materialized credential selections still take precedence. No parallel host-owned native-environment metadata is introduced.
 
@@ -5383,6 +7778,54 @@ protected custody. Neither path borrows custodian Account settings or credential
 and revoked authority fails closed. See
 [Session Account-action authority](./runtime-core.md#session-account-action-authority-03-development).
 This describes development source, not released availability or live certification.
+
+Managed provisioning has a different custody contract. Foreign-controller
+acquire, inspect, bootstrap retry and exact-resource operation observation use the
+existing installation-sealed context with the `managed_controller_codec` purpose.
+It carries a fresh invocation encryption key and the existing nonsecret invocation
+provenance, never the requester's bearer
+or Account content key. The receiver verifies current Home authority and keeps
+its own custodian executor, settings and native credential lease, without creating
+a requester Account execution context. The admitted requester still owns the
+operation's observation and exact managed-resource scope.
+
+Direct UI calls retain their existing confirmation policy. Non-UI Ask policy is not waived:
+unavailable requester approval custody fails closed, and a custodian credential
+cannot write a private approval Artifact for a different originating Account.
+Development: guest pairing consumes an admitted Create parent's review once. The
+existing requester-private pairing delivery projects only the F2 issuer's root
+Action id, never its input or a public approval flag. The client consumes that one
+private response for both review and pairing, without a separate review-only fetch;
+its secret may reach the requester's own app before the fallback decision. The
+requester's key-holding client still delivers the pairing secret; standalone, absent, forged and unrelated
+parents retain the existing pairing confirmation.
+Guest setup and Agent-start continuation use a separate fresh child-invocation
+codec sealed to the exact enrolled installation and bound to current Home
+authority. The guest retains its legitimate Account execution context; it does
+not reuse the parent codec key. Missing invocation provenance does not acquire
+UI approval authority. Exact native workspace bind phases retain their existing
+prepared-map custody; arbitrary commands/files still require normal isolation.
+Fresh native acquisition through the real acquire-role lease and signed automatic
+setup through the canonical prepared targets-only Apply are source-tested;
+the temporary server delegation refusal is removed. The local same-daemon setup
+credential gate is a separate M-ELEV-owned integration and is not relaxed here.
+An already-enrolled codec replay is distinct from fresh native lease evidence.
+These are unreleased source contracts, not loaded-stack or released-availability
+claims. Remaining integration checks and visual consent composition are tracked
+in the VD-DELEG lane report.
+
+The managed controller admits finite provisioning and control work once. Native
+roles consume that admission and the operation's cancellation signal; they do
+not reread the managed row before every guest command or bootstrap secret read.
+The admitted launch owns exact Connected Account selections. Configuration
+rotation takes effect at credential acquisition without withdrawing the managed
+operation. Saved Secret access, revision and Account encryption checks still
+belong to the secret acquisition owner. Policy follow-ups retain signed
+installation, Account and target proofs and use the existing admitted-request
+lookup rather than reevaluating the source guest's retention policy. Native
+submission CAS and paid-resource settlement remain separate domain transitions.
+Provisioner discovery returns its admitted read snapshot; selecting a contributor
+starts a fresh admission through the existing invocation owner.
 
 #### Managed session directories (planned 0.3 development behavior)
 
@@ -5448,10 +7891,13 @@ deletion stops the tracked process tree before removing every allocation bound t
 the session on that machine, after physical containment and symlink checks.
 Offline cleanup is pending until the daemon returns. Persistent removal failure
 records `pendingRemoval` and returns normally so later Account changes can advance;
-startup retries it. Existing deletion replay and complete active/archived inventory
-reconciliation cover reconnect and access reset. A partial inventory never proves
-absence. Startup resolves unbound creation records through the existing creation-tag
-lookup before binding or removal.
+startup and access reset retry it. Existing deletion cursor replay owns missed
+deletion delivery. An allocation's absence from the daemon Account's inventory
+or creation-tag lookup never proves deletion: a grantee's Session can run on this
+Machine without being visible to its owner. Startup binds unbound creations when
+the existing tag lookup finds their Session, and otherwise retains their files
+for normal resume binding. A cursor gap without a recorded removal can therefore
+leave orphaned files; it must not delete a retained conversation's workspace.
 
 These private folders are separate working directories, not OS or tenant
 isolation. Agents retain the daemon user's filesystem access, including access to
@@ -5597,6 +8043,14 @@ after that store retires or reloads.
 No new persisted launch marker is needed.
 Creation refusals keep their exact terminal spawn detail, through the same
 classification the runner uses.
+In 0.3 development source, a typed `session.spawn_new` refusal settles its
+operation as `failed`, retaining the exact spawn result for current operation
+readers and replay. A retryable refusal still permits an explicit retry with the
+same creation key through the ordinary creator. Released V1 operation readers
+receive the failed state and error without the result body, which their parser
+forbids on failed operations. Updating this behavior requires the daemon payload
+and matching current Protocol/requester readers; it does not rewrite retained
+historical operation records.
 In development source, a Session create/load HTTP 5xx retains its status through
 the API client and daemon launch classifier. A validated
 `database_transaction_conflict_exhausted` receipt also retains that code; arbitrary
@@ -5777,11 +8231,45 @@ cache, and stops it on shutdown or startup failure. Its history directory is
 source wiring, not released availability or certification of the entire
 machine-resource program.
 
-The sampler uses one unref'ed timer and the fastest held demand: wall-minute
-alignment at 60 seconds without a viewer, 15 seconds for summary demand, and
-2 seconds for live or Overview demand. In-process live demand does not request
-Overview extras. GPU, thermal and battery detail are Overview-only, cached for
-15 seconds. The base power fact serves keep-awake **On power** and enabled
+The daemon snapshot and UI live append share Protocol's vitals-series gap and
+15-second slot projection. Explicit missing measurements remain gaps; a minute
+record covers only its observed minute. Delivery order, not wall-clock labels,
+owns the latest observation: a backwards step starts a fresh chart segment but
+does not stop updates. A snapshot started before a delivered observation cannot
+overwrite it. The qualified UI resource owner retains one observation per
+Home/Account/Machine and selects the strongest currently demanded detail; closing
+the last detail view leaves any summary consumer live without a second transport.
+Summary and Overview share availability facts, so older failure metadata cannot
+hide an authorized recovered reading. Their compact/full presentation remains
+surface-owned. These are development-source contracts, not loaded QA evidence.
+
+Proposal receipts borrow one qualified complete-Trash category projection and
+the existing 30-day Activity observation per Home/Account/Machine. The category
+owner acquires one revision across its pages; its complete-inventory selector is
+UI-internal and is never sent on the wire. Cards retain their own approval result
+and truthful per-entry receipt reducer, not another receipt ledger. Move, Restore
+and Empty run through the Storage owner so real effects invalidate those shared
+facts. Credential resolution stays Checking until the existing identity owner
+settles; missing transport material is not itself a failed read. Closing or
+hiding the last consumer releases its reads and parked Activity watch.
+
+The sampler uses one unref'ed timer at the per-Machine resources policy's
+`monitoring.intervalMs` (default 2 seconds). `monitoring.mode` is `off`,
+`while_viewing`, or `always` (the history-preserving default). Off admits no
+reader calls, timer fires or new history writes, even with held viewer demand;
+while-viewing releases the timer with the last consumer. The existing
+resources-policy metadata/CAS owner persists these deliberate preferences and
+publishes monitoring-key changes separately from unrelated policy/revision
+changes. This is the data contract; rendered controls and the Machine-page Off
+state still need the UI lane. Positive safe-integer intervals retain their full
+deadline across platform timer chunks. Native helper failure retains its
+existing one-minute retry spacing, never shortening a longer selected interval.
+
+Summary, in-process live and Overview consumers share that base clock; changing
+demand does not insert another read. Only Overview requests GPU, thermal,
+battery and inotify detail, on its first base tick and every Nth base tick after
+that, where N is the 15-second slow-fact period rounded up to whole ticks
+(16 seconds at the default interval). The base power fact serves keep-awake **On power** and enabled
 whole-disk scanning without a viewer: manual scans use it for worker sizing,
 and scheduled scans use it for admission and AC edges. The sampler reads their demand from the
 canonical resources policy; **On** and **Off** keep-awake modes need no AC facts.
@@ -5790,11 +8278,24 @@ while a power-dependent policy needs it, reusing that result across summary/live
 reads. Overview shares the same power reader at its existing extras boundary.
 With no Overview or power-dependent policy, idle, summary and Processes reads
 spawn no battery tool. A failed power read
-leaves the power fact unknown. Linux's always-on reader spawns zero processes. Its optional NVIDIA
+leaves the power fact unknown. Linux's base reader spawns zero processes. Its optional NVIDIA
 read first checks for an NVIDIA device and an executable `nvidia-smi` on PATH,
 then runs at most one system-tool call per extras read; a missing or failing tool
 does not hide the base sample. Non-Overview responses omit extras even when a
 concurrent Overview has populated that cache.
+
+Linux's Overview-only inotify walk skips vanished processes and descriptors at
+their own loop boundaries. A known permission gap omits the entire optional
+used/max count, never a subtotal; unexpected I/O follows the reader's existing
+`reader_failed` path. File-watch presentation and limit attention consume that
+same fact. This does not add an idle walk or change the slow-fact cadence.
+The client's history range remains one global device UI lens, held by keyed
+persistent UI state rather than Settings; the existing migration owner imports
+its retired local-settings value without replacing a current lens.
+
+Observation order, start-to-start live scheduling and ring retention use the
+monotonic clock. Wall timestamps remain display/history facts: stepping that
+clock backwards does not reject a new sample or strand a retained watch cursor.
 
 [`createCounterRateReader`](../apps/cli/src/daemon/vitals/readers/counterRates.ts)
 owns counter validity for Linux and native CPU, cgroup CPU, network, swap/events
@@ -5919,8 +8420,9 @@ Minute timestamps are the end of their measured interval; accepted minutes are
 strictly increasing, including after a backward wall-clock change. Startup and
 day rollover prune whole expired day files. Tolerant stored readers accept
 unknown fields, skip malformed rows and ignore an unfinished final append.
-Alert-episode rows use this same stream, not another store. Missing minutes remain
-gaps. The 1-hour projection
+Only minute records are persisted. Retired alert and checkpoint rows are ignored;
+alert suppression and recovery state are held only for the current daemon
+lifetime. Missing minutes remain gaps. The 1-hour projection
 combines the live ring with restored minutes, while 24-hour and 7-day projections
 use 5-minute and 30-minute buckets with means and maxima and explicit null
 buckets. Network buckets carry observed duration separately for received and sent
@@ -5946,11 +8448,10 @@ and exhausted commit feed the shared effective rule level; a negative binary
 low-memory signal permits rule recovery without inventing a native pressure
 metric for the UI.
 
-The alert runtime journals each transition before delivery. Before historical day
-files age out, the same stream carries open episodes forward with their original
-fire time; historical display pruning does not close an active condition. Startup
-restores that state before pruning, avoiding a duplicate fire or lost recovery
-after restart. Its notification
+The alert runtime retains each transition in memory before delivery. Pruning
+display history does not close an active condition within that daemon lifetime;
+restarting the daemon begins a fresh alert episode rather than restoring
+suppression. Its notification
 builder calls the existing activity-notification dispatcher using `resource_limit`.
 That event and Guard's distinct events share the `machines` channel topic.
 Recovery delivery is quiet; machine/rule/volume notification identity is stable,
@@ -5970,12 +8471,14 @@ do not wait for the next sample or hold faster demand. A watch returns existing
 newer samples immediately, or uses the shared
 [`parkWatch`](../apps/cli/src/daemon/lifecycle/parkWatch.ts) and
 [`waitForChangeOrDeadline`](../apps/cli/src/daemon/lifecycle/waitForChangeOrDeadline.ts)
-owners for the 25-second park window, cancellation and cleanup. Only a parked
-watch holds its summary/Overview demand, and admission is checked again before
-disclosure after the wait. Watch deadline and sample cadence are separate
-contracts. Mounted machine watches use the RPC transport's caller-owned operation
-lifetime with bounded connection/setup. The daemon's park deadline returns an
-unchanged answer; caller cancellation and transport disconnect retire the request.
+owners for change notification, cancellation and cleanup, without a park expiry. Only a parked
+watch holds its summary/Overview demand. The dispatcher admits each request once;
+local target binding and cancellation remain checked at disclosure, and the next
+request re-admits Home access. Reply objects use their producer's types rather
+than re-parsing and cloning the daemon's own samples. Sampling cadence remains with
+the producer. Mounted Machine watches use the RPC transport's caller-owned operation
+lifetime with bounded connection/setup. Watches answer on a real change or caller
+cancellation; transport disconnect retires the request.
 Clients add no separate response deadline or transport margin. The protocol's
 [`machine-vitals Action specs`](../packages/protocol/src/actions/specs/machineVitals.ts)
 declare safe get/history reads and the account-level summaries-list seam. The
@@ -6061,7 +8564,18 @@ requires UI, daemon and server to move together; no Machine alias for
 
 The CLI daemon is one component of the named-stack runtime format; it is not a
 second runtime owner. In current 0.3 development, source validation and default
-source QA resolve first-party source through `happier-source`. Native daemon
+source QA resolve first-party source through `happier-source`. Repository CLI
+wrappers select their authored CLI export through the same source-export owner
+and keep the CLI source loader for their process lifetime, including deferred
+command dispatch and lazy imports. They neither select nor build CLI dist
+snapshots: a compiled closure's integrity does not establish source freshness.
+Installed wrappers retain their compiled snapshot selection. Source daemon
+startup loads available bundled plugin source directly through that workspace
+source loader, without building or materializing workspace `dist` outputs.
+Retained flat plugin copies still pass their local copy admission before import;
+immutable runtime artifacts retain their existing artifact admission. A failed
+source admission settles that demand; a later demand may retry through the same
+activation owner. Native daemon
 construction uses the same CLI/plugin/Agent entry authority and one esbuild graph,
 with shared physical ESM chunks. Bun compiles a launcher that loads
 `package-dist/index.mjs` beside its executable, preserving the host/plugin shared
@@ -6084,9 +8598,13 @@ typecheck result. See [binary runtime](binary-runtime.md#internal-workspace-pack
 The shared workspace build-mode owner also supplies compiler arguments to both
 the generic package emitter and cli-common's atomic compiler. Remaining
 `source-dev`/`qa-runtime` package consumers emit incrementally from captured inputs
-without semantic checking. Output records identify that capture, while later source
-edits demand the next build. Ordinary builds and public publication retain strict checking and
-last-green replacement rules. Native source bundles do not consume these dist
+without semantic checking. Ordinary builds and public publication use the same
+input capture with strict checking. Output records identify the consumed capture;
+later source edits demand the next build rather than aborting publication or
+spending a trailing compiler pass. Unsafe changes to the shared dependency install
+still reject publication. CLI shared-dependency materialization consumes the package
+owner's valid capture in every build mode; plugin authored-manifest consistency
+remains separately checked. Native source bundles do not consume these dist
 outputs, and public typechecking remains separate.
 
 In current development source, explicit artifact builds record requested components' preparation and terminal
@@ -6147,6 +8665,14 @@ build writes a private temporary payload and releases its capacity before
 acquiring `cli-dist-build.lock` for the staged copy. Prebuilt helper publication
 replaces a complete sibling file, so an already executing helper keeps its inode.
 The existing package-dist and validation envelopes remain unchanged.
+Source-test preparation uses the canonical workspace lock's waiting policy
+behind a live finite publisher. It preserves the holder and existing helper
+while waiting, then publishes the already prepared payload after release without
+repeating Go compilation. Preparation adds no retry loop or competing timeout.
+In source development, daemon startup uses the existing
+`prepareDevDaemonSourceRuntime` → `buildSourceRuntimeBundle` owner to select an
+immutable generation before loading CLI commands. Source dev/reload uses that
+same owner; publication custody does not span profile or start-to-stable waits.
 
 Runtime snapshots are manifests plus managed references to canonical producer artifact payloads. A consumer selects a valid target-compatible published snapshot and retains only its own mutable state, process lifecycle, and selection pointer; it does not build or copy a payload. Snapshot validation checks component support references, and retention protects support artifacts transitively while a retained snapshot or external consumer selection needs them. Selecting a newer snapshot is non-disruptive: `selectedSnapshotId` can differ from `loadedSnapshotId` until an explicit restart, which is the proof boundary for newly loaded server or daemon bytes.
 
@@ -6166,6 +8692,11 @@ The repository typecheck reuses those canonical builds as the source-compilation
 
 In the development checkout, run the public `pnpm run typecheck` entry point. The execution owner selects the host and marks dispatched children with `HAPPIER_TYPECHECK_DISPATCHED=1`, including explicit local execution. The shared TypeScript runner refuses unmarked `typecheck:finite` and `typecheck:source:finite` invocations before starting the compiler. Turbo forwards and hashes this marker so dispatched children keep the selected host and an authorized cached result cannot satisfy an unmarked invocation. CI's public `check:public-sdk:finite` entry point grants the same permission through the execution owner.
 
+`hstack-exec --script=typecheck` is also a public-script invocation. The launcher
+expands script shorthand before delegating to a script that owns its own
+dispatch, preserving arguments and the script's exit status. The shorthand is
+not restricted to `*:local` executor targets.
+
 The shared TypeScript dist builder excludes test-only roots, including `.test-d.ts` and `.test-d.tsx`, through a build-only configuration extending the package project. It preserves package exclusions and leaves no-emit project selection unchanged. Root typecheck also runs the Protocol and Triage projects with `--noEmit`, in both ordinary and compiler-only modes, because their type tests previously relied on production compilation. Plugin UI's source check and Plugin SDK's test-project check continue to enforce their type tests.
 
 Generated-contract validation and mutable compiler-input preparation are separate finite facts. For example, the Plugin SDK Action-map and external SDK Action-wrapper checks are cacheable exact-input tasks, while synchronizing the physical declaration graph consumed by the Plugin SDK remains non-cacheable. This prevents an expensive semantic generator check from being repeated merely because declaration bytes must be refreshed through their canonical owner.
@@ -6183,15 +8714,44 @@ fingerprint and does not request native artifact publication. An explicit restar
 prepares current source; running code remains unchanged between restarts. Source
 development reloads remain with their service owners rather than advancing a
 managed runtime publication flight or selecting another stack's snapshot.
-In current 0.3 development, `withJsonOwnerFileLock` serves registered waiters
-in filesystem ticket order, including the shared source-bundle build lock.
-Queue entries use the same PID/heartbeat reclaim rule as the held lock;
-cancellation and timeout remove the caller's entry. Uncontended callers retain
-the exclusive-create path. Already running scripts keep their loaded lock code
-and can still compete outside the queue: synchronize the checkout and relaunch
-the owning runner to pick up fairness. Bundle reuse still requires both the
-source/tool fingerprint and matching consumed-byte digests; a change to an
-unconsumed input can therefore trigger another build.
+
+In 0.3 development, `packages/cli-common/registerSourceRuntime.mjs` configures
+tsx from the source entry's nearest `tsconfig.runtime.json` or `tsconfig.json`
+inside the checkout. An explicit `TSX_TSCONFIG_PATH` takes precedence. ESM and
+CommonJS share that selection, without exporting the inferred default to child
+processes. CLI generators and daemon entries therefore resolve the CLI's `@/*`
+paths independently of the launching directory, including UI test prebuilds.
+tsx owns path mapping; the existing workspace-source hook continues to select
+authored workspace exports ahead of stale installed declarations.
+When a UI/workspace build imports the CLI generator in the same process,
+the tools-only `cliSourceLoader.mjs#createCliSourceLoader` supplies a scoped CLI graph
+using `apps/cli/tsconfig.runtime.json`. The generator's authoring loader and
+isolated inspection worker use that same owner. Their namespaces retain their
+existing invocation/session lifetimes and do not replace the caller's aliases.
+In current 0.3 development, the JSON owner-file lock admits exclusive callers
+in completed-registration ticket order, including source-bundle publication.
+Overlapping registrations may share a sequence and use their unique ticket
+names to break ties. Cancellation and timeout remove the caller's ticket;
+departed processes do not block the queue. File
+notifications wake waiters, with the existing catch-up for process death or lost
+events. Already running scripts retain their loaded helper, so their owner must
+relaunch them to pick up fairness. Source-build fingerprint custody remains
+with the workspace bundle-lock owner.
+
+Successful source-runtime publication records a current-context candidate and
+an exact captured-input candidate. Reuse checks the current candidate first,
+then at most one exact candidate on a miss, without scanning retained products.
+It verifies the chosen completion's consumed source/tool identity and byte
+digests. Unconsumed application edits preserve warm reuse; undoing authored
+changes can select the historical captured product. Shared web reuse likewise
+looks up its exact captured-input/build-options candidate. Missing or stale
+candidates take the cold-build path. The existing fingerprint lock pins
+the chosen graph during verification and the daemon import probe, outside
+publication custody; short publication sections read completion and select it.
+Publication also admits completed products and their consumer pins. Retention
+performs tree/process scans outside that lock, rechecks current pins and producer
+custody before atomically retiring candidates under it, and removes retired
+trees after release. Interrupted deletion is handled by the same retention path.
 The detached Stack owner in `apps/stack/scripts/stack/run_script_with_stack_env.mjs`
 owns services and logs; the TUI attaches, displays the same state, and sends explicit
 controls. An unexpected TUI exit detaches from a healthy owner, while explicit
@@ -6219,24 +8779,37 @@ installation and lifecycle ownership.
 
 Remote dependency bootstrap installs tools without general workspace lifecycle scripts before loading the package-manager owner. Every install that materializes the shared UI dependency tree, including source-test and stage-zero refreshes, completes the canonical UI postinstall under the existing dependency-refresh lock, before publishing the ready marker. Warm prerequisite repair uses the same lock and withdraws admission until repair succeeds. The dependency-free `utils/proc/ui_postinstall.mjs` owner serves both bootstrap and full package-manager preparation; the UI verifier also loads without compiled Stack packages. The mandatory password-worker asset producer compiles the canonical Protocol codec source directly, so cold UI postinstall does not require or consume stale Protocol dist. Scriptless admission still does not certify other runtime lifecycle prerequisites. UI patches and asset-generator sources participate through `apps/ui/package.json`'s `happier.installFreshnessInputs`; changing either reruns postinstall even when pnpm reuses installed packages. Postinstall failure leaves admission stale and fails preparation; an unchanged source-test preparation reuses completed outputs.
 
-In current 0.3 development, a dependency writer stops verified managed Metro consumers before changing their shared tree. Final Metro launch and existing PID-state publication acquire the same install lock; the existing Expo supervisor restarts only after complete dependency admission is available. The UI verifier prevents unchanged warm preparation from stopping a healthy Metro. A legacy running supervisor without this guarded restart capability causes dependency mutation to fail closed with a restart-required error; changing source does not retrofit an already-loaded supervisor. No new PID registry or suspended-process custody is introduced. Last-green launch requires a previously admitted coherent installed tree, not equality with newer source inputs: a successful no-install repair retains the old admission inputs, while the normal installer still sees those newer inputs as stale. Failed preparation never admits a replacement against a partial tree.
+In current 0.3 development, dependency writers publish changed outputs without stopping running Metro consumers. The publication owner retains both the global completed generation and the last completed generation affecting Expo's consumed dependency outputs. Installs and UI dependency repairs advance both; server-only generated Prisma clients advance only the global generation. Expo's existing reload owner and Metro cache fingerprint consume its projected generation without scanning or classifying changed files. Failed writes advance neither completed generation. This follows the dev Expo owner's 2026-10-30 19:59 UTC ruling. Starters wait for an active installer before launching; changing source does not retrofit an already-loaded supervisor. Last-green launch requires a previously admitted coherent installed tree, not equality with newer source inputs: a successful no-install repair retains the old admission inputs, while the normal installer still sees those newer inputs as stale. Failed preparation never admits a replacement against a partial tree.
 
-Remote validation bootstrap has the target's explicit package-manager cache context even when it does not inherit the running Stack environment. Both dispatchers provide `cache=<targetHome>/cache`; consumer discovery uses that target home through the same `dev_targets/stack_paths.mjs` owner as managed worker state, including its `stack-state` directory. It must not search only the remote account's default local Stack home. Planned dependency stops preserve the existing crash-restart budget, while a crash before successful PID publication remains an ordinary startup failure; user shutdown remains authoritative.
+Remote validation bootstrap has the target's explicit package-manager cache context even when it does not inherit the running Stack environment. Both dispatchers provide `cache=<targetHome>/cache`; consumer discovery uses that target home through the same `dev_targets/stack_paths.mjs` owner as managed worker state, including its `stack-state` directory. It must not search only the remote account's default local Stack home. Consumer discovery supplies restart advice rather than process-lifecycle authority. A crash before successful PID publication remains an ordinary startup failure; user shutdown remains authoritative.
 
-In current source development, the remote Stack supervisor retires the prior target-owned Stack before dependency bootstrap. Its retirement probe includes live recorded Expo processes even when their runner's runtime state has disappeared; the target's canonical Stack stop still verifies process identity and ownership before signaling them. Source and controlled supervisors both invoke target-owned Stack stop before closing their worker transports. If bootstrap still finds a live Metro without a verified dependency-safe restart owner, the supervisor reports a failed target with a one-time recovery instruction and does not retry that ownership refusal. Stop the owning Stack on that target, verify its recorded Expo has exited, then start again; source changes alone cannot retrofit a live legacy supervisor.
+In current source development, the remote Stack supervisor retires the prior target-owned Stack before dependency bootstrap. Its retirement probe includes live recorded Expo processes even when their runner's runtime state has disappeared; the target's canonical Stack stop still verifies process identity and ownership before signaling them. Source and controlled supervisors both invoke target-owned Stack stop before closing their worker transports. This explicit Stack retirement remains separate from dependency publication and its output-scoped Expo reload.
 
 In 0.3 web development, `apps/ui/metro.config.js` rewrites development bundle, source-map and HMR entry requests to `lazy=false`. Dynamic imports are included in the initial graph and still resolve asynchronously; `inlineRequires` defers module evaluation. This prevents Metro from retaining overlapping transitive graphs for each large optional presentation entry. Native development and production lazy bundling retain Expo's existing behavior. Web Babel uses Expo's existing `import.meta` transform so optional dependencies remain valid in Metro's script bundles; the Metro cache-version bump invalidates older transforms on restart. App and vendor source maps remain intact. A running Metro must be restarted to load this configuration change.
+
+In current 0.3 development source, Metro's disk store retains one source revision per file/options/configuration slot and checks the complete content key before returning a hit. Stack selects a cache generation from the actual Metro, Babel, store and dependency inputs at initial launch and supervised restart. Retired generations go through the canonical historical reaper with live cache-root bindings; unchanged inputs keep their cache without mtime expiry. Legacy `metro-cache` directories are not automatically migrated or deleted. Interrupted staging files and slots for deleted sources retire with their generation. Platforms without authoritative process-reference observation retain old generations.
+
+Expo preparation also uses that reaper for abandoned scratch. Plugin-UI cleanup preserves current and per-plugin last-green inventory graphs, and retains all previously served graphs while Expo liveness is alive or unknown, including detached processes with an inventory binding. Once the previous serving process is positively dead, superseded graphs become eligible under the existing historical-age and fresh process/tree checks. Unavailable observations retain data and report the reason. These development-source changes take effect when a newly loaded Stack Expo owner launches Metro; they do not retrofit a running supervisor or Metro, or authorize restarting one.
 
 In current development source, the reload coordinator revalidates each service
 against its own consumed descriptors. A daemon-only edit cannot revoke a server
 build or activation. Shared-input edits still revoke every affected service,
 and edits arriving during preparation coalesce into the existing trailing cycle.
+Ordinary shared workspace source edits affect server and daemon reloads; Expo
+consumes those edits through Metro's source resolver and watch roots. Expo
+uses explicit descriptors while preparing its startup inputs. Once serving,
+dependency publications and source edits do not request process replacement.
+Metro/Babel configuration and installed dependency fingerprints are reconciled
+at the owning Stack's next startup or explicit restart; publishing JavaScript Plugin UI
+artifacts is handled by Metro's inventory watcher. This development-source
+policy takes effect when the Stack lifecycle owner next restarts its coordinator.
 Package currentness and dependency ordering remain with the workspace build owner.
 Its scheduling graph shares the manifests already read during workspace discovery
 within one pass. Fresh package admission, transitive input/output fingerprints,
 lock-wait rechecks, and publication fences are not memoized through that graph.
-Manifest movement re-enters the existing single trailing pass with a fresh graph;
-no scheduling observation survives an invocation.
+Manifest movement that invalidates the observed dependency graph rejects that
+candidate; the next invocation observes the current graph. No scheduling
+observation survives an invocation.
 
 ## Implementation references
 - CLI entry: `apps/cli/src/index.ts`
@@ -6246,49 +8819,35 @@ no scheduling observation survives an invocation.
 - Persistence: `apps/cli/src/persistence.ts`
 - Config: `apps/cli/src/configuration.ts`
 
-The 2026-11-02 owner ruling amends MI-1's mandatory member placement: sharing
-is for trusted people, not a sandbox against malicious guests. Localhost reach
-is accepted, including other people's development servers.
+## Windows background tasks (0.3 development)
 
-`resolveHostRequesterAgentPlacementForHost` consumes the shared
-`resolveMachineAgentExecutionPlacementV1` policy projection. Linux with enabled
-`memberProvisioning: 'linuxUsersV1'` selects `member`; otherwise every requester
-uses the owner's Agent placement (`sharedAgent` when isolation is enabled,
-`daemon` when disabled). macOS and Windows do not provision member users.
-Native readiness is still required for an enabled isolation transport; a broken
-member setup never silently falls back. Unknown requester custody still refuses.
-Placement changes neither requester credentials nor Session ownership or the
-Session's role at the Computer gate. Happier's Computer controls require Manage
-to access the owner's real display. In fallback mode, a guest's Agent runs as you
-and can do anything you can do on this Machine, including seeing your screen.
-The grant controller exposes this same policy projection and the existing
-preview/set Actions for the disclosure and Linux separate-user setup; visual
-composition is a separate UI pass. Older daemons keep returning their typed
-isolation refusal, which newer clients present without a private-RPC retry.
+In current development source (not yet released), the shared service planner gives current-user
+tasks (daemon, relay host, stack self-host and its auto-updater) a native action instead of `powershell.exe`: Task
+Scheduler starts `services/<label>/launcher-<build>-<sha256 prefix>/happier-service-launcher.exe
+--wrapper "<services/<label>.ps1>" --diagnostic-log "<services/<label>.launcher.log>"`. It is a
+GUI-subsystem program, so no console window is created for the task; it starts the unchanged
+wrapper with Windows PowerShell 5.1 (resolved from the Windows directory, not `PATH`) under
+`CREATE_NO_WINDOW`, inheriting only NUL standard handles. The wrapper still owns environment,
+working directory, program and log redirection. The launcher waits for the wrapper and exits with
+its exit code, so Task Scheduler's retry and `IgnoreNew` policy are unchanged. The wrapper runs in
+a private job with kill-on-close: if the launcher is terminated (`Stop-ScheduledTask`, `/End`)
+the whole task tree ends, but after an observed wrapper exit (including a non-zero exit) the job is
+disarmed first, so processes a daemon deliberately leaves running survive a normal exit or
+self-restart. The diagnostic log records launcher version, stage, wrapper PID and creation time,
+Win32 error and wrapper exit — never environment values.
 
-## Agent isolation bootstrap retirement (0.3 development)
-
-Cross-UID Linux Sessions and the native isolation probe place their private
-socket directories under `/tmp`, independent of a custodian-private `TMPDIR`.
-The existing ACL admits only the selected shared Agent or member UID to that
-Session leaf and socket; the Session bearer and tool authority remain unchanged.
-No custodian ancestor permissions or daemon group membership are widened.
-
-An Off review inventories the shared bootstrap and member RunAs rules derived
-from the existing private bindings, even when desired policy is already disabled. An unresolved binding scope or incomplete inventory adds one retained
-`native_check_unavailable` item; Off remains ready and does not claim the member
-rules were fully inspected. Its optional `plan.retirement` lists native presence, exact
-managed RunAs removal, and typed remedies for retained resources. The legacy
-bootstrap recorded neither exclusive user/group ownership nor prior permissions
-or Git values. Those identities, shared tools and authored home/workspace data
-are retained with explicit administrator guidance. A changed or foreign sudoers
-file is retained too; removal requires the producer's exact content digest,
-root:root ownership, mode 0440 and no symlinks through the native file owner.
-Member revoke withdraws that exact rule after the natural lifecycle boundary
-even if account or binding state has drifted; retained identities and data remain. Accepted/unchanged results report removed
-step ids and retained remedies. Off inventory uses the same read-only elevated
-CHECK as enabling. If the daemon identity or elevated CHECK is unavailable, Off
-still returns a ready review, retains every inventory item with
-`native_check_unavailable`, and removes nothing. An unavailable checkout census
-also does not block this explicit policy recovery. This is an unreleased 0.3
-development contract.
+Installs copy the packaged launcher (located as described in
+[Binary-safe runtime](binary-runtime.md)) into the content-named task directory after PE
+validation (x64, PE32+, GUI subsystem, provenance marker) and before any stop or registration. A
+running launcher is never replaced in place, and a different build gets a new directory. Relay host
+and stack self-host upgrades run the same asset preflight before they stop the current service.
+Supported stop requires exactly one registered action and accepts only the expected native
+action for that task or the exact legacy PowerShell action; additional actions are refused. A task still registered with the legacy
+action keeps working for start, stop and restart, and service status reports it as a launcher
+upgrade (`windowsLauncherUpgradeNeeded`), which doctor and background-service repair treat as needing
+a reinstall. Only `install` rewrites the action and verifies it afterwards; start/restart drift
+refresh rewrites the wrapper but never the task action. CLI self-update repairs a discovered legacy
+user task through that installer before its version-proven restart. It preserves the definition's
+autostart and Desktop ownership, and preserves an external CLI command. A custom command prefix
+that the installer cannot represent is left unchanged with a warning. SYSTEM tasks still use the
+PowerShell action.

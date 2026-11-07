@@ -32,16 +32,10 @@ export async function runMcpServeCommand(
   reloadConfiguration();
   if (explicitServerSelection) {
     const target = explicitServerSelection.homeTarget;
-    await applyResolvedServerSelection({
-      ...explicitServerSelection,
-      serverUrl: target.canonicalAuthUrl,
-      localServerUrl: target.applicationUrl === target.canonicalAuthUrl
-        ? null
-        : target.applicationUrl,
-    });
+    await applyResolvedServerSelection(explicitServerSelection);
     if (target.homeServerIdentityId) {
       const snapshot = await (deps.observeServerFeaturesSnapshot ?? observeServerFeaturesSnapshot)({
-        serverUrl: target.applicationUrl,
+        serverUrl: resolveServerHttpBaseUrl(),
         projection: 'public',
       });
       const observedIdentity = snapshot.status === 'ready'

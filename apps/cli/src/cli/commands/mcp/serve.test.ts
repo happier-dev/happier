@@ -227,6 +227,8 @@ describe('happier mcp serve (env hardening)', () => {
       delete process.env.HAPPIER_ACTIVE_SERVER_ID;
       reloadConfiguration();
 
+      const defaultServerUrl = configuration.serverUrl;
+      const defaultServerId = configuration.activeServerId;
       await mkdir(dirname(configuration.privateKeyFile), { recursive: true });
       await writeFile(configuration.privateKeyFile, JSON.stringify({ token: 'active-home-token' }), 'utf8');
       const profile = await addServerProfile({
@@ -253,6 +255,7 @@ describe('happier mcp serve (env hardening)', () => {
         'utf8',
       );
 
+      const persistedBefore = JSON.parse(await readFile(join(homeDir, 'settings.json'), 'utf8'));
       const resolution = await applyEphemeralServerSelectionFromPrefixArgs(['--server', profile.id, 'mcp', 'serve']);
       expect(resolution.selection?.application).toEqual({ kind: 'ephemeralEnv' });
       if (!resolution.selection || resolution.selection.application.kind !== 'ephemeralEnv') {
@@ -336,15 +339,15 @@ describe('happier mcp serve (env hardening)', () => {
             toolIds: [`${profile.id}/tool`],
           },
           {
-            activeServerId: 'cloud',
-            serverUrl: 'https://api.happier.dev',
+            activeServerId: defaultServerId,
+            serverUrl: defaultServerUrl,
             token: 'active-home-token',
-            toolIds: ['cloud/tool'],
+            toolIds: [`${defaultServerId}/tool`],
           },
         ]);
         expect(connectedSnapshots).toEqual(constructedSnapshots);
         const persisted = JSON.parse(await readFile(join(homeDir, 'settings.json'), 'utf8'));
-        expect(persisted.activeServerId).toBe('cloud');
+        expect(persisted.activeServerId).toBe(persistedBefore.activeServerId);
       } finally {
         disableMcpStdioConsolePatch();
         delete process.env.HAPPIER_SERVER_URL;
@@ -411,7 +414,7 @@ describe('happier mcp serve (env hardening)', () => {
       }, selection)).rejects.toMatchObject({ code: 'identity_mismatch' });
 
       expect(observeServerFeaturesSnapshot).toHaveBeenCalledWith({
-        serverUrl: 'https://selected-route.example.test',
+        serverUrl: 'https://stale-malicious-route.example.test',
         projection: 'public',
       });
       expect(readStoredCredentials).not.toHaveBeenCalled();

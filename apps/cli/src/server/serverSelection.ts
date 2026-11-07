@@ -2,6 +2,7 @@ import { reloadConfiguration, configuration } from '@/configuration';
 import { deriveServerIdFromUrl } from '@/server/serverId';
 import { getServerProfile, upsertServerProfileByUrl, useServerProfile } from '@/server/serverProfiles';
 import { resolveCliHomeTarget } from '@/server/homeTarget';
+import { resolveServerProfileApiUrl } from '@/configuration/serverSelection';
 import type { ResolvedHomeTarget } from '@happier-dev/cli-common/homeTarget';
 import { resolveDefaultWebappUrl } from '@happier-dev/cli-common/happierCloud';
 import { assertOrganizationPolicyEndpointAllowed } from '@happier-dev/protocol/organizationPolicy/organizationPolicyV1';
@@ -178,12 +179,14 @@ export async function applyEphemeralServerSelectionFromPrefixArgs(
   }
 
   const applyEphemeralSelectionEnv = (params: Readonly<{
+    homeTarget: ResolvedHomeTarget;
     serverUrl: string;
     webappUrl: string;
     activeServerId: string;
     localServerUrl?: string | null;
   }>) => {
     applySelectionEnv({
+      homeTarget: params.homeTarget,
       serverUrl: normalizeUrlOrThrow(params.serverUrl, '--server-url'),
       localServerUrl: params.localServerUrl ? normalizeUrlOrThrow(params.localServerUrl, '--local-server-url') : null,
       webappUrl: normalizeUrlOrThrow(params.webappUrl, '--webapp-url'),
@@ -264,21 +267,23 @@ export type ServerSelectionResolution = Readonly<{
 }>;
 
 function applySelectionEnv(selection: Readonly<{
+  homeTarget: ResolvedHomeTarget;
   serverUrl: string;
   localServerUrl: string | null;
   webappUrl: string;
   activeServerId: string;
 }>): void {
-  assertOrganizationPolicyEndpointAllowed(configuration.organizationPolicy, 'home', selection.serverUrl);
-  const local = selection.localServerUrl;
-  if (local && local !== selection.serverUrl) {
-    process.env.HAPPIER_PUBLIC_SERVER_URL = selection.serverUrl;
+  const serverUrl = selection.homeTarget.canonicalAuthUrl;
+  assertOrganizationPolicyEndpointAllowed(configuration.organizationPolicy, 'home', serverUrl);
+  const local = resolveServerProfileApiUrl(selection, selection.homeTarget);
+  if (local !== serverUrl) {
+    process.env.HAPPIER_PUBLIC_SERVER_URL = serverUrl;
     process.env.HAPPIER_LOCAL_SERVER_URL = local;
     process.env.HAPPIER_SERVER_URL = local;
   } else {
     delete process.env.HAPPIER_PUBLIC_SERVER_URL;
     delete process.env.HAPPIER_LOCAL_SERVER_URL;
-    process.env.HAPPIER_SERVER_URL = selection.serverUrl;
+    process.env.HAPPIER_SERVER_URL = serverUrl;
   }
   process.env.HAPPIER_ACTIVE_SERVER_ID = selection.activeServerId;
   process.env.HAPPIER_WEBAPP_URL = selection.webappUrl;
@@ -382,20 +387,20 @@ export async function resolveServerSelectionFromArgs(argsRaw: string[]): Promise
  *
  * Side effects:
  * - Updates persisted settings for a profile selection, or for `--server-url --persist`
- * - Sets env vars for an ephemeral selection
+ * - Applies the resolved runtime origin to this process for every selection
  * - Always reloads configuration
  */
 export async function applyResolvedServerSelection(selection: ResolvedServerSelection): Promise<void> {
   const application = selection.application;
+  let activeServerId = selection.activeServerId;
   switch (application.kind) {
     case 'ephemeralEnv':
-      applySelectionEnv(selection);
       break;
     case 'useServerProfile':
-      await useServerProfile(application.selector);
+      activeServerId = (await useServerProfile(application.selector)).id;
       break;
     case 'upsertServerProfile':
-      await upsertServerProfileByUrl({
+      activeServerId = (await upsertServerProfileByUrl({
         name: application.name,
         serverUrl: selection.serverUrl,
         ...(selection.localServerUrl && selection.localServerUrl !== selection.serverUrl
@@ -403,9 +408,10 @@ export async function applyResolvedServerSelection(selection: ResolvedServerSele
           : {}),
         webappUrl: selection.webappUrl,
         use: true,
-      });
+      })).id;
       break;
   }
+  applySelectionEnv({ ...selection, activeServerId });
   reloadConfiguration();
 }
 
@@ -439,6 +445,7 @@ export async function applyResolvedServerSelectionNonFocusing(
   }
 
   applySelectionEnv({
+    homeTarget: selection.homeTarget,
     serverUrl: selection.serverUrl,
     localServerUrl: selection.localServerUrl,
     webappUrl: selection.webappUrl,
@@ -479,6 +486,7 @@ export async function runWithServerProfileSelection<T>(
   );
   const profile = await getServerProfile(profileSelector);
   applySelectionEnv({
+    homeTarget: await resolveCliHomeTarget({ kind: 'saved_profile', profileRef: profile.id }),
     serverUrl: profile.serverUrl,
     localServerUrl: profile.localServerUrl ?? null,
     webappUrl: profile.webappUrl,

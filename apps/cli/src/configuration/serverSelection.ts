@@ -3,6 +3,7 @@ import { join } from 'node:path';
 
 import { createServerUrlComparableKey } from '@happier-dev/protocol/server/urls/serverUrlComparableKey';
 import { resolveBuildDefaultProfile, resolveDefaultWebappUrl } from '@happier-dev/cli-common/happierCloud';
+import type { ResolvedHomeTarget } from '@happier-dev/cli-common/homeTarget';
 import type { OrganizationPolicyLoadResult } from '@happier-dev/protocol/organizationPolicy/organizationPolicyV1';
 
 import { deriveServerIdFromUrl, sanitizeServerIdForFilesystem } from '@/server/serverId';
@@ -72,8 +73,20 @@ function normalizeServerUrl(url: string): string {
   return String(url ?? '').trim().replace(/\/+$/, '');
 }
 
-export function resolveServerProfileApiUrl(profile: Readonly<{ serverUrl: string; localServerUrl?: string }>): string {
-  return normalizeServerUrl(profile.localServerUrl ?? '') || normalizeServerUrl(profile.serverUrl);
+export function resolveServerProfileApiUrl(
+  profile: Readonly<{ serverUrl: string; localServerUrl?: string | null }>,
+  target?: Pick<ResolvedHomeTarget, 'canonicalAuthUrl' | 'applicationUrl'>,
+): string {
+  const localServerUrl = normalizeServerUrl(profile.localServerUrl ?? '');
+  // A same-Home forward changes reachability, never descriptor authority or
+  // the credential audience. A route saved for another canonical URL cannot follow it.
+  if (target) {
+    return localServerUrl
+      && createServerUrlComparableKey(profile.serverUrl) === createServerUrlComparableKey(target.canonicalAuthUrl)
+      ? localServerUrl
+      : normalizeServerUrl(target.applicationUrl);
+  }
+  return localServerUrl || normalizeServerUrl(profile.serverUrl);
 }
 
 function safeCreateComparableServerUrlKey(url: string | null | undefined): string {

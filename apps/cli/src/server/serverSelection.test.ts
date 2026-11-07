@@ -4,6 +4,15 @@ import { join } from 'node:path';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 
+// Transform the real selection graph before per-test environment isolation.
+await import('./serverSelection');
+
+async function seedFocusedProfile() {
+  const { setServerProfileEndpointsById } = await import('./serverProfiles');
+  await setServerProfileEndpointsById({ id: 'focused-home', serverUrl: 'https://focused.example.test',
+    webappUrl: 'https://focused.example.test', use: true });
+}
+
 describe('server selection flags', () => {
   const envKeys = [
     'HAPPIER_HOME_DIR',
@@ -36,12 +45,13 @@ describe('server selection flags', () => {
       const { getActiveServerProfile } = await import('./serverProfiles');
       const config = await import('@/configuration');
 
+      await seedFocusedProfile();
       const remaining = await applyServerSelectionFromArgs(['--server-url', 'https://stack.example.test']);
       expect(remaining).toEqual([]);
       expect(config.configuration.serverUrl).toBe('https://stack.example.test');
       expect(config.configuration.webappUrl).toBe('https://stack.example.test');
       expect(process.env.HAPPIER_WEBAPP_URL).toBe('https://stack.example.test');
-      expect((await getActiveServerProfile()).id).toBe('cloud');
+      expect((await getActiveServerProfile()).id).toBe('focused-home');
     });
   });
 
@@ -118,6 +128,7 @@ describe('server selection flags', () => {
       const { resolveServerSelectionFromArgs, applyResolvedServerSelectionNonFocusing } = await import('./serverSelection');
       const { getActiveServerProfile, listServerProfiles } = await import('./serverProfiles');
       const config = await import('@/configuration');
+      await seedFocusedProfile();
       const before = await getActiveServerProfile();
       const resolution = await resolveServerSelectionFromArgs([
         '--server-url',
@@ -163,6 +174,8 @@ describe('server selection flags', () => {
 
       const after = await getActiveServerProfile();
       expect(after.id).toBe(before.id);
+      const { configuration } = await import('@/configuration');
+      expect(configuration.activeServerId).toBe(before.id);
 
       const profiles = await listServerProfiles();
       expect(profiles.filter((profile) => profile.serverUrl === 'https://stack.example.test')).toHaveLength(1);
@@ -201,6 +214,7 @@ describe('server selection flags', () => {
       vi.resetModules();
 
       const { addServerProfile } = await import('./serverProfiles');
+      await seedFocusedProfile();
       await addServerProfile({
         name: 'company',
         serverUrl: 'https://company.example.test',
@@ -224,7 +238,7 @@ describe('server selection flags', () => {
       expect(config.configuration.webappUrl).toBe('https://app.company.example.test');
 
       const settingsRaw = JSON.parse(readFileSync(join(homeDir, 'settings.json'), 'utf8'));
-      expect(settingsRaw.activeServerId).toBe('cloud');
+      expect(settingsRaw.activeServerId).toBe('focused-home');
     });
   });
 
@@ -242,6 +256,7 @@ describe('server selection flags', () => {
       vi.resetModules();
 
       const { addServerProfile, getActiveServerProfile } = await import('./serverProfiles');
+      await seedFocusedProfile();
       await addServerProfile({
         name: 'stale profile',
         serverUrl: 'https://company.example.test',
@@ -264,7 +279,7 @@ describe('server selection flags', () => {
       expect(config.configuration.serverUrl).toBe('https://company.example.test');
       expect(config.configuration.webappUrl).toBe('https://app.company.example.test');
       expect(process.env.HAPPIER_ACTIVE_SERVER_ID).toBe('company');
-      expect((await getActiveServerProfile()).id).toBe('cloud');
+      expect((await getActiveServerProfile()).id).toBe('focused-home');
     });
   });
 
@@ -280,6 +295,7 @@ describe('server selection flags', () => {
 
       vi.resetModules();
       const { addServerProfile, getActiveServerProfile } = await import('./serverProfiles');
+      await seedFocusedProfile();
       await addServerProfile({
         name: 'company',
         serverUrl: 'https://company.example.test',
@@ -296,7 +312,7 @@ describe('server selection flags', () => {
       expect(config.configuration.webappUrl).toBe('https://app.company.example.test');
       expect(process.env.HAPPIER_SERVER_URL).toBe('https://company.example.test');
       expect(process.env.HAPPIER_WEBAPP_URL).toBe('https://app.company.example.test');
-      expect((await getActiveServerProfile()).id).toBe('cloud');
+      expect((await getActiveServerProfile()).id).toBe('focused-home');
     });
   });
 
@@ -313,6 +329,7 @@ describe('server selection flags', () => {
 
       vi.resetModules();
       const { addServerProfile, getActiveServerProfile } = await import('./serverProfiles');
+      await seedFocusedProfile();
       await addServerProfile({
         name: 'stale profile',
         serverUrl: 'https://company.example.test',
@@ -335,7 +352,7 @@ describe('server selection flags', () => {
       expect(config.configuration.serverUrl).toBe('https://company.example.test');
       expect(config.configuration.webappUrl).toBe('https://app.company.example.test');
       expect(process.env.HAPPIER_ACTIVE_SERVER_ID).toBe('company');
-      expect((await getActiveServerProfile()).id).toBe('cloud');
+      expect((await getActiveServerProfile()).id).toBe('focused-home');
     });
   });
 
