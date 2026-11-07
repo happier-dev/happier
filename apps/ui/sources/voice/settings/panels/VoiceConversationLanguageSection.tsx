@@ -2,8 +2,6 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { SETTING_ANCHOR_QUERY_PARAM, type SettingRef } from '@/components/settings/catalog/settingDeclarations';
 import { SettingAnchor } from '@/components/settings/shell/SettingRow';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -11,7 +9,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { LANGUAGES, getLanguageDisplayNameForCode } from '@/constants/Languages';
 import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
-import { getPreferredLanguage, t } from '@/text';
+import { t } from '@/text';
 import { projectConversationLanguage, projectConversationLanguagePreference, projectConversationLanguagePreferenceSelection } from '@/voice/settings/language/conversationLanguage';
 import { VOICE_CONVERSATIONS_SETTINGS, resolveVoiceConversationLanguageSetting } from '@/voice/settings/voiceSettingsDeclarations';
 import { updateVoiceConversationLanguagePreference } from '@/voice/settings/voiceSettingBinding';
@@ -20,21 +18,16 @@ import type { VoiceProviderRegistry } from '@/voice/registry/providerRegistry';
 import { useVoiceProviderRegistryRevision } from '@/voice/registry/useVoiceProviderRegistryRevision';
 import { useVoiceSettingsSearchPrerequisite } from '@/voice/settings/VoiceSettingsSearchPrerequisite';
 
-/** A language reads by its name in the viewer's language, never by its tag ("en"). */
-function languageName(code: string): string {
-  return getLanguageDisplayNameForCode(code, getPreferredLanguage());
-}
-
 const SETTINGS = VOICE_CONVERSATIONS_SETTINGS.settings;
 /** "Same as I speak" is a real choice (no reply preference); an empty menu id would read as unchosen. */
 const SAME_AS_SPOKEN_ID = 'same';
 
 /**
- * Conversations → Language: I speak (recognition), Reply in (`assistantLanguage`, the reply
- * preference) and Voice (the Speak engine's output voice). Recognition and the output voice belong
- * to their engines in Hear and Speak, so those rows say what is in effect and lead to that control;
- * Realtime services contribute whether recognition is automatic, reply is independent, or one
- * language controls both. Services without that fact own their language behavior themselves.
+ * Conversations → Language: Reply in (`assistantLanguage`, the reply preference). Recognition and the
+ * output voice belong to their engines and are set in Hear and Speak on this same page, never through
+ * a second row here that sends the person there. Realtime services contribute whether recognition is
+ * automatic, reply is independent, or one language controls both. Services without that fact own
+ * their language behavior themselves.
  */
 export function VoiceConversationLanguageSection(props: Readonly<{
   voice: VoiceSettings;
@@ -44,7 +37,6 @@ export function VoiceConversationLanguageSection(props: Readonly<{
 }>) {
   const searchPrerequisite = useVoiceSettingsSearchPrerequisite();
   const { theme } = useUnistyles();
-  const router = useRouter();
   const [replyMenuOpen, setReplyMenuOpen] = React.useState(false);
   const defaultRegistry = React.useMemo(() => createDefaultVoiceProviderRegistry(), []);
   const registry = props.registry ?? defaultRegistry;
@@ -54,7 +46,6 @@ export function VoiceConversationLanguageSection(props: Readonly<{
   const languageSetting = resolveVoiceConversationLanguageSetting(props.voice, registry);
   if (language.mode === 'off') return searchPrerequisite({ settings: [languageSetting, SETTINGS.greeting], reason: t('settingsVoice.pages.search.chooseService'), group: true });
 
-  const reveal = (setting: SettingRef) => router.setParams({ [SETTING_ANCHOR_QUERY_PARAM]: setting.anchor });
   const languageIcon = (name: 'sparkle' | 'translate') => (
     <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
       <Icon name={name} size={20} color={theme.colors.text.secondary} />
@@ -62,7 +53,6 @@ export function VoiceConversationLanguageSection(props: Readonly<{
   );
 
   const local = language.mode === 'local' ? language : null;
-  const recognition = local?.recognition ?? null;
   const coupled = preference.kind === 'single_language' ? preference : null;
   const automatic = language.mode === 'service' && language.language?.kind === 'automatic_recognition';
   const { value: normalizedPreference, unavailableValue: unavailablePreference } = projectConversationLanguagePreferenceSelection(props.voice, preference);
@@ -74,17 +64,6 @@ export function VoiceConversationLanguageSection(props: Readonly<{
         ? t('settingsVoice.pages.conversations.languageDescription')
         : t('settingsVoice.pages.conversations.languageServiceDescription')}
     >
-      {local && recognition ? (
-        <Item
-          testID="settings.voice.language.iSpeak"
-          title={t('settingsVoice.pages.conversations.iSpeakTitle')}
-          subtitle={t('settingsVoice.pages.conversations.iSpeakEngineDescription')}
-          subtitleLines={0}
-          detail={recognition.kind === 'explicit' ? languageName(recognition.language) : t('settingsVoice.pages.conversations.languageEngineDefault')}
-          accessibilityRole="button"
-          onPress={() => reveal(local.sttProvider === 'local_neural' ? SETTINGS.sttLanguage : SETTINGS.sttProvider)}
-        />
-      ) : null}
       {automatic ? <Item
         testID="settings.voice.language.iSpeak"
         title={t('settingsVoice.pages.conversations.iSpeakTitle')}
@@ -138,21 +117,6 @@ export function VoiceConversationLanguageSection(props: Readonly<{
         detail={t('settingsVoice.pages.conversations.replySame')}
         showChevron={false}
       /> : null}
-      {local ? (
-        <Item
-          testID="settings.voice.language.voice"
-          title={t('settingsVoice.pages.conversations.voiceTitle')}
-          subtitle={t('settingsVoice.pages.conversations.voiceDescription')}
-          subtitleLines={0}
-          detail={local.outputVoice.kind === 'engine_voice'
-            ? local.outputVoice.voiceId ?? t('settingsVoice.pages.conversations.voiceDefault')
-            : local.outputVoice.kind === 'device'
-              ? t('settingsVoice.pages.conversations.voiceDevice')
-              : t('settingsVoice.pages.conversations.voiceInEngine')}
-          accessibilityRole="button"
-          onPress={() => reveal(local.ttsProvider === 'local_neural' ? SETTINGS.ttsVoiceId : SETTINGS.ttsProvider)}
-        />
-      ) : null}
     </ItemGroup>
   );
 }

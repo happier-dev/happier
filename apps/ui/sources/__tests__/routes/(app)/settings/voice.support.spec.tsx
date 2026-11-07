@@ -621,8 +621,10 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         };
 
         const screen = await renderVoiceSettings("conversations");
-        // I speak reads the speech model's own language; Reply in is the reply preference.
-        expect(findItemByTestId(screen, 'settings.voice.language.iSpeak')?.props.detail).toBe('fr');
+        // The speech model's language is set where it lives (Hear) on this page; Language never sends the
+        // person there with a second row for it (or for Speak's voice). Reply in is the reply preference.
+        expect(findItemByTestId(screen, 'settings.voice.language.iSpeak')).toBeNull();
+        expect(findItemByTestId(screen, 'settings.voice.language.voice')).toBeNull();
         const replyIn = findDropdownByItemTriggerTitle(screen, 'settingsVoice.pages.conversations.replyInTitle');
         expect(replyIn?.props.selectedId).toBe('same');
 

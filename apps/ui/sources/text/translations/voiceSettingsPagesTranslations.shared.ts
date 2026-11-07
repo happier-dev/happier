@@ -204,15 +204,8 @@ export type VoiceSettingsPagesCopy = Readonly<{
       replyInDescription: string;
       replySame: string;
       iSpeakAutomatic: string;
-      iSpeakEngineDescription: string;
-      voiceTitle: string;
-      voiceDescription: string;
-      voiceDefault: string;
-      voiceDevice: string;
-      voiceInEngine: string;
       languageServiceDescription: string;
       languageAutomaticDescription: string;
-      languageEngineDefault: string;
       languageCoupledDescription: string;
       greetingTitle: string;
       greetingOff: string;
@@ -464,15 +457,8 @@ export const en: VoiceSettingsPagesCopy = {
       replyInDescription: 'The answer comes back in this language, even if you switch.',
       replySame: 'Same as I speak',
       iSpeakAutomatic: 'Automatic',
-      iSpeakEngineDescription: 'Speech recognition uses it to understand you. Set it in Hear.',
-      voiceTitle: 'Voice',
-      voiceDescription: 'The voice replies are read in. Set it in Speak.',
-      voiceDefault: 'Default',
-      voiceDevice: 'System voice',
-      voiceInEngine: 'Set in Speak',
       languageServiceDescription: 'The language your voice service answers in.',
       languageAutomaticDescription: 'Your voice service detects the language you speak.',
-      languageEngineDefault: 'Engine default',
       languageCoupledDescription: 'Your voice service uses one language for listening and replies.',
       greetingTitle: 'Greeting',
       greetingOff: 'Off',
