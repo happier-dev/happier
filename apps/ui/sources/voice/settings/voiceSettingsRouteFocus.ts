@@ -1,6 +1,8 @@
 import type { Href } from 'expo-router';
 
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
+import { SETTING_ANCHOR_QUERY_PARAM } from '@/components/settings/catalog/settingDeclarations';
+import { VOICE_CONVERSATIONS_SETTINGS } from './voiceSettingsDeclarations';
 import type { VoiceRoleReadiness } from '@/voice/registry/readiness';
 
 type RouteParamValue = string | string[] | undefined;
@@ -12,12 +14,12 @@ export const VOICE_SETTINGS_PRIVACY_FOCUS_TARGET = {
 
 export const VOICE_SETTINGS_PROVIDER_FOCUS_TARGET = {
   pathname: SETTINGS_ROUTES.voiceConversations,
-  params: { focus: 'provider' },
+  params: { [SETTING_ANCHOR_QUERY_PARAM]: VOICE_CONVERSATIONS_SETTINGS.settings.provider.anchor },
 } as const satisfies Href;
 
 export const VOICE_SETTINGS_EXECUTION_MACHINE_FOCUS_TARGET = {
   pathname: SETTINGS_ROUTES.voiceConversations,
-  params: { focus: 'execution_machine' },
+  params: { [SETTING_ANCHOR_QUERY_PARAM]: VOICE_CONVERSATIONS_SETTINGS.settings.executionMachine.anchor },
 } as const satisfies Href;
 
 export type VoiceSettingsRouteFocus = 'privacy' | 'provider' | 'execution_machine' | 'local';
@@ -35,6 +37,8 @@ export function resolveVoiceSettingsRecoveryFocus(
 export function resolveVoiceSettingsRecoveryTarget(action: VoiceRoleReadiness['recoveryAction']): Href | null {
   if (action === 'enable_voice_agent') return SETTINGS_ROUTES.features;
   const focus = resolveVoiceSettingsRecoveryFocus(action);
+  if (focus === 'provider') return VOICE_SETTINGS_PROVIDER_FOCUS_TARGET;
+  if (focus === 'execution_machine') return VOICE_SETTINGS_EXECUTION_MACHINE_FOCUS_TARGET;
   return focus ? { pathname: SETTINGS_ROUTES.voiceConversations, params: { focus } } : null;
 }
 

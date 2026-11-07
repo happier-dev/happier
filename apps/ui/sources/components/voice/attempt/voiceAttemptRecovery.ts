@@ -3,6 +3,7 @@ import { Linking, Platform } from 'react-native';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { buildSettingHref } from '@/components/settings/catalog/settingDeclarations';
 import { VOICE_CONVERSATIONS_SETTINGS } from '@/voice/settings/voiceSettingsDeclarations';
+import { VOICE_AGENT_SELECTION_UNAVAILABLE_ERROR_CODE } from '@/voice/agent/projectVoiceConfiguredAgentTarget';
 import type { VoiceConnectRecoveryTarget } from '@/components/voice/surface/resolveVoiceConnectRecoveryTarget';
 import type { VoiceSurfaceRecovery } from '@/components/voice/surface/resolveVoiceSurfaceRecovery';
 import { voiceSessionManager } from '@/voice/session/voiceSession';
@@ -159,16 +160,20 @@ export async function executeVoiceAttemptRecovery(params: Readonly<{
             return true;
         }
         if (recoveryAction === 'open_settings' || recoveryAction === 'open_settings_then_reconnect') {
+            if (params.errorReason?.toLowerCase() === VOICE_AGENT_SELECTION_UNAVAILABLE_ERROR_CODE) {
+                await navigate(buildSettingHref(SETTINGS_ROUTES.voiceConversations, VOICE_CONVERSATIONS_SETTINGS.settings.agent));
+                return true;
+            }
             if (params.errorReason === 'usage_limit') {
                 await navigate(buildSettingHref(SETTINGS_ROUTES.voiceConversations, VOICE_CONVERSATIONS_SETTINGS.settings.connectedServices));
                 return true;
             }
             if (Platform.OS === 'web') {
-                await navigate(SETTINGS_ROUTES.voice);
+                await navigate(VOICE_SETTINGS_PROVIDER_FOCUS_TARGET);
                 return true;
             }
             await Linking.openSettings().catch(async () => {
-                if (params.isCurrent?.() !== false) await navigate(SETTINGS_ROUTES.voice);
+                if (params.isCurrent?.() !== false) await navigate(VOICE_SETTINGS_PROVIDER_FOCUS_TARGET);
             });
             return params.isCurrent?.() !== false;
         }

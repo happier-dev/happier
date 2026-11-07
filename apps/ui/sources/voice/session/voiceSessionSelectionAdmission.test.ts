@@ -5,9 +5,10 @@ import {
     localVoiceSpeechOutputBoundary,
     machineRpcWithServerScope,
     registerLocalVoiceEngineHarnessHooks,
+    setPlatformOs,
     warmLocalVoiceEngineHarnessGraph,
 } from '@/voice/local/localVoiceEngine.testHarness';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { readLocalConversationVoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
@@ -18,6 +19,7 @@ describe('Voice Start selection admission through the Action executor', () => {
     registerLocalVoiceEngineHarnessHooks();
 
     it('keeps an unavailable configured Agent refusal and its setup action at dispatch', async () => {
+        setPlatformOs('web');
         const state = await getStorage();
         const settings = state.getState().settings;
         const config = readLocalConversationVoiceSettings(settings.voice);
@@ -43,7 +45,8 @@ describe('Voice Start selection admission through the Action executor', () => {
         controller.setConfiguredProviderId('local_conversation');
         setVoiceSessionLifecycleController(controller);
         const unsubscribe = controller.subscribe(() => setVoiceSessionSnapshot(controller.getSnapshot()));
-        const executor = createDefaultActionExecutor({ presentUserActionConfirmation: async () => true });
+        const openRoute = vi.fn();
+        const executor = createDefaultActionExecutor({ presentUserActionConfirmation: async () => true, openRoute });
         try {
             const result = await executor.execute('ui.voice_global.start', { target: { kind: 'global' }, expectedAttempt: null }, {
                 surface: 'ui', serverId: localVoiceHomeId, authority: 'present_user', actionCaller: { kind: 'host' },
@@ -58,6 +61,14 @@ describe('Voice Start selection admission through the Action executor', () => {
             expect(machineRpcWithServerScope.mock.calls.filter(([request]) => request.method === RPC_METHODS.SESSION_SPAWN_NEW)).toEqual([]);
             expect(localVoiceSpeechOutputBoundary.fileRecording.start).not.toHaveBeenCalled();
             expect(localVoiceSpeechOutputBoundary.getAudioSessionCoordinator().getSnapshot().leaseCount).toBe(0);
+            const { getVoiceSessionPresentedAttemptId } = await import('./voiceSessionStore');
+            const expectedAttempt = getVoiceSessionPresentedAttemptId();
+            expect(expectedAttempt).not.toBeNull();
+            const recovered = await executor.execute('ui.voice_global.recover', { expectedAttempt }, {
+                surface: 'ui', serverId: localVoiceHomeId, authority: 'present_user', actionCaller: { kind: 'host' },
+            });
+            expect(recovered, JSON.stringify(recovered)).toMatchObject({ ok: true });
+            expect(openRoute).toHaveBeenCalledExactlyOnceWith('/settings/voice/conversations?setting=voiceConversations.agent');
         } finally {
             unsubscribe();
             setVoiceSessionLifecycleController(null);

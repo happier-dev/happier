@@ -146,22 +146,16 @@ describe('the one Voice recovery dispatch every placement fires', () => {
     resetVoiceSessionStoreForTests();
   });
 
-  it('opens app voice settings for credential review', async () => {
+  it('opens the declared provider row for credential review', async () => {
     const navigate = vi.fn();
     (await dispatch('review_credentials', navigate))();
-    expect(navigate).toHaveBeenCalledWith({
-      pathname: '/settings/voice/conversations',
-      params: { focus: 'provider' },
-    });
+    expect(navigate).toHaveBeenCalledWith({ pathname: '/settings/voice/conversations', params: { setting: 'voiceConversations.provider' } });
   });
 
   it('opens the canonical execution-machine settings section for an unavailable machine', async () => {
     const navigate = vi.fn();
     (await dispatch('select_execution_machine', navigate))();
-    expect(navigate).toHaveBeenCalledWith({
-      pathname: '/settings/voice/conversations',
-      params: { focus: 'execution_machine' },
-    });
+    expect(navigate).toHaveBeenCalledWith({ pathname: '/settings/voice/conversations', params: { setting: 'voiceConversations.executionMachine' } });
   });
 
   it('reveals the Conversations speech engine without opening system microphone settings or retrying', async () => {
@@ -184,6 +178,23 @@ describe('the one Voice recovery dispatch every placement fires', () => {
       setupIncomplete: false, context: context(), navigate,
     })).toBe(true);
     expect(navigate).toHaveBeenCalledWith('/settings/voice/conversations?setting=voiceConversations.connectedServices');
+    expect(state.openSettings).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['web', 'VOICE_AGENT_SELECTION_UNAVAILABLE'],
+    ['ios', 'VOICE_AGENT_SELECTION_UNAVAILABLE'],
+    ['web', 'voice_agent_selection_unavailable'],
+    ['ios', 'voice_agent_selection_unavailable'],
+  ] as const)('reveals the declared Agent row for a disabled selection on %s (%s)', async (platform, errorReason) => {
+    state.platform = platform;
+    const navigate = vi.fn();
+    const { executeVoiceAttemptRecovery } = await import('./voiceAttemptRecovery');
+    expect(await executeVoiceAttemptRecovery({
+      recoveryAction: 'open_settings', errorReason,
+      setupIncomplete: false, context: context(), navigate,
+    })).toBe(true);
+    expect(navigate).toHaveBeenCalledExactlyOnceWith('/settings/voice/conversations?setting=voiceConversations.agent');
     expect(state.openSettings).not.toHaveBeenCalled();
   });
 
@@ -228,7 +239,7 @@ describe('the one Voice recovery dispatch every placement fires', () => {
     }))();
     expect(navigate).toHaveBeenCalledWith({
       pathname: '/settings/voice/conversations',
-      params: { focus: 'provider' },
+      params: { setting: 'voiceConversations.provider' },
     });
   });
 
@@ -304,7 +315,7 @@ describe('the one Voice recovery dispatch every placement fires', () => {
     (await dispatch(null, navigate, {}, true))();
     expect(navigate).toHaveBeenCalledWith({
       pathname: '/settings/voice/conversations',
-      params: { focus: 'provider' },
+      params: { setting: 'voiceConversations.provider' },
     });
   });
 

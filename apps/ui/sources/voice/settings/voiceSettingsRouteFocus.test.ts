@@ -12,6 +12,8 @@ import {
 describe('voice settings route focus', () => {
   it('opens the existing turn-on feature destination for a policy-disabled Voice agent', () => {
     expect(resolveVoiceSettingsRecoveryTarget('enable_voice_agent')).toBe('/settings/features');
+    expect(resolveVoiceSettingsRecoveryTarget('configure_credential')).toEqual(VOICE_SETTINGS_PROVIDER_FOCUS_TARGET);
+    expect(resolveVoiceSettingsRecoveryTarget('select_execution_machine')).toEqual(VOICE_SETTINGS_EXECUTION_MACHINE_FOCUS_TARGET);
     expect(resolveVoiceSettingsRecoveryTarget('install_model')).toEqual({
       pathname: '/settings/voice/conversations', params: { focus: 'local' },
     });
@@ -19,7 +21,7 @@ describe('voice settings route focus', () => {
   it('keeps provider disclosure and context-sharing focus as separate destinations', () => {
     expect(VOICE_SETTINGS_PROVIDER_FOCUS_TARGET).toMatchObject({
       pathname: '/settings/voice/conversations',
-      params: { focus: 'provider' },
+      params: { setting: 'voiceConversations.provider' },
     });
     expect(VOICE_SETTINGS_PRIVACY_FOCUS_TARGET).toMatchObject({
       params: { focus: 'privacy' },
@@ -29,7 +31,7 @@ describe('voice settings route focus', () => {
     );
     expect(VOICE_SETTINGS_EXECUTION_MACHINE_FOCUS_TARGET).toMatchObject({
       pathname: '/settings/voice/conversations',
-      params: { focus: 'execution_machine' },
+      params: { setting: 'voiceConversations.executionMachine' },
     });
   });
 
