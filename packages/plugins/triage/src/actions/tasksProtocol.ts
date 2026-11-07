@@ -1,5 +1,5 @@
 import { PluginContributionIdentityV1Schema } from '@happier-dev/plugin-sdk/manifest';
-import { defineProtocolLiteral, defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
+import { defineProtocolLiteral, defineProtocolObject, defineProtocolString, defineProtocolUnion, ScmHostingRepositoryIdentityV1ProtocolSchema } from '@happier-dev/plugin-sdk/protocol';
 import {
     TriageEntryLocatorV1Schema,
     TriageEntryRefV1Schema,
@@ -16,8 +16,20 @@ export const TRIAGE_TASKS_TRANSITION_ACTION_LOCAL_ID_V1 = 'tasks/transition-v1';
 export const TRIAGE_TASKS_LINK_ACTION_LOCAL_ID_V1 = 'tasks/link-v1';
 export const TRIAGE_TASKS_OPEN_CREATE_ACTION_LOCAL_ID_V1 = 'tasks/open-create-v1';
 /** Reviewable draft text, never a provider write or an imported task. */
+export const TriageTaskDraftOriginV1Schema = defineProtocolObject({
+    sessionId: defineProtocolString({ minLength: 1 }),
+    serverId: defineProtocolString({ minLength: 1 }).optional(),
+    sessionTitle: defineProtocolString().optional(),
+    messageId: defineProtocolString({ minLength: 1 }),
+    observedRevision: defineProtocolString({ minLength: 1 }),
+    role: defineProtocolUnion([defineProtocolLiteral('user'), defineProtocolLiteral('agent'), defineProtocolLiteral('event'), defineProtocolLiteral('unknown')]),
+    quote: defineProtocolString().optional(),
+    /** A suggestion only, taken from the Session's accepted checkout. */
+    repository: ScmHostingRepositoryIdentityV1ProtocolSchema.optional(),
+}, { policy: 'closed' });
 export const TriageTaskDraftV1Schema = defineProtocolObject({
     title: defineProtocolString().optional(), body: defineProtocolString().optional(),
+    origin: TriageTaskDraftOriginV1Schema.optional(),
 }, { policy: 'closed' });
 export type TriageTaskDraftV1 = ReturnType<typeof TriageTaskDraftV1Schema.parse>;
 export const TriageTaskDraftLaunchV1Schema = defineProtocolObject({

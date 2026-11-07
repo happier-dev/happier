@@ -54,6 +54,7 @@ import {
     PluginUiSelectActionInputRequestV1Schema,
     PLUGIN_UI_HOST_API_VERSION_V1,
     PLUGIN_UI_HOST_API_WIRE_VERSION_V1,
+    PluginUiSessionStateV1Schema,
 } from '@happier-dev/protocol/plugins/ui';
 import type {
     PluginUiHostApiErrorPayloadV1,
@@ -143,6 +144,7 @@ import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
 import { createPluginSurfaceAccountActionServices } from './pluginSurfaceAccountActionServices';
 import { readAccountTargetedContributionSnapshot } from './accountTargetedContributionSnapshot';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { createPluginSurfaceSessionHandlers } from './pluginSurfaceSessionState';
 
 /** Exact producer-owned mounted binding, preserved only until RPC projection. */
 export type PluginSurfaceActionMountedBinding = DaemonPluginStructuredMessageActionMountedBinding;
@@ -725,8 +727,18 @@ function createClientActionUi(
     const authority = registeredAuthority && 'machineId' in registeredAuthority ? registeredAuthority
         : accountContext ? input.contributedAction : undefined;
     const accountLifetime = selection.registration.accountLifetime;
+    const resolvedSessionTargets = input.hostAction?.context?.sessionTargetsV1;
+    const hasSessionScope = () => !!accountLifetime && (!resolvedSessionTargets
+        || resolvedSessionTargets.targets.every(target => areServerProfileIdentifiersEquivalent(
+            target.serverId, accountLifetime.scope.serverId,
+        )));
     const executeAction = clientActionExecuteAction(input, selection, signal, selectedInputs);
     const isCurrent = () => selection.isCurrent() && !signal.aborted;
+    const sessionReader = accountLifetime ? createPluginSurfaceSessionHandlers({
+        accountScope: accountLifetime.scope, accountLifetime, isCurrent,
+        // This invocation exposes snapshots only; it establishes no watches.
+        deliver: () => {},
+    }) : null;
     function assertCurrent() {
         if (!selection.isCurrent()) throw new PluginError({ code: 'plugin_action_generation_retired' });
         if (signal.aborted) throw new PluginError({ code: 'plugin_action_aborted' });
@@ -758,10 +770,22 @@ function createClientActionUi(
         version: () => ({
             apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
             wireVersion: PLUGIN_UI_HOST_API_WIRE_VERSION_V1,
-            methods: ['context', 'executeAction', ...(authority && accountLifetime ? ['selectActionInput' as const, 'openNewSession' as const] : []), ...(accountLifetime ? ['revealSessionInput' as const, 'openAutomationEvent' as const] : []),
+            methods: ['context', 'executeAction', ...(authority && accountLifetime ? ['selectActionInput' as const, 'openNewSession' as const] : []), ...(accountLifetime ? ['readSession' as const, 'revealSessionInput' as const, 'openAutomationEvent' as const] : []),
                 ...(selection.binding.openSurface ? ['openSurface' as const] : [])],
         }),
         context,
+        readSession: async (sessionId, options) => {
+            assertCurrent();
+            if (!sessionReader || !hasSessionScope()) throw new PluginError({ code: 'plugin_action_session_read_unavailable' });
+            const cancellation = mergeAbortSignals([signal, options?.signal]);
+            try {
+                const result = await sessionReader.readSession(sessionId, { signal: cancellation.signal });
+                const failure = readPluginSurfaceHostApiErrorPayload(result);
+                if (failure) throw new PluginError(createPluginSurfaceHostApiPluginErrorData(failure.code, failure.diagnostics, failure.message, failure));
+                assertCurrent();
+                return result === null ? null : PluginUiSessionStateV1Schema.parse(result);
+            } finally { cancellation.dispose(); }
+        },
         selectActionInput: async (request, options) => {
             assertCurrent();
             if (!authority || !accountLifetime) throw new PluginError({ code: 'plugin_action_input_selection_unavailable' });

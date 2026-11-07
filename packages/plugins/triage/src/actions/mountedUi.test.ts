@@ -49,21 +49,32 @@ function registeredDraftAction() {
 
 it.each([
   { name: 'explicit draft', fromMessage: false, input: { title: 'Fix reconnect handling', body: 'Explicit body' }, expected: { title: 'Fix reconnect handling', body: 'Explicit body' } },
-  { name: 'selected message', fromMessage: true, input: {}, expected: { body: 'Selected answer\nwith details' } },
+  { name: 'selected message', fromMessage: true, input: {}, expected: { title: 'Selected answer' } },
+  { name: 'paragraph message', fromMessage: true, input: {},
+    selectedText: 'Read-only inspection complete. The investigation found several follow-up items that belong in their own task.\n\n- Check the affected flow\n- Retain the original evidence',
+    expected: { title: 'Read-only inspection complete.' } },
+  { name: 'leading empty lines and a question', fromMessage: true, input: {},
+    selectedText: '\n\r\n  Can the Session reconnect? Keep all of this context available.\nMore evidence follows.',
+    expected: { title: 'Can the Session reconnect?' } },
+  { name: 'non-Latin sentence boundary', fromMessage: true, input: {},
+    selectedText: '接続を修正する。元の説明を保持する。', expected: { title: '接続を修正する。' } },
+  { name: 'blank message', fromMessage: true, input: {}, selectedText: '\n  \r\n', noProposedTitle: true, expected: {} },
   { name: 'explicit draft with a selected message', fromMessage: true, input: { title: 'Keep title', body: 'Explicit body' }, expected: { title: 'Keep title', body: 'Explicit body' } },
-  { name: 'explicit empty body', fromMessage: true, input: { body: '' }, expected: { body: '' } },
+  { name: 'explicit empty title', fromMessage: true, input: { title: '' }, expected: { title: '' } },
+  { name: 'explicit empty body', fromMessage: true, input: { body: '' }, expected: { title: 'Selected answer', body: '' } },
   ...[1_000, 9_000, 32_768].map((size) => ({ name: `selected ${size}-byte message`, fromMessage: true,
-    input: {}, selectedText: 'a'.repeat(size), expected: { body: 'a'.repeat(size) } })),
+    input: {}, selectedText: 'a'.repeat(size), expected: { title: 'a'.repeat(size) } })),
   { name: 'multibyte message above navigation boundary', fromMessage: true, input: {},
-    selectedText: '答🙂\n'.repeat(1_500), expected: { body: '答🙂\n'.repeat(1_500) } },
+    selectedText: '答🙂\n'.repeat(1_500), expected: { title: '答🙂' } },
   { name: 'explicit large body takes precedence', fromMessage: true, input: { body: 'explicit\n'.repeat(1_500) },
     expected: { body: 'explicit\n'.repeat(1_500) } },
 ])('opens a reviewable task draft without writing: $name', async (testCase) => {
   const { fromMessage, input, expected } = testCase;
   const selectedText = 'selectedText' in testCase ? testCase.selectedText : 'Selected answer\nwith details';
-  const { declaration, handler } = registeredDraftAction();
+  const { declaration, handler } = await registeredDraftAction();
   const opened: unknown[] = [];
   const writes: string[] = [];
+  const sessionReads: string[] = [];
   const shared = createTriageEphemeralSharedScopeOriginFixture();
   const actionScope = shared.forExecutionOrigin('action');
   const pageScope = shared.forExecutionOrigin('page');
@@ -71,6 +82,12 @@ it.each([
     authorPlugin: { id: PLUGIN_MANIFEST.id, version: PLUGIN_MANIFEST.version },
     surface: defineUiSurface(() => null), surfaceContext: createSurfaceContextFixture(),
     adapter: createPluginUiRnwSemanticSurfaceAdapter(), handlers: {
+      readSession: ({ sessionId }) => { sessionReads.push(sessionId); return { sessionId, serverId: 'home-a', title: 'Reconnect investigation',
+        acceptedWorkspace: { checkout: { serverId: 'home-a', workspaceId: 'workspace-a', machineId: 'machine-a', rootPath: '/workspace' },
+          repository: { kind: 'github', deployment: 'https://github.com', repository: 'example/repository' } },
+        lifecycle: 'active', runtime: 'waiting', operational: 'ready',
+        workStatus: { state: 'ready', bucket: 'idle', tone: 'neutral', attentionType: null, word: 'Ready' }, pendingPermissions: [],
+      }; },
       openSurface: ({ view, input }) => {
         const request = PluginUiOpenSurfaceRequestV1Schema.parse({ destination: view, input, subPath: 'tasks,mine' });
         expect(request.destination).toEqual({ pluginId: 'happier.triage', localId: 'tasks' });
@@ -91,12 +108,23 @@ it.each([
         provenanceCategory: 'owner' as const,
       }) } : {}),
     })).toEqual({ status: 'applied' });
+    // Opening one draft reads only its origin Session; mount/replay never fans out or polls.
+    expect(sessionReads).toEqual(fromMessage ? ['session-a'] : []);
     expect(opened).toHaveLength(1);
     const launch = TriageTaskDraftLaunchV1Schema.parse(opened[0]);
     expect(launch).not.toHaveProperty('fields');
     const received = readTriageTaskDraftLaunch(pageScope, launch);
     expect(received).toMatchObject({ status: 'ready', fields: expected });
     if (received.status !== 'ready') throw new Error('Missing draft');
+    if ('noProposedTitle' in testCase) expect(received.fields).not.toHaveProperty('title');
+    // Full evidence stays in origin; Notes contains only deliberate draft input.
+    if (fromMessage && !('body' in input)) expect(received.fields).not.toHaveProperty('body');
+    if (fromMessage) expect(received.fields).toMatchObject({ origin: {
+      sessionId: 'session-a', messageId: 'message-a', observedRevision: 'revision-a', role: 'agent', quote: selectedText,
+      serverId: 'home-a', sessionTitle: 'Reconnect investigation',
+      repository: { kind: 'github', deployment: 'https://github.com', repository: 'example/repository' },
+    } });
+    else expect(received.fields).not.toHaveProperty('origin');
     // Reading during an interrupted render must not consume the handoff.
     expect(readTriageTaskDraftLaunch(pageScope, launch)).toMatchObject({ status: 'ready', fields: expected });
     // The real destination resolves the same address and opens the existing create owner.
@@ -147,7 +175,7 @@ it.each([
 });
 
 it('discards a refused navigation and never resolves a draft in a different Account/generation', async () => {
-  const { declaration, handler } = registeredDraftAction();
+  const { declaration, handler } = await registeredDraftAction();
   const shared = createTriageEphemeralSharedScopeOriginFixture();
   const other = createTriageEphemeralSharedScopeOriginFixture();
   const sharedScope = shared.forExecutionOrigin('action');
@@ -196,6 +224,41 @@ it('shows an unavailable draft instead of an empty form when its client lifetime
     await expect(page.getByText('This task draft is no longer available. Open it again from the message or action.')).resolves.toBeDefined();
     await expect(page.getByText(DRAFT_PURPOSE)).rejects.toBeDefined();
   } finally { await page.dispose(); }
+});
+
+it.each(['cancelled', 'retired'] as const)('does not navigate or retain a draft when the exact Session read settles after %s', async (ending) => {
+  const { declaration, handler } = await registeredDraftAction();
+  const shared = createTriageEphemeralSharedScopeOriginFixture();
+  const scope = shared.forExecutionOrigin('action');
+  const controller = new AbortController();
+  let finishRead!: (value: null) => void;
+  let startedRead!: () => void;
+  const readStarted = new Promise<void>(resolve => { startedRead = resolve; });
+  const pendingRead = new Promise<null>(resolve => { finishRead = resolve; });
+  const opened: unknown[] = [];
+  const fixture = await createPluginUiTestkit({ identity: { instanceId: 'ending-draft', mountNonce: ending },
+    authorPlugin: { id: PLUGIN_MANIFEST.id, version: PLUGIN_MANIFEST.version },
+    surface: defineUiSurface(() => null), surfaceContext: createSurfaceContextFixture(),
+    adapter: createPluginUiRnwSemanticSurfaceAdapter(), handlers: {
+      readSession: async () => { startedRead(); return await pendingRead; },
+      openSurface: ({ input }) => { opened.push(input); },
+    },
+  });
+  try {
+    const pending = handler({}, {
+      plugin: { id: PLUGIN_MANIFEST.id, version: PLUGIN_MANIFEST.version },
+      contribution: { id: declaration.id, qualifiedId: `${PLUGIN_MANIFEST.id}/actions/${declaration.id}` },
+      invocationSurface: 'agent', signal: controller.signal, ui: fixture.context.hostApi, ephemeralSharedScope: scope,
+      messageAction: { sessionId: 'session-a', messageId: 'message-a', observedRevision: 'revision-a',
+        role: 'agent', contentCategory: 'text', seq: 1, visibleText: 'Keep the source quote',
+        structuredPresentationSummary: null, provenanceCategory: 'owner' },
+    });
+    await readStarted;
+    if (ending === 'cancelled') controller.abort(); else shared.retire();
+    finishRead(null);
+    expect(await pending).toEqual({ status: 'unavailable' });
+    expect(opened).toEqual([]);
+  } finally { await fixture.dispose(); shared.retire(); }
 });
 
 describe('mounted source-panel intents', () => {

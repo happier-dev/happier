@@ -56,6 +56,7 @@ export type PluginClientActionUi = Readonly<{
     openSurface: PluginUiHostApi['openSurface'];
     openNewSession: PluginUiHostApi['openNewSession'];
     openAutomationEvent: PluginUiHostApi['openAutomationEvent'];
+    readSession: PluginUiHostApi['readSession'];
     revealSessionInput: PluginUiHostApi['revealSessionInput'];
 }>;
 
