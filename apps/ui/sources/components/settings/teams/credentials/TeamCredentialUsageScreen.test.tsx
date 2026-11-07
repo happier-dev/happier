@@ -245,7 +245,16 @@ describe('TeamCredentialUsageScreen', () => {
 
     it.each([{ kind: 'team', teamId: 'team-1' }, { kind: 'home' }] as const)(
         'refreshes the $kind aggregate only on relevant pushed usage writes', async subject => {
-            const { notifyTeamCredentialUsageChanged } = await import('@/sync/engine/teams/teamCredentialUsageChanges');
+            const { handleEphemeralSocketUpdate } = await import('@/sync/engine/socket/socket');
+            const deliver = (sourceServerId: string, teamId: string) => handleEphemeralSocketUpdate({
+                update: { type: 'team-credential-usage-changed', resourceId: 'resource-not-loaded', teamId },
+                sourceServerId,
+                addActivityUpdate: () => {},
+                addMachineActivityUpdate: () => {},
+                getSessionEncryption: () => null,
+                getSession: () => undefined,
+                applyMessages: () => {},
+            });
             const serverId = await addHome();
             const { homeGovernanceProjectionFixture } = await import('@/dev/testkit/fixtures/homeGovernanceFixtures');
             harness.answer(serverId, '/v1/home/governance/get', { body: homeGovernanceProjectionFixture() });
@@ -253,11 +262,11 @@ describe('TeamCredentialUsageScreen', () => {
             const screen = await renderScreen(<TeamCredentialUsageScreen serverId={serverId} subject={subject} />);
             await vi.waitFor(() => expect(screen.getTextContent()).toContain('4,200'));
             const reads = harness.requestsFor(USAGE_QUERY_PATH).length;
-            notifyTeamCredentialUsageChanged({ serverId: 'other-home', resourceId: 'other-resource', teamId: 'team-1' });
-            if (subject.kind === 'team') notifyTeamCredentialUsageChanged({ serverId, resourceId: 'other-resource', teamId: 'other-team' });
+            await deliver('other-home', 'team-1');
+            if (subject.kind === 'team') await deliver(serverId, 'other-team');
             expect(harness.requestsFor(USAGE_QUERY_PATH)).toHaveLength(reads);
             harness.answer(serverId, USAGE_QUERY_PATH, { body: usageResult({ totalTokens: 8400 }) });
-            notifyTeamCredentialUsageChanged({ serverId, resourceId: 'resource-not-loaded', teamId: 'team-1' });
+            await deliver(serverId, 'team-1');
             await vi.waitFor(() => expect(screen.getTextContent()).toContain('8,400'));
             expect(harness.requestsFor(USAGE_QUERY_PATH)).toHaveLength(reads + 1);
         },

@@ -735,7 +735,7 @@ export const TeamCredentialUsageScreen = React.memo(function TeamCredentialUsage
     return (
         <TeamSection
             serverId={props.serverId}
-            teamId={props.subject?.teamId ?? props.teamId}
+            teamId={props.subject ? props.subject.teamId : props.teamId}
             title={t('teams.credentials.usage.title')}
             description={t('teams.pages.credentialUsage')}
         >
