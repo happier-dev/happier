@@ -33,7 +33,7 @@ function sourceFacts(displayName: string): PluginUiTargetedContributionsV1 {
 }
 
 const ITEM: TriageListItemV1 = {
-  key: 'entry-17', group: 'everythingElse', summary: null, signal: null, agent: null,
+  key: 'entry-17', group: 'everythingElse', statusGroup: 'everythingElse', summary: null, signal: null, agent: null,
   row: {
     key: 'entry-17', entryRef: testkitEntryRef(), title: 'Example entry', scopeLabel: 'example/repository',
     detail: null, tone: 'neutral', detailKind: null, detailIcon: null, authorLabel: null, designation: null,

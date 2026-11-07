@@ -66,6 +66,11 @@ export type CorpusSessionLinkRowV1 = Readonly<{
 
 export type CorpusUserMarkDisplayV1 = Readonly<{ title: string; scopeLabel: string }>;
 
+export type CorpusTaskOriginErrorV1 = Readonly<{
+    entryRef: TriageEntryRefV1;
+    display: CorpusUserMarkDisplayV1;
+}>;
+
 /**
  * One pull request the user named as the fix for the marked entry.
  *
@@ -94,9 +99,8 @@ export type CorpusUserMarkRowV1 = Readonly<{
     /** [row id] Collection-bound tag over the canonical entry-ref tuple. */
     markTag: string;
     /**
-     * [projected] leading index field. A mark holding only a fix-PR choice is
-     * live with `false`; a mark with neither a pin nor a fix-PR choice does not
-     * exist, because Unpin tombstones such a row instead of writing `false`.
+     * [projected] leading index field. A relationship-only mark is live with
+     * `false`; removing its last intent tombstones the row.
      */
     pinned: boolean;
     /** [projected] index range field. */
@@ -112,4 +116,6 @@ export type CorpusUserMarkRowV1 = Readonly<{
     displayAtMark: CorpusUserMarkDisplayV1;
     /** Present once the user linked or dismissed a fix pull request for this entry. */
     fixPullRequests?: CorpusFixPullRequestsV1;
+    /** The error the user chose when creating this task; private relationship intent. */
+    originError?: CorpusTaskOriginErrorV1;
 }>;

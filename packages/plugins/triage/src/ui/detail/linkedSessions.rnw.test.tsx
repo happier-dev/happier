@@ -123,7 +123,7 @@ describe('common-header linked Sessions', () => {
     const header = await mountHeader(['Current investigation', 'Current parser cleanup']);
     await expect(header.getByRole('button', { name: 'Current investigation' })).resolves.toBeDefined();
     await expect(header.queryByRole('button', { name: 'Route repair' })).resolves.toBeUndefined();
-    await act(async () => { await header.press(await header.getByRole('button', { name: 'Open session Current investigation' })); });
+    await act(async () => { await header.press(await header.getByRole('button', { name: 'Open Current investigation' })); });
     expect(calls).toEqual([{ action: 'session.open', input: { sessionId: 'session-linked' } }]);
   });
   it('selects the inline Session independently from the explicit Open operation and its retryable failure', async () => {
@@ -139,20 +139,17 @@ describe('common-header linked Sessions', () => {
     expect(selectedSessionId).toBe('session-linked');
     expect(calls).toEqual([]);
     await act(async () => {
-      await header.press(await header.getByRole('button', { name: 'Open session Route repair' }));
+      await header.press(await header.getByRole('button', { name: 'Open Route repair' }));
     });
 
     expect(calls).toEqual([{ action: 'session.open', input: { sessionId: 'session-linked' } }]);
-    const failedRow = await header.getByRole('button', { name: 'Route repair' });
-    expect(failedRow.name).toBe('Route repair');
+    // The failure stays on that Session's card, which keeps its name.
+    await expect(header.getByRole('button', { name: 'Route repair' })).resolves.toBeDefined();
     await expect(header.getByText('This Session could not be opened.')).resolves.toBeDefined();
-    const failedButton = Array.from(document.querySelectorAll<HTMLElement>('[role="button"]'))
-      .find((button) => button.getAttribute('aria-label') === 'Route repair');
-    expect(failedButton?.textContent).toContain('This Session could not be opened.');
 
     openFails = false;
     await act(async () => {
-      await header.press(await header.getByRole('button', { name: 'Open session Route repair' }));
+      await header.press(await header.getByRole('button', { name: 'Open Route repair' }));
     });
     expect(calls).toHaveLength(2);
     await expect(header.queryByText('This Session could not be opened.')).resolves.toBeUndefined();
@@ -163,19 +160,15 @@ describe('common-header linked Sessions', () => {
     blockOpen = true;
 
     await act(async () => {
-      await header.press(await header.getByRole('button', { name: 'Open session Route repair' }));
+      await header.press(await header.getByRole('button', { name: 'Open Route repair' }));
       await Promise.resolve();
     });
 
-    const unavailable = await header.getByRole('button', {
-      name: 'Parser cleanup',
-      state: { disabled: true },
-    });
+    // Another Session's card cannot open or be selected meanwhile, and says why.
+    const unavailable = await header.getByRole('button', { name: 'Open Parser cleanup', state: { disabled: true } });
     expect(unavailable.state?.disabled).toBe(true);
+    await expect(header.queryByRole('button', { name: 'Parser cleanup' })).resolves.toBeUndefined();
     await expect(header.getByText('Another Session is opening.')).resolves.toBeDefined();
-    const unavailableButton = Array.from(document.querySelectorAll<HTMLElement>('[role="button"]'))
-      .find((button) => button.getAttribute('aria-label') === 'Parser cleanup');
-    expect(unavailableButton?.textContent).toContain('Another Session is opening.');
 
     const release = releaseOpen;
     if (release === null) throw new Error('the Session open did not reach the host');

@@ -1,10 +1,15 @@
 import * as React from 'react';
 import {
   BrandMark,
+  Button,
   Card,
+  Column,
   Columns,
   Heading,
+  Item,
+  ItemGroup,
   PageHeader,
+  Row,
   Stack,
   Step,
   Text,
@@ -15,6 +20,7 @@ import {
 
 import { TRIAGE_DISPLAY_NAME } from '../../displayName.js';
 import type { TriageConfigureSourceOfferV1 } from './configureSources.js';
+import { createTriageNameListFormatter } from './nameList.js';
 
 /**
  * The first run of PRs & Issues (PLAN.md: "First run is the lab's Desk first run"): what the page is for, the
@@ -29,13 +35,6 @@ export function TriageFirstRun(props: Readonly<{
 }>): React.ReactElement {
   const text = usePluginTranslation();
   const { spacing } = usePluginTheme();
-  const { locale } = useSurfaceContext();
-  // Not every JavaScript engine the host runs ships `Intl.ListFormat`; a comma list says the same thing.
-  const formatKinds = React.useMemo(() => {
-    if (typeof Intl.ListFormat !== 'function') return (names: readonly string[]) => names.join(', ');
-    const listFormat = new Intl.ListFormat(locale, { style: 'long', type: 'conjunction' });
-    return (names: readonly string[]) => listFormat.format(names);
-  }, [locale]);
   return (
     <Stack gap="large" style={[FIRST_RUN_COLUMN_STYLE_V1, { paddingVertical: spacing.large + spacing.small }]} testID="triage-first-run">
       <PageHeader
@@ -54,27 +53,7 @@ export function TriageFirstRun(props: Readonly<{
             value={text('plugins.triage.surface.firstRun.connect.description', 'Pick where your work lives. You can add more later.')}
           />
         </Stack>
-        <Columns minColumnWidth={200} gap="small" rowGap="small">
-          {props.offers.map((offer) => (
-            <Card
-              key={`${offer.destination.pluginId}/${offer.destination.localId}`}
-              onPress={() => { props.onConnect(offer); }}
-              accessibilityLabel={text('plugins.triage.surface.firstRun.connectNamed', 'Connect {name}', { name: offer.displayName })}
-              testID={`triage-first-run-source:${offer.destination.pluginId}`}
-            >
-              <Stack gap="small">
-                <BrandMark pluginId={offer.destination.pluginId} size="medium" externallyLabelled />
-                <Stack gap="xsmall">
-                  <Text variant="label" value={offer.displayName} numberOfLines={1} />
-                  {offer.kindNames.length === 0 ? null : (
-                    <Text variant="micro" tone="secondary" value={formatKinds(offer.kindNames)} numberOfLines={1} />
-                  )}
-                </Stack>
-                <Text variant="micro" tone="accent" value={text('plugins.triage.surface.firstRun.connect', 'Connect')} />
-              </Stack>
-            </Card>
-          ))}
-        </Columns>
+        <TriageConnectTiles offers={props.offers} onConnect={props.onConnect} />
         {/* Where the reader's work is read, said before they connect anything (lab Desk first run). */}
         <Text
           variant="micro"
@@ -87,17 +66,129 @@ export function TriageFirstRun(props: Readonly<{
       </Stack>
       <Stack gap="medium">
         <Heading level={2} value={text('plugins.triage.surface.firstRun.next.title', 'What happens next')} />
-        <Columns minColumnWidth={180} gap="medium" rowGap="medium">
+        {/* The lab's three steps side by side; each cell is a `Column`, or the grid has no cells to lay out. */}
+        <Columns columns={3} minColumnWidth={180} gap="medium" rowGap="medium">
           {FIRST_RUN_STEPS_V1.map((step, index) => (
-            <Step key={step.id} marker={{ kind: 'number', value: index + 1 }} title={text(step.titleKey, step.title)}>
-              <Text variant="micro" tone="secondary" value={text(step.bodyKey, step.body)} />
-            </Step>
+            <Column key={step.id}>
+              <Step marker={{ kind: 'number', value: index + 1 }} title={text(step.titleKey, step.title)}>
+                <Text variant="micro" tone="secondary" value={text(step.bodyKey, step.body)} />
+              </Step>
+            </Column>
           ))}
         </Columns>
       </Stack>
     </Stack>
   );
 }
+
+/**
+ * The first run of Tasks (lab `tasks-firstrun`): nothing is listed and no tracker is connected. The personal list
+ * already exists in the reader's Account, so its one action is **New task**, the page's one primary action. Each tracker
+ * that brings tasks is the same Connect tile the PRs & Issues first run offers, one press from its own page; with none
+ * installed that section is absent rather than empty.
+ */
+export function TriageTasksFirstRun(props: Readonly<{
+  offers: readonly TriageConfigureSourceOfferV1[];
+  onConnect: (offer: TriageConfigureSourceOfferV1) => void;
+  onNewTask: () => void;
+}>): React.ReactElement {
+  const text = usePluginTranslation();
+  const { spacing } = usePluginTheme();
+  return (
+    <Stack gap="large" style={[FIRST_RUN_COLUMN_STYLE_V1, { paddingVertical: spacing.large + spacing.small }]} testID="triage-tasks-first-run">
+      <PageHeader
+        title={text('plugins.triage.tasks.title', 'Tasks')}
+        description={text(
+          'plugins.triage.tasks.firstRun.description',
+          'Everything you have to do, from your trackers and your own list, next to the agents doing it.',
+        )}
+        leading={<BrandMark size="large" externallyLabelled />}
+      />
+      <Stack gap="medium">
+        <Stack gap="xsmall">
+          <Heading level={2} value={text('plugins.triage.tasks.firstRun.own.title', 'Start with your own list')} />
+          <Text
+            tone="secondary"
+            value={text('plugins.triage.tasks.firstRun.own.description', 'Personal tasks live in your Happier Account, and only you see them.')}
+          />
+        </Stack>
+        <Card padding="medium">
+          <Row gap="medium" align="center" justify="space-between" wrap>
+            <BrandMark size="small" externallyLabelled />
+            <Stack gap="xsmall" style={PERSONAL_TASKS_COPY_STYLE_V1}>
+              <Text variant="label" value={text('plugins.triage.tasks.firstRun.own.row', 'Personal tasks')} />
+              <Text
+                variant="micro"
+                tone="secondary"
+                value={text(
+                  'plugins.triage.tasks.firstRun.own.rowDescription',
+                  'Link them to Sessions, block them on a pull request, break them into sub-tasks.',
+                )}
+              />
+            </Stack>
+            <Button title={text('plugins.triage.tasks.new', 'New task')} variant="primary" onPress={props.onNewTask} />
+          </Row>
+        </Card>
+      </Stack>
+      {props.offers.length === 0 ? null : (
+        <Stack gap="medium">
+          <Stack gap="xsmall">
+            <Heading level={2} value={text('plugins.triage.tasks.firstRun.trackers.title', 'Bring tasks from a tracker')} />
+            <Text
+              tone="secondary"
+              value={text('plugins.triage.tasks.firstRun.trackers.description', 'They stay in their tracker. Happier reads and edits them there.')}
+            />
+          </Stack>
+          <TriageConnectTiles offers={props.offers} onConnect={props.onConnect} />
+          <Text
+            variant="micro"
+            tone="secondary"
+            value={text(
+              'plugins.triage.tasks.firstRun.trust',
+              'Trackers are read live on the machine you choose. Their tasks are never copied into your account.',
+            )}
+          />
+        </Stack>
+      )}
+    </Stack>
+  );
+}
+
+/** One row per source, each with its own Connect (lab t1, both first runs). */
+function TriageConnectTiles(props: Readonly<{
+  offers: readonly TriageConfigureSourceOfferV1[];
+  onConnect: (offer: TriageConfigureSourceOfferV1) => void;
+}>): React.ReactElement {
+  const text = usePluginTranslation();
+  const { locale } = useSurfaceContext();
+  const formatKinds = React.useMemo(() => createTriageNameListFormatter(locale), [locale]);
+  return (
+    <ItemGroup accessibilityLabel={text('plugins.triage.surface.firstRun.connect.title', 'Connect a source')}>
+      {props.offers.map((offer) => (
+        <Item
+          key={`${offer.destination.pluginId}/${offer.destination.localId}`}
+          icon={<BrandMark pluginId={offer.destination.pluginId} size="small" externallyLabelled />}
+          title={offer.displayName}
+          {...(offer.kindNames.length === 0 ? {} : { subtitle: formatKinds(offer.kindNames) })}
+          accessoryOutsidePressable
+          accessory={(
+            <Button
+              title={text('plugins.triage.surface.firstRun.connect', 'Connect')}
+              accessibilityLabel={text('plugins.triage.surface.firstRun.connectNamed', 'Connect {name}', { name: offer.displayName })}
+              variant="secondary"
+              size="small"
+              testID={`triage-first-run-source:${offer.destination.pluginId}`}
+              onPress={() => { props.onConnect(offer); }}
+            />
+          )}
+        />
+      ))}
+    </ItemGroup>
+  );
+}
+
+/** The personal row's words take the room and wrap; New task keeps its own width at the row's end. */
+const PERSONAL_TASKS_COPY_STYLE_V1 = Object.freeze({ flexGrow: 1, flexShrink: 1, flexBasis: 200, minWidth: 0 });
 
 /** The lab's reading column for a first run: a centred measure, not a full-bleed table width. */
 const FIRST_RUN_COLUMN_STYLE_V1 = Object.freeze({ width: '100%' as const, maxWidth: 720, alignSelf: 'center' as const });

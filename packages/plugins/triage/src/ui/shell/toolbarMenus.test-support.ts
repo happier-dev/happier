@@ -75,6 +75,13 @@ export async function filterFacetOption(
   return await shell.getByRole('checkbox', options);
 }
 
+/** Close the Filters editor the way a reader does, by pressing its trigger again, so the list behind it is read. */
+export async function closeFilters(shell: PluginUiTestkit): Promise<void> {
+  const trigger = (await shell.getAllByRole('button')).find((candidate) => candidate.name === 'Filters');
+  if (trigger?.state?.expanded !== true) return;
+  await act(async () => { await shell.press(trigger); });
+}
+
 /** Open the Filters form and press one facet option. */
 export async function pressFilterFacetOption(shell: PluginUiTestkit, facet: string, name: string): Promise<void> {
   const option = await filterFacetOption(shell, facet, { name });

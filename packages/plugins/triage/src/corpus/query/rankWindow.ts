@@ -39,7 +39,7 @@ export type CorpusRankableRowV1 = Readonly<{
 }>;
 
 /** The three built-in orders. `smart` is a window re-rank, never a persisted score. */
-export type CorpusWindowOrderV1 = 'newest' | 'oldest' | 'smart';
+export type CorpusWindowOrderV1 = import('../../projection/listWindow.js').TriageListOrderV1;
 
 /**
  * The attention partition: `required`, then `suggested`, then the rows no

@@ -18,6 +18,7 @@ const ASK = TRIAGE_DEFAULT_ACTIONS_V1[0]!;
 const FIX = TRIAGE_DEFAULT_ACTIONS_V1[1]!;
 const REVIEW = TRIAGE_DEFAULT_ACTIONS_V1[2]!;
 const EXPLAIN = TRIAGE_DEFAULT_ACTIONS_V1[3]!;
+const INVESTIGATE = TRIAGE_DEFAULT_ACTIONS_V1[4]!;
 
 function storedFrom(actions: readonly TriageActionV1[]): unknown {
     return {
@@ -56,6 +57,12 @@ function storedFrom(actions: readonly TriageActionV1[]): unknown {
 }
 
 describe('the Triage action record', () => {
+    it('offers a configured read-diagnostics investigation without granting service mutation authority', () => {
+        const investigation = parseTriageActions(undefined).value.actions.find(candidate => candidate.actionId === 'investigate');
+        expect(investigation).toMatchObject({ enabled: true, workspaceMode: 'reference_only',
+            target: { kind: 'agent', promptInvocationId: null, delivery: 'send' } });
+        expect(investigation?.target.seededFallbackInstruction).toContain('machines.services.logs.read');
+    });
     it('normalizes profile references through the Launch Profile id owner', () => {
         const profileId = 'é'.repeat(256);
         const read = parseTriageActions(storedFrom([{ ...ASK, profileId: ` ${profileId} ` }]));
@@ -71,7 +78,7 @@ describe('the Triage action record', () => {
         // The seed is what a reader sees, not what the record holds: an absent
         // value must not need a write before the headline controls exist.
         expect(read.value.actions.map((action) => action.label))
-            .toEqual(['Ask', 'Fix', 'Review', 'Explain this PR in chat']);
+            .toEqual(['Ask', 'Fix', 'Review', 'Explain this PR in chat', 'Investigate']);
     });
 
     it('reads an empty stored catalog as no custom actions with all built-ins offered', () => {
@@ -87,7 +94,7 @@ describe('the Triage action record', () => {
         const read = parseTriageActions(storedFrom([custom, configuredReview]));
 
         expect(read.kind).toBe('parsed');
-        expect(read.value.actions).toEqual([custom, configuredReview, ASK, FIX, EXPLAIN]);
+        expect(read.value.actions).toEqual([custom, configuredReview, ASK, FIX, EXPLAIN, INVESTIGATE]);
     });
 
     it('persists deletion of a built-in as disabled through the real writer and reader', async () => {
@@ -100,7 +107,7 @@ describe('the Triage action record', () => {
         });
 
         expect(removed.status).toBe('applied');
-        const expected = [ASK, FIX, REVIEW, { ...EXPLAIN, enabled: false }];
+        const expected = [ASK, FIX, REVIEW, { ...EXPLAIN, enabled: false }, INVESTIGATE];
         expect(testkit.read(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1)).toEqual(storedFrom(expected));
         expect((await readTriageActions({ catalog })).value.actions).toEqual(expected);
     });
@@ -191,7 +198,7 @@ describe('the Triage action record', () => {
         });
         expect(updated.status).toBe('applied');
         expect(testkit.read(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1)).toEqual(storedFrom([
-            { ...ASK, label: 'Discuss' }, FIX, REVIEW, EXPLAIN,
+            { ...ASK, label: 'Discuss' }, FIX, REVIEW, EXPLAIN, INVESTIGATE,
         ]));
     });
 
@@ -307,6 +314,7 @@ describe('the Triage action record', () => {
             'Fix',
             'Review',
             'Explain this PR in chat',
+            'Investigate',
             'Explain',
         ]);
         expect(created.value.actions.at(-1)).toEqual({
@@ -366,7 +374,7 @@ describe('the Triage action record', () => {
         const reordered = await mutateTriageAction(deps, {
             kind: 'reorder',
             expectedRevision: testkit.revision(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1),
-            actionIds: [REVIEW.actionId, FIX.actionId, ASK.actionId, EXPLAIN.actionId],
+            actionIds: [REVIEW.actionId, FIX.actionId, ASK.actionId, EXPLAIN.actionId, INVESTIGATE.actionId],
         });
         expect(reordered.status).toBe('applied');
         if (reordered.status !== 'applied') return;
@@ -375,6 +383,7 @@ describe('the Triage action record', () => {
             FIX.actionId,
             ASK.actionId,
             EXPLAIN.actionId,
+            INVESTIGATE.actionId,
         ]);
 
         const deleted = await mutateTriageAction(deps, { kind: 'delete', actionId: FIX.actionId, expectedRevision: testkit.revision(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1) });
@@ -385,6 +394,7 @@ describe('the Triage action record', () => {
             FIX.actionId,
             ASK.actionId,
             EXPLAIN.actionId,
+            INVESTIGATE.actionId,
         ]);
         expect(deleted.value.actions.find((action) => action.actionId === FIX.actionId)?.enabled).toBe(false);
     });
@@ -623,7 +633,7 @@ describe('the caller-observed revision', () => {
         // Nothing was written, and the other device's action is still there.
         const now = parseTriageActions(testkit.read(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1));
         expect(now.value.actions.map((action) => action.label))
-            .toEqual(['Ask', 'Fix', 'Review', 'Explain this PR in chat', 'Triage']);
+            .toEqual(['Ask', 'Fix', 'Review', 'Explain this PR in chat', 'Investigate', 'Triage']);
     });
 
     it('returns the revision an applied write landed on, so a second edit can name it', async () => {
@@ -657,6 +667,7 @@ describe('the caller-observed revision', () => {
     });
 
 });
+
 describe('a press\'s launch mode (owner ruling 2026-11-07 "Agent actions: one shared flow")', () => {
     it('reads the configured delivery as the action\'s launch mode', () => {
         expect(readTriageActionLaunchModeV1(FIX)).toBe('review');

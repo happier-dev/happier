@@ -8,6 +8,7 @@ import {
 } from '../../corpus/testkit/observations.test-support.js';
 import { triageEntryRowKey, type TriageListRowV1 } from '../../projection/listWindow.js';
 import type { TriagePinnedEntryV1 } from '../marks/pinCommand.js';
+import { INTERNAL_TASK_SOURCE_V1 } from '../../internalTasks/identity.js';
 import {
   planTriageListItemsV1,
   readTriageListGroupV1,
@@ -76,6 +77,18 @@ function byGroup(items: readonly TriageListItemV1[]): Readonly<Record<string, re
 }
 
 describe('the PRs & Issues grouping axis', () => {
+  it('keeps personal tasks in Tasks rather than PRs & Issues, including pins and exact pin reads', () => {
+    const personal = { ...row('personal', { kindId: 'task', involvement: ['assignee'] }),
+      entryRef: { source: INTERNAL_TASK_SOURCE_V1, kindId: 'task', collisionScope: 'personal', entryId: 'personal' } };
+    const personalPin = { ...pin('personal'), entryRef: personal.entryRef };
+    const input = { rows: [row('pr'), row('issue', { kindId: 'issue' }), personal],
+      pins: [personalPin], readRows: [personal], workflowSubjectOf: pullRequests };
+    expect(planTriageListItemsV1(input).map(item => item.row.entryRef.entryId)).toEqual(['pr', 'issue']);
+    expect(planTriageListItemsV1({ ...input, rows: [], readRows: [] })).toEqual([]);
+    expect(planTriageListItemsV1({ ...input, tasks: { audience: 'everyone',
+      isTask: ref => ref.kindId === 'task' || ref.kindId === 'issue', hasSessions: () => false } })
+      .map(item => item.row.entryRef.entryId)).toEqual(['personal', 'issue']);
+  });
   it('projects personal task order into only its existing slots, retaining external source order and status groups', () => {
     const personal = (id: string, state: 'unstarted' | 'started' = 'unstarted') => {
       const base = row(id, { kindId: 'task' });
@@ -89,6 +102,15 @@ describe('the PRs & Issues grouping axis', () => {
     expect(items.map(item => item.row.entryRef.entryId)).toEqual(['c', 'external-1', 'working', 'a', 'external-2', 'b']);
     expect(byGroup(items).started).toEqual(['working']);
     expect(byGroup(items).unstarted).toEqual(['c', 'external-1', 'a', 'external-2', 'b']);
+  });
+  it('never pulls a shared task with a colliding id into the viewer personal order', () => {
+    const task = (id: string, collisionScope: string) => ({ ...row(id, { kindId: 'task' }),
+      entryRef: { source: INTERNAL_TASK_SOURCE_V1, kindId: 'task', collisionScope, entryId: id } });
+    const items = planTriageListItemsV1({ rows: [task('a', 'personal'), task('b', 'account:other'), task('b', 'account:account')],
+      pins: [], workflowSubjectOf: pullRequests,
+      tasks: { audience: 'everyone', isTask: () => true, hasSessions: () => false, personalOrder: ['b', 'a'], personalAccountId: 'account' } });
+    expect(items.map(item => [item.row.entryRef.collisionScope, item.row.entryRef.entryId]))
+      .toEqual([['account:account', 'b'], ['account:other', 'b'], ['personal', 'a']]);
   });
   it('takes the completing capability from the selected connection, with runtime capabilities replacing the kind defaults', () => {
     const capabilities = (id: string) => ({ completingTransitionId: id,
@@ -149,6 +171,19 @@ describe('the PRs & Issues grouping axis', () => {
     // A linked Session is sufficient, even before its live work state answers.
     expect(planTriageListItemsV1({ ...input, tasks: { ...input.tasks, audience: 'agents' } }).map((item) => item.row.entryRef.entryId)).toEqual(['linked']);
   });
+  it('applies Tasks kind membership to readable, exactly-read and unread pins, without excluding task-kind issues', () => {
+    const issue = row('issue', { kindId: 'issue' });
+    const issuePin = { ...pin('issue'), entryRef: issue.entryRef };
+    const input = { rows: [row('pr'), issue], pins: [pin('pr'), issuePin], workflowSubjectOf: pullRequests,
+      tasks: { audience: 'everyone' as const, isTask: (ref: TriageListRowV1['entryRef']) => ref.kindId === 'issue',
+        hasSessions: () => false } };
+    for (const rows of [input.rows, []]) {
+      for (const readRows of [input.rows, []]) {
+        expect(planTriageListItemsV1({ ...input, rows, readRows })
+          .map(item => [item.row.entryRef.entryId, item.group])).toEqual([['issue', 'pinned']]);
+      }
+    }
+  });
   it('carries the source\'s own status word and live relations on a task item, and none on a PRs & Issues item', () => {
     const base = row('relations', { kindId: 'issue', involvement: ['assignee'] });
     const task = { ...base, content: { ...base.content!, outcome: { ...base.content!.outcome, snapshot: {
@@ -161,8 +196,8 @@ describe('the PRs & Issues grouping axis', () => {
     const tasks = { audience: 'mine' as const, isTask: () => true, hasSessions: () => false, capabilitiesOf: () => capabilities };
     const [item] = planTriageListItemsV1({ rows: [task], pins: [], workflowSubjectOf: pullRequests, tasks });
     // The row's status control offers the selected connection's workflow, each step with the category it moves to.
-    expect(item!.task).toEqual({ category: 'started', statusLabel: 'In Review', completingTransitionId: 'done',
-      transitions: [{ id: 'done', label: 'Done', category: 'completed' }],
+    expect(item!.task).toEqual({ category: 'started', statusLabel: 'In Review', completingTransitionId: 'done', assignedToViewer: true,
+      transitions: [{ id: 'done', label: 'Done', category: 'completed', state: { presentation: 'resolved' } }],
       relations: { children: { total: 5, completed: 3 } } });
     const [plain] = planTriageListItemsV1({ rows: [task], pins: [], workflowSubjectOf: pullRequests });
     expect(plain!.task).toBeUndefined();
@@ -234,10 +269,40 @@ describe('the PRs & Issues grouping axis', () => {
     expect(unwalked.row.title).toBe('Not walked yet');
   });
 
+  it('keeps each pinned entry\'s own status for a view without a Pinned group (the board)', () => {
+    // Owner ruling 2026-10-31: on the board a pin stays in its status column with a pin mark.
+    const items = planTriageListItemsV1({
+      rows: [row('a', { attention: 'required' }), row('b'), row('c', { involvement: ['author'] })],
+      pins: [pin('a'), pin('c'), pin('z', 'Not walked yet')],
+      workflowSubjectOf: pullRequests,
+    });
+    const statusOf = Object.fromEntries(items.map((item) => [item.row.entryRef.entryId, item.statusGroup]));
+    expect(statusOf).toEqual({ a: 'needsYou', c: 'inReview', z: 'everythingElse', b: 'everythingElse' });
+    expect(items.filter((item) => item.group === 'pinned').map((item) => item.row.entryRef.entryId)).toEqual(['a', 'c', 'z']);
+  });
+
+  it('lets an exact read answer a pin the window never walked, without listing the entry anywhere else', () => {
+    // The reader opened the pinned entry: its detail read it exactly, so the pin no longer says it is unsynchronized.
+    const items = planTriageListItemsV1({
+      rows: [row('b')],
+      pins: [pin('z', 'Title at pin time')],
+      readRows: [row('z'), row('y')],
+      workflowSubjectOf: pullRequests,
+    });
+    expect(byGroup(items)).toEqual({ pinned: ['z'], everythingElse: ['b'] });
+    const pinned = items.find((item) => item.row.entryRef.entryId === 'z')!;
+    expect(pinned.row.materialized).toBe(true);
+    expect(pinned.row.title).toBe('Entry z');
+  });
+
   it('carries the source summary for the peek and the primary status fact as the signal', () => {
     const [item] = planTriageListItemsV1({
       rows: [row('a', {
-        facts: [{ id: 'checks', label: 'Checks', importance: 'primary', value: { kind: 'status', value: '2 failing', tone: 'danger' } }],
+        facts: [
+          ...Array.from({ length: 6 }, (_, index) => ({ id: `fact-${index}`, importance: 'secondary' as const,
+            value: { kind: 'text' as const, value: `Value ${index}` } })),
+          { id: 'checks', label: 'Checks', importance: 'primary', value: { kind: 'status', value: '2 failing', tone: 'danger' } },
+        ],
       })],
       pins: [],
       workflowSubjectOf: pullRequests,

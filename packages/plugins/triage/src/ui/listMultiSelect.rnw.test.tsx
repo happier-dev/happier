@@ -41,7 +41,7 @@ import {
 import { listTriagePinnedEntries } from '../actions/userMarks.js';
 import { reobserveTriageEntry } from '../actions/reobserveEntry.js';
 import { readTriageEntryDetail } from '../actions/readEntryDetail.js';
-import { createTestkitSourceSessionRelations } from '../sessions/testkit/entrySessionTestkit.test-support.js';
+import { createTestkitSourceSessionRelations, readTestkitSourceSessionLinks, testkitTriageActionId } from '../sessions/testkit/entrySessionTestkit.test-support.js';
 import { TriageReobserveEntryInputV1Schema } from '../actions/reobserveEntryProtocol.js';
 import { TriageReadEntryDetailInputV1Schema } from '../actions/entryDetailProtocol.js';
 import { toTriageWireObservation } from '../projection/listWindowWire.js';
@@ -200,7 +200,7 @@ function createHarness(options: Readonly<{
     /** Holds the project registry at its boundary until the mounted request is cancelled. */
     deferProjectsRead?: boolean;
     sessionStates?: Record<string, SessionStateV1 | null>;
-    /** A Collection transport outage after an earlier successful mounted read. */
+    /** An Account relation Action transport outage after an earlier successful read. */
     sessionLinkReadFails?: () => boolean;
     sessionLinkReadError?: () => Error | undefined;
 }> = {}) {
@@ -225,20 +225,18 @@ function createHarness(options: Readonly<{
     let projectsSignal: AbortSignal | undefined;
     let retireMounted: (() => Promise<void>) | null = null;
     control.sourceInstances.seed(toCorpusStoredValue(instanceRow()));
+    const sessionLinksReader = {
+        ...collections.sessionLinks,
+        query: async (...args: Parameters<typeof collections.sessionLinks.query>) => {
+            sessionLinkQueries.push(args[0]);
+            const page = await collections.sessionLinks.query(...args);
+            sessionLinkPageSizes.push(page.rows.length);
+            return page;
+        },
+    };
     const collectionsById = new Map<string, unknown>([
         ['source-instances', collections.sourceInstances],
-        ['session-links', {
-            ...collections.sessionLinks,
-            query: async (...args: Parameters<typeof collections.sessionLinks.query>) => {
-                sessionLinkQueries.push(args[0]);
-                const error = options.sessionLinkReadError?.();
-                if (error) throw error;
-                if (options.sessionLinkReadFails?.()) throw new Error('Session links unavailable');
-                const page = await collections.sessionLinks.query(...args);
-                sessionLinkPageSizes.push(page.rows.length);
-                return page;
-            },
-        }],
+        ['session-links', sessionLinksReader],
         ['user-marks', collections.userMarks],
     ]);
     const dataClient = {
@@ -392,8 +390,16 @@ function createHarness(options: Readonly<{
         input: unknown;
         signal?: AbortSignal;
     }>) {
-        const action = String(request.action);
+        const action = testkitTriageActionId(request.action);
         if (retired) throw new Error('triage:test:surfaceRetired');
+        if (action === 'sessions/read-source-links-v1') {
+            const error = options.sessionLinkReadError?.();
+            if (error) throw error;
+            if (options.sessionLinkReadFails?.()) throw new Error('Session links unavailable');
+            return await readTestkitSourceSessionLinks(request.input, {
+                collections: { ...collections, sessionLinks: sessionLinksReader }, contributions: admitted, signal: request.signal,
+            });
+        }
         if (action === 'entries/reobserve-v1') {
             const input = TriageReobserveEntryInputV1Schema.parse(request.input);
             const result = await reobserveTriageEntry(input, {
@@ -445,9 +451,17 @@ function createHarness(options: Readonly<{
             return await startTriageEntrySession(
                 TriageStartEntrySessionInputV1Schema.parse(request.input),
                 {
-                    collections: { sessionLinks },
+                    linkSession: async (link) => {
+                        const relations = createTestkitSourceSessionRelations({
+                            collections: { ...collections, sessionLinks },
+                            contributions: admitted,
+                            signal: request.signal,
+                        });
+                        const result = await relations.write({ ...link, linked: true });
+                        return { status: result.status === 'linked' ? 'linked' : 'failed' };
+                    },
                     execute: executeSessionAction,
-                    nowMs: () => 2_000,
+                    signal: request.signal,
                 },
             );
         }
@@ -652,7 +666,8 @@ async function mountShell(
                     return { status: 'applied' as const, revision: 2 };
                 },
                 // The host owns history and settlement; the surface only writes
-                // the lens and consumes what settles.
+                // the lens and consumes what settles. LIST-R2 also publishes
+                // the opening route so the host can name its view.
                 replacePageLocation: ({ subPath }) => {
                     locations.push(subPath);
                     return subPath;
@@ -722,14 +737,14 @@ async function pressRow(
 
 async function chooseRow(label: string): Promise<void> {
     const mode = document.querySelector<HTMLElement>('[data-testid="happier-list-selection-mode"]');
-    if (!mode?.textContent?.includes('Done selecting')) {
+    if (mode?.textContent !== 'Done') {
         await act(async () => { mode?.click(); });
     }
     await pressRow(label);
 }
 
 /**
- * The bulk action picker: one compact menu ("Action · Ask") in the list toolbar beside "Done selecting", so a live
+ * The bulk action picker: one compact menu ("Action · Ask") in the list toolbar beside "Done", so a live
  * selection never pushes an inline list of buttons into the rows. Read the way a reader does: open the menu, read
  * its radio rows, close it again.
  */
@@ -776,16 +791,17 @@ describe('selecting several PRs & Issues rows', () => {
             await settle();
             expect(document.body.textContent).toContain('With an agent');
         });
-        // The fixture has three visible entries. Each exact relation is one page,
-        // irrespective of the six Account-wide pages the old join traversed.
+        // One exact entry-set query covers the three visible entries, regardless
+        // of the many Account-wide pages an inventory walk would traverse.
         expect({
-            exactRelations: harness.sessionLinkQueries.every(query => query.prefix?.length === 1),
+            exactRelations: harness.sessionLinkQueries.every(query => query.prefixes?.length
+                === gridRows().filter(row => row.closest('[data-testid^="triage-entry-drag:"]')).length),
             continued: harness.sessionLinkQueries.some(query => query.cursor !== undefined),
             queries: harness.sessionLinkQueries.length,
             rowsRead: harness.sessionLinkPageSizes.reduce((sum, size) => sum + size, 0),
         }).toEqual({
             exactRelations: true, continued: false,
-            queries: gridRows().filter(row => row.closest('[data-testid^="triage-entry-drag:"]')).length,
+            queries: 1,
             rowsRead: 1,
         });
     });
@@ -811,9 +827,9 @@ describe('selecting several PRs & Issues rows', () => {
         });
         const continuationReads = harness.sessionLinkQueries.filter(query => query.cursor !== undefined);
         expect(continuationReads).toHaveLength(1);
-        expect(continuationReads[0]!.prefix).toHaveLength(1);
+        expect(continuationReads[0]!.prefixes).toHaveLength(3);
         expect(harness.sessionLinkQueries.some(query => query.cursor === undefined
-            && JSON.stringify(query.prefix) === JSON.stringify(continuationReads[0]!.prefix))).toBe(true);
+            && JSON.stringify(query.prefixes) === JSON.stringify(continuationReads[0]!.prefixes))).toBe(true);
         expect(harness.sessionLinkPageSizes.reduce((sum, size) => sum + size, 0)).toBe(201);
     });
 
@@ -867,17 +883,20 @@ describe('selecting several PRs & Issues rows', () => {
         expect(document.body.textContent).not.toContain('Some linked Session activity could not be read.');
         expect(rowNamed('Replace the duplicated normalizer')).toBeDefined();
         expect(harness.diagnostics).toContainEqual(expect.objectContaining({
-            code: 'triage_session_links_read_unavailable', message: 'Session links unavailable',
+            code: 'triage_session_links_read_unavailable',
+            details: { code: 'internal_error', retryable: false },
         }));
     });
 
-    it('retries a retryable Account link read once before showing a persistent failure', async () => {
+    it('settles a retryable Account link refusal without replay and recovers only on explicit Retry', async () => {
         let failuresRemaining = 0;
+        let relationAttempts = 0;
         const harness = createHarness({ sessionStates: { 'linked-session': {
             sessionId: 'linked-session', lifecycle: 'active', runtime: 'idle',
             operational: 'ready', pendingPermissions: [],
             workStatus: { state: 'ready', bucket: 'idle', tone: 'neutral', attentionType: null, word: 'Ready' },
         } }, sessionLinkReadError: () => {
+            relationAttempts += 1;
             if (failuresRemaining === 0) return undefined;
             failuresRemaining -= 1;
             return new PluginError({ code: 'plugin_account_storage_unavailable', retryable: true });
@@ -890,22 +909,24 @@ describe('selecting several PRs & Issues rows', () => {
         });
         const { shell } = await mountShell(harness);
         await settle();
+        const initialAttempts = relationAttempts;
         failuresRemaining = 1;
         await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Refresh' })); });
         await settle();
-        expect(document.body.textContent).not.toContain('Some linked Session activity could not be read.');
-
-        failuresRemaining = 2;
-        await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Refresh' })); });
         await vi.waitFor(async () => {
             await settle();
             expect(document.body.textContent).toContain('Some linked Session activity could not be read.');
         });
+        expect(relationAttempts - initialAttempts).toBe(1);
         expect(failuresRemaining).toBe(0);
         expect(harness.diagnostics).toContainEqual(expect.objectContaining({
             code: 'triage_session_links_read_unavailable',
             details: { code: 'plugin_account_storage_unavailable', retryable: true },
         }));
+        await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Retry' })); });
+        await settle();
+        expect(relationAttempts - initialAttempts).toBe(2);
+        expect(document.body.textContent).not.toContain('Some linked Session activity could not be read.');
     });
 
     it('groups linked working Sessions live without opening a detail', async () => {
@@ -929,7 +950,7 @@ describe('selecting several PRs & Issues rows', () => {
             expect(document.body.textContent).toContain('With an agent');
         });
         expect(rowNamed('Replace the duplicated normalizer')).toBeDefined();
-        expect(locations).toEqual([]);
+        expect(locations).toEqual(['']);
 
         await settle();
         const commitsBeforeTitle = commits;
@@ -1293,7 +1314,7 @@ describe('selecting several PRs & Issues rows', () => {
                 },
             }],
         });
-        expect(locations).toEqual([]);
+        expect(locations).toEqual(['']);
     });
 
     it('carries a Launch Profile worktree answer into the attach-all seed', async () => {
@@ -1363,7 +1384,7 @@ describe('selecting several PRs & Issues rows', () => {
         expect(harness.preparedNewSessionSelections).toEqual([]);
         expect(harness.lifecycle).toEqual([]);
         expect(harness.wasRetired).toBe(false);
-        expect(locations).toEqual([]);
+        expect(locations).toEqual(['']);
         expect(document.body.textContent).toContain('Each pull request needs its own review workspace.');
         expect(document.body.textContent).not.toContain('could not be used');
     });
@@ -1498,7 +1519,7 @@ describe('selecting several PRs & Issues rows', () => {
         expect(harness.composerTransactions).toEqual([]);
         expect(harness.newSessionSeeds).toEqual([]);
         expect(harness.wasRetired).toBe(false);
-        expect(locations).toEqual([]);
+        expect(locations).toEqual(['']);
         await expect(shell.getByRole('status', {
             name: 'A formal code review cannot be started in bulk from here, so nothing was started.',
         })).resolves.toBeDefined();

@@ -1,9 +1,17 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { describe, expect, it } from 'vitest';
+import { normalizePluginAccountCollectionContractV1, PluginAccountCollectionContributionV1Schema } from '@happier-dev/protocol';
+import { projectPluginAccountCollectionDeclaration } from '@happier-dev/plugin-sdk/collections';
+import { compilePluginJsonSchema, isValidPluginJsonSchemaValue } from '@happier-dev/plugin-sdk/manifest';
+import { preparePluginCollectionLogicalMutationRequestV1 } from '@happier-dev/protocol/plugins/data/collectionLogicalCodecV1';
+import { PLUGIN_COLLECTION_LIMITS_V1 } from '@happier-dev/protocol/plugins/data/collectionLimitsV1';
+import { MAX_TRIAGE_TEXT_UTF8_BYTES_V1 } from '@happier-dev/triage-protocol/v1';
 
 import type { CorpusCollectionsV1 } from '../collections/bindCorpusCollections.js';
 import { CORPUS_USER_MARKS_INDEX_ID } from '../collections/ids.js';
 import type { CorpusUserMarkRowV1 } from '../collections/rows.js';
+import type { CorpusStoredValueV1 } from '../collections/handles.js';
+import { CORPUS_USER_MARKS_COLLECTION } from '../collections/definitions.js';
 import { deriveUserMarkTag } from '../identity/tags.js';
 import {
     createTestkitCorpusCollections,
@@ -11,7 +19,7 @@ import {
     type TestkitCorpusCollections,
 } from '../testkit/corpusCollections.test-support.js';
 import { testkitEntryRef } from '../testkit/observations.test-support.js';
-import { setPinned } from './setPinned.js';
+import { setFixPullRequest, setPinned, setTaskOriginError } from './setPinned.js';
 
 const DISPLAY = { title: 'Replace the duplicated normalizer', scopeLabel: 'example/repository' } as const;
 
@@ -88,6 +96,58 @@ async function liveMarks(fixture: TestkitCorpusCollections): Promise<readonly Co
 }
 
 describe('setPinned', () => {
+    it.each(['plain', 'e2ee'] as const)('preserves the full prior mark and relationships after an over-envelope pin or link refusal in %s mode', async (encryptionMode) => {
+        const material = encryptionMode === 'e2ee' ? testkitAccountMaterial(1) : null;
+        const fixture = createTestkitCorpusCollections({ accountEncryptionMode: encryptionMode, material });
+        const contract = normalizePluginAccountCollectionContractV1({ pluginId: 'happier.triage',
+            contribution: PluginAccountCollectionContributionV1Schema.parse(projectPluginAccountCollectionDeclaration(
+                CORPUS_USER_MARKS_COLLECTION.id, CORPUS_USER_MARKS_COLLECTION)) });
+        const validate = compilePluginJsonSchema(contract.schema);
+        // Account Collection I/O is the boundary. Its real codec decides the
+        // envelope refusal; the in-memory store still owns persistence and CAS.
+        const collections: Pick<CorpusCollectionsV1, 'userMarks'> = { userMarks: {
+            ...fixture.collections.userMarks,
+            async batch(operations, options) {
+                const prepared = preparePluginCollectionLogicalMutationRequestV1({ contract, operations,
+                    isValidLogicalValue: (candidate: CorpusStoredValueV1): candidate is CorpusStoredValueV1 =>
+                        isValidPluginJsonSchemaValue(validate, candidate),
+                    encryptionMode, material, randomBytes: length => new Uint8Array(length).fill(3), absenceEpoch: 0 });
+                if (prepared.status === 'failed') {
+                    // The daemon maps this canonical no-effect refusal to the
+                    // same typed boundary code (accountPluginDataStorage.ts).
+                    if (prepared.reason !== 'private-payload-too-large') throw new Error(prepared.reason);
+                    expect(prepared.encodedBytes).toBeGreaterThan(prepared.effectiveMaximum);
+                    expect(prepared.effectiveMaximum).toBe(PLUGIN_COLLECTION_LIMITS_V1.maximumPrivateEnvelopeEncodedBytes);
+                    throw new PluginError({ code: 'collection_quota_incompatible', message: 'Collection envelope is too large' });
+                }
+                return await fixture.collections.userMarks.batch(operations, options);
+            },
+        } };
+        const entryRef = testkitEntryRef();
+        const display = { title: 't'.repeat(MAX_TRIAGE_TEXT_UTF8_BYTES_V1 + 1), scopeLabel: DISPLAY.scopeLabel };
+        const originError = { entryRef: { ...entryRef, entryId: 'origin-error' }, display };
+        const fixPullRequest = { ...entryRef, entryId: 'fix-pr' };
+        expect(await setTaskOriginError({ collections, entryRef, displayAtMark: display, originError, nowMs: 1 }))
+            .toEqual({ status: 'linked' });
+        expect(await setFixPullRequest({ collections, entryRef, displayAtMark: display, fixPullRequest,
+            linked: true, displayAtLink: display, nowMs: 2 })).toEqual({ status: 'linked' });
+        const markTag = await deriveUserMarkTag(collections.userMarks, entryRef);
+        const previous = structuredClone(await collections.userMarks.get(markTag));
+        expect(previous?.value).toMatchObject({ pinned: false, displayAtMark: display, originError,
+            fixPullRequests: { linked: [{ entryRef: fixPullRequest, displayAtLink: display, linkedAtMs: 2 }], dismissed: [] } });
+        const oversized = { title: 'x'.repeat(PLUGIN_COLLECTION_LIMITS_V1.maximumPrivateEnvelopeEncodedBytes + 1), scopeLabel: DISPLAY.scopeLabel };
+        await expect(setPinned({ collections, entryRef, pinned: true, displayAtMark: oversized, nowMs: 3 }))
+            .rejects.toMatchObject({ code: 'collection_quota_incompatible' });
+        expect(await collections.userMarks.get(markTag)).toEqual(previous);
+        await expect(setFixPullRequest({ collections, entryRef, displayAtMark: display, fixPullRequest,
+            linked: true, displayAtLink: oversized, nowMs: 4 })).rejects.toMatchObject({ code: 'collection_quota_incompatible' });
+        expect(await collections.userMarks.get(markTag)).toEqual(previous);
+        expect(await setPinned({ collections, entryRef, pinned: true, displayAtMark: display, nowMs: 5 }))
+            .toEqual({ status: 'pinned', markTag });
+        expect((await collections.userMarks.get(markTag))?.value).toMatchObject({ pinned: true, displayAtMark: display,
+            originError, fixPullRequests: previous?.value.fixPullRequests });
+    });
+
     it('pins from the supplied projected facts alone, with no durable entry row anywhere', async () => {
         const fixture = createTestkitCorpusCollections({ accountEncryptionMode: 'e2ee' });
         const entryRef = testkitEntryRef();

@@ -16,7 +16,7 @@ function configured(
   displayLabel?: string,
 ): TriageListWindowSnapshotV1['configuredSources'][number] {
   return {
-    sourceInstanceId,
+    sourceInstanceId, configurationRowId: sourceInstanceId,
     source,
     ...(displayLabel === undefined ? {} : { displayLabel }),
     available: true,

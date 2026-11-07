@@ -5,16 +5,14 @@ import {
   BrandMark,
   Button,
   CodeBlock,
-  HAPPIER_WORK_STATUS_SEMANTIC_TONE,
   Icon,
-  IconButton,
   ReviewSeverity,
   Row,
   Stack,
   Status,
   Step,
   Text,
-  WidgetFrame,
+  SessionCard,
   usePluginHostApi,
   usePluginTranslation,
   useReviewCommentProposalsForEntry,
@@ -26,8 +24,10 @@ import type { TriageLinkedSessionProjectionV1 } from '@happier-dev/triage-protoc
 
 import { describeTriageAgentStatusV1, readTriageSessionWhereV1 } from './agentState.js';
 import { TriageLinkedSessions } from './linkedSessions.js';
-import { readTriageSessionTitle } from './sessionTitle.js';
 import { useLinkedSessionOpen } from './useLinkedSessionOpen.js';
+
+/** The entry's agent entry points, published by its action row (one start controller) for the story to offer. */
+export type TriageAgentEntryV1 = Readonly<{ start(): void; send(): void }>;
 
 type TriageFindingV1 = ReturnType<typeof useReviewCommentProposalsForEntry>['proposals'][number];
 
@@ -68,6 +68,8 @@ export function TriageAgentStep(props: Readonly<{
   onSelectSession?: (sessionId: TriageLinkedSessionProjectionV1['sessionId']) => void;
   /** The live read of `sessions[0]`, owned by the detail so the card and step share one watch. */
   live: SessionStateReadV1;
+  /** The detail's live reads of the linked Sessions. */
+  sessionStates?: ReadonlyMap<string, SessionStateReadV1>;
   /** This entry, as the Reviews read names it. */
   reviewEntry: ReviewCommentProposalQueryV1['entry'];
   /**
@@ -75,12 +77,36 @@ export function TriageAgentStep(props: Readonly<{
    * Activity, the same facts without the rail marker.
    */
   variant?: 'step' | 'card';
+  /** The step's place in the story: the source's chapters come first (③ after an ask and its changes). */
+  number?: number;
+  /**
+   * The entry's own Start and Send to a Session (the action row's primary press), offered here while no Session is
+   * linked, where the agent's work will appear (lab t1). Absent: the entry has no agent action to offer.
+   */
+  entry?: TriageAgentEntryV1 | null;
 }>): React.ReactElement | null {
   const text = usePluginTranslation();
   const linkedSessionIds = React.useMemo(() => props.sessions.map((session) => session.sessionId), [props.sessions]);
   const findings = useReviewCommentProposalsForEntry({ linkedSessionIds, entry: props.reviewEntry });
   const opener = useLinkedSessionOpen();
-  if (props.sessions.length === 0) return null;
+  if (props.sessions.length === 0) {
+    if (props.entry === undefined || props.entry === null || props.variant === 'card') return null;
+    const entry = props.entry;
+    return (
+      <Step
+        marker={{ kind: 'number', value: props.number ?? 3 }}
+        title={text('plugins.triage.surface.detail.agent.workUnnamed', 'The agent\u2019s work')}
+        testID="triage-story-agent"
+      >
+        <Row gap="small" align="center" wrap>
+          <Button title={text('plugins.triage.surface.detail.agent.start', 'Start a Session')} variant="secondary"
+            size="small" onPress={entry.start} />
+          <Button title={text('plugins.triage.surface.actions.sendToSession', 'Send to a Session…')} variant="plain"
+            size="small" onPress={entry.send} />
+        </Row>
+      </Step>
+    );
+  }
   const status = props.live.state === null ? null : describeTriageAgentStatusV1(props.live.state);
   const whereLabel = readTriageSessionWhereV1(props.live.state);
   const shown = findings.proposals.slice(0, SHOWN_FINDINGS);
@@ -88,8 +114,11 @@ export function TriageAgentStep(props: Readonly<{
   // field; in that case use the story's current linked Session destination.
   const omittedFinding = findings.proposals[SHOWN_FINDINGS];
   const findingsSessionId = omittedFinding?.sessionId ?? props.sessions[0]?.sessionId;
-  // ③ uses the same public Session title and untitled fallback as the linked controls.
-  const title = readTriageSessionTitle(props.live.state, text);
+  // The step names whose work it is (lab: "Claude's work"); the Session cards under it name each Session.
+  const agentName = props.live.state?.agent?.displayName;
+  const stepTitle = agentName === undefined
+    ? text('plugins.triage.surface.detail.agent.workUnnamed', 'The agent\u2019s work')
+    : text('plugins.triage.surface.detail.agent.work', '{agent}\u2019s work', { agent: agentName });
   const content = (
     <>
       {shown.length === 0 ? null : (
@@ -140,35 +169,28 @@ export function TriageAgentStep(props: Readonly<{
     </>
   );
   if (props.variant === 'card') {
-    // The Activity's last word (lab c7 Activity): the agent's card — its mark, the Session's name, where it works and
-    // its state, and the arrow that opens the Session — not a bare title and status line under the timeline.
-    const agent = props.live.state?.agent;
+    // The Activity's last word (lab c7 Activity): the shared Session card for the most recent linked Session.
     const sessionId = props.sessions[0]?.sessionId;
-    const openLabel = `${text('plugins.triage.surface.detail.session.open', 'Open session')} ${title}`;
+    if (sessionId === undefined) return null;
     return (
-      <WidgetFrame
-        frameStyle="card"
-        placement="companion"
+      <SessionCard
+        sessionId={sessionId}
+        read={props.live}
+        status={status === null ? null : {
+          label: text(status.labelKey, status.label, status.labelParams), tone: status.tone, live: status.live,
+        }}
+        onOpen={() => { void opener.open(sessionId); }}
+        openBusy={opener.busySessionId === sessionId}
         testID="triage-activity-agent"
-        {...(agent?.brand === undefined ? {} : { mark: <BrandMark pluginId={agent.brand.pluginId} size="small" externallyLabelled /> })}
-        title={title}
-        {...(whereLabel === undefined ? {} : { source: whereLabel })}
-        {...(status === null ? {} : {
-          meta: <Status tone={HAPPIER_WORK_STATUS_SEMANTIC_TONE[status.tone]} label={text(status.labelKey, status.label, status.labelParams)} pulsing={status.live} />,
-        })}
-        {...(sessionId === undefined ? {} : {
-          accessory: <IconButton icon={<Icon name="external" tone="secondary" />} accessibilityLabel={openLabel}
-            busy={opener.busySessionId === sessionId} onPress={() => { void opener.open(sessionId); }} />,
-        })}
       >
         {shown.length === 0 ? null : content}
-      </WidgetFrame>
+      </SessionCard>
     );
   }
   return (
     <Step
-      marker={{ kind: 'number', value: 3 }}
-      title={title}
+      marker={{ kind: 'number', value: props.number ?? 3 }}
+      title={stepTitle}
       trailing={whereLabel === undefined ? undefined : <Text variant="micro" tone="secondary" value={whereLabel} />}
       testID="triage-story-agent"
     >
@@ -178,6 +200,7 @@ export function TriageAgentStep(props: Readonly<{
         hasMore={props.hasMore}
         labelled={false}
         onSelect={props.onSelectSession}
+        {...(props.sessionStates === undefined ? {} : { states: props.sessionStates })}
         {...(props.pageState === undefined ? {} : { pageState: props.pageState })}
         {...(props.onLoadMore === undefined ? {} : { onLoadMore: props.onLoadMore })}
       />

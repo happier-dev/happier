@@ -30,6 +30,7 @@ export const renderSurface: RenderSurface = defineUiSurface((context) => {
   if (createDraft.status === 'unavailable') return <Banner tone="warning"
     title={text('plugins.triage.tasks.draftUnavailable', 'This task draft is no longer available. Open it again from the message or action.')} />;
   return <TriageListShell tasksPage {...(context.subPath === undefined ? {} : { subPath: context.subPath })}
+    {...(context.launch === undefined ? {} : { pageLaunch: context.launch })}
     {...(launch === undefined ? {} : { launch })}
-    {...(createDraft.status === 'ready' ? { createDraft: createDraft.fields, onCreateDraftClose: closeDraft } : {})} />;
+    {...(createDraft.status === 'ready' ? { createDraft: createDraft.fields, createDraftId: activeDraftId ?? undefined, onCreateDraftClose: closeDraft } : {})} />;
 });

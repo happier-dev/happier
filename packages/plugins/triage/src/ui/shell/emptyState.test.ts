@@ -31,13 +31,14 @@ function windowState(input: Readonly<{
     failure?: TriageListShellFailureV1 | null;
     refreshing?: boolean;
     rows?: TriageListWindowV1['rows'];
+    lanes?: TriageListWindowV1['lanes'];
 }>): TriageListShellStateV1 {
     return {
         kind: 'window',
         window: {
             v: 1,
             rows: input.rows ?? [],
-            lanes: [],
+            lanes: input.lanes ?? [],
             coverage: input.coverage,
             assembledAtMs: 0,
         },
@@ -48,6 +49,18 @@ function windowState(input: Readonly<{
 }
 
 describe('the empty PRs & Issues list', () => {
+    it('offers a task start when the inventory is empty, keeping a narrowed audience distinct', () => {
+        const narrowing = readTriageLensNarrowingV1({ filters: { ...TRIAGE_LIST_NO_FILTERS_V1, tasks: 'mine' }, query: '' });
+        const tracker = { sourceInstanceId: '00000000-0000-4000-8000-000000000009',
+            source: { pluginId: 'happier.example.tracker', localId: 'tracker' }, health: { kind: 'walkFinished' as const }, exhausted: true };
+        expect(readTriageListEmptyState(windowState({ coverage: 'complete', lanes: [tracker] }), 0, { narrowing }))
+            .toMatchObject({ kind: 'taskStart', next: [] });
+        // With no tracker connected beside the personal list, the empty inventory is the Tasks first run.
+        expect(readTriageListEmptyState(windowState({ coverage: 'complete' }), 0, { narrowing }))
+            .toMatchObject({ kind: 'taskFirstRun', next: [] });
+        expect(resolveTriageListEmptyState({ coverage: 'complete', failure: null, refreshing: false, narrowing }))
+            .toMatchObject({ kind: 'noTasks' });
+    });
     it('keeps an empty Tasks lens distinct from all-clear and offers only real continuations', () => {
         const narrowing = readTriageLensNarrowingV1({ filters: { ...TRIAGE_LIST_NO_FILTERS_V1, tasks: 'mine' }, query: '' });
         expect(resolveTriageListEmptyState({ coverage: 'complete', failure: null, refreshing: false, narrowing }))

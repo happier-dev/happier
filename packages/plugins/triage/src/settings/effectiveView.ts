@@ -83,6 +83,8 @@ const UNSAVED_DEFAULT = Object.freeze({
 
 export function resolveTriageEffectiveView(input: Readonly<{
     saved: CorpusSavedViewsReadV1;
+    /** Device-local selection from the validated page location, never Account KV. */
+    selectedViewId: string | null;
     /** The sources currently configured, as the aggregate list reports them. */
     configuredSources: readonly PluginContributionIdentity[];
 }>): CorpusEffectiveViewV1 {
@@ -90,7 +92,8 @@ export function resolveTriageEffectiveView(input: Readonly<{
         return { ...UNSAVED_DEFAULT, availability: 'unavailable' };
     }
 
-    const { views, selectedViewId } = input.saved.value;
+    const { views } = input.saved.value;
+    const { selectedViewId } = input;
     const selected = selectedViewId === null
         ? undefined
         : views.find((view) => view.viewId === selectedViewId);

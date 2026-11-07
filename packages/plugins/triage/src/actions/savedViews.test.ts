@@ -4,7 +4,7 @@ import { TRIAGE_LIST_NO_FILTERS_V1 } from '../projection/listWindow.js';
 import { TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1 } from '../settings/savedViews.js';
 import { createTestkitAccountKv } from '../settings/testkit/accountKv.test-support.js';
 import { administerTriageSavedView, readTriageSavedViewsForSurface } from './savedViews.js';
-import type { TriageAdministerSavedViewInputV1 } from './savedViewsProtocol.js';
+import { TriageAdministerSavedViewInputV1Schema, type TriageAdministerSavedViewInputV1 } from './savedViewsProtocol.js';
 
 const MINTED = '00000001-0000-4000-8000-000000000000';
 
@@ -21,7 +21,6 @@ const createInput: TriageAdministerSavedViewInputV1 = {
     filters: TRIAGE_LIST_NO_FILTERS_V1,
     order: 'smart',
     smartPolicy: { v: 1, precedence: ['attention', 'activity'] },
-    select: true,
 };
 
 describe('the saved-view Actions', () => {
@@ -34,8 +33,8 @@ describe('the saved-view Actions', () => {
         // The id is minted at the writer, not by the caller: a client-chosen id
         // would let two devices claim one view.
         expect(created.views?.map((view) => view.viewId)).toEqual([MINTED]);
-        expect(created.selectedViewId).toBe(MINTED);
-        expect(fixture.read(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1)).toMatchObject({ selectedViewId: MINTED });
+        expect(created).not.toHaveProperty('selectedViewId');
+        expect(fixture.read(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1)).not.toHaveProperty('selectedViewId');
     });
 
     it('refuses a repeated Smart predicate rather than ranking it', async () => {
@@ -60,7 +59,7 @@ describe('the saved-view Actions', () => {
 
         expect(await administerTriageSavedView({
             v: 1,
-            kind: 'select',
+            kind: 'delete',
             viewId: '00000002-0000-4000-8000-000000000000',
             expectedRevision: fixture.revision(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1),
         }, deps(fixture))).toEqual({ v: 1, status: 'unknownView' });
@@ -80,7 +79,6 @@ describe('the saved-view Actions', () => {
             v: 1,
             availability: 'unavailable',
             views: [],
-            selectedViewId: null,
             revision: fixture.revision(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1),
         });
         expect(await administerTriageSavedView({
@@ -88,6 +86,13 @@ describe('the saved-view Actions', () => {
             expectedRevision: fixture.revision(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1),
         }, deps(fixture)))
             .toEqual({ v: 1, status: 'unreadable' });
+    });
+
+    it('does not admit the retired Account selection command', () => {
+        expect(TriageAdministerSavedViewInputV1Schema.safeParse({
+            v: 1, kind: 'select', viewId: MINTED, expectedRevision: 'absent',
+        }).success).toBe(false);
+        expect(TriageAdministerSavedViewInputV1Schema.safeParse({ ...createInput, select: true }).success).toBe(false);
     });
 
     it('reads back the exact stored lens after a write', async () => {

@@ -84,16 +84,23 @@ afterEach(async () => {
 });
 
 describe('Triage entry Session tab', () => {
-  it('uses the host untitled fallback for unreadable links instead of persisted labels or raw ids', async () => {
+  it('never names an unreadable link "Untitled session", and says so only for a Session the host reads as untitled', async () => {
+    // Unknown is not untitled: a Session the host cannot (yet) read is "Linked session", never a persisted label or raw id.
     const body = await mountBody([LINKED[0]!], () => null);
     await act(async () => { await body.press(await body.getByRole('tab', { name: 'Session' })); });
-    await expect(body.getByText('Untitled session')).resolves.toBeDefined();
+    await act(async () => { await new Promise((resolve) => { setTimeout(resolve, 0); }); });
+    await expect(body.getByText('Linked session')).resolves.toBeDefined();
+    await expect(body.queryByText('Untitled session')).resolves.toBeUndefined();
     await expect(body.queryByText('Route repair')).resolves.toBeUndefined();
+    const untitled = await mountBody([LINKED[0]!], (sessionId) => { const { title: _title, ...state } = liveState(sessionId); return state as SessionStateV1; });
+    await act(async () => { await untitled.press(await untitled.getByRole('tab', { name: 'Session' })); });
+    await act(async () => { await new Promise((resolve) => { setTimeout(resolve, 0); }); });
+    await expect(untitled.getByText('Untitled session')).resolves.toBeDefined();
     const picker = await mountBody(LINKED, (sessionId) => sessionId === 'session-linked'
       ? { ...liveState(sessionId), title: 'Current investigation' } : null);
     await act(async () => { await picker.press(await picker.getByRole('tab', { name: 'Session' })); });
     await act(async () => { await picker.press(await picker.getByRole('button', { name: 'Linked session: Current investigation' })); });
-    await expect(picker.getByRole('menuitemradio', { name: 'Untitled session' })).resolves.toBeDefined();
+    await expect(picker.getByRole('menuitemradio', { name: 'Linked session' })).resolves.toBeDefined();
     await expect(picker.queryByRole('menuitemradio', { name: 'Parser cleanup' })).resolves.toBeUndefined();
   });
   it('distinguishes Account-only links with current host Session titles and unlinks the chosen pair', async () => {
@@ -162,7 +169,7 @@ describe('Triage entry Session tab', () => {
     await expect(body.queryByRole('group', { name: 'Session session-linked' })).resolves.toBeUndefined();
 
     await act(async () => {
-      await body.press(await body.getByRole('tab', { name: 'Details' }));
+      await body.press(await body.getByRole('tab', { name: 'Overview' }));
     });
     await expect(body.queryByRole('group', { name: 'Session session-other' })).resolves.toBeUndefined();
     expect(document.querySelector('[role="group"][aria-label="Session session-other"]')).toBeNull();
@@ -200,6 +207,6 @@ describe('Triage entry Session tab', () => {
     const body = await mountBody([]);
     await expect(body.getByText("The source's own detail")).resolves.toBeDefined();
     await expect(body.queryByRole('tab', { name: 'Session' })).resolves.toBeUndefined();
-    await expect(body.queryByRole('tab', { name: 'Details' })).resolves.toBeUndefined();
+    await expect(body.queryByRole('tab', { name: 'Overview' })).resolves.toBeUndefined();
   });
 });

@@ -35,8 +35,8 @@ import type { TriageCatalogStoreV1 } from '../../settings/accountKvCatalogStore.
  * directly invokes the same two published Actions through a daemon.
  *
  * Neither transport owns a decision: `settings/savedViews.ts` still mints the
- * view id, validates every bound, decides the conflict verdict and clears a
- * deleted view's selection atomically. This module is transport plus the one
+ * view id, validates every bound and decides the conflict verdict.
+ * This module is transport plus the one
  * thing a caller must not spell twice — what **Rename** and **Update** mean in
  * terms of the single `update` command.
  *
@@ -163,7 +163,6 @@ export async function administerTriageSavedViewFromSurface(
 export function readTriageSavedViewsProjectionV1(projection: Readonly<{
   availability: TriageReadSavedViewsResultV1['availability'];
   views: TriageReadSavedViewsResultV1['views'];
-  selectedViewId: string | null;
 }>): CorpusSavedViewsReadV1 {
   if (projection.availability === 'unavailable') {
     return { kind: 'unreadable', value: CORPUS_EMPTY_SAVED_VIEWS_V1 };
@@ -184,7 +183,7 @@ export function readTriageSavedViewsProjectionV1(projection: Readonly<{
   }
   return {
     kind: projection.availability,
-    value: { v: 1, views, selectedViewId: projection.selectedViewId },
+    value: { v: 1, views },
   };
 }
 
@@ -204,9 +203,6 @@ export function triageCreateSavedViewInputV1(
     order: lens.order,
     smartPolicy: lens.smartPolicy,
     view: lens.view,
-    // Creation cannot select before the route carrying the writer-minted id has
-    // settled. The mounted controller performs the explicit select afterward.
-    select: false,
   };
 }
 
@@ -262,11 +258,4 @@ export function triageDeleteSavedViewInputV1(
   expectedRevision: string,
 ): TriageAdministerSavedViewInputV1 {
   return { v: 1, kind: 'delete', viewId, expectedRevision };
-}
-
-export function triageSelectSavedViewInputV1(
-  viewId: string | null,
-  expectedRevision: string,
-): TriageAdministerSavedViewInputV1 {
-  return { v: 1, kind: 'select', viewId, expectedRevision };
 }

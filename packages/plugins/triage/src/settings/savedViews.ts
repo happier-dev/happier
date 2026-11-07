@@ -14,6 +14,7 @@ import {
 import {
     triageSourceFilterKeyV1,
     triageScopeFilterKeyV1,
+    TRIAGE_LIST_ORDERS_V1 as ORDERS,
     type CorpusSourceFilterValueV1,
     type CorpusScopeFilterValueV1,
     type CorpusTypeFilterValueV1,
@@ -27,7 +28,8 @@ import {
     TriageListSettledQueryV1Schema,
 } from '../actions/listEntriesProtocol.js';
 
-import { TriageSavedViewsCatalogValueV1Schema } from '../actions/savedViewsProtocol.js';
+import { TriageSavedViewsCatalogValueV1Schema, TRIAGE_SAVED_VIEW_PRESENTATIONS_V1 } from '../actions/savedViewsProtocol.js';
+export { TRIAGE_SAVED_VIEW_PRESENTATIONS_V1 } from '../actions/savedViewsProtocol.js';
 import type { TriageCatalogStoreV1 } from './accountKvCatalogStore.js';
 
 const storedTriageSavedViews = createProtocolStoredReadSchema(TriageSavedViewsCatalogValueV1Schema);
@@ -40,9 +42,8 @@ const storedTriageSavedViews = createProtocolStoredReadSchema(TriageSavedViewsCa
  * persists — so they carry the same discipline as a pin. A view is addressed by
  * its own minted opaque id and never by its position or its label, so renaming
  * a view, reordering the set, or saving two views under one name can never
- * silently move the user's selection onto a different lens. Selection is durable
- * account preference: on restart the shell re-reads `selectedViewId` and applies
- * the named view exactly.
+ * silently move the user's selection onto a different lens. Selection belongs
+ * to the device's host-restored page location, never to this Account value.
  *
  * The lens it stores is **source-neutral**. Every facet value is a canonical
  * private identity — an admitted qualified source, a source-neutral `kindId`, an
@@ -79,7 +80,6 @@ export const MAX_TRIAGE_SAVED_VIEWS_SERIALIZED_UTF8_BYTES_V1 =
  * List | Board, persisted per saved view"). It is remembered with the view, never as a layout Setting. A value
  * this build does not know makes the stored set unreadable rather than silently becoming List.
  */
-export const TRIAGE_SAVED_VIEW_PRESENTATIONS_V1 = Object.freeze(['list', 'board'] as const);
 export type TriageSavedViewPresentationV1 = (typeof TRIAGE_SAVED_VIEW_PRESENTATIONS_V1)[number];
 
 export type CorpusSavedViewV1 = Readonly<{
@@ -98,15 +98,12 @@ export type CorpusSavedViewV1 = Readonly<{
 export type CorpusSavedViewsCatalogV1 = Readonly<{
     v: 1;
     views: readonly CorpusSavedViewV1[];
-    /** `null` selects the deterministic unsaved default; otherwise it names exactly one member. */
-    selectedViewId: string | null;
 }>;
 
 /** The parsed absence and the effective default lens behind it. */
 export const CORPUS_EMPTY_SAVED_VIEWS_V1: CorpusSavedViewsCatalogV1 = Object.freeze({
     v: 1,
     views: Object.freeze([]),
-    selectedViewId: null,
 });
 
 /**
@@ -122,20 +119,14 @@ export type CorpusSavedViewsReadV1 = Readonly<{
     value: CorpusSavedViewsCatalogV1;
 }>;
 
-export type CorpusSavedViewsRejectionV1 =
-    | 'label'
-    | 'query'
-    | 'duplicateFacetValue'
-    | 'filterValue'
-    | 'order'
-    | 'smartPolicy'
-    | 'view'
-    | 'valueTooLarge';
+export type CorpusSavedViewsRejectionV1 = NonNullable<
+    import('../actions/savedViewsProtocol.js').TriageAdministerSavedViewResultV1['reason']
+>;
 
 export type CorpusSavedViewsMutationResultV1 =
     | Readonly<{
         status: 'applied';
-        viewId: string | null;
+        viewId: string;
         value: CorpusSavedViewsCatalogV1;
         revision: string;
     }>
@@ -146,7 +137,7 @@ export type CorpusSavedViewsMutationResultV1 =
     | Readonly<{ status: 'rejected'; reason: CorpusSavedViewsRejectionV1 }>;
 
 type CorpusSavedViewsAppliedPlanV1 =
-    | Readonly<{ status: 'applied'; viewId: string | null; value: CorpusSavedViewsCatalogV1 }>
+    | Readonly<{ status: 'applied'; viewId: string; value: CorpusSavedViewsCatalogV1 }>
     | Exclude<CorpusSavedViewsMutationResultV1, Readonly<{ status: 'applied' }>>;
 
 export type CorpusSavedViewDraftV1 = Readonly<{
@@ -162,10 +153,9 @@ export type CorpusSavedViewDraftV1 = Readonly<{
 type CorpusSavedViewCommandBaseV1 = Readonly<{ expectedRevision: string }>;
 
 export type CorpusSavedViewCommandV1 = CorpusSavedViewCommandBaseV1 & (
-    | (CorpusSavedViewDraftV1 & Readonly<{ kind: 'create'; select?: boolean }>)
+    | (CorpusSavedViewDraftV1 & Readonly<{ kind: 'create' }>)
     | (CorpusSavedViewDraftV1 & Readonly<{ kind: 'update'; viewId: string }>)
     | Readonly<{ kind: 'delete'; viewId: string }>
-    | Readonly<{ kind: 'select'; viewId: string | null }>
 );
 
 export type CorpusSavedViewsDepsV1 = Readonly<{
@@ -181,7 +171,6 @@ function utf8ByteLength(value: string): number {
     return encoder.encode(value).byteLength;
 }
 
-const ORDERS: readonly TriageListOrderV1[] = Object.freeze(['newest', 'oldest', 'smart']);
 function readSingleLineString(value: unknown): string | null {
     if (typeof value !== 'string') return null;
     const normalized = normalizeTriageSingleLineV1(value);
@@ -275,9 +264,8 @@ const VIEW_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-
  *
  * Any member this build cannot understand makes the whole value `unreadable`
  * rather than dropping that member: silently discarding one view would lose
- * durable user state with no upstream owner to recover it from. A
- * `selectedViewId` naming no stored view is the one honest exception — the view
- * was deleted elsewhere, so the selection is cleared rather than restored.
+ * durable user state with no upstream owner to recover it from. A retired
+ * `selectedViewId` field is ignored by the stored-read projection.
  */
 export function parseTriageSavedViews(raw: unknown): CorpusSavedViewsReadV1 {
     if (raw === undefined || raw === null) return { kind: 'absent', value: CORPUS_EMPTY_SAVED_VIEWS_V1 };
@@ -322,10 +310,7 @@ export function parseTriageSavedViews(raw: unknown): CorpusSavedViewsReadV1 {
         views.push(parsed.view);
     }
 
-    const selectedViewId = typeof candidate.selectedViewId === 'string' && ids.has(candidate.selectedViewId)
-        ? candidate.selectedViewId
-        : null;
-    return { kind: 'parsed', value: { v: 1, views, selectedViewId } };
+    return { kind: 'parsed', value: { v: 1, views } };
 }
 
 /**
@@ -364,7 +349,6 @@ function toStoredValue(value: CorpusSavedViewsCatalogV1): JsonValue {
             smartPolicy: { v: 1, precedence: [...view.smartPolicy.precedence] },
             view: view.view,
         })),
-        selectedViewId: value.selectedViewId,
     };
 }
 
@@ -382,17 +366,6 @@ function applyCommand(
     command: CorpusSavedViewCommandV1,
     mintViewId: () => string,
 ): CorpusSavedViewsAppliedPlanV1 {
-    if (command.kind === 'select') {
-        if (command.viewId !== null && !current.views.some((view) => view.viewId === command.viewId)) {
-            return { status: 'unknownView' };
-        }
-        return {
-            status: 'applied',
-            viewId: command.viewId,
-            value: { ...current, selectedViewId: command.viewId },
-        };
-    }
-
     if (command.kind === 'delete') {
         if (!current.views.some((view) => view.viewId === command.viewId)) return { status: 'unknownView' };
         return {
@@ -401,10 +374,6 @@ function applyCommand(
             value: {
                 v: 1,
                 views: current.views.filter((view) => view.viewId !== command.viewId),
-                // Deleting the selected view clears the selection in the same
-                // write: a dangling selection would restore a view that no
-                // longer exists on the next start.
-                selectedViewId: current.selectedViewId === command.viewId ? null : current.selectedViewId,
             },
         };
     }
@@ -428,13 +397,12 @@ function applyCommand(
         value: {
             v: 1,
             views: [...current.views, parsed.view],
-            selectedViewId: command.select === true ? viewId : current.selectedViewId,
         },
     };
 }
 
 /**
- * The one typed create/update/delete/select write.
+ * The one typed create/update/delete write.
  *
  * It reads the authoritative record, validates the whole resulting value, and
  * writes it against the revision it read. A losing write returns the typed

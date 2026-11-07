@@ -6,8 +6,8 @@ import {
   planTriageListContinuationV1,
   readTriageWindowStatementV1,
 } from './continuation.js';
+import { formatTriageCompactAgeV1 } from '@happier-dev/triage-protocol/v1';
 import {
-  formatTriageCompactAgeV1,
   readTriageAgentBadgeV1,
   readTriageRowPlaceV1,
   readTriageRowBylinePlaceV1,
@@ -232,7 +232,8 @@ describe('a PRs & Issues entry row', () => {
     expect(attention.detailTone).toBe('attention');
     expect(summary).not.toHaveProperty('detailTone');
     expect(suggestion).not.toHaveProperty('detailTone');
-    expect(readTriageRowMarkV1(displayRow({ detailKind: 'attention' }))).toEqual({ name: 'info', tone: 'attention' });
+    expect(readTriageRowMarkV1(displayRow({ detailKind: 'attention' }))).toEqual({ name: 'info', tone: 'secondary' });
+    expect(readTriageRowMarkV1(displayRow({ detailKind: 'attention', detailDanger: true }))).toEqual({ name: 'info', tone: 'danger' });
     expect(readTriageRowMarkV1(displayRow({ lifecyclePresentation: 'resolved' }))).toEqual({ name: 'check', tone: 'secondary' });
     expect(readTriageRowMarkV1(displayRow({ lifecyclePresentation: null, detailKind: 'presence', tone: 'warning' })))
       .toEqual({ name: 'info', tone: 'warning' });
@@ -384,6 +385,34 @@ describe('the window-honesty line', () => {
       entries,
       text,
     })).toEqual(['12 loaded', 'Azure DevOps may have more']);
+  });
+
+  it('names sources without account logins and deduplicates repeated source connections', () => {
+    const github = { pluginId: 'happier.scm-github', localId: 'github' };
+    const linear = { pluginId: 'happier.linear', localId: 'linear' };
+    const lane = (sourceInstanceId: string, source: typeof SOURCE) =>
+      ({ sourceInstanceId, source, health: { kind: 'walkFinished' as const }, exhausted: false });
+    const readSourceName = (source: Readonly<{ pluginId: string }>) =>
+      source.pluginId === github.pluginId ? 'GitHub' : source.pluginId === linear.pluginId ? 'Linear' : undefined;
+    const statement = (configuredSources: Parameters<typeof readTriageWindowStatementV1>[0]['configuredSources']) =>
+      readTriageWindowStatementV1({
+        loadedCount: 30,
+        window: { coverage: 'partial', lanes: [lane('gh-1', github), lane('ln', linear)] },
+        configuredSources,
+        readSourceName,
+        entries,
+        text,
+      });
+    expect(statement([
+      { sourceInstanceId: 'gh-1', source: github, displayLabel: 'leeroybrun' },
+      { sourceInstanceId: 'ln', source: linear, displayLabel: 'leeroy@acme.dev' },
+    ])).toEqual(['30 loaded', 'GitHub, Linear may have more']);
+    // Several connections still name their source once, without exposing a login.
+    expect(statement([
+      { sourceInstanceId: 'gh-1', source: github, displayLabel: 'leeroybrun' },
+      { sourceInstanceId: 'gh-2', source: github, displayLabel: 'acme-bot' },
+      { sourceInstanceId: 'ln', source: linear, displayLabel: 'leeroy@acme.dev' },
+    ])).toEqual(['30 loaded', 'GitHub, Linear may have more']);
   });
 
   it('says a failed read in the continuation copy\u2019s own words, and nothing before a window exists', () => {

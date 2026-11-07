@@ -1,11 +1,9 @@
 // @vitest-environment jsdom
 import { act } from 'react';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { TriageMountedUiInputV1Schema } from './mountedUiProtocol.js';
-import { createPluginRegistrationScope } from '@happier-dev/plugin-sdk/host/registration';
-import { derivePluginClientContributionRegistrationRights } from '@happier-dev/protocol/plugins/contributions/catalog';
-import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
-import type { PluginClientActionHandler } from '@happier-dev/plugin-sdk/actions';
+import { createPluginClientTestkit, createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
+import type { PluginClientTestkit } from '@happier-dev/plugin-sdk/testing';
 import { defineUiSurface } from '@happier-dev/plugin-ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { PLUGIN_MANIFEST } from '../manifest.js';
@@ -13,6 +11,7 @@ import { activate } from './mountedUi.js';
 import { TriageTaskDraftLaunchV1Schema } from './tasksProtocol.js';
 import { PluginUiOpenSurfaceRequestV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { MessageActionAvailableSnapshotV1Schema } from '@happier-dev/protocol';
+import { normalizePluginActionInputHintsV2 } from '@happier-dev/protocol/plugins/actions/v2';
 import { createTriageEphemeralSharedScopeOriginFixture } from '../ui/window/ephemeralSharedScope.test-support.js';
 import { readTriageTaskDraftLaunch } from '../ui/taskDraftHandoff.js';
 import { renderSurface as renderTasksSurface } from '../ui/tasksSurface.js';
@@ -32,18 +31,24 @@ import { TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1 } from '../settings/savedViews.js'
 /** The New task draft's first line (lab `tasks-create`). */
 const DRAFT_PURPOSE = 'Where does it belong? It\u2019s created there and stays there.';
 
-function registeredDraftAction() {
+const clients: PluginClientTestkit[] = [];
+afterEach(async () => { for (const client of clients.splice(0)) await client.dispose(); });
+
+async function registeredDraftAction() {
   const declaration = PLUGIN_MANIFEST.contributes.actions.find((action) => action.id === 'tasks/open-create-v1');
   if (declaration?.execution.target !== 'client') throw new Error('Missing Tasks draft Action');
   const target = { ...declaration.execution.client, platform: 'web' as const };
-  const scope = createPluginRegistrationScope({ pluginId: PLUGIN_MANIFEST.id, target: { realm: 'client', ...target },
-    rights: derivePluginClientContributionRegistrationRights(PLUGIN_MANIFEST.contributes, target) });
-  activate(scope.api);
-  const registration = scope.commit().find((entry) => entry.family === 'actions' && entry.localId === declaration.id);
-  if (registration?.family !== 'actions') throw new Error('Tasks draft Action was not registered');
-  // The host capture is opaque; the declared target establishes its client handler realm.
-  return { declaration, handler: registration.value as PluginClientActionHandler };
+  const client = await createPluginClientTestkit({ manifest: PLUGIN_MANIFEST, target, activate });
+  clients.push(client);
+  const handler = client.registration('actions', declaration.id);
+  if (!handler) throw new Error('Tasks draft Action was not registered');
+  return { declaration, handler };
 }
+
+it('opens its reviewable draft directly without a second host input form', async () => {
+  const { declaration } = await registeredDraftAction();
+  expect(normalizePluginActionInputHintsV2(declaration.inputHints, declaration.inputSchema)?.fields).toEqual([]);
+});
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -262,6 +267,15 @@ it.each(['cancelled', 'retired'] as const)('does not navigate or retain a draft 
 });
 
 describe('mounted source-panel intents', () => {
+  it('admits explicit completed-group disclosure without accepting unknown groups or fields', () => {
+    const operation = { kind: 'setGroupExpanded', group: 'completed', expanded: true };
+    expect(TriageMountedUiInputV1Schema.safeParse({ mountId: 'tasks-page', operation }).success).toBe(true);
+    expect(TriageMountedUiInputV1Schema.safeParse({ mountId: 'tasks-page', operation: { ...operation, expanded: false } }).success).toBe(true);
+    for (const invalid of [{ ...operation, group: 'unknown' }, { kind: 'setGroupExpanded', group: 'completed' },
+      { ...operation, persisted: true }]) {
+      expect(TriageMountedUiInputV1Schema.safeParse({ mountId: 'tasks-page', operation: invalid }).success).toBe(false);
+    }
+  });
   it('admits linked-session selection without admitting an unaddressed or empty selection', () => {
     expect(TriageMountedUiInputV1Schema.safeParse({ mountId: 'detail', operation: {
       kind: 'selectLinkedSession', sessionId: 'session-other',

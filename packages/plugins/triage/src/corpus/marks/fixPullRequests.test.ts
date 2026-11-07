@@ -5,7 +5,7 @@ import { CORPUS_USER_MARKS_INDEX_ID } from '../collections/ids.js';
 import type { CorpusUserMarkRowV1 } from '../collections/rows.js';
 import { deriveUserMarkTag } from '../identity/tags.js';
 import {
-    createTestkitCorpusCollections,
+    createTestkitCorpusCollections as createBaseCorpusCollections,
     type TestkitCorpusCollections,
 } from '../testkit/corpusCollections.test-support.js';
 import { testkitEntryRef, testkitLocator } from '../testkit/observations.test-support.js';
@@ -18,6 +18,12 @@ import {
 } from './fixPullRequests.js';
 import { setFixPullRequest, setPinned } from './setPinned.js';
 import { readTriageFixPullRequests } from '../../actions/fixPullRequests.js';
+import { createTriageSourceSessionRelations } from '../../sessions/sourceSessionRelations.js';
+import { TriageConfiguredSourceInstanceV1Schema } from '@happier-dev/triage-protocol/v1';
+import { CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../collections/ids.js';
+import { toCorpusStoredValue } from '../collections/rowCodec.js';
+import { INTERNAL_TASK_DESCRIPTOR_V1 } from '../../internalTasks/contribution.js';
+import { INTERNAL_TASK_SOURCE_V1 } from '../../internalTasks/identity.js';
 
 const SENTRY = { pluginId: 'happier.sentry', localId: 'errors' } as const;
 const GITHUB = { pluginId: 'happier.scm-github', localId: 'github' } as const;
@@ -43,6 +49,58 @@ const SUBJECTS: Readonly<Record<string, TriageSourceWorkflowSubjectV1>> = {
 };
 const workflowSubjectOf = (ref: TriageEntryRefV1) => SUBJECTS[ref.kindId] ?? null;
 
+function createTestkitCorpusCollections(options: Parameters<typeof createBaseCorpusCollections>[0] = {}, role?: 'ready' | 'failed') {
+    const fixture = createBaseCorpusCollections(options);
+    const sources = [SENTRY, GITHUB].map((source, index) => {
+        fixture.control.sourceInstances.seed(toCorpusStoredValue({
+            instanceTag: `${index}${'0'.repeat(42)}`,
+            sourceQualifiedId: `${source.pluginId}/${source.localId}`,
+            lifecycle: CORPUS_SOURCE_INSTANCE_LIFECYCLE.active,
+            configuredAtMs: 1,
+            configured: TriageConfiguredSourceInstanceV1Schema.parse({
+                v: 1, instance: { source, sourceInstanceId: index === 0
+                    ? '11111111-1111-4111-8111-111111111111' : '22222222-2222-4222-8222-222222222222' },
+                binding: { purpose: 'triage-source', account: { service: { pluginId: source.pluginId, localId: 'accounts' }, accountId: 'account-1' } },
+                localInstanceKey: 'acme/web', configuration: { v: 1, token: 'fixture-source-configuration' },
+            }),
+        }));
+        return {
+            contributor: { pluginId: source.pluginId, contributionId: source.localId },
+            descriptor: { v: 1, purpose: 'triage-source', displayName: source.localId,
+                kinds: (index === 0 ? ['error-group'] : ['pull-request', 'issue']).map((id) => ({ id, displayName: id, workflowSubject: SUBJECTS[id] })),
+                ...(index === 1 && role ? { sessionRelations: { kindIds: ['pull-request'] } } : {}),
+            },
+            operations: index === 1 && role ? { readSessionLinks: { role: 'read' }, linkSession: { role: 'write' } } : {},
+        };
+    });
+    let configurationReads = 0;
+    let roleReads = 0;
+    const internalRead = { role: 'internalRead' };
+    const collections = { ...fixture.collections, sourceInstances: { ...fixture.collections.sourceInstances,
+        query: async (...args: Parameters<typeof fixture.collections.sourceInstances.query>) => {
+            configurationReads++; return await fixture.collections.sourceInstances.query(...args);
+        },
+    } };
+    // Host targeted-operation RPC and Account Collection I/O are the boundaries.
+    const context = { services: {
+        targetedContributions: { observeForSelf: () => ({ readCurrent: async () => ({ contributions: [...sources, {
+            contributor: { pluginId: INTERNAL_TASK_SOURCE_V1.pluginId, contributionId: INTERNAL_TASK_SOURCE_V1.localId },
+            descriptor: INTERNAL_TASK_DESCRIPTOR_V1,
+            operations: { readSessionLinks: internalRead, linkSession: { role: 'internalWrite' } },
+        }] }), dispose: () => {} }) },
+        actions: { executeAdmittedTargetedOperation: async (_operation: unknown, input: { sessionId?: string }) => {
+            // The built-in Account task store is empty in this transport fixture.
+            if (_operation === internalRead) return { kind: 'complete', links: [] };
+            roleReads++;
+            if (role === 'failed') throw new Error('PR relation unavailable');
+            return { kind: 'complete', links: input.sessionId === 'session-a' ? [{ localRef: { kindId: 'pull-request', collisionScope: 'acme/web', entryId: 'canonical' },
+                sessionId: 'session-a', linkedAtMs: 2_000, displayPath: 'Canonical PR' }] : [] };
+        } },
+    } } as unknown as Parameters<typeof createTriageSourceSessionRelations>[0];
+    return { ...fixture, collections, relations: createTriageSourceSessionRelations(context, collections),
+        counts: () => ({ configurationReads, roleReads }) };
+}
+
 async function link(fixture: TestkitCorpusCollections, entryRef: TriageEntryRefV1, sessionId: string, nowMs: number) {
     const result = await linkEntryToSession({
         collections: fixture.collections,
@@ -55,10 +113,10 @@ async function link(fixture: TestkitCorpusCollections, entryRef: TriageEntryRefV
 }
 
 async function resolve(
-    fixture: TestkitCorpusCollections,
+    fixture: ReturnType<typeof createTestkitCorpusCollections>,
     presentation: Readonly<Record<string, TriageFixPullRequestPresentationV1>> = {},
 ) {
-    const sources = await readFixPullRequestSources({ collections: fixture.collections, entryRef: ERROR_REF });
+    const sources = await readFixPullRequestSources({ collections: fixture.collections, sourceRelations: fixture.relations, entryRef: ERROR_REF });
     return resolveFixPullRequests(sources, {
         workflowSubjectOf,
         presentationOf: (ref) => presentation[ref.entryId] ?? null,
@@ -66,6 +124,45 @@ async function resolve(
 }
 
 describe('fix pull request links', () => {
+    it('merges live native candidates with user and Session choices without persisting or overriding dismissals', async () => {
+        const fixture = createTestkitCorpusCollections();
+        const native = githubPr('native');
+        const explicit = githubPr('explicit');
+        await link(fixture, ERROR_REF, 'session-native', 10);
+        await link(fixture, native, 'session-native', 20);
+        await setFixPullRequest({ collections: fixture.collections, entryRef: ERROR_REF, displayAtMark: ERROR_DISPLAY,
+            linked: true, fixPullRequest: explicit, displayAtLink: ERROR_DISPLAY, nowMs: 1 });
+        const base = await readFixPullRequestSources({ collections: fixture.collections, sourceRelations: fixture.relations, entryRef: ERROR_REF });
+        const sources = { ...base, native: [{ entryRef: native, status: 'open' as const, display: { title: 'Native update' } }] };
+        const projected = resolveFixPullRequests(sources, { workflowSubjectOf, presentationOf: () => 'active' });
+        expect(projected.candidates.map(({ entryRef, origins }) => [entryRef.entryId, origins])).toEqual([
+            ['explicit', ['user']], ['native', ['session', 'native']],
+        ]);
+        expect(projected.primary?.entryRef).toEqual(explicit);
+        expect(resolveFixPullRequests({ ...sources, dismissed: [native], incomplete: true }, {
+            workflowSubjectOf, presentationOf: () => 'active',
+        })).toMatchObject({ candidates: [{ entryRef: explicit }], incomplete: true });
+        expect((await readFixPullRequestSources({ collections: fixture.collections, sourceRelations: fixture.relations, entryRef: ERROR_REF })).linked)
+            .toHaveLength(1);
+        expect(resolveFixPullRequests({ ...sources, linked: [], coLinked: [], native: [{ ...sources.native[0]!, status: 'closed' }] }, {
+            workflowSubjectOf, presentationOf: () => null,
+        }).primary).toBeNull();
+    });
+    it.each(['ready', 'failed'] as const)('discovers fix PRs through composed relations when the PR owner is %s', async (role) => {
+        const fixture = createTestkitCorpusCollections({}, role);
+        await link(fixture, ERROR_REF, 'session-a', 1_000);
+        await link(fixture, githubPr('stale'), 'session-a', 2_000);
+        await link(fixture, GITHUB_ISSUE, 'session-a', 3_000);
+        const result = await readTriageFixPullRequests({ v: 1, entryRef: ERROR_REF }, {
+            collections: fixture.collections, sourceRelations: fixture.relations, nowMs: () => 5_000,
+            projection: { workflowSubjectOf, presentationOf: () => 'active' },
+        });
+        expect(result.candidates.map((candidate) => candidate.entryRef.entryId)).toEqual(role === 'ready' ? ['canonical'] : []);
+        expect(result.incomplete).toBe(role === 'failed');
+        expect(fixture.counts()).toEqual({ configurationReads: 1, roleReads: 1 });
+        expect((await readTriageSessionLinksPageV1(fixture.collections.sessionLinks, { relation: { sessionId: 'session-a' } })).links)
+            .toContainEqual(expect.objectContaining({ entryRef: githubPr('stale') }));
+    });
     it('retains a fix PR after more than one relation page of distinct non-PR siblings', async () => {
         const fixture = createTestkitCorpusCollections();
         await link(fixture, ERROR_REF, 'session-a', 1);
@@ -86,9 +183,9 @@ describe('fix pull request links', () => {
         // the two complete relation pages, so filtering after a total cap loses it.
         expect(later.links.filter((sibling) => sibling.entryRef.kindId !== 'error-group')[0]?.entryRef.kindId).toBe('issue');
 
-        const sources = await readFixPullRequestSources({ collections: fixture.collections, entryRef: ERROR_REF });
+        const sources = await readFixPullRequestSources({ collections: fixture.collections, sourceRelations: fixture.relations, entryRef: ERROR_REF });
         const resolved = await readTriageFixPullRequests({ v: 1, entryRef: ERROR_REF }, {
-            collections: fixture.collections, nowMs: () => 1_100,
+            collections: fixture.collections, sourceRelations: fixture.relations, nowMs: () => 1_100,
             projection: { workflowSubjectOf, presentationOf: () => null },
         });
         expect(resolved.candidates).toEqual([expect.objectContaining({ entryRef: pr, origins: ['session'] })]);
@@ -96,7 +193,7 @@ describe('fix pull request links', () => {
         expect(sources.incomplete).toBe(false);
         const firstSibling = sources.coLinked[0]!;
         await link(fixture, firstSibling.entryRef, laterSession, 1_900);
-        const repeated = await readFixPullRequestSources({ collections: fixture.collections, entryRef: ERROR_REF });
+        const repeated = await readFixPullRequestSources({ collections: fixture.collections, sourceRelations: fixture.relations, entryRef: ERROR_REF });
         expect(repeated.coLinked.map((entry) => entry.entryRef)).toEqual(sources.coLinked.map((entry) => entry.entryRef));
         expect(repeated.coLinked[0]?.linkedAtMs).toBe(1_900);
 
@@ -104,7 +201,7 @@ describe('fix pull request links', () => {
         // outranks a newer derived link of the same lifecycle state.
         await link(fixture, ERROR_REF, 'session-duplicate', 2_000);
         await link(fixture, pr, 'session-duplicate', 2_001);
-        const duplicates = await readFixPullRequestSources({ collections: fixture.collections, entryRef: ERROR_REF });
+        const duplicates = await readFixPullRequestSources({ collections: fixture.collections, sourceRelations: fixture.relations, entryRef: ERROR_REF });
         expect(duplicates.coLinked.filter((entry) => entry.entryRef.kindId === 'pull-request'))
             .toEqual([expect.objectContaining({ entryRef: pr, linkedAtMs: 2_001 })]);
         const explicit = githubPr('explicit-fix');
@@ -116,17 +213,17 @@ describe('fix pull request links', () => {
             linked: false, fixPullRequest: pr, nowMs: 3_000 });
         expect((await resolve(fixture)).candidates.map((candidate) => candidate.entryRef)).toEqual([explicit]);
 
-        // The real Collection query boundary still cuts one relation at its
-        // page size, and the reader discloses the missing suffix without walking it.
+        // The composed relation owner drains each selected relation's pages;
+        // a physical page cut cannot erase a valid sibling or invent incompleteness.
         await link(fixture, { ...GITHUB_ISSUE, entryId: 'beyond-relation-page' }, firstSession, 4_000);
         const firstPage = await readTriageSessionLinksPageV1(fixture.collections.sessionLinks, { relation: { sessionId: firstSession } });
         expect(firstPage.nextCursor).toBeDefined();
         const suffix = await readTriageSessionLinksPageV1(fixture.collections.sessionLinks, {
             relation: { sessionId: firstSession }, cursor: firstPage.nextCursor,
         });
-        const incomplete = await readFixPullRequestSources({ collections: fixture.collections, entryRef: ERROR_REF });
-        expect(incomplete.incomplete).toBe(true);
-        expect(incomplete.coLinked.map((entry) => entry.entryRef)).not.toContainEqual(suffix.links[0]!.entryRef);
+        const incomplete = await readFixPullRequestSources({ collections: fixture.collections, sourceRelations: fixture.relations, entryRef: ERROR_REF });
+        expect(incomplete.incomplete).toBe(false);
+        expect(incomplete.coLinked.map((entry) => entry.entryRef)).toContainEqual(suffix.links[0]!.entryRef);
     });
 
     it('returns every durable explicit choice rather than applying the relationship query page to intent', async () => {
@@ -139,7 +236,7 @@ describe('fix pull request links', () => {
             })).toEqual({ status: 'linked' });
         }
         const result = await readTriageFixPullRequests({ v: 1, entryRef: ERROR_REF }, {
-            collections: fixture.collections, nowMs: () => choices + 1,
+            collections: fixture.collections, sourceRelations: fixture.relations, nowMs: () => choices + 1,
             projection: { workflowSubjectOf, presentationOf: () => 'active' },
         });
         expect(result.candidates).toHaveLength(choices);
@@ -159,7 +256,7 @@ describe('fix pull request links', () => {
             fixPullRequest: githubPr('new'), linked: true, displayAtLink: ERROR_DISPLAY, nowMs: dismissals + 1,
         })).toEqual({ status: 'linked' });
         expect((await resolve(fixture)).primary?.entryRef).toEqual(githubPr('new'));
-        const sources = await readFixPullRequestSources({ collections: fixture.collections, entryRef: ERROR_REF });
+        const sources = await readFixPullRequestSources({ collections: fixture.collections, sourceRelations: fixture.relations, entryRef: ERROR_REF });
         expect(sources.dismissed).toHaveLength(dismissals);
     });
     it('returns the owner-resolved public read, excluding non-PR siblings and keeping closed PRs out of primary', async () => {
@@ -170,7 +267,7 @@ describe('fix pull request links', () => {
         await link(fixture, GITHUB_ISSUE, 'session-a', 4_000);
 
         const result = await readTriageFixPullRequests({ v: 1, entryRef: ERROR_REF }, {
-            collections: fixture.collections,
+            collections: fixture.collections, sourceRelations: fixture.relations,
             nowMs: () => 5_000,
             projection: {
                 workflowSubjectOf,
@@ -215,7 +312,7 @@ describe('fix pull request links', () => {
         await link(fixture, ERROR_REF, 'session-a', 1_000);
         await link(fixture, githubPr('41'), 'session-a', 2_000);
         const result = await readTriageFixPullRequests({ v: 1, entryRef: ERROR_REF }, {
-            collections: fixture.collections,
+            collections: fixture.collections, sourceRelations: fixture.relations,
             nowMs: () => 5_000,
             projection: { workflowSubjectOf, presentationOf: async () => { throw new Error('Source unreachable'); } },
         });
@@ -223,6 +320,7 @@ describe('fix pull request links', () => {
         const controller = new AbortController();
         await expect(readTriageFixPullRequests({ v: 1, entryRef: ERROR_REF }, {
             collections: fixture.collections,
+            sourceRelations: fixture.relations,
             nowMs: () => 5_000,
             signal: controller.signal,
             projection: { workflowSubjectOf, presentationOf: async () => {
@@ -281,7 +379,7 @@ describe('fix pull request links', () => {
             linked: true, fixPullRequest: GITHUB_ISSUE,
             displayAtLink: { title: 'Another issue', scopeLabel: 'acme/web' }, nowMs: 1000,
         });
-        const sources = await readFixPullRequestSources({ collections: fixture.collections, entryRef: ERROR_REF });
+        const sources = await readFixPullRequestSources({ collections: fixture.collections, sourceRelations: fixture.relations, entryRef: ERROR_REF });
         expect(resolveFixPullRequests(sources, { workflowSubjectOf, presentationOf: () => 'active' }))
             .toEqual({ candidates: [], primary: null, incomplete: false });
         // A stale display projection cannot stand in for an unavailable source descriptor.
@@ -298,9 +396,9 @@ describe('fix pull request links', () => {
             fixPullRequestWorkflowSubject: 'issue' as const,
         };
         await expect(setFixPullRequest(input)).rejects.toMatchObject({ name: 'PluginError', code: 'triage_fix_pull_request_kind_invalid' });
-        expect((await readFixPullRequestSources({ collections: fixture.collections, entryRef: ERROR_REF })).linked).toEqual([]);
+        expect((await readFixPullRequestSources({ collections: fixture.collections, sourceRelations: fixture.relations, entryRef: ERROR_REF })).linked).toEqual([]);
         expect(await setFixPullRequest({ ...input, fixPullRequestWorkflowSubject: null })).toEqual({ status: 'linked' });
-        expect((await readFixPullRequestSources({ collections: fixture.collections, entryRef: ERROR_REF })).linked)
+        expect((await readFixPullRequestSources({ collections: fixture.collections, sourceRelations: fixture.relations, entryRef: ERROR_REF })).linked)
             .toEqual([expect.objectContaining({ entryRef: GITHUB_ISSUE })]);
     });
 
@@ -321,7 +419,7 @@ describe('fix pull request links', () => {
 
         expect((await resolve(fixture)).candidates).toEqual([]);
         // The Session still worked on the PR.
-        const sources = await readFixPullRequestSources({ collections: fixture.collections, entryRef: ERROR_REF });
+        const sources = await readFixPullRequestSources({ collections: fixture.collections, sourceRelations: fixture.relations, entryRef: ERROR_REF });
         expect(sources.coLinked.map((c) => c.entryRef)).toEqual([pr]);
 
         await setFixPullRequest({

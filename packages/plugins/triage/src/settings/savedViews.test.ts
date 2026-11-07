@@ -68,11 +68,23 @@ async function create(
         filters: overrides.filters ?? filters(),
         order: overrides.order ?? 'newest',
         smartPolicy: CORPUS_DEFAULT_SMART_POLICY_V1,
-        select: true,
     });
 }
 
 describe('parseTriageSavedViews', () => {
+    it('ignores retired Account selection and drops it on the next catalog write', async () => {
+        const fixture = createTestkitAccountKv();
+        const deps = createDeps(fixture);
+        const created = await create(fixture, deps, 'Work');
+        if (created.status !== 'applied') throw new Error('setup failed');
+        fixture.seed(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1, { ...created.value, selectedViewId: created.viewId });
+        expect((await readTriageSavedViews(deps)).value).not.toHaveProperty('selectedViewId');
+        await mutateTriageSavedViews(deps, {
+            kind: 'delete', viewId: created.viewId!,
+            expectedRevision: fixture.revision(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1),
+        });
+        expect(fixture.read(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1)).toEqual({ v: 1, views: [] });
+    });
     it('reads unknown saved-view fields recursively and retains canonical writes', async () => {
         const fixture = createTestkitAccountKv();
         const viewId = '00000001-0000-4000-8000-000000000000';
@@ -91,17 +103,17 @@ describe('parseTriageSavedViews', () => {
             }],
         });
         const deps = createDeps(fixture);
-        expect((await readTriageSavedViews(deps)).value).toEqual({ v: 1, views: [canonical], selectedViewId: viewId });
+        expect((await readTriageSavedViews(deps)).value).toEqual({ v: 1, views: [canonical] });
         expect((await mutateTriageSavedViews(deps, {
-            kind: 'select', viewId: null, expectedRevision: fixture.revision(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1),
+            ...canonical, kind: 'update', expectedRevision: fixture.revision(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1),
         })).status).toBe('applied');
-        expect(fixture.read(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1)).toEqual({ v: 1, views: [canonical], selectedViewId: null });
+        expect(fixture.read(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1)).toEqual({ v: 1, views: [canonical] });
     });
 
     it('reads an absent value as the deterministic unsaved default', () => {
         expect(parseTriageSavedViews(undefined)).toEqual({ kind: 'absent', value: CORPUS_EMPTY_SAVED_VIEWS_V1 });
         expect(parseTriageSavedViews(null)).toEqual({ kind: 'absent', value: CORPUS_EMPTY_SAVED_VIEWS_V1 });
-        expect(CORPUS_EMPTY_SAVED_VIEWS_V1).toEqual({ v: 1, views: [], selectedViewId: null });
+        expect(CORPUS_EMPTY_SAVED_VIEWS_V1).toEqual({ v: 1, views: [] });
     });
 
     it('reports a stored value it cannot read instead of silently becoming the default', () => {
@@ -132,10 +144,10 @@ describe('parseTriageSavedViews', () => {
         expect(parseTriageSavedViews(oversized).kind).toBe('unreadable');
     });
 
-    it('drops a selection that names no stored view rather than restoring a nonexistent one', () => {
+    it('ignores a retired selection that names no stored view', () => {
         const parsed = parseTriageSavedViews({ v: 1, views: [], selectedViewId: 'not-a-stored-view' });
         expect(parsed.kind).toBe('parsed');
-        expect(parsed.value.selectedViewId).toBeNull();
+        expect(parsed.value).not.toHaveProperty('selectedViewId');
     });
 });
 
@@ -186,7 +198,7 @@ describe('mutateTriageSavedViews', () => {
         expect(after.value.views[0]).toMatchObject({ label: 'Renamed by A', order: 'newest' });
     });
 
-    it('restores the selected saved view exactly after restart and clears selection when it is deleted', async () => {
+    it('restores saved definitions exactly after restart and deletes only the named view', async () => {
         const fixture = createTestkitAccountKv();
         const deps = createDeps(fixture);
 
@@ -208,7 +220,7 @@ describe('mutateTriageSavedViews', () => {
         // "Restart": a fresh reader over the same stored bytes, with no
         // in-process state carried across.
         const restarted = await readTriageSavedViews({ catalog: fixture.catalog(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1) });
-        expect(restarted.value.selectedViewId).toBe(second.viewId);
+        expect(restarted.value).not.toHaveProperty('selectedViewId');
         expect(restarted.value.views).toHaveLength(2);
         expect(restarted.value.views[0]).toEqual({
             viewId: first.viewId,
@@ -220,38 +232,18 @@ describe('mutateTriageSavedViews', () => {
             view: 'list',
         });
 
-        // Deleting the selected view clears the selection in the same write.
+        // Catalog deletion removes only the named definition.
         const deleted = await mutateTriageSavedViews(deps, {
             kind: 'delete', viewId: second.viewId, expectedRevision: fixture.revision(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1),
         });
         expect(deleted.status).toBe('applied');
         const afterDelete = await readTriageSavedViews({ catalog: fixture.catalog(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1) });
-        expect(afterDelete.value.selectedViewId).toBeNull();
         expect(afterDelete.value.views.map((view) => view.viewId)).toEqual([first.viewId]);
-        // Asserted on the stored bytes, not only on the parsed read: leaving a
-        // dangling id in durable state and repairing it on every read would
-        // look identical here while silently persisting a selection that names
-        // nothing.
         expect(fixture.read(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1))
-            .toMatchObject({ selectedViewId: null });
-
-        // Deleting an unselected view leaves the selection alone.
-        await mutateTriageSavedViews(deps, {
-            kind: 'select', viewId: first.viewId, expectedRevision: fixture.revision(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1),
-        });
-        const third = await create(fixture, deps, 'Third');
-        if (third.status !== 'applied') return;
-        await mutateTriageSavedViews(deps, {
-            kind: 'select', viewId: first.viewId, expectedRevision: fixture.revision(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1),
-        });
-        await mutateTriageSavedViews(deps, {
-            kind: 'delete', viewId: third.viewId, expectedRevision: fixture.revision(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1),
-        });
-        expect((await readTriageSavedViews({ catalog: fixture.catalog(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1) })).value.selectedViewId)
-            .toBe(first.viewId);
+            .not.toHaveProperty('selectedViewId');
     });
 
-    it('keys selection on the minted view id rather than an index or a display label', async () => {
+    it('keys definitions on the minted view id rather than an index or a display label', async () => {
         const fixture = createTestkitAccountKv();
         const deps = createDeps(fixture);
         const first = await create(fixture, deps, 'Mine');
@@ -260,20 +252,13 @@ describe('mutateTriageSavedViews', () => {
         expect(first.viewId).not.toBe(second.viewId);
 
         await mutateTriageSavedViews(deps, {
-            kind: 'select', viewId: second.viewId, expectedRevision: fixture.revision(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1),
-        });
-        await mutateTriageSavedViews(deps, {
             kind: 'delete', viewId: first.viewId, expectedRevision: fixture.revision(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1),
         });
 
-        // An index- or label-keyed selection would now name the wrong view.
+        // Same-name views remain independently addressable.
         const after = await readTriageSavedViews({ catalog: fixture.catalog(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1) });
-        expect(after.value.selectedViewId).toBe(second.viewId);
+        expect(after.value.views[0]?.viewId).toBe(second.viewId);
         expect(after.value.views).toHaveLength(1);
-        expect(await mutateTriageSavedViews(deps, {
-            kind: 'select', viewId: first.viewId, expectedRevision: fixture.revision(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1),
-        }))
-            .toEqual({ status: 'unknownView' });
         expect(await mutateTriageSavedViews(deps, {
             kind: 'delete', viewId: first.viewId, expectedRevision: fixture.revision(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1),
         }))
@@ -547,7 +532,6 @@ describe('mutateTriageSavedViews', () => {
                 smartPolicy: CORPUS_DEFAULT_SMART_POLICY_V1,
                 view: 'list',
             }],
-            selectedViewId: created.viewId,
         });
 
         // An unknown facet member cannot ride along into the durable value.

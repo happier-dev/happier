@@ -6,6 +6,7 @@ import { readActiveConfiguredSourceRows } from '../../corpus/configuration/readC
 import { removeConfiguredSourceInstance } from '../../corpus/configuration/administerConfiguredSourceInstance.js';
 import { useTriageDurableAccount, type TriageDurableAccountV1 } from '../durable/accountDurableState.js';
 import { TRIAGE_SOURCES_ADMINISTER_ACTION_LOCAL_ID_V1, type TriageConfiguredSourceInstanceV1 } from '@happier-dev/triage-protocol/v1';
+import { isInternalTaskConfiguredInstanceV1 } from '../../internalTasks/configuration.js';
 
 export type TriageMountedConfiguredSourceV1 = Readonly<{
   sourceInstanceId: string;
@@ -13,6 +14,8 @@ export type TriageMountedConfiguredSourceV1 = Readonly<{
   configured: TriageConfiguredSourceInstanceV1;
   displayLabel: string;
   displayPath?: string;
+  /** Built-in Account-data targets have no connection to remove. */
+  removable?: boolean;
 }>;
 
 export type TriageMountedConfiguredSourcesV1 = Readonly<{
@@ -92,6 +95,7 @@ export function useTriageConfiguredSources(): TriageMountedConfiguredSourcesV1 {
         sourceInstanceId: row.configured.instance.sourceInstanceId,
         configured: row.configured,
         displayLabel: row.configured.locator?.displayLabel ?? row.configured.localInstanceKey,
+        removable: !isInternalTaskConfiguredInstanceV1(row.configured),
         ...(row.configured.locator?.displayPath === undefined
           ? {}
           : { displayPath: row.configured.locator.displayPath }),

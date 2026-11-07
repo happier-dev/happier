@@ -1,4 +1,6 @@
 import type { HappierSceneId } from '@happier-dev/plugin-ui';
+import { sameTriageSourceIdentity } from '../../corpus/identity/components.js';
+import { INTERNAL_TASK_SOURCE_V1 } from '../../internalTasks/identity.js';
 import type { TriageLensNarrowingV1 } from '../state/narrowing.js';
 import {
     readTriageListFailureNotice,
@@ -49,6 +51,8 @@ export type TriageListEmptyStateV1 = Readonly<{
         | 'noSearchMatchYet'
         | 'noTasks'
         | 'noTasksYet'
+        | 'taskStart'
+        | 'taskFirstRun'
         | 'healthy';
     title: string;
     description: string;
@@ -120,6 +124,13 @@ const NO_SEARCH_MATCH_YET: TriageListEmptyStateV1 = Object.freeze({
 const NO_TASKS: TriageListEmptyStateV1 = Object.freeze({
     kind: 'noTasks', title: 'No tasks here', description: 'Try another task lens or create a task.', next: NO_NEXT_STEPS,
 });
+const TASK_START: TriageListEmptyStateV1 = Object.freeze({
+    kind: 'taskStart', title: 'No tasks yet', description: 'Create a task to get started. You can also bring tasks from a tracker.', next: NO_NEXT_STEPS,
+});
+/** No task anywhere and no tracker connected: the Tasks first run (`./firstRun.tsx`) is the whole answer. */
+const TASK_FIRST_RUN: TriageListEmptyStateV1 = Object.freeze({
+    kind: 'taskFirstRun', title: '', description: '', next: NO_NEXT_STEPS,
+});
 const NO_TASKS_YET: TriageListEmptyStateV1 = Object.freeze({
     kind: 'noTasksYet', title: 'No tasks here', description: 'No tasks read so far are in this lens. More sources may still answer.',
     next: Object.freeze(['loadMore'] as const),
@@ -134,6 +145,7 @@ const EMPTY_SCENES_V1: Readonly<Partial<Record<TriageListEmptyStateV1['kind'], H
     noMatch: 'noMatch',
     noSearchMatch: 'noMatch',
     noTasks: 'noMatch',
+    taskStart: 'inboxZero',
 });
 
 export function readTriageListEmptyScene(kind: TriageListEmptyStateV1['kind']): HappierSceneId | undefined {
@@ -175,6 +187,9 @@ const EMPTY_TRANSLATION_KEYS_V1: Readonly<Record<TriageListEmptyStateV1['kind'],
     }),
     noTasks: Object.freeze({ title: 'plugins.triage.tasks.empty.title', description: 'plugins.triage.tasks.empty.description' }),
     noTasksYet: Object.freeze({ title: 'plugins.triage.tasks.empty.title', description: 'plugins.triage.tasks.empty.pending' }),
+    taskStart: Object.freeze({ title: 'plugins.triage.tasks.empty.startTitle', description: 'plugins.triage.tasks.empty.startDescription' }),
+    // Renders the Tasks first run, whose copy is its own.
+    taskFirstRun: Object.freeze({ title: '', description: '' }),
 });
 
 /**
@@ -233,6 +248,10 @@ export function resolveTriageListEmptyState(input: Readonly<{
      * nothing is cleared from the rail.
      */
     narrowing: TriageLensNarrowingV1;
+    /** The source window has no tasks before the audience join. */
+    taskInventoryEmpty?: boolean;
+    /** A tracker other than the built-in personal list is connected; without one an empty inventory is a first run. */
+    taskTrackerConnected?: boolean;
     /** The reader's locale, for the list of connections a shared failure names. */
     locale?: string;
 }>, text: TriageTextResolverV1 = ENGLISH_TEXT): TriageListEmptyStateV1 {
@@ -259,12 +278,31 @@ export function resolveTriageListEmptyState(input: Readonly<{
         // sentence names the search box the query is actually in.
         return input.coverage === 'partial' ? NO_SEARCH_MATCH_YET : NO_SEARCH_MATCH;
     }
-    if (input.narrowing.tasks) return input.coverage === 'partial' ? NO_TASKS_YET : NO_TASKS;
+    if (input.narrowing.tasks) return input.coverage === 'partial' ? NO_TASKS_YET
+        : input.taskInventoryEmpty === true ? input.taskTrackerConnected === false ? TASK_FIRST_RUN : TASK_START : NO_TASKS;
     if (input.coverage === 'partial') return input.refreshing ? READING : BOUNDED;
     // A complete window with a refresh in flight is a real, current, empty
     // answer; the pass now running may change it, but nothing said so far is
     // untrue.
     return HEALTHY;
+}
+
+/**
+ * Whether an empty group in a listed window may say nothing needs the reader: the healthy claim an empty list makes,
+ * decided by the same owner from the same facts (a failure, an incomplete read or the reader's own narrowing each
+ * falsify it), so the group's quiet line and the whole-list empty state cannot disagree.
+ */
+export function readTriageQuietGroupClaimV1(
+    state: TriageListShellStateV1,
+    narrowing: TriageLensNarrowingV1,
+): boolean {
+    if (state.kind !== 'window') return false;
+    return resolveTriageListEmptyState({
+        coverage: state.window.coverage,
+        failure: state.failure,
+        refreshing: state.refreshing,
+        narrowing,
+    }).kind === 'healthy';
 }
 
 /** The empty slot for one resolved shell state, or `null` when rows are shown. */
@@ -279,6 +317,8 @@ export function readTriageListEmptyState(
         failure: state.failure,
         refreshing: state.refreshing,
         narrowing: options.narrowing,
+        taskInventoryEmpty: state.window.rows.length === 0,
+        taskTrackerConnected: state.window.lanes.some((lane) => !sameTriageSourceIdentity(lane.source, INTERNAL_TASK_SOURCE_V1)),
         ...(options.locale === undefined ? {} : { locale: options.locale }),
     }, options.text ?? ENGLISH_TEXT);
 }

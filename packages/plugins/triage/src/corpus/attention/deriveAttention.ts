@@ -105,11 +105,22 @@ export function deriveDisplayedAttention(
 }
 
 /**
- * The chip mark of a displayed reason, from the one table that owns the
- * aggregate's involvement reasons. A source-declared reason names no mark, so it
- * is drawn as its words alone rather than with a guess from them.
+ * A source's "this is a severe security finding": the one source reason Triage draws as a failure (a rose chip with
+ * its shield, lab c8-alert) rather than as amber needs-you.
+ */
+const SECURITY_SEVERITY_REASON_ID = 'github-security-severity';
+
+/** Whether this reason is a failure rather than a request for the reader. */
+export function readTriageAttentionReasonDangerV1(reasonId: string): boolean {
+    return reasonId === SECURITY_SEVERITY_REASON_ID;
+}
+
+/**
+ * The reason's mark, for the aggregate's involvement reasons and the security severity above. Any other
+ * source-declared reason names no mark, so it is drawn as its words alone rather than with a guess from them.
  */
 export function readTriageAttentionReasonIconV1(reasonId: string): string | null {
+    if (reasonId === SECURITY_SEVERITY_REASON_ID) return 'shield';
     for (const [, reason] of INVOLVEMENT_REASONS) {
         if (reason.reasonId === reasonId) return reason.reasonIcon ?? null;
     }

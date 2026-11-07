@@ -6,6 +6,7 @@ import { putCorpusRowOnce } from '../collections/putRowOnce.js';
 import { fromCorpusStoredRow } from '../collections/rowCodec.js';
 import type {
     CorpusFixPullRequestsV1,
+    CorpusTaskOriginErrorV1,
     CorpusUserMarkDisplayV1,
     CorpusUserMarkRowV1,
 } from '../collections/rows.js';
@@ -99,6 +100,18 @@ async function rewriteLiveMark(
     return result.status === 'updated';
 }
 
+async function deleteLiveMark(collections: MarkCollections, markTag: string, revision: number, signal?: AbortSignal): Promise<boolean> {
+    try {
+        await collections.userMarks.delete(markTag, { expectedRevision: revision, ...(signal ? { signal } : {}) });
+        return true;
+    } catch (error) {
+        // Only the store's revision refusal is a conflict; connectivity and
+        // cancellation retain their actual failure for the caller.
+        if (isPluginError(error) && error.code === COLLECTION_CONFLICT_CODE) return false;
+        throw error;
+    }
+}
+
 function withoutFixPullRequests(row: CorpusUserMarkRowV1): CorpusUserMarkRowV1 {
     const { fixPullRequests: _dropped, ...rest } = row;
     return rest;
@@ -116,9 +129,8 @@ export async function setPinned(input: CorpusSetPinnedInputV1): Promise<CorpusSe
         // An already-absent mark is an idempotent success.
         if (!existing) return { status: 'unpinned', markTag };
         if (existing.value.pinned === false) return { status: 'unpinned', markTag };
-        // The row also carries the reader's fix-PR choice. Unpin removes the
-        // pin, never that choice, so the row stays live as `pinned: false`.
-        if (existing.value.fixPullRequests !== undefined) {
+        // Unpin removes the pin, preserving either relationship on this row.
+        if (existing.value.fixPullRequests !== undefined || existing.value.originError !== undefined) {
             return await rewriteLiveMark(
                 collections,
                 existing.revision,
@@ -128,35 +140,16 @@ export async function setPinned(input: CorpusSetPinnedInputV1): Promise<CorpusSe
                 ? { status: 'unpinned', markTag }
                 : { status: 'conflict', markTag };
         }
-        try {
-            await collections.userMarks.delete(markTag, {
-                expectedRevision: existing.revision,
-                ...(input.signal ? { signal: input.signal } : {}),
-            });
-        } catch (error) {
-            // `conflict` means exactly one thing — the store refused this delete
-            // because another writer moved the mark's revision. Every other
-            // refusal, and an abort or an unreachable store, surfaces as itself:
-            // folding them all into `conflict` tells the reader their pin changed
-            // somewhere else and to retry, when the write is in fact refused for
-            // a reason retrying cannot resolve. The mounted control already reads
-            // a rejection as "your account could not be reached" and says so.
-            if (isPluginError(error) && error.code === COLLECTION_CONFLICT_CODE) {
-                return { status: 'conflict', markTag };
-            }
-            throw error;
-        }
-        return { status: 'unpinned', markTag };
+        return await deleteLiveMark(collections, markTag, existing.revision, input.signal)
+            ? { status: 'unpinned', markTag } : { status: 'conflict', markTag };
     }
 
     const existing = await readLiveMark(collections, markTag, options);
     // A live mark is idempotent: a repeat Pin never reorders the pinned section
     // and never overwrites the user's own mark with a later pass's rendering.
     if (existing?.value.pinned === true) return { status: 'pinned', markTag };
-    // A live unpinned mark that holds a fix-PR choice is pinned in place, keeping
-    // the choice. A live unpinned mark WITHOUT one is not a state this writer
-    // produces, so it stays a conflict rather than being overwritten.
-    if (existing?.value.fixPullRequests !== undefined) {
+    // Pin a relationship-only mark in place, preserving the user's choices.
+    if (existing?.value.fixPullRequests !== undefined || existing?.value.originError !== undefined) {
         return await rewriteLiveMark(
             collections,
             existing.revision,
@@ -198,6 +191,49 @@ export type CorpusSetFixPullRequestResultV1 =
     | Readonly<{ status: 'unlinked' }>
     /** Another writer moved the mark first; the caller re-reads rather than forcing. */
     | Readonly<{ status: 'conflict' }>;
+
+export async function readTaskOriginError(input: Readonly<{
+    collections: MarkCollections; entryRef: TriageEntryRefV1; signal?: AbortSignal;
+}>): Promise<CorpusTaskOriginErrorV1 | null> {
+    const options = input.signal ? { signal: input.signal } : undefined;
+    const markTag = await deriveUserMarkTag(input.collections.userMarks, input.entryRef, options);
+    return (await readLiveMark(input.collections, markTag, options))?.value.originError ?? null;
+}
+
+/** The same mark writer preserves pin and fix-PR intent when changing an origin. */
+export async function setTaskOriginError(input: Readonly<{
+    collections: MarkCollections; entryRef: TriageEntryRefV1; displayAtMark: CorpusUserMarkDisplayV1;
+    originError: CorpusTaskOriginErrorV1 | null; nowMs: number; signal?: AbortSignal;
+}>): Promise<CorpusSetFixPullRequestResultV1> {
+    const options = input.signal ? { signal: input.signal } : undefined;
+    const markTag = await deriveUserMarkTag(input.collections.userMarks, input.entryRef, options);
+    const existing = await readLiveMark(input.collections, markTag, options);
+    const status = input.originError === null ? 'unlinked' : 'linked';
+    if (existing) {
+        const current = existing.value.originError;
+        if (input.originError === null && current === undefined) return { status };
+        if (input.originError !== null && current !== undefined
+            && sameTriageEntryReference(current.entryRef, input.originError.entryRef)
+            && current.display.title === input.originError.display.title
+            && current.display.scopeLabel === input.originError.display.scopeLabel) return { status };
+        const { originError: _removed, ...retained } = existing.value;
+        if (input.originError === null && !retained.pinned && retained.fixPullRequests === undefined) {
+            return await deleteLiveMark(input.collections, markTag, existing.revision, input.signal)
+                ? { status } : { status: 'conflict' };
+        }
+        const next = input.originError === null ? retained : { ...retained, originError: input.originError };
+        return await rewriteLiveMark(input.collections, existing.revision, next, input.signal)
+            ? { status } : { status: 'conflict' };
+    }
+    if (input.originError === null) return { status };
+    const written = await putCorpusRowOnce<CorpusUserMarkRowV1>({
+        collection: input.collections.userMarks, rowId: markTag,
+        row: { markTag, pinned: false, markedAtMs: input.nowMs, entryRef: input.entryRef,
+            displayAtMark: input.displayAtMark, originError: input.originError },
+        ...(input.signal ? { signal: input.signal } : {}),
+    });
+    return written.status === 'written' ? { status } : { status: 'conflict' };
+}
 
 /**
  * Link or unlink one fix pull request for the marked entry.

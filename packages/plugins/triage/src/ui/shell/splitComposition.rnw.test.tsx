@@ -86,7 +86,7 @@ function listResult(): TriageListEntriesResultV1 {
     return TriageListEntriesResultV1Schema.parse({
         v: 1,
         configuredSources: [{
-            sourceInstanceId: INSTANCE,
+            sourceInstanceId: INSTANCE, configurationRowId: INSTANCE,
             source: SOURCE,
             displayLabel: 'Example account',
             available: true,
@@ -130,7 +130,7 @@ async function executeAction(action: string): Promise<JsonValue> {
         return { v: 1, pins: [] };
     }
     if (action === TRIAGE_READ_SAVED_VIEWS_ACTION_LOCAL_ID_V1) {
-        return { v: 1, availability: 'absent', views: [], selectedViewId: null, revision: 'revision-1' };
+        return { v: 1, availability: 'absent', views: [], revision: 'revision-1' };
     }
     if (action === TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1) {
         return { kind: 'unavailable' };

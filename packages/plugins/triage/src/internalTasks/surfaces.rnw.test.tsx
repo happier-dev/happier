@@ -23,14 +23,15 @@ afterEach(async () => { for (const fixture of mounted.splice(0)) await act(async
 type ExecuteAction = NonNullable<NonNullable<Parameters<typeof createPluginUiTestkit>[0]['handlers']>['executeAction']>;
 type TaskList = Extract<PluginActionResultById['tasks.internal.list'], { status: 'ok' }>;
 
-function detailInput(taskId = 'task-a', observedAtMs = 1): TriageDetailSurfaceInputV1 {
+function detailInput(taskId = 'task-a', observedAtMs = 1, ownerAccountId?: string): TriageDetailSurfaceInputV1 {
   const basis = createTriageSourceV1Fixture().detailInput;
   return TriageDetailSurfaceInputV1Schema.parse({ ...basis,
     instance: { ...basis.instance, binding: INTERNAL_TASK_DRAFT_V1.binding,
       localInstanceKey: INTERNAL_TASK_DRAFT_V1.localInstanceKey, configuration: INTERNAL_TASK_DRAFT_V1.configuration,
       instance: { ...basis.instance.instance, source: INTERNAL_TASK_SOURCE_V1 } },
     observation: { ...basis.observation, observedAtMs,
-      entryRef: { source: INTERNAL_TASK_SOURCE_V1, ...internalTaskLocalRefV1(taskId) } },
+      entryRef: { source: INTERNAL_TASK_SOURCE_V1, ...internalTaskLocalRefV1(taskId),
+        ...(ownerAccountId === undefined ? {} : { collisionScope: `account:${ownerAccountId}` }) } },
   });
 }
 
@@ -38,6 +39,11 @@ function taskList(taskId = 'task-a', notes = 'Keep the reviewed implementation n
   return { status: 'ok', scope: { serverId: 'home-a', accountId: 'account-a' },
     todos: [{ id: taskId, title: 'Reviewed task', notes, state: 'unstarted', done: false, createdAt: 1, updatedAt: 1 }],
     undoneOrder: [taskId], completedOrder: [] };
+}
+
+function taskRead(taskId = 'task-a', notes?: string) {
+  const list = taskList(taskId, notes);
+  return { status: 'applied' as const, scope: list.scope, todo: list.todos[0]! };
 }
 
 function accountData(options: Readonly<{ waitForSources?: Promise<void>; failSources?: boolean }> = {}) {
@@ -89,9 +95,6 @@ async function mountSurface(surface: RenderSurface, executeAction: ExecuteAction
   return { fixture, updateInput: async (input: TriageDetailSurfaceInputV1, hostApi = fixture.context.hostApi) => {
     if (!mount) throw new Error('Expected the real semantic mount');
     await mount.update({ ...fixture.context, hostApi, launchInput: input });
-  }, updateHostApi: async (hostApi: PluginUiHostApi) => {
-    if (!mount) throw new Error('Expected the real semantic mount');
-    await mount.update({ ...fixture.context, hostApi });
   }, updateDataClient: async (next: PluginUiDataClient) => {
     if (!mount) throw new Error('Expected the real semantic mount');
     dataClient = next;
@@ -127,20 +130,13 @@ function seedPersonalSource(corpus: ReturnType<typeof accountData>['corpus'], ki
   }));
 }
 
-it.each(['active', 'retired', 'unrelated'] as const)('reads %s personal-source configuration before offering setup, without writing', async kind => {
+it.each(['active', 'retired', 'unrelated', 'none'] as const)('keeps Happier tasks available with %s configured rows, without setup or writes', async kind => {
   const { client, corpus } = accountData();
-  seedPersonalSource(corpus, kind);
+  if (kind !== 'none') seedPersonalSource(corpus, kind);
   const calls: string[] = [];
   const { fixture } = await mountSurface(renderSettings, ({ action }) => { calls.push(action); throw new Error('No write expected'); }, undefined, client);
-  if (kind === 'active') {
-    await expect(fixture.getByText('On')).resolves.toBeDefined();
-    await expect(fixture.queryByRole('button', { name: 'Turn on' })).resolves.toBeUndefined();
-  } else {
-    await expect(fixture.getByRole('button', { name: 'Turn on' })).resolves.toBeDefined();
-    await expect(fixture.queryByText('On')).resolves.toBeUndefined();
-    // The row says what turning it on does.
-    await expect(fixture.getByText('Your existing tasks and linked Sessions appear in Tasks.')).resolves.toBeDefined();
-  }
+  await expect(fixture.getByText('On')).resolves.toBeDefined();
+  await expect(fixture.queryByRole('button', { name: 'Turn on' })).resolves.toBeUndefined();
   expect(calls).toEqual([]);
 });
 
@@ -160,68 +156,19 @@ it('retires personal-source state on Account replacement and ignores the retired
 
   await act(async () => { await surface.updateDataClient(accountData().client); });
   await act(async () => { finishRead(); });
-  await expect(surface.fixture.queryByText('On')).resolves.toBeUndefined();
-  await expect(surface.fixture.getByRole('button', { name: 'Turn on' })).resolves.toBeDefined();
+  await expect(surface.fixture.getByText('On')).resolves.toBeDefined();
+  await expect(surface.fixture.queryByRole('button', { name: 'Turn on' })).resolves.toBeUndefined();
   expect(calls).toEqual([]);
-});
-
-it('configures only on user intent, once while pending and after successful setup', async () => {
-  const calls: unknown[] = [];
-  let settle!: (value: unknown) => void;
-  const response = new Promise(resolve => { settle = resolve; });
-  const { fixture } = await mountSurface(renderSettings, ({ action, input }) => {
-    calls.push({ action, input });
-    return response;
-  });
-  expect(calls).toEqual([]);
-  await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Turn on' })); });
-  expect(calls).toEqual([{ action: 'internal/tasks/configure-v1', input: { v: 1 } }]);
-  await expect(fixture.press(await fixture.getByRole('button', { name: 'Turn on' }))).rejects.toThrow();
-  await act(async () => { settle(createTriageSourceV1Fixture().administrationResult); });
-  await expect(fixture.getByText('On')).resolves.toBeDefined();
-  await expect(fixture.queryByRole('button', { name: 'Turn on' })).resolves.toBeUndefined();
-  expect(calls).toHaveLength(1);
-});
-
-it('enables setup for a replacement host without mount writes or accepting an old completion', async () => {
-  const calls: string[] = [];
-  const result = createTriageSourceV1Fixture().administrationResult;
-  const original = await mountSurface(renderSettings, ({ action }) => { calls.push(`original:${action}`); return result; });
-  await act(async () => { await original.fixture.press(await original.fixture.getByRole('button', { name: 'Turn on' })); });
-  await expect(original.fixture.getByText('On')).resolves.toBeDefined();
-  let settleOld!: (value: unknown) => void;
-  const next = await mountSurface(renderSettings, ({ action }) => {
-    calls.push(`next:${action}`);
-    return new Promise(resolve => { settleOld = resolve; });
-  });
-  await act(async () => { await original.updateHostApi(next.fixture.context.hostApi); });
-  expect(calls).toEqual(['original:internal/tasks/configure-v1']);
-  await act(async () => { await original.fixture.press(await original.fixture.getByRole('button', { name: 'Turn on' })); });
-  let settleCurrent!: (value: unknown) => void;
-  const successor = await mountSurface(renderSettings, ({ action }) => {
-    calls.push(`successor:${action}`);
-    return new Promise(resolve => { settleCurrent = resolve; });
-  });
-  await act(async () => { await original.updateHostApi(successor.fixture.context.hostApi); });
-  expect(calls).toEqual(['original:internal/tasks/configure-v1', 'next:internal/tasks/configure-v1']);
-  await expect(original.fixture.queryByText('On')).resolves.toBeUndefined();
-  await act(async () => { await original.fixture.press(await original.fixture.getByRole('button', { name: 'Turn on' })); });
-  await act(async () => { settleOld(result); });
-  await expect(original.fixture.queryByText('On')).resolves.toBeUndefined();
-  await expect(original.fixture.press(await original.fixture.getByRole('button', { name: 'Turn on' }))).rejects.toThrow();
-  await act(async () => { settleCurrent(result); });
-  await expect(original.fixture.getByText('On')).resolves.toBeDefined();
-  expect(calls).toEqual(['original:internal/tasks/configure-v1', 'next:internal/tasks/configure-v1', 'successor:internal/tasks/configure-v1']);
 });
 
 it('keeps last good notes visible through a failed re-observation, then reflects a confirmed deletion', async () => {
   let reject!: (reason: Error) => void;
   let reads = 0;
   const { fixture, updateInput } = await mountSurface(renderDetail, ({ action }) => {
-    expect(action).toBe('tasks.internal.list');
+    expect(action).toBe('tasks.internal.read');
     reads++;
     if (reads === 2) return new Promise((_resolve, rejectRead) => { reject = rejectRead; });
-    return reads === 1 ? taskList() : { ...taskList(), todos: [] };
+    return reads === 1 ? taskRead() : { status: 'refused', reason: 'task_not_found' };
   }, detailInput());
   await expect(fixture.getByText(taskList().todos[0]!.notes!)).resolves.toBeDefined();
   await act(async () => { await updateInput(detailInput('task-a', 2)); });
@@ -233,25 +180,42 @@ it('keeps last good notes visible through a failed re-observation, then reflects
   await expect(fixture.queryByText(taskList().todos[0]!.notes!)).resolves.toBeUndefined();
 });
 
+it('reads exact shared detail and retires notes when the same task id changes owner', async () => {
+  const calls: unknown[] = [];
+  let settle!: (value: unknown) => void;
+  const { fixture, updateInput } = await mountSurface(renderDetail, ({ action, input }) => {
+    calls.push({ action, input });
+    if (calls.length === 2) return new Promise(resolve => { settle = resolve; });
+    return { status: 'applied', scope: taskList().scope, todo: { ...taskList().todos[0], ownerAccountId: 'other', notes: 'Shared owner notes.' } };
+  }, detailInput('task-a', 1, 'other'));
+  await expect(fixture.getByText('Shared owner notes.')).resolves.toBeDefined();
+  expect(calls).toEqual([{ action: 'tasks.internal.read', input: { taskId: 'task-a', ownerAccountId: 'other' } }]);
+  await act(async () => { await updateInput(detailInput('task-a', 2, 'third')); });
+  await expect(fixture.queryByText('Shared owner notes.')).resolves.toBeUndefined();
+  await act(async () => { settle({ status: 'applied', scope: taskList().scope,
+    todo: { ...taskList().todos[0], ownerAccountId: 'third', notes: 'Third owner notes.' } }); });
+  await expect(fixture.getByText('Third owner notes.')).resolves.toBeDefined();
+});
+
 it('cancels the previous selected task read and cannot display its late result in another detail', async () => {
   const signals: AbortSignal[] = [];
-  let settleOld!: (value: TaskList) => void;
-  let settleRetired!: (value: TaskList) => void;
+  let settleOld!: (value: ReturnType<typeof taskRead>) => void;
+  let settleRetired!: (value: ReturnType<typeof taskRead>) => void;
   const { fixture, updateInput } = await mountSurface(renderDetail, ({ signal }) => {
     signals.push(signal);
     if (signals.length === 1) return new Promise(resolve => { settleOld = resolve; });
     if (signals.length === 3) return new Promise(resolve => { settleRetired = resolve; });
-    return taskList('task-b', 'Only the second task notes.');
+    return taskRead('task-b', 'Only the second task notes.');
   }, detailInput());
   await act(async () => { await updateInput(detailInput('task-b', 2)); });
   expect(signals[0]!.aborted).toBe(true);
-  await act(async () => { settleOld(taskList()); });
+  await act(async () => { settleOld(taskRead()); });
   await expect(fixture.getByText('Only the second task notes.')).resolves.toBeDefined();
   await expect(fixture.queryByText(taskList().todos[0]!.notes!)).resolves.toBeUndefined();
   await act(async () => { await updateInput(detailInput('task-b', 3)); });
   await act(async () => { await fixture.dispose(); });
   expect(signals[2]!.aborted).toBe(true);
-  await act(async () => { settleRetired(taskList('task-b', 'Late retired notes')); });
+  await act(async () => { settleRetired(taskRead('task-b', 'Late retired notes')); });
 });
 
 it('refuses a different source instead of reading an internal task with the same local id', async () => {
@@ -262,24 +226,49 @@ it('refuses a different source instead of reading an internal task with the same
     observation: { ...input.observation, entryRef: { ...input.observation.entryRef, source } },
   });
   let reads = 0;
-  const { fixture } = await mountSurface(renderDetail, () => { reads++; return taskList(); }, foreign);
+  const { fixture } = await mountSurface(renderDetail, () => { reads++; return taskRead(); }, foreign);
   expect(reads).toBe(0);
   await expect(fixture.queryByText(taskList().todos[0]!.notes!)).resolves.toBeUndefined();
   await expect(fixture.getByText('This task could not be read')).resolves.toBeDefined();
 });
 
 it('does not carry notes across an Account-bound host replacement with the same task id', async () => {
-  const { fixture, updateInput } = await mountSurface(renderDetail, () => taskList(), detailInput());
-  let settle!: (value: TaskList) => void;
+  const { fixture, updateInput } = await mountSurface(renderDetail, () => taskRead(), detailInput());
+  let settle!: (value: ReturnType<typeof taskRead>) => void;
   const replacement = await mountSurface(renderSettings, ({ action }) => {
-    expect(action).toBe('tasks.internal.list');
+    expect(action).toBe('tasks.internal.read');
     return new Promise(resolve => { settle = resolve; });
   });
   // A replacement host is a distinct Account-bound transport, not a mutable local Account cache.
   const hostApi: PluginUiHostApi = replacement.fixture.context.hostApi;
   await act(async () => { await updateInput(detailInput(), hostApi); });
   await expect(fixture.queryByText(taskList().todos[0]!.notes!)).resolves.toBeUndefined();
-  await act(async () => { settle({ ...taskList('task-a', 'Only the replacement Account notes.'),
+  await act(async () => { settle({ ...taskRead('task-a', 'Only the replacement Account notes.'),
     scope: { serverId: 'home-b', accountId: 'account-b' } }); });
   await expect(fixture.getByText('Only the replacement Account notes.')).resolves.toBeDefined();
+});
+
+it('tells a recipient whose task it is not and whether they can change it', async () => {
+  const shared = (access: 'view' | 'edit') => async () => {
+    const { fixture } = await mountSurface(renderDetail, () => ({ status: 'applied', scope: taskList().scope,
+      todo: { ...taskList().todos[0], ownerAccountId: 'other', access, notes: 'Shared owner notes.' } }), detailInput('task-a', 1, 'other'));
+    return fixture;
+  };
+  await expect((await shared('view')()).getByText('Shared with you · View only')).resolves.toBeDefined();
+  await expect((await shared('edit')()).getByText('Shared with you · You can edit')).resolves.toBeDefined();
+  // The owner's own task carries no sharing line.
+  const { fixture: own } = await mountSurface(renderDetail, () => ({ status: 'applied', scope: taskList().scope,
+    todo: { ...taskList().todos[0], access: 'owner' } }), detailInput());
+  await expect(own.getByText(taskList().todos[0]!.notes!)).resolves.toBeDefined();
+  await expect(own.queryByText('Shared with you · View only')).resolves.toBeUndefined();
+  await expect(own.queryByText('Shared with you · You can edit')).resolves.toBeUndefined();
+});
+
+it('says why a shared task cannot be opened instead of a generic read failure', async () => {
+  const { fixture: keyless } = await mountSurface(renderDetail, () => ({ status: 'refused', reason: 'task_content_unavailable' }),
+    detailInput('task-a', 1, 'other'));
+  await expect(keyless.getByText('This task is end-to-end encrypted, and this Account can’t open it yet')).resolves.toBeDefined();
+  const { fixture: revoked } = await mountSurface(renderDetail, () => ({ status: 'refused', reason: 'task_not_found' }),
+    detailInput('task-b', 1, 'other'));
+  await expect(revoked.getByText('This task isn’t shared with you anymore')).resolves.toBeDefined();
 });

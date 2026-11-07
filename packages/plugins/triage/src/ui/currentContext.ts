@@ -15,7 +15,6 @@ import {
 } from './navigation/location.js';
 import { resolveTriageActionTargetV1 } from './state/actionTarget.js';
 import { readTriageLensNarrowingV1 } from './state/narrowing.js';
-import type { TriageSurfaceStateV1 } from './state/surface.js';
 import { projectTriageEntryDisplay } from './window/entryDisplay.js';
 
 type ContextDetailV1 = Readonly<{
@@ -47,7 +46,7 @@ type ContextDetailV1 = Readonly<{
  * navigation effect, Voice hook or currentness store.
  */
 export function projectTriageCurrentUiContextV1(input: Readonly<{
-  surface: TriageSurfaceStateV1;
+  surface: Parameters<typeof readTriageRouteLensV1>[0];
   visibleRows: readonly TriageListRowV1[];
   formatOpenEntryTitle: (title: string) => string;
   mountedCommands?: readonly CurrentUiCommandDeclarationV1[];

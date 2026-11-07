@@ -8,7 +8,6 @@ import {
     defineProtocolUnion,
 } from '@happier-dev/plugin-sdk/protocol';
 import {
-    MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
     TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
     TriageEntryRefV1Schema,
 } from '@happier-dev/triage-protocol/v1';
@@ -32,15 +31,11 @@ import { MAX_TRIAGE_LIST_WINDOW_ROWS_V1 } from '../projection/listWindow.js';
 
 const triageText = defineProtocolString({
     minLength: 1,
-    maxLength: MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
     pattern: TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
 });
 
-/**
- * The two display values a user needs to recognize and unpin what they pinned.
- * `closed` is what keeps this from growing into a durable entry projection.
- */
-const TriageUserMarkDisplayV1Schema = defineProtocolObject({
+/** The closed display remainder shared by pin and relationship intent. */
+export const TriageUserMarkDisplayV1Schema = defineProtocolObject({
     title: triageText,
     scopeLabel: triageText,
 }, { policy: 'closed' });

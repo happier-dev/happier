@@ -16,18 +16,19 @@ import type {
 } from '../collections/rows.js';
 import { entryReferenceComponents, sameTriageEntryReference } from '../identity/components.js';
 import { deriveUserMarkTag } from '../identity/tags.js';
-import { readTriageSessionLinksPageV1 } from '../../sessions/readEntrySessionLinks.js';
+import type { createTriageSourceSessionRelations } from '../../sessions/sourceSessionRelations.js';
 
 /**
  * The read and resolution half of the fix-PR link (`design/FIX-LINK.md`).
  *
- * The relationship "this pull request fixes that issue or error group" has two
+ * The relationship "this pull request fixes that issue or error group" has three
  * inputs and no store of its own:
  *
  * - the user's explicit choice, kept on the entry's `user-marks` row and written
  *   only by `setPinned.ts#setFixPullRequest`, the one `user-marks` writer;
- * - the candidates a fixing Session already implies: a Session linked in
- *   `session-links` to both the entry and a pull request.
+ * - the candidates a fixing Session already implies through the composed
+ *   source/corpus relation owner.
+ * - current native associations supplied by the selected source's optional read role.
  *
  * Nothing here writes. The derived half is recomputed from the Session links on
  * every read, so unlinking the PR from the Session removes the candidate by
@@ -46,14 +47,17 @@ export type TriageFixPullRequestSourcesV1 = Readonly<{
     dismissed: readonly TriageEntryRefV1[];
     /** Every other entry a Session linked to this entry is also linked to, of any kind. */
     coLinked: readonly TriageCoLinkedEntryV1[];
-    /** A Session-links page was cut, so `coLinked` may be missing candidates. */
+    native?: readonly Omit<TriageFixPullRequestV1, 'origins'>[];
+    /** A requested relation slice failed or was unavailable, so candidates may be missing. */
     incomplete: boolean;
 }>;
 
-type FixReadCollections = Pick<CorpusCollectionsV1, 'userMarks' | 'sessionLinks'>;
+type FixReadCollections = Pick<CorpusCollectionsV1, 'userMarks'>;
+type FixSessionRelations = Pick<ReturnType<typeof createTriageSourceSessionRelations>, 'read'>;
 
 export async function readFixPullRequestSources(input: Readonly<{
     collections: FixReadCollections;
+    sourceRelations: FixSessionRelations;
     entryRef: TriageEntryRefV1;
     signal?: AbortSignal;
 }>): Promise<TriageFixPullRequestSourcesV1> {
@@ -64,16 +68,26 @@ export async function readFixPullRequestSources(input: Readonly<{
     const stored = await collections.userMarks.get(markTag, options);
     const choice = stored ? fromCorpusStoredRow<CorpusUserMarkRowV1>(stored).value.fixPullRequests : undefined;
 
-    // One bounded page per relation, the same page the detail's linked-Session
-    // read uses. A cut page is reported rather than walked without bound.
-    let incomplete = false;
-    const sessions = await readTriageSessionLinksPageV1(collections.sessionLinks, { relation: { entryRef } }, options);
-    if (sessions.nextCursor !== undefined) incomplete = true;
+    let sessions: Awaited<ReturnType<FixSessionRelations['read']>>;
+    try {
+        sessions = await input.sourceRelations.read({ entryRef });
+    } catch {
+        throwIfAborted(input.signal);
+        return Object.freeze({ linked: choice?.linked ?? [], dismissed: choice?.dismissed ?? [], coLinked: [], incomplete: true });
+    }
+    let incomplete = sessions.kind !== 'complete';
 
     const coLinked = new Map<string, TriageCoLinkedEntryV1>();
-    for (const { sessionId } of sessions.links) {
-        const siblings = await readTriageSessionLinksPageV1(collections.sessionLinks, { relation: { sessionId } }, options);
-        if (siblings.nextCursor !== undefined) incomplete = true;
+    for (const sessionId of new Set(sessions.links.map((link) => link.sessionId))) {
+        let siblings: Awaited<ReturnType<FixSessionRelations['read']>>;
+        try {
+            siblings = await input.sourceRelations.read({ sessionId });
+        } catch {
+            throwIfAborted(input.signal);
+            incomplete = true;
+            continue;
+        }
+        if (siblings.kind !== 'complete') incomplete = true;
         for (const sibling of siblings.links) {
             if (sameTriageEntryReference(sibling.entryRef, entryRef)) continue;
             const key = JSON.stringify(entryReferenceComponents(sibling.entryRef));
@@ -81,7 +95,7 @@ export async function readFixPullRequestSources(input: Readonly<{
             if (seen === undefined) {
                 coLinked.set(key, {
                     entryRef: sibling.entryRef,
-                    displayPath: sibling.displayPathAtLink,
+                    displayPath: sibling.displayPath,
                     linkedAtMs: sibling.linkedAtMs,
                 });
             } else if (seen.linkedAtMs < sibling.linkedAtMs) {
@@ -115,6 +129,10 @@ export type TriageFixPullRequestProjectionV1 = Readonly<{
     workflowSubjectOf(entryRef: TriageEntryRefV1): TriageSourceWorkflowSubjectV1 | null;
     presentationOf(entryRef: TriageEntryRefV1): TriageFixPullRequestPresentationV1 | null
         | Promise<TriageFixPullRequestPresentationV1 | null>;
+    readNativeCandidates?(): Promise<Readonly<{
+        candidates: readonly Omit<TriageFixPullRequestV1, 'origins'>[];
+        incomplete: boolean;
+    }>>;
 }>;
 
 /** A missing descriptor cannot invalidate a durable user choice. */
@@ -124,18 +142,26 @@ export function isKnownNonPullRequestSubject(subject: TriageSourceWorkflowSubjec
 
 export async function readResolvedFixPullRequests(input: Readonly<{
     collections: FixReadCollections;
+    sourceRelations: FixSessionRelations;
     entryRef: TriageEntryRefV1;
     projection: TriageFixPullRequestProjectionV1;
     signal?: AbortSignal;
 }>): Promise<TriageResolvedFixPullRequestsV1> {
-    const sources = await readFixPullRequestSources(input);
+    const [relationships, native] = await Promise.all([
+        readFixPullRequestSources(input), input.projection.readNativeCandidates?.(),
+    ]);
+    const sources = native === undefined ? relationships : {
+        ...relationships, native: native.candidates, incomplete: relationships.incomplete || native.incomplete,
+    };
     throwIfAborted(input.signal);
     // Let the canonical resolver filter, dismiss and deduplicate before any live source read.
     const candidates = resolveFixPullRequests(sources, {
         workflowSubjectOf: input.projection.workflowSubjectOf,
         presentationOf: () => null,
     }).candidates;
+    const nativeKeys = new Set(sources.native?.map((candidate) => JSON.stringify(entryReferenceComponents(candidate.entryRef))));
     const presentations = await Promise.all(candidates.map(async ({ entryRef }) => {
+        if (nativeKeys.has(JSON.stringify(entryReferenceComponents(entryRef)))) return null;
         if (input.projection.workflowSubjectOf(entryRef) !== 'pullRequest') return null;
         try {
             return await input.projection.presentationOf(entryRef);
@@ -240,6 +266,25 @@ export function resolveFixPullRequests(
         };
         drafts.push(draft);
         draftsByEntry.set(key, draft);
+    }
+
+    for (const native of sources.native ?? []) {
+        if (projection.workflowSubjectOf(native.entryRef) !== 'pullRequest') continue;
+        const key = JSON.stringify(entryReferenceComponents(native.entryRef));
+        if (dismissed.has(key)) continue;
+        const existing = draftsByEntry.get(key);
+        if (existing) {
+            existing.candidate = { ...native, ...existing.candidate,
+                status: native.status,
+                display: { ...native.display, ...existing.candidate.display },
+                ...(native.sourceContext === undefined ? {} : { sourceContext: native.sourceContext }),
+                origins: existing.candidate.origins.includes('native') ? existing.candidate.origins : [...existing.candidate.origins, 'native'],
+            };
+        } else {
+            const draft: Draft = { candidate: { ...native, origins: ['native'] }, user: false, linkedAtMs: 0 };
+            drafts.push(draft);
+            draftsByEntry.set(key, draft);
+        }
     }
 
     drafts.sort((left, right) =>

@@ -8,10 +8,9 @@ describe('the source-neutral Tasks Actions', () => {
             const action = PLUGIN_MANIFEST.contributes.actions.find((candidate) => candidate.id === id);
             expect(action, `${id} must have its real registered Action declaration`).toBeDefined();
             expect(action?.surfaces).toEqual(expect.arrayContaining(['ui', 'agent', 'mcp', 'cli']));
-            if (id === 'tasks/create-v1' || id === 'tasks/edit-v1' || id === 'tasks/transition-v1') {
-                expect(action?.dangerLevel).toBe('writesRemote');
-                expect(action?.confirmation).toBeDefined();
-            }
+            if (id === 'tasks/link-v1') expect(action?.sessionTarget).toEqual({ field: 'sessionId', cardinality: 'one' });
+            // The selected source Action owns provider-write approval; the
+            // aggregate declarations do not add a second approval request.
         }
     });
 });

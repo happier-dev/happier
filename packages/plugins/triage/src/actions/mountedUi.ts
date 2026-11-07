@@ -2,7 +2,9 @@ import type { PluginClientActionHandler } from '@happier-dev/plugin-sdk/actions'
 import type { PluginClientApi } from '@happier-dev/plugin-sdk';
 import { TRIAGE_SOURCE_PANEL_REVEAL_ACTION_V1, TRIAGE_SOURCE_PANEL_INSERT_ACTION_V1 } from '@happier-dev/triage-sources/runtime';
 import { invokeTriageMountedUiAction } from '../ui/mountedActions.js';
-import { TRIAGE_TASKS_OPEN_CREATE_ACTION_LOCAL_ID_V1, TriageTaskDraftV1Schema } from './tasksProtocol.js';
+import { TRIAGE_TASKS_OPEN_CREATE_ACTION_LOCAL_ID_V1, TriageTaskDraftV1Schema,
+  TRIAGE_TASKS_CHECK_WRITE_ACTION_LOCAL_ID_V1, TriageCheckTaskWriteInputV1Schema } from './tasksProtocol.js';
+import { checkTriageTaskWrite } from '../ui/detail/taskWrite.js';
 import { TRIAGE_TASK_DETAIL_DESTINATION_V1 } from '../composer/openEntryDetails.js';
 import { stageTriageTaskDraft } from '../ui/taskDraftHandoff.js';
 import { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, TriageMountedUiInputV1Schema, TriageMountedSourceRevealInputV1Schema, TriageMountedSourceInsertInputV1Schema, type TriageMountedUiInputV1, type TriageMountedUiResultV1 } from './mountedUiProtocol.js';
@@ -39,6 +41,11 @@ export function createTriageMountedSourceInsertActionHandler(): PluginClientActi
 }
 
 export function activate(api: PluginClientApi): void {
+  api.actions.register(TRIAGE_TASKS_CHECK_WRITE_ACTION_LOCAL_ID_V1, async (input, context) => {
+    const parsed = TriageCheckTaskWriteInputV1Schema.parse(input);
+    const resolved = await checkTriageTaskWrite(context.ephemeralSharedScope, parsed.entryRef, context.ui, context.signal);
+    return { status: resolved ? 'applied' : 'unavailable' };
+  });
   api.actions.register(TRIAGE_TASKS_OPEN_CREATE_ACTION_LOCAL_ID_V1, async (input, context) => {
     const draft = TriageTaskDraftV1Schema.parse(input);
     if (context.signal.aborted || context.ephemeralSharedScope === null) return { status: 'unavailable' };

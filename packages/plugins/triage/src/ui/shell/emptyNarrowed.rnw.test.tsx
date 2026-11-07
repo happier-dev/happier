@@ -38,7 +38,7 @@ const SEARCH_THAT_MATCHES_NOTHING = 'zzqxnomatch';
 function listResult(): JsonValue {
     return TriageListEntriesResultV1Schema.parse({
         v: 1,
-        configuredSources: [{ sourceInstanceId: INSTANCE, source: SOURCE, displayLabel: 'Example account', available: true }],
+        configuredSources: [{ sourceInstanceId: INSTANCE, configurationRowId: INSTANCE, source: SOURCE, displayLabel: 'Example account', available: true }],
         configuredSourcesStatus: 'complete',
         window: {
             v: 1,
@@ -94,7 +94,7 @@ async function mountSearched(): Promise<Readonly<{ shell: PluginUiTestkit; locat
                     if (action === TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1) return listResult();
                     if (action === TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1) return { v: 1, pins: [] };
                     if (action === TRIAGE_READ_SAVED_VIEWS_ACTION_LOCAL_ID_V1) {
-                        return { v: 1, availability: 'absent', views: [], selectedViewId: null, revision: 'revision-1' };
+                        return { v: 1, availability: 'absent', views: [], revision: 'revision-1' };
                     }
                     throw new Error(`unexpected action ${action}`);
                 },

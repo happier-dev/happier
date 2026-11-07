@@ -24,7 +24,7 @@ import {
 import { TriageListEntriesInputV1Schema } from '../../actions/listEntriesProtocol.js';
 import { CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../../corpus/collections/ids.js';
 import { toCorpusStoredValue } from '../../corpus/collections/rowCodec.js';
-import { createTestkitCorpusCollections } from '../../corpus/testkit/corpusCollections.test-support.js';
+import { createTestkitCorpusCollections, selectTestkitConfiguredSources } from '../../corpus/testkit/corpusCollections.test-support.js';
 import {
     testkitLocator,
     testkitSnapshot,
@@ -138,13 +138,13 @@ function createListHarness(withTasks = false, mineFacts: Readonly<Record<string,
             }] }],
         } satisfies PluginUiTargetedContributionsV1,
         reads: 0,
-        executeAction(input: unknown) {
+        async executeAction(input: unknown) {
             this.reads += 1;
             const parsed = TriageListEntriesInputV1Schema.parse(input);
             // Enumerate exactly the source contributions this harness admits.
             return listTriageEntries({ ...parsed, sources: parsed.sources.kind === 'allConfigured'
-                ? { kind: 'selected', sourceInstanceIds: [INSTANCE,
-                    ...(withPersonal ? [INTERNAL_TASK_SOURCE_RECORD_V1.value.configured.instance.sourceInstanceId] : [])] } : parsed.sources }, {
+                ? await selectTestkitConfiguredSources([INSTANCE,
+                    ...(withPersonal ? [INTERNAL_TASK_SOURCE_RECORD_V1.value.configured.instance.sourceInstanceId] : [])], collections.sourceInstances) : parsed.sources }, {
                 sourceInstances: collections.sourceInstances,
                 readAdmittedSources: async () => admitted,
                 executeScan,
@@ -194,6 +194,67 @@ afterEach(async () => {
 });
 
 describe('the New for you widget', () => {
+    it('shows personal tasks while an external source waits, then names its refusal beside those rows', async () => {
+        const harness = createListHarness(false, {}, true);
+        let release = (): void => {};
+        const held = new Promise<void>(resolve => { release = resolve; });
+        const widget = await mountWidget(createTriageEphemeralSharedScopeOriginFixture(), async input => {
+            const parsed = TriageListEntriesInputV1Schema.parse(input);
+            // Hold/refuse the source's Action transport, keeping the real
+            // mounted store, aggregate and internal-task projection beneath it.
+            if (parsed.sources.kind === 'selected' && parsed.sources.sourceInstances.map(source => source.sourceInstanceId).includes(INSTANCE)) {
+                await held;
+                throw new PluginError({ code: 'unavailable', retryable: true });
+            }
+            return harness.executeAction(input);
+        }, undefined, { surface: renderTasksWidget, targetedContributions: harness.targetedContributions });
+        try {
+            await vi.waitFor(() => widget.getByText('Personal task 5'));
+            await expect(widget.queryByText('Loading the latest entries')).resolves.toBeUndefined();
+        } finally {
+            release();
+        }
+        await vi.waitFor(() => widget.getByText('Example forge · example/repository could not be read'));
+        await expect(widget.getByText('Personal task 5')).resolves.toBeDefined();
+    });
+
+    it('fills the PR glance from its own view even when newer personal tasks exceed the glance size', async () => {
+        const harness = createListHarness(false, {}, true);
+        const widget = await mountWidget(createTriageEphemeralSharedScopeOriginFixture(), input => harness.executeAction(input));
+        await vi.waitFor(() => widget.getByText(TITLE));
+        await expect(widget.queryByText('Personal task 5')).resolves.toBeUndefined();
+    });
+    it('offers source setup when only the built-in task source exists', async () => {
+        const { collections } = createTestkitCorpusCollections();
+        const widget = await mountWidget(createTriageEphemeralSharedScopeOriginFixture(), input => listTriageEntries(
+            TriageListEntriesInputV1Schema.parse(input), { sourceInstances: collections.sourceInstances,
+                readAdmittedSources: async () => [], executeScan: async () => { throw new Error('No source should be scanned'); },
+                nowMs: () => 3_000,
+            }));
+        await expect(widget.getByText('No sources connected yet')).resolves.toBeDefined();
+        // The one next step is named for what it does, and leads to the page's own source tiles.
+        await act(async () => { await widget.press(await widget.getByRole('button', { name: 'Connect a source' })); });
+        expect(opened).toEqual([{ ...TRIAGE_ENTRY_DETAIL_DESTINATION_V1 }]);
+    });
+    it('names the source it could not read instead of claiming nothing is new', async () => {
+        const harness = createListHarness(false, {}, false, { now: true });
+        const widget = await mountWidget(createTriageEphemeralSharedScopeOriginFixture(), input => harness.executeAction(input));
+        await vi.waitFor(() => widget.getByText('Example forge · example/repository could not be read'));
+        await expect(widget.queryByText('Nothing new right now')).resolves.toBeUndefined();
+    });
+    it('keeps the last rows and says, in one line under them, which source failed', async () => {
+        const scope = createTriageEphemeralSharedScopeOriginFixture();
+        const failing = { now: false };
+        const harness = createListHarness(false, {}, false, failing);
+        const first = await mountWidget(scope, input => harness.executeAction(input));
+        await vi.waitFor(() => first.getByText(TITLE));
+        await first.dispose();
+        mounted.splice(mounted.indexOf(first), 1);
+        failing.now = true;
+        const second = await mountWidget(scope, input => harness.executeAction(input));
+        await vi.waitFor(() => second.getByText('Example forge · example/repository could not be read'));
+        await expect(second.getByText(TITLE)).resolves.toBeDefined();
+    });
     it('uses the shared window for My tasks without showing PRs or uninvolved tasks', async () => {
         const harness = createListHarness(true);
         const widget = await mountWidget(createTriageEphemeralSharedScopeOriginFixture(), (input) => harness.executeAction(input),
@@ -226,7 +287,7 @@ describe('the New for you widget', () => {
         mounted.splice(mounted.indexOf(first), 1);
         failing.now = true;
         const second = await mountWidget(scope, (input) => harness.executeAction(input), undefined, { surface });
-        await vi.waitFor(() => second.getByText('example/repository could not be read'));
+        await vi.waitFor(() => second.getByText('Example forge · example/repository could not be read'));
         const shownRows = async () => (await Promise.all(titles.map((title) => second.queryByText(title)))).filter(Boolean).length;
         expect(await shownRows()).toBe(3);
     });
@@ -253,6 +314,33 @@ describe('the New for you widget', () => {
         // The date is the reader's locale's ("3 Jan", "Jan 3"); the blocker is not said beside it.
         expect(document.body.textContent).toMatch(/Overdue · /);
         expect(document.body.textContent).not.toContain('Blocked');
+    });
+    it('leaves a task that is already done off My tasks', async () => {
+        // My tasks is the most pressing work (lab `tasks-widget`); Done lives behind the page's collapsed band.
+        const harness = createListHarness(true, { state: { presentation: 'resolved', nativeLabel: 'Done' } });
+        const widget = await mountWidget(createTriageEphemeralSharedScopeOriginFixture(), (input) => harness.executeAction(input),
+            undefined, { surface: renderTasksWidget, targetedContributions: harness.targetedContributions });
+        // Settled either way: the row, or the widget's own empty line.
+        await vi.waitFor(() => expect(document.body.textContent).toMatch(/My assigned task|No tasks here/));
+        await expect(widget.queryByText('My assigned task')).resolves.toBeUndefined();
+    });
+    it('stays quiet about an old but healthy list, as the page does', async () => {
+        // Age alone is not a failure: the page's warning is failure-only (`ui/shell/windowState.ts`), and My tasks
+        // reads the same rule rather than its own age threshold.
+        const scope = createTriageEphemeralSharedScopeOriginFixture();
+        const harness = createListHarness(true);
+        const options = { surface: renderTasksWidget, targetedContributions: harness.targetedContributions };
+        const first = await mountWidget(scope, (input) => harness.executeAction(input), undefined, options);
+        await vi.waitFor(() => first.getByText('My assigned task'));
+        await first.dispose();
+        mounted.splice(mounted.indexOf(first), 1);
+
+        // A minute later the reader is back on Home; the retained window is old and its revalidation is in flight.
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(Date.now() + 60_000);
+        const second = await mountWidget(scope, () => new Promise<never>(() => {}), undefined, options);
+        expect(await second.queryByText('My assigned task')).toBeDefined();
+        await expect(second.queryByText('Showing the last known list')).resolves.toBeUndefined();
     });
     it('retries a failed first demand through the addressed mounted refresh owner', async () => {
         const scope = createTriageEphemeralSharedScopeOriginFixture();

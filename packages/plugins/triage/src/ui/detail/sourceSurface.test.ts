@@ -121,6 +121,7 @@ describe('the source detail contribution lookup', () => {
         // it keeps its kind's glyph rather than a generic info mark (LAB-JUDGE-2 R4).
         expect(readTriageEntryGlyphV1(null, 'pullRequest')).toBe('change-open');
         expect(readTriageEntryGlyphV1('unknown', 'issue')).toBe('issue');
+        expect(readTriageEntryGlyphV1(null, 'issue', 'shield')).toBe('shield');
     });
     it('keeps source rendering and execution unavailable on an Account mount without an admitted occurrence', () => {
         const context = createSurfaceContextFixture({

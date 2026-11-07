@@ -139,10 +139,12 @@ const mounted: PluginUiTestkit[] = [];
 async function mountShell(subPath?: string): Promise<Readonly<{
     shell: PluginUiTestkit;
     locations: readonly string[];
+    views: readonly (string | undefined)[];
 }>> {
     const harness = createHarness();
     const ephemeralSharedScope = createTriageEphemeralSharedScopeFixture();
     const locations: string[] = [];
+    const views: (string | undefined)[] = [];
     let fixture!: PluginUiTestkit;
     await act(async () => {
         fixture = await createPluginUiTestkit({
@@ -155,8 +157,9 @@ async function mountShell(subPath?: string): Promise<Readonly<{
             handlers: {
                 publishCurrentUiContext: () => undefined,
                 executeAction: async ({ action, input }) => await harness.executeAction({ action, input }),
-                replacePageLocation: ({ subPath: written }) => {
+                replacePageLocation: ({ subPath: written, view }) => {
                     locations.push(written);
+                    views.push(view);
                     return written;
                 },
             },
@@ -166,7 +169,7 @@ async function mountShell(subPath?: string): Promise<Readonly<{
     await act(async () => {
         await refreshTriageListWindow('view', fixture.context.hostApi, ephemeralSharedScope);
     });
-    return { shell: fixture, locations };
+    return { shell: fixture, locations, views };
 }
 
 afterEach(async () => {
@@ -174,6 +177,22 @@ afterEach(async () => {
 });
 
 describe('the PRs & Issues lens controls', () => {
+    it('publishes the cold Tasks route and view once without rewriting on re-render', async () => {
+        const subPath = 'tasks,mine/q,normalizer';
+        const { shell, locations, views } = await mountShell(subPath);
+
+        expect(locations).toEqual([subPath]);
+        expect(views).toEqual(['tasks']);
+        await act(async () => {
+            await shell.updateSurface(createSurfaceContextFixture({ textScale: 1.25 }));
+        });
+        await act(async () => {
+            await shell.updateSurface(createSurfaceContextFixture({ textScale: 1 }));
+        });
+        expect(locations).toEqual([subPath]);
+        expect(views).toEqual(['tasks']);
+    });
+
     it('shows the route-carried query in a search control the reader can see', async () => {
         const { shell } = await mountShell('q,normalizer');
 

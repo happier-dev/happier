@@ -4,7 +4,11 @@ import {
   TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
   TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
   admitTriageSourceDescriptorV1,
+  type TriageConfigureSourceOfferV1,
 } from '@happier-dev/triage-protocol/v1';
+import { createTriageConfigureSourceOfferV1 } from '../../corpus/configuration/sourceSetupOffer.js';
+import { INTERNAL_TASK_SOURCE_V1 } from '../../internalTasks/identity.js';
+import { sameTriageSourceIdentity } from '../../corpus/identity/components.js';
 
 /**
  * Where the shell sends a reader who has nothing configured.
@@ -24,17 +28,7 @@ import {
  * nominate anyone else's.
  */
 
-export type TriageConfigureSourceOfferV1 = Readonly<{
-  /**
-   * The exact qualified destination, ready for `openSurface`. A Settings page
-   * takes no launch input and no sub-path; the host's resolver refuses both.
-   */
-  destination: Readonly<{ pluginId: string; localId: string }>;
-  /** The source's own name for itself, as its descriptor states it. */
-  displayName: string;
-  /** What the source brings, in its own words: each declared kind's plural name ("Pull requests", "Issues"). */
-  kindNames: readonly string[];
-}>;
+export type { TriageConfigureSourceOfferV1 } from '@happier-dev/triage-protocol/v1';
 
 const NONE: readonly TriageConfigureSourceOfferV1[] = Object.freeze([]);
 
@@ -49,6 +43,8 @@ const NONE: readonly TriageConfigureSourceOfferV1[] = Object.freeze([]);
  */
 export function planTriageConfigureSourceOffersV1(
   targetedContributions: SurfaceContext['targetedContributions'],
+  /** Only the sources that bring tasks, each named by its task kinds (the Tasks first run). */
+  options: Readonly<{ tasks?: boolean }> = {},
 ): readonly TriageConfigureSourceOfferV1[] {
   if (targetedContributions === undefined) return NONE;
   const point = targetedContributions.points.find(
@@ -61,18 +57,17 @@ export function planTriageConfigureSourceOffersV1(
   if (snapshot === undefined) return NONE;
   const offers: TriageConfigureSourceOfferV1[] = [];
   for (const contribution of snapshot.contributions) {
+    // The built-in Account target has no connection/setup step to offer.
+    if (sameTriageSourceIdentity({ pluginId: contribution.contributor.pluginId,
+      localId: contribution.contributor.contributionId }, INTERNAL_TASK_SOURCE_V1)) continue;
     const admitted = admitTriageSourceDescriptorV1(contribution.descriptor);
     if (!admitted.ok) continue;
-    const settingsPageId = admitted.descriptor.settingsPageId;
-    if (settingsPageId === undefined) continue;
-    offers.push(Object.freeze({
-      destination: Object.freeze({
-        pluginId: contribution.contributor.pluginId,
-        localId: settingsPageId,
-      }),
-      displayName: admitted.descriptor.displayName,
-      kindNames: Object.freeze(admitted.descriptor.kinds.map((kind) => kind.pluralDisplayName ?? kind.displayName)),
-    }));
+    const descriptor = options.tasks === true
+      ? { ...admitted.descriptor, kinds: admitted.descriptor.kinds.filter((kind) => kind.task === true) }
+      : admitted.descriptor;
+    if (descriptor.kinds.length === 0) continue;
+    const offer = createTriageConfigureSourceOfferV1(contribution.contributor.pluginId, descriptor);
+    if (offer !== undefined) offers.push(offer);
   }
   return Object.freeze(offers);
 }

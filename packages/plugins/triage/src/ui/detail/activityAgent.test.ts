@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { SessionStateReadV1 } from '@happier-dev/plugin-ui';
+import type { PluginTranslate, SessionStateReadV1 } from '@happier-dev/plugin-ui';
 import type { SessionStateV1 } from '@happier-dev/plugin-sdk/ui';
 import type { TriageDetailPrimaryWriteV1 } from '@happier-dev/triage-sources/ui';
 
@@ -7,6 +7,10 @@ import {
   readTriageActivityNextV1,
   readTriageActivitySessionEventsV1,
 } from './activityAgent.js';
+
+/** The English fallback with its values filled in, as a mounted surface without a catalog resolves it. */
+const translate = ((_key: string, fallback?: string, values?: Readonly<Record<string, unknown>>) =>
+  (fallback ?? '').replace(/\{(\w+)\}/gu, (_match, name: string) => String(values?.[name] ?? ''))) as PluginTranslate;
 
 function state(
   latestActivity: SessionStateV1['latestActivity'],
@@ -63,13 +67,13 @@ describe("the Activity's Happier half", () => {
       ['s2', state({ kind: 'hidden' })],
       ['s3', { status: 'loading', state: null }],
     ]);
-    expect(readTriageActivitySessionEventsV1(sessions, reads)).toEqual([
+    expect(readTriageActivitySessionEventsV1(sessions, reads, translate)).toEqual([
       {
         id: 'happier-session:s1:1000',
         atMs: 1_000,
         kind: 'session',
         actor: 'Codex',
-        summary: 'Fix failing checks on #54',
+        summary: 'Worked on Fix failing checks on #54',
       },
     ]);
   });
@@ -78,7 +82,7 @@ describe("the Activity's Happier half", () => {
     const read = state({ kind: 'ready', text: '<options>Private raw reply</options>', createdAt: 1000 });
     expect(readTriageActivitySessionEventsV1([{ sessionId: 's1' }], new Map([
       ['s1', { ...read, state: { ...read.state!, title: undefined } }],
-    ]))).toEqual([]);
+    ]), translate)).toEqual([]);
   });
 
   it('says what still stands before merging, and stays quiet while the agent is waiting on the reader', () => {

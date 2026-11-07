@@ -36,8 +36,10 @@ import { projectTriageListWindow } from '../window/mountedWindow.js';
 import { useTriageListWindow } from '../window/useTriageListWindow.js';
 import { useTriageListWindowViewDemand } from '../window/useTriageListWindowViewDemand.js';
 import { planTriageListItemsV1 } from '../list/sections.js';
+import { planTriageTaskViewInventoryV1 } from '../list/viewInventory.js';
 import { TRIAGE_ROUTE_DEFAULT_LENS_V1 } from '../navigation/location.js';
 import { readTriageListFailureNotice, resolveTriageListShellState } from '../shell/windowState.js';
+import { readTriageListEmptyScene, readTriageListEmptyState, readTriageListEmptyStateKeys } from '../shell/emptyState.js';
 import { TRIAGE_DISPLAY_NAME } from '../../displayName.js';
 import { stageTriageTaskDraft } from '../taskDraftHandoff.js';
 
@@ -47,10 +49,11 @@ import { stageTriageTaskDraft } from '../taskDraftHandoff.js';
  */
 export const TRIAGE_LATEST_WIDGET_ROWS_V1 = 5;
 
-const LATEST_LENS = Object.freeze({ ...TRIAGE_LIST_DEFAULT_LENS_V1, limit: TRIAGE_LATEST_WIDGET_ROWS_V1 });
+/** The widget has no lens of its own to narrow with. */
+const NOT_NARROWED = Object.freeze({ facets: false, search: false, narrowed: false });
 
 /**
- * **New in PRs & Issues**, the Home widget (`shell-extensibility` §2.1, §3.5).
+ * **New for you**, the Home widget (`shell-extensibility` §2.1, §3.5).
  *
  * It reads the same mounted window the page and the Composer picker share: one store, one
  * single-flight, one pacing interval. The window is retained by the host while nothing shows it,
@@ -85,7 +88,7 @@ export function TriageLatestWidget({ tasksOnly = false }: Readonly<{ tasksOnly?:
 
   // The page's one rule (`ui/shell/windowState.ts`): an old list that read cleanly stays quiet; only a failed or
   // unreachable read says the rows are the last known ones.
-  const shellState = resolveTriageListShellState(snapshot);
+  const shellState = resolveTriageListShellState(snapshot, { tasks: tasksOnly });
   const degraded = shellState.kind === 'window'
     && (shellState.showReadWarning || tasksOnly && snapshot.window?.coverage === 'partial');
   // A glance shows only the whole rows its frame has room for (two per grid row), never a row cut at the card foot;
@@ -93,19 +96,26 @@ export function TriageLatestWidget({ tasksOnly = false }: Readonly<{ tasksOnly?:
   const footprint = useWidgetPresentation()?.footprint;
   const roomRows = footprint ? Math.min(TRIAGE_LATEST_WIDGET_ROWS_V1, widgetFootprintBodyRows(footprint)) : TRIAGE_LATEST_WIDGET_ROWS_V1;
   const shownRows = Math.max(1, roomRows - (footprint && degraded ? 1 : 0));
-  const rows = React.useMemo(
+  const view = React.useMemo(
     () => {
       if (snapshot.window === undefined) return undefined;
-      const projected = projectTriageListWindow(tasksOnly ? TRIAGE_LIST_DEFAULT_LENS_V1 : LATEST_LENS, hostApi, sharedScope)?.rows;
-      if (!tasksOnly || projected === undefined) return projected;
-      const mine = planTriageListItemsV1({ rows: projected, pins: [], workflowSubjectOf: () => null,
-        tasks: { audience: 'mine', hasSessions: () => false, isTask: (ref) => readTriageSourceDescriptorV1(surfaceContext, ref.source)
-          ?.kinds.some((kind) => kind.id === ref.kindId && kind.task === true) === true } });
-      const wanted = new Set(mine.slice(0, TRIAGE_LATEST_WIDGET_ROWS_V1).map((item) => item.key));
-      return projected.filter((row) => wanted.has(triageEntryRowKey(row.entryRef)));
+      const projected = projectTriageListWindow(TRIAGE_LIST_DEFAULT_LENS_V1, hostApi, sharedScope)?.rows;
+      if (projected === undefined) return undefined;
+      const items = planTriageListItemsV1({ rows: projected, pins: [], workflowSubjectOf: () => null,
+        ...(tasksOnly ? { tasks: { audience: 'mine' as const, hasSessions: () => false,
+          isTask: planTriageTaskViewInventoryV1(source => readTriageSourceDescriptorV1(surfaceContext, source)?.kinds)
+            .includesKind } } : {}) });
+      // The most pressing open work, in the page's band order (In progress, To do, Backlog); Done and Canceled stay
+      // on the page behind their collapsed bands (lab `tasks-widget`).
+      const byKey = new Map(projected.map((row) => [triageEntryRowKey(row.entryRef), row] as const));
+      return { rows: items.filter((item) => !tasksOnly || item.group !== 'completed' && item.group !== 'canceled')
+        .slice(0, shownRows).flatMap((item) => byKey.get(item.key) ?? []),
+        inProgress: items.filter((item) => item.group === 'started').length,
+        needsYou: items.filter((item) => item.group === 'needsYou').length };
     },
-    [hostApi, sharedScope, snapshot.window, surfaceContext.targetedContributions, tasksOnly],
+    [hostApi, sharedScope, shownRows, snapshot.window, surfaceContext.targetedContributions, tasksOnly],
   );
+  const rows = view?.rows;
   const openPage = React.useCallback(() => {
     void hostApi.openSurface(tasksOnly ? TRIAGE_TASK_DETAIL_DESTINATION_V1 : TRIAGE_ENTRY_DETAIL_DESTINATION_V1,
       undefined, { subPath: tasksOnly ? 'tasks,mine' : '' }).catch(() => undefined);
@@ -123,11 +133,23 @@ export function TriageLatestWidget({ tasksOnly = false }: Readonly<{ tasksOnly?:
     ? <IconButton icon={<Icon name="add" size="small" />} accessibilityLabel={newTaskLabel} onPress={createTask}
       testID="triage-tasks-widget.new" />
     : null), [createTask, newTaskLabel, tasksOnly]);
+  // The frame names the plugin's page each glance comes from, "Tasks" or "PRs & Issues", not the whole plugin; its
+  // one live fact is the count the page leads with: in progress on My tasks, needs you on PRs & Issues.
+  const inProgress = view?.inProgress ?? 0;
+  const needsYou = view?.needsYou ?? 0;
   const header = <PaneHeaderContent
     caption={tasksOnly ? text('plugins.triage.tasks.title', 'Tasks') : TRIAGE_DISPLAY_NAME}
+    line={tasksOnly
+      ? inProgress > 0 ? [text('plugins.triage.tasks.widget.inProgress', '{count} in progress', { count: inProgress })] : []
+      : needsYou > 0 ? [{ text: text('plugins.triage.sessionLinks.needsYouCount', '{count} needs you', { count: needsYou }), attention: true }] : []}
     {...(headerActions === null ? {} : { actions: headerActions })}
     // The frame's one footer link, "Open Tasks": the way to every row this glance leaves out.
     onOpen={openPage} />;
+  // A glance says a degraded read in one quiet line under its rows, never a card above them: the page beside it owns
+  // the source notice and its repair (one cause, said once, at the owner that can fix it). The line names the source
+  // that failed when there is one; its words stay quiet and only the dot carries the warning (owner tone ruling
+  // 2026-10-31). Unfinished coverage is said only on My tasks, whose "most pressing first" it would falsify; the
+  // newest entries read so far are still the newest.
   const degradedLine = shellState.kind !== 'window' ? null : shellState.showReadWarning
     ? <Status testID="triage-latest-widget.degraded" tone="warning" presentation="inline" label={shellState.failure === null
       ? text('plugins.triage.surface.lastKnown', 'Showing the last known list')
@@ -168,24 +190,45 @@ export function TriageLatestWidget({ tasksOnly = false }: Readonly<{ tasksOnly?:
   }
 
   if (rows.length === 0) {
-    if (tasksOnly) return <>{header}<EmptyState layout="line" title={text('plugins.triage.tasks.myTasks', 'My tasks')}
-      description={text('plugins.triage.tasks.description', 'Your work, and the agents working with you.')}
-      action={<Button title={text('plugins.triage.tasks.title', 'Tasks')} variant="plain" onPress={openPage} />} />{degradedLine}</>;
-    return snapshot.configuredSources.length === 0 ? (
-      <>{header}<EmptyState
+    // Nothing open: say so once (the frame already says "My tasks") and offer the one next step, a new task, through
+    // the same draft handoff a message's Create task uses. Happier tasks need no source or Machine.
+    // The frame sizes and centres every state here (a card's scene step, or one line in a compact footprint), so
+    // these states pass no size. A degraded read keeps its scene off: the scene is for an answer that settled.
+    if (tasksOnly) return <>{header}<EmptyState testID="triage-latest-widget.empty"
+      {...(degradedLine === null ? { scene: readTriageListEmptyScene('taskStart') } : {})}
+      title={text('plugins.triage.tasks.empty.title', 'No tasks here')}
+      description={text('plugins.triage.tasks.widget.empty.description', 'Your open tasks show here, most pressing first.')}
+      action={<Button title={text('plugins.triage.tasks.new', 'New task')} onPress={createTask} />} />{degradedLine}</>;
+    // First run: what this card will hold, and the one way to fill it, which opens the page's own source tiles.
+    if (shellState.kind === 'configureSources') return (<>{header}
+      <EmptyState
         testID="triage-latest-widget.noSources"
-        layout="line"
-        titleKey="plugins.triage.widget.noSources"
-        title="Connect a source to see new pull requests and issues here."
-        action={<Button titleKey="plugins.triage.widget.setUp" title="Set up" onPress={openPage} />}
-      />{degradedLine}</>
-    ) : (
-      <>{header}<EmptyState
+        scene="reviewApproved"
+        title={text('plugins.triage.widget.noSources', 'No sources connected yet')}
+        description={text('plugins.triage.widget.noSources.description', 'New pull requests, issues and alerts show here.')}
+        action={<Button title={text('plugins.triage.surface.firstRun.connect.title', 'Connect a source')} onPress={openPage} />}
+      /></>
+    );
+    // What an empty list may claim is the page's one decision (`ui/shell/emptyState.ts`): "nothing new" only when
+    // every source answered; a failed or unfinished read says so instead, in the same words the page uses.
+    const empty = readTriageListEmptyState(shellState, 0, { narrowing: NOT_NARROWED, text });
+    if (empty !== null && empty.kind !== 'healthy') {
+      const keys = readTriageListEmptyStateKeys(empty.kind);
+      return (<>{header}
+        <EmptyState
+          testID="triage-latest-widget.empty"
+          title={keys.title === '' ? empty.title : text(keys.title, empty.title)}
+          description={keys.description === '' ? empty.description : text(keys.description, empty.description)}
+        /></>
+      );
+    }
+    return (<>{header}
+      <EmptyState
         testID="triage-latest-widget.empty"
-        layout="line"
-        titleKey="plugins.triage.widget.empty"
-        title="Nothing new right now"
-      />{degradedLine}</>
+        scene={readTriageListEmptyScene('healthy')}
+        title={text('plugins.triage.widget.empty', 'Nothing new right now')}
+        description={text('plugins.triage.widget.empty.description', 'Pull requests, issues and alerts show here as they arrive.')}
+      /></>
     );
   }
 
@@ -193,7 +236,7 @@ export function TriageLatestWidget({ tasksOnly = false }: Readonly<{ tasksOnly?:
     <>
     {header}
     <ItemGroup testID="triage-latest-widget.rows">
-      {rows.slice(0, shownRows).map((row) => {
+      {rows.map((row) => {
         const display = projectTriageEntryDisplay(row, text);
         // The page's row mark and detail tone (one owner): the entry's kind glyph, loud only when it
         // needs the reader.
@@ -233,7 +276,7 @@ export function TriageLatestWidget({ tasksOnly = false }: Readonly<{ tasksOnly?:
             testID={`triage-latest-widget.row.${display.key}`}
             title={display.title}
             titleNumberOfLines={1}
-            subtitle={display.scopeLabel}
+            subtitle={readTriageRowBylinePlaceV1(display)}
             subtitleNumberOfLines={1}
             icon={<Icon name={mark.name} size="small" tone={mark.tone} />}
             {...(display.detail === null ? {} : { detail: display.detail, detailNumberOfLines: 1 })}

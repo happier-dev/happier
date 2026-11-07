@@ -55,7 +55,7 @@ export type TriageMountedSavedViewsV1 = Readonly<{
   /** Read the current catalog for an explicit selection; refusals never return the retained set. */
   refresh(signal: AbortSignal): Promise<CorpusSavedViewsReadV1 | null>;
   /**
-   * Run one explicit create/rename/update/delete/select.
+   * Run one explicit create/rename/update/delete.
    *
    * It resolves to the authoritative projection when the owner applied the
    * write, and to `null` for every settled refusal — so a caller can make the
@@ -147,7 +147,6 @@ export function useTriageSavedViews(): TriageMountedSavedViewsV1 {
         const projection = readTriageSavedViewsProjectionV1({
           availability: 'parsed',
           views: result.views ?? [],
-          selectedViewId: result.selectedViewId ?? null,
         });
         setSaved(projection);
         if (result.revision === undefined || result.viewId === undefined) {

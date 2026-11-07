@@ -1,15 +1,15 @@
 import {
   formatTriageTimestampV1,
   type TriageLinkedSessionProjectionV1,
+  type TriageSourceKindGlyphV1,
   type TriageSourceDescriptorV1,
   type TriageSourceEntrySnapshotV1,
   type TriageSourceWorkflowSubjectV1,
 } from '@happier-dev/triage-protocol/v1';
-import { readTriageAttentionReasonIconV1 } from '../../corpus/attention/deriveAttention.js';
+import { readTriageAttentionReasonDangerV1, readTriageAttentionReasonIconV1 } from '../../corpus/attention/deriveAttention.js';
 
 import type { ProjectedObservationV1 } from '../../corpus/fold/projectedObservation.js';
 import type { TriageListLaneV1, TriageListRowV1 } from '../../projection/listWindow.js';
-import { readTriageLaneFailure } from '../../projection/sourceHealth.js';
 import { projectTriageEntryDisplay, type TriageEntryDisplayTextV1, type TriageEntryDisplayV1 } from '../window/entryDisplay.js';
 
 /**
@@ -60,6 +60,8 @@ export type TriageDetailHeaderV1 = Readonly<{
    * nobody has declared.
    */
   workflowSubject: TriageSourceWorkflowSubjectV1 | null;
+  /** The mark the source declares for this kind, replacing its subject's while it is active (a security alert's shield). */
+  kindGlyph: TriageSourceKindGlyphV1 | null;
   scopeLabel: string | null;
   /** The provider's own state word when it sent one. */
   stateLabel: string | null;
@@ -71,6 +73,14 @@ export type TriageDetailHeaderV1 = Readonly<{
   sourcePluginId: string;
   /** Where the entry lives, in the source's own address for it ("owner/repo #2476"). */
   addressLabel: string | null;
+  /**
+   * The breadcrumb above the title, outermost first: the entry's scope, then its own designation
+   * (["tidewater/checkout-web", "#2476"]). Read from the source's own two facts, never by splitting the
+   * address. `null` with no present answer.
+   */
+  breadcrumb: readonly string[] | null;
+  /** A pull/merge request's branch pair as the source names it; `null` when unknown or not a branch-based kind. */
+  branches: Readonly<{ head: string; base: string }> | null;
   /** Who opened it: "You" when the reader did, else the source's author name (the row display's rule). */
   authorLabel: string | null;
   /** When the source says it was opened, on the source's clock. */
@@ -81,21 +91,13 @@ export type TriageDetailHeaderV1 = Readonly<{
    */
   sourceConnections: number;
   /** The facts the row's kind glyph and its tone are read from, so the header wears the row's own mark. */
-  markFacts: Pick<TriageEntryDisplayV1, 'lifecyclePresentation' | 'detailKind' | 'tone'>;
+  markFacts: Pick<TriageEntryDisplayV1, 'lifecyclePresentation' | 'detailKind' | 'tone' | 'detailDanger'>;
   /** Why this entry is asking for the reader, in the source's own words. */
-  attention: Readonly<{ level: 'required' | 'suggested'; reasonLabel: string; icon: string | null }> | null;
+  attention: Readonly<{ level: 'required' | 'suggested'; reasonLabel: string; icon: string | null; danger: boolean }> | null;
+  /** When the selected connection last answered for this entry; what a failed read says it still holds. */
+  lastReadAtMs: number | null;
   /** How the aggregate's own knowledge of this entry stands right now. */
   presence: 'present' | 'absent' | 'unresolved';
-  /**
-   * The connection this detail is read through answered the last pass with a
-   * typed failure.
-   *
-   * A connection the pass never asked is not one of these and never will be:
-   * `projection/sourceHealth.ts` owns that distinction, and collapsing it here
-   * is how the header came to tell a reader that a connection nothing asked
-   * "did not answer".
-   */
-  sourceReadFailed: boolean;
   webUrl: string | null;
   linkedSessions: readonly TriageLinkedSessionProjectionV1[];
   linkedSessionsHasMore: boolean;
@@ -145,10 +147,6 @@ export function projectTriageDetailHeaderV1(
   const { row } = input;
   const observation = selectedObservation(row);
   const present = observation?.outcome.kind === 'present' ? observation.outcome : null;
-  const selectedInstanceId = row.selected.kind === 'selected' ? row.selected.sourceInstanceId : null;
-  const lane = selectedInstanceId === null
-    ? undefined
-    : input.lanes.find((candidate) => candidate.sourceInstanceId === selectedInstanceId);
 
   const descriptor = input.sourceDescriptor;
   const kind = descriptor?.kinds.find((candidate) => candidate.id === row.entryRef.kindId);
@@ -162,6 +160,8 @@ export function projectTriageDetailHeaderV1(
     sourceLabel: descriptor?.displayName ?? null,
     kindLabel: kind?.displayName ?? null,
     workflowSubject: kind?.workflowSubject ?? null,
+    kindGlyph: kind?.glyph ?? null,
+    lastReadAtMs: observation?.observedAtMs ?? null,
     scopeLabel: present?.snapshot.scopeLabel ?? null,
     stateLabel: present?.snapshot.state.nativeLabel ?? null,
     lifecyclePresentation: present?.snapshot.state.presentation ?? null,
@@ -170,11 +170,17 @@ export function projectTriageDetailHeaderV1(
     // A source may address an entry by its own title (a personal task): saying it twice is not an address.
     addressLabel: (present?.locator.displayPath !== undefined && present.locator.displayPath !== present.snapshot.title
       ? present.locator.displayPath : undefined) ?? present?.snapshot.scopeLabel ?? null,
+    breadcrumb: present === null ? null : Object.freeze([
+      present.snapshot.scopeLabel,
+      ...(present.snapshot.designation === undefined ? [] : [present.snapshot.designation]),
+    ]),
+    branches: present?.snapshot.branches ?? null,
     authorLabel: display.authorLabel,
     markFacts: Object.freeze({
       lifecyclePresentation: display.lifecyclePresentation,
       detailKind: display.detailKind,
       tone: display.tone,
+      ...(display.detailDanger === true ? { detailDanger: true as const } : {}),
     }),
     openedAtMs: present?.snapshot.createdAtMs ?? null,
     sourceConnections: input.lanes.filter((candidate) => candidate.source.pluginId === row.entryRef.source.pluginId
@@ -184,13 +190,9 @@ export function projectTriageDetailHeaderV1(
       reasonLabel: row.attention.reasonLabel,
       // The same mark the row's chip leads with, from the one reason-icon owner.
       icon: readTriageAttentionReasonIconV1(row.attention.reasonId),
+      danger: readTriageAttentionReasonDangerV1(row.attention.reasonId),
     }),
     presence: row.presence.kind,
-    // Only the connection this detail runs under, and only through the one
-    // health owner. Another connection failing is aggregate list health and is
-    // already said beside the list; repeating it here would attribute it to the
-    // entry on screen.
-    sourceReadFailed: readTriageLaneFailure(lane) !== null,
     webUrl: present?.locator.webUrl ?? null,
     linkedSessions: input.linkedSessions,
     linkedSessionsHasMore: input.linkedSessionsHasMore,
@@ -198,8 +200,8 @@ export function projectTriageDetailHeaderV1(
 }
 
 /**
- * The line under the detail title: where the entry lives, then who opened it and when ("example/repository #17 ·
- * You opened 42 minutes ago"). The source's brand mark leads it and the kind glyph sits beside the title, so the
+ * The line under the detail title: where the entry lives, a pull request's branch pair, then who opened it and when
+ * ("example/repository #17 · leeroy/server-rounding → main · You opened 42 minutes ago"). The source's brand mark leads it and the kind glyph sits beside the title, so the
  * source's name and the state word are not repeated in words. The connection is named only when the reader has
  * more than one connection to this source, which is the only time there is one to tell apart.
  */
@@ -218,6 +220,9 @@ export function readTriageDetailContextLineV1(
       : text('plugins.triage.surface.detail.openedBy', '{author} opened {age}', { author: header.authorLabel, age });
   const parts = [
     header.addressLabel,
+    header.branches === null
+      ? null
+      : text('plugins.triage.surface.detail.branches', '{head} → {base}', { head: header.branches.head, base: header.branches.base }),
     opened,
     header.connectionLabel === null || header.sourceConnections < 2
       ? null

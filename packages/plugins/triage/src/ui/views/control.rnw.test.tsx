@@ -3,20 +3,17 @@ import * as React from 'react';
 import { act } from 'react';
 import { afterEach, expect, it } from 'vitest';
 import { createPluginUiTestkit, createSurfaceContextFixture, type PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
-import { Button, Text, defineUiSurface } from '@happier-dev/plugin-ui';
+import { Button, defineUiSurface } from '@happier-dev/plugin-ui';
 import { PluginUiProvider } from '@happier-dev/plugin-ui/advanced';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 
 import { CORPUS_DEFAULT_SMART_POLICY_V1 } from '../../corpus/query/smartPolicy.js';
 import { TRIAGE_LIST_NO_FILTERS_V1 } from '../../projection/listWindow.js';
 import {
-  CORPUS_EMPTY_SAVED_VIEWS_V1, TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1,
-  mutateTriageSavedViews, readTriageSavedViews, type CorpusSavedViewCommandV1,
+  TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1, mutateTriageSavedViews,
 } from '../../settings/savedViews.js';
 import { createTestkitAccountKv } from '../../settings/testkit/accountKv.test-support.js';
 import { useTriageViewsControl } from './control.js';
-import { readTriageSavedViewLensStatusV1 } from './divergence.js';
-import { triageRenameSavedViewInputV1, triageUpdateSavedViewInputV1, type TriageSavedViewLensV1 } from './savedViewsCommand.js';
 import { pressToolbarMenuItem } from '../shell/toolbarMenus.test-support.js';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -32,79 +29,6 @@ async function typeName(value: string) {
     input!.dispatchEvent(new Event('input', { bubbles: true }));
   });
 }
-
-it('keeps select/create/rename/update/delete at Triage’s durable Account owner through the shared picker', async () => {
-  const account = createTestkitAccountKv();
-  const deps = {
-    catalog: account.catalog(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1),
-    mintViewId: () => '00000001-0000-4000-8000-000000000000',
-  };
-  const initialLens: TriageSavedViewLensV1 = {
-    query: 'review', filters: TRIAGE_LIST_NO_FILTERS_V1, order: 'oldest',
-    smartPolicy: CORPUS_DEFAULT_SMART_POLICY_V1, view: 'board',
-  };
-  function Surface() {
-    const [catalog, setCatalog] = React.useState(CORPUS_EMPTY_SAVED_VIEWS_V1);
-    const [lens, setLens] = React.useState(initialLens);
-    const selected = catalog.views.find((view) => view.viewId === catalog.selectedViewId) ?? null;
-    async function apply(command: CorpusSavedViewCommandV1) {
-      const result = await mutateTriageSavedViews(deps, command);
-      if (result.status !== 'applied') return false;
-      setCatalog(result.value);
-      if (command.kind === 'select') {
-        const view = result.value.views.find((entry) => entry.viewId === result.value.selectedViewId);
-        if (view) setLens(view);
-      }
-      return true;
-    }
-    const revision = () => account.revision(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1);
-    const { control, details } = useTriageViewsControl({
-      views: catalog.views, selectedViewId: catalog.selectedViewId,
-      status: readTriageSavedViewLensStatusV1({ selected, lens }),
-      namesUnavailableSources: false, busy: false, unavailableReason: null,
-      unreadable: false, notice: null, text: (_key, fallback) => fallback,
-      onSelectView: (viewId) => { void apply({ kind: 'select', viewId, expectedRevision: revision() }); },
-      onCreateView: (label) => apply({ ...lens, kind: 'create', label, select: true, expectedRevision: revision() }),
-      onRenameView: (view, label) => apply(triageRenameSavedViewInputV1(view, label, revision())),
-      onUpdateView: (view) => { void apply(triageUpdateSavedViewInputV1(view, lens, revision())); },
-      onDeleteView: (view) => { void apply({ kind: 'delete', viewId: view.viewId, expectedRevision: revision() }); },
-    });
-    return <>{control}{details}<Text>{lens.query}</Text><Button title="Edit lens" onPress={() => {
-      setLens({ ...lens, query: 'changed', order: 'newest', view: 'list' });
-    }} /></>;
-  }
-  let fixture!: PluginUiTestkit;
-  await act(async () => { fixture = await createPluginUiTestkit({
-    identity: { instanceId: 'triage-views', mountNonce: 'triage-views' },
-    authorPlugin: { id: 'happier.triage', version: '0.0.0' },
-    surface: defineUiSurface(() => <Surface />), surfaceContext: createSurfaceContextFixture(),
-    adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true }),
-  }); });
-  mounted.push(fixture);
-  const press = async (name: string) => { await act(async () => { await fixture.press(await fixture.getByRole('button', { name })); }); };
-  const stored = async () => (await readTriageSavedViews(deps)).value;
-  await pressToolbarMenuItem(fixture, 'Views', 'menuitem', 'Save as new view');
-  await typeName('My review');
-  expect(await stored()).toEqual(CORPUS_EMPTY_SAVED_VIEWS_V1);
-  await press('Save view');
-  const created = await stored();
-  expect(created.selectedViewId).toBe(created.views[0]?.viewId);
-  expect(created.views[0]).toMatchObject({ label: 'My review', ...initialLens });
-  await press('Edit lens');
-  expect(await stored()).toEqual(created);
-  await pressToolbarMenuItem(fixture, 'Views', 'menuitem', 'Rename');
-  await typeName('Renamed review');
-  await press('Save view');
-  expect((await stored()).views[0]).toMatchObject({ label: 'Renamed review', ...initialLens });
-  await pressToolbarMenuItem(fixture, 'Views', 'menuitem', 'Update this view');
-  expect((await stored()).views[0]).toMatchObject({ label: 'Renamed review', query: 'changed', order: 'newest', view: 'list' });
-  await pressToolbarMenuItem(fixture, 'Views', 'menuitemradio', 'No saved view');
-  expect((await stored()).selectedViewId).toBeNull();
-  await pressToolbarMenuItem(fixture, 'Views', 'menuitemradio', 'Renamed review');
-  expect((await stored()).selectedViewId).toBe(created.selectedViewId);
-  await pressToolbarMenuItem(fixture, 'Views', 'menuitem', 'Delete');
-  expect(await stored()).toEqual(CORPUS_EMPTY_SAVED_VIEWS_V1);
-});
 
 it('withdraws Triage’s private naming draft when the captured Account host changes while a save is pending', async () => {
   const accounts = { a: createTestkitAccountKv(), b: createTestkitAccountKv() };
@@ -123,7 +47,7 @@ it('withdraws Triage’s private naming draft when the captured Account host cha
           catalog: boundary.catalog(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1),
           mintViewId: () => '00000001-0000-4000-8000-000000000000',
         }, {
-          kind: 'create', label, select: true, expectedRevision: boundary.revision(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1),
+          kind: 'create', label, expectedRevision: boundary.revision(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1),
           query: '', filters: TRIAGE_LIST_NO_FILTERS_V1, order: 'newest', smartPolicy: CORPUS_DEFAULT_SMART_POLICY_V1,
         });
         return result.status === 'applied';

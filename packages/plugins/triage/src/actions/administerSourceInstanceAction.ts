@@ -71,9 +71,6 @@ export function createTriageAdministerSourceInstanceActionHandler(
             || input.source.localId !== selectedSource?.localId)) return { kind: 'invalidCaller' };
         const resolution = await resolveTriageCallerSource(context, cancellation, selectedSource);
         if (resolution.kind === 'invalidCaller') return { kind: 'invalidCaller' };
-        // The admitted view moved under this invocation, so the caller just
-        // resolved is no longer the one the write would belong to.
-        if (resolution.kind === 'currentnessConflict') return { kind: 'currentnessConflict' };
         const caller = resolution.caller;
 
         return await administerConfiguredSourceInstance({

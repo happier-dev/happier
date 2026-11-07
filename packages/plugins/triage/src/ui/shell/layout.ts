@@ -16,6 +16,14 @@
 export const TRIAGE_SPLIT_LIST_RATIO_PREFERENCE_V1 = 0.37;
 
 /**
+ * The board's narrowest card at normal text size. The approved board (`c7-merged.html`) gives each card about 276 pt
+ * of a 1440 window; narrower, a two-line title breaks to a word per line and the reason chip meets the mark. When the
+ * columns cannot all keep it (the detail pane open beside the board, a narrow window) the board scrolls sideways
+ * rather than squeezing every card.
+ */
+export const TRIAGE_BOARD_CARD_MIN_WIDTH_V1 = 280;
+
+/**
  * Minimum legible measure for the row title, in characters. Below it the
  * design's two-line tail-truncated title can no longer show the discriminating
  * part of an identifier, which is the row's whole scanning purpose.

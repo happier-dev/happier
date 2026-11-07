@@ -24,6 +24,7 @@ describe('resolveTriageEffectiveView', () => {
     it('resolves the deterministic unsaved default when no view is selected', () => {
         const resolved = resolveTriageEffectiveView({
             saved: { kind: 'absent', value: CORPUS_EMPTY_SAVED_VIEWS_V1 },
+            selectedViewId: null,
             configuredSources: [GITHUB],
         });
 
@@ -42,7 +43,8 @@ describe('resolveTriageEffectiveView', () => {
     it('applies the selected view exactly, without reinterpreting its lens', () => {
         const selected = view();
         const resolved = resolveTriageEffectiveView({
-            saved: { kind: 'parsed', value: { v: 1, views: [selected], selectedViewId: selected.viewId } },
+            saved: { kind: 'parsed', value: { v: 1, views: [selected] } },
+            selectedViewId: selected.viewId,
             configuredSources: [GITHUB, SENTRY],
         });
 
@@ -59,7 +61,8 @@ describe('resolveTriageEffectiveView', () => {
     it('keeps the stored lens and names the removed source instead of silently widening the view', () => {
         const selected = view();
         const resolved = resolveTriageEffectiveView({
-            saved: { kind: 'parsed', value: { v: 1, views: [selected], selectedViewId: selected.viewId } },
+            saved: { kind: 'parsed', value: { v: 1, views: [selected] } },
+            selectedViewId: selected.viewId,
             // The user removed their GitHub source after saving this view.
             configuredSources: [SENTRY],
         });
@@ -82,7 +85,8 @@ describe('resolveTriageEffectiveView', () => {
             },
         });
         const resolved = resolveTriageEffectiveView({
-            saved: { kind: 'parsed', value: { v: 1, views: [selected], selectedViewId: selected.viewId } },
+            saved: { kind: 'parsed', value: { v: 1, views: [selected] } },
+            selectedViewId: selected.viewId,
             configuredSources: [],
         });
 
@@ -92,6 +96,7 @@ describe('resolveTriageEffectiveView', () => {
     it('falls back to the unsaved default and says so when the stored views cannot be read', () => {
         const resolved = resolveTriageEffectiveView({
             saved: { kind: 'unreadable', value: CORPUS_EMPTY_SAVED_VIEWS_V1 },
+            selectedViewId: null,
             configuredSources: [GITHUB],
         });
 
@@ -106,7 +111,8 @@ describe('resolveTriageEffectiveView', () => {
     it('resolves the unsaved default when the selection names no stored view', () => {
         const selected = view();
         const resolved = resolveTriageEffectiveView({
-            saved: { kind: 'parsed', value: { v: 1, views: [selected], selectedViewId: 'other' } },
+            saved: { kind: 'parsed', value: { v: 1, views: [selected] } },
+            selectedViewId: 'other',
             configuredSources: [GITHUB],
         });
 

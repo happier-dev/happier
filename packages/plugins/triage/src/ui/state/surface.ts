@@ -35,9 +35,8 @@ import { hasSelectedTriageFacetV1 } from './narrowing.js';
  *
  * **`selectedViewId` is carried here**, and it now has a real producer. The
  * list's own compact **Views** control (`ui/views/control.tsx`) creates,
- * renames, selects and removes views, so selecting a view is an explicit
- * Account KV mutation whose applied projection becomes this
- * lens, id included.
+ * renames, selects and removes views. Selection applies the stored lens through
+ * the host's device-local page location, id included, without an Account KV write.
  *
  * Two rules about it are load-bearing:
  *

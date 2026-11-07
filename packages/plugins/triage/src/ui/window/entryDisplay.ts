@@ -3,12 +3,13 @@ import {
   type TriageSourceEntrySnapshotV1,
   type TriageSourceDescriptorV1,
   type TriageEntryRefV1,
+  type TriageSourceKindGlyphV1,
   type TriageSourceWorkflowSubjectV1,
 } from '@happier-dev/triage-protocol/v1';
 import type { PluginUiIconTokenV1 } from '@happier-dev/plugin-sdk/ui';
 
 import { triageEntryRowKey, type TriageListRowV1 } from '../../projection/listWindow.js';
-import { readTriageAttentionReasonIconV1 } from '../../corpus/attention/deriveAttention.js';
+import { readTriageAttentionReasonDangerV1, readTriageAttentionReasonIconV1 } from '../../corpus/attention/deriveAttention.js';
 
 /**
  * The one display projection of a window row.
@@ -46,6 +47,7 @@ const ENGLISH_TEXT: TriageEntryDisplayTextV1 = (_key, fallback = '') => fallback
 export function readTriageEntryGlyphV1(
   lifecycle: TriageEntryDisplayV1['lifecyclePresentation'],
   workflowSubject: TriageSourceWorkflowSubjectV1 | null,
+  kindGlyph: TriageSourceKindGlyphV1 | null = null,
 ): PluginUiIconTokenV1 {
   if (lifecycle === 'closed' || lifecycle === 'suppressed') return 'close';
   if (lifecycle === 'resolved') {
@@ -53,6 +55,7 @@ export function readTriageEntryGlyphV1(
   }
   // Active, or a lifecycle nobody has said yet (a pin no read has materialized, a source's `unknown`): the entry is
   // still the kind it is, so it keeps its kind's glyph rather than a generic info mark.
+  if (kindGlyph !== null) return kindGlyph;
   if (workflowSubject === 'issue') return 'issue';
   if (workflowSubject === 'errorIssue') return 'bug';
   if (workflowSubject === 'other') return 'info';
@@ -108,6 +111,8 @@ export type TriageEntryDisplayV1 = Readonly<{
   detailKind: TriageEntryDetailKindV1 | null;
   /** An attention reason's chip mark (a shared icon token name), or `null`. */
   detailIcon: string | null;
+  /** The attention reason is a failure rather than a request (a severe security finding): rose, never amber. */
+  detailDanger?: true;
   /**
    * Who opened the entry: "You" when the reader did, else the source's author
    * name, else `null` (a kind with no author, or a source that did not say).
@@ -208,6 +213,8 @@ export function projectTriageEntryDisplay(
     detailIcon: (detailKind === 'attention' || detailKind === 'suggestion') && row.attention != null
       ? readTriageAttentionReasonIconV1(row.attention.reasonId)
       : null,
+    ...(detailKind === 'attention' && row.attention != null && readTriageAttentionReasonDangerV1(row.attention.reasonId)
+      ? { detailDanger: true as const } : {}),
     authorLabel,
     designation: snapshot?.designation ?? null,
     lifecyclePresentation: snapshot?.state.presentation ?? null,

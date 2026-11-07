@@ -33,8 +33,8 @@ type TriageViewItem = Readonly<{ id: string; label: string; view: CorpusSavedVie
 
 /**
  * Triage binds its Account-owned views and notices to the public controlled
- * collection picker. Storage, durable selectedViewId and Rename/Update meaning
- * remain with savedViews.ts and savedViewsCommand.ts.
+ * collection picker. Catalog storage and Rename/Update meaning remain with
+ * savedViews.ts and savedViewsCommand.ts; selection uses the host page location.
  */
 export function useTriageViewsControl(props: TriageViewsControlPropsV1): Readonly<{
   control: React.ReactElement;

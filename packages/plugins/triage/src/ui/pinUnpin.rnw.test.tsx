@@ -36,6 +36,8 @@ import type { CorpusSourceInstanceRowV1 } from '../corpus/collections/rows.js';
 import { createTestkitCorpusCollections } from '../corpus/testkit/corpusCollections.test-support.js';
 import { createTestkitAccountKv } from '../settings/testkit/accountKv.test-support.js';
 import { linkEntryToSession } from '../sessions/entrySessionLinks.js';
+import { readTestkitSourceSessionLinks } from '../sessions/testkit/entrySessionTestkit.test-support.js';
+import { TRIAGE_READ_SOURCE_SESSION_LINKS_ACTION_LOCAL_ID_V1 } from '../actions/sessionLinksProtocol.js';
 import {
     testkitLocator,
     testkitSnapshot,
@@ -142,6 +144,9 @@ function createHarness(options: Readonly<{ withRowFacts?: boolean }> = {}) {
 
     async function executeAction(request: Readonly<{ action: unknown; input: unknown }>) {
         const action = String(request.action);
+        if (action === TRIAGE_READ_SOURCE_SESSION_LINKS_ACTION_LOCAL_ID_V1) {
+            return await readTestkitSourceSessionLinks(request.input, { collections, contributions: admitted });
+        }
         const marksAction = action === TRIAGE_SET_ENTRY_PINNED_ACTION_LOCAL_ID_V1
             || action === TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1;
         if (marksAction && state.marksUnreachable) {
@@ -359,8 +364,8 @@ describe('the mounted Pin/Unpin affordance', () => {
         // Dropping it would strand durable intent the reader could not remove.
         await expect(shell.getByText('A change this device has not read'))
             .resolves.toEqual({ content: 'A change this device has not read' });
-        await expect(shell.getByText('Not yet synchronized'))
-            .resolves.toEqual({ content: 'Not yet synchronized' });
+        await expect(shell.getByText('Open to read details'))
+            .resolves.toEqual({ content: 'Open to read details' });
 
         // The pin is removed from the row's one menu, like every other row: no inline control sits beside it.
         await expect(shell.queryByRole('button', { name: 'Unpin A change this device has not read' })).resolves.toBeUndefined();
@@ -436,7 +441,7 @@ describe('the mounted Pin/Unpin affordance', () => {
         await act(async () => {
             await refreshTriageListWindow('manual', shell.context.hostApi, harness.ephemeralSharedScope);
         });
-        await expect(shell.getByText('This entry is no longer in the list')).resolves.toBeDefined();
+        await expect(shell.getByText('These details are not loaded')).resolves.toBeDefined();
 
         await act(async () => {
             await shell.press(await shell.getByRole('button', {

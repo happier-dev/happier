@@ -19,7 +19,7 @@ export const CORPUS_SMART_PRECEDENCE_TUPLES_V1 = Object.freeze([
     Object.freeze(['activity', 'attention'] as const),
 ] as const);
 
-export type CorpusSmartPredicateV1 = 'attention' | 'activity';
+export type CorpusSmartPredicateV1 = (typeof CORPUS_SMART_PRECEDENCE_TUPLES_V1)[number][number];
 
 export type CorpusSmartPrecedenceV1 = (typeof CORPUS_SMART_PRECEDENCE_TUPLES_V1)[number];
 

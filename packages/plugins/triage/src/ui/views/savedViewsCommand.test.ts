@@ -70,12 +70,11 @@ describe('the surface’s saved-view commands', () => {
                 order: 'oldest',
                 smartPolicy: { v: 1, precedence: ['activity', 'attention'] },
             }],
-            selectedViewId: STORED.viewId,
             revision: REVISION,
         });
 
         expect(read.kind).toBe('parsed');
-        expect(read.value.selectedViewId).toBe(STORED.viewId);
+        expect(read.value).not.toHaveProperty('selectedViewId');
         expect(read.value.views[0]?.smartPolicy).toEqual({ v: 1, precedence: ['activity', 'attention'] });
         expect(read.value.views[0]?.query).toBe('authentication');
         expect(read.value.views[0]?.filters.sources).toEqual([{ source: SOURCE }]);
@@ -95,7 +94,6 @@ describe('the surface’s saved-view commands', () => {
                 order: 'newest',
                 smartPolicy: { v: 1, precedence: ['attention', 'attention'] },
             }],
-            selectedViewId: STORED.viewId,
             revision: REVISION,
         });
 
@@ -109,13 +107,11 @@ describe('the surface’s saved-view commands', () => {
         expect(readTriageSavedViewsProjectionV1({
             availability: 'unavailable',
             views: [],
-            selectedViewId: null,
             revision: REVISION,
         }).kind).toBe('unreadable');
         expect(readTriageSavedViewsProjectionV1({
             availability: 'absent',
             views: [],
-            selectedViewId: null,
         }).kind).toBe('absent');
     });
 });

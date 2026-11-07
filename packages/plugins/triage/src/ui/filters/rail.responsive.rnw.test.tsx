@@ -83,7 +83,7 @@ function listResult(): TriageListEntriesResultV1 {
     return TriageListEntriesResultV1Schema.parse({
         v: 1,
         configuredSources: [{
-            sourceInstanceId: INSTANCE,
+            sourceInstanceId: INSTANCE, configurationRowId: INSTANCE,
             source: SOURCE,
             displayLabel: 'Example account',
             available: true,

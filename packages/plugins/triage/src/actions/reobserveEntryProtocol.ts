@@ -8,6 +8,7 @@ import {
   TriageEntryLocatorV1Schema,
   TriageEntryRefV1Schema,
   TriageSourceInstanceIdV1Schema,
+  TriageTaskFieldsV1Schema,
 } from '@happier-dev/triage-protocol/v1';
 
 import { TriageProjectedObservationV1Schema } from './listEntriesProtocol.js';
@@ -19,6 +20,8 @@ export const TriageReobserveEntryInputV1Schema = defineProtocolObject({
   /** Private exact row address from source admission; never configuration authority. */
   sourceInstanceRowId: TriageIdentifierV1ProtocolSchema.optional(),
   lastKnownLocator: TriageEntryLocatorV1Schema.optional(),
+  /** Exact edit recovery only; full field values never enter the list projection. */
+  includeTaskFields: defineProtocolLiteral(true).optional(),
 }, { policy: 'closed' });
 export type TriageReobserveEntryActionInputV1 = ReturnType<
   typeof TriageReobserveEntryInputV1Schema.parse
@@ -29,6 +32,7 @@ export const TriageReobserveEntryResultV1Schema = defineProtocolUnion([
     kind: defineProtocolLiteral('observed'),
     entryRef: TriageEntryRefV1Schema,
     observation: TriageProjectedObservationV1Schema,
+    taskFields: TriageTaskFieldsV1Schema.optional(),
   }, { policy: 'closed' }),
   defineProtocolObject({ kind: defineProtocolLiteral('unavailable') }, { policy: 'closed' }),
   defineProtocolObject({ kind: defineProtocolLiteral('rejected') }, { policy: 'closed' }),

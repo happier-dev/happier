@@ -1,21 +1,25 @@
 import type { TriageDataActionContext, TriageDataActionHandler } from './dataContext.js';
 
 import { throwIfAborted } from '@happier-dev/plugin-sdk/async';
+import { isPluginError } from '@happier-dev/plugin-sdk';
 import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, TriageTaskWriteResultV1Schema, type TriageTaskWriteResultV1 } from '@happier-dev/triage-protocol/v1';
 import { bindCorpusCollections } from '../corpus/collections/bindCorpusCollections.js';
 import { CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../corpus/collections/ids.js';
 import { configuredSourceInstanceIsOwnedBy, findConfiguredSourceInstanceRow } from '../corpus/configuration/administerConfiguredSourceInstance.js';
 import { renderSourceQualifiedId } from '../corpus/identity/components.js';
 import { qualifySourceObservation } from '../corpus/fold/qualify.js';
-import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../manifest.js';
+import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../definition.js';
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
 import { isTriageHostActionCaller } from './callerSource.js';
 import { indexTriageAdmittedSourcesV1 } from './listEntries.js';
 import type {
     TriageCreateTaskActionInputV1,
+    TriageCreateTaskActionResultV1,
     TriageEditTaskActionInputV1,
     TriageTransitionTaskActionInputV1,
 } from './tasksProtocol.js';
+import { TRIAGE_LINK_ENTRY_TO_SESSION_ACTION_LOCAL_ID_V1, TriageLinkEntryToSessionActionResultV1Schema } from './sessionLinksProtocol.js';
+import { TRIAGE_TASKS_SET_ORIGIN_ERROR_ACTION_LOCAL_ID_V1, TriageSetTaskOriginErrorResultV1Schema } from './taskOriginProtocol.js';
 
 type TaskWriteRequest =
     | Readonly<{ role: 'create'; input: TriageCreateTaskActionInputV1 }>
@@ -84,8 +88,12 @@ async function writeTask(request: TaskWriteRequest, context: TriageDataActionCon
         if (request.role === 'create') {
             const operation = source.operations.create;
             if (operation === undefined) return { kind: 'refused', reason: 'unsupportedOperation' };
+            if (request.input.initialStatusId !== undefined && kind.taskCapabilities?.initialStatuses === undefined) {
+                return { kind: 'refused', reason: 'unsupportedField' };
+            }
             return acceptResult(await context.services.actions.executeAdmittedTargetedOperation(operation, {
                 v: 1, instance: configured, kindId: request.input.kindId, fields: request.input.fields,
+                ...(request.input.initialStatusId === undefined ? {} : { initialStatusId: request.input.initialStatusId }),
             }, options));
         }
         const entry = request.input.entryRef;
@@ -105,14 +113,52 @@ async function writeTask(request: TaskWriteRequest, context: TriageDataActionCon
         if (operation === undefined) return { kind: 'refused', reason: 'unsupportedOperation' };
         return acceptResult(await context.services.actions.executeAdmittedTargetedOperation(operation, {
             ...addressed, transitionId: request.input.transitionId,
+            ...(request.input.fieldValues === undefined ? {} : { fieldValues: request.input.fieldValues }),
         }, options));
     } finally {
         observation.dispose();
     }
 }
 
-export function createTriageCreateTaskActionHandler(): TriageDataActionHandler<TriageCreateTaskActionInputV1, TriageTaskWriteResultV1> {
-    return async (input, context) => await writeTask({ role: 'create', input }, context);
+export function createTriageCreateTaskActionHandler(): TriageDataActionHandler<TriageCreateTaskActionInputV1, TriageCreateTaskActionResultV1> {
+    return async (input, context) => {
+        const creation = await writeTask({ role: 'create', input }, context);
+        // A response-loss create is never replayed, and its uncertain observation cannot authorize a link.
+        if (creation.kind !== 'applied' || input.linkSession === undefined && input.originError === undefined) return creation;
+        const entryRef = { source: input.source, ...creation.observation.localRef };
+        const attemptLink = async (link: () => Promise<'linked' | 'failed' | 'unknown'>) => {
+            if (context.signal.aborted) return 'failed' as const;
+            try {
+                return await link();
+            } catch (error) {
+                return isPluginError(error) && (error.code === 'denied' || error.code === 'cancelled') ? 'failed' as const : 'unknown' as const;
+            }
+        };
+        const linkSession = input.linkSession;
+        const sessionLink = linkSession === undefined ? undefined : await attemptLink(async () => {
+            const result = TriageLinkEntryToSessionActionResultV1Schema.parse(await context.services.actions.execute({
+                pluginId: context.plugin.id, localId: TRIAGE_LINK_ENTRY_TO_SESSION_ACTION_LOCAL_ID_V1,
+            }, {
+                v: 1, sessionId: linkSession, sourceInstanceId: input.sourceInstanceId, entryRef,
+                display: { locator: creation.observation.locator, scopeLabel: creation.observation.snapshot.scopeLabel },
+            }, { signal: context.signal }));
+            return result.status;
+        });
+        const originError = input.originError;
+        const originErrorLink = originError === undefined ? undefined : await attemptLink(async () => {
+            const result = TriageSetTaskOriginErrorResultV1Schema.parse(await context.services.actions.execute({
+                pluginId: context.plugin.id, localId: TRIAGE_TASKS_SET_ORIGIN_ERROR_ACTION_LOCAL_ID_V1,
+            }, {
+                v: 1, entryRef, originError,
+                displayAtMark: { title: creation.observation.snapshot.title, scopeLabel: creation.observation.snapshot.scopeLabel },
+            }, { signal: context.signal }));
+            return result.status === 'linked' ? 'linked' : 'failed';
+        });
+        return { kind: 'createdAndLinkAttempted', creation,
+            ...(sessionLink === undefined ? {} : { sessionLink }),
+            ...(originErrorLink === undefined ? {} : { originErrorLink }),
+        };
+    };
 }
 export function createTriageEditTaskActionHandler(): TriageDataActionHandler<TriageEditTaskActionInputV1, TriageTaskWriteResultV1> {
     return async (input, context) => await writeTask({ role: 'edit', input }, context);

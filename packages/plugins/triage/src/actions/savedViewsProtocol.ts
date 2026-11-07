@@ -15,6 +15,7 @@ import {
     TriageSurfaceFilterSelectionV1Schema,
     TriageListSettledQueryV1Schema,
     TriageSmartPolicyV1Schema,
+    TriageListOrderV1Schema,
 } from './listEntriesProtocol.js';
 
 /**
@@ -24,7 +25,7 @@ import {
  * the one `triage.savedViews` CAS owner. A mount with direct Account Data binds
  * the same semantic owner to Account KV without crossing this wire. Nothing here is a second authority:
  * `savedViews.ts` still mints the view id, validates every bound, decides the
- * conflict verdict and owns the atomic clear of a deleted selection.
+ * conflict verdict. Device-local selection uses the mounted page Action.
  *
  * The lens on this wire is the exact source-neutral facet vocabulary the list
  * Action queries with — the same schema value, not a copy — so a saved lens and
@@ -42,16 +43,12 @@ const triageViewId = defineProtocolString({
     pattern: TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
 });
 
-const TriageSavedViewOrderV1Schema = defineProtocolUnion([
-    defineProtocolLiteral('newest'),
-    defineProtocolLiteral('oldest'),
-    defineProtocolLiteral('smart'),
-]);
-
 /** How the view presents its rows (`settings/savedViews.ts`); absent from a writer that predates views. */
-const TriageSavedViewPresentationV1Schema = defineProtocolUnion([
-    defineProtocolLiteral('list'),
-    defineProtocolLiteral('board'),
+export const TRIAGE_SAVED_VIEW_PRESENTATIONS_V1 = Object.freeze(['list', 'board'] as const);
+export const TriageSavedViewPresentationV1Schema = defineProtocolUnion([
+    defineProtocolLiteral(TRIAGE_SAVED_VIEW_PRESENTATIONS_V1[0]),
+    defineProtocolLiteral(TRIAGE_SAVED_VIEW_PRESENTATIONS_V1[1]),
+    ...TRIAGE_SAVED_VIEW_PRESENTATIONS_V1.slice(2).map(view => defineProtocolLiteral(view)),
 ]);
 
 const TriageSavedViewV1Schema = defineProtocolObject({
@@ -59,7 +56,7 @@ const TriageSavedViewV1Schema = defineProtocolObject({
     label: triageViewLabel,
     query: TriageListSettledQueryV1Schema,
     filters: TriageSurfaceFilterSelectionV1Schema,
-    order: TriageSavedViewOrderV1Schema,
+    order: TriageListOrderV1Schema,
     smartPolicy: TriageSmartPolicyV1Schema,
     view: TriageSavedViewPresentationV1Schema.optional(),
 }, { policy: 'closed' });
@@ -68,8 +65,6 @@ const TriageSavedViewV1Schema = defineProtocolObject({
 export const TriageSavedViewsCatalogValueV1Schema = defineProtocolObject({
     v: defineProtocolLiteral(1),
     views: defineProtocolArray(TriageSavedViewV1Schema),
-    // A stale selected id is cleared by the catalog owner after reading.
-    selectedViewId: defineProtocolString().nullable(),
 }, { policy: 'closed' });
 
 export const TriageReadSavedViewsInputV1Schema = defineProtocolObject({
@@ -93,7 +88,6 @@ export const TriageReadSavedViewsResultV1Schema = defineProtocolObject({
     v: defineProtocolLiteral(1),
     availability: TriageSavedViewsAvailabilityV1Schema,
     views: defineProtocolArray(TriageSavedViewV1Schema),
-    selectedViewId: defineProtocolUnion([triageViewId, defineProtocolLiteral(null)]),
     revision: TriageAccountKvRevisionV1Schema,
 }, { policy: 'closed' });
 export type TriageReadSavedViewsResultV1 = ReturnType<typeof TriageReadSavedViewsResultV1Schema.parse>;
@@ -102,16 +96,16 @@ const TriageSavedViewDraftV1Schema = {
     label: triageViewLabel,
     query: TriageListSettledQueryV1Schema,
     filters: TriageSurfaceFilterSelectionV1Schema,
-    order: TriageSavedViewOrderV1Schema,
+    order: TriageListOrderV1Schema,
     smartPolicy: TriageSmartPolicyV1Schema,
     view: TriageSavedViewPresentationV1Schema.optional(),
 } as const;
 
 /**
- * Explicit CRUD and selection, and nothing else.
+ * Explicit catalog CRUD, and nothing else.
  *
  * A temporary route or local lens change is deliberately unrepresentable here:
- * only an explicit save, update, delete or select may rewrite durable user
+ * only an explicit save, update or delete may rewrite durable user
  * state, so browsing a modified lens can never overwrite the view it started
  * from.
  */
@@ -121,7 +115,6 @@ export const TriageAdministerSavedViewInputV1Schema = defineProtocolUnion([
         kind: defineProtocolLiteral('create'),
         expectedRevision: TriageAccountKvRevisionV1Schema,
         ...TriageSavedViewDraftV1Schema,
-        select: defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]).optional(),
     }, { policy: 'closed' }),
     defineProtocolObject({
         v: defineProtocolLiteral(1),
@@ -134,12 +127,6 @@ export const TriageAdministerSavedViewInputV1Schema = defineProtocolUnion([
         v: defineProtocolLiteral(1),
         kind: defineProtocolLiteral('delete'),
         viewId: triageViewId,
-        expectedRevision: TriageAccountKvRevisionV1Schema,
-    }, { policy: 'closed' }),
-    defineProtocolObject({
-        v: defineProtocolLiteral(1),
-        kind: defineProtocolLiteral('select'),
-        viewId: defineProtocolUnion([triageViewId, defineProtocolLiteral(null)]),
         expectedRevision: TriageAccountKvRevisionV1Schema,
     }, { policy: 'closed' }),
 ]);
@@ -173,9 +160,8 @@ export const TriageAdministerSavedViewResultV1Schema = defineProtocolObject({
     ]).optional(),
     /** The authoritative set after an applied write; omitted otherwise. */
     views: defineProtocolArray(TriageSavedViewV1Schema).optional(),
-    /** The view the applied command acted on; `null` only for selecting no view. */
-    viewId: defineProtocolUnion([triageViewId, defineProtocolLiteral(null)]).optional(),
-    selectedViewId: defineProtocolUnion([triageViewId, defineProtocolLiteral(null)]).optional(),
+    /** The view the applied catalog command acted on. */
+    viewId: triageViewId.optional(),
     revision: TriageAccountKvRevisionV1Schema.optional(),
 }, { policy: 'closed' });
 export type TriageAdministerSavedViewResultV1 =
@@ -183,5 +169,5 @@ export type TriageAdministerSavedViewResultV1 =
 
 /** The authoritative saved-view read. */
 export const TRIAGE_READ_SAVED_VIEWS_ACTION_LOCAL_ID_V1 = 'views/read-v1';
-/** The one explicit create/update/delete/select write. */
+/** The one explicit create/update/delete write. */
 export const TRIAGE_ADMINISTER_SAVED_VIEW_ACTION_LOCAL_ID_V1 = 'views/administer-v1';

@@ -26,8 +26,8 @@ import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
  * `triage.savedViews` CAS owner.
  *
  * Neither is a second authority. `savedViews.ts` still mints the view id,
- * validates every bound before the write, decides the conflict verdict, clears a
- * deleted view's selection atomically, and declines to overwrite a stored value
+ * validates every bound before the write, decides the conflict verdict,
+ * and declines to overwrite a stored value
  * it cannot read. This module transports the caller's intent to it and projects
  * its answer back.
  */
@@ -65,7 +65,6 @@ export async function readTriageSavedViewsForSurface(
         // writer instead of offering to replace it.
         availability: read.kind === 'unreadable' ? 'unavailable' : read.kind,
         views: projectViews(read.value.views),
-        selectedViewId: read.value.selectedViewId,
         revision: read.revision,
     };
 }
@@ -73,7 +72,6 @@ export async function readTriageSavedViewsForSurface(
 function commandFrom(input: TriageAdministerSavedViewInputV1): CorpusSavedViewCommandV1 | null {
     const expectedRevision = input.expectedRevision;
     if (input.kind === 'delete') return { kind: 'delete', viewId: input.viewId, expectedRevision };
-    if (input.kind === 'select') return { kind: 'select', viewId: input.viewId, expectedRevision };
     // The wire bounds the policy's shape; the one canonical owner closes its
     // vocabulary, so a repeated predicate is refused here rather than ranked.
     const smartPolicy = parseCorpusSmartPolicy(input.smartPolicy);
@@ -91,7 +89,6 @@ function commandFrom(input: TriageAdministerSavedViewInputV1): CorpusSavedViewCo
             kind: 'create',
             expectedRevision,
             ...draft,
-            ...(input.select === undefined ? {} : { select: input.select }),
         }
         : { kind: 'update', viewId: input.viewId, expectedRevision, ...draft };
 }
@@ -119,7 +116,6 @@ export async function administerTriageSavedView(
         status: 'applied',
         views: projectViews(result.value.views),
         viewId: result.viewId,
-        selectedViewId: result.value.selectedViewId,
         revision: result.revision,
     };
 }

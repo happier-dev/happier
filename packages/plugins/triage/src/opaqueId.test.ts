@@ -61,7 +61,6 @@ describe('the Triage opaque-id owner', () => {
             expectedRevision: accountKv.revision(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1),
             label: 'Needs me',
             ...LENS,
-            select: true,
         });
         expect(written.status).toBe('applied');
 
@@ -71,7 +70,7 @@ describe('the Triage opaque-id owner', () => {
         const read = await readTriageSavedViews({ catalog: accountKv.catalog(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1) });
         expect(read.kind).toBe('parsed');
         expect(read.value.views.map((view) => view.label)).toEqual(['Needs me']);
-        expect(read.value.selectedViewId).toBe(read.value.views[0]?.viewId);
+        expect(read.value).not.toHaveProperty('selectedViewId');
         expect(accountKv.read(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1)).toBeDefined();
     });
 });

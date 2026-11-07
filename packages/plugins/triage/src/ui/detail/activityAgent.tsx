@@ -1,7 +1,6 @@
 import * as React from 'react';
 
 import {
-  Row,
   Text,
   type PluginTranslate,
   type SessionStateReadV1,
@@ -23,6 +22,7 @@ type TriageActivityEventV1 = TriageActivityAgentV1['events'][number];
 export function readTriageActivitySessionEventsV1(
   sessions: readonly TriageLinkedSessionProjectionV1[],
   reads: ReadonlyMap<string, SessionStateReadV1>,
+  text: PluginTranslate,
 ): readonly TriageActivityEventV1[] {
   const events: TriageActivityEventV1[] = [];
   for (const session of sessions) {
@@ -41,7 +41,7 @@ export function readTriageActivitySessionEventsV1(
       atMs: latest.createdAt,
       kind: 'session',
       actor: state.agent?.displayName ?? null,
-      summary: state.title,
+      summary: text('plugins.triage.surface.detail.activity.sessionWorked', 'Worked on {title}', { title: state.title }),
     });
   }
   return events;
@@ -62,21 +62,20 @@ export function readTriageActivityNextV1(
   return sentence.trim() === '' ? null : sentence;
 }
 
-/** The "Next:" line that closes the Activity, quiet, under the agent card. */
+/** The "Next:" line that closes the Activity's rail, quiet, under the agent card. */
 export function TriageActivityNext(
   props: Readonly<{ sentence: string; text: PluginTranslate }>,
 ): React.ReactElement {
   return (
-    <Row gap="xsmall" align="center" testID="triage-activity-next">
-      <Text
-        variant="meta"
-        tone="secondary"
-        value={props.text(
-          'plugins.triage.surface.detail.activity.next',
-          'Next: {sentence}',
-          { sentence: props.sentence },
-        )}
-      />
-    </Row>
+    <Text
+      testID="triage-activity-next"
+      variant="reading"
+      tone="secondary"
+      value={props.text(
+        'plugins.triage.surface.detail.activity.next',
+        'Next: {sentence}',
+        { sentence: props.sentence },
+      )}
+    />
   );
 }

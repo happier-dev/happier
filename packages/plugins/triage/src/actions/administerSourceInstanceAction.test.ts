@@ -4,6 +4,7 @@ import {
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
     TriageSourceInstanceDraftV1Schema,
+    type TriageGetResultV1,
     type TriageScanResultV1,
     type TriageSourceInstanceDraftV1,
 } from '@happier-dev/triage-protocol/v1';
@@ -12,12 +13,22 @@ import { describe, expect, it } from 'vitest';
 import type { CorpusCollectionsV1 } from '../corpus/collections/bindCorpusCollections.js';
 import {
     CORPUS_SOURCE_INSTANCES_COLLECTION_ID,
+    CORPUS_SESSION_LINKS_COLLECTION_ID,
+    CORPUS_USER_MARKS_COLLECTION_ID,
     CORPUS_SOURCE_INSTANCE_LIFECYCLE,
 } from '../corpus/collections/ids.js';
 import { fromCorpusStoredRow } from '../corpus/collections/rowCodec.js';
 import type { CorpusSourceInstanceRowV1 } from '../corpus/collections/rows.js';
-import { createTestkitCorpusCollections } from '../corpus/testkit/corpusCollections.test-support.js';
-import { testkitLocator, testkitSnapshot, testkitViewer } from '../corpus/testkit/observations.test-support.js';
+import { createTestkitCorpusCollections, selectTestkitConfiguredSources } from '../corpus/testkit/corpusCollections.test-support.js';
+import { testkitEntryRef, testkitLocator, testkitSnapshot, testkitViewer } from '../corpus/testkit/observations.test-support.js';
+import { setPinned } from '../corpus/marks/setPinned.js';
+import { readPinnedSection } from '../corpus/query/pinnedSection.js';
+import { projectTriagePinnedRow } from '../ui/marks/pinnedRows.js';
+import { linkEntryToSession } from '../sessions/entrySessionLinks.js';
+import { readTriageSessionLinksPageV1 } from '../sessions/readEntrySessionLinks.js';
+import { openLinkedSession } from '../sessions/entrySessionOpen.js';
+import { deriveTriageComposerEntryAttachmentKey } from '../composer/attachmentValue.js';
+import { createTriageEntryAttachmentRuntime } from '../composer/attachmentRuntime.js';
 import { createTriageListEntriesActionHandler } from './listEntries.js';
 import type { TriageAdmittedSourceV1 } from './listEntries.js';
 import { createTriageAdministerSourceInstanceActionHandler } from './administerSourceInstanceAction.js';
@@ -55,6 +66,7 @@ function draft(overrides: Readonly<{ localInstanceKey?: string }> = {}): TriageS
 }
 
 const SCAN_HANDLE = Object.freeze({ role: 'scan' });
+const GET_HANDLE = Object.freeze({ role: 'get' });
 
 const ADMITTED = [{
     contributor: {
@@ -72,7 +84,7 @@ const ADMITTED = [{
         displayName: 'Example forge',
         kinds: [{ id: 'pull-request', workflowSubject: 'pullRequest', displayName: 'Pull request' }],
     },
-    operations: { listInstances: {}, scan: SCAN_HANDLE, get: {} },
+    operations: { listInstances: {}, scan: SCAN_HANDLE, get: GET_HANDLE },
     surfaces: { detail: {} },
     // Host-created admitted entries are not constructible from plugin code; the
     // fixture stands in for the host at that one boundary.
@@ -108,11 +120,12 @@ function createContext(input: Readonly<{
         services: {
             storage: {
                 account: {
-                    collection: (definition: PluginAccountCollectionDefinition) => (
-                        definition.id === CORPUS_SOURCE_INSTANCES_COLLECTION_ID
-                            ? input.collections.sourceInstances
-                            : input.collections.userMarks
-                    ),
+                    collection: (definition: PluginAccountCollectionDefinition) => {
+                        if (definition.id === CORPUS_SOURCE_INSTANCES_COLLECTION_ID) return input.collections.sourceInstances;
+                        if (definition.id === CORPUS_SESSION_LINKS_COLLECTION_ID) return input.collections.sessionLinks;
+                        if (definition.id === CORPUS_USER_MARKS_COLLECTION_ID) return input.collections.userMarks;
+                        throw new Error(`Undeclared Collection: ${definition.id}`);
+                    },
                 },
             },
             targetedContributions: {
@@ -125,8 +138,13 @@ function createContext(input: Readonly<{
                 }),
             },
             actions: {
-                executeAdmittedTargetedOperation: async (operation: unknown): Promise<TriageScanResultV1> => {
+                executeAdmittedTargetedOperation: async (operation: unknown): Promise<TriageScanResultV1 | TriageGetResultV1> => {
                     input.onScan?.(operation);
+                    if (operation === GET_HANDLE) {
+                        const { source: _source, ...localRef } = testkitEntryRef();
+                        return { kind: 'present', localRef, locator: testkitLocator(),
+                            snapshot: testkitSnapshot(), viewer: testkitViewer() };
+                    }
                     return {
                         kind: 'complete',
                         observations: [{
@@ -226,17 +244,18 @@ describe('the source administration Action handler', () => {
         // list is opened or refreshed.
         expect(scanned).toEqual([]);
 
-        // And the composed aggregate list now returns that source's entries,
-        // which it structurally could not do before a row existed.
+        // Select the administered external connection; personal tasks now exist
+        // independently of configured source rows.
         const listed = await createTriageListEntriesActionHandler()(
-            { v: 1, sources: { kind: 'allConfigured' }, limit: 10, order: 'newest' },
+            { v: 1, sources: await selectTestkitConfiguredSources([INSTANCE_ID], collections.sourceInstances), limit: 10, order: 'newest' },
             createContext({ collections, onScan: (op) => scanned.push(op) }),
         );
         expect(listed.configuredSources).toEqual([{
             sourceInstanceId: INSTANCE_ID,
+            configurationRowId: rows[0]?.instanceTag,
             source: SOURCE,
             configurationRevision: 1,
-            displayLabel: 'example/repository',
+            displayLabel: 'Example forge · example/repository',
             available: true,
         }]);
         expect(listed.window.rows.map((row) => row.entryRef.entryId)).toEqual(['17']);
@@ -273,15 +292,48 @@ describe('the source administration Action handler', () => {
         expect(await readRows(collections)).toHaveLength(0);
     });
 
-    it('retires the instance on remove', async () => {
+    it.each(['ui', 'agent'] as const)('retains pins, links and dispatchable attachments through provider-silent %s removal/reactivation without a daemon', async (surface) => {
         const { collections } = createTestkitCorpusCollections();
         const handler = createTriageAdministerSourceInstanceActionHandler({
             mintSourceInstanceId: () => INSTANCE_ID,
             nowMs: () => 1_000,
         });
-        const context = createContext({ collections, caller: pluginCaller(SOURCE.pluginId) });
+        const providerCalls: unknown[] = [];
+        const unavailableAccess: string[] = [];
+        const context = createContext({ collections, surface,
+            ...(surface === 'ui' ? { caller: pluginCaller(SOURCE.pluginId) } : {}),
+            onScan: operation => providerCalls.push(operation),
+        });
+        // These are genuine host service boundaries. No daemon or Message store
+        // is available, including as an oracle for deciding what may be removed.
+        for (const [target, port] of [
+            [context.services, 'sessions'],
+            [context.services.storage, 'daemon'],
+            [context.services.storage, 'daemonSession'],
+        ] as const) Object.defineProperty(target, port, { get() {
+            unavailableAccess.push(port);
+            throw new Error(`Unavailable host boundary: ${port}`);
+        } });
 
-        await handler({ v: 1, kind: 'create', draft: draft() }, context);
+        expect(await handler({ v: 1, kind: 'create', source: SOURCE, draft: draft() }, context))
+            .toEqual({ kind: 'active', sourceInstanceId: INSTANCE_ID });
+        const entryRef = testkitEntryRef();
+        const displayAtMark = { title: 'Keep this pinned entry', scopeLabel: 'example/repository' };
+        expect(await setPinned({ collections, entryRef, pinned: true, displayAtMark, nowMs: 10 }))
+            .toMatchObject({ status: 'pinned' });
+        const sessionId = 'session-retained';
+        expect(await linkEntryToSession({ collections, entryRef, sessionId, nowMs: 20,
+            display: { locator: testkitLocator(), scopeLabel: displayAtMark.scopeLabel },
+        })).toMatchObject({ status: 'linked' });
+        const pinsBefore = await readPinnedSection({ collections, limit: 10 });
+        const linksBefore = await readTriageSessionLinksPageV1(collections.sessionLinks, { relation: { entryRef } });
+        const attachment = { instanceId: 'attachment-retained',
+            key: deriveTriageComposerEntryAttachmentKey(entryRef), value: { v: 1 as const, entryRef,
+                sourceInstance: { source: SOURCE, sourceInstanceId: INSTANCE_ID }, lastKnownLocator: testkitLocator() },
+        };
+        const request = { sessionId, localId: 'pending-retained', attachments: [attachment] };
+        const runtime = createTriageEntryAttachmentRuntime();
+        expect(providerCalls).toEqual([]);
         const removed = await handler(
             { v: 1, kind: 'remove', sourceInstanceId: INSTANCE_ID },
             context,
@@ -296,10 +348,55 @@ describe('the source administration Action handler', () => {
         // A retired instance disappears from the aggregate list without any
         // durable cleanup, because nothing provider-derived was durable.
         const listed = await createTriageListEntriesActionHandler()(
-            { v: 1, sources: { kind: 'allConfigured' }, limit: 10, order: 'newest' },
-            createContext({ collections }),
+            { v: 1, sources: await selectTestkitConfiguredSources([INSTANCE_ID], collections.sourceInstances), limit: 10, order: 'newest' },
+            context,
         );
         expect(listed.configuredSources).toEqual([]);
         expect(listed.window.rows).toEqual([]);
+
+        const retainedPins = await readPinnedSection({ collections, limit: 10 });
+        expect(retainedPins).toEqual(pinsBefore);
+        const pin = retainedPins.marks[0];
+        if (!pin) throw new Error('Removal lost the pin');
+        expect(projectTriagePinnedRow(pin, null)).toMatchObject({
+            entryRef, title: displayAtMark.title, scopeLabel: displayAtMark.scopeLabel,
+            pinned: true, materialized: false,
+        });
+        const retainedLinks = await readTriageSessionLinksPageV1(collections.sessionLinks, { relation: { entryRef } });
+        expect(retainedLinks).toEqual(linksBefore);
+        const link = retainedLinks.links[0];
+        if (!link) throw new Error('Removal lost the Session link');
+        expect(link.displayPathAtLink).toBe(testkitLocator().displayPath);
+        const opened: unknown[] = [];
+        expect(await openLinkedSession({ sessionId: link.sessionId, execute: async (action, input) => {
+            opened.push({ action, input });
+        } })).toEqual({ status: 'opened' });
+        expect(opened).toEqual([{ action: 'session.open', input: { sessionId } }]);
+
+        // Exercise the registered attachment consumer, not an unchanged local
+        // fixture value: retirement blocks dispatch without erasing the record.
+        expect(await runtime.prepareForSend!(request, context)).toEqual({ attachments: [{
+            instanceId: attachment.instanceId, status: 'ready', value: attachment.value,
+        }] });
+        expect((await runtime.resolveForDispatch!(request, context)).attachments)
+            .toMatchObject([{ instanceId: attachment.instanceId, status: 'unavailable', retryable: false }]);
+        expect(providerCalls).toEqual([]);
+
+        expect(await handler({ v: 1, kind: 'reactivate', sourceInstanceId: INSTANCE_ID, draft: draft() }, context))
+            .toEqual({ kind: 'reactivated', sourceInstanceId: INSTANCE_ID });
+        const reactivated = await readRows(collections);
+        expect(reactivated).toHaveLength(1);
+        expect(reactivated[0]?.configured.instance).toEqual({ source: SOURCE, sourceInstanceId: INSTANCE_ID });
+        expect(reactivated[0]?.lifecycle).toBe(CORPUS_SOURCE_INSTANCE_LIFECYCLE.active);
+        expect(await readPinnedSection({ collections, limit: 10 })).toEqual(pinsBefore);
+        expect(await readTriageSessionLinksPageV1(collections.sessionLinks, { relation: { entryRef } })).toEqual(linksBefore);
+        expect(providerCalls).toEqual([]);
+
+        // The original attachment becomes usable only through a fresh exact
+        // provider read after explicit reactivation of its same configured tuple.
+        expect((await runtime.resolveForDispatch!(request, context)).attachments)
+            .toMatchObject([{ instanceId: attachment.instanceId, status: 'ready' }]);
+        expect(providerCalls).toEqual([GET_HANDLE]);
+        expect(unavailableAccess).toEqual([]);
     });
 });

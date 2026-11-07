@@ -11,8 +11,7 @@ import { testkitEntryRef, testkitObservation, testkitPresentOutcome } from '../.
 import { foldTriageListWindow, TRIAGE_LIST_DEFAULT_LENS_V1 } from '../../projection/listWindow.js';
 // A mounted plugin renderer loads after its real declaration/registration entry.
 import '../../manifest.js';
-
-import { TRIAGE_ROW_REASON_TEST_ID_V1, useTriageListAnatomyV1 } from './rows.js';
+import { TRIAGE_ROW_REASON_TEST_ID_V1, readTriageDataColumnsV1, useTriageListAnatomyV1 } from './rows.js';
 import { readTriageTaskDueV1 } from './taskColumns.js';
 import type { TriageListDisplayRowV1 } from '../marks/pinnedRows.js';
 
@@ -20,7 +19,7 @@ import type { TriageListDisplayRowV1 } from '../marks/pinnedRows.js';
 const mounted: PluginUiTestkit[] = [];
 afterEach(async () => { for (const fixture of mounted.splice(0)) await fixture.dispose(); });
 
-async function readAnatomy(input: Readonly<{ withSignal: boolean; withAgent: boolean; withReason?: boolean }>) {
+async function readAnatomy(input: Parameters<typeof useTriageListAnatomyV1>[0]) {
   let anatomy: CollectionAnatomy<TriageListItemV1> | null = null;
   const surface = defineUiSurface(function Probe() {
     anatomy = useTriageListAnatomyV1(input);
@@ -41,6 +40,37 @@ async function readAnatomy(input: Readonly<{ withSignal: boolean; withAgent: boo
 }
 
 describe('PRs & Issues table columns', () => {
+  it('renders the source’s Owner value and distinguishes unassigned from unknown', async () => {
+    const base = testkitObservation();
+    const present = testkitPresentOutcome();
+    const observations = ['Mara', null, undefined].map((assigneeLabel, index) => ({ ...base,
+      entryRef: testkitEntryRef({ kindId: 'issue', entryId: String(index) }),
+      outcome: { ...present, snapshot: { ...present.snapshot, authorLabel: 'A different author',
+        ...(assigneeLabel === undefined ? {} : { assigneeLabel }) } },
+    }));
+    const window = foldTriageListWindow({ observations, lanes: [], configuredSourcesStatus: 'complete',
+      activeSourceInstanceIds: [base.sourceInstanceId], lens: TRIAGE_LIST_DEFAULT_LENS_V1, assembledAtMs: base.observedAtMs });
+    const items = planTriageListItemsV1({ rows: window.rows, pins: [], workflowSubjectOf: () => 'issue',
+      tasks: { audience: 'everyone', isTask: () => true, hasSessions: () => false } });
+    let fixture!: PluginUiTestkit;
+    await act(async () => {
+      fixture = await createPluginUiTestkit({ identity: { instanceId: 'owner-column', mountNonce: 'owner-column' },
+        authorPlugin: { id: 'happier.triage', version: '0.0.0' },
+        surface: defineUiSurface(() => {
+          const anatomy = useTriageListAnatomyV1({ withSignal: false, tasks: true, taskAudience: 'everyone' });
+          const owner = anatomy.fields?.find(field => field.key === 'owner');
+          return <>{items.map(item => <React.Fragment key={item.key}>{owner?.render(item)}</React.Fragment>)}</>;
+        }),
+        surfaceContext: createSurfaceContextFixture(), adapter: createPluginUiRnwSemanticSurfaceAdapter(), handlers: {},
+      });
+    });
+    mounted.push(fixture);
+    for (const label of ['Mara', 'Unassigned', '—']) await expect(fixture.getByText(label)).resolves.toBeDefined();
+    await expect(fixture.queryByText('A different author')).resolves.toBeUndefined();
+    // A person is drawn with their mark (lab `tasks-everyone`); nobody, or an unknown owner, has none.
+    await expect(fixture.getByRole('image', { name: 'Mara' })).resolves.toBeDefined();
+    await expect(fixture.queryByRole('image', { name: 'Unassigned' })).resolves.toBeUndefined();
+  });
   it("gives a task's list row its one loudest fact: an agent asking, then an urgent due date, Blocked, then a working agent", async () => {
     const base = testkitObservation();
     const present = testkitPresentOutcome();
@@ -95,7 +125,7 @@ describe('PRs & Issues table columns', () => {
       fixture = await createPluginUiTestkit({ identity: { instanceId: 'task-agent', mountNonce: 'task-agent' },
         authorPlugin: { id: 'happier.triage', version: '0.0.0' },
         surface: defineUiSurface(() => {
-          const tasks = useTriageListAnatomyV1({ withSignal: false, tasks: true });
+          const tasks = useTriageListAnatomyV1({ withSignal: false, tasks: true, taskAudience: 'mine' });
           const prs = useTriageListAnatomyV1({ withSignal: true });
           seen.taskBadge = tasks.glyphBadge?.(item) ?? null;
           seen.prBadge = prs.glyphBadge?.(item) ?? null;
@@ -110,6 +140,79 @@ describe('PRs & Issues table columns', () => {
     expect(seen.prBadge).not.toBeNull();
   });
 
+  it('names the reader as You when the source says the reader is the assignee', async () => {
+    const base = testkitObservation();
+    const present = testkitPresentOutcome();
+    const observations = [{ ...base, entryRef: testkitEntryRef({ kindId: 'issue', entryId: 'mine' }),
+      outcome: { ...present, viewer: { ...present.viewer, involvement: ['assignee' as const] },
+        snapshot: { ...present.snapshot, assigneeLabel: 'qa-usage-visuals-owner' } } }];
+    const window = foldTriageListWindow({ observations, lanes: [], configuredSourcesStatus: 'complete',
+      activeSourceInstanceIds: [base.sourceInstanceId], lens: TRIAGE_LIST_DEFAULT_LENS_V1, assembledAtMs: base.observedAtMs });
+    const items = planTriageListItemsV1({ rows: window.rows, pins: [], workflowSubjectOf: () => 'issue',
+      tasks: { audience: 'everyone', isTask: () => true, hasSessions: () => false } });
+    let fixture!: PluginUiTestkit;
+    await act(async () => {
+      fixture = await createPluginUiTestkit({ identity: { instanceId: 'owner-you', mountNonce: 'owner-you' },
+        authorPlugin: { id: 'happier.triage', version: '0.0.0' },
+        surface: defineUiSurface(() => {
+          const anatomy = useTriageListAnatomyV1({ withSignal: false, tasks: true, taskAudience: 'everyone' });
+          const owner = anatomy.fields?.find(field => field.key === 'owner');
+          return <>{items.map(item => <React.Fragment key={item.key}>{owner?.render(item)}</React.Fragment>)}</>;
+        }),
+        surfaceContext: createSurfaceContextFixture(), adapter: createPluginUiRnwSemanticSurfaceAdapter(), handlers: {},
+      });
+    });
+    mounted.push(fixture);
+    await expect(fixture.getByText('You')).resolves.toBeDefined();
+    await expect(fixture.queryByText('qa-usage-visuals-owner')).resolves.toBeUndefined();
+  });
+  it('keeps the entry columns from the first paint, so a fact arriving late never moves Where or the titles', () => {
+    const late = readTriageDataColumnsV1({ tasks: false, items: [], sharedGroupReasons: new Map() });
+    expect(late).toEqual({ withSignal: true, withAgent: true, withReason: true });
+    expect(readTriageDataColumnsV1({ tasks: true, items: [], sharedGroupReasons: new Map() }))
+      .toEqual({ withSignal: false, withAgent: false, withReason: false });
+  });
+  it('gives Everyone its Owner field and Agents its declared Agent field', async () => {
+    const mine = await readAnatomy({ withSignal: false, tasks: true, taskAudience: 'mine' });
+    const everyone = await readAnatomy({ withSignal: false, tasks: true, taskAudience: 'everyone' });
+    const agents = await readAnatomy({ withSignal: false, tasks: true, taskAudience: 'agents' });
+    expect(mine.fields?.some(field => field.key === 'owner')).toBe(false);
+    expect(everyone.fields?.some(field => field.key === 'owner')).toBe(true);
+    expect(agents.fields?.some(field => field.key === 'agent')).toBe(true);
+    expect(agents.agent).toBeUndefined();
+  });
+  it('gives each lens the lab’s column set: Agents leads with the agent before Where and drops Progress and Due', async () => {
+    const keys = async (audience: 'mine' | 'agents' | 'everyone') =>
+      (await readAnatomy({ withSignal: false, tasks: true, taskAudience: audience })).fields?.map(field =>
+        `${field.key}${field.leading === true ? ':lead' : ''}`);
+    expect(await keys('mine')).toEqual(['status:lead', 'progress', 'due']);
+    expect(await keys('agents')).toEqual(['status:lead', 'agent:lead']);
+    expect(await keys('everyone')).toEqual(['status:lead', 'owner:lead', 'due']);
+  });
+  it('widens the Agents lens’ agent to what its Session is about', async () => {
+    const base = testkitObservation();
+    const window = foldTriageListWindow({ observations: [{ ...base, entryRef: testkitEntryRef({ kindId: 'issue', entryId: 'a' }) }],
+      lanes: [], configuredSourcesStatus: 'complete', activeSourceInstanceIds: [base.sourceInstanceId],
+      lens: TRIAGE_LIST_DEFAULT_LENS_V1, assembledAtMs: base.observedAtMs });
+    const [planned] = planTriageListItemsV1({ rows: window.rows, pins: [], workflowSubjectOf: () => 'issue',
+      tasks: { audience: 'agents', isTask: () => true, hasSessions: () => true } });
+    const item: TriageListItemV1 = { ...planned!, agent: { kind: 'working', labelKey: 'x.working', label: 'Working', tone: 'neutral',
+      live: true, sessionTitle: 'Writing a regression test' } };
+    let fixture!: PluginUiTestkit;
+    await act(async () => {
+      fixture = await createPluginUiTestkit({ identity: { instanceId: 'agents-wide', mountNonce: 'agents-wide' },
+        authorPlugin: { id: 'happier.triage', version: '0.0.0' },
+        surface: defineUiSurface(() => {
+          const anatomy = useTriageListAnatomyV1({ withSignal: false, tasks: true, taskAudience: 'agents' });
+          return <>{anatomy.fields?.find(field => field.key === 'agent')?.render(item)}</>;
+        }),
+        surfaceContext: createSurfaceContextFixture(), adapter: createPluginUiRnwSemanticSurfaceAdapter(), handlers: {},
+      });
+    });
+    mounted.push(fixture);
+    await expect(fixture.getByText('Working')).resolves.toBeDefined();
+    await expect(fixture.getByText('· Writing a regression test')).resolves.toBeDefined();
+  });
   it('draws the Agent column only when some listed entry has a linked agent, like Signal', async () => {
     const without = await readAnatomy({ withSignal: false, withAgent: false });
     expect(without.agent).toBeUndefined();
@@ -132,7 +235,7 @@ describe('PRs & Issues table columns', () => {
       pinned: false, materialized: true, sourceInstanceId: null, kindId: 'pull-request', lifecycleLabel: 'Open',
       observedAtMs: 1_000, stale: false,
     } as unknown as TriageListDisplayRowV1;
-    const item: TriageListItemV1 = { key: row.key, row, group: 'everythingElse', summary: null, signal: null, agent: null };
+    const item: TriageListItemV1 = { key: row.key, row, group: 'everythingElse', statusGroup: 'everythingElse', summary: null, signal: null, agent: null };
     const surface = defineUiSurface(function Probe() {
       const anatomy = useTriageListAnatomyV1({ withSignal: false, withAgent: false });
       return <>{anatomy.reason?.(item)}</>;

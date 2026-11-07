@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import * as React from 'react';
 import { act } from 'react';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit, PluginUiTestkitOpenSurfaceInput } from '@happier-dev/plugin-sdk/testing';
@@ -20,6 +21,10 @@ import {
 import { TRIAGE_READ_SAVED_VIEWS_ACTION_LOCAL_ID_V1 } from '../../actions/savedViewsProtocol.js';
 import { TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1 } from '../../actions/userMarksProtocol.js';
 import { renderSurface as renderShellSurface } from '../surface.js';
+import { defineUiSurface } from '@happier-dev/plugin-ui';
+import { TRIAGE_TASKS_LIST_ACTION_LOCAL_ID_V1 } from '../../actions/tasksProtocol.js';
+import { INTERNAL_TASK_SOURCE_RECORD_V1 } from '../../internalTasks/configuration.js';
+import { TriageListShell } from './root.js';
 import { refreshTriageListWindow } from '../window/mountedWindow.js';
 import { createTriageEphemeralSharedScopeFixture } from '../window/ephemeralSharedScope.test-support.js';
 import { pressToolbarMenuItem, toolbarMenuItem } from './toolbarMenus.test-support.js';
@@ -67,7 +72,8 @@ function contribution(
             id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
             version: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
         },
-        descriptor: { ...(descriptor(settingsPageId) as Record<string, JsonValue>), displayName },
+        descriptor: { ...(descriptor(settingsPageId) as Record<string, JsonValue>), displayName,
+            kinds: [{ id: 'issue', workflowSubject: 'issue', displayName: 'Issue', pluralDisplayName: 'Issues', task: true }] },
         operations: [],
         surfaces: [],
     };
@@ -135,7 +141,7 @@ function configuredListResult(): TriageListEntriesResultV1 {
     return TriageListEntriesResultV1Schema.parse({
         v: 1,
         configuredSources: [{
-            sourceInstanceId: '00000000-0000-4000-8000-000000000002',
+            sourceInstanceId: '00000000-0000-4000-8000-000000000002', configurationRowId: '00000000-0000-4000-8000-000000000002',
             source: { pluginId: SOURCE_PLUGIN_ID, localId: 'example-forge' },
             displayLabel: 'Example account',
             available: true,
@@ -156,6 +162,26 @@ function configuredListResult(): TriageListEntriesResultV1 {
     });
 }
 
+/** Tasks with only the built-in personal list (and, optionally, a connected tracker), and no task at all. */
+function emptyTasksResult(trackerConnected: boolean): TriageListEntriesResultV1 {
+    const personal = INTERNAL_TASK_SOURCE_RECORD_V1.value.configured.instance;
+    const tracker = { sourceInstanceId: '00000000-0000-4000-8000-000000000003',
+        source: { pluginId: SECOND_SOURCE_PLUGIN_ID, localId: 'example-tracker' } };
+    const sources = [{ ...personal, displayLabel: 'Happier tasks' }, ...(trackerConnected ? [{ ...tracker, displayLabel: 'Example Tracker' }] : [])];
+    return TriageListEntriesResultV1Schema.parse({
+        v: 1,
+        configuredSources: sources.map(source => ({ ...source, configurationRowId: source.sourceInstanceId, available: true })),
+        configuredSourcesStatus: 'complete',
+        window: {
+            v: 1,
+            rows: [],
+            lanes: sources.map(({ sourceInstanceId, source }) => ({ sourceInstanceId, source, health: { kind: 'walkFinished' }, exhausted: true })),
+            coverage: 'complete',
+            assembledAtMs: 1_760_000_100_000,
+        },
+    });
+}
+
 const durableReads = { pins: 0, views: 0 };
 
 async function executeAction(
@@ -163,6 +189,7 @@ async function executeAction(
     exposeDurableState: boolean,
     configured: boolean,
     durableUnreachable = false,
+    tasks?: 'personalOnly' | 'trackerConnected',
 ): Promise<JsonValue> {
     if (durableUnreachable && action === TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1) {
         durableReads.pins += 1;
@@ -172,7 +199,8 @@ async function executeAction(
         durableReads.views += 1;
         throw new Error('account unreachable');
     }
-    if (action === TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1) {
+    if (action === TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1 || action === TRIAGE_TASKS_LIST_ACTION_LOCAL_ID_V1) {
+        if (tasks !== undefined) return emptyTasksResult(tasks === 'trackerConnected') as unknown as JsonValue;
         return (configured ? configuredListResult() : emptyListResult()) as unknown as JsonValue;
     }
     if (action === TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1) return {
@@ -192,7 +220,7 @@ async function executeAction(
         }] : [],
     };
     if (action === TRIAGE_READ_SAVED_VIEWS_ACTION_LOCAL_ID_V1) {
-        return { v: 1, availability: 'absent', views: [], selectedViewId: null, revision: 'revision-1' };
+        return { v: 1, availability: 'absent', views: [], revision: 'revision-1' };
     }
     throw new Error(`unexpected action ${action}`);
 }
@@ -212,6 +240,8 @@ async function mountShell(options: Readonly<{
     secondSource?: boolean;
     /** The reader's pins and saved views cannot be read: the Account is unreachable. */
     durableUnreachable?: boolean;
+    /** Mount the Tasks page over no tasks, with only the personal list or with a tracker connected too. */
+    tasks?: 'personalOnly' | 'trackerConnected';
 }> = {}): Promise<PluginUiTestkit> {
     opened = [];
     const ephemeralSharedScope = createTriageEphemeralSharedScopeFixture();
@@ -220,7 +250,8 @@ async function mountShell(options: Readonly<{
         fixture = await createPluginUiTestkit({
             identity: { instanceId: 'fixture-instance-182', mountNonce: 'fixture-mount-182' },
             authorPlugin: { id: 'happier.triage', version: '0.0.0' },
-            surface: renderShellSurface,
+            surface: options.tasks === undefined ? renderShellSurface
+                : defineUiSurface(() => <TriageListShell tasksPage subPath="tasks,mine" />),
             surfaceContext: createSurfaceContextFixture({
                 mount: {
                     kind: 'destination',
@@ -240,6 +271,7 @@ async function mountShell(options: Readonly<{
                     options.exposeDurableState === true,
                     options.configured === true,
                     options.durableUnreachable === true,
+                    options.tasks,
                 ),
                 replacePageLocation: ({ subPath }) => subPath,
                 ...(options.canOpenSurface === false ? {} : {
@@ -343,6 +375,19 @@ describe('the unconfigured PRs & Issues screen', () => {
         await expect(configured.getByRole('textbox', { name: 'Search PRs & Issues' })).resolves.toBeDefined();
     });
 
+    it('draws no filter, order or list/board controls over a first run with nothing to act on', async () => {
+        // Lab `merged-connect`: the first run is the page's whole answer. Filters, an order and a List | Board
+        // choice over zero rows are controls that cannot change anything.
+        const shell = await mountShell({ settingsPageId: 'triage-sources' });
+        await expect(shell.getByText('Connect a source')).resolves.toBeDefined();
+        await expect(shell.queryByRole('button', { name: 'Filters' })).resolves.toBeUndefined();
+        await expect(shell.queryByRole('radio', { name: 'Board' })).resolves.toBeUndefined();
+
+        const configured = await mountShell({ settingsPageId: 'triage-sources', configured: true });
+        await expect(configured.getByRole('button', { name: 'Filters' })).resolves.toBeDefined();
+        await expect(configured.getByRole('radio', { name: 'Board' })).resolves.toBeDefined();
+    });
+
     it('scrolls the first run with the page, so every source stays reachable on a short screen', async () => {
         // R3-02: the first run once sat in the Collection's fixed header, so on a phone the lower sources and
         // the "What happens next" steps were clipped with no way to reach them. It scrolls with the page now; a
@@ -409,6 +454,31 @@ describe('the unconfigured PRs & Issues screen', () => {
  * or repair the first, without removing what they already have and returning to
  * the unconfigured screen to get the offer back.
  */
+describe('the first run of Tasks', () => {
+    it('starts the personal list and offers the trackers that bring tasks when nothing is connected yet', async () => {
+        // Lab `tasks-firstrun`: the personal list is already there, so its one action is New task; each tracker
+        // that brings tasks is one press from its own page. A source that only lists pull requests is not offered.
+        const shell = await mountShell({ settingsPageId: 'triage-sources', secondSource: true, tasks: 'personalOnly' });
+        await expect(shell.getByText('Start with your own list')).resolves.toBeDefined();
+        await expect(shell.getByText('Bring tasks from a tracker')).resolves.toBeDefined();
+        expect((await shell.getAllByRole('button')).filter(button => button.name === 'New task')).toHaveLength(1);
+        await expect(shell.queryByRole('button', { name: 'Connect Example Forge' })).resolves.toBeUndefined();
+        const tracker = await shell.getByRole('button', { name: 'Connect Example Tracker' });
+        await expect(shell.queryByText('No tasks yet')).resolves.toBeUndefined();
+        await expect(shell.queryByRole('button', { name: 'Filters' })).resolves.toBeUndefined();
+        await expect(shell.queryByRole('textbox', { name: 'Search tasks' })).resolves.toBeUndefined();
+        await act(async () => { await shell.press(tracker); });
+        await act(async () => { await Promise.resolve(); });
+        expect(opened[0]?.view).toEqual({ pluginId: SECOND_SOURCE_PLUGIN_ID, localId: 'tracker-settings' });
+    });
+
+    it('keeps the ordinary empty answer once a tracker is connected', async () => {
+        const shell = await mountShell({ settingsPageId: 'triage-sources', secondSource: true, tasks: 'trackerConnected' });
+        await expect(shell.getByText('No tasks yet')).resolves.toBeDefined();
+        await expect(shell.queryByText('Bring tasks from a tracker')).resolves.toBeUndefined();
+    });
+});
+
 describe('Manage sources on the ordinary list screen', () => {
     it('reaches the source-owned settings page beside the sources it lists', async () => {
         const shell = await mountShell({ settingsPageId: 'triage-sources', configured: true });

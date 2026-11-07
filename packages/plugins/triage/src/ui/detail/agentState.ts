@@ -1,7 +1,7 @@
 import type { SessionStateV1 } from '@happier-dev/plugin-sdk/ui';
 
 /** Only the host facts used by row status and grouping; detail labels remain full Session consumers. */
-export type TriageAgentStateV1 = Readonly<Pick<SessionStateV1, 'lifecycle' | 'operational' | 'agent'> & {
+export type TriageAgentStateV1 = Readonly<Pick<SessionStateV1, 'lifecycle' | 'operational' | 'agent' | 'title'> & {
   workStatus: Pick<SessionStateV1['workStatus'], 'bucket' | 'tone'>;
 }>;
 
@@ -18,6 +18,8 @@ export type TriageAgentStatusV1 = Readonly<{
   label: string;
   labelParams?: Readonly<Record<string, string>>;
   agent?: SessionStateV1['agent'];
+  /** What the Session is about, in the host's words (the Agents lens says it after the state). */
+  sessionTitle?: string;
   tone: SessionStateV1['workStatus']['tone'];
   /** The agent is working now; the status pulses (reduced motion keeps it still). */
   live: boolean;
@@ -45,6 +47,7 @@ function status(id: TriageAgentStatusKindV1, state: TriageAgentStateV1): TriageA
     label: namedAttention ? '{agent} needs you' : COPY[id],
     ...(namedAttention ? { labelParams: { agent: state.agent!.displayName } } : {}),
     ...(state.agent === undefined ? {} : { agent: state.agent }),
+    ...(state.title === undefined ? {} : { sessionTitle: state.title }),
     tone: state.workStatus.tone,
     live: state.workStatus.bucket === 'working',
   };

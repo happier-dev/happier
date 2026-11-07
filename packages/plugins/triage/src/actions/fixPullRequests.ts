@@ -5,31 +5,31 @@ import { fitActionResultSequenceV1 } from '@happier-dev/triage-sources/projectio
 
 import { bindCorpusCollections } from '../corpus/collections/bindCorpusCollections.js';
 import type { CorpusCollectionsV1 } from '../corpus/collections/bindCorpusCollections.js';
+import { readActiveConfiguredSourceRow } from '../corpus/configuration/readConfiguredSourceRows.js';
 import { readResolvedFixPullRequests, selectPrimaryFixPullRequest, type TriageFixPullRequestProjectionV1 } from '../corpus/marks/fixPullRequests.js';
-import { readActiveConfiguredSourceRows } from '../corpus/configuration/readConfiguredSourceRows.js';
-import { findConfiguredSourceInstanceRow } from '../corpus/configuration/administerConfiguredSourceInstance.js';
-import { CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../corpus/collections/ids.js';
 import { renderSourceQualifiedId } from '../corpus/identity/components.js';
 import { setFixPullRequest } from '../corpus/marks/setPinned.js';
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
-import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../manifest.js';
+import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../definition.js';
 import { indexTriageAdmittedSourcesV1, type TriageAdmittedSourceV1 } from './listEntries.js';
 import { reobserveTriageEntry } from './reobserveEntry.js';
+import { createTriageSourceSessionRelations } from '../sessions/sourceSessionRelations.js';
 import type {
     TriageReadFixPullRequestsInputV1,
     TriageReadFixPullRequestsResultV1,
     TriageSetFixPullRequestInputV1,
     TriageSetFixPullRequestResultV1,
 } from '@happier-dev/triage-protocol/v1';
+import { TriageSourceReadFixPullRequestsResultV1Schema } from '@happier-dev/triage-protocol/v1';
 
 /**
  * The two fix-PR Actions: transport to the one `user-marks` writer and the
- * read over `user-marks` plus `session-links`. They decide nothing; the corpus
+ * read over user marks, composed Session links and live native associations. The corpus
  * owners do (`design/FIX-LINK.md`).
  */
 
 export type TriageFixPullRequestsDepsV1 = Readonly<{
-    collections: Pick<CorpusCollectionsV1, 'userMarks' | 'sessionLinks'>;
+    collections: Pick<CorpusCollectionsV1, 'userMarks'>;
     nowMs: () => number;
     signal?: AbortSignal;
     workflowSubjectOf?: TriageFixPullRequestProjectionV1['workflowSubjectOf'];
@@ -37,10 +37,14 @@ export type TriageFixPullRequestsDepsV1 = Readonly<{
 
 export async function readTriageFixPullRequests(
     input: TriageReadFixPullRequestsInputV1,
-    deps: TriageFixPullRequestsDepsV1 & Readonly<{ projection: TriageFixPullRequestProjectionV1 }>,
+    deps: TriageFixPullRequestsDepsV1 & Readonly<{
+        projection: TriageFixPullRequestProjectionV1;
+        sourceRelations: Pick<ReturnType<typeof createTriageSourceSessionRelations>, 'read'>;
+    }>,
 ): Promise<TriageReadFixPullRequestsResultV1> {
     const resolved = await readResolvedFixPullRequests({
         collections: deps.collections,
+        sourceRelations: deps.sourceRelations,
         entryRef: input.entryRef,
         projection: deps.projection,
         ...(deps.signal ? { signal: deps.signal } : {}),
@@ -49,6 +53,46 @@ export async function readTriageFixPullRequests(
         v: 1,
         ...resolved,
     };
+}
+
+/** Resolve native evidence only through the currently admitted selected source. */
+export async function readTriageNativeFixPullRequests(
+    input: TriageReadFixPullRequestsInputV1,
+    deps: Readonly<{
+        sourceRelations: Pick<ReturnType<typeof createTriageSourceSessionRelations>, 'readSources'>;
+        execute: TriageDataActionContext['services']['actions']['executeAdmittedTargetedOperation'];
+        signal?: AbortSignal;
+    }>,
+): Promise<Awaited<ReturnType<NonNullable<TriageFixPullRequestProjectionV1['readNativeCandidates']>>>> {
+    try {
+        const { sources, configured } = await deps.sourceRelations.readSources({ entryRef: input.entryRef });
+        const source = sources.get(renderSourceQualifiedId(input.entryRef.source));
+        const operation = source?.operations.readFixPullRequests;
+        if (operation === undefined) return { candidates: [], incomplete: false };
+        const selected = input.sourceContext;
+        const record = configured.records.find(({ value: row }) => row.configured.instance.sourceInstanceId === selected?.instance.instance.sourceInstanceId
+            && renderSourceQualifiedId(row.configured.instance.source) === renderSourceQualifiedId(input.entryRef.source));
+        if (record === undefined || selected === undefined || !source?.descriptor.kinds.some((kind) => kind.id === input.entryRef.kindId)) {
+            return { candidates: [], incomplete: true };
+        }
+        const row = record.value;
+        const result = TriageSourceReadFixPullRequestsResultV1Schema.safeParse(await deps.execute(operation, {
+            v: 1, instance: row.configured,
+            localRef: { kindId: input.entryRef.kindId, collisionScope: input.entryRef.collisionScope, entryId: input.entryRef.entryId },
+            lastKnownLocator: selected.lastKnownLocator,
+        }, { signal: deps.signal }));
+        if (!result.success || result.data.kind !== 'complete') return { candidates: [], incomplete: true };
+        if (result.data.candidates.some((candidate) => !source.descriptor.kinds.some((kind) => kind.id === candidate.localRef.kindId
+            && kind.workflowSubject === 'pullRequest'))) return { candidates: [], incomplete: true };
+        return { candidates: result.data.candidates.map((candidate) => ({
+            entryRef: { source: input.entryRef.source, ...candidate.localRef }, status: candidate.status, display: candidate.display,
+            sourceContext: { sourceInstanceId: row.configured.instance.sourceInstanceId, sourceInstanceRowId: record.rowId,
+                lastKnownLocator: candidate.locator },
+        })), incomplete: false };
+    } catch {
+        throwIfAborted(deps.signal);
+        return { candidates: [], incomplete: true };
+    }
 }
 
 export async function setTriageFixPullRequest(
@@ -111,53 +155,58 @@ export function createTriageReadFixPullRequestsActionHandler(): TriageDataAction
 > {
     return async (input, context: TriageDataActionContext) => {
         throwIfAborted(context.signal);
-        const options = context.signal === undefined ? {} : { signal: context.signal };
         const collections = bindCorpusCollections(requireTriageAccountStorage(context));
-        const observation = context.services.targetedContributions.observeForSelf(
-            TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1, { onInvalidated: () => {} },
-        );
-        try {
-            const [admitted, configured] = await Promise.all([
-                readFixLinkSourceFacts(async () => (await observation.readCurrent(options)).contributions, context.signal),
-                readActiveConfiguredSourceRows(collections.sourceInstances, options),
-            ]);
+        const selected = input.sourceContext === undefined ? undefined : {
+            entryRef: input.entryRef,
+            record: await readActiveConfiguredSourceRow(collections.sourceInstances, input.sourceContext.instance, { signal: context.signal })
+                .catch(() => { throwIfAborted(context.signal); return null; }),
+        };
+        const sourceRelations = createTriageSourceSessionRelations(context, collections, selected);
+        const sourceView = await sourceRelations.readSources({ entryRef: input.entryRef }).catch(() => {
             throwIfAborted(context.signal);
-            const sources = indexTriageAdmittedSourcesV1(admitted);
-            const result = await readTriageFixPullRequests(input, {
-                collections,
-                nowMs: () => Date.now(),
-                ...(context.signal ? { signal: context.signal } : {}),
-                projection: {
-                    workflowSubjectOf: (entryRef) => workflowSubjectOf(sources, entryRef),
-                    presentationOf: async (entryRef) => {
-                        for (const row of configured.rows) {
-                            if (renderSourceQualifiedId(row.configured.instance.source) !== renderSourceQualifiedId(entryRef.source)) continue;
-                            const result = await reobserveTriageEntry({
-                                entryRef, sourceInstanceId: row.configured.instance.sourceInstanceId,
-                            }, {
-                                readConfiguredInstance: async (sourceInstanceId, readOptions) => {
-                                    const current = await findConfiguredSourceInstanceRow(collections.sourceInstances, sourceInstanceId, readOptions);
-                                    return current?.value.lifecycle === CORPUS_SOURCE_INSTANCE_LIFECYCLE.active
-                                        ? current.value.configured : null;
-                                },
-                                readAdmittedSources: async () => admitted,
-                                executeGet: async (operation, getInput, getOptions) => await context.services.actions
-                                    .executeAdmittedTargetedOperation(operation, getInput, getOptions ?? {}),
-                                nowMs: () => Date.now(),
-                                ...(context.signal ? { signal: context.signal } : {}),
-                            });
-                            if (result.kind === 'observed' && result.observation.outcome.kind === 'present') {
-                                return result.observation.outcome.snapshot.state.presentation;
-                            }
+            return null;
+        });
+        const sources = sourceView?.sources ?? new Map<string, TriageAdmittedSourceV1>();
+        const configuredRows = sourceView?.configured.rows ?? [];
+        const admitted = [...sources.values()];
+        throwIfAborted(context.signal);
+        const result = await readTriageFixPullRequests(input, {
+            collections,
+            sourceRelations,
+            nowMs: () => Date.now(),
+            ...(context.signal ? { signal: context.signal } : {}),
+            projection: {
+                readNativeCandidates: () => readTriageNativeFixPullRequests(input, {
+                    sourceRelations,
+                    execute: (operation, input, options) => context.services.actions.executeAdmittedTargetedOperation(operation, input, options),
+                    signal: context.signal,
+                }),
+                workflowSubjectOf: (entryRef) => workflowSubjectOf(sources, entryRef),
+                presentationOf: async (entryRef) => {
+                    const rows = selected !== undefined && renderSourceQualifiedId(entryRef.source) !== renderSourceQualifiedId(input.entryRef.source)
+                        ? (await sourceRelations.readSources({ entryRef })).configured.rows : configuredRows;
+                    for (const row of rows) {
+                        if (renderSourceQualifiedId(row.configured.instance.source) !== renderSourceQualifiedId(entryRef.source)) continue;
+                        const result = await reobserveTriageEntry({
+                            entryRef, sourceInstanceId: row.configured.instance.sourceInstanceId,
+                        }, {
+                            readConfiguredInstance: async (sourceInstanceId) =>
+                                (await sourceRelations.findConfiguredInstance(sourceInstanceId, entryRef))?.value.configured ?? null,
+                            readAdmittedSources: async () => admitted,
+                            executeGet: async (operation, getInput, getOptions) => await context.services.actions
+                                .executeAdmittedTargetedOperation(operation, getInput, getOptions ?? {}),
+                            nowMs: () => Date.now(),
+                            ...(context.signal ? { signal: context.signal } : {}),
+                        });
+                        if (result.kind === 'observed' && result.observation.outcome.kind === 'present') {
+                            return result.observation.outcome.snapshot.state.presentation;
                         }
-                        return null;
-                    },
+                    }
+                    return null;
                 },
-            });
-            return fitFixPullRequestsActionResult(result);
-        } finally {
-            observation.dispose();
-        }
+            },
+        });
+        return fitFixPullRequestsActionResult(result);
     };
 }
 

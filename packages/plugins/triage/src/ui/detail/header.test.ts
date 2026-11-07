@@ -104,31 +104,7 @@ describe('projectTriageDetailHeaderV1', () => {
             linkedSessions: [],
             linkedSessionsHasMore: false,
         });
-        expect(projected.attention).toEqual({ level: 'required', reasonLabel: 'Review requested', icon: 'review' });
-    });
-
-    it('says nothing about a connection no pass asked', () => {
-        // `projection/sourceHealth.ts` excludes `unavailable` deliberately: the
-        // invocation never settled into provider evidence, so there is nothing to
-        // report and reporting it accuses a provider that was never asked. The
-        // detail header re-derived its own health and collapsed the two, so a
-        // configured-but-unasked connection was told to the reader as one that
-        // "did not answer in the last pass".
-        expect(header({
-            sourceInstanceId: INSTANCE,
-            source: SOURCE,
-            health: { kind: 'unavailable' },
-            exhausted: false,
-        }).sourceReadFailed).toBe(false);
-    });
-
-    it('reports the connection this detail is read through when it answered with a failure', () => {
-        expect(header({
-            sourceInstanceId: INSTANCE,
-            source: SOURCE,
-            health: { kind: 'failed', failure: { class: 'permission', code: 'forbidden' } },
-            exhausted: false,
-        }).sourceReadFailed).toBe(true);
+        expect(projected.attention).toEqual({ level: 'required', reasonLabel: 'Review requested', icon: 'review', danger: false });
     });
 
     it('names the source and this entry\'s kind in the source\'s own words', () => {
@@ -156,20 +132,26 @@ describe('projectTriageDetailHeaderV1', () => {
         expect(undeclared.kindLabel).toBeNull();
     });
 
+    it('splits the entry\'s address into where it lives and its own number, for the breadcrumb', () => {
+        const projected = (snapshot: Parameters<typeof testkitSnapshot>[0]) => {
+            const outcome = testkitPresentOutcome({ locator: testkitLocator(), snapshot: testkitSnapshot(snapshot), viewer: testkitViewer() });
+            return projectTriageDetailHeaderV1({
+                row: { ...row(), content: { sourceInstanceId: INSTANCE, observedAtMs: 1_000, outcome },
+                    observations: [{ sourceInstanceId: INSTANCE, observedAtMs: 1_000, outcome }] },
+                lanes: [HEALTHY_LANE], connectionLabel: null, sourceDescriptor: DESCRIPTOR,
+                linkedSessions: [], linkedSessionsHasMore: false,
+            }).breadcrumb;
+        };
+        // The source's own scope and designation, never a split of the display path.
+        expect(projected({ title: 'Fix the parser', scopeLabel: 'tidewater/checkout-web', designation: '#2476' }))
+            .toEqual(['tidewater/checkout-web', '#2476']);
+        // A kind with no designation still says where it lives.
+        expect(projected({ title: 'Write the release notes', scopeLabel: 'Personal tasks' })).toEqual(['Personal tasks']);
+    });
+
     it('carries neither name while no admitted contribution has answered', () => {
         expect(header(HEALTHY_LANE).sourceLabel).toBeNull();
         expect(header(HEALTHY_LANE).kindLabel).toBeNull();
-    });
-
-    it('never repeats another connection\'s failure onto the entry on screen', () => {
-        // Aggregate list health belongs beside the list. Attributing it here would
-        // make one broken connection look like a problem with this entry.
-        expect(header({
-            sourceInstanceId: '22222222-2222-4222-8222-222222222222',
-            source: SOURCE,
-            health: { kind: 'failed', failure: { class: 'permission', code: 'forbidden' } },
-            exhausted: false,
-        }).sourceReadFailed).toBe(false);
     });
 });
 
@@ -217,6 +199,16 @@ describe('the detail header line (lab meta: where the entry lives, then who open
 
     it('names the entry\'s address and who opened it when, without the source name or the state word', () => {
         expect(lineFor({})).toBe('example/repository #17 · Mara Oduya opened 42 minutes ago');
+    });
+
+    it('puts a pull request\'s branch pair between where it lives and who opened it (lab: head → base)', () => {
+        const outcome = testkitPresentOutcome({
+            locator: testkitLocator(),
+            snapshot: testkitSnapshot({ title: 'Fix the parser', createdAtMs: CREATED, authorLabel: 'Mara Oduya',
+                branches: { head: 'leeroy/server-rounding', base: 'main' } }),
+            viewer: testkitViewer(),
+        });
+        expect(lineFor({ outcome })).toBe('example/repository #17 · leeroy/server-rounding → main · Mara Oduya opened 42 minutes ago');
     });
 
     it('says "You" when the reader opened it, through the row display\'s one rule', () => {
