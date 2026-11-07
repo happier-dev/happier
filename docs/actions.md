@@ -1259,6 +1259,7 @@ later; a run-now caller that uses it creates an approval Artifact instead of the
 Withdrawal before dispatch is the context `signal`. Agent, MCP, CLI and plugin callers never
 receive this confirmation. Account Ask settings govern requests made for the person;
 the person's own verified UI interaction does not create a self-approval request.
+Home admission owns cross-person authority; “own UI” skips only self-approval in the invoking Account.
 
 Source-control writes follow the same rule, and the Action policy is the one confirmation owner
 (a caller-owned dialog would double up with the executor's designed confirmation).
