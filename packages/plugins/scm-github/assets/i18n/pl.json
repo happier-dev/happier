@@ -88,7 +88,7 @@
   "plugins.triage.detailStory.noLineCounts": "Liczba wierszy nie jest podawana",
   "plugins.triage.detailStory.fileLines": "{path}: dodano {additions}, usunięto {deletions}",
   "plugins.triage.detailStory.notAllRead": "nie odczytano wszystkich kontroli",
-  "plugins.triage.detailStory.showMore": "Pokaż więcej",
+  "plugins.triage.detailStory.showMore": "Czytaj dalej",
   "plugins.triage.detailStory.showLess": "Pokaż mniej",
   "plugins.triage.detailStory.inFiles.one": "w {count} pliku",
   "plugins.triage.detailStory.inFiles.few": "w {count} plikach",

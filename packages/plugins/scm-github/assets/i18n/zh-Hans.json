@@ -88,7 +88,7 @@
   "plugins.triage.detailStory.noLineCounts": "未提供行数",
   "plugins.triage.detailStory.fileLines": "{path}：新增 {additions} 行，删除 {deletions} 行",
   "plugins.triage.detailStory.notAllRead": "还有检查未读取",
-  "plugins.triage.detailStory.showMore": "显示更多",
+  "plugins.triage.detailStory.showMore": "阅读更多",
   "plugins.triage.detailStory.showLess": "收起",
   "plugins.triage.detailStory.inFiles.one": "涉及 {count} 个文件",
   "plugins.triage.detailStory.inFiles.few": "涉及 {count} 个文件",

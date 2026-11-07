@@ -80,7 +80,7 @@
   "plugins.triage.detailStory.noLineCounts": "未提供行數",
   "plugins.triage.detailStory.fileLines": "{path}：新增 {additions} 行，刪除 {deletions} 行",
   "plugins.triage.detailStory.notAllRead": "還有檢查未讀取",
-  "plugins.triage.detailStory.showMore": "顯示更多",
+  "plugins.triage.detailStory.showMore": "閱讀更多",
   "plugins.triage.detailStory.showLess": "收合",
   "plugins.triage.detailStory.inFiles.one": "涉及 {count} 個檔案",
   "plugins.triage.detailStory.inFiles.few": "涉及 {count} 個檔案",

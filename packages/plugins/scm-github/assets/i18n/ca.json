@@ -88,7 +88,7 @@
   "plugins.triage.detailStory.noLineCounts": "No s'informa del nombre de línies",
   "plugins.triage.detailStory.fileLines": "{path}: {additions} afegides, {deletions} eliminades",
   "plugins.triage.detailStory.notAllRead": "queden comprovacions sense llegir",
-  "plugins.triage.detailStory.showMore": "Mostra’n més",
+  "plugins.triage.detailStory.showMore": "Llegeix-ne més",
   "plugins.triage.detailStory.showLess": "Mostra’n menys",
   "plugins.triage.detailStory.inFiles.one": "en {count} fitxer",
   "plugins.triage.detailStory.inFiles.few": "en {count} fitxers",

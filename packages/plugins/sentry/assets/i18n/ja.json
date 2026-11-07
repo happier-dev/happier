@@ -80,7 +80,7 @@
   "plugins.triage.detailStory.noLineCounts": "行数は報告されていません",
   "plugins.triage.detailStory.fileLines": "{path}: {additions} 行追加、{deletions} 行削除",
   "plugins.triage.detailStory.notAllRead": "未読のチェックがあります",
-  "plugins.triage.detailStory.showMore": "さらに表示",
+  "plugins.triage.detailStory.showMore": "続きを読む",
   "plugins.triage.detailStory.showLess": "表示を減らす",
   "plugins.triage.detailStory.inFiles.one": "{count} 個のファイル",
   "plugins.triage.detailStory.inFiles.few": "{count} 個のファイル",

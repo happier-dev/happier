@@ -80,7 +80,7 @@
   "plugins.triage.detailStory.noLineCounts": "Keine Zeilenzahlen gemeldet",
   "plugins.triage.detailStory.fileLines": "{path}: {additions} hinzugefügt, {deletions} entfernt",
   "plugins.triage.detailStory.notAllRead": "nicht alle Prüfungen gelesen",
-  "plugins.triage.detailStory.showMore": "Mehr anzeigen",
+  "plugins.triage.detailStory.showMore": "Weiterlesen",
   "plugins.triage.detailStory.showLess": "Weniger anzeigen",
   "plugins.triage.detailStory.inFiles.one": "in {count} Datei",
   "plugins.triage.detailStory.inFiles.few": "in {count} Dateien",

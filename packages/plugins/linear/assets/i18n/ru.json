@@ -80,7 +80,7 @@
   "plugins.triage.detailStory.noLineCounts": "Число строк не сообщается",
   "plugins.triage.detailStory.fileLines": "{path}: добавлено {additions}, удалено {deletions}",
   "plugins.triage.detailStory.notAllRead": "не все проверки прочитаны",
-  "plugins.triage.detailStory.showMore": "Показать больше",
+  "plugins.triage.detailStory.showMore": "Читать далее",
   "plugins.triage.detailStory.showLess": "Показать меньше",
   "plugins.triage.detailStory.inFiles.one": "в {count} файле",
   "plugins.triage.detailStory.inFiles.few": "в {count} файлах",

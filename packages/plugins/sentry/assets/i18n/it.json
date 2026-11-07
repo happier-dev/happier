@@ -80,7 +80,7 @@
   "plugins.triage.detailStory.noLineCounts": "Numero di righe non indicato",
   "plugins.triage.detailStory.fileLines": "{path}: {additions} aggiunte, {deletions} rimosse",
   "plugins.triage.detailStory.notAllRead": "alcuni controlli non letti",
-  "plugins.triage.detailStory.showMore": "Mostra altro",
+  "plugins.triage.detailStory.showMore": "Leggi tutto",
   "plugins.triage.detailStory.showLess": "Mostra meno",
   "plugins.triage.detailStory.inFiles.one": "in {count} file",
   "plugins.triage.detailStory.inFiles.few": "in {count} file",

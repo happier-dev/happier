@@ -147,6 +147,7 @@ export { ThreadMessage, type ThreadMessageProps } from './ThreadMessage.js';
 export { ReplyQuote, type ReplyQuoteProps } from './ReplyQuote.js';
 export { HappierReplyQuote, type HappierReplyQuoteProps, type HappierReplyQuoteSource, type HappierReplyQuoteTextProps } from '../presentation/content/ReplyQuote.js';
 export { ReturnedAnswerQuote, type ReturnedAnswerOutcome, type ReturnedAnswerQuestion, type ReturnedAnswerQuoteProps } from './ReturnedAnswerQuote.js';
+export { ContentPreview, type ContentPreviewProps } from './ContentPreview.js';
 export {
   HappierReturnedAnswerQuote,
   type HappierReturnedAnswerOutcome,

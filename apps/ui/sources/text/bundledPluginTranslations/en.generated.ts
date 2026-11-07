@@ -2425,7 +2425,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.triage.detailStory.runningSoFar.one": "{count} running so far",
   "plugins.triage.detailStory.runningSoFar.other": "{count} running so far",
   "plugins.triage.detailStory.showLess": "Show less",
-  "plugins.triage.detailStory.showMore": "Show more",
+  "plugins.triage.detailStory.showMore": "Read more",
   "plugins.triage.detailStory.smallerFiles.few": "{count} smaller files",
   "plugins.triage.detailStory.smallerFiles.many": "{count} smaller files",
   "plugins.triage.detailStory.smallerFiles.one": "{count} smaller file",

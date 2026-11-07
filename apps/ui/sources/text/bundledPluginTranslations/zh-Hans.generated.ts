@@ -2425,7 +2425,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.triage.detailStory.runningSoFar.one": "目前 {count} 项进行中",
   "plugins.triage.detailStory.runningSoFar.other": "目前 {count} 项进行中",
   "plugins.triage.detailStory.showLess": "收起",
-  "plugins.triage.detailStory.showMore": "显示更多",
+  "plugins.triage.detailStory.showMore": "阅读更多",
   "plugins.triage.detailStory.smallerFiles.few": "另有 {count} 个较小的文件",
   "plugins.triage.detailStory.smallerFiles.many": "另有 {count} 个较小的文件",
   "plugins.triage.detailStory.smallerFiles.one": "另有 {count} 个较小的文件",

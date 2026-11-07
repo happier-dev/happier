@@ -2425,7 +2425,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.triage.detailStory.runningSoFar.one": "現時点で {count} 件実行中",
   "plugins.triage.detailStory.runningSoFar.other": "現時点で {count} 件実行中",
   "plugins.triage.detailStory.showLess": "表示を減らす",
-  "plugins.triage.detailStory.showMore": "さらに表示",
+  "plugins.triage.detailStory.showMore": "続きを読む",
   "plugins.triage.detailStory.smallerFiles.few": "ほか {count} 個の小さなファイル",
   "plugins.triage.detailStory.smallerFiles.many": "ほか {count} 個の小さなファイル",
   "plugins.triage.detailStory.smallerFiles.one": "ほか {count} 個の小さなファイル",

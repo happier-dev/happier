@@ -160,13 +160,31 @@ describe('the ask of a long change request', () => {
       </TriageDetailStory>
     ));
     await measureAsk(4000);
-    const more = await page.getByRole('button', { name: 'Show more' });
+    const more = await page.getByRole('button', { name: 'Read more' });
     await act(async () => {
       await page.press(more);
     });
     await expect(
       page.getByRole('button', { name: 'Show less' }),
     ).resolves.toBeDefined();
+  });
+
+  it('opens a clipped preview when keyboard focus enters it, and says whether it is open', async () => {
+    const page = await mount(() => (
+      <TriageDetailStory kind="ask" changes={<Text value="What changed follows" />}>
+        <Text value="A pull request description several screens long." />
+        <Button title="Read the design notes" onPress={() => undefined} />
+      </TriageDetailStory>
+    ));
+    await measureAsk(4000);
+    const more = await page.getByRole('button', { name: 'Read more' });
+    expect(document.querySelector('[aria-label="Read more"], [role="button"][aria-expanded]')?.getAttribute('aria-expanded')).toBe('false');
+    // Tab reaches a control that sits below the clip: the preview opens so focus never lands on something hidden.
+    const trailing = [...document.querySelectorAll<HTMLElement>('[role="button"]')]
+      .find((node) => node.textContent === 'Read the design notes')!;
+    await act(async () => { trailing.focus(); });
+    await expect(page.getByRole('button', { name: 'Show less' })).resolves.toBeDefined();
+    expect(more).toBeDefined();
   });
 
   it('keeps the read state above the preview, so a failed read is never clipped into it', async () => {
@@ -190,7 +208,7 @@ describe('the ask of a long change request', () => {
     ));
     await measureAsk(60);
     await expect(
-      page.queryByRole('button', { name: 'Show more' }),
+      page.queryByRole('button', { name: 'Read more' }),
     ).resolves.toBeUndefined();
   });
 });

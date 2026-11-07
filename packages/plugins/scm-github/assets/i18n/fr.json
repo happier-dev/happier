@@ -88,7 +88,7 @@
   "plugins.triage.detailStory.noLineCounts": "Nombre de lignes non communiqué",
   "plugins.triage.detailStory.fileLines": "{path} : {additions} ajoutées, {deletions} supprimées",
   "plugins.triage.detailStory.notAllRead": "certaines vérifications non lues",
-  "plugins.triage.detailStory.showMore": "Afficher plus",
+  "plugins.triage.detailStory.showMore": "Lire la suite",
   "plugins.triage.detailStory.showLess": "Afficher moins",
   "plugins.triage.detailStory.inFiles.one": "dans {count} fichier",
   "plugins.triage.detailStory.inFiles.few": "dans {count} fichiers",
