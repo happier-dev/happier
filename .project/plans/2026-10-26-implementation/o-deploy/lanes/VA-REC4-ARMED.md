@@ -1,4 +1,5 @@
-READY FOR RELOAD — #83 review/Health/title vertical verified; deployment submission fixture remains under diagnosis.
+READY FOR RELOAD — #83 review/Health/preset/title checks pass; integrated types and loaded QA deferred.
+Commit efc4f89bd8faa9e1a0e2ebb940aaaf205d304846; READY posted18:10 to O-DEPLOY/ORCH-TOP/UI refinements.
 
 Observed current source:
 - GuidedAutomationSetup consumes buildGuidedAutomationReadBack before Agent choice;
@@ -24,17 +25,22 @@ Deciding #83 evidence (all /tmp unless another path is shown):
   localized title presenter3/3 passed: VA-REC4-ARMED-r83-integrated-GREEN.log.
 - Composed23980:6/7 passed, including both rendered bound Health paths, declared title
   and3 native controls. Environment controller/seed/hidden-field assertions passed;
-  setup Action submission stayed empty at fixture:186. Diagnostic61011 is pending;
-  VA-REC4-ARMED-r83-{composed-GREEN,deployment-diagnostic}.log. No full habit GREEN claim.
+  setup Action submission stayed empty at fixture:186. Diagnostic61011 terminal1:
+  candidate is offline (legacy activeAt=1); current presence owner correctly refuses it.
+  Fixture now publishes presenceProtocolVersion:1 through applyMachines; deciding86543
+  terminal0,1/1 passes through real setup dispatch, editor completion and named review.
+  No production availability change. Other6 cases were unchanged and passed23980.
+  VA-REC4-ARMED-r83-{composed-GREEN,deployment-diagnostic,deployment-final}.log.
 - Adjacent content first case times out even alone (33177); attribution unresolved.
   List locale2 failed alone (13866): public locale preload missing in fixture; corrected
-  test uses existing preloadTranslations, final95573 pending. Logs r83-editor-adjacent,
+  test uses existing preloadTranslations, final95573 terminal0,10/10. Logs r83-editor-adjacent,
   r83-locale-attribution and r83-list-final under VA-REC4-ARMED- prefix.
 - Entry16679 AUTO terminal0,7/7 passed: VA-REC4-ARMED-r83-entry-AUTO.log.
   Prior15385 failed4/7 and composed collection failed on foreign eager lazy-schema
   initialization. T2 repaired deployment operations; successful retry supersedes them.
 - UI package typecheck explicitly deferred to T2-RECEIPT-1107's single integrated wave
-  (O-DEPLOY18:10); no package/delta PASS claimed. Systemic baseline pointer:
+  (O-DEPLOY18:10); UI97061 running at18:17, .project/tmp/T2-RECEIPT-1107/typecheck-*.log.
+  No package/delta PASS claimed. Systemic baseline pointer:
   .project/plans/2026-09-28-systemic-deep-audit/lanes/pkg-typecheck-wave-1107.md.
 
 Existing committed verticals retained:
@@ -72,6 +78,6 @@ Reload recipe (ORCH/QA owns stack agent-qa-servers-deploy): load committed sourc
 record selected==loaded, open failed-deploy habit from Environment, then verify named
 review; open Health from Environment and Machine service and verify bound forms;
 inspect no-label Health row. Current reload84 source16:33 predates these changes.
-Residual: deployment submission fixture and cold summary acquisition unresolved;
+Residual: cold saved rows can remain generic until Event catalogue acquisition;
 normal-editor timeout unattributed; integrated types/live QA unrun. Native approved
 Action recipe's deleted-target pause gap was separately routed08:58, not claimed fixed.

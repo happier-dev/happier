@@ -12,7 +12,7 @@ import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/
 import { HealthCheckSetupInputV1ProtocolSchema } from '@happier-dev/plugin-sdk';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { AutomationPluginEventTriggerProjectionSchema } from '@happier-dev/protocol/automations/automationTriggerProjectionV1';
-import { DeploymentReceiptEventSetupV1Schema } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
+import { DEPLOYMENT_RECEIPT_EVENT_REFS_V1, DeploymentReceiptEventSetupV1Schema } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 
 import { publishDaemonMergedProjectionInputs } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
 import { ActionInputFormModal } from '@/components/plugins/actions/ActionInputFormModal';
@@ -160,12 +160,11 @@ it('configures a prebound guided deployment Event without exposing its known fie
     let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
     try {
         await waitForHomeGovernance(() => expect(storage.getState().isDataReady).toBe(true));
-        storage.getState().applyMachines([fresh.machineTarget.machine], true, { sourceServerId: connection.serverId });
-        observeMachinePresenceForTest(lifetime.scope, [machineId]);
         const { SubjectTriggersSection } = await import('@/components/workflows/triggers/SubjectTriggersSection');
         const { listWorkflowTriggerSets } = await import('@/sync/domains/workflows/workflowTriggerActions');
         expect(await listWorkflowTriggerSets({ scope: 'account_inline' })).toEqual([]);
-        const controller = createMachineFixture({ ...fresh.machineTarget.machine,
+        // This current Home owns the connected daemon's presence; no legacy heartbeat clock is inferred.
+        const controller = createMachineFixture({ ...fresh.machineTarget.machine, presenceProtocolVersion: 1,
             metadata: { host: 'Controller studio', platform: 'linux', happyCliVersion: '0.3.0',
                 happyHomeDir: '/home/controller', homeDir: '/home/controller' } });
         storage.getState().applyMachines([controller], true, { sourceServerId: connection.serverId });
@@ -179,7 +178,7 @@ it('configures a prebound guided deployment Event without exposing its known fie
         await pressTestInstanceAsync(screen.findAllByType(Item).find(row => row.props.testID === 'guided-automation-configure-event'));
         const editor = screen.findByType(PluginEventAutomationEditor);
         expect(editor.props.authoringMachineId).toBe(machineId);
-        expect(editor.props.initialSetupSeed).toMatchObject({ eventRef: event.event.identity,
+        expect(editor.props.initialSetupSeed).toMatchObject({ eventRef: DEPLOYMENT_RECEIPT_EVENT_REFS_V1.failed,
             monitoringMachineId: machineId, setupInput });
         expect(screen.findAllHostsByTestId('automation-event-watcher-picker')).toHaveLength(0);
         expect(screen.findAllHostsByTestId('automation-event-picker')).toHaveLength(0);
