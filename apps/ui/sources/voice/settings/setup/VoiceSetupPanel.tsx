@@ -394,9 +394,11 @@ const stylesheet = StyleSheet.create((theme) => ({
     stacked: {
         gap: 14,
     },
+    // The field hugs the planet and its caption; stretched to the steps' height it read as a second,
+    // mostly empty card beside step 1's service grid.
     visualSide: {
         width: PLANET_COLUMN_PX,
-        alignSelf: 'stretch',
+        alignSelf: 'flex-start',
         alignItems: 'center',
         gap: theme.space.s10,
         paddingTop: 18,
