@@ -1,6 +1,6 @@
 import { isWorkspaceSyncRelationshipWriteActionId } from './actionIds.js';
 import { FILESYSTEM_BROWSER_ACTION_IDS_V1 } from './filesystemActionIdsV1.js';
-import { SESSION_AGENT_READINESS_CHILDREN_V1, SESSION_AGENT_READINESS_ROOT_ACTION_ID_V1, readSessionAgentReadinessRoleV1, type SessionAgentReadinessActionIdV1 } from '../machines/managed/actionIdsV1.js';
+import { SESSION_AGENT_READINESS_ROOT_ACTION_ID_V1, readSessionAgentReadinessRoleV1, type SessionAgentReadinessActionIdV1 } from '../machines/managed/actionIdsV1.js';
 import { dispatchSessionOrganizationAppearance } from './executor/session/organizationAppearance.js';
 import type { SessionSpaceMembershipSetInputV1 } from './sessionSpaceMembership.js';
 import { dispatchProjectsDispatch1, dispatchProjectsDispatch2, dispatchProjectsDispatch3 } from './executor/projects/dispatch.js';
@@ -3063,8 +3063,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         preparedHostReviewedChildren = { ...preparedHostReviewedChildren, children: [...(preparedHostReviewedChildren?.children ?? []), ...children] };
       }
     }
-    const nativeReview = !existingAdmission && !sharedRequesterRequest
-      ? admitPresentUserConfirmationV1(actionId, admittedInput, ctx) : null;
+    // Confirm binds the admitted intent. Trusted preparation can add resolved
+    // revisions/content without asking the person to approve that same intent again.
+    const nativeConfirmation = !existingAdmission && !sharedRequesterRequest
+      ? admitPresentUserConfirmationV1(actionId, semanticInput, ctx) : null;
+    const nativeReview = nativeConfirmation
+      ? recordPresentUserApprovalV1({ ...nativeConfirmation, input: admittedInput }) : null;
     const childrenPreparation = await prepareHostReviewedChildrenV1({ actionId, input: admittedInput, context: ctx, deps,
       invokePreparationChild: async child => {
         const policy = prepareHostReviewedChildPolicyV1(child, ctx, approvalScope);
@@ -5817,24 +5821,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
           }
           const args = { ...spawnArgs, admittedInput: admittedSpawnInput,
-            invokeAgentReadinessAction: (childId: SessionAgentReadinessActionIdV1, childInput: unknown,
-              childOptions?: Readonly<{ result: 'optional' }>) => {
+            invokeAgentReadinessAction: (childId: SessionAgentReadinessActionIdV1, childInput: unknown) => {
               const role = readSessionAgentReadinessRoleV1(childId);
               if (!role) return Promise.resolve<ActionExecuteResult>({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' });
               const normalized = getActionSpec(childId).inputSchema.parse(childInput);
               return invokeHostReviewedChildV1({
                 parent: { actionId, input: projectNativeJsonValueForTransport(admittedSpawnInput) as Record<string, JsonValue> },
                 context: ctx, child: { action: childId, role, input: projectNativeJsonValueForTransport(normalized) },
-                // Optional update work has no blocking review recipient.
-                // Ordinary admission still refuses review-required work; Setup
-                // can later invoke the existing Manage Action with review.
-                execute: (preparedInput, childContext) => executeHostChild(childId, preparedInput,
-                  childOptions?.result === 'optional'
-                    && (childId === SESSION_AGENT_READINESS_CHILDREN_V1.acquire.action
-                      && readRecord(normalized).intent === 'update'
-                      || childId === SESSION_AGENT_READINESS_CHILDREN_V1.status.action
-                        && readRecord(normalized).waitForTerminal === false)
-                    ? { ...childContext, interactivePresentation: 'unavailable' } : childContext),
+                execute: (preparedInput, childContext) => executeHostChild(childId, preparedInput, childContext),
               });
             } };
           const continuation = ctx.invocationServices?.sessionCreation;

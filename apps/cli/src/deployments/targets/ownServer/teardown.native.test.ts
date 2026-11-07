@@ -19,6 +19,67 @@ import { createOwnServerTeardownForHost } from './teardown';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createDeploymentSourceMaterializationPort } from './exactCommitRelease';
 import { createScmBackendRegistry } from '@/scm/registry';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
+import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
+
+it.each(['exact', 'changed-input'] as const)(
+    'retains the person’s confirmation through never-deployed Compose removal preparation: %s', async confirmation => {
+        const actionId = 'deployments.teardown';
+        const environment = createDeploymentEnvironmentDetailV1();
+        delete environment.targetLinks[0].targetLink.activeDeploymentId;
+        const input = { serverId: 'home', environmentId: environment.environment.id,
+            targetLinkId: 'target-link', requestKey: 'remove-confirmed-empty', reason: 'manual' as const,
+            removeEnvironment: true as const, volumes: [] };
+        // Home records and Artifact persistence are host IO. Preparation,
+        // confirmation custody and approval policy use their real owners.
+        const teardown = createOwnServerTeardownForHost({ serverId: 'home', machineId: 'machine-a',
+            credentials: { token: 'test-token', encryption: null }, serverHttpBaseUrl: 'https://unused-home.test',
+            runtime: { async acquire() { throw new Error('No native work was admitted'); } },
+            async readEnvironment() { return environment; },
+            async *readBuildHistory() {},
+            async readReceipt() { throw new Error('No receipt is required'); },
+            async writeTransition() { throw new Error('No receipt is required'); },
+            async findReceipt() { return null; },
+            async createCandidate() { throw new Error('No content is required'); },
+        });
+        let approvals = 0;
+        const effects: unknown[] = [];
+        const storage: NonNullable<ActionExecutorDeps['deploymentAction']> = async (id, admitted) => {
+            if (id === 'deployments.environments.get') return { ok: true,
+                environment: environment.environment, targetLinks: environment.targetLinks.map(row => row.targetLink) };
+            expect(id).toBe(actionId);
+            effects.push(admitted);
+            return { ok: true, environmentId: input.environmentId, revision: environment.environment.revision + 1,
+                nothingDeployed: true, environmentRemoved: true };
+        };
+        const executor = createActionExecutor({ deploymentAction: storage,
+            resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(storage),
+            prepareDeploymentTeardown: teardown.prepare,
+            approvalsCreate: async () => { approvals++; return { artifactId: 'duplicate-person-review' }; },
+        });
+        const result = await executor.execute(actionId, input, { surface: 'ui', authority: 'present_user',
+            actionCaller: { kind: 'host' }, serverId: 'home', runtimeAccountId: 'owner',
+            actionRequestId: input.requestKey, externalActionTarget: { kind: 'machine', machineId: 'machine-a' },
+            actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: { [actionId]: { approvalRequiredSurfaces: ['ui'] } } }),
+            presentUserConfirmation: { actionId, inputDigest: computeActionInputApprovalDigestV1(actionId,
+                confirmation === 'exact' ? input : { ...input, environmentId: 'another-environment' }),
+                accountId: 'owner', serverId: 'home', requestId: input.requestKey,
+                target: { kind: 'machine', machineId: 'machine-a' } },
+        });
+        if (confirmation === 'exact') {
+            expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { environmentRemoved: true } });
+            expect(effects).toEqual([expect.objectContaining({ environmentId: input.environmentId,
+                nothingDeployed: true, removeEnvironment: true, expectedRevision: environment.environment.revision })]);
+            expect(approvals).toBe(0);
+        } else {
+            expect(result).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+            expect(effects).toEqual([]);
+            expect(approvals).toBe(1);
+        }
+    });
 
 it.each(['empty', 'unavailable', 'other-target-deployed'] as const)(
     'removes a never-deployed repository Environment without content or native preparation: %s', async history => {
