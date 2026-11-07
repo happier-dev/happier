@@ -5,7 +5,12 @@ import { dirname, join } from 'node:path';
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createPlainSessionFixture } from '@/testkit/backends/sessionFixtures';
+import { createAccountEncryptionCurrentnessFixture, createPlainSessionFixture } from '@/testkit/backends/sessionFixtures';
+import type { Session } from '@/api/types';
+import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
+import { createRuntimeFailureTranscriptProjector } from '@/agent/runtime/session/transcripts/runtimeFailureTranscript';
+import { openSessionMessageContent } from '@/session/transport/encryption/sessionEncryptionContext';
+import { SessionStoredMessageContentSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
 import {
   type ApiSessionSocketStub,
   createApiSessionSocketStub,
@@ -16,7 +21,7 @@ import {
 import { createKeyedStreamedTranscriptBridge } from './createKeyedStreamedTranscriptBridge';
 import { createRuntimeTranscriptProjector } from '@/agent/runtime/session/transcripts/projectRuntimeTranscriptEvent';
 import { AgentSessionRuntimeEventSchema } from '@happier-dev/protocol/runtime/agentSessionV1';
-import { SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1, SessionTranscriptObservationAckV1Schema } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
+import { SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1, SessionTranscriptObservationAckV1Schema, SessionTranscriptObservationInputSchema } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
 import type { SessionTurnMutationV1 } from '@happier-dev/protocol';
 import type { createSessionSocketTransport } from './connection/createSessionSocketTransport';
 import type { RegisteredSessionStateFieldMutationV1 } from './client/transport/mutations/sessionClientDurableMutationTypes';
@@ -70,7 +75,6 @@ const originalOutboxBaseRetryMs = process.env.HAPPIER_SESSION_MUTATION_OUTBOX_BA
 const originalOutboxMaxRetryMs = process.env.HAPPIER_SESSION_MUTATION_OUTBOX_MAX_RETRY_MS;
 const originalOutboxJitterMs = process.env.HAPPIER_SESSION_MUTATION_OUTBOX_JITTER_MS;
 const originalOutboxMaxAttempts = process.env.HAPPIER_SESSION_MUTATION_OUTBOX_MAX_ATTEMPTS;
-const originalOutboxTranscriptFlushBatchLimit = process.env.HAPPIER_SESSION_MUTATION_OUTBOX_TRANSCRIPT_FLUSH_BATCH_LIMIT;
 const originalOutboxDeliveryConcurrency = process.env.HAPPIER_SESSION_MUTATION_OUTBOX_DELIVERY_CONCURRENCY;
 const originalOutboxDeadLetterMaxEntries = process.env.HAPPIER_SESSION_MUTATION_OUTBOX_DEAD_LETTER_MAX_ENTRIES;
 const originalOutboxReferencedPrerequisiteMaxEntries = process.env.HAPPIER_SESSION_MUTATION_OUTBOX_REFERENCED_PREREQUISITE_MAX_ENTRIES;
@@ -178,7 +182,6 @@ function restoreDurableMutationOutboxTestEnv(): void {
   restoreEnvValue('HAPPIER_SESSION_MUTATION_OUTBOX_MAX_RETRY_MS', originalOutboxMaxRetryMs);
   restoreEnvValue('HAPPIER_SESSION_MUTATION_OUTBOX_JITTER_MS', originalOutboxJitterMs);
   restoreEnvValue('HAPPIER_SESSION_MUTATION_OUTBOX_MAX_ATTEMPTS', originalOutboxMaxAttempts);
-  restoreEnvValue('HAPPIER_SESSION_MUTATION_OUTBOX_TRANSCRIPT_FLUSH_BATCH_LIMIT', originalOutboxTranscriptFlushBatchLimit);
   restoreEnvValue('HAPPIER_SESSION_MUTATION_OUTBOX_DELIVERY_CONCURRENCY', originalOutboxDeliveryConcurrency);
   restoreEnvValue('HAPPIER_SESSION_MUTATION_OUTBOX_DEAD_LETTER_MAX_ENTRIES', originalOutboxDeadLetterMaxEntries);
   restoreEnvValue('HAPPIER_SESSION_MUTATION_OUTBOX_REFERENCED_PREREQUISITE_MAX_ENTRIES', originalOutboxReferencedPrerequisiteMaxEntries);
@@ -404,6 +407,85 @@ function createWorkStateMutation(): RegisteredSessionStateFieldMutationV1 {
 }
 
 describe('ApiSessionClient durable mutation outbox', () => {
+  it.each([
+    { mode: 'e2ee', transcriptMode: 'e2ee' },
+    { mode: 'plain', transcriptMode: 'plain' },
+    { mode: 'plain', transcriptMode: 'e2ee' },
+  ] as const)('keeps native startup prose in the private transcript for a $mode Account ($transcriptMode Session)', async ({ mode, transcriptMode }) => {
+    const home = createSessionTranscriptHomeStub();
+    const transcript: unknown[] = [];
+    const mutations: SessionTurnMutationV1[] = [];
+    sessionSocketStub = createApiSessionSocketStub({ connected: false, emitWithAck: async (event, payload) => {
+      if (event === SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1) transcript.push(payload);
+      if (event === 'session-turn-mutation') {
+        const mutation = payload as SessionTurnMutationV1;
+        mutations.push(mutation);
+        return createSessionTurnMutationAppliedSocketAck(mutation);
+      }
+      return home.answer(event, payload) ?? { ok: true };
+    } });
+    userSocketStub = createApiSessionSocketStub({ connected: false });
+    const plainSession = createPlainSessionFixture({ id: `startup-privacy-${mode}-${transcriptMode}` });
+    const session: Session = transcriptMode === 'plain' ? plainSession : { ...plainSession, encryptionMode: 'e2ee',
+      encryptionKey: new Uint8Array(32).fill(7), encryptionVariant: 'dataKey' };
+    const axiosGet = await getAxiosGetMock();
+    axiosGet.mockImplementation(async (url: unknown) => {
+      if (typeof url === 'string' && url.endsWith('/v1/account/encryption/currentness')) {
+        return { status: 200, data: createAccountEncryptionCurrentnessFixture({ mode }) };
+      }
+      throw new Error('session-end proof unavailable');
+    });
+    const client = createTestApiSessionClient(ApiSessionClient, 'tok', session);
+    // Start from the same established Home contract as the transcript receipt cases below.
+    sessionSocketStub.connected = true;
+    const contract = { ...serverContract('session_sync_v2_pending_input_v1'), socket: sessionSocketStub };
+    const internals = client as unknown as {
+      sessionSyncPendingInputServerContractResult: typeof contract;
+      durableMutationOutbox: { setSessionSyncPendingInputServerContract: (result: typeof contract) => Promise<void> };
+    };
+    internals.sessionSyncPendingInputServerContractResult = contract;
+    await internals.durableMutationOutbox.setSessionSyncPendingInputServerContract(contract);
+    const nativeMessage = 'stage=exec errno=EACCES: cannot open /private/member/project/CODEX_HOME';
+    const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', provider: 'codex', occurredAt: 100,
+      error: { code: 'agent_startup_rpc_rejected', severity: 'error', details: { v: 1, source: 'agent_session_error',
+        failureCause: { code: 'agent_startup_rpc_rejected', phase: 'client_start', failureReason: 'unclassified_provider_error',
+          providerErrorCode: -32603, providerErrorMessage: nativeMessage } } } });
+    try {
+      const project = createRuntimeFailureTranscriptProjector({ session: client, provider: 'codex', providerName: 'Codex' });
+      await project({ kind: 'turn-failed', sessionId: session.id, turnId: 'startup-turn', sequence: 1, emittedAtMs: 100,
+        diagnostic: { code: issue.code, severity: 'error' } }, { issue });
+      await client.enqueueSessionTurnMutation({ v: 1, action: 'fail', sessionId: session.id,
+        mutationId: 'startup-failure', turnId: 'startup-turn', observedAt: 100, issue });
+
+      const opened = transcript.map(payload => {
+        const observation = SessionTranscriptObservationInputSchema.parse(payload);
+        const content = SessionStoredMessageContentSchema.parse(observation.content);
+        expect(content.t).toBe(transcriptMode === 'e2ee' ? 'encrypted' : 'plain');
+        return openSessionMessageContent({ ...client.getStoredContentEncryptionContext(), content });
+      });
+      expect(opened).toContainEqual(expect.objectContaining({ role: 'agent', content: expect.objectContaining({
+        type: 'acp', data: expect.objectContaining({ type: 'message', message: expect.stringContaining(nativeMessage) }),
+      }), meta: expect.objectContaining({ runtimeIssueV1: issue }) }));
+      const failed = mutations.find(mutation => mutation.action === 'fail');
+      expect(failed?.action).toBe('fail');
+      if (failed?.action !== 'fail') throw new Error('Missing failed turn mutation');
+      expect(failed.issue).toMatchObject({ code: issue.code, failureCause: { phase: 'client_start' } });
+      if (mode === 'e2ee') {
+        expect(JSON.stringify({ mutations, transcript })).not.toContain(nativeMessage);
+        expect(JSON.stringify({ mutations, transcript })).not.toContain('/private/member');
+        expect(failed.issue.failureCause).not.toHaveProperty('providerErrorMessage');
+        expect(failed.issue.sanitizedPreview).toBe('Agent startup was rejected by its native API');
+      } else {
+        expect(failed.issue).toEqual(issue);
+        expect(failed.issue.failureCause?.providerErrorMessage).toBe(nativeMessage);
+      }
+      // The public projection must never mutate the private issue retained by the host.
+      expect(issue.failureCause?.providerErrorMessage).toBe(nativeMessage);
+    } finally {
+      await client.close();
+    }
+  });
+
   it.each([false, true])('joins streamed final Home receipts before an immediately following turn completion (checkpoint=%s)', async (checkpoint) => {
     const home = createSessionTranscriptHomeStub();
     const firstWrite = createDeferred<void>();
@@ -490,7 +572,12 @@ describe('ApiSessionClient durable mutation outbox', () => {
     axiosPost.mockReset();
     const axiosGet = await getAxiosGetMock();
     axiosGet.mockReset();
-    axiosGet.mockRejectedValue(new Error('session-end proof unavailable'));
+    axiosGet.mockImplementation(async (url: unknown) => {
+      if (typeof url === 'string' && url.endsWith('/v1/account/encryption/currentness')) {
+        return { status: 200, data: createAccountEncryptionCurrentnessFixture({ mode: 'plain' }) };
+      }
+      throw new Error('session-end proof unavailable');
+    });
     sessionSocketStub = null;
     userSocketStub = null;
   });
@@ -1343,10 +1430,9 @@ describe('ApiSessionClient durable mutation outbox', () => {
     await outbox.close();
   });
 
-  it('caps transcript deliveries during reconnect flushes', async () => {
+  it('drains transcript deliveries during reconnect without a queue-local batch cap', async () => {
     process.env.HAPPIER_SESSION_MUTATION_OUTBOX_BASE_RETRY_MS = '60000';
     process.env.HAPPIER_SESSION_MUTATION_OUTBOX_JITTER_MS = '0';
-    process.env.HAPPIER_SESSION_MUTATION_OUTBOX_TRANSCRIPT_FLUSH_BATCH_LIMIT = '1';
     const deliveredLocalIds: string[] = [];
     sessionSocketStub = createApiSessionSocketStub({
       connected: true,
@@ -1364,11 +1450,10 @@ describe('ApiSessionClient durable mutation outbox', () => {
       },
     });
 
-    await saveSessionClientDurableMutationOutbox('s1', [
-      createTranscriptAppendMutation({ localId: 'stream-1', text: 'one', updatedAt: 100 }),
-      createTranscriptAppendMutation({ localId: 'stream-2', text: 'two', updatedAt: 200 }),
-      createTranscriptAppendMutation({ localId: 'stream-3', text: 'three', updatedAt: 300 }),
-    ].map((mutation) => ({
+    const expectedLocalIds = Array.from({ length: 26 }, (_, index) => `stream-${index + 1}`);
+    await saveSessionClientDurableMutationOutbox('s1', expectedLocalIds.map((localId, index) =>
+      createTranscriptAppendMutation({ localId, text: `input ${index}`, updatedAt: 100 + index }),
+    ).map((mutation) => ({
       kind: 'transcript_message_append',
       mutationId: mutation.mutationId,
       payload: mutation,
@@ -1388,11 +1473,8 @@ describe('ApiSessionClient durable mutation outbox', () => {
       serverContract('session_sync_v2_pending_input_v1'),
     );
 
-    await expect.poll(() => deliveredLocalIds).toEqual(['stream-1']);
-    await expect.poll(() => readPersistedOutboxMutations('s1')).toEqual([
-      expect.objectContaining({ payload: expect.objectContaining({ localId: 'stream-2' }) }),
-      expect.objectContaining({ payload: expect.objectContaining({ localId: 'stream-3' }) }),
-    ]);
+    await expect.poll(() => deliveredLocalIds).toEqual(expectedLocalIds);
+    await expect.poll(() => readPersistedOutboxMutations('s1')).toEqual([]);
     await outbox.close();
   });
 

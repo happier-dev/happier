@@ -23,7 +23,6 @@ import type { ExactSessionTurnEndMutationV1, SessionRuntimeActivityProjection, S
 import {
     resolveSessionClientDurableMutationMaxAttempts,
     resolveSessionClientDurableMutationRetryDelayMs,
-    resolveSessionClientDurableMutationTranscriptFlushBatchLimit,
 } from './sessionClientDurableMutationBackoff';
 import {
     appendSessionClientDurableMutationDeadLetters,
@@ -194,6 +193,7 @@ type CreateGenericSessionClientDurableMutationOutboxParams = Readonly<{
     runtimeActivitySupportControlled?: boolean;
     getSessionTurnServerContractMode?: () => SessionSyncPendingInputServerContractResult['mode'] | null;
     getSocket: () => SessionClientDurableMutationSocket | null;
+    getAccountEncryptionMode?: () => Promise<'plain' | 'e2ee' | 'unknown'>;
     requestReconnect: (reason: string) => void;
     onTranscriptMessageDeliveryAttempt?: (mutation: Readonly<{
         localId: string;
@@ -885,6 +885,9 @@ function createGenericSessionClientDurableMutationOutbox(
                 getSocket: () => selectActiveGenericSessionClientDurableMutationOutboxHandle(
                     handles,
                 ).getSocket(),
+                get getAccountEncryptionMode() {
+                    return selectActiveGenericSessionClientDurableMutationOutboxHandle(handles).getAccountEncryptionMode;
+                },
                 requestReconnect: (reason) => {
                     for (const handle of handles.values()) {
                         if (handle.isDeliveryActive?.() === false) continue;
@@ -1069,6 +1072,7 @@ export function createRuntimeSessionClientDurableMutationOutbox(params: Readonly
     flushOnReady?: boolean;
     initiallyActive?: boolean;
     getSocket: () => SessionClientDurableMutationSocket | null;
+    getAccountEncryptionMode?: () => Promise<'plain' | 'e2ee' | 'unknown'>;
     requestReconnect: (reason: string) => void;
     onTranscriptMessageDeliveryAttempt?: (mutation: Readonly<{
         localId: string;
@@ -1650,7 +1654,7 @@ function createGenericSessionClientDurableMutationOutboxInstance(
             pruneDurableFailedMutationReasonsForQueuedDependents('startup');
         })
         .catch((error) => {
-            logger.debug('[API] Failed to load durable session mutation outbox', {
+            logger.infoFile('[API] Failed to load durable session mutation outbox', {
                 sessionId: params.sessionId,
                 error: serializeAxiosErrorForLog(error),
             });
@@ -1918,6 +1922,7 @@ function createGenericSessionClientDurableMutationOutboxInstance(
                 token: params.token,
                 socket: params.getSocket(),
                 mutation: mutation.payload,
+                getAccountEncryptionMode: params.getAccountEncryptionMode,
             }));
             if (!result.delivered && result.reason === 'unsupported_capability' && 'diagnostic' in result) {
                 logUnsupportedSessionTurnMutationDiagnostic(result.diagnostic);
@@ -2139,10 +2144,6 @@ function createGenericSessionClientDurableMutationOutboxInstance(
             let runtimeActivitySettlementPendingDurableCut: RuntimeActivitySnapshotTail['settlement'] = null;
             let runtimeActivityRetirementPendingDurableCut: number | null = null;
             let earlierOrderedMutationBlocked = false;
-            const transcriptFlushBatchLimit = reason === 'flush'
-                ? Number.POSITIVE_INFINITY
-                : resolveSessionClientDurableMutationTranscriptFlushBatchLimit();
-            let transcriptDeliveriesThisFlush = 0;
             const refreshInFlightMutations = (nextIndex: number): void => {
                 inFlightMutations = mergeLiveQueuedMutations(
                     remaining,
@@ -2311,25 +2312,6 @@ function createGenericSessionClientDurableMutationOutboxInstance(
                     earlierOrderedMutationBlocked = true;
                     refreshInFlightMutations(index + 1);
                     continue;
-                }
-                if (
-                    reason !== 'flush'
-                    && isTranscriptDeliveryMutation(mutation)
-                    && transcriptDeliveriesThisFlush >= transcriptFlushBatchLimit
-                ) {
-                    remaining.push({
-                        ...mutation,
-                        nextAttemptAt: Math.max(
-                            mutation.nextAttemptAt,
-                            Date.now() + resolveSessionClientDurableMutationRetryDelayMs(0),
-                        ),
-                    } as QueuedSessionClientDurableMutation);
-                    refreshInFlightMutations(index + 1);
-                    didChange = true;
-                    continue;
-                }
-                if (isTranscriptDeliveryMutation(mutation)) {
-                    transcriptDeliveriesThisFlush += 1;
                 }
                 let outcome: DurableMutationDeliveryOutcome = { delivered: false };
                 let attemptFailureReason: SessionClientDurableMutationAttemptReason = 'delivery_not_confirmed';

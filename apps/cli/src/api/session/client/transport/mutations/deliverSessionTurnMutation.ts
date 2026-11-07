@@ -3,6 +3,7 @@ import axios from '@/api/client/credentialAxios';
 
 import { isAuthenticationError } from '@/api/client/httpStatusError';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { readRequesterAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentnessObservation';
 import { configuration } from '@/configuration';
 import { emitSocketWithAck } from '@/session/transport/shared/socketAck';
 import { ExactSessionTurnEndMutationV1Schema, isExactSessionTurnMutationPositiveReceiptV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1';
@@ -10,6 +11,7 @@ import { SessionTurnMutationReceiptV1Schema } from '@happier-dev/protocol/sessio
 import type { ExactSessionTurnEndMutationV1, SessionTurnMutationDecisionV1, SessionTurnMutationV1 } from '@happier-dev/protocol';
 
 import type { SessionClientDurableMutationSocket } from './sessionClientDurableMutationTypes';
+import { projectRuntimeIssueForServer } from './projectRuntimeIssueForServer';
 
 function isSuccessAck(value: unknown): boolean {
     if (!value || typeof value !== 'object') return false;
@@ -219,15 +221,20 @@ async function tryHttpSessionTurnMutation(params: Readonly<{
     mutation: SessionTurnMutationV1;
     serverUrl: string;
     exactMutation?: ExactSessionTurnEndMutationV1;
+    resolveAuthorizationHeaders?: (request: Readonly<{ method: string; path: string; body?: unknown }>) => Readonly<Record<string, string>> | null;
 }>): Promise<SessionTurnMutationHttpResult> {
     try {
+        const path = `/v1/sessions/${encodeURIComponent(params.mutation.sessionId)}/turns/mutations`;
+        const authorizationHeaders = params.resolveAuthorizationHeaders?.({ method: 'POST', path, body: params.mutation })
+            ?? (params.resolveAuthorizationHeaders ? null : { Authorization: `Bearer ${params.token}` });
+        if (!authorizationHeaders) return { status: 'failed' };
         const response = await axios.post(
-            `${params.serverUrl}/v1/sessions/${encodeURIComponent(params.mutation.sessionId)}/turns/mutations`,
+            `${params.serverUrl}${path}`,
             params.mutation,
             {
                 headers: {
                     ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
-                    Authorization: `Bearer ${params.token}`,
+                    ...authorizationHeaders,
                     'Content-Type': 'application/json',
                 },
                 timeout: configuration.sessionControlHttpTimeoutMs,
@@ -259,13 +266,37 @@ export async function deliverSessionTurnMutation(params: Readonly<{
     token: string;
     socket: SessionClientDurableMutationSocket | null;
     mutation: SessionTurnMutationV1;
+    getAccountEncryptionMode?: () => Promise<'plain' | 'e2ee' | 'unknown'>;
     signal?: AbortSignal;
+    /** Exact admitted requester headers for the HTTP boundary; never an installed-token fallback. */
+    resolveAuthorizationHeaders?: (request: Readonly<{ method: string; path: string; body?: unknown }>) => Readonly<Record<string, string>> | null;
 }>): Promise<SessionTurnMutationDeliveryResult> {
     const serverUrl = resolveServerHttpBaseUrl();
+    // This boundary also covers daemon writers, persisted replay and HTTP fallback.
+    let mutation = params.mutation;
+    if (mutation.action === 'fail') {
+        const publicIssue = projectRuntimeIssueForServer(mutation.issue);
+        // A closed issue already containing no private diagnostic needs no mode read.
+        if (publicIssue !== mutation.issue) {
+            const accountMode = params.getAccountEncryptionMode
+                ? await params.getAccountEncryptionMode()
+                : (await readRequesterAccountEncryptionCurrentness({
+                    token: params.token,
+                    serverBaseUrl: serverUrl,
+                    signal: params.signal,
+                    ...(params.resolveAuthorizationHeaders ? {
+                        authorizationHeaders: params.resolveAuthorizationHeaders({
+                            method: 'GET', path: '/v1/account/encryption/currentness',
+                        }) ?? {},
+                    } : {}),
+                })).mode;
+            if (accountMode !== 'plain') mutation = { ...mutation, issue: publicIssue };
+        }
+    }
     const parsedExactMutation = ExactSessionTurnEndMutationV1Schema.safeParse(params.mutation);
     const exactMutation = parsedExactMutation.success ? parsedExactMutation.data : undefined;
     const socketResult = params.socket?.connected === true
-        ? await trySocketSessionTurnMutation({ socket: params.socket, mutation: params.mutation, exactMutation, signal: params.signal })
+        ? await trySocketSessionTurnMutation({ socket: params.socket, mutation, exactMutation, signal: params.signal })
         : { status: 'failed' as const };
     if (socketResult.status === 'delivered') return { delivered: true, path: 'socket' };
 
@@ -273,9 +304,10 @@ export async function deliverSessionTurnMutation(params: Readonly<{
 
     const httpResult = await tryHttpSessionTurnMutation({
         token: params.token,
-        mutation: params.mutation,
+        mutation,
         serverUrl,
         exactMutation,
+        ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
     });
     if (httpResult.status === 'delivered') return { delivered: true, path: 'http' };
     if (socketResult.status === 'unsupported' && httpResult.status === 'unsupported') {

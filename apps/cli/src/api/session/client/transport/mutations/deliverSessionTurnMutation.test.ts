@@ -1,9 +1,10 @@
 import axios from 'axios';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SessionTurnMutationV1 } from '@happier-dev/protocol';
+import { AUTHORITY_CEILING_HEADER_V1, type SessionTurnMutationV1 } from '@happier-dev/protocol';
 
 import { configuration } from '@/configuration';
 import { deliverSessionTurnMutation } from './deliverSessionTurnMutation';
+import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 
 vi.mock('axios');
 
@@ -34,6 +35,26 @@ const mutation = {
     turnId: 'turn-1',
     observedAt: 200,
 } as const;
+
+it('keeps admitted requester headers on host startup failure publication', async () => {
+    vi.mocked(axios.post).mockResolvedValue({ data: { receipt: receipt() } } as never);
+    const result = await deliverSessionTurnMutation({ token: 'installed-account-token', socket: null, mutation,
+        resolveAuthorizationHeaders: () => ({ Authorization: 'Bearer requester-token', [AUTHORITY_CEILING_HEADER_V1]: 'account_automation' }),
+    });
+    expect(result).toEqual({ delivered: true, path: 'http' });
+    expect(axios.post).toHaveBeenLastCalledWith(expect.any(String), mutation, expect.objectContaining({ headers: expect.objectContaining({
+        Authorization: 'Bearer requester-token', [AUTHORITY_CEILING_HEADER_V1]: 'account_automation',
+    }) }));
+});
+
+it('does not substitute an installed Account when admitted requester headers are unavailable', async () => {
+    vi.mocked(axios.post).mockClear();
+    const result = await deliverSessionTurnMutation({ token: 'installed-account-token', socket: null, mutation,
+        resolveAuthorizationHeaders: () => null,
+    });
+    expect(result).toMatchObject({ delivered: false });
+    expect(axios.post).not.toHaveBeenCalled();
+});
 
 function receipt(overrides: Record<string, unknown> = {}) {
     return {
@@ -142,6 +163,88 @@ function ordinaryReceipt(mutation: SessionTurnMutationV1, overrides: Record<stri
         ...overrides,
     };
 }
+
+describe('deliverSessionTurnMutation Account diagnostic privacy', () => {
+    const nativeMessage = 'stage=exec errno=EACCES: cannot open /private/member/project/CODEX_HOME';
+    const failure = {
+        v: 1, sessionId: 'session-1', mutationId: 'private-fail', action: 'fail', turnId: 'turn-1', observedAt: 100,
+        issue: { v: 1, scope: 'primary_session', status: 'failed', code: 'agent_startup_rpc_rejected',
+            source: 'agent_session_error', occurredAt: 100, sanitizedPreview: nativeMessage,
+            failureCause: { code: 'agent_startup_rpc_rejected', phase: 'client_start',
+                failureReason: 'unclassified_provider_error', providerErrorCode: -32603,
+                providerErrorMessage: nativeMessage } },
+    } as const satisfies SessionTurnMutationV1;
+
+    beforeEach(() => {
+        vi.mocked(axios.get).mockReset();
+        vi.mocked(axios.post).mockReset();
+    });
+
+    it.each([
+        { mode: 'e2ee', transport: 'socket' }, { mode: 'e2ee', transport: 'http' },
+        { mode: 'plain', transport: 'socket' }, { mode: 'plain', transport: 'http' },
+    ] as const)('projects $mode diagnostics once before $transport delivery or replay', async ({ mode, transport }) => {
+        vi.mocked(axios.get).mockResolvedValue({ status: 200, data: createAccountEncryptionCurrentnessFixture({ mode }) });
+        const sent: unknown[] = [];
+        const socket = {
+            connected: true, emit: vi.fn(),
+            emitWithAck: async (_event: string, payload: unknown) => {
+                sent.push(payload);
+                return transport === 'socket' ? { ok: true, receipt: ordinaryReceipt(failure) } : { ok: false };
+            },
+        };
+        vi.mocked(axios.post).mockImplementation(async (_url, payload) => {
+            sent.push(payload);
+            return { status: 200, data: { success: true, receipt: ordinaryReceipt(failure) } };
+        });
+
+        await expect(deliverSessionTurnMutation({ token: 'privacy-token', socket, mutation: failure }))
+            .resolves.toEqual({ delivered: true, path: transport });
+        expect(axios.get).toHaveBeenCalledTimes(1);
+        expect(sent).toHaveLength(transport === 'socket' ? 1 : 2);
+        for (const payload of sent) {
+            if (mode === 'plain') expect(payload).toEqual(failure);
+            else {
+                expect(JSON.stringify(payload)).not.toContain(nativeMessage);
+                expect(JSON.stringify(payload)).not.toContain('/private/member');
+                expect(payload).toMatchObject({ issue: { code: failure.issue.code,
+                    failureCause: { phase: 'client_start', providerErrorCode: -32603 },
+                    sanitizedPreview: 'Agent startup was rejected by its native API' } });
+            }
+        }
+        expect(failure.issue.failureCause.providerErrorMessage).toBe(nativeMessage);
+    });
+
+    it('never sends native diagnostics while Account mode is unavailable', async () => {
+        vi.mocked(axios.get).mockRejectedValue(new Error('Home unavailable'));
+        const socket = { connected: true, emit: vi.fn(), emitWithAck: vi.fn() };
+        await expect(deliverSessionTurnMutation({ token: 'privacy-token', socket, mutation: failure }))
+            .rejects.toMatchObject({ code: 'account_encryption_currentness_unavailable' });
+        expect(socket.emitWithAck).not.toHaveBeenCalled();
+        expect(axios.post).not.toHaveBeenCalled();
+    });
+
+    it('keeps native exit stderr and materialization paths out of E2EE Account Home state', async () => {
+        vi.mocked(axios.get).mockResolvedValue({ status: 200, data: createAccountEncryptionCurrentnessFixture({ mode: 'e2ee' }) });
+        const exitFailure = { ...failure, issue: { v: 1, scope: 'primary_session', status: 'failed',
+            code: 'agent_process_exit_after_switch', source: 'agent_process_exit_after_switch', occurredAt: 100,
+            agentProcessExitAfterSwitch: { exitCode: 1, signal: null, lastStderrLine: nativeMessage,
+                vendorResumeId: null, materializationRoot: '/private/member/project', effectiveStateMode: 'isolated' },
+        } } as const satisfies SessionTurnMutationV1;
+        const sent: unknown[] = [];
+        const socket = { connected: true, emit: vi.fn(), emitWithAck: async (_event: string, payload: unknown) => {
+            sent.push(payload);
+            return { ok: true, receipt: ordinaryReceipt(exitFailure) };
+        } };
+        await expect(deliverSessionTurnMutation({ token: 'privacy-token', socket, mutation: exitFailure }))
+            .resolves.toEqual({ delivered: true, path: 'socket' });
+        expect(JSON.stringify(sent)).not.toContain('/private/member');
+        expect(sent).toEqual([expect.objectContaining({ issue: {
+            v: 1, scope: 'primary_session', status: 'failed', code: exitFailure.issue.code,
+            source: exitFailure.issue.source, occurredAt: 100,
+        } })]);
+    });
+});
 
 describe('deliverSessionTurnMutation exact end', () => {
     beforeEach(() => {

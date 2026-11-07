@@ -82,7 +82,8 @@ export function prepareTranscriptMessageBody(
         ? presentSessionAgentAuthRequired(runtimeIssue)
         : null;
     const runtimeFailure = runtimeIssue?.code === 'provider_model_not_found' || readAgentStartupFailureCode(runtimeIssue?.code) !== null
-        ? presentSessionRuntimeIssue(runtimeIssue).message : null;
+        ? [presentSessionRuntimeIssue(runtimeIssue).message, runtimeIssue?.failureCause?.providerErrorMessage]
+            .filter(Boolean).join('\n') || null : null;
     let text: string | null;
     if (teamDenial) text = [teamDenial.title, teamDenial.body].filter(Boolean).join(' · ');
     else if (agentAuth) text = agentAuth.message;

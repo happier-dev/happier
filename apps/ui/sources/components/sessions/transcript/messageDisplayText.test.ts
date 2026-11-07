@@ -16,6 +16,25 @@ const user = (overrides: Partial<UserTextMessage> = {}): UserTextMessage => ({
 });
 
 describe('resolveTranscriptMessageDisplayText', () => {
+    it('retains private native startup detail in rendering, Find and copy', () => {
+        const nativeMessage = 'stage=exec errno=EACCES: cannot open /private/member/project/CODEX_HOME';
+        const normalized = normalizeRawMessage('private-startup', 'private-startup', 100, {
+            role: 'agent', content: { type: 'acp', agentId: 'codex', data: {
+                type: 'message', message: `Codex turn failed: ${nativeMessage}`,
+            } }, meta: { source: 'runtime', runtimeIssueV1: {
+                v: 1, scope: 'primary_session', status: 'failed', code: 'agent_startup_rpc_rejected',
+                source: 'agent_session_error', occurredAt: 100, agentId: 'codex', sanitizedPreview: nativeMessage,
+                failureCause: { code: 'agent_startup_rpc_rejected', phase: 'client_start',
+                    failureReason: 'unclassified_provider_error', providerErrorCode: -32603,
+                    providerErrorMessage: nativeMessage },
+            } },
+        });
+        const message = agent({ meta: normalized?.meta, text: `Codex turn failed: ${nativeMessage}` });
+        for (const preserveInlineReferences of [false, true]) {
+            expect(resolveTranscriptMessageDisplayText(message, { preserveInlineReferences }).text).toContain(nativeMessage);
+        }
+    });
+
     it('keeps host onboarding model instructions out of Find and copy while preserving the same person-authored words', () => {
         const onboarding = buildSessionHostOnboardingInputV1({ templateName: 'Garden', templateVersion: '1.2.3', authorDisplayName: 'Ana' });
         const text = onboarding.initialInput.text;

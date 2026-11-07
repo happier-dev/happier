@@ -1,11 +1,14 @@
+import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import { resolvePublishedMachineEncryptionContext, MachineContentKeyUnavailableError } from './machine/machineDataEncryptionKey';
+import { readPublishedMachineRow } from './machine/readPublishedMachineRow';
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { AccessibleMachineAccessV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
+import { MachineRegistrationReplacementResultSchema } from '@happier-dev/protocol/machines/identity/machineReplacement';
 import { MachineKeyBasisV1Schema, MachinePublishedRowV1Schema, MachineContentKeyTransitionResultV1Schema, prepareMachineContentKeyV1, MachineContentKeyPreparationErrorV1 } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { createMachineContentCodec } from './machine/machineStoredContent';
 import { parseMachinePublishedMetadataV1, parseMachinePublishedDaemonStateV1, StoredMachinePublishedMetadataV1Schema, StoredMachinePublishedDaemonStateV1Schema, projectMachinePublishedMetadataFromRowV1 } from '@happier-dev/protocol/machines/machinePublishedContentV1';
-import axios from 'axios'
+import axios from '@/api/client/credentialAxios';
 import { ManagedEnrollmentCorrelationV1Schema, type ManagedEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { deriveManagedDevcontainerChildProjectionV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
 import { readSessionCreationInitialTriggerError } from './session/sessionCreationInitialTriggerError';
@@ -66,11 +69,12 @@ import { createDaemonRuntimeActionExecutor, type BrowserUiAutomationRouteOwner, 
 import type {
   BrowserRecordingComposerAttachInput,
   BrowserRecordingComposerAttachResult,
-} from '@/daemon/browser/recording/attachToComposer';
+} from '../daemon/recording/attachToComposer';
 import type { LocalServicesRuntimeActionRoutes } from '@/daemon/local/services/actions/runtimeActionExecutor';
 import type { DaemonPeerMediationObservabilityRuntimeActionContext } from '@/daemon/peer/mediation/observability/runtimeActionExecutor';
 import type { SimulatorPreviewRoutes } from '@/daemon/devices/simulator/previewRoutes.types';
 import {
+  readServerIdentityIdFromFeaturesSnapshot,
   refreshServerFeaturesSnapshot,
   type CliServerFeaturesSnapshot,
 } from '@/features/serverFeaturesClient';
@@ -264,10 +268,10 @@ function normalizeLocalMachineId(value: string | null | undefined): string | nul
 
 // Only a structured refusal code is exposed; response bodies and Axios
 // configuration can contain private material and must not enter broker errors.
-const PeerMediationRouteGrantRefusalSchema = z.object({
+const PeerMediationRouteGrantRefusalSchema = lazyZodSchema(() => z.object({
   ok: z.literal(false),
   reasonCode: z.string().check(z.regex(/^[a-z][a-z0-9_]*$/u)),
-});
+}));
 
 export class ApiClient {
 
@@ -438,8 +442,6 @@ export class ApiClient {
         token: this.credential.token, ...(signal ? { signal } : {}),
       })).mode,
       prepareTarget: async (args) => {
-        // The pinned native contract cannot prove keyboard focus; never route credentials to raw type.
-        if (args.actionId === 'computer.secret.fill') return { status: 'refused', code: 'field_verification_unsupported' };
         const routes = this.getBrowserDaemonAutomationRoutes?.();
         if (!routes) return { status: 'refused', code: 'target_unavailable' };
         // Browser owns its observation hold and actual-launch qualification. The consumer
@@ -500,7 +502,6 @@ export class ApiClient {
           'Content-Type': 'application/json',
         },
         signal,
-        timeout: 30_000,
       },
     );
     return RunnerBrokerReadinessResponseV1Schema.parse(response.data);
@@ -529,6 +530,7 @@ export class ApiClient {
     signal?: AbortSignal,
   }): Promise<SessionCreateOrLoadResult | null> {
     opts.signal?.throwIfAborted();
+    const managedCreation = opts.metadata.sessionCreationCorrespondenceV1?.recipe.managedCreation;
     const sessionsUrl = `${resolveServerHttpBaseUrl()}/v1/sessions`;
 
     // One terminal classification for every failure this call can meet on its
@@ -587,11 +589,12 @@ export class ApiClient {
       ...(opts.signal ? { signal: opts.signal } : {}),
     });
     if (encryptionModeResolution.status === 'currentness_unavailable') {
-      // The read failed before any Session request; classify the transport
-      // failure it wraps exactly as the sessions request's own would be. An
-      // unavailable currentness is never reinterpreted as a Plain Account.
       const { error } = encryptionModeResolution;
-      return settleGetOrCreateSessionFailure(error.cause ?? error);
+      // Keep the stable authentication contract, but do not erase the phase of
+      // an unavailable observation or turn it into proof that the Home is offline.
+      const status = readHttpStatus(error.cause ?? error);
+      if (status === 401 || status === 403) return settleGetOrCreateSessionFailure(error.cause ?? error);
+      throw error;
     }
     const {
       desiredSessionEncryptionMode,
@@ -602,7 +605,7 @@ export class ApiClient {
     const initialAccessCreateFields = buildSessionInitialAccessCreateFields(opts, serverFeaturesSnapshot);
     const creationMetadata = addSessionInitialAccessTeamShareStatement(opts.metadata, initialAccessCreateFields, desiredSessionEncryptionMode);
     const encryptionContext = desiredSessionEncryptionMode === 'e2ee'
-      ? resolveSessionEncryptionContext(this.credential)
+      ? await resolveSessionEncryptionContext(this.credential)
       : null;
     const materializedInitialAccessCreateFields = await materializeSessionInitialAccessCreateFields({
       fields: initialAccessCreateFields,
@@ -692,6 +695,7 @@ export class ApiClient {
           body: {
             tag: opts.tag,
             ...pickSessionCreateOriginFields(opts),
+            ...(managedCreation ? { managedCreation } : {}),
             ...(opts.manager !== undefined ? { manager: opts.manager } : {}),
             ...materializedInitialAccessCreateFields,
             ...(opts.initialTriggers !== undefined ? { initialTriggers: opts.initialTriggers } : {}),
@@ -972,7 +976,7 @@ export class ApiClient {
     if (!account || !http || account.accountId !== options.authorization.binding.accountId
       || account.accountId !== http.accountId || account.serverId !== http.serverId
       || !await account.isCurrent() || !await http.isCurrent()) throw new MachineContentKeyUnavailableError(machineId);
-    const raw = await ApiClient.readPublishedMachineRowForAuthority(machineId, undefined, options);
+    const raw = await readPublishedMachineRow(machineId, undefined, options);
     if (!await account.isCurrent() || !await http.isCurrent()) throw new MachineContentKeyUnavailableError(machineId);
     options.signal?.throwIfAborted();
     return raw ? ApiClient.decodePublishedMachineForAuthority(machineId, raw, account.accountEncryptionMode, undefined, options.authorization) : null;
@@ -981,29 +985,7 @@ export class ApiClient {
   private async readPublishedMachineRow(machineId: string, options?: Readonly<{ signal?: AbortSignal;
     authorization?: ExternalActionExecutionAuthorizationV1;
     effectActionId?: string }>): Promise<PublishedMachineRow | null> {
-    return ApiClient.readPublishedMachineRowForAuthority(machineId, this.credential, options);
-  }
-
-  private static async readPublishedMachineRowForAuthority(machineId: string, credentials: StoredCredentials | undefined,
-    options?: Readonly<{ signal?: AbortSignal; authorization?: ExternalActionExecutionAuthorizationV1; effectActionId?: string }>): Promise<PublishedMachineRow | null> {
-    try {
-      const path = `/v1/machines/${encodeURIComponent(machineId)}`;
-      const http = options?.authorization?.requesterHttpProjection;
-      const requesterHeaders = http ? await http.createRequestHeaders({ effectActionId: options?.effectActionId ?? options!.authorization!.binding.actionId,
-        method: 'GET', path, ...(options?.signal ? { signal: options.signal } : {}) }) : null;
-      if (options?.authorization && !requesterHeaders) throw new MachineContentKeyUnavailableError(machineId);
-      const response = await axios.get(
-        `${http?.serverHttpBaseUrl ?? resolveServerHttpBaseUrl()}${path}`,
-        {
-          headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), ...(requesterHeaders ?? { Authorization: `Bearer ${credentials!.token}` }) },
-          ...(options?.signal ? { signal: options.signal } : {}),
-        },
-      );
-      return MachinePublishedRowV1Schema.parse(response.data.machine);
-    } catch (error) {
-      if (axios.isAxiosError(error) && error.response?.status === 404) return null;
-      throw error;
-    }
+    return readPublishedMachineRow(machineId, this.credential, options);
   }
 
   private decodePublishedMachine(machineId: string, raw: PublishedMachineRow, accountMode: ConnectedServiceAccountEncryptionMode): Machine & { encryptionMode: 'plain' | 'e2ee' } {
@@ -1172,13 +1154,15 @@ export class ApiClient {
     }
   }
 
-  async mintPeerMediationRouteGrant(request: unknown, options?: Readonly<{ signal?: AbortSignal }>): Promise<unknown> {
+  async mintPeerMediationRouteGrant(request: unknown, options?: Readonly<{
+    signal?: AbortSignal; authorizationHeaders?: Readonly<Record<string, string>>;
+  }>): Promise<unknown> {
     options?.signal?.throwIfAborted();
     const response = await axios.post(
       `${resolveServerHttpBaseUrl()}/v1/machines/peer/mediation/route-grants`,
       request,
       {
-        headers: { Authorization: `Bearer ${this.credential.token}`, 'Content-Type': 'application/json' },
+        headers: { ...(options?.authorizationHeaders ?? { Authorization: `Bearer ${this.credential.token}` }), 'Content-Type': 'application/json' },
         ...(options?.signal ? { signal: options.signal } : {}),
       },
     ).catch((error: unknown) => {
@@ -1449,6 +1433,12 @@ export class ApiClient {
         throw new MachineReplacedError(opts.machineId, replacementMachineId);
       }
       logger.debug(`[API] Machine ${opts.machineId} registered/updated with server`);
+      const replacement = MachineRegistrationReplacementResultSchema.safeParse(response.data.machineReplacement);
+      if (replacement.success && replacement.data.status === 'skipped') {
+        logger.warnLocalFile('[API] Machine replacement skipped', {
+          code: 'machine_replacement_skipped', phase: 'machine_registration', reason: replacement.data.reason,
+        });
+      }
       const shouldConsumeReplacementCandidate = registrationIdentity?.replacementCandidateAccountId
         && registrationIdentity.replacesMachineId
         && (
@@ -1567,6 +1557,7 @@ export class ApiClient {
       | 'durableMutationDeliveryInitiallyActive'
       | 'transformSessionInputBeforeCommit'
       | 'afterComposerAttachmentMessageAccepted'
+      | 'pendingMessageComposerAdmissionControls'
       | 'machineAdmissionTransport'
       | 'actionsSettingsProvider'
     > & Partial<Pick<ApiSessionClientOptions, 'metadataAuthority'>> = {},
@@ -1586,6 +1577,7 @@ export class ApiClient {
         ?? { kind: 'owner', credentials: this.credential, readCurrentCredentials: readStoredCredentials },
       ...(sessionOptions.actionsSettingsProvider ? { actionsSettingsProvider: sessionOptions.actionsSettingsProvider } : {}),
       getAccountEncryptionCurrentness: async () => await this.getAccountEncryptionCurrentness(),
+      getAccountEncryptionMode: async () => await this.getAccountEncryptionMode({ usage: 'identity', throwOnTransportError: true }),
       getBrowserDaemonControlRoutes: this.getBrowserDaemonControlRoutes,
       getBrowserDaemonContextRoutes: this.getBrowserDaemonContextRoutes,
       getBrowserDaemonAutomationRoutes: this.getBrowserDaemonAutomationRoutes,
@@ -1603,6 +1595,8 @@ export class ApiClient {
         ?? transformSessionInputThroughPluginHooks,
       afterComposerAttachmentMessageAccepted:
         sessionOptions.afterComposerAttachmentMessageAccepted,
+      pendingMessageComposerAdmissionControls:
+        sessionOptions.pendingMessageComposerAdmissionControls,
       machineAdmissionTransport:
         sessionOptions.machineAdmissionTransport,
       localMachineId: this.localMachineId,
@@ -1632,6 +1626,12 @@ export class ApiClient {
       ownershipMetadata,
       {
         ...lifecycleDependencies,
+        installedCredentials: this.credential,
+        getServerFeaturesSnapshot: lifecycleDependencies?.getServerFeaturesSnapshot
+          ?? (this.getCachedServerFeaturesSnapshot ? () => this.getCachedServerFeaturesSnapshot?.() : undefined),
+        resolveCurrentServerIdentityId: lifecycleDependencies?.resolveCurrentServerIdentityId ?? (() => {
+          return readServerIdentityIdFromFeaturesSnapshot(this.getCachedServerFeaturesSnapshot?.()) ?? null;
+        }),
         loadMachine: lifecycleDependencies?.loadMachine ?? ((options) => this.getMachine(machine.id, options)),
         createCapabilitiesApiClient:
           lifecycleDependencies?.createCapabilitiesApiClient
@@ -1730,6 +1730,7 @@ export class ApiClient {
   async listConnectedServiceProfiles(params: {
     serviceId: ConnectedServiceId;
     forceRefresh?: boolean;
+    signal?: AbortSignal;
   }): Promise<ConnectedServiceProfileListResult> {
     return await this.connectedServiceCredentialApi.listConnectedServiceProfiles(params);
   }
