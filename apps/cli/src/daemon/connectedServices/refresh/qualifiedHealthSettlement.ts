@@ -57,41 +57,43 @@ export type QualifiedHealthSettlementInput = Readonly<{
     basis: Awaited<ReturnType<QualifiedConnectedAccountEstablishedRuntimeOwner['invokeWithReceipt']>>['basis'];
     health: ConnectedServiceCredentialHealthV1;
     healthWritePath?: 'status' | 'result';
+    providerIdentity?: QualifiedHealthSettlementInput['basis']['credentialProviderIdentity'];
 }>;
 
 export async function settleQualifiedHealth(input: QualifiedHealthSettlementInput, deps: Readonly<{
-    runtime: QualifiedConnectedAccountRefreshRuntime; token: string;
-}>): Promise<void> {
-    const expectedConfigurationRevision =
-      input.basis.credentialConfigurationRevision;
-    const expectedCredentialRevision = input.settledCredentialRevision ?? input.basis.credentialRevision;
-    // Status observes no new attempt/success timestamp. Keep committed history
-    // intact when this admission already carries exactly the same status facts.
-    // Result settlement still owns refresh effects and replacement revisions.
-    if (input.healthWritePath === 'status'
-      && input.settledCredentialRevision === undefined
-      && isDeepStrictEqual(credentialHealthStatusFacts(input.basis.credentialHealth ?? null), input.health)) return;
+    runtime: QualifiedConnectedAccountRefreshRuntime;
+    token: string;
+}>, signal?: AbortSignal): Promise<ConnectedServiceCredentialRevisionV1 | undefined> {
+    signal?.throwIfAborted();
+    const expectedConfigurationRevision = input.basis.credentialConfigurationRevision;
+    let settledCredentialRevision = input.settledCredentialRevision;
+    if (settledCredentialRevision === undefined && input.providerIdentity?.accountId
+        && !input.basis.credentialProviderIdentity?.accountId) {
+        const replacement = await input.basis.prepareCredentialReplacement({
+            set: {}, delete: [], metadata: { providerIdentity: input.providerIdentity },
+        });
+        const settled = await deps.runtime.mutateCredential({ token: deps.token, ...(signal ? { signal } : {}),
+            mutation: { ref: input.account, ...replacement,
+                expectedCredentialRevision: input.basis.credentialRevision, expectedConfigurationRevision } });
+        if (settled.configurationRevision !== expectedConfigurationRevision) {
+            throw new Error('Qualified Connected Account identity settled against a different configuration');
+        }
+        settledCredentialRevision = settled.credentialRevision;
+    }
+    const expectedCredentialRevision = settledCredentialRevision ?? input.basis.credentialRevision;
+    if (input.healthWritePath === 'status' && settledCredentialRevision === undefined
+        && isDeepStrictEqual(credentialHealthStatusFacts(input.basis.credentialHealth), input.health)) return;
     recordCredentialHealthWrite({ path: input.healthWritePath ?? 'result', account: input.account,
-      credentialRevision: expectedCredentialRevision, configurationRevision: expectedConfigurationRevision,
-      before: input.basis.credentialHealth, after: input.health });
-    const mutation = await deps.runtime.mutateCredentialHealth({
-      token: deps.token,
-      patch: Object.freeze({
-        ref: input.account,
-        expectedCredentialRevision,
-        expectedConfigurationRevision,
-        health: input.health,
-      }),
-    });
-    if (
-      mutation.credentialRevision !== expectedCredentialRevision
-      || mutation.configurationRevision !== expectedConfigurationRevision
-      || !input.basis.isCurrent()
-    ) {
-      throw new Error(
-        'Qualified Connected Account health mutation settled against a different invocation basis',
-      );
+        credentialRevision: expectedCredentialRevision, configurationRevision: expectedConfigurationRevision,
+        before: input.basis.credentialHealth, after: input.health });
+    const mutation = await deps.runtime.mutateCredentialHealth({ ...(signal ? { signal } : {}), token: deps.token,
+        patch: Object.freeze({ ref: input.account, expectedCredentialRevision, expectedConfigurationRevision, health: input.health }) });
+    if (mutation.credentialRevision !== expectedCredentialRevision
+        || mutation.configurationRevision !== expectedConfigurationRevision
+        || (settledCredentialRevision === undefined && !input.basis.isCurrent())) {
+        throw new Error('Qualified Connected Account health mutation settled against a different invocation basis');
     }
     notifyQualifiedReauth({ account: input.account, credentialRevision: expectedCredentialRevision,
-      previousHealth: input.basis.credentialHealth, health: input.health }, deps.runtime);
+        previousHealth: input.basis.credentialHealth, health: input.health }, deps.runtime);
+    return settledCredentialRevision;
 }

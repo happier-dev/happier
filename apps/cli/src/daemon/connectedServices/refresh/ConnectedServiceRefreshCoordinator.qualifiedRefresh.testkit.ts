@@ -12,8 +12,12 @@ import {
   sealQualifiedConnectedAccountContentEnvelope,
   QualifiedConnectedAccountProfileV4Schema,
   QualifiedConnectedAccountGroupV4Schema,
+  QualifiedConnectedAccountGroupActiveAccountV4Schema,
   QualifiedConnectedAccountPurposeBindingsV1Schema,
   type QualifiedConnectedAccountCredentialSnapshotV4,
+  type ConnectedServiceCredentialHealthV1,
+  QualifiedConnectedAccountCredentialHealthPatchV4Schema,
+  type ConnectedServiceAuthGroupPolicyV1,
   type QualifiedConnectedAccountRef,
   QualifiedConnectedAccountCredentialSnapshotV4Schema,
   ConnectedServiceCredentialRevisionV1Schema,
@@ -31,7 +35,6 @@ import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1 } from '../accountGroups
 import { ConnectedServiceRefreshCoordinator } from './ConnectedServiceRefreshCoordinator';
 
 const service = Object.freeze({ pluginId: 'happier.agent.codex', localId: 'openai-codex' });
-const account = Object.freeze({ service, accountId: 'work' });
 const firstRevision = 'csr_abcdefghijklmnopqrstuv';
 const secondRevision = 'csr_bcdefghijklmnopqrstuvw';
 const thirdRevision = 'csr_cdefghijklmnopqrstuvwx';
@@ -39,20 +42,25 @@ const now = 1_000_000;
 
 export async function createBuiltInQualifiedRefreshHarness(input: Readonly<{
   runAccountOperation?: ConstructorParameters<typeof ConnectedServiceRefreshCoordinator>[0]['runAccountOperation'];
+  primaryAccountId?: string;
   controller?: PluginReloadController;
   happyHomeDir?: string;
   runtimeRegistry?: ConnectedServiceRuntimeRegistry;
   readGroup?: NonNullable<ConstructorParameters<typeof ConnectedServiceRefreshCoordinator>[0]['qualifiedConnectedAccountRuntime']>['readGroup'];
   onQualifiedConnectedAccountCredentialUpdated?: NonNullable<ConstructorParameters<typeof ConnectedServiceRefreshCoordinator>[0]['qualifiedConnectedAccountRuntime']>['onCredentialUpdated'];
+  onReauthRequired?: NonNullable<ConstructorParameters<typeof ConnectedServiceRefreshCoordinator>[0]['qualifiedConnectedAccountRuntime']>['onReauthRequired'];
+  backupNeedsReauth?: boolean;
+  additionalPluginIds?: readonly string[];
   createPurposeRuntime?: (resources: Readonly<{
     controller: PluginReloadController;
     happyHomeDir: string;
     establishedRuntimeOwner: ReturnType<typeof createQualifiedConnectedAccountEstablishedRuntimeOwner>;
     credentials: Credentials;
     api: ApiClient;
-    readCredential: (input?: Readonly<{ ref: QualifiedConnectedAccountRef }>) => Promise<Readonly<{ credentialRevision: string }>>;
+    readCredential: (input?: Readonly<{ ref: QualifiedConnectedAccountRef }>) => Promise<Readonly<{ credentialRevision: string; authenticationModeId: string; health?: ConnectedServiceCredentialHealthV1 }>>;
   }>) => ReturnType<typeof createDaemonConnectedAccountPurposeBindingRuntime>;
 }> = {}) {
+  const account = Object.freeze({ service, accountId: input.primaryAccountId ?? 'work' });
   // Production also constructs the real purpose owner before publishing the registry that
   // consumes it. No already-admitted registry is patched with a replacement internal owner.
   const ownsHome = input.happyHomeDir === undefined;
@@ -65,7 +73,9 @@ export async function createBuiltInQualifiedRefreshHarness(input: Readonly<{
       secret: new Uint8Array(32).fill(8),
     },
   };
+  let qualifiedAuthenticationModeId = 'oauth';
   let qualifiedRevision = firstRevision;
+  let qualifiedHealth: ConnectedServiceCredentialHealthV1 | undefined;
   let qualifiedMetadata: QualifiedConnectedAccountCredentialSnapshotV4['metadata'] = {
     providerIdentity: { accountId: 'work' }, displayName: 'work', scopes: ['openid'],
   };
@@ -86,7 +96,7 @@ export async function createBuiltInQualifiedRefreshHarness(input: Readonly<{
   let legacyRecord = buildConnectedServiceCredentialRecord({
     now,
     serviceId: 'openai-codex',
-    profileId: 'work',
+    profileId: account.accountId,
     kind: 'oauth',
     expiresAt: null,
     oauth: {
@@ -107,6 +117,7 @@ export async function createBuiltInQualifiedRefreshHarness(input: Readonly<{
       payload: { v: 1, values: { accessToken: 'access-backup', refreshToken: 'refresh-backup',
         idToken: 'id-backup', providerAccountId: 'backup' } }, randomBytes: (length) => new Uint8Array(length) }),
     metadata: { providerIdentity: { accountId: 'backup' }, displayName: 'backup', scopes: ['openid'] },
+    ...(input.backupNeedsReauth ? { health: { v: 1, status: 'needs_reauth', reconnectRequired: true } } : {}),
   });
   const backupLegacyRecord = buildConnectedServiceCredentialRecord({
     now, serviceId: 'openai-codex', profileId: 'backup', kind: 'oauth', expiresAt: null,
@@ -125,12 +136,13 @@ export async function createBuiltInQualifiedRefreshHarness(input: Readonly<{
     if (ref.accountId !== account.accountId) throw new Error('Fixture credential account unavailable');
     const credential = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
       ref: account,
-      authenticationModeId: 'oauth',
+      authenticationModeId: qualifiedAuthenticationModeId,
       revisionSemantics: 'revisioned',
       credentialRevision: qualifiedRevision,
       configurationRevision: null,
       content: qualifiedContent,
       metadata: qualifiedMetadata,
+      ...(qualifiedHealth ? { health: qualifiedHealth } : {}),
     });
     if (credential.revisionSemantics !== 'revisioned') throw new Error('Work fixture credential must be revisioned');
     return credential;
@@ -155,7 +167,7 @@ export async function createBuiltInQualifiedRefreshHarness(input: Readonly<{
   const api = {
     getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
     getConnectedServiceCredentialPlain: vi.fn(async (input?: Readonly<{ serviceId: string; profileId: string }>) => {
-      if (input && (input.serviceId !== 'openai-codex' || !['work', 'backup'].includes(input.profileId))) return null;
+      if (input && (input.serviceId !== 'openai-codex' || ![account.accountId, 'backup'].includes(input.profileId))) return null;
       const isBackup = input?.profileId === 'backup';
       return {
         content: { t: 'plain' as const, v: isBackup ? backupLegacyRecord : legacyRecord },
@@ -175,11 +187,14 @@ export async function createBuiltInQualifiedRefreshHarness(input: Readonly<{
       credentialRevision: qualifiedRevision,
     };
   });
-  const mutateCredentialHealth = vi.fn(async () => ({
+  const mutateCredentialHealth = vi.fn(async (input: Readonly<{ token: string; patch: unknown }>) => {
+    qualifiedHealth = QualifiedConnectedAccountCredentialHealthPatchV4Schema.parse(input.patch).health;
+    return {
     success: true as const,
     credentialRevision: qualifiedRevision,
     configurationRevision: null,
-  }));
+    };
+  });
   const mutateCredential = vi.fn(async (input: Readonly<{
     token: string;
     mutation: unknown;
@@ -203,6 +218,7 @@ export async function createBuiltInQualifiedRefreshHarness(input: Readonly<{
         plaintext,
         metadata: mutation.metadata,
       });
+    qualifiedAuthenticationModeId = mutation.authenticationModeId;
     qualifiedContent = mutation.content;
     qualifiedMetadata = mutation.metadata;
     qualifiedRevision = qualifiedRevision === firstRevision ? secondRevision
@@ -212,7 +228,7 @@ export async function createBuiltInQualifiedRefreshHarness(input: Readonly<{
     legacyRecord = buildConnectedServiceCredentialRecord({
       now,
       serviceId: 'openai-codex',
-      profileId: 'work',
+      profileId: account.accountId,
       kind: 'oauth',
       expiresAt: opened.values.expiresAtMs === undefined ? null : Number(opened.values.expiresAtMs),
       oauth: {
@@ -256,6 +272,7 @@ export async function createBuiltInQualifiedRefreshHarness(input: Readonly<{
       acquireRefreshLease,
       mutateCredential,
       mutateCredentialHealth,
+      ...(input.onReauthRequired ? { onReauthRequired: input.onReauthRequired } : {}),
       ...(input.onQualifiedConnectedAccountCredentialUpdated
         ? { onCredentialUpdated: input.onQualifiedConnectedAccountCredentialUpdated } : {}),
     },
@@ -267,30 +284,7 @@ export async function createBuiltInQualifiedRefreshHarness(input: Readonly<{
     purposeRuntime = input.createPurposeRuntime?.({ controller, happyHomeDir, establishedRuntimeOwner,
       credentials, api, readCredential });
     admittedRuntime = await createAdmittedPluginRuntimeFixture({ happyHomeDir, controller,
-      runtimeOptions: { pluginIds: [service.pluginId], ...(purposeRuntime ? { connectedAccounts: purposeRuntime.owner } : {}),
-        // Keep the real HTTP policy, DNS admission and buffering above the genuine socket boundary.
-        networkDependencies: {
-          resolveNetworkAddresses: async () => ['8.8.8.8'],
-          async openPinnedStream(request) {
-            const response = await globalThis.fetch(request.url, {
-              method: request.method,
-              headers: request.headers,
-              ...(request.body === undefined ? {} : { body: new Uint8Array(request.body).buffer }),
-              signal: request.signal,
-            });
-            const reader = response.body?.getReader();
-            return {
-              status: response.status,
-              headers: Object.fromEntries(response.headers.entries()),
-              contentLength: null,
-              async read() {
-                const next = await reader?.read();
-                return next && !next.done ? next.value : null;
-              },
-              cancel() { void reader?.cancel(); },
-            };
-          },
-        },
+      runtimeOptions: { pluginIds: [service.pluginId, ...(input.additionalPluginIds ?? [])], ...(purposeRuntime ? { connectedAccounts: purposeRuntime.owner } : {}),
       },
     });
   } catch (error) {
@@ -311,21 +305,25 @@ export async function createBuiltInQualifiedRefreshHarness(input: Readonly<{
 
 /** Real selection, purpose resolution and file materialization over the same HTTP/storage fixture. */
 export async function createBuiltInQualifiedNativeRefreshHarness(
-  resources: Pick<NonNullable<Parameters<typeof createBuiltInQualifiedRefreshHarness>[0]>, 'controller' | 'happyHomeDir' | 'runtimeRegistry' | 'onQualifiedConnectedAccountCredentialUpdated'> = {},
+  resources: Pick<NonNullable<Parameters<typeof createBuiltInQualifiedRefreshHarness>[0]>, 'controller' | 'happyHomeDir' | 'runtimeRegistry' | 'onQualifiedConnectedAccountCredentialUpdated' | 'onReauthRequired' | 'backupNeedsReauth' | 'additionalPluginIds'> & Readonly<{
+    groupBinding?: boolean;
+    groupPolicy?: ConnectedServiceAuthGroupPolicyV1;
+  }> = {},
 ) {
   let group = QualifiedConnectedAccountGroupV4Schema.parse({ v: 1,
     ref: { service, groupId: 'pool' }, incarnation: 'pool-lifetime', displayName: 'Pool',
-    policy: DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, activeConnectedAccountId: 'work', generation: 7,
+    policy: resources.groupPolicy ?? DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, activeConnectedAccountId: 'work', generation: 7,
     runtimeStateRevision: 0, state: {}, createdAt: 0, updatedAt: 0,
     members: ['work', 'backup'].map((connectedAccountId) => ({ v: 1, connectedAccountId,
       priority: 100, enabled: true, state: {}, createdAt: 0, updatedAt: 0 })) });
-  let readCurrentCredential!: (input?: Readonly<{ ref: QualifiedConnectedAccountRef }>) => Promise<Readonly<{ credentialRevision: string }>>;
+  let readCurrentCredential!: (input?: Readonly<{ ref: QualifiedConnectedAccountRef }>) => Promise<Readonly<{ credentialRevision: string; authenticationModeId: string; health?: ConnectedServiceCredentialHealthV1 }>>;
   const listAccounts = async () => {
     const credential = await readCurrentCredential();
     const backup = await readCurrentCredential({ ref: { service, accountId: 'backup' } });
     return { service, accounts: ['work', 'backup'].map((accountId) =>
       QualifiedConnectedAccountProfileV4Schema.parse({ ref: { service, accountId },
-        status: 'connected', authenticationModeId: 'oauth', revisionSemantics: 'revisioned',
+        status: (accountId === 'work' ? credential.health : backup.health)?.status ?? 'connected',
+        authenticationModeId: (accountId === 'work' ? credential : backup).authenticationModeId, revisionSemantics: 'revisioned',
         credentialRevision: accountId === 'work' ? credential.credentialRevision : backup.credentialRevision, configurationReady: true,
         configurationRevision: null, kind: 'oauth', expiresAt: null, scopes: [],
         providerIdentity: { accountId } })) };
@@ -334,7 +332,7 @@ export async function createBuiltInQualifiedNativeRefreshHarness(
   // durable selected purpose; an empty store is not a selected Account launch.
   let stored = QualifiedConnectedAccountPurposeBindingsV1Schema.parse({ v: 1, bindings: [{
     purpose: { consumer: { pluginId: 'happier.agent.codex', localId: 'codex' }, purpose: 'primary' },
-    target: { kind: 'account', account: { service, accountId: 'work' } },
+    target: resources.groupBinding ? { kind: 'group', service, groupId: 'pool' } : { kind: 'account', account: { service, accountId: 'work' } },
   }] });
   const listeners = new Set<() => void>();
   let api!: ApiClient;
@@ -354,7 +352,8 @@ export async function createBuiltInQualifiedNativeRefreshHarness(
       return createDaemonConnectedAccountPurposeBindingRuntime({
         establishedRuntimeOwner: prepared.establishedRuntimeOwner, reloadController: prepared.controller,
         resolveQualifiedConnectedAccountV4Support: () => 'advertised',
-        qualifiedApi: { listAccounts, listGroups: async () => ({ groups: [group] }), readGroup: async () => group },
+        qualifiedApi: { listAccountsForServices: async services => ({ services, accounts: (await listAccounts()).accounts }),
+          listAccounts, listGroups: async () => ({ groups: [group] }), readGroup: async () => group },
         store: { read: async () => stored, update: async (mutate) => {
           stored = QualifiedConnectedAccountPurposeBindingsV1Schema.parse(mutate(stored));
           for (const listener of listeners) listener();
@@ -366,7 +365,25 @@ export async function createBuiltInQualifiedNativeRefreshHarness(
   const purposeRuntime = harness.purposeRuntime;
   if (!purposeRuntime) { await harness.dispose(); throw new Error('Real native purpose runtime unavailable'); }
   return { ...harness, api, purposeRuntime,
-    qualifiedApi: { listAccounts, readGroup: async () => group },
+    qualifiedApi: { listAccounts, readGroup: async () => group,
+      listGroups: async () => ({ groups: [group] }),
+      setActiveAccount: vi.fn(async (request: Parameters<typeof import('@/api/client/qualifiedConnectedAccountApi')['setQualifiedConnectedAccountGroupActiveAccountV4']>[0]) => {
+        const mutation = QualifiedConnectedAccountGroupActiveAccountV4Schema.parse(request.mutation);
+        if (!mutation.expectedSource) throw new Error('Fixture group switch requires its source CAS');
+        if (mutation.expectedGeneration !== group.generation || mutation.expectedIncarnation !== group.incarnation
+          || mutation.expectedRuntimeStateRevision !== group.runtimeStateRevision
+          || mutation.expectedSource.connectedAccountId !== group.activeConnectedAccountId) throw new Error('Fixture group CAS conflict');
+        const source = await readCurrentCredential({ ref: { service, accountId: group.activeConnectedAccountId! } });
+        if (mutation.expectedSource.credentialRevision !== source.credentialRevision) throw new Error('Fixture source CAS conflict');
+        group = QualifiedConnectedAccountGroupV4Schema.parse({ ...group,
+          activeConnectedAccountId: mutation.connectedAccountId, generation: group.generation + 1,
+          runtimeStateRevision: group.runtimeStateRevision + 1,
+          state: { ...group.state, lastSwitchReason: mutation.switchReason } });
+        purposeRuntime.invalidate();
+        return group;
+      }),
+      updateRuntimeState: async () => { throw new Error('Committed health must not create a second runtime cooldown'); },
+    },
     switchGroupAccount(accountId: 'work' | 'backup') {
       group = QualifiedConnectedAccountGroupV4Schema.parse({ ...group,
         activeConnectedAccountId: accountId, generation: group.generation + 1,

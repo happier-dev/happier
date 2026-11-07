@@ -25,7 +25,7 @@ import type {
   ConnectedAccountConfigurationRecord,
 } from '@happier-dev/cli-common/connectedAccounts';
 import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
-import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { createAdmittedPluginRuntimeFixture, retireAdmittedPluginRuntimeRegistry } from '@/plugins/testkit/admittedRuntime';
 import { writeCommittedLocalPathPluginFixture } from '@/plugins/store/state.testkit';
 import {
   createLocalPathPluginDistributionIdentity,
@@ -43,6 +43,7 @@ import {
 } from './ConnectedServiceRefreshCoordinator';
 import { ConnectedServiceQuotasCoordinator } from '../quotas/ConnectedServiceQuotasCoordinator';
 import { createBuiltInQualifiedRefreshHarness } from './ConnectedServiceRefreshCoordinator.qualifiedRefresh.testkit';
+import { persistConnectedServiceCredentialHealthForMaterializationFailure } from './failureHealth';
 
 // Genuine HTTP boundary: Node's runtime uses the package's Undici fetch.
 vi.mock('undici', async importOriginal => {
@@ -80,6 +81,7 @@ async function createTrustedLocalLinkInstall(input: Readonly<{
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   await Promise.all(createdRegistries.splice(0).map(async (registry) => {
     await registry.dispose();
@@ -90,6 +92,96 @@ afterEach(async () => {
 });
 
 describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () => {
+  it.each(['request_auth', 'spawn', 'configuration'] as const)(
+    'publishes committed refresh after registry retirement through %s', async entryPoint => {
+      const onCredentialUpdated = vi.fn();
+      const harness = await createBuiltInQualifiedRefreshHarness({
+        onQualifiedConnectedAccountCredentialUpdated: onCredentialUpdated,
+      });
+      createdRegistries.push(harness);
+      const status = await harness.establishedRuntimeOwner.invokeWithReceipt({
+        account: harness.account, operation: { kind: 'status' },
+      });
+      const persist = harness.mutateCredential.getMockImplementation()!;
+      harness.mutateCredential.mockImplementationOnce(async params => {
+        await retireAdmittedPluginRuntimeRegistry({
+          controller: harness.controller, registry: harness.registry, happyHomeDir: harness.happyHomeDir,
+        });
+        return persist(params);
+      });
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+        access_token: 'access-new', refresh_token: 'refresh-new', expires_in: 3600,
+      }), { status: 200, headers: { 'content-type': 'application/json' } })));
+      if (entryPoint === 'request_auth') {
+        await expect(harness.coordinator.refreshQualifiedConnectedAccountCredentialForRequestAuth({
+          account: harness.account, expectedCredentialRevision: harness.firstRevision,
+        })).resolves.toBe(true);
+      } else if (entryPoint === 'spawn') {
+        await expect(harness.coordinator.refreshQualifiedConnectedAccountCredentialForSpawnPreflight({
+          profile: { ref: harness.account, status: 'connected', authenticationModeId: 'oauth',
+            revisionSemantics: 'revisioned', credentialRevision: harness.firstRevision,
+            configurationRevision: null, configurationReady: true, kind: 'oauth',
+            expiresAt: harness.now - 1, displayName: 'work', scopes: ['openid'] },
+        })).resolves.toMatchObject({ status: 'ready', profile: { credentialRevision: harness.secondRevision } });
+      } else {
+        await expect(harness.coordinator.applyQualifiedConnectedAccountConfigurationConsequence({
+          account: harness.account, authenticationModeId: 'oauth', configurationScope: 'service',
+          behavior: 'refresh', runtimeConfigurationRevision: status.basis.runtimeConfigurationRevision!,
+        })).resolves.toBeUndefined();
+      }
+      expect(harness.controller.isRuntimeRegistryCurrent(harness.registry)).toBe(false);
+      expect(await harness.readCredential()).toMatchObject({ credentialRevision: harness.secondRevision,
+        health: { status: 'connected', reconnectRequired: false } });
+      expect(harness.mutateCredential).toHaveBeenCalledOnce();
+      expect(harness.mutateCredentialHealth).toHaveBeenCalledOnce();
+      expect(onCredentialUpdated).toHaveBeenCalledOnce();
+      expect(fetch).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each(['before_persist', 'during_persist'] as const)(
+    'publishes successful refresh health when the caller cancels %s', async timing => {
+      const harness = await createBuiltInQualifiedRefreshHarness();
+      createdRegistries.push(harness);
+      const warn = vi.spyOn(logger, 'warn');
+      const controller = new AbortController();
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+        access_token: 'access-new', refresh_token: 'refresh-new', expires_in: 3600,
+      }), { status: 200, headers: { 'content-type': 'application/json' } })));
+      if (timing === 'before_persist') {
+        harness.getAccountEncryptionMode.mockImplementation(async () => {
+          if (vi.mocked(fetch).mock.calls.length > 0) controller.abort();
+          return 'plain';
+        });
+      } else {
+        const persist = harness.mutateCredential.getMockImplementation()!;
+        harness.mutateCredential.mockImplementationOnce(async params => {
+          controller.abort();
+          if ('signal' in params && params.signal instanceof AbortSignal) params.signal.throwIfAborted();
+          return persist(params);
+        });
+      }
+      await expect(harness.coordinator.refreshQualifiedConnectedAccountCredentialForRequestAuth({
+        account: harness.account, expectedCredentialRevision: harness.firstRevision, signal: controller.signal,
+      })).resolves.toBe(true);
+      expect(controller.signal.aborted).toBe(true);
+      const persisted = await harness.readCredential();
+      expect(persisted).toMatchObject({ credentialRevision: harness.secondRevision, health: {
+        status: 'connected', reconnectRequired: false, lastRefreshSuccessAt: harness.now,
+      } });
+      expect(parseQualifiedConnectedAccountCredentialPlaintextV1({
+        ref: persisted.ref, authenticationModeId: persisted.authenticationModeId,
+        metadata: persisted.metadata, plaintext: openQualifiedConnectedAccountContentEnvelope({
+          kind: 'credential', accountMode: 'plain', envelope: persisted.content,
+        }),
+      }).values).toMatchObject({ accessToken: 'access-new', refreshToken: 'refresh-new' });
+      expect(harness.mutateCredential).toHaveBeenCalledOnce();
+      expect(harness.mutateCredentialHealth).toHaveBeenCalledOnce();
+      expect(fetch).toHaveBeenCalledOnce();
+      expect(warn.mock.calls.filter(([event]) => typeof event === 'string' && event.includes('did not settle'))).toEqual([]);
+    },
+  );
+
   it.each(['write_failure', 'cancelled_write', 'quota_write_failure'] as const)('logs successful exchange with unconfirmed persistence without retrying the provider (%s)', async scenario => {
     const harness = await createBuiltInQualifiedRefreshHarness();
     createdRegistries.push(harness);
@@ -127,6 +219,112 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
     // does not change that health policy into a rotation-settlement receipt.
     if (scenario !== 'quota_write_failure') expect(harness.mutateCredentialHealth).not.toHaveBeenCalled();
   });
+
+  it.each(['provider_401', 'provider_403', 'invalid_client'] as const)(
+    'does not latch materialization health from the broad %s category', async category => {
+      const harness = await createBuiltInQualifiedRefreshHarness();
+      createdRegistries.push(harness);
+      await persistConnectedServiceCredentialHealthForMaterializationFailure({
+        binding: { serviceId: 'openai-codex', profileId: 'work' }, now: harness.now,
+        diagnostic: { code: 'synthetic_resource_failure', providerId: 'codex', severity: 'blocking',
+          serviceId: 'openai-codex', reason: 'missing_access_token', credentialRefreshFailure: { category } },
+        qualifiedCredential: { token: harness.credentials.token, ref: harness.account,
+          expectedCredentialRevision: harness.firstRevision, expectedConfigurationRevision: null },
+        mutateCredentialHealth: harness.mutateCredentialHealth,
+      });
+      expect((await harness.readCredential()).health).toMatchObject({
+        status: 'refresh_failed_retryable', reconnectRequired: false, lastRefreshFailureKind: category,
+      });
+    });
+
+  it.each(['recovered', 'resource_still_unauthorized', 'refresh_reused', 'refresh_unknown', 'lease_contended', 'resource_forbidden'] as const)(
+    'recovers a resource 401 through one leased refresh before settling health (%s)', async (scenario) => {
+      const harness = await createBuiltInQualifiedRefreshHarness();
+      createdRegistries.push(harness);
+      const debug = vi.spyOn(logger, 'debug');
+      if (scenario === 'lease_contended') harness.acquireRefreshLease.mockResolvedValueOnce({
+        acquired: false, leaseUntil: harness.now + 60_000, ownerId: 'other-refresh-owner', credentialRevision: harness.firstRevision,
+      });
+      let resourceCalls = 0;
+      let tokenCalls = 0;
+      const order: string[] = [];
+      vi.stubGlobal('fetch', vi.fn(async (request: string | URL | Request) => {
+        const url = String(request);
+        if (url.includes('/oauth/token')) {
+          tokenCalls += 1; order.push('token');
+          return new Response(JSON.stringify(scenario === 'refresh_reused'
+            ? { error: { code: 'refresh_token_reused' } }
+            : scenario === 'refresh_unknown' ? { error: 'other_error' }
+              : { access_token: 'synthetic-fresh-access', refresh_token: 'synthetic-fresh-refresh', expires_in: 3600 }),
+          { status: scenario.startsWith('refresh_') ? 401 : 200 });
+        }
+        if (url.includes('/usage')) {
+          resourceCalls += 1; order.push('resource');
+          return new Response('{}', { status: scenario === 'resource_forbidden' ? 403
+            : resourceCalls === 1 || scenario === 'resource_still_unauthorized' ? 401 : 200 });
+        }
+        throw new Error('Unexpected synthetic provider request');
+      }));
+      const profile: QualifiedConnectedAccountProfileV4 = {
+        ref: harness.account, status: 'connected', authenticationModeId: 'oauth', revisionSemantics: 'revisioned',
+        credentialRevision: harness.firstRevision, configurationRevision: null, configurationReady: true,
+        kind: 'oauth', expiresAt: null, displayName: 'work', scopes: [],
+      };
+      const quotas = new ConnectedServiceQuotasCoordinator({
+        api: { getAccountEncryptionMode: async () => 'plain' } as unknown as ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0]['api'],
+        credentials: harness.credentials, quotaFetchers: [], now: () => harness.now,
+        randomBytes: length => new Uint8Array(length), discoveryEnabled: false,
+        qualifiedHealth: harness.coordinator,
+        qualifiedConnectedAccountRuntime: {
+          resolvePeerClass: () => 'advertised_v4', establishedRuntimeOwner: harness.establishedRuntimeOwner,
+          listScheduledAccounts: async () => [profile], readQuota: async () => null,
+          writeProviderAccountUsage: async () => ({ success: true }),
+        },
+      });
+      try {
+        await quotas.tickOnce();
+        const noExchange = scenario === 'lease_contended' || scenario === 'resource_forbidden';
+        const refreshed = !noExchange && !scenario.startsWith('refresh_');
+        expect(order).toEqual(noExchange ? ['resource']
+          : refreshed ? ['resource', 'token', 'resource'] : ['resource', 'token']);
+        expect(tokenCalls).toBe(noExchange ? 0 : 1);
+        expect(resourceCalls).toBe(refreshed ? 2 : 1);
+        expect(harness.acquireRefreshLease).toHaveBeenCalledTimes(scenario === 'resource_forbidden' ? 0 : 1);
+        expect(harness.mutateCredential).toHaveBeenCalledTimes(refreshed ? 1 : 0);
+        expect((await harness.readCredential()).health).toMatchObject({
+          status: scenario === 'refresh_reused' ? 'needs_reauth'
+            : scenario === 'refresh_unknown' ? 'refresh_failed_retryable' : 'connected',
+          reconnectRequired: scenario === 'refresh_reused',
+        });
+        if (refreshed) {
+          expect((await harness.readCredential()).health).toMatchObject({
+            lastRefreshAttemptAt: harness.now, lastRefreshSuccessAt: harness.now,
+          });
+        } else if (scenario === 'refresh_reused' || scenario === 'refresh_unknown') {
+          expect((await harness.readCredential()).health).toMatchObject({
+            lastRefreshAttemptAt: harness.now, lastRefreshFailureAt: harness.now,
+            providerHttpStatus: 401,
+            providerErrorCode: scenario === 'refresh_reused' ? 'refresh_token_reused' : 'openai_codex_oauth_rejected',
+          });
+        }
+        if (scenario !== 'resource_forbidden') {
+          expect(debug).toHaveBeenCalledWith('[ConnectedServiceRefreshCoordinator] refresh lease', {
+            account: harness.account, credentialRevision: harness.firstRevision, configurationRevision: null,
+            machineId: 'machine-1', ownerId: 'machine-1:runtime-1', acquired: scenario !== 'lease_contended',
+            leaseOwnerId: scenario === 'lease_contended' ? 'other-refresh-owner' : 'machine-1:runtime-1',
+            leaseCredentialRevision: harness.firstRevision,
+          });
+        }
+        if (scenario === 'refresh_reused' || scenario === 'resource_forbidden') {
+          expect(debug).toHaveBeenCalledWith('[ConnectedServiceRefreshCoordinator] credential health write', expect.objectContaining({
+            account: harness.account, credentialRevision: harness.firstRevision, configurationRevision: null,
+            afterStatus: scenario === 'refresh_reused' ? 'needs_reauth' : 'connected',
+          }));
+        }
+      } finally {
+        await quotas.disposeInBandQuotaPersistence();
+      }
+    }, 30_000);
 
   it('parks a healthy bound V4 OAuth account without expiry instead of polling its credential', async () => {
     const harness = await createBuiltInQualifiedRefreshHarness();
@@ -278,9 +476,12 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
     ['happier.agent.codex', 'openai-codex', 'scheduled_credential_read_failure', 200],
     ['happier.agent.codex', 'openai-codex', 'scheduled_revoked_lease_failure', 200],
     ['happier.agent.claude', 'claude-subscription', 'scheduled', 200],
+    ['happier.agent.claude', 'claude-subscription', 'scheduled_deadline', 200],
+    ['happier.agent.codex', 'openai-codex', 'scheduled_deadline', 200],
     ['happier.agent.claude', 'claude-subscription', 'enrich_known_private', 200],
     ['happier.agent.claude', 'claude-subscription', 'enrich_unknown_public', 200],
     ['happier.agent.claude', 'claude-subscription', 'scheduled', 400],
+    ['happier.agent.codex', 'openai-codex', 'scheduled', 400],
     ['happier.agent.claude', 'claude-subscription', 'overlap_quota', 200],
     ['happier.agent.claude', 'claude-subscription', 'overlap_request_auth', 200],
     ['happier.agent.claude', 'claude-subscription', 'overlap_spawn', 200],
@@ -311,9 +512,14 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
     const foregroundRead = new Promise<void>((resolve) => { foregroundCredentialRead = resolve; });
     let foregroundStarted = false;
     let clock = now;
+    const deadlineScenario = entryPoint === 'scheduled_deadline';
+    const codexDeadline = deadlineScenario && serviceId === 'openai-codex';
+    const deadlineLifetimeMs = codexDeadline ? 900_000 : 360_000;
+    const accessJwt = (expiresAt: number) => `${Buffer.from('{}').toString('base64url')}.${Buffer.from(JSON.stringify({ exp: expiresAt / 1000 })).toString('base64url')}.signature`;
+    if (deadlineScenario) vi.spyOn(Date, 'now').mockImplementation(() => clock);
     let profileStatus: QualifiedConnectedAccountProfileV4['status'] = entryPoint.endsWith('metadata_retry')
       || entryPoint.startsWith('scheduled_') && entryPoint.endsWith('_failure')
-      ? 'connected' : 'refresh_failed_retryable';
+      || deadlineScenario ? 'connected' : 'refresh_failed_retryable';
     let accountRuntimeCurrent = true;
     const effectAdmissions: boolean[] = [];
     const tokenExchangeRequests = () => vi.mocked(fetch).mock.calls.filter(([request, init]) => {
@@ -330,11 +536,14 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
       providerEntered();
       if (overlapping) await providerGate;
       if (entryPoint === 'revoked_refresh') accountRuntimeCurrent = false;
-      return new Response(JSON.stringify(providerStatus === 400 ? { error: 'invalid_grant' } : {
-        access_token: 'access-new',
+      return new Response(JSON.stringify(providerStatus === 400 ? {
+        error: 'invalid_grant', error_description: 'private-provider-detail',
+        access_token: 'private-response-access', refresh_token: 'private-response-refresh',
+      } : {
+        access_token: codexDeadline ? accessJwt(clock + 3_600_000) : 'access-new',
         refresh_token: 'refresh-new',
         id_token: 'id-new',
-        expires_in: 3600,
+        ...(codexDeadline ? {} : { expires_in: 3600 }),
         account: { uuid: 'work' },
       }), {
         status: providerStatus,
@@ -365,11 +574,11 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
       payload: {
         v: 1,
         values: {
-          accessToken: 'access-old',
+          accessToken: codexDeadline ? accessJwt(now + deadlineLifetimeMs) : 'access-old',
           refreshToken: 'refresh-old',
           idToken: 'id-old',
           providerAccountId: 'work',
-          expiresAtMs: contextEnrichment ? '4102444800000' : String(entryPoint === 'spawn_window_retryable' ? now + 1 : now - 1),
+          ...(codexDeadline ? {} : { expiresAtMs: contextEnrichment ? '4102444800000' : String(deadlineScenario ? now + deadlineLifetimeMs : entryPoint === 'spawn_window_retryable' ? now + 1 : now - 1) }),
           ...(contextEnrichment ? { organizationUuid: 'organization-known' } : {}),
         },
       },
@@ -380,7 +589,7 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
       serviceId,
       profileId: 'work',
       kind: 'oauth',
-      expiresAt: entryPoint === 'spawn_window_retryable' ? now + 1 : now - 1,
+      expiresAt: deadlineScenario ? now + 360_000 : entryPoint === 'spawn_window_retryable' ? now + 1 : now - 1,
       oauth: {
         accessToken: 'access-old',
         refreshToken: 'refresh-old',
@@ -525,6 +734,7 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
       };
     });
     const requestedInventoryServices: unknown[] = [];
+    const reauthEvents: unknown[] = [];
     const coordinator = new ConnectedServiceRefreshCoordinator({
       api,
       credentials,
@@ -532,7 +742,7 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
       ownerIdProvider: () => 'machine-1:runtime-1',
       activeServerDir: join(happyHomeDir, 'active'),
       baseDir: join(happyHomeDir, 'materialized'),
-      refreshWindowMs: 60_000,
+      refreshWindowMs: codexDeadline ? 600_000 : 60_000,
       refreshLeaseMs: 30_000,
       now: () => clock,
       isAccountRuntimeCurrent: async () => accountRuntimeCurrent,
@@ -563,9 +773,19 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
         acquireRefreshLease,
         mutateCredential,
         mutateCredentialHealth,
+        onReauthRequired: async (event: unknown) => { reauthEvents.push(event); },
       },
     });
 
+    if (deadlineScenario) {
+      expect(await coordinator.tickOnce()).toEqual({ nextAutomaticRunAfterMs: 300_000 });
+      expect(tokenExchangeRequests()).toHaveLength(0);
+      clock += 300_000;
+      expect(await coordinator.tickOnce()).toEqual({ nextAutomaticRunAfterMs: codexDeadline ? 3_000_000 : 3_540_000 });
+      expect(tokenExchangeRequests()).toHaveLength(1);
+      expect(qualifiedRevision).toBe(secondRevision);
+      return;
+    }
     if (entryPoint.startsWith('scheduled_') && entryPoint.endsWith('_failure')) {
       if (entryPoint.startsWith('scheduled_bound_')) coordinator.registerSpawnTarget({
         pid: 123, agentId: 'codex', materializationKey: 'interrupted-refresh',
@@ -599,21 +819,26 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
         if (bound) await expect(coordinator.tickOnce()).rejects.toMatchObject({
           errors: [expect.objectContaining({ message: expect.stringContaining('Connected services refresh failed') })],
         });
-        else expect(await coordinator.tickOnce()).toEqual({ nextAutomaticRunAfterMs: 60_000 });
+        else expect(await coordinator.tickOnce()).toEqual({ nextAutomaticRunAfterMs: 30_000 });
       };
       await failedRefresh();
       expect(profileStatus).toBe('refresh_failed_retryable');
+      expect(qualifiedHealth).toMatchObject({
+        lastRefreshAttemptAt: clock,
+        lastRefreshFailureAt: clock,
+        providerHttpStatus: providerStatus,
+      });
       expect(tokenExchangeRequests()).toHaveLength(1);
       expect(mutateCredentialHealth).toHaveBeenCalledOnce();
       clock += 1;
       // The failed refresh's own health write changes listing metadata, not
       // credential authority, and cannot shorten the existing recovery delay.
-      expect(await coordinator.tickOnce()).toEqual({ nextAutomaticRunAfterMs: 59_999 });
+      expect(await coordinator.tickOnce()).toEqual({ nextAutomaticRunAfterMs: 29_999 });
       expect(tokenExchangeRequests()).toHaveLength(1);
       profileStatus = 'connected';
-      expect(await coordinator.tickOnce()).toEqual({ nextAutomaticRunAfterMs: 59_999 });
+      expect(await coordinator.tickOnce()).toEqual({ nextAutomaticRunAfterMs: 29_999 });
       expect(tokenExchangeRequests()).toHaveLength(1);
-      clock += 59_999;
+      clock += 29_999;
       await failedRefresh();
       expect(tokenExchangeRequests()).toHaveLength(2);
       expect(mutateCredentialHealth).toHaveBeenCalledTimes(2);
@@ -657,6 +882,7 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
     if (entryPoint === 'scheduled_rejected_retry' || entryPoint === 'quota_rejected_retry') {
       await coordinator.tickOnce();
       expect(profileStatus).toBe('needs_reauth');
+      expect(reauthEvents).toEqual([{ account, credentialRevision: firstRevision }]);
       expect(tokenExchangeRequests()).toHaveLength(1);
       clock += 60_001;
       if (entryPoint === 'scheduled_rejected_retry') {
@@ -668,6 +894,7 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
       }
       expect(tokenExchangeRequests()).toHaveLength(1);
       expect(profileStatus).toBe('needs_reauth');
+      expect(reauthEvents).toHaveLength(1);
       // A new admitted credential clears the persisted latch; no daemon-local
       // reconnect flag may prevent refreshing that replacement revision.
       qualifiedRevision = secondRevision;
@@ -686,8 +913,10 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
           configurationReady: false, configurationRevision: null,
           kind: null, expiresAt: entryPoint === 'spawn_window_retryable' ? now + 1 : null, displayName: 'work', scopes: ['openid'],
         },
-      })).resolves.toEqual({ status: providerStatus === 400 ? 'reconnect_required'
-        : providerStatus === 503 ? 'refresh_failed' : 'ready' });
+      })).resolves.toMatchObject({ status: providerStatus === 400 ? 'reconnect_required'
+        : providerStatus === 503 ? 'refresh_failed' : 'ready',
+        ...(providerStatus === 200 ? { profile: { ref: account, credentialRevision: secondRevision } } : {}),
+      });
       expect(requestedInventoryServices).toHaveLength(0);
       expect(readCredential).toHaveBeenCalled();
       expect(tokenExchangeRequests()).toHaveLength(1);
@@ -742,7 +971,7 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
       } else if (entryPoint === 'overlap_configuration') {
         await expect(foreground).resolves.toBeUndefined();
       } else if (entryPoint === 'overlap_spawn') {
-        await expect(foreground).resolves.toEqual({ status: 'ready' });
+        await expect(foreground).resolves.toMatchObject({ status: 'ready', profile: { ref: account, credentialRevision: secondRevision } });
       } else {
         await expect(foreground).resolves.toBe(true);
       }
@@ -753,14 +982,23 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
     }
 
     if (entryPoint === 'owner_read_revoked') {
+      // Revocation during an admitted finite read does not discard its result.
+      await expect(establishedRuntimeOwner.readCredentialRevision({ account }))
+        .resolves.toBe(firstRevision);
+      expect(qualifiedRevision).toBe(firstRevision);
+      const admittedReads = readCredential.mock.calls.length;
       await expect(establishedRuntimeOwner.readCredentialRevision({ account }))
         .rejects.toThrow('connected_account_runtime_not_current');
-      expect(qualifiedRevision).toBe(firstRevision);
+      expect(readCredential).toHaveBeenCalledTimes(admittedReads);
       return;
     }
     if (entryPoint === 'owner_invoke_revoked') {
       await expect(establishedRuntimeOwner.invokeWithReceipt({ account, operation: { kind: 'status' } }))
+        .resolves.toMatchObject({ result: { status: 'expired' } });
+      const admittedReads = readCredential.mock.calls.length;
+      await expect(establishedRuntimeOwner.invokeWithReceipt({ account, operation: { kind: 'status' } }))
         .rejects.toThrow('connected_account_runtime_not_current');
+      expect(readCredential).toHaveBeenCalledTimes(admittedReads);
       expect(fetch).not.toHaveBeenCalled();
       return;
     }
@@ -807,8 +1045,12 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
         expect(legacyRecord.oauth).toMatchObject({ accessToken: 'access-old', refreshToken: 'refresh-old' });
         expect(mutateCredential).not.toHaveBeenCalled();
         expect(mutateCredentialHealth.mock.calls.at(-1)?.[0].patch).toMatchObject({
-          health: { status: 'needs_reauth', reconnectRequired: true, providerErrorCode: 'claude_subscription_oauth_rejected' },
+          health: { status: 'needs_reauth', reconnectRequired: true,
+            lastRefreshFailureKind: 'invalid_grant',
+            providerErrorCode: serviceId === 'openai-codex'
+              ? 'invalid_grant' : 'claude_subscription_oauth_rejected' },
         });
+        expect(JSON.stringify(mutateCredentialHealth.mock.calls)).not.toMatch(/private-provider-detail|private-response-access|private-response-refresh/);
         return;
       }
       expect(legacyRecord.oauth).toMatchObject({ accessToken: 'access-new', refreshToken: 'refresh-new' });
@@ -1080,6 +1322,7 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
       };
     });
     const onCredentialUpdated = vi.fn();
+    const onReauthRequired = vi.fn(async () => undefined);
     const acquireRefreshLease = vi.fn(async (input: Readonly<{
       token: string;
       lease: unknown;
@@ -1134,6 +1377,7 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
         mutateCredential,
         mutateCredentialHealth,
         onCredentialUpdated,
+        onReauthRequired,
       },
     });
 
@@ -1310,6 +1554,10 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
     });
     expect(onCredentialUpdated).toHaveBeenCalledTimes(3);
 
+    expect(onReauthRequired).toHaveBeenCalledExactlyOnceWith({
+      account: novelAccount, credentialRevision: thirdRevision,
+    });
+
     acquireRefreshLease.mockResolvedValueOnce({
       acquired: false,
       leaseUntil: now + 60_000,
@@ -1406,11 +1654,11 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
     const revisionBeforeFreshReplacement = revision;
     await expect(coordinator.refreshQualifiedConnectedAccountCredentialForSpawnPreflight({
       profile: { ...currentProfile, status: 'connected', expiresAt: now + 1 }, allowEarlyRefresh: false,
-    })).resolves.toEqual({ status: 'ready' });
+    })).resolves.toMatchObject({ status: 'ready', profile: { ref: novelAccount, credentialRevision: revision } });
     expect(revision).toBe(revisionBeforeFreshReplacement);
     mutateCredentialHealth.mockClear();
     await expect(coordinator.refreshQualifiedConnectedAccountCredentialForSpawnPreflight({ profile: currentProfile }))
-      .resolves.toEqual({ status: 'ready' });
+      .resolves.toMatchObject({ status: 'ready', profile: { ref: novelAccount, credentialRevision: revision } });
     expect(mutateCredentialHealth).toHaveBeenCalledWith(expect.objectContaining({ patch: expect.objectContaining({
       health: { v: 1, status: 'connected', reconnectRequired: false },
     }) }));

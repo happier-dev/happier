@@ -144,6 +144,7 @@ export async function refreshQualifiedConnectedAccount(input: Readonly<{
   acquireRefreshLease?: RefreshLeaseClient;
   mutateCredential?: CredentialMutationClient;
 }>): Promise<QualifiedConnectedAccountRefreshSettlement> {
+  input.signal?.throwIfAborted();
   const support = input.resolveV4Support();
   if (support !== 'advertised') {
     throw new QualifiedConnectedAccountCompatibilityError(
@@ -183,6 +184,7 @@ export async function refreshQualifiedConnectedAccount(input: Readonly<{
     ?? acquireQualifiedConnectedAccountRefreshLeaseV4;
   const lease = await acquireRefreshLease({
     token: input.token,
+    ...(input.signal ? { signal: input.signal } : {}),
     lease: Object.freeze({
       ref: input.account,
       expectedCredentialRevision:
@@ -191,6 +193,7 @@ export async function refreshQualifiedConnectedAccount(input: Readonly<{
       ttlMs: input.leaseMs,
     }),
   });
+  input.signal?.throwIfAborted();
   if (
     !lease.acquired
     || lease.ownerId !== ownerId
@@ -213,8 +216,10 @@ export async function refreshQualifiedConnectedAccount(input: Readonly<{
   );
   const renewalTimer = setInterval(() => {
     renewalInFlight = renewalInFlight.then(async () => {
+      input.signal?.throwIfAborted();
       const renewed = await acquireRefreshLease({
         token: input.token,
+        ...(input.signal ? { signal: input.signal } : {}),
         lease: Object.freeze({
           ref: input.account,
           expectedCredentialRevision:
