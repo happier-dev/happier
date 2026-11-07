@@ -79,12 +79,12 @@ describe('searchFiles', () => {
         expect(machineFilesystemListDirectoryMock).toHaveBeenCalledWith(
             'm1',
             { path: '/repo', includeFiles: true },
-            { serverId: SCOPE_A.serverId, accountId: 'account' },
+            expect.objectContaining({ serverId: SCOPE_A.serverId, accountId: 'account' }),
         );
         expect(machineFilesystemListDirectoryMock).toHaveBeenCalledWith(
             'm1',
             { path: '/repo/src', includeFiles: true },
-            { serverId: SCOPE_A.serverId, accountId: 'account' },
+            expect.objectContaining({ serverId: SCOPE_A.serverId, accountId: 'account' }),
         );
         expect(results.map((entry) => entry.fullPath)).toContain('README.md');
         expect(results.map((entry) => entry.fullPath)).toContain('src/');
@@ -129,22 +129,20 @@ describe('searchFiles', () => {
         expect(resultsWithExt.some((entry) => entry.fullPath === '.github/workflows/publish-github-release.yml')).toBe(true);
     });
 
-    it('falls back to ripgrep glob search when the initial file index misses a match', async () => {
+    it('falls back to ripgrep glob search when a partial file index misses a match', async () => {
         machineRipgrepMock
             .mockResolvedValueOnce({
-                success: true,
-                stdout: [
+                ok: true,
+                paths: [
                     '.github/workflows/tests.yml',
                     'src/index.ts',
-                ].join('\n') + '\n',
-                stderr: '',
-                exitCode: 0,
+                ],
+                truncated: true,
             })
             .mockResolvedValueOnce({
-                success: true,
-                stdout: '.github/workflows/publish-github-release.yml\n',
-                stderr: '',
-                exitCode: 0,
+                ok: true,
+                paths: ['.github/workflows/publish-github-release.yml'],
+                truncated: false,
             });
 
         const { searchFiles } = await import('./suggestionFile');

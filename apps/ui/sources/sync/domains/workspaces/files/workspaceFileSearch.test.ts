@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { DaemonWorkspaceFileListRequestSchema, DaemonWorkspaceFileListResponseSchema, WORKSPACE_FILE_LIST_MAX_RESULTS } from '@happier-dev/protocol/machines/workspaceFiles';
+import { DaemonWorkspaceFileListRequestSchema, DaemonWorkspaceFileListResponseSchema } from '@happier-dev/protocol/machines/workspaceFiles';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { markWorkspaceRepositoryDirectoryChanged } from './workspaceRepositoryDirectoryRevision';
+import { tryBuildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope';
 
 const machineRipgrepMock = vi.fn();
 const machineFilesystemListDirectoryMock = vi.fn();
@@ -97,6 +99,89 @@ describe('workspaceFileSearch', () => {
         await credentialHarness.reset();
         SCOPE_A.serverId = await credentialHarness.addHome({ name: 'Files A', serverUrl: 'https://files-a.test', accountId: 'account-a' });
         SCOPE_B.serverId = await credentialHarness.addHome({ name: 'Files B', serverUrl: 'https://files-b.test', accountId: 'account-b', active: false });
+    });
+
+    it('queries the admitted file index without rescanning a full listing page and refreshes after an inventory change', async () => {
+        const lifetime = createAccountLifetimeFixture('account-a');
+        const paths = Array.from({ length: 59_000 }, (_, index) => `src/file-${String(index).padStart(5, '0')}.ts`);
+        machineRipgrepMock.mockResolvedValue({ ok: true, paths, truncated: false });
+        const { searchWorkspaceFiles } = await import('./workspaceFileSearch');
+        await searchWorkspaceFiles({ scope: SCOPE_A, query: '', resultType: 'file', accountLifetime: lifetime });
+        let fileKindReads = 0;
+        for (const file of workspaceFileSearchCache.readFiles(SCOPE_A, lifetime) ?? []) {
+            const kind = file.fileType;
+            Object.defineProperty(file, 'fileType', { configurable: true, get: () => { fileKindReads += 1; return kind; } });
+        }
+        const last = await searchWorkspaceFiles({ scope: SCOPE_A, query: 'file-04999.ts', resultType: 'file', accountLifetime: lifetime });
+        const first = await searchWorkspaceFiles({ scope: SCOPE_A, query: 'file-00000.ts', resultType: 'file', accountLifetime: lifetime });
+        expect(last[0]?.fullPath).toBe('src/file-04999.ts');
+        expect(first[0]?.fullPath).toBe('src/file-00000.ts');
+        expect(fileKindReads).toBe(0);
+        expect(await searchWorkspaceFiles({ scope: SCOPE_A, query: 'not-in-this-workspace', resultType: 'file', accountLifetime: lifetime })).toEqual([]);
+        expect(machineRipgrepMock).toHaveBeenCalledTimes(1);
+        // PERF FILE-FIND: the SCM-owned workspace revision, rather than elapsed time,
+        // is the boundary at which a filename inventory becomes obsolete.
+        markWorkspaceRepositoryDirectoryChanged(tryBuildWorkspaceCacheKey(SCOPE_A));
+        machineRipgrepMock.mockResolvedValue({ ok: true, paths: ['src/fresh.ts'], truncated: false });
+        expect((await searchWorkspaceFiles({ scope: SCOPE_A, query: 'fresh', resultType: 'file', accountLifetime: lifetime }))[0]?.fullPath)
+            .toBe('src/fresh.ts');
+        expect(machineRipgrepMock).toHaveBeenCalledTimes(2);
+    });
+
+    it.each(['ripgrep', 'directory'] as const)('finds a fuzzy-only match beyond 5000 paths in a 6000-path %s corpus', async source => {
+        const paths = [...Array.from({ length: 5999 }, (_, index) => `unrelated-${index}.ts`), 'promptMapper.ts'];
+        if (source === 'ripgrep') machineRipgrepMock.mockImplementation((_machineId: string, request: { query?: string; limit?: number }) => {
+            const selected = request.query ? paths.filter(path => path.includes(request.query!)) : paths;
+            return { ok: true, paths: selected.slice(0, request.limit), truncated: request.limit !== undefined && selected.length > request.limit };
+        });
+        else {
+            machineRipgrepMock.mockResolvedValue({ ok: false, errorCode: 'ripgrep_unavailable' });
+            machineFilesystemListDirectoryMock.mockResolvedValue({ ok: true, entries: paths.map(name => ({ name, type: 'file' })) });
+        }
+        const { searchWorkspaceFiles } = await import('./workspaceFileSearch');
+        const page = await searchWorkspaceFiles({ scope: SCOPE_A, query: 'prmptMapper', resultType: 'file', includeCoverage: true });
+        expect(page.items[0]?.fullPath).toBe('promptMapper.ts');
+        expect(page.corpusTruncated).toBe(false);
+    });
+
+    it('retains the admitted index when a partial-corpus query discovers no new paths', async () => {
+        const lifetime = createAccountLifetimeFixture('account-a');
+        machineRipgrepMock.mockResolvedValueOnce({ ok: true, paths: Array.from({ length: 5_000 }, (_, index) => `src/file-${index}.ts`), truncated: true })
+            .mockResolvedValue({ ok: true, paths: [], truncated: false });
+        const { searchWorkspaceFiles } = await import('./workspaceFileSearch');
+        await searchWorkspaceFiles({ scope: SCOPE_A, query: '', resultType: 'file', accountLifetime: lifetime });
+        let inventoryNameReads = 0;
+        for (const file of workspaceFileSearchCache.readFiles(SCOPE_A, lifetime) ?? []) {
+            const name = file.fileName;
+            Object.defineProperty(file, 'fileName', { configurable: true, get: () => { inventoryNameReads += 1; return name; } });
+        }
+        expect(await searchWorkspaceFiles({ scope: SCOPE_A, query: 'zzzzzzzzzzzzzz', resultType: 'file', accountLifetime: lifetime })).toEqual([]);
+        expect(inventoryNameReads).toBe(0);
+    });
+
+    it('indexes the offline Recent/Changed inventory once per change and retires it with the Account', () => {
+        const lifetime = createAccountLifetimeFixture('account-a');
+        let inventoryNameReads = 0;
+        const changed = Array.from({ length: 54_935 }, (_, index) => ({
+            fullPath: `src/file-${index}.ts`, filePath: 'src/',
+            get fileName() { inventoryNameReads += 1; return `file-${index}.ts`; },
+        }));
+        const recent = [{ fullPath: 'recent.ts', filePath: '', fileName: 'recent.ts', fileType: 'file' as const }];
+        const index = workspaceFileSearchCache.readLocalIndex(SCOPE_A, lifetime, { recent, changed })!;
+        expect(inventoryNameReads).toBe(54_935);
+        inventoryNameReads = 0;
+        expect(workspaceFileSearchCache.readLocalIndex(SCOPE_A, lifetime, { recent, changed })).toBe(index);
+        expect(index.search('file-54934.ts')[0]?.fullPath).toBe('src/file-54934.ts');
+        expect(index.byPath.get('recent.ts')?.fileName).toBe('recent.ts');
+        expect(inventoryNameReads).toBe(0);
+        const next = workspaceFileSearchCache.readLocalIndex(SCOPE_A, lifetime, {
+            recent, changed: [...changed.slice(0, -1), { fullPath: 'fresh.ts', fileName: 'fresh.ts', filePath: '' }],
+        })!;
+        expect(next.byPath.has('src/file-54934.ts')).toBe(false);
+        expect(next.search('fresh.ts')[0]?.fullPath).toBe('fresh.ts');
+        lifetime.retire();
+        expect(workspaceFileSearchCache.readLocalIndex(SCOPE_A, lifetime, { recent, changed })).toBeNull();
+        expect(workspaceFileSearchCache.readFiles(SCOPE_A, createAccountLifetimeFixture('account-b'))).toBeNull();
     });
 
     it('keeps literal file-list names instead of trimming repository identities', async () => {
@@ -441,8 +526,26 @@ describe('workspaceFileSearch', () => {
         expect(machineFilesystemListDirectoryMock).toHaveBeenCalledWith(
             'm1',
             { path: '/repo', includeFiles: true },
-            { serverId: SCOPE_A.serverId, accountId: 'account-a' },
+            expect.objectContaining({ serverId: SCOPE_A.serverId, accountId: 'account-a' }),
         );
+    });
+
+    it.each(['refused', 'thrown'] as const)('retains readable siblings and marks fallback coverage partial after a %s child read', async failure => {
+        machineRipgrepMock.mockResolvedValue({ ok: false, errorCode: 'ripgrep_unavailable' });
+        machineFilesystemListDirectoryMock.mockImplementation(async (_machineId: string, input: Readonly<{ path: string }>) => {
+            if (input.path === '/repo') return { ok: true, entries: [
+                { name: 'unreadable', type: 'directory' }, { name: 'readable', type: 'directory' },
+            ] };
+            if (input.path === '/repo/unreadable') {
+                if (failure === 'thrown') throw new Error('Directory read failed');
+                return { ok: false, errorCode: 'permission_denied' };
+            }
+            return { ok: true, entries: [{ name: 'keep.ts', type: 'file' }] };
+        });
+        const { searchWorkspaceFiles } = await import('./workspaceFileSearch');
+        const page = await searchWorkspaceFiles({ scope: SCOPE_A, query: '', includeCoverage: true });
+        expect(page.items.some(item => item.fullPath === 'readable/keep.ts')).toBe(true);
+        expect(page.corpusTruncated).toBe(true);
     });
 
     it('applies the requested result type before the row limit without removing folders from the shared corpus', async () => {
@@ -474,7 +577,7 @@ describe('workspaceFileSearch', () => {
         await mod.searchWorkspaceFiles({ scope: SCOPE_A, query: 'ci', limit: 20 });
         expect(machineRipgrepMock).toHaveBeenCalledWith(
             'm1',
-            { rootPath: '/repo', includeHidden: true, limit: 5000 },
+            { rootPath: '/repo', includeHidden: true },
             expect.objectContaining({ serverId: SCOPE_A.serverId }),
         );
 
@@ -548,7 +651,28 @@ describe('workspaceFileSearch', () => {
         expect(resBOwn.some((r) => r.fullPath === 'src/beta.ts')).toBe(true);
     });
 
-    it('cancels a query-owned index build and never publishes its late files to the shared cache', async () => {
+    it('aborts a superseded workspace revision and never publishes its late inventory over the current revision', async () => {
+        const lifetime = createAccountLifetimeFixture('account-a');
+        let releaseOld!: (value: { ok: true; paths: string[]; truncated: false }) => void;
+        machineRipgrepMock
+            .mockImplementationOnce(() => new Promise(resolve => { releaseOld = resolve; }))
+            .mockResolvedValue({ ok: true, paths: ['src/current.ts'], truncated: false });
+        const { searchWorkspaceFiles } = await import('./workspaceFileSearch');
+        const pending = searchWorkspaceFiles({ scope: SCOPE_A, query: '', accountLifetime: lifetime });
+        const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+        await vi.waitFor(() => expect(machineRipgrepMock).toHaveBeenCalledTimes(1));
+
+        markWorkspaceRepositoryDirectoryChanged(tryBuildWorkspaceCacheKey(SCOPE_A));
+        expect(machineRipgrepMock.mock.calls[0]?.[2]?.signal.aborted).toBe(true);
+        const current = await searchWorkspaceFiles({ scope: SCOPE_A, query: 'current', accountLifetime: lifetime });
+        releaseOld({ ok: true, paths: ['src/stale.ts'], truncated: false });
+        await rejected;
+        expect(current.map(item => item.fullPath)).toEqual(['src/current.ts']);
+        expect(workspaceFileSearchCache.readFiles(SCOPE_A, lifetime)?.map(item => item.fullPath)).not.toContain('src/stale.ts');
+        expect(machineRipgrepMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('cancels superseded keystrokes while sharing one cold enumeration until the workspace revision changes', async () => {
         activeAccountLifetime = createAccountLifetimeFixture('account-a');
         let releaseFirstIndex!: (value: { success: boolean; stdout: string }) => void;
         let callCount = 0;
@@ -574,24 +698,24 @@ describe('workspaceFileSearch', () => {
         });
 
         await vi.waitFor(() => expect(machineRipgrepMock).toHaveBeenCalledTimes(1));
-        expect(machineRipgrepMock.mock.calls[0]?.[2]).toEqual({
+        expect(machineRipgrepMock.mock.calls[0]?.[2]).toMatchObject({
             serverId: SCOPE_A.serverId,
             accountId: 'account-a',
-            signal: controller.signal,
+            signal: expect.any(AbortSignal),
         });
 
         controller.abort();
-        releaseFirstIndex({ success: true, stdout: 'src/stale.ts\n' });
-
         await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
-
-        const current = await mod.searchWorkspaceFiles({
+        const current = mod.searchWorkspaceFiles({
             scope: SCOPE_A,
-            query: '',
+            query: 'shared',
             limit: 50,
         });
-        expect(current.some((entry) => entry.fullPath === 'src/current.ts')).toBe(true);
-        expect(current.some((entry) => entry.fullPath === 'src/stale.ts')).toBe(false);
+        releaseFirstIndex({ success: true, stdout: 'src/shared.ts\n' });
+        expect((await current).map(entry => entry.fullPath)).toEqual(['src/shared.ts']);
+        expect(callCount).toBe(1);
+        markWorkspaceRepositoryDirectoryChanged(tryBuildWorkspaceCacheKey(SCOPE_A));
+        expect((await mod.searchWorkspaceFiles({ scope: SCOPE_A, query: 'current' })).map(entry => entry.fullPath)).toEqual(['src/current.ts']);
         expect(callCount).toBe(2);
     });
 
@@ -631,24 +755,16 @@ describe('workspaceFileSearch', () => {
         expect(machineRipgrepMock).toHaveBeenCalledTimes(3);
     });
 
-    // The targeted glob runs against the whole worktree, so its output is attacker-
-    // adjacent in size: a broad query on a large repo can return tens of thousands of
-    // paths, every one of which would otherwise be turned into item objects, pushed
-    // into the long-lived workspace cache and re-indexed by Fuse. The bound is
-    // `Math.max(50, limit * 5)` — a floor so a small limit still discovers enough to
-    // rank, and a multiple of the caller's limit so a large limit is still served.
-    // Both terms are asserted, because a bare constant would pass a floor-only test.
-    it('bounds how many glob-fallback paths it ingests, by both the floor and the limit multiple', async () => {
-        const indexStdout = 'src/index.ts\n';
-        const globStdout = Array.from({ length: 400 }, (_, i) => `pkg/zeta-${String(i).padStart(3, '0')}.ts`).join('\n') + '\n';
+    it('keeps complete transport-admitted fallback results while limiting the visible page', async () => {
+        const indexPaths = ['src/index.ts'];
+        const globPaths = Array.from({ length: 400 }, (_, i) => `pkg/zeta-${String(i).padStart(3, '0')}.ts`);
 
         machineRipgrepMock.mockImplementation((_machineId: string, input: Readonly<{ query?: string }>) => {
             const isGlob = Boolean(input.query);
             return Promise.resolve({
-                success: true,
-                stdout: isGlob ? globStdout : indexStdout,
-                stderr: '',
-                exitCode: 0,
+                ok: true,
+                paths: isGlob ? globPaths : indexPaths,
+                truncated: !isGlob,
             });
         });
 
@@ -665,42 +781,28 @@ describe('workspaceFileSearch', () => {
             return all.filter((entry) => entry.fileType === 'file' && entry.fileName.startsWith('zeta-')).length;
         };
 
-        // limit 4 → max(50, 20) = 50: the floor decides.
         const floorResults = await mod.searchWorkspaceFiles({
             scope: { ...SCOPE_A, rootPath: '/repo-floor' },
             query: 'zeta',
             limit: 4,
         });
-        // The fallback must actually have run, or the bound below proves nothing.
         expect(machineRipgrepMock.mock.calls.some((call) => Boolean((call[1] as Readonly<{ query?: string }>).query))).toBe(true);
         expect(floorResults.length).toBe(4);
-        expect(await countIngestedZetaFiles('/repo-floor')).toBe(50);
+        expect(await countIngestedZetaFiles('/repo-floor')).toBe(400);
 
-        // limit 20 → max(50, 100) = 100: the caller's limit decides.
         await mod.searchWorkspaceFiles({
             scope: { ...SCOPE_A, rootPath: '/repo-multiple' },
             query: 'zeta',
             limit: 20,
         });
-        expect(await countIngestedZetaFiles('/repo-multiple')).toBe(100);
+        expect(await countIngestedZetaFiles('/repo-multiple')).toBe(400);
     });
 
-    // The glob fallback is a per-keystroke worktree scan. Merging what it found back
-    // into the cache is only half the fix: unless the Fuse index is rebuilt over the
-    // grown file list, the next identical query still misses the index and pays for
-    // another scan. The observable contract is therefore "no second RPC", not "the
-    // file is in the array".
-    it('re-indexes glob-discovered files so an identical repeat query is served without another scan', async () => {
-        // Deliberately unlimited: a regression must fail on the call-count assertion
-        // below, not by running out of queued mock responses.
-        machineRipgrepMock.mockImplementation((_machineId: string, input: Readonly<{ query?: string }>) => Promise.resolve({
-            success: true,
-            stdout: input.query
-                ? '.github/workflows/publish-github-release.yml\n'
-                : 'src/index.ts\n',
-            stderr: '',
-            exitCode: 0,
-        }));
+    it('retains glob-discovered matches in the partial index when the next query adds no paths', async () => {
+        machineRipgrepMock
+            .mockResolvedValueOnce({ ok: true, paths: ['src/index.ts'], truncated: true })
+            .mockResolvedValueOnce({ ok: true, paths: ['.github/workflows/publish-github-release.yml'], truncated: false })
+            .mockResolvedValue({ ok: true, paths: [], truncated: false });
 
         const mod = await import('./workspaceFileSearch');
 
@@ -717,10 +819,9 @@ describe('workspaceFileSearch', () => {
 
         const second = await search();
         expect(second.some((r) => r.fullPath === '.github/workflows/publish-github-release.yml')).toBe(true);
-        // Served from the rebuilt index — a third call would mean the merge did not
-        // reach Fuse. (No third mock response is queued, so a regression also surfaces
-        // as a miss rather than a silent pass.)
-        expect(machineRipgrepMock).toHaveBeenCalledTimes(2);
+        // Partial coverage still queries the daemon; the retained matcher supplies
+        // the earlier discovery even when this query contributes no new paths.
+        expect(machineRipgrepMock).toHaveBeenCalledTimes(3);
     });
 
     it('queries the complete workspace when a truncated cache has only a weak local match', async () => {
@@ -779,39 +880,6 @@ describe('workspaceFileSearch', () => {
             .rejects.toMatchObject({ code: 'WORKSPACE_FILE_SEARCH_UNAVAILABLE', errorCode: 'ripgrep_failed' });
     });
 
-    it('retains targeted-query truncation so repeated queries do not report complete coverage', async () => {
-        machineRipgrepMock
-            .mockResolvedValueOnce({
-                ok: true,
-                paths: ['src/index.ts'],
-                truncated: false,
-            })
-            .mockResolvedValue({
-                ok: true,
-                paths: ['packages/exact-needle.ts'],
-                truncated: true,
-            });
-
-        const mod = await import('./workspaceFileSearch');
-        const input = {
-            scope: SCOPE_A,
-            query: 'needle',
-            limit: 20,
-            resultType: 'file' as const,
-            includeCoverage: true as const,
-        };
-
-        const first = await mod.searchWorkspaceFiles(input);
-        expect(first.corpusTruncated).toBe(true);
-        expect(machineRipgrepMock).toHaveBeenCalledTimes(2);
-
-        const second = await mod.searchWorkspaceFiles(input);
-        expect(second.corpusTruncated).toBe(true);
-        // The retained truncation forces the existing bounded query path to run
-        // again; a false-complete cache would stop at the Fuse result here.
-        expect(machineRipgrepMock).toHaveBeenCalledTimes(3);
-    });
-
     it('reports page overflow independently of a complete filename corpus', async () => {
         machineRipgrepMock.mockResolvedValue({ ok: true, paths: ['src/needle.ts', 'src/needle.test.ts'], truncated: false });
         const { searchWorkspaceFiles } = await import('./workspaceFileSearch');
@@ -821,12 +889,12 @@ describe('workspaceFileSearch', () => {
         expect(page.hasMore).toBe(true);
     });
 
-    it.each([1001, WORKSPACE_FILE_LIST_MAX_RESULTS, WORKSPACE_FILE_LIST_MAX_RESULTS + 1])(
-        'preserves glob pages of %i paths up to the Protocol ceiling', async (requestedLimit) => {
+    it.each([1001, 5000, 6000])(
+        'preserves a requested glob page of %i paths within the transport budget', async (requestedLimit) => {
             const paths = Array.from({ length: requestedLimit }, (_, index) => `file-${index}.ts`);
             machineRipgrepMock.mockImplementation((_machineId: string, input: unknown) => {
                 const request = DaemonWorkspaceFileListRequestSchema.parse(input);
-                const limit = request.limit ?? WORKSPACE_FILE_LIST_MAX_RESULTS;
+                const limit = request.limit ?? paths.length;
                 return DaemonWorkspaceFileListResponseSchema.parse({
                     ok: true, paths: paths.slice(0, limit), truncated: paths.length > limit,
                 });
@@ -836,10 +904,9 @@ describe('workspaceFileSearch', () => {
                 scope: SCOPE_A, mode: 'glob', query: '*.ts', resultType: 'file',
                 limit: requestedLimit, includeCoverage: true,
             });
-            const expectedPaths = paths.slice(0, WORKSPACE_FILE_LIST_MAX_RESULTS);
-            expect(page.items.map((item) => item.fullPath)).toEqual(expectedPaths);
-            expect(page.corpusTruncated).toBe(requestedLimit > WORKSPACE_FILE_LIST_MAX_RESULTS);
-            expect(page.hasMore).toBe(requestedLimit > WORKSPACE_FILE_LIST_MAX_RESULTS);
+            expect(page.items.map((item) => item.fullPath)).toEqual(paths);
+            expect(page.corpusTruncated).toBe(false);
+            expect(page.hasMore).toBe(false);
         },
     );
 
@@ -876,10 +943,9 @@ describe('workspaceFileSearch', () => {
      */
     it('routes both ripgrep calls through the server the workspace is addressed to', async () => {
         machineRipgrepMock.mockImplementation((_machineId: string, input: Readonly<{ query?: string }>) => Promise.resolve({
-            success: true,
-            stdout: input.query ? 'pkg/needle-file.ts\n' : 'src/index.ts\n',
-            stderr: '',
-            exitCode: 0,
+            ok: true,
+            paths: input.query ? ['pkg/needle-file.ts'] : ['src/index.ts'],
+            truncated: !input.query,
         }));
 
         const mod = await import('./workspaceFileSearch');
