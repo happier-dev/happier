@@ -66,6 +66,7 @@ export const StorageWorktreesPage = React.memo(function StorageWorktreesPage(
     machineId: string;
     machineName: string;
     onBack: () => void;
+    onOpenAdminAccess?: () => void;
   }>,
 ) {
   const language = usePreferredLanguage();
@@ -150,7 +151,7 @@ export const StorageWorktreesPage = React.memo(function StorageWorktreesPage(
           />
         ) : null}
       </StoragePageHead>
-      <StorageReadNotice issues={list.page?.incomplete} onRetry={list.retry} />
+      <StorageReadNotice issues={list.page?.incomplete} onRetry={list.retry} onOpenRemedy={props.onOpenAdminAccess} />
       {headline ? (
         <ItemGroup header="none">
           <StorageVolumeRow volume={headline} compact={layout.compact} />

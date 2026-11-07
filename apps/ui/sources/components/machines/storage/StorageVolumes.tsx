@@ -13,9 +13,11 @@ import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
 
-import { resolveStorageVolumeParts, storageVolumeMountHint, storageVolumeName, type StorageSummary, type StorageVolume } from './storageViewModel';
+import { isStorageBootPartition, resolveStorageVolumeParts, storageVolumeMountHint, storageVolumeName, type StorageSummary, type StorageVolume } from './storageViewModel';
 
 const BAR_HEIGHT = 10;
+/** A part the legend names stays visible on the bar: Happier's few GB on a 2 TB disk is still a sliver of its colour. */
+const MIN_PART_WIDTH = 4;
 /** The legend reads at the row-description size, like the lab's key under each disk. */
 const LEGEND_TEXT = happierPageTextMetrics('meta');
 
@@ -26,10 +28,11 @@ const LEGEND_TEXT = happierPageTextMetrics('meta');
  */
 export const StorageVolumes = React.memo(function StorageVolumes(props: Readonly<{ summary: StorageSummary; compact: boolean }>) {
     usePreferredLanguage();
-    if (props.summary.volumes.length === 0) return null;
+    const volumes = props.summary.volumes.filter(volume => !isStorageBootPartition(volume));
+    if (volumes.length === 0) return null;
     return (
         <ItemGroup accessibilityLabel={t('machineStorage.volumes.label')}>
-            {props.summary.volumes.map(volume => <StorageVolumeRow key={volume.volume.volumeId} volume={volume} compact={props.compact} />)}
+            {volumes.map(volume => <StorageVolumeRow key={volume.volume.volumeId} volume={volume} compact={props.compact} />)}
         </ItemGroup>
     );
 });
@@ -79,7 +82,7 @@ export const StorageVolumeRow = React.memo(function StorageVolumeRow(props: Read
             </View>
             <View style={styles.bar} accessible accessibilityRole="image" accessibilityLabel={label}>
                 <CompositionStrip theme={pluginTheme} label={label} total={volume.totalBytes} segments={barSegments}
-                    variant="bar" segmentGap={0} appearance={{ legend: 'compact', height: BAR_HEIGHT }} />
+                    variant="bar" segmentGap={0} minimumFillWidth={MIN_PART_WIDTH} appearance={{ legend: 'compact', height: BAR_HEIGHT }} />
             </View>
             <View style={styles.legend}>
                 <CompositionStrip theme={pluginTheme} label={label} total={volume.totalBytes} segments={legendSegments}

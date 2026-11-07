@@ -14,7 +14,7 @@ import { Typography } from '@/constants/Typography';
 import { shadowLevelStyle } from '@/shadowElevation';
 import { t } from '@/text';
 
-import type { StoragePileBar } from './storagePileModel';
+import { describeStoragePileReceiptNote, type StoragePileBar } from './storagePileModel';
 
 export type PileBarActions = Readonly<{
   onClear?: () => void;
@@ -41,13 +41,20 @@ export const PileBar = React.memo(function PileBar(
       compact: boolean;
       /** `card`: docked as the last row of an agent's proposal card instead of floating over the page. */
       placement?: 'page' | 'card';
+      /** Storage is decimal; process proposals free binary memory. */
+      quantityKind?: Parameters<typeof formatMachineBytes>[1];
       testID?: string;
+      /**
+       * What needs the person under the bar's line (a refused Put back and its recovery). It keeps the bar
+       * on screen even when the line itself has nothing left to say.
+       */
+      recovery?: React.ReactNode;
     }
   >,
 ) {
   const { theme } = useUnistyles();
   const motion = useMotionPreferences();
-  const visible = props.bar.kind !== 'hidden';
+  const visible = props.bar.kind !== 'hidden' || props.recovery != null;
   // The first item rises from the bottom edge (12 px + opacity, 240 ms); the last leaves faster (160 ms).
   const rise = React.useRef(new Animated.Value(visible ? 1 : 0)).current;
   const [mounted, setMounted] = React.useState(visible);
@@ -73,7 +80,11 @@ export const PileBar = React.memo(function PileBar(
   if (visible) last.current = props.bar;
   if (!mounted) return null;
   const bar = visible ? props.bar : last.current;
-  const amount = (bytes: number) => formatMachineBytes(bytes, 'storage');
+  const amount = (bytes: number) => formatMachineBytes(bytes, props.quantityKind ?? 'storage');
+  // A partial Empty is said by the receipt itself, on every surface that docks this bar; what stayed and why
+  // gets its second line even on a phone, where the bar is otherwise one line.
+  const receiptNote = describeStoragePileReceiptNote(bar);
+  const note = receiptNote ?? props.note;
   const icon =
     bar.kind === 'held'
       ? 'trash'
@@ -89,10 +100,12 @@ export const PileBar = React.memo(function PileBar(
           ? t('machineStorage.pile.checking', { count: bar.count })
           : bar.kind === 'ready'
             ? t('machineStorage.pile.items', { count: bar.count })
-            : '';
+            : bar.kind === 'dropped'
+              ? t('machineStorage.pile.items', { count: 0 })
+              : '';
   const total =
     bar.kind === 'held'
-      ? bar.inTrashBytes === null ? '—' : amount(bar.inTrashBytes)
+      ? bar.inTrashBytes === null ? t('machineStorage.pile.sizeUnknown') : amount(bar.inTrashBytes)
       : bar.kind === 'checking'
         ? amount(bar.freesBytes)
         : bar.kind === 'ready'
@@ -149,7 +162,7 @@ export const PileBar = React.memo(function PileBar(
           }}
         />
       ) : null}
-      {bar.kind === 'freed' && props.onDone ? (
+      {(bar.kind === 'freed' || bar.kind === 'dropped') && props.onDone ? (
         <RoundButton
           testID="machine-storage-pile-done"
           size="small"
@@ -177,10 +190,10 @@ export const PileBar = React.memo(function PileBar(
   const a11y = {
     accessibilityRole: bar.kind === 'ready' ? undefined : ('summary' as const),
     accessibilityLiveRegion: 'polite' as const,
-    accessibilityLabel: [title, total, props.note].filter(Boolean).join(', '),
+    accessibilityLabel: [title, total, note].filter(Boolean).join(', '),
   };
-  const content = (
-    <>
+  const content = bar.kind === 'hidden' ? null : (
+    <View style={styles.row}>
       <View style={styles.glyph}>
         {bar.kind === 'checking' ? (
           <ActivitySpinner size="small" color={theme.colors.text.secondary} />
@@ -201,19 +214,25 @@ export const PileBar = React.memo(function PileBar(
           {title}
           {total ? <Text style={styles.total}>{`  ${total}`}</Text> : null}
         </Text>
-        {props.note ? (
-          <Text style={styles.note} numberOfLines={props.compact ? 1 : 2}>
-            {props.note}
+        {note ? (
+          <Text style={styles.note} numberOfLines={props.compact && !card && !receiptNote ? 1 : 2}>
+            {note}
           </Text>
         ) : null}
       </View>
       {actions}
+    </View>
+  );
+  const body = (
+    <>
+      {content}
+      {props.recovery ? <View style={content ? styles.recovery : null}>{props.recovery}</View> : null}
     </>
   );
   if (card) {
     return (
       <Animated.View testID={props.testID ?? 'machine-storage-pile'} style={[styles.bar, props.compact ? styles.compact : null, styles.inCard, motionStyle]} {...a11y}>
-        {content}
+        {body}
       </Animated.View>
     );
   }
@@ -223,7 +242,7 @@ export const PileBar = React.memo(function PileBar(
     <Animated.View style={[dockStyle, motionStyle]}>
       <ItemGroup surface="none" header="none">
         <View testID={props.testID ?? 'machine-storage-pile'} style={[styles.bar, props.compact ? styles.compact : null]} {...a11y}>
-          {content}
+          {body}
         </View>
       </ItemGroup>
     </Animated.View>
@@ -238,8 +257,6 @@ const dockStyle: ViewStyle =
 
 const styles = StyleSheet.create((theme) => ({
   bar: {
-    flexDirection: 'row',
-    alignItems: 'center',
     gap: theme.space.s12,
     marginTop: theme.space.s16,
     paddingHorizontal: theme.space.s16,
@@ -261,6 +278,16 @@ const styles = StyleSheet.create((theme) => ({
   compact: {
     paddingHorizontal: theme.space.s12,
     paddingVertical: theme.space.s10,
+  },
+  recovery: {
+    paddingTop: theme.space.s12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: theme.colors.border.surface,
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.space.s12,
   },
   glyph: {
     width: 20,

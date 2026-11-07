@@ -1061,6 +1061,8 @@ const artifactsBrowserTranslations = { it: {
             empty: 'Nessuna versione precedente. Ogni salvataggio ne conserva una.',
             versionsLabel: 'Versioni',
             restoreFailed: 'Impossibile ripristinare questa versione. Riprova.',
+            compareUnavailable: 'Confronto non disponibile',
+            compareCurrentUnavailable: 'La versione attuale non è disponibile in questa vista della cronologia. Puoi comunque leggere le versioni precedenti.',
             savedByUser: 'Salvato da un utente',
             savedByAgentSession: 'Salvato da una sessione agente',
             restoredVersion: ({ n }) => `Ripristinato dalla versione ${n}`,
@@ -13771,6 +13773,9 @@ const italian: TeamsTranslationRoot = {
             directUse: {
                 ownerVisibility: "Il proprietario della macchina può esaminare le chiavi e le credenziali selezionate consegnate qui, anche quando i membri avranno utenti separati.",
                 sharedUserVisibility: "Su una macchina condivisa, i membri e l’Agente isolato del proprietario possono leggere le chiavi consegnate direttamente finché condividono un utente Agente. Una configurazione attivata o in attesa non dimostra la separazione tra i membri.",
+                separatePlacement: 'I loro agenti vengono eseguiti con il proprio utente su questa macchina.',
+                sharedPlacement: 'I loro agenti vengono eseguiti come te su questa macchina.',
+                sharedBeforeSeparation: 'Ciò che è stato condiviso prima di attivare gli utenti separati potrebbe essere ancora visibile a loro.',
                 title: 'Usare direttamente questa credenziale condivisa?',
                 body: 'Happier pu\u00f2 fornire il materiale della credenziale agli strumenti locali usati da questa sessione. Continua solo se ti fidi di questi strumenti con questa credenziale.',
             },

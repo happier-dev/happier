@@ -6,8 +6,8 @@ import { CompositionStrip } from '@happier-dev/plugin-ui/presentation';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { preloadTranslationsForSettings, setPreferredLanguageFromSettings, t } from '@/text';
 
-import { StorageVolumeRow } from './StorageVolumes';
-import type { StorageVolume } from './storageViewModel';
+import { StorageVolumeRow, StorageVolumes } from './StorageVolumes';
+import type { StorageSummary, StorageVolume } from './storageViewModel';
 
 afterEach(() => {
     standardCleanup();
@@ -74,4 +74,15 @@ it('shows sampled reclaimable capacity quietly in the bar, preserving the free-n
     const { availableIncludingPurgeableBytes: _known, ...unknown } = volume;
     await screen.update(<StorageVolumeRow volume={unknown} compact={false} />);
     expect(bar().segments.some((segment: { id: string }) => segment.id === 'purgeable')).toBe(false);
+});
+
+it('lists data disks but keeps the boot and EFI partitions out of the disk section', async () => {
+    const disk = (volumeId: string, mountPath: string, happierBytes = 0): StorageVolume => ({ volume: { volumeId, mountPath, label: mountPath },
+        totalBytes: 1_000_000, freeBytes: 500_000, happierBytes, pileBytes: 0, trashBytes: 0 });
+    const summary = { volumes: [disk('root', '/', 40_960), disk('boot', '/boot'), disk('efi', '/boot/efi'), disk('data', '/srv/data')] } as unknown as StorageSummary;
+    const screen = await renderScreen(<StorageVolumes summary={summary} compact={false} />);
+    expect(screen.findAllByTestId('machine-storage-volume-root')).not.toHaveLength(0);
+    expect(screen.findAllByTestId('machine-storage-volume-data')).not.toHaveLength(0);
+    expect(screen.findAllByTestId('machine-storage-volume-boot')).toHaveLength(0);
+    expect(screen.findAllByTestId('machine-storage-volume-efi')).toHaveLength(0);
 });

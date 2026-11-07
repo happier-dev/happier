@@ -1061,6 +1061,8 @@ const artifactsBrowserTranslations = { es: {
             empty: 'Aún no hay versiones anteriores. Cada guardado conserva una.',
             versionsLabel: 'Versiones',
             restoreFailed: 'No se pudo restaurar esta versión. Inténtalo de nuevo.',
+            compareUnavailable: 'Comparación no disponible',
+            compareCurrentUnavailable: 'La versión actual no está disponible en esta vista del historial. Puedes seguir leyendo versiones anteriores.',
             savedByUser: 'Guardado por un usuario',
             savedByAgentSession: 'Guardado por una sesión de agente',
             restoredVersion: ({ n }) => `Restaurado desde la versión ${n}`,
@@ -13819,6 +13821,9 @@ const spanish: TeamsTranslationRoot = {
             directUse: {
                 ownerVisibility: "El propietario de la máquina puede inspeccionar las claves y las credenciales seleccionadas que se entreguen aquí, incluso cuando los miembros tengan usuarios separados.",
                 sharedUserVisibility: "En una máquina compartida, los miembros y el Agente aislado del propietario pueden leer las claves entregadas directamente mientras compartan un usuario de Agente. Una configuración activada o pendiente no demuestra que los miembros estén separados.",
+                separatePlacement: 'Sus agentes se ejecutan con su propio usuario en esta máquina.',
+                sharedPlacement: 'Sus agentes se ejecutan como tú en esta máquina.',
+                sharedBeforeSeparation: 'Lo que se compartió antes de activar los usuarios separados puede seguir siendo visible para ellos.',
                 title: '\u00bfUsar directamente esta credencial compartida?',
                 body: 'Happier puede proporcionar material de credencial a las herramientas locales que usa esta sesi\u00f3n. Contin\u00faa solo si conf\u00edas en esas herramientas con esta credencial.',
             },

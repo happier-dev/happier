@@ -9,10 +9,13 @@ import {
   describeStorageCollect,
   describeStorageGroupCollect,
   describeStoragePileBar,
+  describeStoragePileReceiptNote,
   resolveStorageCollectAll,
   resolveStorageCollectRange,
   resolveStorageCollectToggle,
+  storagePathContains,
 } from './storagePileModel';
+import { createStorageTrashReceipt, settleStorageTrashReceipt } from '@/sync/domains/machines/storage/trashReceipt';
 
 const size = (bytes: number) => ({
   allocatedBytes: bytes,
@@ -253,6 +256,18 @@ describe('the pile bar states (lab rs PM)', () => {
       }),
     ).toEqual({ kind: 'freed', count: 2, freedBytes: 300 });
   });
+
+  it('after a partial Empty says what is left and why, and never repeats the original Trash total', () => {
+    const moved = { ...applied([{ itemId: 'a', status: 'moved' }, { itemId: 'b', status: 'moved' }]), trashEntryIds: ['ea', 'eb'] };
+    const empty = { outcomes: [{ entryId: 'ea', status: 'deleted' as const }, { entryId: 'eb', status: 'refused' as const, reason: { code: 'in_use' as const } }], freedBytes: 120_000_000 };
+    const trash = settleStorageTrashReceipt(createStorageTrashReceipt(moved), { kind: 'empty', result: empty });
+    const bar = describeStoragePileBar({ pile: pile(0, 0), receipt: { kind: 'applied', result: moved, emptiesAt: null, trash }, checking: null });
+    expect(bar).toMatchObject({ kind: 'held', count: 1, inTrashBytes: null });
+    expect(describeStoragePileReceiptNote(bar)).toBe('1 item couldn’t be emptied: in use. 1 emptied, 120 MB freed.');
+    // Before any Empty, and after a clean move, the caller's own note stands.
+    expect(describeStoragePileReceiptNote(describeStoragePileBar({ pile: null, checking: null,
+      receipt: { kind: 'applied', result: moved, emptiesAt: null, trash: createStorageTrashReceipt(moved) } }))).toBeNull();
+  });
 });
 
 describe('collecting a range (Shift, through the Collection range resolver)', () => {
@@ -267,5 +282,36 @@ describe('collecting a range (Shift, through the Collection range resolver)', ()
     expect(resolveStorageCollectRange({ rows, pile, anchorKey: 'd', targetKey: 'b' })).toEqual({ remove: ['b'] });
     expect(resolveStorageCollectRange({ rows, pile: [], anchorKey: null, targetKey: 'd' })?.add?.map((entry) => entry.itemId)).toEqual(['d']);
     expect(resolveStorageCollectRange({ rows, pile: [], anchorKey: 'a', targetKey: 'k' })).toBeNull();
+  });
+});
+
+describe('reading a row against a large pile', () => {
+  // The reference reading: scan the pile for the row's entry, then for a folder holding it.
+  const trim = (path: string) => (path.length > 1 ? path.replace(/[\\/]+$/u, '') : path);
+  const reference = (row: StorageItemV1, pile: readonly PileItemRefV1[]) => {
+    if (row.verdict === 'forbidden') return 'none';
+    if (pile.some((entry) => entry.itemId === row.itemId || trim(entry.path) === trim(row.path))) return 'collected';
+    if (pile.some((entry) => storagePathContains(entry.path, row.path))) return 'inside';
+    if (!row.collectable || row.verdict === 'check') return 'none';
+    return row.verdict === 'keep' ? 'confirm' : 'available';
+  };
+
+  it('answers exactly as scanning the pile would, across separators, roots, trailing separators and renamed ids', () => {
+    const pile = [
+      ref('root-folder', '/'),
+      ref('cache', '/home/u/.cache/'),
+      ref('win', 'C:\\Users\\u\\AppData'),
+      ref('moved', '/old/place/tool'),
+      ref('plain', '/srv/data/a'),
+    ];
+    const paths = ['/', '/home/u/.cache', '/home/u/.cache/tool/x', '/home/u/.cachefoo', '/home/u', 'C:\\Users\\u\\AppData\\Local', 'C:\\Users\\u2\\AppData', '/old/place/tool', '/new/place/tool', '/srv/data/a/b/c', '/srv/data', 'relative/dir'];
+    for (const [index, path] of paths.entries()) {
+      for (const verdict of ['safe', 'caution', 'keep', 'check', 'forbidden'] as const) {
+        for (const itemId of [`row-${index}`, 'moved']) {
+          const row = item(itemId, path, verdict);
+          expect(describeStorageCollect(row, pile), `${itemId} ${path} ${verdict}`).toBe(reference(row, pile));
+        }
+      }
+    }
   });
 });

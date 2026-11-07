@@ -12,6 +12,7 @@ import {
     type MachineStorageScanStartInputV1, type MachineStorageScanGetInputV1, type MachineStorageScanCancelInputV1,
     type MachineStorageScanSkipInputV1, type MachineStorageProtectedAddInputV1,
     type MachineStorageItemsListResultV1, type PileReviewV1, type PileApplyResultV1, type TrashRestoreResultV1, type TrashEmptyResultV1,
+    MachineStorageDockerPruneResultV1Schema, type MachineStorageDockerPruneInputV1,
 } from '@happier-dev/protocol/storage/storageV1';
 import { MachineResourcesPolicyMutationResultV1Schema } from '@happier-dev/protocol/machines/resources/machineResourcesPolicyV1';
 import type { MachineStorageActionId } from '@happier-dev/protocol/actions/specs/storage';
@@ -160,6 +161,10 @@ export function deleteMachineStorageNowViaAction(input: MachineStorageDeleteNowI
 }
 export function emptyMachineStorageTrashViaAction(input: ScopedInput<MachineStorageTrashEmptyInputV1>) {
     return result(input, () => execute(input, 'machines.storage.trash.empty', fields(input)), raw => TrashEmptyResultV1Schema.safeParse(raw));
+}
+/** Free space: one Docker cleanup the person reviewed (their press is the confirmation); the Storage owner proves what may go. */
+export function pruneMachineStorageDockerViaAction(input: ScopedInput<MachineStorageDockerPruneInputV1> & Readonly<{ reviewedByPerson?: boolean }>) {
+    return result(input, () => execute(input, 'machines.storage.docker.prune', fields(input)), raw => MachineStorageDockerPruneResultV1Schema.safeParse(raw));
 }
 export function restoreMachineStorageTrashViaAction(input: ScopedInput<MachineStorageTrashRestoreInputV1>) {
     return result(input, () => execute(input, 'machines.storage.trash.restore', fields(input)), raw => TrashRestoreResultV1Schema.safeParse(raw));

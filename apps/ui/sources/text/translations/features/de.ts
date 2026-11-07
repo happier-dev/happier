@@ -1055,6 +1055,8 @@ const artifactsBrowserTranslations = { de: {
             empty: 'Noch keine früheren Versionen. Jedes Speichern behält eine.',
             versionsLabel: 'Versionen',
             restoreFailed: 'Diese Version konnte nicht wiederhergestellt werden. Versuche es erneut.',
+            compareUnavailable: 'Vergleich nicht verfügbar',
+            compareCurrentUnavailable: 'Die aktuelle Version ist in dieser Verlaufsansicht nicht verfügbar. Du kannst frühere Versionen weiterhin lesen.',
             savedByUser: 'Von einem Benutzer gespeichert',
             savedByAgentSession: 'Von einer Agentensitzung gespeichert',
             restoredVersion: ({ n }) => `Aus Version ${n} wiederhergestellt`,
@@ -13579,6 +13581,9 @@ const german: TeamsTranslationRoot = {
             directUse: {
                 ownerVisibility: "Der Eigentümer des Rechners kann hier übermittelte Schlüssel und ausgewählte Zugangsdaten einsehen, auch wenn Mitglieder später getrennte Benutzer haben.",
                 sharedUserVisibility: "Auf einem geteilten Rechner können Mitglieder und der isolierte Agent des Eigentümers direkt übermittelte Schlüssel lesen, solange sie denselben Agent-Benutzer verwenden. Eine aktivierte oder ausstehende Einrichtung belegt keine Trennung der Mitglieder.",
+                separatePlacement: 'Ihre Agents laufen auf diesem Rechner als eigener Benutzer.',
+                sharedPlacement: 'Ihre Agents laufen auf diesem Rechner als du.',
+                sharedBeforeSeparation: 'Was vor dem Einschalten getrennter Benutzer geteilt wurde, kann für sie weiterhin sichtbar sein.',
                 title: 'Diese geteilten Zugangsdaten direkt verwenden?',
                 body: 'Happier kann Zugangsmaterial an lokale Werkzeuge dieser Session weitergeben. Fahre nur fort, wenn du diesen Werkzeugen mit den Zugangsdaten vertraust.',
             },

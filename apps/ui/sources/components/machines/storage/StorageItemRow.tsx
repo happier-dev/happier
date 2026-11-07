@@ -15,6 +15,7 @@ import { t } from '@/text';
 import type { StorageVerdictChip } from './storageReasonPresentation';
 import { StorageCollectToggle } from './StorageCollectToggle';
 import type { StorageCollectState } from './storagePileModel';
+import { formatStorageSize } from './storageViewModel';
 
 const BAR_WIDTH = 64;
 
@@ -26,11 +27,14 @@ const BAR_WIDTH = 64;
 export function StorageSizeBar(props: Readonly<{ label: string; bytes: number; largest: number; hatched: boolean; compact: boolean; color?: string }>) {
     const { theme } = useUnistyles();
     const pluginTheme = usePluginUiTheme(theme);
+    // Drawn for the eye: the row already says its size in the words it shows, so the bar adds no raw byte counts.
     return (
-        <CapacityBar theme={pluginTheme} label={props.label} value={props.bytes} capacity={Math.max(1, props.largest)}
-            size="inline" height={props.compact ? undefined : theme.space.s6} showCaption={false}
-            color={props.color ?? theme.colors.text.secondary} trackColor={theme.colors.border.default}
-            pattern={props.hatched ? 'hatched' : 'solid'} />
+        <View aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+            <CapacityBar theme={pluginTheme} label={props.label} value={props.bytes} capacity={Math.max(1, props.largest)}
+                size="inline" height={props.compact ? undefined : theme.space.s6} showCaption={false}
+                color={props.color ?? theme.colors.text.secondary} trackColor={theme.colors.border.default}
+                pattern={props.hatched ? 'hatched' : 'solid'} />
+        </View>
     );
 }
 
@@ -60,8 +64,7 @@ export const StorageItemRow = React.memo(function StorageItemRow(props: Readonly
     trailing?: React.ReactNode;
     dim?: boolean;
 }>) {
-    const size = formatMachineBytes(props.bytes, 'storage');
-    const sizeText = props.atLeast ? `≥ ${size}` : size;
+    const sizeText = formatStorageSize(props.bytes, props.atLeast);
     const bar = (
         <StorageSizeBar label={props.title} bytes={props.bytes} largest={props.largest} compact={props.compact}
             hatched={props.hatched === true || props.collect?.state === 'collected' || props.collect?.state === 'inside'} />
@@ -87,6 +90,8 @@ export const StorageItemRow = React.memo(function StorageItemRow(props: Readonly
         <Item testID={props.testID} title={props.title} subtitle={props.evidence || undefined} subtitleLines={1} mode="info"
             accessibilityLabel={label} showDivider={props.showDivider}
             leftElement={box} style={props.dim ? styles.dim : undefined}
+            // The meta column is facts that are never cut: the title gives way with an ellipsis instead.
+            accessoryMaxWidth="row"
             rightElement={
                 <View style={styles.figures}>
                     <View style={styles.bar}>{bar}</View>
@@ -117,7 +122,7 @@ export function StorageVerdictPill(props: Readonly<{ chip: StorageVerdictChip }>
             label={split ? props.chip.word! : props.chip.label} detail={split ? props.chip.detail : undefined}
             foregroundColor={attention ? tint : theme.colors.text.primary}
             detailColor={attention ? tint : theme.colors.text.secondary}
-            labelStyle={styles.chipLabel} labelNumberOfLines={1} accessibilityLabel={props.chip.label}
+            labelStyle={styles.chipLabel} labelNumberOfLines={1} accessibilityLabel={props.chip.label} style={styles.pillFit}
             leading={props.chip.icon ? <Icon name={props.chip.icon} size={12} color={tint} /> : undefined} />
     );
 }
@@ -154,9 +159,13 @@ const styles = StyleSheet.create((theme) => ({
     dim: {
         opacity: 0.6,
     },
+    // One meta column on every row; a long verdict truncates its reason inside it, never past the card.
     chipColumn: {
         width: 196,
         alignItems: 'flex-start',
+    },
+    pillFit: {
+        maxWidth: '100%',
     },
     compactBottom: {
         gap: theme.space.s6,

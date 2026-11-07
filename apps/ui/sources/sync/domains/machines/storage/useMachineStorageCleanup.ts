@@ -15,9 +15,14 @@ export function useMachineStorageCleanup(input: MachineStorageHookInput) {
     const subscribe = React.useCallback((listener: () => void) => machineStorageStore.observeReceipt(key, listener), [key]);
     const snapshot = React.useCallback((): MachineStorageReceipt | null => machineStorageStore.getReceipt(key), [key]);
     const receipt = React.useSyncExternalStore(subscribe, snapshot, snapshot);
+    const subscribeRestore = React.useCallback((listener: () => void) => machineStorageStore.observeRestoreOutcomes(key, listener), [key]);
+    const restoreSnapshot = React.useCallback(() => machineStorageStore.getRestoreOutcomes(key), [key]);
+    const restoreOutcomes = React.useSyncExternalStore(subscribeRestore, restoreSnapshot, restoreSnapshot);
     return React.useMemo(() => ({
         enabled,
         receipt,
+        restoreOutcomes,
+        putBackBeside: (entryId: string) => machineStorageStore.restoreTrashBeside({ ...key, entryId }),
         check: (refs: Without<MachineStorageCheckInput>['refs']) => machineStorageStore.checkPile({ ...key, refs }),
         apply: (mode: 'trash' | 'delete', items: readonly MachineStorageApplyItem[]) => machineStorageStore.applyPile({ ...key, mode, items }),
         undo: () => machineStorageStore.undoReceipt(key),
@@ -26,5 +31,5 @@ export function useMachineStorageCleanup(input: MachineStorageHookInput) {
         restore: (selection: Without<MachineStorageTrashRestoreInput>) => machineStorageStore.restoreTrash({ ...key, ...selection }),
         empty: (selection: Without<MachineStorageTrashEmptyInput>) => machineStorageStore.emptyTrash({ ...key, ...selection }),
         setProtected: (path: string, protect: boolean) => machineStorageStore.setProtectedFolder({ ...key, path, protect }),
-    }), [enabled, key, receipt]);
+    }), [enabled, key, receipt, restoreOutcomes]);
 }

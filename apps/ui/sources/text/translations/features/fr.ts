@@ -1061,6 +1061,8 @@ const artifactsBrowserTranslations = { fr: {
             empty: 'Pas encore de version antérieure. Chaque enregistrement en garde une.',
             versionsLabel: 'Versions',
             restoreFailed: 'Impossible de restaurer cette version. Réessaie.',
+            compareUnavailable: 'Comparaison indisponible',
+            compareCurrentUnavailable: 'La version actuelle n’est pas disponible dans cette vue de l’historique. Tu peux toujours lire les versions précédentes.',
             savedByUser: 'Enregistré par un utilisateur',
             savedByAgentSession: 'Enregistré par une session d’agent',
             restoredVersion: ({ n }) => `Restauré depuis la version ${n}`,
@@ -13817,6 +13819,9 @@ const french: TeamsTranslationRoot = {
             directUse: {
                 ownerVisibility: "Le propriétaire de la machine peut consulter les clés et les identifiants sélectionnés qui y sont transmis, même lorsque les membres ont des utilisateurs distincts.",
                 sharedUserVisibility: "Sur une machine partagée, les membres et l’Agent isolé du propriétaire peuvent lire les clés transmises directement tant qu’ils partagent le même utilisateur d’Agent. Une configuration activée ou en attente ne prouve pas que les membres sont isolés les uns des autres.",
+                separatePlacement: 'Leurs agents s’exécutent sous leur propre utilisateur sur cette machine.',
+                sharedPlacement: 'Leurs agents s’exécutent sous votre utilisateur sur cette machine.',
+                sharedBeforeSeparation: 'Ce qui a été partagé avant l’activation des utilisateurs distincts peut encore leur être visible.',
                 title: 'Utiliser directement cet identifiant partag\u00e9\u00a0?',
                 body: 'Happier peut fournir le mat\u00e9riel d\u2019identification aux outils locaux utilis\u00e9s par cette session. Continue uniquement si tu confies cet identifiant \u00e0 ces outils.',
             },

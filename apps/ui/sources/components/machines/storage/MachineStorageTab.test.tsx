@@ -247,7 +247,7 @@ describe('MachineStorageTab', () => {
         const readable = { ...item('readable', 'Readable storage', GB, 'safe', 'downloads_again'), categoryId };
         let partial = true;
         const issues = [{ categoryId, reason: 'permission_denied', remedy: 'grant_admin_access_or_run_as_machine_owner' }];
-        const { screen } = await mount(params, {}, rpc => {
+        const { screen, setParams } = await mount(params, {}, rpc => {
             if (rpc.method !== method) return undefined;
             const incomplete = partial ? issues : [];
             if (method === RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET) return { ...SUMMARY, incomplete };
@@ -262,6 +262,9 @@ describe('MachineStorageTab', () => {
         expect(screen.findByTestId('machine-storage-error')).toBeNull();
         if (_label === 'summary') expect(screen.getTextContent()).toContain(formatMachineBytes(17.6 * GB, 'storage'));
         else expect(screen.getTextContent()).toContain('Readable storage');
+        // The remedy is a way there, not a loop: admin access opens in the Security tab.
+        await act(async () => { screen.pressByTestId('machine-storage-incomplete-remedy'); });
+        expect(setParams).toHaveBeenCalledWith({ id: 'security' });
         partial = false;
         await act(async () => { screen.pressByTestId('machine-storage-incomplete-retry'); });
         await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('machine-storage-incomplete')).toBeNull()); });
@@ -463,6 +466,23 @@ describe('MachineStorageTab', () => {
         expect(screen.getTextContent()).toContain(frenchEvidence);
         await act(async () => { setPreferredLanguageFromSettings('en'); });
         expect(screen.findByTestId('machine-storage-worktree-locale')).toBeNull();
+    });
+
+    it('says a nearly full disk in amber with one callout that opens the prepared low-disk view', async () => {
+        const reason = { key: 'disk:mac', level: 'needs_you', since: 1, metric: 'disk', nextStep: 'free_up_space',
+            kind: 'disk_nearly_full', volumeId: 'mac', volumeLabel: 'Macintosh HD' } as const;
+        const { screen, setParams } = await mount({ id: 'storage' }, { daemonState: { resources: { v: 1, vitals: { state: 'reporting' },
+            host: { logicalCores: 4, memoryTotalBytes: 100, bootedAt: 1 }, attention: { level: 'needs_you', reasons: [reason] } } } });
+        await vi.waitFor(async () => { await act(async () => {}); expect(screen.findByTestId('machine-storage-disk-attention')).not.toBeNull(); });
+        expect(screen.getTextContent()).toContain(t('machineAttention.words.diskNearlyFull', { volume: 'Macintosh HD' }));
+        await act(async () => { screen.pressByTestId('machine-storage-disk-attention-action'); });
+        expect(setParams).toHaveBeenCalledWith({ id: 'storage', prepare: 'lowDisk', volumeId: 'mac' });
+    });
+
+    it('keeps a calm disk free of the low-disk callout', async () => {
+        const { screen } = await mount({ id: 'storage' });
+        await vi.waitFor(async () => { await act(async () => {}); expect(screen.findByTestId('machine-storage-sentence')).not.toBeNull(); });
+        expect(screen.findByTestId('machine-storage-disk-attention')).toBeNull();
     });
 
     it.each([

@@ -1061,6 +1061,8 @@ const artifactsBrowserTranslations = { ca: {
             empty: 'Encara no hi ha versions anteriors. Cada desament en conserva una.',
             versionsLabel: 'Versions',
             restoreFailed: 'No s’ha pogut restaurar aquesta versió. Torna-ho a provar.',
+            compareUnavailable: 'Comparació no disponible',
+            compareCurrentUnavailable: 'La versió actual no està disponible en aquesta vista de l’historial. Pots continuar llegint les versions anteriors.',
             savedByUser: 'Desat per un usuari',
             savedByAgentSession: 'Desat per una sessió d’agent',
             restoredVersion: ({ n }) => `Restaurat des de la versió ${n}`,
@@ -13792,6 +13794,9 @@ const catalan: TeamsTranslationRoot = {
             directUse: {
                 ownerVisibility: "El propietari de la màquina pot inspeccionar les claus i les credencials seleccionades que s’hi lliuren, fins i tot quan els membres tinguin usuaris separats.",
                 sharedUserVisibility: "En una màquina compartida, els membres i l’Agent aïllat del propietari poden llegir les claus lliurades directament mentre comparteixin un usuari d’Agent. Una configuració activada o pendent no demostra que els membres estiguin separats.",
+                separatePlacement: 'Els seus agents s’executen amb el seu propi usuari en aquesta màquina.',
+                sharedPlacement: 'Els seus agents s’executen com tu en aquesta màquina.',
+                sharedBeforeSeparation: 'Tot el que s’hagi compartit abans d’activar els usuaris separats encara pot ser visible per a ells.',
                 title: 'Vols fer servir directament aquesta credencial compartida?',
                 body: 'Happier pot proporcionar material de la credencial a les eines locals que utilitza aquesta sessi\u00f3. Continua nom\u00e9s si confies aquestes credencials a les eines.',
             },

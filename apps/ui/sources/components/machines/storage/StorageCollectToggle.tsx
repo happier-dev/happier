@@ -92,7 +92,6 @@ export const StorageCollectToggle = React.memo(function StorageCollectToggle(
       onPressOut={() => animate(1)}
       onPress={props.onPress ?? noop}
       {...(props.onKeyDown ? { onKeyDown: props.onKeyDown } : {})}
-      hitSlop={8}
       style={styles.slot}
     >
       <Animated.View
@@ -116,10 +115,12 @@ export async function confirmStorageKeep(
     title: string;
     reason: StorageReasonV1;
     loses?: readonly StorageReasonV1[];
+    file?: true;
   }>,
 ): Promise<boolean> {
   const lost = describeStorageLosses(
     input.loses?.length ? input.loses : [input.reason],
+    { file: input.file === true },
   );
   return Modal.confirm(
     t('machineStorage.keep.title', { name: input.title }),
@@ -140,6 +141,8 @@ export type StorageCollectRowInput = StorageCollectable &
     title: string;
     reason: StorageReasonV1;
     loses?: readonly StorageReasonV1[];
+    /** The item is one file (a whole-disk row), so what it loses names the file. */
+    file?: true;
   }>;
 
 /**

@@ -1061,6 +1061,8 @@ const artifactsBrowserTranslations = { ja: {
             empty: '以前のバージョンはまだありません。保存するたびに 1 つ残ります。',
             versionsLabel: 'バージョン',
             restoreFailed: 'このバージョンを復元できませんでした。もう一度お試しください。',
+            compareUnavailable: '比較できません',
+            compareCurrentUnavailable: 'この履歴画面では現在のバージョンを利用できません。以前のバージョンは引き続き読むことができます。',
             savedByUser: 'ユーザーが保存',
             savedByAgentSession: 'エージェントセッションが保存',
             restoredVersion: ({ n }) => `バージョン${n}から復元`,
@@ -13755,6 +13757,9 @@ const japanese: TeamsTranslationRoot = {
             directUse: {
                 ownerVisibility: "マシンの所有者は、メンバーごとにユーザーが分離された後も、ここに渡されたキーや選択された認証情報を確認できます。",
                 sharedUserVisibility: "共有マシンでは、メンバーと所有者の隔離されたエージェントが同じエージェント用ユーザーを共有している間、直接渡されたキーを読み取れます。設定が有効または保留中であることは、メンバー間の分離を証明しません。",
+                separatePlacement: 'このマシンでは、メンバーのエージェントはそれぞれのユーザーで動作します。',
+                sharedPlacement: 'このマシンでは、メンバーのエージェントはあなたとして動作します。',
+                sharedBeforeSeparation: '個別ユーザーをオンにする前に共有したものは、引き続き見える可能性があります。',
                 title: '\u3053\u306e\u5171\u6709\u8a8d\u8a3c\u60c5\u5831\u3092\u76f4\u63a5\u4f7f\u7528\u3057\u307e\u3059\u304b\uff1f',
                 body: 'Happier \u306f\u3001\u3053\u306e\u30bb\u30c3\u30b7\u30e7\u30f3\u3067\u4f7f\u7528\u3059\u308b\u30ed\u30fc\u30ab\u30eb\u30c4\u30fc\u30eb\u306b\u8a8d\u8a3c\u60c5\u5831\u3092\u63d0\u4f9b\u3059\u308b\u5834\u5408\u304c\u3042\u308a\u307e\u3059\u3002\u305d\u308c\u3089\u306e\u30c4\u30fc\u30eb\u3092\u4fe1\u983c\u3067\u304d\u308b\u5834\u5408\u306e\u307f\u7d9a\u884c\u3057\u3066\u304f\u3060\u3055\u3044\u3002',
             },

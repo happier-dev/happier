@@ -137,6 +137,15 @@ export function storageVolumeName(volume: StorageVolume, form: 'title' | 'senten
 }
 
 /** The mount path beside the name, when it says something the name does not ("/Volumes/Work"). */
+/**
+ * The boot and EFI partitions a Linux machine mounts: the system's, never where Happier or anything
+ * the person clears lives. The disk section leaves them out unless Happier keeps something there.
+ */
+export function isStorageBootPartition(volume: StorageVolume): boolean {
+    const path = volume.volume.mountPath;
+    return volume.happierBytes === 0 && (path === '/boot' || path.startsWith('/boot/'));
+}
+
 export function storageVolumeMountHint(volume: StorageVolume): string | null {
     const path = volume.volume.mountPath;
     if (path === '/' || /^[A-Za-z]:[\\/]?$/u.test(path)) return null;

@@ -2,7 +2,6 @@ import type { DiskNodeV1, StorageItemV1, StorageReasonV1 } from '@happier-dev/pr
 
 import { HAPPIER_SUNBURST_SMALLER_SUFFIX, HAPPIER_TREEMAP_SMALLER_SUFFIX, type HappierChartPart } from '@happier-dev/plugin-ui/presentation';
 
-import { formatMachineBytes } from '@/components/machines/vitals/machineVitalsPresentation';
 import { t } from '@/text';
 
 import {
@@ -10,6 +9,7 @@ import {
   type StorageCollectState,
   type StoragePileMembership,
 } from './storagePileModel';
+import { formatStorageSize } from './storageViewModel';
 
 /**
  * The one view model of an opened folder in a whole-disk scan (plan 40 §4.11, lab `rs` M / MT / MU / MV):
@@ -127,7 +127,7 @@ export function resolveStorageDiskOpenTarget(
  * Happier could not fully open keeps its "≥" lower bound in all of them, as the page above promises.
  */
 export function formatStorageDiskBytes(node: DiskNodeV1, bytes: number = node.size.allocatedBytes): string {
-  return `${node.flags.atLeast ? '≥ ' : ''}${formatMachineBytes(bytes, 'storage')}`;
+  return formatStorageSize(bytes, node.flags.atLeast);
 }
 
 /** A level's chart node as the public Map / Rings part: the same words as its row. */
@@ -181,6 +181,7 @@ export type StorageDiskCollectRow = Readonly<{
   collectable: boolean;
   reason: StorageReasonV1;
   loses?: readonly StorageReasonV1[];
+  file?: true;
 }>;
 
 /**
@@ -204,6 +205,7 @@ export function toStorageDiskCollectRow(node: DiskNodeV1): StorageDiskCollectRow
     collectable: !virtual && verdict !== 'forbidden',
     reason,
     ...(node.loses ? { loses: node.loses } : {}),
+    ...(node.kind === 'file' ? { file: true as const } : {}),
   };
 }
 

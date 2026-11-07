@@ -59,6 +59,12 @@ import { StorageVolumes } from './StorageVolumes';
 import { StorageWholeDiskView } from './StorageWholeDiskView';
 import { StorageWorktreesPage } from './StorageWorktreesPage';
 import { useMachineTabCompactLayout } from '@/components/machines/page/useMachineTabCompactLayout';
+import { beginMachinePageTabIntent } from '@/components/machines/page/machinePageIntent';
+import {
+  describeMachineAttentionWord,
+  readMachinePublishedResources,
+  resolveMachineReasonAction,
+} from '@/components/machines/summary/machineResourceSentences';
 import { useMachineTabFacts } from '@/components/machines/page/useMachineTabFacts';
 import {
   describeStorageSentence,
@@ -96,11 +102,18 @@ export const MachineStorageTab = React.memo(function MachineStorageTab(
     () => setParams({ id: 'storage' }),
     [setParams],
   );
+  // A read the owner could not finish names its remedy: admin access, set in the Security tab by whoever manages the Machine.
+  const { recipient } = useMachineTabFacts(props.serverId, props.machineId);
+  const openAdminAccess = React.useCallback(
+    () => setParams({ id: 'security' }),
+    [setParams],
+  );
   const page = {
     serverId: props.serverId,
     machineId: props.machineId,
     machineName: props.machineName,
     onBack: back,
+    onOpenAdminAccess: recipient ? undefined : openAdminAccess,
   };
   if (params.page === 'category' && params.categoryId)
     return <StorageCategoryPage {...page} categoryId={params.categoryId} />;
@@ -117,6 +130,7 @@ export const MachineStorageTab = React.memo(function MachineStorageTab(
       params={params}
       setParams={setParams}
       onOpenCategory={openCategory}
+      onOpenAdminAccess={page.onOpenAdminAccess}
       barAccessoryShown={props.barAccessoryShown === true}
     />
   );
@@ -259,6 +273,7 @@ function StorageMainView(
     params: StorageParams;
     setParams: (next: MachinePageTabParams) => void;
     onOpenCategory: (categoryId: HappierStorageCategoryIdV1) => void;
+    onOpenAdminAccess: (() => void) | undefined;
     barAccessoryShown: boolean;
   }>,
 ) {
@@ -338,7 +353,7 @@ function StorageMainView(
           />
         </ItemGroup>
       ) : null}
-      {view.kind === 'ready' && !disk ? <StorageReadNotice issues={view.summary.incomplete} onRetry={retry} /> : null}
+      {view.kind === 'ready' && !disk ? <StorageReadNotice issues={view.summary.incomplete} onRetry={retry} onOpenRemedy={props.onOpenAdminAccess} /> : null}
       {view.kind === 'loading' ? (
         <StorageLoading />
       ) : disk ? (
@@ -350,6 +365,7 @@ function StorageMainView(
           offline={view.offline}
           params={props.params}
           setParams={props.setParams}
+          onOpenAdminAccess={props.onOpenAdminAccess}
           sentence={
             <StorageSentence
               facts={describeStorageSentence(view.summary, {
@@ -431,6 +447,16 @@ function StorageHappierView(
         />
       )}
       {props.policyUnavailable ? <StoragePolicyNotice onRetry={props.onRetry} /> : null}
+      {custodian && !lowDisk ? (
+        <StorageDiskAttention
+          serverId={props.serverId}
+          machineId={props.machineId}
+          machineName={props.machineName}
+          summary={props.summary}
+          offline={props.offline}
+          setParams={props.setParams}
+        />
+      ) : null}
       {lowDisk && custodian ? (
         <StorageLowDisk
           serverId={props.serverId}
@@ -535,6 +561,66 @@ function StorageHappierView(
         </>
       )}
     </>
+  );
+}
+
+/**
+ * A disk the machine says is nearly full (or full), in amber, with its one way out: the published attention
+ * reason and its action (`resolveMachineReasonAction`) are the same ones the Inbox and the page header use,
+ * so "Free up space" here opens the same prepared low-disk view.
+ */
+function StorageDiskAttention(
+  props: Readonly<{
+    serverId: string;
+    machineId: string;
+    machineName: string;
+    summary: StorageSummary;
+    offline: boolean;
+    setParams: (next: MachinePageTabParams) => void;
+  }>,
+) {
+  const resources = useMachineField(props.machineId, 'daemonState', 'resources', { serverId: props.serverId });
+  const reason = React.useMemo(
+    () => readMachinePublishedResources({ resources })?.attention.reasons.find(
+      (entry) => entry.kind === 'disk_nearly_full' || entry.kind === 'disk_full',
+    ) ?? null,
+    [resources],
+  );
+  if (!reason || (reason.kind !== 'disk_nearly_full' && reason.kind !== 'disk_full')) return null;
+  const volume = props.summary.volumes.find((entry) => entry.volume.volumeId === reason.volumeId);
+  const action = props.offline ? null : resolveMachineReasonAction(reason);
+  const usedPct = volume && volume.totalBytes > 0
+    ? Math.round((1 - volume.freeBytes / volume.totalBytes) * 100)
+    : null;
+  const detail = reason.kind === 'disk_full'
+    ? t('machines.widgets.body.storage.fullDetail', { machine: props.machineName })
+    : volume && usedPct !== null
+      ? t('machines.widgets.body.storage.nearlyFullDetail', {
+          percent: usedPct,
+          total: formatMachineBytes(volume.totalBytes, 'storage'),
+          happier: formatMachineBytes(volume.happierBytes, 'storage'),
+        })
+      : undefined;
+  return (
+    <ItemGroup header="none">
+      <SurfaceStateCard
+        testID="machine-storage-disk-attention"
+        kind="warning"
+        size="line"
+        title={describeMachineAttentionWord(reason)}
+        {...(detail ? { reason: detail } : {})}
+        {...(action ? {
+          action: {
+            label: action.label,
+            testID: 'machine-storage-disk-attention-action',
+            onPress: () => {
+              beginMachinePageTabIntent({ serverId: props.serverId, machineId: props.machineId }, action.tab);
+              props.setParams(action.tab);
+            },
+          },
+        } : {})}
+      />
+    </ItemGroup>
   );
 }
 

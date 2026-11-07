@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { useMachineTabFacts } from '@/components/machines/page/useMachineTabFacts';
 import { useMachineResourcesPolicy } from '@/sync/domains/machines/resources/useMachineResourcesPolicy';
+import { useMachineStorageCategory } from '@/sync/domains/machines/storage/useMachineStorageCategory';
 import { useMachineStorageCleanup } from '@/sync/domains/machines/storage/useMachineStorageCleanup';
 import { useMachineStoragePile } from '@/sync/domains/machines/storage/useMachineStoragePile';
 import { t } from '@/text';
@@ -9,6 +10,7 @@ import { t } from '@/text';
 import { PileBar } from './PileBar';
 import { formatStorageDay } from './storageCategoryText';
 import { describeStoragePileBar } from './storagePileModel';
+import { StorageRestoreRecovery, useRememberedRestoreEntries, useTrackedRestoreRefusals, type RestoreRecoveryOutcomes } from './StorageRestoreRecovery';
 import { showStorageReviewSheet } from './StorageReviewSheet';
 import type { StorageSummary } from './storageViewModel';
 
@@ -44,6 +46,7 @@ export const StoragePileDock = React.memo(function StoragePileDock(
     count: number;
     freesBytes: number;
   }> | null>(null);
+  const [previewFreesBytes, setPreviewFreesBytes] = React.useState<number | null>(null);
   const emptiesAt = props.summary.trash.emptiesNextAt ?? null;
   const receipt =
     cleanup.receipt?.kind === 'applied'
@@ -51,8 +54,17 @@ export const StoragePileDock = React.memo(function StoragePileDock(
         ? null
         : { ...cleanup.receipt, emptiesAt }
       : cleanup.receipt;
+  // The last Trash move on this machine owns the entries a refused Put back can be about; the receipt itself
+  // goes once everything is back, so its batch is kept to let a success stay on screen.
+  const batch = cleanup.receipt?.kind === 'applied' && cleanup.receipt.result.mode === 'trash' ? cleanup.receipt.result : null;
+  const [lastBatch, setLastBatch] = React.useState<Readonly<{ id: string; entryIds: readonly string[] }> | null>(null);
+  if (batch && lastBatch?.id !== batch.batchId) setLastBatch({ id: batch.batchId, entryIds: batch.trashEntryIds ?? [] });
+  const refusals = useTrackedRestoreRefusals(cleanup.restoreOutcomes, { scope: lastBatch?.entryIds ?? [], resetKey: lastBatch?.id ?? null });
   const bar = describeStoragePileBar({
-    pile: props.summary.pile,
+    pile: {
+      ...props.summary.pile,
+      ...(previewFreesBytes === null ? {} : { freesBytes: previewFreesBytes }),
+    },
     receipt,
     checking,
   });
@@ -70,6 +82,7 @@ export const StoragePileDock = React.memo(function StoragePileDock(
       check: (refs) => cleanup.check(refs),
       apply: (mode, chosen) => cleanup.apply(mode, chosen),
       onChecking: setChecking,
+      onPreviewFreesBytes: setPreviewFreesBytes,
     });
   }, [cleanup, homeDir, items, policy, nearlyFullThreshold, props.machineName, props.serverId, props.summary]);
   const date = emptiesAt ? formatStorageDay(emptiesAt) : null;
@@ -104,11 +117,53 @@ export const StoragePileDock = React.memo(function StoragePileDock(
         void set({ clear: true });
       }}
       onReview={review}
+      recovery={refusals.ids.length > 0 && !props.omitTrashReceipt ? (
+        <DockRestoreRecovery
+          serverId={props.serverId}
+          machineId={props.machineId}
+          ids={refusals.ids}
+          outcomes={cleanup.restoreOutcomes}
+          homeDir={homeDir}
+          compact={props.compact}
+          onPutBackBeside={cleanup.putBackBeside}
+          onDone={refusals.dismiss}
+        />
+      ) : undefined}
       onUndo={() => cleanup.undo()}
       onEmptyNow={async () => {
         if (bar.kind === 'held') await cleanup.emptyNow();
       }}
-      onDone={cleanup.dismiss}
+      onDone={bar.kind === 'dropped' ? () => {
+        void set({ acknowledgeDropped: props.summary.pile.droppedSinceLastView.map((entry) => entry.itemId) });
+      } : cleanup.dismiss}
     />
   );
 });
+
+/** Names a refused Put back from the Trash the machine lists now; mounted only while there is something to say. */
+function DockRestoreRecovery(
+  props: Readonly<{
+    serverId: string;
+    machineId: string;
+    ids: readonly string[];
+    outcomes: RestoreRecoveryOutcomes;
+    homeDir: string | undefined;
+    compact: boolean;
+    onPutBackBeside: (entryId: string) => unknown;
+    onDone: () => void;
+  }>,
+) {
+  const trash = useMachineStorageCategory({ serverId: props.serverId, machineId: props.machineId, categoryId: 'trash' });
+  const entries = useRememberedRestoreEntries(trash.page?.trashEntries ?? []);
+  return (
+    <StorageRestoreRecovery
+      ids={props.ids}
+      entries={entries}
+      outcomes={props.outcomes}
+      homeDir={props.homeDir}
+      compact={props.compact}
+      onPutBackBeside={props.onPutBackBeside}
+      onDone={props.onDone}
+    />
+  );
+}

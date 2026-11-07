@@ -42,6 +42,7 @@ export const StorageCategoryPage = React.memo(function StorageCategoryPage(props
     machineName: string;
     categoryId: HappierStorageCategoryIdV1;
     onBack: () => void;
+    onOpenAdminAccess?: () => void;
 }>) {
     const { homeDir } = useMachineTabFacts(props.serverId, props.machineId);
     const summary = useMachineStorageSummary({ machineId: props.machineId, serverId: props.serverId });
@@ -66,7 +67,7 @@ export const StorageCategoryPage = React.memo(function StorageCategoryPage(props
             <StoragePageHead title={title} onBack={props.onBack}>
                 {first.category ? <CategorySentence category={first.category} policy={policy} trashEmptiesAt={trashEmptiesAt} /> : null}
             </StoragePageHead>
-            <StorageReadNotice issues={first.page?.incomplete} onRetry={first.retry} />
+            <StorageReadNotice issues={first.page?.incomplete} onRetry={first.retry} onOpenRemedy={props.onOpenAdminAccess} />
             {/* The machine groups a whole list in one answer; a paged list keeps its one biggest-first run. */}
             {first.page?.groups?.length && !first.page.nextCursor && props.categoryId !== 'trash' ? (
                 <CategoryPageGroups page={first.page} largest={largest} homeDir={homeDir} compact={layout.compact} actions={rowActions} />

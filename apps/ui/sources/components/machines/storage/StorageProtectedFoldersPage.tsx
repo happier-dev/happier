@@ -18,6 +18,7 @@ import { t } from '@/text';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
+import { StoragePolicyNotice } from './StoragePolicyNotice';
 import { StoragePageHead, StorageSayLine } from './StoragePageHead';
 import { formatStorageDay } from './storageCategoryText';
 
@@ -86,96 +87,102 @@ export const StorageProtectedFoldersPage = React.memo(
             text={readOnly ?? t('machineStorage.protectedFolders.lead', { machine: props.machineName })}
           />
         </StoragePageHead>
-        <ItemGroup
-          title={t('machineStorage.protectedFolders.builtInTitle')}
-          description={t('machineStorage.protectedFolders.builtInDescription')}
-        >
-          {BUILT_IN.map((id, index) => (
-            <Item
-              key={id}
-              testID={`machine-storage-protected-builtin-${id}`}
-              mode="info"
-              showChevron={false}
-              icon={
-                <Icon
-                  name="lock"
-                  size={18}
-                  color={theme.colors.text.secondary}
-                />
-              }
-              title={t(`machineStorage.protectedFolders.builtIn.${id}.title`)}
-              subtitle={t(
-                `machineStorage.protectedFolders.builtIn.${id}.subtitle`,
-              )}
-              showDivider={index < BUILT_IN.length - 1}
-            />
-          ))}
-        </ItemGroup>
-        <ItemGroup
-          title={t('machineStorage.protectedFolders.addedTitle')}
-          description={failed ? t('machineStorage.tidy.saveFailed') : undefined}
-          action={
-            editable ? (
-              <TextLinkButton
-                testID="machine-storage-protected-add"
-                tone="strong"
-                label={t('machineStorage.protectedFolders.add')}
-                onPress={add}
-              />
-            ) : undefined
-          }
-        >
-          {folders.length === 0 ? (
-            <Item
-              testID="machine-storage-protected-none"
-              mode="info"
-              showChevron={false}
-              title={t('machineStorage.protectedFolders.none')}
-            />
-          ) : (
-            folders.map((folder, index) => (
-              <Item
-                key={folder.path}
-                testID={`machine-storage-protected-${index}`}
-                mode="info"
-                showChevron={false}
-                icon={
-                  <Icon
-                    name="folder"
-                    size={18}
-                    color={theme.colors.text.secondary}
-                  />
-                }
-                title={
-                  <Text style={styles.mono}>
-                    {formatPathRelativeToHome(folder.path, facts.homeDir)}
-                  </Text>
-                }
-                subtitle={t('machineStorage.protectedFolders.added', {
-                  date: formatStorageDay(folder.addedAt),
-                })}
-                rightElement={
-                  editable ? (
-                    <RoundButton
-                      testID={`machine-storage-protected-${index}-remove`}
-                      size="small"
-                      display="inverted"
-                      title={t('machineStorage.protectedFolders.remove')}
-                      loading={busy === folder.path}
-                      onPress={() => change(folder.path, false)}
+        {policy.status !== 'ready' ? (
+          <StoragePolicyNotice />
+        ) : (
+          <>
+            <ItemGroup
+              title={t('machineStorage.protectedFolders.builtInTitle')}
+              description={t('machineStorage.protectedFolders.builtInDescription')}
+            >
+              {BUILT_IN.map((id, index) => (
+                <Item
+                  key={id}
+                  testID={`machine-storage-protected-builtin-${id}`}
+                  mode="info"
+                  showChevron={false}
+                  icon={
+                    <Icon
+                      name="lock"
+                      size={18}
+                      color={theme.colors.text.secondary}
                     />
-                  ) : undefined
-                }
-                showDivider={index < folders.length - 1}
-              />
-            ))
-          )}
-        </ItemGroup>
-        <ItemGroup header="none" surface="none">
-          <Text style={styles.note}>
-            {t('machineStorage.protectedFolders.forbiddenNote')}
-          </Text>
-        </ItemGroup>
+                  }
+                  title={t(`machineStorage.protectedFolders.builtIn.${id}.title`)}
+                  subtitle={t(
+                    `machineStorage.protectedFolders.builtIn.${id}.subtitle`,
+                  )}
+                  showDivider={index < BUILT_IN.length - 1}
+                />
+              ))}
+            </ItemGroup>
+            <ItemGroup
+              title={t('machineStorage.protectedFolders.addedTitle')}
+              description={failed ? t('machineStorage.tidy.saveFailed') : undefined}
+              action={
+                editable ? (
+                  <TextLinkButton
+                    testID="machine-storage-protected-add"
+                    tone="strong"
+                    label={t('machineStorage.protectedFolders.add')}
+                    onPress={add}
+                  />
+                ) : undefined
+              }
+            >
+              {folders.length === 0 ? (
+                <Item
+                  testID="machine-storage-protected-none"
+                  mode="info"
+                  showChevron={false}
+                  title={t('machineStorage.protectedFolders.none')}
+                />
+              ) : (
+                folders.map((folder, index) => (
+                  <Item
+                    key={folder.path}
+                    testID={`machine-storage-protected-${index}`}
+                    mode="info"
+                    showChevron={false}
+                    icon={
+                      <Icon
+                        name="folder"
+                        size={18}
+                        color={theme.colors.text.secondary}
+                      />
+                    }
+                    title={
+                      <Text style={styles.mono}>
+                        {formatPathRelativeToHome(folder.path, facts.homeDir)}
+                      </Text>
+                    }
+                    subtitle={t('machineStorage.protectedFolders.added', {
+                      date: formatStorageDay(folder.addedAt),
+                    })}
+                    rightElement={
+                      editable ? (
+                        <RoundButton
+                          testID={`machine-storage-protected-${index}-remove`}
+                          size="small"
+                          display="inverted"
+                          title={t('machineStorage.protectedFolders.remove')}
+                          loading={busy === folder.path}
+                          onPress={() => change(folder.path, false)}
+                        />
+                      ) : undefined
+                    }
+                    showDivider={index < folders.length - 1}
+                  />
+                ))
+              )}
+            </ItemGroup>
+            <ItemGroup header="none" surface="none">
+              <Text style={styles.note}>
+                {t('machineStorage.protectedFolders.forbiddenNote')}
+              </Text>
+            </ItemGroup>
+          </>
+        )}
       </View>
     );
   },

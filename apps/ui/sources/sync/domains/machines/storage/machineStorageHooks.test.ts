@@ -2,6 +2,8 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { HappierStorageSummaryV1, MachineStorageWatchResultV1 } from '@happier-dev/protocol/storage/storageV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import type { MachineVitalsSampleV1 } from '@happier-dev/protocol/machines/vitals/machineVitalsSampleV1';
+import type { MachineVitalsWatchResultV1 } from '@happier-dev/protocol/machines/vitals/machineVitalsRpcV1';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
@@ -17,14 +19,14 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
 const home = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(home);
 const { machineStorageStore } = await import('./machineStorageStore');
+const { machineResourceStore } = await import('../resources/machineResourceStore');
 const { useMachineStorageSummary } = await import('./useMachineStorageSummary');
 const { useMachineStorageCategory } = await import('./useMachineStorageCategory');
 const { useMachineStoragePile } = await import('./useMachineStoragePile');
 const { useMachineStorageScan } = await import('./useMachineStorageScan');
 const { upsertServerProfile } = await import('@/sync/domains/server/serverProfiles');
 const { storage } = await import('@/sync/domains/state/storageStore');
-const { readMachineStatusNextRefreshAtMs } = await import('@/utils/sessions/machineUtils');
-const { useMachineDaemonReadTargets } = await import('../useMachineDaemonReadTarget');
+const { useMachineDaemonReadTargets, resolveMachineDaemonReadServerId } = await import('../useMachineDaemonReadTarget');
 const { selectStorageTabView } = await import('@/components/machines/storage/storageViewModel');
 
 function report(revision: number): HappierStorageSummaryV1 {
@@ -35,11 +37,65 @@ function report(revision: number): HappierStorageSummaryV1 {
 }
 
 const beforeState = storage.getState();
-beforeEach(async () => { await home.reset(); machineStorageStore.reset(); transport.rpc.mockReset(); });
-afterEach(async () => { standardCleanup(); machineStorageStore.reset(); storage.setState(beforeState); await home.reset(); });
+beforeEach(async () => { await home.reset(); machineStorageStore.reset(); machineResourceStore.reset(); transport.rpc.mockReset(); });
+afterEach(async () => { standardCleanup(); machineStorageStore.reset(); machineResourceStore.reset(); storage.setState(beforeState); await home.reset(); });
 
 describe('machine storage hooks', () => {
-    it('retires a failed read when the existing heartbeat grace expires without a store update', async () => {
+    it('joins live Vitals capacity without rereading Storage or changing its summary on CPU-only ticks', async () => {
+        const serverId = await home.addHome({ name: 'Storage Home', serverUrl: 'https://storage-vitals.test', serverIdentityId: 'srv_storage_vitals', accountId: 'owner' });
+        await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: 'machine', active: true, activeAt: Date.now() })]);
+        home.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: {} }, version: 1 } });
+        const sample = (sampledAt: number, availableBytes: number, busyPct = 20): MachineVitalsSampleV1 => ({
+            v: 1, sampledAt, intervalMs: 15_000, cpu: { reported: true, busyPct },
+            memory: { reported: false, reason: 'unavailable' }, network: { reported: false, reason: 'unavailable' },
+            disk: { reported: true, volumes: [{ id: 'disk', label: 'System', mount: '/', totalBytes: 1000, availableBytes,
+                availableIncludingPurgeableBytes: 500 }] },
+        });
+        const stored = { ...report(1), volumes: [{ volume: { volumeId: 'disk', label: 'System', mountPath: '/' }, totalBytes: 1000,
+            freeBytes: 100, availableIncludingPurgeableBytes: 400, happierBytes: 100, pileBytes: 20, pileFreesBytes: 10, trashBytes: 0 },
+            { volume: { volumeId: 'other', label: 'Other', mountPath: '/other' }, totalBytes: 1000,
+                freeBytes: 100, happierBytes: 0, pileBytes: 0, pileFreesBytes: 0, trashBytes: 0 }],
+            pile: { count: 1, freesBytes: 10, droppedSinceLastView: [] } };
+        const watches: Array<ReturnType<typeof createDeferred<MachineVitalsWatchResultV1>>> = [];
+        transport.rpc.mockImplementation(async ({ method, onDispatched }: { method: string; onDispatched?: () => void }) => {
+            if (method === RPC_METHODS.DAEMON_STORAGE_WATCH) return new Promise(() => {});
+            if (method === RPC_METHODS.DAEMON_VITALS_WATCH) {
+                const answer = createDeferred<MachineVitalsWatchResultV1>(); watches.push(answer); onDispatched?.(); return answer.promise;
+            }
+            if (method === RPC_METHODS.MACHINES_VITALS_GET) return { state: 'reporting', sample: sample(100, 200),
+                series5m: { cpu: [], memory: [], networkRx: [], networkTx: [] } };
+            return stored;
+        });
+        let renders = 0;
+        const targetKey = { serverId: resolveMachineDaemonReadServerId(serverId), machineId: 'machine', expectedAccountId: 'owner' };
+        const hook = await renderHook(() => { renders++; return useMachineStorageSummary({ serverId, machineId: 'machine', expectedAccountId: 'owner' }); });
+        try {
+            await act(async () => { await vi.waitFor(() => expect(hook.getCurrent().summary?.volumes[0]?.freeBytes).toBe(200)); });
+            const retained = machineStorageStore.getState(targetKey).summary;
+            const readCount = transport.rpc.mock.calls.filter(([input]) => input.method === RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET).length;
+            const vitalsReadCount = transport.rpc.mock.calls.filter(([input]) => input.method === RPC_METHODS.MACHINES_VITALS_GET).length;
+            await act(async () => { await vi.waitFor(() => expect(watches).toHaveLength(1)); });
+            await act(async () => { watches[0]!.resolve({ changed: true, samples: [sample(200, 300)] });
+                await vi.waitFor(() => expect(hook.getCurrent().summary?.volumes[0]?.freeBytes).toBe(300)); });
+            const joined = hook.getCurrent().summary;
+            const renderCount = renders;
+            await act(async () => { await vi.waitFor(() => expect(watches).toHaveLength(2));
+                watches[1]!.resolve({ changed: true, samples: [sample(300, 300, 70)] });
+                await vi.waitFor(() => expect(watches).toHaveLength(3)); });
+            expect(hook.getCurrent().summary).toBe(joined);
+            expect(renders).toBe(renderCount);
+            await hook.rerender();
+            expect(watches).toHaveLength(3);
+            expect(transport.rpc.mock.calls.filter(([input]) => input.method === RPC_METHODS.MACHINES_VITALS_GET)).toHaveLength(vitalsReadCount);
+            expect(transport.rpc.mock.calls.filter(([input]) => input.method === RPC_METHODS.DAEMON_STORAGE_WATCH)).toHaveLength(1);
+            expect(joined?.pile).toBe(retained?.pile);
+            expect(joined?.volumes[0]).toMatchObject({ freeBytes: 300, availableIncludingPurgeableBytes: 500, happierBytes: 100, pileFreesBytes: 10 });
+            expect(joined?.volumes[1]).toBe(retained?.volumes[1]);
+            expect(machineStorageStore.getState(targetKey).summary).toBe(retained);
+            expect(transport.rpc.mock.calls.filter(([input]) => input.method === RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET)).toHaveLength(readCount);
+        } finally { await hook.unmount(); }
+    });
+    it('retires a failed read on an authoritative offline push and retains the last ready storage report', async () => {
         const before = storage.getState();
         const serverId = await home.addHome({ name: 'Storage Home', serverUrl: 'https://storage-expiry.test', serverIdentityId: 'srv_storage_expiry', accountId: 'owner' });
         home.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: {} }, version: 1 } });
@@ -51,9 +107,9 @@ describe('machine storage hooks', () => {
         const targets = await renderHook(() => useMachineDaemonReadTargets({ serverId, machineIds: ['machine'] }));
         try {
             await act(async () => { await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ status: 'error', offline: false, summary: null })); });
-            const expiresAt = readMachineStatusNextRefreshAtMs(machine, Date.now());
-            expect(expiresAt).not.toBeNull();
-            await act(async () => { await vi.advanceTimersByTimeAsync(expiresAt! - Date.now()); });
+            await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
+            expect(hook.getCurrent().offline).toBe(false);
+            await act(async () => storage.setState({ machineListByServerId: { [serverId]: [{ ...machine, active: false }] } }));
             expect({ storage: hook.getCurrent(), targets: targets.getCurrent() }).toMatchObject({
                 storage: { offline: true, summary: null }, targets: [{ offline: true, enabled: false }],
             });
@@ -69,9 +125,7 @@ describe('machine storage hooks', () => {
                 await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ status: 'ready', offline: false, summary: { revision: 2 } }));
             });
             const known = hook.getCurrent().summary;
-            const nextExpiry = readMachineStatusNextRefreshAtMs(heartbeat, Date.now());
-            expect(nextExpiry).not.toBeNull();
-            await act(async () => { await vi.advanceTimersByTimeAsync(nextExpiry! - Date.now()); });
+            await act(async () => storage.setState({ machineListByServerId: { [serverId]: [{ ...heartbeat, active: false }] } }));
             expect(hook.getCurrent()).toMatchObject({ status: 'ready', offline: true });
             expect(hook.getCurrent().summary).toBe(known);
             expect(hook.getCurrent().summary?.sizedAt).toBe(100);

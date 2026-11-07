@@ -4,7 +4,7 @@ import { StorageEvidenceCodeV1Schema } from '@happier-dev/protocol/storage/stora
 import { preloadTranslationsForSettings, setPreferredLanguageFromSettings, t } from '@/text';
 import { machineDetailPageTranslations } from '@/text/translations/machineDetailPageTranslations';
 
-import { storageEvidenceLabel } from './storageReasonPresentation';
+import { describeStorageLosses, storageEvidenceLabel } from './storageReasonPresentation';
 
 afterEach(() => setPreferredLanguageFromSettings('en'));
 
@@ -33,5 +33,14 @@ describe('storage evidence presentation', () => {
             expect(label).not.toMatch(/machineStorage\.|private-detector|private-project\.json/u);
             expect(label).not.toBe(code);
         }
+    });
+});
+
+describe('storage losses', () => {
+    it('names the file, not a folder, when the item in use is one file', () => {
+        expect(describeStorageLosses([{ code: 'in_use' }])).toContain('folder');
+        const file = describeStorageLosses([{ code: 'in_use' }], { file: true });
+        expect(file).not.toContain('folder');
+        expect(file).toContain('file');
     });
 });

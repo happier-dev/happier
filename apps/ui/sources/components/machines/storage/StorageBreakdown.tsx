@@ -24,6 +24,7 @@ import { STORAGE_CATEGORY_ICONS, storageCategoryShortTitle, storageCategoryTitle
 import {
     buildStorageRing,
     describeStorageCategoryTrailing,
+    formatStorageSize,
     isStorageCategoryPartial,
     orderStorageCategories,
     readHappierStorageBytes,
@@ -60,6 +61,8 @@ export const StorageBreakdown = React.memo(function StorageBreakdown(props: Read
     machineId: string;
     summary: StorageSummary;
     compact: boolean;
+    /** Protection awaits the machine's resources policy: sizes only, no "can go" and no "always kept". */
+    cleanupHidden?: boolean;
     onOpenCategory: (categoryId: HappierStorageCategoryIdV1) => void;
 }>) {
     const [width, setWidth] = React.useState(0);
@@ -70,7 +73,7 @@ export const StorageBreakdown = React.memo(function StorageBreakdown(props: Read
     const withRing = !props.compact && width >= RING_MIN_WIDTH && total > 0;
     const rows = categories.map((category, index) => (
         <StorageCategoryRow key={category.categoryId} serverId={props.serverId} machineId={props.machineId} category={category} summary={props.summary} largest={largest}
-            facts={describeStorageCategoryFacts(category, policy)} compact={props.compact}
+            facts={describeStorageCategoryFacts(category, policy)} compact={props.compact} cleanupHidden={props.cleanupHidden === true}
             narrowFigures={withRing || width < FULL_FIGURES_MIN_ROW}
             showDivider={index < categories.length - 1} onOpen={props.onOpenCategory} />
     ));
@@ -99,11 +102,6 @@ function BreakdownAccessory(props: Readonly<{ compact: boolean }>) {
     return <Text style={styles.accessory}>{t(props.compact ? 'machineStorage.breakdown.accessoryShort' : 'machineStorage.breakdown.accessory')}</Text>;
 }
 
-function formatCategorySize(category: StorageCategory): string {
-    const size = formatMachineBytes(category.size.allocatedBytes, 'storage');
-    return isStorageCategoryPartial(category) ? `≥ ${size}` : size;
-}
-
 /**
  * One kind (SUB's row anatomy at the breakdown's scale): glyph, name, evidence; a bar against the
  * largest kind; its size; and what can go, that it is always kept, or when the Trash empties. On a
@@ -117,6 +115,7 @@ export const StorageCategoryRow = React.memo(function StorageCategoryRow(props: 
     largest: number;
     facts: string;
     compact: boolean;
+    cleanupHidden?: boolean;
     /** The row is too narrow for the full figures (beside the ring, or a narrow sheet). */
     narrowFigures?: boolean;
     showDivider: boolean;
@@ -125,8 +124,9 @@ export const StorageCategoryRow = React.memo(function StorageCategoryRow(props: 
     const { theme } = useUnistyles();
     const { category, onOpen } = props;
     const title = storageCategoryTitle(category.categoryId);
-    const size = formatCategorySize(category);
-    const trailing = describeStorageCategoryTrailing(category, props.summary);
+    const size = formatStorageSize(category.size.allocatedBytes, isStorageCategoryPartial(category));
+    const described = describeStorageCategoryTrailing(category, props.summary);
+    const trailing = props.cleanupHidden && (described.kind === 'can_go' || described.kind === 'always_kept') ? { kind: 'none' as const } : described;
     const bar = (
         <StorageSizeBar label={title} bytes={category.size.allocatedBytes} largest={props.largest} compact={props.compact}
             hatched={category.categoryId === 'trash'} />
@@ -150,14 +150,16 @@ export const StorageCategoryRow = React.memo(function StorageCategoryRow(props: 
     if (props.compact) {
         return (
             <Item testID={`machine-storage-category-${category.categoryId}`} icon={icon} title={title} subtitle={props.facts}
-                subtitleLines={1} showChevron onPress={open} showDivider={props.showDivider}
+                subtitleLines={1} showChevron keepChevronWithRightElement onPress={open} showDivider={props.showDivider}
                 rightElement={<Text style={styles.size}>{size}</Text>}
-                bottomElementInset="text" bottomElement={<View style={styles.compactBottom}>{bar}{trailingNode}</View>} />
+                bottomElementInset="text" bottomElementOutsidePressable={trailing.kind === 'trash'}
+                bottomElement={<View style={styles.compactBottom}>{bar}{trailingNode}</View>} />
         );
     }
     return (
         <Item testID={`machine-storage-category-${category.categoryId}`} icon={icon} title={title} subtitle={props.facts}
             subtitleLines={1} showChevron keepChevronWithRightElement onPress={open} showDivider={props.showDivider}
+            rightElementOutsidePressable={trailing.kind === 'trash'}
             rightElement={
                 <View style={[styles.figures, props.narrowFigures ? styles.figuresNarrow : null]}>
                     <View style={props.narrowFigures ? styles.barNarrow : styles.bar}>{bar}</View>

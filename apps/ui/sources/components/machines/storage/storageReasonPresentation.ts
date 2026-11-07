@@ -50,6 +50,7 @@ export function storageEvidenceLabel(code: string): string {
 }
 
 export function storageReasonLabel(reason: StorageReasonV1): string {
+    if (reason.code === 'policy_unavailable') return t('machineStorage.reasons.facts_unavailable');
     if (reason.code === 'unsupported') {
         if (reason.detail?.cause === 'main_checkout_lifecycle_unsupported') return t('machineStorage.ownerLimitations.mainCheckout');
         const categoryId = reason.detail?.categoryId;
@@ -108,10 +109,15 @@ const LOSS_CODES = new Set<StorageReasonCode>(['main_checkout', 'in_use', 'chang
  * changes are deleted.", "A session is working in it; it stops." — one sentence per reason the
  * machine gave, with its counts.
  */
-export function describeStorageLosses(reasons: readonly StorageReasonV1[]): string {
+export function describeStorageLosses(
+    reasons: readonly StorageReasonV1[],
+    item?: Readonly<{ file?: boolean }>,
+): string {
     return reasons.map(reason => {
         const raw = reason.detail?.count;
         const count = typeof raw === 'number' && Number.isFinite(raw) ? raw : 0;
+        // One file in use loses the file; the folder sentence is a folder's.
+        if (reason.code === 'in_use' && item?.file === true) return t('machineStorage.loses.in_use_file', { count });
         return LOSS_CODES.has(reason.code)
             ? t(`machineStorage.loses.${reason.code as 'in_use'}`, { count })
             : t('machineStorage.loses.other', { reason: storageReasonLabel(reason) });

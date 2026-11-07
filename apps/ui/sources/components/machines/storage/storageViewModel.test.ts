@@ -7,6 +7,8 @@ import {
     buildStorageRing,
     describeStorageCategoryTrailing,
     describeStorageSentence,
+    formatStorageSize,
+    isStorageCategoryPartial,
     orderStorageCategories,
     resolveStorageVolumeParts,
     selectStorageTabView,
@@ -54,6 +56,14 @@ describe('the Storage tab state (STO-24)', () => {
             .toMatchObject({ kind: 'ready', summary: known, stale: true, offline: false, recipient: true });
         // Offline, an old summary is last known, not a failure.
         expect(selectStorageTabView({ status: 'error', summary: known, offline: true, recipient: false })).toMatchObject({ kind: 'ready', stale: false, offline: true });
+    });
+    it('keeps the last good sizes while the machine\u2019s resources policy is unavailable, and offers no cleanup claims', () => {
+        const known = summary();
+        expect(selectStorageTabView({ status: 'policy_unavailable', summary: known, offline: false, recipient: false }))
+            .toMatchObject({ kind: 'ready', summary: known, policyUnavailable: true, stale: false });
+        expect(selectStorageTabView({ status: 'policy_unavailable', summary: null, offline: false, recipient: false })).toEqual({ kind: 'policy_unavailable' });
+        expect(selectStorageTabView({ status: 'ready', summary: known, offline: false, recipient: false })).toMatchObject({ policyUnavailable: false });
+        expect(describeStorageSentence(known, { recipient: false, policyUnavailable: true }).canGoBytes).toBeNull();
     });
 });
 
@@ -127,6 +137,10 @@ describe('the breakdown and its ring (STO-2, STO-5)', () => {
         const known = summary({ trash: { count: 3, allocatedBytes: GB, emptiesNextAt: 5_000 } });
         const order = orderStorageCategories(known).map(entry => entry.categoryId);
         expect(order).toEqual(['worktrees', 'caches', 'modelPacks', 'logs', 'agentHomes', 'trash']);
+        // A kind holding nothing yet is folded away, as the lab lists only kinds with content.
+        const empty = { ...known, categories: known.categories.map(entry => entry.categoryId === 'worktrees'
+            ? { ...entry, count: 0, size: { ...entry.size, allocatedBytes: 0 } } : entry) };
+        expect(orderStorageCategories(empty).map(entry => entry.categoryId)).not.toContain('worktrees');
         const byId = new Map(known.categories.map(entry => [entry.categoryId, entry]));
         expect(describeStorageCategoryTrailing(byId.get('worktrees')!, known)).toEqual({ kind: 'can_go', bytes: 23.8 * GB });
         expect(describeStorageCategoryTrailing(byId.get('agentHomes')!, known)).toEqual({ kind: 'always_kept' });
@@ -190,5 +204,16 @@ describe('Custom… values (R43)', () => {
         expect(parseCustomScanTime('3:05')).toBe('03:05');
         expect(parseCustomScanTime('23:59')).toBe('23:59');
         expect(parseCustomScanTime('24:00')).toBeNull();
+    });
+});
+
+describe('the lower-bound size (C2-9)', () => {
+    it('says a figure the same way for a disk node, a category and an item row, with its "\u2265" only when it is a floor', () => {
+        const exact = formatStorageSize(4_100, false);
+        expect(formatStorageSize(4_100, true)).toBe(`\u2265 ${exact}`);
+        expect(exact).not.toContain('\u2265');
+        const partial = { ...category('caches', 4_100), size: { ...category('caches', 4_100).size, atLeast: true } };
+        expect(isStorageCategoryPartial(partial)).toBe(true);
+        expect(formatStorageSize(partial.size.allocatedBytes, isStorageCategoryPartial(partial))).toBe(formatStorageSize(4_100, true));
     });
 });

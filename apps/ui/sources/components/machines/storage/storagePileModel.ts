@@ -7,6 +7,11 @@ import type {
 import { toStorageItemRef } from '@/sync/domains/machines/storage/pileRef';
 import { storageVerdictStartsTicked } from '@/sync/domains/machines/storage/storageVerdictSelection';
 import { resolveHappierListMultiSelectionRange } from '@happier-dev/plugin-ui/presentation';
+import { storageTrashReceiptBytes, type StorageTrashReceipt } from '@/sync/domains/machines/storage/trashReceipt';
+import { formatMachineBytes } from '@/components/machines/vitals/machineVitalsPresentation';
+import { t } from '@/text';
+
+import { storageReasonLabel } from './storageReasonPresentation';
 
 /**
  * Collecting (plan 40 STO-11, ruling 4, lab `rs` PM): ticking a row is putting it in the machine's one
@@ -43,8 +48,9 @@ export type StoragePileReceipt =
       kind: 'applied';
       result: PileApplyResultV1;
       emptiesAt: number | null;
+      trash?: StorageTrashReceipt;
     }>
-  | Readonly<{ kind: 'emptied'; count: number; freedBytes: number }>;
+  | Readonly<{ kind: 'emptied'; count: number; freedBytes: number; restoredCount?: number }>;
 
 export type StoragePileBar =
   | Readonly<{ kind: 'hidden' }>
@@ -59,9 +65,13 @@ export type StoragePileBar =
       inTrashBytes: number | null;
       notActed: number;
       emptiesAt: number | null;
+      /** Remaining entry identities, typed reasons, and actual settled counts/bytes from the receipt owner. */
+      trash?: StorageTrashReceipt;
     }>
   /** True at once: deleted now, or the Trash was emptied. */
-  | Readonly<{ kind: 'freed'; count: number; freedBytes: number }>;
+  | Readonly<{ kind: 'freed'; count: number; freedBytes: number; restoredCount?: number }>
+  /** A newer scan took the pile's last items away: the bar stays to say so until Done (STO-11). */
+  | Readonly<{ kind: 'dropped'; count: number }>;
 
 function trimEnd(path: string): string {
   return path.length > 1 ? path.replace(/[\\/]+$/u, '') : path;
@@ -76,17 +86,60 @@ export function storagePathContains(parent: string, child: string): boolean {
   return next === '/' || next === '\\' || a.endsWith('/') || a.endsWith('\\');
 }
 
+type PileIndex = Readonly<{
+  /** The first entry (in pile order) for an item id, and for a trimmed path. */
+  byId: ReadonlyMap<string, number>;
+  byPath: ReadonlyMap<string, number>;
+  /** Every entry's trimmed path, for "a folder holding it is in the pile". */
+  paths: ReadonlySet<string>;
+}>;
+
+/**
+ * What a row asks of the pile (its entry, or whether a folder holding it is in) is answered from one index of the
+ * pile's membership, built once per pile and shared by every row that reads it. A page of thousands of rows asks
+ * this for each, so scanning the pile per row would cost rows × pile on every change of the pile.
+ */
+const pileIndexes = new WeakMap<StoragePileMembership, PileIndex>();
+
+function indexOfPile(pile: StoragePileMembership): PileIndex {
+  const known = pileIndexes.get(pile);
+  if (known) return known;
+  const byId = new Map<string, number>();
+  const byPath = new Map<string, number>();
+  const paths = new Set<string>();
+  pile.forEach((entry, position) => {
+    const path = trimEnd(entry.path);
+    if (!byId.has(entry.itemId)) byId.set(entry.itemId, position);
+    if (!byPath.has(path)) byPath.set(path, position);
+    paths.add(path);
+  });
+  const index = { byId, byPath, paths };
+  pileIndexes.set(pile, index);
+  return index;
+}
+
 function pileEntryFor(
   item: StorageCollectable,
   pile: StoragePileMembership,
 ): Readonly<StorageItemRefV1> | null {
-  return (
-    pile.find(
-      (entry) =>
-        entry.itemId === item.itemId ||
-        trimEnd(entry.path) === trimEnd(item.path),
-    ) ?? null
-  );
+  const index = indexOfPile(pile);
+  const byId = index.byId.get(item.itemId);
+  const byPath = index.byPath.get(trimEnd(item.path));
+  const position = byId === undefined ? byPath : byPath === undefined ? byId : Math.min(byId, byPath);
+  return position === undefined ? null : pile[position]!;
+}
+
+/** A folder holding `path` (either separator) is in the pile; the walk is the path's depth, not the pile's size. */
+function pileHoldsFolderOf(path: string, pile: StoragePileMembership): boolean {
+  const { paths } = indexOfPile(pile);
+  if (paths.size === 0) return false;
+  const trimmed = trimEnd(path);
+  for (let at = 0; at < trimmed.length; at += 1) {
+    const code = trimmed.charCodeAt(at);
+    if (code !== 47 && code !== 92) continue;
+    if (at === 0 ? paths.has('') || paths.has(trimmed.charAt(0)) : paths.has(trimmed.slice(0, at))) return true;
+  }
+  return false;
 }
 
 export function describeStorageCollect(
@@ -95,8 +148,7 @@ export function describeStorageCollect(
 ): StorageCollectState {
   if (item.verdict === 'forbidden') return 'none';
   if (pileEntryFor(item, pile)) return 'collected';
-  if (pile.some((entry) => storagePathContains(entry.path, item.path)))
-    return 'inside';
+  if (pileHoldsFolderOf(item.path, pile)) return 'inside';
   if (
     !item.collectable ||
     item.verdict === 'check'
@@ -175,6 +227,7 @@ export function describeStoragePileBar(
       kind: 'freed',
       count: receipt.count,
       freedBytes: receipt.freedBytes,
+      ...(receipt.restoredCount ? { restoredCount: receipt.restoredCount } : {}),
     };
   if (receipt?.kind === 'applied') {
     const { result } = receipt;
@@ -186,18 +239,47 @@ export function describeStoragePileBar(
     return {
       kind: 'held',
       batchId: result.batchId,
-      count: acted,
-      inTrashBytes: result.inTrashBytes,
+      count: receipt.trash ? receipt.trash.remaining.length + receipt.trash.unknownCount : acted,
+      inTrashBytes: receipt.trash ? storageTrashReceiptBytes(result, receipt.trash) : result.inTrashBytes,
       notActed: result.outcomes.length - acted,
       emptiesAt: receipt.emptiesAt,
+      ...(receipt.trash ? { trash: receipt.trash } : {}),
     };
   }
-  if (!input.pile || input.pile.count === 0) return { kind: 'hidden' };
+  if (!input.pile) return { kind: 'hidden' };
+  if (input.pile.count === 0) {
+    const dropped = input.pile.droppedSinceLastView.length;
+    return dropped > 0 ? { kind: 'dropped', count: dropped } : { kind: 'hidden' };
+  }
   return {
     kind: 'ready',
     count: input.pile.count,
     freesBytes: input.pile.freesBytes,
   };
+}
+
+/**
+ * What a held pile says once an Empty settled only part of it (lab `rs` RD: partial results are said plainly):
+ * how many stayed in the Trash and the machine's typed reason, then what did go. `null` while no Empty
+ * outcome concerns the entries still held, so the caller's own note stands.
+ */
+export function describeStoragePileReceiptNote(bar: StoragePileBar): string | null {
+  if (bar.kind !== 'held' || !bar.trash?.emptyOutcomes) return null;
+  const { trash } = bar;
+  const outcomes = trash.emptyOutcomes!;
+  const stayed = trash.remaining.flatMap((entry) => {
+    const outcome = outcomes[entry.entryId];
+    return outcome && outcome.status !== 'deleted' ? [outcome] : [];
+  });
+  if (stayed.length === 0) return null;
+  const reasons = [...new Set(stayed.map((outcome) => storageReasonLabel(outcome.reason ?? { code: 'operation_failed' })))];
+  const refused = t('machineStorage.pile.emptyRefused', { count: stayed.length, reason: reasons.join(', ') });
+  const emptied = Object.values(outcomes).filter((outcome) => outcome.status === 'deleted').length;
+  if (emptied === 0) return refused;
+  const went = trash.freedBytesKnown === false || trash.freedBytes <= 0
+    ? t('machineStorage.pile.emptiedOnly', { count: emptied })
+    : t('machineStorage.pile.emptiedFreed', { count: emptied, amount: formatMachineBytes(trash.freedBytes, 'storage') });
+  return `${refused} ${went}`;
 }
 
 /**

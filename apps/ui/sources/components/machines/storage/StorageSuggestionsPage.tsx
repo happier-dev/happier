@@ -65,6 +65,7 @@ export const StorageSuggestionsPage = React.memo(
       machineId: string;
       machineName: string;
       onBack: () => void;
+      onOpenAdminAccess?: () => void;
     }>,
   ) {
     const layout = useMachineTabCompactLayout();
@@ -142,7 +143,7 @@ export const StorageSuggestionsPage = React.memo(
           ) : null}
         </StoragePageHead>
         <StorageReadNotice issues={[...(rebuilt.page?.incomplete ?? []), ...(unused.page?.incomplete ?? []), ...(outside.page?.incomplete ?? [])]}
-          onRetry={() => { rebuilt.retry(); unused.retry(); outside.retry(); }} />
+          onRetry={() => { rebuilt.retry(); unused.retry(); outside.retry(); }} onOpenRemedy={props.onOpenAdminAccess} />
         {headline ? (
           <ItemGroup header="none">
             <StorageVolumeRow volume={headline} compact={layout.compact} />

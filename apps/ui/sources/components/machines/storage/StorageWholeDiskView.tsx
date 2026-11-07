@@ -158,6 +158,7 @@ export const StorageWholeDiskView = React.memo(function StorageWholeDiskView(
     offline: boolean;
     params: StorageParams;
     setParams: (next: MachinePageTabParams) => void;
+    onOpenAdminAccess?: () => void;
     /** The Happier view's disk sentence; a disk never scanned leads with it as Happier's does (lab `rs` MS 1). */
     sentence?: React.ReactNode;
   }>,
@@ -242,7 +243,7 @@ export const StorageWholeDiskView = React.memo(function StorageWholeDiskView(
     ...(scan ? { scanId: scan.scanId, view } : {}),
   });
   const readNotice = <StorageReadNotice issues={[...(props.summary.incomplete ?? []), ...(scanState.page?.incomplete ?? [])]}
-    onRetry={scanState.retry} />;
+    onRetry={scanState.retry} onOpenRemedy={props.onOpenAdminAccess} />;
   const collect = useStorageCollect({ ...target, readOnly: props.offline });
   const [starting, setStarting] = React.useState(false);
   // The address as it is when the start is acknowledged, not as it was when the person pressed the control.

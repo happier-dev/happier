@@ -21,7 +21,7 @@ const storageRpc = await import('./machineRpc');
 const { machineStorageStore } = await import('./machineStorageStore');
 const { Modal } = await import('@/modal');
 // Load the real executor graph during collection rather than spending the first test's deadline on imports.
-await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
+await import('@/sync/ops/actions/defaultActionExecutor');
 const { fetchMachineStorageSummaryViaAction, fetchMachineStorageCategoryViaAction, refreshMachineStorageSizeViaAction, watchMachineStorageViaMachineRpc } = storageRpc;
 
 const HOME = 'srv_storage_action';
@@ -37,6 +37,20 @@ beforeEach(async () => {
 afterEach(async () => { boundary.rpc.mockReset(); await homes.reset(); });
 
 describe('storage Action and Machine RPC boundary', () => {
+    it('preserves unavailable policy through Action reads, effects and the parked watch', async () => {
+        boundary.rpc.mockRejectedValue(new RpcError('Storage policy is unavailable', 'policy_unavailable'));
+        expect(await fetchMachineStorageSummaryViaAction(key)).toEqual({ ok: false, reason: 'policy_unavailable' });
+        expect(await storageRpc.checkMachineStorageItemsViaAction({ ...key, refs: [] })).toEqual({ ok: false, reason: 'policy_unavailable' });
+        expect(await storageRpc.deleteMachineStorageNowViaAction({ ...key, items: [reviewed()], reviewedByPerson: true }))
+            .toEqual({ ok: false, reason: 'policy_unavailable' });
+        expect(await watchMachineStorageViaMachineRpc(key)).toEqual({ ok: false, reason: 'policy_unavailable' });
+        boundary.rpc.mockResolvedValueOnce({ status: 'unavailable', reason: 'policy_unavailable' });
+        expect(await storageRpc.addMachineStorageProtectedFolderViaAction({ ...key, path: '/protected' }))
+            .toEqual({ ok: false, reason: 'policy_unavailable' });
+        boundary.rpc.mockResolvedValueOnce({ status: 'unavailable', reason: 'transport_unavailable' });
+        expect(await storageRpc.addMachineStorageProtectedFolderViaAction({ ...key, path: '/protected' }))
+            .toEqual({ ok: true, value: { status: 'unavailable', reason: 'transport_unavailable' } });
+    });
     const reviewed = () => ({ ref: { itemId: 'log', path: '/logs/old', identity: { dev: '1', ino: '2', kind: 'file' as const },
         collectedAt: 100, collectedBy: { accountId: key.expectedAccountId, kind: 'person' as const } }, expect: 'checked-log' });
 
@@ -48,6 +62,35 @@ describe('storage Action and Machine RPC boundary', () => {
         expect(Modal.confirm).not.toHaveBeenCalled();
         expect(boundary.rpc).toHaveBeenLastCalledWith(expect.objectContaining({ method: RPC_METHODS.DAEMON_STORAGE_DELETE_NOW,
             payload: { machineId: key.machineId, serverId: HOME, items: [{ ref: item.ref, expect: 'checked-log' }] } }));
+    });
+
+    it('sends a reviewed Docker cleanup once through its Action and returns the owner\'s typed result', async () => {
+        const completed = { kind: 'completed', buildCache: 'unsupported', removed: ['sha256:a'], kept: ['sha256:b'] };
+        boundary.rpc.mockResolvedValueOnce(completed);
+        expect(await storageRpc.pruneMachineStorageDockerViaAction({ ...key, selection: { kind: 'unusedBuildCacheAndUnreferencedImages' }, reviewedByPerson: true }))
+            .toEqual({ ok: true, value: completed });
+        expect(Modal.confirm).not.toHaveBeenCalled();
+        expect(boundary.rpc).toHaveBeenCalledOnce();
+        expect(boundary.rpc).toHaveBeenLastCalledWith(expect.objectContaining({ method: RPC_METHODS.DAEMON_STORAGE_DOCKER_PRUNE,
+            payload: { machineId: key.machineId, serverId: HOME, selection: { kind: 'unusedBuildCacheAndUnreferencedImages' } } }));
+        const unsupported = { kind: 'unsupported', reason: 'native_runtime_unavailable', removed: [], kept: [] };
+        boundary.rpc.mockResolvedValueOnce(unsupported);
+        expect(await storageRpc.pruneMachineStorageDockerViaAction({ ...key, selection: { kind: 'unusedBuildCacheAndUnreferencedImages' }, reviewedByPerson: true }))
+            .toEqual({ ok: true, value: unsupported });
+    });
+
+    it('deletes the reviewed items even if the caller changes its draft while admission loads', async () => {
+        const item = reviewed();
+        const receipt = PileApplyResultV1Schema.parse({ batchId: 'delete-reviewed', mode: 'delete', inTrashBytes: 0,
+            freedBytes: 64, outcomes: [{ itemId: item.ref.itemId, status: 'deleted' }] });
+        boundary.rpc.mockResolvedValueOnce(receipt);
+        const pending = storageRpc.deleteMachineStorageNowViaAction({ ...key, items: [item], reviewedByPerson: true });
+        item.expect = 'changed-after-confirmation';
+        expect(await pending).toEqual({ ok: true, value: receipt });
+        expect(boundary.rpc).toHaveBeenCalledWith(expect.objectContaining({ payload: expect.objectContaining({
+            items: [expect.objectContaining({ expect: 'checked-log' })],
+        }) }));
+        expect(Modal.confirm).not.toHaveBeenCalled();
     });
 
     it('still asks for an unreviewed permanent delete, and an explicit Ask first goes to approval without a receipt or mutation', async () => {

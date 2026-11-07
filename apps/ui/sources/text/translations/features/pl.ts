@@ -1061,6 +1061,8 @@ const artifactsBrowserTranslations = { pl: {
             empty: 'Brak wcześniejszych wersji. Każdy zapis zachowuje jedną.',
             versionsLabel: 'Wersje',
             restoreFailed: 'Nie udało się przywrócić tej wersji. Spróbuj ponownie.',
+            compareUnavailable: 'Porównanie niedostępne',
+            compareCurrentUnavailable: 'Bieżąca wersja nie jest dostępna w tym widoku historii. Nadal możesz czytać wcześniejsze wersje.',
             savedByUser: 'Zapisane przez użytkownika',
             savedByAgentSession: 'Zapisane przez sesję agenta',
             restoredVersion: ({ n }) => `Przywrócone z wersji ${n}`,
@@ -13790,6 +13792,9 @@ const polish: TeamsTranslationRoot = {
             directUse: {
                 ownerVisibility: "Właściciel maszyny może przeglądać dostarczone tu klucze i wybrane poświadczenia, nawet gdy członkowie będą już mieli osobnych użytkowników.",
                 sharedUserVisibility: "Na udostępnionej maszynie członkowie i izolowany Agent właściciela mogą odczytywać klucze dostarczone bezpośrednio, dopóki korzystają z tego samego użytkownika Agenta. Włączona lub oczekująca konfiguracja nie dowodzi rozdzielenia członków.",
+                separatePlacement: 'Ich agenci działają na tej maszynie jako ich własny użytkownik.',
+                sharedPlacement: 'Ich agenci działają na tej maszynie jako ty.',
+                sharedBeforeSeparation: 'To, co udostępniono przed włączeniem osobnych użytkowników, może nadal być dla nich widoczne.',
                 title: 'U\u017cy\u0107 bezpo\u015brednio tych udost\u0119pnionych po\u015bwiadcze\u0144?',
                 body: 'Happier mo\u017ce przekaza\u0107 po\u015bwiadczenia lokalnym narz\u0119dziom u\u017cywanym przez t\u0119 sesj\u0119. Kontynuuj tylko wtedy, gdy ufasz tym narz\u0119dziom w zakresie tych po\u015bwiadcze\u0144.',
             },

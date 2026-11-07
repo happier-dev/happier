@@ -1061,6 +1061,8 @@ const artifactsBrowserTranslations = { 'zh-Hans': {
             empty: '还没有更早的版本。每次保存都会保留一个。',
             versionsLabel: '版本',
             restoreFailed: '无法恢复此版本，请重试。',
+            compareUnavailable: '无法比较',
+            compareCurrentUnavailable: '当前版本在此历史记录视图中不可用。你仍可阅读早期版本。',
             savedByUser: '由用户保存',
             savedByAgentSession: '由代理会话保存',
             restoredVersion: ({ n }) => `从版本 ${n} 恢复`,
@@ -13750,6 +13752,9 @@ const simplifiedChinese: TeamsTranslationRoot = {
             directUse: {
                 ownerVisibility: "即使成员之后使用独立用户，机器所有者仍可查看传送到此处的密钥和所选凭据。",
                 sharedUserVisibility: "在共享机器上，只要成员和所有者的隔离智能体仍共用一个智能体用户，就能读取直接传送的密钥。设置已启用或待完成并不证明成员之间已隔离。",
+                separatePlacement: '他们的代理在这台机器上以各自的用户运行。',
+                sharedPlacement: '他们的代理在这台机器上以你的身份运行。',
+                sharedBeforeSeparation: '在开启独立用户之前共享的内容，他们可能仍然可以看到。',
                 title: '\u76f4\u63a5\u4f7f\u7528\u6b64\u5171\u4eab\u51ed\u636e\uff1f',
                 body: 'Happier \u53ef\u80fd\u4f1a\u5411\u6b64\u4f1a\u8bdd\u4f7f\u7528\u7684\u672c\u5730\u5de5\u5177\u63d0\u4f9b\u51ed\u636e\u6750\u6599\u3002\u4ec5\u5f53\u4f60\u4fe1\u4efb\u8fd9\u4e9b\u5de5\u5177\u5904\u7406\u6b64\u51ed\u636e\u65f6\u624d\u7ee7\u7eed\u3002',
             },
