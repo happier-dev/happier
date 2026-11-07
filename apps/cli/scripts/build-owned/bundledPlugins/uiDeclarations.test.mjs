@@ -7,7 +7,7 @@ import { PluginPortableReleaseManifestV1Schema } from '@happier-dev/protocol/plu
 import { PluginUiArtifactsManifestV2Schema, computePluginUiArtifactFileSetSha256DigestV1,
   computePluginUiArtifactSha256DigestV1 } from '@happier-dev/protocol/plugins/ui';
 import { serializeCanonicalPluginManifest } from '../../../src/plugins/manifest/serialize.ts';
-import { projectBundledPluginUiDeclaration } from './uiDeclarations.mjs';
+import { projectBundledPluginUiDeclaration, projectBundledPluginUiFirstPaintDeclaration } from './uiDeclarations.mjs';
 import { collectBundledPluginUiArtifactSources } from '../../../../ui/scripts/generateBundledPluginUiArtifacts.mjs';
 
 const manifest = PluginPortableReleaseManifestV1Schema.parse({
@@ -173,4 +173,21 @@ describe('build-owned bundled app declarations', () => {
       .protocols[0].surfaces.detail.inputSchema).toEqual(unsupported);
     expect(Object.hasOwn(declaration, 'accountCustody')).toBe(false);
   });
+  it('carries client registration families into the cold Account manifest', async () => {
+    const client = { artifactId: 'fixture-card', exportName: 'renderSurface' };
+    const selected = PluginPortableReleaseManifestV1Schema.parse({ ...manifest, contributes: {
+      ...manifest.contributes,
+      workItems: [{ id: 'work-items', client, platforms: ['web'] }],
+      dragSources: [{ id: 'issue', title: 'Issue', referenceSchema: { type: 'object' }, client, platforms: ['web'] }],
+      dropTargets: [{ id: 'board', title: 'Board', acceptedKinds: ['session'],
+        actions: [{ kind: 'host', actionId: 'session.open' }], client, platforms: ['web'] }],
+    } });
+    const full = await project(selected, artifactGraphs);
+    const cold = await projectBundledPluginUiFirstPaintDeclaration(full);
+    expect(cold.presentationManifest.contributes.workItems).toEqual(full.normalizedManifest.contributes.workItems);
+    expect(cold.presentationManifest.contributes.dragSources).toEqual(full.normalizedManifest.contributes.dragSources);
+    expect(cold.presentationManifest.contributes.dropTargets).toEqual(full.normalizedManifest.contributes.dropTargets);
+    expect(cold.presentationManifest.contributes.actions).toEqual([]);
+  });
+
 });

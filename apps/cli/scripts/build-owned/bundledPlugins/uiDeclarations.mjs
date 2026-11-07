@@ -32,8 +32,11 @@ export async function projectBundledPluginUiDeclaration({ packageName, packageVe
 /** Discovery is a projection of the admitted declaration, never an executable manifest. */
 export async function projectBundledPluginUiFirstPaintDeclaration(declaration) {
   const { PluginPortableReleaseManifestV1Schema } = await import('@happier-dev/protocol/plugins/availability');
+  const { derivePluginContributionRegistrationRights } = await import('@happier-dev/protocol/plugins/contributions/catalog');
   const { normalizedManifest, entriesById, ...identity } = declaration;
   const contributes = normalizedManifest.contributes;
+  const clientFamilies = new Set(derivePluginContributionRegistrationRights(contributes)
+    .filter(right => right.target.realm === 'client').map(right => right.family));
   const emptyUi = PluginPortableReleaseManifestV1Schema.parse({ schemaVersion: 2, id: normalizedManifest.id,
     version: normalizedManifest.version, displayName: normalizedManifest.displayName,
     runtime: { apiVersion: 1 }, contributes: {} }).contributes.ui;
@@ -41,7 +44,7 @@ export async function projectBundledPluginUiFirstPaintDeclaration(declaration) {
     .map(({ inputSchema, resultSchema, ...descriptor }) => descriptor);
   const presentationManifest = { ...normalizedManifest, contributes: {
     ...Object.fromEntries(Object.entries(contributes).filter(([key]) => key !== 'ui')
-      .map(([key, value]) => [key, Array.isArray(value) ? [] : value])),
+      .map(([key, value]) => [key, Array.isArray(value) && !clientFamilies.has(key) ? [] : value])),
     actions,
     resources: contributes.resources,
     connectedAccountDescriptors: contributes.connectedAccountDescriptors,
