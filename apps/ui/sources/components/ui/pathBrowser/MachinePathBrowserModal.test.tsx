@@ -702,7 +702,7 @@ describe('MachinePathBrowserModal', () => {
         expect(confirmBefore?.props.disabled).toBe(false);
 
         await act(async () => {
-            screen.changeTextByTestId('path-browser-search', '/');
+            screen.changeTextByTestId('path-browser-search', 'needle');
         });
         await act(async () => {
             vi.advanceTimersByTime(200);
@@ -776,6 +776,46 @@ describe('MachinePathBrowserModal', () => {
             includeFiles: false,
         }));
         expect(screen.findByTestId(getPathBrowserRowTestId('/Users'))).toBeTruthy();
+    });
+
+    it('lists everything under the root when it opens on a folder inside it, not only the way to that folder', async () => {
+        listMachineFileBrowserDirectoryEntriesMock.mockImplementation(async (input) => input.directoryPath === '/'
+            ? { ok: true as const, entries: [{ name: 'Users', path: '/Users', type: 'directory' as const },
+                { name: 'var', path: '/var', type: 'directory' as const }], truncated: false }
+            : await defaultDirectoryEntries(input));
+        const screen = await renderInModalChrome(<MachinePathBrowserModal machineId="machine-1" initialPath="/Users/leeroy"
+            onResolve={vi.fn()} onClose={vi.fn()} />);
+        await waitForTestId(screen, getPathBrowserRowTestId('/var'));
+        expect(screen.findByTestId(getPathBrowserRowTestId('/Users/leeroy'))).toBeTruthy();
+    });
+
+    it('goes to a typed or pasted absolute path, listing that folder by the typed name instead of searching for it', async () => {
+        const listing: Record<string, Array<{ name: string; path: string; type: 'directory' }>> = {
+            '/': [{ name: 'Users', path: '/Users', type: 'directory' }, { name: 'var', path: '/var', type: 'directory' }],
+            '/var': [{ name: 'tmp', path: '/var/tmp', type: 'directory' }, { name: 'log', path: '/var/log', type: 'directory' }],
+            '/var/tmp': [{ name: 'project', path: '/var/tmp/project', type: 'directory' }, { name: 'other', path: '/var/tmp/other', type: 'directory' }],
+        };
+        listMachineFileBrowserDirectoryEntriesMock.mockImplementation(async (input) => (
+            { ok: true as const, entries: listing[input.directoryPath] ?? [], truncated: false }));
+        const onResolve = vi.fn();
+        const screen = await renderInModalChrome(<MachinePathBrowserModal machineId="machine-1" onResolve={onResolve} onClose={vi.fn()} />);
+        await waitForTestId(screen, getPathBrowserToggleTestId('/'));
+
+        await act(async () => { screen.changeTextByTestId('path-browser-search', '/var/tmp/pro'); });
+        await waitForTestId(screen, getPathBrowserRowTestId('/var/tmp/project'));
+        expect(screen.findByTestId(getPathBrowserRowTestId('/var/tmp/other'))).toBeNull();
+        expect(screen.findByTestId(getPathBrowserRowTestId('/var/log'))).toBeNull();
+
+        await act(async () => { screen.changeTextByTestId('path-browser-search', '/var/tmp/project'); });
+        let confirm = screen.findByTestId(PATH_BROWSER_CONFIRM_TEST_ID);
+        for (let index = 0; index < 8 && confirm?.props?.disabled !== false; index += 1) {
+            await flushHookEffects({ cycles: 1, turns: 1 });
+            confirm = screen.findByTestId(PATH_BROWSER_CONFIRM_TEST_ID);
+        }
+        expect(confirm?.props.disabled).toBe(false);
+        await screen.pressByTestIdAsync(PATH_BROWSER_CONFIRM_TEST_ID);
+        expect(onResolve).toHaveBeenCalledWith('/var/tmp/project');
+        expect(machineWorkspaceFileListMock).not.toHaveBeenCalled();
     });
 
     it('pre-expands and preselects the current directory path so the user can navigate up or elsewhere', async () => {

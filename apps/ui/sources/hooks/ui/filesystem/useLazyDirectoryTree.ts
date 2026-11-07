@@ -28,6 +28,11 @@ function normalizeExpandedPaths(paths: readonly string[]): string[] {
     return out;
 }
 
+/** Placeholder entries (the way to an initial folder) paint at once but still need the real listing. */
+function isLoadedDirectory(entries: readonly LazyDirectoryTreeEntry[] | undefined): boolean {
+    return entries !== undefined && !(entries.length > 0 && entries.every((entry) => entry.source === 'preview'));
+}
+
 function seedDirectoryEntriesByPathFromCache(input: Readonly<{
     rootDirectoryPath: string;
     expandedPaths: readonly string[] | null;
@@ -285,7 +290,7 @@ export function useLazyDirectoryTree(input: {
             return;
         }
         if (options?.forceReload !== true && !staleDirectoriesRef.current.has(clean)
-            && (directoryEntriesByPathRef.current.has(clean) || directoryErrorsRef.current.has(clean))) {
+            && (isLoadedDirectory(directoryEntriesByPathRef.current.get(clean)) || directoryErrorsRef.current.has(clean))) {
             return;
         }
 

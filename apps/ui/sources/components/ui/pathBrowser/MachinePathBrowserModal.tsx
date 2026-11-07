@@ -216,6 +216,18 @@ function buildInitialExpandedPathsWithinRoot(rootDirectoryPath: string, initialP
     return out;
 }
 
+/**
+ * A typed or pasted absolute path: the folder to list and the start of the name to keep in it
+ * (`/var/tmp/pro` → `/var/tmp`, `pro`; `/var/tmp/` → `/var/tmp`, ``). Null for a name search.
+ */
+function readTypedMachinePath(query: string): Readonly<{ directory: string; prefix: string }> | null {
+    const raw = query.trim();
+    if (!raw.startsWith('/') && !/^[A-Za-z]:[\\/]/.test(raw)) return null;
+    const cut = Math.max(raw.lastIndexOf('/'), raw.lastIndexOf('\\'));
+    const directory = normalizeAbsolutePath(raw.slice(0, cut + 1));
+    return directory ? { directory, prefix: raw.slice(cut + 1) } : null;
+}
+
 function buildInitialSelectionCandidates(path: string | null): string[] {
     return buildInitialExpandedPaths(path).slice().reverse();
 }
@@ -478,7 +490,8 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
         return '';
     }, [nodesByPath, rootDirectoryPath, selectedPath]);
 
-    const deepSearchEnabled = deepSearchRootDirectoryPath !== '' && searchQuery.trim().length > 0;
+    const typedPath = React.useMemo(() => readTypedMachinePath(searchQuery), [searchQuery]);
+    const deepSearchEnabled = typedPath === null && deepSearchRootDirectoryPath !== '' && searchQuery.trim().length > 0;
     const enableRowLongPressContextMenu = enableContextMenu && Platform.OS !== 'web';
 
     const activeServer = useActiveServerSnapshot(props.serverId == null);
@@ -531,6 +544,14 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
             });
 
         if (!q) return base;
+        if (typedPath) {
+            // The way to the typed folder, then its children whose names start as typed.
+            const way = new Set(buildInitialExpandedPaths(typedPath.directory));
+            const prefix = typedPath.prefix.toLowerCase();
+            return base.filter((node) => (node.type === 'file' || node.type === 'directory')
+                ? way.has(node.path) || (node.parentDirectoryPath === typedPath.directory && node.name.toLowerCase().startsWith(prefix))
+                : node.parentDirectoryPath !== undefined && node.parentDirectoryPath !== null && way.has(node.parentDirectoryPath));
+        }
 
         const keep = new Set<string>();
         const addChain = (node: FilesystemBrowserNode) => {
@@ -558,7 +579,22 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
             }
             return false;
         });
-    }, [deepSearchEnabled, deepSearchNodes, isHiddenByAncestors, nodesByPath, rawNodes, searchQuery, showHidden]);
+    }, [deepSearchEnabled, deepSearchNodes, isHiddenByAncestors, nodesByPath, rawNodes, searchQuery, showHidden, typedPath]);
+
+    // Typing or pasting a path opens the folders on the way to it, and picks it once it is there.
+    React.useEffect(() => {
+        if (!typedPath) return;
+        const way = buildInitialExpandedPaths(typedPath.directory);
+        setExpandedPaths((current) => way.every((path) => current.includes(path)) ? current : [...new Set([...current, ...way])]);
+    }, [typedPath]);
+    const typedTarget = typedPath ? (typedPath.prefix ? joinMachinePath(typedPath.directory, typedPath.prefix) : typedPath.directory) : null;
+    const typedTargetNode = typedTarget ? nodesByPath.get(typedTarget) : undefined;
+    const typedTargetPickable = typedTargetNode !== undefined && typedTargetNode.source !== 'preview'
+        && typedTargetNode.type === (selectionMode === 'file' ? 'file' : 'directory');
+    React.useEffect(() => {
+        if (typedTarget && typedTargetPickable) setSelectedPath(typedTarget);
+    }, [typedTarget, typedTargetPickable]);
+
 
     const refresh = React.useCallback(() => {
         clearCachedMachineFileBrowserRoots({ machineId: props.machineId, serverId: props.serverId });
