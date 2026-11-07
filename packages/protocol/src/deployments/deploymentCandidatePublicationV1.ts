@@ -130,8 +130,15 @@ function publicationArtifactId(digest: string): string {
 export function computeDeploymentEnvironmentUpdateMetadataDigestV1(input: Readonly<Record<string, unknown>>): string {
   const { contentArtifactId: _artifact, contentHeaderVersion: _header, contentBodyVersion: _body,
     authoredInputDigest: _digest, preparedBindings: _bindings, ...metadata } = input;
+  let reviewedMetadata = metadata;
+  // The full input digest binds this private operand. Home receives only the
+  // prepared Artifact reference; every remaining reviewed patch leaf stays bound.
+  if (metadata.patch !== undefined) {
+    const { previewTemplate: _previewTemplate, ...patch } = readRecord(metadata.patch);
+    reviewedMetadata = { ...metadata, patch };
+  }
   return computeCanonicalDomainSeparatedDigest('happier-deployment-environment-update-metadata-v1',
-    [createCanonicalJsonSigningInput(metadata)]);
+    [createCanonicalJsonSigningInput(reviewedMetadata)]);
 }
 export function computeDeploymentEnvironmentUpdateInputDigestV1(input: Readonly<Record<string, unknown>>): string {
   const { authoredInputDigest: _digest, preparedBindings: _bindings, ...reviewed } = input;
