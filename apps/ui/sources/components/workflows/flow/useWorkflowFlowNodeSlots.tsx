@@ -154,7 +154,7 @@ const FLOW_NODE_LAYOUT: Readonly<Record<WorkflowFlowNode['kind'], HappierWorkMap
     thenBranch: { appearance: 'lane' },
     otherwiseBranch: { appearance: 'lane' },
     loop: { appearance: 'frame' },
-    if: { appearance: 'group' },
+    if: { appearance: 'group', childLayout: 'lanes' },
     observedPhase: { appearance: 'group' },
 };
 
@@ -174,8 +174,10 @@ type FlowNodeInputs = Readonly<{
     compact: boolean;
     preview: boolean;
     notStartedLabel: string | undefined;
+    /** The Run did not take the If alternative this node is, or sits in (`listWorkflowFlowNotTakenNodeIds`). */
+    notTaken: boolean;
     testIDPrefix: string;
-    theme: ReturnType<typeof useUnistyles>['theme'];
+    theme: Pick<ReturnType<typeof useUnistyles>['theme'], 'colors'>;
 }>;
 
 function createNodeSlots(props: FlowNodeInputs) {
@@ -227,7 +229,11 @@ function createNodeSlots(props: FlowNodeInputs) {
             return line === null ? null : <Text style={styles.subtitle} numberOfLines={1}>{line}</Text>;
         })(),
         presentNode: ((): HappierWorkMapNodePresentation => {
-            const layout = FLOW_NODE_LAYOUT[node.kind];
+            // 07 S14: lanes rejoin at "All {n} lanes finish"; an If's alternatives sit apart on a dashed "or".
+            const grammar: HappierWorkMapNodePresentation = node.kind === 'parallel' && node.childNodeIds.length > 1
+                ? { ...FLOW_NODE_LAYOUT.parallel, join: t('workflows.map.allLanesFinish', { count: node.childNodeIds.length }) }
+                : node.kind === 'if' ? { ...FLOW_NODE_LAYOUT.if, alternatives: t('workflows.map.or') } : FLOW_NODE_LAYOUT[node.kind];
+            const layout = props.notTaken ? { ...grammar, muted: true } : grammar;
             // INT I3: the ring and tint come from the shared status tone, never a local colour rule.
             const toneOf = (state: (typeof occurrences)[number]) => resolveWorkStatusTone({
                 kind: 'workflow_step',
@@ -243,6 +249,14 @@ function createNodeSlots(props: FlowNodeInputs) {
         })(),
         renderStatus: (() => {
             const elapsed = formatWorkflowInvocationElapsedLabel(runState?.timing);
+            // The alternative the Run did not take says so once, on its own caption; its steps stay quiet.
+            if (props.notTaken) {
+                return node.kind === 'thenBranch' || node.kind === 'otherwiseBranch' ? (
+                    <Text testID={`${testIDPrefix}-node-${node.nodeId}-not-taken`} style={styles.meta}>
+                        {t('workflows.map.notTaken')}
+                    </Text>
+                ) : null;
+            }
             return (
                 <>
                     {/* An authoring fact; a Run's Map shows what is happening, not unset configuration. */}

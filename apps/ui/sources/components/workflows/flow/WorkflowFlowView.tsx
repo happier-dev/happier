@@ -14,6 +14,7 @@ import { useWorkflowFlowNodeSlots, workflowFlowStyles as styles } from './useWor
 import { WorkMapView } from '@/components/work/map/WorkMapView';
 
 import {
+    listWorkflowFlowNotTakenNodeIds,
     resolveWorkflowFlowEditTarget,
     type WorkflowFlowEditTarget,
     type WorkflowFlowNode,
@@ -86,6 +87,8 @@ export function WorkflowFlowView(props: Readonly<{
 }>): React.ReactElement {
     const testIDPrefix = props.testIDPrefix ?? 'workflow-flow';
     const { theme } = useUnistyles();
+    // Slots consume colours, whose identity survives Unistyles' per-render outer Proxy.
+    const nodeTheme = React.useMemo(() => ({ colors: theme.colors }), [theme.colors]);
     const compact = props.density === 'compact';
     const editTarget = props.onEditStep === undefined || props.selectedNodeId === null
         ? null
@@ -93,6 +96,8 @@ export function WorkflowFlowView(props: Readonly<{
     const editLabel = editTarget?.kind === 'prompt' ? t('workflows.a11y.editStep') : t('workflows.a11y.editBlock');
     const selectsOccurrence = props.onSelectOccurrence !== undefined;
 
+    const notTaken = React.useMemo(() => listWorkflowFlowNotTakenNodeIds(props.projection, props.runStates),
+        [props.projection, props.runStates]);
     const nodeSlots = useWorkflowFlowNodeSlots(props.projection.nodes.map(node => {
         const occurrences = props.runStates?.get(node.nodeId) ?? [];
         return {
@@ -109,8 +114,9 @@ export function WorkflowFlowView(props: Readonly<{
             compact,
             preview: props.preview === true,
             notStartedLabel: props.notStartedLabel,
+            notTaken: notTaken.has(node.nodeId),
             testIDPrefix,
-            theme,
+            theme: nodeTheme,
         };
     }));
     const occurrencesOf = (node: WorkflowFlowNode) => props.runStates?.get(node.nodeId) ?? [];

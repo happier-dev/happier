@@ -28,27 +28,24 @@ import type { Theme } from '@/theme';
  * `SessionAgentActivitySummary` bind through `useWorkTheme` and `WORK_HOST`.
  */
 
-const hostWorkThemes = new WeakMap<Theme, HappierWorkTheme>();
-
 /** Happier core's Work theme: its snapshot, page palette, Work colours and the user's density and radii. */
 function projectWorkTheme(theme: Theme): HappierWorkTheme {
-    const existing = hostWorkThemes.get(theme);
-    if (existing) return existing;
-    const projected: HappierWorkTheme = Object.freeze({
+    return Object.freeze({
         base: projectPluginUiTheme(theme),
         palette: projectPluginUiHostPalette(theme),
         colors: projectWorkColors(theme),
         spacing: Object.freeze({ xsmall: theme.space.s4, small: theme.space.s8 }),
         radii: Object.freeze({ control: theme.borderRadius.md, inset: theme.borderRadius.lg, card: theme.borderRadius.xl }),
     });
-    hostWorkThemes.set(theme, projected);
-    return projected;
 }
 
 /** The shared Work primitives' theme, from the theme the app is rendering with. */
 export function useWorkTheme(): HappierWorkTheme {
     const { theme } = useUnistyles();
-    return projectWorkTheme(theme);
+    // Like usePluginUiTheme, depend on resolved fields: Unistyles replaces the outer Proxy each render.
+    return React.useMemo(() => projectWorkTheme(theme), [
+        theme.colors, theme.dark, theme.space, theme.borderRadius, theme.finish, theme.parts, theme.typography,
+    ]);
 }
 
 type WorkTextStyle = Pick<TextStyle, 'fontFamily' | 'fontWeight' | 'fontVariant' | 'fontSize' | 'lineHeight' | 'letterSpacing'>;

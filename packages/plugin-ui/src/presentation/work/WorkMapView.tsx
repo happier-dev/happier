@@ -2,6 +2,7 @@ import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactElem
 import { StyleSheet, View, type ViewStyle } from 'react-native';
 
 import { WorkMapItem } from './WorkMapItem.js';
+import { createMapSelection } from './mapSelection.js';
 import type { HappierGestureResponderEvent, HappierLayoutChangeEvent } from '../portableTypes.js';
 import { formatHappierWorkMapNodeName, type HappierWorkMap, type HappierWorkMapNode } from './workMap.js';
 import type { HappierWorkStatusTone } from './workStatus.js';
@@ -251,6 +252,8 @@ export function HappierWorkMapView<TNode extends HappierWorkMapNode>(props: Happ
   const compact = density === 'compact';
   const g = GEOMETRY[density];
   const styles = useMemo(() => createWorkMapStyles(theme, density), [theme, density]);
+  const [selection] = useState(() => createMapSelection(props.selectedNodeId));
+  useLayoutEffect(() => { selection.select(props.selectedNodeId); }, [selection, props.selectedNodeId]);
   const openRef = useRef(props.onOpen);
   useLayoutEffect(() => { openRef.current = props.onOpen; }, [props.onOpen]);
   const openNode = useCallback((node: TNode, event: HappierGestureResponderEvent) => openRef.current?.(node, event), []);
@@ -317,7 +320,6 @@ export function HappierWorkMapView<TNode extends HappierWorkMapNode>(props: Happ
     if (node === undefined) return null;
     const presentation = props.presentNode?.(node) ?? DEFAULT_PRESENTATION;
     const appearance = presentation.appearance ?? 'card';
-    const selected = props.selectedNodeId === node.nodeId;
     const readOnly = props.onOpen === undefined;
     const disabled = readOnly || props.isNodeDisabled?.(node) === true;
     // Keep the approved anatomy while it fits alongside the remaining hairlines. Thereafter spend
@@ -449,7 +451,7 @@ export function HappierWorkMapView<TNode extends HappierWorkMapNode>(props: Happ
         key={node.nodeId}
         node={node}
         presentation={presentation}
-        selected={selected}
+        selection={selection}
         readOnly={readOnly}
         disabled={disabled}
         accessibilityLabel={props.accessibilityLabelForNode(node)}

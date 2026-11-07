@@ -1,4 +1,4 @@
-import { act, type ReactNode } from 'react';
+import { act, Profiler, type ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { HappierUiEnvironmentProvider } from '../../environment/context.js';
@@ -489,6 +489,50 @@ describe('Work primitives for plugin authors', () => {
     }
   });
 
+  it('selects across groups in a 500-item map without rendering unrelated rows', async () => {
+    const nodes = Array.from({ length: 5 }, (_, group) => [
+      { nodeId: `group-${group}`, label: `Group ${group}`, parentNodeId: null },
+      ...Array.from({ length: 99 }, (_, item) => ({
+        nodeId: `item-${group}-${item}`, label: `Item ${group}-${item}`, parentNodeId: `group-${group}`,
+      })),
+    ]).flat();
+    const map = buildHappierWorkMap({ relationships: 'authored', nodes });
+    const renders = new Map<string, number>();
+    const host: authorBarrel.HappierWorkHost = { Text: props => {
+      if (props.role === 'mapLabel') {
+        const label = String(props.children);
+        renders.set(label, (renders.get(label) ?? 0) + 1);
+      }
+      return <span data-selected={props.strong === true}>{props.children}</span>;
+    } };
+    const accessibilityLabelForNode = (node: (typeof map.nodes)[number]) => node.label;
+    let commits = 0;
+    const render = (selectedNodeId: string | null) => inSurface(
+      <Profiler id="selection" onRender={() => { commits += 1; }}>
+        <HappierWorkMapView map={map} selectedNodeId={selectedNodeId} testIDPrefix="map"
+          host={host} accessibilityLabelForNode={accessibilityLabelForNode} />
+      </Profiler>,
+    );
+    const mounted = mountThroughReactNativeWeb(render('item-0-0'));
+    try {
+      for (const selected of ['item-1-0', 'item-2-0', null]) {
+        renders.clear(); commits = 0;
+        await mounted.render(render(selected));
+        const rowRenders = [...renders.values()].reduce((total, count) => total + count, 0);
+        console.info('WORKMAP-SELECT nested map', { selected, rows: renders.size, rowRenders, commits });
+        expect(rowRenders).toBe(selected === null ? 1 : 2);
+        expect(commits).toBeLessThanOrEqual(2);
+        const selectedLabels = mounted.container.querySelectorAll('[data-selected="true"]');
+        expect(selectedLabels).toHaveLength(selected === null ? 0 : 1);
+        if (selected !== null) expect(selectedLabels[0]?.textContent).toContain(selected.replace('item-', 'Item '));
+      }
+      renders.clear(); commits = 0;
+      await mounted.render(render(null));
+      expect(renders.size).toBe(0);
+      expect(commits).toBeLessThanOrEqual(1);
+    } finally { mounted.unmount(); }
+  });
+
   it('draws a map without an open handler read-only: its cards are not buttons, and a muted card is quieter', () => {
     const map = buildHappierWorkMap({
       relationships: 'authored',
@@ -692,6 +736,42 @@ describe('Work primitives for plugin authors', () => {
     } finally {
       mounted.unmount();
     }
+  });
+
+  describe('a facts tail that stays on the line', () => {
+    function readFacts(facts: readonly ReactNode[], factsTail?: ReactNode) {
+      const mounted = mountThroughReactNativeWeb(
+        inSurface(
+          <HappierWorkSummary
+            testID="tail"
+            title="Release"
+            phase="attention"
+            facts={facts}
+            factsTail={factsTail}
+            accessibilityLabel="Release"
+          />,
+        ),
+      );
+      try {
+        return byTestId(mounted.container, 'tail')!.textContent.slice('Release'.length);
+      } finally {
+        mounted.unmount();
+      }
+    }
+
+    it('follows real facts after one separator and leaves the line alone when omitted', () => {
+      expect(readFacts(['Deploy', 'Production'])).toBe('Deploy · Production');
+      expect(readFacts(['Deploy'], '2h')).toBe('Deploy · 2h');
+      expect(readFacts([], '2h')).toBe('2h');
+    });
+
+    it('adds no separator when every fact is absent, by the facts line\'s own rule', () => {
+      expect(readFacts([null, undefined, false, ''], '2h')).toBe('2h');
+    });
+
+    it('keeps a numeric zero tail, which is a renderable fact', () => {
+      expect(readFacts(['Pending'], 0)).toBe('Pending · 0');
+    });
   });
 
   it('fails loudly rather than guessing a theme outside a mounted surface', () => {

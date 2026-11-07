@@ -84,7 +84,11 @@ const virtualizedListState = vi.hoisted(() => ({
   scrollToOffset: vi.fn(),
 }));
 const viewport = vi.hoisted(() => ({ window: { width: 1200, height: 800 } }));
+const themeBoundary = vi.hoisted(() => ({ freshProxy: false }));
 const arrivalCosts = vi.hoisted(() => new Map<string, {
+  read(): { renders: number; commits: number }; reset(): void;
+}>());
+const selectionCosts = vi.hoisted(() => new Map<string, {
   read(): { renders: number; commits: number }; reset(): void;
 }>());
 const retireContents: Array<() => Promise<void>> = [];
@@ -109,7 +113,16 @@ vi.mock('react-native', async () => {
     useRenderCommitCounter(counter);
     return ReactRuntime.createElement(native.View, { ...props, ref });
   });
-  return { ...native, View };
+  const Pressable = ReactRuntime.forwardRef<React.ComponentRef<typeof native.Pressable>, React.ComponentProps<typeof native.Pressable>>((props, ref) => {
+    const counter = ReactRuntime.useMemo(() => {
+      const counter = createRenderCommitCounter();
+      if (props.testID) selectionCosts.set(props.testID, counter);
+      return counter;
+    }, [props.testID]);
+    useRenderCommitCounter(counter);
+    return ReactRuntime.createElement(native.Pressable, { ...props, ref });
+  });
+  return { ...native, View, Pressable };
 });
 // Radix supplies the DOM portal primitives; modal custody and chrome stay real.
 vi.mock('@/utils/web/radixCjs', async () => {
@@ -120,7 +133,12 @@ vi.mock('@/utils/web/radixCjs', async () => {
 vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 vi.mock('react-native-unistyles', async () => {
   const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-  return createUnistylesMock();
+  const native = await createUnistylesMock();
+  return { ...native, useUnistyles: () => {
+    const state = native.useUnistyles();
+    // Unistyles 3.5.3 useProxifiedUnistyles creates a new outer proxy on every render.
+    return themeBoundary.freshProxy ? { ...state, theme: new Proxy(state.theme, {}) } : state;
+  } };
 });
 vi.mock('@/text', async () => {
   const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -155,6 +173,7 @@ afterEach(async () => {
   virtualizedListState.boundary?.reset();
   virtualizedListState.scrollToOffset.mockReset();
   viewport.window = { width: 1200, height: 800 };
+  themeBoundary.freshProxy = false;
 });
 
 type ContentProps = React.ComponentProps<typeof WorkflowRunContent>;
@@ -357,6 +376,44 @@ it.each(['flow', 'steps'] as const)('measures a 500-item %s arrival without waki
   // The changed lifecycle must survive the real projection, not a quiet-path-only optimization.
   expect(screen.findAll(node => typeof node.props.testID === 'string' && node.props.testID.includes('budget-499'))
     .some(node => node.findAllByType(WorkflowLifecycleStatus).some(status => status.props.lifecycle === 'completed'))).toBe(true);
+});
+
+it.each(['flow', 'steps'] as const)('selects a node in a 500-item %s with only the two affected rows rendering', async view => {
+  themeBoundary.freshProxy = true;
+  const costs = view === 'flow' ? selectionCosts : arrivalCosts;
+  costs.clear();
+  const definition = createWorkflowDefinitionFixture({ blocks: Array.from({ length: 500 }, (_, index) => ({
+    kind: 'wait', id: `selection-${index}`, document: { text: `Review ${index}`, references: [], attachments: [] },
+  })) });
+  const root = createWorkflowInvocationIndexFixture({ id: 'selection-root' });
+  const invocations = [root, ...Array.from({ length: 500 }, (_, index) => createWorkflowInvocationIndexFixture({
+    id: `selection-item-${index}`, parentRecordId: root.id, memberOrdinal: String(index), sequence: String(index + 1),
+    lifecycle: 'completed',
+  }))];
+  const screen = await renderContent({ definition, invocations, view, selectedInvocationId: 'selection-item-0' });
+  let commits = 0;
+  const content = (selectedInvocationId: string) => <React.Profiler id="selection" onRender={() => { commits += 1; }}>
+    <WorkflowRunContent {...screen.contentProps} selectedInvocationId={selectedInvocationId} />
+  </React.Profiler>;
+  await screen.update(content('selection-item-0'));
+  for (const selected of [1, 2]) {
+    for (const counter of costs.values()) counter.reset();
+    commits = 0;
+    await screen.update(content(`selection-item-${selected}`));
+    const changedRows = [...costs].filter(([id, counter]) =>
+      /(?:flow-node-selection-\d+|steps-selection-\d+-block)$/.test(id) && counter.read().renders > 0).map(([id]) => id);
+    const rowRenders = changedRows.reduce((total, id) => total + (costs.get(id)?.read().renders ?? 0), 0);
+    console.info('WORKMAP-SELECT selection', { view, selected, commits, rowRenders, changedRows: changedRows.length });
+    expect(changedRows.length).toBeLessThanOrEqual(2);
+    expect(changedRows).toHaveLength(2);
+    expect(changedRows.some(id => id.includes(`selection-${selected - 1}`))).toBe(true);
+    expect(changedRows.some(id => id.includes(`selection-${selected}`))).toBe(true);
+    if (view === 'flow') {
+      expect(screen.findByTestId(`workflow-run-flow-node-selection-${selected}`)?.props.accessibilityState.selected).toBe(true);
+      expect(screen.findByTestId(`workflow-run-flow-node-selection-${selected - 1}`)?.props.accessibilityState.selected).toBe(false);
+    }
+    expect(commits).toBeLessThanOrEqual(2);
+  }
 });
 
 it('renders For-each value names and stopped occurrence facts through the real Run body', async () => {
@@ -787,13 +844,13 @@ describe('WorkflowRunContent', () => {
     expect(screen.getTextContent()).toContain('workflows.problem.requesterCustodyUnavailable');
   });
 
-  it('explains a terminal failure from its exact failed leaf without attention or selection', async () => {
+  it.each(['failed', 'interrupted'] as const)('explains a %s Run from its exact failed leaf without attention or selection', async (state) => {
     const invocation = createWorkflowInvocationIndexFixture({
       id: 'publish',
       lifecycle: 'failed',
     });
     const screen = await renderContent({
-      run: createWorkflowRunSummaryFixture({ state: 'failed' }),
+      run: createWorkflowRunSummaryFixture({ state }),
       definition: createWorkflowDefinitionFixture({
         blocks: [
           {
@@ -834,7 +891,7 @@ describe('WorkflowRunContent', () => {
     });
     expect(screen.getTextContent()).toContain(
       `workflows.run.outcomeLine:${JSON.stringify({
-        word: 'workflows.runState.failed',
+        word: `workflows.runState.${state}`,
         sentence: 'workflows.run.failedStepSentence:{"step":"Publish summary"}',
       })}`,
     );
@@ -843,13 +900,31 @@ describe('WorkflowRunContent', () => {
     );
   });
 
+  it.each([false, true])('leads with the existing recovery instruction before a failed step is opened, usage limit: %s', async (usageLimit) => {
+    const invocation = createWorkflowInvocationIndexFixture({ id: 'failed', parentRecordId: 'root', lifecycle: 'failed' });
+    const progress = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1',
+      invocationPath: { blockId: 'analyze', scope: [] }, blockKind: 'step', attempt: '0', logicalInvocationRecordId: invocation.id,
+      reason: { code: 'session_input_target_update_required',
+        ...(usageLimit ? { runtimeIssueV1: { v: 1, scope: 'primary_session', status: 'failed', code: 'usage_limit',
+          source: 'usage_limit', occurredAt: 100, sanitizedPreview: 'Usage limit reached',
+          usageLimit: { v: 1, resetAtMs: 1_900_000_000_000, retryAfterMs: null, quotaScope: 'account', recoverability: 'wait' } } } : {}) },
+    });
+    const screen = await renderContent({
+      run: createWorkflowRunSummaryFixture({ state: 'interrupted', workflowCustodyState: 'pending' }),
+      invocations: [invocation], invocationProgressById: new Map([[invocation.id, progress]]),
+      selectedInvocationId: null, firstFailedInvocationId: invocation.id, onCancel: vi.fn(),
+    });
+    expect(screen.findByTestId('workflow-run-cancel')).toBeTruthy();
+    expect(screen.getTextContent()).toContain(usageLimit ? 'workflows.recovery.usageLimitWait' : 'workflows.recovery.nextStop');
+  });
+
   it('says Skipped on a completed Run map for a step it never ran, and only when the history is complete', async () => {
     const root = createWorkflowInvocationIndexFixture({ id: 'root', lifecycle: 'completed' });
     const taken = createWorkflowInvocationIndexFixture({ id: 'taken', parentRecordId: root.id, sequence: '1', lifecycle: 'completed' });
-    const definition = createWorkflowDefinitionFixture({ blocks: [{ kind: 'if', id: 'choose',
-      when: { kind: 'compare', operator: 'eq', left: { kind: 'input', name: 'go' }, right: { kind: 'literal', value: true } },
-      then: [{ kind: 'wait', id: 'taken', name: 'List machines', document: { text: 'List', references: [], attachments: [] } }],
-      otherwise: [{ kind: 'wait', id: 'untaken', name: 'Alternative check', document: { text: 'Other', references: [], attachments: [] } }] }] });
+    const definition = createWorkflowDefinitionFixture({ blocks: [
+      { kind: 'wait', id: 'taken', name: 'List machines', document: { text: 'List', references: [], attachments: [] } },
+      { kind: 'wait', id: 'untaken', name: 'Alternative check', document: { text: 'Other', references: [], attachments: [] } },
+    ] });
     const progress = new Map([[root.id, WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1',
       blockKind: 'root', invocationPath: { blockId: '$root', scope: [] }, attempt: '0', logicalInvocationRecordId: root.id })],
       [taken.id, WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1',
@@ -867,6 +942,27 @@ describe('WorkflowRunContent', () => {
     await stopped.unmount();
     const partial = await render('succeeded', false);
     expect(partial.findByTestId('workflow-run-flow-node-untaken-not-started')).toBeNull();
+    await partial.unmount();
+  });
+
+  it.each(['flow', 'steps'] as const)('keeps a failed step outcome honest about unreached leaves in %s only after history completes', async (view) => {
+    const failed = createWorkflowInvocationIndexFixture({ id: 'failed', lifecycle: 'failed' });
+    const progress = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1',
+      blockKind: 'wait', invocationPath: { blockId: 'first', scope: [] }, attempt: '0', logicalInvocationRecordId: failed.id });
+    const render = (invocationHistoryComplete: boolean) => renderContent({
+      run: createWorkflowRunSummaryFixture({ state: 'failed', workflowCustodyState: 'settled' }),
+      definition: createWorkflowDefinitionFixture({ blocks: [
+        { kind: 'wait', id: 'first', name: 'First check', document: { text: 'Check', references: [], attachments: [] } },
+        { kind: 'wait', id: 'later', name: 'Later check', document: { text: 'Check later', references: [], attachments: [] } },
+      ] }),
+      view, invocations: [failed], invocationProgressById: new Map([[failed.id, progress]]),
+      invocationHistoryComplete, firstFailedInvocationId: failed.id, firstFailedInvocationResolution: 'resolved',
+    });
+    const complete = await render(true);
+    expect(complete.getTextContent()).toContain('workflows.run.notReached');
+    await complete.unmount();
+    const partial = await render(false);
+    expect(partial.getTextContent()).not.toContain('workflows.run.notReached');
     await partial.unmount();
   });
 
@@ -1873,6 +1969,7 @@ describe('WorkflowRunContent', () => {
       active: true,
       invocationPage: true,
       selectedInvocationId: 'inv-1',
+      onOpenSession: vi.fn(),
       selectedInvocationProgress: {
         kind: 'happier.workflow-progress.v1',
         blockKind: 'step',
@@ -1909,6 +2006,12 @@ describe('WorkflowRunContent', () => {
     expect(screen.findByType('ReviewSlot' as never).props.publication).toBe(
       'updated',
     );
+    // Publishing fresh held content must retain the sheet's title band and presentation.
+    const { ModalCardFrame } = await import('@/modal/components/card/ModalCardFrame');
+    const sheet = screen.findAllByType(ModalCardFrame)
+      .find((node) => node.props.testID === 'workflow-run-review-modal');
+    expect(sheet?.props.title).toBe('workflows.run.untitled');
+    expect(sheet?.props.presentation).toBe('sheet');
     // A route departure retires the owned sheet while the shell's provider remains mounted.
     await screen.update(<></>);
     expect(screen.visibleModals()).toEqual([]);
@@ -2053,12 +2156,21 @@ describe('WorkflowRunContent', () => {
       const screen = await renderContent({
         run: createWorkflowRunSummaryFixture({ state: 'waiting_for_review', attentionRequired: true }),
         selectedInvocationId: 'first-hold', onSelectInvocation,
-        invocations: ['first-hold', 'next-hold'].map((id) => createWorkflowInvocationIndexFixture({ id, lifecycle: 'waiting_for_review' })),
+        invocations: ['first-hold', 'next-hold'].map((id) => createWorkflowInvocationIndexFixture({ id, parentRecordId: 'root', lifecycle: 'waiting_for_review' })),
+        invocationProgressById: new Map(['first-hold', 'next-hold'].map((id) => [id, WorkflowProgressEnvelopeV1Schema.parse({
+          kind: 'happier.workflow-progress.v1', blockKind: 'step', invocationPath: { blockId: 'analyze', scope: [] },
+          attempt: '0', logicalInvocationRecordId: id,
+        })])),
         renderReviewCard: () => React.createElement('ReviewSlot'),
       });
       expect(screen.findByTestId('workflow-run-previous-hold')?.props.disabled).toBe(true);
       await screen.pressByTestIdAsync('workflow-run-next-hold');
       expect(onSelectInvocation).toHaveBeenCalledWith('next-hold');
+      await screen.update(<WorkflowRunContent {...screen.contentProps} selectedInvocationId="next-hold" attentionHasMore />);
+      expect(screen.findByTestId('workflow-run-next-hold')?.props.disabled).toBe(true);
+      expect(screen.getTextContent()).toContain('workflows.run.holdsPosition:{"current":2,"total":2,"more":true}');
+      await screen.pressByTestIdAsync('workflow-run-previous-hold');
+      expect(onSelectInvocation).toHaveBeenLastCalledWith('first-hold');
     });
     const sessionProgress = (sessionId: string): NonNullable<ContentProps['selectedInvocationProgress']> => ({
       kind: 'happier.workflow-progress.v1',
@@ -2119,7 +2231,7 @@ describe('WorkflowRunContent', () => {
       });
     });
 
-    it('states the hold in Needs you alone: no outcome sentence and no word on its row', async () => {
+    it('keeps the overall status while Needs you names the held work', async () => {
       const screen = await renderContent({
         run: createWorkflowRunSummaryFixture({ state: 'waiting_for_review', attentionRequired: true }),
         invocations: [
@@ -2129,8 +2241,26 @@ describe('WorkflowRunContent', () => {
         selectedInvocationId: null,
       });
       expect(screen.findByTestId('workflow-run-needs-you')).toBeTruthy();
-      expect(screen.findByTestId('workflow-run-outcome')).toBeNull();
+      expect(screen.findByTestId('workflow-run-outcome')).toBeTruthy();
       expect(screen.findByTestId('workflow-run-invocations-word-held')).toBeNull();
+    });
+
+    it('leaves agent and attempt identity out of a human Wait header', async () => {
+      const invocation = createWorkflowInvocationIndexFixture({ id: 'held', lifecycle: 'waiting_for_review' });
+      const progress = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1',
+        blockKind: 'wait', attempt: invocation.attempt, logicalInvocationRecordId: invocation.id,
+        invocationPath: { blockId: 'confirm', scope: [] } });
+      const screen = await renderContent({
+        definition: createWorkflowDefinitionFixture({ blocks: [{ kind: 'wait', id: 'confirm', name: 'Confirm the release',
+          document: { text: 'Review the release summary.', references: [], attachments: [] } }] }),
+        invocations: [invocation], selectedInvocationId: invocation.id,
+        selectedInvocationProgress: progress, invocationProgressById: new Map([[invocation.id, progress]]),
+      });
+      const header = screen.findAllByTestId('workflow-run-selected-header')
+        .concat(screen.findAllByTestId('details-pane.header'))
+        .find((node) => typeof node.props.subtitle === 'string');
+      expect(header).toBeDefined();
+      expect(header?.props.subtitle).not.toMatch(/attempt/iu);
     });
 
     it('keeps the outcome when it says something the hold does not, as a Run that is stopping does', async () => {
@@ -2239,9 +2369,9 @@ describe('WorkflowRunContent', () => {
         }),
       ],
     });
-    // No status pill and no outcome line: Needs you states this hold.
+    // The overall status remains while Needs you names the human step.
     expect(screen.findByTestId('workflow-run-state')).toBeNull();
-    expect(screen.findByTestId('workflow-run-outcome')).toBeNull();
+    expect(screen.findByTestId('workflow-run-outcome')).toBeTruthy();
     // A Wait-for-you step never borrows the review hold's word.
     const text = screen.getTextContent();
     expect(screen.findByTestId('workflow-run-needs-you')).toBeTruthy();
@@ -2903,7 +3033,7 @@ describe('WorkflowRunContent', () => {
     expect(unnamed.findByTestId('workflow-run-machine-id')).toBeNull();
   });
 
-  it('routes an approval-backed invocation to its canonical Session owner', async () => {
+  it.each(['session', 'session_ready'] as const)('still reaches the conversation through the %s invocation header action', async (kind) => {
     const openSession = vi.fn();
     const screen = await renderContent({
       selectedInvocationId: 'inv-1',
@@ -2913,16 +3043,33 @@ describe('WorkflowRunContent', () => {
         blockKind: 'step',
         attempt: '0',
         logicalInvocationRecordId: 'inv-1',
-        execution: {
-          kind: 'session',
-          sessionId: 'session-1',
-          localInputId: 'input-1',
-        },
+        execution: kind === 'session'
+          ? { kind, sessionId: 'session-1', localInputId: 'input-1' }
+          : { kind, sessionId: 'session-1' },
       },
       onOpenSession: openSession,
     });
-    await screen.pressByTestIdAsync('workflow-run-open-session');
+    expect(screen.findByTestId('workflow-run-open-session')).toBeNull();
+    await screen.pressByTestIdAsync('workflow-run-selected-open-execution');
     expect(openSession).toHaveBeenCalledWith('session-1');
+  });
+
+  it.each([true, false])('still reaches the conversation from a prepared related Wait execution only when inspectable: %s', async (canInspectExecution) => {
+    const onOpenSession = vi.fn();
+    const screen = await renderContent({
+      selectedInvocationId: 'inv-1',
+      selectedInvocationProgress: WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1',
+        invocationPath: { blockId: 'confirm', scope: [] }, blockKind: 'wait', attempt: '0', logicalInvocationRecordId: 'inv-1' }),
+      selectedRelatedExecution: { execution: { kind: 'session_ready', sessionId: 'second-opinion' }, canInspectExecution },
+      onOpenSession,
+    });
+    if (canInspectExecution) {
+      await screen.pressByTestIdAsync('workflow-run-selected-open-execution');
+      expect(onOpenSession).toHaveBeenCalledWith('second-opinion');
+    } else {
+      expect(screen.findByTestId('workflow-run-selected-open-execution')).toBeNull();
+    }
+    expect(screen.findByTestId('session-in-pane-inactive:second-opinion')).toBeNull();
   });
 
   it('routes a detached invocation to the canonical execution Run owner', async () => {
@@ -3174,8 +3321,10 @@ describe('WorkflowRunContent', () => {
         },
       ],
     ]);
-    // The open step's recovery card above owns the cause; the wide header does not repeat it.
-    expect(failed.findAllByTestId('workflow-run-failure-reason')).toHaveLength(0);
+    // The Run keeps its failure cause visible while the selected step is inspected.
+    expect(failed.findAllByTestId('workflow-run-failure-reason').length).toBeGreaterThan(0);
+    expect(failed.findByTestId('workflow-run-failure-reason')?.props.children)
+      .toContain('The Run store could not be written.');
     await failed.unmount();
 
     // With no step open, the header is the one place that says why the Run failed.

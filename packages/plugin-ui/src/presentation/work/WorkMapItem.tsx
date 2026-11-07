@@ -5,6 +5,7 @@ import type { HappierWorkMapNode } from './workMap.js';
 import { resolveHappierWorkStatusSurfaceStyle, softenHappierWorkColor, type HappierWorkStatusTone } from './workStatus.js';
 import type { HappierWorkColors, HappierWorkHost, HappierWorkTextRole, HappierWorkTheme } from './workTheme.js';
 import type { HappierWorkMapNodeAppearance, HappierWorkMapNodePresentation, WorkMapStyles } from './WorkMapView.js';
+import { useMapNodeSelected, type MapSelection } from './mapSelection.js';
 
 /**
  * The open card keeps its own ground and tone and is ringed (lab `.wm-node.on`, `.wm-node.need.on`): a
@@ -37,7 +38,7 @@ function labelRole(appearance: HappierWorkMapNodeAppearance, compact: boolean): 
 type WorkMapItemProps<TNode extends HappierWorkMapNode> = Readonly<{
   node: TNode;
   presentation: HappierWorkMapNodePresentation;
-  selected: boolean;
+  selection: MapSelection;
   readOnly: boolean;
   disabled: boolean;
   accessibilityLabel: string;
@@ -63,13 +64,15 @@ type WorkMapItemProps<TNode extends HappierWorkMapNode> = Readonly<{
 }>;
 
 /** The shared row boundary consumes retained producer slots with default prop identity semantics. */
-function WorkMapItemView<TNode extends HappierWorkMapNode>(props: WorkMapItemProps<TNode>): ReactElement {
-  const { node, presentation, selected, readOnly, disabled, theme, Text, styles, testIDPrefix,
-    compact, inLane, wrapRow, copyMinWidth, stackStatus, framePadding, scale, leading, subtitle } = props;
+function WorkMapItemView<TNode extends HappierWorkMapNode>(props: Omit<WorkMapItemProps<TNode>,
+  'children' | 'joinCaption' | 'detail' | 'framePadding' | 'scale' | 'rootSequencePosition'>): ReactElement {
+  const { node, presentation, readOnly, disabled, theme, Text, styles, testIDPrefix,
+    compact, inLane, wrapRow, copyMinWidth, stackStatus, leading, subtitle } = props;
+  const selected = useMapNodeSelected(props.selection, node.nodeId);
   const appearance = presentation.appearance ?? 'card';
   const tone = presentation.tone ?? 'neutral';
   const role = labelRole(appearance, compact);
-  const row = (
+  return (
     <Pressable
       testID={`${testIDPrefix}-node-${node.nodeId}`}
       accessibilityRole={readOnly ? undefined : 'button'}
@@ -120,22 +123,30 @@ function WorkMapItemView<TNode extends HappierWorkMapNode>(props: WorkMapItemPro
         : props.status}
     </Pressable>
   );
+}
 
+// Child-tree identity must not invalidate the node's own row when a sibling is selected.
+const WorkMapItemRow = memo(WorkMapItemView) as typeof WorkMapItemView;
+
+function WorkMapItemLayout<TNode extends HappierWorkMapNode>(props: WorkMapItemProps<TNode>): ReactElement {
+  const { children, joinCaption, detail, framePadding, scale, rootSequencePosition, ...rowProps } = props;
+  const { node, presentation, styles, testIDPrefix } = props;
+  const appearance = presentation.appearance ?? 'card';
   const item = (
     <View
       testID={`${testIDPrefix}-item-${node.nodeId}`}
       role="listitem"
       style={[styles.item, appearance === 'frame' ? [styles.frame, scale === 1 ? null : { paddingHorizontal: framePadding }] : null]}
     >
-      {row}
-      {props.detail}
-      {props.children}
-      {props.joinCaption}
+      <WorkMapItemRow {...rowProps} />
+      {detail}
+      {children}
+      {joinCaption}
     </View>
   );
-  return props.rootSequencePosition === undefined ? item : (
+  return rootSequencePosition === undefined ? item : (
     <View>
-      {props.rootSequencePosition === 0 ? null : (
+      {rootSequencePosition === 0 ? null : (
         <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.spine} />
       )}
       {item}
@@ -143,4 +154,4 @@ function WorkMapItemView<TNode extends HappierWorkMapNode>(props: WorkMapItemPro
   );
 }
 
-export const WorkMapItem = memo(WorkMapItemView) as typeof WorkMapItemView;
+export const WorkMapItem = memo(WorkMapItemLayout) as typeof WorkMapItemLayout;
