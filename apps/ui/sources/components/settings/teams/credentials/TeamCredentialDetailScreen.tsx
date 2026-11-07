@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { TeamCredentialTestActionOutputV1 } from '@happier-dev/protocol/teams';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
@@ -40,7 +41,6 @@ import {
     recipientDeliveryMode,
     requestPolicySummary,
     resourceDeliverySummary,
-    resourceState,
     resourceStateLabel,
     sessionUsePolicyLabel,
     sourceKindLabel,
@@ -67,6 +67,22 @@ function directMaterialStateLabel(state: NonNullable<ReturnType<typeof useTeamCr
         case 'stale': return t('teams.credentials.directReadiness.state.sourceChanged');
         case 'revoked': return t('teams.credentials.detail.notFound');
     }
+}
+
+type CredentialTestResult = Readonly<{ message: string; code?: string; detail?: string }>;
+
+function presentTestResult(result: TeamCredentialTestActionOutputV1, sourceOwnerDisplayName: string | null): CredentialTestResult {
+    return {
+        message: result.recovery ?? resourceStateLabel(result.readiness, sourceOwnerDisplayName),
+        code: result.failureDetail?.code ?? result.code ?? (result.result === 'needs_attention'
+            ? ('reason' in result.readiness ? result.readiness.reason : undefined) ?? result.readiness.kind
+            : undefined),
+        detail: result.failureDetail ? JSON.stringify({
+            stage: result.failureDetail.stage,
+            httpStatus: result.failureDetail.httpStatus,
+            requestId: result.requestId,
+        }, null, 2) : result.requestId,
+    };
 }
 
 /**
@@ -133,7 +149,7 @@ const CredentialDetail = React.memo(function CredentialDetail(props: Readonly<{
     const [preparationPending, setPreparationPending] = React.useState<number | null>(null);
     const [preparationBusy, setPreparationBusy] = React.useState(false);
     const [testBusy, setTestBusy] = React.useState(false);
-    const [testResult, setTestResult] = React.useState<string | null>(null);
+    const [testResult, setTestResult] = React.useState<CredentialTestResult | null>(null);
     const targetKey = `${context.scope.serverId}:${context.scope.accountId}:${context.address.teamId}:${resourceId}`;
     const currentTargetKey = React.useRef(targetKey);
     currentTargetKey.current = targetKey;
@@ -205,7 +221,7 @@ const CredentialDetail = React.memo(function CredentialDetail(props: Readonly<{
                     />
                     <Item
                         testID="team-credential-recipient-state"
-                        title={resourceStateLabel(resource.readiness.kind)}
+                        title={resourceStateLabel(resource.readiness)}
                         detail={(() => {
                             const mode = recipientDeliveryMode(resource);
                             return mode ? deliveryModeLabel(mode) : undefined;
@@ -300,7 +316,6 @@ const CredentialDetail = React.memo(function CredentialDetail(props: Readonly<{
     // therefore mean "not shown" and must not be read as state, and the two
     // destinations that would be refused are not offered.
     const { capabilities } = resource;
-    const state = resourceState(resource);
     const delivery = capabilities.manageAudience ? resourceDeliverySummary(resource) : null;
     const brokerConnectionSemantics = resource.brokerPlacement?.kind === 'machine_pool'
         ? t('machinePools.connectionSemantics')
@@ -335,9 +350,9 @@ const CredentialDetail = React.memo(function CredentialDetail(props: Readonly<{
                 />
                 <Item
                     testID="team-credential-state"
-                    title={resourceStateLabel(state)}
+                    title={resourceStateLabel(resource.readiness, resource.sourceOwnerDisplayName)}
                     // The last test's answer, while there is one, says more than the delivery line.
-                    subtitle={testResult ?? delivery ?? undefined}
+                    subtitle={testResult?.code ? delivery ?? undefined : testResult?.message ?? delivery ?? undefined}
                     showChevron={false}
                     rightElement={(
                         <RoundButton
@@ -367,25 +382,24 @@ const CredentialDetail = React.memo(function CredentialDetail(props: Readonly<{
                                             // "it ran".
                                             onApprovalSucceeded: (result) => {
                                                 if (currentTargetKey.current !== requestedTargetKey) return;
-                                                setTestResult(result.recovery ?? resourceStateLabel(result.readiness.kind));
+                                                setTestResult(presentTestResult(result, resource.sourceOwnerDisplayName));
                                             },
                                             onApprovalFailed: (code) => {
                                                 if (currentTargetKey.current !== requestedTargetKey) return;
-                                                setTestResult(credentialApprovalFailureMessage(code));
+                                                setTestResult({ message: credentialApprovalFailureMessage(code), code });
                                             },
                                         },
                                     });
                                     if (currentTargetKey.current !== requestedTargetKey) return;
                                     if (outcome.kind === 'succeeded') {
-                                        setTestResult(outcome.value.recovery
-                                            ?? resourceStateLabel(outcome.value.readiness.kind));
+                                        setTestResult(presentTestResult(outcome.value, resource.sourceOwnerDisplayName));
                                     } else {
-                                        setTestResult(credentialFailureMessage(outcome.failure));
+                                        setTestResult({ message: credentialFailureMessage(outcome.failure), code: outcome.failure.code ?? undefined });
                                     }
                                 } catch (cause) {
                                     if (currentTargetKey.current !== requestedTargetKey) return;
                                     if (isTeamActionApprovalPendingError(cause)) context.requestApproval(cause.registration);
-                                    else setTestResult(t('teams.errors.generic'));
+                                    else setTestResult({ message: t('teams.errors.generic') });
                                 } finally {
                                     if (currentTargetKey.current === requestedTargetKey) setTestBusy(false);
                                 }
@@ -393,6 +407,18 @@ const CredentialDetail = React.memo(function CredentialDetail(props: Readonly<{
                         />
                     )}
                 />
+                {testResult?.code ? (
+                    <SurfaceStateCard
+                        key={`${testResult.code}:${testResult.detail ?? ''}`}
+                        testID="team-credential-test-result"
+                        kind="error"
+                        size="line"
+                        title={testResult.message}
+                        diagnosticCode={testResult.code}
+                        diagnosticDetail={testResult.detail}
+                        accessibilitySemantics="alert"
+                    />
+                ) : null}
 {capabilities.managePolicy ? <Item
                     testID="team-credential-use-policy"
                     title={t('teams.credentials.usePolicy.label')}

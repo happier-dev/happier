@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { TEAM_CREDENTIAL_EXTERNAL_PROVIDER_PROTOCOLS_V1 } from '@happier-dev/protocol';
+import { TEAM_CREDENTIAL_EXTERNAL_PROVIDER_PROTOCOLS_V1 } from '@happier-dev/protocol/teams/credentials/externalProviderApiV1';
 import { TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1, TeamCredentialResourceDiscoveryPageV1Schema } from '@happier-dev/protocol/teams';
 
 import { collectRenderedTestIds } from '@/dev/testkit/render/collectRenderedTestIds';
@@ -43,6 +43,8 @@ vi.doUnmock('@/sync/domains/state/storage');
 const { resetTeamsSnapshotsForTests } = await import('@/sync/store/teams/teamsSnapshots');
 const { resetTeamsDirectoryEngineForTests } = await import('@/sync/engine/teams/teamsDirectoryEngine');
 const { resetTeamActionClientForTests } = await import('@/sync/ops/teams/teamActionClient');
+// Keep cold module transformation outside the interaction timeout on a saturated host.
+const { TeamCredentialDetailScreen } = await import('./TeamCredentialDetailScreen');
 
 const TEAM_GET_PATH = '/v1/teams/get';
 const LIST_PATH = '/v1/teams/credential-resources/list';
@@ -66,6 +68,54 @@ beforeEach(async () => {
 afterEach(standardCleanup);
 
 describe('TeamCredentialDetailScreen', () => {
+    it.each([
+        { approved: false, withFailureDetail: false }, { approved: true, withFailureDetail: false },
+        { approved: false, withFailureDetail: true }, { approved: true, withFailureDetail: true },
+    ])('keeps the typed Test cause and request ID in Details ($approved, detail=$withFailureDetail)', async ({ approved, withFailureDetail }) => {
+        const serverId = await harness.addHome({
+            name: 'Home A', serverUrl: 'https://home-a.example', accountId: 'account-ada',
+            teamsEnabled: true, credentialResourcesEnabled: true,
+        });
+        await harness.selectHomes([serverId]);
+        harness.answer(serverId, TEAM_GET_PATH, { body: teamSummaryFixture({ capabilities: teamCapabilitiesFixture({}) }) });
+        harness.answer(serverId, GET_PATH, { body: teamCredentialResourceFixture() });
+        harness.answer(serverId, '/v1/teams/credential-resources/test', { body: {
+            result: 'needs_attention', code: withFailureDetail ? 'upstream_unavailable' : 'connected_service_credential_reconnect_required', requestId: 'test-request-1106',
+            readiness: withFailureDetail ? { kind: 'source_unavailable' } : { kind: 'source_unavailable', reason: 'connected_service_credential_reconnect_required' },
+            recovery: 'Reconnect the shared account and try again.',
+            ...(withFailureDetail ? { failureDetail: { code: 'source_invalid', stage: 'application_response', httpStatus: 403 } } : {}),
+        } });
+        if (approved) await harness.requireUiApproval(serverId, 'teams.credentials.test');
+        const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+        const screen = await renderScreen(<TeamCredentialDetailScreen serverId={serverId} teamId="team-1" resourceId="resource-1" />);
+        await vi.waitFor(() => expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('team-credential-test'));
+        await screen.pressByTestIdAsync('team-credential-test');
+        if (approved) {
+            await vi.waitFor(() => expect(harness.artifacts(serverId).list()).toHaveLength(1));
+            const artifactId = harness.artifacts(serverId).list()[0]!.id;
+            await expect(decideApprovalAsInbox(serverId, artifactId, 'approve')).resolves.toMatchObject({ ok: true });
+        }
+        await vi.waitFor(() => {
+            const details = screen.findAllByType(SurfaceStateCard).find(row => row.props.testID === 'team-credential-test-result');
+            expect(details?.props.diagnosticCode).toBe(withFailureDetail ? 'source_invalid' : 'connected_service_credential_reconnect_required');
+            expect(details?.props.diagnosticDetail).toContain('test-request-1106');
+            if (withFailureDetail) {
+                expect(details?.props.diagnosticDetail).toContain('application_response');
+                expect(details?.props.diagnosticDetail).toContain('403');
+            }
+        });
+        expect(screen.getTextContent()).not.toContain('test-request-1106');
+        expect(screen.getTextContent()).not.toContain('connected_service_credential_reconnect_required');
+        expect(screen.getTextContent()).not.toContain('application_response');
+        await screen.pressByTestIdAsync('team-credential-test-result-details-toggle');
+        expect(screen.getTextContent()).toContain('test-request-1106');
+        expect(screen.getTextContent()).toContain(withFailureDetail ? 'source_invalid' : 'connected_service_credential_reconnect_required');
+        if (withFailureDetail) {
+            expect(screen.getTextContent()).toContain('application_response');
+            expect(screen.getTextContent()).toContain('403');
+        }
+    });
+
     it('renders a deep-linked administration resource that is absent from the first list page', async () => {
         const serverId = await harness.addHome({
             name: 'Home A', serverUrl: 'https://home-a.example', accountId: 'account-ada',

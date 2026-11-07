@@ -1,12 +1,10 @@
-import { deliveryModeLabel } from '@/sync/domains/teams/teamCredentialDeliveryPresentation';
-export { deliveryModeLabel } from '@/sync/domains/teams/teamCredentialDeliveryPresentation';
 import type {
     TeamCredentialBrokerPlacementV1,
     TeamCredentialRouteV1,
     TeamCredentialRequestProtocolKindV1,
     TeamCredentialResourceRecoveryActionV1,
     TeamCredentialResourceSummaryV1,
-    TeamCredentialResourceReadinessV1,
+    TeamCredentialResourceCatalogEntryV1,
     TeamCredentialResourceSourcePresentationV1,
     TeamCredentialSessionUsePolicyV1,
     TeamCredentialSourceBindingV1,
@@ -24,7 +22,12 @@ import type { ConnectedServiceRegistrySnapshot } from '@/sync/domains/connectedS
 import { resolveQualifiedConnectedServiceMarkId } from '@/components/settings/connectedServices/model/resolveQualifiedConnectedServiceMarkId';
 import { resolveAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
 import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { resourceStateLabel, type TeamCredentialResourceState } from './readinessPresentation';
+import { deliveryModeLabel } from '@/sync/domains/teams/teamCredentialDeliveryPresentation';
 import { resolveUsageQueryPeriod, type UsageRelativePeriod } from '@happier-dev/protocol/inputs/usageQuery';
+export { deliveryModeLabel } from '@/sync/domains/teams/teamCredentialDeliveryPresentation';
+import { teamCredentialReconnectPresentation } from './sourceHealthPresentation';
+export { resourceStateLabel, type TeamCredentialResourceState } from './readinessPresentation';
 
 /** Team Usage requires explicit numeric bounds; its All range keeps the existing epoch contract. */
 export function resolveTeamCredentialUsageStartTimeSeconds(period: UsageRelativePeriod, nowMs: number): number {
@@ -185,34 +188,12 @@ export function audienceSummary(resource: TeamCredentialResourceSummaryV1): stri
  * The Home computes this from current source, broker, policy and limit facts.
  * The client renders that answer without becoming a second evaluator.
  */
-export type TeamCredentialResourceState = TeamCredentialResourceReadinessV1['kind'];
-
 export function resourceState(
-    resource: TeamCredentialResourceSummaryV1,
+    resource: Pick<TeamCredentialResourceSummaryV1, 'readiness'>,
     options?: Readonly<{ audienceKnown?: boolean }>,
 ): TeamCredentialResourceState {
     void options;
     return resource.readiness.kind;
-}
-
-export function resourceStateLabel(state: TeamCredentialResourceState): string {
-    switch (state) {
-        case 'available':
-            return t('teams.credentials.state.available');
-        case 'resource_unavailable':
-            return t('teams.credentials.state.disabled');
-        case 'resource_corrupt':
-        case 'source_unavailable':
-            return t('teams.credentials.errors.sourceMissing');
-        case 'broker_unavailable':
-            return t('teams.credentials.errors.brokerUnavailable');
-        case 'update_required':
-            return t('teams.unavailable.updateRequired');
-        case 'policy_denied':
-            return t('teams.credentials.forbidden');
-        case 'limit_reached':
-            return t('teams.credentials.limits.reached');
-    }
 }
 
 export function sessionUsePolicyLabel(policy: TeamCredentialSessionUsePolicyV1): string {
@@ -238,13 +219,17 @@ export function sessionUsePolicyLabel(policy: TeamCredentialSessionUsePolicyV1):
  * checks the same capability before offering them.
  */
 function resourceRowFacts(
-    resource: TeamCredentialResourceSummaryV1,
+    resource: TeamCredentialResourceSummaryV1 | TeamCredentialResourceCatalogEntryV1,
 ): Readonly<{ identity: readonly string[]; state: string }> {
+    const administration = 'capabilities' in resource ? resource : null;
+    const recipientDelivery = 'allowedRoutes' in resource ? recipientDeliveryMode(resource) : null;
     const identity = [
-        sourceKindLabel(resource.source ?? resource.sourcePresentation),
-        resource.capabilities.manageAudience ? resourceDeliverySummary(resource) : null,
+        sourceKindLabel(administration?.source ?? resource.sourcePresentation),
+        administration
+            ? administration.capabilities.manageAudience ? resourceDeliverySummary(administration) : null
+            : recipientDelivery ? deliveryModeLabel(recipientDelivery) : null,
     ].filter((part): part is string => part !== null && part !== '');
-    return { identity, state: resourceStateLabel(resourceState(resource)) };
+    return { identity, state: resourceStateLabel(resource.readiness, administration?.sourceOwnerDisplayName) };
 }
 
 /**
@@ -256,7 +241,7 @@ function resourceRowFacts(
  * clause so the name stays a name rather than a recital of the subtitle.
  */
 export function resourceAccessibilityLabel(
-    resource: TeamCredentialResourceSummaryV1,
+    resource: TeamCredentialResourceSummaryV1 | TeamCredentialResourceCatalogEntryV1,
     // The Home's per-resource `capabilities` is the one viewer-authority gate;
     // a caller cannot widen or narrow what this viewer was told.
     options?: Readonly<{ audienceKnown?: boolean }>,
@@ -268,12 +253,12 @@ export function resourceAccessibilityLabel(
 
 /**
  * The complete list-row projection, rendered without interpreting authority.
- * Every fact comes from the one Home list answer; source internals and raw IDs
+ * Every fact comes from the Home's administration or recipient projection; source internals and raw IDs
  * are intentionally absent even when the source custodian can edit them on the
  * detail route.
  */
 export function resourceAdministrationSummaryLines(
-    resource: TeamCredentialResourceSummaryV1,
+    resource: TeamCredentialResourceSummaryV1 | TeamCredentialResourceCatalogEntryV1,
 ): readonly string[] {
     const facts = resourceRowFacts(resource);
     // A usable resource says nothing about its state: only a state that needs someone earns a line.
@@ -289,9 +274,9 @@ export function resourceAdministrationSummaryLines(
  * a row out from under someone who is reaching for it. Ties fall back to the
  * resource id so two identically named resources still have a stable order.
  */
-export function orderTeamCredentialResources(
-    resources: readonly TeamCredentialResourceSummaryV1[],
-): readonly TeamCredentialResourceSummaryV1[] {
+export function orderTeamCredentialResources<T extends Pick<TeamCredentialResourceSummaryV1, 'id' | 'displayName'>>(
+    resources: readonly T[],
+): readonly T[] {
     return [...resources].sort((left, right) => {
         const byName = left.displayName.localeCompare(right.displayName);
         return byName !== 0 ? byName : left.id.localeCompare(right.id);
@@ -420,6 +405,8 @@ export function recoveryDestinationIsNavigable(destination: TeamCredentialRecove
  * Codes this domain does not own fall back to the shared Team vocabulary.
  */
 export function credentialFailureMessage(failure: HomeDomainFailure<string>): string {
+    const reconnect = teamCredentialReconnectPresentation(failure.code);
+    if (reconnect) return reconnect.message;
     switch (failure.code) {
         case 'resource_changed':
             return t('teams.credentials.edit.conflict');

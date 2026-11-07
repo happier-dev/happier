@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1, TeamCredentialResourceCatalogEntryV1Schema, TeamCredentialResourceDiscoveryPageV1Schema } from '@happier-dev/protocol/teams';
 
-import { collectRenderedTestIds, renderScreen, standardCleanup, teamCapabilitiesFixture, teamCredentialResourceFixture, teamCredentialViewerFixture, teamSummaryFixture } from '@/dev/testkit';
+import { collectRenderedTestIds, createDeferred, renderScreen, standardCleanup, teamCapabilitiesFixture, teamCredentialResourceFixture, teamCredentialViewerFixture, teamSummaryFixture } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelpers';
@@ -31,12 +32,13 @@ installHomeGovernanceBoundaries(harness);
 const { resetTeamsSnapshotsForTests } = await import('@/sync/store/teams/teamsSnapshots');
 const { resetTeamsDirectoryEngineForTests } = await import('@/sync/engine/teams/teamsDirectoryEngine');
 const { resetTeamActionClientForTests } = await import('@/sync/ops/teams/teamActionClient');
+// Load the screen after transport boundaries, outside a test's interaction clock.
+const { TeamCredentialsScreen } = await import('./TeamCredentialsScreen');
 
 const TEAM_GET_PATH = '/v1/teams/get';
 const CREDENTIALS_LIST_PATH = '/v1/teams/credential-resources/list';
 
 async function renderCredentials(serverId: string) {
-    const { TeamCredentialsScreen } = await import('./TeamCredentialsScreen');
     return renderScreen(<TeamCredentialsScreen serverId={serverId} teamId="team-1" />);
 }
 
@@ -52,6 +54,7 @@ async function addHome(options?: Readonly<{ credentialResourcesEnabled?: boolean
     harness.answer(serverId, TEAM_GET_PATH, {
         body: teamSummaryFixture({ capabilities: teamCapabilitiesFixture({}) }),
     });
+    harness.answer(serverId, TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1, { body: TeamCredentialResourceDiscoveryPageV1Schema.parse({ resources: [], nextCursor: null, failures: [] }) });
     return serverId;
 }
 
@@ -80,6 +83,67 @@ afterEach(() => {
 });
 
 describe('TeamCredentialsScreen', () => {
+    it.each([
+        { alsoAdministered: false, readiness: { kind: 'source_unavailable', reason: 'connected_service_credential_reconnect_required' } },
+        { alsoAdministered: true, readiness: { kind: 'source_unavailable', reason: 'connected_service_credential_reconnect_required' } },
+        { alsoAdministered: false, readiness: { kind: 'available' } },
+    ] as const)('shows the brokered-only recipient share (state=$readiness.kind, also administered=$alsoAdministered)', async ({ alsoAdministered, readiness }) => {
+        const serverId = await addHome();
+        harness.answer(serverId, CREDENTIALS_LIST_PATH, {
+            body: { resources: [], viewer: teamCredentialViewerFixture({ offerOwnCredential: true }) },
+        });
+        const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
+            id: 'shared-resource', teamId: 'team-1', displayName: 'Shared Codex', resourceRevision: 1,
+            sourcePresentation: teamCredentialResourceFixture().sourcePresentation,
+            readiness,
+            recoveryAction: 'source_owner_action', allowedRoutes: ['brokered'],
+            mayBroker: true, mayReceiveDirect: false, directMaterialState: 'never_delivered',
+            sessionUsePolicy: 'personal_allowed', providerModels: [], connectedServiceSelections: [],
+        });
+        if (alsoAdministered) harness.answer(serverId, CREDENTIALS_LIST_PATH, { body: {
+            resources: [teamCredentialResourceFixture({ id: resource.id, displayName: resource.displayName, readiness: resource.readiness })],
+            viewer: teamCredentialViewerFixture({ offerOwnCredential: true }),
+        } });
+        harness.answer(serverId, TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1, { body: TeamCredentialResourceDiscoveryPageV1Schema.parse({ resources: [resource], nextCursor: null, failures: [] }) });
+        const screen = await renderCredentials(serverId);
+        await waitForTestId(screen, 'team-credentials-row:shared-resource');
+        await waitForTestId(screen, 'team-credentials-share');
+        expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-credentials-empty');
+        const { resourceStateLabel } = await import('./teamCredentialPresentation');
+        if (resource.readiness.kind !== 'available') expect(screen.getTextContent()).toContain(resourceStateLabel(resource.readiness));
+        expect(collectRenderedTestIds(screen.tree.toJSON()).filter(id => id === 'team-credentials-row:shared-resource')).toHaveLength(1);
+        expect(harness.requestsFor(CREDENTIALS_LIST_PATH)).toHaveLength(1);
+        expect(harness.requestsFor(TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1)).toHaveLength(1);
+        screen.pressByTestId('team-credentials-row:shared-resource');
+        expect(routerPush).toHaveBeenCalledWith(`/settings/teams/${serverId}/team-1/credentials/shared-resource`);
+    });
+
+    it('waits for the recipient catalog before claiming empty and preserves a failed read as retryable', async () => {
+        const serverId = await addHome();
+        harness.answer(serverId, CREDENTIALS_LIST_PATH, {
+            body: { resources: [], viewer: teamCredentialViewerFixture({ offerOwnCredential: true }) },
+        });
+        const held = createDeferred<void>();
+        harness.answer(serverId, TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1, {
+            respondAfter: held.promise, body: TeamCredentialResourceDiscoveryPageV1Schema.parse({ resources: [], nextCursor: null, failures: [] }),
+        });
+        const screen = await renderCredentials(serverId);
+        await vi.waitFor(() => expect(harness.requestsFor(TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1)).toHaveLength(1));
+        expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('team-credentials-loading');
+        expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-credentials-empty');
+        held.resolve();
+        await waitForTestId(screen, 'team-credentials-empty');
+
+        const { refreshTeamCredentialResourceCatalog } = await import('@/sync/engine/teams/teamsDirectoryEngine');
+        harness.answer(serverId, TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1, { throwError: new Error('offline') });
+        await refreshTeamCredentialResourceCatalog({ serverId, accountId: 'account-ada' }, { serverId, teamId: 'team-1' });
+        await waitForTestId(screen, 'team-credentials-error');
+        expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-credentials-empty');
+        harness.answer(serverId, TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1, { body: TeamCredentialResourceDiscoveryPageV1Schema.parse({ resources: [], nextCursor: null, failures: [] }) });
+        await screen.pressByTestIdAsync('team-credentials-retry');
+        await waitForTestId(screen, 'team-credentials-empty');
+    });
+
     it('renders each resource from the one list answer and opens it by its exact address', async () => {
         const serverId = await addHome();
         harness.answer(serverId, CREDENTIALS_LIST_PATH, {

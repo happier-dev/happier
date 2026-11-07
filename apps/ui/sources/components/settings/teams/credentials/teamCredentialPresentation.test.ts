@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
 import { teamCredentialResourceFixture } from '@/dev/testkit';
-import { TeamCredentialUsageQueryInputV1Schema } from '@happier-dev/protocol/teams';
+import { TeamCredentialResourceCatalogEntryV1Schema, TeamCredentialUsageQueryInputV1Schema } from '@happier-dev/protocol/teams';
 
 import {
     audienceSummary,
     brokerPlacementLabel,
     orderTeamCredentialResources,
     resourceAccessibilityLabel,
+    resourceAdministrationSummaryLines,
     resourceDeliverySummary,
     resourceState,
     resourceStateLabel,
@@ -19,6 +20,19 @@ import {
 } from './teamCredentialPresentation';
 
 describe('teamCredentialPresentation', () => {
+    it('presents recipient-only reconnect readiness without requiring manager-private fields or models', () => {
+        const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
+            id: 'shared-resource', teamId: 'team-1', displayName: 'Shared Codex', resourceRevision: 1,
+            sourcePresentation: teamCredentialResourceFixture().sourcePresentation,
+            readiness: { kind: 'source_unavailable', reason: 'connected_service_credential_reconnect_required' },
+            recoveryAction: 'source_owner_action', allowedRoutes: ['brokered'], mayBroker: true,
+            mayReceiveDirect: false, directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed',
+            providerModels: [], connectedServiceSelections: [],
+        });
+        expect(resourceAdministrationSummaryLines(resource)).toContain(resourceStateLabel(resource.readiness));
+        expect(resourceAccessibilityLabel(resource)).toContain(resourceStateLabel(resource.readiness));
+    });
+
     it('preserves the explicit Team All epoch and host-local Today bounds', () => {
         const nowMs = new Date(2026, 10, 4, 13, 30).getTime();
         const all = TeamCredentialUsageQueryInputV1Schema.parse({ resourceId: 'resource',
@@ -88,6 +102,17 @@ describe('teamCredentialPresentation', () => {
 
     it('presents a reached limit as the admission state, not as an invalid editor form', () => {
         expect(resourceStateLabel('limit_reached')).toBe('Limit reached');
+    });
+
+    it('retains source reconnect readiness in the resource accessible description', () => {
+        const resource = teamCredentialResourceFixture({ sourceOwnerDisplayName: 'Alice', readiness: {
+            kind: 'source_unavailable', reason: 'connected_service_credential_reconnect_required',
+        } });
+        expect(resourceAccessibilityLabel(resource)).toContain('Connected account needs reconnect');
+        expect(resourceAccessibilityLabel(resource)).toContain('Alice');
+        expect(credentialFailureMessage({ kind: 'invalid', retryable: false,
+            code: 'connected_service_credential_reconnect_required',
+        })).toContain('Ask the source owner');
     });
 
     it('never derives a state from an audience the Home did not disclose', () => {
