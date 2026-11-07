@@ -249,6 +249,12 @@ const ProjectDeploymentsPage = React.memo(
       setSelection({ environmentId: selectionRef.current.environmentId, deploymentId: null });
       navigateEnvironment(next);
     }, [navigateEnvironment, setSelection]);
+    // Project settings lead to each Environment's own Triggers (on its Overview); no Project-wide trigger read.
+    const triggerEnvironments = React.useMemo(() => (collection.snapshot.value?.items ?? [])
+      .map((item) => ({ id: item.environment.id, title: item.title })), [collection.snapshot.value]);
+    const openEnvironmentTriggers = React.useCallback((id: string) => {
+      setSelection({ environmentId: id, deploymentId: null });
+    }, [setSelection]);
     const hostedBack = useProjectPageBack(phone && (environmentId !== null || selection.drafting === true || selection.defaults === true), back);
     // Without a Project bar to host it (the standalone deployments route), the open Environment draws the
     // receipt's same page Back so a phone can return to the list.
@@ -374,7 +380,8 @@ const ProjectDeploymentsPage = React.memo(
         : null;
     const detail =
       selection.defaults ? <ProjectDeploymentDefaultsSettings key={`${props.serverId}:${props.accountId}:${props.sourceId}`}
-        lifetime={props.lifetime} sourceId={props.sourceId} demand={props.demand} /> : draft ?? (environmentId === null ? null : selection.deploymentId ? (
+        lifetime={props.lifetime} sourceId={props.sourceId} demand={props.demand} environments={triggerEnvironments}
+        onOpenEnvironment={openEnvironmentTriggers} /> : draft ?? (environmentId === null ? null : selection.deploymentId ? (
         <DeploymentReceiptDetail
           key={`${environmentId}:${selection.deploymentId}`}
           controller={props.controller}
@@ -409,6 +416,7 @@ const ProjectDeploymentsPage = React.memo(
           lifetime={props.lifetime}
           review={review}
           restore={props.actions?.restore ?? null}
+          setBindings={props.actions?.setBindings ?? null}
           onBack={back}
           onNavigate={(next) => {
             setSelection({ environmentId, deploymentId: null });

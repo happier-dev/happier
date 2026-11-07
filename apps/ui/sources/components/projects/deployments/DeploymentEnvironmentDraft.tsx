@@ -39,6 +39,13 @@ import { deploymentActionRefusalRemedy, deploymentDefinitionLabel } from './depl
 
 import type { createDeploymentActions } from './deploymentActions';
 import { renderDeploymentCreationDefaultsRows } from './DeploymentCreationDefaultsRows';
+import { useDeployHostReadiness } from './EnvironmentMachineChoice';
+import { MachineSetupPlanReview } from '@/components/settings/machines/managed/MachineSetupPlanReview';
+import { ManagedMachineActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { openActionOperationDetail } from '@/components/inbox/actionOperations/openActionOperationDetail';
+import { classifyHomeActionOutcome } from '@/sync/ops/home/homeActionOutcome';
+import { homeDomainFailureCode } from '@/sync/api/home/homeDomainActions';
+import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { useDeploymentPlatformTargets } from './DeploymentPlatformTargetSheet';
 import type { readDeploymentPlatformTargets } from './platformTargetLink';
 import {
@@ -129,6 +136,30 @@ export const DeploymentEnvironmentDraft = React.memo(
       machines[0] ??
       null;
     const branch = ref ?? source?.defaultRef ?? null;
+    // A Compose Environment runs on the chosen Machine: its Docker host setup is planned once per choice, and a
+    // Machine that needs it shows the setup review in place. Saving can wait for it; nothing runs until Apply.
+    const host = useDeployHostReadiness(onPlatform ? null : props.lifetime, onPlatform ? null : chosen?.id ?? null);
+    const [hostApply, setHostApply] = React.useState<Readonly<{ pending: boolean; error: string | null }>>(HOST_APPLY_IDLE);
+    React.useEffect(() => setHostApply(HOST_APPLY_IDLE), [chosen?.id]);
+    const applyHostSetup = async () => {
+      const lifetime = props.lifetime;
+      if (!host.prepared?.ok || !lifetime || hostApply.pending) return;
+      setHostApply({ pending: true, error: null });
+      let result;
+      try {
+        result = await hostSetupExecute.confirmed('machines.setup.apply', host.prepared.input, { surface: 'ui',
+          serverId: lifetime.scope.serverId, expectedAccountId: lifetime.scope.accountId });
+      } catch {
+        setHostApply({ pending: false, error: 'managed_request_failed' });
+        return;
+      }
+      const outcome = classifyHomeActionOutcome(result);
+      if (outcome.kind === 'failed') { setHostApply({ pending: false, error: homeDomainFailureCode(outcome.failure) }); return; }
+      setHostApply(HOST_APPLY_IDLE);
+      if (outcome.kind === 'approval_pending') { props.onApprovalRequested(outcome.artifactId); return; }
+      const output = ManagedMachineActionOutputSchemasV1['machines.setup.apply'].safeParse(outcome.result);
+      if (output.success) openActionOperationDetail({ serverId: lifetime.scope.serverId, operationId: output.data.operationId });
+    };
     const valid =
       name.trim().length > 0 &&
       chosen !== null &&
@@ -372,6 +403,25 @@ export const DeploymentEnvironmentDraft = React.memo(
               />
             )}
           </ItemGroup>
+          {!onPlatform && chosen && host.readiness === 'needsSetup' && host.prepared?.ok ? <>
+            <AttentionBanner
+              testID="project-deployments.draft.hostSetup"
+              tone="warning"
+              title={t('projects.deployments.platformLink.hostNeedsSetup', { machine: machineName(chosen.id) })}
+              description={t('projects.deployments.platformLink.hostSetupBody')}
+              {...(hostApply.error ? { details: [hostApply.error] } : {})}
+              action={{ label: t('projects.deployments.platformLink.hostSetupAction', { machine: machineName(chosen.id) }),
+                onPress: () => { void applyHostSetup(); }, loading: hostApply.pending, disabled: hostApply.pending,
+                display: 'secondary', testID: 'project-deployments.draft.hostSetup.apply' }}
+            />
+            <MachineSetupPlanReview testID="project-deployments.draft.hostSetup.review" prepared={host.prepared}
+              nameOf={machineName} disabled={hostApply.pending} />
+          </> : !onPlatform && chosen && host.readiness === 'unknown' && host.prepared?.ok ? (
+            <ItemGroup>
+              <Item testID="project-deployments.draft.hostUnchecked" mode="info"
+                title={t('projects.deployments.platformLink.hostUnchecked', { machine: machineName(chosen.id) })} />
+            </ItemGroup>
+          ) : null}
           <ItemGroup
             title={t('projects.deployments.whatRunsTitle')}
             description={props.copyFrom ? undefined : onPlatform
@@ -509,6 +559,9 @@ const DATA_COPY_OPTIONS = (): ReadonlyArray<SegmentedChoiceOption<DataCopyChoice
   { id: 'createEmpty', label: t('projects.deployments.copy.dataEmpty'), description: t('projects.deployments.copy.dataEmptyHint') },
   { id: 'restoreBackup', label: t('projects.deployments.copy.dataRestore'), description: t('projects.deployments.copy.dataRestoreHint') },
 ];
+
+const HOST_APPLY_IDLE = Object.freeze({ pending: false, error: null });
+const hostSetupExecute = createFrontDoorActionExecute();
 
 const NO_PLATFORM_TARGETS: ReturnType<typeof readDeploymentPlatformTargets> = [];
 

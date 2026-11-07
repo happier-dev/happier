@@ -39,6 +39,10 @@ type DeploymentPlatformLinkCopy = Readonly<{
   choicesFailed: (params: { platform: string }) => string;
   choicesFailedBody: string;
   connection: string;
+  hostNeedsSetup: (params: { machine: string }) => string;
+  hostSetupBody: string;
+  hostSetupAction: (params: { machine: string }) => string;
+  hostUnchecked: (params: { machine: string }) => string;
 }>;
 
 export const deploymentPlatformLinkTranslations = {
@@ -77,6 +81,10 @@ export const deploymentPlatformLinkTranslations = {
     choicesFailed: ({ platform }) => `Couldn’t read your ${platform} choices`,
     choicesFailedBody: "Check that the connection can see your projects, then retry.",
     connection: "Connection",
+    hostNeedsSetup: ({ machine }) => `${machine} isn’t set up to host deploys yet`,
+    hostSetupBody: "You review every change before anything runs. Saving this environment can wait until then.",
+    hostSetupAction: ({ machine }) => `Set up ${machine}`,
+    hostUnchecked: ({ machine }) => `Couldn’t check whether ${machine} can host deploys`,
   },
   ca: {
     title: ({ name }) => `Desplega ${name} a una plataforma`,
@@ -115,6 +123,10 @@ export const deploymentPlatformLinkTranslations = {
     choicesFailed: ({ platform }) => `No s’han pogut llegir les opcions de ${platform}`,
     choicesFailedBody: "Comprova que la connexió pot veure els teus projectes i torna-ho a provar.",
     connection: "Connexió",
+    hostNeedsSetup: ({ machine }) => `${machine} encara no està preparada per allotjar desplegaments`,
+    hostSetupBody: "Revises cada canvi abans que s’executi res. Desar aquest entorn pot esperar fins aleshores.",
+    hostSetupAction: ({ machine }) => `Prepara ${machine}`,
+    hostUnchecked: ({ machine }) => `No s’ha pogut comprovar si ${machine} pot allotjar desplegaments`,
   },
   de: {
     title: ({ name }) => `${name} auf einer Plattform bereitstellen`,
@@ -152,6 +164,10 @@ export const deploymentPlatformLinkTranslations = {
     choicesFailed: ({ platform }) => `${platform}-Auswahl konnte nicht gelesen werden`,
     choicesFailedBody: "Prüfe, ob die Verbindung deine Projekte sieht, und versuche es erneut.",
     connection: "Verbindung",
+    hostNeedsSetup: ({ machine }) => `${machine} ist noch nicht für Deployments eingerichtet`,
+    hostSetupBody: "Du prüfst jede Änderung, bevor etwas läuft. Das Speichern dieser Umgebung kann so lange warten.",
+    hostSetupAction: ({ machine }) => `${machine} einrichten`,
+    hostUnchecked: ({ machine }) => `Konnte nicht prüfen, ob ${machine} Deployments hosten kann`,
   },
   es: {
     title: ({ name }) => `Desplegar ${name} en una plataforma`,
@@ -190,6 +206,10 @@ export const deploymentPlatformLinkTranslations = {
     choicesFailed: ({ platform }) => `No se pudieron leer las opciones de ${platform}`,
     choicesFailedBody: "Comprueba que la conexión puede ver tus proyectos y vuelve a intentarlo.",
     connection: "Conexión",
+    hostNeedsSetup: ({ machine }) => `${machine} aún no está preparada para alojar despliegues`,
+    hostSetupBody: "Revisas cada cambio antes de que se ejecute nada. Guardar este entorno puede esperar hasta entonces.",
+    hostSetupAction: ({ machine }) => `Preparar ${machine}`,
+    hostUnchecked: ({ machine }) => `No se pudo comprobar si ${machine} puede alojar despliegues`,
   },
   fr: {
     title: ({ name }) => `Déployer ${name} sur une plateforme`,
@@ -228,6 +248,10 @@ export const deploymentPlatformLinkTranslations = {
     choicesFailed: ({ platform }) => `Impossible de lire vos choix ${platform}`,
     choicesFailedBody: "Vérifiez que la connexion voit vos projets, puis réessayez.",
     connection: "Connexion",
+    hostNeedsSetup: ({ machine }) => `${machine} n’est pas encore prête à héberger des déploiements`,
+    hostSetupBody: "Vous examinez chaque changement avant toute exécution. L’enregistrement de cet environnement peut attendre.",
+    hostSetupAction: ({ machine }) => `Préparer ${machine}`,
+    hostUnchecked: ({ machine }) => `Impossible de vérifier si ${machine} peut héberger des déploiements`,
   },
   it: {
     title: ({ name }) => `Distribuisci ${name} su una piattaforma`,
@@ -266,6 +290,10 @@ export const deploymentPlatformLinkTranslations = {
     choicesFailed: ({ platform }) => `Impossibile leggere le scelte di ${platform}`,
     choicesFailedBody: "Controlla che la connessione veda i tuoi progetti, poi riprova.",
     connection: "Connessione",
+    hostNeedsSetup: ({ machine }) => `${machine} non è ancora pronta per ospitare deployment`,
+    hostSetupBody: "Rivedi ogni modifica prima che venga eseguito qualcosa. Il salvataggio di questo ambiente può attendere.",
+    hostSetupAction: ({ machine }) => `Prepara ${machine}`,
+    hostUnchecked: ({ machine }) => `Impossibile verificare se ${machine} può ospitare deployment`,
   },
   ja: {
     title: ({ name }) => `${name} をプラットフォームにデプロイ`,
@@ -303,6 +331,10 @@ export const deploymentPlatformLinkTranslations = {
     choicesFailed: ({ platform }) => `${platform} の選択肢を読み込めませんでした`,
     choicesFailedBody: "接続からプロジェクトが見えることを確認して、もう一度お試しください。",
     connection: "接続",
+    hostNeedsSetup: ({ machine }) => `${machine} はまだデプロイを受け入れる準備ができていません`,
+    hostSetupBody: "実行前にすべての変更を確認できます。この環境の保存はそれまで待てます。",
+    hostSetupAction: ({ machine }) => `${machine} をセットアップ`,
+    hostUnchecked: ({ machine }) => `${machine} がデプロイを受け入れられるか確認できませんでした`,
   },
   pl: {
     title: ({ name }) => `Wdróż ${name} na platformie`,
@@ -339,6 +371,10 @@ export const deploymentPlatformLinkTranslations = {
     choicesFailed: ({ platform }) => `Nie udało się odczytać opcji ${platform}`,
     choicesFailedBody: "Sprawdź, czy połączenie widzi Twoje projekty, i spróbuj ponownie.",
     connection: "Połączenie",
+    hostNeedsSetup: ({ machine }) => `${machine} nie jest jeszcze gotowa do hostowania wdrożeń`,
+    hostSetupBody: "Przeglądasz każdą zmianę, zanim cokolwiek się uruchomi. Zapisanie tego środowiska może poczekać.",
+    hostSetupAction: ({ machine }) => `Skonfiguruj ${machine}`,
+    hostUnchecked: ({ machine }) => `Nie udało się sprawdzić, czy ${machine} może hostować wdrożenia`,
   },
   pt: {
     title: ({ name }) => `Implementar ${name} numa plataforma`,
@@ -376,6 +412,10 @@ export const deploymentPlatformLinkTranslations = {
     choicesFailed: ({ platform }) => `Não foi possível ler suas opções do ${platform}`,
     choicesFailedBody: "Verifique se a conexão vê seus projetos e tente novamente.",
     connection: "Conexão",
+    hostNeedsSetup: ({ machine }) => `${machine} ainda não está pronta para hospedar implantações`,
+    hostSetupBody: "Você revisa cada mudança antes de qualquer execução. Salvar este ambiente pode esperar até lá.",
+    hostSetupAction: ({ machine }) => `Preparar ${machine}`,
+    hostUnchecked: ({ machine }) => `Não foi possível verificar se ${machine} pode hospedar implantações`,
   },
   ru: {
     title: ({ name }) => `Развернуть ${name} на платформе`,
@@ -413,6 +453,10 @@ export const deploymentPlatformLinkTranslations = {
     choicesFailed: ({ platform }) => `Не удалось прочитать варианты ${platform}`,
     choicesFailedBody: "Проверьте, что подключению видны ваши проекты, и повторите.",
     connection: "Подключение",
+    hostNeedsSetup: ({ machine }) => `${machine} ещё не готова принимать развёртывания`,
+    hostSetupBody: "Вы проверяете каждое изменение до запуска. Сохранение этого окружения может подождать.",
+    hostSetupAction: ({ machine }) => `Настроить ${machine}`,
+    hostUnchecked: ({ machine }) => `Не удалось проверить, может ли ${machine} принимать развёртывания`,
   },
   'zh-Hans': {
     title: ({ name }) => `将 ${name} 部署到平台`,

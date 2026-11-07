@@ -25,7 +25,10 @@ import { renderDeploymentDefaultsEditorRows } from './DeploymentCreationDefaults
 import { useDeploymentAccountDefaults } from './useDeploymentAccountDefaults';
 
 /** Project overrides use the existing Source leaf and encrypted Artifact Actions. */
-export function ProjectDeploymentDefaultsSettings(props: Readonly<{ lifetime: ServerAccountScopeLifetime | null; sourceId: string; demand: DeploymentReadDemandV1 }>) {
+export function ProjectDeploymentDefaultsSettings(props: Readonly<{ lifetime: ServerAccountScopeLifetime | null; sourceId: string; demand: DeploymentReadDemandV1;
+    /** This page's Environments: triggers belong to each one, so the Project leads to theirs (ORCH-TOP 11-07 15:13). */
+    environments?: readonly Readonly<{ id: string; title: string }>[];
+    onOpenEnvironment?: (environmentId: string) => void; }>) {
     const { theme } = useUnistyles();
     const { lifetime, sourceId } = props;
     const presented = isDeploymentReadDemandActiveV1(props.demand);
@@ -91,6 +94,12 @@ export function ProjectDeploymentDefaultsSettings(props: Readonly<{ lifetime: Se
         {ownAccount && lifetime ? <ItemGroup><Item testID="project-deployment-defaults.account" title={t('projects.deployments.defaultsEditor.accountLink')}
             icon={<Icon name="sliders-horizontal" size={18} color={theme.colors.text.secondary} />}
             onPress={() => router.push({ pathname: SETTINGS_ROUTES.deployments, params: { serverId: lifetime.scope.serverId } })} /></ItemGroup> : null}
+        {props.environments && props.environments.length > 0 && props.onOpenEnvironment ? <ItemGroup testID="project-deployment-defaults.triggers"
+            title={t('projects.deployments.defaultsEditor.triggersTitle')} description={t('projects.deployments.defaultsEditor.triggersDescription')}>
+            {props.environments.map(environment => <Item key={environment.id} testID={`project-deployment-defaults.triggers.${environment.id}`}
+                title={environment.title} icon={<Icon name="lightning" size={18} color={theme.colors.text.secondary} />}
+                onPress={() => props.onOpenEnvironment?.(environment.id)} />)}
+        </ItemGroup> : null}
         <ItemGroup><Item testID="deployment-defaults.notifications" title={t('projects.deployments.defaultsEditor.alertChannels')}
             icon={<Icon name="bell" size={18} color={theme.colors.text.secondary} />}
             onPress={() => router.push(SETTINGS_ROUTES.notifications)} /></ItemGroup>

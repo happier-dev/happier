@@ -25,6 +25,7 @@ const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMe
 const original = storage.getState();
 const projectPages = import.meta.glob<{ ProjectDeploymentDefaultsSettings: React.ComponentType<{
     lifetime: ServerAccountScopeLifetime | null; sourceId: string; demand: { mounted: boolean; visible: boolean; focused: boolean };
+    environments?: readonly Readonly<{ id: string; title: string }>[]; onOpenEnvironment?: (environmentId: string) => void;
 }> }>('./ProjectDeploymentDefaultsSettings.tsx');
 const environmentPages = import.meta.glob<typeof import('./DeploymentEnvironmentSettingsPanel')>('./DeploymentEnvironmentSettingsPanel.tsx');
 afterEach(() => { standardCleanup(); storage.setState(original, true); router.resetParams(); vi.unstubAllGlobals(); });
@@ -189,5 +190,17 @@ describe('Project deployment defaults', () => {
             await act(async () => retention().props.onCommit('8'));
             expect(account.artifacts.list()).toHaveLength(0);
         } finally { standardCleanup(); context.dispose(); await account.dispose(); }
+    });
+
+    it('leads to each Environment’s own Triggers instead of a Project trigger list', async () => {
+        const { ProjectDeploymentDefaultsSettings } = await projectPages['./ProjectDeploymentDefaultsSettings.tsx']!();
+        const opened: string[] = [];
+        const screen = await renderScreen(<ProjectDeploymentDefaultsSettings lifetime={null} sourceId="source-app"
+            demand={{ mounted: true, visible: true, focused: true }}
+            environments={[{ id: 'env-staging', title: 'Staging' }, { id: 'env-production', title: 'Production' }]}
+            onOpenEnvironment={id => opened.push(id)} />);
+        await screen.pressByTestIdAsync('project-deployment-defaults.triggers.env-production');
+        expect(opened).toEqual(['env-production']);
+        expect(screen.getTextContent()).toContain('Staging');
     });
 });
