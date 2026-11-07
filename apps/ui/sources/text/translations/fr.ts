@@ -7958,6 +7958,7 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
         waitingBody: "Happier vérifiera à nouveau quand le provider devrait accepter des requêtes.",
         readyTitle: "Limite d’utilisation réinitialisée",
         readyBody: "Tu peux reprendre cette session maintenant.",
+        retryAt: ({ time }: { time: string }) => `Happier réessaiera automatiquement à ${time}.`,
         resetCreditSummary: ({ count, expiresAt }: { count: number; expiresAt: string | null }) => {
           const label = count === 1 ? "1 réinitialisation d’usage" : `${count} réinitialisations d’usage`;
           return expiresAt ? `${label} disponibles. La plus proche expire ${expiresAt}.` : `${label} en attente.`;

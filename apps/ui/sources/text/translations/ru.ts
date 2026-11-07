@@ -8567,6 +8567,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
         waitingBody: "Happier проверит снова, когда провайдер, как ожидается, начнет принимать запросы.",
         readyTitle: "Лимит использования сброшен",
         readyBody: "Теперь можно возобновить этот сеанс.",
+        retryAt: ({ time }: { time: string }) => `Happier автоматически повторит попытку в ${time}.`,
         resetCreditSummary: ({ count, expiresAt }: { count: number; expiresAt: string | null }) => {
           const label = count === 1 ? "1 сброс использования" : `${count} сбросов использования`;
           return expiresAt ? `${label} доступен. Ближайший истекает ${expiresAt}.` : `${label} доступен.`;

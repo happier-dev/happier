@@ -461,6 +461,10 @@ const translateUsageLimitRecoveryPresentationKey: SessionUsageLimitRecoveryTrans
         ];
         return t('session.usageLimitRecovery.banner.resetCreditSummary', resetCreditSummaryParams);
     }
+    if (key === 'session.usageLimitRecovery.banner.retryAt') {
+        const [retryAtParams] = params as [SessionUsageLimitRecoveryTranslationParams['session.usageLimitRecovery.banner.retryAt']];
+        return t('session.usageLimitRecovery.banner.retryAt', retryAtParams);
+    }
     return tLoose(key);
 };
 
@@ -5585,7 +5589,9 @@ export function useSessionComposerController({
                 countText: mainPendingCount > 0
                     ? t(queuedAreNextTurnUpdates ? 'session.pendingMessages.updatesWaiting' : 'session.pendingMessages.indicator', { count: mainPendingCount }) : null,
             },
+            usageLimitRecoveryCardShown: visibleUsageLimitRecoveryPresentation !== null,
         }), [
+            visibleUsageLimitRecoveryPresentation,
             providerBindingLine,
             pendingQueueLine,
             mainPendingCount,
@@ -7990,7 +7996,7 @@ export function useSessionComposerController({
                     || composerInputEffects.composerInputLock !== null
                 }
                 onAbort={handleAgentInputAbort}
-                showAbortButton={shouldShowAbortButtonForSessionState(sessionStatus.state)}
+                showAbortButton={shouldShowAbortButtonForSessionState(sessionStatus.state, sessionStatus.actionRequiredReason)}
                 onFileViewerPress={openFileViewer}
                 // Autocomplete configuration
                 autocompleteKinds={SESSION_COMPOSER_SUGGESTION_KINDS}

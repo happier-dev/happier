@@ -77,6 +77,8 @@ export function resolveSessionViewConnectionStatus(input: Readonly<{
      * state as the line, or its size ("2 queued") after an ordinary status.
      */
     pendingQueue?: Readonly<{ line: SessionViewPendingQueueLine | null; countText: string | null }> | null;
+    /** The usage-limit recovery card is on screen and already states the limit and its recovery. */
+    usageLimitRecoveryCardShown?: boolean;
 }>): SessionViewConnectionStatus | null {
     const guard = input.guard?.state ?? null;
     // A restart or a failed account switch is the more urgent fact; otherwise the guard's word leads.
@@ -124,6 +126,12 @@ export function resolveSessionViewConnectionStatus(input: Readonly<{
             isPulsing: false,
             ...(binding.action ? { providerBindingAction: binding.action } : {}),
         };
+    }
+    // The recovery card above the composer is the one place the usage limit is said while it shows.
+    if (input.sessionStatusState === 'usage_limited' && input.usageLimitRecoveryCardShown === true && !restartActive && !input.sessionStatusResuming) {
+        return queueCountText
+            ? { text: queueCountText, color: input.sessionStatusColor, dotColor: input.sessionStatusDotColor, isPulsing: false }
+            : null;
     }
     // Inactive recovery wording explains missing reachability; it must not replace the
     // canonical presenter's more specific failure, current request or process-terminal fact.

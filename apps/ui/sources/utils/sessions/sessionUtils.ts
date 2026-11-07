@@ -337,10 +337,15 @@ function useRuntimeStatusFreshnessRefresh(input: RuntimeStatusFreshnessRefreshIn
     ]);
 }
 
-export function shouldShowAbortButtonForSessionState(state: SessionAwarenessPresentationStateV1): boolean {
+export function shouldShowAbortButtonForSessionState(
+    state: SessionAwarenessPresentationStateV1,
+    actionRequiredReason?: SessionStatus['actionRequiredReason'],
+): boolean {
     // Abort should only be available when there's an in-flight operation or a permission gate.
-    // Idle online sessions are represented as `waiting` today.
-    return state === 'thinking' || state === 'permission_required' || state === 'action_required';
+    // Idle online sessions are represented as `waiting` today. Blocked queued input is action
+    // required with nothing running, so there is nothing to stop.
+    if (state === 'action_required') return actionRequiredReason !== 'blocked_input';
+    return state === 'thinking' || state === 'permission_required';
 }
 
 function resolveGetSessionStatusOptions(options?: GetSessionStatusOptionsInput): GetSessionStatusOptions {

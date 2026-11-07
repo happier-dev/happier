@@ -8224,6 +8224,7 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
         waitingBody: "O Happier verificará novamente quando se espera que o provedor aceite solicitações.",
         readyTitle: "Limite de uso redefinido",
         readyBody: "Você já pode retomar esta sessão.",
+        retryAt: ({ time }: { time: string }) => `O Happier tentará novamente de forma automática às ${time}.`,
         resetCreditSummary: ({ count, expiresAt }: { count: number; expiresAt: string | null }) => {
           const label = count === 1 ? "1 reinício de uso" : `${count} reinícios de uso`;
           return expiresAt ? `${label} disponível. O primeiro expira em ${expiresAt}.` : `${label} disponível.`;

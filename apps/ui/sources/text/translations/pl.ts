@@ -7954,6 +7954,7 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
         waitingBody: "Happier sprawdzi ponownie, gdy dostawca powinien przyjmować żądania.",
         readyTitle: "Limit użycia został zresetowany",
         readyBody: "Możesz teraz wznowić tę sesję.",
+        retryAt: ({ time }: { time: string }) => `Happier automatycznie ponowi próbę o ${time}.`,
         resetCreditSummary: ({ count, expiresAt }: { count: number; expiresAt: string | null }) => {
           const label = count === 1 ? "1 reset użycia" : `${count} resetów użycia`;
           return expiresAt ? `${label} dostępny. Najwcześniej wygasa ${expiresAt}.` : `${label} dostępny.`;

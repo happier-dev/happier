@@ -1379,7 +1379,8 @@ describe('SessionView (direct sessions)', () => {
     expect(banners).toHaveLength(1);
     const banner = banners[0].props;
     expect(banner).toMatchObject({
-      title: 'externalSessions.sharingTranscriptUnavailableTitle',
+      // The Machine that holds this external transcript is named, as the Files pane does.
+      title: 'externalSessions.transcriptLoadFailedFrom',
       body: 'externalSessions.browseAgentUnavailable',
       actionLabel: 'common.retry',
       actionTestID: 'session.externalTranscript.loadIssue.retry',

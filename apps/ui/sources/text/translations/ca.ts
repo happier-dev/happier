@@ -7424,6 +7424,7 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
                 waitingBody: 'Happier ho tornarà a comprovar quan s’esperi que el proveïdor accepti sol·licituds.',
                 readyTitle: 'El límit d’ús s’ha restablert',
                 readyBody: 'Ara pots reprendre aquesta sessió.',
+                retryAt: ({ time }: { time: string }) => `Happier ho tornarà a provar automàticament a les ${time}.`,
                 resetCreditSummary: ({ count, expiresAt }: { count: number; expiresAt: string | null }) => {
                     const label = count === 1 ? '1 restabliment d’ús' : `${count} restabliments d’ús`;
                     return expiresAt ? `${label} disponible. El primer caduca el ${expiresAt}.` : `${label} disponible.`;

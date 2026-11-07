@@ -2142,6 +2142,12 @@ describe('shouldShowAbortButtonForSessionState', () => {
     it('returns true for action_required sessions', async () => {
         const { shouldShowAbortButtonForSessionState } = await import('./sessionUtils');
         expect(shouldShowAbortButtonForSessionState('action_required')).toBe(true);
+        expect(shouldShowAbortButtonForSessionState('action_required', 'request')).toBe(true);
+    });
+
+    it('returns false when action is required only because queued input is blocked: nothing is running', async () => {
+        const { shouldShowAbortButtonForSessionState } = await import('./sessionUtils');
+        expect(shouldShowAbortButtonForSessionState('action_required', 'blocked_input')).toBe(false);
     });
 
     it('returns false for disconnected sessions', async () => {

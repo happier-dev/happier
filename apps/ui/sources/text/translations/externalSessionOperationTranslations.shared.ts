@@ -81,6 +81,8 @@ export const en = {
     sharingImportIncomplete: 'Import in progress or incomplete. Resume the import before sharing.',
     sharingTranscriptUnavailableTitle: 'Transcript unavailable',
     transcriptRetainedRefreshFailedTitle: 'Showing the last known transcript',
+    transcriptLoadFailedFrom: ({ place }: { place: string }) => `Couldn’t load this transcript from ${place}`,
+    transcriptUnreachable: 'Happier can’t reach it from here. Check your connection, then retry.',
     transcriptLoadFailed: 'Happier could not load this transcript.',
     sharingTranscriptUnavailable: 'Transcript unavailable. This legacy linked session has no safe persisted transcript.',
     sharingSharedUpTo: ({ time }: { time: string }) => `Shared up to ${time}`,

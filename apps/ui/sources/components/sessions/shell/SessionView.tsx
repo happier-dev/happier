@@ -45,14 +45,16 @@ import { useSessionExecutionRunsSupported } from "@/hooks/server/useSessionExecu
 import { useEventCallback } from "@/hooks/ui/useEventCallback";
 import { Modal } from "@/modal";
 import { COMPOSER_SETTLED_APPROVAL_PRESENTATIONS, TRANSCRIPT_SETTLED_APPROVAL_PRESENTATIONS } from "@/components/tools/shell/approvals/transcriptSettledApprovalPresentations";
-import { useWorkspaceRefs, storage, useEnabledAutomationsCountForSession, useComposerApprovalArtifactsForSession, useEndpointConnectivity, useIsDataReady, useLocalSetting, useTranscriptApprovalArtifactsForSession, useSessionPendingMessages, useSessionTranscriptIds, useSessionVisibleReadSeq, useSetting, useSyncError } from "@/sync/domains/state/storage";
+import { useWorkspaceRefs, storage, useEnabledAutomationsCountForSession, useComposerApprovalArtifactsForSession, useEndpointConnectivity, useIsDataReady, useLocalSetting, useTranscriptApprovalArtifactsForSession, useSessionPendingMessages, useSessionTranscriptIds, useSessionVisibleReadSeq, useServerScopedMachineLabel, useSetting, useSyncError } from "@/sync/domains/state/storage";
 import type { SessionRouteHydrationState } from "@/sync/domains/session/sessionRouteHydrationState";
 import { readSessionContentAvailability } from "@/sync/domains/session/encryptedContentAvailability";
 import { appendSessionDraftText } from "@/components/sessions/composer/sessionDraftAppendAction";
 import { Session } from "@/sync/domains/state/storageTypes";
 import { readSessionOwnerMetadataView } from "@/sync/domains/session/readSessionOwnerMetadataView";
+import { presentTranscriptLoadIssue } from '@/components/sessions/shell/transcriptLoadIssuePresentation';
+import { useHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
+import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { sync } from "@/sync/sync";
-import type { SessionTranscriptLoadIssue } from "@/sync/store/domains/transcriptLoading";
 import { t, type TranslationKey } from "@/text";
 import { useDeviceType, useIsLandscape, useIsTablet } from "@/utils/platform/responsive";
 import { getSessionName, getSessionStatus } from "@/utils/sessions/sessionUtils";
@@ -558,7 +560,7 @@ const SessionTranscriptContent = React.memo(function SessionTranscriptContent({
     return (
         <>
             {shouldRenderChatTimeline ? (
-                <ExternalTranscriptLoadIssueBanner sessionId={sessionId} retainedTranscriptVisible={hasRetainedTranscript && shouldRenderChatTimelineImmediately} />
+                <ExternalTranscriptLoadIssueBanner sessionId={sessionId} serverId={session.serverId ?? null} machineId={readSessionOwnerMetadataView(session)?.machineId ?? null} retainedTranscriptVisible={hasRetainedTranscript && shouldRenderChatTimelineImmediately} />
             ) : null}
             {/* Who is using the Session's shared window, at the top of the transcript on every device (lab computer HC). */}
             {shouldRenderChatTimeline ? <SessionComputerPresenceLine sessionId={sessionId} serverId={session.serverId ?? null} /> : null}
@@ -597,6 +599,8 @@ type SessionTranscriptPlaceholderProps = Readonly<{
     isForkedSessionV1: boolean;
     isLocallyAttached: boolean;
     pendingMessagesCount: number;
+    /** The queued-input read finished (or failed): the transcript's own pending owner, `useSessionPendingMessages`. */
+    pendingMessagesSettled: boolean;
     restoreSecretKeyColor: string;
     restoreSecretKeyDescriptionColor: string;
     restoreButtonBackgroundColor: string;
@@ -605,35 +609,6 @@ type SessionTranscriptPlaceholderProps = Readonly<{
     onRestoreSecretKeyPress: (() => void) | null;
     activityColor: string;
 }>;
-
-function resolveExternalTranscriptLoadIssueBody(issue: SessionTranscriptLoadIssue): string {
-    if (issue.kind === 'authority_unavailable') {
-        return issue.reason === 'machine_offline'
-            ? t('newSession.machineOfflineInlineBody')
-            : t('externalSessions.sharingTranscriptUnavailable');
-    }
-    if (issue.kind === 'read_failed') {
-        if (issue.errorCode === 'machine_offline') {
-            return t('newSession.machineOfflineInlineBody');
-        }
-        if (issue.errorCode === 'agent_unavailable') {
-            return t('externalSessions.browseAgentUnavailable');
-        }
-        if (issue.errorCode === 'agent_timeout') {
-            return t('externalSessions.browseAgentTimedOut');
-        }
-        if (issue.errorCode === 'agent_error') {
-            return t('externalSessions.browseAgentFailed');
-        }
-    }
-    return t('externalSessions.transcriptLoadFailed');
-}
-
-function isExternalTranscriptLoadIssueRetryable(issue: SessionTranscriptLoadIssue): boolean {
-    if (issue.kind === 'source_discontinuity') return true;
-    if (issue.kind === 'read_failed') return issue.errorCode !== 'invalid_request';
-    return issue.reason === 'machine_offline';
-}
 
 /**
  * Reports one typed transcript-load issue.
@@ -646,12 +621,21 @@ function isExternalTranscriptLoadIssueRetryable(issue: SessionTranscriptLoadIssu
  */
 const ExternalTranscriptLoadIssueBanner = React.memo(function ExternalTranscriptLoadIssueBanner({
     sessionId,
+    serverId,
+    machineId,
     retainedTranscriptVisible = false,
-}: Readonly<{ sessionId: string; retainedTranscriptVisible?: boolean }>) {
+}: Readonly<{ sessionId: string; serverId: string | null; machineId: string | null; retainedTranscriptVisible?: boolean }>) {
     const issue = storage((state) => state.sessionTranscriptLoadIssues[sessionId] ?? null);
     const [retrying, setRetrying] = React.useState(false);
     const retryInFlightRef = React.useRef(false);
-    const retryable = issue ? isExternalTranscriptLoadIssueRetryable(issue) : false;
+    // The same where-and-why context the Files pane gives: the Machine or Home the read could not reach.
+    const machineName = useServerScopedMachineLabel(serverId, machineId);
+    const homeProfile = serverId ? getServerProfileById(serverId) : null;
+    // Only a saved Home has a name to give; an unknown profile would read as the product name.
+    const homeLabel = useHomeDisplayLabel(homeProfile);
+    const homeName = homeProfile ? homeLabel || null : null;
+    const presented = issue ? presentTranscriptLoadIssue(issue, { retainedTranscriptVisible, machineName, homeName }) : null;
+    const retryable = presented?.retryable ?? false;
     const handleRetry = React.useCallback(async () => {
         if (!retryable || retryInFlightRef.current) return;
         retryInFlightRef.current = true;
@@ -670,7 +654,7 @@ const ExternalTranscriptLoadIssueBanner = React.memo(function ExternalTranscript
         }
     }, [retryable, sessionId]);
 
-    if (!issue) return null;
+    if (!issue || !presented) return null;
 
     return (
         <View
@@ -686,10 +670,8 @@ const ExternalTranscriptLoadIssueBanner = React.memo(function ExternalTranscript
             <View style={{ width: '100%', maxWidth: retainedTranscriptVisible ? undefined : 560 }}>
                 <WarningActionBanner
                     testID="session.externalTranscript.loadIssue"
-                    title={retainedTranscriptVisible
-                        ? t('externalSessions.transcriptRetainedRefreshFailedTitle')
-                        : t('externalSessions.sharingTranscriptUnavailableTitle')}
-                    body={resolveExternalTranscriptLoadIssueBody(issue)}
+                    title={presented?.title}
+                    body={presented?.body}
                     actionLabel={retryable ? t('common.retry') : undefined}
                     actionAccessibilityLabel={retryable ? t('common.retry') : undefined}
                     actionTestID={retryable ? 'session.externalTranscript.loadIssue.retry' : undefined}
@@ -709,6 +691,7 @@ const SessionTranscriptPlaceholder = React.memo(function SessionTranscriptPlaceh
     isForkedSessionV1,
     isLocallyAttached,
     pendingMessagesCount,
+    pendingMessagesSettled,
     restoreSecretKeyColor,
     restoreSecretKeyDescriptionColor,
     restoreButtonBackgroundColor,
@@ -778,10 +761,12 @@ const SessionTranscriptPlaceholder = React.memo(function SessionTranscriptPlaceh
     }
 
     if (transcriptLoadIssue) {
-        return <ExternalTranscriptLoadIssueBanner sessionId={sessionId} />;
+        return <ExternalTranscriptLoadIssueBanner sessionId={sessionId} serverId={session.serverId ?? null} machineId={readSessionOwnerMetadataView(session)?.machineId ?? null} />;
     }
 
-    return isLoaded ? (
+    // "No messages yet" is a settled fact only once queued input has been read too: a cold open reads
+    // the queue after the committed transcript, and a queued-only Session was flashing empty first.
+    return isLoaded && pendingMessagesSettled ? (
         <EmptyMessages session={session} />
     ) : (
         <ActivitySpinner size="small" color={activityColor} />
@@ -2050,6 +2035,8 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
     paneScopeId,
     sessionPluginRuntime,
     pendingMessages,
+    pendingMessagesLoaded,
+    pendingReadState,
     externalSessionRuntime,
     externalSessionRuntimePresentation,
     externalSessionIdentityPresentation,
@@ -2492,6 +2479,7 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
             isForkedSessionV1={isForkedSessionV1}
             isLocallyAttached={isLocallyAttached}
             pendingMessagesCount={pendingMessages.length}
+            pendingMessagesSettled={pendingMessagesLoaded || pendingReadState === 'error'}
             restoreSecretKeyColor={theme.colors.text.primary}
             restoreSecretKeyDescriptionColor={theme.colors.text.secondary}
             restoreButtonBackgroundColor={theme.colors.surface.inset}

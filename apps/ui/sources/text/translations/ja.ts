@@ -8422,6 +8422,7 @@ localTailscale: {
         waitingBody: "プロバイダーがリクエストを受け付ける見込みの時刻に、Happier が再確認します。",
         readyTitle: "使用上限がリセットされました",
         readyBody: "このセッションを今すぐ再開できます。",
+        retryAt: ({ time }: { time: string }) => `Happier は ${time} に自動で再試行します。`,
         resetCreditSummary: ({ count, expiresAt }: { count: number; expiresAt: string | null }) => {
           const label = count === 1 ? "使用リセット 1 件" : `使用リセット ${count} 件`;
           return expiresAt ? `${label}が利用可能です。最も早い期限は ${expiresAt} です。` : `${label}が利用可能です。`;

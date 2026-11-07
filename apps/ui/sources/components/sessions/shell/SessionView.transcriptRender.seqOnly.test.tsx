@@ -126,6 +126,8 @@ let messageFixtureIds: readonly string[] | null = null;
 let messageFixtureLoaded: boolean | null = null;
 let messageFixture = createSessionMessagesFixture();
 let pendingFixtureInput: readonly unknown[] | null = null;
+let pendingLoadedState = true;
+let pendingFixtureLoaded: boolean | null = null;
 let pendingFixture: StorageState['sessionPending'][string] = { messages: [], discarded: [], isLoaded: true };
 
 function getStorageStateForTest() {
@@ -145,12 +147,13 @@ function getStorageStateForTest() {
             messagesVersion: messageFixture.messagesVersion + 1,
         });
     }
-    if (pendingFixtureInput !== pendingMessagesState) {
+    if (pendingFixtureInput !== pendingMessagesState || pendingFixtureLoaded !== pendingLoadedState) {
         pendingFixtureInput = pendingMessagesState;
+        pendingFixtureLoaded = pendingLoadedState;
         pendingFixture = {
             messages: pendingMessagesState.map((message) => createPendingMessageFixture(message)),
             discarded: [],
-            isLoaded: true,
+            isLoaded: pendingLoadedState,
         };
     }
     return {
@@ -613,6 +616,7 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
         });
         committedMessagesState = [];
         pendingMessagesState = [];
+        pendingLoadedState = true;
         committedMessagesLoadedState = true;
         transcriptIdsState = [];
         transcriptIdsLoadedState = true;
@@ -911,6 +915,24 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
         }
     });
 
+    it('keeps loading, not "No messages yet", until a cold open has read the queued input', async () => {
+        sessionState.seq = 0;
+        committedMessagesState = [];
+        transcriptIdsState = [];
+        transcriptIdsLoadedState = true;
+        pendingLoadedState = false;
+
+        const loading = await renderSessionView();
+        expect(loading.findAllByType('EmptyMessages')).toHaveLength(0);
+        expect(loading.tree.root.findAllByProps({ accessibilityRole: 'progressbar' })).toHaveLength(1);
+        await loading.unmount();
+
+        pendingLoadedState = true;
+        const settled = await renderSessionView();
+        expect(settled.findAllByType('EmptyMessages')).toHaveLength(1);
+        await settled.unmount();
+    });
+
     it('settles a seq-only transcript read failure on the retry banner instead of a second spinner', async () => {
         committedMessagesLoadedState = false;
         transcriptIdsLoadedState = false;
@@ -926,7 +948,7 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
         expect(screen.findAllByType('ChatList')).toHaveLength(0);
         expect(screen.tree.root.findAllByType(WarningActionBanner)
             .find((banner) => banner.props.testID === 'session.externalTranscript.loadIssue')?.props.title
-        ).toBe('externalSessions.sharingTranscriptUnavailableTitle');
+        ).toBe('externalSessions.transcriptLoadFailedFrom');
 
         await screen.unmount();
     });
@@ -944,7 +966,7 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
 
         expect(screen.tree.root.findAllByType(WarningActionBanner)
             .find((banner) => banner.props.testID === 'session.externalTranscript.loadIssue')?.props.title
-        ).toBe('externalSessions.sharingTranscriptUnavailableTitle');
+        ).toBe('externalSessions.transcriptLoadFailedFrom');
 
         await screen.unmount();
     });

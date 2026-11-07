@@ -800,6 +800,53 @@ describe('sessionUsageLimitRecoveryPresentation', () => {
         })).toBeNull();
     });
 
+    it('presents the daemon’s automatic usage-limit retry as the current state, not an opt-in wait', () => {
+        // The daemon arms a same-Session retry for a non-account usage limit and projects it under
+        // its temporary-throttle fingerprint (`projectTemporaryThrottleRecoveryMetadata`).
+        const issue = SessionRuntimeIssueV1Schema.parse({
+            ...usageLimitIssue, agentId: 'codex',
+            usageLimit: { ...usageLimitIssue.usageLimit, resetAtMs: null, quotaScope: 'unknown' },
+        });
+        const nextCheckAtMs = issue.occurredAt + 3_600_000;
+        const recoveryState = readSessionUsageLimitRecoveryFromMetadata({ sessionUsageLimitRecoveryV1: {
+            v: 1, status: 'waiting',
+            issueFingerprint: 'temporary-throttle:temporary-retry:usage_limit:openai-codex:no-group:profile-1',
+            armedAtMs: issue.occurredAt, resetAtMs: null, nextCheckAtMs, attemptCount: 0, maxAttempts: 0,
+            lastProbeError: null, selectedAuth: { kind: 'profile', serviceId: 'openai-codex', profileId: 'profile-1' },
+        } });
+        expect(recoveryState).not.toBeNull();
+        const params: unknown[] = [];
+        const translate: SessionUsageLimitRecoveryTranslate = (key, ...rest) => {
+            params.push(...rest);
+            return key;
+        };
+        const input = {
+            featureEnabled: true, lastRuntimeIssue: issue, latestTurnStatus: 'failed', recoveryState,
+            checkNowSupported: true, settings: { v: 1, mode: 'ask' }, translate,
+        } as const;
+        const presentation = buildSessionUsageLimitRecoveryPresentation(input);
+
+        // Its identity is the daemon's recovery, so Stop retrying and Retry now reach that recovery.
+        expect(presentation?.issueFingerprint).toBe(recoveryState?.issueFingerprint);
+        expect(presentation?.waiting).toBe(true);
+        expect(presentation?.banner.title).toBe('session.usageLimitRecovery.banner.title');
+        expect(presentation?.banner.body).toBe('session.usageLimitRecovery.banner.retryAt');
+        expect(params).toContainEqual({ time: expect.any(String) });
+        expect(presentation?.banner.mode).toBe('cancel');
+        expect(presentation?.banner.secondaryActions.map((action) => action.kind)).toEqual(['retry_temporary_throttle']);
+        // A usage limit is not an overload: no seconds countdown titled "Model overloaded".
+        expect(presentation?.banner.temporaryThrottle).toBeUndefined();
+        expect(presentation?.statusBadge.label).toBe('session.usageLimitRecovery.status.waiting');
+
+        const offline = buildSessionUsageLimitRecoveryPresentation({ ...input, machineReachable: false });
+        expect(offline?.banner.body).toBe('session.usageLimitRecovery.overloadOffline');
+        expect(offline?.banner.actionsDisabled).toBe(true);
+        // A stopped daemon retry leaves the person's ordinary opt-in recovery.
+        expect(buildSessionUsageLimitRecoveryPresentation({ ...input,
+            recoveryState: recoveryState ? { ...recoveryState, status: 'cancelled', nextCheckAtMs: null } : null,
+        })?.banner.mode).toBe('enable');
+    });
+
     it('keeps the current failed recovery visible when the provider emits its terminal limit notice', () => {
         const presentation = buildSessionUsageLimitRecoveryPresentation({
             featureEnabled: true,

@@ -411,4 +411,23 @@ describe('resolveSessionViewConnectionStatus', () => {
             })?.text).toBe('Stopped by the machine guard');
         });
     });
+
+    it('leaves the usage limit to its recovery card while that card is shown', () => {
+        const usageLimited = { ...baseInput, sessionStatusState: 'usage_limited', sessionStatusText: 'Usage limit reached' } as const;
+        expect(resolveSessionViewConnectionStatus({ ...usageLimited, usageLimitRecoveryCardShown: true })).toBeNull();
+        expect(resolveSessionViewConnectionStatus({ ...usageLimited, usageLimitRecoveryCardShown: true,
+            pendingQueue: { line: null, countText: '1 queued' } })?.text).toBe('1 queued');
+        // Hidden behind its badge, the card no longer says it, so the line does.
+        expect(resolveSessionViewConnectionStatus({ ...usageLimited, usageLimitRecoveryCardShown: false })?.text)
+            .toBe('Usage limit reached');
+    });
+
+    it('leaves a refused start to its "Couldn\'t start" notice: no second Inactive line or Resume', () => {
+        const inactive = { ...baseInput, sessionStatusState: 'disconnected', inactiveStatusText: 'Inactive (resumable)',
+            inactiveResumeAvailable: true } as const;
+        expect(resolveSessionViewConnectionStatus(inactive)).toMatchObject({ text: 'Inactive (resumable)', inactiveAction: 'resume' });
+        expect(resolveSessionViewConnectionStatus({ ...inactive, startFailureNoticeShown: true })).toBeNull();
+        expect(resolveSessionViewConnectionStatus({ ...inactive, startFailureNoticeShown: true,
+            pendingQueue: { line: null, countText: '1 queued' } })).toMatchObject({ text: '1 queued' });
+    });
 });
