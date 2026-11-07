@@ -1,4 +1,4 @@
-import type { Settings } from '@/persistence';
+import { clearServerAccountChangesCursors, updateSettings, type Settings } from '@/persistence';
 import { sanitizeServerIdForFilesystem } from '@/server/serverId';
 
 function deleteKey<T extends Record<string, unknown>>(obj: T | undefined, key: string): T | undefined {
@@ -19,7 +19,6 @@ export function clearServerScopedAuthStateInSettings(settings: Settings, serverI
   const nextReplacementCandidates = deleteKey(settings.machineReplacementCandidatesByServerIdByAccountId, target);
   const nextLastTokenSubs = deleteKey(settings.lastTokenSubByServerId, target);
   const nextMachineConfirmed = deleteKey(settings.machineIdConfirmedByServerByServerId, target);
-  const nextCursors = deleteKey(settings.lastChangesCursorByServerIdByAccountId, target);
 
   return {
     ...settings,
@@ -28,6 +27,11 @@ export function clearServerScopedAuthStateInSettings(settings: Settings, serverI
     machineReplacementCandidatesByServerIdByAccountId: nextReplacementCandidates,
     lastTokenSubByServerId: nextLastTokenSubs,
     machineIdConfirmedByServerByServerId: nextMachineConfirmed,
-    lastChangesCursorByServerIdByAccountId: nextCursors,
   };
+}
+
+export async function clearServerScopedAuthState(serverId: string): Promise<void> {
+  if (!serverId.trim()) return;
+  await clearServerAccountChangesCursors(serverId);
+  await updateSettings(settings => clearServerScopedAuthStateInSettings(settings, serverId));
 }

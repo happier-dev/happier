@@ -65,7 +65,7 @@ describe('doctor snapshot projection', () => {
       writeFileSync(credentialPath, credentialBytes, 'utf8');
 
       vi.resetModules();
-      const { readSettings, readStoredCredentials } = await import('@/persistence');
+      const { readAccountChangesCursors, readSettings, readStoredCredentials } = await import('@/persistence');
       const { buildDoctorRepairReport } = await import('@/diagnostics/doctorRepair/buildDoctorRepairReport');
       const { buildDoctorSnapshotFromInventory } = await import('@/doctor/inv/snapshot');
       const binaryPath = join(homeDir, 'cli-preview', 'current', 'happier');
@@ -73,6 +73,7 @@ describe('doctor snapshot projection', () => {
       // Typed inventory evidence enters the deterministic owner directly; persistence and repair stay real.
       const inventory = {
         settings: await readSettings(),
+        accountChangesCursors: await readAccountChangesCursors(),
         credentials: await readStoredCredentials(),
         daemonStatus: {
           server: {

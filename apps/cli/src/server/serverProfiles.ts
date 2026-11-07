@@ -1,4 +1,4 @@
-import { readSettings, readStoredCredentialsForServerId, updateSettings, type Settings } from '@/persistence';
+import { copyServerAccountChangesCursors, readAccountChangesCursors, readSettings, readStoredCredentialsForServerId, updateSettings, type Settings } from '@/persistence';
 import { deriveServerIdFromName, deriveServerIdFromUrl, sanitizeServerIdForFilesystem } from '@/server/serverId';
 import { isLocalishServerUrl } from '@/server/serverUrlClassification';
 import { createServerUrlComparableKey } from '@happier-dev/protocol/server/urls/serverUrlComparableKey';
@@ -35,7 +35,7 @@ function copyServerScopedEntry<T>(map: Record<string, T> | undefined, sourceId: 
 function hasServerScopedState(settings: Settings, serverId: string): boolean {
   return [settings.machineIdByServerId, settings.machineIdByServerIdByAccountId,
     settings.machineReplacementCandidatesByServerIdByAccountId, settings.lastTokenSubByServerId,
-    settings.machineIdConfirmedByServerByServerId, settings.lastChangesCursorByServerIdByAccountId]
+    settings.machineIdConfirmedByServerByServerId]
     .some((map) => map && Object.prototype.hasOwnProperty.call(map, serverId));
 }
 
@@ -47,7 +47,6 @@ function copyMissingServerScopedState(current: Settings, sourceId: string, targe
     machineReplacementCandidatesByServerIdByAccountId: copyServerScopedEntry(current.machineReplacementCandidatesByServerIdByAccountId, sourceId, targetId),
     lastTokenSubByServerId: copyServerScopedEntry(current.lastTokenSubByServerId, sourceId, targetId),
     machineIdConfirmedByServerByServerId: copyServerScopedEntry(current.machineIdConfirmedByServerByServerId, sourceId, targetId),
-    lastChangesCursorByServerIdByAccountId: copyServerScopedEntry(current.lastChangesCursorByServerIdByAccountId, sourceId, targetId),
   };
 }
 
@@ -80,10 +79,13 @@ async function maybeAdoptDerivedServerProfileState(params: Readonly<{
     if (!existsSync(sourceKeyPath)) continue;
     try {
       await updateSettings(async (current) => {
-        if (hasServerScopedState(current, params.targetServerId)) return current;
+        const cursors = await readAccountChangesCursors();
+        if (hasServerScopedState(current, params.targetServerId)
+          || Object.prototype.hasOwnProperty.call(cursors, params.targetServerId)) return current;
         await mkdir(targetDir, { recursive: true, mode: 0o700 });
         await copyFile(sourceKeyPath, targetKeyPath);
         await chmod(targetKeyPath, 0o600).catch(() => {});
+        await copyServerAccountChangesCursors(candidateId, params.targetServerId);
         return copyMissingServerScopedState(current, candidateId, params.targetServerId);
       });
       return;

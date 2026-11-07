@@ -51,7 +51,6 @@ export function createDaemonSettingsFixture(options: {
     machineIdByServerIdByAccountId: options.machineIdByServerIdByAccountId ?? {},
     machineIdConfirmedByServerByServerId: options.machineIdConfirmedByServerByServerId ?? {},
     lastTokenSubByServerId: options.lastTokenSubByServerId ?? {},
-    lastChangesCursorByServerIdByAccountId: {},
   }
 }
 

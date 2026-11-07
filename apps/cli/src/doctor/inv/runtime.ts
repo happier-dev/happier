@@ -1,5 +1,5 @@
 import { readDaemonStatusSnapshot } from '@/daemon/statusSnapshot';
-import { readSettings, readStoredCredentials } from '@/persistence';
+import { readAccountChangesCursors, readSettings, readStoredCredentials, type AccountChangesCursors } from '@/persistence';
 import { daemonPost } from '@/daemon/controlHttp';
 import { DoctorSnapshotResourceVitalsSchema, type DoctorSnapshotResourceVitals } from '@happier-dev/protocol/diagnostics/doctorSnapshot';
 
@@ -10,6 +10,7 @@ import { readDoctorWarnings } from './warnings';
 
 export type DoctorRuntimeInventory = Readonly<{
   settings: Awaited<ReturnType<typeof readSettings>>;
+  accountChangesCursors?: AccountChangesCursors;
   credentials: Awaited<ReturnType<typeof readStoredCredentials>>;
   daemonStatus: Awaited<ReturnType<typeof readDaemonStatusSnapshot>> | undefined;
   installations: Awaited<ReturnType<typeof readDoctorInstallations>>;
@@ -20,13 +21,14 @@ export type DoctorRuntimeInventory = Readonly<{
 }>;
 
 export async function readDoctorRuntimeInventory(): Promise<DoctorRuntimeInventory> {
-  const [settings, credentials, daemonStatus, installations, services, localRelays] = await Promise.all([
+  const [settings, credentials, daemonStatus, installations, services, localRelays, accountChangesCursors] = await Promise.all([
     readSettings(),
     readStoredCredentials(),
     readDaemonStatusSnapshot().catch(() => undefined),
     readDoctorInstallations(),
     readDoctorServices(),
     readDoctorRelays().catch(() => ({ relays: [] })),
+    readAccountChangesCursors(),
   ]);
 
   const warnings = await readDoctorWarnings({
@@ -37,6 +39,7 @@ export async function readDoctorRuntimeInventory(): Promise<DoctorRuntimeInvento
 
   return {
     settings,
+    accountChangesCursors,
     credentials,
     daemonStatus,
     installations,

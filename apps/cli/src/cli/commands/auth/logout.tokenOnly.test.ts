@@ -1,5 +1,10 @@
 import { accountSettingsParse } from '@happier-dev/protocol';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
+
+const settingsFixture = vi.hoisted(() => ({ homeDir: '' }));
 
 const {
   clearCredentialsMock,
@@ -8,7 +13,6 @@ const {
   rmSyncMock,
   stopDaemonMock,
   stopAllDaemonsBestEffortMock,
-  updateSettingsMock,
 } = vi.hoisted(() => ({
   clearCredentialsMock: vi.fn(async () => undefined),
   isDaemonStopIncompleteErrorMock: vi.fn((error: unknown) => (
@@ -23,7 +27,6 @@ const {
   rmSyncMock: vi.fn(),
   stopDaemonMock: vi.fn(async () => ({ status: 'stopped' as const, method: 'graceful' as const })),
   stopAllDaemonsBestEffortMock: vi.fn(async () => undefined),
-  updateSettingsMock: vi.fn(async (_mutate: unknown) => undefined),
 }));
 
 vi.mock('node:fs', async (importOriginal) => ({
@@ -43,16 +46,17 @@ vi.mock('node:readline', async () => {
   };
 });
 
-vi.mock('@/persistence', () => ({
+vi.mock('@/persistence', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/persistence')>()),
   clearCredentials: () => clearCredentialsMock(),
   readStoredCredentials: () => readStoredCredentialsMock(),
-  updateSettings: (mutate: unknown) => updateSettingsMock(mutate),
 }));
 
 vi.mock('@/configuration', () => ({
   configuration: {
     activeServerId: 'plain-server',
-    happyHomeDir: '/tmp/happier-logout-token-only-test',
+    get happyHomeDir() { return settingsFixture.homeDir; },
+    get settingsFile() { return join(settingsFixture.homeDir, 'settings.json'); },
   },
 }));
 
@@ -65,11 +69,8 @@ vi.mock('@/daemon/multiDaemon', () => ({
   stopAllDaemonsBestEffort: () => stopAllDaemonsBestEffortMock(),
 }));
 
-vi.mock('./clearServerScopedAuthState', () => ({
-  clearServerScopedAuthStateInSettings: (settings: unknown) => settings,
-}));
-
 import { handleAuthLogout } from './logout';
+import { readAccountChangesCursors, readSettings } from '@/persistence';
 import {
   getActiveAccountSettingsSnapshot,
   resetActiveAccountSettingsSnapshotForTests,
@@ -77,7 +78,16 @@ import {
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
 describe('happier auth logout token-only authentication', () => {
-  afterEach(() => {
+  beforeEach(async () => {
+    settingsFixture.homeDir = await createTempDir('happier-plain-logout-');
+    await writeFile(join(settingsFixture.homeDir, 'settings.json'), JSON.stringify({
+      schemaVersion: 6, onboardingCompleted: true, machineIdByServerId: { 'plain-server': 'machine' },
+      lastChangesCursorByServerIdByAccountId: { 'plain-server': { account: 7 }, other: { account: 9 } },
+    }));
+  });
+
+  afterEach(async () => {
+    await removeTempDir(settingsFixture.homeDir);
     resetActiveAccountSettingsSnapshotForTests();
     isDaemonStopIncompleteErrorMock.mockClear();
     stopDaemonMock.mockReset();
@@ -96,7 +106,8 @@ describe('happier auth logout token-only authentication', () => {
       expect(readStoredCredentialsMock).toHaveBeenCalledTimes(1);
       expect(stopDaemonMock).toHaveBeenCalledTimes(1);
       expect(clearCredentialsMock).toHaveBeenCalledTimes(1);
-      expect(updateSettingsMock).toHaveBeenCalledTimes(1);
+      expect((await readSettings()).machineIdByServerId?.['plain-server']).toBeUndefined();
+      expect(await readAccountChangesCursors()).toEqual({ other: { account: 9 } });
       expect(rmSyncMock).not.toHaveBeenCalled();
       expect(logSpy.mock.calls.flat().join(' ')).not.toContain('Not currently authenticated');
     } finally {
@@ -164,7 +175,7 @@ describe('happier auth logout token-only authentication', () => {
 
       expect(stopAllDaemonsBestEffortMock).toHaveBeenCalledTimes(1);
       expect(rmSyncMock).toHaveBeenCalledExactlyOnceWith(
-        '/tmp/happier-logout-token-only-test',
+        settingsFixture.homeDir,
         { recursive: true, force: true },
       );
       expect(

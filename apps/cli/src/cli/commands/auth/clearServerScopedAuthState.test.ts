@@ -16,7 +16,6 @@ describe('clearServerScopedAuthStateInSettings', () => {
       },
       lastTokenSubByServerId: { cloud: 'a', other: 'b' },
       machineIdConfirmedByServerByServerId: { cloud: true, other: true },
-      lastChangesCursorByServerIdByAccountId: { cloud: { a: 1 }, other: { b: 2 } },
     };
 
     const out = clearServerScopedAuthStateInSettings(input, 'cloud');
@@ -28,7 +27,6 @@ describe('clearServerScopedAuthStateInSettings', () => {
     });
     expect(out.lastTokenSubByServerId).toEqual({ other: 'b' });
     expect(out.machineIdConfirmedByServerByServerId).toEqual({ other: true });
-    expect(out.lastChangesCursorByServerIdByAccountId).toEqual({ other: { b: 2 } });
   });
 
   it('preserves undefined server-scoped maps when they were unset', () => {
@@ -44,7 +42,6 @@ describe('clearServerScopedAuthStateInSettings', () => {
     expect(out.machineReplacementCandidatesByServerIdByAccountId).toBeUndefined();
     expect(out.lastTokenSubByServerId).toBeUndefined();
     expect(out.machineIdConfirmedByServerByServerId).toBeUndefined();
-    expect(out.lastChangesCursorByServerIdByAccountId).toBeUndefined();
   });
 
   it('clears entries using the sanitized server id key', () => {
@@ -55,7 +52,6 @@ describe('clearServerScopedAuthStateInSettings', () => {
       machineIdByServerIdByAccountId: { cloud: { a: 'm1' }, other: { b: 'm2' } },
       lastTokenSubByServerId: { cloud: 'a', other: 'b' },
       machineIdConfirmedByServerByServerId: { cloud: true, other: true },
-      lastChangesCursorByServerIdByAccountId: { cloud: { a: 1 }, other: { b: 2 } },
     };
 
     const out = clearServerScopedAuthStateInSettings(input, 'cloud/unsafe');
@@ -64,6 +60,5 @@ describe('clearServerScopedAuthStateInSettings', () => {
     expect(out.machineIdByServerIdByAccountId).toEqual({ other: { b: 'm2' } });
     expect(out.lastTokenSubByServerId).toEqual({ other: 'b' });
     expect(out.machineIdConfirmedByServerByServerId).toEqual({ other: true });
-    expect(out.lastChangesCursorByServerIdByAccountId).toEqual({ other: { b: 2 } });
   });
 });

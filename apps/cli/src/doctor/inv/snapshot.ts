@@ -196,7 +196,7 @@ export function buildDoctorSnapshotFromInventory(params: Readonly<{
   const accountId = token ? readAccountIdFromToken(token) : null;
 
   const knownAccountIds: string[] = [];
-  const cursorMapByServer = settings.lastChangesCursorByServerIdByAccountId ?? {};
+  const cursorMapByServer = params.inventory.accountChangesCursors ?? {};
   for (const byAccountId of Object.values(cursorMapByServer)) {
     if (!byAccountId || typeof byAccountId !== 'object') continue;
     for (const knownAccountId of Object.keys(byAccountId)) {

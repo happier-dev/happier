@@ -37,7 +37,7 @@ import { resolveMachineIdForServerFromSettings } from './daemon/resolveMachineId
 import { cleanupAtomicWriteTempFiles, cleanupAtomicWriteTempFilesSync, writeJsonAtomicSync } from './utils/fs/writeJsonAtomicSync';
 import type { MachineReplacementReason } from '@happier-dev/protocol';
 import { RequesterWorkAttributionV1Schema, type RequesterWorkAttributionV1 } from '@happier-dev/protocol/machines/requesterWorkAttributionV1';
-import { reclaimJsonOwnerFileLockSnapshot } from './utils/fs/jsonOwnerFileLock';
+import { reclaimJsonOwnerFileLockSnapshot, withJsonOwnerFileLock } from './utils/fs/jsonOwnerFileLock';
 import { readProcessRunState } from './daemon/processRunState';
 import { decodeJwtPayload } from './cloud/decodeJwtPayload';
 import { readAuthTokenProvenance } from '@happier-dev/protocol/auth/authToken';
@@ -113,6 +113,9 @@ async function cleanupLegacyDaemonStateFilesBestEffort(): Promise<void> {
 // Incremented when Settings structure changes.
 export const SUPPORTED_SCHEMA_VERSION = 6;
 
+const PERSISTENCE_LOCK_TIMEOUT_MS = 5000;
+const PERSISTENCE_STALE_LOCK_TIMEOUT_MS = 10000;
+
 export interface Settings {
   // Schema version for backwards compatibility
   schemaVersion: number
@@ -167,12 +170,6 @@ export interface Settings {
   plugins?: {
     devWatch?: boolean
   }
-  /**
-   * Per-server, per-account reconnect cursor for `/v2/changes`.
-   * Keyed by server id, then server account id.
-   */
-  lastChangesCursorByServerIdByAccountId?: Record<string, Record<string, number>>
-
   // ---- Derived fields (not persisted in v5+) ----
   /**
    * Machine id for the active server (derived from machineIdByServerId).
@@ -180,12 +177,6 @@ export interface Settings {
    */
   machineId?: string
   machineIdConfirmedByServer?: boolean
-  /**
-   * Cursor map for the active server (derived from lastChangesCursorByServerIdByAccountId).
-   * Kept for backwards compatibility with older call sites.
-   */
-  lastChangesCursorByAccountId?: Record<string, number>
-
   /**
    * Device-local daemon memory settings (schema v5+; stored as an opaque JSON payload).
    * Parsed/normalized by `settings/memorySettings.ts`.
@@ -224,7 +215,6 @@ const defaultSettings: Settings = {
   plugins: {
     devWatch: true,
   },
-  lastChangesCursorByServerIdByAccountId: {},
 }
 
 /**
@@ -279,11 +269,6 @@ function migrateSettings(raw: any, fromVersion: number): any {
     } else {
       migrated.machineIdConfirmedByServerByServerId = {};
     }
-
-    const legacyCursor = migrated.lastChangesCursorByAccountId && typeof migrated.lastChangesCursorByAccountId === 'object'
-      ? migrated.lastChangesCursorByAccountId
-      : {};
-    migrated.lastChangesCursorByServerIdByAccountId = { [cloudId]: legacyCursor };
 
     // Remove legacy single-server fields from disk representation.
     if ('machineId' in migrated) delete migrated.machineId;
@@ -433,84 +418,91 @@ function normalizeDaemonState(
   };
 }
 
-export async function readSettings(): Promise<Settings> {
-  if (!existsSync(configuration.settingsFile)) {
-    return { ...defaultSettings }
+async function readSettingsFromDisk(): Promise<Settings> {
+  let content: string;
+  try {
+    content = await readFile(configuration.settingsFile, 'utf8');
+  } catch (error) {
+    // Only a confirmed missing file is safe to initialize with defaults.
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return { ...defaultSettings };
+    throw error;
   }
 
+  const raw = JSON.parse(content)
+
+  // Check schema version (default to 1 if missing)
+  const schemaVersion = raw.schemaVersion ?? 1;
+
+  // Warn if schema version is newer than supported
+  if (schemaVersion > SUPPORTED_SCHEMA_VERSION) {
+    logger.warn(
+      `Settings file uses schema v${schemaVersion}, newer than the supported v${SUPPORTED_SCHEMA_VERSION}. ` +
+      'Update Happier CLI for full functionality.'
+    );
+  }
+
+  // Migrate if needed
+  const migrated = migrateSettings(raw, schemaVersion);
+
+  // Merge with defaults to ensure all required fields exist
+  const merged: Settings = serializeSettingsForDisk({ ...defaultSettings, ...migrated });
+
+  // Derive backwards-compat fields for the *effective* active server (schema v5+).
+  // The configuration layer resolves env overrides (HAPPIER_SERVER_URL/HAPPIER_WEBAPP_URL) into
+  // a deterministic server id; use that id so per-server machine ids work in hermetic
+  // test homes even if settings.json.activeServerId is left at "cloud".
+  const activeServerId = sanitizeServerIdForFilesystem(
+    configuration.activeServerId ?? merged.activeServerId ?? 'cloud',
+    'cloud',
+  );
+  const lastTokenSub =
+    merged.lastTokenSubByServerId && typeof merged.lastTokenSubByServerId === 'object'
+      ? merged.lastTokenSubByServerId[activeServerId]
+      : undefined;
+  const resolvedMachineId = resolveMachineIdForServerFromSettings(
+    merged,
+    activeServerId,
+    typeof lastTokenSub === 'string' && lastTokenSub.trim() ? lastTokenSub.trim() : null,
+  );
+  if (resolvedMachineId) merged.machineId = resolvedMachineId;
+  if (merged.machineIdConfirmedByServerByServerId && typeof merged.machineIdConfirmedByServerByServerId === 'object') {
+    const v = merged.machineIdConfirmedByServerByServerId[activeServerId];
+    if (typeof v === 'boolean') merged.machineIdConfirmedByServer = v;
+  }
+  return merged;
+}
+
+export async function readSettings(): Promise<Settings> {
   try {
-    // Read raw settings
-    const content = await readFile(configuration.settingsFile, 'utf8')
-    const raw = JSON.parse(content)
-
-    // Check schema version (default to 1 if missing)
-    const schemaVersion = raw.schemaVersion ?? 1;
-
-    // Warn if schema version is newer than supported
-    if (schemaVersion > SUPPORTED_SCHEMA_VERSION) {
-      logger.warn(
-        `Settings file uses schema v${schemaVersion}, newer than the supported v${SUPPORTED_SCHEMA_VERSION}. ` +
-        'Update Happier CLI for full functionality.'
-      );
-    }
-
-    // Migrate if needed
-    const migrated = migrateSettings(raw, schemaVersion);
-
-    // Merge with defaults to ensure all required fields exist
-    const merged: Settings = { ...defaultSettings, ...migrated };
-
-    // Derive backwards-compat fields for the *effective* active server (schema v5+).
-    // The configuration layer resolves env overrides (HAPPIER_SERVER_URL/HAPPIER_WEBAPP_URL) into
-    // a deterministic server id; use that id so per-server machine ids/cursors work in hermetic
-    // test homes even if settings.json.activeServerId is left at "cloud".
-    const activeServerId = sanitizeServerIdForFilesystem(
-      configuration.activeServerId ?? merged.activeServerId ?? 'cloud',
-      'cloud',
-    );
-    const lastTokenSub =
-      merged.lastTokenSubByServerId && typeof merged.lastTokenSubByServerId === 'object'
-        ? merged.lastTokenSubByServerId[activeServerId]
-        : undefined;
-    const resolvedMachineId = resolveMachineIdForServerFromSettings(
-      merged,
-      activeServerId,
-      typeof lastTokenSub === 'string' && lastTokenSub.trim() ? lastTokenSub.trim() : null,
-    );
-    if (resolvedMachineId) merged.machineId = resolvedMachineId;
-    if (merged.machineIdConfirmedByServerByServerId && typeof merged.machineIdConfirmedByServerByServerId === 'object') {
-      const v = merged.machineIdConfirmedByServerByServerId[activeServerId];
-      if (typeof v === 'boolean') merged.machineIdConfirmedByServer = v;
-    }
-    if (merged.lastChangesCursorByServerIdByAccountId && typeof merged.lastChangesCursorByServerIdByAccountId === 'object') {
-      const cursorMap = merged.lastChangesCursorByServerIdByAccountId[activeServerId];
-      if (cursorMap && typeof cursorMap === 'object') merged.lastChangesCursorByAccountId = cursorMap;
-    }
-
-    return merged;
-  } catch (error: any) {
-    logger.warn(`Failed to read settings: ${error.message}`);
-    // Return defaults on any error
-    return { ...defaultSettings }
+    return await readSettingsFromDisk();
+  } catch (error) {
+    logger.warn(`Failed to read settings: ${error instanceof Error ? error.message : String(error)}`);
+    return { ...defaultSettings };
   }
 }
 
 function serializeSettingsForDisk(settings: Settings): Settings {
   const schemaVersion = settings.schemaVersion ?? SUPPORTED_SCHEMA_VERSION;
-  if (schemaVersion < 5) return settings;
+  const { lastChangesCursorByAccountId: _legacyCursor,
+    lastChangesCursorByServerIdByAccountId: _legacyScopedCursors, ...withoutCursors } = settings as Settings & {
+      lastChangesCursorByAccountId?: unknown;
+      lastChangesCursorByServerIdByAccountId?: unknown;
+    };
+  if (schemaVersion < 5) return withoutCursors;
 
   // Strip derived/legacy fields so we don't regress back to single-server semantics.
   const {
     machineId: _machineId,
     machineIdConfirmedByServer: _machineIdConfirmedByServer,
-    lastChangesCursorByAccountId: _lastChangesCursorByAccountId,
     ...rest
-  } = settings;
+  } = withoutCursors;
   return rest as Settings;
 }
 
 export async function writeSettings(settings: Settings): Promise<void> {
   await ensureHappyHomeDirExists();
+  // Import predecessor state before a settings publication can retire its source.
+  await ensureAccountChangesCursorsImported();
 
   // Ensure schema version is set before writing
   const settingsWithVersion = serializeSettingsForDisk({
@@ -564,8 +556,8 @@ export async function updateSettings(
 
   // Timing constants
   const LOCK_RETRY_INTERVAL_MS = 100;  // How long to wait between lock attempts
-  const MAX_LOCK_ATTEMPTS = 50;        // Maximum number of attempts (5 seconds total)
-  const STALE_LOCK_TIMEOUT_MS = 10000; // Consider lock stale after 10 seconds
+  const MAX_LOCK_ATTEMPTS = PERSISTENCE_LOCK_TIMEOUT_MS / LOCK_RETRY_INTERVAL_MS;
+  const STALE_LOCK_TIMEOUT_MS = PERSISTENCE_STALE_LOCK_TIMEOUT_MS;
   const EMPTY_LOCK_GRACE_MS = 1000;    // Break empty locks quickly when a process dies before writing its pid
 
   await ensureHappyHomeDirExists();
@@ -638,8 +630,9 @@ export async function updateSettings(
   }
 
   try {
-    // Read current settings with defaults
-    const current = await readSettings() || { ...defaultSettings };
+    // Never turn a failed read or migration into a destructive defaults write.
+    const current = await readSettingsFromDisk();
+    await ensureAccountChangesCursorsImported();
 
     // Apply update
     const updated = await updater(current);
@@ -1103,14 +1096,98 @@ export async function clearMachineId(opts?: Readonly<{
   });
 }
 
+export type AccountChangesCursors = Readonly<Record<string, Readonly<Record<string, number>>>>;
+
+function normalizeAccountChangesCursors(value: unknown): AccountChangesCursors {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value).flatMap(([serverId, byAccount]) => {
+    if (!byAccount || typeof byAccount !== 'object' || Array.isArray(byAccount)) return [];
+    const entries = Object.entries(byAccount).filter((entry): entry is [string, number] =>
+      typeof entry[1] === 'number' && Number.isFinite(entry[1]) && entry[1] >= 0);
+    return entries.length ? [[serverId, Object.fromEntries(entries)]] : [];
+  }));
+}
+
+function readAccountChangesCursorsFile(): AccountChangesCursors | null {
+  try {
+    return normalizeAccountChangesCursors(JSON.parse(readFileSync(join(configuration.happyHomeDir, 'changes-cursors.json'), 'utf8')));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
+function readLegacyAccountChangesCursors(): AccountChangesCursors {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(configuration.settingsFile, 'utf8'));
+  } catch (error) {
+    // Match readSettings' existing malformed-JSON recovery. Unreadable settings
+    // have no usable checkpoint to import and must remain repairable.
+    if (error instanceof SyntaxError || (error as NodeJS.ErrnoException).code === 'ENOENT') return {};
+    throw error;
+  }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const settings = raw as Record<string, unknown>;
+  // 0.2 schema v5/v6 and the pre-v5 single-cloud cursor are import-only inputs.
+  return normalizeAccountChangesCursors(settings.lastChangesCursorByServerIdByAccountId
+    ?? { cloud: settings.lastChangesCursorByAccountId });
+}
+
+async function updateAccountChangesCursors(updater: (current: AccountChangesCursors) => AccountChangesCursors): Promise<AccountChangesCursors> {
+  const observed = readAccountChangesCursorsFile();
+  if (observed && updater(observed) === observed) return observed;
+  await ensureHappyHomeDirExists();
+  const path = join(configuration.happyHomeDir, 'changes-cursors.json');
+  // Reuse the settings persistence owner's existing 5s lock admission / 10s stale
+  // contract. CLI commands and session/daemon processes can update different scopes.
+  return await withJsonOwnerFileLock({ lockPath: `${path}.lock`, timeoutMs: PERSISTENCE_LOCK_TIMEOUT_MS,
+    staleAfterMs: PERSISTENCE_STALE_LOCK_TIMEOUT_MS, errorCode: 'changes_cursor_lock_timeout' }, async () => {
+    const stored = readAccountChangesCursorsFile();
+    const current = stored ?? readLegacyAccountChangesCursors();
+    const next = updater(current);
+    // Persist even an empty initial import: reset/logout must never re-import a
+    // stale predecessor field. Subsequent equal acknowledgements do no writes.
+    if (!stored || next !== current) writeJsonAtomicSync(path, next);
+    return next;
+  });
+}
+
+export async function readAccountChangesCursors(): Promise<AccountChangesCursors> {
+  return readAccountChangesCursorsFile() ?? await updateAccountChangesCursors(current => current);
+}
+
+async function ensureAccountChangesCursorsImported(): Promise<void> {
+  // The file's presence completes the one-way import. Settings publications must
+  // not depend on reading established runtime progress (including a damaged file).
+  if (!existsSync(join(configuration.happyHomeDir, 'changes-cursors.json'))) {
+    await readAccountChangesCursors();
+  }
+}
+
+export async function clearServerAccountChangesCursors(serverId: string): Promise<void> {
+  const target = sanitizeServerIdForFilesystem(serverId, 'cloud');
+  await updateAccountChangesCursors(current => {
+    if (!Object.prototype.hasOwnProperty.call(current, target)) return current;
+    const next = { ...current };
+    delete next[target];
+    return next;
+  });
+}
+
+export async function copyServerAccountChangesCursors(sourceId: string, targetId: string): Promise<void> {
+  await updateAccountChangesCursors(current => {
+    if (Object.prototype.hasOwnProperty.call(current, targetId)
+      || !Object.prototype.hasOwnProperty.call(current, sourceId)) return current;
+    return { ...current, [targetId]: current[sourceId] };
+  });
+}
+
 export async function readAccountChangesCursor(accountId: string): Promise<number> {
   if (!accountId) return 0;
-  const settings = await readSettings();
-  const activeServerId = sanitizeServerIdForFilesystem(
-    configuration.activeServerId ?? settings.activeServerId ?? 'cloud',
-    'cloud',
-  );
-  const cursor = settings.lastChangesCursorByServerIdByAccountId?.[activeServerId]?.[accountId];
+  const byServer = await readAccountChangesCursors();
+  const activeServerId = sanitizeServerIdForFilesystem(configuration.activeServerId, 'cloud');
+  const cursor = byServer[activeServerId]?.[accountId];
   return typeof cursor === 'number' && Number.isFinite(cursor) && cursor >= 0 ? cursor : 0;
 }
 
@@ -1119,29 +1196,21 @@ export async function writeAccountChangesCursor(accountId: string, cursor: numbe
   if (!Number.isFinite(cursor) || cursor < 0) return;
   const next = Math.floor(cursor);
 
-  await updateSettings((settings) => {
-    const activeServerId = sanitizeServerIdForFilesystem(
-      configuration.activeServerId ?? settings.activeServerId ?? 'cloud',
-      'cloud',
-    );
-    const byServer = settings.lastChangesCursorByServerIdByAccountId ?? {};
-    const currentMap = byServer[activeServerId] ?? {};
+  await updateAccountChangesCursors((byServer) => {
+    const activeServerId = sanitizeServerIdForFilesystem(configuration.activeServerId, 'cloud');
+    const currentMap = Object.prototype.hasOwnProperty.call(byServer, activeServerId) ? byServer[activeServerId] : {};
     if (next === 0) {
-      if (!(accountId in currentMap)) return settings;
+      if (!Object.prototype.hasOwnProperty.call(currentMap, accountId)) return byServer;
       const copy = { ...currentMap };
       delete copy[accountId];
       const nextByServer = { ...byServer };
       if (Object.keys(copy).length) nextByServer[activeServerId] = copy;
       else delete nextByServer[activeServerId];
-      return { ...settings, lastChangesCursorByServerIdByAccountId: nextByServer };
+      return nextByServer;
     }
 
-    if (currentMap[accountId] === next) return settings;
-    const nextByServer = { ...byServer, [activeServerId]: { ...currentMap, [accountId]: next } };
-    return {
-      ...settings,
-      lastChangesCursorByServerIdByAccountId: nextByServer,
-    };
+    if (currentMap[accountId] === next) return byServer;
+    return { ...byServer, [activeServerId]: { ...currentMap, [accountId]: next } };
   });
 }
 

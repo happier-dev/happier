@@ -6,14 +6,13 @@ import { cmd, neutral, ok, warn } from '@happier-dev/cli-common/output';
 import {
   clearCredentials,
   readStoredCredentials,
-  updateSettings,
 } from '@/persistence';
 import { configuration } from '@/configuration';
 import { isDaemonStopIncompleteError, stopDaemon } from '@/daemon/controlClient';
 import { stopAllDaemonsBestEffort } from '@/daemon/multiDaemon';
 import { clearActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { promptConfirmYesNo } from '@/terminal/prompts/promptConfirmYesNo';
-import { clearServerScopedAuthStateInSettings } from './clearServerScopedAuthState';
+import { clearServerScopedAuthState } from './clearServerScopedAuthState';
 
 export async function handleAuthLogout(args: string[]): Promise<void> {
   const logoutAll = args.includes('--all');
@@ -68,9 +67,7 @@ export async function handleAuthLogout(args: string[]): Promise<void> {
 
         await clearCredentials();
 
-        await updateSettings((settings) => {
-          return clearServerScopedAuthStateInSettings(settings, targetServerId);
-        });
+        await clearServerScopedAuthState(targetServerId);
 
         // Credential removal is still authoritative for this CLI process, but
         // do not claim logout succeeded while a verified daemon may retain its

@@ -11,7 +11,7 @@ import type { BugReportArtifactPayload, BugReportEnvironmentPayload, DoctorSnaps
 
 import packageJson from '../../package.json';
 import { configuration } from '@/configuration';
-import { readSettings, readStoredCredentials } from '@/persistence';
+import { readAccountChangesCursors, readSettings, readStoredCredentials } from '@/persistence';
 import { collectBugReportMachineDiagnosticsSnapshot, readBugReportLogTail } from '@/diagnostics/bugReportMachineDiagnostics';
 import { collectBugReportMachineDiagnosticsSnapshotForBugReport } from '@/diagnostics/bugReportMachineDiagnosticsRecipe';
 import { normalizeBaseUrl, withAbortTimeout } from '@/diagnostics/httpClient';
@@ -156,7 +156,7 @@ export async function collectBugReportDiagnosticsArtifacts(
     const settings = await readSettings();
     settingsActiveServerId = settings.activeServerId ? String(settings.activeServerId).trim() : null;
 
-    const byServer = settings.lastChangesCursorByServerIdByAccountId ?? {};
+    const byServer = await readAccountChangesCursors();
     const accountIds: string[] = [];
     for (const map of Object.values(byServer)) {
       if (!map || typeof map !== 'object') continue;

@@ -16,7 +16,7 @@ vi.mock('node:readline', async () => {
 });
 
 import { reloadConfiguration } from '@/configuration';
-import { readSettings } from '@/persistence';
+import { readAccountChangesCursors, readSettings } from '@/persistence';
 import { spawnStoppableHttpDaemon, withConfiguredDaemonTestHome, writeDaemonStateFixture } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { reserveEphemeralPort, waitForHttpReady } from '@/testkit/http/portUtils';
 
@@ -108,8 +108,9 @@ describe('happier auth logout', () => {
       const next = await readSettings();
       expect(next.machineIdByServerId?.cloud).toBeUndefined();
       expect(next.machineIdByServerId?.company).toBe('mid_company');
-      expect(next.lastChangesCursorByServerIdByAccountId?.cloud).toBeUndefined();
-      expect(next.lastChangesCursorByServerIdByAccountId?.company?.a).toBe(2);
+      const cursors = await readAccountChangesCursors();
+      expect(cursors.cloud).toBeUndefined();
+      expect(cursors.company?.a).toBe(2);
 
       // Company credentials file content is preserved.
       const companyRaw = JSON.parse(await readFile(join(home, 'servers', 'company', 'access.key'), 'utf-8'));
