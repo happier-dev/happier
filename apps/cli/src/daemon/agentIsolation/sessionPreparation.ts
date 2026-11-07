@@ -4,7 +4,8 @@ import type { CurrentMachineExecutionOriginContext } from '@/api/machine/resolve
 import type { RequesterSessionRuntimeContext } from '../sessionEncryption/requesterSessionCredentials';
 import type { RequesterAccountActionCustody } from '../sessionEncryption/requesterAccountActionProjection';
 import type { PrepareAgentIsolationMember } from '../spawn/prepareDaemonConnectedServices';
-import { selectHostRequesterExecutionIdentity, resolveHostRequesterAgentPlacementForHost, type HostAgentIsolationLaunchContext,
+import { readAgentIsolationNativeIdentity } from './agentIsolationNativeIdentity';
+import { selectHostRequesterExecutionIdentity, assertHostRequesterExecutionAdmissionForHost, resolveHostRequesterAgentPlacementForHost, type HostAgentIsolationLaunchContext,
   type HostRequesterExecutionIdentity, type HostRequesterExecutionIdentityInput } from './agentIsolationLaunchPolicy';
 
 /** Private admitted sources remain distinct: current Account custody never
@@ -33,7 +34,7 @@ export function createSessionAgentIsolationMemberPreparation(options: Readonly<{
     signal.throwIfAborted();
     const birth = requester?.bootstrap;
     const policy = options.agentIsolation?.read();
-    const reviewedMembers = policy?.enabled && policy.memberProvisioning === 'linuxUsersV1';
+    const isolationEnabled = policy?.enabled === true;
     let identity: HostRequesterExecutionIdentity;
     let homeServerIdentityId: string;
     if (!birth) {
@@ -42,10 +43,9 @@ export function createSessionAgentIsolationMemberPreparation(options: Readonly<{
         throw new PluginError({ code: 'agent_isolation_unavailable',
           message: 'Retained Session requester is unavailable', retryable: false });
       }
-      // Preserve the named legacy owner transition. Reviewed member creation
-      // instead requires an admitted fresh source or exact ordinary custody;
-      // a null historical recovery is never current-Account authority.
-      if (!reviewedMembers) return undefined;
+      // Both native placements retain the admitted Account source. A missing
+      // historical Session requester never becomes focused-Account authority.
+      if (!isolationEnabled) return undefined;
       if (!accountSource || accountSource.origin.machineId !== options.machineId
         || !accountSource.origin.serverIdentityId) throw new PluginError({ code: 'agent_isolation_unavailable',
           message: 'Ordinary Session requester custody is unavailable', retryable: false });
@@ -91,12 +91,21 @@ export function createSessionAgentIsolationMemberPreparation(options: Readonly<{
     }
     if (identity.kind !== 'isolated') throw new PluginError({ code: 'agent_isolation_unavailable',
       message: 'Retained Session requester is unavailable', retryable: false });
-    if (resolveHostRequesterAgentPlacementForHost({ identity, snapshot: policy }) !== 'member') return undefined;
+    const placement = resolveHostRequesterAgentPlacementForHost({ identity, snapshot: policy });
+    if (placement === 'daemon') return undefined;
+    const requesterIdentity = { ...identity, homeServerIdentityId };
+    if (placement === 'sharedAgent') {
+      await options.agentIsolation?.qualifyNativeReadiness?.({ requesterIdentity: identity, signal });
+      const snapshot = options.agentIsolation?.read();
+      assertHostRequesterExecutionAdmissionForHost({ identity, snapshot, agentLaunchKind: 'exec' });
+      return { kind: 'sharedAgent', requesterIdentity, snapshot,
+        identity: await readAgentIsolationNativeIdentity(signal) };
+    }
     if (!options.agentIsolation?.prepareMember) throw new PluginError({ code: 'agent_isolation_unavailable',
       message: 'Requester native setup is unavailable', retryable: false });
-    return (await options.agentIsolation.prepareMember({
-      requesterIdentity: { ...identity, homeServerIdentityId }, signal,
-      requesterMachineRole: birth?.savedSecretOperationContext.machineAdmission?.role,
-    })).identity;
+    const native = await options.agentIsolation.prepareMember({
+      requesterIdentity, signal, requesterMachineRole: birth?.savedSecretOperationContext.machineAdmission?.role,
+    });
+    return { kind: 'member', requesterIdentity, snapshot: policy, identity: native.identity, daemonObservation: native.daemonObservation };
   };
 }

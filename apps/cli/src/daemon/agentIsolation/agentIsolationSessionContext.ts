@@ -55,6 +55,7 @@ export function createAgentIsolationSessionContext(input: Readonly<{
     ...(input.managedHappierBinaryPath ? { managedHappierBinaryPath: input.managedHappierBinaryPath } : {}),
     ...(input.resolveRequesterIdentity ? { resolveRequesterIdentity: input.resolveRequesterIdentity } : {}),
     requesterIdentity,
+    ...(input.machine?.qualifyNativeReadiness ? { qualifyNativeReadiness: input.machine.qualifyNativeReadiness } : {}),
     read: () => {
       const snapshot = input.machine?.read();
       if (!snapshot?.enabled || requesterIdentity.kind !== 'isolated') return snapshot;
@@ -105,7 +106,8 @@ export function createAgentIsolationSessionContext(input: Readonly<{
           message: 'Current operation lifetime is unavailable', retryable: false });
         const selected = mcpLaunchMaterial ?? material;
         const operationMaterial = { materializationKey: material.runtimeHome,
-          environment: selected.environment, selectedMaterials: selected.selectedMaterials };
+          environment: selected.environment, selectedMaterials: selected.selectedMaterials,
+          ...(selected.accountSettingsApplication ? { accountSettingsApplication: selected.accountSettingsApplication } : {}) };
         const operation = { machine: input.machine!, managedHappierBinaryPath,
           requesterIdentity: { ...requesterIdentity, homeServerIdentityId: home },
           signal,
@@ -131,7 +133,8 @@ export function createAgentIsolationSessionContext(input: Readonly<{
           launch: { managedHappierBinaryPath, runtimeHome: material.runtimeHome,
             providerEnvironmentKeys: input.providerEnvironmentKeys,
             environment: launchMaterial.environment, selectedEnvironmentKeys: Object.keys(launchMaterial.environment),
-            selectedMaterials: launchMaterial.selectedMaterials, sessionMcpContext } };
+            selectedMaterials: launchMaterial.selectedMaterials, sessionMcpContext,
+            ...(launchMaterial.accountSettingsApplication ? { accountSettingsApplication: launchMaterial.accountSettingsApplication } : {}) } };
       } };
     } } : {}),
   };
@@ -163,8 +166,7 @@ export function createAgentIsolationOperationContext(input: Readonly<{
   input.signal.throwIfAborted();
   const member = input.memberIdentity;
   const identity = member ? requireAgentIsolationMaterialNativeIdentity(member, input.requesterIdentity)
-    : resolveHostRequesterAgentPlacementForHost({ identity: input.requesterIdentity, snapshot: input.machine.read() }) === 'sharedAgent' && 'nativeIdentity' in input
-      ? input.nativeIdentity : unavailable();
+    : 'nativeIdentity' in input ? input.nativeIdentity : unavailable();
   const requesterIdentity = { kind: input.requesterIdentity.kind, requester: input.requesterIdentity.requester,
     separationRequired: input.requesterIdentity.separationRequired,
     ...(input.requesterIdentity.presentPerson ? { presentPerson: true as const } : {}),
@@ -182,16 +184,18 @@ export function createAgentIsolationOperationContext(input: Readonly<{
       if (retained.agentUid !== member.agentUid || retained.agentGid !== member.agentGid) unavailable();
     }
   }
+  const snapshot = input.machine.read();
   const read = (captured?: AgentLaunchOperationMaterialization) => {
     input.signal.throwIfAborted();
     const material = input.readMaterial();
     if (!material || material.materializationKey !== materializationKey || captured && material !== captured) unavailable();
     if (target && input.readTarget?.() !== target) unavailable();
     const projected = target ? { runtimeHome: target.runtimeHome,
-      environment: material.environment, selectedMaterials: material.selectedMaterials }
+      environment: material.environment, selectedMaterials: material.selectedMaterials,
+      ...(material.accountSettingsApplication ? { accountSettingsApplication: material.accountSettingsApplication } : {}) }
       : member ? projectAgentIsolationOperationMaterial(member, material) : unavailable();
     // Finite workers use the selected native home before any Project exists.
-    const machine = withWorkspaceRoot(input.machine.read(), member?.workspaceRoot ?? identity.home);
+    const machine = withWorkspaceRoot(snapshot, member?.workspaceRoot ?? identity.home);
     if (!machine) unavailable();
     return { ...machine, ...(member ? { memberIdentity: member } : {}),
       ...(input.daemonObservation ? { daemonObservation: input.daemonObservation } : {}),
@@ -199,7 +203,8 @@ export function createAgentIsolationOperationContext(input: Readonly<{
       launch: { managedHappierBinaryPath: input.managedHappierBinaryPath, runtimeHome: projected.runtimeHome,
         providerEnvironmentKeys: input.providerEnvironmentKeys,
         environment: projected.environment, selectedEnvironmentKeys: Object.keys(projected.environment),
-        selectedMaterials: projected.selectedMaterials } };
+        selectedMaterials: projected.selectedMaterials,
+        ...(projected.accountSettingsApplication ? { accountSettingsApplication: projected.accountSettingsApplication } : {}) } };
   };
   const onNativeLaunchFailure = member ? memberLaunchFailureRecovery(input) : undefined;
   return { requesterIdentity, ...(onNativeLaunchFailure ? { onNativeLaunchFailure } : {}),
@@ -212,7 +217,6 @@ export function createAgentIsolationOperationContext(input: Readonly<{
       if (requesterIdentity?.kind !== 'isolated') unavailable();
       if (member) requireAgentIsolationMaterialNativeIdentity(member, { ...requesterIdentity,
         homeServerIdentityId: input.requesterIdentity.homeServerIdentityId });
-      else if (resolveHostRequesterAgentPlacementForHost({ identity: requesterIdentity, snapshot: input.machine.read() }) === 'member') unavailable();
       const captured = input.readMaterial();
       if (!captured) unavailable();
       read(captured);

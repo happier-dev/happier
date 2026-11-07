@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
 import { join, resolve } from 'node:path';
+import { chmodSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 
@@ -13,6 +14,42 @@ describe('configuration daemon ownership paths', () => {
     envScope.restore();
     process.argv = [...argvSnapshot];
     vi.resetModules();
+  });
+
+  it.skipIf(process.platform === 'win32')('preserves reviewed home traversal across CLI configuration reload without exposing private state', async () => {
+    const homeDir = createTempDirSync('happier-config-home-traversal-');
+    try {
+      envScope.patch({ HAPPIER_HOME_DIR: homeDir });
+      process.argv = ['node', '/repo/apps/cli/src/index.ts', 'daemon', 'status'];
+      const config = await import('./configuration');
+      // The POSIX ACL execute mask is visible as the group execute mode bit.
+      // Native provisioning separately owns the named-user --x grant.
+      chmodSync(homeDir, 0o710);
+      mkdirSync(config.configuration.logsDir, { recursive: true });
+      chmodSync(config.configuration.logsDir, 0o755);
+      writeFileSync(config.configuration.settingsFile, '{}', { mode: 0o644 });
+
+      config.reloadConfiguration();
+
+      expect(statSync(homeDir).mode & 0o777).toBe(0o710);
+      expect(statSync(config.configuration.logsDir).mode & 0o777).toBe(0o700);
+      expect(statSync(config.configuration.settingsFile).mode & 0o777).toBe(0o600);
+    } finally { removeTempDirSync(homeDir); }
+  });
+
+  it.skipIf(process.platform === 'win32')('preserves reviewed home traversal when publishing CLI settings', async () => {
+    const homeDir = createTempDirSync('happier-settings-home-traversal-');
+    try {
+      envScope.patch({ HAPPIER_HOME_DIR: homeDir });
+      const { configuration } = await import('./configuration');
+      const { readSettings, writeSettings } = await import('./persistence');
+      chmodSync(homeDir, 0o710);
+
+      await writeSettings(await readSettings());
+
+      expect(statSync(homeDir).mode & 0o777).toBe(0o710);
+      expect(statSync(configuration.settingsFile).mode & 0o777).toBe(0o600);
+    } finally { removeTempDirSync(homeDir); }
   });
 
   it('uses the canonical daemon state and lock file when invoked via the public dev shim name', async () => {

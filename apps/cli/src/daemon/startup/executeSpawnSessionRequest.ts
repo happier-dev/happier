@@ -1,3 +1,6 @@
+import { randomUUID } from 'node:crypto';
+import { NativeSessionDirectoryResultSchema } from '@/rpc/handlers/fileSystem/sessionDirectoryEffect';
+import { prepareAdmittedScmEffect } from '@/workspaces/activation/workspaceEffect';
 import type { PersistedTakeoverAdmissionWaiter } from '../spawn/persistedTakeoverAdmission';
 import { configuration } from '@/configuration';
 import type { SpawnFailureLimitsReader } from '@/processes/spawnFailure/classifySpawnFailure';
@@ -141,7 +144,7 @@ type SpawnAccountUsageStore = Parameters<typeof resolveConnectedServiceAuthForSp
 type SpawnPredictiveSwitchGuard = Parameters<typeof resolveConnectedServiceAuthForSpawn>[0]['predictiveSwitchGuard'];
 export type ExecuteSpawnSessionRequestParams = Readonly<{
     prepareAgentIsolationMember?: import('../spawn/prepareDaemonConnectedServices').PrepareAgentIsolationMember;
-    readAgentIsolationEnabled?: () => boolean;
+    prepareNativeFilesystemEffect?: import('@/api/apiMachine').ApiMachineClient['prepareNativeSessionFilesystemEffect'];
     prepareNativeTeamCredentialBinding?: (input: Readonly<{
         sessionId: string;
         created: boolean;
@@ -689,25 +692,8 @@ export async function executeSpawnSessionRequest(
             if (!daemonProviderLaunch.ok) {
                 return await refuseSpawn(daemonProviderLaunch.result);
             }
-            if (options.checkoutCreationDraft) {
-                const target = await prepareSessionCreationTarget({
-                    request: { directory: { kind: 'path', path: directory },
-                        checkoutCreationDraft: options.checkoutCreationDraft,
-                        ...(options.sessionCreationTag ? { sessionCreationTag: options.sessionCreationTag } : {}) },
-                    env: params.processEnv ?? process.env,
-                    signal: preparationSignal ?? params.signal,
-                });
-                if (!target.ok) {
-                    return await refuseSpawn({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-                        errorMessage: target.code });
-                }
-                directory = target.directory;
-                options = { ...options, directory, checkoutCreationDraft: undefined,
-                    attachMetadataIdentityPolicy: 'replace_with_runtime_identity' };
-            }
             const preparedAgentIsolationIdentity = await prepareDaemonAgentIsolationIdentity({
                 hasAgentRuntime: catalogAgentId !== null, prepareAgentIsolationMember: params.prepareAgentIsolationMember,
-                readAgentIsolationEnabled: params.readAgentIsolationEnabled,
                 requesterWorkAttributionV1: options.requesterSessionBootstrap?.attribution ?? options.requesterWorkAttributionV1,
                 signal: preparationSignal ?? params.signal,
                 ...(prepared.directoryKind === 'managed' ? { managedDirectory: {
@@ -715,6 +701,49 @@ export async function executeSpawnSessionRequest(
                 } } : {}),
             });
             if (!preparedAgentIsolationIdentity.ok) return await refuseSpawn(preparedAgentIsolationIdentity.result);
+            let nativeDirectory: Extract<import('@/rpc/handlers/fileSystem/sessionDirectoryEffect').NativeSessionDirectoryResult, { ok: true }> | undefined;
+            if (prepared.directoryKind !== 'managed' && preparedAgentIsolationIdentity.requesterNativeIdentity) {
+                if (!params.prepareNativeFilesystemEffect) throw new Error('Session native filesystem owner is unavailable');
+                const signal = preparationSignal ?? params.signal ?? new AbortController().signal;
+                const scm = options.checkoutCreationDraft
+                    ? await prepareAdmittedScmEffect({ registry: appliedPluginRuntimeLease.registry }) : undefined;
+                const channel = await params.prepareNativeFilesystemEffect({
+                    preparedIdentity: preparedAgentIsolationIdentity.requesterNativeIdentity,
+                    operationKey: randomUUID(), signal,
+                });
+                try {
+                    scm?.assertCurrent();
+                    const target = NativeSessionDirectoryResultSchema.parse(await channel.request({
+                        kind: 'session.directory.prepare', request: { directory: { kind: 'path', path: directory },
+                            ...(options.checkoutCreationDraft ? { checkoutCreationDraft: options.checkoutCreationDraft } : {}),
+                            ...(options.sessionCreationTag ? { sessionCreationTag: options.sessionCreationTag } : {}) },
+                        approvedNewDirectoryCreation: options.approvedNewDirectoryCreation ?? true,
+                        ...(scm ? { scm: scm.effect } : {}),
+                    }));
+                    if (!target.ok) return await refuseSpawn(target.result);
+                    nativeDirectory = target;
+                    directory = target.directory;
+                    options = { ...options, directory, checkoutCreationDraft: undefined,
+                        ...(target.checkoutCreated ? { attachMetadataIdentityPolicy: 'replace_with_runtime_identity' as const } : {}) };
+                } finally { await channel.dispose(); }
+            } else {
+                if (options.checkoutCreationDraft) {
+                    const target = await prepareSessionCreationTarget({
+                        request: { directory: { kind: 'path', path: directory },
+                            checkoutCreationDraft: options.checkoutCreationDraft,
+                            ...(options.sessionCreationTag ? { sessionCreationTag: options.sessionCreationTag } : {}) },
+                        env: params.processEnv ?? process.env,
+                        signal: preparationSignal ?? params.signal,
+                    });
+                    if (!target.ok) {
+                        return await refuseSpawn({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+                            errorMessage: target.code });
+                    }
+                    directory = target.directory;
+                    options = { ...options, directory, checkoutCreationDraft: undefined,
+                        attachMetadataIdentityPolicy: 'replace_with_runtime_identity' };
+                }
+            }
             managedDirectoryOwner = prepared.directoryKind === 'managed'
                 ? createManagedSessionDirectories({ payloadPlacement: preparedAgentIsolationIdentity.payloadPlacement }) : null;
             const managedDirectory = managedDirectoryOwner
@@ -743,7 +772,7 @@ export async function executeSpawnSessionRequest(
                     ...(identityChanged ? { attachMetadataIdentityPolicy: 'replace_with_runtime_identity' } : {}),
                 };
             }
-            const ensuredDirectory = managedDirectory?.ok
+            const ensuredDirectory = nativeDirectory ? { ok: true as const, directoryCreated: nativeDirectory.directoryCreated } : managedDirectory?.ok
                 ? { ok: true as const, directoryCreated: managedDirectory.directoryCreated === true }
                 : await ensureSessionDirectory({
                     directory,

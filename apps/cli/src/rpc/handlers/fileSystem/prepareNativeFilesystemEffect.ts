@@ -1,6 +1,7 @@
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import { env as hostEnvironment } from 'node:process';
+import { randomUUID } from 'node:crypto';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import type { HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import type { AgentLaunchOperationMaterialization } from '@/daemon/agentIsolation/agentLaunchMaterials';
@@ -20,16 +21,19 @@ const cleanupUnconfirmed = (cause?: unknown) => new PluginError({
 export async function prepareNativeFilesystemEffect(input: Readonly<{
   prepareNativeOperation: ApiMachineClient['prepareNativeOperation'];
   identity: Extract<HostRequesterExecutionIdentity, { kind: 'isolated' }>;
+  preparedIdentity?: import('@/daemon/agentIsolation/prepareNativeOperation').PreparedRequesterNativeIdentity;
   operationKey: string;
   configuration: FilesystemEffectConfiguration;
   signal: AbortSignal;
   ingress?: RpcHandlerContext;
+  allowMemberPreparation?: false;
   releaseRequester?: () => Promise<void>;
 }>): Promise<FilesystemEffectChannel> {
-  if (!input.operationKey) throw Object.assign(new Error('Filesystem operation custody is unavailable'),
-    { code: 'filesystem_identity_custody_unavailable' });
+  // Trace-only RPCs have no cancellation operation id. Their admitted requester
+  // still needs a private native material directory for this invocation.
+  const operationKey = input.operationKey || randomUUID();
   let material: AgentLaunchOperationMaterialization | undefined = Object.freeze({
-    materializationKey: input.operationKey, environment: Object.freeze({}), selectedMaterials: Object.freeze([]),
+    materializationKey: operationKey, environment: Object.freeze({}), selectedMaterials: Object.freeze([]),
   });
   let native: Awaited<ReturnType<ApiMachineClient['prepareNativeOperation']>> | undefined;
   let process: SupervisedPluginProcess | undefined;
@@ -72,11 +76,13 @@ export async function prepareNativeFilesystemEffect(input: Readonly<{
   try {
     assertOpen();
     native = await input.prepareNativeOperation({ requesterIdentity: input.identity,
+      ...(input.preparedIdentity ? { preparedIdentity: input.preparedIdentity } : {}),
       readMaterial: () => material,
+      ...(input.allowMemberPreparation === false ? { allowMemberPreparation: false as const } : {}),
       signal: input.signal, ...(input.ingress ? { ingress: input.ingress } : {}) });
     // Existing temp-file owners stay inside this selected operation directory;
     // a shared daemon-created system temp parent may be private to its UID.
-    material = Object.freeze({ materializationKey: input.operationKey, selectedMaterials: Object.freeze([]),
+    material = Object.freeze({ materializationKey: operationKey, selectedMaterials: Object.freeze([]),
       environment: Object.freeze({ TMPDIR: native.materialTarget.runtimeHome,
         TEMP: native.materialTarget.runtimeHome, TMP: native.materialTarget.runtimeHome }) });
     assertOpen();

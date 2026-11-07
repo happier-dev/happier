@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { copyFile, lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
@@ -20,6 +20,7 @@ import { writeFileAtomically, writeJsonAtomic } from '@/utils/fs/writeJsonAtomic
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 import { pluginInstallReviewPrincipalPresentationMatchesDigest } from '@/plugins/daemon/installReviewPrincipal';
 import { asHostProtocolZod } from '@/plugins/runtime/protocolComposableZodAdapter';
+import { classifyPluginModuleFailure, type PluginModuleFailureCause } from '@/plugins/runtime/moduleFailure';
 import {
   PluginStateFileV1Schema,
   PluginStateRecordSchema,
@@ -1031,6 +1032,7 @@ export type RejectedCommittedPluginGeneration = Readonly<{
   pluginId: string;
   immutableGenerationId: string;
   message: string;
+  cause?: PluginModuleFailureCause;
 }>;
 
 export async function readCurrentCommittedPluginGenerations(
@@ -1099,6 +1101,7 @@ export async function readCurrentCommittedPluginGenerations(
         pluginId,
         immutableGenerationId: reference.immutableGenerationId,
         message: error instanceof Error ? error.message : String(error),
+        cause: classifyPluginModuleFailure(error, 'resolve'),
       }));
     }
   }
@@ -1277,6 +1280,7 @@ async function prepareImmutablePluginGenerationWithReuse(input: Readonly<{
   const targetRoot = join(input.paths.generationsDir, record.immutableGenerationId);
   try {
     await verifyPersistedGeneration(targetRoot, record);
+    await makePluginGenerationCodeReadable(targetRoot, record);
     return {
       rootPath: targetRoot,
       reference: PluginRegistryGenerationReferenceSchema.parse({
@@ -1293,7 +1297,8 @@ async function prepareImmutablePluginGenerationWithReuse(input: Readonly<{
   }
 
   const sourceRootPath = await realpath(input.sourceRootPath);
-  await mkdir(input.paths.generationsDir, { recursive: true });
+  await mkdir(input.paths.generationsDir, { recursive: true, mode: 0o755 });
+  if (process.platform !== 'win32') await chmod(input.paths.generationsDir, 0o755);
   const stagingRoot = join(input.paths.generationsDir, `.staging-${record.immutableGenerationId}-${process.pid}-${randomUUID()}`);
   let copiedFileCount = 0;
   let copiedByteCount = 0;
@@ -1360,6 +1365,7 @@ async function prepareImmutablePluginGenerationWithReuse(input: Readonly<{
     }
     const generationRecordPath = join(stagingRoot, 'plugin-generation.v1.json');
     await writeJsonAtomic(generationRecordPath, record);
+    await makePluginGenerationCodeReadable(stagingRoot, record);
     await flushFileDurably(generationRecordPath);
     for (const directory of [...stagedDirectories].sort((left, right) => right.length - left.length)) {
       await flushDirectoryDurably(directory);
@@ -1386,6 +1392,21 @@ async function prepareImmutablePluginGenerationWithReuse(input: Readonly<{
   } finally {
     await rm(stagingRoot, { recursive: true, force: true }).catch(() => undefined);
   }
+}
+
+/** Installation owns code modes; runtime readers retain the admitted source. */
+async function makePluginGenerationCodeReadable(root: string, record: ImmutablePluginGenerationRecord): Promise<void> {
+  if (process.platform === 'win32') return;
+  const directories = new Set<string>([root]);
+  for (const file of record.files) {
+    const path = join(root, ...file.relativePath.split('/'));
+    const stats = await lstat(path);
+    await chmod(path, stats.mode & 0o111 ? 0o755 : 0o644);
+    for (const directory of collectPluginGenerationStagingAncestorDirectories(root, dirname(path))) {
+      directories.add(directory);
+    }
+  }
+  for (const directory of directories) await chmod(directory, 0o755);
 }
 
 export async function prepareImmutablePluginGeneration(input: Readonly<{

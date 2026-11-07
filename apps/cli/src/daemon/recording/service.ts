@@ -3,6 +3,8 @@ import { type BrowserRecordingAvailabilityReason } from '@happier-dev/protocol/b
 import type { BrowserRecordingCaptureSourceV1, BrowserDiagnosticFidelityV1, BrowserEvidenceSessionMediaReferenceV1, BrowserRecordingCapabilities, BrowserRecordingCaptureKindV1, BrowserRenderEngineKindV1, BrowserRecordingOutcomeReasonV1, BrowserRecordingPolicyStateV1, BrowserRecordingRetentionClassV1, BrowserRecordingSessionV1, BrowserSemanticAdapterKindV1, BrowserViewTargetKindV1 } from '@happier-dev/protocol';
 import type { SessionMediaIngestionSource } from '@/session/media/_types';
 import type { SurfaceInputControl } from '../surfaces/inputControl';
+import type { RecordingOperationContext } from './sessionMediaHost';
+import { readRequesterAccountActionContext } from '../sessionEncryption/requesterAccountActionContext';
 
 const RECORDING_ID_PREFIX = 'browser_recording';
 
@@ -66,6 +68,7 @@ export type BrowserRecordingMediaWriter<R extends RecordingSession = BrowserReco
     artifact: BrowserRecordingCapturedArtifact;
     /** The lifecycle owner stopped capture before confidential input could be delivered. */
     captureStopped?: true;
+    context?: RecordingOperationContext;
   }>): Promise<BrowserEvidenceSessionMediaReferenceV1>;
   discardRecording(input: Readonly<{
     recording: R;
@@ -86,7 +89,8 @@ export type BrowserRecordingStorageRecord = Readonly<{
 }>;
 
 export type BrowserRecordingDaemonService<R extends RecordingSession = BrowserRecordingSessionV1, S extends RecordingStartInput = BrowserRecordingRuntimeStartInput, Q = BrowserRecordingTarget> = Readonly<{
-  startRecording(input: S): Promise<BrowserRecordingRuntimeStartResult<R>>;
+  dispose(): Promise<void>;
+  startRecording(input: S, context?: RecordingOperationContext): Promise<BrowserRecordingRuntimeStartResult<R>>;
   stopRecording(input: BrowserRecordingRuntimeStopInput): Promise<BrowserRecordingRuntimeStopResult<R>>;
   cancelRecording(input: BrowserRecordingRuntimeCancelInput): Promise<BrowserRecordingRuntimeTerminalResult<R>>;
   cleanupExpiredRecordings(input: Readonly<{ nowMs: number; target?: Q; beforeEffect?: () => Promise<void> }>): Promise<Readonly<{
@@ -261,6 +265,8 @@ export function createRecordingDaemonService<R extends RecordingSession, S exten
     readonly adapter: BrowserRecordingCaptureAdapter<R>;
     readonly control?: SurfaceInputControl;
     readonly unregisterConfidentialityDrain?: () => void;
+    readonly context?: RecordingOperationContext;
+    readonly releaseCustody?: () => Promise<void>;
     discard?: Promise<void>;
   }>();
 
@@ -268,7 +274,7 @@ export function createRecordingDaemonService<R extends RecordingSession, S exten
     return { status: 'unavailable', reason: createUnavailable('browser_recording_policy_denied', 'Browser recording is held for confidential input.') };
   }
 
-  function putRecording(recording: R, activeForView: boolean): void {
+  async function putRecording(recording: R, activeForView: boolean): Promise<void> {
     if (!sessionsById.has(recording.recordingId)) {
       sessionOrder.push(recording.recordingId);
     }
@@ -280,8 +286,10 @@ export function createRecordingDaemonService<R extends RecordingSession, S exten
       if (activeRecordingIdByView.get(viewKey) === recording.recordingId) {
         activeRecordingIdByView.delete(viewKey);
       }
-      activeAdapterByRecordingId.get(recording.recordingId)?.unregisterConfidentialityDrain?.();
+      const active = activeAdapterByRecordingId.get(recording.recordingId);
+      active?.unregisterConfidentialityDrain?.();
       activeAdapterByRecordingId.delete(recording.recordingId);
+      await active?.releaseCustody?.();
     }
     for (const listener of storageChangeListeners) listener();
   }
@@ -317,7 +325,7 @@ export function createRecordingDaemonService<R extends RecordingSession, S exten
       durationMs: durationFrom(recording, atMs),
       mediaRef: undefined,
     });
-    putRecording(updated, false);
+    await putRecording(updated, false);
     return { status, recording: updated };
   }
 
@@ -351,7 +359,7 @@ export function createRecordingDaemonService<R extends RecordingSession, S exten
       durationMs: recording.durationMs || durationFrom(recording, atMs),
       mediaRef: undefined,
     });
-    putRecording(discarded, false);
+    await putRecording(discarded, false);
     return { status: 'discarded', recording: discarded };
   }
 
@@ -367,7 +375,8 @@ export function createRecordingDaemonService<R extends RecordingSession, S exten
       artifact = await adapter.stop({ recordingId: recording.recordingId, recording });
       // Capture has ended. Decide its cause once, before persistence can outlive a later hold.
       const stopped = { ...recording, outcomeReason: control?.hasConfidentialityHold() ? 'policy_revoked' as const : 'user_stopped' as const };
-      const mediaRef = await input.mediaWriter.persistRecording({ recording: stopped, artifact, captureStopped: true });
+      const mediaRef = await input.mediaWriter.persistRecording({ recording: stopped, artifact, captureStopped: true,
+        context: activeAdapterByRecordingId.get(recording.recordingId)?.context });
       const stoppedAtMs = stopInput.stoppedAtMs ?? now();
       const finalized = parseRecordingSession({
         ...stopped,
@@ -382,7 +391,7 @@ export function createRecordingDaemonService<R extends RecordingSession, S exten
         mediaRef,
         expiresAtMs: stopInput.expiresAtMs,
       });
-      putRecording(finalized, false);
+      await putRecording(finalized, false);
       return { status: 'finalized', recording: finalized };
     } catch {
       if (control?.isObservationHeld()) {
@@ -398,7 +407,7 @@ export function createRecordingDaemonService<R extends RecordingSession, S exten
         durationMs: durationFrom(recording, stopInput.stoppedAtMs ?? now()),
         mediaRef: undefined,
       });
-      putRecording(failed, false);
+      await putRecording(failed, false);
       return { status: 'failed', recording: failed, reason: 'capture_failed' };
     } finally {
       if (artifact?.cleanup) await artifact.cleanup();
@@ -406,6 +415,12 @@ export function createRecordingDaemonService<R extends RecordingSession, S exten
   }
 
   return {
+    async dispose() {
+      for (const recordingId of activeAdapterByRecordingId.keys()) {
+        const recording = readRecording(recordingId);
+        if (recording) await terminalOutcome(recording, 'session_closed', now());
+      }
+    },
     nextExpiryAtMs() {
       let earliest: number | null = null;
       for (const recording of sessionsById.values()) {
@@ -423,7 +438,7 @@ export function createRecordingDaemonService<R extends RecordingSession, S exten
       const result = await discardFinalizedStoredMedia(recording, 'user_discarded', now(), beforeEffect);
       if (result.status === 'unavailable') throw new BrowserRecordingStorageError('browser_recording_media_discard_failed');
     },
-    async startRecording(startInput) {
+    async startRecording(startInput, context) {
       const control = input.resolveInputControl?.(startInput);
       if (control?.isObservationHeld()) return confidentialityUnavailable();
       const activeRecordingId = activeRecordingIdByView.get(input.model.targetKey(startInput));
@@ -495,8 +510,9 @@ export function createRecordingDaemonService<R extends RecordingSession, S exten
           }
         }
       });
-      activeAdapterByRecordingId.set(recordingId, { adapter, control, unregisterConfidentialityDrain });
-      putRecording(recording, true);
+      const releaseCustody = readRequesterAccountActionContext(context?.externalActionExecutionAuthorization)?.retain();
+      activeAdapterByRecordingId.set(recordingId, { adapter, control, unregisterConfidentialityDrain, context, releaseCustody });
+      await putRecording(recording, true);
       const start = async (): Promise<BrowserRecordingRuntimeStartResult<R>> => {
         let adapterStart: BrowserRecordingCaptureAdapterStartResult;
         try {
@@ -525,7 +541,7 @@ export function createRecordingDaemonService<R extends RecordingSession, S exten
           return { status: 'unavailable', reason: adapterStart.reason };
         }
         const started = parseRecordingSession({ ...recording, status: 'recording' });
-        putRecording(started, true);
+        await putRecording(started, true);
         return { status: 'started', recording: started };
       };
       return (control ? await control.observeWhile(start) : await start()) ?? confidentialityUnavailable();
@@ -621,7 +637,7 @@ export function createRecordingDaemonService<R extends RecordingSession, S exten
           stoppedAtMs: recording.stoppedAtMs ?? cleanupInput.nowMs,
           mediaRef: undefined,
         });
-        putRecording(discarded, false);
+        await putRecording(discarded, false);
         discardedRecordingIds.push(recordingId);
       }
       return { discardedRecordingIds, failedRecordingIds };

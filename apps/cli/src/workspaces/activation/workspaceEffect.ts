@@ -48,9 +48,24 @@ export async function prepareWorkspaceCheckoutEffect(input: Readonly<{
     assertCurrent() {},
   };
   if (input.request.source.kind !== 'repository' && input.request.materialization.kind !== 'sync') throw privateProjectCheckoutRefusal('workspace_private_checkout_review_required');
+  const admitted = await prepareAdmittedScmEffect({ registry: input.registry,
+    ...(input.request.source.kind === 'repository' ? { providerId: input.request.source.selector.provider.id } : {}),
+  });
+  return { assertCurrent: admitted.assertCurrent, effect: {
+    request: input.request, workspaceRefId: input.workspaceRefId, workspaceRoot: input.workspaceRoot, ...admitted.effect,
+  } };
+}
+
+export type AdmittedScmEffect = Pick<WorkspaceCheckoutEffect, 'generation' | 'plugins' | 'contributions'>;
+
+/** Captures SCM from the same held, admitted runtime for native checkout. */
+export async function prepareAdmittedScmEffect(input: Readonly<{
+  registry: ResolvedExecutablePluginRuntimeRegistry;
+  providerId?: string;
+}>): Promise<Readonly<{ effect: AdmittedScmEffect; assertCurrent(): void }>> {
   await activateScmRuntimeContributionsOnDemand(input.registry);
   const contributes = input.registry.contributes;
-  const providerId = input.request.source.kind === 'repository' ? input.request.source.selector.provider.id : undefined;
+  const providerId = input.providerId;
   const scmHostingProviders = (contributes.scmHostingProviders ?? []).filter(entry => `${entry.pluginId}/${entry.definition.id}` === providerId);
   const admittedBackendPlugins = new Set([...(input.registry.scmBackendsById?.values() ?? [])].map(entry => entry.pluginId));
   const scmBackends = (contributes.scmBackends ?? []).filter(entry => entry.pluginId && admittedBackendPlugins.has(entry.pluginId));
@@ -63,19 +78,16 @@ export async function prepareWorkspaceCheckoutEffect(input: Readonly<{
     }
   };
   assertCurrent();
-  return { assertCurrent, effect: {
-    request: input.request, workspaceRefId: input.workspaceRefId, workspaceRoot: input.workspaceRoot,
-    generation: input.registry.generation, plugins,
+  return { assertCurrent, effect: { generation: input.registry.generation, plugins,
     contributions: { activationTargets: plugins.map(plugin => plugin.target), scmBackends, scmHostingProviders,
       connectedAccountDescriptors: contributes.connectedAccountDescriptors,
       systemTools: (contributes.systemTools ?? []).filter(entry => entry.pluginId !== undefined && pluginIds.includes(entry.pluginId)),
-    },
-  } };
+    } } };
 }
 
 /** The admitted plugin projection is loaded once in the member process for
  * checkout or retained Sync; SCM never falls back to daemon-owned discovery. */
-export async function createWorkspaceEffectScmRegistry(input: WorkspaceCheckoutEffect, context: WorkspaceCheckoutEffectContext) {
+export async function createWorkspaceEffectScmRegistry(input: AdmittedScmEffect, context: Pick<WorkspaceCheckoutEffectContext, 'connectedAccounts'>) {
   const contributes = createResolvedContributionRegistry(input.contributions);
   const loaded = await loadAdmittedPluginProcessRegistrations(input.plugins, input.generation,
     async () => { throw privateProjectCheckoutRefusal(); }, contributes);

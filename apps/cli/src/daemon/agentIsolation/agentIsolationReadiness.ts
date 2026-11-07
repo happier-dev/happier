@@ -6,11 +6,38 @@ import { dirname, join } from 'node:path';
 import { execFileWithDeadline } from '@happier-dev/cli-common/process';
 import type { MachineAgentIsolationOwnStatusV1, MachineAgentIsolationStatusV1,
   MachineAgentIsolationProbeFailureV1 } from '@happier-dev/protocol/machines/agentIsolationV1';
+import { resolveMachineAgentExecutionPlacementV1 } from '@happier-dev/protocol/machines/agentIsolationV1';
+import type { AgentIsolationEffectDependencies } from './agentIsolationProvisioner';
+import type { HostAgentIsolationLaunchContext } from './agentIsolationLaunchPolicy';
 import type { SessionMcpLocalTransport } from '@/mcp/runtime/sessionMcpLocalTransport';
 import { terminateProcessTree } from '@/processes/terminate/terminateProcessTree';
 import { logger } from '@/ui/logger';
 import { createUnixAgentIdentityLaunch } from './unixAgentIdentityAdapter';
 import { readAgentIsolationNativeIdentity, type AgentIsolationMemberNativeIdentity } from './agentIsolationNativeIdentity';
+
+/** Explicit launch preparation may qualify a successor's unknown shared-user
+ * fact. Reads never call this port, and classified failures remain terminal. */
+export function createAgentIsolationNativeReadinessQualification(input: Readonly<{
+  read: HostAgentIsolationLaunchContext['read'];
+  effects: AgentIsolationEffectDependencies;
+}>): NonNullable<HostAgentIsolationLaunchContext['qualifyNativeReadiness']> {
+  return async ({ requesterIdentity, signal }) => {
+    signal?.throwIfAborted();
+    const snapshot = input.read();
+    const status = snapshot?.status;
+    const effects = input.effects;
+    if (requesterIdentity?.kind !== 'isolated' || !snapshot || resolveMachineAgentExecutionPlacementV1({ policy: snapshot, platform: effects.platform }) !== 'sharedAgent'
+      || status?.kind !== 'unavailable' || status.code !== 'provisioning_unavailable'
+      || status.setup || status.prerequisite || status.probeFailure || !effects.nativeReadiness) return;
+    const roots = effects.readRoots();
+    if (!roots) return;
+    const qualified = await observeAgentIsolationNativeReadiness({ installedCli: effects.installedCli,
+      roots: roots.map(root => root.path), privateRoots: effects.nativeReadiness.privateRoots,
+      system: effects.nativeReadiness.system, signal });
+    signal?.throwIfAborted();
+    await effects.publishStatus(qualified);
+  };
+}
 
 export type AgentIsolationReadinessSystem = Readonly<{ run: typeof execFileWithDeadline }>;
 type Unavailable = Extract<MachineAgentIsolationStatusV1, { kind: 'unavailable' }>;

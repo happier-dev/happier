@@ -2,6 +2,7 @@ import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
 import { readSessionStartupFailurePreview } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { resolveAgentDisplayTitle } from '@/agent/catalog/agentDisplayTitle';
+import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
@@ -13,7 +14,8 @@ import { createProviderRedactionLease } from '@/providers/spawn/redaction';
 import { resolveNativeAgentLaunchEnvironment } from '@/agent/runtime/launchEnvironment';
 import { bindAgentCliLaunchSpec } from '@/packagedRuntime/managedTools/agentCliLaunchSpec';
 import { readAccountLaunchProfiles, readProfileSettingsFromAccountSnapshot } from '@/settings/profiles/readProfilesFromAccountSettings';
-import { resolveLaunchProfileSavedSecretEnvironment } from '../agentRuntime/resolveForegroundProfileSavedSecretEnvironment';
+import { LaunchSecretReferenceOverlayError, createLaunchSecretReferenceOverlayProviderErrorV1,
+  resolveLaunchProfileSavedSecretEnvironment } from '../agentRuntime/resolveForegroundProfileSavedSecretEnvironment';
 import { readConnectedServiceChildSelectionsFromEnv } from '../connectedServices/connectedServiceChildEnvironment';
 import { scopeConnectedAccountSessionPurposeBindingLease } from '../connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import type { ConnectedAccountPurposeBindingOwner } from '../connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
@@ -32,12 +34,12 @@ type ProviderAdmission = Parameters<typeof prepareDaemonProviderLaunch>[0];
 export type InactiveSessionControlLaunchAdmission = Pick<ConnectedAdmission,
   'credentials' | 'api' | 'activeServerDir' | 'connectedServicesMaterializationBaseDir'
   | 'connectedServiceRefreshCoordinator' | 'qualifiedConnectedAccountApi'
-  | 'activatePurposeBindings' | 'processEnv' | 'serverContract' | 'prepareAgentIsolationMember' | 'readAgentIsolationEnabled'
+  | 'activatePurposeBindings' | 'processEnv' | 'serverContract' | 'prepareAgentIsolationMember'
   | 'providerAccountUsageStore' | 'createConnectedServiceLaunchAuthGroupCoordinator' | 'predictiveSwitchGuard'> & Pick<ProviderAdmission,
   'savedSecretOperationContext' | 'providerRuntimeHomeDir' | 'resolveProvidersFeatureEnabled'
   | 'resolveManagedPurposeBindingIntent' | 'readModelProjection'> & Readonly<{
-    agentIsolation?: import('../agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext;
     connectedAccountsOwner?: InactiveSessionControlLaunchScope['connectedAccountsOwner'];
+    agentIsolation?: import('../agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext;
     assertCurrent(): Promise<void>;
     readAccountSettingsSnapshot: NonNullable<ProviderAdmission['readAccountSettingsSnapshot']>;
     readAccountLaunchProfiles?: () => ReturnType<typeof readAccountLaunchProfiles>;
@@ -116,7 +118,7 @@ export async function prepareInactiveSessionControlLaunchScope(
     if (provider.attempt && !('materializeAfterHooks' in provider.attempt)) unavailable();
     await assertCurrent();
     const connected = await prepareDaemonConnectedServices({
-      ...admission, accountSettingsSnapshot: snapshot ?? undefined, options: provider.options,
+      ...admission, signal, accountSettingsSnapshot: snapshot ?? undefined, options: provider.options,
       normalizedExistingSessionId: adapterParams.sessionId, requestedSessionId: '',
       effectiveResume: options.resume ?? '', catalogAgentId: agentId, pluginRuntimeRegistry: registry,
       isAccountRuntimeCurrent: async () => { await assertCurrent(); return true; },
@@ -199,6 +201,11 @@ export async function prepareInactiveSessionControlLaunchScope(
     await resources.retire();
     signal.throwIfAborted();
     if (isPluginError(error) && error.code === 'agent_cli_not_runnable') throw error;
+    if (error instanceof LaunchSecretReferenceOverlayError) {
+      const providerError = createLaunchSecretReferenceOverlayProviderErrorV1(error.reason);
+      throw new PluginError({ code: providerError.code, details: { providerError: normalizeStrictJsonValue(providerError) },
+        message: 'The Session Profile Saved Secret could not be admitted' }, { cause: error });
+    }
     unavailable(error);
   }
 }

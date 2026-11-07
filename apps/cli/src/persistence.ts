@@ -42,6 +42,7 @@ import { reclaimJsonOwnerFileLockSnapshot, withJsonOwnerFileLock } from './utils
 import { readProcessRunState } from './daemon/processRunState';
 import { decodeJwtPayload } from './cloud/decodeJwtPayload';
 import { readAuthTokenProvenance } from '@happier-dev/protocol/auth/authToken';
+import { ensurePrivateDirectoryPreservingTraversal } from './utils/fs/protectedLocalState';
 
 async function bestEffortChmod(path: string, mode: number): Promise<void> {
   if (process.platform === 'win32') return;
@@ -65,7 +66,13 @@ async function ensureHappyHomeDirExists(): Promise<void> {
   if (!existsSync(configuration.happyHomeDir)) {
     await mkdir(configuration.happyHomeDir, { recursive: true });
   }
-  await bestEffortChmod(configuration.happyHomeDir, 0o700);
+  if (process.platform !== 'win32') {
+    try {
+      await ensurePrivateDirectoryPreservingTraversal(configuration.happyHomeDir);
+    } catch {
+      // Existing home permission repair is best-effort.
+    }
+  }
 }
 
 function resolveDaemonStateCandidatePathsForCurrentLifecycle(): readonly string[] {

@@ -9,6 +9,7 @@ import {
   ensureProtectedLocalStateDirectorySync,
   ensureProtectedLocalStateFileSync,
   publishProtectedLocalStateFileIfAbsent,
+  listProtectedLocalStateDirectory,
   readProtectedLocalStateFile,
   readProtectedLocalStateFileSync,
   type ProtectedLocalStateOptions,
@@ -141,6 +142,17 @@ async function protectedFileIn(directoryMode: number): Promise<string> {
 }
 
 describe('protected local state reads', () => {
+  it.runIf(posixOnly)('reads a private file through a traversal-only parent without admitting directory listing', async () => {
+    const path = await protectedFileIn(0o710);
+    await expect(readProtectedLocalStateFile(path)).resolves.toBe('secret');
+    expect(readProtectedLocalStateFileSync(path)).toBe('secret');
+    await expect(listProtectedLocalStateDirectory(dirname(path)))
+      .rejects.toThrow('Protected local state has unsafe group/world permissions');
+    await writeProtectedLocalStateFileAtomic(path, 'updated');
+    expect((await stat(dirname(path))).mode & 0o777).toBe(0o710);
+    expect((await stat(path)).mode & 0o777).toBe(0o600);
+  });
+
   it.runIf(posixOnly)('refuses to disclose bytes from a group- or world-reachable directory', async () => {
     const path = await protectedFileIn(0o755);
 
@@ -215,7 +227,7 @@ describe('protected local state publication', () => {
     await expect(readdir(dirname(path))).resolves.toEqual(['device-key']);
   });
 
-  it.runIf(posixOnly)('re-applies the protected shape when an owner replaces a file an older release left loose', async () => {
+  it.runIf(posixOnly)('removes legacy parent read/write access while retaining traversal when an owner replaces private state', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-protected-local-state-owned-'));
     roots.push(root);
     const directory = join(root, 'state');
@@ -233,7 +245,10 @@ describe('protected local state publication', () => {
     await writeProtectedLocalStateFileAtomic(path, 'fresh', { authority: 'owned' });
 
     await expect(readFile(path, 'utf8')).resolves.toBe('fresh');
-    expect((await stat(directory)).mode & 0o777).toBe(0o700);
+    expect((await stat(directory)).mode & 0o777).toBe(0o710);
     expect((await stat(path)).mode & 0o777).toBe(0o600);
+    await expect(readProtectedLocalStateFile(path)).resolves.toBe('fresh');
+    await expect(listProtectedLocalStateDirectory(directory))
+      .rejects.toThrow('Protected local state has unsafe group/world permissions');
   });
 });

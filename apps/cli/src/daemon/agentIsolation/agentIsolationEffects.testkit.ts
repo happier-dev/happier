@@ -1,6 +1,7 @@
 import { PassThrough, Readable } from 'node:stream';
 import { createInterface } from 'node:readline';
 import * as machineSetup from '@happier-dev/cli-common/machineSetup';
+import type { MachineMetadataFieldPortV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
 import type { MachineAdminAccessObservationV1, MachineAdminAccessV1 } from '@happier-dev/protocol';
 import type { MachineElevationSpawn } from '@/machines/adminAccess/runElevatedEffect';
 import { MachineEffectInternalRequestSchema } from '@/machines/setup/effectInternalProtocol';
@@ -113,6 +114,7 @@ export function createAgentIsolationMemberPreparationBoundary(input: Readonly<{
   observeNativeStep?: machineSetup.MachineSetupBackend['observe'];
   resolveAccountId?: Parameters<typeof createHostActionOperationRuntime>[0]['resolveAccountId'];
   readActivityInventory?: Parameters<typeof createAgentIsolationMemberOperations>[0]['readActivityInventory'];
+  metadataPort?: MachineMetadataFieldPortV1;
   /** Native OS state outlives the daemon runtime in restart fixtures. */
   nativeState?: { installed: Set<string>; drifted: Set<string>; accountUid: number };
 }>) {
@@ -178,7 +180,7 @@ export function createAgentIsolationMemberPreparationBoundary(input: Readonly<{
     resolveAccountId: input.resolveAccountId ?? (async () => input.custodianAccountId), generateOperationId: () => `member-setup-${++nextOperation}` });
   const members = createAgentIsolationMemberOperations({ observeExecution: runtime.observeExecution, operations: runtime,
     serverId: requesterIdentity.requester.serverId, readActivityInventory: input.readActivityInventory ?? (() => null), activeServerDir, effects,
-    captureMetadataPort: () => port,
+    captureMetadataPort: () => input.metadataPort ?? port,
     target: () => ({ homeServerIdentityId: requesterIdentity.homeServerIdentityId,
       machineId: requesterIdentity.requester.machineId, installationId: requesterIdentity.requester.installationId,
       custodianAccountId: input.custodianAccountId, encryptionMode: input.encryptionMode }) });

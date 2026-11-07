@@ -20,6 +20,7 @@ import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRi
 import { resolveIntEnvWithBounds } from './configuration/resolveIntEnvWithBounds'
 import { HappierReplayWritableMaxSeedCharsSchema } from '@happier-dev/protocol/sessions/replay-seed-budget';
 import { resolveCliHappyHomeDir } from './configuration/resolveCliHappyHomeDir'
+import { ensurePrivateDirectoryPreservingTraversalSync } from './utils/fs/protectedLocalState'
 import {
   readActiveServerFromSettingsFile,
   resolveServerSelection,
@@ -29,8 +30,6 @@ import type { ClientEncryptionRequirement } from '@happier-dev/protocol';
 import { readFiniteTransferConfig } from '@happier-dev/transfers/node'
 import type { OrganizationPolicyLoadResult } from '@happier-dev/protocol/organizationPolicy/organizationPolicyV1';
 import { loadOrganizationPolicy } from '@happier-dev/cli-common/organizationPolicy/readOrganizationPolicyFile';
-import { TerminalPresentUserPolicySchema } from '@happier-dev/protocol/actions/invocationAuthority';
-import type { TerminalPresentUserPolicy } from '@happier-dev/protocol/actions/invocationAuthority';
 
 export const DEFAULT_MCP_TOOL_CALL_TIMEOUT_MS = 100_000_000;
 export const DEFAULT_EXECUTION_RUN_WAIT_MCP_TIMEOUT_GRACE_MS = 60_000;
@@ -51,14 +50,6 @@ function resolveClientEncryptionRequirementEnv(env: NodeJS.ProcessEnv): ClientEn
   throw new Error(
     'Invalid HAPPIER_ENCRYPTION_REQUIREMENT; expected "follow_account" or "require_e2ee"',
   );
-}
-
-function resolveTerminalPresentUserPolicyEnv(env: NodeJS.ProcessEnv): TerminalPresentUserPolicy | undefined {
-  const raw = String(env.HAPPIER_CLI_PRESENT_USER ?? '').trim().toLowerCase();
-  if (!raw) return undefined;
-  const parsed = TerminalPresentUserPolicySchema.safeParse(raw);
-  if (parsed.success) return parsed.data;
-  throw new Error('Invalid HAPPIER_CLI_PRESENT_USER; expected "allowed" or "disallowed"');
 }
 
 export function isDaemonProcessArgv(args: readonly string[]): boolean {
@@ -165,9 +156,6 @@ class Configuration {
   public readonly pendingQueueStateReconcileThrottleMs: number
   public readonly promptLoopUserMessageSeqWaitTimeoutMs: number
 
-  // Codex app-server terminal notification settle time (allows slightly late item notifications to land before flushing).
-  public readonly codexAppServerTurnCompletionSettleMs: number
-
   // MCP server SSE keepalive (prevents client idle timeouts on long-lived streams).
   public readonly mcpSseKeepAliveIntervalMs: number | null
   // MCP client request timeouts for tool calls proxied by Happier-owned bridges.
@@ -269,10 +257,9 @@ class Configuration {
   public readonly startupDeferredSessionBufferMaxBytes: number
   public readonly startupPermissionSeedTranscriptTake: number
   public readonly startupOverridesCacheMaxAgeMs: number
-  // Shell-bridge command context env policy (default: off).
+  // Retained opt-in current-user Windows shell-bridge context (default: off).
   public readonly shellBridgeContextEnvMode: ShellBridgeContextEnvMode
   public readonly clientEncryptionRequirement: ClientEncryptionRequirement
-  public readonly terminalPresentUserPolicy: TerminalPresentUserPolicy | undefined
 
   constructor(organizationPolicy: OrganizationPolicyLoadResult = loadOrganizationPolicy()) {
     this.organizationPolicy = organizationPolicy;
@@ -326,7 +313,6 @@ class Configuration {
     this.activeServerDir = join(this.serversDir, this.activeServerId)
     this.shellBridgeContextEnvMode = resolveShellBridgeContextEnvMode(process.env)
     this.clientEncryptionRequirement = resolveClientEncryptionRequirementEnv(process.env)
-    this.terminalPresentUserPolicy = resolveTerminalPresentUserPolicyEnv(process.env)
     this.legacyPrivateKeyFile = join(this.happyHomeDir, 'access.key')
     this.privateKeyFile = join(this.activeServerDir, 'access.key')
     this.installationIdentityFile = join(this.happyHomeDir, 'installation-identity.json')
@@ -506,11 +492,6 @@ class Configuration {
     this.promptLoopUserMessageSeqWaitTimeoutMs = resolveIntEnvWithBounds(
       'HAPPIER_PROMPT_LOOP_USER_MESSAGE_SEQ_WAIT_TIMEOUT_MS',
       { min: 0, max: 10_000, default: 1_000 },
-    );
-
-    this.codexAppServerTurnCompletionSettleMs = resolveIntEnvWithBounds(
-      'HAPPIER_CODEX_APP_SERVER_TURN_COMPLETION_SETTLE_MS',
-      { min: 0, max: 5_000, default: 25 },
     );
 
     const mcpKeepAliveRaw = String(process.env.HAPPIER_MCP_SSE_KEEPALIVE_INTERVAL_MS ?? '').trim();
@@ -840,7 +821,7 @@ class Configuration {
     }
     if (process.platform !== 'win32') {
       try {
-        chmodSync(this.happyHomeDir, 0o700)
+        ensurePrivateDirectoryPreservingTraversalSync(this.happyHomeDir)
       } catch {
         // best-effort
       }

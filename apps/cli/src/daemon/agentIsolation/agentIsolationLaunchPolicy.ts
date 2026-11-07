@@ -413,6 +413,7 @@ export type HostAgentIsolationLaunchSnapshot = Readonly<{
         providerEnvironmentKeys?: readonly string[];
         environment?: Readonly<Record<string, string>>;
         selectedMaterials: readonly Readonly<{ relativePath: string; contentBase64: string }>[];
+        accountSettingsApplication?: import('./agentLaunchFrame').AgentLaunchAccountSettingsApplication;
         /** Live Session lease output; never Machine metadata or general env. */
         sessionMcpContext?: SessionMcpLocalContext;
     }>;
@@ -424,6 +425,8 @@ export type HostAgentIsolationLaunchContext = Readonly<{
     /** Native Session custody is demanded before effects, not at service construction. */
     resolveRequesterIdentity?(signal?: AbortSignal): Promise<HostRequesterExecutionIdentity>;
     managedHappierBinaryPath?: string;
+    /** Demand-only qualification at the native readiness/publication owner. */
+    qualifyNativeReadiness?(input: Readonly<{ requesterIdentity?: HostRequesterExecutionIdentity; signal?: AbortSignal }>): Promise<void>;
     /** Read the already admitted native binding without setup or a readiness probe. */
     readMember?(input: Readonly<{ requesterIdentity: AgentIsolationMemberRequester;
         rpcContext?: RpcHandlerContext; signal?: AbortSignal }>): Promise<Readonly<{
@@ -488,6 +491,7 @@ export async function admitAgentIsolationLaunchForHost(input: Readonly<{
         assertHostRequesterExecutionAdmissionForHost({ identity, personBreakGlass: true, agentLaunchKind: input.agentLaunchKind });
         return undefined;
     }
+    await input.context?.qualifyNativeReadiness?.({ requesterIdentity: identity, signal: input.signal });
     let snapshot = input.context?.read();
     assertHostRequesterExecutionAdmissionForHost({ identity, agentLaunchKind: input.agentLaunchKind });
     if (!snapshot?.enabled) return undefined;

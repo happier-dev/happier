@@ -1,3 +1,4 @@
+import { createRequesterPluginSettingsSource } from '@/daemon/sessionEncryption/requesterPluginSettings';
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import { prepareDaemonAgentIsolationIdentity, type PreparedDaemonAgentIsolationIdentity, type PrepareAgentIsolationMember } from './prepareDaemonAgentIsolationIdentity';
 export type { PrepareAgentIsolationMember } from './prepareDaemonAgentIsolationIdentity';
@@ -127,7 +128,6 @@ export type PreparedDaemonConnectedServices = Readonly<{
 export async function prepareDaemonConnectedServices(input: Readonly<{
     preparedAgentIsolationIdentity?: PreparedDaemonAgentIsolationIdentity;
     prepareAgentIsolationMember?: PrepareAgentIsolationMember;
-    readAgentIsolationEnabled?: () => boolean;
     signal?: AbortSignal;
     options: SpawnSessionOptions;
     normalizedExistingSessionId: string;
@@ -179,6 +179,10 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
         ...input.options,
         ...(admittedBindings.data ? { connectedServices: admittedBindings.data } : {}),
     };
+    const accountPluginSettingsSource = input.options.requesterSessionBootstrap
+        ? createRequesterPluginSettingsSource({ bootstrap: input.options.requesterSessionBootstrap,
+            isCurrent: input.isAccountRuntimeCurrent, signal: input.signal })
+        : undefined;
     const shouldResolveAuth = shouldResolveConnectedServiceAuthForSpawn(admittedOptions);
     const catalogStartedAt = performance.now();
     const catalogEntry = admittedBindings.data && input.catalogAgentId
@@ -237,7 +241,6 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
     if (!isolationIdentity) {
         const prepared = await prepareDaemonAgentIsolationIdentity({
             hasAgentRuntime: input.catalogAgentId !== null, prepareAgentIsolationMember: input.prepareAgentIsolationMember,
-            readAgentIsolationEnabled: input.readAgentIsolationEnabled,
             requesterWorkAttributionV1: options.requesterSessionBootstrap?.attribution ?? options.requesterWorkAttributionV1,
             signal: input.signal,
         });
@@ -275,6 +278,7 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
                 connectedAccountsOwner: input.connectedAccountsOwner,
                 ...(input.options.requesterSessionBootstrap
                   ? { allowNativeAccountState: input.options.requesterSessionBootstrap.allowNativeAccountCredentials === true } : {}),
+                ...(accountPluginSettingsSource ? { accountPluginSettingsSource } : {}),
                 ...(input.isAccountRuntimeCurrent ? { isAccountRuntimeCurrent: input.isAccountRuntimeCurrent } : {}),
                 ...(input.qualifiedConnectedAccountApi ? { qualifiedConnectedAccountApi: input.qualifiedConnectedAccountApi } : {}),
                 api: input.api,
@@ -463,6 +467,7 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
                 materializationKey, activeServerDir: input.activeServerDir ?? configuration.activeServerDir,
                 baseDir: input.connectedServicesMaterializationBaseDir, sessionDirectory: options.directory,
                 recordsByServiceId: new Map(), allowNativeAccountState: false,
+                ...(accountPluginSettingsSource ? { accountPluginSettingsSource } : {}),
                 ...(input.isAccountRuntimeCurrent ? { isAccountRuntimeCurrent: input.isAccountRuntimeCurrent } : {}),
                 accountSettings: input.accountSettingsSnapshot?.settings ?? null });
             if (!isolated) throw new Error('agent_native_home_unavailable');

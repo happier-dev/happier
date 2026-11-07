@@ -384,6 +384,7 @@ import { type BrowserDiagnosticsActionRoutes } from '../browser/diagnostics/acti
 import { type BrowserDaemonControlRoutes } from '../browser/control/routes';
 import { type BrowserContextRoutes } from '../browser/context/routes';
 import { createComputerRoutes, type ComputerRoutes } from '../computer/routes';
+import { createRecordingSessionMediaHost } from '../recording/sessionMediaHost';
 import { DEFAULT_COMPUTER_USE_SETTINGS_V1, readComputerUseSettingsForMachine } from '@happier-dev/protocol/computer/v1';
 import { type BrowserContextSource } from '../browser/context/source';
 
@@ -551,7 +552,7 @@ import type {
 } from '@/session/shared/spawnSessionContract';
 import { SPAWN_SESSION_ERROR_CODES, projectSessionRunnerLaunchAdmissionFailure } from '@/session/shared/spawnSessionContract';
 import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
-import { resolveSessionMachineWorkspacePath, readOwnSessionMachineWorkspace } from '@/session/machineControlLocality';
+import { resolveSessionMachineWorkspacePath } from '@/session/machineControlLocality';
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import { createManagedSessionDirectories } from '@/session/creation/managedSessionDirectories';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
@@ -9222,23 +9223,13 @@ export async function startDaemonSessionControlRuntime(
         defaultDisplayId: process.env.DISPLAY,
         recording: {
           workingDirectory: configuration.happyHomeDir,
-          resolveWorkingDirectory: async ({ sessionId }) => {
-            const workspace = await readOwnSessionMachineWorkspace({
-              credentials: params.credentials, serverHttpBaseUrl: params.serverBaseUrl,
-              sessionId, machineId: params.machineId,
-              currentMachineHost: params.currentMachineHost ?? '',
-              currentMachineHomeDir: params.currentMachineHomeDir ?? '',
-              signal: shutdownCancellationDomains.daemonWorkSignal,
-            });
-            if (!workspace) throw new Error('Computer recording session working directory is unavailable.');
-            return workspace.rootPath;
-          },
-          commitAttachment: async ({ sessionId, localId, meta }) => {
-            await params.daemonSessionMutationCustody.stageTranscriptMessage({
-              sessionId, localId, messageRole: 'user',
-              payload: { role: 'user', content: { type: 'text', text: 'Computer recording' }, meta },
-            });
-          },
+          ...createRecordingSessionMediaHost({
+            credentials: params.credentials, serverHttpBaseUrl: params.serverBaseUrl,
+            machineId: params.machineId, currentMachineHost: params.currentMachineHost ?? '',
+            currentMachineHomeDir: params.currentMachineHomeDir ?? '',
+            signal: shutdownCancellationDomains.daemonWorkSignal,
+            mutationCustody: params.daemonSessionMutationCustody, title: 'Computer recording',
+          }),
         },
         requesterHost: {
           custodianAccountId: params.externalActionAccountId ?? null,
@@ -9515,7 +9506,7 @@ export async function startDaemonSessionControlRuntime(
     await shutdownCancellationDomains.stopManagedLocalServices(
       localServicesRuntime,
     );
-    browserRoutePublication.stopRecording();
+    await browserRoutePublication.stopRecording();
     await simulatorPreviewRuntime.stop();
     // Tear down the long-lived iOS helper child process (SIGTERM) so a verified signed helper
     // never outlives the daemon. No-op when iOS stayed fail-closed (no session was created).
@@ -12565,7 +12556,8 @@ export async function startDaemonSessionControlRuntime(
       skillUsageRecorder: params.skillUsageRecorder,
       onScmDiffSummaryResultUpdated: change => params.getApiMachineForSessions()?.emitScmDiffSummaryResultUpdated(change),
       onSessionActivityChanged: async (sessionId, occurrence, executionRunId) => {
-        sessionLiveWorkProducer.notifyChanged();
+        // The runner names its own Session; only that runner's live work is reread.
+        sessionLiveWorkProducer.notifySessionChanged(sessionId);
         if (executionRunId && sessionId === null) params.getApiMachineForSessions()?.emitExecutionRunSourceUpdated(executionRunId);
         let result: Awaited<ReturnType<typeof dispatchSessionFollowOccurrence>> = undefined;
         if (occurrence) {

@@ -1,6 +1,8 @@
 import { existsSync } from 'node:fs';
-import { mkdir, readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
 import { expect, it, onTestFinished, vi } from 'vitest';
@@ -12,6 +14,7 @@ import { resolveAgentCliManagedCommandPathForRuntime, resolveAgentCliOverrideEnv
 import type { ManagedServiceHandle } from '@happier-dev/plugin-sdk/managed-services';
 import type { startDaemonControlServer } from '@/daemon/controlServer';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import { createInstalledProjectAgentDaemonFixture } from '@/daemon/testkit/installedProjectAgentDaemonFixture';
 import { createInstalledMachineRpcDatabaseBoundary, createInstalledMachineRpcRelay } from '@/daemon/testkit/installedMachineRpcRelay.testkit';
 import { spawnPublicInstalledProjectAgentSession } from '@/daemon/testkit/publicInstalledProjectAgentSpawn.testkit';
@@ -45,6 +48,9 @@ const boundary = vi.hoisted(() => ({
   database: null as ReturnType<typeof createInstalledMachineRpcDatabaseBoundary>['db'] | null,
   sudoAdapter: null as string | null,
   sudoStarts: 0,
+  nativeHome: undefined as string | undefined,
+  nativeStderr: '',
+  nativeTrace: [] as unknown[],
 }));
 vi.mock('@/daemon/controlServer', async original => ({
   ...await original<typeof import('@/daemon/controlServer')>(),
@@ -67,9 +73,34 @@ vi.mock('cross-spawn', async original => {
   return { ...actual, default: vi.fn((command: string, args?: readonly string[], options?: import('node:child_process').SpawnOptions) => {
     if (command !== 'sudo') return actual.default(command, [...args ?? []], options);
     if (!boundary.sudoAdapter) throw new Error('Unexpected native identity switch');
+    if (boundary.nativeHome) expect(args?.slice(0, 4)).toEqual(['-n', '-u', 'happier-agent', '--']);
     boundary.sudoStarts++;
-    return native.spawn(process.execPath, ['--import', createRequire(import.meta.url).resolve('tsx'), boundary.sudoAdapter], options);
+    const child = native.spawn(process.execPath, ['--import', createRequire(import.meta.url).resolve('tsx'), boundary.sudoAdapter], options);
+    if (boundary.nativeHome) {
+      child.stderr?.on('data', chunk => { boundary.nativeStderr += String(chunk); });
+      child.stdout?.on('data', chunk => { boundary.nativeTrace.push({ stdout: String(chunk) }); });
+      child.on('exit', (code, signal) => { boundary.nativeTrace.push({ code, signal }); });
+      child.on('error', error => { boundary.nativeTrace.push({ error: error.message }); });
+    }
+    return child;
   }) };
+});
+// The finite filesystem supervisor uses Node's native spawn owner rather than
+// cross-spawn. Substitute the same RunAs OS boundary for that real entry.
+vi.mock('node:child_process', async original => {
+  const actual = await original<typeof import('node:child_process')>();
+  return { ...actual, spawn: ((command: string, args?: readonly string[], options?: import('node:child_process').SpawnOptions) => {
+    if (command !== 'sudo' || !boundary.nativeHome) return actual.spawn(command, [...args ?? []], options);
+    if (!boundary.sudoAdapter) throw new Error('Unexpected native identity switch');
+    expect(args?.slice(0, 4)).toEqual(['-n', '-u', 'happier-agent', '--']);
+    boundary.sudoStarts++;
+    const child = actual.spawn(process.execPath, ['--import', createRequire(import.meta.url).resolve('tsx'), boundary.sudoAdapter], options);
+    child.stderr?.on('data', chunk => { boundary.nativeStderr += String(chunk); });
+    child.stdout?.on('data', chunk => { boundary.nativeTrace.push({ stdout: String(chunk) }); });
+    child.on('exit', (code, signal) => { boundary.nativeTrace.push({ code, signal }); });
+    child.on('error', error => { boundary.nativeTrace.push({ error: error.message }); });
+    return child;
+  }) as typeof actual.spawn };
 });
 // Observe a separate identity at the OS boundary without provisioning it. The
 // sudo adapter above deliberately runs as this test user: no installed-UID claim.
@@ -77,8 +108,10 @@ vi.mock('@happier-dev/cli-common/process', async original => {
   const actual = await original<typeof import('@happier-dev/cli-common/process')>();
   return { ...actual, execFileWithDeadline: async (...args: Parameters<typeof actual.execFileWithDeadline>) => {
     if (args[0] === 'getent' && JSON.stringify(args[1]) === JSON.stringify(['--service=files', 'passwd', 'happier-agent'])) {
-      return { stdout: `happier-agent:x:${(process.getuid?.() ?? 1) + 1}:${process.getgid?.() ?? 1}::/var/lib/happier/agent:/usr/sbin/nologin\n`, stderr: '' };
+      return { stdout: `happier-agent:x:${(process.getuid?.() ?? 1) + 1}:${process.getgid?.() ?? 1}::${boundary.nativeHome ?? '/var/lib/happier/agent'}:/usr/sbin/nologin\n`, stderr: '' };
     }
+    if (args[0] === 'sudo' && boundary.sudoAdapter) return actual.execFileWithDeadline(process.execPath,
+      ['--import', createRequire(import.meta.url).resolve('tsx'), boundary.sudoAdapter], args[2]);
     return actual.execFileWithDeadline(...args);
   } };
 });
@@ -87,6 +120,9 @@ function retainBoundaryCleanup() {
     vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs();
     boundary.control = null; boundary.database = null; boundary.sudoAdapter = null;
     boundary.sudoStarts = 0;
+    boundary.nativeHome = undefined;
+    boundary.nativeStderr = '';
+    boundary.nativeTrace = [];
   });
 }
 
@@ -163,6 +199,94 @@ async function nativeServices(h: NativeFixture) {
   onTestFinished(() => h.dispatch({ kind: 'plugin_services.close_v1', ...h.operationBase(invocationId) }));
   return services;
 }
+
+it.skipIf(process.platform !== 'linux').each(['existing', 'new', 'checkout'] as const)('prepares an isolated Session folder as the selected native user instead of the daemon (%s)', async mode => {
+  retainBoundaryCleanup();
+  let root = '';
+  const authoredPlugin = {
+    manifest: createPluginManifestV2Fixture({ id: 'acme.project-launch',
+      hostAccess: { required: [{ id: 'native-home', capability: 'environment', reason: 'Select the Agent native home', scope: { keys: ['ACME_CONFIG_DIR'] } }], optional: [] },
+      contributes: { agents: [{
+      id: 'agent', title: 'Native folder Agent', runtime: { kind: 'custom' }, primary: 'sessions',
+      capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
+    }] } }),
+    files: {
+      'agent.mjs': `export function factory() { return { sessions: { open() { throw new Error('Runner launch is canceled by the test'); } } }; }`,
+      'daemon.mjs': `import { factory } from './agent.mjs';
+        export function activate(api) { api.agents.register('agent', factory, {
+          sessionRunnerFactory: { module: './agent.mjs', export: 'factory', runtimeApiVersion: 1 },
+          connectedAccountLaunch: { stateSharingDescriptor: {
+            providerSupportStatus: 'supported',
+            config: { supported: true, modes: ['linked'], entries: [] },
+            state: { supported: true, modes: ['isolated'], entries: [], symlinkUnavailableDegradePolicy: 'block_continuity' },
+            authIsolation: { mode: 'materialized_home', secretEntries: [] },
+            nativeHome: { environmentKey: 'ACME_CONFIG_DIR', defaultRelativePath: '.acme' },
+          } },
+        }); }`,
+    },
+  } satisfies NonNullable<Parameters<typeof createInstalledProjectAgentDaemonFixture>[3]>;
+  const h = await createInstalledProjectAgentDaemonFixture(() => boundary.control, undefined, true, authoredPlugin, undefined, {
+    externalActionAccountId: 'requester', homeServerIdentityId: 'srv_public_native_custody', ordinaryAccountSession: true,
+    ...(mode === 'checkout' ? { additionalPluginIds: ['happier.scm.backend.git'] } : {}),
+    machineRpcMethods: [RPC_METHODS.SESSION_SPAWN_NEW],
+    machineAccess: { custodianAccountId: 'requester', role: 'manage' },
+    resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: 'srv_public_native_custody', machineId: 'machine' }),
+    agentIsolation: { managedHappierBinaryPath: process.execPath, read: () => ({
+      enabled: true, status: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' }, workspaceRoots: [root],
+    }) },
+  });
+  root = h.cwd;
+  boundary.nativeHome = h.cwd;
+  boundary.sudoAdapter = writeAcpTestAgentScript({ dir: h.f.directory, fileName: 'directory-identity-boundary.mjs', source: `
+    import { readAgentLaunchFrame } from ${JSON.stringify(new URL('../agentIsolation/agentLaunchFrame.ts', import.meta.url).href)};
+    import { executeAgentLaunchPayload } from ${JSON.stringify(new URL('../agentIsolation/agentLaunchShim.ts', import.meta.url).href)};
+    const frame = await readAgentLaunchFrame(process.stdin, undefined, true);
+    const payload = 'action' in frame ? frame : { ...frame,
+      environment: { ...frame.environment, TSX_TSCONFIG_PATH: ${JSON.stringify(new URL('../../../tsconfig.json', import.meta.url).pathname)} },
+      executable: process.execPath,
+      args: ['--conditions=happier-source', '--import',
+        ${JSON.stringify(new URL('../../../../../packages/cli-common/registerSourceRuntime.mjs', import.meta.url).href)},
+        ${JSON.stringify(new URL('../../index.ts', import.meta.url).pathname)}, ...frame.args] };
+    const result = await executeAgentLaunchPayload(payload, { agentHome: ${JSON.stringify(h.cwd)},
+      input: process.stdin, stdout: process.stdout, stderr: process.stderr });
+    process.exitCode = result.code ?? 1;
+  ` });
+  const nativeDirectory = join(h.cwd, 'native-private-folder');
+  if (mode !== 'new') await mkdir(nativeDirectory);
+  if (mode === 'checkout') {
+    const git = promisify(execFile);
+    await git('git', ['init', '-b', 'main'], { cwd: nativeDirectory });
+    await writeFile(join(nativeDirectory, 'selected-owner.txt'), 'selected native checkout');
+    await git('git', ['add', '.'], { cwd: nativeDirectory });
+    await git('git', ['-c', 'user.name=Native Session test', '-c', 'user.email=native@example.invalid', 'commit', '-m', 'initial'], { cwd: nativeDirectory });
+  }
+  const filesystem = (await import('fs/promises')).default;
+  const access = filesystem.access;
+  // The daemon cannot traverse the selected user's directory. A real worker
+  // process does not inherit this OS-boundary substitute and can enter it.
+  const denied = vi.spyOn(filesystem, 'access').mockImplementation(async (path, mode) => {
+    if (String(path) === nativeDirectory) throw Object.assign(new Error('Selected user owns this folder'), { code: 'EACCES' });
+    return access(path, mode);
+  });
+  let reachedRunner = false;
+  try {
+    const result = await h.daemon.spawnSession({ directory: nativeDirectory,
+      ...(mode === 'checkout' ? { checkoutCreationDraft: { kind: 'git_worktree' as const, displayName: 'native-session', baseRef: 'main', branchMode: 'new' as const } } : {}),
+      agentTarget: { kind: 'agent', identity: { pluginId: h.retainedAgent.pluginId, localId: h.retainedAgent.localAgentId } },
+      beforeSessionRunnerLaunch: async () => { reachedRunner = true; return false; } });
+    if (!reachedRunner) expect(result, JSON.stringify({ result, sudoStarts: boundary.sudoStarts, nativeTrace: boundary.nativeTrace, nativeStderr: boundary.nativeStderr })).toMatchObject({ type: 'error', errorCode: 'DIRECTORY_CREATE_FAILED' });
+    expect(reachedRunner, JSON.stringify(result)).toBe(true);
+    expect(result).toMatchObject({ type: 'error', errorCode: 'DAEMON_RPC_UNAVAILABLE' });
+    if (mode === 'checkout') {
+      const listed = await promisify(execFile)('git', ['worktree', 'list', '--porcelain'], { cwd: nativeDirectory });
+      const worktrees = listed.stdout.split('\n').filter(line => line.startsWith('worktree ')).map(line => line.slice(9));
+      expect(worktrees).toHaveLength(2);
+      const checkout = worktrees.find(path => path !== nativeDirectory)!;
+      expect(await readFile(join(checkout, 'selected-owner.txt'), 'utf8')).toBe('selected native checkout');
+    } else expect(existsSync(nativeDirectory)).toBe(true);
+    expect(boundary.sudoStarts).toBeGreaterThan(0);
+  } finally { denied.mockRestore(); }
+}, 120_000);
 
 async function publicTmuxBoundary(h: NativeFixture) {
   const bin = join(h.f.directory, 'terminal-bin');

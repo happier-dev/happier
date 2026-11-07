@@ -73,7 +73,7 @@ describe('connected-service quota spawn preflight', () => {
                     prepareAgentIsolationMember: async () => {
                         const preparation = await member.prepare();
                         if (preparation.kind !== 'ready') throw new Error('Canonical member preparation refused');
-                        return preparation.identity;
+                        return { kind: 'member', snapshot: undefined, requesterIdentity: { kind: 'isolated', separationRequired: true, homeServerIdentityId: 'canonical-home', requester: { serverId: 'home', accountId: 'member', machineId: 'machine-1', installationId: 'installation' } }, identity: preparation.identity };
                     } } : {}),
                 resolveConnectedServiceAuthForSpawn: async input => {
                     connectedOwnerReached = true;

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { describe, expect, it } from 'vitest';
@@ -6,6 +6,23 @@ import { describe, expect, it } from 'vitest';
 import { readOrCreateDeviceLocalSecretStorage } from './deviceLocalSecretStorage';
 
 describe('deviceLocalSecretStorage', () => {
+  it.skipIf(process.platform === 'win32').each([false, true])('keeps reviewed home traversal while opening a device key (existing: %s)', async (existing) => {
+    const home = await mkdtemp(join(tmpdir(), 'happier-device-key-traversal-'));
+    const path = join(home, 'device-local-secret-key.json');
+    try {
+      if (existing) await readOrCreateDeviceLocalSecretStorage({ path });
+      await chmod(home, 0o710);
+
+      const storage = await readOrCreateDeviceLocalSecretStorage({ path });
+
+      expect((await stat(home)).mode & 0o777).toBe(0o710);
+      expect((await stat(path)).mode & 0o777).toBe(0o600);
+      const sealed = storage.sealJson({ purpose: 'plugin_secrets', value: { token: 'private' } });
+      const restarted = await readOrCreateDeviceLocalSecretStorage({ path });
+      expect(restarted.openJson({ purpose: 'plugin_secrets', ciphertext: sealed })).toEqual({ token: 'private' });
+    } finally { await rm(home, { recursive: true, force: true }); }
+  });
+
   it('publishes one device-local key under concurrent startup and reuses it across daemon restarts', async () => {
     const home = await mkdtemp(join(tmpdir(), 'happier-device-local-secret-'));
     const privateDirectory = join(home, 'private');

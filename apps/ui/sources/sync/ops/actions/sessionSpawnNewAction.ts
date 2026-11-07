@@ -13,6 +13,7 @@ import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/actionExe
 import { readSessionCreationTargetPreparationResultV1, needsSessionCreationDirectoryApprovalPreflightV1,
     projectSessionCreationTargetPreparationRpcFailureV1,
     projectSessionCreationDirectoryApprovalV1,
+    type SessionCreationTargetPreparationRequestV1,
 } from '@happier-dev/protocol/sessions/creation/sessionCreationTargetPreparationV1';
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { ActionOperationGetV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';
@@ -92,7 +93,7 @@ function projectSessionSpawnSetupTransportFailure(error: unknown) {
     } satisfies Extract<SessionSpawnNewResultV1, { type: 'error' }>;
 }
 
-/** Read-only target preparation precedes the UI Artifact, as it does for CLI approvals. */
+/** Explicit launch prepares the requester before reviewing directory creation. */
 export function createUiSessionSpawnNewDirectoryApprovalPreflight(
     account: LazyActionAccountContext | null,
 ): NonNullable<ActionExecutorDeps['sessionSpawnNewDirectoryApprovalPreflight']> {
@@ -102,10 +103,10 @@ export function createUiSessionSpawnNewDirectoryApprovalPreflight(
         account.assertCurrent();
         let raw: unknown;
         try {
-            raw = await withActionAccountRequestSignal(account, signal, ownedSignal => machineRpcWithServerScope<unknown, { directory: SessionSpawnNewInputV2['directory'] }>({
+            raw = await withActionAccountRequestSignal(account, signal, ownedSignal => machineRpcWithServerScope<unknown, SessionCreationTargetPreparationRequestV1>({
                 serverId: input.executionTarget.serverId, accountId: account.accountId,
                 machineId: input.executionTarget.machineId, method: RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT,
-                payload: { directory: input.directory }, signal: ownedSignal,
+                payload: { directory: input.directory, prepareAgentIsolationMember: true }, signal: ownedSignal,
             }));
         } catch (error) {
             if (signal?.aborted) throw error;

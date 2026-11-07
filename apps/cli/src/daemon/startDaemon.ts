@@ -252,6 +252,7 @@ import {
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
+import { ensurePluginStoreDirectories } from '@/plugins/store/paths';
 import type { DaemonPluginChangeOwner } from '@/plugins/daemon/changeService';
 import { createDaemonPluginRuntimeOwner, createDaemonPluginTransferRpcResolver } from '@/plugins/daemon/runtimeOwner';
 import { createDaemonMachineAdminAccessRoutes } from '@/machines/adminAccess/createDaemonMachineAdminAccessRoutes';
@@ -1738,11 +1739,15 @@ export async function startDaemon(
         serverId: requesterRuntimeServerId, homeServerIdentityId: resolveBoundHomeServerIdentityId(), machineId })
         ?.map(ref => ({ rootId: ref.id, path: ref.rootPath })) ?? null;
     };
+    let isolationPluginCodeRoot: string | undefined;
+    await settleDaemonOptionalCapability('plugin_runtime', ensurePluginStoreDirectories({ happyHomeDir: configuration.happyHomeDir })
+      .then(paths => { isolationPluginCodeRoot = paths.generationsDir; }), reportOptionalCapabilityUnavailable);
     const isolationEffects = createDaemonAgentIsolationEffects({ getMachineClient: () => apiMachineForSessions,
       adminAccess: machineAdminAccessRoutes, readRoots: readIsolationRoots,
       trackedSessions: pidToTrackedSession, sessionChanges: sessionActivity,
       protectedRoots: [configuration.happyHomeDir, '/opt/happier', '/var/lib/happier-agent'],
       privateRoots: [configuration.happyHomeDir],
+      pluginCodeRoot: isolationPluginCodeRoot,
       readMemberBindingScope: () => {
         const target = machineAdminAccessRoutes.target();
         const homeServerIdentityId = resolveBoundHomeServerIdentityId();

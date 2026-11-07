@@ -6,6 +6,7 @@ import { ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/o
 import { applyMachineSetupBeforeAgent } from '@/machines/setup/applyMachineSetupBeforeAgent';
 import { resolveInheritedApprovalProfileIdV1 } from '@happier-dev/protocol/actions';
 import type { CliActionDepsParams } from '../actions/cliActionDeps/types';
+import { prepareSessionAgentReadiness } from './prepareSessionAgentReadiness';
 import { incompatibleSessionSpawnTarget, projectSessionInitialAccessEnvelopeHostErrorResult } from '../actions/cliActionDeps/sessionSpawnErrors';
 import { SessionSpawnNewIncompatibleTargetV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { createPrepareSessionCreationAuthorization, createReviewedSecondOpinionSessionCreationAuthorization } from '@/api/externalActionExecutionAuthorization';
@@ -227,6 +228,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
               ? RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT : RPC_METHODS.DAEMON_SESSION_CREATION_PREPARE,
             request: {
               directory: input.directory,
+              ...(needsSessionCreationDirectoryApprovalPreflightV1(input) ? { prepareAgentIsolationMember: true as const } : {}),
               ...(input.sessionCreationTag ? { sessionCreationTag: input.sessionCreationTag } : {}),
               ...(input.checkoutCreationDraft !== undefined
                 ? { checkoutCreationDraft: input.checkoutCreationDraft }
@@ -777,6 +779,13 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
         });
         if (setupFailure) return setupFailure;
       }
+      const agentReadiness = await prepareSessionAgentReadiness({
+        machineId: executionTarget.machineId, serverId: executionTarget.serverId, agentId: resolvedAgentTarget.agentId,
+        ...(agentTarget.definitionId === undefined ? {} : { definitionId: agentTarget.definitionId }),
+        ...(input.agentInstallConsent === undefined ? {} : { consent: input.agentInstallConsent }),
+        invoke: input.invokeAgentReadinessAction, ...(signal ? { signal } : {}),
+      });
+      if (agentReadiness && 'result' in agentReadiness) return agentReadiness.result;
       const initialTriggerPreparationState: { failure?: unknown } = {};
       let cleanupInitialTriggerCustody: (() => Promise<void>) | undefined;
       const prepareInitialTriggers: Parameters<typeof createSpawnedSession>[0]['prepareInitialTriggers'] =
@@ -1094,6 +1103,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
           executionTarget,
           organizationPlacement: created.organizationPlacement,
           initialInput: created.initialInput,
+          ...(agentReadiness ? { agentUpdate: agentReadiness.agentUpdate } : {}),
           ...(created.attestedContext ? { attestedContext: created.attestedContext } : {}),
           ...(created.filesNotCopied ? { filesNotCopied: created.filesNotCopied } : {}),
         };

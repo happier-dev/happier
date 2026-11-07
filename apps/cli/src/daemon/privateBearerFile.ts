@@ -6,6 +6,7 @@ import { dirname } from 'node:path';
 import {
   createProtectedLocalStateFileExclusive,
   ensureProtectedLocalStateDirectory,
+  ensureProtectedLocalStateFileParentDirectory,
   publishProtectedLocalStateFileIfAbsent,
   readProtectedLocalStateFile,
   readProtectedLocalStateFileSync,
@@ -50,9 +51,9 @@ function asTypedUnsafeFailure(error: unknown, unsafeCode: string): unknown {
   return new Error(unsafeCode);
 }
 
-async function ensureProtectedBearerDirectory(path: string, unsafeCode: string): Promise<void> {
+async function ensureProtectedBearerDirectory(path: string, unsafeCode: string, kind: 'directory' | 'file-parent' = 'directory'): Promise<void> {
   try {
-    await ensureProtectedLocalStateDirectory(path, BEARER_STATE);
+    await (kind === 'file-parent' ? ensureProtectedLocalStateFileParentDirectory : ensureProtectedLocalStateDirectory)(path, BEARER_STATE);
   } catch (error) {
     throw asTypedUnsafeFailure(error, unsafeCode);
   }
@@ -105,7 +106,7 @@ export async function writePrivateOwnerFile(input: Readonly<{
   path: string;
   contents: string | Uint8Array;
 }>): Promise<void> {
-  await ensureProtectedBearerDirectory(dirname(input.path), 'private_bearer_parent_unsafe');
+  await ensureProtectedBearerDirectory(dirname(input.path), 'private_bearer_parent_unsafe', 'file-parent');
   await createProtectedLocalStateFileExclusive(input.path, input.contents, BEARER_STATE);
 }
 
@@ -120,7 +121,7 @@ export async function publishPrivateBearerFileIfAbsent(input: Readonly<{
   path: string;
   contents: string;
 }>): Promise<boolean> {
-  await ensureProtectedBearerDirectory(dirname(input.path), 'private_bearer_parent_unsafe');
+  await ensureProtectedBearerDirectory(dirname(input.path), 'private_bearer_parent_unsafe', 'file-parent');
   return await publishProtectedLocalStateFileIfAbsent(
     input.path,
     input.contents,
@@ -132,7 +133,7 @@ export async function replacePrivateBearerFile(input: Readonly<{
   path: string;
   contents: string;
 }>): Promise<void> {
-  await ensureProtectedBearerDirectory(dirname(input.path), 'private_bearer_parent_unsafe');
+  await ensureProtectedBearerDirectory(dirname(input.path), 'private_bearer_parent_unsafe', 'file-parent');
   await writeProtectedLocalStateFileAtomic(input.path, input.contents, BEARER_STATE);
 }
 

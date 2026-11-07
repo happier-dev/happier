@@ -1,4 +1,3 @@
-import { type FileHandle } from 'node:fs/promises';
 import {
   chmodSync,
   closeSync,
@@ -21,6 +20,7 @@ import {
   readdir,
   rename,
   rm,
+  type FileHandle,
 } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { dirname, resolve } from 'node:path';
@@ -117,6 +117,7 @@ function validateStats(params: Readonly<{
   platform: NodeJS.Platform;
   expectedUid?: number;
   verifyPermissions?: boolean;
+  allowDirectoryTraversal?: boolean;
 }>): void {
   if (params.stats.isSymbolicLink()) {
     throw new Error('Protected local state must not be a symbolic link');
@@ -130,7 +131,8 @@ function validateStats(params: Readonly<{
     }
     if (
       params.verifyPermissions !== false
-      && (Number(params.stats.mode) & FORBIDDEN_POSIX_BITS) !== 0
+      && (Number(params.stats.mode) & (params.kind === 'directory' && params.allowDirectoryTraversal
+        ? FORBIDDEN_POSIX_BITS & ~0o010 : FORBIDDEN_POSIX_BITS)) !== 0
     ) {
       throw new Error('Protected local state has unsafe group/world permissions');
     }
@@ -161,6 +163,7 @@ async function assertProtectedPath(
   path: string,
   kind: ProtectedLocalStateKind,
   options: ProtectedLocalStateOptions,
+  allowDirectoryTraversal = false,
 ): Promise<Awaited<ReturnType<typeof lstat>>> {
   const platform = resolvePlatform(options);
   const stats = await lstat(path);
@@ -169,6 +172,7 @@ async function assertProtectedPath(
     kind,
     platform,
     expectedUid: platform === 'win32' ? undefined : resolveExpectedUid(options),
+    allowDirectoryTraversal,
   });
   if (platform === 'win32') {
     await resolveWindowsAclBoundary(options).verify({ path, kind });
@@ -240,12 +244,15 @@ async function applyProtection(
   path: string,
   kind: ProtectedLocalStateKind,
   options: ProtectedLocalStateOptions,
+  preserveTraversal = false,
 ): Promise<void> {
   if (resolvePlatform(options) === 'win32') {
     await resolveWindowsAclBoundary(options).applyAndVerify({ path, kind });
     return;
   }
-  await chmod(path, kind === 'directory' ? 0o700 : 0o600);
+  await chmod(path, kind === 'directory'
+    ? preserveTraversal ? privateDirectoryModePreservingTraversal(await lstat(path), options) : 0o700
+    : 0o600);
 }
 
 function applyProtectionSync(
@@ -304,18 +311,34 @@ export async function ensureProtectedLocalStateDirectory(
   path: string,
   options: ProtectedLocalStateOptions & Readonly<{ createIfMissing?: boolean }> = {},
 ): Promise<void> {
+  await ensureProtectedDirectory(path, options, false);
+}
+
+/** Files remain private when their custodian-owned parent permits only traversal. */
+export async function ensureProtectedLocalStateFileParentDirectory(
+  path: string,
+  options: ProtectedLocalStateOptions = {},
+): Promise<void> {
+  await ensureProtectedDirectory(path, options, true);
+}
+
+async function ensureProtectedDirectory(
+  path: string,
+  options: ProtectedLocalStateOptions & Readonly<{ createIfMissing?: boolean }>,
+  preserveTraversal: boolean,
+): Promise<void> {
   const existed = await pathExists(path);
   if (!existed) {
     if (options.createIfMissing === false) {
       throw Object.assign(new Error('Protected local state directory does not exist'), { code: 'ENOENT' });
     }
     await mkdir(path, { recursive: true, mode: 0o700 });
-    await applyProtection(path, 'directory', options);
+    await applyProtection(path, 'directory', options, preserveTraversal);
   } else if (resolveAuthority(options) === 'owned') {
     await assertProtectedIdentity(path, 'directory', options);
-    await applyProtection(path, 'directory', options);
+    await applyProtection(path, 'directory', options, preserveTraversal);
   }
-  await assertProtectedPath(path, 'directory', options);
+  await assertProtectedPath(path, 'directory', options, preserveTraversal);
   if (!existed) {
     await fsyncDirectory(dirname(path), resolvePlatform(options));
   }
@@ -336,6 +359,28 @@ export function ensureProtectedLocalStateDirectorySync(
   }
   assertProtectedPathSync(path, 'directory', options);
   if (!existed) fsyncDirectorySync(dirname(path), resolvePlatform(options));
+}
+
+function privateDirectoryModePreservingTraversal(stats: Stats, options: ProtectedLocalStateOptions = {}): number {
+  validateStats({ stats, kind: 'directory', platform: resolvePlatform(options),
+    expectedUid: resolveExpectedUid(options), verifyPermissions: false });
+  // A reviewed named-user execute ACL uses the group execute mask. Keep that
+  // mask without granting traversal or retaining read/list/write access.
+  return 0o700 | (stats.mode & 0o010);
+}
+
+/** Private containers may retain the native owner's execute-only ACL grants. */
+export async function ensurePrivateDirectoryPreservingTraversal(path: string): Promise<void> {
+  await ensureProtectedLocalStateFileParentDirectory(path, { authority: 'owned' });
+}
+
+export function ensurePrivateDirectoryPreservingTraversalSync(path: string): void {
+  if (process.platform === 'win32') {
+    ensureProtectedLocalStateDirectorySync(path, { authority: 'owned' });
+    return;
+  }
+  mkdirSync(path, { recursive: true, mode: 0o700 });
+  chmodSync(path, privateDirectoryModePreservingTraversal(lstatSync(path)));
 }
 
 /** Re-applies and verifies protection for an owner-managed file when it exists. */
@@ -376,7 +421,7 @@ export async function createProtectedLocalStateFileExclusive(
   contents: string | Uint8Array,
   options: ProtectedLocalStateOptions = {},
 ): Promise<void> {
-  await ensureProtectedLocalStateDirectory(dirname(path), options);
+  await ensureProtectedLocalStateFileParentDirectory(dirname(path), options);
   const platform = resolvePlatform(options);
   const flags = platform === 'win32'
     ? 'wx'
@@ -419,7 +464,9 @@ export async function createProtectedLocalStateFileExclusive(
  * A protected file inside a group- or world-writable directory may already have
  * been replaced, so the directory's shape is part of what makes the bytes
  * trustworthy. On POSIX that is the parent's owner UID and the absence of any
- * group/world bit. Windows has no mode to read: the parent's protected DACL is
+ * group/world read or write bit. An execute-only named-user ACL mask is safe
+ * for a private file; directory listing still requires the strict directory
+ * contract. Windows has no mode to read: the parent's protected DACL is
  * applied and verified where the directory is created
  * (`ensureProtectedLocalStateDirectory`), and the read verifies the file's own
  * DACL. Refusing a symbolic link at either the file or its immediate parent,
@@ -437,6 +484,7 @@ function assertProtectedFileReadIdentity(params: Readonly<{
     kind: 'directory',
     platform: params.platform,
     expectedUid: params.expectedUid,
+    allowDirectoryTraversal: true,
   });
   validateStats({
     stats: params.fileStats,
@@ -459,10 +507,12 @@ function assertUnchangedOpenIdentity(before: Stats, opened: Stats): void {
   }
 }
 
-export async function readProtectedLocalStateFile(
+/** Retains the protection owner's verified file object for bounded reads or append-only output. */
+export async function openProtectedLocalStateFile(
   path: string,
+  mode: 'r' | 'a',
   options: ProtectedLocalStateOptions = {},
-): Promise<string> {
+): Promise<FileHandle> {
   const platform = resolvePlatform(options);
   const expectedUid = platform === 'win32' ? undefined : resolveExpectedUid(options);
   const resolvedPath = resolve(path);
@@ -475,16 +525,23 @@ export async function readProtectedLocalStateFile(
   if (platform === 'win32') {
     await resolveWindowsAclBoundary(options).verify({ path: resolvedPath, kind: 'file' });
   }
-  const flags = platform === 'win32' ? 'r' : constants.O_RDONLY | constants.O_NOFOLLOW;
+  const flags = platform === 'win32' ? mode : (mode === 'a' ? constants.O_WRONLY | constants.O_APPEND : constants.O_RDONLY) | constants.O_NOFOLLOW;
   const handle = await open(resolvedPath, flags);
   try {
     const opened = await handle.stat();
     validateStats({ stats: opened, kind: 'file', platform, expectedUid });
     assertUnchangedOpenIdentity(fileStats, opened);
-    return await handle.readFile('utf8');
-  } finally {
-    await handle.close();
-  }
+    return handle;
+  } catch (error) { await handle.close(); throw error; }
+}
+
+export async function readProtectedLocalStateFile(
+  path: string,
+  options: ProtectedLocalStateOptions = {},
+): Promise<string> {
+  const handle = await openProtectedLocalStateFile(path, 'r', options);
+  try { return await handle.readFile('utf8'); }
+  finally { await handle.close(); }
 }
 
 /**
@@ -543,7 +600,7 @@ export async function writeProtectedLocalStateFileAtomic(
   contents: string | Uint8Array,
   options: ProtectedLocalStateOptions = {},
 ): Promise<void> {
-  await ensureProtectedLocalStateDirectory(dirname(path), options);
+  await ensureProtectedLocalStateFileParentDirectory(dirname(path), options);
   if (await pathExists(path)) {
     // `owned` replaces the file wholesale, so it only has to be the thing this
     // process may act on. Requiring the protected shape here would wedge an
@@ -584,7 +641,7 @@ export async function publishProtectedLocalStateFileIfAbsent(
   contents: string | Uint8Array,
   options: ProtectedLocalStateOptions = {},
 ): Promise<boolean> {
-  await ensureProtectedLocalStateDirectory(dirname(path), options);
+  await ensureProtectedLocalStateFileParentDirectory(dirname(path), options);
   const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
   await createProtectedLocalStateFileExclusive(temporaryPath, contents, options);
   try {
@@ -617,31 +674,4 @@ export async function listProtectedLocalStateDirectory(
 ): Promise<readonly string[]> {
   await assertProtectedPath(path, 'directory', options);
   return readdir(path);
-}
-
-export async function openProtectedLocalStateFile(
-  path: string,
-  mode: 'r' | 'a',
-  options: ProtectedLocalStateOptions = {},
-): Promise<FileHandle> {
-  const platform = resolvePlatform(options);
-  const expectedUid = platform === 'win32' ? undefined : resolveExpectedUid(options);
-  const resolvedPath = resolve(path);
-  const parentPath = dirname(resolvedPath);
-  const [parentStats, fileStats] = await Promise.all([
-    lstat(parentPath),
-    lstat(resolvedPath),
-  ]);
-  assertProtectedFileReadIdentity({ parentStats, fileStats, platform, expectedUid });
-  if (platform === 'win32') {
-    await resolveWindowsAclBoundary(options).verify({ path: resolvedPath, kind: 'file' });
-  }
-  const flags = platform === 'win32' ? mode : (mode === 'a' ? constants.O_WRONLY | constants.O_APPEND : constants.O_RDONLY) | constants.O_NOFOLLOW;
-  const handle = await open(resolvedPath, flags);
-  try {
-    const opened = await handle.stat();
-    validateStats({ stats: opened, kind: 'file', platform, expectedUid });
-    assertUnchangedOpenIdentity(fileStats, opened);
-    return handle;
-  } catch (error) { await handle.close(); throw error; }
 }

@@ -1,3 +1,4 @@
+import { NativeSessionDirectoryCommandSchema, executeNativeSessionDirectoryPreparation } from './sessionDirectoryEffect';
 import { createHash, randomUUID } from 'node:crypto';
 import { copyFile, rename, rm } from 'node:fs/promises';
 import { z } from 'zod/mini';
@@ -39,6 +40,7 @@ const transferMethods = [RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_INIT, RPC_METHODS.
   RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT, RPC_METHODS.DAEMON_TRANSFER_UPLOAD_CHUNK,
   RPC_METHODS.DAEMON_TRANSFER_UPLOAD_FINALIZE, RPC_METHODS.DAEMON_TRANSFER_UPLOAD_ABORT] as const;
 const commandSchema = z.discriminatedUnion('kind', [
+  NativeSessionDirectoryCommandSchema,
   z.strictObject({ kind: z.literal('action'), actionId: z.string(), input: z.unknown() }),
   z.strictObject({ kind: z.literal('rpc'), method: z.enum(transferMethods), input: z.unknown() }),
   z.strictObject({ kind: z.literal('filesystem.rpc'), method: z.string(), input: z.unknown() }),
@@ -141,6 +143,7 @@ export function createFilesystemEffectByteOwner(configuration: FilesystemEffectC
       assertOpen();
       const command = commandSchema.parse(raw);
       switch (command.kind) {
+        case 'session.directory.prepare': return await executeNativeSessionDirectoryPreparation(command, signal);
         case 'filesystem.rpc': {
           if (transferMethods.some(method => method === command.method)) throw invalidOperation();
           const handler = rpcHandlers.get(command.method);

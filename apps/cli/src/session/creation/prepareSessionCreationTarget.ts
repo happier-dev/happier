@@ -1,3 +1,4 @@
+import type { ScmBackendRegistry } from '@/scm/registry';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
 import { SessionCreationTargetPreparationRequestV1Schema, SessionCreationTargetPreparationResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationTargetPreparationV1';
 import type { ScmWorktreeCreateResponse, SessionCreationTargetPreparationRequestV1, SessionCreationTargetPreparationResultV1 } from '@happier-dev/protocol';
@@ -20,9 +21,9 @@ type CreateSessionCheckout = (input: Readonly<{
   signal?: AbortSignal;
 }>) => Promise<SessionCheckoutCreationResult>;
 
-async function createSessionCheckoutWithScm(input: Parameters<CreateSessionCheckout>[0]): Promise<SessionCheckoutCreationResult> {
+async function createSessionCheckoutWithScm(input: Parameters<CreateSessionCheckout>[0], registry?: ScmBackendRegistry): Promise<SessionCheckoutCreationResult> {
   const resolved = await realizeWorkspaceCheckoutWithScmWorkspaceSource({
-    sourcePath: input.sourceDirectory,
+    sourcePath: input.sourceDirectory, registry,
     checkoutCreation: {
       kind: 'git_worktree',
       displayName: input.displayName,
@@ -66,6 +67,8 @@ export async function prepareSessionCreationTarget(input: Readonly<{
   signal?: AbortSignal;
   /** Test seam; production always delegates through the canonical SCM owner. */
   createCheckout?: CreateSessionCheckout;
+  /** Native worker consumes its already admitted SCM projection. */
+  scmRegistry?: ScmBackendRegistry;
 }>): Promise<SessionCreationTargetPreparationResultV1> {
   const request = SessionCreationTargetPreparationRequestV1Schema.parse(input.request);
   if (request.directory.kind === 'managed') {
@@ -93,6 +96,9 @@ export async function prepareSessionCreationTarget(input: Readonly<{
       approvedNewDirectoryCreation: false,
     });
     input.signal?.throwIfAborted();
+    if (!directoryReadiness.ok && directoryReadiness.response.type === 'error') {
+      return { ok: false, code: 'invalid_directory' };
+    }
     return SessionCreationTargetPreparationResultV1Schema.parse({
       ok: true,
       directory: canonicalSource.path,
@@ -105,7 +111,8 @@ export async function prepareSessionCreationTarget(input: Readonly<{
   input.signal?.throwIfAborted();
   let checkoutResult: SessionCheckoutCreationResult;
   try {
-    checkoutResult = await (input.createCheckout ?? createSessionCheckoutWithScm)({
+    const createCheckout = input.createCheckout ?? (request => createSessionCheckoutWithScm(request, input.scmRegistry));
+    checkoutResult = await createCheckout({
       sourceDirectory: canonicalSource.path,
       displayName: draft.displayName,
       baseRef: draft.baseRef ?? null,

@@ -17,15 +17,17 @@ import { createMachineAdminAccessObserver } from '@/machines/adminAccess/observe
 import { execFileWithDeadline } from '@happier-dev/cli-common/process';
 import { readAgentIsolationSnapshot } from './agentIsolationPolicy';
 import { createAgentIsolationSessionContext } from './agentIsolationSessionContext';
-import { selectHostRequesterExecutionIdentity } from './agentIsolationLaunchPolicy';
+import { selectHostRequesterExecutionIdentity, resolveHostRequesterAgentExecutionIdentity } from './agentIsolationLaunchPolicy';
 import { prepareSessionMcpLocalTransport } from '@/mcp/runtime/sessionMcpLocalTransport';
 import { authorizeResolvedProjectExecLaunchForHost } from '@/plugins/runtime/invocation/services/exec';
 import { materializeQualifiedConnectedAccountLaunchUses } from '@/daemon/connectedServices/materialize/materializeQualifiedConnectedAccountLaunchUses';
 import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
-import { observeAgentIsolationNativeReadiness, type AgentIsolationReadinessSystem } from './agentIsolationReadiness';
+import { observeAgentIsolationNativeReadiness, createAgentIsolationNativeReadinessQualification, type AgentIsolationReadinessSystem } from './agentIsolationReadiness';
 import type { TrackedSession } from '@/daemon/types';
 import { waitForExistingSessionExitIfStopRequested } from '@/daemon/sessions/waitForExistingSessionExitIfStopRequested';
 import { logger } from '@/ui/logger';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { prepareRequesterNativeOperation } from './prepareNativeOperation';
 
 // ACL commands are an OS boundary; the transport's exact ACL validation and
 // real Unix socket lifecycle are not mocked.
@@ -91,6 +93,7 @@ it.skipIf(process.platform !== 'linux').each([false, true])('settles applied eff
     const trackedSessions = new Map<number, TrackedSession>();
     let status: MachineAgentIsolationStatusV1 = { kind: 'disabled' };
     let failProbe = false, revokeDuringProbe = false, wrongChallenge = false, skipAnonymous = false, plantedLink = false;
+    let missingNativeUser = false;
     let probeFailureCode = 72;
     const outside = join(directory, 'private-sentinel');
     await writeFile(outside, 'agent');
@@ -110,6 +113,7 @@ it.skipIf(process.platform !== 'linux').each([false, true])('settles applied eff
       // Process/OS boundary only. The actual frame, finite readiness owner,
       // setup interpreter, metadata CAS and registered RPC handler stay real.
       run: async (command: string, args: readonly string[], options: Parameters<AgentIsolationReadinessSystem['run']>[2]) => {
+        if (command === 'getent' && missingNativeUser) throw Object.assign(new Error('Native user is absent'), { code: 2 });
         if (command === 'getent') return { stdout: args.includes('group') ? args.at(-1) === 'happier-agent' ? 'happier-agent:x:988:\n' : 'happier-workspace:x:1001:happier,happier-agent\n'
           : 'happier-agent:x:999:988::/var/lib/happier-agent:/usr/sbin/nologin\n', stderr: '' };
         probes++;
@@ -195,6 +199,9 @@ it.skipIf(process.platform !== 'linux').each([false, true])('settles applied eff
       daemonState: { runtimeId: 'current-daemon', agentIsolation: status },
       runtimeId: 'current-daemon', platform: process.platform,
     }), workspaceRoots: [workspace] }) };
+    Object.assign(machineContext, { qualifyNativeReadiness: createAgentIsolationNativeReadinessQualification({
+      read: machineContext.read, effects,
+    }) });
     // This registered global readiness path owns the existing shared account.
     // Member-native qualification is covered through its separate own-status owner.
     const ownerAgent = createAgentIsolationSessionContext({ machine: machineContext,
@@ -308,6 +315,38 @@ it.skipIf(process.platform !== 'linux').each([false, true])('settles applied eff
     await expect(apply()).resolves.toMatchObject({ status: { kind: 'unavailable', code: 'local_admin_api_accessible' } });
     await expect(restrictedLaunch()).rejects.toMatchObject({ code: 'agent_isolation_unavailable',
       details: { reason: 'local_admin_api_accessible' }, execLaunch: 'notStarted' });
+    // A successor withdraws the predecessor's runtime publication, while the
+    // reviewed shared native setup remains installed. First launch must demand
+    // one real qualification, then subsequent calls consume that held fact.
+    failProbe = false;
+    status = { kind: 'unavailable', code: 'provisioning_unavailable' };
+    trackedSessions.set(54321, { pid: 54321, startedBy: 'daemon', happySessionId: 'retained-live-session' });
+    const beforeSuccessorLaunch = probes;
+    await expect(prepareRequesterNativeOperation({ requesterIdentity: resolveHostRequesterAgentExecutionIdentity(ownerIdentity),
+      signal: context.signal, allowMemberPreparation: false,
+      readMaterial: () => ({ materializationKey: 'background-folder', environment: {}, selectedMaterials: [] }) },
+    { machine: machineContext, homeServerIdentityId: 'home', machineId: 'machine', installationId: 'installation',
+      reloadController: pluginReloadController })).rejects.toMatchObject({ code: 'agent_isolation_unavailable' });
+    expect(probes - beforeSuccessorLaunch).toBe(0);
+    const successorLaunch = await restrictedLaunch();
+    expect(successorLaunch.command).toBe('sudo');
+    await successorLaunch.release();
+    expect(status).toMatchObject({ kind: 'effective', platform: 'linux', agentUser: 'happier-agent' });
+    expect(probes - beforeSuccessorLaunch).toBe(1);
+    const nextLaunch = await restrictedLaunch();
+    await nextLaunch.release();
+    expect(probes - beforeSuccessorLaunch).toBe(1);
+    status = { kind: 'unavailable', code: 'provisioning_unavailable' };
+    missingNativeUser = true;
+    await expect(restrictedLaunch()).rejects.toMatchObject({ code: 'agent_isolation_unavailable',
+      details: { reason: 'agent_user_missing' }, execLaunch: 'notStarted' });
+    expect(status).toMatchObject({ kind: 'unavailable', code: 'agent_user_missing' });
+    expect(probes - beforeSuccessorLaunch).toBe(1);
+    missingNativeUser = false;
+    trackedSessions.delete(54321);
+    // Restore the classified refusal entering the existing Apply cancellation
+    // control; bare successor publication is qualified by Preview itself.
+    status = { kind: 'unavailable', code: 'local_admin_api_accessible' };
     failProbe = false; revokeDuringProbe = true;
     await expect(apply()).rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN });
     expect(status.kind).not.toBe('effective');

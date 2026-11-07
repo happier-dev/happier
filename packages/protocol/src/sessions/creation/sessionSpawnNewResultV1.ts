@@ -15,7 +15,7 @@ import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.
 import { SessionFollowSourceKeyPreparationResultV1Schema } from '../follow/sessionFollowSourceKeyPreparationV1.js';
 import { SessionAttestedContextV1Schema } from './sessionAttestedContextV1.js';
 import { SessionSpawnLaunchErrorV1Schema } from '../spawnSession.js';
-import { ActionOperationAddressV1Schema } from '../../actions/specs/actionOperations.js';
+import { ActionOperationAddressV1Schema } from '../../actions/operations/addressV1.js';
 import {
   SessionCreationOpaqueIdV1Schema,
   SessionExecutionTargetV1Schema,
@@ -78,6 +78,13 @@ export type SessionSpawnNewInitialInputDispositionV1 = z.infer<
 export const SessionForkFilesNotCopiedV1Schema = lazyZodSchema(() => z.strictObject({ reason: z.literal('cross_machine') }));
 export type SessionForkFilesNotCopiedV1 = z.infer<typeof SessionForkFilesNotCopiedV1Schema>;
 
+/** An optional CLI update never changes the successful Session birth settlement. */
+export const SessionAgentUpdateNoticeV1Schema = lazyZodSchema(() => z.strictObject({
+  agentId: z.string().check(z.trim(), z.minLength(1)),
+  status: z.enum(['pending', 'failed']),
+}));
+export type SessionAgentUpdateNoticeV1 = z.infer<typeof SessionAgentUpdateNoticeV1Schema>;
+
 const SessionSpawnNewErrorCodeV1Schema = lazyZodSchema(() => z.union([
   z.enum([
     'invalid_input',
@@ -94,6 +101,7 @@ const SessionSpawnNewErrorCodeV1Schema = lazyZodSchema(() => z.union([
     'cancelled',
     'spawn_failed',
     'agent_cli_missing',
+    'agent_cli_not_ready',
     'agent_signed_out',
   ]),
   SessionAccessErrorCodeV1Schema,
@@ -138,6 +146,7 @@ export const SessionSpawnNewResultV1Schema = lazyZodSchema(() => z.union([
     attestedContext: z.optional(SessionAttestedContextV1Schema),
     filesNotCopied: z.optional(SessionForkFilesNotCopiedV1Schema),
     sourceKeyPreparation: z.optional(SessionFollowSourceKeyPreparationResultV1Schema),
+    agentUpdate: z.optional(SessionAgentUpdateNoticeV1Schema),
   }),
   z.strictObject({
     type: z.literal('pending'),
@@ -145,7 +154,11 @@ export const SessionSpawnNewResultV1Schema = lazyZodSchema(() => z.union([
     outcome: z.enum(['accepted', 'unknown']),
     /** Existing receiving-host operation; observation never starts another create. */
     operation: z.optional(ActionOperationAddressV1Schema),
-  }),
+    /** Committed/attached proof for an opted-in observer, never input acceptance or native readiness. */
+    sessionId: z.optional(asProtocolZod(SessionIdSchema)),
+  }).check(z.refine(value => value.sessionId === undefined || value.outcome === 'accepted', {
+    path: ['sessionId'], message: 'Committed Session proof requires an accepted receipt.',
+  })),
   z.strictObject({
     type: z.literal('error'),
     code: SessionSpawnNewErrorCodeV1Schema,
@@ -168,7 +181,7 @@ export const SessionSpawnNewResultV1Schema = lazyZodSchema(() => z.union([
     if (value.terminalHostError && (value.code !== 'incompatible_target' || value.retryable)) {
       context.addIssue({ code: "custom", path: ['terminalHostError'], message: 'Terminal host setup failures require a non-retryable incompatible target.' });
     }
-    const agentPrecondition = value.code === 'agent_cli_missing' || value.code === 'agent_signed_out';
+    const agentPrecondition = value.code === 'agent_cli_missing' || value.code === 'agent_cli_not_ready' || value.code === 'agent_signed_out';
     if (agentPrecondition !== (value.agentId !== undefined)) {
       context.addIssue({ code: "custom", path: ['agentId'], message: 'Agent identity is required only for an Agent precondition failure.' });
     }

@@ -27,9 +27,16 @@ export type SessionCreationDirectoryApprovalV1 = z.infer<
 
 export const SessionCreationTargetPreparationRequestV1Schema = lazyZodSchema(() => z.strictObject({
   directory: SessionDirectoryIntentV1Schema,
+  /** Deliberate Session creation prepares its requester before the native folder read. */
+  prepareAgentIsolationMember: z.optional(z.literal(true)),
   sessionCreationTag: z.optional(SessionCreationTagV1Schema),
   checkoutCreationDraft: z.optional(z.nullable(SessionAuthoringCheckoutCreationDraftV1Schema)),
-}).check(z.superRefine(refineSessionDirectoryIntentCheckoutV1)));
+}).check(z.superRefine(refineSessionDirectoryIntentCheckoutV1), z.superRefine((request, context) => {
+  if (request.prepareAgentIsolationMember === true && !needsSessionCreationDirectoryApprovalPreflightV1(request)) {
+    context.addIssue({ code: 'custom', path: ['prepareAgentIsolationMember'],
+      message: 'Requester preparation requires a direct directory preflight' });
+  }
+})));
 export type SessionCreationTargetPreparationRequestV1 = z.infer<
   typeof SessionCreationTargetPreparationRequestV1Schema
 >;

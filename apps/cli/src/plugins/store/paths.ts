@@ -1,9 +1,9 @@
-import { mkdir } from 'node:fs/promises';
+import { chmod, mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 import { configuration } from '../../configuration';
 import { resolvePluginStorePathLayout } from './pathLayout';
-import { ensureProtectedLocalStateDirectory } from '@/utils/fs/protectedLocalState';
+import { ensurePrivateDirectoryPreservingTraversal, ensureProtectedLocalStateDirectory } from '@/utils/fs/protectedLocalState';
 
 export type PluginStorePaths = Readonly<{
   happyHomeDir: string;
@@ -28,20 +28,16 @@ export const PLUGIN_MANIFEST_RELATIVE_PATH = join('.happier-plugin', 'plugin.jso
 export function resolvePluginStorePaths(params?: Readonly<{ happyHomeDir?: string }>): PluginStorePaths {
   return resolvePluginStorePathLayout(params?.happyHomeDir ?? configuration.happyHomeDir);
 }
+
 export async function ensurePluginStoreDirectories(params?: Readonly<{ happyHomeDir?: string }>): Promise<PluginStorePaths> {
   const paths = resolvePluginStorePaths(params);
-  await ensureProtectedLocalStateDirectory(dirname(paths.rootDir), { authority: 'owned' });
+  await ensurePrivateDirectoryPreservingTraversal(dirname(paths.rootDir));
+  await ensurePrivateDirectoryPreservingTraversal(paths.rootDir);
+  await mkdir(paths.generationsDir, { recursive: true, mode: 0o755 });
+  if (process.platform !== 'win32') await chmod(paths.generationsDir, 0o755);
   await Promise.all([
-    mkdir(paths.stateDir, { recursive: true }),
-    mkdir(paths.stateRevisionsDir, { recursive: true }),
-    mkdir(paths.generationsDir, { recursive: true }),
-    mkdir(paths.installedDir, { recursive: true }),
-    mkdir(paths.cacheDir, { recursive: true }),
-    mkdir(paths.logsDir, { recursive: true }),
-    mkdir(paths.locksDir, { recursive: true }),
-    mkdir(paths.storageDir, { recursive: true }),
-    mkdir(paths.secretsDir, { recursive: true }),
-    mkdir(paths.settingsDir, { recursive: true }),
-  ]);
+    paths.stateDir, paths.stateRevisionsDir, paths.installedDir, paths.cacheDir,
+    paths.logsDir, paths.locksDir, paths.storageDir, paths.secretsDir, paths.settingsDir,
+  ].map(path => ensureProtectedLocalStateDirectory(path, { authority: 'owned' })));
   return paths;
 }

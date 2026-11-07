@@ -1,19 +1,30 @@
 import { execFileWithDeadline } from '@happier-dev/cli-common/process';
 import { encodeAgentLaunchFrame } from './agentLaunchFrame';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import type { AgentIsolationMemberRequester, AgentIsolationDaemonObservation } from './provisioning';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import type { RequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { prepareRequesterOperationMaterial } from '@/daemon/connectedServices/purposeBindings/requesterOperationMaterial';
 import { resolveInstalledMachineEffectCli } from '@/machines/adminAccess/runElevatedEffect';
 import { assertHostRequesterExecutionAdmissionForHost, resolveHostRequesterAgentPlacementForHost,
-  type HostAgentIsolationLaunchContext, type HostRequesterExecutionIdentity } from './agentIsolationLaunchPolicy';
+  type HostAgentIsolationLaunchContext, type HostAgentIsolationLaunchSnapshot, type HostRequesterExecutionIdentity } from './agentIsolationLaunchPolicy';
 import { readAgentIsolationNativeIdentity, type AgentIsolationMemberNativeIdentity } from './agentIsolationNativeIdentity';
 import { createAgentIsolationOperationContext } from './agentIsolationSessionContext';
 import { projectAgentIsolationOperationMaterial, type AgentLaunchMaterialization,
   type AgentLaunchOperationMaterialization } from './agentLaunchMaterials';
 
+export type PreparedRequesterNativeIdentity = Readonly<{
+  requesterIdentity: AgentIsolationMemberRequester;
+  snapshot: HostAgentIsolationLaunchSnapshot | undefined;
+} & (
+  { kind: 'member'; identity: AgentIsolationMemberNativeIdentity; daemonObservation?: AgentIsolationDaemonObservation | null }
+  | { kind: 'sharedAgent'; identity: Pick<AgentIsolationMemberNativeIdentity, 'agentUid' | 'agentGid' | 'home'> }
+)>;
+
 export type PrepareRequesterNativeOperationInput = Readonly<{
   requesterIdentity: HostRequesterExecutionIdentity;
+  /** Exact native fact already prepared by Session admission. */
+  preparedIdentity?: PreparedRequesterNativeIdentity;
   requesterAccount?: RequesterAccountActionContext;
   retainedRequesterCustody?: ReturnType<NonNullable<RequesterAccountActionContext['retainCustody']>>;
   readMaterial(): AgentLaunchOperationMaterialization | undefined;
@@ -40,14 +51,17 @@ export async function prepareRequesterNativeOperation(input: PrepareRequesterNat
   input.signal.throwIfAborted();
   const selected = input.requesterIdentity;
   const { homeServerIdentityId } = host;
-  const machine = input.allowMemberPreparation === false && host.machine
-    ? { ...host.machine, prepareMember: undefined } : host.machine;
+  const machine = input.preparedIdentity && host.machine
+    ? { ...host.machine, read: () => input.preparedIdentity!.snapshot }
+    : input.allowMemberPreparation === false && host.machine
+      ? { ...host.machine, prepareMember: undefined } : host.machine;
   if (selected.kind !== 'isolated'
     || !machine || !homeServerIdentityId || selected.requester.machineId !== host.machineId
     || selected.requester.installationId !== host.installationId) throw unavailable();
   const requesterIdentity = { ...selected, homeServerIdentityId };
-  const snapshot = machine.read();
-  const placement = resolveHostRequesterAgentPlacementForHost({ identity: selected, snapshot });
+  if (!input.preparedIdentity && input.allowMemberPreparation !== false) await machine.qualifyNativeReadiness?.({ requesterIdentity: selected, signal: input.signal });
+  const snapshot = input.preparedIdentity ? input.preparedIdentity.snapshot : machine.read();
+  const placement = input.preparedIdentity?.kind ?? resolveHostRequesterAgentPlacementForHost({ identity: selected, snapshot });
   if (placement === 'daemon') throw unavailable();
   const operation = { machine, requesterIdentity, signal: input.signal,
     managedHappierBinaryPath: machine.managedHappierBinaryPath ?? resolveInstalledMachineEffectCli(),
@@ -57,9 +71,9 @@ export async function prepareRequesterNativeOperation(input: PrepareRequesterNat
   let target: AgentLaunchMaterialization | undefined;
   let agentIsolation: HostAgentIsolationLaunchContext;
   if (placement === 'member') {
-    if (!machine.readMember) throw unavailable();
+    if (!input.preparedIdentity && !machine.readMember) throw unavailable();
     const memberInput = { requesterIdentity, rpcContext: input.ingress, signal: input.signal };
-    const native = await machine.readMember(memberInput).catch(error => {
+    const native = input.preparedIdentity?.kind === 'member' ? input.preparedIdentity : await machine.readMember!(memberInput).catch(error => {
       input.signal.throwIfAborted();
       // Missing binding/native identity is an actual preparation failure. Keep
       // cold member auto-setup at the incumbent owner; never use the daemon UID.
@@ -69,15 +83,16 @@ export async function prepareRequesterNativeOperation(input: PrepareRequesterNat
     // This operation consumes a committed member binding. Global shared-user
     // readiness is independent and is not republished by native operations.
     const memberSnapshot = snapshot && { ...snapshot, status: { kind: 'effective' as const, platform: 'linux' as const } };
-    assertHostRequesterExecutionAdmissionForHost({ identity: selected, snapshot: memberSnapshot, agentLaunchKind: 'exec' });
+    if (!input.preparedIdentity) assertHostRequesterExecutionAdmissionForHost({ identity: selected, snapshot: memberSnapshot, agentLaunchKind: 'exec' });
     memberIdentity = native.identity;
     workingDirectory = native.identity.workspaceRoot;
     agentIsolation = createAgentIsolationOperationContext({ ...operation,
       machine: { ...machine, read: () => memberSnapshot }, memberIdentity,
       rpcContext: input.ingress, daemonObservation: native.daemonObservation });
   } else {
-    assertHostRequesterExecutionAdmissionForHost({ identity: selected, snapshot, agentLaunchKind: 'exec' });
-    const nativeIdentity = await readAgentIsolationNativeIdentity(input.signal);
+    if (!input.preparedIdentity) assertHostRequesterExecutionAdmissionForHost({ identity: selected, snapshot, agentLaunchKind: 'exec' });
+    const nativeIdentity = input.preparedIdentity?.kind === 'sharedAgent' ? input.preparedIdentity.identity
+      : await readAgentIsolationNativeIdentity(input.signal);
     const material = input.readMaterial();
     if (!material) throw unavailable();
     target = projectAgentIsolationOperationMaterial(nativeIdentity, material);

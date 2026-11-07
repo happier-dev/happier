@@ -40,7 +40,7 @@ export async function resolveAgentIsolationEffectIntentResult(enabled: boolean, 
       steps: retirementObservations.filter(step => step.kind === 'file' && step.state === 'absent'), retirementObservations, retirementWarnings } };
   }
   if (requesterIdentity) return { kind: 'ready' as const, intent: { roots: [], ancestorAcls: [], sessionsToReplace: 0, daemonObservation: daemon,
-    steps: buildAgentIsolationProvisioningSteps({ daemonUsername: daemon.daemonUsername, daemonPrimaryGroup: daemon.daemonPrimaryGroup, binaryPath: effects.installedCli, requesterIdentity, retainedMemberUid }) } };
+    steps: buildAgentIsolationProvisioningSteps({ daemonUsername: daemon.daemonUsername, daemonPrimaryGroup: daemon.daemonPrimaryGroup, binaryPath: effects.installedCli, pluginCodeRoot: effects.pluginCodeRoot, requesterIdentity, retainedMemberUid }) } };
   const admitted = effects.readRoots();
   // A newly created server may have no Workspace yet. Only an unavailable
   // census is unknown; a known empty census still needs account/RunAs setup.
@@ -50,9 +50,12 @@ export async function resolveAgentIsolationEffectIntentResult(enabled: boolean, 
   if (!workspace) return unavailable('workspace_paths',
     'Check that admitted Workspace directories exist, are accessible to the daemon, and are outside protected roots.');
   const { roots, ancestorAcls } = workspace;
+  const provisioningSteps = buildAgentIsolationProvisioningSteps({ daemonUsername: daemon.daemonUsername,
+    daemonPrimaryGroup: daemon.daemonPrimaryGroup, binaryPath: effects.installedCli, pluginCodeRoot: effects.pluginCodeRoot });
+  const provisioningTraversalPaths = new Set(provisioningSteps.flatMap(step => step.kind === 'pathTraversal' ? [step.path] : []));
   const steps = [
-    ...buildAgentIsolationProvisioningSteps({ daemonUsername: daemon.daemonUsername, daemonPrimaryGroup: daemon.daemonPrimaryGroup, binaryPath: effects.installedCli }),
-    ...ancestorAcls.map((acl, index) => ({ id: `ancestor-${index}`, kind: 'pathTraversal' as const, path: acl.path, agentUsername: 'happier-agent' })),
+    ...provisioningSteps,
+    ...ancestorAcls.filter(acl => !provisioningTraversalPaths.has(acl.path)).map((acl, index) => ({ id: `ancestor-${index}`, kind: 'pathTraversal' as const, path: acl.path, agentUsername: 'happier-agent' })),
     ...roots.map(root => ({ id: `workspace-${root.rootId}`, kind: 'workspaceAccess' as const, path: root.path,
       group: 'happier-workspace', agentUsername: 'happier-agent' })),
     buildUserManagerGroupRefreshStep({ uid: daemon.daemonUid, username: daemon.daemonUsername }),

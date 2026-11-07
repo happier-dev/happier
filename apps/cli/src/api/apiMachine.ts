@@ -180,6 +180,7 @@ import { registerDaemonProcessesRpcHandlers, type DaemonProcessesRoutes } from '
 import { registerDaemonDeploymentChildRpcHandler } from '@/deployments/daemonDeploymentChildRpc';
 import {
     registerDaemonBrowserControlHandler,
+    registerDaemonBrowserViewWatchHandler,
 } from '@/rpc/handlers/daemonBrowserControl';
 import { registerDaemonComputerHandler } from '@/rpc/handlers/daemonComputer';
 import { registerMachineLiveStreamSourceAdmissionHandler } from '@/daemon/peer/mediation/stream/sourceAdmission';
@@ -236,6 +237,7 @@ import type { RpcHandlerActiveExecution, RpcHandlerContext, RpcLocalActionContex
 import type { PeerMachineRpcDirectHandlerManager } from '@/daemon/peer/mediation/rpc/registerRoutes';
 import { SOCKET_RPC_EVENTS, type SocketRpcAnsweringClientV1 } from '@happier-dev/protocol/socketRpc';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { SessionCreationTargetPreparationRequestV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationTargetPreparationV1';
 import { SocketRpcAnsweringClientCandidatesV1Schema, type SocketRpcAnsweringClientCandidateV1 } from '@happier-dev/protocol/socketRpc';
 import { isCurrentUiContextClientRpcMethod } from '@happier-dev/protocol/actions/clientDispatchV1';
 import { EXTERNAL_SESSION_OPERATION_SOCKET_EVENT_V1 } from '@happier-dev/protocol/sessions/external/operationActionsV1';
@@ -737,10 +739,15 @@ export class ApiMachineClient {
             return { bootstrap: birth, dispose: () => owner.release(runtime) };
         },
         executeNativeRpc: async ({ method, input, context, requester, identity }) => {
+            // Parse explicit launch intent before native preparation can mutate.
+            // The same folder RPC without intent remains a background read.
+            const preparation = method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT
+                ? SessionCreationTargetPreparationRequestV1Schema.parse(input) : undefined;
             const channel = await this.openNativeFilesystemChannel({ requester, identity,
                 operationKey: context.localActionContext?.operationAcceptance?.operationId
                     ?? context.localActionContext?.actionRequestId ?? context.transportRequestId ?? '',
-                signal: context.signal, ingress: context });
+                signal: context.signal, ingress: context,
+                ...(preparation && preparation.prepareAgentIsolationMember !== true ? { allowMemberPreparation: false as const } : {}) });
             try { return await channel.request({ kind: 'filesystem.rpc', method, input }); }
             finally { await channel.dispose(); }
         },
@@ -1044,6 +1051,19 @@ export class ApiMachineClient {
         }
         const requester = await this.filesystemEffectAdmission.resolveActionRequester(context);
         try { return requester.identity; } finally { await requester.dispose(); }
+    }
+
+    /** Session preparation retains the exact requester/native fact selected at
+     * birth. The incumbent filesystem owner supplies its existing policy. */
+    prepareNativeSessionFilesystemEffect(input: Readonly<{
+        preparedIdentity: import('@/daemon/agentIsolation/prepareNativeOperation').PreparedRequesterNativeIdentity;
+        operationKey: string;
+        signal: AbortSignal;
+    }>) {
+        return prepareNativeFilesystemEffect({ prepareNativeOperation: args => this.prepareNativeOperation(args),
+            identity: input.preparedIdentity.requesterIdentity, preparedIdentity: input.preparedIdentity,
+            operationKey: input.operationKey, signal: input.signal,
+            configuration: this.filesystemEffectConfiguration(input.preparedIdentity.requesterIdentity.requester.accountId) });
     }
 
     /** Consumes the already admitted requester and existing selected-material lease. */
@@ -1489,7 +1509,10 @@ export class ApiMachineClient {
             machineId: this.machine.id,
             resolvePrivateWorkspaceSyncTargetExecution: input => {
                 const adapter = this.lifecycleDependencies.workspaceSyncHandoffAdapter;
-                return adapter ? resolvePrivateWorkspaceSyncTargetExecution(adapter, input) : { kind: 'no_private_capture' };
+                return resolvePrivateWorkspaceSyncTargetExecution({
+                    resolvePrivateExecution: adapter?.resolvePrivateExecution,
+                    hasRetainedRecoveryAdmission: this.lifecycleDependencies.workspaceSync?.hasRetainedRecoveryAdmission,
+                }, input);
             },
             resolveHomeServerIdentityId: async signal => (await resolveCurrentMachineExecutionOriginContext(signal))?.serverIdentityId ?? null,
             resolveCustodianAccountId: (signal) => runWithServerHttpBaseUrl(readMachineRuntimeServerHttpBaseUrl(), () => this.getAccountId(signal)),
@@ -2442,24 +2465,28 @@ export class ApiMachineClient {
         }
     }
 
+    private filesystemEffectConfiguration(requesterAccountId: string): import('@/rpc/handlers/fileSystem/filesystemEffectOperation').FilesystemEffectConfiguration {
+        return { machineId: this.machine.id, requesterAccountId, workingDirectory: this.machineRpcWorkingDirectory,
+            accessPolicy: this.filesystemAccessPolicy, additionalAllowedReadDirs: [...this.additionalAllowedReadDirs],
+            additionalAllowedWriteDirs: [...this.additionalAllowedWriteDirs],
+            additionalAllowedReadFiles: [...this.transientSessionMediaReadAllowance.readAllowedReadFiles()],
+            sessionRpcTransferMaxBytes: resolveServerRoutedTransferMaxBytes() };
+    }
+
     /** File effects keep the already admitted Action's local cancellation signal. */
     private openNativeFilesystemChannel(input: Readonly<{ requester: FilesystemEffectRequester;
         identity: Extract<HostRequesterExecutionIdentity, { kind: 'isolated' }>; operationKey: string;
-        signal: AbortSignal; ingress?: RpcHandlerContext }>) {
+        signal: AbortSignal; ingress?: RpcHandlerContext; allowMemberPreparation?: false }>) {
         const account = readRequesterAccountActionContext(input.ingress?.callerInputAuthorization
             ?? input.ingress?.localActionContext?.externalActionExecutionAuthorization);
         const releaseAccount = account?.retain();
         return prepareNativeFilesystemEffect({ prepareNativeOperation: args => this.prepareNativeOperation(args),
             identity: input.identity, operationKey: input.operationKey, signal: input.signal,
+            ...(input.allowMemberPreparation === false ? { allowMemberPreparation: false as const } : {}),
             ...(input.ingress ? { ingress: input.ingress } : {}),
-            configuration: { machineId: this.machine.id, requesterAccountId: input.identity.requester.accountId,
+            configuration: { ...this.filesystemEffectConfiguration(input.identity.requester.accountId),
                 ...(input.ingress?.capabilitySessionFactories ? { capabilitySessionFactories: input.ingress.capabilitySessionFactories } : {}),
-                workingDirectory: this.machineRpcWorkingDirectory,
-                ...(input.ingress?.callerAuthority ? { callerAuthority: input.ingress.callerAuthority } : {}),
-                accessPolicy: this.filesystemAccessPolicy, additionalAllowedReadDirs: [...this.additionalAllowedReadDirs],
-                additionalAllowedWriteDirs: [...this.additionalAllowedWriteDirs],
-                additionalAllowedReadFiles: [...this.transientSessionMediaReadAllowance.readAllowedReadFiles()],
-                sessionRpcTransferMaxBytes: resolveServerRoutedTransferMaxBytes() },
+                ...(input.ingress?.callerAuthority ? { callerAuthority: input.ingress.callerAuthority } : {}) },
             releaseRequester: async () => { await input.requester.dispose(); await releaseAccount?.(); } });
     }
 
@@ -3262,6 +3289,10 @@ export class ApiMachineClient {
             browserControl,
             getNativeClient: () => this,
         });
+    }
+
+    registerBrowserViewDiscovery(discovery: import('@/daemon/browser/control/viewDiscovery').BrowserDaemonViewDiscovery): void {
+        registerDaemonBrowserViewWatchHandler(this.rpcHandlerManager, discovery);
     }
 
     registerBrowserContextRoutes(browserContext: BrowserContextRoutes): void {

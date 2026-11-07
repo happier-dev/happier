@@ -35,6 +35,13 @@ vi.mock('@happier-dev/cli-common/process', async original => {
 });
 afterEach(() => { nativeHomes.clear(); vi.restoreAllMocks(); });
 
+function sharedPreparation(birth = { serverId: 'canonical-home', accountId: 'owner', machineId: 'machine', installationId: 'installation' }) {
+  return createSessionAgentIsolationMemberPreparation({ machineId: 'machine', custodianAccountId: 'owner',
+    agentIsolation: { read: () => ({ enabled: true, status: { kind: 'effective', platform: 'linux' }, workspaceRoots: [] }) },
+    resolveCurrentMachineExecutionOriginContext: async () => ({ machineId: 'machine', serverIdentityId: 'canonical-home' }),
+  })({ bootstrap: { attribution: birth, homeServerIdentityId: 'canonical-home', savedSecretOperationContext: { machineAdmission: null } } }, new AbortController().signal);
+}
+
 describe.skipIf(process.platform !== 'linux')('managed cwd native identity preparation', () => {
   it('retains the native cause when execution admission consumes an unavailable probe status', async () => {
     const memberIdentity = { ...deriveAgentIsolationMemberIdentity({ homeServerIdentityId: 'canonical-home',
@@ -70,7 +77,7 @@ describe.skipIf(process.platform !== 'linux')('managed cwd native identity prepa
       Reflect.set(client, 'agentIsolationMemberOperations', native.members);
       const prepared = await prepareDaemonAgentIsolationIdentity({ hasAgentRuntime: true,
         requesterWorkAttributionV1: birth,
-        prepareAgentIsolationMember: async () => (await client.prepareAgentIsolationMember({ requesterIdentity })).identity,
+        prepareAgentIsolationMember: async () => ({ kind: 'member', requesterIdentity, snapshot: undefined, ...await client.prepareAgentIsolationMember({ requesterIdentity }) }),
       });
       expect(native.runtime.store.get({ accountId: 'owner', machineId: 'machine' }, 'member-setup-1'))
         .toMatchObject({ state: 'succeeded', result: { kind: 'ready' } });
@@ -100,13 +107,13 @@ describe.skipIf(process.platform !== 'linux')('managed cwd native identity prepa
       const identity = deriveAgentIsolationMemberIdentity(requesterIdentity);
       nativeHomes.set(identity.home, { backingDirectory: join(root, 'server'), uid: 2401, gid: 2401 });
       const prepared = await prepareDaemonAgentIsolationIdentity({ hasAgentRuntime: true,
-        requesterWorkAttributionV1: birth, readAgentIsolationEnabled: () => true,
+        requesterWorkAttributionV1: birth,
         managedDirectory: { directory: join(root, 'server', 'session-directories', 'placeholder'), workspaceRoots: [root] },
         prepareAgentIsolationMember: kind === 'member' ? async input => {
-          return await readAgentIsolationNativeIdentity({ requesterIdentity, signal: input.signal }, {
+          return { kind: 'member', requesterIdentity, snapshot: undefined, identity: await readAgentIsolationNativeIdentity({ requesterIdentity, signal: input.signal }, {
             observe: async step => ({ stepId: step.id, status: 'satisfied', facts: { uid: 2401, gid: 2401 } }),
-          });
-        } : createSessionAgentIsolationMemberPreparation({ machineId: 'machine', custodianAccountId: 'owner' })(null, new AbortController().signal),
+          }) };
+        } : sharedPreparation(birth),
       });
       expect(prepared).toMatchObject({ ok: true, payloadPlacement: {
         root: kind === 'member' ? deriveAgentIsolationMemberIdentity({ homeServerIdentityId: 'canonical-home', requester: birth }).workspaceRoot : root,
@@ -118,8 +125,8 @@ describe.skipIf(process.platform !== 'linux')('managed cwd native identity prepa
   });
 
   it('refuses ambiguous shared managed placement before creating daemon-private payloads', async () => {
-    const result = await prepareDaemonAgentIsolationIdentity({ hasAgentRuntime: true, readAgentIsolationEnabled: () => true,
-      prepareAgentIsolationMember: createSessionAgentIsolationMemberPreparation({ machineId: 'machine', custodianAccountId: 'owner' })(null, new AbortController().signal),
+    const result = await prepareDaemonAgentIsolationIdentity({ hasAgentRuntime: true,
+      prepareAgentIsolationMember: sharedPreparation(),
       managedDirectory: { directory: '/daemon/private/placeholder', workspaceRoots: ['/accepted/a', '/accepted/b'] },
     });
     expect(result).toMatchObject({ ok: false, result: { type: 'error', errorCode: 'SPAWN_VALIDATION_FAILED',
@@ -127,16 +134,16 @@ describe.skipIf(process.platform !== 'linux')('managed cwd native identity prepa
   });
 
   it('selects the unique accepted containing workspace for shared managed placement', async () => {
-    const result = await prepareDaemonAgentIsolationIdentity({ hasAgentRuntime: true, readAgentIsolationEnabled: () => true,
-      prepareAgentIsolationMember: createSessionAgentIsolationMemberPreparation({ machineId: 'machine', custodianAccountId: 'owner' })(null, new AbortController().signal),
+    const result = await prepareDaemonAgentIsolationIdentity({ hasAgentRuntime: true,
+      prepareAgentIsolationMember: sharedPreparation(),
       managedDirectory: { directory: '/accepted/b/work', workspaceRoots: ['/accepted/a', '/accepted/b'] },
     });
     expect(result).toMatchObject({ ok: true, payloadPlacement: { root: '/accepted/b', agentUid: 2403 } });
   });
 
   it('honors an explicit accepted root when accepted workspaces are nested', async () => {
-    const result = await prepareDaemonAgentIsolationIdentity({ hasAgentRuntime: true, readAgentIsolationEnabled: () => true,
-      prepareAgentIsolationMember: createSessionAgentIsolationMemberPreparation({ machineId: 'machine', custodianAccountId: 'owner' })(null, new AbortController().signal),
+    const result = await prepareDaemonAgentIsolationIdentity({ hasAgentRuntime: true,
+      prepareAgentIsolationMember: sharedPreparation(),
       managedDirectory: { directory: '/accepted/project', workspaceRoots: ['/accepted', '/accepted/project'] },
     });
     expect(result).toMatchObject({ ok: true, payloadPlacement: { root: '/accepted/project', agentUid: 2403 } });

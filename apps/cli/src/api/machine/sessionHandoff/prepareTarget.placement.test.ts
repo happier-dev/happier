@@ -1,4 +1,3 @@
-import { resolveSessionHandoffPrepareTargetJobLeaseTtlMs } from '@/session/handoff/prepare/sessionHandoffPrepareTargetJobLease';
 import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { statSync } from 'node:fs';
@@ -66,9 +65,7 @@ it.skipIf(process.platform !== 'linux')('holds admitted placement before ingress
     let admitted = false;
     let importedPath = '';
     const handler = createSessionHandoffPrepareTargetActionHandler({ prepareJobStore, sourceExportStore, activePrepareJobs,
-      prepareTargetJobLeaseOwnerId: 'placement-test', prepareTargetJobLeaseTtlMs: resolveSessionHandoffPrepareTargetJobLeaseTtlMs(),
-      getTransferRouteCache: () => { throw new Error('Placement fixture does not use workspace route caching'); },
-      invalidateDirectPeerRouteCacheForHandoffMachines: () => undefined, runtimeConfig: { activeServerDir: session.directory },
+      prepareTargetJobLeaseOwnerId: 'placement-test', runtimeConfig: { activeServerDir: session.directory },
       machineTransferChannel: undefined, directPeerTransfer: { publishTransfer: () => [], clearPublishedTransfer: () => undefined,
         requestPayloadFile: async request => {
           const payload = request.transferId === transferId ? seed.payloadSource
@@ -84,7 +81,7 @@ it.skipIf(process.platform !== 'linux')('holds admitted placement before ingress
             custodianAccountId: session.bootstrap.attribution.accountId,
             resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: 'srv_handoff_placement', machineId: session.bootstrap.attribution.machineId }),
           })(context?.requesterSessionBootstrap ? { bootstrap: context.requesterSessionBootstrap } : null, context!.signal),
-          readAgentIsolationEnabled: () => true,
+
           managedDirectory: { directory: request.targetPath, workspaceRoots: [workspace] }, signal: context?.signal,
         });
         if (!prepared.ok) throw new Error('Canonical placement refused');
@@ -134,7 +131,8 @@ it.skipIf(process.platform !== 'linux')('gives the retained fork member access t
     await writeFile(join(source.directory, 'notes.txt'), 'retained seed', { mode: 0o600 });
     await writeFile(join(source.directory, 'scripts', 'run'), '#!/bin/sh\n', { mode: 0o700 });
     const target = await owner.materializeForFreshSpawn({ sessionCreationTag: 'fork' });
-    expect(await seedManagedSessionDirectory({ activeServerDir: directory, sessionCreationTag: 'fork', targetPath: target.directory,
+    await owner.bind({ allocationId: target.allocationId, sessionId: 'fork' });
+    expect(await seedManagedSessionDirectory({ activeServerDir: directory, allocationId: target.allocationId,
       seed: { sourceSessionId: 'source', sourceSessionCreationTag: 'source', sourcePath: source.directory } })).toEqual({ ok: true });
     expect(await readFile(join(target.directory, 'notes.txt'), 'utf8')).toBe('retained seed');
     expect(acl.get(statSync(join(target.directory, 'notes.txt')).ino)?.get('user:2403')).toBe('rw-');
