@@ -23,7 +23,7 @@ export function readFilteredBoardRoute(value: unknown): SessionListFilterV1 | nu
 
 /** Typed Board Artifacts open their domain editor, never the generic note writer. */
 export function readBoardArtifactRoute(artifact: Readonly<{
-    id: string; header?: Readonly<{ kind?: string }> | null;
+    id: string; header?: Readonly<{ kind?: unknown }> | null;
 }> | null): string | null {
     return artifact?.header?.kind === WORK_BOARD_ARTIFACT_KIND_V1 ? createBoardRoute(artifact.id) : null;
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { createWorkBoardV1, normalizeSessionListFilterV1, WorkBoardsV1Schema } from '@happier-dev/protocol';
+import { createWorkBoardV1, WorkBoardsV1Schema } from '@happier-dev/protocol/boards/workBoardV1';
+import { normalizeSessionListFilterV1} from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 
 import { buildSessionListFilterQueryHomes } from '@/components/sessions/shell/search/sessionListViewFilters';
 
@@ -7,6 +8,14 @@ import { fromStoredSessionListFilter, toStoredSessionListFilter } from '@/compon
 import { createFilteredBoardRoute, readFilteredBoardRoute } from '../boardsRoutes';
 
 describe('board Sessions filter', () => {
+    it('reopens unknown core and extension restrictions without broadening the stored selector', () => {
+        const filter = { ...normalizeSessionListFilterV1({ homeServerIds: ['home-a'] }),
+            futureCore: { value: 'narrow' }, extensions: { 'acme.future': { kind: 'future', value: true } } };
+        const saved = WorkBoardsV1Schema.parse({ v: 1, boards: [{ ...createWorkBoardV1({ id: 'future', name: 'Future' }), source: { picked: [], filter } }] });
+        const editor = fromStoredSessionListFilter(saved.boards[0]!.source.filter!, ['home-a']);
+        expect(editor).toMatchObject(filter);
+        expect(toStoredSessionListFilter(editor)).toEqual(filter);
+    });
     it('opens a transient Board using the same qualified filter, and rejects malformed route filters', () => {
         const filter = normalizeSessionListFilterV1({ scope: 'all_accessible', show: 'both',
             homeServerIds: ['home-a'], underSessionId: 'manager / one' });

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { createWorkBoardArtifactPortV1, createWorkBoardV1, WorkBoardsV1Schema, type WorkBoardIntentV1 } from '@happier-dev/protocol';
+import { createWorkBoardArtifactPortV1} from '@happier-dev/protocol/boards/workBoardArtifactV1';
+import { createWorkBoardV1, WorkBoardsV1Schema, type WorkBoardIntentV1 } from '@happier-dev/protocol/boards/workBoardV1';
 import { createWorkBoardArtifactBoundary } from '@/dev/testkit/harness/workBoardArtifactBoundary';
 
 import { resolveBoardSaveFailure, resolveCollectionSaveFailure } from './boardSaveFailure';

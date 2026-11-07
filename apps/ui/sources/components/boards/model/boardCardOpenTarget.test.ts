@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import type { BoardItemRefV1 } from '@happier-dev/protocol';
+import type { BoardItemRefV1 } from '@happier-dev/protocol/boards/workBoardV1';
 
-import type { BoardCard } from './boardCards';
+import { buildBoardCards, type BoardCard } from './boardCards';
+import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
+import { workflowRunRowFromSummary } from '@/sync/store/domains/workflowRuns';
 import { resolveBoardCardOpenTarget } from './boardCardOpenTarget';
 
 function card(kind: Exclude<BoardItemRefV1['kind'], 'task'>, bucket: BoardCard['status']['bucket'], availability: BoardCard['availability'] = 'ready'): BoardCard {
@@ -18,6 +20,20 @@ function card(kind: Exclude<BoardItemRefV1['kind'], 'task'>, bucket: BoardCard['
 }
 
 describe('resolveBoardCardOpenTarget', () => {
+    it('opens a failed Run update at its owner and sends a concurrent real hold to Inbox', () => {
+        const ref = { kind: 'workflow_run', qualifiedId: { serverId: 'home-a', id: 'failed' } } as const;
+        const current = (invocationAttentionRequired: boolean) => buildBoardCards([
+            { ref, key: 'failed', picked: true, sourced: false, available: true },
+        ], { nowMs: 1, session: () => null, workflow: () => null, machine: () => null,
+            machineSessionCounts: new Map(), accountScopedHome: () => true,
+            workflowRun: () => workflowRunRowFromSummary(createWorkflowRunSummaryFixture({
+                id: 'failed', state: 'failed', failureUnseen: true, attentionRequired: true, invocationAttentionRequired,
+            }), null) })[0]!;
+        expect(resolveBoardCardOpenTarget(current(false), { inboxAvailable: true })).toEqual({ kind: 'item', ref });
+        expect(resolveBoardCardOpenTarget(current(true), { inboxAvailable: true })).toEqual({
+            kind: 'inbox', item: { kind: 'workflow_run', serverId: 'home-a', id: 'failed' },
+        });
+    });
     it('opens a task only when its current source supplies a page, never an unavailable or unopenable item', () => {
         const task: BoardCard = { ...card('session', 'idle'),
             ref: { kind: 'task', pluginId: 'com.acme.tasks', qualifiedId: { serverId: 'home-a', id: 'task-1' } } };

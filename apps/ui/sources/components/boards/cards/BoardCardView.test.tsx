@@ -8,7 +8,16 @@ import { isSessionListRowVisible } from '@/sync/domains/session/sessionSurfaceVi
 import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { workflowRunRowFromSummary } from '@/sync/store/domains/workflowRuns';
 import { buildBoardCards, type BoardCard } from '../model/boardCards';
-import { BoardCardView } from './BoardCardView';
+import { BoardCardView, resolveBoardCardAction } from './BoardCardView';
+import { createExternalWorkItemsPluginFixture, createWorkItemsAccountFixture } from '@/dev/testkit/fixtures/workItemsPlugin';
+import { PluginContributesV2Schema } from '@happier-dev/protocol/plugins/contributions/v2';
+import { createPluginUiClientExecutableRegistrationIndex } from '@/components/plugins/reactNative/clientExecutableContributions';
+import { readBoardTaskItems } from '../model/boardTaskItems';
+import { createBoardCardProjection } from '../model/boardCards';
+import { buildWorkBoardItemKeyV1 } from '@happier-dev/protocol/boards/workBoardV1';
+
+const sessionNavigation = vi.hoisted(() => vi.fn());
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ router: { push: sessionNavigation } }).module);
 
 const hydrateSessionListRows = vi.hoisted(() => vi.fn(async (_addresses: readonly { serverId: string; sessionId: string }[]) => undefined));
 vi.mock('@/sync/sync', () => ({ sync: { hydrateSessionListRows } }));
@@ -24,11 +33,99 @@ function runCard(state: 'cancelled' | 'outcome_uncertain' | 'waiting_for_review'
         machineSessionCounts: new Map(), accountScopedHome: () => true,
         workflowRun: () => workflowRunRowFromSummary(createWorkflowRunSummaryFixture({ state,
             workflowCustodyState: state === 'cancelled' ? 'settled' : 'pending',
-            attentionRequired: true, createdAt: new Date(Date.now() - 120_000).toISOString() }), null),
+            attentionRequired: state !== 'cancelled', invocationAttentionRequired: state !== 'cancelled',
+            createdAt: new Date(Date.now() - 120_000).toISOString() }), null),
     })[0]!;
 }
 
 describe('Board body facts', () => {
+    it('redacts a private linked Session name while preserving its task reference', async () => {
+        const { buildSessionOrganizationSessionKey } = await import('@/sync/domains/session/organization/keys');
+        const { setScreenSharingPrivacyActive } = await import('@/desktop/capture/useNativeRecordingActive');
+        const row = createSessionListRenderableSessionFixture({ id: 'secret-worker', metadata: { name: 'Secret invoices', path: '/private', host: 'host' } });
+        storage.setState({ sessionListRowsByServerId: { 'home-a': { [row.id]: row } }, settings: { ...storage.getState().settings,
+            sessionListHiddenTagIdsWhileRecording: { 'home-a': ['secret'] } }, sessionOrganizationTagAssignmentsBySessionKey: {
+                [buildSessionOrganizationSessionKey('home-a', row.id)]: { sessionId: row.id, tagIds: ['secret'] } } });
+        const card = buildBoardCards([{ key: 'task', ref: { kind: 'task', pluginId: 'com.acme.tasks', qualifiedId: { serverId: 'home-a', id: 'task' } }, picked: true, sourced: false, available: true }], {
+            nowMs: Date.now(), session: () => row, machine: () => null, workflow: () => null, workflowRun: () => null,
+            machineSessionCounts: new Map(), accountScopedHome: () => true,
+            task: () => ({ title: 'Task', category: 'started', categoryLabel: 'In progress', parentItemId: null, parentTitle: null,
+                linkedSessions: [{ serverId: 'home-a', sessionId: row.id }] }),
+        })[0]!;
+        const screen = await renderScreen(<BoardCardView card={card} />);
+        try {
+            expect(screen.getTextContent()).toContain('Secret invoices');
+            await act(async () => setScreenSharingPrivacyActive(true));
+            expect(screen.getTextContent()).not.toContain('Secret invoices');
+            expect(screen.findHostByTestId('board-card:task:session:home-a:secret-worker')).not.toBeNull();
+            await act(async () => setScreenSharingPrivacyActive(false));
+            expect(screen.getTextContent()).toContain('Secret invoices');
+        } finally { await screen.unmount(); setScreenSharingPrivacyActive(false); }
+    });
+    it('keeps N task cards rendered when an unrelated work item changes, and updates only the changed card', async () => {
+        const count = 100;
+        const item = { title: 'Task', category: 'unstarted' as const, linkedSessions: [] };
+        const fixture = createExternalWorkItemsPluginFixture(Object.fromEntries(Array.from({ length: count }, (_, i) => [String(i), { ...item, title: `Task ${i}` }])));
+        const pluginId = fixture.plugin.manifest.id;
+        const contributes = PluginContributesV2Schema.parse(fixture.plugin.manifest.contributes);
+        const index = createPluginUiClientExecutableRegistrationIndex();
+        const executionOrigin = { serverIdentityId: 'srv_board_work', materializationRef: { pluginId, machineId: 'machine', materializationId: 'current' } };
+        const controller = new AbortController();
+        const account = createWorkItemsAccountFixture('home-a', controller.signal);
+        const scope = index.createScope({ pluginId, contributes, target: { ...fixture.client, platform: 'web' }, executionOrigin,
+            pluginVersion: '1.0.0', occurrenceId: 'current', authority: { serverId: 'home-a', machineId: 'machine' },
+            accountLifetime: account.accountLifetime,
+            lifecycle: { signal: controller.signal, isCurrent: () => !controller.signal.aborted } });
+        fixture.activateClient(scope.api);
+        scope.commit();
+        const source = { id: `${pluginId}/work-items`, pluginId, pluginVersion: '1.0.0', occurrenceId: 'current',
+            definition: contributes.workItems[0]!, executionOrigin };
+        const refs = Array.from({ length: count }, (_, i) => ({ kind: 'task' as const, pluginId, qualifiedId: { serverId: 'home-a', id: String(i) } }));
+        const members = refs.map(ref => ({ key: buildWorkBoardItemKeyV1(ref), ref, picked: true, sourced: false, available: true }));
+        const project = createBoardCardProjection();
+        const read = async () => {
+            const result = await readBoardTaskItems({ serverId: 'home-a', refs, sessions: [], sources: [source],
+                platform: 'web', reader: index, signal: controller.signal });
+            return project(members, { nowMs: Date.now(), task: ref => result.items.get(buildWorkBoardItemKeyV1(ref)) ?? null,
+                session: () => null, machine: () => null, workflow: () => null, workflowRun: () => null,
+                accountScopedHome: () => true, machineSessionCounts: new Map() });
+        };
+        const renders = new Map<string, number>();
+        const targets = new Map(members.map(member => [member.key, (content: React.ReactNode) => {
+            renders.set(member.key, (renders.get(member.key) ?? 0) + 1);
+            return content;
+        }]));
+        const render = (cards: readonly BoardCard[]) => <>{cards.map(card => <BoardCardView key={card.key} card={card} renderTarget={targets.get(card.key)} />)}</>;
+        try {
+            const screen = await renderScreen(render(await read()));
+            expect(renders.size).toBe(count);
+            renders.clear();
+            fixture.setItem('outside', { ...item, title: 'Unrelated update' });
+            await screen.update(render(await read()));
+            expect([...renders.values()].reduce((a, b) => a + b, 0)).toBe(0);
+            fixture.setItem('5', { ...item, title: 'Changed task' });
+            await screen.update(render(await read()));
+            expect([...renders]).toEqual([[members[5]!.key, 1]]);
+            expect(screen.getTextContent()).toContain('Changed task');
+        } finally { controller.abort(); await scope.unwind(); }
+    });
+    it('renders live task context and opens a qualified linked Session from its own control', async () => {
+        const card = buildBoardCards([{ key: 'task', ref: { kind: 'task', pluginId: 'com.acme.tasks',
+            qualifiedId: { serverId: 'home-a', id: 'task' } }, picked: true, sourced: false, available: true }], {
+            nowMs: Date.now(), session: () => createSessionListRenderableSessionFixture({ id: 'worker' }),
+            machine: () => null, workflow: () => null, workflowRun: () => null,
+            machineSessionCounts: new Map(), accountScopedHome: () => true,
+            task: () => ({ title: 'Fix checkout', category: 'started', categoryLabel: 'In progress',
+                parentItemId: 'payments', parentTitle: 'Payments', linkedSessions: [{ serverId: 'home-b', sessionId: 'worker' }] }),
+        })[0]!;
+        const screen = await renderScreen(<BoardCardView card={card} />);
+        expect(screen.getTextContent()).toContain('In progress');
+        expect(screen.getTextContent()).toContain('Payments');
+        const open = screen.findHostByTestId('board-card:task:session:home-b:worker');
+        expect(open).not.toBeNull();
+        await act(async () => open!.props.onPress());
+        expect(sessionNavigation).toHaveBeenCalledWith('/session/worker?serverId=home-b');
+    });
     it('offers native Review for a held Run and Run now for a readable workflow without answering inline', async () => {
         const onAction = vi.fn();
         const held = runCard('waiting_for_review');
@@ -46,7 +143,7 @@ describe('Board body facts', () => {
             qualifiedId: { serverId: 'home-a', id: 'definition-1' } }, picked: true, sourced: false, available: true }], {
             nowMs: Date.now(), session: () => null, machine: () => null, workflowRun: () => null,
             machineSessionCounts: new Map(), accountScopedHome: () => true,
-            workflow: () => ({ title: 'Workflow', summary: null }),
+            workflow: () => ({ title: 'Workflow', summary: { needsYouCount: 0, lastRun: null } }),
         })[0]!;
         await screen.update(<BoardCardView card={workflow} onAction={onAction} />);
         const runNow = screen.findHostByTestId('board-card:definition:run');
@@ -57,6 +154,42 @@ describe('Board body facts', () => {
         expect(screen.findHostByTestId('board-card:definition:run')).toBeNull();
     });
 
+    it.each([true, false])('gives a speaking Workflow status the right slot and keeps Run for a quiet card (showStatusWord=%s)', async (showStatusWord) => {
+        const onAction = vi.fn();
+        const workflow = buildBoardCards([{ key: 'definition', ref: { kind: 'workflow',
+            qualifiedId: { serverId: 'home-a', id: 'definition-1' } }, picked: true, sourced: false, available: true }], {
+            nowMs: Date.now(), session: () => null, machine: () => null, workflowRun: () => null,
+            machineSessionCounts: new Map(), accountScopedHome: () => true,
+            workflow: () => ({ title: 'Workflow', summary: { needsYouCount: 0, lastRun: null } }),
+        })[0]!;
+        const failed: BoardCard = { ...workflow, status: { state: 'failed', bucket: 'finished',
+            tone: 'danger', word: 'Failed', attentionType: null } };
+        const screen = await renderScreen(<BoardCardView card={failed} onAction={onAction} showStatusWord={showStatusWord} />);
+        expect(screen.getTextContent()).toContain('Failed');
+        expect(screen.findHostByTestId('board-card:definition:run')).toBeNull();
+        expect(resolveBoardCardAction(failed), 'Run remains eligible through the existing Workflow row/menu').toBe('run');
+        await screen.update(<BoardCardView card={workflow} onAction={onAction} showStatusWord={showStatusWord} />);
+        expect(screen.findHostByTestId('board-card:definition:word')).toBeNull();
+        expect(screen.findHostByTestId('board-card:definition:needs')).toBeNull();
+        const run = screen.findHostByTestId('board-card:definition:run');
+        expect(run).not.toBeNull();
+        await act(async () => run!.props.onPress());
+        expect(onAction).toHaveBeenCalledWith(workflow, 'run');
+    });
+
+    it('keeps the unavailable Workflow explanation visible in Canvas without offering Run', async () => {
+        const workflow = buildBoardCards([{ key: 'missing-definition', ref: { kind: 'workflow',
+            qualifiedId: { serverId: 'home-a', id: 'definition-1' } }, picked: true, sourced: false, available: true }], {
+            nowMs: Date.now(), session: () => null, machine: () => null, workflowRun: () => null,
+            machineSessionCounts: new Map(), accountScopedHome: () => true, workflow: () => null,
+            missingEntityReason: () => 'boards.card.missing',
+        })[0]!;
+        const screen = await renderScreen(<BoardCardView card={workflow} onAction={vi.fn()} />);
+        expect(screen.findHostByTestId('board-card:missing-definition:word')).not.toBeNull();
+        expect(screen.findHostByTestId('board-card:missing-definition:run')).toBeNull();
+        expect(screen.getTextContent()).toContain('boards.card.missing');
+    });
+
     it('keeps a stopped Run neutral with its outcome and age, and names genuine attention without inventing review eligibility', async () => {
         const stopped = runCard('cancelled');
         expect(stopped.status).toMatchObject({ bucket: 'finished', tone: 'neutral' });
@@ -65,9 +198,12 @@ describe('Board body facts', () => {
         expect(screen.getTextContent()).toContain('boards.card.run.started(age=time.minutesAgoShort(count=2))');
         expect(screen.getTextContent()).not.toContain('workStatus.buckets.needs_you');
         expect(screen.getTextContent()).not.toContain('boards.card.run.waitingForYou');
-        await screen.update(<BoardCardView card={runCard('outcome_uncertain')} />);
+        const uncertain = runCard('outcome_uncertain');
+        expect(uncertain.status).toMatchObject({ state: 'outcome_uncertain', bucket: 'needs_you', attentionType: 'decision' });
+        await screen.update(<BoardCardView card={uncertain} />);
         expect(screen.getTextContent()).toContain('workflows.runState.outcome_uncertain');
-        expect(screen.getTextContent()).toContain('workStatus.buckets.needs_you');
+        // Terminal outcomes keep their precise word even in a genuine attention window.
+        expect(screen.getTextContent().split(uncertain.status.word)).toHaveLength(2);
         expect(screen.getTextContent()).not.toContain('boards.card.run.waitingForYou');
         await screen.update(<BoardCardView card={runCard('waiting_for_review')} />);
         // The hold is named once, by the card's state word; the body does not restate it in other words.
@@ -121,6 +257,18 @@ describe('Board body facts', () => {
         expect(count(grouped.getTextContent(), 'Succeeded')).toBe(1);
         const groupedNeedsYou = await renderScreen(<BoardCardView card={workflow('Interrupted', 'attention')} showStatusWord={false} />);
         expect(count(groupedNeedsYou.getTextContent(), 'Interrupted')).toBe(1);
+    });
+
+    it('draws the live domain line as the card\'s description under its title, with no body room before the facts', async () => {
+        const screen = await renderScreen(<BoardCardView card={{ ...runCard('cancelled'), title: 'Prepare the 0.3 release' }} />);
+        const titleBlock = screen.findHostByTestId('board-card:run.titleBlock');
+        const description = screen.findHostByTestId('board-card:run.description');
+        expect(titleBlock).toBeTruthy();
+        expect(description).toBeTruthy();
+        let node = description;
+        while (node && node !== titleBlock) node = node.parent;
+        expect(node).toBe(titleBlock);
+        expect(screen.findHostByTestId('board-card:run.body')).toBeFalsy();
     });
 
     it('drops the kind line when the title already reads as the kind (an untitled Run)', async () => {

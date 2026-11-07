@@ -2,7 +2,8 @@
 import type { View } from 'react-native';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
-import { buildWorkBoardItemKeyV1, createWorkBoardV1, WorkBoardActionInputSchemasV1 } from '@happier-dev/protocol';
+import { buildWorkBoardItemKeyV1, createWorkBoardV1} from '@happier-dev/protocol/boards/workBoardV1';
+import { WorkBoardActionInputSchemasV1 } from '@happier-dev/protocol/boards/actionsV1';
 import { renderHook } from '@/dev/testkit';
 import { installPanelCommonModuleMocks } from '@/components/ui/panels/panelTestHelpers';
 import { createEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entityDragDropRuntime';

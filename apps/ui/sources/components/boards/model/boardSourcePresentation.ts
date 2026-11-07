@@ -1,4 +1,4 @@
-import type { WorkBoardPreviewLayoutV1 } from '@happier-dev/protocol';
+import type { WorkBoardPreviewLayoutV1 } from '@happier-dev/protocol/boards/workBoardArtifactV1';
 import { t } from '@/text';
 
 /** The Board header and its static Artifact preview name the same saved sources. */

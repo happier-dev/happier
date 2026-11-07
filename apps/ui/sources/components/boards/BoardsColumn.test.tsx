@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ARTIFACT_PLAIN_DATA_KEY_MARKER, buildWorkBoardArtifactHeaderV1, createWorkBoardV1, encodePlainArtifactStoredContent, type WorkBoardV1 } from '@happier-dev/protocol';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent} from '@happier-dev/protocol/storage/artifactStoredContent';
+import { buildWorkBoardArtifactHeaderV1} from '@happier-dev/protocol/boards/workBoardArtifactV1';
+import { createWorkBoardV1, type WorkBoardV1 } from '@happier-dev/protocol/boards/workBoardV1';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { createDeferred, createPlainAccountEncryptionCurrentnessFixture, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
@@ -16,9 +18,9 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { PinnedBoardNeedsYouCount } from './PinnedBoardNeedsYouCount';
 import { createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { act } from 'react-test-renderer';
-import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
 import type { Artifact } from '@/sync/domains/artifacts/artifactTypes';
+import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 // Native and navigation adapters are external boundaries; the Board store and collection stay real.
 vi.mock('react-native', async () => {
@@ -52,6 +54,12 @@ let bodyGate: Promise<void> | null = null;
 let indexGate: Promise<void> | null = null;
 let failIndex = false;
 let previousStorageState = getStorage().getState();
+
+const deviceState = vi.hoisted(() => ({ type: 'tablet' as 'phone' | 'tablet' }));
+vi.mock('@/utils/platform/responsive', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/utils/platform/responsive')>(),
+    useDeviceType: () => deviceState.type,
+}));
 
 describe('BoardsColumn collection search', () => {
     beforeEach(async () => {
@@ -104,6 +112,18 @@ describe('BoardsColumn collection search', () => {
         vi.restoreAllMocks();
     });
 
+    // More opens this page with no tab bar and no native header, so its head is the only way out.
+    it('gives the phone page its own Back, and leaves the column beside a page without one', async () => {
+        deviceState.type = 'phone';
+        const page = await renderScreen(<InjectedAuthProvider credentials={credentials}><BoardsColumn surface="page" /></InjectedAuthProvider>);
+        await flushHookEffects({ runOnlyPendingTimers: true });
+        expect(page.findHostByTestId('boards-column:back')).not.toBeNull();
+        deviceState.type = 'tablet';
+        const column = await renderScreen(<InjectedAuthProvider credentials={credentials}><BoardsColumn /></InjectedAuthProvider>);
+        await flushHookEffects({ runOnlyPendingTimers: true });
+        expect(column.findHostByTestId('boards-column:back')).toBeNull();
+    });
+
     it('filters real acknowledged Board names while keeping one stable creation row', async () => {
         const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}><BoardsColumn /></InjectedAuthProvider>);
         await flushHookEffects({ runOnlyPendingTimers: true });
@@ -111,6 +131,10 @@ describe('BoardsColumn collection search', () => {
         expect(screen.findHostByTestId('boards-column:board:alpha')).not.toBeNull();
         expect(screen.findHostByTestId('boards-column:board:beta')).not.toBeNull();
         expect(screen.findHostByTestId('boards-column:search')).not.toBeNull();
+        const { Item } = await import('@/components/ui/lists/Item');
+        const navigation = screen.findAllByType(Item).filter(node => node.props.testID?.startsWith('boards-column:board:'));
+        expect(navigation).toHaveLength(2);
+        expect(navigation.every(node => node.props.rowRole === 'item' && node.props.titleLines === 1)).toBe(true);
 
         screen.changeTextByTestId('boards-column:search', '  ALPHA  ');
         await flushHookEffects();
@@ -242,6 +266,9 @@ describe('BoardsColumn collection search', () => {
 
     it('keeps populated column and pinned chrome free of card title construction while attention stays live', async () => {
         const serverId = home!.homes.boards!.id;
+        const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}>{null}</InjectedAuthProvider>);
+        const { getSyncSingleton } = await import('@/sync/runtime/getSyncSingleton');
+        await act(async () => { await getSyncSingleton().awaitBootstrapForegroundAcquisition(); });
         let titleReads = 0;
         const rows = Object.fromEntries(Array.from({ length: 40 }, (_, index) => {
             const row = createSessionListRenderableSessionFixture({ id: `chrome-${index}`, active: true, activeAt: Date.now(), metadata: {
@@ -252,12 +279,10 @@ describe('BoardsColumn collection search', () => {
         }));
         liveBoard = { ...boards[0]!, pinnedInSessions: true, source: { picked: Object.keys(rows).map(id => ({ kind: 'session', qualifiedId: { serverId, id } })) } };
         getStorage().setState({ sessionListRowsByServerId: { [serverId]: rows } });
-        const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}><BoardsColumn />
+        await screen.update(<InjectedAuthProvider credentials={credentials}><BoardsColumn />
             <PinnedBoardNeedsYouCount board={{ id: 'alpha', name: liveBoard.name, pinnedInSessions: true, source: { sections: [] } }} />
         </InjectedAuthProvider>);
-        await flushHookEffects({ runOnlyPendingTimers: true });
-        await flushHookEffects({ runOnlyPendingTimers: true });
-        expect(screen.findHostByTestId('boards-column:board:alpha')).not.toBeNull();
+        await waitForHomeGovernance(() => expect(screen.findHostByTestId('boards-column:board:alpha')).not.toBeNull());
         expect(titleReads).toBe(0);
         // The pending-timer flush crossed the original runtime observation's freshness deadline.
         // A live permission prompt needs both current runtime presence and current request evidence.

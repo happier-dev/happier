@@ -1,4 +1,4 @@
-import type { WorkBoardIntentV1 } from '@happier-dev/protocol';
+import type { WorkBoardIntentV1 } from '@happier-dev/protocol/boards/workBoardV1';
 
 import type { WorkBoardSaveFailure, WorkBoardSaveState } from './workBoardSaveQueue';
 

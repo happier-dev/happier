@@ -1,5 +1,5 @@
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
-import { applyWorkBoardIntentV1, createWorkBoardV1, buildWorkBoardItemKeyV1, buildWorkBoardWidgetKeyV1, type BoardItemRefV1, type WorkBoardV1 } from '@happier-dev/protocol';
+import { applyWorkBoardIntentV1, createWorkBoardV1, buildWorkBoardItemKeyV1, buildWorkBoardWidgetKeyV1, type BoardItemRefV1, type WorkBoardV1 } from '@happier-dev/protocol/boards/workBoardV1';
 import { createEntityDragDropRuntime, createEntityDragGestureAdapter } from '@/components/ui/treeDragDrop';
 import { createWorkBoardArtifactBoundary } from '@/dev/testkit/harness/workBoardArtifactBoundary';
 import { createWorkBoardAccountStore } from './workBoardAccountStore';
@@ -31,7 +31,7 @@ describe('WorkBoard shared entity owner', () => {
             destination: { x: 440, y: 5 }, canvasAvailable: true });
         if (admission.status !== 'allowed') throw new Error('expected move');
         expect(admission.effect.input).toMatchObject({ intent: { positionsByItemRef: { [key]: { x: 440, y: 96 } } } });
-        const intent = (await import('@happier-dev/protocol')).WorkBoardActionInputSchemasV1['boards.apply'].parse(admission.effect.input).intent;
+        const intent = (await import('@happier-dev/protocol/boards/actionsV1')).WorkBoardActionInputSchemasV1['boards.apply'].parse(admission.effect.input).intent;
         await createWorkBoardUiActionPort(() => current, store.queue, store.readBoardAccess).apply(intent);
         expect(persistence.acknowledged().boards[0]!.positionsByItemRef).toEqual({
             [key]: { x: 440, y: 96 }, [otherKey]: { x: 432, y: 0 },
@@ -131,7 +131,7 @@ describe('WorkBoard shared entity owner', () => {
             execute: async effect => {
                 const input = effect.input;
                 if (!input || typeof input !== 'object' || Array.isArray(input) || !('intent' in input)) throw new Error('invalid effect');
-                const { WorkBoardIntentV1Schema } = await import('@happier-dev/protocol');
+                const { WorkBoardIntentV1Schema} = await import('@happier-dev/protocol/boards/workBoardV1');
                 const outcome = await store.queue.dispatch(WorkBoardIntentV1Schema.parse(input.intent));
                 if (outcome.status === 'pending') throw new Error('The Artifact boundary cannot request approval.');
                 if (outcome.status === 'applied') return { status: 'applied' };
@@ -172,7 +172,7 @@ describe('WorkBoard shared entity owner', () => {
         const admission = resolveWorkBoardEntityDrop({ item: workBoardDragItem(scope, board.id, ref), context: current, destination: position, canvasAvailable: true });
         expect(admission.status).toBe('allowed');
         if (admission.status !== 'allowed') throw new Error('expected move');
-        const { WorkBoardActionInputSchemasV1 } = await import('@happier-dev/protocol');
+        const { WorkBoardActionInputSchemasV1} = await import('@happier-dev/protocol/boards/actionsV1');
         const intent = WorkBoardActionInputSchemasV1['boards.apply'].parse(admission.effect.input).intent;
         const port = createWorkBoardUiActionPort(() => current, store.queue, store.readBoardAccess);
         await port.apply(intent);
@@ -213,7 +213,7 @@ describe('WorkBoard shared entity owner', () => {
         const persistence = createWorkBoardArtifactBoundary({ v: 1, boards: [current] });
         const store = createWorkBoardAccountStore(persistence.transport, () => true);
         const port = createWorkBoardUiActionPort(() => context(current), store.queue, store.readBoardAccess);
-        const { WorkBoardActionInputSchemasV1 } = await import('@happier-dev/protocol');
+        const { WorkBoardActionInputSchemasV1} = await import('@happier-dev/protocol/boards/actionsV1');
         await expect(port.apply(WorkBoardActionInputSchemasV1['boards.apply'].parse(admission.effect.input).intent))
             .rejects.toMatchObject({ code: 'board-item-gone' });
         expect(persistence.acknowledged().boards[0]!.positionsByItemRef).toEqual({});

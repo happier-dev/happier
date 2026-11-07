@@ -1,8 +1,11 @@
 import * as React from 'react';
+import { ScrollView } from 'react-native';
 import { Collection, type CollectionAnatomy } from '@happier-dev/plugin-ui';
 import { useHappierCollection, type HappierCollectionGrouping } from '@happier-dev/plugin-ui/presentation';
 
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { Text } from '@/components/ui/text/Text';
 import { describeWorkStatusBucket, WORK_STATUS_BUCKETS } from '@/components/work/status/workStatusBuckets';
 import { t } from '@/text';
 
@@ -11,15 +14,12 @@ import type { BoardCard } from '../model/boardCards';
 import type { BoardCardAction } from '../model/boardCardOpenTarget';
 import type { BoardCanvasWidget, BoardCanvasWidgetRender } from '../canvas/BoardCanvas';
 
-/** A work card, or a configured widget (which has a placement and no status). */
-type StatusItem = BoardCard | BoardCanvasWidget;
-const isWidget = (item: StatusItem): item is BoardCanvasWidget => 'placement' in item;
-const WIDGETS_GROUP = 'widgets';
 const NO_WIDGETS: readonly BoardCanvasWidget[] = Object.freeze([]);
-const keyOf = (item: StatusItem) => item.key;
-const groupOf = (item: StatusItem) => isWidget(item) ? WIDGETS_GROUP : item.status.bucket;
-/** A widget is not opened: its own body holds its controls. */
-const SELECTION = { isItemActivatable: (item: StatusItem) => !isWidget(item) };
+const keyOf = (item: BoardCard) => item.key;
+const groupOf = (item: BoardCard) => item.status.bucket;
+const passThroughScroller = (children: React.ReactNode) => <>{children}</>;
+const fillStyle = { flex: 1 } as const;
+const scrollContentStyle = { flexGrow: 1 } as const;
 
 /**
  * By status (lab `boards-B2`): five columns from the one vocabulary — Needs you · Working · Finished ·
@@ -42,35 +42,27 @@ export const BoardByStatus = React.memo(function BoardByStatus(props: Readonly<{
 }>) {
     const widgets = props.widgets ?? NO_WIDGETS;
     const hasWidgets = widgets.length > 0;
-    const groups = React.useMemo((): HappierCollectionGrouping<StatusItem> => ({
-        // Widgets lead, in the Board's order; a Board without them keeps its five status groups.
-        axis: [
-            ...(hasWidgets ? [{ key: WIDGETS_GROUP, title: t('boards.widgets.group') }] : []),
-            ...WORK_STATUS_BUCKETS.map(bucket => ({ key: bucket, title: describeWorkStatusBucket(bucket),
-                tone: bucket === 'needs_you' ? 'attention' as const : 'neutral' as const })),
-        ],
+    const groups = React.useMemo((): HappierCollectionGrouping<BoardCard> => ({
+        axis: WORK_STATUS_BUCKETS.map(bucket => ({ key: bucket, title: describeWorkStatusBucket(bucket),
+            tone: bucket === 'needs_you' ? 'attention' as const : 'neutral' as const })),
         groupOf, retainEmpty: !props.stacked,
-    }), [hasWidgets, props.stacked]);
-    const items = React.useMemo((): readonly StatusItem[] => hasWidgets ? [...widgets, ...props.cards] : props.cards, [hasWidgets, props.cards, widgets]);
-    const renderWidget = props.renderWidget;
+    }), [props.stacked]);
     const onAction = props.onAction;
-    const anatomy = React.useMemo((): CollectionAnatomy<StatusItem> => ({
+    const anatomy = React.useMemo((): CollectionAnatomy<BoardCard> => ({
         card: {
-            headerRight: item => isWidget(item) ? null : <BoardCardActionButton card={item} onAction={onAction} />,
-            facts: item => isWidget(item) ? null : <BoardCardFacts card={item} />,
-            description: item => isWidget(item) ? null : <BoardCardBodyContent card={item} showStatusWord={false} />,
+            headerRight: item => <BoardCardActionButton card={item} onAction={onAction} />,
+            facts: item => <BoardCardFacts card={item} />,
+            description: item => <BoardCardBodyContent card={item} showStatusWord={false} />,
         },
-        // A widget is its own framed surface with live controls, so it stands in place of a card, never inside one.
-        wrapItem: (item, card) => isWidget(item) ? renderWidget?.(item, { grip: null, lifted: false, active: true }) ?? null : card,
-        // The column names the bucket; a qualifying word leads the card's facts line, so a narrow column's title keeps
-        // the card's width (lab boards-B2).
-        reason: item => isWidget(item) || shownBoardCardWord(item, false) === null ? null : <BoardCardStatus card={item} showStatusWord={false} />,
-        glyph: item => isWidget(item) ? null : <BoardCardMark card={item} />,
+        // The column names the bucket; a qualifying word ("Outcome uncertain") leads the card's facts line, so a
+        // narrow column's title keeps the card's width (lab boards-B2).
+        reason: item => shownBoardCardWord(item, false) === null ? null : <BoardCardStatus card={item} showStatusWord={false} />,
+        glyph: item => <BoardCardMark card={item} />,
         title: item => item.title,
-        accessibilityLabel: item => `${item.title}, ${isWidget(item) ? t('boards.widgets.kind') : item.status.word}`,
-        testID: item => isWidget(item) ? `board-status-widget:${item.key}` : `board-status-card:${item.key}`,
+        accessibilityLabel: item => `${item.title}, ${item.status.word}`,
+        testID: item => `board-status-card:${item.key}`,
         columnTitles: { title: '' },
-    }), [renderWidget, onAction]);
+    }), [onAction]);
     const onOpenChange = React.useCallback((key: string | null) => {
         const card = props.cards.find(candidate => candidate.key === key);
         if (card) {
@@ -78,16 +70,30 @@ export const BoardByStatus = React.memo(function BoardByStatus(props: Readonly<{
             props.onOpen(card);
         }
     }, [props.cards, props.onOpen]);
-    const model = useHappierCollection({ items, keyOf, groups, selection: 'none', openKey: null, onOpenChange });
+    const model = useHappierCollection({ items: props.cards, keyOf, groups, selection: 'none', openKey: null, onOpenChange });
     const current = React.useRef(model);
     current.current = model;
+    const scroller = React.useRef<ScrollView | null>(null);
+    const viewport = model.viewport('board');
+    React.useLayoutEffect(() => {
+        if (props.visible !== false) scroller.current?.scrollTo({ y: viewport.offsetRef.current, animated: false });
+    }, [props.visible, props.stacked, viewport]);
     React.useEffect(() => {
         if (props.active !== false && current.current.focusKey !== null) current.current.actions.requestFocus(current.current.focusKey);
     }, [props.active]);
     if (props.visible === false) return null;
-    return <CoreCollectionScope>
+    return <CoreCollectionScope renderPageScroller={passThroughScroller}>
+        <ScrollView ref={scroller} style={fillStyle} contentContainerStyle={scrollContentStyle} scrollEventThrottle={16}
+            onScroll={event => { viewport.offsetRef.current = event.nativeEvent.contentOffset.y; }}>
+            {hasWidgets ? <ItemGroup testID="board-by-status:column:widgets" surface="none" title={t('boards.widgets.group')}
+                titleAccessory={<Text variant="meta">{widgets.length}</Text>}>
+                {widgets.map(widget => <React.Fragment key={widget.key}>
+                    {props.renderWidget?.(widget, { grip: null, lifted: false, active: true })}
+                </React.Fragment>)}
+            </ItemGroup> : null}
         <Collection model={model} anatomy={anatomy} accessibilityLabel={t('boards.header.byStatus')}
-            presentation="board" boardLayout={props.stacked ? 'stacked' : 'columns'} detail="none" selection={SELECTION}
+            presentation="board" boardLayout={props.stacked ? 'stacked' : 'columns'} detail="none" scroll="page"
             minListWidth={280} minDetailWidth={0} preferredListRatio={1} testID="board-by-status" />
+        </ScrollView>
     </CoreCollectionScope>;
 });

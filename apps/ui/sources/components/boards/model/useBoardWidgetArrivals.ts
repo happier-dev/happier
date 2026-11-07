@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { WorkBoardIntentV1, WorkBoardV1, WorkBoardWidgetPlacementV1 } from '@happier-dev/protocol';
+import type { WorkBoardIntentV1, WorkBoardV1, WorkBoardWidgetPlacementV1 } from '@happier-dev/protocol/boards/workBoardV1';
 import { captureWorkBoardWidgetMoveV1 } from '@happier-dev/protocol/widgets';
 
 import { useSessionBoardArrivals } from '@/components/sessions/board/useSessionBoardArrivals';

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { BUILTIN_WIDGET_DESCRIPTORS_V1, WIDGET_SIZE_POLICY_V1, type WidgetInstanceV1 } from '@happier-dev/protocol/widgets';
+import { getPreferredLanguage, preloadTranslationsForSettings, setPreferredLanguageFromSettings, t } from '@/text';
+import { createPublicProfileWidgetAreaPresetsV1 } from '@happier-dev/protocol/widgets/publicProfileWidgetPresetsV1';
 
 import {
     widgetInstalledPackage as installedPackage,
@@ -14,6 +16,8 @@ import {
     describeBuiltinWidgetInstance,
     describeWidgetDefinitionSummaryV1,
     isBuiltinWidgetSwitchedOff,
+    readSessionHostWidgetDescriptor,
+    readWidgetDescriptor,
     readWidgetSourcePluginName,
     resolveWidgetInstanceTitle,
     selectBuiltinWidgetCandidates,
@@ -312,6 +316,29 @@ describe('The title a widget instance wears', () => {
     const instance = (definition: WidgetInstanceV1['definition'], displayName?: string): WidgetInstanceV1 =>
         ({ v: 1, id: 'w', definition, bindings: {}, ...(displayName ? { displayName } : {}) });
 
+    it('localizes a retained preset style title while preserving an authored name and a different selected style', async () => {
+        const language = getPreferredLanguage();
+        try {
+            setPreferredLanguageFromSettings('en');
+            const preset = createPublicProfileWidgetAreaPresetsV1({ title: presentation =>
+                presentation.widgetId === 'usage_rhythm' && presentation.inputs.style === 'sky'
+                    ? t('publicIdentity.blocks.sky') : undefined });
+            const item = preset.find(entry => entry.id === 'minimal')!.items.find(entry => entry.kind === 'widget' && entry.instance.id === 'days');
+            if (item?.kind !== 'widget') throw new Error('Missing public profile days preset');
+            const saved = item.instance;
+            await preloadTranslationsForSettings('fr');
+            setPreferredLanguageFromSettings('fr');
+            const candidate = readWidgetDescriptor(null, saved.definition);
+            const title = t('usage.board.charts.inputSky');
+            expect(title).not.toBe(saved.displayName);
+            expect(resolveWidgetInstanceTitle(saved, candidate)).toBe(title);
+            expect(resolveWidgetInstanceTitle({ ...saved, displayName: 'Our working days' }, candidate)).toBe('Our working days');
+            expect(resolveWidgetInstanceTitle({ ...saved, bindings: { style: { kind: 'value', value: 'weekTide' } } }, candidate)).toBe(saved.displayName);
+        } finally {
+            setPreferredLanguageFromSettings(language);
+        }
+    });
+
     it('waits only for a pending name and keeps known names through pending or failed reads', () => {
         const saved = instance({ kind: 'artifact', artifactId: 'private' });
         expect(resolveWidgetInstanceTitle(saved, null, { definitionState: 'loading' })).toBeNull();
@@ -330,5 +357,31 @@ describe('The title a widget instance wears', () => {
         const missingPlugin = resolveWidgetInstanceTitle(instance({ kind: 'installed', surface: { pluginId: 'acme.gone', localId: 'w' } }), null);
         expect(privateDefinition).not.toBe(missingPlugin);
         expect(privateDefinition).not.toMatch(/unavailable/i);
+    });
+
+    it('names a shared private-definition placement from its existing stored displayName without opening the definition', () => {
+        const shared = instance({ kind: 'artifact', artifactId: 'maker-private-definition' }, 'Release health');
+        expect(resolveWidgetInstanceTitle(shared, null, { definitionState: 'unavailable' })).toBe('Release health');
+        expect(resolveWidgetInstanceTitle(shared, { title: 'Definition title' })).toBe('Release health');
+        const { displayName: _storedTitle, ...olderLayout } = shared;
+        expect(resolveWidgetInstanceTitle(olderLayout, null, { definitionState: 'unavailable' })).toBe(t('composerReferences.kindWidget'));
+    });
+});
+
+describe('Session host widget naming', () => {
+    // The app shell names only App and Project placements; a Session-target widget is published by the
+    // exact Session's Machine projection. A Companion or Board copy must still be named (and mounted).
+    it('names a Session-target widget from the exact Session projection when the app shell does not publish it', () => {
+        const packages = { 'acme.review': installedPackage('acme.review', 'Review Assistant') };
+        const app = projectionOf([{ pluginId: 'acme.review', localId: 'latest', title: 'Latest', target: 'app' }], packages);
+        const session = projectionOf([{ pluginId: 'acme.review', localId: 'review-status', title: 'Review status' }], packages);
+        const sessionWidget = { kind: 'installed', surface: { pluginId: 'acme.review', localId: 'review-status' } } as const;
+        const appWidget = { kind: 'installed', surface: { pluginId: 'acme.review', localId: 'latest' } } as const;
+
+        expect(readWidgetDescriptor(app, sessionWidget)).toBeNull();
+        expect(readSessionHostWidgetDescriptor({ app, session }, sessionWidget))
+            .toMatchObject({ title: 'Review status', pluginName: 'Review Assistant', target: 'session' });
+        expect(readSessionHostWidgetDescriptor({ app, session: null }, appWidget)?.title).toBe('Latest');
+        expect(readSessionHostWidgetDescriptor({ app, session: null }, sessionWidget)).toBeNull();
     });
 });

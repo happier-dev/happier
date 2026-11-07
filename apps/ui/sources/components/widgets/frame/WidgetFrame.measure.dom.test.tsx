@@ -14,8 +14,67 @@ vi.mock('@/utils/web/reactDomCjs', async () => {
 });
 
 import { WidgetFrame } from './WidgetFrame';
+import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
+import { buildWidgetFrameStyleActions } from './widgetFrameMenu';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+it.each([
+    ['keyboard', 'frameStyle'], ['pointer', 'frameStyle'],
+    ['keyboard', 'frameStyleReset'], ['pointer', 'frameStyleReset'],
+] as const)('returns focus to the mounted widget trigger after %s %s selection', async (input, actionId) => {
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    const measure = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+        x: 100, y: 100, width: 200, height: 40, top: 100, left: 100, right: 300, bottom: 140, toJSON: () => ({}),
+    });
+    const changed = vi.fn();
+    function Harness() {
+        const [override, setOverride] = React.useState<'card' | 'plain' | null>(actionId === 'frameStyleReset' ? 'plain' : null);
+        return <WidgetFrame testID="capacity" frameStyle={override ?? 'card'} placement="home" title="Capacity"
+            body={{ kind: 'content', children: <input data-testid="capacity-body" /> }}
+            menu={<ItemRowActions title="Capacity" overflowOnly overflowTriggerTestID="capacity-options"
+                actions={buildWidgetFrameStyleActions({ placement: 'home', surfaceDefault: 'card', override,
+                    onSet: style => { changed(style); setOverride(style); } })} />} />;
+    }
+    try {
+        await act(async () => root.render(<Harness />));
+        const trigger = document.querySelector<HTMLElement>('[data-testid="capacity-options"]')!;
+        const body = document.querySelector('[data-testid="capacity-body"]');
+        trigger.focus();
+        await act(async () => trigger.click());
+        await vi.waitFor(() => expect(document.querySelector(`[data-testid="${actionId}"]`)).not.toBeNull());
+        const option = document.querySelector<HTMLElement>(`[data-testid="${actionId}"]`)!;
+        await act(async () => {
+            option.focus();
+            if (input === 'keyboard') {
+                option.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+                option.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true, cancelable: true }));
+                // jsdom does not perform a button's native Enter default action.
+                expect(option.tagName).toBe('BUTTON');
+                option.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 0 }));
+            } else {
+                option.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0 }));
+                option.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, button: 0 }));
+                option.click();
+            }
+        });
+        await vi.waitFor(async () => {
+            await act(async () => {});
+            expect(changed).toHaveBeenCalledWith(actionId === 'frameStyleReset' ? null : 'plain');
+        });
+        expect(document.querySelector(`[data-testid="${actionId}"]`)).toBeNull();
+        expect(document.querySelector('[data-testid="capacity-body"]')).toBe(body);
+        expect(document.querySelector('[data-testid="capacity-options"]')).toBe(trigger);
+        expect(trigger.isConnected).toBe(true);
+        expect(document.activeElement).toBe(trigger);
+    } finally {
+        await act(async () => root.unmount());
+        measure.mockRestore();
+        container.remove();
+    }
+});
 
 it('hands a web widget its measured room in the first commit, before any layout event can reach it', async () => {
     const container = document.createElement('div');

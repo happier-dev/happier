@@ -1,10 +1,10 @@
 import * as React from 'react';
 import { View, type LayoutChangeEvent } from 'react-native';
-import { type WorkBoardWidgetIntentV1, type WorkBoardWidgetPlacementV1 } from '@happier-dev/protocol';
+import { type WorkBoardWidgetIntentV1, type WorkBoardWidgetPlacementV1 } from '@happier-dev/protocol/boards/workBoardV1';
 import { resolveWidgetSizeChoicesV1, type WidgetInputBindingsV1, type WidgetSizeV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 import { getWidgetSizeFootprintV1 } from '@happier-dev/protocol/widgets';
 
-import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { useAppShellPluginUiProjectionCurrentness } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { WidgetFrame } from '@/components/widgets/frame/WidgetFrame';
@@ -17,7 +17,7 @@ import { useWidgetInputsEditor } from '@/components/widgets/surface/useWidgetInp
 import { useWidgetDefinitionFlows } from '@/components/widgets/definitions/useWidgetDefinitionFlows';
 import { useWidgetInstanceBindingLabel } from '@/components/widgets/surface/useWidgetInstanceBindingLabel';
 import { WidgetSurface } from '@/components/widgets/surface/WidgetSurface';
-import { readWidgetSourcePluginName, resolveWidgetInstanceTitle, type WidgetCandidate } from '@/components/widgets/widgetCatalog';
+import { readWidgetSourcePluginName, resolveWidgetInstanceTitle, widgetCandidateHoldsHtml, type WidgetCandidate } from '@/components/widgets/widgetCatalog';
 import { t } from '@/text';
 import { useEntityComposerMention } from '@/components/ui/treeDragDrop/useEntityComposerMention';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
@@ -68,7 +68,7 @@ export type BoardWidgetCardProps = Readonly<{
 export const BoardWidgetCard = React.memo(function BoardWidgetCard(props: BoardWidgetCardProps) {
     const { placement, boardId, dispatch } = props;
     const { instance } = placement;
-    const appRuntime = useAppShellPluginUiProjection();
+    const appRuntime = useAppShellPluginUiProjectionCurrentness();
     const scope = props.scope;
     const mention = useEntityComposerMention();
     const candidate = props.descriptor;
@@ -163,6 +163,7 @@ export const BoardWidgetCard = React.memo(function BoardWidgetCard(props: BoardW
                 mark={candidate?.icon ?? 'squares-four'}
                 title={rename.field ?? frameTitle}
                 source={bindingLabel ?? readWidgetSourcePluginName(appRuntime.pluginUiProjection, candidate)}
+                livePicture={widgetCandidateHoldsHtml(candidate)}
                 menu={(
                     <View ref={inputs.anchorRef} collapsable={false}>
                         <ItemRowActions

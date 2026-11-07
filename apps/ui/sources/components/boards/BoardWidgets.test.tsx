@@ -1,11 +1,12 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
-import { View } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
 import {
-    buildWorkBoardItemKeyV1, buildWorkBoardWidgetKeyV1, createWorkBoardV1, WorkBoardActionInputSchemasV1,
+    buildWorkBoardItemKeyV1, buildWorkBoardWidgetKeyV1, createWorkBoardV1,
     WorkBoardsV1Schema, type BoardItemRefV1, type WorkBoardIntentV1, type WorkBoardV1, type WorkBoardWidgetPlacementV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/boards/workBoardV1';
+import { WorkBoardActionInputSchemasV1} from '@happier-dev/protocol/boards/actionsV1';
 import { widgetCandidateDefinitionV1, type WidgetInstanceV1 } from '@happier-dev/protocol/widgets';
 
 import { renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
@@ -18,6 +19,7 @@ import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/ac
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { AppShellPluginUiProjectionValueProvider, type AppShellPluginUiProjectionValue } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { UniversalSearchRuntimeProvider } from '@/components/appShell/search/UniversalSearchRuntimeContext';
+import { WidgetFrame } from '@/components/widgets/frame/WidgetFrame';
 
 import { BoardByStatus } from './byStatus/BoardByStatus';
 import { BoardCanvas, type BoardCanvasWidget, type BoardCanvasWidgetRender } from './canvas/BoardCanvas';
@@ -54,6 +56,9 @@ vi.mock('@legendapp/list/react-native', async original => (await import('@/dev/t
 // subscriptions, descriptor lookup and card admission all remain real.
 vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
+
+// The app entry loads the real Sync owner before visible Session cards demand content.
+await import('@/sync/syncEngine');
 
 const searchRuntime = { open: () => {}, buildCommands: () => [] };
 function Wrapper({ children }: React.PropsWithChildren) {
@@ -230,13 +235,13 @@ describe('WorkBoard widgets', () => {
                         index={0} count={1} dispatch={b.store.queue.dispatch} active testID="board-widget:gone" />
                 </AppShellPluginUiProjectionValueProvider>, { wrapper: Wrapper });
             const loading = screen.findAll(node => node.props?.accessibilityLabel === t('common.loading')).length > 0;
-            const text = screen.getTextContent();
+            const title = screen.findAllByType(WidgetFrame)[0]!.props.title;
             await act(async () => { screen.tree.unmount(); });
-            return { loading, text };
+            return { loading, title };
         };
         const settled = await titleOf('current');
         expect(settled.loading).toBe(false);
-        expect(settled.text).toContain(t('boards.widgets.kind'));
+        expect(settled.title).toBe(t('sessionBoard.item.pluginUnavailable.title'));
         const pending = await titleOf('establishing');
         expect(pending.loading).toBe(true);
     });
@@ -339,6 +344,34 @@ describe('WorkBoard widgets', () => {
             && /^(board-by-status:column:|stub:)/.test(node.props.testID as string)).map(node => node.props.testID as string);
         const unique = order.filter((id, index) => order.indexOf(id) === index);
         expect(unique).toEqual(['board-by-status:column:widgets', 'stub:c2', 'stub:c1', 'board-by-status:column:working']);
+    });
+
+    it('keeps configured By status widget controls independent and its edited body mounted across work updates', async () => {
+        let mounts = 0;
+        const menu = vi.fn();
+        const onOpen = vi.fn();
+        function Notes() {
+            const [draft, setDraft] = React.useState('Initial note');
+            React.useEffect(() => { mounts += 1; }, []);
+            return <WidgetFrame testID="board-notes" frameStyle="card" placement="board" title="Notes" bodyHeight="content"
+                menu={<Pressable testID="board-notes-menu" onPress={menu}><Text>Configure</Text></Pressable>}
+                body={{ kind: 'content', children: <Pressable testID="board-notes-edit" onPress={() => setDraft('Edited note')}><Text>{draft}</Text></Pressable> }} />;
+        }
+        const board = boardWith([placement(copy('notes', NOTES))]);
+        const widgets = canvasWidgets(board);
+        const renderWidget: BoardCanvasWidgetRender = () => <Notes />;
+        const render = (title: string) => <BoardByStatus cards={[{ ...workCard(), title }]} widgets={widgets}
+            renderWidget={renderWidget} onOpen={onOpen} stacked />;
+        const screen = await renderScreen(render('Checkout'), { wrapper: Wrapper });
+        const control = screen.findHostByTestId('board-notes-edit');
+        await screen.pressByTestIdAsync('board-notes-edit');
+        await screen.pressByTestIdAsync('board-notes-menu');
+        await screen.update(render('Checkout updated'));
+        expect(screen.findHostByTestId('board-notes-edit')).toBe(control);
+        expect(screen.getTextContent()).toContain('Edited note');
+        expect(mounts).toBe(1);
+        expect(menu).toHaveBeenCalledOnce();
+        expect(onOpen).not.toHaveBeenCalled();
     });
 
     it.each(['rename', 'inputs', 'size', 'frame', 'order', 'position'] as const)(

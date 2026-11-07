@@ -1,8 +1,9 @@
-import type { BoardItemRefV1 } from '@happier-dev/protocol';
+import type { BoardItemRefV1 } from '@happier-dev/protocol/boards/workBoardV1';
 
 import type { InboxItemFocus } from '@/components/inbox/inboxItemFocus';
 
 import type { BoardCard } from './boardCards';
+import { isWorkStatusNeedsYou } from '@/components/work/status/resolveWorkStatusTone';
 
 export type BoardCardOpenTarget =
     | Readonly<{ kind: 'inbox'; item: InboxItemFocus }>
@@ -26,7 +27,7 @@ export function resolveBoardCardOpenTarget(
         ? { kind: 'item', ref: card.ref, intent: 'run' } : null;
     if (context.action === 'review') return { kind: 'item', ref: card.ref };
     const inboxWork = card.ref.kind === 'session' || card.ref.kind === 'workflow_run';
-    if (inboxWork && card.status.bucket === 'needs_you' && context.inboxAvailable) {
+    if (inboxWork && isWorkStatusNeedsYou(card.status) && context.inboxAvailable) {
         return { kind: 'inbox', item: { kind: card.ref.kind === 'session' ? 'session' : 'workflow_run',
             serverId: card.ref.qualifiedId.serverId, id: card.ref.qualifiedId.id } };
     }

@@ -45,6 +45,7 @@ import { MiddleEllipsisText } from '@/components/ui/text/MiddleEllipsisText';
 import { isWidgetResourceQuietRefresh, WidgetFrameResourceActivityContext } from './widgetFrameResourceActivity';
 import { useWidgetBodyRowHeight, WidgetFrameBodyRowsContext, widgetFootprintBodyRows } from './widgetFrameBody';
 import { WidgetFrameBodyOpenContext, type WidgetFrameBodyOpen } from './widgetFrameBodyCaption';
+import { GlassLivePictureBackdropContext } from '@/components/ui/glass/livePictureBackdrop';
 import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
 import { resolveVerticalScrollEdgeMaskStyle } from '@/components/ui/scroll/resolveScrollEdgeMaskStyle';
 
@@ -89,6 +90,12 @@ export type WidgetFrameFooter =
 
 export type WidgetFrameProps = Readonly<{
     testID: string;
+    /** Open independently of the frame's native body/menu controls. */
+    onOpen?: () => void;
+    /** Existing host target retaining its ref, keyboard and drag semantics. */
+    openTarget?: React.ReactNode;
+    /** Quiet domain facts, without a divided footer band. */
+    facts?: React.ReactNode;
     /** Reuse the native body/footer inside a configured instance's existing frame. */
     presentation?: 'frame' | 'body';
     /** Card (its own surface) or plain (on the page, a hairline above). See `useWidgetFrameStyle`. */
@@ -121,13 +128,22 @@ export type WidgetFrameProps = Readonly<{
     sourcePlacement?: 'inline' | 'below';
     /** The widget's controls at the end of the header: its ⋯ menu. */
     menu?: React.ReactNode;
+    /**
+     * The body draws a live picture (an agent's or plugin's HTML page): arbitrary pixels, so the menu
+     * and grip open their floating surfaces with the live-picture coat, readable over a white page in dark.
+     */
+    livePicture?: boolean;
     /** The card's move grip (Canvas, Session Board): always the last control of the header, after the ⋯ menu. */
     grip?: React.ReactNode;
     /** The move handle, before the mark, while the widget's surface is being arranged. */
     leading?: React.ReactNode;
     /** Mounted viewer-local disclosure; never writes the layout or alters Resource activity. */
     disclosure?: HappierControlledDisclosure;
-    body: WidgetFrameBody;
+    /**
+     * The widget's body. Omitted by a card that says everything in its header (a Board card: title, its
+     * description beneath, its quiet facts at the foot), so no empty body room opens between them.
+     */
+    body?: WidgetFrameBody;
     footer?: WidgetFrameFooter | null;
     /** Reserved body rows. Home keeps {@link HOME_WIDGET_BODY_ROWS}; other placements reserve none. */
     rows?: number;
@@ -226,7 +242,7 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
             return next;
         });
     }, []);
-    const emptyBody = props.body.kind === 'empty' || (props.body.kind === 'content'
+    const emptyBody = props.body?.kind === 'empty' || (props.body?.kind === 'content'
         && replacementStates.size > 0 && [...replacementStates.values()].every(empty => empty));
     // A phone stacks every card in one column, so a card with nothing to show is its one line (F2): a first-run
     // phone page of scenes would run several screens. It takes its content's height; rows return with content.
@@ -421,18 +437,23 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
         </View>
     ) : null;
 
+    const accessory = props.grip ? <View style={styles.chrome}>{props.menu}{props.grip}</View> : props.menu;
+    const body = props.body;
     if (props.presentation === 'body') {
-        return <>{props.meta}<SurfaceStateSizeProvider size={stateSize} actions="quiet">
+        return <>{props.meta}{body ? <SurfaceStateSizeProvider size={stateSize} actions="quiet">
             <WidgetFrameBodyOpenContext.Provider value={setLentOpen}>
-            <WidgetFrameBodyView testID={props.testID} body={props.body} rows={0} />
+            <WidgetFrameBodyView testID={props.testID} body={body} rows={0} />
             </WidgetFrameBodyOpenContext.Provider>
-        </SurfaceStateSizeProvider>{footerNode}</>;
+        </SurfaceStateSizeProvider> : null}{footerNode}</>;
     }
     return (
         <SurfaceStateContentContext.Provider value={props.grouped || phone ? reportContentState : null}>
         <WidgetFrameResourceActivityContext.Provider value={reportResourceActivity}>
         <HappierWidgetFrame
             testID={props.testID}
+            onOpen={props.onOpen}
+            openTarget={props.openTarget}
+            facts={props.facts}
             frameStyle={props.frameStyle}
             placement={props.placement}
             {...(props.anatomy ? { anatomy: props.anatomy } : {})}
@@ -453,7 +474,9 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
             meta={meta}
             {...(refreshingMark ? { compactMeta: refreshingMark } : {})}
             {...(props.leading ? { leading: props.leading } : {})}
-            accessory={props.grip ? <View style={styles.chrome}>{props.menu}{props.grip}</View> : props.menu}
+            accessory={props.livePicture && accessory
+                ? <GlassLivePictureBackdropContext.Provider value>{accessory}</GlassLivePictureBackdropContext.Provider>
+                : accessory}
             disclosure={props.disclosure}
             // The public driver erases Reanimated's host-private value types, as at the plugin presentation boundary.
             disclosureMotion={reanimatedDisclosureMotion as unknown as HappierDisclosureMotionDriver}
@@ -473,7 +496,8 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
                 ?? (typeof props.source === 'string' && typeof props.title === 'string' ? `${props.title}, ${props.source}` : undefined)}
             overlay={props.fresh ? <WidgetFrameArrivalRing key={String(props.fresh)} frameStyle={props.frameStyle} /> : null}
         >
-            <SurfaceStateSizeProvider size={stateSize} actions="quiet">
+            {/* A card never owns its page's one primary action: its states' actions are quiet (F1). */}
+            {body ? <SurfaceStateSizeProvider size={stateSize} actions="quiet">
                 <WidgetFrameBodyRowsContext.Provider value={rows}>
                 <WidgetFrameBodyOpenContext.Provider value={setLentOpen}>
                 <WidgetPresentationProvider value={widgetPresentation}>
@@ -486,7 +510,7 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
                         style={{ minHeight: bodyHeight === 'grow' ? props.viewportHeight ?? rows * rowHeight : undefined, flexGrow: 1, minWidth: 0 }}>
                         <View ref={viewportContentRef} testID={`${props.testID}.viewportBody`} onLayout={onBodyBoxLayout}
                             style={{ minWidth: 0, ...(bodyHeight === 'grow' ? { minHeight: declaredBodyHeight } : {}) }}>
-                            <WidgetFrameBodyView testID={props.testID} body={props.body} rows={rows} />
+                            <WidgetFrameBodyView testID={props.testID} body={body} rows={rows} />
                         </View>
                     </View>
                 ) : props.widgetPresentation ? (
@@ -497,20 +521,20 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
                             ...(!phoneEmpty && bodyFadeMask ? { maskImage: bodyFadeMask.maskImage, WebkitMaskImage: bodyFadeMask.WebkitMaskImage } : {}) }}
                         contentContainerStyle={{ minHeight: phoneEmpty ? undefined : '100%' }}>
                         <View ref={viewportContentRef} testID={`${props.testID}.viewportContent`} onLayout={onFixedContentLayout} style={styles.fixedBodyContent}>
-                            <WidgetFrameBodyView testID={props.testID} body={props.body} rows={rows} />
+                            <WidgetFrameBodyView testID={props.testID} body={body} rows={rows} />
                         </View>
                     </HappierScrollArea>
                 ) : reservedRows > 0 ? (
-                    <WidgetFrameReservedRows rows={rows} rowHeight={rowHeight} centered={props.body.kind !== 'content'}>
-                        <WidgetFrameBodyView testID={props.testID} body={props.body} rows={rows} />
+                    <WidgetFrameReservedRows rows={rows} rowHeight={rowHeight} centered={body.kind !== 'content'}>
+                        <WidgetFrameBodyView testID={props.testID} body={body} rows={rows} />
                     </WidgetFrameReservedRows>
                 ) : (
-                    <WidgetFrameBodyView testID={props.testID} body={props.body} rows={rows} />
+                    <WidgetFrameBodyView testID={props.testID} body={body} rows={rows} />
                 )}
                 </WidgetPresentationProvider>
                 </WidgetFrameBodyOpenContext.Provider>
                 </WidgetFrameBodyRowsContext.Provider>
-            </SurfaceStateSizeProvider>
+            </SurfaceStateSizeProvider> : null}
         </HappierWidgetFrame>
         </WidgetFrameResourceActivityContext.Provider>
         </SurfaceStateContentContext.Provider>

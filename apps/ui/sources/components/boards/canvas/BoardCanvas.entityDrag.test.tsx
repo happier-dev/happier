@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createWorkBoardV1, WorkBoardActionInputSchemasV1, buildWorkBoardItemKeyV1 } from '@happier-dev/protocol';
+import { createWorkBoardV1, buildWorkBoardItemKeyV1 } from '@happier-dev/protocol/boards/workBoardV1';
+import { WorkBoardActionInputSchemasV1} from '@happier-dev/protocol/boards/actionsV1';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createEntityDragDropRuntime } from '@/components/ui/treeDragDrop';
 import { createWorkBoardArtifactBoundary } from '@/dev/testkit/harness/workBoardArtifactBoundary';
@@ -87,10 +88,8 @@ describe('WorkBoard mounted canvas carry', () => {
         const layout = { x: 0, y: 0, width: 800, height: 800 };
         const frame = () => screen.findAllByType('View').find(node =>
             typeof node.props.onLayout === 'function' && typeof node.props.accessibilityElementsHidden === 'boolean')!;
-        await act(async () => {
-            screen.findByTestId('board-canvas')!.props.onLayout({ nativeEvent: { layout } });
-            frame().props.onLayout({ nativeEvent: { layout: { ...layout, width: 408, height: 240 } } });
-        });
+        await act(async () => { screen.findByTestId('board-canvas')!.props.onLayout({ nativeEvent: { layout } }); });
+        await act(async () => { frame().props.onLayout({ nativeEvent: { layout: { ...layout, width: 408, height: 240 } } }); });
         expect(frame().props.accessibilityElementsHidden).toBe(false);
         await screen.update(<></>);
         // Phone By status has replaced Canvas. Returning must not wait for the

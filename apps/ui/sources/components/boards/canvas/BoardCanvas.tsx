@@ -91,7 +91,9 @@ export const BoardCanvas = React.memo(function BoardCanvas(props: BoardCanvasPro
     const measured = React.useRef(new Map<string, BoardCanvasRect>());
     const [heights, setHeights] = React.useState<ReadonlyMap<string, number>>(() => props.retainedLayout?.current?.heights ?? new Map());
     const previousPositions = React.useRef<ReadonlyMap<string, BoardCanvasPoint>>(props.retainedLayout?.current?.positions ?? new Map());
+    const previousSettled = React.useRef<ReadonlySet<string>>(new Set());
     const previousMembers = React.useRef<readonly CanvasMember[]>([]);
+    const previousFootprints = React.useRef<readonly Pick<CanvasMember, 'key' | 'span' | 'kind'>[]>([]);
     const canvas = useBoardCanvasEntityDrop(props.binding, measured, props.snap);
     // The existing Canvas grid is the quantization boundary; Home's owner supplies demand overscan.
     const [verticalDemand] = React.useState(() => createNearViewportTracker({ quantum: gridStepPx, initialViewportHeight: viewportHeight }));
@@ -101,14 +103,18 @@ export const BoardCanvas = React.memo(function BoardCanvas(props: BoardCanvasPro
     const members = React.useMemo(() => {
         const prior = new Map(previousMembers.current.map(member => [member.key, member]));
         const next: CanvasMember[] = [
-            ...props.cards.map((card): CanvasMember => ({ kind: 'work', key: card.key, title: card.title, span: 1, card })),
-            ...widgets.map((widget): CanvasMember => ({ kind: 'widget', key: widget.key, title: widget.title,
-                span: getWidgetSizeFootprintV1('workBoard', widget.size ?? widget.placement.size)?.columnSpan === 2 ? 2 : 1, widget })),
-        ].map(member => {
-            const old = prior.get(member.key);
-            return old?.kind === 'work' && member.kind === 'work' && old.card === member.card ? old
-                : old?.kind === 'widget' && member.kind === 'widget' && old.widget === member.widget && old.span === member.span ? old : member;
-        });
+            ...props.cards.map((card): CanvasMember => {
+                const old = prior.get(card.key);
+                return old?.kind === 'work' && old.card === card ? old
+                    : { kind: 'work', key: card.key, title: card.title, span: 1, card };
+            }),
+            ...widgets.map((widget): CanvasMember => {
+                const old = prior.get(widget.key);
+                const span = getWidgetSizeFootprintV1('workBoard', widget.size ?? widget.placement.size)?.columnSpan === 2 ? 2 : 1;
+                return old?.kind === 'widget' && old.widget === widget && old.span === span ? old
+                    : { kind: 'widget', key: widget.key, title: widget.title, span, widget };
+            }),
+        ];
         if (!props.order?.length) return next;
         // The Board's manual order first (picked work and widgets, mixed); live section cards keep theirs after it.
         const rank = new Map(props.order.map((key, index) => [key, index] as const));
@@ -118,21 +124,66 @@ export const BoardCanvas = React.memo(function BoardCanvas(props: BoardCanvasPro
     }, [props.cards, props.order, widgets]);
     const drawingMembers = React.useMemo(() => members.map(member => member.span === 2 && columnCount === 1
         && props.positionsByItemRef[member.key] === undefined ? { ...member, span: 1 as const } : member), [members, columnCount, props.positionsByItemRef]);
-    const positions = React.useMemo(() => {
-        // Measure hidden frames first; never guess a height from a card's kind or duplicate its body rules.
-        const ready = width > 0 && members.every(member => heights.has(member.key));
-        return resolveBoardCanvasPositions({ members: drawingMembers.filter(member => heights.has(member.key)
-            && (ready || previousPositions.current.has(member.key) || props.positionsByItemRef[member.key] !== undefined)).map(member => ({ key: member.key,
-                width: memberWidthPx(member.span), height: heights.get(member.key)! })),
+    // Geometry consumes membership/order/span and measured sizes, not titles or work status.
+    // A changed card retains this compact input until layout reports a real size change.
+    const footprints = React.useMemo(() => {
+        const previous = previousFootprints.current;
+        return previous.length === drawingMembers.length && drawingMembers.every((member, index) =>
+            member.key === previous[index]?.key && member.span === previous[index]?.span && member.kind === previous[index]?.kind) ? previous
+            : drawingMembers.map(({ key, span, kind }) => ({ key, span, kind }));
+    }, [drawingMembers]);
+    const { positions, settled } = React.useMemo(() => {
+        // Measure frames first; never guess a height from a card's body rules. A work card not measured yet
+        // is laid out at the mean height its measured siblings reported (one grid step before any has), and
+        // its point is corrected when it measures. The Canvas windows its cards on those points, so a large
+        // Board builds only what is near view, also on the first scroll past the measured cards.
+        const laidOut = width > 0;
+        const placed = footprints.filter(member => laidOut || heights.has(member.key)
+            && (previousSettled.current.has(member.key) || props.positionsByItemRef[member.key] !== undefined));
+        let measuredWorkHeight = 0, measuredWorkCount = 0;
+        for (const member of footprints) {
+            const height = member.kind === 'work' ? heights.get(member.key) : undefined;
+            if (height !== undefined) { measuredWorkHeight += height; measuredWorkCount += 1; }
+        }
+        const unmeasuredWorkHeight = measuredWorkCount > 0 ? Math.max(gridStepPx, measuredWorkHeight / measuredWorkCount) : gridStepPx;
+        const positions = resolveBoardCanvasPositions({ members: placed.map(member => ({ key: member.key,
+            width: memberWidthPx(member.span),
+            height: heights.get(member.key) ?? (member.kind === 'work' ? unmeasuredWorkHeight : gridStepPx) })),
             positionsByItemRef: props.positionsByItemRef, columnCount, snap: props.snap, previous: previousPositions.current });
-    }, [drawingMembers, members, heights, props.positionsByItemRef, columnCount, props.snap, width]);
+        // A point is final once everything placed before it is measured: every hand-placed member, then
+        // the flowing members in Board order. A frame shown before keeps showing while a new one measures.
+        const settled = new Set<string>();
+        const handPlaced = placed.filter(member => props.positionsByItemRef[member.key] !== undefined);
+        if (handPlaced.every(member => heights.has(member.key))) {
+            for (const member of handPlaced) settled.add(member.key);
+            for (const member of placed) {
+                if (props.positionsByItemRef[member.key] !== undefined) continue;
+                if (!laidOut || !heights.has(member.key)) break;
+                settled.add(member.key);
+            }
+        }
+        for (const member of placed) if (heights.has(member.key) && previousSettled.current.has(member.key)) settled.add(member.key);
+        return { positions, settled };
+    }, [footprints, heights, props.positionsByItemRef, columnCount, props.snap, width]);
     React.useLayoutEffect(() => {
-        previousPositions.current = positions; previousMembers.current = members;
+        previousPositions.current = positions; previousSettled.current = settled;
+        previousMembers.current = members; previousFootprints.current = footprints;
         if (props.retainedLayout) props.retainedLayout.current = { width, viewportHeight, heights, positions };
-    }, [positions, members, props.retainedLayout, width, viewportHeight, heights]);
+        // The drop owner reads every placed rectangle, built or windowed out; a retired member leaves it.
+        measured.current.clear();
+        for (const member of footprints) {
+            const point = settled.has(member.key) ? positions.get(member.key) : undefined;
+            const height = heights.get(member.key);
+            if (point && height !== undefined) measured.current.set(member.key, { ...point, width: memberWidthPx(member.span), height });
+        }
+    }, [positions, settled, members, footprints, props.retainedLayout, width, viewportHeight, heights]);
+    // A windowed-out card keeps its measured size; only a member that left the Board forgets it.
+    React.useLayoutEffect(() => {
+        const keys = new Set(footprints.map(member => member.key));
+        setHeights(previous => [...previous.keys()].every(key => keys.has(key)) ? previous
+            : new Map([...previous].filter(([key]) => keys.has(key))));
+    }, [footprints]);
     const reportRect = React.useCallback((key: string, rect: CardRect | null) => {
-        if (rect) measured.current.set(key, rect);
-        else measured.current.delete(key);
         setHeights(previous => {
             if (rect ? previous.get(key) === rect.height : !previous.has(key)) return previous;
             const next = new Map(previous);
@@ -148,11 +199,25 @@ export const BoardCanvas = React.memo(function BoardCanvas(props: BoardCanvasPro
         memberRight = Math.max(memberRight, point.x + memberWidthPx(member.span));
     }
     const contentWidth = Math.max(width, memberRight + paddingPx * 2);
-    const cardProps = { binding: props.binding, canvas, onOpen: props.onOpen, onAction: props.onAction, renderWidget: props.renderWidget,
-        verticalDemand, horizontalDemand, onReportRect: reportRect, onPlaced: props.onPlaced, onFocused: setFocusedKey };
+    // A parent re-render hands new callback closures; cards call the current one, so none redraws for it.
+    // Only widget members draw through `renderWidget`, so only they receive it.
+    const latest = React.useRef(props);
+    latest.current = props;
+    const onOpen = React.useCallback((card: BoardCard) => latest.current.onOpen(card), []);
+    const hasAction = props.onAction !== undefined;
+    const onAction = React.useMemo(() => hasAction
+        ? (card: BoardCard, action: BoardCardAction) => latest.current.onAction?.(card, action) : undefined, [hasAction]);
+    const onPlaced = React.useCallback(() => latest.current.onPlaced?.(), []);
+    // A card being carried stays built when it travels outside the window.
+    const [heldKey, setHeldKey] = React.useState<string | null>(null);
+    const onHeld = React.useCallback((key: string, held: boolean) => setHeldKey(previous => held ? key : previous === key ? null : previous), []);
+    const cardProps = { binding: props.binding, canvas, onOpen, onAction,
+        verticalDemand, horizontalDemand, onReportRect: reportRect, onPlaced, onFocused: setFocusedKey, onHeld };
     return <View style={styles.scroll}>
         <ScrollView ref={canvas.viewportRef} testID="board-canvas" style={styles.scroll} contentContainerStyle={styles.scrollContent}
-            onLayout={(event: LayoutChangeEvent) => { setWidth(event.nativeEvent.layout.width); setViewportHeight(event.nativeEvent.layout.height); verticalDemand.onLayout(event); horizontalDemand.onLayout(event); canvas.refresh(); }}
+            onLayout={(event: LayoutChangeEvent) => {
+                setWidth(event.nativeEvent.layout.width); setViewportHeight(event.nativeEvent.layout.height); verticalDemand.onLayout(event); horizontalDemand.onLayout(event); canvas.refresh();
+            }}
             onScroll={event => { verticalDemand.onScroll(event); canvas.refresh(); }} scrollEventThrottle={16}>
             <ScrollView testID="board-canvas-horizontal" horizontal contentContainerStyle={{ width: contentWidth }}
                 onScroll={event => { horizontalDemand.onScroll(event); canvas.refresh(); }} scrollEventThrottle={16}>
@@ -160,16 +225,44 @@ export const BoardCanvas = React.memo(function BoardCanvas(props: BoardCanvasPro
                     style={[styles.content, { width: contentWidth, minHeight: Math.max(contentHeight + paddingPx * 2, viewportHeight) }]}>
                     {props.snap ? <CanvasDotGrid /> : null}
                     <CanvasSnapFeedback binding={props.binding} canvas={canvas} members={drawingMembers} heights={heights} />
-                    {drawingMembers.map(member => <CanvasCard key={member.key} {...cardProps} member={member}
+                    {drawingMembers.map(member => <CanvasMemberSlot key={member.key} {...cardProps} member={member}
+                        renderWidget={member.kind === 'widget' ? props.renderWidget : undefined}
                         position={positions.get(member.key) ?? props.positionsByItemRef[member.key] ?? null}
                         measuredHeight={heights.get(member.key)}
-                        positioned={positions.has(member.key)} saved={props.positionsByItemRef[member.key] !== undefined}
-                        placing={props.placingKey === member.key} restoreFocus={focusedKey === member.key} />)}
+                        positioned={settled.has(member.key)} saved={props.positionsByItemRef[member.key] !== undefined}
+                        placing={props.placingKey === member.key} restoreFocus={focusedKey === member.key}
+                        held={heldKey === member.key} />)}
                 </View>
             </ScrollView>
         </ScrollView>
         <CanvasMoveFeedback binding={props.binding} targetId={canvas.targetId} />
     </View>;
+});
+
+type CanvasCardProps = React.ComponentProps<typeof CanvasCard>;
+
+/**
+ * Builds a work card only near the scroll window (the shared near-viewport rule, on both Canvas axes).
+ * Outside it nothing is built: the member keeps its measured size and point, and the content box keeps the
+ * whole Board's extent. A focused, placing or carried card, and a hand-placed card still to be measured, stay built.
+ */
+const CanvasMemberSlot = React.memo(function CanvasMemberSlot(props: CanvasCardProps & Readonly<{ held: boolean }>) {
+    const { held, ...card } = props;
+    const top = paddingPx + (props.position?.y ?? 0);
+    const left = paddingPx + (props.position?.x ?? 0);
+    const width = memberWidthPx(props.member.span);
+    // A card with no point yet (the Canvas has not reported its size) waits for that first layout,
+    // rather than being built while the window is still unknown.
+    const placed = props.position !== null;
+    const verticalSpan = React.useMemo<NearViewportSpan | null>(() => !placed ? null : props.measuredHeight === undefined ? { top }
+        : { top, height: props.measuredHeight }, [placed, top, props.measuredHeight]);
+    const horizontalSpan = React.useMemo<NearViewportSpan | null>(() => placed ? { top: left, height: width } : null, [placed, left, width]);
+    const verticalNear = useIsNearViewport(props.verticalDemand, verticalSpan);
+    const horizontalNear = useIsNearViewport(props.horizontalDemand, horizontalSpan);
+    // Widget frames stay built and demand only their bodies (`CanvasWidgetBody`); work cards window whole.
+    const keep = props.member.kind === 'widget' || held || props.placing || props.restoreFocus
+        || (props.saved && props.measuredHeight === undefined);
+    return keep || (verticalNear && horizontalNear) ? <CanvasCard {...card} /> : null;
 });
 
 const CanvasCard = React.memo(function CanvasCard(props: Readonly<{
@@ -182,6 +275,7 @@ const CanvasCard = React.memo(function CanvasCard(props: Readonly<{
     verticalDemand: NearViewportTracker; horizontalDemand: NearViewportTracker;
     onReportRect: (key: string, rect: CardRect | null) => void;
     onFocused: (key: string) => void;
+    onHeld: (key: string, held: boolean) => void;
 }>) {
     const { member, binding, canvas } = props;
     // The status word follows a work card's title; a widget says what it is.
@@ -252,7 +346,12 @@ const CanvasCard = React.memo(function CanvasCard(props: Readonly<{
         if (props.saved && !wasSaved.current && latest.current.restoreFocus) pressable.current?.focus?.();
         wasSaved.current = props.saved;
     }, [props.saved]);
-    React.useEffect(() => () => { adapter.current?.cancel(); carry.current?.cancel('source-retired'); props.onReportRect(member.key, null); }, [member.key, props.onReportRect]);
+    React.useEffect(() => () => { adapter.current?.cancel(); carry.current?.cancel('source-retired'); }, [member.key]);
+    React.useEffect(() => {
+        if (!state.active) return;
+        props.onHeld(member.key, true);
+        return () => props.onHeld(member.key, false);
+    }, [state.active, member.key, props.onHeld]);
     // Numeric motion updates only this carried card; the canvas never subscribes to pointer frames.
     React.useEffect(() => {
         let wasSource = false;
@@ -393,12 +492,12 @@ const CanvasCard = React.memo(function CanvasCard(props: Readonly<{
             {member.kind === 'work' ? <View style={styles.cardFrame}>
                 {/* The card's open target and its action are siblings inside one frame, never a button in a button. */}
                 <BoardCardView card={member.card} lifted={lifted} onAction={props.onAction} actionsDisabled={state.active} grip={grip}
-                    renderTarget={content => <Pressable ref={ref} testID={'board-canvas-card:' + member.key} accessibilityRole="button"
-                        style={[styles.cardBody, { paddingBottom: gridInset }]} onFocus={() => { setFocused(true); props.onFocused(member.key); }} onBlur={() => setFocused(false)}
+                    gridInsetPx={gridInset}
+                    renderTarget={() => <Pressable ref={ref} testID={'board-canvas-card:' + member.key} accessibilityRole="button"
+                        style={styles.cardBody} onFocus={() => { setFocused(true); props.onFocused(member.key); }} onBlur={() => setFocused(false)}
                         accessibilityLabel={member.title + ', ' + spoken} accessibilityHint={t('entityDragDrop.keyboard.hintsA11y')}
                         accessibilityActions={moveActions} onAccessibilityAction={onMoveAction}
                         onPress={() => { if (!state.active) props.onOpen(member.card); }} {...keyboardProps}>
-                        {content}
                     </Pressable>} />
             </View> : <View testID={'board-canvas-widget:' + member.key}>
                 <CanvasWidgetBody widget={member.widget} span={span} left={paddingPx + (props.position?.x ?? 0)} width={width}
@@ -485,7 +584,7 @@ const styles = StyleSheet.create(theme => ({
     dotGrid: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
     scroll: { flex: 1 }, scrollContent: { flexGrow: 1 }, content: { position: 'relative' },
     placed: { position: 'absolute' }, dragging: { zIndex: 10 },
-    cardFrame: { position: 'relative' }, cardBody: { alignSelf: 'stretch' },
+    cardFrame: { position: 'relative' }, cardBody: { flex: 1, alignSelf: 'stretch' },
     snapFeedback: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
     // Guides are dashed hairlines in the focus ink: alignment help that reads as a hint, not as content.
     guideX: { position: 'absolute', top: 0, bottom: 0, width: 0, borderLeftWidth: 1, borderStyle: 'dashed', borderColor: theme.colors.border.focus },

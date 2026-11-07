@@ -1,4 +1,7 @@
-import type { ConnectedAccountUiProjectionEntryV1, PluginContributionIdentityV1, PluginJsonSchemaV2, PluginProjectedResourceV2 } from '@happier-dev/protocol';
+import type { ConnectedAccountUiProjectionEntryV1} from '@happier-dev/protocol/connect/connectedAccountUiProjectionV1';
+import type { PluginContributionIdentityV1} from '@happier-dev/protocol/plugins/contribution-identity';
+import type { PluginJsonSchemaV2} from '@happier-dev/protocol/plugins/contributions/jsonSchema';
+import type { PluginProjectedResourceV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { WidgetPublicSnapshotPresentationV1Schema, type WidgetPublicSnapshotPresentationV1 } from '@happier-dev/protocol/widgets';
 import { readWidgetInputTargetV1, WidgetConnectedAccountPurposeBindingV1Schema, WidgetSizeDeclarationV1Schema, type WidgetSizeDeclarationV1, type WidgetConnectedAccountPurposeBindingV1, type WidgetDefinitionAuthorV1, type WidgetDefinitionSummaryV1 } from '@happier-dev/protocol/widgets';
 import { buildQualifiedPluginContributionKey, PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -7,7 +10,7 @@ import { InputHintsSchema, InputPathSchema, type InputHints } from '@happier-dev
 import { BUILTIN_WIDGET_DESCRIPTORS_V1, readBuiltinWidgetDescriptorV1, readWidgetDefinitionResourcesV1, type BuiltinWidgetDescriptorV1, type WidgetDefinitionV1, type WidgetInstanceV1, type WidgetDefinitionRefV1, type WidgetCandidateIdentityV1 } from '@happier-dev/protocol/widgets';
 import { t } from '@/text';
 import { readUsageBreakdownsInstanceTitle } from '@/components/settings/usage/usageBreakdownTitle';
-import { localizeBuiltinInputHints } from '@/text/builtinInputPrompts';
+import { localizeBuiltinInputHints, localizeBuiltinInputLabel } from '@/text/builtinInputPrompts';
 import { isAtmosphereMomentOn, readAtmosphereMoments } from '@/components/atmosphere/atmosphereMoments';
 
 import type { IconName } from '@/components/ui/icons/Icon';
@@ -16,7 +19,7 @@ import {
     resolvePluginSurfaceDestinationLabel,
 } from '@/components/plugins/surfaces/pluginSurfaceDestinations';
 import type { SessionPluginRuntimeState } from '@/components/sessions/plugins/useSessionPluginRuntime';
-import { createPluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
+import { createPluginLocalizedTextResolver, type PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import type { PluginUiPolicyEvaluationContext } from '@/sync/domains/plugins/ui/policy';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import {
@@ -72,11 +75,17 @@ export type WidgetCandidate = WidgetCandidateIdentityV1 & Readonly<{
     madeBy?: Readonly<{ author: WidgetDefinitionAuthorV1; createdAt?: number }>;
 }>;
 
+/** Whether this widget's body is an HTML page (a live picture in its frame), from its saved definition or its header. */
+export function widgetCandidateHoldsHtml(candidate: WidgetCandidate | null | undefined): boolean {
+    const authored = candidate?.authoredDefinition;
+    return authored ? authored.body.kind === 'html' : candidate?.bodyKind === 'html';
+}
+
 /** The header supplies setup and frame metadata; the demanded mount opens the executable body. */
 export function describeWidgetDefinitionSummaryV1(summary: WidgetDefinitionSummaryV1, installed?: WidgetCandidate | null): WidgetCandidate {
     return { definition: { kind: 'artifact', artifactId: summary.artifactId }, key: `artifact:${summary.artifactId}`,
         title: summary.name, pluginName: installed?.pluginName ?? summary.name, sharedPluginName: false,
-        icon: installed?.icon ?? 'stack', homeDefault: 'available', target: summary.sessionInputPath ? 'session' : 'app',
+        icon: installed?.icon ?? 'stack', homeDefault: 'available', target: installed?.target === 'project' ? 'project' : summary.sessionInputPath ? 'session' : 'app',
         inputs: summary.inputs, inputSchema: summary.inputSchema, bodyKind: summary.bodyKind, sizeDeclaration: summary.sizeDeclaration,
         ...(summary.publicPresentation ? { publicPresentation: summary.publicPresentation } : installed?.publicPresentation ? { publicPresentation: installed.publicPresentation } : {}),
         ...(summary.author ? { madeBy: { author: summary.author, ...(summary.createdAt !== undefined ? { createdAt: summary.createdAt } : {}) } } : {}),
@@ -95,7 +104,7 @@ export function describeAuthoredWidgetDefinitionV1(definition: WidgetDefinitionV
     const native = definition.body.kind === 'builtin' ? readWidgetDescriptor(null, definition.body) : null;
     return { definition: reference, key: reference.kind === 'artifact' ? `artifact:${reference.artifactId}` : `inline:${definition.id}`,
         title: definition.name, pluginName: installed?.pluginName ?? definition.name, sharedPluginName: false,
-        icon: native?.icon ?? installed?.icon ?? 'stack', homeDefault: 'available', target: readWidgetInputTargetV1(definition).kind === 'session' ? 'session' : 'app',
+        icon: native?.icon ?? installed?.icon ?? 'stack', homeDefault: 'available', target: installed?.target === 'project' ? 'project' : readWidgetInputTargetV1(definition).kind === 'session' ? 'session' : 'app',
         inputs: definition.inputs, inputSchema: definition.inputSchema, sizeDeclaration: definition.sizeDeclaration,
         ...(definition.publicPresentation ? { publicPresentation: definition.publicPresentation } : installed?.publicPresentation ? { publicPresentation: installed.publicPresentation } : {}),
         ...(definition.sessionInputPath ? { sessionInputPath: definition.sessionInputPath } : {}),
@@ -114,8 +123,9 @@ export function selectWidgetCandidates(
     projection: PluginUiProjectionModel | null | undefined,
     policyContext?: PluginUiPolicyEvaluationContext,
     moments: Readonly<Record<string, boolean>> = readAtmosphereMoments(),
+    localize?: PluginLocalizedTextResolver,
 ): readonly WidgetCandidate[] {
-    return Object.freeze([...selectBuiltinWidgetCandidates(moments), ...describeWidgetPlacements(projection, projection ? selectRenderableWidgetPlacements(projection, policyContext) : [])]);
+    return Object.freeze([...selectBuiltinWidgetCandidates(moments), ...describeWidgetPlacements(projection, projection ? selectRenderableWidgetPlacements(projection, policyContext) : [], localize)]);
 }
 
 /**
@@ -161,7 +171,7 @@ type WidgetInstanceTitleContext = Readonly<{
     /** A Session record or placement may already carry a human name while its descriptor is absent. */
     fallbackTitle?: string;
 }>;
-type NamedWidgetInstance = Pick<WidgetInstanceV1, 'definition' | 'displayName'>;
+type NamedWidgetInstance = Pick<WidgetInstanceV1, 'definition' | 'displayName'> & Partial<Pick<WidgetInstanceV1, 'bindings'>>;
 
 /**
  * One title for cards, groups, menus and summaries. Known names survive pending/failed reads;
@@ -172,7 +182,15 @@ export function resolveWidgetInstanceTitle(instance: NamedWidgetInstance | null 
 export function resolveWidgetInstanceTitle(instance: NamedWidgetInstance | null | undefined, candidate: Readonly<{ title: string }> | null | undefined, context: WidgetInstanceTitleContext): string | null;
 export function resolveWidgetInstanceTitle(instance: NamedWidgetInstance | null | undefined, candidate: Readonly<{ title: string }> | null | undefined, context?: WidgetInstanceTitleContext): string | null {
     const definition = instance?.definition;
-    const name = instance?.displayName ?? candidate?.title
+    let displayName = instance?.displayName;
+    const style = instance?.bindings?.style;
+    if (displayName !== undefined && definition?.kind === 'builtin' && style?.kind === 'value') {
+        const option = readBuiltinWidgetDescriptorV1(definition)?.inputs?.fields.find(field => field.path === 'style')
+            ?.options?.find(option => option.value === style.value);
+        // Presets retained the declaration's style name; custom names remain the person's own words.
+        if (option?.label === displayName) displayName = localizeBuiltinInputLabel(option.label);
+    }
+    const name = displayName ?? candidate?.title
         ?? (definition?.kind === 'inline' ? definition.definition.name : undefined);
     if (name !== undefined) return name;
     if (context?.fallbackTitle !== undefined) return context.fallbackTitle;
@@ -196,6 +214,7 @@ export function describeWidgetCandidatePurpose(candidate: WidgetCandidate): stri
 export function readWidgetDescriptor(
     projection: PluginUiProjectionModel | null | undefined,
     identity: PluginContributionIdentityV1 | WidgetDefinitionRefV1,
+    localize?: PluginLocalizedTextResolver,
 ): WidgetCandidate | null {
     if ('kind' in identity) {
         if (identity.kind === 'builtin') {
@@ -203,10 +222,25 @@ export function readWidgetDescriptor(
             return descriptor ? describeBuiltinWidgetCandidate(descriptor) : null;
         }
         if (identity.kind !== 'installed') return null;
-        return readWidgetDescriptor(projection, identity.surface);
+        return readWidgetDescriptor(projection, identity.surface, localize);
     }
     const surface = identity;
-    return describeWidgetPlacements(projection, projection ? selectWidgetPlacementsBySurface(projection, surface) : [])[0] ?? null;
+    return describeWidgetPlacements(projection, projection ? selectWidgetPlacementsBySurface(projection, surface) : [], localize)[0] ?? null;
+}
+
+/**
+ * How a Session host (Companion, Board) names an installed widget. The app shell publishes App and Project
+ * placements only; a Session-target placement is published by the exact Session's Machine projection, so the
+ * host falls back to that projection when the app shell does not name it. Execution authority still comes
+ * from the configured target's own runtime (`useConfiguredWidgetTarget`), never from this naming read.
+ */
+export function readSessionHostWidgetDescriptor(
+    projections: Readonly<{ app: PluginUiProjectionModel | null | undefined; session: PluginUiProjectionModel | null | undefined }>,
+    identity: PluginContributionIdentityV1 | WidgetDefinitionRefV1,
+    localize?: Readonly<{ app?: PluginLocalizedTextResolver; session?: PluginLocalizedTextResolver }>,
+): WidgetCandidate | null {
+    return readWidgetDescriptor(projections.app, identity, localize?.app)
+        ?? (projections.session ? readWidgetDescriptor(projections.session, identity, localize?.session) : null);
 }
 
 /**
@@ -221,13 +255,14 @@ export function readWidgetSourcePluginName(projection: PluginUiProjectionModel |
 function describeWidgetPlacements(
     projection: PluginUiProjectionModel | null | undefined,
     placements: ReturnType<typeof selectRenderableWidgetPlacements>,
+    localizedText?: PluginLocalizedTextResolver,
 ): readonly WidgetCandidate[] {
     if (!projection) return EMPTY_CANDIDATES;
 
     // A duplicate qualified identity is a projection violation. The mount
     // resolver fails closed on it, so offering it here would create an item that
     // can never mount.
-    const localize = createPluginLocalizedTextResolver({ projection });
+    const localize = localizedText ?? createPluginLocalizedTextResolver({ projection });
     const displayNameCounts = new Map<string, number>();
     for (const installed of Object.values(projection.installedPackagesById)) {
         const name = installed.displayName.trim();
@@ -290,12 +325,13 @@ export function selectCurrentSessionWidgetCandidates(input: Readonly<{
     boardFeatureEnabled: boolean;
     canEdit: boolean;
     policyContext: PluginUiPolicyEvaluationContext;
+    localize?: PluginLocalizedTextResolver;
 }>): readonly WidgetCandidate[] {
     if (!input.boardFeatureEnabled || !input.canEdit) {
         return EMPTY_CANDIDATES;
     }
     if (input.runtime.phase !== 'current' || !input.runtime.interactionEnabled) return selectBuiltinWidgetCandidates();
-    return selectWidgetCandidates(input.runtime.pluginUiProjection, input.policyContext);
+    return selectWidgetCandidates(input.runtime.pluginUiProjection, input.policyContext, undefined, input.localize);
 }
 
 const EMPTY_CANDIDATES: readonly WidgetCandidate[] = Object.freeze([]);

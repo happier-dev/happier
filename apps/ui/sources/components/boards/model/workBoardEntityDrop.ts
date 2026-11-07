@@ -1,7 +1,7 @@
 import { BoardItemRefV1Schema, WorkBoardPositionV1Schema, buildWorkBoardItemKeyV1, buildWorkBoardWidgetKeyV1, resolveWorkBoardItemOrderV1, type BoardItemRefV1, type WorkBoardV1, type WorkBoardsV1 } from '@happier-dev/protocol/boards/workBoardV1';
 import { WorkBoardActionInputSchemasV1 } from '@happier-dev/protocol/boards/actionsV1';
 import { WorkBoardMutationErrorV1, type WorkBoardArtifactPortV1 } from '@happier-dev/protocol/boards/workBoardArtifactV1';
-import type { ActionExecutorDeps } from '@happier-dev/protocol';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import type { WidgetInstanceRefV1, WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 import { resolveWorkBoardWidgetPlacementV1 } from '@happier-dev/protocol/widgets';
 import { entityDragScopesEqualV1, type EntityDragItemV1, type EntityDragScopeV1, type EntityDropAdmissionV1 } from '@happier-dev/protocol/plugins/ui';

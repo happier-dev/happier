@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, StyleSheet, Text } from 'react-native';
+import { Pressable, StyleSheet, Text, TextInput } from 'react-native';
 import * as Unistyles from 'react-native-unistyles';
 import { useWidgetPresentation } from '@happier-dev/plugin-ui';
 import { act } from 'react-test-renderer';
@@ -32,7 +32,6 @@ vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock();
 });
-
 // The window class is the platform boundary: a phone stacks cards in one column.
 const device = vi.hoisted(() => ({ type: undefined as 'phone' | 'tablet' | undefined }));
 vi.mock('@/utils/platform/responsive', async (importOriginal) => {
@@ -63,142 +62,24 @@ async function renderFrame(props: Partial<React.ComponentProps<typeof WidgetFram
 }
 
 describe('WidgetFrame', () => {
-    it('puts a plugin body\'s header content (its live fact and its plus) in its frame\'s header, as a tab puts it in its pane header', async () => {
-        const { WidgetFrameBodyMetaContext } = await import('./widgetFrameBodyCaption');
-        const { useWidgetFrameHeaderBinding } = await import('./widgetFrameHeaderBinding');
-        // What `PaneHeaderContent` calls from inside a plugin widget body.
-        function PluginBody() {
-            const binding = useWidgetFrameHeaderBinding();
-            return <>{binding === null ? 'no-binding' : binding.renderPaneHeader({
-                line: [{ text: '3 in progress', attention: true }],
-                actions: <Pressable testID="plugin-plus" accessibilityLabel="New task" onPress={() => {}} />,
-            })}rows:here</>;
+    it('keeps authored title and source controls outside native pointer-disabled subtrees', async () => {
+        const inspect = vi.fn(), open = vi.fn();
+        const screen = await renderFrame({
+            onOpen: open,
+            title: <TextInput testID="rename-title" defaultValue="Latest runs" />,
+            source: <Pressable testID="inspect-source" onPress={inspect}><Text>Source</Text></Pressable>,
+        });
+        for (const id of ['rename-title', 'inspect-source']) {
+            const control = screen.findHostByTestId(id);
+            expect(control).not.toBeNull();
+            // Native `none` disables all descendants; `box-none` preserves child controls.
+            for (let node = control?.parent; node; node = node.parent) {
+                expect(node.props.pointerEvents, `${id} has a disabled native ancestor`).not.toBe('none');
+            }
         }
-        function Placement() {
-            const [meta, setMeta] = React.useState<React.ReactNode>(null);
-            return (
-                <WidgetFrameBodyMetaContext.Provider value={setMeta}>
-                    <WidgetFrame testID="frame" frameStyle="card" placement="home" mark="list" title="My tasks"
-                        meta={meta} body={{ kind: 'content', children: <PluginBody /> }} />
-                </WidgetFrameBodyMetaContext.Provider>
-            );
-        }
-        const screen = await renderScreen(<Placement />);
-        await flushHookEffects({ cycles: 3 });
-        expect(screen.getTextContent()).toContain('3 in progress');
-        expect(screen.findByTestId('plugin-plus')).not.toBeNull();
-        expect(screen.getTextContent()).not.toContain('no-binding');
-        // Outside a frame that lends its header, the body draws nothing in its place.
-        const bare = await renderScreen(<PluginBody />);
-        expect(bare.getTextContent()).toContain('no-binding');
-    });
-
-    it('names a plugin body\'s source by the caption it lends, in place of its plugin, and the plugin again once it stops', async () => {
-        const { WidgetFrameBodyCaptionContext, WidgetFrameBodyMetaContext } = await import('./widgetFrameBodyCaption');
-        const { useWidgetFrameHeaderBinding } = await import('./widgetFrameHeaderBinding');
-        // What `PaneHeaderContent caption="Tasks"` calls from inside a plugin widget body.
-        function PluginBody(props: Readonly<{ caption: string | null }>) {
-            const binding = useWidgetFrameHeaderBinding();
-            return <>{binding?.renderPaneHeader({ line: null, actions: null, caption: props.caption })}rows:here</>;
-        }
-        let setCaptionProp: (caption: string | null) => void = () => {};
-        function Placement() {
-            const [caption, setCaption] = React.useState<string | null>('Tasks');
-            setCaptionProp = setCaption;
-            const [bodyCaption, setBodyCaption] = React.useState<string | null>(null);
-            const [meta, setMeta] = React.useState<React.ReactNode>(null);
-            return (
-                <WidgetFrameBodyCaptionContext.Provider value={setBodyCaption}>
-                <WidgetFrameBodyMetaContext.Provider value={setMeta}>
-                    <WidgetFrame testID="frame" frameStyle="card" placement="home" mark="check-square" title="Due this week"
-                        source={bodyCaption ?? 'PRs, Issues & Tasks'} meta={meta}
-                        body={{ kind: 'content', children: <PluginBody caption={caption} /> }} />
-                </WidgetFrameBodyMetaContext.Provider>
-                </WidgetFrameBodyCaptionContext.Provider>
-            );
-        }
-        const screen = await renderScreen(<Placement />);
-        await flushHookEffects({ cycles: 3 });
-        expect(screen.getTextContent()).toContain('Tasks');
-        expect(screen.getTextContent()).not.toContain('PRs, Issues & Tasks');
-        await act(async () => { setCaptionProp(null); });
-        await flushHookEffects({ cycles: 3 });
-        expect(screen.getTextContent()).toContain('PRs, Issues & Tasks');
-    });
-
-    it('leads a capped plugin body to the page it names from the frame\'s one footer link, over the placement\'s generic Open, never over a failed refresh', async () => {
-        const { WidgetFrameBodyMetaContext } = await import('./widgetFrameBodyCaption');
-        const { useWidgetFrameHeaderBinding } = await import('./widgetFrameHeaderBinding');
-        const openTasks = vi.fn();
-        const openPlugin = vi.fn();
-        // What `PaneHeaderContent caption="Tasks" onOpen={…}` calls from inside a plugin widget body.
-        function PluginBody() {
-            const binding = useWidgetFrameHeaderBinding();
-            return <>{binding?.renderPaneHeader({ line: null, actions: null, caption: 'Tasks', open: openTasks })}rows:here</>;
-        }
-        function Placement(props: Readonly<{ footer: React.ComponentProps<typeof WidgetFrame>['footer'] }>) {
-            const [meta, setMeta] = React.useState<React.ReactNode>(null);
-            return (
-                <WidgetFrameBodyMetaContext.Provider value={setMeta}>
-                    <WidgetFrame testID="frame" frameStyle="card" placement="home" mark="check-square" title="My tasks"
-                        meta={meta} footer={props.footer} body={{ kind: 'content', children: <PluginBody /> }} />
-                </WidgetFrameBodyMetaContext.Provider>
-            );
-        }
-        const screen = await renderScreen(<Placement footer={{ kind: 'open', label: 'Open PRs, Issues & Tasks', onPress: openPlugin }} />);
-        await flushHookEffects({ cycles: 3 });
-        // The text runtime renders the key with its parameters: the link names the body's page.
-        expect(screen.getTextContent()).toContain('homeWidgets.open(destination=Tasks)');
-        expect(screen.getTextContent()).not.toContain('Open PRs, Issues & Tasks');
-        screen.pressByTestId('frame.open');
-        expect(openTasks).toHaveBeenCalledTimes(1);
-        expect(openPlugin).not.toHaveBeenCalled();
-
-        // A failed refresh says why with Retry in that one row instead.
-        const stale = await renderScreen(<Placement footer={{ kind: 'refreshFailed', reason: 'Couldn\'t refresh', onRetry: () => {} }} />);
-        await flushHookEffects({ cycles: 3 });
-        expect(stale.getTextContent()).toContain('Couldn\'t refresh');
-        expect(stale.findByTestId('frame.open')).toBeNull();
-    });
-
-    it('draws a widget body\'s own empty state at the frame\'s step: centred in a card with room, one line in a compact one', async () => {
-        const stateOf = (screen: Awaited<ReturnType<typeof renderFrame>>) => {
-            const state = screen.root.findAllByType(SurfaceStateCard).find(card => card.props.testID === 'usage-empty')!;
-            return state.findByType(HappierSurfaceState).props as { size?: string; layout?: string };
-        };
-        const body = { kind: 'content' as const, children: <UsageBodyInsufficient testID="usage-empty" title="No usage in this period"
-            reason="Usage shows here once your agents run." /> };
-        const card = await renderFrame({ body });
-        expect(stateOf(card)).toMatchObject({ size: 'pane' });
-        expect(stateOf(card).layout).toBeUndefined();
-        standardCleanup();
-        const compact = await renderFrame({ body, widgetPresentation: { size: 'wide',
-            footprint: { columns: 2, columnSpan: 2, rowSpan: 1, height: 'compact', width: 'full' } } });
-        expect(stateOf(compact)).toMatchObject({ size: 'line' });
-        standardCleanup();
-        // A card spanning the whole band reads its state at the wider measure, so a reason never wraps in a narrow column.
-        const full = await renderFrame({ body, widgetPresentation: { size: 'full',
-            footprint: { columns: 2, columnSpan: 2, rowSpan: 2, height: 'regular', width: 'full' } } });
-        expect(stateOf(full)).toMatchObject({ size: 'details' });
-    });
-
-    it('draws every state action in a card quiet, so no card competes with the page\'s one primary', async () => {
-        const buttonOf = (screen: Awaited<ReturnType<typeof renderFrame>>, testID: string) =>
-            // The core button (a memo) is found by its props: the one node with this testID that takes the press.
-            screen.root.findAll(node => node.props.testID === testID && typeof node.props.action === 'function')[0]!.props as { display?: string };
-        const own = await renderFrame({ body: { kind: 'empty', title: 'No runs yet', reason: 'Runs show here.',
-            action: { label: 'New workflow', onPress: vi.fn() } } });
-        expect(buttonOf(own, 'frame.empty-action').display).toBe('secondary');
-        standardCleanup();
-        // A body's own state (Capacity's connect) takes the frame's decision too, even one that says it invites.
-        const body = await renderFrame({ body: { kind: 'content', children: <SurfaceStateCard testID="usage-empty" kind="empty"
-            title="No subscription connected" action={{ label: 'Connect a subscription', onPress: vi.fn(), invitation: true }} /> } });
-        expect(buttonOf(body, 'usage-empty-action').display).toBe('secondary');
-        standardCleanup();
-        // Outside a card (a page or pane's one state) the invitation stays the filled primary.
-        const page = await renderScreen(<SurfaceStateCard testID="page-empty" kind="empty" size="pane"
-            title="No runs yet" action={{ label: 'New workflow', onPress: vi.fn() }} />);
-        expect(buttonOf(page, 'page-empty-action').display).toBeUndefined();
+        await screen.pressByTestIdAsync('inspect-source');
+        expect(inspect).toHaveBeenCalledOnce();
+        expect(open).not.toHaveBeenCalled();
     });
 
     it('compacts an empty grouped half body and restores its declared room when content arrives', async () => {
@@ -454,6 +335,18 @@ describe('WidgetFrame', () => {
         const order = screen.tree.findAllByType(Text).map((node) => node.props.testID).filter((id: unknown) => id === 'frame-menu' || id === 'frame-grip');
         expect(order).toEqual(['frame-menu', 'frame-grip']);
     });
+    it('opens its menu and grip over an HTML body as over a live picture, so their floating surfaces take the readable coat', async () => {
+        const { GlassLivePictureBackdropContext } = await import('@/components/ui/glass/livePictureBackdrop');
+        // Every floating surface reads this one declaration (GlassSurface); the probe stands where the ⋯ menu opens from.
+        const Probe = (props: { label: string }) => <Text>{`${props.label}:${React.useContext(GlassLivePictureBackdropContext) ? 'picture' : 'page'}`}</Text>;
+        const picture = await renderFrame({ livePicture: true, menu: <Probe label="menu" />, grip: <Probe label="grip" /> });
+        expect(picture.getTextContent()).toContain('menu:picture');
+        expect(picture.getTextContent()).toContain('grip:picture');
+        standardCleanup();
+        const page = await renderFrame({ menu: <Probe label="menu" /> });
+        expect(page.getTextContent()).toContain('menu:page');
+    });
+
     it('keeps the suffix that tells near-identical machines apart when a bound source is too long for its header', async () => {
         const screen = await renderFrame({ source: 'Following group · NLDW6-3-11-20 · 0371' });
         const runs = screen.tree.findAllByType(Text).map((node) => node.props.children).filter((child: unknown) => typeof child === 'string');
@@ -471,6 +364,104 @@ describe('WidgetFrame', () => {
         expect(text).toContain('rows:here');
     });
 
+    it('puts a plugin body\'s header content (its live fact and its plus) in its frame\'s header, as a tab puts it in its pane header', async () => {
+        const { WidgetFrameBodyMetaContext } = await import('./widgetFrameBodyCaption');
+        const { useWidgetFrameHeaderBinding } = await import('./widgetFrameHeaderBinding');
+        // What `PaneHeaderContent` calls from inside a plugin widget body.
+        function PluginBody() {
+            const binding = useWidgetFrameHeaderBinding();
+            return <>{binding === null ? 'no-binding' : binding.renderPaneHeader({
+                line: [{ text: '3 in progress', attention: true }],
+                actions: <Pressable testID="plugin-plus" accessibilityLabel="New task" onPress={() => {}} />,
+            })}rows:here</>;
+        }
+        function Placement() {
+            const [meta, setMeta] = React.useState<React.ReactNode>(null);
+            return (
+                <WidgetFrameBodyMetaContext.Provider value={setMeta}>
+                    <WidgetFrame testID="frame" frameStyle="card" placement="home" mark="list" title="My tasks"
+                        meta={meta} body={{ kind: 'content', children: <PluginBody /> }} />
+                </WidgetFrameBodyMetaContext.Provider>
+            );
+        }
+        const screen = await renderScreen(<Placement />);
+        await flushHookEffects({ cycles: 3 });
+        expect(screen.getTextContent()).toContain('3 in progress');
+        expect(screen.findByTestId('plugin-plus')).not.toBeNull();
+        expect(screen.getTextContent()).not.toContain('no-binding');
+        // Outside a frame that lends its header, the body draws nothing in its place.
+        const bare = await renderScreen(<PluginBody />);
+        expect(bare.getTextContent()).toContain('no-binding');
+    });
+
+    it('names a plugin body\'s source by the caption it lends, in place of its plugin, and the plugin again once it stops', async () => {
+        const { WidgetFrameBodyCaptionContext, WidgetFrameBodyMetaContext } = await import('./widgetFrameBodyCaption');
+        const { useWidgetFrameHeaderBinding } = await import('./widgetFrameHeaderBinding');
+        // What `PaneHeaderContent caption="Tasks"` calls from inside a plugin widget body.
+        function PluginBody(props: Readonly<{ caption: string | null }>) {
+            const binding = useWidgetFrameHeaderBinding();
+            return <>{binding?.renderPaneHeader({ line: null, actions: null, caption: props.caption })}rows:here</>;
+        }
+        let setCaptionProp: (caption: string | null) => void = () => {};
+        function Placement() {
+            const [caption, setCaption] = React.useState<string | null>('Tasks');
+            setCaptionProp = setCaption;
+            const [bodyCaption, setBodyCaption] = React.useState<string | null>(null);
+            const [meta, setMeta] = React.useState<React.ReactNode>(null);
+            return (
+                <WidgetFrameBodyCaptionContext.Provider value={setBodyCaption}>
+                <WidgetFrameBodyMetaContext.Provider value={setMeta}>
+                    <WidgetFrame testID="frame" frameStyle="card" placement="home" mark="check-square" title="Due this week"
+                        source={bodyCaption ?? 'PRs, Issues & Tasks'} meta={meta}
+                        body={{ kind: 'content', children: <PluginBody caption={caption} /> }} />
+                </WidgetFrameBodyMetaContext.Provider>
+                </WidgetFrameBodyCaptionContext.Provider>
+            );
+        }
+        const screen = await renderScreen(<Placement />);
+        await flushHookEffects({ cycles: 3 });
+        expect(screen.getTextContent()).toContain('Tasks');
+        expect(screen.getTextContent()).not.toContain('PRs, Issues & Tasks');
+        await act(async () => { setCaptionProp(null); });
+        await flushHookEffects({ cycles: 3 });
+        expect(screen.getTextContent()).toContain('PRs, Issues & Tasks');
+    });
+
+    it('leads a capped plugin body to the page it names from the frame\'s one footer link, over the placement\'s generic Open, never over a failed refresh', async () => {
+        const { WidgetFrameBodyMetaContext } = await import('./widgetFrameBodyCaption');
+        const { useWidgetFrameHeaderBinding } = await import('./widgetFrameHeaderBinding');
+        const openTasks = vi.fn();
+        const openPlugin = vi.fn();
+        // What `PaneHeaderContent caption="Tasks" onOpen={…}` calls from inside a plugin widget body.
+        function PluginBody() {
+            const binding = useWidgetFrameHeaderBinding();
+            return <>{binding?.renderPaneHeader({ line: null, actions: null, caption: 'Tasks', open: openTasks })}rows:here</>;
+        }
+        function Placement(props: Readonly<{ footer: React.ComponentProps<typeof WidgetFrame>['footer'] }>) {
+            const [meta, setMeta] = React.useState<React.ReactNode>(null);
+            return (
+                <WidgetFrameBodyMetaContext.Provider value={setMeta}>
+                    <WidgetFrame testID="frame" frameStyle="card" placement="home" mark="check-square" title="My tasks"
+                        meta={meta} footer={props.footer} body={{ kind: 'content', children: <PluginBody /> }} />
+                </WidgetFrameBodyMetaContext.Provider>
+            );
+        }
+        const screen = await renderScreen(<Placement footer={{ kind: 'open', label: 'Open PRs, Issues & Tasks', onPress: openPlugin }} />);
+        await flushHookEffects({ cycles: 3 });
+        // The text runtime renders the key with its parameters: the link names the body's page.
+        expect(screen.getTextContent()).toContain('homeWidgets.open(destination=Tasks)');
+        expect(screen.getTextContent()).not.toContain('Open PRs, Issues & Tasks');
+        screen.pressByTestId('frame.open');
+        expect(openTasks).toHaveBeenCalledTimes(1);
+        expect(openPlugin).not.toHaveBeenCalled();
+
+        // A failed refresh says why with Retry in that one row instead.
+        const stale = await renderScreen(<Placement footer={{ kind: 'refreshFailed', reason: 'Couldn\'t refresh', onRetry: () => {} }} />);
+        await flushHookEffects({ cycles: 3 });
+        expect(stale.getTextContent()).toContain('Couldn\'t refresh');
+        expect(stale.findByTestId('frame.open')).toBeNull();
+    });
+
     it('reserves skeleton rows while the first read is pending, and shows no content', async () => {
         const screen = await renderFrame({ body: { kind: 'loading', accessibilityLabel: 'Loading latest runs' } });
         expect(screen.findByTestId('frame.loading')).toBeTruthy();
@@ -486,6 +477,46 @@ describe('WidgetFrame', () => {
         expect(screen.findByTestId('frame.empty')).toBeTruthy();
         expect(screen.getTextContent()).toContain('No runs yet');
         expect(screen.getTextContent()).toContain('Runs of your automations show up here.');
+    });
+
+    it('draws a widget body\'s own empty state at the frame\'s step: centred in a card with room, one line in a compact one', async () => {
+        const stateOf = (screen: Awaited<ReturnType<typeof renderFrame>>) => {
+            const state = screen.root.findAllByType(SurfaceStateCard).find(card => card.props.testID === 'usage-empty')!;
+            return state.findByType(HappierSurfaceState).props as { size?: string; layout?: string };
+        };
+        const body = { kind: 'content' as const, children: <UsageBodyInsufficient testID="usage-empty" title="No usage in this period"
+            reason="Usage shows here once your agents run." /> };
+        const card = await renderFrame({ body });
+        expect(stateOf(card)).toMatchObject({ size: 'pane' });
+        expect(stateOf(card).layout).toBeUndefined();
+        standardCleanup();
+        const compact = await renderFrame({ body, widgetPresentation: { size: 'wide',
+            footprint: { columns: 2, columnSpan: 2, rowSpan: 1, height: 'compact', width: 'full' } } });
+        expect(stateOf(compact)).toMatchObject({ size: 'line' });
+        standardCleanup();
+        // A card spanning the whole band reads its state at the wider measure, so a reason never wraps in a narrow column.
+        const full = await renderFrame({ body, widgetPresentation: { size: 'full',
+            footprint: { columns: 2, columnSpan: 2, rowSpan: 2, height: 'regular', width: 'full' } } });
+        expect(stateOf(full)).toMatchObject({ size: 'details' });
+    });
+
+    it('draws every state action in a card quiet, so no card competes with the page\'s one primary', async () => {
+        const buttonOf = (screen: Awaited<ReturnType<typeof renderFrame>>, testID: string) =>
+            // The core button (a memo) is found by its props: the one node with this testID that takes the press.
+            screen.root.findAll(node => node.props.testID === testID && typeof node.props.action === 'function')[0]!.props as { display?: string };
+        const own = await renderFrame({ body: { kind: 'empty', title: 'No runs yet', reason: 'Runs show here.',
+            action: { label: 'New workflow', onPress: vi.fn() } } });
+        expect(buttonOf(own, 'frame.empty-action').display).toBe('secondary');
+        standardCleanup();
+        // A body's own state (Capacity's connect) takes the frame's decision too, even one that says it invites.
+        const body = await renderFrame({ body: { kind: 'content', children: <SurfaceStateCard testID="usage-empty" kind="empty"
+            title="No subscription connected" action={{ label: 'Connect a subscription', onPress: vi.fn(), invitation: true }} /> } });
+        expect(buttonOf(body, 'usage-empty-action').display).toBe('secondary');
+        standardCleanup();
+        // Outside a card (a page or pane's one state) the invitation stays the filled primary.
+        const page = await renderScreen(<SurfaceStateCard testID="page-empty" kind="empty" size="pane"
+            title="No runs yet" action={{ label: 'New workflow', onPress: vi.fn() }} />);
+        expect(buttonOf(page, 'page-empty-action').display).toBeUndefined();
     });
 
     it.each([true, false])('keeps a credential reader mounted when a phone widget settles to an empty body (footprint: %s)', async (withFootprint) => {

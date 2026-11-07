@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import type { WorkBoardV1 } from '@happier-dev/protocol';
+import type { WorkBoardV1 } from '@happier-dev/protocol/boards/workBoardV1';
 import type { WorkBoardArtifactSummaryV1 } from '@happier-dev/protocol/boards/workBoardArtifactV1';
 
 import { usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -18,12 +18,13 @@ import { useDispatchWorkBoardIntent, useWorkBoardSaveState, useWorkBoardSummarie
 import { resolveCollectionSaveFailure } from './model/boardSaveFailure';
 import { BoardSaveFailureLine } from './BoardSaveFailureLine';
 import { BoardReadState } from './BoardReadState';
+import { usePhoneDestinationBack } from '@/components/ui/layout/usePageBackControl';
 
 /**
  * The Boards destination's column (lab `boards-B1`): your boards, the open one selected, with one live
  * line each — who needs you and how many items it holds ("3 need you · 9 items"); search finds a board
  * by name, and the last row makes a new board. Only the open destination's column is mounted. A board with no source reads
- * nothing; the others read their own membership/status summaries, sharing one Inbox model only while one of them shows
+ * nothing; the others read their own membership/status summaries, sharing one Inbox work projection only while one of them shows
  * Needs you.
  */
 
@@ -81,6 +82,7 @@ export const BoardsColumn = React.memo(function BoardsColumn(props: Readonly<{
     surface?: 'plane' | 'page';
 }>) {
     const pathname = usePathname();
+    const pageBack = usePhoneDestinationBack('boards-column:back');
     const bodies = useWorkBoards().boards;
     const boards = useWorkBoardSummaries();
     const [query, setQuery] = React.useState('');
@@ -101,16 +103,18 @@ export const BoardsColumn = React.memo(function BoardsColumn(props: Readonly<{
             <CollectionList
                 testID="boards-column:list"
                 surface={props.surface ?? 'plane'}
+                pageBack={props.surface === 'page' ? pageBack : null}
                 title={t('boards.title')}
                 search={{ value: query, onChangeText: setQuery, placeholder: t('common.search'), testID: 'boards-column:search' }}
             >
                 <BoardReadState place="column" size="line" retained={boards.length > 0} />
-                {/* The board rows' live lines share one Inbox model; the list itself never remounts for it. */}
+                {/* The board rows share Inbox membership without mounting its detail rows. */}
                 <BoardsInboxBoundary boards={matchingBoards}>
                     {matchingBoards.map((summary) => <BoardRow key={summary.id} summary={summary}
                         board={bodies.find(board => board.id === summary.id) ?? null} selected={openId === summary.id} />)}
                 </BoardsInboxBoundary>
                 <CollectionNavigationRow
+                    rowRole="item"
                     testID="boards-column:new-row"
                     title={t('boards.newBoard')}
                     icon={<Icon name="plus" />}

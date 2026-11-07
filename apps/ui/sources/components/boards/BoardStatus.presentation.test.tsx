@@ -82,7 +82,7 @@ const { AppPaneProvider } = await import('@/components/appShell/panes/AppPanePro
 const { createWorkflowDefinitionFixture, createWorkflowInvocationIndexFixture, createWorkflowRunSummaryFixture } = await import('@/dev/testkit/fixtures/workflowRunFixtures');
 const { buildBoardCards } = await import('./model/boardCards');
 const { projectBoardMembership } = await import('./model/boardMembership');
-const { createWorkBoardV1, WorkBoardActionInputSchemasV1 } = await import('@happier-dev/protocol');
+const [{ createWorkBoardV1}, { WorkBoardActionInputSchemasV1}] = await Promise.all([import('@happier-dev/protocol/boards/workBoardV1'), import('@happier-dev/protocol/boards/actionsV1')]);
 const { buildSessionListRenderableFromSession } = await import('@/sync/domains/session/listing/sessionListRenderable');
 const { projectWork } = await import('@/components/sessions/work/workProjection');
 const { toWorkReportSessionSource } = await import('@/components/sessions/work/sessionWorkSources');
@@ -205,6 +205,7 @@ it.each(variants)('renders the STATUS source surfaces ($dark / $width)', async v
             workflowServerId: home.id, accountServerId: home.id, notices: [] }),
         openApprovals: [], openUsageNotices: [], friendRequests: [], actionOperationEntries: [], targetBySessionAddress: new Map(),
         pendingReadKeys: new Set(), markAllPending: false, isLoading: false, hasPrimaryAttention: true, showCaughtUp: false,
+        readUnavailableReasonBySessionAddress: new Map(), markAllReadUnavailableReason: null,
         markRead: async () => {}, resolveActionOperation: noop, dismissUsageNotice: async () => {} } as never;
     const screen = await renderScreen(<InjectedAuthProvider credentials={null}>
         <UniversalSearchRuntimeProvider value={{ open: noop, buildCommands: () => [] }}>
@@ -215,7 +216,7 @@ it.each(variants)('renders the STATUS source surfaces ($dark / $width)', async v
                     <BoardCanvas cards={canvasCards} positionsByItemRef={canvasBoard.positionsByItemRef} snap={false}
                         binding={binding} onOpen={noop} onAction={noop} /></div></section>
                 <section id="work"><h2>Work map</h2><div style={{ width: capture.width === 390 ? 390 : 420 }}>
-                    <SessionWorkMapView map={map} projection={projection} testIDPrefix="capture-work" onOpenItem={noop} /></div></section>
+                    <SessionWorkMapView map={map} projection={projection} showFacts={false} testIDPrefix="capture-work" onOpenItem={noop} /></div></section>
                 <section id="inbox"><h2>Inbox</h2><div style={{ width: capture.width === 390 ? 390 : 1000 }}><ItemList testID="capture-inbox">
                     <PageHeader title={t('tabs.inbox')} description={t('inbox.work.pageDescription')} actions={capture.width === 390 ? undefined
                         : <SegmentedTabBar tabs={[{ id: 'needs_you', label: t('inbox.work.tabs.needsYou'), count: '1' },
@@ -234,9 +235,8 @@ it.each(variants)('renders the STATUS source surfaces ($dark / $width)', async v
                         firstFailedInvocationId={null} firstFailedInvocationResolution="resolved"
                         onSelectInvocation={noop} view="flow" onChangeView={noop} onCancel={noop} onPause={noop}
                         notificationOperation={<RunWorkNotifyOperation source={{ kind: 'workflow_run', runId: run.id }}
-                            project={{ machineId: machine.id, directory: '/Users/alice/projects/payments' }}
-                            read={{ status: 'ready', sets: [], add: async () => { throw new Error('Capture cannot write a trigger'); },
-                                remove: async () => { throw new Error('Capture cannot remove a trigger'); } }} />}
+                            read={{ status: 'ready', once: [], pendingIntent: null, errorIntent: null,
+                                change: async () => { throw new Error('Capture cannot edit a Follow'); } }} />}
                         sourceAction={{ kind: 'edit', onPress: noop }} />
                 </AppPaneProvider></section>
             </main>
