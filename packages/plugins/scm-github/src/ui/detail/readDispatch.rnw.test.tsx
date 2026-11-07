@@ -254,6 +254,124 @@ async function mountRegisteredFiles(
 }
 
 describe('registered GitHub detail read dispatch', () => {
+  it('publishes exact Overview membership rereads to mounted action readers without another provider read', async () => {
+    const scope = createTriageEphemeralSharedScopeFixture();
+    let assigned = false;
+    let refuse = false;
+    let revision = 3_000;
+    let holdNext = false;
+    let releaseHeld: ((response: StubHttpResponse) => void) | undefined;
+    let holdChecks = false;
+    let releaseChecks: ((response: StubHttpResponse) => void) | undefined;
+    let reads = 0;
+    const transport = createStubGithubTransport({ respond: (request) => {
+      const path = new URL(request.url).pathname;
+      if (holdChecks && path === '/graphql') {
+        holdChecks = false;
+        return new Promise<StubHttpResponse>((resolve) => { releaseChecks = resolve; });
+      }
+      if (!path.endsWith('/pulls/1284')) return undefined;
+      reads++;
+      if (holdNext) {
+        holdNext = false;
+        return new Promise<StubHttpResponse>((resolve) => { releaseHeld = resolve; });
+      }
+      return refuse ? { status: 503, body: { message: 'Unavailable' } } : { status: 200, body: {
+        ...GITHUB_PULL_REQUEST_RESPONSE,
+        assignees: assigned ? [{ ...GITHUB_PULL_REQUEST_RESPONSE.user, login: 'leeroybrun' }] : [],
+        labels: assigned ? [{ id: 11, name: 'performance' }] : [],
+      } };
+    } });
+    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: {
+      http: transport.context.services.http, connectedAccounts: transport.context.services.connectedAccounts,
+    } });
+    plugins.push(plugin);
+    const observed = new Map<string, GithubOverviewControllerV1>();
+    const mount = async (name: string, readWhenActive: boolean, entryId = '1284') => {
+      function Probe() {
+        const input = launchInput();
+        observed.set(name, useGithubOverview({ ...input, observation: { ...input.observation,
+          sourceUpdatedAtMs: revision,
+          entryRef: { ...input.observation.entryRef, entryId } } }, { readWhenActive }));
+        return null;
+      }
+      let detail!: PluginUiTestkit;
+      await act(async () => {
+        detail = await createPluginUiTestkit({
+          identity: { instanceId: name, mountNonce: `${name}-mount` },
+          authorPlugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
+          surface: defineUiSurface(() => <Tabs value="overview" onValueChange={() => {}} ariaLabel={name}>
+            <Tabs.Item value="overview" title="Overview"><Probe /></Tabs.Item>
+          </Tabs>),
+          surfaceContext: createSurfaceContextFixture(),
+          adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope: scope }),
+          handlers: { executeAction: async ({ action, input, signal }) => {
+            if (typeof action === 'string' || input === undefined) throw new Error('Expected an Overview Action');
+            return plugin.invokeAction(action.localId, input, { surface: 'ui', signal });
+          } },
+        });
+      });
+      mounted.push(detail);
+      return detail;
+    };
+    const story = await mount('story', true);
+    await vi.waitFor(() => expect(observed.get('story')).toMatchObject({ value: { assignees: [], labels: [] } }));
+    const actions = await mount('actions', false);
+    await mount('other-entry', false, '1285');
+    expect(observed.get('actions')).toMatchObject({ value: { assignees: [], labels: [] } });
+    expect(reads).toBe(1);
+    assigned = true;
+    await act(async () => { await observed.get('story')!.refresh(); });
+    expect(observed.get('story')).toMatchObject({ value: { assignees: ['leeroybrun'], labels: ['performance'] } });
+    expect(observed.get('actions')).toMatchObject({ value: { assignees: ['leeroybrun'], labels: ['performance'] } });
+    expect(observed.get('other-entry')).toMatchObject({ value: null, failure: null });
+    expect(reads).toBe(2);
+    await act(async () => { await actions.dispose(); });
+    mounted.splice(mounted.indexOf(actions), 1);
+    const reopened = await mount('actions', false);
+    expect(observed.get('actions')).toMatchObject({ value: { assignees: ['leeroybrun'], labels: ['performance'] } });
+    expect(reads).toBe(2);
+    refuse = true;
+    await act(async () => { await observed.get('story')!.refresh(); });
+    expect(observed.get('actions')).toMatchObject({ value: { assignees: ['leeroybrun'] }, failure: { class: 'transient' } });
+    refuse = false;
+    assigned = false;
+    await act(async () => { await observed.get('story')!.refresh(); });
+    expect(observed.get('actions')).toMatchObject({ value: { assignees: [], labels: [] }, failure: null });
+    expect(reads).toBe(4);
+    revision = 4_000;
+    assigned = true;
+    await act(async () => {
+      await story.updateSurface(createSurfaceContextFixture());
+      await reopened.updateSurface(createSurfaceContextFixture());
+    });
+    await vi.waitFor(() => expect(observed.get('actions')).toMatchObject({ value: { assignees: ['leeroybrun'], labels: ['performance'] } }));
+    expect(reads).toBe(5);
+    // A sibling publication cannot settle this reader's own pending Action.
+    // Hold the publisher after its entity read, so the Account request owner's
+    // legitimate in-flight GET join does not make the second read depend on it.
+    holdChecks = true;
+    let publishing!: Promise<boolean>;
+    await act(async () => { publishing = observed.get('story')!.refresh(); });
+    await vi.waitFor(() => expect(releaseChecks).toBeTypeOf('function'));
+    holdNext = true;
+    let pending!: Promise<boolean>;
+    await act(async () => { pending = observed.get('actions')!.refresh(); });
+    await vi.waitFor(() => expect(reads).toBe(7));
+    await act(async () => {
+      releaseChecks!({ status: 503, body: { message: 'Unavailable' } });
+      await publishing;
+    });
+    expect(observed.get('actions')!.refreshing).toBe(true);
+    await act(async () => {
+      releaseHeld!({ status: 200, body: { ...GITHUB_PULL_REQUEST_RESPONSE, assignees: [], labels: [] } });
+      await pending;
+    });
+    expect(observed.get('story')).toMatchObject({ value: { assignees: [], labels: [] }, refreshing: false });
+    expect(observed.get('actions')).toMatchObject({ value: { assignees: [], labels: [] }, refreshing: false });
+    expect(reads).toBe(7);
+  });
+
   it.each(['absent', 'unadmitted'] as const)('reads and retains an Account Overview with an %s Machine execution scope', async (executionScope) => {
     const origins = createTriageEphemeralSharedScopeOriginFixture();
     const presentation = origins.forExecutionOrigin('account');

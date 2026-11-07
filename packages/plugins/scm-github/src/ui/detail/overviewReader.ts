@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useExecutePluginAction, useTabPanelActivity } from '@happier-dev/plugin-ui';
 import { useTriageDetailRequest } from '@happier-dev/triage-sources/ui';
 import type { TriageDetailSurfaceInputV1, TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
@@ -10,6 +10,9 @@ import { useGithubOverviewRetention } from './overviewRetention.js';
 import { dispatchFailure, ROUTE_UNAVAILABLE, UNREADABLE_RESULT, useGithubRoutingToken, type ExecuteResult } from './readBoundary.js';
 
 export type GithubOverviewValueV1 = Extract<GithubOverviewResultV1, { kind: 'overview' }>;
+
+const noSubscribe = () => () => {};
+const noSnapshot = () => null;
 
 export type GithubOverviewControllerV1 = Readonly<{
   /** `null` means the reader is still showing only its launch observation. */
@@ -54,6 +57,8 @@ export function useGithubOverview(
   const retentionKey = useMemo(() => JSON.stringify([request, routingToken]), [request, routingToken]);
   const retention = useGithubOverviewRetention(retentionKey);
   const retained = retention.kind === 'ready' ? retention.value : null;
+  const settled = useSyncExternalStore(active ? retained?.subscribe ?? noSubscribe : noSubscribe,
+    retained?.getSnapshot ?? noSnapshot, retained?.getSnapshot ?? noSnapshot);
   const scope = useMemo(() => ({ request, routingToken, head, retained }), [request, routingToken, head, retained]);
   const scopeNow = useRef(scope);
   const changedScope = scopeNow.current !== scope;
@@ -93,20 +98,20 @@ export function useGithubOverview(
   }, [active]);
 
   useEffect(() => {
-    const settled = retained?.settled;
     const signal = readLifetime.current?.signal;
-    if (!settled || settled.head !== head || settled.revision !== revision || !signal || signal.aborted) return;
+    if (!settled || settled.head !== head || settled.revision !== revision || !signal || signal.aborted
+      || readNow.current.refreshing) return;
     readFor.current = { scope, signal, revision, settled: true };
     readNow.current = settled.state;
     setState(settled.state);
-  }, [active, activeSignal, head, retained, revision, scope]);
+  }, [active, activeSignal, head, revision, scope, settled, visibleState.refreshing]);
 
   const refresh = useCallback(async (includeBranchRules = false): Promise<boolean> => {
     if (!active || activeSignal.aborted || retained === null || scopeNow.current !== scope || readNow.current.refreshing) return false;
     const lifetime = readLifetime.current;
     if (lifetime === null || lifetime.scope !== scope || lifetime.activeSignal !== activeSignal || lifetime.signal.aborted) return false;
     const settle = (next: GithubOverviewReadStateV1) => {
-      retained.settled = { head, revision, state: next };
+      retained.settle({ head, revision, state: next });
       readNow.current = next;
       setState(next);
     };

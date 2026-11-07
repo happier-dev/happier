@@ -7,26 +7,37 @@ const LOADING = Object.freeze({ kind: 'loading' as const });
 const UNAVAILABLE = Object.freeze({ kind: 'unavailable' as const,
   failure: Object.freeze({ class: 'unknown' as const, code: 'github-overview-scope-unavailable' }) });
 
+type SettledOverview = Readonly<{
+  head: string | undefined;
+  revision: number | undefined;
+  state: GithubOverviewReadStateV1;
+}>;
+
 type RetainedOverview = {
-  settled: Readonly<{
-    head: string | undefined;
-    revision: number | undefined;
-    state: GithubOverviewReadStateV1;
-  }> | null;
+  getSnapshot(): SettledOverview | null;
+  subscribe(listener: () => void): () => void;
+  settle(next: SettledOverview): void;
 };
 
 /**
  * Closing an entry retires its reader, not the settled result for that exact
  * authority. The existing host scope owns retention across those mounts. This
- * value holds no transport, pending work, subscriptions, or automatic demand.
+ * value publishes settled answers to mounted exact-target readers. It holds no
+ * transport, pending work, or automatic demand.
  */
 export function useGithubOverviewRetention(key: string): GithubReadStateV1<RetainedOverview> {
   const scope = usePluginUiEphemeralSharedScope();
   const [held, setHeld] = useState<Readonly<{ scope: typeof scope; key: string; state: GithubReadStateV1<RetainedOverview> }> | null>(null);
   useEffect(() => {
     const create = () => {
-      const value: RetainedOverview = { settled: null };
-      return { value, retainWhenIdle: true as const, dispose() { value.settled = null; } };
+      let settled: SettledOverview | null = null;
+      const listeners = new Set<() => void>();
+      const value: RetainedOverview = {
+        getSnapshot: () => settled,
+        subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
+        settle(next) { settled = next; for (const listener of listeners) listener(); },
+      };
+      return { value, retainWhenIdle: true as const, dispose() { settled = null; listeners.clear(); } };
     };
     // Only settled presentation data is retained. The read Action owns its
     // execution authority; an Account renderer need not have a Machine origin.
