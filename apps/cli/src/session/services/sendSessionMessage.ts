@@ -987,11 +987,11 @@ async function waitForAssistantCompletionAfterCurrentUserTurn(params: AssistantC
           replyOutcome = original.status === 'available' ? original.progress.outcome : undefined;
           publishedDiscussionAnswer = requiresDiscussionReplyOutcome
             && replyOutcome?.kind === 'answer' && 'publicationRef' in replyOutcome;
-          acceptedTurnId = original.status === 'available' && (!replyOutcome || publishedDiscussionAnswer)
+          acceptedTurnId = original.status === 'available' && (!replyOutcome || replyOutcome.kind === 'failed' || publishedDiscussionAnswer)
             ? original.progress.acceptedTurnId : undefined;
           if (replyOutcome) {
             params.reply.onOutcome(replyOutcome);
-            if (!('result' in replyOutcome) && !publishedDiscussionAnswer) {
+            if (!('result' in replyOutcome) && replyOutcome.kind !== 'failed' && !publishedDiscussionAnswer) {
               return { kind: 'fulfilled', outcome: replyOutcome };
             }
           }
@@ -1000,7 +1000,16 @@ async function waitForAssistantCompletionAfterCurrentUserTurn(params: AssistantC
           ...(acceptedTurnId ? { acceptedTurnId } : {}),
           ...(replyOutcome && 'result' in replyOutcome
             && replyOutcome.result.sessionId === params.sessionId
-            ? { resultMessageId: replyOutcome.result.messageId } : {}) });
+            ? { resultMessageId: replyOutcome.result.messageId } : {}) }).catch(error => {
+          // Failed custody is definitive even when its optional diagnostic is unavailable.
+          if (replyOutcome?.kind === 'failed') return { kind: 'missing' } as const;
+          throw error;
+        });
+        // A failed reply has no result reference, but its exact accepted turn
+        // still owns the typed cause. Never replace it with a later success.
+        if (replyOutcome?.kind === 'failed') {
+          return outcome.kind === 'failed' ? outcome : { kind: 'fulfilled', outcome: replyOutcome };
+        }
         if ((!params.reply || originalHasNoReply) && outcome.kind !== 'missing') return outcome;
         // Ordinary retained Workflow turns can recover from exact native
         // completion without reply custody. Discussion Workflow success must

@@ -18,6 +18,15 @@ import { applyWorkflowInvocationFactV1, WorkflowProgressEnvelopeV1Schema } from 
 import { SessionRuntimeIssueV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { createWorkflowInvocationRecoveryObserver } from '@/daemon/workflows/invocationRecoveryObserver';
 import type { SessionMessageReplyOutcomeV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
+import { createWorkflowSessionStepExecutor } from '@/daemon/workflows/sessionStepExecutor';
+import { createWorkflowCoordinator, WorkflowRuntimeInterruption } from '@/daemon/workflows/coordinator';
+import { DurableWorkflowCoordinatorStore } from '@/daemon/workflows/production';
+import { createWorkflowRunStorageTestkit } from '@/daemon/workflows/workflowRunStorage.testkit';
+import { materializeWorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
+import { openWorkflowProgressStoredEnvelopeV1, sealWorkflowCheckpointStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1,
+  serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
+import { deriveActivitySummaryFromAgentState } from '@/api/session/deriveActivitySummaryFromAgentState';
+import type { AgentState } from '@/api/types';
 
 const socketBoundary = vi.hoisted(() => ({ create: vi.fn() }));
 vi.mock('@/api/session/sockets', async (importOriginal) => ({
@@ -30,6 +39,233 @@ vi.mock('@/api/session/sockets', async (importOriginal) => ({
 }));
 
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
+
+it.each(['weekly', 'unknown-reset', 'ordinary-failure', 'legacy-bare'] as const)(
+  'retains a failed original reply diagnostic through the real Workflow Run attention (%s)', async scenario => {
+  const sessionId = 'c' + 'b'.repeat(24), runId = 'quota-reply-run', accountId = 'account', machineId = 'machine';
+  const workspace = { machineId, directory: '/repo', checkoutRootPath: '/repo' };
+  const definition = { version: 1 as const, inputs: [], defaults: {
+    agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+  }, blocks: [{ kind: 'step' as const, id: 'work', document: { text: 'Work', references: [], attachments: [] },
+    input: [], result: { kind: 'text' as const } }] };
+  const materialized = await materializeWorkflowAcceptedSnapshotV1({ definition,
+    context: { source: { kind: 'inline' }, inputs: {}, machineId, executionTarget: { kind: 'session' },
+      workspaceTarget: { project: workspace }, authorization: { principal: { kind: 'host' } } },
+    admission: { kind: 'user' }, effects: { resolveTargetAvailability: async () => true } });
+  if (!materialized.ok) throw new Error(materialized.error.code);
+  const stored = createWorkflowRunStorageTestkit({ runId, accountId, machineId, origin: { kind: 'direct' } });
+  const rootRecordId = 'root';
+  const checkpoint = { kind: 'happier.workflow-checkpoint.v1' as const, rootRecordId, nextSequence: '1',
+    frontier: { nextBlockOrdinal: 0, paused: false } };
+  await stored.execute({ operation: 'initialize', runId, expectedRevision: 0,
+    checkpointEnvelope: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowCheckpointStoredEnvelopeV1({ mode: 'plain',
+      binding: { v: 1, purpose: 'checkpoint', accountId, runId }, checkpoint })),
+    rootInvocation: { id: rootRecordId, contentEnvelope: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({ mode: 'plain',
+      binding: { v: 1, purpose: 'invocation_progress', accountId, runId, recordId: rootRecordId,
+        sequence: '0', parentRecordId: null, memberOrdinal: '0', attempt: '0' },
+      progress: { kind: 'happier.workflow-progress.v1', blockKind: 'root', attempt: '0',
+        invocationPath: { blockId: '$root', scope: [] }, logicalInvocationRecordId: rootRecordId } })) } });
+  const store = await DurableWorkflowCoordinatorStore.load({ accountId, runId, parentAttempt: 0, rootRecordId,
+    checkpoint, encryption: { witness: { mode: 'plain', version: 1, contentKeyFingerprint: null }, runCrypto: { mode: 'plain' } },
+    storage: stored, revision: stored.run().revision });
+  const quota = scenario === 'weekly' || scenario === 'unknown-reset';
+  const preview = scenario === 'legacy-bare' ? "You've hit your weekly limit · resets Nov 9, 4pm (Europe/Amsterdam)"
+    : quota ? 'Usage limit reached' : 'Provider rejected the requested model.';
+  // Providers claude-ratelimit-issue-1107 owns the native weekly text/reset:
+  // classifyPrimarySessionRuntimeIssue.claudeSdk.test.ts proves this emitted shape.
+  const issue = SessionRuntimeIssueV1Schema.parse({ v: 1, scope: 'primary_session', status: 'failed',
+    code: quota ? 'usage_limit' : scenario === 'legacy-bare' ? 'claude_rate_limit' : 'model_not_found',
+    source: quota ? 'usage_limit' : 'agent_session_error',
+    agentId: 'claude', occurredAt: Date.parse('2026-11-07T09:52:00Z'), sanitizedPreview: preview,
+    ...(quota ? { usageLimit: { v: 1,
+      resetAtMs: scenario === 'weekly' ? Date.parse('2026-11-09T15:00:00Z') : null,
+      retryAfterMs: null, quotaScope: 'account', recoverability: 'switch_account',
+      connectedService: { serviceId: 'happier.agent.claude/claude-subscription',
+        profileId: 'issued-profile', groupId: 'issued-pool' },
+    } } : {}),
+  });
+  let localId = '', invocationRecordId = '';
+  socketBoundary.create.mockReturnValue(Object.assign(new EventEmitter(), {
+    connected: false, connect: vi.fn(), disconnect: vi.fn(), close: vi.fn(),
+  }));
+  // Only the authenticated Home transport is substituted; exact-input lookup,
+  // reply custody, turn decoding, step execution and durable Run projection stay real.
+  vi.spyOn(axios, 'get').mockImplementation(async url => {
+    if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: {
+      mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+      recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' } } };
+    if (url.endsWith(`/v2/sessions/${sessionId}`)) return { status: 200, data: { session:
+      createSessionRecordFixture({ id: sessionId, encryptionMode: 'plain', metadata: '{}', active: true }) } };
+    if (url.endsWith('/reply')) return { status: 200, data: { v: 1, status: 'available', progress: {
+      v: 1, mode: 'wait', disposition: 'observing', acceptedTurnId: 'failed-turn', outcome: { kind: 'failed' } } } };
+    if (url.includes('/messages/by-local-id/')) return { status: 200, data: { message: {
+      id: 'input-row', localId, seq: 7, createdAt: 7, updatedAt: 7, content: { t: 'plain', v: {
+        role: 'user', content: { type: 'text', text: 'Work' }, meta: { happierInputAuthorityV1: {
+          v: 2, producer: 'workflow', caller: { kind: 'host' },
+          permission: { admittedPermissionCeiling: 'default', requestedPermissionCeiling: 'default' },
+          workflow: { runId, invocationRecordId, purpose: 'invocation', stepOrdinal: '1', workDepth: 1 },
+        } } } },
+    } } };
+    if (url.endsWith('/turns')) return { status: 200, data: { v: 1, sessionId, updatedAt: 12, turns: [
+      { turnId: 'unrelated-turn', status: 'failed', startedAt: 1, updatedAt: 2, terminalAt: 2,
+        lastRuntimeIssue: { ...issue, code: 'unrelated-private-issue' },
+        transcriptAnchors: { startUserMessageSeq: 1, userMessageSeqs: [1], endSeqInclusive: 2 } },
+      { turnId: 'failed-turn', status: 'failed', startedAt: 7, updatedAt: 12, terminalAt: 12,
+        workflowInvocation: { runId, invocationRecordId }, lastRuntimeIssue: issue,
+        transcriptAnchors: { startUserMessageSeq: 7, userMessageSeqs: [7], startSeqInclusive: 7, endSeqInclusive: 12 } },
+    ] } };
+    if (url.includes('/messages?')) return { status: 200, data: { hasMore: false, messages: [] } };
+    throw new Error(`unexpected_quota_reply_read:${url}`);
+  });
+  const execute = createWorkflowSessionStepExecutor({ credentials: { token: 'token', encryption: null },
+    prepareConversation: async () => { throw new Error('Retained input needs no preparation'); },
+    materializeConversation: async () => { throw new Error('Retained input needs no materialization'); } });
+  const coordinator = createWorkflowCoordinator({ store, rootInvocationRecordId: rootRecordId,
+    resolveWorkspace: async () => ({ ok: true, workspace }), executeStep: async params => {
+      invocationRecordId = params.invocationRecordId!;
+      localId = deriveWorkflowSessionInputLocalIdV2({ purpose: 'invocation', runId, invocationRecordId });
+      const execution = { kind: 'session' as const, sessionId, localInputId: localId };
+      await params.onInputAccepted(execution);
+      return execute({ ...params, invocation: { ...params.invocation, execution } });
+    } });
+  await expect(coordinator.run({ ...materialized.snapshot, runId, signal: new AbortController().signal }))
+    .resolves.toMatchObject({ state: 'interrupted' });
+  expect(stored.run()).toMatchObject({ attentionRequired: quota, invocationAttentionRequired: quota });
+  const leaf = stored.rowById(invocationRecordId)!;
+  expect(leaf.index.lifecycle).toBe(quota ? 'needs_attention' : 'failed');
+  const opened = openWorkflowProgressStoredEnvelopeV1({ mode: 'plain', envelope: JSON.parse(leaf.contentEnvelope),
+    binding: { v: 1, purpose: 'invocation_progress', accountId, runId, recordId: invocationRecordId,
+      sequence: leaf.index.sequence, parentRecordId: leaf.index.parentRecordId, memberOrdinal: leaf.index.memberOrdinal,
+      attempt: leaf.index.attempt } });
+  if (opened.kind !== 'available') throw new Error(opened.kind);
+  const progress = opened.content;
+  expect(progress.replyOutcome).toEqual({ kind: 'failed' });
+  expect(progress.reason).toMatchObject({ code: 'session_input_failed', runtimeIssueV1: {
+    code: issue.code, sanitizedPreview: preview, source: quota ? 'usage_limit' : 'agent_session_error',
+    ...(quota ? { usageLimit: issue.usageLimit } : {}),
+  } });
+});
+
+it('pushes a native tool approval and its decision into the Workflow Run attention without duplicate publications', async () => {
+  const sessionId = 'c' + 'a'.repeat(24), runId = 'native-approval-run', accountId = 'account', machineId = 'machine';
+  const workspace = { machineId, directory: '/repo', checkoutRootPath: '/repo' };
+  const definition = { version: 1 as const, inputs: [], defaults: {
+    agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+  }, blocks: [{ kind: 'step' as const,
+    id: 'work', document: { text: 'Work', references: [], attachments: [] }, input: [], result: { kind: 'text' as const } }] };
+  const materialized = await materializeWorkflowAcceptedSnapshotV1({ definition,
+    context: { source: { kind: 'inline' }, inputs: {}, machineId, executionTarget: { kind: 'session' },
+      workspaceTarget: { project: workspace }, authorization: { principal: { kind: 'host' } } },
+    admission: { kind: 'user' }, effects: { resolveTargetAvailability: async () => true } });
+  if (!materialized.ok) throw new Error(materialized.error.code);
+  const stored = createWorkflowRunStorageTestkit({ runId, accountId, machineId, origin: { kind: 'direct' } });
+  const rootRecordId = 'root';
+  const checkpoint = { kind: 'happier.workflow-checkpoint.v1' as const, rootRecordId, nextSequence: '1',
+    frontier: { nextBlockOrdinal: 0, paused: false } };
+  await stored.execute({ operation: 'initialize', runId, expectedRevision: 0,
+    checkpointEnvelope: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowCheckpointStoredEnvelopeV1({ mode: 'plain',
+      binding: { v: 1, purpose: 'checkpoint', accountId, runId }, checkpoint })),
+    rootInvocation: { id: rootRecordId, contentEnvelope: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({ mode: 'plain',
+      binding: { v: 1, purpose: 'invocation_progress', accountId, runId, recordId: rootRecordId,
+        sequence: '0', parentRecordId: null, memberOrdinal: '0', attempt: '0' },
+      progress: { kind: 'happier.workflow-progress.v1', blockKind: 'root', attempt: '0',
+        invocationPath: { blockId: '$root', scope: [] }, logicalInvocationRecordId: rootRecordId } })) } });
+  const store = await DurableWorkflowCoordinatorStore.load({ accountId, runId, parentAttempt: 0, rootRecordId,
+    checkpoint, encryption: { witness: { mode: 'plain', version: 1, contentKeyFingerprint: null }, runCrypto: { mode: 'plain' } },
+    storage: stored, revision: stored.run().revision });
+  const socket = Object.assign(new EventEmitter(), { connected: false, connect: vi.fn(), disconnect: vi.fn(), close: vi.fn() });
+  socketBoundary.create.mockReturnValue(socket);
+  let localId = '', invocationRecordId = '', finished = false;
+  let agentState: AgentState = { requests: {} };
+  const turnId = 'native-turn';
+  const requests: string[] = [];
+  vi.spyOn(axios, 'get').mockImplementation(async url => {
+    requests.push(url);
+    if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: {
+      mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+      recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' } } };
+    if (url.endsWith(`/v2/sessions/${sessionId}`)) return { status: 200, data: { session: createSessionRecordFixture({
+      id: sessionId, encryptionMode: 'plain', metadata: '{}',
+      pendingPermissionRequestCount: deriveActivitySummaryFromAgentState(agentState).pendingPermissionRequestCount,
+      pendingUserActionRequestCount: 0 }) } };
+    if (url.endsWith('/reply')) return { status: 200, data: { v: 1, status: 'available', progress: {
+      v: 1, mode: 'wait', disposition: 'observing', acceptedTurnId: turnId } } };
+    const input = { id: 'input-row', localId, seq: 1, createdAt: 1, updatedAt: 1, content: { t: 'plain', v: {
+      role: 'user', content: { type: 'text', text: 'Work' }, meta: { happierInputAuthorityV1: {
+        v: 2, producer: 'workflow', caller: { kind: 'host' },
+        permission: { admittedPermissionCeiling: 'default', requestedPermissionCeiling: 'default' },
+        workflow: { runId, invocationRecordId, purpose: 'invocation', stepOrdinal: '1', workDepth: 1 },
+      } } } } };
+    if (url.includes('/messages/by-local-id/')) return { status: 200, data: { message: input } };
+    if (url.endsWith('/turns')) return { status: 200, data: { v: 1, sessionId, updatedAt: 2, turns: [{ turnId,
+      status: finished ? 'completed' : 'in_progress', startedAt: 1, updatedAt: 2, initiator: 'workflow', workDepth: 1,
+      workflowInvocation: { runId, invocationRecordId }, transcriptAnchors: { startUserMessageSeq: 1, userMessageSeqs: [1],
+        ...(finished ? { finalAssistantMessageSeq: 2, endSeqInclusive: 2 } : {}) } }] } };
+    if (url.includes('/messages?')) return { status: 200, data: { hasMore: false, messages: [input, ...(finished ? [{
+      id: 'answer', localId: null, seq: 2, createdAt: 2, updatedAt: 2, content: { t: 'plain', v:
+        buildAcpAgentMessageEnvelope({ provider: 'external-agent', body: { type: 'message', message: 'Done' },
+          meta: { runtimeTurnId: turnId, runtimeEventKind: 'transcript-message-committed' } }) },
+    }] : [])] } };
+    throw new Error(`unexpected_approval_read:${url}`);
+  });
+  const execute = createWorkflowSessionStepExecutor({ credentials: { token: 'token', encryption: null },
+    prepareConversation: async () => { throw new Error('Retained input needs no preparation'); },
+    materializeConversation: async () => { throw new Error('Retained input needs no materialization'); } });
+  const coordinator = createWorkflowCoordinator({ store, rootInvocationRecordId: rootRecordId,
+    resolveWorkspace: async () => ({ ok: true, workspace }), executeStep: async params => {
+      // Start at the already admitted native input, then retain the production
+      // Session observer, leaf adapter, coordinator, envelope and Run projection.
+      invocationRecordId = params.invocationRecordId!;
+      localId = deriveWorkflowSessionInputLocalIdV2({ purpose: 'invocation', runId, invocationRecordId });
+      const execution = { kind: 'session' as const, sessionId, localInputId: localId };
+      await params.onInputAccepted(execution);
+      return execute({ ...params, invocation: { ...params.invocation, execution } });
+    } });
+  let controller = new AbortController();
+  let running = coordinator.run({ ...materialized.snapshot, runId, signal: controller.signal });
+  try {
+    await vi.waitFor(() => expect(socket.listenerCount('update')).toBeGreaterThan(0));
+    await vi.waitFor(() => expect(requests.some(url => url.endsWith('/turns'))).toBe(true));
+    const push = () => socket.emit('update', { id: 'approval-update', seq: 1, createdAt: 2,
+      body: { t: 'update-session', id: sessionId,
+        pendingPermissionRequestCount: deriveActivitySummaryFromAgentState(agentState).pendingPermissionRequestCount,
+        pendingUserActionRequestCount: 0 } });
+    const approval = { tool: 'Bash', kind: 'permission' as const, arguments: { command: 'pwd' }, createdAt: 2, turnId };
+    agentState = { requests: { 'exec-native': approval } }; push();
+    await vi.waitFor(() => expect(stored.run()).toMatchObject({ state: 'running', attentionRequired: true, invocationAttentionRequired: true }));
+    const attentionRevision = stored.run().revision;
+    controller.abort('workflow_runtime_interrupted');
+    await running.catch(error => { if (!(error instanceof WorkflowRuntimeInterruption)) throw error; });
+    const turnReads = requests.filter(url => url.endsWith('/turns')).length;
+    controller = new AbortController();
+    running = coordinator.run({ ...materialized.snapshot, runId, signal: controller.signal });
+    await vi.waitFor(() => expect(requests.filter(url => url.endsWith('/turns')).length).toBeGreaterThan(turnReads));
+    expect(stored.run()).toMatchObject({ invocationAttentionRequired: true, revision: attentionRevision });
+    const snapshotReads = () => requests.filter(url => url.endsWith(`/v2/sessions/${sessionId}`)).length;
+    const beforePushReads = snapshotReads();
+    for (let index = 0; index < 3; index += 1) push();
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(stored.run().revision).toBe(attentionRevision);
+    expect(snapshotReads()).toBe(beforePushReads);
+    agentState = { requests: { 'exec-native': approval }, completedRequests: {
+      'exec-native': { ...approval, status: 'approved', completedAt: 3 },
+    } }; push();
+    await vi.waitFor(() => expect(stored.run()).toMatchObject({ state: 'running', attentionRequired: false, invocationAttentionRequired: false }));
+    expect(stored.run().revision).toBe(attentionRevision + 1);
+    // Recover both edges when the socket missed the native request/decision.
+    agentState = { requests: { 'exec-native': approval } };
+    socket.emit('connect');
+    await vi.waitFor(() => expect(stored.run().invocationAttentionRequired).toBe(true));
+    agentState = { requests: {} };
+    socket.emit('connect');
+    await vi.waitFor(() => expect(stored.run().invocationAttentionRequired).toBe(false));
+  } finally {
+    finished = true;
+    controller.abort('workflow_runtime_interrupted');
+    socket.emit('ephemeral', { type: 'session-message-reply-pending-v1', v: 1, sessionId, requestLocalId: localId });
+    await running.catch(error => { if (!(error instanceof WorkflowRuntimeInterruption)) throw error; });
+  }
+});
 
 it('rejoins only the original completed Workflow turn when retained reply anchors are incomplete', async () => {
   const sessionId = 'c' + 'b'.repeat(24);
@@ -87,7 +323,7 @@ it('rejoins only the original completed Workflow turn when retained reply anchor
     }] } };
     if (url.includes('/messages?')) {
       onNativeTranscriptRead?.();
-      return { status: 200, data: { messages: [input,
+      return { status: 200, data: { hasMore: false, messages: [input,
       ...(answerVisible ? [assistant(5, 'QA-FIN80 CHILD DONE', turnId)] : []),
       assistant(6, 'Other child', turnId, {}, 'sidechain'),
       assistant(7, 'Unfinished checkpoint', turnId, { runtimeEventKind: 'streaming',
@@ -228,7 +464,7 @@ it.each(['pass', 'answer'] as const)('settles an explicit pass or answer (%s) fr
       content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'Anything to add?' } } },
     } } };
     if (url.endsWith('/turns')) return { status: 200, data: { v: 1, sessionId, updatedAt: 7, turns: [] } };
-    if (url.includes('/messages?')) return { status: 200, data: { messages: [
+    if (url.includes('/messages?')) return { status: 200, data: { hasMore: false, messages: [
       { id: 'committed-explicit-answer', seq: 8, createdAt: 8, content: { t: 'plain', v: {
         role: 'agent', content: { type: 'text', text: 'Use revision abc123' } } } },
       { id: 'unrelated-final', seq: 9, createdAt: 9, content: { t: 'plain', v: {
@@ -275,7 +511,7 @@ it.each([1_900_000_000_000, null, undefined])('carries the exact failed turn usa
       ...(issue ? { lastRuntimeIssue: issue } : {}),
       transcriptAnchors: { startUserMessageSeq: 7, userMessageSeqs: [7], startSeqInclusive: 7, endSeqInclusive: 12, finalAssistantMessageSeq: null },
     }] } };
-    if (url.includes('/messages?')) return { status: 200, data: { messages: [] } };
+    if (url.includes('/messages?')) return { status: 200, data: { hasMore: false, messages: [] } };
     if (url.includes(`/v2/sessions/${sessionId}`)) return { status: 200, data: { session:
       createSessionRecordFixture({ id: sessionId, encryptionMode: 'plain', metadata: '{}', active: true }) } };
     throw new Error(`unexpected_http_read:${url}`);
@@ -285,8 +521,8 @@ it.each([1_900_000_000_000, null, undefined])('carries the exact failed turn usa
   expect(observed).toMatchObject({ ok: true, result: { kind: 'failed' } });
   if (!observed.ok) throw new Error('missing_exact_input_result');
   const result = classifyWorkflowSessionInputResult(observed.result);
-  expect(result).toMatchObject({ kind: 'failed', ...(issue ? { runtimeIssueV1: issue } : {}) });
-  if (result.kind !== 'failed') throw new Error('missing_failed_input_result');
+  expect(result).toMatchObject({ kind: issue ? 'needs_attention' : 'failed', ...(issue ? { runtimeIssueV1: issue } : {}) });
+  if (result.kind !== 'failed' && result.kind !== 'needs_attention') throw new Error('missing_failed_input_result');
   const progress = applyWorkflowInvocationFactV1(WorkflowProgressEnvelopeV1Schema.parse({
     kind: 'happier.workflow-progress.v1', blockKind: 'step', invocationPath: { blockId: 'work', scope: [] },
     attempt: '0', logicalInvocationRecordId: 'leaf',
@@ -354,7 +590,7 @@ it.each(['single', 'shared', 'quiet'] as const)('captures only the host-settled 
         ...(phase === 'opening' ? [] : [usage(10, 7), text(11, 'QA-FIN38b TOOL DONE alpha')]),
         ...(phase === 'both_done' && mode !== 'single' ? [usage(12, 9), text(13, 'QA-FIN38b TOOL DONE beta')] : [])];
       const query = new URL(url).searchParams;
-      return { status: 200, data: { messages: rows.filter(item => item.seq > Number(query.get('afterSeq') ?? 0)) } };
+      return { status: 200, data: { hasMore: false, messages: rows.filter(item => item.seq > Number(query.get('afterSeq') ?? 0)) } };
     }
     if (url.endsWith('/pending')) return { status: 200, data: { pending: [] } };
     if (url.includes(`/v2/sessions/${sessionId}`)) return { status: 200, data: { session:
@@ -448,7 +684,7 @@ it.each(['materialization', 'completion'] as const)('parks exact input %s and ca
       });
       return { status: 200, data: { message: input } };
     }
-    if (url.includes('/messages?')) return { status: 200, data: { messages: completed ? [input,
+    if (url.includes('/messages?')) return { status: 200, data: { hasMore: false, messages: completed ? [input,
       { id: 'text', seq: 8, localId: null, createdAt: 2, content: { t: 'plain', v: { role: 'agent', content: {
         type: 'acp', agentId: 'codex', data: { type: 'text', text: 'Done after reconnect' } } } } },
       { id: 'done', seq: 9, localId: null, createdAt: 2, content: { t: 'plain', v: { role: 'agent', content: {
@@ -496,7 +732,7 @@ it('reads settled exact input evidence once even when resolving transport passes
         updatedAt: 1, recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' } } };
     }
     if (url.includes('/messages/by-local-id/')) return { status: 200, data: { message: input } };
-    if (url.includes('/messages?')) return { status: 200, data: { messages: [input,
+    if (url.includes('/messages?')) return { status: 200, data: { hasMore: false, messages: [input,
       ...[lifecycle('task_started'), { role: 'agent', content: { type: 'acp', agentId: 'codex', data: { type: 'text', text: 'Done' } } }, lifecycle('task_complete')]
         .map((value, ordinal) => ({ id: `result-${ordinal}`, localId: null, seq: 8 + ordinal, createdAt: 2,
           content: { t: 'plain', v: value } })),
