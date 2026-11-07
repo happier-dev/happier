@@ -17383,7 +17383,6 @@ settingsSession: {
       recipientFinishSharing: "Завершить общий доступ",
       recipientReadinessUnavailable: "Не удалось проверить, кто может открыть этот секрет. Попробуйте ещё раз.",
       shareDisclosureTitle: "Поделиться этим секретом?",
-      shareDisclosureBody: "Те, кому вы его дадите, смогут использовать его везде, где Happier принимает сохранённые секреты. Приложения и локальные инструменты могут получить его значение.",
       shareDisclosureTargetCount: ({ count }: { count: number }) =>
         count % 10 === 1 && count % 100 !== 11
           ? `${count} получатель`

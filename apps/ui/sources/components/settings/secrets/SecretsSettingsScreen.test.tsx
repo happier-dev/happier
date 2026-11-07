@@ -785,6 +785,11 @@ describe('Saved Secrets editor continuity through the settings screen', () => {
         harness.answer(scope.serverId, '/v1/account/saved-secrets/resources/materials', { body: { resources: revisedEntries.map(materialFor) } });
         act(() => applySavedSecretCatalogPage({ scope, entries: revisedEntries, observedAt: 2 }));
         await act(async () => { response.resolve(); await response.promise; });
+        if (!dispatchThenFail) {
+            await vi.waitFor(() => expect(screen.findByTestId('saved-secret-access-editor-body')).toBeNull());
+            expect(screen.getTextContent()).not.toContain('secrets.catalog.operationFailed');
+            return;
+        }
         await vi.waitFor(() => expect(screen.findByTestId('saved-secret-access-reload')?.props.disabled).not.toBe(true));
         expect(screen.findByTestId('saved-secret-access-reload')).not.toBeNull();
         expect(screen.findByTestId('saved-secret-access-cancel')?.props.disabled).not.toBe(true);

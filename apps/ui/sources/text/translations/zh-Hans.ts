@@ -17412,7 +17412,6 @@ settingsSession: {
       recipientFinishSharing: "完成共享",
       recipientReadinessUnavailable: "无法检查谁可以打开此机密。请重试。",
       shareDisclosureTitle: "共享此机密？",
-      shareDisclosureBody: "获得共享的人可以在 Happier 接受已保存机密的任何位置使用它。应用和本地工具可能会收到它的值。",
       shareDisclosureTargetCount: ({ count }: { count: number }) => `${count} 位接收者`,
       shareDisclosureConfirm: ({ target }: { target: string }) => `共享给${target}`,
       convertToPlainTitle: '将此机密改为由 Home 管理？',

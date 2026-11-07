@@ -17258,7 +17258,6 @@ settingsSession: {
       recipientFinishSharing: "Dokończ udostępnianie",
       recipientReadinessUnavailable: "Nie udało się sprawdzić, kto może otworzyć ten sekret. Spróbuj ponownie.",
       shareDisclosureTitle: "Udostępnić ten sekret?",
-      shareDisclosureBody: "Osoby, którym go udostępnisz, mogą go używać wszędzie tam, gdzie Happier przyjmuje zapisane sekrety. Aplikacje i lokalne narzędzia mogą otrzymać jego wartość.",
       shareDisclosureTargetCount: ({ count }: { count: number }) =>
         count === 1
           ? "1 odbiorca"

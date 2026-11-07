@@ -17704,7 +17704,6 @@ settingsSession: {
       recipientFinishSharing: "共有を完了",
       recipientReadinessUnavailable: "このシークレットを開けるユーザーを確認できませんでした。もう一度お試しください。",
       shareDisclosureTitle: "このシークレットを共有しますか？",
-      shareDisclosureBody: "共有した相手は、Happier が保存済みシークレットを受け付けるすべての場所でこれを使えます。アプリやローカルのツールにも値が渡ることがあります。",
       shareDisclosureTargetCount: ({ count }: { count: number }) => `${count} 人`,
       shareDisclosureConfirm: ({ target }: { target: string }) => `${target}に共有`,
       convertToPlainTitle: 'このシークレットを Home 管理にしますか？',

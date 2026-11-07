@@ -1382,7 +1382,6 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             recipientFinishSharing: '完成共用',
             recipientReadinessUnavailable: '無法檢查誰可以開啟這個機密。請再試一次。',
             shareDisclosureTitle: '要共用這個機密嗎？',
-            shareDisclosureBody: '取得共用的人可以在 Happier 接受已儲存機密的任何地方使用它。應用程式和本機工具可能會取得它的值。',
             shareDisclosureTargetCount: ({ count }: { count: number }) => `${count} 位接收者`,
             shareDisclosureConfirm: ({ target }: { target: string }) => `共用給${target}`,
             convertToPlainTitle: '將此機密改為由 Home 管理？',

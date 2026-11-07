@@ -17898,7 +17898,6 @@ settingsSession: {
       recipientFinishSharing: "Concluir compartilhamento",
       recipientReadinessUnavailable: "Não foi possível verificar quem pode abrir este segredo. Tente novamente.",
       shareDisclosureTitle: "Compartilhar este segredo?",
-      shareDisclosureBody: "Quem receber pode usá-lo em qualquer lugar onde o Happier aceite segredos salvos. Apps e ferramentas locais podem receber o valor.",
       shareDisclosureTargetCount: ({ count }: { count: number }) =>
         count === 1 ? "1 destinatário" : `${count} destinatários`,
       shareDisclosureConfirm: ({ target }: { target: string }) => `Compartilhar com ${target}`,

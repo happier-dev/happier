@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import type { SavedSecretCatalogEntryV1 } from '@happier-dev/protocol';
+import type { SavedSecretCatalogEntryV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { SharedSavedSecretGrantsSetInputV1Schema, SharedSavedSecretPromoteInputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -23,6 +23,8 @@ installSettingsViewCommonModuleMocks({
 vi.mock('expo-crypto', async importOriginal => ({ ...await importOriginal<typeof import('expo-crypto')>(),
     randomUUID: (await import('node:crypto')).randomUUID }));
 const { serveSavedSecretEditorHomes, savedSecretGrantsPath, savedSecretPromotePath } = await import('@/dev/testkit/harness/savedSecretEditorHttpHarness');
+// Collect the real executor before the per-test Home fixture's setup budget starts.
+await import('@/sync/ops/actions/defaultActionExecutor');
 const { teamSummaryFixture, teamGroupFixture } = await import('@/dev/testkit/fixtures/teamFixtures');
 let home: Awaited<ReturnType<typeof serveSavedSecretEditorHomes>> | null = null;
 let testScope = { serverId: '', accountId: 'account-owner' };
@@ -202,12 +204,13 @@ describe('SavedSecretAccessEditor', () => {
         expect(onClose).toHaveBeenCalledOnce();
     });
 
-    it('does not let a late save response close a different resource revision', async () => {
+    it.each([false, true])('settles an acknowledged grant after its own catalog revision arrives unless the resource changed (%s)', async differentResource => {
         const { SavedSecretAccessEditor } = await import('./SavedSecretAccessEditor');
         const request = createDeferred<Response>();
+        const refresh = createDeferred<void>();
         home!.respondToMutations(() => request.promise);
         const onClose = vi.fn();
-        const onSaved = vi.fn(async () => {});
+        const onSaved = vi.fn(async () => { await refresh.promise; });
         const scope = testScope;
         const screen = await renderScreen(
             <SavedSecretAccessEditor target={{ kind: 'shared', entry }} scope={scope} onClose={onClose} onSaved={onSaved} />,
@@ -221,7 +224,8 @@ describe('SavedSecretAccessEditor', () => {
         expect(SharedSavedSecretGrantsSetInputV1Schema.parse(grantWrites()[0]!.body)).toMatchObject({ expectedRevision: 3, accountGrants: ['account-new'] });
         await screen.update(
             <SavedSecretAccessEditor
-                target={{ kind: 'shared', entry: { ...entry, revision: 4 } }}
+                target={{ kind: 'shared', entry: { ...entry, revision: 4,
+                    ...(differentResource ? { ref: 'happier:shared-secret:v1:resource-2' } : {}) } }}
                 scope={scope}
                 onClose={onClose}
                 onSaved={onSaved}
@@ -232,9 +236,14 @@ describe('SavedSecretAccessEditor', () => {
         await vi.waitFor(() => expect(response.bodyUsed).toBe(true));
         await flushHookEffects();
 
-        expect(onSaved).not.toHaveBeenCalled();
-        expect(onClose).not.toHaveBeenCalled();
-        expect(screen.findByTestId('saved-secret-access-save')).toBeTruthy();
+        try {
+            expect(onSaved).toHaveBeenCalledTimes(differentResource ? 0 : 1);
+            expect(onClose).not.toHaveBeenCalled();
+            expect(screen.getTextContent()).not.toContain('secrets.catalog.operationFailed');
+        } finally {
+            await act(async () => { refresh.resolve(); });
+        }
+        expect(onClose).toHaveBeenCalledTimes(differentResource ? 0 : 1);
     });
 
     it('keeps an unsaved recipient choice when the catalog revision moves underneath', async () => {
@@ -300,6 +309,7 @@ describe('SavedSecretAccessEditor', () => {
         await screen.pressByTestIdAsync('saved-secret-access-save');
 
         expect(confirmDisclosure).toHaveBeenCalledOnce();
+        expect(confirmDisclosure).toHaveBeenCalledWith(expect.any(String), 'secretsSettings.sharingDescription', expect.any(Object));
         expect(grantWrites()).toHaveLength(0);
         expect(screen.findByTestId('saved-secret-access-save')).toBeTruthy();
     });

@@ -213,7 +213,7 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
         if (grantCount > 0) {
             const confirmed = await Modal.confirm(
                 t('secrets.catalog.shareDisclosureTitle'),
-                t('secrets.catalog.shareDisclosureBody'),
+                t('secretsSettings.sharingDescription'),
                 {
                     cancelText: t('common.cancel'),
                     confirmText: t('secrets.catalog.shareDisclosureConfirm', {

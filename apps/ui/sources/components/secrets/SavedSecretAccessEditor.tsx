@@ -132,10 +132,7 @@ export const SavedSecretAccessEditor = React.memo(function SavedSecretAccessEdit
     React.useEffect(() => { props.onDirtyChange?.(dirty); }, [dirty, props.onDirtyChange]);
     const [saving, setSaving] = React.useState(false);
     const [failure, setFailure] = React.useState<Extract<SavedSecretResourceOperationResult, { ok: false }>['reason'] | null>(null);
-    /**
-     * Which revision an in-flight save was issued against. A response that
-     * arrives after the row moved must not close the editor.
-     */
+    /** Confirmation belongs to the revision the person reviewed before submission. */
     const targetKey = entry === null
         ? `${props.scope.serverId}:${props.scope.accountId}:personal:${target.kind === 'personal' ? target.secret.id : ''}`
         : `${props.scope.serverId}:${props.scope.accountId}:${entry.ref}:${entry.revision ?? -1}`;
@@ -215,7 +212,7 @@ export const SavedSecretAccessEditor = React.memo(function SavedSecretAccessEdit
             const target = t('secrets.catalog.shareDisclosureTargetCount', { count: nextGrantCount });
             const confirmed = await Modal.confirm(
                 t('secrets.catalog.shareDisclosureTitle'),
-                t('secrets.catalog.shareDisclosureBody'),
+                t('secretsSettings.sharingDescription'),
                 {
                     cancelText: t('common.cancel'),
                     confirmText: t('secrets.catalog.shareDisclosureConfirm', { target }),
@@ -228,13 +225,17 @@ export const SavedSecretAccessEditor = React.memo(function SavedSecretAccessEdit
         const encryption = getSyncSingleton().encryption;
         try {
         const finishApproved = async () => {
-            if (!targetMounted.current || currentTargetKey.current !== requestedTargetKey) return;
-            setSaving(false);
-            await props.onSaved();
-            if (targetMounted.current && currentTargetKey.current === requestedTargetKey) props.onClose();
+            if (!targetMounted.current || currentTargetIdentity.current !== targetIdentity) return;
+            setSaving(true);
+            try {
+                await props.onSaved();
+                if (targetMounted.current && currentTargetIdentity.current === targetIdentity) props.onClose();
+            } finally {
+                if (targetMounted.current && currentTargetIdentity.current === targetIdentity) setSaving(false);
+            }
         };
         const onApprovalFailed = () => {
-            if (!targetMounted.current || currentTargetKey.current !== requestedTargetKey) return;
+            if (!targetMounted.current || currentTargetIdentity.current !== targetIdentity) return;
             setSaving(false);
             setFailure('failed');
         };
@@ -262,9 +263,11 @@ export const SavedSecretAccessEditor = React.memo(function SavedSecretAccessEdit
                 onApprovalSucceeded: finishApproved,
                 onApprovalFailed,
             });
-        if (!targetMounted.current || currentTargetKey.current !== requestedTargetKey) return;
-        setSaving(false);
+        // A successful write advances this row's revision. Completion belongs to
+        // the resource, while the server's expectedRevision owns write admission.
+        if (!targetMounted.current || currentTargetIdentity.current !== targetIdentity) return;
         if (!result.ok) {
+            setSaving(false);
             setFailure(result.reason);
             if (result.reason === 'outcome_unknown') {
                 await props.onSaved().catch(() => undefined);
@@ -274,12 +277,12 @@ export const SavedSecretAccessEditor = React.memo(function SavedSecretAccessEdit
         try {
             await props.onSaved();
         } catch {
-            if (targetMounted.current && currentTargetKey.current === requestedTargetKey) setFailure('failed');
+            if (targetMounted.current && currentTargetIdentity.current === targetIdentity) setFailure('failed');
             return;
         }
-        if (targetMounted.current && currentTargetKey.current === requestedTargetKey) props.onClose();
+        if (targetMounted.current && currentTargetIdentity.current === targetIdentity) props.onClose();
         } catch (cause) {
-            if (!targetMounted.current || currentTargetKey.current !== requestedTargetKey) return;
+            if (!targetMounted.current || currentTargetIdentity.current !== targetIdentity) return;
             if (isTeamActionApprovalPendingError(cause)) {
                 props.requestApproval?.(cause.registration);
                 return;
@@ -287,8 +290,7 @@ export const SavedSecretAccessEditor = React.memo(function SavedSecretAccessEdit
             setSaving(false);
             setFailure('failed');
         } finally {
-            // Revision changes fence the result, but the same editor still owns
-            // the completed request's busy state and must offer recovery.
+            // The same editor owns the completed request's busy state.
             if (targetMounted.current && currentTargetIdentity.current === targetIdentity) setSaving(false);
         }
     };
@@ -314,7 +316,7 @@ export const SavedSecretAccessEditor = React.memo(function SavedSecretAccessEdit
         ? failure === 'outcome_unknown'
             ? t('secrets.catalog.outcomeUnknown')
             : t('secrets.catalog.operationFailed')
-        : movedUnderEditor ? t('secrets.catalog.operationFailed') : null;
+        : movedUnderEditor && !saving ? t('secrets.catalog.operationFailed') : null;
 
     // Rendered inside the secret's expanded row: the recipients, what each one needs, then the one
     // write. Nothing is shared until Save (or Share, for a still-personal secret) is pressed.
