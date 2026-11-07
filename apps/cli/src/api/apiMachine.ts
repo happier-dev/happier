@@ -2198,6 +2198,7 @@ export class ApiMachineClient {
                 } : {}),
                 actionsSettingsProvider,
                 currentMachineId: this.machine.id,
+                ...(workSummaryInstallation ? { sessionCreationInstallation: workSummaryInstallation } : {}),
                 ...(this.lifecycleDependencies.requesterSessionRuntime ? { requesterSessionRuntime: this.lifecycleDependencies.requesterSessionRuntime } : {}),
                 requesterBootstrapBoundary: this.lifecycleDependencies.requesterBootstrapBoundary ?? {
                     serverId: this.machineRuntimeServerId,

@@ -475,7 +475,8 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
                   "defaultMinContextTokens": 200000,
                   "mode": "native",
                   "nativeHonorsMinimum": true
-                }
+                },
+                "manual": true
               }
             }
           }
@@ -491,7 +492,8 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
           "defaultMinContextTokens": 200000,
           "mode": "native",
           "nativeHonorsMinimum": true
-        }
+        },
+        "manual": true
       },
       "sessionFork": {
         "conversation": "unsupported",
@@ -571,12 +573,84 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     },
     "nativeCatalogObservation": {
       "connectedServiceId": "claude-subscription",
-      "nativeBearer": {
-        "fileId": ".credentials.json",
-        "jsonPath": [
-          "claudeAiOauth",
-          "accessToken"
-        ]
+      "nativeTarget": {
+        "credentialSources": [
+          {
+            "headers": [
+              {
+                "format": "bearer",
+                "name": "authorization"
+              }
+            ],
+            "kind": "environment",
+            "variable": "ANTHROPIC_AUTH_TOKEN"
+          },
+          {
+            "headers": [
+              {
+                "format": "bearer",
+                "name": "authorization"
+              }
+            ],
+            "kind": "environment",
+            "variable": "ANTHROPIC_OAUTH_TOKEN"
+          },
+          {
+            "headers": [
+              {
+                "format": "raw",
+                "name": "x-api-key"
+              }
+            ],
+            "kind": "environment",
+            "variable": "ANTHROPIC_API_KEY"
+          },
+          {
+            "fileId": "settings.json",
+            "headers": [
+              {
+                "format": "raw",
+                "name": "x-api-key"
+              },
+              {
+                "format": "bearer",
+                "name": "authorization"
+              }
+            ],
+            "jsonPath": [
+              "apiKeyHelper"
+            ],
+            "kind": "jsonCommand",
+            "maxCredentialLength": 16384,
+            "requiredSettingSource": "user"
+          },
+          {
+            "headers": [
+              {
+                "format": "bearer",
+                "name": "authorization"
+              }
+            ],
+            "kind": "environment",
+            "variable": "CLAUDE_CODE_OAUTH_TOKEN"
+          },
+          {
+            "defaultEndpointOnly": true,
+            "fileId": ".credentials.json",
+            "headers": [
+              {
+                "format": "bearer",
+                "name": "authorization"
+              }
+            ],
+            "jsonPath": [
+              "claudeAiOauth",
+              "accessToken"
+            ],
+            "kind": "jsonFile"
+          }
+        ],
+        "endpointEnvironmentVariable": "ANTHROPIC_BASE_URL"
       },
       "providerLocalId": "anthropic",
       "purpose": "model_upstream"
@@ -2385,6 +2459,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
           "kind": "primary"
         }
       ],
+      "nonInteractiveStatusProbe": true,
       "support": "login_terminal"
     },
     "displayName": "FX CLI",
@@ -2447,7 +2522,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
       "vendorResumeIdField": "fxSessionId"
     },
     "runtimeInput": {
-      "inFlightSteerSupported": false,
+      "inFlightSteerSupported": true,
       "terminalPromptInjectionSupported": false
     },
     "sessionCapabilities": {
@@ -2534,7 +2609,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
   },
   "id": "fx",
   "modelConfig": {
-    "acpApplyBehavior": "set_model",
     "acpModelConfigOptionId": "model",
     "allowedModes": [
       "default"
@@ -3466,14 +3540,12 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     },
     "install": {
       "docsUrl": "https://opencode.ai",
-      "guideUrl": "https://opencode.ai/docs",
+      "guideUrl": "https://dev.opencode.ai/v2/docs/",
       "managed": {
+        "allowBuild": true,
         "binaryName": "opencode",
         "kind": "managed_package",
-        "packageBinarySetup": {
-          "kind": "opencode_platform_binary"
-        },
-        "packageName": "opencode-ai"
+        "packageName": "@opencode/cli"
       },
       "manual": {
         "kind": "command"
@@ -3486,6 +3558,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
           ".opencode/bin"
         ]
       },
+      "npmPackageName": "opencode-ai",
       "recommendationOrder": 40
     }
   },

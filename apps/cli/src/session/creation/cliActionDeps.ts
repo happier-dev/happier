@@ -208,7 +208,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
 
     let rawPreparedTarget: unknown;
     try {
-      rawPreparedTarget = directTargetTransport
+      rawPreparedTarget = directTargetTransport && !needsSessionCreationDirectoryApprovalPreflightV1(input)
         ? await directTargetTransport.prepare(
           {
             directory: input.directory,

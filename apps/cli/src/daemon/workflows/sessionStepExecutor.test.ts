@@ -129,6 +129,9 @@ function installSessionCreationTransport() {
   readiness.callMachineRpc.mockClear();
   readiness.callMachineRpc.mockImplementation(async ({ method, request }: Parameters<typeof import('@/session/transport/rpc/machineRpc').callMachineRpc>[0]) => {
     const organizationPlacement = { folderId: null, tagIds: [] };
+    if (method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT) {
+      return prepareSessionCreationTarget({ request: SessionCreationTargetPreparationRequestV1Schema.parse(request) });
+    }
     if (method === RPC_METHODS.SPAWN_HAPPY_SESSION) {
       if (request && typeof request === 'object' && 'type' in request && request.type === 'resume-session'
         && 'sessionId' in request && typeof request.sessionId === 'string') {

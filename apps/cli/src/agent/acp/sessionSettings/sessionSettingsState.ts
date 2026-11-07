@@ -1,12 +1,22 @@
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
+
 export type SessionConfigOptionValueId = string;
+
+export type SessionConfigOptionChoice = Readonly<{
+  value: SessionConfigOptionValueId;
+  name: string;
+  description?: string;
+}>;
 
 export type SessionConfigOption = Readonly<{
   id: string;
   name: string;
   description?: string;
+  category?: string;
   type: string;
   currentValue: SessionConfigOptionValueId;
-  options?: ReadonlyArray<Readonly<{ value: SessionConfigOptionValueId; name: string; description?: string }>>;
+  options?: ReadonlyArray<SessionConfigOptionChoice>;
+  groups?: ReadonlyArray<Readonly<{ id: string; name: string; options: ReadonlyArray<SessionConfigOptionChoice> }>>;
 }>;
 
 export type SessionMode = {
@@ -52,14 +62,26 @@ function getString(obj: Record<string, unknown>, key: string): string | null {
   return typeof value === 'string' ? value : null;
 }
 
-function normalizeConfigOptionValueId(value: unknown): SessionConfigOptionValueId | null {
+export function normalizeSessionConfigOptionValue(value: unknown): SessionConfigOptionValueId | null {
   if (typeof value === 'string') {
-    const trimmed = value.trim();
-    return trimmed.length > 0 ? trimmed : null;
+    return value;
   }
   if (typeof value === 'number' && Number.isFinite(value)) return String(value);
   if (typeof value === 'boolean') return value ? 'true' : 'false';
   return null;
+}
+
+function normalizeConfigOptionChoices(raw: ReadonlyArray<unknown>): SessionConfigOptionChoice[] {
+  return raw.flatMap((rawChoice): SessionConfigOptionChoice[] => {
+    const choice = asRecord(rawChoice);
+    if (!choice) return [];
+    if (Array.isArray(choice.options)) return normalizeConfigOptionChoices(choice.options);
+    const value = normalizeSessionConfigOptionValue(choice.value);
+    const name = readNonBlankOpaqueIdentifier(choice.name);
+    if (value === null || !name) return [];
+    const description = getString(choice, 'description');
+    return [{ value, name, ...(description !== null ? { description } : {}) }];
+  });
 }
 
 export function normalizeSessionConfigOptions(raw: ReadonlyArray<unknown>, disableModeControls = false): SessionConfigOption[] {
@@ -69,47 +91,45 @@ export function normalizeSessionConfigOptions(raw: ReadonlyArray<unknown>, disab
     const entry = asRecord(entryRaw);
     if (!entry) continue;
 
-    const id = getString(entry, 'id');
-    const name = getString(entry, 'name');
-    const type = getString(entry, 'type');
+    const id = readNonBlankOpaqueIdentifier(entry.id);
+    const name = readNonBlankOpaqueIdentifier(entry.name);
+    const type = readNonBlankOpaqueIdentifier(entry.type);
     if (!id || !name || !type) continue;
     if (disableModeControls && [id, name, getString(entry, 'category')]
       .some(value => value?.trim().toLowerCase() === 'mode')) continue;
 
-    const currentValue = normalizeConfigOptionValueId(entry.currentValue);
+    const currentValue = normalizeSessionConfigOptionValue(entry.currentValue);
     if (currentValue === null) continue;
 
     const description = getString(entry, 'description');
+    const category = getString(entry, 'category');
     const optionsCandidate = entry.options;
-    const optionsRaw = Array.isArray(optionsCandidate) ? optionsCandidate : null;
+    const groupsRaw = Array.isArray(entry.groups) ? entry.groups : null;
+    const optionsRaw = Array.isArray(optionsCandidate) ? optionsCandidate : groupsRaw;
 
     let options: SessionConfigOption['options'] | undefined = undefined;
     if (optionsRaw) {
-      const normalized: Array<{ value: SessionConfigOptionValueId; name: string; description?: string }> = [];
-      // ACP select groups contain choices, not selectable group IDs.
-      const choices = optionsRaw.flatMap((rawOption) => {
-        const option = asRecord(rawOption);
-        return Array.isArray(option?.options) ? option.options : [rawOption];
-      });
-      for (const optRaw of choices) {
-        const opt = asRecord(optRaw);
-        if (!opt) continue;
-        const value = normalizeConfigOptionValueId(opt.value);
-        const optName = getString(opt, 'name');
-        if (value === null || !optName) continue;
-        const optDescription = getString(opt, 'description');
-        normalized.push({ value, name: optName, ...(optDescription ? { description: optDescription } : {}) });
-      }
+      const normalized = normalizeConfigOptionChoices(optionsRaw);
       if (normalized.length > 0 || optionsRaw.length === 0) options = normalized;
     }
+    const groups = (groupsRaw ?? optionsRaw ?? []).flatMap((rawGroup) => {
+      const group = asRecord(rawGroup);
+      if (!group || !Array.isArray(group.options)) return [];
+      const groupId = readNonBlankOpaqueIdentifier(getString(group, 'group') ?? getString(group, 'id'));
+      const name = readNonBlankOpaqueIdentifier(getString(group, 'name') ?? groupId);
+      if (!groupId || !name) return [];
+      return [{ id: groupId, name, options: normalizeConfigOptionChoices(group.options) }];
+    });
 
     out.push({
       id,
       name,
       type,
       currentValue,
-      ...(description ? { description } : {}),
+      ...(description !== null ? { description } : {}),
+      ...(category !== null ? { category } : {}),
       ...(options ? { options } : {}),
+      ...(groups.length > 0 ? { groups } : {}),
     });
   }
 
@@ -134,7 +154,7 @@ export function readSessionModeStateFromSessionResponse(sessionResponse: unknown
       const name = getString(mode, 'name');
       if (!id || !name) return null;
       const description = getString(mode, 'description');
-      return { id, name, ...(description ? { description } : {}) };
+      return { id, name, ...(description !== null ? { description } : {}) };
     })
     .filter((mode): mode is SessionMode => Boolean(mode));
 
@@ -159,54 +179,13 @@ function normalizeSessionModel(model: Record<string, unknown>): SessionModel | n
   return {
     id,
     name,
-    ...(description ? { description } : {}),
+    ...(description !== null ? { description } : {}),
     ...(contextWindowTokens !== null ? { contextWindowTokens } : {}),
     ...(modelOptions && modelOptions.length > 0 ? { modelOptions } : {}),
   };
 }
 
-export function readSessionModelStateFromSessionResponse(
-  sessionResponse: unknown,
-  projectModel?: SessionModelProjector,
-): SessionModelState | null {
-  const response = asRecord(sessionResponse);
-  if (!response) return null;
-  const modelsRaw = asRecord(response.models);
-  if (!modelsRaw) return null;
-
-  const currentModelId = getString(modelsRaw, 'currentModelId');
-  const availableModelsCandidate = (modelsRaw as { availableModels?: unknown }).availableModels;
-  const availableModelsRaw: unknown[] | null = Array.isArray(availableModelsCandidate) ? availableModelsCandidate : null;
-  if (!currentModelId || !availableModelsRaw) return null;
-
-  const availableModels: SessionModel[] = availableModelsRaw
-    .map((model: unknown) => asRecord(model))
-    .filter((model): model is Record<string, unknown> => Boolean(model))
-    .map((model) => {
-      const normalized = normalizeSessionModel(model);
-      if (!normalized || !projectModel) return normalized;
-      const projected = projectModel(model, normalized);
-      const revalidated = normalizeSessionModel(projected as unknown as Record<string, unknown>);
-      if (!revalidated || revalidated.id !== normalized.id) {
-        throw new Error('ACP model projector returned an invalid model');
-      }
-      return revalidated;
-    })
-    .filter((model): model is SessionModel => Boolean(model));
-
-  if (
-    availableModelsRaw.length > 0 && (
-      availableModels.length === 0 || !availableModels.some((model) => model.id === currentModelId)
-    )
-  ) return null;
-
-  return { currentModelId, availableModels };
-}
-
-export async function readSessionModelStateFromSessionResponseAwaitable(
-  sessionResponse: unknown,
-  projectModel?: AwaitableSessionModelProjector,
-): Promise<SessionModelState | null> {
+function readSessionModelResponse(sessionResponse: unknown) {
   const response = asRecord(sessionResponse);
   if (!response) return null;
   const modelsRaw = asRecord(response.models);
@@ -214,31 +193,58 @@ export async function readSessionModelStateFromSessionResponseAwaitable(
 
   const currentModelId = getString(modelsRaw, 'currentModelId');
   const availableModelsCandidate = modelsRaw.availableModels;
-  if (!currentModelId || !Array.isArray(availableModelsCandidate)) return null;
+  const availableModelsRaw: unknown[] | null = Array.isArray(availableModelsCandidate) ? availableModelsCandidate : null;
+  if (!currentModelId || !availableModelsRaw) return null;
+
+  const models = availableModelsRaw.flatMap((value) => {
+    const raw = asRecord(value);
+    const normalized = raw ? normalizeSessionModel(raw) : null;
+    return raw && normalized ? [{ raw, normalized }] : [];
+  });
+
+  // ACP reports the current selection independently of the selectable catalog.
+  // Native Agents can use a custom model without advertising it as a choice.
+  if (availableModelsRaw.length > 0 && models.length === 0) return null;
+
+  return { currentModelId, models };
+}
+
+function normalizeProjectedSessionModel(projected: SessionModel, originalId: string): SessionModel {
+  const revalidated = normalizeSessionModel(projected as unknown as Record<string, unknown>);
+  if (!revalidated || revalidated.id !== originalId) {
+    throw new Error('ACP model projector returned an invalid model');
+  }
+  return revalidated;
+}
+
+export function readSessionModelStateFromSessionResponse(
+  sessionResponse: unknown,
+  projectModel?: SessionModelProjector,
+): SessionModelState | null {
+  const response = readSessionModelResponse(sessionResponse);
+  if (!response) return null;
+  return {
+    currentModelId: response.currentModelId,
+    availableModels: response.models.map(({ raw, normalized }) => projectModel
+      ? normalizeProjectedSessionModel(projectModel(raw, normalized), normalized.id)
+      : normalized),
+  };
+}
+
+export async function readSessionModelStateFromSessionResponseAwaitable(
+  sessionResponse: unknown,
+  projectModel?: AwaitableSessionModelProjector,
+): Promise<SessionModelState | null> {
+  const response = readSessionModelResponse(sessionResponse);
+  if (!response) return null;
 
   const availableModels: SessionModel[] = [];
-  for (const modelValue of availableModelsCandidate) {
-    const model = asRecord(modelValue);
-    if (!model) continue;
-    const normalized = normalizeSessionModel(model);
-    if (!normalized) continue;
-    const projected = projectModel
-      ? await projectModel(model, normalized)
-      : normalized;
-    const revalidated = normalizeSessionModel(projected as unknown as Record<string, unknown>);
-    if (!revalidated || revalidated.id !== normalized.id) {
-      throw new Error('ACP model projector returned an invalid model');
-    }
-    availableModels.push(revalidated);
+  for (const { raw, normalized } of response.models) {
+    availableModels.push(projectModel
+      ? normalizeProjectedSessionModel(await projectModel(raw, normalized), normalized.id)
+      : normalized);
   }
-  if (
-    availableModelsCandidate.length > 0 && (
-      availableModels.length === 0 || !availableModels.some((model) => model.id === currentModelId)
-    )
-  ) {
-    return null;
-  }
-  return { currentModelId, availableModels };
+  return { currentModelId: response.currentModelId, availableModels };
 }
 
 export function readSessionConfigOptionsFromSessionResponse(
@@ -255,20 +261,47 @@ export function readSessionConfigOptionsFromSessionResponse(
   return normalizeSessionConfigOptions(configOptionsRaw, disableModeControls);
 }
 
+export function resolveSessionModelConfigOption(
+  configOptions: ReadonlyArray<SessionConfigOption>,
+  modelConfigOptionId?: string,
+): SessionConfigOption | null {
+  const eligible = configOptions.filter((option) => (option.type === 'select' || option.type === 'enum') && option.options !== undefined);
+  const modelSelector = (option: SessionConfigOption | undefined): SessionConfigOption | null => (
+    option && option.currentValue.trim().length > 0 && option.options?.every((choice) => choice.value.trim().length > 0)
+      ? option
+      : null
+  );
+  if (modelConfigOptionId !== undefined) {
+    return modelSelector(eligible.find((option) => option.id === modelConfigOptionId));
+  }
+  const dedicated = eligible.filter((option) => option.id.toLowerCase() === 'model' || option.name.toLowerCase() === 'model');
+  if (dedicated.length > 0) return dedicated.length === 1 ? modelSelector(dedicated[0]) : null;
+  const categorized = eligible.filter((option) => option.category === 'model');
+  return categorized.length === 1 ? modelSelector(categorized[0]) : null;
+}
+
 export function readSessionModelStateFromConfigOptions(
   sessionResponse: unknown,
-  modelConfigOptionId: string,
+  modelConfigOptionId?: string,
 ): SessionModelState | null {
-  const normalizedConfigId = modelConfigOptionId.trim();
-  if (!normalizedConfigId) return null;
   const configOptions = readSessionConfigOptionsFromSessionResponse(sessionResponse);
-  const modelOption = configOptions?.find((option) => option.id === normalizedConfigId) ?? null;
+  if (!configOptions) return null;
+  const modelOption = resolveSessionModelConfigOption(configOptions, modelConfigOptionId);
   if (!modelOption?.options) return null;
 
+  // Known control IDs work without category hints. Model-control hints describe
+  // the observed selection, not controls supported by every advertised model;
+  // adjacent category=model settings remain in the full configuration catalog.
+  const modelOptions = configOptions.filter((option) => option !== modelOption && (
+    option.category === 'thought_level' || option.category === 'model_config' || [
+      'effort', 'reasoning_effort', 'thought_level', 'fast', 'ultrafast',
+    ].includes(option.id.toLowerCase().replaceAll('-', '_'))
+  ));
   const availableModels = modelOption.options.map((option) => ({
     id: option.value,
     name: option.name,
-    ...(option.description ? { description: option.description } : {}),
+    ...(option.description !== undefined ? { description: option.description } : {}),
+    ...(option.value === modelOption.currentValue && modelOptions.length > 0 ? { modelOptions } : {}),
   }));
   if (availableModels.length > 0 && !availableModels.some((model) => model.id === modelOption.currentValue)) return null;
   return {

@@ -94,10 +94,6 @@ export type ProviderSessionRuntimePreferencesResolver = (
   params: AgentCliSessionCommandBuildInputV1,
 ) => ProviderSessionRuntimePreferences | Promise<ProviderSessionRuntimePreferences>;
 
-export type SessionHandoffAgentBundleRecordExtractor = (
-  agentBundle: Readonly<Record<string, unknown>>,
-) => readonly unknown[];
-
 export type ConnectedServiceStateSharingDescriptorEntry =
   AgentConnectedAccountStateSharingDescriptorEntryV1;
 
@@ -385,13 +381,6 @@ export type AgentCatalogEntry = Readonly<{
    */
   getTerminalPromptSubmitVerificationPolicy?: () => Promise<TerminalPromptSubmitVerificationPolicy | null>;
   /**
-   * Optional provider-owned handoff provider-bundle record extractor.
-   *
-   * Shared media continuity code applies provider-agnostic path validation after this hook
-   * extracts provider-specific transcript/export records.
-   */
-  getSessionHandoffAgentBundleRecordExtractor?: () => Promise<SessionHandoffAgentBundleRecordExtractor | null>;
-  /**
    * Optional Agent-owned derivation of this Agent's own session log for a vendor
    * resume id.
    *
@@ -418,6 +407,7 @@ export type AgentCatalogEntry = Readonly<{
    */
   needsAccountSettingsForProbes?: boolean;
   preparePreflightLaunchEnvironment?: NonNullable<import('@happier-dev/plugin-sdk/agents/runtime').AgentPreflightSessionControlsContributionV1['prepareLaunchEnvironment']>;
+  resolveNativeCatalogSettingSources?: NonNullable<import('@happier-dev/plugin-sdk/agents/runtime').AgentPreflightSessionControlsContributionV1['resolveNativeCatalogSettingSources']>;
   resolveNativeSkillDirectories?: NonNullable<import('@happier-dev/plugin-sdk/agents/runtime').AgentPreflightSessionControlsContributionV1['resolveNativeSkillDirectories']>;
   resolveNativePluginSkillRoots?: NonNullable<import('@happier-dev/plugin-sdk/agents/runtime').AgentPreflightSessionControlsContributionV1['resolveNativePluginSkillRoots']>;
   resolveProbePluginSettings?: (options?: Readonly<{ signal?: AbortSignal }>) => Promise<AgentCliSessionCommandPluginSettingsV1 | null>;
@@ -458,6 +448,12 @@ export type AgentCatalogEntry = Readonly<{
    * Keep provider-specific implementations in the backend folder and expose them via this catalog hook.
    */
   getPreflightSessionControlsProbeAdapter?: () => Promise<PreflightSessionControlsProbeAdapter | null>;
+  /** Agent runtime limit, independent of offered-model capabilities. */
+  resolveRuntimeMaxInputUnicodeCharacters?: (params: Readonly<{
+    runtimeDescriptorV1?: RuntimeDescriptorV1;
+    runtimeKindOverride?: string;
+    accountSettings?: Readonly<Record<string, unknown>> | null;
+  }>) => number | null | Promise<number | null>;
 }>;
 
 export type {

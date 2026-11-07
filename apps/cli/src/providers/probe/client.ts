@@ -2,7 +2,6 @@ import { lookup } from 'node:dns/promises';
 import type { ManagedServiceResponse } from '@happier-dev/plugin-sdk/managed-services';
 import { brotliDecompressSync, gunzipSync, inflateSync } from 'node:zlib';
 
-import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers/safety/limits';
 import { assessProviderEndpoint } from '@happier-dev/protocol/providers/safety/url';
 import { createProviderProbeRequestFingerprintV1 } from '@happier-dev/protocol/providers/securityFingerprintsV1';
 import { ProviderOriginRelativePathSchema } from '@happier-dev/protocol/providers/originRelativePathSchema';
@@ -18,6 +17,7 @@ import { resolveUrlConnectionIdentity } from '@/network/urlConnectionIdentity';
 
 import {
   awaitWithinProviderOperation,
+  awaitAbortableWithinProviderOperation,
   ProviderOperationAbandonedError,
 } from '../operationLifetime';
 
@@ -38,9 +38,7 @@ export type ProviderProbeTransportRequest = Readonly<{
   method: 'GET' | 'POST';
   body?: Uint8Array;
   signal: AbortSignal;
-  wallTimeMs: number;
-  idleTimeMs: number;
-  maxResponseBodyBytes: number;
+  wallTimeMs?: number;
 }>;
 
 export type ProviderProbeTransportResponse = Readonly<{
@@ -53,9 +51,12 @@ export type ProviderProbeTransport = (
   request: ProviderProbeTransportRequest,
 ) => Promise<ProviderProbeTransportResponse>;
 
-export type ProviderProbeCredential =
+export type ProviderProbeCredentialMaterial =
   | Readonly<{ kind: 'httpHeader'; name: string; value: string }>
   | Readonly<{ kind: 'queryParam'; name: string; value: string }>;
+export type ProviderProbeCredential = ProviderProbeCredentialMaterial & Readonly<{
+  additionalCredentials?: readonly ProviderProbeCredentialMaterial[];
+}>;
 
 export type ProviderProbeHttpCredentialLease = Readonly<{
   credential: ProviderProbeCredential;
@@ -75,7 +76,7 @@ export type ProviderProbeManagedServiceRequest = (
     method: 'GET' | 'POST';
     headers: Readonly<Record<string, string>>;
     body?: Uint8Array;
-    timeoutMs: number;
+    timeoutMs?: number;
     signal: AbortSignal;
   }>,
 ) => Promise<Readonly<{
@@ -121,10 +122,6 @@ type ProviderJsonGetRequest = Omit<ProviderCatalogGetRequest, 'parser' | 'contri
 export type ProviderUsageGetRequest = ProviderJsonGetRequest & Readonly<{
   parse(body: unknown): unknown;
 }>;
-export const PROVIDER_MODEL_LOAD_HTTP_LIMITS = Object.freeze({
-  wallTimeMs: 10 * 60 * 1_000,
-  maxDecodedBodyBytes: 1024 * 1024,
-} as const);
 
 export type ProviderModelLoadPostRequest = Readonly<{
   endpointUrl: string;
@@ -147,6 +144,7 @@ export class ProviderProbeClientError extends Error {
     | 'provider_endpoint_rate_limited'
     | 'provider_endpoint_auth_required'
     | 'provider_endpoint_unauthorized'
+    | 'provider_credential_transport_unavailable'
     | 'provider_probe_response_invalid'
     | 'provider_contribution_unavailable'>;
   readonly retryAfterMs?: number;
@@ -185,32 +183,28 @@ function headerValue(headers: Readonly<Record<string, string | undefined>>, name
   return undefined;
 }
 
-function boundedRetryAfterMs(value: string | undefined, now: number): number | undefined {
+function retryAfterMs(value: string | undefined, now: number): number | undefined {
   if (!value) return undefined;
   const seconds = Number(value.trim());
   const delay = Number.isFinite(seconds)
     ? Math.max(0, Math.floor(seconds * 1_000))
     : Math.max(0, Date.parse(value) - now);
   if (!Number.isFinite(delay)) return undefined;
-  return Math.min(86_400_000, delay);
+  return delay;
 }
 
-function decodeResponseBody(body: Uint8Array, encoding: string, maxDecodedBodyBytes: number): Buffer {
+function decodeResponseBody(body: Uint8Array, encoding: string): Buffer {
   const source = Buffer.from(body);
-  const maxOutputLength = maxDecodedBodyBytes + 1;
   let decoded: Buffer;
   try {
     switch (encoding) {
       case 'identity': decoded = source; break;
-      case 'gzip': decoded = gunzipSync(source, { maxOutputLength }); break;
-      case 'deflate': decoded = inflateSync(source, { maxOutputLength }); break;
-      case 'br': decoded = brotliDecompressSync(source, { maxOutputLength }); break;
+      case 'gzip': decoded = gunzipSync(source); break;
+      case 'deflate': decoded = inflateSync(source); break;
+      case 'br': decoded = brotliDecompressSync(source); break;
       default: throw new Error('unsupported');
     }
   } catch {
-    throw new ProviderProbeClientError('provider_probe_response_invalid');
-  }
-  if (decoded.byteLength > maxDecodedBodyBytes) {
     throw new ProviderProbeClientError('provider_probe_response_invalid');
   }
   return decoded;
@@ -260,19 +254,12 @@ async function defaultTransport(input: ProviderProbeTransportRequest): Promise<P
     method: input.method,
     ...(input.body ? { body: input.body } : {}),
     signal: input.signal,
-    wallTimeMs: input.wallTimeMs,
-    idleTimeMs: input.idleTimeMs,
+    ...(input.wallTimeMs === undefined ? {} : { wallTimeMs: input.wallTimeMs }),
   });
   const chunks: Uint8Array[] = [];
-  let encodedBytes = 0;
   for (;;) {
     const chunk = await response.read();
     if (chunk === null) break;
-    encodedBytes += chunk.byteLength;
-    if (encodedBytes > input.maxResponseBodyBytes) {
-      response.cancel();
-      throw new Error('Provider probe response limit');
-    }
     chunks.push(chunk);
   }
   return {
@@ -312,12 +299,8 @@ function rejectOnAbort(signal: AbortSignal): Readonly<{
 }
 
 /**
- * Applies the Provider endpoint deadlines the pinned transport already owns to
- * a host-private authenticated transport: one wall budget covering pre-dispatch
- * resolution, establishment and the complete body, plus one idle budget between
- * body chunks. Either breach cancels the response body, so the endpoint owner's
- * connection and the probe scheduler slot are released instead of being held
- * until an external lifecycle transition.
+ * Reads the complete managed response within the containing operation's signal.
+ * Cancellation also closes a body returned after the caller has already left.
  */
 async function readManagedServiceResponseWithProviderProbeDeadlines(input: Readonly<{
   managedRequest: ProviderProbeManagedServiceRequest;
@@ -326,31 +309,9 @@ async function readManagedServiceResponseWithProviderProbeDeadlines(input: Reado
   headers: Readonly<Record<string, string>>;
   body?: Uint8Array;
   signal: AbortSignal;
-  wallTimeMs: number;
-  idleTimeMs: number;
-  maxResponseBodyBytes: number;
+  wallTimeMs?: number;
 }>): Promise<ProviderProbeTransportResponse> {
-  const deadline = new AbortController();
-  const wallTimer = setTimeout(
-    () => deadline.abort(new Error('provider_probe_wall_timeout')),
-    input.wallTimeMs,
-  );
-  wallTimer.unref?.();
-  let idleTimer: ReturnType<typeof setTimeout> | null = null;
-  const clearIdle = (): void => {
-    if (idleTimer) clearTimeout(idleTimer);
-    idleTimer = null;
-  };
-  const resetIdle = (): void => {
-    clearIdle();
-    idleTimer = setTimeout(
-      () => deadline.abort(new Error('provider_probe_idle_timeout')),
-      input.idleTimeMs,
-    );
-    idleTimer.unref?.();
-  };
-  const bounded = AbortSignal.any([input.signal, deadline.signal]);
-  const aborted = rejectOnAbort(bounded);
+  const aborted = rejectOnAbort(input.signal);
   try {
     const target = new URL(input.requestUrl);
     const establishment = input.managedRequest({
@@ -358,29 +319,23 @@ async function readManagedServiceResponseWithProviderProbeDeadlines(input: Reado
       method: input.method,
       headers: { ...input.headers },
       ...(input.body === undefined ? {} : { body: input.body }),
-      timeoutMs: input.wallTimeMs,
-      signal: bounded,
+      ...(input.wallTimeMs === undefined ? {} : { timeoutMs: input.wallTimeMs }),
+      signal: input.signal,
     });
     // A transport that resolves after the deadline still owns a live body; drop
     // it rather than leaving the endpoint owner holding an open response.
     establishment.then(
       (late) => {
-        if (bounded.aborted) void late.body?.cancel().catch(() => undefined);
+        if (input.signal.aborted) void late.body?.cancel().catch(() => undefined);
       },
       () => undefined,
     );
     const fetched = await Promise.race([establishment, aborted.promise]);
-    // The idle budget bounds the gaps between body chunks, exactly as the
-    // pinned transport arms it once response headers arrive. Establishment
-    // stays bounded by the wall budget alone.
-    resetIdle();
     const chunks: Uint8Array[] = [];
-    let encodedBytes = 0;
     const reader = fetched.body?.getReader();
     if (reader) {
       try {
         for (;;) {
-          resetIdle();
           let next: Awaited<ReturnType<
             typeof reader.read
           >>;
@@ -391,15 +346,9 @@ async function readManagedServiceResponseWithProviderProbeDeadlines(input: Reado
             throw error;
           }
           if (next.done) break;
-          encodedBytes += next.value.byteLength;
-          if (encodedBytes > input.maxResponseBodyBytes) {
-            await reader.cancel().catch(() => undefined);
-            throw new Error('Provider probe response limit');
-          }
           chunks.push(next.value);
         }
       } finally {
-        clearIdle();
         reader.releaseLock();
       }
     }
@@ -409,8 +358,6 @@ async function readManagedServiceResponseWithProviderProbeDeadlines(input: Reado
       body: Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))),
     };
   } finally {
-    clearTimeout(wallTimer);
-    clearIdle();
     aborted.dispose();
   }
 }
@@ -430,9 +377,7 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
     resolveCredential?: () => Promise<ProviderProbeHttpCredentialLease>;
     method: 'GET' | 'POST';
     body?: Uint8Array;
-    wallTimeMs: number;
     wallDeadlineAtMs?: number;
-    maxResponseBodyBytes: number;
     signal?: AbortSignal;
     authorizeDestination(destination: AssessedProviderEndpoint): Promise<void>;
     managedRequest?: ProviderProbeManagedServiceRequest;
@@ -445,7 +390,7 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
     // unresponsive resolver must not extend or outlive the advertised wall
     // time, and `node:dns` cannot be aborted directly. Establishment and body
     // then spend what resolution left rather than restarting the clock.
-    const hopDeadlineAtMs = input.wallDeadlineAtMs ?? now() + input.wallTimeMs;
+    const hopDeadlineAtMs = input.wallDeadlineAtMs ?? Infinity;
     try {
       const parsed = new URL(input.currentUrl);
       const addresses = await awaitWithinProviderOperation(
@@ -518,31 +463,34 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
       if (remainingWallTimeMs <= 0) throw new ProviderProbeClientError('provider_endpoint_unreachable');
       const headers: Record<string, string> = { ...input.publicHeaders };
       let requestUrl = assessed.normalizedUrl;
-      if (credential?.kind === 'httpHeader') {
-        headers[normalizeProviderCredentialHeaderName(credential.name)] = credential.value;
-      } else if (credential?.kind === 'queryParam') {
-        const url = new URL(requestUrl);
-        url.searchParams.set(normalizeProviderQueryParameterName(credential.name), credential.value);
-        requestUrl = url.toString();
+      const headerNames = new Set(Object.keys(headers).map(name => name.toLowerCase()));
+      for (const material of credential ? [credential, ...(credential.additionalCredentials ?? [])] : []) {
+        if (material.kind === 'httpHeader') {
+          const name = normalizeProviderCredentialHeaderName(material.name);
+          if (headerNames.has(name)) throw new ProviderProbeClientError('provider_credential_transport_unavailable');
+          headerNames.add(name);
+          headers[name] = material.value;
+        } else {
+          const url = new URL(requestUrl);
+          url.searchParams.set(normalizeProviderQueryParameterName(material.name), material.value);
+          requestUrl = url.toString();
+        }
       }
       try {
-        const signal = input.signal ?? new AbortController().signal;
         const requestBody = input.body === undefined
           ? undefined
           : new Uint8Array(input.body);
-        const response = input.managedRequest
-          ? await readManagedServiceResponseWithProviderProbeDeadlines({
+        const response = await awaitAbortableWithinProviderOperation(signal => input.managedRequest
+          ? readManagedServiceResponseWithProviderProbeDeadlines({
               managedRequest: input.managedRequest,
               requestUrl,
               method: input.method,
               headers,
               ...(requestBody === undefined ? {} : { body: requestBody }),
               signal,
-              wallTimeMs: remainingWallTimeMs,
-              idleTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxIdleTimeMs,
-              maxResponseBodyBytes: input.maxResponseBodyBytes,
+              ...(Number.isFinite(remainingWallTimeMs) ? { wallTimeMs: remainingWallTimeMs } : {}),
             })
-          : await transport({
+          : transport({
               url: requestUrl,
               hostname: assessed.hostname,
               servername: assessed.hostname,
@@ -551,10 +499,8 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
               method: input.method,
               ...(input.body ? { body: input.body } : {}),
               signal,
-              wallTimeMs: remainingWallTimeMs,
-              idleTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxIdleTimeMs,
-              maxResponseBodyBytes: input.maxResponseBodyBytes,
-            });
+              ...(Number.isFinite(remainingWallTimeMs) ? { wallTimeMs: remainingWallTimeMs } : {}),
+            }), operationLifetime, now);
         return { response, credentialLease };
       } catch (error) {
         if (input.signal?.aborted || error instanceof ProviderProbeCancelledError) {
@@ -578,12 +524,8 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
       let currentUrl = initialUrl;
       let resolveCredential = input.resolveCredential;
       let redirectPublicHeaders: Readonly<Record<string, string>> = publicHeaders;
-      let redirects = 0;
-      // One wall budget for the catalog read, spent across every redirect hop.
-      // A per-hop budget would let the declared redirect chain multiply the
-      // advertised ceiling by `maxRedirects + 1`.
-      const wallDeadlineAtMs = input.wallDeadlineAtMs
-        ?? now() + PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs;
+      // Any caller deadline covers the entire read, including redirect hops.
+      const wallDeadlineAtMs = input.wallDeadlineAtMs ?? Infinity;
       while (true) {
         const remainingWallTimeMs = wallDeadlineAtMs - now();
         if (remainingWallTimeMs <= 0) {
@@ -595,9 +537,7 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
           publicHeaders: headers,
           ...(resolveCredential ? { resolveCredential } : {}),
           method: 'GET',
-          wallTimeMs: remainingWallTimeMs,
           wallDeadlineAtMs,
-          maxResponseBodyBytes: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxDecodedBodyBytes,
           ...(input.signal ? { signal: input.signal } : {}),
           authorizeDestination: input.authorizeDestination,
           ...(input.managedRequest
@@ -610,7 +550,7 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
           throwIfCancelled(input.signal);
           if ([301, 302, 303, 307, 308].includes(response.status)) {
             const location = headerValue(response.headers, 'location');
-            if (!location || redirects >= PROVIDER_ENDPOINT_SAFETY_LIMITS.maxRedirects) {
+            if (!location) {
               throw new ProviderProbeClientError('provider_probe_response_invalid');
             }
             let redirected: URL;
@@ -634,7 +574,6 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
               redirectPublicHeaders = {};
             }
             currentUrl = redirectTarget;
-            redirects += 1;
             continue;
           }
           if (response.status === 401 || response.status === 403) {
@@ -648,7 +587,7 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
           }
           if (response.status === 429) {
             throw new ProviderProbeClientError('provider_endpoint_rate_limited', {
-              retryAfterMs: boundedRetryAfterMs(headerValue(response.headers, 'retry-after'), now()),
+              retryAfterMs: retryAfterMs(headerValue(response.headers, 'retry-after'), now()),
             });
           }
           if (response.status >= 500 && response.status <= 599) {
@@ -669,7 +608,6 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
           const decoded = decodeResponseBody(
             response.body,
             metadata.encoding,
-            PROVIDER_ENDPOINT_SAFETY_LIMITS.maxDecodedBodyBytes,
           );
           let json: unknown;
           try {
@@ -748,11 +686,9 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
         ...(input.resolveCredential ? { resolveCredential: input.resolveCredential } : {}),
         method: 'POST',
         body,
-        wallTimeMs: PROVIDER_MODEL_LOAD_HTTP_LIMITS.wallTimeMs,
         ...(input.wallDeadlineAtMs !== undefined
           ? { wallDeadlineAtMs: input.wallDeadlineAtMs }
           : {}),
-        maxResponseBodyBytes: PROVIDER_MODEL_LOAD_HTTP_LIMITS.maxDecodedBodyBytes,
         ...(input.signal ? { signal: input.signal } : {}),
         authorizeDestination: input.authorizeDestination,
       });
@@ -770,7 +706,7 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
         }
         if (response.status === 429) {
           throw new ProviderProbeClientError('provider_endpoint_rate_limited', {
-            retryAfterMs: boundedRetryAfterMs(headerValue(response.headers, 'retry-after'), now()),
+            retryAfterMs: retryAfterMs(headerValue(response.headers, 'retry-after'), now()),
           });
         }
         if (response.status >= 500 && response.status <= 599) {
@@ -780,7 +716,7 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
           throw new ProviderProbeClientError('provider_probe_response_invalid');
         }
         const encoding = headerValue(response.headers, 'content-encoding')?.trim().toLowerCase() || 'identity';
-        decodeResponseBody(response.body, encoding, PROVIDER_MODEL_LOAD_HTTP_LIMITS.maxDecodedBodyBytes);
+        decodeResponseBody(response.body, encoding);
         return { statusCode: response.status };
       } finally {
         credentialLease?.close();

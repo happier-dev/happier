@@ -10,6 +10,7 @@ import type { PluginJsonRpcClient } from '../services/io.js';
 import type { ManagedServiceHandle, ManagedServiceSpec } from '../managed-services/contract.js';
 import type { AgentConnectedAccountContinuityV1 } from './connectedAccountContinuity.js';
 import type { ConnectedAccountsService } from '../services/connectedAccounts.js';
+import type { AgentSessionModelOption } from './context.js';
 
 /**
  * Secret-free connected-service selection supplied to an Agent daemon spawn
@@ -573,6 +574,8 @@ export type AgentPreflightSessionControlsProbeInputV1 = Readonly<{
   nonblankEnvironment?: Readonly<Record<string, boolean>>;
   /** Persisted non-secret settings for the owning Agent, kept account/daemon qualified. */
   pluginSettings?: AgentCliSessionCommandPluginSettingsV1;
+  /** Desired native configuration for this temporary Session; values retain their native scalar type. */
+  configOptionOverrides?: Readonly<Record<string, AgentSessionModelOption['currentValue']>>;
 }>;
 
 /**
@@ -600,10 +603,16 @@ export type AgentPreflightSessionControlsProbeContextV1 =
     probeDeclaredAcpSessionControls?(input: AgentPreflightExecutableSelectorV1 & Readonly<{
       args: readonly string[];
       authenticationMethodId?: string;
+      modelConfigOptionId?: string;
+      configOptionOverrides?: Readonly<Record<string, AgentSessionModelOption['currentValue']>>;
     }>): Promise<Readonly<{
       models: readonly unknown[] | null;
       modes: readonly unknown[] | null;
       configOptions: unknown;
+      modelConfigOptionId?: string;
+      observedAt?: number;
+      refreshError?: boolean;
+      refreshErrorMessage?: string;
     }>>;
     /** Resolves only a manifest-declared system tool; no executable or process handle is exposed. */
     resolveDeclaredSystemTool(input: Readonly<{ toolId: string }>): Promise<Readonly<{ executablePath: string }>>;
@@ -643,6 +652,12 @@ export type AgentPreflightSessionControlsModelsV1 = Readonly<{
  * enforcement, dispatch, and result projection.
  */
 export type AgentPreflightSessionControlsContributionV1 = Readonly<{
+  /** Runtime turn-input limit in Unicode scalar values, independent of model
+   * catalog evidence. Null means this runtime has no known limit.
+   */
+  resolveMaxInputUnicodeCharacters?: (
+    input: Pick<AgentPreflightSessionControlsProbeInputV1, 'accountSettings' | 'runtimeDescriptorV1' | 'runtimeKindOverride'>,
+  ) => number | null;
   /** Installed/enabled native plugin roots for Found only, never native masking.
    * A known download path may resolve its recorded project scope for revalidation.
    */
@@ -658,6 +673,12 @@ export type AgentPreflightSessionControlsContributionV1 = Readonly<{
     layout: 'collection' | 'skill';
     status: 'ok' | 'failed';
   }>[]>;
+  /** Effective native settings sources, interpreted only by the owning Agent.
+   * Receives non-secret Settings; native files, environment and credentials remain host-owned.
+   */
+  resolveNativeCatalogSettingSources?: (input: Readonly<{
+    pluginSettings: AgentCliSessionCommandPluginSettingsV1;
+  }>) => readonly string[] | Promise<readonly string[]>;
   /** Extra launch directories whose project skill roots this Agent will load.
    * The host scans them using the Agent's declared nativeRoots.project patterns.
    */

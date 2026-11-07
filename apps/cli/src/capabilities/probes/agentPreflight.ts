@@ -10,16 +10,22 @@ import { ConnectedServicesProviderStateSharingSettingsV1Schema } from '@happier-
 import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { SecretReferenceOverlayV1Schema } from '@happier-dev/protocol/profiles/secretReferenceOverlayV1';
 import { CodexPassiveRealtimeSetupResultV1Schema } from '@happier-dev/protocol/capabilities/codexPassiveRealtimeSetup';
+import { ProbedCatalogOptionValueSchema } from '@happier-dev/protocol/capabilities';
+import { NonBlankOpaqueIdentifierSchema } from '@happier-dev/protocol/strings/opaqueIdentifier';
+import { z } from 'zod/mini';
 import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 import { randomUUID } from 'node:crypto';
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { configuration } from '@/configuration';
+import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
 import { getAgentModelConfig } from '@happier-dev/agents';
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 import { readDeclaredCatalogConnectedServiceIds, resolveCatalogAgentConnectedServiceIds, readDeclaredCatalogConnectedAccountServiceIds, resolveCatalogAgentConnectedAccountServiceIds } from '@/agent/catalog/registry';
 import { resolveProbeBackendContext } from '@/rpc/handlers/capabilitiesProbeContext';
 import { resolveConnectedServiceAuthForSpawn } from '@/daemon/connectedServices/resolveConnectedServiceAuthForSpawn';
+import { buildConnectedServiceCredentialSpawnErrorResult } from '@/daemon/connectedServices/diagnostics/buildConnectedServiceDiagnosticSpawnErrorResult';
+import { isConnectedServiceUxDiagnosticSpawnErrorDetail } from '@happier-dev/protocol/spawnSession';
 import { resolveQualifiedPurposeBindingSnapshotForAgentSpawn } from '@/daemon/connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn';
 import { parseConnectedServiceBindingSelections } from '@/daemon/connectedServices/parseConnectedServicesBindings';
 import { generateConnectedServiceMaterializationIdentityV1 } from '@/daemon/connectedServices/materialization/identity';
@@ -27,7 +33,7 @@ import { resolveConnectedServiceMaterializedRootDir } from '@/daemon/connectedSe
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
 import { sanitizeEnvVarRecord } from '@/terminal/runtime/envVarSanitization';
 import { stripSessionControlEnvOverrides } from '@/session/runtime/control/sessionControlEnvironment';
-import { isDynamicModelProbeEnabled, resolveNativeCatalogBearer, type NativeCatalogBearer } from '@/providers/probe/nativeCatalogCredential';
+import { isDynamicModelProbeEnabled, resolveNativeCatalogTarget, type NativeCatalogTargetResolution } from '@/providers/probe/nativeCatalogCredential';
 import { resolveNativeCatalogObservationContext } from '@/providers/probe/resolveNativeCatalogObservationContext';
 import { ProviderProbeCancelledError } from '@/providers/probe/client';
 import { probeAgentModelsBestEffort } from './agentModelsProbe';
@@ -39,6 +45,7 @@ import { resolveProfileProbeEnvironment } from './resolveProfileProbeEnvironment
 import { resolvePreflightSessionControlsProbeEnvironment, withPreflightSessionControlsProbeEnvironment } from './preflightSessionControlsProbeEnvironment';
 
 const DEFAULT_PROBE_MODELS_TIMEOUT_MS = 30_000;
+const ConfigOptionOverridesSchema = z.record(NonBlankOpaqueIdentifierSchema, ProbedCatalogOptionValueSchema);
 
 type ConnectedServiceProbeCredentials = NonNullable<
     Awaited<ReturnType<typeof resolveProbeBackendContext>>['credentials']
@@ -46,8 +53,8 @@ type ConnectedServiceProbeCredentials = NonNullable<
 type ConnectedServiceProbeApi = Parameters<typeof resolveConnectedServiceAuthForSpawn>[0]['api'];
 
 export type CliProbeDependencies = Readonly<{
-    secretSources?: import('@/plugins/runtime/lifecycle/contributions/targetSecretSources').TargetSecretSourcesV1;
     savedSecretOperationContext?: import('@/settings/secrets/savedSecretOperationContext').SavedSecretOperationContextV1;
+    secretSources?: import('@/plugins/runtime/lifecycle/contributions/targetSecretSources').TargetSecretSourcesV1;
     accountContext?: NonNullable<Parameters<typeof resolveProbeBackendContext>[1]>['accountContext'];
     createAgentInvocationServices?: CreateAgentInvocationServices;
     agentCatalogEntry?: AgentCatalogEntry | null;
@@ -61,7 +68,7 @@ export type CliProbeDependencies = Readonly<{
     activatePurposeBindings?: ConnectedAccountPurposeBindingOwner['activatePurposeBindings'];
     connectedAccountsOwner?: Parameters<typeof resolveConnectedServiceAuthForSpawn>[0]['connectedAccountsOwner'];
     isAgentRegistryCurrent?: () => boolean;
-    resolveNativeCatalogBearer?: (input: Parameters<typeof resolveNativeCatalogBearer>[0]) => Promise<NativeCatalogBearer | null>;
+    resolveNativeCatalogTarget?: (input: Parameters<typeof resolveNativeCatalogTarget>[0]) => Promise<NativeCatalogTargetResolution>;
 }>;
 
 export type CliProbeRequestContext = Readonly<{
@@ -228,7 +235,7 @@ export function resolveCliProbeInvokeParams(params?: Record<string, unknown>): R
     const timeoutMsRaw = rawParams.timeoutMs;
     const cwdRaw = rawParams.cwd;
     return {
-        cwd: typeof cwdRaw === 'string' && cwdRaw.trim().length > 0 ? cwdRaw.trim() : process.cwd(),
+        cwd: typeof cwdRaw === 'string' && cwdRaw.trim().length > 0 ? expandHomeDirPath(cwdRaw.trim()) : process.cwd(),
         timeoutMs: typeof timeoutMsRaw === 'number' ? timeoutMsRaw : DEFAULT_PROBE_MODELS_TIMEOUT_MS,
     };
 }
@@ -241,6 +248,13 @@ export async function invokeCliPreflightMethod(
     requestContext: CliProbeRequestContext,
 ): Promise<CapabilitiesInvokeResponse> {
     const { cwd, timeoutMs } = resolveCliProbeInvokeParams(params);
+    const probeDeadlineAtMs = requestContext.deadlineAtMs ?? Date.now() + timeoutMs;
+    const configOverrides = params?.configOptionOverrides === undefined ? null
+        : ConfigOptionOverridesSchema.safeParse(params.configOptionOverrides);
+    if (configOverrides && !configOverrides.success) {
+        return { ok: false, error: { code: 'invalid_params', message: 'Configuration overrides must contain opaque option ids and scalar values.' } };
+    }
+    const configOptionOverrides = configOverrides?.success ? configOverrides.data : undefined;
     const parsedConnectedServices = ConnectedServiceBindingsV2IngressSchema.safeParse(params?.connectedServices);
     const connectedServices = parsedConnectedServices.success ? parsedConnectedServices.data : null;
     if (params?.connectedServices != null && !parsedConnectedServices.success) {
@@ -307,6 +321,7 @@ export async function invokeCliPreflightMethod(
             runtimeDescriptorV1: probeContext.runtimeDescriptorV1,
             runtimeKindOverride: probeContext.runtimeKindOverride,
             pluginSettings: probeContext.pluginSettings,
+            configOptionOverrides,
             cwd,
             timeoutMs,
             accountSettings: probeContext.accountSettings,
@@ -326,8 +341,9 @@ export async function invokeCliPreflightMethod(
             credentials: probeContext.credentials,
             processEnv: { ...process.env, ...explicitEnvironment },
             savedSecretOperationContext: dependencies.savedSecretOperationContext,
-            secretSources: dependencies.secretSources,
             machineAdmission: requestContext.machineAdmission,
+            secretSources: dependencies.secretSources,
+            signal: requestContext.signal,
         });
     } catch {
         return {
@@ -387,7 +403,19 @@ export async function invokeCliPreflightMethod(
                 dependencies,
                 processEnv: profileProcessEnv,
             });
-        } catch {
+        } catch (error) {
+            const failure = buildConnectedServiceCredentialSpawnErrorResult({ agentId: materializationAgentId, error });
+            if (failure && isConnectedServiceUxDiagnosticSpawnErrorDetail(failure.errorDetail)) {
+                const diagnostic = failure.errorDetail.uxDiagnostic;
+                return { ok: false, error: {
+                    code: diagnostic.code,
+                    message: diagnostic.code,
+                    retryable: diagnostic.retryable,
+                } };
+            }
+            // The capability service owns code-only projection. Never forward
+            // credential-bearing messages, causes or arbitrary error metadata.
+            if (error instanceof Error && 'code' in error && typeof error.code === 'string') throw error;
             return {
                 ok: false,
                 error: {
@@ -440,13 +468,13 @@ export async function invokeCliPreflightMethod(
         materializedEnv,
     })).env;
     const commonProbeArgs = {
-        machineAdmission: requestContext.machineAdmission,
-        savedSecretOperationContext: dependencies.savedSecretOperationContext,
-        secretSources: dependencies.secretSources,
         agentId,
         catalogEntry: dependencies.agentCatalogEntry,
         registrySnapshot: dependencies.agentRegistrySnapshot,
         runtimeCacheKey: dependencies.agentRuntimeCacheKey,
+        savedSecretOperationContext: dependencies.savedSecretOperationContext,
+        secretSources: dependencies.secretSources,
+        machineAdmission: requestContext.machineAdmission,
         ...(requestContext.signal ? { signal: requestContext.signal } : {}),
         ...(requestContext.deadlineSignal ? { deadlineSignal: requestContext.deadlineSignal } : {}),
         ...(requestContext.cleanupScope ? { cleanupScope: requestContext.cleanupScope } : {}),
@@ -454,6 +482,7 @@ export async function invokeCliPreflightMethod(
         runtimeDescriptorV1: probeContext.runtimeDescriptorV1,
         runtimeKindOverride: probeContext.runtimeKindOverride,
         pluginSettings: probeContext.pluginSettings,
+        configOptionOverrides,
         cwd,
         timeoutMs: requestContext.deadlineAtMs === undefined ? timeoutMs : Math.max(0, requestContext.deadlineAtMs - Date.now()),
         accountSettings: probeContext.accountSettings,
@@ -538,6 +567,7 @@ export async function invokeCliPreflightMethod(
                     requestAuthUse,
                     provider: provider.definition,
                     trigger: params?.bypassCache === true ? 'manual_refresh' : 'picker_open',
+                    currentOnly: params?.currentOnly === true,
                     isCurrent,
                     ...(requestContext.signal ? { signal: requestContext.signal } : {}),
                 });
@@ -554,16 +584,39 @@ export async function invokeCliPreflightMethod(
                     },
                 };
             }
-            const nativeContext = observation.nativeBearer
+            const nativeContext = observation.nativeTarget
                 ? resolveNativeCatalogObservationContext({ agentId, observation, registry, catalogEntry: dependencies.agentCatalogEntry })
                 : null;
-            if (nativeContext && observation.nativeBearer) {
-                const credential = await (dependencies.resolveNativeCatalogBearer ?? resolveNativeCatalogBearer)({
+            if (nativeContext && observation.nativeTarget) {
+                const signal = requestContext.signal && requestContext.deadlineSignal
+                    ? AbortSignal.any([requestContext.signal, requestContext.deadlineSignal])
+                    : requestContext.signal ?? requestContext.deadlineSignal;
+                const catalog = nativeContext.provider.catalog;
+                const probe = catalog.source === 'static+probe' ? catalog.probes[0] : undefined;
+                const defaultEndpointUrl = nativeContext.provider.endpointTemplates.find(endpoint => endpoint.id === probe?.endpointTemplateId)?.baseUrl;
+                const enabledSettingSources = await nativeContext.catalogEntry?.resolveNativeCatalogSettingSources?.({
+                    pluginSettings: probeContext.pluginSettings ?? {},
+                }) ?? [];
+                const target = defaultEndpointUrl ? await (dependencies.resolveNativeCatalogTarget ?? resolveNativeCatalogTarget)({
                     observation,
                     catalogEntry: nativeContext.catalogEntry,
                     environment: probeProcessEnv,
-                }).catch(() => null);
-                if (credential) {
+                    cwd,
+                    defaultEndpointUrl,
+                    enabledSettingSources,
+                    retainCleanup: requestContext.cleanupScope?.retain,
+                    ...(signal ? { signal } : {}),
+                    deadlineAtMs: probeDeadlineAtMs,
+                }) : { status: 'unavailable' as const };
+                if (target.status === 'unavailable') {
+                    return { ok: true, result: {
+                        agentId,
+                        availableModels: projectNativeCatalogModels(modelConfig?.staticModels ?? [], modelConfig),
+                        supportsFreeform: modelConfig?.supportsSelection === true && modelConfig.supportsFreeform === true,
+                        source: 'static', refreshError: true,
+                    } };
+                }
+                if (target.status === 'ready') {
                     const result = await observationRuntime.service.observeNative({
                         machineId: observationRuntime.machineId,
                         operationId: randomUUID(),
@@ -572,10 +625,12 @@ export async function invokeCliPreflightMethod(
                         requestAuthUse: nativeContext.requestAuthUse,
                         provider: nativeContext.provider,
                         service: { pluginId: nativeContext.consumer.pluginId, localId: observation.connectedServiceId },
-                        credential,
+                        target,
+                        wallDeadlineAtMs: probeDeadlineAtMs,
                         trigger: params?.bypassCache === true ? 'manual_refresh' : 'picker_open',
+                        currentOnly: params?.currentOnly === true,
                         isCurrent,
-                        ...(requestContext.signal ? { signal: requestContext.signal } : {}),
+                        ...(signal ? { signal } : {}),
                     });
                     if (!isCurrent()) throw new ProviderProbeCancelledError();
                     return {
@@ -592,7 +647,8 @@ export async function invokeCliPreflightMethod(
                 }
             }
         }
-          return { ok: true, result: await probeAgentModelsBestEffort({ ...commonProbeArgs, bypassCache: params?.bypassCache === true }) };
+          return { ok: true, result: await probeAgentModelsBestEffort({ ...commonProbeArgs,
+            bypassCache: params?.bypassCache === true, currentOnly: params?.currentOnly === true }) };
       }
       if (method === 'probeModes') {
           return { ok: true, result: await probeAgentModesBestEffort(commonProbeArgs) };

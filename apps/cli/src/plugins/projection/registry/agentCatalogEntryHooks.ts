@@ -623,6 +623,7 @@ export function projectAgentTerminalPromptSubmitVerificationCatalogEntry(params:
  * the Agent interprets bounded command output into the shared auth result.
  */
 export function projectAgentCliAuthCatalogEntry(params: Readonly<{
+    agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext;
     agentId: CatalogAgentId;
     pluginId: string;
     cliAuth: AgentCliAuthContributionV1;
@@ -631,6 +632,7 @@ export function projectAgentCliAuthCatalogEntry(params: Readonly<{
     systemTools: readonly PluginSystemToolContributionV1[];
     agentCliSystemTool?: AgentCliSystemToolBinding | null;
     hostAccess?: ResolvedAgentContribution['hostAccess'];
+    retirementSignal?: AbortSignal;
     isCurrent(): boolean;
 }>): Pick<ResolvedCatalogEntry, 'getCliAuthSpec'> {
     const staticProbe = createNativeAgentCliAuthStaticProbe(params.cli);
@@ -660,6 +662,8 @@ export function projectAgentCliAuthCatalogEntry(params: Readonly<{
                 if (!params.isCurrent()) {
                     return { state: 'unknown', reason: 'probe_failed' };
                 }
+                // Member files are private to that OS user. Only the native
+                // command may inspect them; do not read them as the daemon.
                 const staticCredential = nativeExecution ? null : staticProbe?.readPresentCredential(processEnv);
                 // A native status command owns file/keychain readiness, including
                 // Agent-specific home overrides. Default-home file presence cannot
@@ -671,13 +675,17 @@ export function projectAgentCliAuthCatalogEntry(params: Readonly<{
                     ),
                 ));
                 const systemToolExec = createProviderScopedStableExecService({
-                    ...(nativeExecution ? { agentIsolation: nativeExecution.agentIsolation, signal: nativeExecution.signal } : {}),
+                    ...((nativeExecution?.agentIsolation ?? params.agentIsolation)
+                        ? { agentIsolation: nativeExecution?.agentIsolation ?? params.agentIsolation } : {}),
                     cwd: nativeExecution?.cwd ?? process.cwd(),
                     environment: executableEnvironment,
                     systemTools: admittedSystemTools,
                     agentId: params.agentId,
                     runtimeSpec: params.runtimeSpec,
                     agentCliSystemTool: params.agentCliSystemTool,
+                    signal: nativeExecution ? AbortSignal.any([nativeExecution.signal,
+                        ...(params.retirementSignal ? [params.retirementSignal] : [])]) : params.retirementSignal,
+                    isOccurrenceCurrent: params.isCurrent,
                 });
                 const unavailable = () => ({
                     ok: false,
@@ -813,14 +821,14 @@ async function withPreparedPreflightCommand<T>(
     run: (args: readonly string[], env: Readonly<Record<string, string>>, preferredPath?: string) => Promise<T>,
     cleanupScope?: PreflightCatalogCleanupScope,
 ): Promise<T> {
-    const selectedEnvironment = applyPreflightCommandEnvironment(environment, command);
+    const selectedToolchain = applyPreflightCommandEnvironment(environment, command);
     const artifacts: string[] = [];
     const cleanup = async () => { await Promise.all(artifacts.map((path) => removeHappierTempDirAsync(path))); };
     const releaseCleanup = await cleanupScope?.retain(cleanup);
     try {
         input.signal?.throwIfAborted();
         const prepared = command.prepareCommand?.(input);
-        if (prepared === undefined) return await run(command.args, selectedEnvironment);
+        if (prepared === undefined) return await run(command.args, selectedToolchain);
         if (!prepared || !Array.isArray(prepared.args) || Object.keys(prepared).some((key) => key !== 'args' && key !== 'preferredPath')) {
             throw new TypeError('Invalid prepared preflight command');
         }
@@ -850,7 +858,7 @@ async function withPreparedPreflightCommand<T>(
                 const relativePath: string = argument.relativePath;
                 const parts = relativePath.split(/[\\/]/);
                 if (parts.some((part) => !part || part === '..' || part === '.')) throw new TypeError('Invalid preflight relative path');
-                const root = selectedEnvironment[argument.key];
+                const root = selectedToolchain[argument.key];
                 if (!root || !isAbsolute(root)) throw new TypeError('Preflight environment root is unavailable');
                 const canonicalRoot = await realpath(root);
                 const path = await realpath(resolve(canonicalRoot, ...parts));
@@ -862,7 +870,7 @@ async function withPreparedPreflightCommand<T>(
             } else { throw new TypeError('Unknown prepared preflight argument'); }
         }
         input.signal?.throwIfAborted();
-        return await run(args, selectedEnvironment, prepared.preferredPath);
+        return await run(args, selectedToolchain, prepared.preferredPath);
     } finally {
         try { await cleanup(); } finally { releaseCleanup?.(); }
     }
@@ -934,6 +942,20 @@ function createPreflightProbeSignal(
     return signal ? AbortSignal.any([signal, retirementSignal]) : retirementSignal;
 }
 
+/** Projects the same runtime fact for active daemon and retained runner catalogs. */
+export function projectAgentRuntimeInputCapacityCatalogEntry(params: Readonly<{
+    preflightSessionControls: Pick<AgentPreflightSessionControlsContributionV1, 'resolveMaxInputUnicodeCharacters'>;
+    isCurrent(): boolean;
+}>): Pick<ResolvedCatalogEntry, 'resolveRuntimeMaxInputUnicodeCharacters'> {
+    const resolveLimit = params.preflightSessionControls.resolveMaxInputUnicodeCharacters;
+    if (!resolveLimit) return Object.freeze({});
+    return Object.freeze({ resolveRuntimeMaxInputUnicodeCharacters: (input: Parameters<NonNullable<ResolvedCatalogEntry['resolveRuntimeMaxInputUnicodeCharacters']>>[0]) => {
+        if (!params.isCurrent()) return null;
+        const limit = resolveLimit(readPreflightProbeInput({ ...input, environment: {} }));
+        return typeof limit === 'number' && Number.isSafeInteger(limit) && limit > 0 ? limit : null;
+    } });
+}
+
 /**
  * Projects a public Agent preflight declaration through the incumbent catalog
  * probe seam. The Agent receives only strict settings JSON, environment
@@ -942,8 +964,10 @@ function createPreflightProbeSignal(
  * projection owner.
  */
 export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonly<{
+    agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext;
     agentId: CatalogAgentId;
     preflightSessionControls: AgentPreflightSessionControlsContributionV1;
+    modelConfigOptionId?: string;
     systemTools: readonly PluginSystemToolContributionV1[];
     runtimeSpec?: AgentCliRuntimeDescriptor | null;
     agentCliSystemTool?: AgentCliSystemToolBinding | null;
@@ -957,14 +981,21 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
 }>): Pick<ResolvedCatalogEntry,
     | 'needsAccountSettingsForProbes'
     | 'preparePreflightLaunchEnvironment'
+    | 'resolveNativeCatalogSettingSources'
     | 'resolveNativeSkillDirectories'
     | 'resolveNativePluginSkillRoots'
     | 'resolveProbePluginSettings'
     | 'resolveModelsProbeVariant'
     | 'resolveSessionControlsProbeVariant'
     | 'getPreflightSessionControlsProbeAdapter'
+    | 'resolveRuntimeMaxInputUnicodeCharacters'
 > {
     const contribution = params.preflightSessionControls;
+    const resolveModelConfigOptionId = async (): Promise<string | undefined> => {
+        if (params.modelConfigOptionId !== undefined) return params.modelConfigOptionId;
+        const { getAgentModelConfig } = await import('@happier-dev/agents');
+        return getAgentModelConfig(params.agentId)?.acpModelConfigOptionId ?? undefined;
+    };
     const declaredSystemToolIds = new Set(params.systemTools.map((tool) => tool.id));
     for (const toolId of [...(contribution.models?.commandToolIds ?? []), ...(contribution.catalogs?.commandToolIds ?? []), ...(contribution.managedServiceCommands ?? []).map((command) => command.toolId)]) {
         if (!declaredSystemToolIds.has(toolId)) {
@@ -1049,6 +1080,7 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
             environment,
         });
         const exec = createProviderScopedStableExecService({
+            ...(params.agentIsolation ? { agentIsolation: params.agentIsolation } : {}),
             cwd: probeParams.cwd,
             environment,
             systemTools: params.systemTools,
@@ -1213,20 +1245,28 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
             ));
         const probeDeclaredAcpSessionControls: NonNullable<AgentPreflightSessionControlsProbeContextV1['probeDeclaredAcpSessionControls']> =
             async (request) => await withDeclaredJsonRpcClient(request, async (client, scopedSignal) => {
+                const modelConfigOptionId = request.modelConfigOptionId ?? await resolveModelConfigOptionId();
                 const controls = await probeAcpSessionControls({ client, signal: scopedSignal, cwd: probeParams.cwd,
+                    modelConfigOptionId: request.modelConfigOptionId ?? modelConfigOptionId,
+                    configOptionOverrides: request.configOptionOverrides ?? probeParams.configOptionOverrides,
                     ...(request.authenticationMethodId ? { authenticationMethodId: request.authenticationMethodId } : {}) });
                 const { normalizeAcpModelsSnapshot } = await import('@/capabilities/probes/agentModelsProbe');
                 const { normalizeAcpModesSnapshot } = await import('@/capabilities/probes/agentModesProbe');
                 return {
-                    models: normalizeAcpModelsSnapshot(controls.models, controls.configOptions)
+                    models: normalizeAcpModelsSnapshot(controls.models, controls.configOptions, request.modelConfigOptionId ?? modelConfigOptionId)
                         ?? (Array.isArray(controls.models) && controls.models.length === 0 ? [] : null),
                     modes: normalizeAcpModesSnapshot(controls.modes, controls.configOptions)
                         ?? (Array.isArray(controls.modes) && controls.modes.length === 0 ? [] : null),
                     configOptions: controls.configOptions,
+                    ...(controls.modelConfigOptionId === undefined ? {} : { modelConfigOptionId: controls.modelConfigOptionId }),
+                    ...(controls.refreshError ? { refreshError: true } : {}),
+                    ...(controls.refreshErrorMessage === undefined ? {} : { refreshErrorMessage: controls.refreshErrorMessage }),
+                    ...(controls.observedAt === undefined ? {} : { observedAt: controls.observedAt }),
                 };
             });
         return Object.freeze({
             ...input,
+            ...(probeParams.configOptionOverrides ? { configOptionOverrides: probeParams.configOptionOverrides } : {}),
             cwd: probeParams.cwd,
             bypassCache: probeParams.bypassCache,
             signal,
@@ -1244,6 +1284,7 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
         catalogs: AcpPreflightDeclaration,
         inspect: (params: Parameters<typeof probeAcpCatalogs>[0]) => Promise<T>,
     ): Promise<T> => {
+        const modelConfigOptionId = await resolveModelConfigOptionId();
         const toolId = catalogs.resolveCommandToolId
             ? resolveSettingsSelectedSystemToolId({
                 commandToolIds: catalogs.commandToolIds ?? [],
@@ -1257,6 +1298,8 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
             toolId ? { toolId, args: catalogs.command.args } : { executable: catalogs.command.executable!, args: catalogs.command.args },
             async (client, signal) => await inspect({
                 client, signal, cwd: context.cwd,
+                configOptionOverrides: context.configOptionOverrides,
+                ...(modelConfigOptionId === undefined ? {} : { modelConfigOptionId }),
                 ...(catalogs.authenticationMethodId ? { authenticationMethodId: catalogs.authenticationMethodId } : {}),
                 ...(catalogs.selectAuthentication ? { selectAuthentication: (initializeResult) => catalogs.selectAuthentication!({ initializeResult, probe: context }) } : {}),
             }),
@@ -1303,6 +1346,7 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
         : Promise.resolve(null);
     return Object.freeze({
         ...(params.resolvePluginSettings ? { resolveProbePluginSettings: params.resolvePluginSettings } : {}),
+        ...projectAgentRuntimeInputCapacityCatalogEntry({ preflightSessionControls: contribution, isCurrent: params.isCurrent }),
         ...(contribution.resolveNativePluginSkillRoots ? { resolveNativePluginSkillRoots: async (
             input: Parameters<NonNullable<AgentPreflightSessionControlsContributionV1['resolveNativePluginSkillRoots']>>[0],
         ) => {
@@ -1312,6 +1356,14 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
             input.signal?.throwIfAborted();
             if (!params.isCurrent()) throw new Error('Agent native skill discovery belongs to a retired generation');
             return roots;
+        } } : {}),
+        ...(contribution.resolveNativeCatalogSettingSources ? { resolveNativeCatalogSettingSources: async (
+            input: Parameters<NonNullable<AgentPreflightSessionControlsContributionV1['resolveNativeCatalogSettingSources']>>[0],
+        ) => {
+            if (!params.isCurrent()) throw new Error('Agent native catalog discovery belongs to a retired generation');
+            const sources = await contribution.resolveNativeCatalogSettingSources!(input);
+            if (!params.isCurrent()) throw new Error('Agent native catalog discovery belongs to a retired generation');
+            return sources;
         } } : {}),
         ...(contribution.resolveNativeSkillDirectories ? { resolveNativeSkillDirectories: async (
             input: Parameters<NonNullable<AgentPreflightSessionControlsContributionV1['resolveNativeSkillDirectories']>>[0],
@@ -1379,10 +1431,14 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
             } : {}),
             ...(acpDeclaration ? {
                 probeModelsRaw: async (probeParams: PreflightSessionControlsProbeParams) => await invoke(async (context) => {
+                    const modelConfigOptionId = await resolveModelConfigOptionId();
                     const { normalizeAcpModelsSnapshot } = await import('@/capabilities/probes/agentModelsProbe');
                     const controls = await withDeclaredAcpPreflight(context, acpDeclaration, probeAcpSessionControls);
-                    return normalizeAcpModelsSnapshot(controls.models, controls.configOptions)
+                    const availableModels = normalizeAcpModelsSnapshot(controls.models, controls.configOptions, modelConfigOptionId)
                         ?? (Array.isArray(controls.models) && controls.models.length === 0 ? [] : null);
+                    return controls.refreshError ? { availableModels: availableModels ?? [], refreshError: true, source: availableModels === null ? 'unavailable' : 'dynamic',
+                        ...(controls.observedAt === undefined ? {} : { observedAt: controls.observedAt }),
+                        ...(controls.refreshErrorMessage === undefined ? {} : { refreshErrorMessage: controls.refreshErrorMessage }) } : availableModels;
                 }, probeParams),
                 probeModesRaw: async (probeParams: PreflightSessionControlsProbeParams) => await invoke(async (context) => {
                     const { normalizeAcpModesSnapshot } = await import('@/capabilities/probes/agentModesProbe');
@@ -1390,9 +1446,13 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
                     return normalizeAcpModesSnapshot(controls.modes, controls.configOptions)
                         ?? (Array.isArray(controls.modes) && controls.modes.length === 0 ? [] : null);
                 }, probeParams),
-                probeConfigOptionsRaw: async (probeParams: PreflightSessionControlsProbeParams) => await invoke(async (context) => (
-                    await withDeclaredAcpPreflight(context, acpDeclaration, probeAcpSessionControls)
-                )?.configOptions ?? null, probeParams),
+                probeConfigOptionsRaw: async (probeParams: PreflightSessionControlsProbeParams) => await invoke(async (context) => {
+                    const controls = await withDeclaredAcpPreflight(context, acpDeclaration, probeAcpSessionControls);
+                    return controls.configOptions === null ? null : { configOptions: controls.configOptions,
+                        ...(controls.refreshError ? { refreshError: true } : {}),
+                        ...(controls.refreshErrorMessage === undefined ? {} : { refreshErrorMessage: controls.refreshErrorMessage }),
+                        ...(controls.modelConfigOptionId === undefined ? {} : { modelConfigOptionId: controls.modelConfigOptionId }) };
+                }, probeParams),
             } : {}),
             ...(contribution.models
                 ? {
@@ -1551,6 +1611,27 @@ export function projectAgentCliSessionCommandCatalogEntry(params: Readonly<{
         params.agentId,
     );
     const isCurrent = params.isCurrent ?? (() => true);
+    const resolveSessionRuntimePreferences: NonNullable<ResolvedCatalogEntry['resolveSessionRuntimePreferences']> | null = cliSessionCommand.buildSessionOptions
+        ? async (input: SessionRuntimePreferencesInput) => {
+            if (!isCurrent()) return {};
+            if (!params.resolvePluginSettings) {
+                const result = normalizeAgentCliSessionCommandOptions(
+                    await cliSessionCommand.buildSessionOptions!({
+                        ...input,
+                        pluginSettings: Object.freeze({}),
+                    }),
+                );
+                return isCurrent() ? result : {};
+            }
+            const result = normalizeAgentCliSessionCommandOptions(
+                await cliSessionCommand.buildSessionOptions!({
+                    ...input,
+                    pluginSettings: await params.resolvePluginSettings() ?? Object.freeze({}),
+                }),
+            );
+            return isCurrent() ? result : {};
+        }
+        : null;
     return Object.freeze({
         getCliCommandHandler: createCliSessionCommandHandler(
             cliSessionCommand,
@@ -1558,32 +1639,11 @@ export function projectAgentCliSessionCommandCatalogEntry(params: Readonly<{
                 cliSubcommand: params.agentId,
                 runtimeAuthorityAgentId: params.agentId,
             },
+            resolveSessionRuntimePreferences,
             {},
             isCurrent,
         ),
-        ...(cliSessionCommand.buildSessionOptions
-            ? {
-                resolveSessionRuntimePreferences: async (input: SessionRuntimePreferencesInput) => {
-                    if (!isCurrent()) return {};
-                    if (!params.resolvePluginSettings) {
-                        const result = normalizeAgentCliSessionCommandOptions(
-                            await cliSessionCommand.buildSessionOptions!({
-                                ...input,
-                                pluginSettings: Object.freeze({}),
-                            }),
-                        );
-                        return isCurrent() ? result : {};
-                    }
-                    const result = normalizeAgentCliSessionCommandOptions(
-                        await cliSessionCommand.buildSessionOptions!({
-                            ...input,
-                            pluginSettings: await params.resolvePluginSettings() ?? Object.freeze({}),
-                        }),
-                    );
-                    return isCurrent() ? result : {};
-                },
-            }
-            : {}),
+        ...(resolveSessionRuntimePreferences ? { resolveSessionRuntimePreferences } : {}),
     });
 }
 
@@ -1593,6 +1653,7 @@ export function createCliSessionCommandHandler(
         cliSubcommand: string;
         runtimeAuthorityAgentId: string;
     }>,
+    resolveSessionRuntimePreferences: NonNullable<ResolvedCatalogEntry['resolveSessionRuntimePreferences']> | null,
     deps: CliSessionCommandHandlerDeps = {},
     isCurrent: () => boolean = () => true,
 ) {
@@ -1628,6 +1689,7 @@ export function createCliSessionCommandHandler(
             if (!isCurrent()) return;
             await runBackendSessionCliCommand({
                 context,
+                resolveSessionRuntimePreferences,
                 backendIdForSessionRuntime: cliSessionCommand.sessionRuntimeId,
                 runtimeAuthorityAgentId: identity.runtimeAuthorityAgentId,
                 isExplicitCliSubcommand: context.args[0] === identity.cliSubcommand,
@@ -1677,8 +1739,6 @@ function createProviderScopedStableExecService(params: Readonly<{
     const systemTools = createProviderScopedSystemToolResolver(params);
     return createStablePluginExecService({
         ...(params.agentIsolation ? { agentIsolation: params.agentIsolation } : {}),
-
-
         environment: Object.freeze({}),
         signal: params.signal ?? new AbortController().signal,
         isOccurrenceCurrent: params.isOccurrenceCurrent ?? (() => true),

@@ -5,7 +5,7 @@ import {
 } from '@/rpc/handlers/sessionLifecycle';
 import { registerSessionAgentTransitionRpcHandlers } from '@/rpc/handlers/sessionAgentTransition';
 import { registerMachineSessionServerStartRpcHandler } from '@/rpc/handlers/sessionServerStartMachineBinding';
-import type { SessionSpawnDirectTargetTransport } from '@/session/actions/createCliActionDeps';
+import type { SessionSpawnDirectTargetTransport, MachineActionDirectTargetTransport } from '@/session/actions/createCliActionDeps';
 import { MACHINE_SESSION_LIFECYCLE_RPC_SCOPES } from '@/rpc/handlers/actionSpecRpcRegistration';
 import {
   createMachineSessionLifecycleActionExecutor,
@@ -36,6 +36,16 @@ export function registerMachineSessionRpcHandlers(params: Readonly<{
     ...(params.deps?.currentServerId ? { serverId: params.deps.currentServerId } : {}),
     ...(params.deps?.awaitAgentSessionOpen ? { awaitAgentSessionOpen: params.deps.awaitAgentSessionOpen } : {}),
   });
+  const machineId = params.deps?.currentMachineId ?? params.deps?.sessionServerStart?.machineId;
+  const machineActionDirectTargetTransport: MachineActionDirectTargetTransport | undefined = machineId ? {
+    machineId,
+    invoke: (method, request, options) => params.rpcHandlerManager.invokeLocal(method, request, options),
+  } : undefined;
+  const preparationTransport = {
+    ...(machineActionDirectTargetTransport ? { machineActionDirectTargetTransport } : {}),
+    ...(params.deps?.sessionCreationInstallation
+      ? { sessionCreationInstallation: params.deps.sessionCreationInstallation } : {}),
+  };
   registerSessionCreationTargetPreparationRpc({
     rpcHandlerManager: params.rpcHandlerManager,
     ...(params.deps?.filesystemEffectAdmission ? {
@@ -59,6 +69,7 @@ export function registerMachineSessionRpcHandlers(params: Readonly<{
   const sessionSpawnDirectTargetTransport = params.deps?.sessionServerStart
     ? registerMachineSessionServerStartRpcHandler(params.rpcHandlerManager, {
       ...params.deps.sessionServerStart,
+      ...preparationTransport,
       spawnLifecycleHandler,
       ...(params.handlers.resolveSpawnSessionByNonce
         ? { resolveSpawnSessionByNonce: params.handlers.resolveSpawnSessionByNonce }
@@ -67,6 +78,7 @@ export function registerMachineSessionRpcHandlers(params: Readonly<{
     : undefined;
   registerSessionSpawnNewRpcHandlers({
     rpcHandlerManager: params.rpcHandlerManager,
+    ...preparationTransport,
     ...(params.deps?.currentServerId ? { requesterBootstrapBoundary: {
       serverId: params.deps.currentServerId, serverHttpBaseUrl: resolveServerHttpBaseUrl(),
       happyHomeDir: configuration.happyHomeDir, spawnLifecycleHandler,
@@ -93,6 +105,7 @@ export function registerMachineSessionRpcHandlers(params: Readonly<{
         stopSession: params.handlers.stopSession,
       },
       deps: {
+        ...(params.deps?.currentMachineId ? { currentMachineId: params.deps.currentMachineId } : {}),
         ...(params.deps?.runReplaySummaryForDialog
           ? { runReplaySummaryForDialog: params.deps.runReplaySummaryForDialog }
         : {}),

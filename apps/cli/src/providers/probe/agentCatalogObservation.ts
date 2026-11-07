@@ -1,4 +1,6 @@
-import { applyProviderCatalogRefreshV1, mergeProviderCatalogV1 } from '@happier-dev/protocol/providers/catalog/merge';
+import type { NativeCatalogTarget } from './nativeCatalogCredential';
+import { applyProviderCatalogRefreshV1 } from '@happier-dev/protocol/providers/catalog/merge';
+import { projectAgentCatalogObservationSnapshot } from './agentCatalogSnapshot';
 import { createProviderProbeRequestFingerprintV1 } from '@happier-dev/protocol/providers/securityFingerprintsV1';
 import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 import type { OAuthBearerLeaseV1, PluginContributionIdentityV1, ProviderContributionV1, ProviderCatalogTransitionStateV1, ProviderModelDescriptorV1, QualifiedConnectedAccountPurposeBindingV1, QualifiedConnectedAccountPurposeV1, QualifiedConnectedAccountRequestAuthUseV1 } from '@happier-dev/protocol';
@@ -49,8 +51,10 @@ export type AgentProviderCatalogObservationInput = Readonly<{
   requestAuthUse: QualifiedConnectedAccountRequestAuthUseV1;
   provider: ProviderContributionV1;
   trigger: ProviderCatalogRefreshTrigger;
+  currentOnly?: boolean;
   isCurrent(): boolean;
   signal?: AbortSignal;
+  wallDeadlineAtMs?: number;
 }>;
 
 export type AgentProviderNativeCatalogObservationInput = Omit<
@@ -58,18 +62,13 @@ export type AgentProviderNativeCatalogObservationInput = Omit<
   'binding'
 > & Readonly<{
   service: PluginContributionIdentityV1;
-  credential: Readonly<{
-    accessToken: string;
-    credentialFingerprint: string;
-  }>;
+  target: NativeCatalogTarget;
 }>;
 
 export type AgentProviderCatalogObservationService = Readonly<{
   observe(input: AgentProviderCatalogObservationInput): Promise<AgentProviderCatalogObservationResult>;
   observeNative(input: AgentProviderNativeCatalogObservationInput): Promise<AgentProviderCatalogObservationResult>;
 }>;
-
-const MAX_OBSERVATIONS = 64;
 
 function contributionKey(identity: PluginContributionIdentityV1): string {
   return JSON.stringify([identity.pluginId, identity.localId]);
@@ -96,10 +95,6 @@ type AgentCatalogScheduledResult =
       status: 'error';
       completedKey: string;
       error?: Readonly<{ retryAfterMs?: number }>;
-    }>
-  | Readonly<{
-      status: 'local_unavailable';
-      completedKey: string;
     }>;
 
 function requireSingleStaticProbeCatalog(provider: ProviderContributionV1): StaticProbeCatalog {
@@ -110,12 +105,7 @@ function requireSingleStaticProbeCatalog(provider: ProviderContributionV1): Stat
 }
 
 function staticResult(catalog: StaticProbeCatalog): AgentProviderCatalogObservationResult {
-  return {
-    source: 'static',
-    refreshError: true,
-    models: catalog.staticModels.map((model) => ({ ...model })),
-    stale: false,
-  };
+  return projectAgentCatalogObservationSnapshot(catalog);
 }
 
 function schedulerError(error: unknown): Readonly<{ retryAfterMs?: number }> | undefined {
@@ -142,18 +132,13 @@ export function createAgentProviderCatalogObservationService(dependencies: Reado
   type ObservationDependencies = typeof dependencies;
 
   const remember = (identity: string, transition: ProviderCatalogTransitionStateV1): void => {
-    transitionByIdentity.delete(identity);
     transitionByIdentity.set(identity, transition);
-    while (transitionByIdentity.size > MAX_OBSERVATIONS) {
-      const oldest = transitionByIdentity.keys().next().value as string | undefined;
-      if (oldest === undefined) break;
-      transitionByIdentity.delete(oldest);
-    }
   };
 
   const observeWithDependencies = async (
     runtimeDependencies: ObservationDependencies,
     input: AgentProviderCatalogObservationInput,
+    nativeTarget?: NativeCatalogTarget,
   ): Promise<AgentProviderCatalogObservationResult> => {
       const catalog = requireSingleStaticProbeCatalog(input.provider);
       let lease: ReturnType<ConnectedAccountPurposeBindingOwner['activatePurposeBindings']> | null = null;
@@ -167,7 +152,7 @@ export function createAgentProviderCatalogObservationService(dependencies: Reado
         if (!current) throw new ProviderProbeCancelledError();
       };
       const assertCurrent = (): void => {
-        if (input.signal?.aborted) throw new ProviderProbeCancelledError();
+        if (input.signal?.aborted || (input.wallDeadlineAtMs !== undefined && Date.now() >= input.wallDeadlineAtMs)) throw new ProviderProbeCancelledError();
         assertInputCurrent();
       };
       const assertLeaseCurrent = (
@@ -194,8 +179,14 @@ export function createAgentProviderCatalogObservationService(dependencies: Reado
       const probe = catalog.probes[0];
       const endpoint = input.provider.endpointTemplates.find((candidate) => candidate.id === probe.endpointTemplateId);
       if (!endpoint) throw new TypeError('agent_catalog_observation_endpoint_missing');
-      const endpointUrl = endpoint.baseUrl;
+      const endpointUrl = nativeTarget?.endpointUrl ?? endpoint.baseUrl;
       if (!endpointUrl) return staticResult(catalog);
+      const probePath = nativeTarget ? (() => {
+        const base = new URL(endpointUrl);
+        if (!base.pathname.endsWith('/')) base.pathname += '/';
+        const request = new URL(probe.path.replace(/^\/+/, ''), base);
+        return request.pathname + request.search;
+      })() : probe.path;
       const publicHeaders = endpoint.publicHeaders ?? Object.freeze({});
       let redaction: Pick<
         ProviderRedactionLease,
@@ -236,7 +227,7 @@ export function createAgentProviderCatalogObservationService(dependencies: Reado
         const requestFingerprint = createProviderProbeRequestFingerprintV1({
           method: 'GET',
           endpointUrl,
-          path: probe.path,
+          path: probePath,
           parser: probe.parser,
           publicHeaders,
         });
@@ -247,6 +238,7 @@ export function createAgentProviderCatalogObservationService(dependencies: Reado
           input.purpose.purpose,
           requestFingerprint,
           requestAuthMaterializationKey(input.requestAuthUse),
+          nativeTarget?.headerBindings.map(({ name, format }) => [name.toLowerCase(), format]).sort() ?? null,
           contributionKey(current.credentialContext.account.service),
           current.credentialContext.account.accountId,
           current.credentialContext.credentialRevision,
@@ -261,13 +253,10 @@ export function createAgentProviderCatalogObservationService(dependencies: Reado
         lease.dispose();
         lease = null;
         assertCurrent();
+        if (input.currentOnly) return projectAgentCatalogObservationSnapshot(catalog, transitionByIdentity.get(scheduledIdentity));
         const schedulerWaiter = {
           unavailable: (): AgentCatalogScheduledResult => ({
             status: 'error',
-            completedKey: scheduledIdentity,
-          }),
-          localCapacityUnavailable: (): AgentCatalogScheduledResult => ({
-            status: 'local_unavailable',
             completedKey: scheduledIdentity,
           }),
           ...(input.signal ? { signal: input.signal } : {}),
@@ -276,7 +265,7 @@ export function createAgentProviderCatalogObservationService(dependencies: Reado
         const scheduled = await scheduler.runCatalog(
           scheduledIdentity,
           input.trigger,
-          async (): Promise<AgentCatalogScheduledResult> => {
+          async (signal): Promise<AgentCatalogScheduledResult> => {
             let operationCurrent = true;
             const sharedLease = activateLease(() => operationCurrent);
             let sharedRedaction: Pick<
@@ -302,17 +291,22 @@ export function createAgentProviderCatalogObservationService(dependencies: Reado
               const dispatch = async (current: OAuthBearerLeaseV1) => {
                 assertSharedWorkCurrent();
                 const result = await runtimeDependencies.client.getCatalog({
+                  signal,
+                  // Shared work outlives an individual waiter; the scheduler cancels it when no callers remain.
                   endpointUrl,
-                  path: probe.path,
+                  path: probePath,
                   parser: probe.parser,
                   publicHeaders,
                   credentialPolicy: 'required',
                   resolveCredential: async () => ({
-                    credential: {
-                      kind: 'httpHeader',
-                      name: 'authorization',
-                      value: `Bearer ${current.accessToken}`,
-                    },
+                    credential: (() => {
+                      const bindings = nativeTarget?.headerBindings ?? [{ name: 'authorization', format: 'bearer' as const }];
+                      const credentials = bindings.map(binding => ({ kind: 'httpHeader' as const, name: binding.name,
+                        value: binding.format === 'bearer' ? `Bearer ${current.accessToken}` : current.accessToken }));
+                      const first = credentials[0];
+                      if (!first) throw new TypeError('native_catalog_header_binding_missing');
+                      return { ...first, additionalCredentials: credentials.slice(1) };
+                    })(),
                     containsSensitiveValue: (value) =>
                       sharedRedaction?.containsSensitiveValue(value) ?? false,
                     close: () => {},
@@ -402,34 +396,16 @@ export function createAgentProviderCatalogObservationService(dependencies: Reado
         const effectiveIdentity = scheduled.completedKey;
         const previous = transitionByIdentity.get(effectiveIdentity)
           ?? { snapshot: null, staleProbeModels: [] };
-        // Local admission refusal means no Provider request occurred. Keep
-        // the canonical observation unchanged instead of fabricating a failed
-        // refresh and marking a valid retained catalog stale.
-        const transition = scheduled.status === 'local_unavailable'
-          ? previous
-          : applyProviderCatalogRefreshV1(
+        const transition = applyProviderCatalogRefreshV1(
               previous,
               scheduled.status === 'success'
                 ? { status: 'success', observedAt: scheduled.observedAt, models: scheduled.result.catalog.models }
                 : { status: 'failed', failedAt: now() },
             );
         assertCurrent();
-        if (scheduled.status !== 'local_unavailable') remember(effectiveIdentity, transition);
-        const merged = mergeProviderCatalogV1({
-          staticModels: catalog.staticModels,
-          manualModels: [],
-          probeState: transition,
-          membershipPolicy: catalog.membershipPolicy,
-        });
+        remember(effectiveIdentity, transition);
         assertCurrent();
-        if (!transition.snapshot) return staticResult(catalog);
-        return {
-          source: 'dynamic',
-          stale: transition.snapshot.stale,
-          observedAt: transition.snapshot.observedAt,
-          refreshError: scheduled.status !== 'success',
-          models: merged.rows.map((row) => ({ ...row.descriptor })),
-        };
+        return projectAgentCatalogObservationSnapshot(catalog, transition, scheduled.status !== 'success');
       } catch (error) {
         if (error instanceof ProviderProbeCancelledError) throw error;
         assertCurrent();
@@ -455,18 +431,18 @@ export function createAgentProviderCatalogObservationService(dependencies: Reado
           account: Object.freeze({ service: input.service, accountId: 'native' }),
         }),
       });
-      const credentialRevision = `csr_${input.credential.credentialFingerprint.slice('sha256:'.length, 'sha256:'.length + 32)}`;
+      const credentialRevision = `csr_${input.target.credentialFingerprint.slice('sha256:'.length, 'sha256:'.length + 32)}`;
       const nativeDependencies: ObservationDependencies = {
         ...dependencies,
         requestAuth: {
           lookupRequestAuth: async ({ subject }) => {
-            subject.registerRedaction([input.credential.accessToken]);
+            subject.registerRedaction([input.target.credentialValue]);
             return Object.freeze({
-              accessToken: input.credential.accessToken,
+              accessToken: input.target.credentialValue,
               credentialContext: Object.freeze({
                 account: Object.freeze({ service: input.service, accountId: 'native' }),
                 credentialRevision,
-                failingAccessTokenFingerprint: input.credential.credentialFingerprint,
+                failingAccessTokenFingerprint: input.target.credentialFingerprint,
               }),
             });
           },
@@ -475,8 +451,12 @@ export function createAgentProviderCatalogObservationService(dependencies: Reado
       };
       return await observeWithDependencies(nativeDependencies, {
         ...input,
+        requestAuthUse: { purpose: input.purpose, materialization: {
+          kind: 'httpHeaders', origin: new URL(input.target.endpointUrl).origin,
+          headerNames: input.target.headerBindings.map(binding => binding.name),
+        } },
         binding: nativeBinding,
-      });
+      }, input.target);
     },
   });
 }

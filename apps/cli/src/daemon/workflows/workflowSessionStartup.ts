@@ -17,6 +17,8 @@ import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessi
 import { enrichCliActionApprovalContext } from '@/session/actions/enrichCliActionApprovalContext';
 import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { prepareSessionCreationTarget } from '@/session/creation/prepareSessionCreationTarget';
+import type { MachineActionDirectTargetTransport } from '@/session/actions/createCliActionDeps';
+import type { CurrentMachineInstallation } from '@/daemon/identity/currentMachineInstallation';
 
 /** The original startup operation, rather than its Workflow observer, owns launch custody. */
 export async function prepareWorkflowSessionRequester(
@@ -45,6 +47,8 @@ export type WorkflowSessionStartupHost = Readonly<{
   machineId: string;
   observeExecution: HostActionOperationRuntime['observeExecution'];
   rpcContext: ActionOperationRpcContext;
+  machineActionDirectTargetTransport?: MachineActionDirectTargetTransport;
+  sessionCreationInstallation?: Pick<CurrentMachineInstallation['identity'], 'installationId' | 'privateKey'>;
   transport(operation: Parameters<Parameters<HostActionOperationRuntime['observeExecution']>[0]['execute']>[0]): DirectSpawnedSessionTransport;
   observeOperation(operation: ActionCompletionOperation, options: Readonly<{
     waitForTerminal: boolean; includeSetupReview: boolean; signal?: AbortSignal;
@@ -169,6 +173,12 @@ export async function runObservedWorkflowSessionStartup(
               token: input.request.credentials.token, sessionId: context.defaultSessionId ?? 'cli',
               serverId: host.serverId, ...(context.serverIdentityId ? { serverIdentityId: context.serverIdentityId } : {}),
               serverHttpBaseUrl, mode: 'plain', ctx: null,
+              ...(host.machineActionDirectTargetTransport
+                ? { machineActionDirectTargetTransport: host.machineActionDirectTargetTransport } : {}),
+              ...(host.sessionCreationInstallation ? {
+                externalActionMachineInstallationId: host.sessionCreationInstallation.installationId,
+                externalActionMachineRequestPrivateKey: host.sessionCreationInstallation.privateKey,
+              } : {}),
               actionsSettingsProvider: createActionSettingsProvider({
                 scopeKey: resolveAccountSettingsScopeKey(input.request.credentials), allowEnvironmentOverride: false,
               }),

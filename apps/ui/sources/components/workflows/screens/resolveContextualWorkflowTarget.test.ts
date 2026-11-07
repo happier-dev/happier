@@ -31,14 +31,14 @@ describe('resolveContextualWorkflowProjectTarget', () => {
             machines: [machine('machine-a'), machine('machine-b')],
             recentMachinePaths: [{ machineId: 'machine-b', path: '/work/repo' }],
             preferredMachineId: 'machine-a',
-        })).toEqual({ machineId: 'machine-a', directory: '/home/machine-a' });
+        })).toEqual({ machineId: 'machine-a', directory: '~' });
     });
 
     it('falls back to the machine home directory when nothing recent is known', () => {
         expect(resolveContextualWorkflowProjectTarget({
             machines: [machine('machine-a')],
             recentMachinePaths: [],
-        })).toEqual({ machineId: 'machine-a', directory: '/home/machine-a' });
+        })).toEqual({ machineId: 'machine-a', directory: '~' });
     });
 
     it('stays unresolved rather than inventing a folder for a machine it knows nothing about', () => {

@@ -4085,6 +4085,8 @@ export async function startDaemon(
                     const handler = createMachineSessionSpawnRpcHandler({ handlers: { spawnSession, stopSession },
                       serverId: stamp.serverId, awaitAgentSessionOpen });
                     return await runObservedWorkflowSessionStartup(request, { serverId: stamp.serverId, machineId: input.machineId,
+                      machineActionDirectTargetTransport: input.machineActionDirectTargetTransport,
+                      ...(installation ? { sessionCreationInstallation: installation } : {}),
                       observeExecution: observed => client.observeActionExecution(observed),
                       rpcContext: prepared ? { requesterSessionBootstrap: prepared.admitted } : {},
                       transport: operation => ({

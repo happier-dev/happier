@@ -27,9 +27,21 @@ export const CLAUDE_AGENT_MODEL_CONFIG: AgentModelConfig = Object.freeze({
         providerLocalId: 'anthropic',
         purpose: 'model_upstream',
         connectedServiceId: 'claude-subscription',
-        nativeBearer: {
-            fileId: '.credentials.json',
-            jsonPath: ['claudeAiOauth', 'accessToken'],
+        nativeTarget: {
+            endpointEnvironmentVariable: 'ANTHROPIC_BASE_URL',
+            credentialSources: [
+                { kind: 'environment', variable: 'ANTHROPIC_AUTH_TOKEN', headers: [{ name: 'authorization', format: 'bearer' }] },
+                { kind: 'environment', variable: 'ANTHROPIC_OAUTH_TOKEN', headers: [{ name: 'authorization', format: 'bearer' }] },
+                { kind: 'environment', variable: 'ANTHROPIC_API_KEY', headers: [{ name: 'x-api-key', format: 'raw' }] },
+                { kind: 'jsonCommand', fileId: 'settings.json', jsonPath: ['apiKeyHelper'], requiredSettingSource: 'user',
+                    // Claude Code's documented apiKeyHelper token contract, including gateways.
+                    // https://code.claude.com/docs/en/errors#your-apikeyhelper-script-is-failing
+                    maxCredentialLength: 16_384,
+                    headers: [{ name: 'x-api-key', format: 'raw' }, { name: 'authorization', format: 'bearer' }] },
+                { kind: 'environment', variable: 'CLAUDE_CODE_OAUTH_TOKEN', headers: [{ name: 'authorization', format: 'bearer' }] },
+                { kind: 'jsonFile', fileId: '.credentials.json', jsonPath: ['claudeAiOauth', 'accessToken'], defaultEndpointOnly: true,
+                    headers: [{ name: 'authorization', format: 'bearer' }] },
+            ],
         },
     },
     defaultMode: 'default',

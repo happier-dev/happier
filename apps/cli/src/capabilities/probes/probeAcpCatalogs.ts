@@ -1,9 +1,23 @@
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type { AgentPreflightJsonRpcRequestClientV1 } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { ProbedCatalogOptionValue } from '@happier-dev/protocol/capabilities';
+import { normalizeSessionConfigOptionValue, readSessionConfigOptionsFromSessionResponse, readSessionModelStateFromConfigOptions, readSessionModelStateFromSessionResponse, resolveSessionModelConfigOption, type SessionConfigOption } from '@/agent/acp/sessionSettings/sessionSettingsState';
+import type { AcpProbeBackend } from '@/agent/acp/runtime/acpRuntimeBackendContract';
+import { startAcpProbeSession } from './startAcpProbeSession';
 
 export type AcpCatalogsProbeResult = Readonly<{
   commands: unknown[] | null;
   skills: unknown[] | null;
+}>;
+
+type AcpSessionControlsProbeResult = Readonly<{
+  models: unknown;
+  modes: unknown;
+  configOptions: unknown;
+  modelConfigOptionId?: string;
+  refreshError?: boolean;
+  refreshErrorMessage?: string;
+  observedAt?: number;
 }>;
 
 function asRecord(value: unknown): Readonly<Record<string, unknown>> | null {
@@ -17,6 +31,8 @@ type AcpPreflightSessionParams = Readonly<{
   cwd: string;
   signal: AbortSignal;
   authenticationMethodId?: string;
+  modelConfigOptionId?: string;
+  configOptionOverrides?: Readonly<Record<string, ProbedCatalogOptionValue>>;
   selectAuthentication?: (initializeResult: JsonValue) => Readonly<{ methodId: string; metadata?: JsonValue }> | null;
 }>;
 
@@ -100,15 +116,118 @@ export async function probeAcpCatalogs(params: AcpPreflightSessionParams): Promi
   }));
 }
 
-/** Session controls are available at session/new and do not require a command update. */
-export async function probeAcpSessionControls(params: AcpPreflightSessionParams): Promise<Readonly<{
-  models: unknown;
-  modes: unknown;
-  configOptions: unknown;
-}>> {
-  return await withAcpPreflightSession(params, (session) => ({
-    models: asRecord(session.models)?.availableModels ?? null,
-    modes: asRecord(session.modes)?.availableModes ?? null,
-    configOptions: session.configOptions ?? null,
-  }));
+async function applyStandaloneConfigOptionOverrides(params: Readonly<{
+  configOptions: ReadonlyArray<SessionConfigOption> | null;
+  modelConfigOptionId?: string | null;
+  configOptionOverrides?: Readonly<Record<string, ProbedCatalogOptionValue>>;
+  signal?: AbortSignal;
+  setOption: (id: string, value: string) => Promise<unknown>;
+  onConfigOptionsAccepted?: (configOptions: ReadonlyArray<SessionConfigOption>) => void;
+}>) {
+  let configOptions = params.configOptions;
+  let applied = false;
+  let observedAt: number | undefined;
+  const attempted = new Set<string>();
+  const overrides = params.configOptionOverrides;
+  while (configOptions && overrides) {
+    params.signal?.throwIfAborted();
+    const selector = params.modelConfigOptionId === null ? null : resolveSessionModelConfigOption(configOptions, params.modelConfigOptionId);
+    const modelState = params.modelConfigOptionId === null ? null : readSessionModelStateFromConfigOptions({ configOptions }, params.modelConfigOptionId);
+    const modelScopedIds = new Set(modelState?.availableModels.flatMap((model) => model.modelOptions?.map((option) => option.id) ?? []) ?? []);
+    // Re-read the accepted catalog after each setter. A scope change can remove
+    // controls and choices; stale model-specific draft values are never replayed.
+    const option = configOptions.find((candidate) => !attempted.has(candidate.id)
+      && candidate.id !== selector?.id && !modelScopedIds.has(candidate.id)
+      && Object.hasOwn(overrides, candidate.id));
+    if (!option) break;
+    attempted.add(option.id);
+    const value = normalizeSessionConfigOptionValue(overrides[option.id]);
+    if (value === option.currentValue) continue;
+    if (value === null) return { configOptions, applied, observedAt, refreshError: true as const };
+    try {
+      const next = readSessionConfigOptionsFromSessionResponse(await params.setOption(option.id, value));
+      if (next === null) return { configOptions, applied, observedAt, refreshError: true as const };
+      configOptions = next;
+      applied = true;
+      observedAt = Date.now();
+      params.onConfigOptionsAccepted?.(next);
+    } catch (error) {
+      params.signal?.throwIfAborted();
+      return { configOptions, applied, observedAt, refreshError: true as const,
+        ...(error instanceof Error ? { refreshErrorMessage: error.message } : {}) };
+    }
+  }
+  return { configOptions, applied, observedAt };
+}
+
+/** Configured ACP uses the same draft scope projection through its owning backend. */
+export async function probeAcpSessionControlsFromBackend(params: Readonly<{
+  backend: AcpProbeBackend;
+  timeoutMs: number;
+  signal?: AbortSignal;
+  configOptionOverrides?: Readonly<Record<string, ProbedCatalogOptionValue>>;
+}>): Promise<AcpSessionControlsProbeResult> {
+  const { sessionId } = await startAcpProbeSession(params);
+  let modelCatalogObserved = Array.isArray(params.backend.getSessionModelState?.()?.availableModels);
+  const { configOptions, applied, observedAt, refreshError, refreshErrorMessage } = await applyStandaloneConfigOptionOverrides({
+    ...params, configOptions: readSessionConfigOptionsFromSessionResponse({ configOptions: params.backend.getSessionConfigOptionsState?.() }),
+    modelConfigOptionId: params.backend.getSessionModelConfigOptionId?.() ?? null,
+    setOption: async (configId, value) => {
+      if (!params.backend.setSessionConfigOption) throw new Error('ACP backend does not support configuration changes');
+      await params.backend.setSessionConfigOption(sessionId, configId, value);
+      if (Array.isArray(params.backend.getSessionModelState?.()?.availableModels)) modelCatalogObserved = true;
+      return { configOptions: params.backend.getSessionConfigOptionsState?.() };
+    },
+  });
+  const modelConfigOptionId = params.backend.getSessionModelConfigOptionId?.() ?? undefined;
+  return {
+    // The backend remains the authority. A lost previously observed model state
+    // after an accepted setter is a withdrawal, not an unobserved catalog.
+    models: params.backend.getSessionModelState?.()?.availableModels ?? (applied && modelCatalogObserved ? [] : null),
+    modes: params.backend.getSessionModeState?.()?.availableModes ?? null,
+    configOptions,
+    ...(modelConfigOptionId === undefined ? {} : { modelConfigOptionId }),
+    ...(refreshError ? { refreshError } : {}),
+    ...(refreshErrorMessage === undefined ? {} : { refreshErrorMessage }),
+    ...(observedAt === undefined ? {} : { observedAt }),
+  };
+}
+
+/** Session controls require no command update; draft scopes reuse this temporary session. */
+export async function probeAcpSessionControls(params: AcpPreflightSessionParams): Promise<AcpSessionControlsProbeResult> {
+  return await withAcpPreflightSession(params, async (session) => {
+    const initialConfigOptions = readSessionConfigOptionsFromSessionResponse(session);
+    const legacyModelState = readSessionModelStateFromSessionResponse(session);
+    const configModelState = readSessionModelStateFromConfigOptions({ configOptions: initialConfigOptions }, params.modelConfigOptionId);
+    let models: unknown = legacyModelState?.availableModels ?? configModelState?.availableModels ?? asRecord(session.models)?.availableModels ?? null;
+    let modelsDerivedFromConfigOptions = legacyModelState === null && configModelState !== null;
+    const { configOptions, applied, observedAt, refreshError, refreshErrorMessage } = await applyStandaloneConfigOptionOverrides({
+      ...params, configOptions: initialConfigOptions,
+      onConfigOptionsAccepted: (next) => {
+        const state = readSessionModelStateFromConfigOptions({ configOptions: next }, params.modelConfigOptionId);
+        if (state) {
+          models = state.availableModels;
+          modelsDerivedFromConfigOptions = true;
+        } else if (modelsDerivedFromConfigOptions) {
+          models = [];
+          modelsDerivedFromConfigOptions = false;
+        }
+      },
+      setOption: async (configId, value) => await params.client.request('session/set_config_option', {
+        sessionId: session.sessionId as string, configId, value,
+      }),
+    });
+    const modelConfigOptionId = configOptions ? resolveSessionModelConfigOption(configOptions, params.modelConfigOptionId)?.id : undefined;
+    return {
+      // Config snapshots replace derived models; independently reported legacy
+      // models retain authority until a config selector actually owns the fact.
+      models: applied ? models : asRecord(session.models)?.availableModels ?? null,
+      modes: asRecord(session.modes)?.availableModes ?? null,
+      configOptions,
+      ...(modelConfigOptionId === undefined ? {} : { modelConfigOptionId }),
+      ...(refreshError ? { refreshError } : {}),
+      ...(refreshErrorMessage === undefined ? {} : { refreshErrorMessage }),
+      ...(observedAt === undefined ? {} : { observedAt }),
+    };
+  });
 }

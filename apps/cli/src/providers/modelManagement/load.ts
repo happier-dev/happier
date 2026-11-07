@@ -4,7 +4,6 @@ import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import type { AssessedProviderEndpoint, ProviderErrorV1, ProviderModelLoadDescriptorV1, ProviderModelLoadStateV1 } from '@happier-dev/protocol';
 
 import {
-  PROVIDER_MODEL_LOAD_HTTP_LIMITS,
   ProviderProbeCancelledError,
   ProviderProbeClientError,
   type ProviderModelLoadPostRequest,
@@ -21,9 +20,6 @@ import {
 } from '../operationLifetime';
 import type { ProviderContributionRegistryView } from '../registry';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
-
-export const PROVIDER_MODEL_LOAD_WALL_TIME_MS = PROVIDER_MODEL_LOAD_HTTP_LIMITS.wallTimeMs;
-export const PROVIDER_MODEL_LOAD_MAX_DECODED_BODY_BYTES = PROVIDER_MODEL_LOAD_HTTP_LIMITS.maxDecodedBodyBytes;
 
 export class ProviderModelLoadCancelledError extends Error {
   constructor() {
@@ -61,7 +57,7 @@ export type ProviderModelLoadAuthorization<TTicket, TCredentialRef> = Readonly<{
   credentialRef: TCredentialRef | null;
   /**
    * Host-private registry generation selected while authorizing this load.
-   * The service carries it through every later revalidation and refresh so one
+   * The service carries it through catalog reads and refresh so one
    * operation cannot combine facts from two plugin generations.
    */
   operationScope?: Pick<ProviderModelLoadOperationScope, 'registry'>;
@@ -109,12 +105,10 @@ export type ProviderModelLoadCatalogPort<TTicket> = Readonly<{
     ticket: TTicket;
     scope: ProviderModelLoadOperationScope;
   }>): Promise<ProviderCurrentModelObservation>;
-  /** Forces a network-backed refresh; it must not satisfy from a TTL cache. */
+  /** Reads a fresh catalog after this load, not an older in-flight read. */
   refresh(input: Readonly<{
     connectionId: string;
     machineId: string;
-    modelId: string;
-    refreshFrontier: string;
     ticket: TTicket;
     signal: AbortSignal;
     scope: ProviderModelLoadOperationScope;
@@ -126,7 +120,7 @@ export type ProviderModelLoadCatalogPort<TTicket> = Readonly<{
 }>;
 
 export type ProviderModelLoadHttpPort = Readonly<{
-  /** Endpoint-safety client: re-resolves DNS, enforces the cap, and never follows redirects. */
+  /** Endpoint-safety client: re-resolves DNS and never follows redirects. */
   postJsonModelId(input: Readonly<{
     connectionId: string;
     machineId: string;
@@ -137,9 +131,7 @@ export type ProviderModelLoadHttpPort = Readonly<{
     resolveCredential?: () => Promise<ProviderProbeHttpCredentialLease>;
     authorizeDestination(destination: AssessedProviderEndpoint): Promise<void>;
     redirectPolicy: 'reject';
-    wallTimeMs: typeof PROVIDER_MODEL_LOAD_WALL_TIME_MS;
     wallDeadlineAtMs?: number;
-    maxDecodedBodyBytes: typeof PROVIDER_MODEL_LOAD_MAX_DECODED_BODY_BYTES;
     signal: AbortSignal;
   }>): Promise<
     | Readonly<{ ok: true; statusCode: number }>
@@ -334,7 +326,6 @@ export function createProviderModelLoadService<TTicket, TCredentialRef>(
   const inFlight = new Map<string, InFlightEntry>();
   /** Authorizations still resolving, addressed by the logical intent a cancel names. */
   const pendingAuthorizations = new Map<string, Set<AbortController>>();
-  let nextRefreshFrontier = 0;
 
   function logicalOperationKey(
     request: Omit<ProviderModelLoadRequest, 'signal'>,
@@ -465,9 +456,7 @@ export function createProviderModelLoadService<TTicket, TCredentialRef>(
           if (!result.ok) throw new ProviderProbeDestinationAuthorizationError(result.error);
         },
         redirectPolicy: 'reject',
-        wallTimeMs: PROVIDER_MODEL_LOAD_WALL_TIME_MS,
         wallDeadlineAtMs: scope.lifetime.wallDeadlineAtMs,
-        maxDecodedBodyBytes: PROVIDER_MODEL_LOAD_MAX_DECODED_BODY_BYTES,
         signal,
       });
       if (signal.aborted) return cancelledResult();
@@ -482,8 +471,6 @@ export function createProviderModelLoadService<TTicket, TCredentialRef>(
       const refreshed = await dependencies.catalog.refresh({
         connectionId: request.connectionId,
         machineId: request.machineId,
-        modelId: request.modelId,
-        refreshFrontier: String(++nextRefreshFrontier),
         ticket: authorization.ticket,
         signal,
         scope,
@@ -555,7 +542,6 @@ export function createProviderModelLoadService<TTicket, TCredentialRef>(
       const authorizationScope: ProviderModelLoadOperationScope = {
         lifetime: createProviderOperationLifetime({
           ...(input.signal ? { signal: input.signal } : {}),
-          wallTimeMs: PROVIDER_MODEL_LOAD_WALL_TIME_MS,
         }),
       };
       const logicalKey = logicalOperationKey(request);

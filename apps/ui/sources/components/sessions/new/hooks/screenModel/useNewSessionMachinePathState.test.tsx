@@ -1,7 +1,11 @@
 import { act } from 'react-test-renderer';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createMachineFixture, createSessionFixture, renderHook } from '@/dev/testkit';
+// Placement imports reach the Socket SDK before the awaited transport installation.
+vi.mock('socket.io-client', async importOriginal =>
+    (await import('@/dev/testkit/harness/sessionOpsNetworkBoundary')).createSessionOpsSocketIoClientBoundary(importOriginal));
+
+import { createMachineFixture, createSessionFixture, renderHook, waitForTestEvent } from '@/dev/testkit';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import type { Machine, Session } from '@/sync/domains/state/storageTypes';
 
@@ -26,6 +30,7 @@ const { useNewSessionMachinePathState } = await import('./useNewSessionMachinePa
 
 type MachineFixtureInput = {
     id: string;
+    isShared?: boolean;
     metadata?: Partial<NonNullable<Machine['metadata']>> | null;
     active?: boolean;
     activeAt?: number;
@@ -104,6 +109,121 @@ function renderMachinePathState(initialProps: HookParams) {
 }
 
 describe('useNewSessionMachinePathState', () => {
+    it.each([
+        { protection: 'setup_pending', status: { kind: 'applying', phase: 'workspace' } },
+        { protection: 'unavailable', status: { kind: 'unavailable', code: 'workspace_not_ready' } },
+        { protection: 'member_separated', status: { kind: 'effective', platform: 'linux' } },
+        { protection: 'trusted_administrator', status: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' } },
+    ] as const)('settles missing separated directories as a retryable failure ($protection), then resolves the member workspace', async (status) => {
+        const home = await network.addHome('https://server-a', 'account-a', { serverIdentityId: 'folder-retry-home' });
+        const { resolveServerProfileScopeId } = await import('@/sync/domains/server/serverProfiles');
+        const serverId = resolveServerProfileScopeId(home);
+        const machine = makeMachine({ id: 'folder-retry', isShared: true, metadata: { platform: 'linux',
+            homeDir: '/custodian/private', agentIsolation: { enabled: true, memberProvisioning: 'linuxUsersV1' } } });
+        network.respond('machines.agentIsolation.status', status);
+        network.respond('daemon.sessionCreation.directoryPreflight.v1', { ok: true, directory: '/member/workspace',
+            directoryKind: 'path', directoryCreationRequired: false, checkout: null });
+        const hook = await renderMachinePathState({ serverId, machines: [machine], recentMachinePaths: [], machineIdParam: machine.id });
+        try {
+            await waitForTestEvent(hook.subscribe, () => hook.getCurrent().ownIsolation,
+                value => value.status !== null || value.failed);
+            expect(hook.getCurrent().ownIsolation).toMatchObject({ loading: false, failed: true });
+            expect(hook.getCurrent().selectedPath).toBe('');
+            expect(hook.getCurrent().machineHomeDir).toBe('');
+            expect(network.requests.filter(request => request.method === 'machines.agentIsolation.status')).toHaveLength(1);
+            network.respond('machines.agentIsolation.status', { protection: 'member_separated',
+                status: { kind: 'effective', platform: 'linux' }, directories: { home: '/member/home', workspace: '/member/workspace' } });
+            await act(async () => hook.getCurrent().ownIsolation.retry());
+            await waitForTestEvent(hook.subscribe, () => hook.getCurrent().selectedPath, value => value === '/member/workspace');
+            expect(hook.getCurrent().ownIsolation).toMatchObject({ loading: false, failed: false });
+            expect(hook.getCurrent().machineHomeDir).toBe('/member/home');
+            expect(network.requests.filter(request => request.method === 'machines.agentIsolation.status')).toHaveLength(2);
+        } finally { await hook.unmount(); }
+    });
+
+    it('keeps an explicit inaccessible owner folder and blocks Send with the targets typed directory reason', async () => {
+        const home = await network.addHome('https://server-a', 'account-a', { serverIdentityId: 'owner-folder-home' });
+        const { resolveServerProfileScopeId } = await import('@/sync/domains/server/serverProfiles');
+        const serverId = resolveServerProfileScopeId(home);
+        const machine = makeMachine({ id: 'owned-separated', isShared: false, metadata: { platform: 'linux',
+            homeDir: '/custodian/private', agentIsolation: { enabled: true, memberProvisioning: 'linuxUsersV1' } } });
+        network.respond('machines.agentIsolation.status', { protection: 'member_separated',
+            status: { kind: 'effective', platform: 'linux' }, directories: { home: '/member/home', workspace: '/member/workspace' } });
+        network.respond('daemon.sessionCreation.directoryPreflight.v1', { ok: false, code: 'invalid_directory' });
+        const hook = await renderMachinePathState({ serverId, machines: [machine], recentMachinePaths: [],
+            machineIdParam: machine.id, pathParam: '/custodian/private' });
+        try {
+            await act(async () => {});
+            expect(hook.getCurrent()).toHaveProperty('directoryPreflight');
+            await waitForTestEvent(hook.subscribe, () => hook.getCurrent().directoryPreflight,
+                value => value.code !== null);
+            expect(hook.getCurrent().selectedPath).toBe('/custodian/private');
+            expect(hook.getCurrent().directoryPreflight).toMatchObject({ ready: false, code: 'invalid_directory' });
+            expect(network.requests.filter(request => request.method === 'daemon.sessionCreation.directoryPreflight.v1')).toHaveLength(1);
+            network.respond('daemon.sessionCreation.directoryPreflight.v1', { ok: true, directory: '/member/workspace',
+                directoryKind: 'path', directoryCreationRequired: false, checkout: null });
+            await act(async () => hook.getCurrent().setSelectedPath('/member/workspace'));
+            await waitForTestEvent(hook.subscribe, () => hook.getCurrent().directoryPreflight, value => value.ready);
+            expect(hook.getCurrent().directoryPreflight).toMatchObject({ ready: true, code: null });
+        } finally { await hook.unmount(); }
+    });
+    it('settles a non-isolated shared Mac folder even when isolation is unsupported', async () => {
+        const home = await network.addHome('https://server-a', 'account-a', { serverIdentityId: 'shared-mac-home' });
+        const { resolveServerProfileScopeId } = await import('@/sync/domains/server/serverProfiles');
+        const serverId = resolveServerProfileScopeId(home);
+        const machine = makeMachine({ id: 'shared-mac', isShared: true,
+            metadata: { platform: 'darwin', homeDir: '/Users/lume', agentIsolation: { enabled: false } } });
+        network.respond('machines.agentIsolation.status', { protection: 'unavailable',
+            status: { kind: 'unavailable', code: 'unsupported_platform' } });
+        const hook = await renderMachinePathState({ serverId, machines: [machine], recentMachinePaths: [], machineIdParam: machine.id });
+        try {
+            await waitForTestEvent(hook.subscribe, () => hook.getCurrent().ownIsolation,
+                value => value.status !== null || value.failed);
+            await act(async () => {});
+            expect(hook.getCurrent().selectedPath).toBe('~');
+            expect(hook.getCurrent().machineHomeDir).toBe('/Users/lume');
+            expect(network.requests.filter(request => request.method === 'machines.agentIsolation.status')).toHaveLength(1);
+            await act(async () => hook.getCurrent().setSelectedPath('/Users/Shared/project'));
+            await hook.rerender({ serverId, machines: [machine], recentMachinePaths: [], machineIdParam: machine.id });
+            expect(hook.getCurrent().selectedPath).toBe('/Users/Shared/project');
+        } finally { await hook.unmount(); }
+    });
+
+    it.each([true, false])('defaults every separated requester (shared=%s) to its projected workspace, reads once, and preserves an explicit draft', async (isShared) => {
+        const home = await network.addHome('https://server-a', 'account-a', { serverIdentityId: 'member-home' });
+        const { resolveServerProfileScopeId } = await import('@/sync/domains/server/serverProfiles');
+        const serverId = resolveServerProfileScopeId(home);
+        const machine = makeMachine({ id: 'member-target', isShared, metadata: { platform: 'linux', homeDir: '/custodian/private',
+            agentIsolation: { enabled: true, memberProvisioning: 'linuxUsersV1' } } });
+        network.respond('machines.agentIsolation.status', { protection: 'member_separated',
+            status: { kind: 'effective', platform: 'linux' },
+            directories: { home: '/member/home', workspace: '/member/workspace' } });
+        const props: HookParams = { serverId, machines: [machine], recentMachinePaths: [{ machineId: machine.id, path: '/custodian/private' }],
+            machineIdParam: machine.id, pathParam: undefined };
+        const hook = await renderMachinePathState(props);
+        try {
+            await waitForTestEvent(hook.subscribe, () => hook.getCurrent().ownIsolation,
+                value => value.status !== null || value.failed);
+            expect(hook.getCurrent().ownIsolation).toMatchObject({ failed: false });
+            await act(async () => {});
+            expect(hook.getCurrent().selectedPath).toBe('/member/workspace');
+            expect(hook.getCurrent().machineHomeDir).toBe('/member/home');
+            await hook.rerender({ ...props, recentMachinePaths: [] });
+            expect(network.requests.filter(request => request.method === 'machines.agentIsolation.status')).toHaveLength(1);
+            await act(async () => hook.getCurrent().setSelectedPath('/custodian/explicit'));
+            await hook.rerender(props);
+            expect(hook.getCurrent().selectedPath).toBe('/custodian/explicit');
+        } finally { await hook.unmount(); }
+        const draft = await renderMachinePathState({ ...props, persistedMachineId: machine.id, persistedPath: '/custodian/saved-choice' });
+        try {
+            await waitForTestEvent(draft.subscribe, () => draft.getCurrent().ownIsolation,
+                value => value.status !== null || value.failed);
+            expect(draft.getCurrent().ownIsolation).toMatchObject({ failed: false });
+            await act(async () => {});
+            expect(draft.getCurrent().selectedPath).toBe('/custodian/saved-choice');
+        }
+        finally { await draft.unmount(); }
+    });
     it('keeps live placement local while exact hydration and automatic candidate arrivals remain current', async () => {
         const home = await network.addHome('https://server-a', 'account-a');
         const { resolveServerProfileScopeId } = await import('@/sync/domains/server/serverProfiles');
@@ -131,7 +251,7 @@ describe('useNewSessionMachinePathState', () => {
             expect(hook.getCurrent().selectedPath).toBe('');
             const hydrated = makeMachine({ id: selected.id, metadata: { homeDir: '/hydrated' } });
             await act(async () => storage.setState({ machines: { [selected.id]: hydrated }, machineListByServerId: { [serverId]: [hydrated] } }));
-            expect(hook.getCurrent().selectedPath).toBe('/hydrated');
+            expect(hook.getCurrent().selectedPath).toBe('~');
             expect(hook.getCurrent().selectedMachine).toBe(hydrated);
             const plainName = hook.getCurrent().selectedMachineSentenceName;
             const duplicate = { ...hydrated, id: 'duplicate' };
@@ -159,7 +279,7 @@ describe('useNewSessionMachinePathState', () => {
             const arrived = makeMachine({ id: 'arrived', active: true, activeAt: Date.now(), metadata: { homeDir: '/arrived' } });
             await act(async () => storage.setState({ machines: { arrived }, machineListByServerId: { [serverId]: [arrived] } }));
             expect(automatic.getCurrent().selectedMachineId).toBe('arrived');
-            expect(automatic.getCurrent().selectedPath).toBe('/arrived');
+            expect(automatic.getCurrent().selectedPath).toBe('~');
         } finally {
             await automatic.unmount();
             storage.setState({ machines: previous.machines, machineListByServerId: previous.machineListByServerId,
@@ -224,7 +344,7 @@ describe('useNewSessionMachinePathState', () => {
         await act(async () => recordMachineRequestFailed({
             serverId, accountId: home.accountId, machineId: 'automatic-a',
         }));
-        expect(getSelection(hook.getCurrent())).toEqual({ selectedMachineId: 'automatic-b', selectedPath: '/home/b' });
+        expect(getSelection(hook.getCurrent())).toEqual({ selectedMachineId: 'automatic-b', selectedPath: '~' });
         await hook.unmount();
     });
 
@@ -272,9 +392,9 @@ describe('useNewSessionMachinePathState', () => {
         expect(ordinary.getCurrent().selectedPath).toBe('/home/alice/repo');
         await ordinary.unmount();
         const bot = await renderMachinePathState({ ...initial, isBot: true });
-        expect(bot.getCurrent().directoryIntent).toEqual({ kind: 'path', path: '/home/alice' });
+        expect(bot.getCurrent().directoryIntent).toEqual({ kind: 'path', path: '~' });
         await act(async () => bot.getCurrent().setSelectedMachineId('machine-b'));
-        expect(bot.getCurrent().selectedPath).toBe('C:\\Users\\bob\\');
+        expect(bot.getCurrent().selectedPath).toBe('~');
         await act(async () => bot.getCurrent().setSelectedPath('C:\\work\\chosen'));
         await bot.rerender({ ...initial, isBot: true });
         expect(bot.getCurrent().getRequestedPath()).toBe('C:\\work\\chosen');
@@ -288,7 +408,7 @@ describe('useNewSessionMachinePathState', () => {
         const bot = await renderMachinePathState(initial);
         expect(bot.getCurrent().selectedPath).toBe('');
         await bot.rerender({ ...initial, machines: toMachines({ id: 'machine-a', metadata: { homeDir: '/home/alice' } }) });
-        expect(bot.getCurrent().getRequestedPath()).toBe('/home/alice');
+        expect(bot.getCurrent().getRequestedPath()).toBe('~');
         await bot.unmount();
         const restored = await renderMachinePathState({ ...initial, persistedMachineId: 'machine-a', persistedPath: '/chosen' });
         expect(restored.getCurrent().selectedPath).toBe('/chosen');
@@ -304,7 +424,7 @@ describe('useNewSessionMachinePathState', () => {
         await act(async () => bot.getCurrent().adoptManagedMachineTarget('enrolled'));
         await bot.rerender({ ...initial, machines: toMachines({ id: 'host', metadata: { homeDir: '/home/host' } },
             { id: 'enrolled', metadata: { homeDir: '/home/guest' } }) });
-        expect(bot.getCurrent().directoryIntent).toEqual({ kind: 'path', path: '/home/guest' });
+        expect(bot.getCurrent().directoryIntent).toEqual({ kind: 'path', path: '~' });
         await act(async () => bot.getCurrent().setSelectedPath('/explicit'));
         await act(async () => bot.getCurrent().adoptManagedMachineTarget('second'));
         await bot.rerender({ ...initial, machines: toMachines({ id: 'second', metadata: { homeDir: '/home/second' } }) });
@@ -326,7 +446,7 @@ describe('useNewSessionMachinePathState', () => {
             persistedManagedMachineSelection: draft, persistedPath: '/home/host' };
         const bot = await renderMachinePathState(initial);
         await act(async () => bot.getCurrent().adoptManagedMachineTarget('guest'));
-        expect(bot.getCurrent().getRequestedPath()).toBe('/home/guest');
+        expect(bot.getCurrent().getRequestedPath()).toBe('~');
         await bot.unmount();
         const explicit = await renderMachinePathState({ ...initial, persistedPath: '/chosen' });
         await act(async () => explicit.getCurrent().adoptManagedMachineTarget('guest'));
@@ -784,7 +904,7 @@ describe('useNewSessionMachinePathState', () => {
         });
         expect(getSelection(hook.getCurrent())).toEqual({
             selectedMachineId: 'machine-b',
-            selectedPath: '/b',
+            selectedPath: '~',
         });
         await hook.unmount();
     });
@@ -847,7 +967,7 @@ describe('useNewSessionMachinePathState', () => {
             machines: toMachines({ id: 'shared-id', metadata: { homeDir: '/home-b' } }),
             cacheScopeKey: 'home-b',
         });
-        expect(getSelection(hook.getCurrent())).toEqual({ selectedMachineId: 'shared-id', selectedPath: '/home-b' });
+        expect(getSelection(hook.getCurrent())).toEqual({ selectedMachineId: 'shared-id', selectedPath: '~' });
         await hook.unmount();
     });
 
@@ -866,9 +986,9 @@ describe('useNewSessionMachinePathState', () => {
             cacheScopeKey: 'home-b',
         };
         await hook.rerender(changed);
-        expect(hook.getCurrent().selectedPath).toBe('/home-b');
+        expect(hook.getCurrent().selectedPath).toBe('~');
         await hook.rerender({ ...changed, persistedMachineId: 'shared-id', persistedPath: '/home-a' });
-        expect(hook.getCurrent().selectedPath).toBe('/home-b');
+        expect(hook.getCurrent().selectedPath).toBe('~');
         await hook.unmount();
     });
 
@@ -967,7 +1087,7 @@ describe('useNewSessionMachinePathState', () => {
 
         expect(getSelection(hook.getCurrent())).toEqual({
             selectedMachineId: 'machine-target',
-            selectedPath: '/target',
+            selectedPath: '~',
         });
 
         await hook.unmount();
@@ -1095,7 +1215,7 @@ describe('useNewSessionMachinePathState', () => {
         await hook.unmount();
     });
 
-    it('treats machines as eligible for initial selection when they are online via activeAt even if active=false', async () => {
+    it('uses published activity rather than inferring presence from a timestamp', async () => {
         const now = Date.now();
         const home = await network.addHome('https://server-a', 'account-a');
         const { resolveServerProfileScopeId } = await import('@/sync/domains/server/serverProfiles');
@@ -1104,7 +1224,7 @@ describe('useNewSessionMachinePathState', () => {
             serverId: resolveServerProfileScopeId(home),
             machines: toMachines(
                 { id: 'machine-stale-active', metadata: { homeDir: '/stale' }, active: true, activeAt: now - 3 * 60_000 },
-                // Real server snapshots can report recent activeAt while leaving `active` false.
+                // A recent observation cannot override an explicit inactive fact.
                 { id: 'machine-online', metadata: { homeDir: '/online' }, active: false, activeAt: now - 10_000 },
             ),
             recentMachinePaths: [
@@ -1116,8 +1236,8 @@ describe('useNewSessionMachinePathState', () => {
         });
 
         expect(getSelection(hook.getCurrent())).toEqual({
-            selectedMachineId: 'machine-online',
-            selectedPath: '/repo/online',
+            selectedMachineId: 'machine-stale-active',
+            selectedPath: '/repo/stale',
         });
 
         await hook.unmount();
@@ -1131,7 +1251,7 @@ describe('useNewSessionMachinePathState', () => {
         const hook = await renderMachinePathState({
             serverId: resolveServerProfileScopeId(home),
             machines: toMachines(
-                { id: 'machine-offline', metadata: { homeDir: '/offline' }, activeAt: now - 3 * 60_000 },
+                { id: 'machine-offline', metadata: { homeDir: '/offline' }, active: false, activeAt: now - 3 * 60_000 },
                 { id: 'machine-online', metadata: { homeDir: '/online' }, activeAt: now - 10_000 },
             ),
             recentMachinePaths: [
@@ -1159,7 +1279,7 @@ describe('useNewSessionMachinePathState', () => {
         const hook = await renderMachinePathState({
             serverId,
             machines: toMachines(
-                { id: 'machine-old', metadata: { homeDir: '/old' }, activeAt: now - 3 * 60_000 },
+                { id: 'machine-old', metadata: { homeDir: '/old' }, active: false, activeAt: now - 3 * 60_000 },
             ),
             recentMachinePaths: [{ machineId: 'machine-old', path: '/repo/old' }],
             machineIdParam: null,
@@ -1174,7 +1294,7 @@ describe('useNewSessionMachinePathState', () => {
         await hook.rerender({
             serverId,
             machines: toMachines(
-                { id: 'machine-old', metadata: { homeDir: '/old' }, activeAt: now - 3 * 60_000 },
+                { id: 'machine-old', metadata: { homeDir: '/old' }, active: false, activeAt: now - 3 * 60_000 },
                 { id: 'machine-new', metadata: { homeDir: '/new' }, activeAt: now - 10_000 },
             ),
             recentMachinePaths: [{ machineId: 'machine-old', path: '/repo/old' }],
@@ -1184,7 +1304,7 @@ describe('useNewSessionMachinePathState', () => {
 
         expect(getSelection(hook.getCurrent())).toEqual({
             selectedMachineId: 'machine-new',
-            selectedPath: '/new',
+            selectedPath: '~',
         });
 
         await hook.unmount();
@@ -1205,7 +1325,7 @@ describe('useNewSessionMachinePathState', () => {
 
         expect(getSelection(hook.getCurrent())).toEqual({
             selectedMachineId: 'machine-offline',
-            selectedPath: '/offline',
+            selectedPath: '~',
         });
 
         await hook.unmount();
@@ -1308,7 +1428,7 @@ describe('useNewSessionMachinePathState', () => {
             { id: 'machine-new', metadata: { homeDir: '/Users/leeroy/new-home' }, activeAt: now - 10_000 },
         );
         const updatedMachines = toMachines(
-            { id: 'machine-old', metadata: { homeDir: '/Users/leeroy' }, activeAt: now - 5 * 60_000 },
+            { id: 'machine-old', metadata: { homeDir: '/Users/leeroy' }, active: false, activeAt: now - 5 * 60_000 },
             { id: 'machine-new', metadata: { homeDir: '/Users/leeroy/new-home' }, activeAt: now - 10_000 },
         );
 
@@ -1428,7 +1548,7 @@ describe('useNewSessionMachinePathState', () => {
 
         expect(getSelection(hook.getCurrent())).toEqual({
             selectedMachineId: 'machine-offline',
-            selectedPath: '/offline',
+            selectedPath: '~',
         });
 
         await act(async () => {
@@ -1437,7 +1557,7 @@ describe('useNewSessionMachinePathState', () => {
 
         expect(getSelection(hook.getCurrent())).toEqual({
             selectedMachineId: 'machine-online',
-            selectedPath: '/online',
+            selectedPath: '~',
         });
 
         await hook.rerender({
@@ -1455,7 +1575,7 @@ describe('useNewSessionMachinePathState', () => {
         // directory would launch the Agent in a directory of a different Machine.
         expect(getSelection(hook.getCurrent())).toEqual({
             selectedMachineId: 'machine-online',
-            selectedPath: '/online',
+            selectedPath: '~',
         });
 
         await hook.unmount();
@@ -1483,7 +1603,7 @@ describe('useNewSessionMachinePathState', () => {
 
         expect(getSelection(hook.getCurrent())).toEqual({
             selectedMachineId: 'machine-1',
-            selectedPath: '/Users/leeroy',
+            selectedPath: '~',
         });
 
         await hook.unmount();
@@ -1499,7 +1619,7 @@ describe('useNewSessionMachinePathState', () => {
 
         expect(getSelection(hook.getCurrent())).toEqual({
             selectedMachineId: 'machine-1',
-            selectedPath: '/Users/leeroy',
+            selectedPath: '~',
         });
 
         await act(async () => {

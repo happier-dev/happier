@@ -355,6 +355,7 @@ export type MachineRpcHandlerDeps = Readonly<{
     MachineSessionServerStartRpcRegistrationOptions,
     'spawnLifecycleHandler' | 'resolveSpawnSessionByNonce'
   >;
+  sessionCreationInstallation?: MachineSessionServerStartRpcRegistrationOptions['sessionCreationInstallation'];
   /** Closed server-origin Action receiver bound to the shared daemon ingress. */
   externalAction?: ExternalActionRpcRegistrationOptions;
   externalSessionOperationExclusion?: ExternalSessionOperationExclusionOwner;

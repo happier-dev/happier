@@ -31,7 +31,8 @@ export type AgentModelConfig = Readonly<{
   /**
    * How model changes should be described/applied for non-ACP sessions.
    *
-   * ACP sessions may support live switching via `session/set_model`; callers should
+   * ACP sessions may support live switching through advertised configuration or
+   * the legacy `session/set_model` method; callers should
    * treat those as `live` regardless of this value.
    */
   nonAcpApplyScope: AgentModelNonAcpApplyScope;
@@ -43,8 +44,7 @@ export type AgentModelConfig = Readonly<{
    */
   acpApplyBehavior?: 'set_model' | 'restart_session';
   /**
-   * Optional ACP `session/set_config_option` id to use as a fallback when `session/set_model`
-   * is unsupported by the agent.
+   * Optional ACP `session/set_config_option` id used for model selection when declared.
    *
    * Many agents expose a `model` config option, but this is not guaranteed by ACP.
    */
@@ -66,10 +66,16 @@ export type AgentModelConfig = Readonly<{
     providerLocalId: string;
     purpose: string;
     connectedServiceId: string;
-    /** Declarative native OAuth bearer location inside the Agent's declared native home. */
-    nativeBearer?: Readonly<{
-      fileId: string;
-      jsonPath: readonly string[];
+    /** Ordered native credential sources; host owns reads, shell execution and HTTP. */
+    nativeTarget?: Readonly<{
+      endpointEnvironmentVariable?: string;
+      credentialSources: readonly (
+        | Readonly<{ kind: 'environment'; variable: string; headers: readonly Readonly<{ name: string; format: 'raw' | 'bearer' }>[] }>
+        | Readonly<{ kind: 'jsonFile'; fileId: string; jsonPath: readonly string[]; defaultEndpointOnly?: boolean;
+            headers: readonly Readonly<{ name: string; format: 'raw' | 'bearer' }>[] }>
+        | Readonly<{ kind: 'jsonCommand'; fileId: string; jsonPath: readonly string[]; requiredSettingSource: string;
+            maxCredentialLength: number; headers: readonly Readonly<{ name: string; format: 'raw' | 'bearer' }>[] }>
+      )[];
     }>;
   }>;
   defaultMode: string | null;

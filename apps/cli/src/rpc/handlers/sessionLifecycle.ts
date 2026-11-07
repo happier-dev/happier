@@ -1,4 +1,3 @@
-import { createWorkflowRequesterCustody } from '@/daemon/workflows/requesterCustody';
 import type { RpcActionExecutor, RpcActionExecutorContext } from './_actionDispatchAdapter';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { RpcHandlerContext } from '@/api/rpc/types';
@@ -6,7 +5,7 @@ import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { readStoredCredentials } from '@/persistence';
 import { configuration } from '@/configuration';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
-import type { SessionSpawnDirectTargetTransport } from '@/session/actions/createCliActionDeps';
+import type { SessionSpawnDirectTargetTransport, MachineActionDirectTargetTransport } from '@/session/actions/createCliActionDeps';
 import {
     type ActionSpecRpcRegistrationScope,
     SESSION_HANDOFF_LIFECYCLE_RPC_SCOPES,
@@ -41,6 +40,7 @@ import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { createSessionHandoffPrepareTargetJobStore } from '@/session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
 import type { SessionHandoffPrepareTargetResultGetSuccessResponse } from '@happier-dev/protocol';
+import { createWorkflowRequesterCustody, retainWorkflowRequesterCredentials, retireWorkflowRequesterCredentials } from '@/daemon/workflows/requesterCustody';
 
 function matchesPreparedHandoffNativeTarget(
     input: Pick<SpawnSessionOptions, 'agentTarget' | 'backendTarget' | 'directory' | 'resume' | 'transcriptStorage' | 'runtimeDescriptorV1'>,
@@ -310,6 +310,8 @@ export function registerSessionLifecycleRpcHandlers(params: Readonly<{
 
 async function resolveProductionSessionSpawnNewActionExecutor(params: Readonly<{
     sessionSpawnDirectTargetTransport?: SessionSpawnDirectTargetTransport;
+    machineActionDirectTargetTransport?: MachineActionDirectTargetTransport;
+    sessionCreationInstallation?: Pick<CurrentMachineInstallation['identity'], 'installationId' | 'privateKey'>;
     requesterContext?: RpcHandlerContext;
 }> = {}): Promise<RpcActionExecutor> {
     const requester = params.requesterContext?.requesterSessionBootstrap;
@@ -325,6 +327,12 @@ async function resolveProductionSessionSpawnNewActionExecutor(params: Readonly<{
     }
     const shared = {
         credentials,
+        ...(params.machineActionDirectTargetTransport
+            ? { machineActionDirectTargetTransport: params.machineActionDirectTargetTransport } : {}),
+        ...(params.sessionCreationInstallation ? {
+            externalActionMachineInstallationId: params.sessionCreationInstallation.installationId,
+            externalActionMachineRequestPrivateKey: params.sessionCreationInstallation.privateKey,
+        } : {}),
         ...(params.sessionSpawnDirectTargetTransport
             ? { sessionSpawnDirectTargetTransport: params.sessionSpawnDirectTargetTransport }
             : {}),
@@ -361,6 +369,8 @@ export function registerSessionSpawnNewRpcHandlers(params: Readonly<{
     actionExecutor?: RpcActionExecutor;
     /** Exact daemon receiver transport retained after server-scoped machine routing. */
     sessionSpawnDirectTargetTransport?: SessionSpawnDirectTargetTransport;
+    machineActionDirectTargetTransport?: MachineActionDirectTargetTransport;
+    sessionCreationInstallation?: Pick<CurrentMachineInstallation['identity'], 'installationId' | 'privateKey'>;
     requesterBootstrapBoundary?: Readonly<{
         serverId: string;
         serverHttpBaseUrl: string;
@@ -407,6 +417,28 @@ export function registerSessionSpawnNewRpcHandlers(params: Readonly<{
                 catch { custody = null; }
                 if (!custody) return { ok: false, errorCode: context.signal.aborted ? 'cancelled' : 'target_unavailable',
                     error: context.signal.aborted ? 'cancelled' : 'target_unavailable' };
+                if (parsed.data.scope === 'workflow_trigger') {
+                    try {
+                        if (parsed.data.input.executionTarget.serverId !== boundary.serverId) {
+                            return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+                        }
+                        const admitted = custody.admitted;
+                        if (parsed.data.input.operation === 'retain') {
+                            await retainWorkflowRequesterCredentials({ scopeId: parsed.data.input.scopeId,
+                                automationId: parsed.data.input.automationId,
+                                happyHomeDir: boundary.happyHomeDir, credentials: admitted.credentials,
+                                attribution: admitted.attribution, homeServerIdentityId: admitted.homeServerIdentityId });
+                        } else {
+                            await retireWorkflowRequesterCredentials({ scopeId: parsed.data.input.scopeId,
+                                happyHomeDir: boundary.happyHomeDir, ...admitted.attribution,
+                                serverHttpBaseUrl: boundary.serverHttpBaseUrl,
+                                homeServerIdentityId: admitted.homeServerIdentityId });
+                        }
+                        return { ok: true };
+                    } catch {
+                        return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+                    } finally { await custody.admitted.dispose(); }
+                }
                 const projectedAuthorization = context.callerInputAuthorization
                     ? await custody.admitted.projectExternalActionAuthorization(context.callerInputAuthorization,
                         boundary.getObservedServerIdentityId() ?? '', context.signal)
@@ -440,6 +472,10 @@ export function registerSessionSpawnNewRpcHandlers(params: Readonly<{
                 })
                 : requester ? undefined : params.sessionSpawnDirectTargetTransport;
             return await resolveProductionSessionSpawnNewActionExecutor({
+                ...(params.machineActionDirectTargetTransport
+                    ? { machineActionDirectTargetTransport: params.machineActionDirectTargetTransport } : {}),
+                ...(params.sessionCreationInstallation
+                    ? { sessionCreationInstallation: params.sessionCreationInstallation } : {}),
                 ...(request.ingress ? { requesterContext: request.ingress } : {}),
                 ...(directTransport ? { sessionSpawnDirectTargetTransport: {
                     ...directTransport,
@@ -452,10 +488,11 @@ export function registerSessionSpawnNewRpcHandlers(params: Readonly<{
                             return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
                                 errorMessage: 'Requester Session creation identity unavailable' };
                         }
-                        return await directTransport.spawnedSession.spawn(input, {
+                        const response = await directTransport.spawnedSession.spawn(input, {
                             ...request.ingress, ...context,
                             ...(requester ? { requesterSessionBootstrap: requester } : {}),
                         });
+                        return response;
                     } },
                 } } : {}),
             });

@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import type { Machine } from '@/sync/domains/state/storageTypes';
 
-import { resolveDefaultDirectoryForMachine } from './machineDefaultDirectory';
+import { resolveDefaultDirectoryForMachine, resolveMachineHomeDirectory } from './machineDefaultDirectory';
+import { MachineAgentIsolationOwnStatusV1Schema } from '@happier-dev/protocol';
 
 function machine(id: string, homeDir: string | null): Machine {
     return {
@@ -28,6 +29,59 @@ function machine(id: string, homeDir: string | null): Machine {
 const machines = [machine('machine-1', '/home/dev'), machine('machine-2', null)];
 
 describe('default directory for a Machine', () => {
+    it('never defaults an owned separated Machine to daemon history before its member projection arrives', () => {
+        const owned = { ...machine('owned', '/home/daemon'), isShared: false,
+            metadata: { ...machine('owned', '/home/daemon').metadata!,
+                agentIsolation: { enabled: true, memberProvisioning: 'linuxUsersV1' } } };
+        const staleAdmin = MachineAgentIsolationOwnStatusV1Schema.parse({ protection: 'trusted_administrator',
+            status: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' } });
+        for (const ownStatus of [undefined, staleAdmin]) {
+            expect(resolveDefaultDirectoryForMachine({ machineId: owned.id, machines: [owned],
+                recentPaths: ['/home/daemon'], ownStatus })).toBe('');
+            expect(resolveMachineHomeDirectory({ machine: owned, ownStatus })).toBe('');
+        }
+    });
+    it.each(['darwin', 'linux', 'win32'])('resolves a non-isolated shared %s Machine without waiting for isolation readiness', (platform) => {
+        const shared = { ...machine('shared', '/shared/home'), isShared: true,
+            metadata: { ...machine('shared', '/shared/home').metadata!, platform, agentIsolation: { enabled: false } } };
+        const statuses = [undefined,
+            MachineAgentIsolationOwnStatusV1Schema.parse({ protection: 'setup_pending', status: { kind: 'disabled' } }),
+            MachineAgentIsolationOwnStatusV1Schema.parse({ protection: 'unavailable', status: { kind: 'unavailable', code: 'unsupported_platform' } }),
+        ];
+        for (const ownStatus of statuses) {
+            expect(resolveDefaultDirectoryForMachine({ machineId: shared.id, machines: [shared], recentPaths: [], ownStatus }))
+                .toBe('~');
+            expect(resolveMachineHomeDirectory({ machine: shared, ownStatus })).toBe('/shared/home');
+            expect(resolveDefaultDirectoryForMachine({ machineId: shared.id, machines: [shared], recentPaths: ['/shared/repo'], ownStatus }))
+                .toBe('/shared/repo');
+        }
+    });
+
+    it('does not substitute custodian history while member placement or its policy is unresolved', () => {
+        const shared = { ...machine('shared', '/custodian/home'), isShared: true };
+        for (const agentIsolation of [{ enabled: true, memberProvisioning: 'linuxUsersV1' }, { enabled: 'invalid' }]) {
+            const target = { ...shared, metadata: { ...shared.metadata!, agentIsolation } };
+            expect(resolveDefaultDirectoryForMachine({ machineId: target.id, machines: [target], recentPaths: ['/custodian/repo'] }))
+                .toBe('');
+            expect(resolveMachineHomeDirectory({ machine: target })).toBe('');
+        }
+    });
+
+    it('uses the projected member workspace rather than automatic custodian history, and expands home from the same fact', () => {
+        const ownStatus = MachineAgentIsolationOwnStatusV1Schema.parse({ protection: 'member_separated',
+            status: { kind: 'effective', platform: 'linux' }, directories: { home: '/member/home', workspace: '/member/workspace' } });
+        expect(resolveDefaultDirectoryForMachine({ machineId: 'machine-1', machines,
+            recentPaths: ['/home/dev'], ownStatus })).toBe('/member/workspace');
+        expect(resolveMachineHomeDirectory({ machine: machines[0], ownStatus })).toBe('/member/home');
+    });
+
+    it('never substitutes the custodian home when a separated older daemon omits directories', () => {
+        const ownStatus = MachineAgentIsolationOwnStatusV1Schema.parse({ protection: 'member_separated',
+            status: { kind: 'effective', platform: 'linux' } });
+        expect(resolveDefaultDirectoryForMachine({ machineId: 'machine-1', machines,
+            recentPaths: ['/home/dev'], ownStatus })).toBe('');
+        expect(resolveMachineHomeDirectory({ machine: machines[0], ownStatus })).toBe('');
+    });
     it('prefers the most recent folder over the home directory', () => {
         expect(resolveDefaultDirectoryForMachine({
             machineId: 'machine-1',
@@ -36,12 +90,12 @@ describe('default directory for a Machine', () => {
         })).toBe('/home/dev/repo');
     });
 
-    it('falls back to the home directory for a Machine with no history', () => {
+    it('leaves the home default for target-side resolution when a Machine has no history', () => {
         expect(resolveDefaultDirectoryForMachine({
             machineId: 'machine-1',
             machines,
             recentPaths: ['   '],
-        })).toBe('/home/dev');
+        })).toBe('~');
     });
 
     it('stays visibly unresolved when neither is known', () => {
