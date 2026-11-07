@@ -8,6 +8,9 @@ import type {
 } from '@happier-dev/protocol/storage/storageV1';
 
 import { openActionOperationDetail } from '@/components/inbox/actionOperations/openActionOperationDetail';
+import { Modal } from '@/modal';
+import type { CustomModalInjectedProps } from '@/modal/types';
+import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 import { formatMachineBytes } from '@/components/machines/vitals/machineVitalsPresentation';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
@@ -60,6 +63,8 @@ export const StorageDockerCleanup = React.memo(function StorageDockerCleanup(
     offline: boolean;
     /** Re-reads the summary after a cleanup, so the facts say what is left. */
     onSizeAgain: () => Promise<unknown>;
+    /** A phone: the review opens full height with Remove pinned, like the pile's review (MR10). */
+    compact: boolean;
   }>,
 ) {
   const [phase, setPhase] = React.useState<Phase>(FACTS);
@@ -91,8 +96,8 @@ export const StorageDockerCleanup = React.memo(function StorageDockerCleanup(
   }
   const custody = docker.images.custody;
   const candidates = custody.kind === 'complete' ? custody.candidates : [];
-  const remove = async (selected: readonly Candidate[]) => {
-    setPhase({ kind: 'removing', candidates: selected });
+  const remove = async (selected: readonly Candidate[], inPlace: boolean) => {
+    if (inPlace) setPhase({ kind: 'removing', candidates: selected });
     const result = await pruneMachineStorageDockerViaAction({
       machineId: props.machineId,
       serverId: props.serverId,
@@ -128,7 +133,26 @@ export const StorageDockerCleanup = React.memo(function StorageDockerCleanup(
             testID="machine-storage-docker-free-space"
             tone="strong"
             label={t('machineStorage.docker.freeSpace')}
-            onPress={() => setPhase({ kind: 'review', candidates })}
+            onPress={() => {
+              if (!props.compact) {
+                setPhase({ kind: 'review', candidates });
+                return;
+              }
+              Modal.show({
+                component: DockerReviewSheet,
+                props: { candidates, onRemove: () => remove(candidates, false) },
+                chrome: {
+                  kind: 'card',
+                  title: t('machineStorage.docker.freeSpace'),
+                  testID: 'machine-storage-docker-review-modal',
+                  phonePresentation: 'fullscreen',
+                  scrollHost: 'bounded',
+                  bodyScroll: 'auto',
+                  dimensions: { width: HAPPIER_PAGE_METRICS.dialogWidthPx.wide, maxHeightRatio: 0.9, size: 'md' },
+                },
+                closeOnBackdrop: true,
+              });
+            }}
           />
         ) : undefined
       }
@@ -139,7 +163,7 @@ export const StorageDockerCleanup = React.memo(function StorageDockerCleanup(
           removing={phase.kind === 'removing'}
           onCancel={() => setPhase(FACTS)}
           onRemove={() => {
-            void remove(phase.candidates);
+            void remove(phase.candidates, true);
           }}
         />
       ) : (
@@ -228,53 +252,65 @@ export const StorageDockerCleanup = React.memo(function StorageDockerCleanup(
   );
 });
 
-/** The review in place of the facts: the exact unused images, what stays, and Remove. */
-function DockerReview(
-  props: Readonly<{
-    candidates: readonly Candidate[];
-    removing: boolean;
-    onCancel: () => void;
-    onRemove: () => void;
-  }>,
-) {
-  const frees = knownSum(
-    props.candidates.map((candidate) => candidate.reclaimableBytes),
+/** The exact unused images and what stays: the body of the review, in place or in the phone sheet. */
+function DockerReviewBody(props: Readonly<{ candidates: readonly Candidate[] }>) {
+  const frees = knownSum(props.candidates.map((candidate) => candidate.reclaimableBytes));
+  return (
+    <Item
+      testID="machine-storage-docker-review"
+      mode="info"
+      showChevron={false}
+      title={t('machineStorage.docker.reviewLead', { count: props.candidates.length })}
+      subtitle={t('machineStorage.docker.reviewKept')}
+      {...(frees !== null ? { detail: formatMachineBytes(frees, 'storage') } : {})}
+    />
   );
+}
+
+/** Cancel and Remove: the person's Remove is the one confirmation. */
+function DockerReviewActions(props: Readonly<{ removing: boolean; onCancel: () => void; onRemove: () => void; fill?: boolean }>) {
+  return (
+    <View style={styles.actions}>
+      <RoundButton testID="machine-storage-docker-cancel" size="normal" display="inverted" title={t('common.cancel')}
+        disabled={props.removing} onPress={props.onCancel} />
+      <RoundButton testID="machine-storage-docker-remove" size="normal" display="destructive" style={props.fill ? styles.grow : undefined}
+        title={t('machineStorage.docker.remove')} loading={props.removing} onPress={props.onRemove} />
+    </View>
+  );
+}
+
+/** The review in place of the facts (wide pages). */
+function DockerReview(props: Readonly<{ candidates: readonly Candidate[]; removing: boolean; onCancel: () => void; onRemove: () => void }>) {
   return (
     <>
-      <Item
-        testID="machine-storage-docker-review"
-        mode="info"
-        showChevron={false}
-        title={t('machineStorage.docker.reviewLead', {
-          count: props.candidates.length,
-        })}
-        subtitle={t('machineStorage.docker.reviewKept')}
-        {...(frees !== null
-          ? { detail: formatMachineBytes(frees, 'storage') }
-          : {})}
-      />
+      <DockerReviewBody candidates={props.candidates} />
       <SectionContentRow showDivider={false}>
-        <View style={styles.actions}>
-          <RoundButton
-            testID="machine-storage-docker-cancel"
-            size="normal"
-            display="inverted"
-            title={t('common.cancel')}
-            disabled={props.removing}
-            onPress={props.onCancel}
-          />
-          <RoundButton
-            testID="machine-storage-docker-remove"
-            size="normal"
-            display="destructive"
-            title={t('machineStorage.docker.remove')}
-            loading={props.removing}
-            onPress={props.onRemove}
-          />
-        </View>
+        <DockerReviewActions removing={props.removing} onCancel={props.onCancel} onRemove={props.onRemove} />
       </SectionContentRow>
     </>
+  );
+}
+
+/** The phone review: full height, the actions pinned in the sheet's footer while the body scrolls. */
+function DockerReviewSheet(props: CustomModalInjectedProps & Readonly<{ candidates: readonly Candidate[]; onRemove: () => Promise<void> }>) {
+  const [removing, setRemoving] = React.useState(false);
+  const { setChrome, onClose, onRemove } = props;
+  const footer = (
+    <DockerReviewActions removing={removing} fill onCancel={onClose}
+      onRemove={() => {
+        setRemoving(true);
+        void onRemove().finally(onClose);
+      }} />
+  );
+  React.useEffect(() => {
+    setChrome?.({ kind: 'card', footer });
+  });
+  React.useEffect(() => () => setChrome?.(null), [setChrome]);
+  return (
+    <View style={styles.sheetBody}>
+      <DockerReviewBody candidates={props.candidates} />
+      {setChrome ? null : footer}
+    </View>
   );
 }
 
@@ -412,6 +448,12 @@ function ResultLine(
 }
 
 const styles = StyleSheet.create((theme) => ({
+  grow: {
+    flexGrow: 1,
+  },
+  sheetBody: {
+    paddingBottom: theme.space.s16,
+  },
   actions: {
     flexDirection: 'row',
     justifyContent: 'flex-end',

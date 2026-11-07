@@ -506,6 +506,38 @@ describe('MachineStorageTab', () => {
                 images: candidates.map(({ nativeId, configDigest, platform }) => ({ nativeId, configDigest, platform })), buildCacheIds: [] } });
         });
 
+        it('opens the review full height on a phone with Remove pinned in its footer', async () => {
+            const prunes: Rpc[] = [];
+            const { screen } = await mount({ id: 'storage' }, {}, (rpc) => {
+                if (rpc.method === RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET || rpc.method === RPC_METHODS.DAEMON_STORAGE_SIZE_REFRESH) return { ...SUMMARY, docker: ready() };
+                if (rpc.method === RPC_METHODS.DAEMON_STORAGE_DOCKER_PRUNE) {
+                    prunes.push(rpc);
+                    return { kind: 'completed', buildCache: 'unsupported', removed: [sha('a'), sha('c')], kept: [] };
+                }
+                return undefined;
+            });
+            await vi.waitFor(async () => { await act(async () => {}); expect(screen.findByTestId('machine-storage-docker')).not.toBeNull(); });
+            const tab = screen.root.find((entry) => entry.props.testID === 'machine-storage' && typeof entry.type === 'string');
+            await act(async () => { tab.props.onLayout?.({ nativeEvent: { layout: { x: 0, y: 0, width: 358, height: 800 } } }); });
+            modal.current!.spies.show.mockClear();
+            await act(async () => { screen.pressByTestId('machine-storage-docker-free-space'); });
+            const shown = modal.current!.spies.show.mock.calls.at(-1)?.[0] as { component: React.ComponentType<Record<string, unknown>>;
+                props: Record<string, unknown>; chrome?: { phonePresentation?: string } };
+            expect(shown.chrome?.phonePresentation).toBe('fullscreen');
+            // The page itself stays on its facts; the review lives in the full-height sheet.
+            expect(screen.findAllHostsByTestId('machine-storage-docker-review')).toHaveLength(0);
+            const chrome = vi.fn();
+            const close = vi.fn();
+            const Sheet = shown.component;
+            const sheet = await renderScreen(<Sheet {...shown.props} onClose={close} setChrome={chrome} />);
+            expect(sheet.getTextContent()).toContain(t('machineStorage.docker.reviewLead', { count: 2 }));
+            const footer = chrome.mock.calls.map((call) => call[0]).filter(Boolean).at(-1)?.footer as React.ReactElement;
+            const pinned = await renderScreen(footer);
+            await act(async () => { pinned.pressByTestId('machine-storage-docker-remove'); });
+            await vi.waitFor(async () => { await act(async () => {}); expect(prunes).toHaveLength(1); });
+            await vi.waitFor(() => expect(close).toHaveBeenCalled());
+        });
+
         it('offers nothing to remove when custody is unproven, and hides Docker where it does not run', async () => {
             let docker: unknown = ready({ kind: 'unavailable', reason: 'image_custody_unavailable' });
             const { screen } = await mount({ id: 'storage' }, {}, (rpc) => rpc.method === RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET

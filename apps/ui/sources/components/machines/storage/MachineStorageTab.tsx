@@ -502,6 +502,7 @@ function StorageHappierView(
               docker={props.summary.docker}
               offline={props.offline}
               onSizeAgain={props.onSizeAgain}
+              compact={props.compact}
             />
           ) : null}
           {nothingToClear ? (
