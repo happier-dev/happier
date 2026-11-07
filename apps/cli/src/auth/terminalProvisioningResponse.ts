@@ -52,8 +52,8 @@ export function applyTerminalAuthRequestExpiry(
 
 export function formatTerminalPairingExpiryNotice(pairing: TerminalPairingAuthentication): string {
   return pairing.requestExpiresAtMs == null
-    ? 'This link expires soon. Rerun the command if approval fails.'
-    : `This link expires at ${new Date(pairing.requestExpiresAtMs).toISOString()}. Rerun the command if approval fails.`;
+    ? 'This approval link expires soon. Rerun the command if approval fails.'
+    : `This approval link expires at ${new Date(pairing.requestExpiresAtMs).toISOString()}. Rerun the command if approval fails.`;
 }
 
 export function openTerminalProvisioningResponse(params: Readonly<{
