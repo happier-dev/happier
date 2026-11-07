@@ -1447,7 +1447,7 @@ describe('voice tool handlers', () => {
     expect(JSON.parse(res)).toMatchObject({ ok: true });
   });
 
-  it('keeps Session creation on the Voice action channel and returns the created Session', async () => {
+  it.each(['s1', ''])('creates a Session on the configured Voice Machine from startup context (%s)', async (sourceSessionId) => {
     const { buildLocalVoiceAgentSystemPrompt } = await import('@happier-dev/agents');
     const { extractVoiceActionsFromAssistantText } = await import('@happier-dev/protocol/voice/actions');
     const prompt = buildLocalVoiceAgentSystemPrompt({ sessionId: 's1' });
@@ -1458,12 +1458,26 @@ describe('voice tool handlers', () => {
     // Restored runtime scopes carry the durable Home identity, not its device alias.
     publishAppliedActiveServerSnapshot({ ...incumbentHome, serverId: 'srv_voice_tools_a' });
     onTestFinished(() => publishAppliedActiveServerSnapshot(incumbentHome));
+    const current = storage.getState();
+    storage.setState({
+      settings: { ...current.settings, voice: { ...current.settings.voice,
+        executionMachine: { mode: 'fixed', machineId: 'm1' },
+      } },
+      sessions: { ...current.sessions, s1: { ...current.sessions.s1,
+        metadata: { ...current.sessions.s1.metadata!, machineId: 'm2' },
+      } },
+    });
+    const { resolveVoiceExecutionMachineSelectionFromState } = await import('@/voice/settings/executionMachine');
+    expect(resolveVoiceExecutionMachineSelectionFromState(storage.getState())).toEqual({ kind: 'resolved', machineId: 'm1' });
+    const { resolveVoiceAgentInitialContexts } = await import('@/voice/agent/resolveVoiceAgentInitialContexts');
+    const initial = resolveVoiceAgentInitialContexts(sourceSessionId).bootstrapInitialContext;
+    const target = initial.match(/<voice_execution_target>\s*([^<]+)\s*<\/voice_execution_target>/)?.[1];
+    expect(target, 'Voice startup must supply the configured Machine and its Home without discovery').toBeDefined();
+    const executionTarget: unknown = JSON.parse(target!);
+    expect(executionTarget).toEqual({ serverId: 'srv_voice_tools_a', machineId: 'm1' });
     const spawnInput = {
       creationKey: 'manual:voice-v2-contract',
-      executionTarget: {
-        serverId: homeA,
-        machineId: 'm1',
-      },
+      executionTarget,
       directory: { kind: 'path', path: '/tmp/s1' },
       agentTarget: {
         kind: 'agent',
@@ -1526,7 +1540,7 @@ describe('voice tool handlers', () => {
     expect(response, JSON.stringify(response)).toEqual({ ok: true, ...spawnResult });
     expect(daemonRpc).toHaveBeenCalledWith(expect.objectContaining({
       serverUrl: homeUrlA, sessionId: 'm1', method: RPC_METHODS.SESSION_SPAWN_NEW,
-      payload: spawnInput,
+      payload: { ...spawnInput, executionTarget: { serverId: homeA, machineId: 'm1' } },
     }));
   });
 

@@ -98,14 +98,14 @@ describe('buildVoiceInitialContext', () => {
       kind: 'targetless',
       initialContext: expect.stringContaining('<session_context>none</session_context>'),
     });
-    expect(buildVoiceInitialContext('')).toBe('');
+    expect(buildVoiceInitialContext('')).toContain('<session_context>none</session_context>');
 
     expect(resolveVoiceInitialContext('missing_session', { scope: 'session_context' })).toEqual({
       kind: 'missing_session',
       sessionId: 'missing_session',
       initialContext: expect.stringContaining('<session_not_found>true</session_not_found>'),
     });
-    expect(buildVoiceInitialContext('missing_session')).toBe('');
+    expect(buildVoiceInitialContext('missing_session')).toContain('<session_not_found>true</session_not_found>');
 
     const scoped = resolveVoiceInitialContext('s1', { scope: 'session_context' });
     expect(scoped).toEqual({
