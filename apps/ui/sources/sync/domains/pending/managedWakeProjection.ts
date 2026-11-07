@@ -13,6 +13,14 @@ export function isManagedPendingInputAwaitingWake(
         || activation?.managedWakeTargetV1 && activation.requestId === pending.localId);
 }
 
+/** The Session's current managed wake request: newer than its last activation and naming a managed target. */
+export function readManagedWakeAuthorization(
+    session: Pick<Session, 'activeAt'> & Readonly<{ pendingActivationAuthorization?: PendingActivationAuthorizationV1 | null }>,
+): PendingActivationAuthorizationV1 | null {
+    const authorization = session.pendingActivationAuthorization;
+    return authorization && authorization.requestedAt > session.activeAt && authorization.managedWakeTargetV1 ? authorization : null;
+}
+
 export type ManagedWakeProjectionInput = Readonly<{
     managed: Pick<ManagedMachineV1, 'id' | 'homeId' | 'creationState' | 'enrolledMachineId' | 'allocation' | 'controller' | 'observation' | 'submittedNativeEffect' | 'wakeOnAcceptedMessage'> | null;
     pending: Pick<PendingMessage, 'source' | 'pendingDeliveryStatus'> | null;

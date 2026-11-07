@@ -8,6 +8,7 @@ import type { InboxSessionAttentionEntry } from '@/activity/presentation/buildIn
 import type { InboxWorkItem } from '@/activity/presentation/buildInboxWorkGroups';
 import { createActivitySurfaceSessionRoute } from '@/activity/actions/activitySurfaceTargets';
 import { InboxSessionAttentionGroupCard } from '@/components/inbox/sessionAttention/InboxSessionAttentionGroupCard';
+import { InboxManagedWakeSessionRow, hasFailedManagedWake } from '@/components/inbox/sessionAttention/InboxManagedWakeSessionRow';
 import {
     SessionListIdentity,
     type SessionListIdentityDisplay,
@@ -203,6 +204,8 @@ type RowProps = Readonly<{
     workerUpdateHeadline?: string;
 }>;
 
+const NO_WAKE = Object.freeze({ sentence: null, retry: null });
+
 function readRowWorker(props: Pick<RowProps, 'reportsToTitle' | 'workerUpdateHeadline'>) {
     return props.reportsToTitle === undefined ? undefined : { leadTitle: props.reportsToTitle, headline: props.workerUpdateHeadline };
 }
@@ -279,7 +282,7 @@ export const InboxWorkItemRow = React.memo(function InboxWorkItemRow(props: RowP
                 );
             }
             const failed = status.tone === 'danger';
-            return (
+            const renderRow = (wake: Readonly<{ sentence: string | null; retry: React.ReactNode }>) => (
                 <InboxWorkRow
                     testID={`inbox.session.${candidate.sessionId}`}
                     selected={props.focused === true}
@@ -287,7 +290,8 @@ export const InboxWorkItemRow = React.memo(function InboxWorkItemRow(props: RowP
                     title={candidate.title}
                     facts={[
                         item.foldedUnderRunId ? t('inbox.work.rows.step') : null,
-                        buildInboxSessionContextLine(candidate, { showHome: props.spansHomes, worker: readRowWorker(props) }),
+                        // A failed wake says why in the wake owner's words instead of where the session runs.
+                        wake.sentence ?? buildInboxSessionContextLine(candidate, { showHome: props.spansHomes, worker: readRowWorker(props) }),
                     ]}
                     time={time}
                     status={status}
@@ -308,13 +312,16 @@ export const InboxWorkItemRow = React.memo(function InboxWorkItemRow(props: RowP
                             />
                         ) : undefined}
                     trailingAccessory={menu}
-                    belowAccessory={props.pluginSessionRows?.length && props.invokePluginSessionControl ? (
+                    belowAccessory={wake.retry ?? (props.pluginSessionRows?.length && props.invokePluginSessionControl ? (
                         <InboxPluginSessionLines rows={props.pluginSessionRows} invoke={props.invokePluginSessionControl}
                             testID={`inbox.session.${candidate.sessionId}.plugin_rows`} />
-                    ) : undefined}
+                    ) : undefined)}
                     onPress={() => openItem(sessionFocus(candidate.sessionId, serverId), candidate.route ?? null)}
                 />
             );
+            return serverId && hasFailedManagedWake(candidate.session)
+                ? <InboxManagedWakeSessionRow session={candidate.session} serverId={serverId} render={renderRow} />
+                : renderRow(NO_WAKE);
         }
         case 'workflow_run': {
             return <InboxWorkflowRunRow item={item} serverId={props.workflowServerId}
