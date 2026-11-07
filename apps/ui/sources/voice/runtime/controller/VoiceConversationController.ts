@@ -9,7 +9,7 @@ import type {
   VoiceRealtimeJsonValue,
   VoiceRealtimeToolCallV1,
   VoiceTranscriptCanonicalEventV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/voice/realtime/events';
 import type {
   VoiceConnectionCloseReason,
   VoiceRealtimeTransportEvent,
@@ -1098,7 +1098,7 @@ export function createVoiceConversationController(
       fireAndForget(pumpTransportEvents(attempt, connection), { tag: 'VoiceConversation.transportEvents' });
       return { status: 'connected' };
     } catch (error) {
-      const aborted = attempt.abortController.signal.aborted || current !== attempt;
+      const aborted = attempt.abortController.signal.aborted || current !== attempt || !deps.isSelectionCurrent();
       const timedOut = !aborted && error instanceof VoiceConnectionReadyTimeoutError;
       const failureCode = timedOut
         ? error.code

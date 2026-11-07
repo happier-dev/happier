@@ -1,4 +1,5 @@
 import { expect, vi } from 'vitest';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest';
 import type { DaemonVoiceClientAccountOperationRequestV1 } from '@happier-dev/protocol/daemon/voiceCredentials';
 import type { installVoiceWebRtcBrowserBoundary } from './voiceWebRtcHarness';
@@ -77,23 +78,26 @@ export async function createOpenAiVoiceRuntimeEnvironment(options: Readonly<{
   const networkEvents = new EventTarget();
   const notifyNetwork = () => networkEvents.dispatchEvent(new Event('network'));
   await import('@/sync/syncEngine');
-  const { createRecipientContractDigestV1, createPlainSessionOwnerMetadataEnvelopeV1, createSessionOwnerMetadataV1, projectSessionSharedMetadataV1 } = await import('@happier-dev/protocol');
+  const { createRecipientContractDigestV1} = await import('@happier-dev/protocol/plugins/recipientContractV1');
   const { DaemonVoiceClientAccountOperationRequestV1Schema, DaemonVoiceClientAccountOperationResponseV1Schema } = await import('@happier-dev/protocol/daemon/voiceCredentials');
   const { RPC_METHODS } = await import('@happier-dev/protocol/rpc');
+  const { SESSION_CONSUMPTION_REPLACE_EVENT, SessionConsumptionReplaceV1Schema,
+    SessionConsumptionReplaceAckV1Schema } = await import('@happier-dev/protocol/sessions/sessionConsumptionV1');
   const { AccountProfileSchema } = await import('@happier-dev/protocol/account/profile');
   const { SessionLookupByTagsRequestV2Schema, SessionLookupByTagsResponseV2Schema, V2SessionByIdResponseSchema } = await import('@happier-dev/protocol/sessions/control/contract');
+  const { SessionCurrentProjectionRecordV1Schema } = await import('@happier-dev/protocol/sessions/listing/response');
   const { PLUGIN_MANIFEST: authoredOpenAiManifest } = await import('../../../../../../packages/plugins/openai/src/manifest');
   const OPENAI_SOURCE_MANIFEST = PluginManifestV2Schema.parse(authoredOpenAiManifest);
   const { activate: activateOpenAiVoice } = await import('../../../../../../packages/plugins/openai/src/ui/voice/runtime');
-  const { createSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+  const { createSessionFixture, createPlainSessionCurrentProjectionRecordFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
   const { createMachineFixture, createPlainMachineRowFixture, createMachineReadBatchResponseFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
-  const { createSessionReadBatchFetchBoundary } = await import('@/dev/testkit/harness/sessionReadBatchHttpBoundary');
+  const { createCompactSessionListFetchBoundary } = await import('@/dev/testkit/harness/sessionReadBatchHttpBoundary');
   const { createSessionMetadataHttpBoundary } = await import('@/dev/testkit/harness/sessionMetadataHttpBoundary');
   const { answerVoiceRealtimePreparationHttpRequest } = await import('@/dev/testkit/harness/voiceRealtimePreparationHttpBoundary');
   const { createConnectedPurposeCatalogHttpBoundary } = await import('@/dev/testkit/harness/connectedAccountCatalogBoundary');
   const { resetConnectedAccountCatalogEngineForTests } = await import('@/sync/engine/settings/connectedAccountCatalogEngine');
   const { resetConnectedAccountCatalogSnapshotsForTests } = await import('@/sync/store/settings/connectedAccountCatalogSnapshot');
-  const { restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
+  const { restoreServerAccountForTest, createServerAccountConnectionProbeHttpResponse } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
   const { installLocalStorageMock } = await import('@/auth/storage/tokenStorage.web.testHelpers');
   const { getActiveServerSnapshot, upsertServerProfileOnly } = await import('@/sync/domains/server/serverRuntime');
   const { settingsDefaults, settingsParse, applySettings } = await import('@/sync/domains/settings/settings');
@@ -102,6 +106,7 @@ export async function createOpenAiVoiceRuntimeEnvironment(options: Readonly<{
   const { normalizeVoiceSettingsLocalDelta } = await import('@/sync/domains/settings/voiceSettingsPersistence');
   const { normalizeVoiceSettingsServerDelta } = await import('@/sync/domains/settings/voiceSettingsPersistence');
   const { normalizeAccountSettingsForServerStorage } = await import('@/sync/domains/settings/accountSettingsNormalization');
+  const { resolveDeviceLocalSettingsSecretsKey } = await import('@/auth/storage/deviceLocalSecretKey');
   const { resetServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
   const { sync } = await import('@/sync/sync');
   const { apiSocket } = await import('@/sync/api/session/apiSocket');
@@ -156,6 +161,10 @@ export async function createOpenAiVoiceRuntimeEnvironment(options: Readonly<{
       });
       socket.timeout = vi.fn<typeof socket.timeout>(() => socket);
       socket.emitWithAck = vi.fn<typeof socket.emitWithAck>(async (event, payload) => {
+        if (event === SESSION_CONSUMPTION_REPLACE_EVENT) {
+          return SessionConsumptionReplaceAckV1Schema.parse({ ok: true,
+            ...SessionConsumptionReplaceV1Schema.parse(payload) });
+        }
         if (event !== 'rpc-call') return { v: 1, ok: true, admittedSessionIds: [] };
         const request = payload as Readonly<{ method: string; params: unknown }>;
         if (request.method !== `${OPENAI_CREDENTIAL_MACHINE_ID}:${RPC_METHODS.DAEMON_VOICE_CLIENT_ACCOUNT_OPERATION}`) {
@@ -307,7 +316,6 @@ export async function createOpenAiVoiceRuntimeEnvironment(options: Readonly<{
       }
       throw new Error(`unexpected OpenAI fetch: ${url}`);
     });
-    vi.stubGlobal('fetch', fetch);
     return fetch;
   }
 
@@ -462,7 +470,8 @@ export async function createOpenAiVoiceRuntimeEnvironment(options: Readonly<{
     await publishAccountSettings(selected.settings);
     purposes.replace(selected.connectedPurposes);
     await purposes.hydrate({ serverId: getActiveServerSnapshot().serverId, accountId: 'openai-composed-account' });
-    storage.getState().applyMachines([createMachineFixture({ id: OPENAI_CREDENTIAL_MACHINE_ID, activeAt: Date.now() })], true,
+    storage.getState().applyMachines([createMachineFixture({ id: OPENAI_CREDENTIAL_MACHINE_ID, activeAt: Date.now(),
+      storageMode: 'plain', access: createPlainMachineRowFixture({ id: OPENAI_CREDENTIAL_MACHINE_ID, accountId: 'openai-composed-account' }).access })], true,
       { sourceServerId: getActiveServerSnapshot().serverId });
   };
 
@@ -474,6 +483,10 @@ export async function createOpenAiVoiceRuntimeEnvironment(options: Readonly<{
       serverUrl: 'https://openai-composed.example.test',
       name: 'OpenAI composed test',
     });
+    const settingsSecretsKey = await resolveDeviceLocalSettingsSecretsKey({
+      serverId: server.id, accountId: 'openai-composed-account',
+    });
+    if (!settingsSecretsKey) throw new Error('OpenAI Voice fixture could not initialize device-local secret custody');
     // Each restored Account gets a fresh catalog observation; an intentionally
     // retired previous case must not leave a retained loader flight in this one.
     resetConnectedAccountCatalogEngineForTests();
@@ -502,27 +515,27 @@ export async function createOpenAiVoiceRuntimeEnvironment(options: Readonly<{
       metadata: { path: '/voice-transcript-history', host: 'happier.test', ...buildVoiceTranscriptHistorySessionMetadata() },
     });
     sessionHttp = createSessionMetadataHttpBoundary(() => storage.getState().sessions);
-    const carrierMetadata = historySession.metadata;
-    const carrierOwner = createSessionOwnerMetadataV1({ metadata: carrierMetadata });
-    if (!carrierOwner.ok) throw new Error('Expected supported Voice carrier owner metadata');
-    sessionHttp.createSessionFromPost(OPENAI_HISTORY_SESSION_ID, { method: 'POST', body: JSON.stringify({
-      tag: 'system:voice-transcript-history:v1', metadataLayoutVersion: 1,
-      sharedMetadata: { ciphertext: JSON.stringify(projectSessionSharedMetadataV1({ metadata: carrierMetadata, agentState: null })) },
-      ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1(carrierOwner.ownerMetadata),
-      agentState: null, dataEncryptionKey: null, encryptionMode: 'plain',
-    }) });
+    // Persist the authored seed's revisions, independently of a previous
+    // fixture's same-address client row. Exact hydration compares these tuples.
+    sessionHttp.replaceSession(OPENAI_HISTORY_SESSION_ID, createPlainSessionCurrentProjectionRecordFixture({
+      id: historySession.id, seq: historySession.seq, createdAt: historySession.createdAt,
+      updatedAt: historySession.updatedAt, active: historySession.active, activeAt: historySession.activeAt,
+      metadata: historySession.metadata, metadataVersion: historySession.metadataVersion,
+      agentStateVersion: historySession.agentStateVersion,
+    }));
     historySessionPost = async init => sessionHttp.createSessionFromPost(OPENAI_HISTORY_SESSION_ID, init);
     const providerFetch = installOpenAiFetchBoundary();
     allowedTranscriptMessageUrls = new Set([
       transcriptMessageUrl(OPENAI_HISTORY_SESSION_ID),
     ]);
     let nextTranscriptSeq = 0;
-    homeRequest = createSessionReadBatchFetchBoundary(async (input: URL | RequestInfo, init?: RequestInit) => {
+    homeRequest = createCompactSessionListFetchBoundary(async (input: URL | RequestInfo, init?: RequestInit) => {
+      if (new URL(String(input)).pathname === '/v2/sessions/read-batch' && init?.method === 'POST') return undefined;
       const url = String(input);
       if (new URL(url).pathname === '/v1/account/profile') return Response.json(accountProfile);
       if (new URL(url).pathname === '/v2/account/settings') return Response.json({ version: accountSettingsVersion, content: { t: 'plain',
         v: normalizeAccountSettingsForServerStorage({ raw: persistedAccountSettings, mode: 'plain',
-          settingsSecretsKey: null, normalizeServerRaw: normalizeVoiceSettingsServerDelta }).value } });
+          settingsSecretsKey, normalizeServerRaw: normalizeVoiceSettingsServerDelta }).value } });
       if (new URL(url).pathname === '/v1/machines') return Response.json([createPlainMachineRowFixture({ id: OPENAI_CREDENTIAL_MACHINE_ID, accountId: 'openai-composed-account' })]);
       if (new URL(url).pathname === '/v1/machines/read-batch' && init?.method === 'POST') return createMachineReadBatchResponseFixture(init.body,
         id => id === OPENAI_CREDENTIAL_MACHINE_ID ? createPlainMachineRowFixture({ id, accountId: 'openai-composed-account' }) : null);
@@ -543,8 +556,8 @@ export async function createOpenAiVoiceRuntimeEnvironment(options: Readonly<{
       if (purposeResponse) return purposeResponse;
       const preparation = answerVoiceRealtimePreparationHttpRequest(input, persistedAccountSettings);
       if (preparation) return preparation;
-      return null;
-    });
+      return createEmptyAccountBootstrapHttpResponse(new URL(String(input)).pathname, init);
+    }, { preferExactSnapshot: true });
     transcriptRequest = vi.fn(async (input: URL | RequestInfo, init?: RequestInit) => {
       const homeResponse = await homeRequest(input, init);
       if (homeResponse) return homeResponse;
@@ -560,38 +573,56 @@ export async function createOpenAiVoiceRuntimeEnvironment(options: Readonly<{
       const body = JSON.parse(String(init?.body)) as Readonly<{
         localId: string;
       }>;
+      const sessionResponse = sessionHttp.handle(url.slice(0, -'/messages'.length));
+      if (!sessionResponse) throw new Error('Voice transcript fixture has no persisted Session');
+      const session = V2SessionByIdResponseSchema.parse(await sessionResponse.json()).session;
+      const seq = session.seq + 1;
+      const createdAt = Date.now();
+      // The message ACK and subsequent exact Session read observe the same
+      // server write; an old head would correctly fail currentness on restart.
+      sessionHttp.replaceSession(session.id, SessionCurrentProjectionRecordV1Schema.parse({ ...session, seq, updatedAt: createdAt }));
       nextTranscriptSeq += 1;
       return new Response(JSON.stringify({
         didWrite: true,
         message: {
           id: `openai-history-message-${nextTranscriptSeq}`,
-          seq: nextTranscriptSeq,
+          seq,
           localId: body.localId,
-          createdAt: Date.now(),
+          createdAt,
         },
       }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       });
     });
+    // Home authority can carry its captured fetch as well as use runtimeFetch.
+    // Both genuine network entries must reach this same external HTTP fixture.
+    const fetchBoundary: typeof fetch = async (input, init) => {
+        const url = new URL(input instanceof Request ? input.url : String(input));
+        if (url.origin === 'https://api.openai.com') return providerFetch(input, init);
+        if (url.origin !== new URL(server.serverUrl).origin) throw new Error('Unexpected Voice fixture HTTP origin');
+        const probe = createServerAccountConnectionProbeHttpResponse(url.pathname);
+        if (probe) return probe;
+        // Keep domain bootstrap/refresh traffic outside the replaceable
+        // transcript writer. The shared Home boundary owns unclaimed HTTP 404s.
+        const path = url.pathname;
+        const responding = init?.method === 'POST' && /^\/v2\/sessions\/[^/]+\/messages$/.test(path)
+          ? transcriptRequest(input, init)
+          : homeRequest(input, init);
+        notifyNetwork();
+        try { return await responding ?? new Response('{}', { status: 404 }); } finally { notifyNetwork(); }
+    };
+    vi.stubGlobal('fetch', fetchBoundary);
     accountConnection = await restoreServerAccountForTest({
       serverUrl: server.serverUrl,
+      additionalRequestOrigins: ['https://api.openai.com'],
       accountId: 'openai-composed-account',
       credentialScope: 'restored-home',
       // Cold restore is boot-only. This reusable recipe can follow a retained
       // Account transport after its prior content lifetime has been retired.
       activation: apiSocket.getMachineRequestScope() ? 'switch' : undefined,
       configureSocket: configureOpenAiDaemonSocket,
-      request: async (input, init) => {
-        // Keep domain bootstrap/refresh traffic outside the replaceable
-        // transcript writer. The shared Home boundary owns unclaimed HTTP 404s.
-        const path = new URL(String(input)).pathname;
-        const responding = init?.method === 'POST' && /^\/v2\/sessions\/[^/]+\/messages$/.test(path)
-          ? transcriptRequest(input, init)
-          : homeRequest(input, init);
-        notifyNetwork();
-        try { return await responding; } finally { notifyNetwork(); }
-      },
+      request: fetchBoundary,
     });
     await sync.refreshAccountSettingsFromServer(accountSettingsVersion, storage.getState().settingsScope);
     storage.getState().applySessions([historySession]);

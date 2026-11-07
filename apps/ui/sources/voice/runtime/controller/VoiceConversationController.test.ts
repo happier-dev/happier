@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import 'fake-indexeddb/auto';
 import { createDeferred as deferred, waitForTestEvent } from '@/dev/testkit';
-import type { VoiceRealtimeJsonValue, VoiceRealtimeToolCallV1 } from '@happier-dev/protocol';
+import type { VoiceRealtimeJsonValue, VoiceRealtimeToolCallV1 } from '@happier-dev/protocol/voice/realtime/events';
 import type { PartialOptions as ElevenLabsSdkStartOptions } from '@elevenlabs/client';
 
 import type {
@@ -1795,7 +1795,7 @@ describe('VoiceConversationController', () => {
     const environment = await createXaiVoiceRuntimeEnvironment();
     await environment.installSettings(true);
     const composed = await environment.createRuntime();
-    const { SessionCurrentProjectionRecordV1Schema, projectSessionOwnerCompatibilityViewV1 } = await import('@happier-dev/protocol');
+    const [{ SessionCurrentProjectionRecordV1Schema}, { projectSessionOwnerCompatibilityViewV1}] = await Promise.all([import('@happier-dev/protocol/sessions/listing/response'), import('@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1')]);
     const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
     const { readVoiceProviderConversationMetadata } = await import('@/voice/persistence/voiceProviderConversationMetadata');
     const { voiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
