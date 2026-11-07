@@ -5980,6 +5980,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         avatarStyle: '頭像風格',
         homeBotFaces: "主頁上的 Bot 頭像",
         homeBotFacesDescription: "在手機上，主頁頂部顯示一排 Bot 頭像。輕點即可開啟。",
+        homeBotFaces: "主頁上的 Bot 頭像",
+        homeBotFacesDescription: "在手機上，主頁頂部顯示一排 Bot 頭像。輕點即可開啟。",
         avatarStyleDescription: '選擇工作階段頭像外觀',
         botFaceStyle: "機器人",
         botFaceStyleDescription: "選擇機器人的預設臉孔風格",

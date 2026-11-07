@@ -88,6 +88,7 @@ export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen()
     const { arrangement: paneArrangement, setArrangement: setPaneArrangement } = usePaneArrangement();
     const { placement: rightPanelPlacement, setPlacement: setRightPanelPlacement } = useRightPanelPlacement();
     const [avatarStyle, setAvatarStyle] = useSettingMutable('avatarStyle');
+    const [homeBotFacesEnabled, setHomeBotFacesEnabled] = useSettingMutable('homeBotFacesEnabled');
     const [showFlavorIcons, setShowFlavorIcons] = useSettingMutable('showFlavorIcons');
     const [showChatCodeBlockWrapControls, setShowChatCodeBlockWrapControls] = useSettingMutable('showChatCodeBlockWrapControls');
     const [wrapChatCodeBlocks, setWrapChatCodeBlocks] = useSettingMutable('wrapChatCodeBlocks');
@@ -547,6 +548,15 @@ export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen()
                             router.push('/home');
                         }}
                     />
+                    <SettingAnchor setting={APPEARANCE_SETTINGS.settings.homeBotFaces}>
+                        <Item
+                            title={t('settingsAppearance.homeBotFaces')}
+                            subtitle={t('settingsAppearance.homeBotFacesDescription')}
+                            subtitleLines={0}
+                            rightElement={<Switch testID="settings-appearance-homeBotFaces-switch" value={homeBotFacesEnabled} onValueChange={setHomeBotFacesEnabled} />}
+                            showChevron={false}
+                        />
+                    </SettingAnchor>
                 </SettingSection>
                 {/* The Machine summary's look lives with the machines it summarizes. */}
                 <Item

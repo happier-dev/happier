@@ -877,6 +877,7 @@ const ACCOUNT_CORE_CATALOG_DEFINITIONS = {
     botFaceStyle: accountPreference(BotFaceStyleSchema, 'dither', 'Bot face presentation'),
     botMotion: accountPreference(BotMotionSchema, 'lively', 'Bot motion presentation'),
     homeBotFacesEnabled: accountPreference(z.boolean(), true, 'Home presentation'),
+    homeBotFacesEnabled: accountPreference(z.boolean(), true, 'Home presentation'),
     hideInactiveSessions: accountPreference(z.boolean(), false, 'session list presentation'),
     sessionListActiveColorModeV1: accountPreference(z.enum(['activityAndAttention', 'attentionOnly', 'allActive']), 'activityAndAttention', 'session list presentation'),
     sessionMessageSendMode: accountPolicy(z.enum(['agent_queue', 'interrupt', 'server_pending']), 'server_pending', 'message delivery'),

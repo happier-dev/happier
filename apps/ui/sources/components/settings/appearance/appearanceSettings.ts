@@ -73,6 +73,7 @@ export const APPEARANCE_PAGE_SETTINGS = defineSettingsPage({
             titleKey: 'settingsOverview.homeLayoutSectionTitle',
             settings: {
                 homeSections: {},
+                homeBotFaces: {},
             },
         },
         sessions: {

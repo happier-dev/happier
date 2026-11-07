@@ -29,6 +29,7 @@ const APPEARANCE_LOCAL_KEYS = [
 
 const APPEARANCE_ACCOUNT_KEYS = [
     'avatarStyle',
+    'homeBotFacesEnabled',
     'showFlavorIcons',
     'tabBarGitBadgeMode',
     'tabBarFriendsBadgeEnabled',

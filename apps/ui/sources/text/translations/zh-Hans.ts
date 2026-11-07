@@ -6799,6 +6799,8 @@ export const zhHans: TranslationStructure = {
     avatarStyle: "头像风格",
     homeBotFaces: "主页上的 Bot 头像",
     homeBotFacesDescription: "在手机上，主页顶部显示一排 Bot 头像。轻点即可打开。",
+    homeBotFaces: "主页上的 Bot 头像",
+    homeBotFacesDescription: "在手机上，主页顶部显示一排 Bot 头像。轻点即可打开。",
     avatarStyleDescription: "选择会话头像外观",
     botFaceStyle: "机器人",
     botFaceStyleDescription: "选择机器人的默认面孔风格",

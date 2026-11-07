@@ -7376,6 +7376,8 @@ localTailscale: {
     avatarStyle: "アバタースタイル",
     homeBotFaces: "ホームのBotの顔",
     homeBotFacesDescription: "スマートフォンで、ホームの上部にBotの顔を一列に表示します。タップで開きます。",
+    homeBotFaces: "ホームのBotの顔",
+    homeBotFacesDescription: "スマートフォンで、ホームの上部にBotの顔を一列に表示します。タップで開きます。",
     avatarStyleDescription: "セッションアバターの外観を選択",
     botFaceStyle: "ボット",
     botFaceStyleDescription: "ボットの顔のデフォルトスタイルを選択",
