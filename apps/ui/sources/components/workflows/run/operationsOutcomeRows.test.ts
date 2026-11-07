@@ -81,6 +81,8 @@ describe('presentOperationsOutcomeRows', () => {
       },
     });
     expect(presented[0]!.value).toBe('The failed rollback of cmvxxre5g left it running.');
+    // The row draws the agent's own Markdown as a preview (lists stay lists); the plain value is its one-line reading.
+    expect(presented[0]!.markdown).toBe('The **failed rollback** of `cmvxxre5g` left it `running`.');
   });
 
   it('reads recovery from live health for the same Environment and target', () => {

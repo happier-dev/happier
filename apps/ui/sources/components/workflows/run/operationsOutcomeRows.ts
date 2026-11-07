@@ -20,6 +20,8 @@ export type OperationsOutcomeRow = Readonly<{
   key: 'finding' | 'proposal' | 'applied' | 'recovery';
   title: string;
   value: string;
+  /** Finding only: the agent's own Markdown, drawn as a preview; `value` is its plain one-line reading. */
+  markdown?: string;
   tone?: 'danger' | 'attention';
   /** The Session that holds the finding, when there is one to open. */
   session?: ActionSessionAddressV1;
@@ -112,7 +114,8 @@ function findingRow(
         ? t('workflows.triggers.guided.outcome.reported')
         // Whether the agent finished lives in its Session; this row never guesses.
         : t(session ? 'workflows.triggers.guided.outcome.inSession' : 'workflows.triggers.guided.outcome.working');
-  return { key: 'finding', title, value, ...(session ? { session } : {}) };
+  return { key: 'finding', title, value, ...(preview?.state === 'available' ? { markdown: preview.text } : {}),
+    ...(session ? { session } : {}) };
 }
 
 function recoveryRow(

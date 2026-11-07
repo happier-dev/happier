@@ -26,6 +26,25 @@ function hostTexts(screen: Screen): string[] {
 }
 
 describe('AttentionBanner', () => {
+  it('puts a shared control and a button under the words, at the control height, never beside a squeezed body', async () => {
+    const { HappierBanner } = await import('@happier-dev/plugin-ui/presentation');
+    const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
+    const screen = await renderScreen(
+      <AttentionBanner
+        testID="failed"
+        tone="danger"
+        title="This deploy failed"
+        description="The build failed."
+        control={<View testID="agent-control" />}
+        action={{ label: 'Roll back', onPress: () => {} }}
+      />,
+    );
+    // Two ways forward never share a line with the words.
+    expect(screen.findByType(HappierBanner).props.actionPlacement).toBe('below');
+    // Beside a split control (plugin-ui small), the banner's own button is the same height.
+    expect(screen.findAllByType(RoundButton).find(button => button.props.title === 'Roll back')?.props.size).toBe('small');
+  });
+
   it('preserves a domain-owned status glyph with its recovery actions', async () => {
     const retry = vi.fn();
     const screen = await renderScreen(

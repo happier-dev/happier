@@ -4,6 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Text } from '@/components/ui/text/Text';
+import { MarkdownView } from '@/components/markdown/MarkdownView';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { useOperationsRunOutcome } from '@/hooks/workflows/useOperationsRunOutcome';
 import type { OperationsRunOutcomeInput } from '@/sync/domains/workflows/operationsRunOutcome';
@@ -39,8 +40,10 @@ export const OperationsOutcomeGroup = React.memo(
               key={row.key}
               testID={`${props.testID}.${row.key}`}
               title={row.title}
-              // A finding is the agent's own words; the other rows are one short fact.
-              {...(long
+              // A finding is the agent's own words, drawn as its Markdown (lists stay lists); the other rows are one short fact.
+              {...(long && row.markdown
+                ? { bottomElement: <MarkdownView markdown={row.markdown} profile="widget" testID={`${props.testID}.${row.key}.markdown`} /> }
+                : long
                 ? { subtitle: row.value, subtitleLines: 3 }
                 : row.tone
                   ? {

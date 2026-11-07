@@ -101,15 +101,17 @@ export const AttentionBanner = React.memo(function AttentionBanner(props: Readon
     const fullWidthAction = compact && props.compactActionPlacement === 'full-width';
     const toggleDetails = React.useCallback(() => setDetailsOpen((open) => !open), []);
     const hasDetails = (props.details?.length ?? 0) > 0;
+    // Beside a shared control (a split button drawn at the plugin-ui small height), the banner's own buttons match it.
+    const besideControl = props.control !== undefined && props.control !== null;
     const actions = props.action || props.control || props.secondaryAction || (props.moreActions?.length ?? 0) > 0 ? (
         <View style={[styles.actions, fullWidthAction ? { width: '100%' } : null]}>
             {props.control ?? null}
-            {props.action ? <BannerButton action={props.action} testID={`${props.testID}.action`} fullWidth={fullWidthAction} /> : null}
+            {props.action ? <BannerButton action={props.action} testID={`${props.testID}.action`} fullWidth={fullWidthAction} beside={besideControl} /> : null}
             {props.secondaryAction
-                ? <BannerButton action={props.secondaryAction} testID={`${props.testID}.secondaryAction`} quiet />
+                ? <BannerButton action={props.secondaryAction} testID={`${props.testID}.secondaryAction`} quiet beside={besideControl} />
                 : null}
             {(props.moreActions ?? []).map((more, index) => (
-                <BannerButton key={index} action={more} testID={`${props.testID}.moreAction.${index}`} quiet />
+                <BannerButton key={index} action={more} testID={`${props.testID}.moreAction.${index}`} quiet beside={besideControl} />
             ))}
         </View>
     ) : null;
@@ -139,8 +141,9 @@ export const AttentionBanner = React.memo(function AttentionBanner(props: Readon
                 )}
                 action={actions}
                 compactActionPlacement={props.compactActionPlacement}
-                // Two or more ways forward, or a list of steps, never share a line with the words.
-                actionPlacement={props.actionPlacement ?? (props.secondaryAction || (props.moreActions?.length ?? 0) > 0 ? 'below' : undefined)}
+                // Two or more ways forward (a shared control counts as one), or a list of steps, never share a line with the words.
+                actionPlacement={props.actionPlacement ?? (props.secondaryAction || (props.moreActions?.length ?? 0) > 0
+                    || (besideControl && props.action) ? 'below' : undefined)}
                 onLayout={(event) => { const width = readHappierVisibleLayoutWidth(event.nativeEvent.layout.width); if (width !== null) setCompact(width < PAGE_LIST_METRICS.rowStackBelowWidthPx); }}
                 details={<>
                     {hasDetails ? (
@@ -235,12 +238,12 @@ function AttentionBannerStrip(props: React.ComponentProps<typeof AttentionBanner
     );
 }
 
-function BannerButton(props: Readonly<{ action: AttentionBannerAction; testID: string; quiet?: boolean; fullWidth?: boolean }>) {
+function BannerButton(props: Readonly<{ action: AttentionBannerAction; testID: string; quiet?: boolean; fullWidth?: boolean; beside?: boolean }>) {
     const { theme } = useUnistyles();
     return (
         <RoundButton
             testID={props.action.testID ?? props.testID}
-            size={props.fullWidth ? 'normal' : 'mini'}
+            size={props.fullWidth ? 'normal' : props.beside ? 'small' : 'mini'}
             style={props.fullWidth ? { width: '100%' } : undefined}
             display={props.action.display ?? (props.quiet ? 'inverted' : 'secondary')}
             title={props.action.label}
