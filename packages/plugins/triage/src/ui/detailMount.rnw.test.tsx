@@ -1458,6 +1458,16 @@ describe('opening a row into the source detail', () => {
         } finally { releaseFirst(); }
     });
 
+    it('titles a refused unsynchronized pin with its pinned title, not the failure', async () => {
+        // Live READY142: the hosted header said "These details could not be read" above the same failure body.
+        const shell = await mountShell({ pinnedEntryIds: ['657'], noScannedEntries: true, hostedDetail: true,
+            refusedHostReads: new Set([TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1]) });
+        await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Pinned change 657' })); });
+        await vi.waitFor(() => { expect(document.body.textContent).toContain('These details could not be read'); });
+        await expect(shell.getByRole('heading', { name: 'Pinned change 657' })).resolves.toBeDefined();
+        await expect(shell.queryByRole('heading', { name: 'These details could not be read' })).resolves.toBeUndefined();
+    });
+
     it('explains unavailable source admission without reading an unsynchronized pin', async () => {
         const shell = await mountShell({ pinnedEntryIds: ['657'], noScannedEntries: true, noActiveSource: true });
         await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Pinned change 657' })); });

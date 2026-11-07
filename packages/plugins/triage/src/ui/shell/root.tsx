@@ -2443,9 +2443,14 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   });
   const detailHeader = (key: string) => {
     if (key === TRIAGE_TASK_DRAFT_KEY_V1) return { title: text('plugins.triage.tasks.new', 'New task') };
-    if (selectedHeader === null && unobservedSelection !== null) return { title: readFailed
-      ? text('plugins.triage.surface.detail.accountError.title', 'These details could not be read')
-      : text('plugins.triage.surface.detail.reading', 'Reading this entry') };
+    if (selectedHeader === null && unobservedSelection !== null) {
+      // A pin already knows its title; the read failure belongs to the body below, not to the page title.
+      const pinnedTitle = pinsByEntry.get(triageEntryRowKey(unobservedSelection.entryRef))?.displayAtMark.title;
+      if (pinnedTitle !== undefined) return { title: pinnedTitle };
+      return { title: readFailed
+        ? text('plugins.triage.surface.detail.accountError.title', 'These details could not be read')
+        : text('plugins.triage.surface.detail.reading', 'Reading this entry') };
+    }
     if (selectedHeader === null) return { title: text('plugins.triage.surface.entryNotLoaded.heading', 'These details are not loaded') };
     const pinRow = selectedRow === null ? lastKnownPinRow : projectTriageWindowRow(selectedRow, pinsByEntry, { text });
     return renderTriageDetailHeaderV1({ header: selectedHeader, text, locale: surfaceContext.locale, nowMs: Date.now(),
