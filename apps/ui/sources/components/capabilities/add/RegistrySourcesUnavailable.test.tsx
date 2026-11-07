@@ -15,21 +15,16 @@ vi.mock(
 
 const { RegistrySourcesUnavailable } =
   await import('./RegistrySourcesUnavailable');
-const { CorePluginUiPresentationScope } =
-  await import('@/components/plugins/surfaces/CorePluginUiPresentationScope');
 
 function render(
   failures: React.ComponentProps<typeof RegistrySourcesUnavailable>['failures'],
 ) {
+  // As a core page renders it: no presentation scope around it (Store Discover, Store kind pages, Plugins).
   return renderScreen(
-    React.createElement(
-      CorePluginUiPresentationScope,
-      null,
-      React.createElement(RegistrySourcesUnavailable, {
-        failures,
-        testID: 'outage',
-      }),
-    ),
+    React.createElement(RegistrySourcesUnavailable, {
+      failures,
+      testID: 'outage',
+    }),
   );
 }
 
@@ -39,10 +34,10 @@ function texts(screen: Awaited<ReturnType<typeof renderScreen>>): string {
 
 describe('RegistrySourcesUnavailable', () => {
   it('as a page state, names the catalog and gives its reason as the sentence under it', async () => {
-    const screen = await renderScreen(React.createElement(CorePluginUiPresentationScope, null,
+    const screen = await renderScreen(
       React.createElement(RegistrySourcesUnavailable, { testID: 'outage', size: 'page', failures: [{
         key: 'curated', message: 'Curated · Unreachable.', source: 'Curated', reason: 'Unreachable.', onRetry: () => {},
-      }] })));
+      }] }));
     const content = screen.getTextContent();
     expect(content).toContain('Curated');
     expect(content).toContain('Unreachable.');
