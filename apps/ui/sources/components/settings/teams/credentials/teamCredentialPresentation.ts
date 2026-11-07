@@ -302,9 +302,12 @@ export function brokerPoolChoiceLabel(
 export function brokerPlacementLabel(resource: TeamCredentialResourceSummaryV1): string {
     // A value, never the action's own label: the owner's "Choose a broker location" button sits beside it.
     if (resource.brokerPlacement === null) return t('teams.credentials.detail.brokerNotChosen');
-    // A stored choice the Home no longer presents is unavailable to its owner, not unnamed or unchosen.
+    // A placement the Home did not name says so; a missing name is not an availability fact, which
+    // belongs to readiness on the state row.
     const unnamedPlacement = resource.capabilities.updateBrokerPlacement
-        ? t('common.unavailable')
+        ? resource.brokerPlacement.kind === 'machine_pool'
+            ? t('teams.credentials.detail.brokerUnnamedPool')
+            : t('teams.credentials.detail.brokerUnnamedMachine')
         : t('teams.credentials.detail.brokerChosen');
     if (resource.brokerPlacement.kind === 'machine_pool') {
         // A Pool is named as one: "Development" beside a Machine's own display

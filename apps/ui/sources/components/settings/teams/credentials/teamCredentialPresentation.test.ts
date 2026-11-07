@@ -36,6 +36,22 @@ describe('teamCredentialPresentation', () => {
         });
         expect(teamCredentialBrokerPlacementAction(member)).toBeNull();
     });
+
+    it('never reads a broker the Home did not name as unavailable', () => {
+        const placement = { kind: 'machine', machineId: 'machine-3ca2' } as const;
+        const base = teamCredentialResourceFixture({ brokerPlacement: placement });
+        // An online broker without a display name, and a placement the Home did not present to this viewer:
+        // neither is an availability fact, so neither may say "Unavailable".
+        const unnamedOnline = teamCredentialResourceFixture({ brokerPlacement: placement, brokerPresentation: {
+            ...base.brokerPresentation,
+            selectedTarget: { machineId: 'machine-3ca2', displayName: null, availability: 'available' },
+        } });
+        const unpresented = teamCredentialResourceFixture({ brokerPlacement: placement, brokerPresentation: {
+            ...base.brokerPresentation, selectedTarget: null,
+        } });
+        expect(brokerPlacementLabel(unnamedOnline)).toBe(t('teams.credentials.detail.brokerUnnamedMachine'));
+        expect(brokerPlacementLabel(unpresented)).toBe(t('teams.credentials.detail.brokerUnnamedMachine'));
+    });
     it('presents recipient-only reconnect readiness without requiring manager-private fields or models', () => {
         const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
             id: 'shared-resource', teamId: 'team-1', displayName: 'Shared Codex', resourceRevision: 1,
