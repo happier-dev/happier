@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { CurrentUiContextCommandInvocation } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { useNewSessionCapabilities } from '@/sync/domains/capabilities/session/useNewSessionCapabilities';
 import { useSessionCapabilities } from '@/sync/domains/capabilities/session/useSessionCapabilities';
 import { buildSessionCapabilitiesModel, type SessionCapabilitiesModelInput } from './sessionCapabilitiesModel';
@@ -36,16 +37,18 @@ export function useExistingSessionCapabilitiesPopover(target: Extract<SessionCap
     React.useEffect(() => {
         if (metadataChange && 'source' in metadataChange) setChange(null);
     }, [metadataChange]);
-    const setItem = React.useCallback(async (kind: SessionCapabilityChange['kind'], id: string, value: SessionCapabilityChange['state'], suppliedTitle?: string) => {
+    const setItem = React.useCallback(async (kind: SessionCapabilityChange['kind'], id: string, value: SessionCapabilityChange['state'], suppliedTitle?: string,
+        invocation?: CurrentUiContextCommandInvocation) => {
         if (target.readOnly) return { ok: false as const, message: 'read_only' };
         const item = (kind === 'mcp_server' ? state.preview?.mcp.items : state.preview?.skills.items)?.find(item => item.id === id);
         const title = suppliedTitle ?? (kind === 'native_skill' ? id : item ? item.title ?? item.name : null);
-        const result = await state.setItem(kind, id, value);
+        const result = await state.setItem(kind, id, value, undefined, invocation);
         if (result.ok && title && receiptKey.current === key) {
-            setChange({ kind, title, state: value });
+            const written = result.state;
+            setChange({ kind, title, state: written });
             // A return to the rules ("inherit") adds back what was off and removes what was added.
-            const added = value === 'on' || value === 'inherit' && result.previous === 'off';
-            setUndoOffer({ id, written: value, receipt: { kind, title, change: added ? 'added' : 'removed' }, previous: result.previous ?? 'inherit' });
+            const added = written === 'on' || written === 'inherit' && result.previous === 'off';
+            setUndoOffer({ id, written, receipt: { kind, title, change: added ? 'added' : 'removed' }, previous: result.previous });
         } else if (!result.ok) setUndoOffer(null);
         return result;
     }, [target.readOnly, state.setItem, state.preview, key]);
@@ -53,7 +56,9 @@ export function useExistingSessionCapabilitiesPopover(target: Extract<SessionCap
         view: state.preview ? { ...state.preview, pendingApply: state.pendingApply } : null, selection: state.selection,
         applyState: { pendingApply: state.pendingApply, applyTiming: state.applyTiming },
         // A check that failed while the session's machine is offline is the machine being away, not a failure.
-        state: presentation.machineOnline === null ? 'resolving' as const : state.status === 'ready' ? 'ready' as const : state.status === 'unavailable'
+        // Presence can remain unknown independently of a settled capability read.
+        // Only the read's lifecycle decides whether the sheet is still resolving.
+        state: state.status === 'ready' ? 'ready' as const : state.status === 'unavailable'
             ? presentation.machineOnline === false ? 'machine_unreachable' as const : 'error' as const : 'resolving' as const,
         readOnly: target.readOnly, change: changeForTarget }), [state.preview, state.pendingApply, state.applyTiming, state.selection, state.status,
         presentation.machineOnline, target.readOnly, changeForTarget]);
@@ -62,11 +67,11 @@ export function useExistingSessionCapabilitiesPopover(target: Extract<SessionCap
     // Undo stays offered while the item still holds what this change wrote (native skills hold only off/inherit); a newer write by any device retires it.
     const undoCurrent = undoOffer && readSessionCapabilityOverrideV1(state.selection, undoOffer.receipt.kind, undoOffer.id)
         === readSessionCapabilityOverrideV1(setSessionCapabilitySelectionItemV1({}, undoOffer.receipt.kind, undoOffer.id, undoOffer.written), undoOffer.receipt.kind, undoOffer.id) ? undoOffer : null;
-    const undoLast = React.useCallback(async () => {
+    const undoLast = React.useCallback(async (invocation?: CurrentUiContextCommandInvocation) => {
         if (target.readOnly) return { ok: false as const, message: 'read_only' };
         const offered = undoCurrent;
         setUndoOffer(null);
-        const result = await state.undoLast();
+        const result = await state.undoLast(invocation);
         // The undone change is itself the latest one the composer's apply line should describe.
         if (result.ok && offered && receiptKey.current === key) setChange({ kind: offered.receipt.kind, title: offered.receipt.title, state: offered.previous });
         return result;
@@ -80,7 +85,7 @@ export function useNewSessionCapabilitiesPopover(draft: NewSessionCapabilitiesDr
     const state = useNewSessionCapabilities(draft);
     const modelInput = React.useMemo(() => ({ view: state.preview, selection: state.selection,
         // REACH's presence decides "offline" too: a failed check against a machine that is away is not a failure.
-        state: presentation.machineOnline === null ? 'resolving' as const : state.previewStatus === 'ready' ? 'ready' as const
+        state: state.previewStatus === 'ready' ? 'ready' as const
             : state.previewStatus === 'unreachable' || (state.previewStatus === 'error' && presentation.machineOnline === false) ? 'machine_unreachable' as const
             : state.previewStatus === 'error' ? 'error' as const : 'resolving' as const, readOnly: false }),
         [state.preview, state.selection, state.previewStatus, presentation.machineOnline]);

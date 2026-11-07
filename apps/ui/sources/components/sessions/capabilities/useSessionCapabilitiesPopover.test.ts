@@ -8,14 +8,17 @@ import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/s
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createSessionAccessFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
-import { SessionCurrentProjectionRecordV1Schema } from '@happier-dev/protocol';
+import { SessionCurrentProjectionRecordV1Schema } from '@happier-dev/protocol/sessions/listing/response';
 import { createSessionOwnerMetadataV1, createPlainSessionOwnerMetadataEnvelopeV1, projectSessionOwnerCompatibilityViewV1,
-    SessionMetadataOwnerPatchV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+    SessionMetadataOwnerPatchV1Schema, SessionMetadataVersionConflictV1Schema,
+    SessionMetadataTuplePatchSuccessV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import type { SessionCapabilitySelectionV1 } from '@happier-dev/protocol/reach/sessionCapabilitySelectionV1';
 import { SkillListItemV1Schema } from '@happier-dev/protocol/prompts/library/skills/skillLibraryItemV1';
 import { buildSkillComposerGroups, pickSkillComposerRow } from '@/sync/domains/skills/skillComposerGroups';
 import { readSessionCapabilitySelectionFromMetadataV1, resolveSelectionRestartMarkersForStartupV1, writeCapabilitySelectionApplyV1, clearCapabilitySelectionApplyV1, writeSessionCapabilitySelectionToMetadataV1 } from '@happier-dev/protocol/reach/sessionCapabilityMetadataV1';
 import { setSessionCapabilitySelectionItemV1 } from '@happier-dev/protocol/reach/sessionCapabilitySelectionV1';
+import { resolveSessionCapabilitiesV1 } from '@happier-dev/protocol/reach/resolveSessionCapabilitiesV1';
+import { SpawnCapabilitiesPreviewInputV1Schema } from '@happier-dev/protocol/actions/specs/sessionCapabilities';
 import { MetadataSchema } from '@happier-dev/session-core/state';
 import { sessionCapabilityApplyNotice } from './sessionCapabilityApplyNotice';
 
@@ -62,7 +65,7 @@ it('edits only the authoring draft and does not request a Machine preview before
         const [selection, setSelection] = React.useState<SessionCapabilitySelectionV1>({
             mcp: { v: 1, managedServersEnabled: true, forceIncludeServerIds: ['linear'], forceExcludeServerIds: [] } });
         return useNewSessionCapabilitiesPopover({ machineId: 'machine', directory: '/repo', agentId: 'codex', enabled: true,
-            selection, setSelection }, presentation);
+            selection, setSelection }, { ...presentation, machineOnline: null });
     });
     expect(transport).not.toHaveBeenCalled();
     await act(async () => hook.getCurrent().setItem('native_skill', 'native-review', 'off'));
@@ -82,9 +85,38 @@ it('reads a draft check that failed against a machine REACH says is away as offl
     await act(async () => hook.getCurrent().demandPreview());
     await vi.waitFor(() => expect(hook.getCurrent().model.state).toBe('machine_unreachable'));
     await hook.rerender(null);
-    expect(hook.getCurrent().model.state).toBe('resolving');
+    expect(hook.getCurrent().model.state).toBe('error');
     await hook.rerender(true);
     expect(hook.getCurrent().model.state).toBe('error');
+    expect(transport).toHaveBeenCalledTimes(1);
+});
+
+it.each([false, true])('keeps draft Turn on selected with rules enabled=%s without making a Session write', async ruleOn => {
+    const rules = [{ id: 'fixture-rule', target: { t: 'allMachines' as const }, enabled: ruleOn, createdAt: 1, updatedAt: 1 }];
+    transport.mockImplementation(async request => {
+        const input = SpawnCapabilitiesPreviewInputV1Schema.parse(Reflect.get(request as object, 'payload'));
+        const resolved = resolveSessionCapabilitiesV1({ context: { machineId: 'machine', machinePlatform: 'posix', directory: '/repo', projectKey: null, agentId: 'codex' },
+            selection: input.capabilitySelection ?? {}, agentAcceptsUserMcp: true, skills: null,
+            mcp: { v: 1, strictMode: false, servers: [{ id: 'fixture', name: 'fixture', transport: 'http', remote: { url: 'https://fixture.test/mcp', headers: {} }, env: {}, createdAt: 1, updatedAt: 1 }],
+                bindings: rules.map(rule => ({ ...rule, serverId: 'fixture' })) } });
+        return { ...preview, mcp: { ...preview.mcp, items: resolved.mcp.items.map(({ effectiveConfig: _config, ...item }) => item) } };
+    });
+    const hook = await renderHook(() => {
+        const [selection, setSelection] = React.useState<SessionCapabilitySelectionV1>(setSessionCapabilitySelectionItemV1({}, 'mcp_server', 'fixture', 'off'));
+        return useNewSessionCapabilitiesPopover({ machineId: 'machine', directory: '/repo', agentId: 'codex', enabled: true, selection, setSelection },
+            { ...presentation, rules: () => rules });
+    });
+    expect(transport).not.toHaveBeenCalled();
+    await act(async () => hook.getCurrent().demandPreview());
+    await vi.waitFor(() => expect(hook.getCurrent().model.state).toBe('ready'));
+    const row = hook.getCurrent().model.groups[1]!.rows[0]!;
+    expect(row.action).toEqual({ kind: 'turn_on', state: ruleOn ? 'inherit' : 'on' });
+    const action = row.action;
+    if (action.kind !== 'turn_on') throw new Error('Expected Turn on');
+    await act(async () => hook.getCurrent().setItem('mcp_server', row.id, action.state));
+    await vi.waitFor(() => expect(hook.getCurrent().model.groups[1]?.rows[0]).toMatchObject({ id: 'fixture', dimmed: false, action: { kind: 'remove' } }));
+    expect(hook.getCurrent().modelInput.selection.mcp?.forceIncludeServerIds).toEqual(ruleOn ? [] : ['fixture']);
+    expect(homes.requests.some(request => request.input !== null && request.path.includes('/sessions/'))).toBe(false);
 });
 
 it('reuses the Session Action owner for rollback, previous-override Undo and read-only viewers', async () => {
@@ -105,14 +137,14 @@ it('reuses the Session Action owner for rollback, previous-override Undo and rea
     let conflict = false;
     let acknowledgeApply = false;
     for (const suffix of ['', '?accessProjectionVersion=1']) homes.answer(serverId, `GET /v2/sessions/${sessionId}${suffix}`, { select: () => {
-        const response = { body: { session: row } };
+        const response = { body: { session: SessionCurrentProjectionRecordV1Schema.parse(row) } };
         if (conflict) {
             conflict = false;
             const edited = createSessionOwnerMetadataV1({ metadata: writeSessionCapabilitySelectionToMetadataV1(metadata() ?? {},
                 setSessionCapabilitySelectionItemV1(readSessionCapabilitySelectionFromMetadataV1(metadata()), 'native_skill', 'native-review', 'on'), { sessionActive: true }) });
             if (!edited.ok) throw new Error('Invalid concurrent selection');
-            row = { ...row, metadataVersion: row.metadataVersion + 1,
-                ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1(edited.ownerMetadata) };
+            row = SessionCurrentProjectionRecordV1Schema.parse({ ...row, metadataVersion: row.metadataVersion + 1, displayProjectionV1: undefined,
+                ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1(edited.ownerMetadata) });
         }
         if (acknowledgeApply) {
             acknowledgeApply = false;
@@ -121,23 +153,30 @@ it('reuses the Session Action owner for rollback, previous-override Undo and rea
                 hostPid: 42,
             } });
             if (!acknowledged.ok) throw new Error('Invalid runtime acknowledgment');
-            row = { ...row, metadataVersion: row.metadataVersion + 1,
-                ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1(acknowledged.ownerMetadata) };
+            row = SessionCurrentProjectionRecordV1Schema.parse({ ...row, metadataVersion: row.metadataVersion + 1, displayProjectionV1: undefined,
+                ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1(acknowledged.ownerMetadata) });
         }
         return response;
     } });
     homes.answer(serverId, `PATCH /v2/sessions/${sessionId}`, { select: input => {
         const patch = SessionMetadataOwnerPatchV1Schema.parse(input);
-        expect(patch.sharedMetadata.expectedVersion).toBe(row.metadataVersion);
-        row = { ...row, ownerMetadata: patch.ownerMetadata, metadata: patch.sharedMetadata.ciphertext, metadataVersion: row.metadataVersion + 1,
-            agentState: patch.agentState.ciphertext, agentStateVersion: row.agentStateVersion! + 1 };
-        return { body: { success: true, metadataLayoutVersion: 1, sharedMetadata: { version: row.metadataVersion }, agentState: { version: row.agentStateVersion } } };
+        if (patch.sharedMetadata.expectedVersion !== row.metadataVersion || patch.agentState.expectedVersion !== row.agentStateVersion) {
+            return { status: 409, body: SessionMetadataVersionConflictV1Schema.parse({ code: 'session_metadata_version_conflict', metadataLayoutVersion: 1,
+                sharedMetadata: { version: row.metadataVersion }, agentState: { version: row.agentStateVersion } }) };
+        }
+        row = SessionCurrentProjectionRecordV1Schema.parse({ ...row, ownerMetadata: patch.ownerMetadata, metadata: patch.sharedMetadata.ciphertext, metadataVersion: row.metadataVersion + 1,
+            agentState: patch.agentState.ciphertext, agentStateVersion: row.agentStateVersion! + Number(patch.agentState.ciphertext !== row.agentState),
+            ...('displayProjectionV1' in patch ? { displayProjectionV1: patch.displayProjectionV1 ?? undefined } : {}) });
+        return { body: SessionMetadataTuplePatchSuccessV1Schema.parse({ success: true, metadataLayoutVersion: 1,
+            sharedMetadata: { version: row.metadataVersion }, agentState: { version: row.agentStateVersion } }) };
     } });
     const target = { kind: 'session' as const, sessionId, serverId, readOnly: false };
     homes.answer(serverId, 'GET /v1/artifacts', { body: [] });
-    const hook = await renderHook((readOnly: boolean) => useExistingSessionCapabilitiesPopover({ ...target, readOnly }, presentation), { initialProps: false });
+    const hook = await renderHook<ReturnType<typeof useExistingSessionCapabilitiesPopover>, { readOnly: boolean; machineOnline: boolean | null }>(
+        ({ readOnly, machineOnline }) => useExistingSessionCapabilitiesPopover({ ...target, readOnly }, { ...presentation, machineOnline }),
+        { initialProps: { readOnly: false, machineOnline: null } });
     expect(transport).not.toHaveBeenCalled();
-    await act(async () => { expect(await hook.getCurrent().setItem('native_skill', 'native-review', 'on')).toMatchObject({ ok: true }); });
+    await act(async () => { expect(await hook.getCurrent().setItem('native_skill', 'native-review', 'on')).toMatchObject({ ok: true, state: 'on', previous: 'off' }); });
     expect(hook.getCurrent().selection.skills?.excludeNativeSkillNames).toEqual([]);
     // The receipt for the in-place Undo line names the change in the person's words (turning a native skill on is an add).
     expect(hook.getCurrent().undoReceipt).toEqual({ kind: 'native_skill', title: 'native-review', change: 'added' });
@@ -175,6 +214,7 @@ it('reuses the Session Action owner for rollback, previous-override Undo and rea
     expect(metadata()?.hostPid).toBe(42);
     await act(async () => { hook.getCurrent().demandPreview(); });
     await vi.waitFor(() => expect(hook.getCurrent().model.state).toBe('ready'));
+    await hook.rerender({ readOnly: false, machineOnline: true });
     await act(async () => {
         expect(await pickSkillComposerRow(pickRow, hook.getCurrent())).toMatchObject({ ok: true });
     });
@@ -221,7 +261,7 @@ it('reuses the Session Action owner for rollback, previous-override Undo and rea
         } } })));
         expect(hook.getCurrent().model.applyNotice?.key ?? null).toBe(key);
     }
-    await hook.rerender(true);
+    await hook.rerender({ readOnly: true, machineOnline: true });
     await expect(hook.getCurrent().setItem('native_skill', 'native-review', 'on')).resolves.toEqual({ ok: false, message: 'read_only' });
     await expect(hook.getCurrent().undoLast()).resolves.toEqual({ ok: false, message: 'read_only' });
     expect(hook.getCurrent().model.groups[0]?.nativeRow?.rows[0]?.action.kind).toBe('none');
@@ -235,6 +275,12 @@ it('says the session\'s machine is away when its check fails while it is offline
     const ownerMetadataView = MetadataSchema.parse(projectSessionOwnerCompatibilityViewV1({ sharedMetadata: { v: 1 }, ownerMetadata: owner.ownerMetadata }));
     getStorage().setState({ sessions: { [sessionId]: createSessionFixture({ id: sessionId, serverId, active: true, metadataLayoutVersion: 1,
         metadata: { path: '', host: '' }, ownerMetadataView }) }, sessionLocalStateScope: { serverId, accountId: 'owner' } });
+    const row = SessionCurrentProjectionRecordV1Schema.parse({ id: sessionId, seq: 1, createdAt: 1, updatedAt: 1, active: true, activeAt: 1,
+        encryptionMode: 'plain', metadataLayoutVersion: 1, metadata: JSON.stringify({ v: 1 }), metadataVersion: 1,
+        ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1(owner.ownerMetadata), agentState: null, agentStateVersion: 1,
+        dataEncryptionKey: null, share: null, responsibleAccountId: null, responsibleAccount: null,
+        effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }], capabilities: createSessionAccessFixture().capabilities } });
+    for (const suffix of ['', '?accessProjectionVersion=1']) homes.answer(serverId, `GET /v2/sessions/${sessionId}${suffix}`, { body: { session: row } });
     homes.answer(serverId, 'GET /v1/artifacts', { body: [] });
     transport.mockRejectedValue(new Error('machine unreachable'));
     const target = { kind: 'session' as const, sessionId, serverId, readOnly: false };
@@ -243,7 +289,8 @@ it('says the session\'s machine is away when its check fails while it is offline
     await act(async () => { hook.getCurrent().demandPreview(); });
     await vi.waitFor(() => expect(hook.getCurrent().model.state).toBe('machine_unreachable'));
     await hook.rerender(null);
-    expect(hook.getCurrent().model.state).toBe('resolving');
+    expect(hook.getCurrent().model.state).toBe('error');
     await hook.rerender(true);
     expect(hook.getCurrent().model.state).toBe('error');
+    expect(transport).toHaveBeenCalledTimes(1);
 });

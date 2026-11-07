@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import type { AgentInputStatusBadge } from '@/components/sessions/agentInput/agentInputContracts';
+import type { CurrentUiContextCommandInvocation } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
 import { sessionCapabilityApplyBadge } from './sessionCapabilityApplyBadge';
 import type { SessionCapabilityApplyNotice } from './sessionCapabilityApplyNotice';
@@ -17,13 +18,13 @@ export function useSessionCapabilityRestart(
   params: Readonly<{
     notice: SessionCapabilityApplyNotice | null;
     /** The session Action's stop; `true` once the session has stopped. */
-    stop: () => Promise<boolean>;
+    stop: (invocation?: CurrentUiContextCommandInvocation) => Promise<boolean>;
     /** The incumbent explicit resume; `true` once the session runs again. */
-    resume: () => Promise<boolean>;
+    resume: (invocation?: CurrentUiContextCommandInvocation) => Promise<boolean>;
   }>,
 ): Readonly<{
   state: SessionCapabilityRestartState;
-  restart: () => Promise<void>;
+  restart: (invocation?: CurrentUiContextCommandInvocation) => Promise<void>;
   badge: AgentInputStatusBadge | null;
 }> {
   const { notice, stop, resume } = params;
@@ -31,12 +32,12 @@ export function useSessionCapabilityRestart(
     React.useState<SessionCapabilityRestartState>('idle');
   const running = React.useRef(false);
   const enabled = notice?.restart === 'enabled';
-  const restart = React.useCallback(async () => {
+  const restart = React.useCallback(async (invocation?: CurrentUiContextCommandInvocation) => {
     if (running.current || !enabled) return;
     running.current = true;
     setState('restarting');
     try {
-      const restarted = (await stop()) && (await resume());
+      const restarted = (await stop(invocation)) && (await resume(invocation));
       setState(restarted ? 'idle' : 'failed');
     } catch {
       setState('failed');
@@ -52,7 +53,7 @@ export function useSessionCapabilityRestart(
   const badge = React.useMemo(
     () =>
       sessionCapabilityApplyBadge(notice, {
-        restart: { state, onPress: restart },
+        restart: { state, onPress: () => restart() },
       }),
     [notice, state, restart],
   );
