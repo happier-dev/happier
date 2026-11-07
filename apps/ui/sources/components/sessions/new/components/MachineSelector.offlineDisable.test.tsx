@@ -5,6 +5,7 @@ import { renderScreen } from '@/dev/testkit';
 import { SelectionList } from '@/components/ui/selectionList';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import { t } from '@/text';
 import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
 import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 
@@ -33,12 +34,13 @@ describe('MachineSelector', () => {
             .rootStep.sections.flatMap(section => section.kind === 'static' ? section.options : []);
         expect(options().map(option => option.id)).toEqual(['online', 'locked', 'offline:all']);
         const fold = options().find(option => option.id === 'offline:all')!;
-        expect(fold.label).toContain('offlineMachines');
+        expect(fold.label).toBe(t('projectWorkers.offlineMachines', { count: 2 }));
         await act(async () => { fold.onSelect?.(); });
         expect(options().map(option => option.id)).toEqual(['online', 'locked', 'offline:all', 'studio', 'server']);
         expect(options().filter(option => offline.some(machine => machine.id === option.id)).every(option => option.disabled)).toBe(true);
     });
-    it.each(['list', 'dropdown'] as const)('refuses shared workflow destinations in the %s activation path', async (presentation) => {
+    // Owner ruling 2026-11-03 permits shared workflow destinations.
+    it.each(['list', 'dropdown'] as const)('admits shared workflow destinations in the %s activation path', async (presentation) => {
         const shared: Machine = { ...machine('shared', true), isShared: true, access: {
             custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'use',
             resourceMode: 'plain', accessState: 'ready',
@@ -48,15 +50,44 @@ describe('MachineSelector', () => {
             presentation={presentation} onSelect={onSelect} showCliGlyphs={false} />);
         if (presentation === 'dropdown') {
             const props = screen.tree.findByType(DropdownMenu).props as React.ComponentProps<typeof DropdownMenu>;
-            expect(props.items[0]?.disabled).toBe(true);
+            expect(props.items[0]?.disabled).not.toBe(true);
             await act(async () => { props.onSelect(shared.id); });
         } else {
             const props = screen.tree.findByType(SelectionList).props as React.ComponentProps<typeof SelectionList>;
             const option = props.rootStep.sections.flatMap((section) => section.kind === 'static' ? section.options : [])[0];
-            expect(option?.disabled).toBe(true);
+            expect(option?.disabled).not.toBe(true);
             await act(async () => { option?.onSelect?.(); });
         }
-        expect(onSelect).not.toHaveBeenCalled();
+        expect(onSelect).toHaveBeenCalledWith(shared);
+    });
+    it.each([
+        { presentation: 'dropdown', wakeState: 'asleep' },
+        { presentation: 'dropdown', wakeState: 'starting' },
+        { presentation: 'list', wakeState: 'asleep' },
+        { presentation: 'list', wakeState: 'starting' },
+    ] as const)('selects an admitted shared $wakeState Session from the $presentation', async ({ presentation, wakeState }) => {
+        const shared: Machine = { ...machine('shared', false), isShared: true, access: {
+            custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'use',
+            resourceMode: 'plain', accessState: 'ready',
+        }, managedInputRuntime: { nativeReady: false, wakeState, newSessionWake: { kind: 'available' } } };
+        const onSelect = vi.fn();
+        const screen = await renderScreen(<MachineSelector machines={[shared]} selectedMachine={null}
+            presentation={presentation} onSelect={onSelect} showCliGlyphs={false} />);
+        const wakeReason = wakeState === 'asleep' ? t('managedWake.startsOnSend') : t('managedWake.starting', { machine: 'shared' });
+        if (presentation === 'dropdown') {
+            const props = screen.tree.findByType(DropdownMenu).props as React.ComponentProps<typeof DropdownMenu>;
+            expect(props.items[0]?.disabled).toBe(false);
+            expect(props.items[0]?.subtitle).toContain(wakeReason);
+            await act(async () => { props.onSelect(shared.id); });
+        } else {
+            const props = screen.tree.findByType(SelectionList).props as React.ComponentProps<typeof SelectionList>;
+            const option = props.rootStep.sections.flatMap(section => section.kind === 'static' ? section.options : [])
+                .find(option => option.id === shared.id);
+            expect(option?.disabled).toBe(false);
+            expect(option?.subtitle).toContain(wakeReason);
+            await act(async () => { option?.onSelect?.(); });
+        }
+        expect(onSelect).toHaveBeenCalledWith(shared);
     });
     it('names machines, not commands, when the dropdown has none to offer', async () => {
         const screen = await renderScreen(<MachineSelector machines={[]} selectedMachine={null}

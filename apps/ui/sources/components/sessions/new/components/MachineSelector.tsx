@@ -17,7 +17,7 @@ import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/use
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { buildMachineSelectionBuckets } from './machineSelection/buildMachineSelectionBuckets';
 import type { MachineDestinationPurposeV1 } from '@happier-dev/protocol/machines/pools';
-import { describeMachineDestinationEligibility, resolveMachineDestinationPurposeEligibility, type MachineDestinationPlacementFacts } from './machineSelection/buildMachineDestinationModel';
+import { describeMachineDestinationEligibility, describeMachineDestinationWorkerFacts, resolveMachineDestinationPurposeEligibility, type MachineDestinationPlacementFacts } from './machineSelection/buildMachineDestinationModel';
 import { useMachineDestinationWorkerStatus, type MachineDestinationWorkerPlacement } from '@/components/sessions/new/hooks/machines/useMachineDestinationWorkerStatus';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
@@ -208,12 +208,13 @@ export function MachineSelector({
         const presence = resolveMachinePickerPresence(machine, undefined, scope);
         const eligibility = resolveMachineDestinationPurposeEligibility(purpose, resolveMachinePlacementFacts?.(machine, serverId ?? ''), machine, scope);
         const purposeEligible = eligibility.eligible;
-        const unavailable = !presence.selectable || !purposeEligible;
+        const unavailable = !purposeEligible || (!eligibility.managedWake && !presence.selectable);
         return {
             id: machine.id,
             testID: getMachineOptionTestID(machine),
             title: machineName(machine),
             subtitle: [describeMachine?.(machine), describeMachineSharedOwnership(machine), describeMachineDestinationEligibility(eligibility, machine)
+                ?? describeMachineDestinationWorkerFacts(eligibility, undefined, purpose, machineName(machine))
                 ?? (unavailable ? t('common.unavailable') : t('status.online'))].filter(Boolean).join(' · '),
             category,
             disabled: !purposeEligible || (disableOfflineMachines && unavailable),
@@ -279,8 +280,9 @@ export function MachineSelector({
                     onSelect={(machineId) => {
                         const machine = machineById.get(machineId);
                         if (!machine) return;
-                        if (!resolveMachineDestinationPurposeEligibility(purpose, resolveMachinePlacementFacts?.(machine, serverId ?? ''), machine, scope).eligible) return;
-                        if (disableOfflineMachines && !resolveMachinePickerPresence(machine, undefined, scope).selectable) return;
+                        const eligibility = resolveMachineDestinationPurposeEligibility(purpose, resolveMachinePlacementFacts?.(machine, serverId ?? ''), machine, scope);
+                        if (!eligibility.eligible) return;
+                        if (disableOfflineMachines && !eligibility.managedWake && !resolveMachinePickerPresence(machine, undefined, scope).selectable) return;
                         onSelect(machine);
                     }}
                     rowKind="item"
@@ -359,7 +361,8 @@ function MachineSelectorList(props: MachineSelectorProps) {
         showFavorites: props.showFavorites ?? true, showRecent: props.showRecent ?? true, showSearch: props.showSearch ?? true,
         showCliGlyphs: props.showCliGlyphs ?? true, autoDetectCliGlyphs: props.autoDetectCliGlyphs ?? true,
         serverId: props.serverId, favoriteGroupPlacement: props.favoriteGroupPlacement, testIdPrefix: props.testIdPrefix,
-        disableOfflineMachines: props.disableOfflineMachines, resolveMachineAvailability: resolveAvailability,
+        disableOfflineMachines: props.disableOfflineMachines,
+        resolveMachineAvailability: props.disableOfflineMachines === false ? resolveAvailability : undefined,
         includeSelectedUnavailableMachineId: props.includeSelectedUnavailableMachine ? props.selectedMachine?.id : null,
         searchPlaceholder: props.searchPlaceholder, emptyStateLabel: props.noItemsMessage, sectionTitles,
     });
