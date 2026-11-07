@@ -6,6 +6,7 @@ import {
   useStackHeaderActionsClaimed,
   useStackHeaderActionsPublisher,
   type LentHeaderMenuRow,
+  type LentHeaderPrimary,
 } from '@/components/navigation/stackHeaderActions';
 import { resolvePluginUiIconName } from '@/components/plugins/surfaces/iconToken/resolvePluginUiIconToken';
 import { useNavigationTitleChromeShowsTitle } from '@/components/ui/layout/PageHeader';
@@ -20,12 +21,32 @@ import { splitHappierPagePrimaryOperation } from '@happier-dev/plugin-ui/present
 /** The page chrome's placement argument (same-realm binding; the chrome assignment type-checks it). */
 type PageActionsPlacement = 'navigation' | 'page';
 
-/** A Collection toolbar's `⋯` handed with its actions (plugin-ui `HappierPageLentMenu`). */
+type PluginPageLentItem = Readonly<{ id: string; label: string; icon?: string; disabled?: boolean }>;
+
+/** A Collection toolbar's `⋯` and primary handed with its actions (plugin-ui `HappierPageLentMenu`). */
 export type PluginPageLentMenu = Readonly<{
   menu: React.ReactNode;
-  items: readonly Readonly<{ id: string; label: string; icon?: string; disabled?: boolean }>[];
+  items: readonly PluginPageLentItem[];
   onSelect: (id: string) => void;
+  primary?: Readonly<{ label: string } & (
+    | { onPress: () => unknown; menu?: undefined }
+    | { menu: Readonly<{ items: readonly PluginPageLentItem[]; onSelect: (id: string) => void }>; onPress?: undefined }
+  )>;
 }>;
+
+/** What a page lends a claiming header is data; the header draws it. */
+const LENT_TO_HEADER = () => null;
+
+function lentRows(items: readonly PluginPageLentItem[], onSelect: (id: string) => void, prefix: string): readonly LentHeaderMenuRow[] {
+  return items.map((item): LentHeaderMenuRow => ({
+    id: `${prefix}:${item.id}`,
+    title: item.label,
+    testID: `${prefix}.${item.id}`,
+    iconName: resolvePluginUiIconName(item.icon),
+    ...(item.disabled === true ? { disabled: true } : {}),
+    onSelect: () => onSelect(item.id),
+  }));
+}
 
 /** The host's `renderNavigationActions` for a plugin page header or Collection toolbar. */
 export function renderPluginNavigationActions(actions: React.ReactNode, placement: PageActionsPlacement = 'navigation',
@@ -136,17 +157,17 @@ function PluginPageHeaderActions(
   const lendKey = usePageActionsLendKey();
   const more = props.more;
   const lends = lendKey !== null && live && props.placement === 'navigation' && !chromeShowsTitle
-    && (props.actions != null || more !== null);
-  const lentRender = React.useMemo(() => (lends ? () => props.actions ?? null : null), [lends, props.actions]);
-  const lentRows = React.useMemo(() => (!lends || more === null ? null : more.items.map((item): LentHeaderMenuRow => ({
-    id: `plugin-page-more:${item.id}`,
-    title: item.label,
-    testID: `plugin-page-more.${item.id}`,
-    iconName: resolvePluginUiIconName(item.icon),
-    ...(item.disabled === true ? { disabled: true } : {}),
-    onSelect: () => more.onSelect(item.id),
-  }))), [lends, more]);
-  useStackHeaderActionsPublisher(lendKey ?? '', lentRender, lentRows);
+    && more !== null && (more.primary !== undefined || more.items.length > 0);
+  const menuRows = React.useMemo(() => (!lends || more === null || more.items.length === 0 ? null
+    : lentRows(more.items, more.onSelect, 'plugin-page-more')), [lends, more]);
+  const primary = React.useMemo((): LentHeaderPrimary | null => {
+    const lent = lends ? more?.primary : undefined;
+    if (lent === undefined) return null;
+    return lent.menu !== undefined
+      ? { title: lent.label, menu: lentRows(lent.menu.items, lent.menu.onSelect, 'plugin-page-primary') }
+      : { title: lent.label, onPress: () => { void lent.onPress(); } };
+  }, [lends, more]);
+  useStackHeaderActionsPublisher(lendKey ?? '', lends ? LENT_TO_HEADER : null, menuRows, primary);
   const claimed = useStackHeaderActionsClaimed(lendKey ?? '') && lends;
   const hosting = React.useContext(PluginArtifactHostingStatusContext);
   // The page's one filled action stays on the header's trailing side; the rest fold into overflow.

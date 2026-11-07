@@ -44,6 +44,16 @@ function toolbarRow(selected: string[]) {
           onSelect: (id: string) => {
             selected.push(id);
           },
+          // Run workflow needs one choice first: its label and its menu cross, and the header draws them.
+          primary: {
+            label: 'Run workflow',
+            menu: {
+              items: [{ id: 'deploy', label: 'Deploy' }],
+              onSelect: (id: string) => {
+                selected.push(`run:${id}`);
+              },
+            },
+          },
         },
       )}
     </View>
@@ -70,7 +80,7 @@ function header(newSessions: { count: number }) {
 describe('Project header and its plugin page actions (D11)', () => {
   afterEach(standardCleanup);
 
-  it("takes the shown page's primary as its + and the page's ⋯ rows into its own ⋯, with New session there; the page row draws neither", async () => {
+  it("draws the shown page's primary as its own + with the page's menu, and the page's ⋯ rows in its own ⋯ with New session there; the page row draws neither", async () => {
     const selected: string[] = [];
     const newSessions = { count: 0 };
     const screen = await renderScreen(
@@ -79,9 +89,19 @@ describe('Project header and its plugin page actions (D11)', () => {
         {toolbarRow(selected)}
       </PageActionsLendScope>,
     );
-    const primaries = screen.root.findAllByType('RunWorkflowPrimary' as never);
-    expect(primaries).toHaveLength(1);
-    expect(inside(primaries[0]!, 'plugin-toolbar-row')).toBe(false);
+    // The header draws its own +, the same control as New session, named by the page's label; the plugin's node is
+    // drawn nowhere.
+    expect(screen.root.findAllByType('RunWorkflowPrimary' as never)).toHaveLength(0);
+    const plus = screen.root.findAll((node) => node.props.testID === 'project-shell-header.pagePrimary'
+      && typeof node.type !== 'string');
+    expect(plus.length).toBeGreaterThan(0);
+    expect([plus[0]!.props.title, plus[0]!.props.accessibilityLabel]).toContain('Run workflow');
+    const primaryMenu = screen.root.findAll((node) => node.props.testID === 'project-shell-header.pagePrimary.menu'
+      && typeof node.type !== 'string' && Array.isArray(node.props.items))[0]!;
+    expect(primaryMenu.props.items.map((item: { title: string }) => item.title)).toEqual(['Deploy']);
+    await React.act(async () => {
+      primaryMenu.props.onSelect(primaryMenu.props.items[0].id);
+    });
     expect(screen.root.findAllByType('PluginMoreMenu' as never)).toHaveLength(
       0,
     );
@@ -107,7 +127,7 @@ describe('Project header and its plugin page actions (D11)', () => {
     await React.act(async () => {
       rows.find((row) => row.id === 'newSession')!.onSelect();
     });
-    expect(selected).toEqual(['github']);
+    expect(selected).toEqual(['run:deploy', 'github']);
     expect(newSessions.count).toBe(1);
   });
 

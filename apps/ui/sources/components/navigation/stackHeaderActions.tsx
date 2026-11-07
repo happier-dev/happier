@@ -23,8 +23,18 @@ import { PageHeaderMenu } from '@/components/ui/layout/PageHeaderEntityParts';
 /** One row a pane lends to the header of what it shows, drawn in that header's `⋯`. */
 export type LentHeaderMenuRow = Readonly<{ id: string; title: string; testID: string; iconName: IconName; disabled?: boolean; onSelect: () => void }>;
 
+/**
+ * A hosted page's primary, lent to the header above it as data: the header draws it as its own `+`, named by
+ * `title`, pressing `onPress` or opening `menu` when the action needs one choice first (Run workflow).
+ */
+export type LentHeaderPrimary = Readonly<{ title: string; disabled?: boolean } & (
+    | { onPress: () => void; menu?: undefined }
+    | { menu: readonly LentHeaderMenuRow[]; onPress?: undefined }
+)>;
+
 /** `claimants` in claim order: the first draws the actions, so two headers never both draw them. */
-type Entry = Readonly<{ render: () => React.ReactNode; menuRows: readonly LentHeaderMenuRow[] | null; claimants: readonly object[] }>;
+type Entry = Readonly<{ render: () => React.ReactNode; menuRows: readonly LentHeaderMenuRow[] | null;
+    primary?: LentHeaderPrimary | null; claimants: readonly object[] }>;
 
 type RouteIdentity = Readonly<{ key?: string }> | undefined;
 const NO_ROUTE_CONTEXT = React.createContext<RouteIdentity>(undefined);
@@ -54,22 +64,22 @@ function subscribe(listener: () => void) {
 
 /** Publishes the actions of the route whose stack header is hidden (and a pane's lent menu rows); `null` withdraws them. */
 export function useStackHeaderActionsPublisher(routeKey: string, render: (() => React.ReactNode) | null,
-    menuRows: readonly LentHeaderMenuRow[] | null = null) {
+    menuRows: readonly LentHeaderMenuRow[] | null = null, primary: LentHeaderPrimary | null = null) {
     // A scope resolves before paint, so its pane never shows a bar that the content then takes over.
     useClaimEffect(() => {
         if (!render) return undefined;
-        const published = { render, menuRows };
+        const published = { render, menuRows, primary };
         entries.set(routeKey, { ...published, claimants: entries.get(routeKey)?.claimants ?? [] });
         emit();
         return () => {
             const current = entries.get(routeKey);
-            if (current?.render === render && current.menuRows === menuRows) {
+            if (current?.render === render && current.menuRows === menuRows && (current.primary ?? null) === primary) {
                 if (current.claimants.length > 0) entries.set(routeKey, { render: NO_ACTIONS, menuRows: null, claimants: current.claimants });
                 else entries.delete(routeKey);
                 emit();
             }
         };
-    }, [menuRows, render, routeKey]);
+    }, [menuRows, primary, render, routeKey]);
 }
 
 /** Whether a page header on this route has taken its actions (the stack header then draws nothing). */
@@ -118,6 +128,12 @@ export function usePageActionsLendKey(): string | null {
     return React.useContext(PageActionsLendContext);
 }
 
+/** The primary the shown page lends to the header claiming `claimKey` (`PageActionsLendScope`); null when none. */
+export function useLentHeaderPrimary(options: Readonly<{ claimKey: string | null }>): LentHeaderPrimary | null {
+    const key = options.claimKey;
+    return React.useSyncExternalStore(subscribe, () => (key ? entries.get(key)?.primary ?? null : null), () => null);
+}
+
 /** A pane that lends its controls to the header of what it shows; pair it with the publisher hooks above. */
 export function HeaderActionsScope(props: Readonly<{ scopeKey: string | null; children: React.ReactNode }>) {
     return <HeaderActionsScopeContext.Provider value={props.scopeKey}>{props.children}</HeaderActionsScopeContext.Provider>;
@@ -144,7 +160,8 @@ export function useClaimedStackHeaderActions(options?: Readonly<{ scopeOnly?: bo
     useClaimEffect(() => {
         if (!routeKey) return undefined;
         const current = entries.get(routeKey);
-        entries.set(routeKey, { render: current?.render ?? NO_ACTIONS, menuRows: current?.menuRows ?? null, claimants: [...(current?.claimants ?? []), claimant] });
+        entries.set(routeKey, { render: current?.render ?? NO_ACTIONS, menuRows: current?.menuRows ?? null, primary: current?.primary ?? null,
+            claimants: [...(current?.claimants ?? []), claimant] });
         emit();
         return () => {
             const latest = entries.get(routeKey);

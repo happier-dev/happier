@@ -23,14 +23,21 @@ export type HappierPageChrome = Readonly<{
 /** Where a page header's actions live under navigation chrome that shows the title. */
 export type HappierPageActionsPlacement = 'navigation' | 'page';
 
+type HappierPageLentItem = Readonly<{ id: string; label: string; icon?: string; disabled?: boolean }>;
+
 /**
- * A toolbar's `⋯`, handed to the host with its actions: the menu as drawn in the toolbar's row, and its rows, so a
- * header above the page that claims the page's actions puts them in its own `⋯` instead (a Project's header).
+ * A toolbar's `⋯` and primary, handed to the host with its actions: the `⋯` as drawn in the toolbar's row and its
+ * rows, and the primary's label with its press or its menu, so a header above the page that claims the page's
+ * actions (a Project's header) draws them as its own `+` and `⋯` instead.
  */
 export type HappierPageLentMenu = Readonly<{
   menu: ReactNode;
-  items: readonly Readonly<{ id: string; label: string; icon?: string; disabled?: boolean }>[];
+  items: readonly HappierPageLentItem[];
   onSelect: (id: string) => void;
+  primary?: Readonly<{ label: string } & (
+    | { onPress: () => unknown; menu?: undefined }
+    | { menu: Readonly<{ items: readonly HappierPageLentItem[]; onSelect: (id: string) => void }>; onPress?: undefined }
+  )>;
 }>;
 
 /** Same-realm host binding only; not part of the public page-chrome contract. */

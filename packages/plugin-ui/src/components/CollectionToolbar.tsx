@@ -25,7 +25,6 @@ import {
 import { Status } from './Status.js';
 import type { TextTone } from './Text.js';
 import { usePluginTheme } from './PluginUiProvider.js';
-import { usePluginUiSurfaceBridge } from './surfaceBridge.js';
 
 /**
  * Whether the Collection around a toolbar is phone-narrow. Collection provides it from its measured width (and,
@@ -194,7 +193,6 @@ function SearchWithFunnel(props: Readonly<{ search: ReactNode; refine: Collectio
 function WideToolbar(props: CollectionToolbarProps): ReactElement {
   const { slots, freshness, refresh } = props;
   const chrome = useHappierPageChromeInternal();
-  const bridgeSurface = usePluginUiSurfaceBridge();
   // On a host page the ⋯ goes to the host with the primary, so a header above the page that claims the page's
   // actions (a Project's header) draws both and this row draws neither; unclaimed, the host draws them here.
   const hostActions = slots?.pageActions != null && chrome?.renderNavigationActions !== undefined;
@@ -282,9 +280,12 @@ function WideToolbar(props: CollectionToolbarProps): ReactElement {
         {/* The host's page actions take the primary in their place, as a page header's actions do (route
             controls, then the page's own, then the column's Hide last). */}
         {hostActions
-          ? chrome?.renderNavigationActions?.(primary === null ? null : bridgeSurface(primary), undefined,
-            props.more === undefined ? undefined
-              : { menu: <MoreMenu {...props} folded={false} />, items: props.more.items, onSelect: props.more.onSelect })
+          ? chrome?.renderNavigationActions?.(primary, undefined, {
+            menu: props.more === undefined ? null : <MoreMenu {...props} folded={false} />,
+            items: props.more?.items ?? [],
+            onSelect: (id) => props.more?.onSelect(id),
+            ...(props.primary === undefined ? {} : { primary: props.primary }),
+          })
           : <>{slots?.pageActions ?? null}{primary}</>}
       </View>
     </View>

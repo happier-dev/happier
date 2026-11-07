@@ -48,7 +48,8 @@ import { t } from '@/text';
 import { useHeaderHeight } from '@/utils/platform/responsive';
 import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
-import { useClaimedStackHeaderActions, useLentHeaderMenuRows } from '@/components/navigation/stackHeaderActions';
+import { useClaimedStackHeaderActions, useLentHeaderMenuRows, useLentHeaderPrimary } from '@/components/navigation/stackHeaderActions';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import type { PluginRightSidebarLabelledCount } from '@/components/appShell/rightSidebar/rightSidebarPluginCount';
 
 import { useAtmosphereBandBoundary } from '@/components/atmosphere/atmosphereBandBoundary';
@@ -184,9 +185,11 @@ export const ProjectShellHeader = React.memo(function ProjectShellHeader(
   const pointer = useHoverCapablePrimaryPointer();
   // One + and one ⋯: the shown page's primary takes the +, and New session joins its ⋯ rows here.
   const pageActionsKey = props.pageActionsKey ?? null;
-  const pagePrimary = useClaimedStackHeaderActions({ claimKey: pageActionsKey, drawsMenuRows: true });
+  useClaimedStackHeaderActions({ claimKey: pageActionsKey, drawsMenuRows: true });
   const pageMenuRows = useLentHeaderMenuRows({ claimKey: pageActionsKey });
-  const pageOwnsPrimary = pagePrimary != null;
+  const pagePrimary = useLentHeaderPrimary({ claimKey: pageActionsKey });
+  const pageOwnsPrimary = pagePrimary !== null;
+  const [pagePrimaryMenuOpen, setPagePrimaryMenuOpen] = React.useState(false);
   const onNewSession = props.onNewSession;
   const menuActions = React.useMemo((): readonly PageHeaderMenuAction[] => {
     const newSession: readonly PageHeaderMenuAction[] = pageOwnsPrimary && onNewSession
@@ -282,37 +285,52 @@ export const ProjectShellHeader = React.memo(function ProjectShellHeader(
       popoverAccessibilityLabel={menuPage.menuTitle ?? menuPage.title}
       header={<Text style={{ padding: theme.space.s12, color: theme.colors.text.secondary }}>{menuPage.menuTitle ?? menuPage.title}</Text>} /> : null}
   </>;
+  // The header's one +: New session, or the shown page's own primary (D11), drawn the same way.
+  const renderAdd = (title: string, addTestID: string, onPress: () => void) => compact ? (
+    <IconButton
+      testID={addTestID}
+      iconName="plus"
+      variant="plain"
+      accessibilityLabel={title}
+      tooltip={title}
+      interactiveTargetGapPx={ACTIONS_GAP_PX}
+      onPress={onPress}
+    />
+  ) : (
+    <RoundButton
+      testID={addTestID}
+      size="small"
+      display="secondary"
+      title={title}
+      leading={<Icon name="plus" size={ICON_SIZE.xs} color={theme.colors.text.primary} />}
+      onPress={onPress}
+    />
+  );
   const actionsNode = (
     <View style={styles.actions}>
       {props.look}
-      {pageOwnsPrimary ? pagePrimary : props.onNewSession ? (
-        compact ? (
-          <IconButton
-            testID={`${testID}.newSession`}
-            iconName="plus"
-            variant="plain"
-            accessibilityLabel={t('projects.open.newSession')}
-            tooltip={t('projects.open.newSession')}
-            interactiveTargetGapPx={ACTIONS_GAP_PX}
-            onPress={props.onNewSession}
-          />
-        ) : (
-          <RoundButton
-            testID={`${testID}.newSession`}
-            size="small"
-            display="secondary"
-            title={t('projects.open.newSession')}
-            leading={
-              <Icon
-                name="plus"
-                size={ICON_SIZE.xs}
-                color={theme.colors.text.primary}
-              />
-            }
-            onPress={props.onNewSession}
-          />
-        )
-      ) : null}
+      {pagePrimary?.menu !== undefined ? (
+        <DropdownMenu
+          testID={`${testID}.pagePrimary.menu`}
+          open={pagePrimaryMenuOpen}
+          onOpenChange={setPagePrimaryMenuOpen}
+          allowEmptySelection
+          items={pagePrimary.menu.map((row) => ({ id: row.id, title: row.title, testID: row.testID, ...(row.disabled ? { disabled: true } : {}) }))}
+          onSelect={(id) => {
+            setPagePrimaryMenuOpen(false);
+            pagePrimary.menu?.find((row) => row.id === id)?.onSelect();
+          }}
+          // The header's own menu look, as its ⋯ (PageHeaderMenu): a slim list sized to its rows, not to the +.
+          placement="bottom"
+          popoverAnchorAlign="end"
+          variant="slim"
+          matchTriggerWidth={false}
+          maxWidthCap={280}
+          popoverPortalWebTarget="body"
+          trigger={({ toggle }) => renderAdd(pagePrimary.title, `${testID}.pagePrimary`, toggle)}
+        />
+      ) : pagePrimary !== null ? renderAdd(pagePrimary.title, `${testID}.pagePrimary`, pagePrimary.onPress)
+        : props.onNewSession ? renderAdd(t('projects.open.newSession'), `${testID}.newSession`, props.onNewSession) : null}
       {menuActions.length > 0 ? (
         <PageHeaderMenu actions={menuActions} testID={`${testID}.menu`} interactiveTargetGapPx={ACTIONS_GAP_PX} />
       ) : null}
