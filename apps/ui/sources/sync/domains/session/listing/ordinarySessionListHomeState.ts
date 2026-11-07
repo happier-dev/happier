@@ -54,20 +54,25 @@ export function buildOrdinarySessionListHomeState(input: Readonly<{
     const observedPhase = input.observation?.phase;
     const hasObservedRows = addresses.length > 0 || input.observation?.lastSuccessAt != null;
     const inFlight = input.lifecycle.fetchInFlight || input.lifecycle.fetchMoreInFlight;
+    const failure = observedPhase === 'error' ? input.observation?.failure : undefined;
     const phase: SessionListQueryHomeState['phase'] =
-        input.online === false
-            ? 'offline'
-            : inFlight || input.online === null
-                ? (hasObservedRows ? 'refreshing' : 'loading')
-                : observedPhase === 'error'
-                    ? 'error'
-                    // The observation's "offline" is published when the socket drops; a transport that is
-                    // back (`online`) outranks it, or a Home still paging would read as unreachable.
-                    : observedPhase === 'offline' && input.online !== true
-                        ? 'offline'
-                        : input.lifecycle.hasFetchedSnapshot
-                            ? 'ready'
-                            : 'loading';
+        // An admitted refusal has settled even if its promise is still cleaning
+        // up or the realtime socket is reconnecting. Account transfer remains pending.
+        input.online !== null && observedPhase === 'error' && failure?.reason !== 'network'
+            ? 'error'
+            : input.online === false
+                ? 'offline'
+                : inFlight || input.online === null
+                    ? (hasObservedRows ? 'refreshing' : 'loading')
+                    : observedPhase === 'error'
+                        ? 'error'
+                        // The observation's "offline" is published when the socket drops; a transport that is
+                        // back (`online`) outranks it, or a Home still paging would read as unreachable.
+                        : observedPhase === 'offline' && input.online !== true
+                            ? 'offline'
+                            : input.lifecycle.hasFetchedSnapshot
+                                ? 'ready'
+                                : 'loading';
     return {
         requestedQueryKey: input.requestedQueryKey,
         // Sync's snapshot is the applied corpus for this Home; until it has landed
@@ -80,10 +85,11 @@ export function buildOrdinarySessionListHomeState(input: Readonly<{
         attentionHasNext: input.lifecycle.frontier.attentionHasNext,
         phase,
         freshnessAt: input.observation?.lastSuccessAt ?? null,
-        // Sync reports a failed list observation without classifying it further, so
-        // the only honest reason here is the transport one.
-        failureReason: phase === 'error' ? 'network' : null,
-        failureCode: null,
+        homeObservation: input.observation?.phase === phase
+            ? input.observation
+            : { phase, lastSuccessAt: input.observation?.lastSuccessAt ?? null },
+        failureReason: phase === 'error' ? failure?.reason ?? 'response' : null,
+        failureCode: phase === 'error' ? failure?.code ?? null : null,
         // Never `query`: a released GET cannot answer the strict query's structural
         // selection, so coverage owners must keep treating this corpus as ordinary.
         appliedSourceKind: 'ordinary',

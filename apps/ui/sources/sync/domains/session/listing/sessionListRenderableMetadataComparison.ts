@@ -1,5 +1,7 @@
+import { buildExternalSessionAttentionV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
+import { readExternalSessionAttention } from '@/sync/domains/session/external/readExternalSessionAttention';
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
-import type { SessionSemanticDisplayV1, SessionOwnerDisplayV1 } from '@happier-dev/protocol';
+import type { SessionSemanticDisplayV1, SessionOwnerDisplayV1 } from '@happier-dev/protocol/sessions';
 import { readSessionBotV1, readSessionBotFaceV1, areSessionBotFacesEqual, type SessionBotV1, type SessionBotFaceV1 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
 import type { Metadata } from '@happier-dev/session-core/state';
 import {
@@ -17,6 +19,7 @@ import {
 import type { SessionListRenderableMetadata } from './sessionListRenderable';
 import { readSessionUsageLimitRecoveryFromMetadata } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
 import { readSessionWorkspaceLocationFromMetadata } from '@happier-dev/protocol/sessions/metadata/sessionWorkspaceLocationV1';
+import { isVoiceConversationCustodySessionMetadata } from '@happier-dev/protocol/voice/sessionBinding';
 
 export type SessionListRenderableExternalSessionIdentity = Readonly<{
     v: 1;
@@ -48,6 +51,7 @@ export type SessionListRenderableMetadataComparison = Readonly<{
     flavor: string | null;
     externalSessionV1: SessionListRenderableExternalSessionIdentity | null;
     externalAgentObservationV1: ExternalAgentObservationSnapshotV1 | null;
+    externalSessionAttentionV1?: SessionListRenderableMetadata['externalSessionAttentionV1'];
     readStateV1: Readonly<{
         v: 1;
         sessionSeq: number;
@@ -55,6 +59,7 @@ export type SessionListRenderableMetadataComparison = Readonly<{
         updatedAt: number;
     }> | null;
     hiddenSystemSession: boolean;
+    systemSessionKind?: 'voice_custody';
     sessionDirectoryV1: SessionListRenderableMetadata['sessionDirectoryV1'];
     terminalControlServiceabilityV1: SessionListRenderableMetadata['terminalControlServiceabilityV1'];
 }>;
@@ -77,8 +82,10 @@ type SessionListRenderableMetadataComparisonSnapshot = Readonly<{
     flavor: string | null;
     externalSessionV1: SessionListRenderableExternalSessionIdentity | null;
     externalAgentObservationV1?: unknown;
+    externalSessionAttentionV1?: unknown;
     readStateV1: unknown;
     hiddenSystemSession: boolean;
+    systemSessionKind?: 'voice_custody';
     sessionDirectoryV1?: SessionListRenderableMetadata['sessionDirectoryV1'];
     terminalControlServiceabilityV1?: unknown;
 }>;
@@ -241,9 +248,11 @@ function isSessionListRenderableMetadataComparisonSnapshotEqual(
         && (previous.machineId ?? null) === snapshot.machineId
         && (previous.flavor ?? null) === snapshot.flavor
         && (previous.hiddenSystemSession === true) === snapshot.hiddenSystemSession
+        && previous.systemSessionKind === snapshot.systemSessionKind
         && (previous.sessionDirectoryV1 ?? null) === (snapshot.sessionDirectoryV1 ?? null)
         && previous.externalSessionV1 === nextExternalSessionV1
         && previous.externalAgentObservationV1 === nextExternalAgentObservationV1
+        && JSON.stringify(previous.externalSessionAttentionV1 ?? null) === JSON.stringify(snapshot.externalSessionAttentionV1 ?? null)
         && previous.readStateV1 === nextReadStateV1
         && previous.terminalControlServiceabilityV1 === snapshot.terminalControlServiceabilityV1;
 }
@@ -261,8 +270,13 @@ export function normalizeSessionListRenderableMetadataComparison(
     snapshot: SessionListRenderableMetadataComparisonSnapshot,
     previous?: SessionListRenderableMetadata | null,
 ): SessionListRenderableMetadataComparison {
+    const parsedAttention = readExternalSessionAttention(snapshot);
+    const attention = parsedAttention ? buildExternalSessionAttentionV1(parsedAttention) : null;
+    const nextAttention = JSON.stringify(previous?.externalSessionAttentionV1 ?? null) === JSON.stringify(attention)
+        ? previous?.externalSessionAttentionV1 ?? null : attention;
     const normalizedSnapshot = {
         ...snapshot,
+        externalSessionAttentionV1: nextAttention,
     };
     const location = snapshot.sessionWorkspaceLocationV1;
     normalizedSnapshot.sessionWorkspaceLocationV1 = location
@@ -317,8 +331,10 @@ export function normalizeSessionListRenderableMetadataComparison(
         flavor: normalizedSnapshot.flavor,
         externalSessionV1: nextExternalSessionV1,
         externalAgentObservationV1: nextExternalAgentObservationV1,
+        ...(nextAttention ? { externalSessionAttentionV1: nextAttention } : {}),
         readStateV1: nextReadStateV1,
         hiddenSystemSession: normalizedSnapshot.hiddenSystemSession,
+        ...(normalizedSnapshot.systemSessionKind ? { systemSessionKind: normalizedSnapshot.systemSessionKind } : {}),
         sessionDirectoryV1: normalizedSnapshot.sessionDirectoryV1 ?? null,
         terminalControlServiceabilityV1: normalizedSnapshot.terminalControlServiceabilityV1 as SessionListRenderableMetadataComparison['terminalControlServiceabilityV1'],
     };
@@ -331,6 +347,7 @@ export function normalizeSessionListRenderableMetadataComparison(
 export function readSessionListRenderableMetadataComparison(
     metadata: Metadata | null | undefined,
     previous?: SessionListRenderableMetadata | null,
+    admittedLinkedSession?: ExternalSessionLink | null,
 ): SessionListRenderableMetadataComparison | null {
     if (!metadata) return null;
     if (metadata.bot !== undefined && readSessionBotV1(metadata.bot) === null) return null;
@@ -351,10 +368,12 @@ export function readSessionListRenderableMetadataComparison(
         host: typeof metadata.host === 'string' ? metadata.host : null,
         machineId: typeof metadata.machineId === 'string' ? metadata.machineId : null,
         flavor: typeof metadata.flavor === 'string' ? metadata.flavor : null,
-        externalSessionV1: readExternalSessionLink(metadata),
+        externalSessionV1: admittedLinkedSession === undefined ? readExternalSessionLink(metadata) : admittedLinkedSession,
         externalAgentObservationV1: metadata.externalAgentObservationV1,
+        externalSessionAttentionV1: metadata.externalSessionAttentionV1,
         readStateV1: (metadata as Readonly<{ readStateV1?: unknown }>).readStateV1,
         hiddenSystemSession: metadata.systemSessionV1?.hidden === true,
+        ...(isVoiceConversationCustodySessionMetadata(metadata) ? { systemSessionKind: 'voice_custody' as const } : {}),
         // One shared value, so equal rows keep their identity; see `readSessionDirectoryKind`.
         sessionDirectoryV1: readSessionDirectoryKind(metadata) === 'managed' ? MANAGED_SESSION_DIRECTORY_MARKER : null,
         terminalControlServiceabilityV1: metadata.terminal?.controlServiceabilityV1 ?? null,
@@ -406,8 +425,10 @@ export function readSessionListRenderableMetadataComparisonFromRenderable(
         flavor: metadata.flavor ?? null,
         externalSessionV1: metadata.externalSessionV1 ?? null,
         externalAgentObservationV1: metadata.externalAgentObservationV1 ?? null,
+        externalSessionAttentionV1: metadata.externalSessionAttentionV1,
         readStateV1: metadata.readStateV1 ?? null,
         hiddenSystemSession: metadata.hiddenSystemSession === true,
+        systemSessionKind: metadata.systemSessionKind,
         sessionDirectoryV1: readSessionDirectoryKind(metadata) === 'managed' ? MANAGED_SESSION_DIRECTORY_MARKER : null,
         terminalControlServiceabilityV1: metadata.terminalControlServiceabilityV1 ?? null,
     });
@@ -447,6 +468,7 @@ export function areSessionListRenderableMetadataComparisonsEqual(
         && (previous.machineId ?? null) === (next.machineId ?? null)
         && (previous.flavor ?? null) === (next.flavor ?? null)
         && (previous.hiddenSystemSession === true) === (next.hiddenSystemSession === true)
+        && previous.systemSessionKind === next.systemSessionKind
         && readSessionDirectoryKind(previous) === readSessionDirectoryKind(next)
         && areSessionListRenderableExternalSessionIdentitiesEqual(
             previous.externalSessionV1,
@@ -454,6 +476,8 @@ export function areSessionListRenderableMetadataComparisonsEqual(
         )
         && JSON.stringify(previous.externalAgentObservationV1 ?? null)
             === JSON.stringify(next.externalAgentObservationV1 ?? null)
+        && JSON.stringify(previous.externalSessionAttentionV1 ?? null)
+            === JSON.stringify(next.externalSessionAttentionV1 ?? null)
         && (previous.readStateV1?.v ?? null) === (next.readStateV1?.v ?? null)
         && (previous.readStateV1?.sessionSeq ?? null) === (next.readStateV1?.sessionSeq ?? null)
         && (previous.readStateV1?.pendingActivityAt ?? null) === (next.readStateV1?.pendingActivityAt ?? null)

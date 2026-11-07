@@ -1,7 +1,8 @@
 import type {
-    SessionAwarenessProjectionV1,
+    SessionAwarenessProjectionV1} from '@happier-dev/protocol/sessions/awareness/projectionV1';
+import type {
     SessionPersonalAttentionProjectionV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/personal/attention';
 import type { SessionPresentationRecord, SessionListPresentationSource } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
 import type { SessionAttentionOptions } from '@/sync/domains/session/attention/sessionAttention';
 import type { SessionAwarenessPresentationStateV1 } from '@happier-dev/protocol/sessions/awareness/presentationV1';
@@ -9,6 +10,7 @@ import type { WorkStatusPresentation } from '@/components/work/status/resolveWor
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import type { SessionContextPresentation } from '@/sync/domains/session/presentation/sessionContextPresentation';
 import type { FollowPolicyV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
+import type { SessionFollowPersonRulePendingState } from '@/components/sessions/follow/sessionFollowSourcePresentation';
 
 export type SessionActivityAttention = Readonly<{
     session: SessionPresentationRecord;
@@ -43,6 +45,8 @@ export type SessionActivityAttention = Readonly<{
     personalAttention: SessionPersonalAttentionProjectionV1;
     /** Private rule matches admitted by the existing source evaluator, never viewer mutations. */
     followRulePolicies?: readonly FollowPolicyV1[];
+    /** Known receiver-side rule work; presentation never turns it into personal attention. */
+    followRuleEvaluationState?: SessionFollowPersonRulePendingState;
     hasAttention: boolean;
     priority: number;
     lastTurnCompletedAt: number | null;

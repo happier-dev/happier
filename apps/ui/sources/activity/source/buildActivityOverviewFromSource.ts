@@ -19,7 +19,6 @@ import { isUserFacingSession } from '@/sync/domains/session/listing/isUserFacing
 import {
     createSessionListPresentationSource,
     readSessionListPresentationOwnerMetadata,
-    readSessionListPresentationOwnerMetadataField,
     readSessionListRenderableOwnerMetadataView,
     type SessionPresentationRecord,
     type SessionListPresentationSource,
@@ -44,9 +43,11 @@ import {
 } from '@/sync/domains/session/presentation/sessionContextPresentation';
 import { resolveSessionWorkspaceDisplayPresentation } from '@/sync/domains/session/listing/sessionWorkspaceDisplayPresentation';
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
+import { sessionFollowSourceRuntimeStateLabel } from '@/components/sessions/follow/sessionFollowSourcePresentation';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 
 import type { ActivityAttentionSource } from './activityAttentionSourceTypes';
-import { readActivitySessionRulePolicies } from './readActivitySessionRulePolicies';
+import { readActivitySessionRuleMatches } from './readActivitySessionRulePolicies';
 import { collectActivitySourceSessionAddresses } from './activitySourceSessionAddresses';
 
 const NO_SOURCE_ATTENTION_MESSAGES: readonly Message[] = [];
@@ -82,12 +83,6 @@ function readSourceOwnerMetadata(session: SessionPresentationRecord, source?: Se
         ? readSessionOwnerMetadataView(session) : readSessionListRenderableOwnerMetadataView(session);
 }
 
-function readSourceCustodyMetadata(session: SessionPresentationRecord, source?: SessionListPresentationSource) {
-    const metadata = readSourceOwnerMetadata(session, source);
-    return source && metadata ? { hiddenSystemSession: metadata.hiddenSystemSession,
-        systemSessionV1: readSessionListPresentationOwnerMetadataField(source, 'systemSessionV1') } : metadata;
-}
-
 function isHydratedSessionInActivityCustody(session: SessionPresentationRecord, source?: SessionListPresentationSource): boolean {
     if (session.viewer?.attention.presentation === 'status_only' && session.viewer.attention.needsAttention) return true;
     const ownerMetadata = readSourceOwnerMetadata(session, source);
@@ -96,9 +91,9 @@ function isHydratedSessionInActivityCustody(session: SessionPresentationRecord, 
     }
     return (
         isUserFacingSession({
-            metadata: readSourceCustodyMetadata(session, source),
+            metadata: ownerMetadata,
         })
-        || isVoiceConversationCustodySessionMetadata(readSourceCustodyMetadata(session, source))
+        || isVoiceConversationCustodySessionMetadata(ownerMetadata)
     );
 }
 
@@ -109,7 +104,7 @@ function isHydratedSessionUserFacing(session: SessionPresentationRecord, source?
         return false;
     }
     return isUserFacingSession({
-        metadata: readSourceCustodyMetadata(session, source),
+        metadata: ownerMetadata,
     });
 }
 
@@ -328,6 +323,12 @@ function enrichCandidateWithSourceFacts(params: Readonly<{
                     ? 'server_not_active'
                     : 'allowed';
     const ownerMetadata = readSourceOwnerMetadata(params.candidate.session, params.candidate.presentationSource);
+    const receiverRuleEvaluation = params.source.receiverRuleEvaluationByServerId?.[serverId];
+    const audienceScope = params.source.audienceScopes?.get(serverId);
+    const followRuleEvaluationState = receiverRuleEvaluation && audienceScope
+        && receiverRuleEvaluation.accountId === audienceScope.accountId
+        && areServerProfileIdentifiersEquivalent(audienceScope.serverId, serverId)
+        ? receiverRuleEvaluation.pendingBySourceSessionId[sessionId] : undefined;
     const workspaceLabel = ownerMetadata && params.candidate.awareness.workspace
         ? resolveSessionWorkspaceDisplayPresentation({
             serverId,
@@ -339,6 +340,10 @@ function enrichCandidateWithSourceFacts(params: Readonly<{
 
     return {
         ...params.candidate,
+        ...(followRuleEvaluationState ? {
+            followRuleEvaluationState,
+            subtitle: sessionFollowSourceRuntimeStateLabel(followRuleEvaluationState),
+        } : {}),
         address: params.address,
         context: projectSessionContextPresentation(buildSessionContextFacts({
             address: params.address,
@@ -407,7 +412,8 @@ export function buildActivityOverviewFromSource(params: Readonly<{
     const resolveSessionOptions = params.resolveSessionOptionsForServerId;
     const candidates = collectSourceSessions(params.source, params.includeWarmSourceWhenNotReady === true)
         .flatMap((entry) => {
-            const followRulePolicies = readActivitySessionRulePolicies(params.source, entry.address, entry.session, params.nowMs, entry.presentationSource);
+            const followRuleMatches = readActivitySessionRuleMatches(params.source, entry.address, entry.session, params.nowMs, entry.presentationSource);
+            const followRulePolicies = followRuleMatches.map(match => match.policy);
             if (!isSessionAdmittedToPersonalActivity(entry.session, followRulePolicies)) return [];
             const sessionOptions = resolveSessionOptions
                 ? resolveSessionOptions(entry.address.serverId)
@@ -423,6 +429,7 @@ export function buildActivityOverviewFromSource(params: Readonly<{
                         : undefined,
                     sessionOptions,
                     followRulePolicies,
+                    followRuleMatches,
                     nowMs: params.nowMs,
                 }),
             }];
@@ -430,7 +437,7 @@ export function buildActivityOverviewFromSource(params: Readonly<{
         .filter(({ candidate }) => (
             isHydratedSessionUserFacing(candidate.session, candidate.presentationSource)
             || (
-                isVoiceConversationCustodySessionMetadata(readSourceCustodyMetadata(candidate.session, candidate.presentationSource))
+                isVoiceConversationCustodySessionMetadata(readSourceOwnerMetadata(candidate.session, candidate.presentationSource))
                 && candidate.hasAttention
             )
         ))
@@ -481,7 +488,8 @@ export function forEachActivitySummaryCandidate(params: Readonly<{
         params.includeHydratedMessages !== true,
         params.addresses,
     )) {
-        const followRulePolicies = readActivitySessionRulePolicies(params.source, entry.address, entry.session, params.nowMs, entry.presentationSource);
+        const followRuleMatches = readActivitySessionRuleMatches(params.source, entry.address, entry.session, params.nowMs, entry.presentationSource);
+        const followRulePolicies = followRuleMatches.map(match => match.policy);
         if (!isSessionAdmittedToPersonalActivity(entry.session, followRulePolicies)) continue;
         const sessionOptions = params.resolveSessionOptionsForServerId
             ? params.resolveSessionOptionsForServerId(entry.address.serverId)
@@ -498,11 +506,12 @@ export function forEachActivitySummaryCandidate(params: Readonly<{
             nowMs: params.nowMs,
             presentation: 'summary',
             followRulePolicies,
+            followRuleMatches,
         });
         if (
             !isHydratedSessionUserFacing(candidate.session, candidate.presentationSource)
             && !(
-                isVoiceConversationCustodySessionMetadata(readSourceCustodyMetadata(candidate.session, candidate.presentationSource))
+                isVoiceConversationCustodySessionMetadata(readSourceOwnerMetadata(candidate.session, candidate.presentationSource))
                 && candidate.hasAttention
             )
         ) {
@@ -516,6 +525,37 @@ export function forEachActivitySummaryCandidate(params: Readonly<{
 export function isActivityCandidateAwaitingPerson(candidate: Pick<SessionActivityAttention, 'workStatus'>): boolean {
     const type = candidate.workStatus.attentionType;
     return type !== null && resolveInboxItemAttentionV1(type).interrupt;
+}
+
+/** What the always-mounted summary counts for one classified candidate. */
+export type ActivitySummaryFacts = Readonly<{
+    attention: boolean;
+    inbox: boolean;
+    working: boolean;
+    needsYou: boolean;
+    /** The soonest future instant this candidate's attention expires on its own. */
+    nextAttentionBoundaryMs: number | null;
+}>;
+
+/** The summary's one reading of a candidate; the complete and the changed-address summaries share it. */
+export function readActivitySummaryFacts({ entry, candidate, messages }: ActivitySummaryCandidate, nowMs: number): ActivitySummaryFacts {
+    let nextAttentionBoundaryMs: number | null = null;
+    for (const expiresAtMs of readSessionPersonalAttentionExpirationsForViewer(entry.session, nowMs, messages, entry.presentationSource)) {
+        if (expiresAtMs <= nowMs) continue;
+        if (nextAttentionBoundaryMs === null || expiresAtMs < nextAttentionBoundaryMs) nextAttentionBoundaryMs = expiresAtMs;
+    }
+    return {
+        attention: candidate.hasAttention,
+        inbox: classifyInboxSessionCandidate(candidate).section !== null,
+        working: candidate.reasons.isThinking,
+        needsYou: isActivityCandidateAwaitingPerson(candidate),
+        nextAttentionBoundaryMs,
+    };
+}
+
+export function areActivitySummaryFactsEqual(left: ActivitySummaryFacts, right: ActivitySummaryFacts): boolean {
+    return left.attention === right.attention && left.inbox === right.inbox && left.working === right.working
+        && left.needsYou === right.needsYou && left.nextAttentionBoundaryMs === right.nextAttentionBoundaryMs;
 }
 
 /**
@@ -537,21 +577,15 @@ export function buildActivityOverviewSummaryFromSource(params: Readonly<{
     let needsYouCount = 0;
     let nextAttentionBoundaryMs: number | null = null;
 
-    forEachActivitySummaryCandidate(params, ({ entry, candidate, messages }) => {
-        if (candidate.hasAttention) totalAttentionCount += 1;
-        if (classifyInboxSessionCandidate(candidate).section !== null) inboxContentCount += 1;
-        if (candidate.reasons.isThinking) workingCount += 1;
-        if (isActivityCandidateAwaitingPerson(candidate)) needsYouCount += 1;
-        for (const expiresAtMs of readSessionPersonalAttentionExpirationsForViewer(
-            entry.session,
-            params.nowMs,
-            messages,
-            entry.presentationSource,
-        )) {
-            if (expiresAtMs <= params.nowMs) continue;
-            if (nextAttentionBoundaryMs === null || expiresAtMs < nextAttentionBoundaryMs) {
-                nextAttentionBoundaryMs = expiresAtMs;
-            }
+    forEachActivitySummaryCandidate(params, (visited) => {
+        const facts = readActivitySummaryFacts(visited, params.nowMs);
+        if (facts.attention) totalAttentionCount += 1;
+        if (facts.inbox) inboxContentCount += 1;
+        if (facts.working) workingCount += 1;
+        if (facts.needsYou) needsYouCount += 1;
+        if (facts.nextAttentionBoundaryMs !== null
+            && (nextAttentionBoundaryMs === null || facts.nextAttentionBoundaryMs < nextAttentionBoundaryMs)) {
+            nextAttentionBoundaryMs = facts.nextAttentionBoundaryMs;
         }
     });
 

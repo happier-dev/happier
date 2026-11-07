@@ -56,10 +56,9 @@ import { useIsTablet } from '@/utils/platform/responsive';
 import { HubStatusLine } from './header/HubStatusLine';
 import { useHomeGreeting } from './header/homeGreeting';
 import { findHomeHubBuiltinSection, homeChildTitle, homeHubSectionTitle } from './homeHubSections';
-import { HOME_HUB_COMPOSER_SECTION_ID, HomeHubReadingColumn, HomeHubSectionList, resolveHomeHubFirstRunLeadId } from './HomeHubSectionList';
+import { HOME_HUB_ATTENTION_SECTION_ID, HOME_HUB_COMPOSER_SECTION_ID, HomeHubReadingColumn, HomeHubSectionList, resolveHomeHubFirstRunLeadId } from './HomeHubSectionList';
 import type { HubComposerSuggestionsPresentation } from './composer/HubComposerSection';
 import { HubWidgetSection } from './HubWidgetSection';
-import { HomeBotFaces } from './HomeBotFaces';
 import { HomeBotFaces } from './HomeBotFaces';
 import type { HomeHubSection } from './layout/homeHubLayout';
 import { HubSectionMenu } from './layout/HubSectionMenu';
@@ -626,8 +625,6 @@ const HomeHubContent = React.memo(function HomeHubContent() {
             ) : null}
             {/* Phone (owner 11-06): the Bots' faces, a tap from their conversations; off in Appearance › Home. */}
             {phone ? <HomeBotFaces visible={focused && presented} /> : null}
-            {/* Phone (owner 11-06): the Bots' faces, a tap from their conversations; off in Appearance › Home. */}
-            {phone ? <HomeBotFaces visible={focused} /> : null}
             {phone && !briefOpen ? (
                 // Phone (lab B0p): the brief's entry spans the page under the greeting.
                 <ItemGroup surface="none">

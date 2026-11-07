@@ -2,21 +2,29 @@ import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/ac
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
-import { publishAppliedActiveServerRuntimeAvailability } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
-import { NavigationContext, useNavigation } from '@react-navigation/native';
+import { NavigationContext, useNavigation, useIsFocused as useNativeIsFocused } from '@react-navigation/native';
+import Color from 'color';
+import { useRouter } from 'expo-router';
 
-import { createDeferred, flushHookEffects, installTimerCensus, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
+import { publishAppliedActiveServerRuntimeAvailability } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
+import { installTimerCensus } from '@/dev/testkit/performance/timerCensus';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { widgetInstalledPackage, widgetProjectionOf } from '@/dev/testkit/fixtures/pluginWidgetProjectionFixtures';
 import { AppShellPluginUiProjectionValueProvider } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { HomeHub } from './HomeHub';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { storage } from '@/sync/domains/state/storage';
+import { onboardingHistoryState } from '@/sync/domains/state/onboardingUiState';
 import { flattenTestStyle } from '@/dev/testkit/harness/popoverHarness';
 import { createHomeHubArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { HOME_HUB_DEFAULT_LAYOUT, type HomeHubLayoutValue } from '@happier-dev/protocol/home';
+import { getHomeHubDefaultLayoutV1, type HomeHubLayoutValue } from '@happier-dev/protocol/home';
 import type { WidgetInstanceV1 } from '@happier-dev/protocol/widgets';
 import { CardGridCell } from '@/components/ui/cardGrid/CardGrid';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
@@ -30,7 +38,16 @@ import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentat
 import { decryptArtifactWithBody } from '@/sync/engine/artifacts/syncArtifacts';
 import type { Artifact } from '@/sync/domains/artifacts/artifactTypes';
 import { WelcomePlanet } from '@/components/atmosphere/moments/WelcomePlanet';
+import { PlanetCanvas } from '@/components/atmosphere/PlanetCanvas';
+import { HomeCompletedBots } from './HomeCompletedBots';
+import { HOME_HUB_COMPOSER_SECTION_ID } from './HomeHubSectionList';
 import { atmosphereStageStore } from '@/components/atmosphere/atmosphereStage';
+import { AtmosphereLayer } from '@/components/atmosphere/AtmosphereLayer';
+import { AtmosphereSurfaceFrame } from '@/components/atmosphere/AtmosphereSurfaceFrame';
+import { PageAtmosphereStage } from '@/components/atmosphere/PageAtmosphereStage';
+import { DestinationInstanceContext } from '@/components/appShell/workspace/destinationInstanceContext';
+import { GlassRuntimeEnvironmentProvider } from '@/components/ui/glass/glassRuntimeEnvironment';
+import { apiSocket } from '@/sync/api/session/apiSocket';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -53,6 +70,7 @@ const settings = vi.hoisted(() => ({
     scrollOffset: 0,
     presented: undefined as boolean | undefined,
     measureAtmosphere: false,
+    belowHeroTop: 0,
 }));
 const atmospherePaints = vi.hoisted(() => ({ count: 0, font: {} }));
 vi.mock('@shopify/react-native-skia', async () => ({
@@ -227,6 +245,7 @@ afterEach(async () => {
     settings.scrollOffset = 0;
     settings.presented = undefined;
     settings.measureAtmosphere = false;
+    settings.belowHeroTop = 0;
     usage.summary = { entries: [], asOf: null, source: 'none' };
     usage.listeners.clear();
     widgets.projection = null;
@@ -245,7 +264,7 @@ function RoutedHomeBoundary({ children }: React.PropsWithChildren) {
     return <NavigationContext.Provider value={useNavigation()}>{children}</NavigationContext.Provider>;
 }
 
-async function renderHome(request = artifact.request, initial: 'stored' | 'missing' = 'stored') {
+async function renderHome(request = artifact.request, initial: 'stored' | 'missing' = 'stored', wrapper?: React.ComponentType<React.PropsWithChildren>) {
     if (!connection) {
         if (initial === 'stored') artifact.seed({ v: 1, items: [], ...settings.layout });
         restoreSyncLoader = (await loadSyncSingletonForTests()).dispose;
@@ -254,13 +273,15 @@ async function renderHome(request = artifact.request, initial: 'stored' | 'missi
         const scope = { serverId: connection.home.id, accountId: 'account-home' };
         storage.setState({ isDataReady: true, profileScope: scope, settingsScope: scope });
     }
-    if (settings.measureAtmosphere) storage.setState(state => ({ ...state,
-        localSettings: { ...state.localSettings, homeWelcomeSeenAt: null },
+    if (settings.measureAtmosphere) {
+        onboardingHistoryState.set('homeWelcomeSeenAt', null);
+        storage.setState(state => ({ ...state,
         settings: { ...state.settings, homeAtmosphere: { ...state.settings.homeAtmosphere,
             source: 'planet', moments: { ...state.settings.homeAtmosphere.moments, welcome: true, loading: false },
         } },
-    }));
-    const element = () => (
+        }));
+    }
+    const body = () => (
         // The route adapter reads navigator presence before consulting useIsFocused.
         // Model a routed Home, rather than a preview that is always focused.
         <RoutedHomeBoundary>
@@ -286,6 +307,7 @@ async function renderHome(request = artifact.request, initial: 'stored' | 'missi
         </InjectedAuthProvider>
         </RoutedHomeBoundary>
     );
+    const element = () => wrapper ? React.createElement(wrapper, null, body()) : body();
     const contentNode = { getBoundingClientRect: () => ({ left: 0, top: 56 - settings.scrollOffset, width: 800, height: 800 }) };
     const rendered = await renderScreen(element(), {
         createNodeMock: node => {
@@ -295,7 +317,7 @@ async function renderHome(request = artifact.request, initial: 'stored' | 'missi
                 scrollTo: () => {},
                 getBoundingClientRect: () => ({ left: 0, top: 0, width: settings.viewport.width, height: settings.viewport.height }),
                 measureInWindow: (done: (x: number, y: number, width: number, height: number) => void) =>
-                    done(0, 0, settings.viewport.width, settings.viewport.height),
+                    done(0, testID === 'home-hub.below-hero' ? settings.belowHeroTop : 0, settings.viewport.width, settings.viewport.height),
             };
             if (testID === 'home-hub') return { getInnerViewNode: () => contentNode, scrollTo: () => {},
                 getBoundingClientRect: () => ({ left: 0, top: 56, width: settings.viewport.width, height: settings.viewport.height }) };
@@ -342,8 +364,96 @@ function shownSections(text: string): string[] {
 }
 
 describe('HomeHub', () => {
+    it('keeps excluded Home opaque beside an included Project without remounting its scroll content across inclusion', async () => {
+        settings.measureAtmosphere = true;
+        function Shell(props: React.PropsWithChildren) {
+            const focused = useNativeIsFocused();
+            const navigation = useRouter();
+            return <GlassRuntimeEnvironmentProvider value={{ atmosphereBehind: 'band' }}>
+                <AtmosphereLayer sheetRadius={12} chrome={false} />
+                <DestinationInstanceContext.Provider value={{ tabId: 'home', ref: { kind: 'home', params: {} }, pathname: '/', visible: true, focused, isFocused: () => widgets.focused, navigation }}>
+                    <PageAtmosphereStage pathname="/" params={{}}>{props.children}</PageAtmosphereStage>
+                </DestinationInstanceContext.Provider>
+                <AtmosphereSurfaceFrame surface={{ project: { serverId: 'srv', projectKey: 'p1' } }} focused={!focused} visible showLook={false}>
+                    <Text>Project</Text>
+                </AtmosphereSurfaceFrame>
+            </GlassRuntimeEnvironmentProvider>;
+        }
+        const screen = await renderHome(undefined, 'stored', Shell);
+        const include = async (shown: boolean) => act(async () => storage.setState(state => ({ ...state,
+            settings: { ...state.settings, homeAtmosphere: { ...state.settings.homeAtmosphere,
+                showOn: shown ? ['home', 'projects'] : ['projects'],
+                planet: { ...state.settings.homeAtmosphere.planet, digits: false },
+                moments: { ...state.settings.homeAtmosphere.moments, welcome: false, loading: false },
+            } },
+        })));
+        const focus = async (home: boolean) => act(async () => {
+            widgets.focused = home;
+            widgets.focusListeners.forEach(listener => listener());
+        });
+        const masks = () => screen.findAllHostsByTestId('atmosphere-excluded-pane');
+        const expectOpaque = () => {
+            expect(masks()).toHaveLength(1);
+            expect(Color(flattenTestStyle(masks()[0]!.props.style).backgroundColor as string).alpha()).toBe(1);
+        };
+        try {
+            await include(false);
+            await vi.waitFor(() => expect(screen.findHostByTestId('home-hub')).not.toBeNull());
+            // The OS lays out even an excluded Home, whose hero/headline is absent.
+            await act(async () => {
+                for (let node = screen.findHostByTestId('home-hub'); node; node = node.parent) {
+                    if (typeof node.type === 'string') node.props.onLayout?.({ nativeEvent: {
+                        layout: { x: 0, y: 0, width: settings.viewport.width, height: settings.viewport.height },
+                    } });
+                }
+            });
+            const content = screen.findHostByTestId('home-hub');
+            expectOpaque();
+            await focus(false);
+            expectOpaque();
+            expect(atmosphereStageStore.get().stage?.surface).toEqual({ project: { serverId: 'srv', projectKey: 'p1' } });
+            await include(true);
+            await vi.waitFor(() => expect(screen.findByTestId('home-hero')).not.toBeNull());
+            expect(screen.findHostByTestId('home-hub')).toBe(content);
+            expect(masks()).toHaveLength(0);
+            const hero = screen.findByTestId('home-hero');
+            await focus(true);
+            await focus(false);
+            expect(screen.findByTestId('home-hero')).toBe(hero);
+            await include(false);
+            expectOpaque();
+            await focus(true);
+            expect(screen.findHostByTestId('home-hub')).toBe(content);
+        } finally { await screen.unmount(); }
+    });
+
+    it("ends Rise's body above the first thing under the hero, so Done while you were away is on the page and not the planet", async () => {
+        const before = storage.getState();
+        settings.measureAtmosphere = true;
+        settings.viewport = { width: 1100, height: 900 };
+        settings.belowHeroTop = 700;
+        settings.layout = { order: [HOME_HUB_COMPOSER_SECTION_ID], hidden: [] };
+        const screen = await renderHome();
+        try {
+            await act(async () => storage.setState(state => ({ ...state,
+                settings: { ...state.settings, homeAtmosphere: { ...state.settings.homeAtmosphere,
+                    planet: { ...state.settings.homeAtmosphere.planet, placement: 'rise' },
+                    moments: { ...state.settings.homeAtmosphere.moments, welcome: false, loading: false },
+                } },
+            })));
+            await vi.waitFor(() => expect(screen.findByTestId('home-hero')).not.toBeNull());
+            // Only the acknowledged layout places the composer in the hero, which brings this list under it.
+            await vi.waitFor(() => expect(screen.findHostByTestId('home-hub.below-hero')?.findAllByType(HomeCompletedBots.type)).toHaveLength(1));
+            await vi.waitFor(() => expect(screen.findByType(PlanetCanvas).props.fade?.to).toBe(settings.belowHeroTop - 6));
+        } finally {
+            await screen.unmount();
+            await act(async () => storage.setState(state => ({ ...state, settings: { ...state.settings, homeAtmosphere: before.settings.homeAtmosphere } })));
+        }
+    });
+
     it('parks planet paints, moments and timers with retained Home and returns without replaying Welcome', async () => {
         const before = storage.getState();
+        const previousWelcomeSeenAt = onboardingHistoryState.read('homeWelcomeSeenAt') ?? null;
         settings.presented = true;
         settings.measureAtmosphere = true;
         vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'setTimeout', 'clearTimeout', 'requestAnimationFrame', 'cancelAnimationFrame', 'Date', 'performance'] });
@@ -369,7 +479,7 @@ describe('HomeHub', () => {
             const welcome = screen.findByType(WelcomePlanet);
             await act(async () => welcome.props.onLanded());
             expect(screen.findAllByType(WelcomePlanet)).toHaveLength(0);
-            const seen = storage.getState().localSettings.homeWelcomeSeenAt;
+            const seen = onboardingHistoryState.read('homeWelcomeSeenAt');
             expect(seen).not.toBeNull();
             const restingPaints = atmospherePaints.count;
             await act(async () => { vi.advanceTimersByTime(2000); });
@@ -389,7 +499,7 @@ describe('HomeHub', () => {
             settings.presented = true;
             await screen.rerender();
             expect(screen.findAllByType(WelcomePlanet)).toHaveLength(0);
-            expect(storage.getState().localSettings.homeWelcomeSeenAt).toBe(seen);
+            expect(onboardingHistoryState.read('homeWelcomeSeenAt')).toBe(seen);
             const resumedPaints = atmospherePaints.count;
             await act(async () => { vi.advanceTimersByTime(2000); });
             expect(atmospherePaints.count).toBeGreaterThan(resumedPaints);
@@ -397,8 +507,8 @@ describe('HomeHub', () => {
             await screen?.unmount();
             storage.setState(state => ({ ...state,
                 settings: { ...state.settings, homeAtmosphere: before.settings.homeAtmosphere },
-                localSettings: { ...state.localSettings, homeWelcomeSeenAt: before.localSettings.homeWelcomeSeenAt },
             }));
+            onboardingHistoryState.set('homeWelcomeSeenAt', previousWelcomeSeenAt);
             timers.stop();
             vi.restoreAllMocks();
             vi.useRealTimers();
@@ -473,18 +583,41 @@ describe('HomeHub', () => {
         expect(shownSections(loading.getTextContent())).toEqual([]);
         standardCleanup();
 
+        settings.guidanceKind = 'start_daemon';
+        const stopped = await renderHome();
+        expect(stopped.getTextContent()).toContain('guidance');
+    });
+
+    it('opens a Home with no machine yet as Home itself (58d AF1), with zero machine RPC', async () => {
         settings.guidanceKind = 'connect_machine';
-        const firstRun = await renderHome();
-        expect(firstRun.getTextContent()).toContain('guidance');
+        const rpc = vi.spyOn(apiSocket, 'machineRPC');
+        const screen = await renderHome(artifact.request, 'missing');
+        await flushHookEffects({ cycles: 10 });
+        // The widgets carry "no machine yet": no whole-pane guidance replaces Home.
+        expect(screen.getTextContent()).not.toContain('guidance');
+        expect(screen.findByTestId('home-hub')).toBeTruthy();
+        expect(screen.findByTestId('home-hub.section.default:builtin:machine_fleet')).toBeTruthy();
+        expect(screen.findByTestId('home-hub.section.default:builtin:usage_capacity')).toBeTruthy();
+        // Where agents will run is the one question: Machines leads the cards, ahead of Capacity.
+        const cards = screen.findAll((node) => typeof node.props?.testID === 'string'
+            && /^home-hub\.section\.default:builtin:(machine_fleet|usage_capacity)$/.test(node.props.testID));
+        expect(cards[0]?.props.testID).toBe('home-hub.section.default:builtin:machine_fleet');
+        // Composer, then the cards; what Get set up still asks waits below them.
+        expect(shownSections(screen.getTextContent())).toEqual(['start', 'attention', 'automations', 'setup']);
+        // No suggestion can run before a machine exists: the composer stands alone.
+        expect(widgets.composerSuggestions.at(-1)).toBe('none');
+        // appFirst.homeOpen: nothing on Home asks a machine (there is none to ask).
+        expect(rpc).toHaveBeenCalledTimes(0);
     });
 
     it('keeps the default composer hidden after an initial layout read failure and retries the Account layout', async () => {
         settings.layout = { order: ['attention', 'automations', 'start'], hidden: ['setup'] };
         let failRead = true;
         const screen = await renderHome(async (input, init) => {
-            // A reachable Home with no Machines: an unanswered census would read as an unreachable
-            // Home, whose page replaces the layout failure this case exercises.
-            if (new URL(String(input)).pathname === '/v1/machines') return Response.json([]);
+            // Keep this Home reachable: a bootstrap failure would replace the layout error with
+            // the canonical Home-unreachable page, before this case can exercise layout recovery.
+            const bootstrap = createEmptyAccountBootstrapHttpResponse(new URL(String(input)).pathname, init);
+            if (bootstrap) return bootstrap;
             if (failRead && new URL(String(input)).pathname === `/v1/artifacts/${artifact.artifactId}`) {
                 return Response.json({ invalid: 'artifact response' });
             }
@@ -499,8 +632,8 @@ describe('HomeHub', () => {
         expect(holdsText(screen.findByTestId('home-hero')!, 'section:start')).toBe(false);
     });
 
-    it('asks an Account with no name on the no-computer Home, through the one Add your name block and its dismissal', async () => {
-        settings.guidanceKind = 'connect_machine';
+    it('asks an Account with no name on the reconnect Home, through the one Add your name block and its dismissal', async () => {
+        settings.guidanceKind = 'start_daemon';
         const screen = await renderHome();
         const scope = storage.getState().profileScope!;
         const setName = async (name: string | null) => {
@@ -541,14 +674,14 @@ describe('HomeHub', () => {
         const screen = await renderHome();
         await screen.pressByTestIdAsync('look-chip');
         await screen.pressByTestIdAsync('look-source:none');
-        expect(storage.getState().settings.homeAtmosphere.source).toBe('none');
+        await act(async () => { await vi.waitFor(() => expect(storage.getState().settings.homeAtmosphere.source).toBe('none')); });
         expect(screen.findByTestId('home-hero')).toBeNull();
         // Closing and reopening exercises the actual Home entry, without Customize.
         if (screen.findByTestId('look-panel')) await screen.pressByTestIdAsync('look-chip');
         expect(screen.findByTestId('look-chip')).toBeTruthy();
         await screen.pressByTestIdAsync('look-chip');
         await screen.pressByTestIdAsync('look-source:planet');
-        expect(storage.getState().settings.homeAtmosphere.source).toBe('planet');
+        await act(async () => { await vi.waitFor(() => expect(storage.getState().settings.homeAtmosphere.source).toBe('planet')); });
         expect(screen.findByTestId('home-hero')).toBeTruthy();
     });
 
@@ -568,6 +701,7 @@ describe('HomeHub', () => {
         const screen = await renderHome();
         await screen.pressByTestIdAsync('look-chip');
         await screen.pressByTestIdAsync('look-source:none');
+        await act(async () => { await vi.waitFor(() => expect(storage.getState().settings.homeAtmosphere.source).toBe('none')); });
         expect(screen.findByTestId('home-hero')).toBeNull();
         expect(widgets.composerSuggestions.at(-1)).toBe('tiles');
     });
@@ -618,7 +752,7 @@ describe('HomeHub', () => {
 
         screen.pressByTestId('home-layout.reset');
         await flushHookEffects({ cycles: 2 });
-        expect(artifact.layout()).toEqual(HOME_HUB_DEFAULT_LAYOUT);
+        expect(artifact.layout()).toEqual(getHomeHubDefaultLayoutV1());
         expect(shownSections(screen.getTextContent())).toEqual(['start', 'attention', 'setup', 'automations']);
 
         // The header button closes it again.
@@ -1178,33 +1312,54 @@ describe('HomeHub plugin widgets', () => {
         expect(screen.findByTestId(`home-hub.section.${CHECKS}`)).toBeTruthy();
     });
 
-    it('builds a widget body only while Home is focused and the widget is near the viewport', async () => {
+    it('keeps visible split Home widgets current and builds newly visible bodies without keyboard focus', async () => {
         installWidgets();
-        const screen = await renderHome();
-        // Not laid out yet: nothing runs.
-        expect(widgets.bodyMounts.latest ?? 0).toBe(0);
+        function SplitHome({ children }: React.PropsWithChildren) {
+            const focused = useNativeIsFocused();
+            const navigation = useRouter();
+            return <DestinationInstanceContext.Provider value={{ tabId: 'home', ref: { kind: 'home', params: {} }, pathname: '/',
+                visible: true, focused, isFocused: () => widgets.focused, navigation }}>{children}</DestinationInstanceContext.Provider>;
+        }
+        const screen = await renderHome(undefined, 'stored', SplitHome);
+        try {
+            // Not laid out yet: nothing runs.
+            expect(widgets.bodyMounts.latest ?? 0).toBe(0);
 
-        await lay(screen, { [LATEST]: 900, [CHECKS]: 5000 });
-        expect(widgets.bodyMounts.latest).toBe(1);
-        expect(widgets.bodyMounts.checks ?? 0).toBe(0);
-        expect(screen.findByTestId(`home-hub.section.${CHECKS}.deferred`)).toBeTruthy();
+            await lay(screen, { [LATEST]: 900, [CHECKS]: 5000 });
+            expect(widgets.bodyMounts.latest).toBe(1);
+            expect(widgets.bodyMounts.checks ?? 0).toBe(0);
+            expect(screen.findByTestId(`home-hub.section.${CHECKS}.deferred`)).toBeTruthy();
 
-        // Scrolled far down: the first leaves, the second arrives.
-        await act(async () => {
-            settings.scrollOffset = 4600;
-            screen.findByTestId('home-hub')!.props.onScroll({ nativeEvent: { contentOffset: { x: 0, y: 4600 } } });
-        });
-        await flushHookEffects({ cycles: 2 });
-        expect(widgets.bodyMounts.latest).toBe(0);
-        expect(widgets.bodyMounts.checks).toBe(1);
+            // Scrolled far down: the first leaves, the second arrives.
+            await act(async () => {
+                settings.scrollOffset = 4600;
+                screen.findByTestId('home-hub')!.props.onScroll({ nativeEvent: { contentOffset: { x: 0, y: 4600 } } });
+            });
+            await flushHookEffects({ cycles: 2 });
+            expect(widgets.bodyMounts.latest).toBe(0);
+            expect(widgets.bodyMounts.checks).toBe(1);
 
-        // Another page covers Home: nothing keeps running behind it.
-        await act(async () => {
-            widgets.focused = false;
-            for (const listener of [...widgets.focusListeners]) listener();
-        });
-        await flushHookEffects({ cycles: 2 });
-        expect(widgets.bodyMounts.checks).toBe(0);
+            // Focus moves to the other visible pane; Home still presents live widget data.
+            await act(async () => {
+                widgets.focused = false;
+                for (const listener of [...widgets.focusListeners]) listener();
+            });
+            await flushHookEffects({ cycles: 2 });
+            expect(widgets.bodyMounts.checks).toBe(1);
+            await act(async () => {
+                widgets.data.checks = 17;
+                widgets.dataListeners.forEach(listener => listener());
+            });
+            expect(screen.getTextContent()).toContain('widget:checks=17');
+            // Scrolling an unfocused pane must also instantiate its newly visible widget.
+            await act(async () => {
+                settings.scrollOffset = 0;
+                screen.findByTestId('home-hub')!.props.onScroll({ nativeEvent: { contentOffset: { x: 0, y: 0 } } });
+            });
+            await flushHookEffects({ cycles: 2 });
+            expect(widgets.bodyMounts.latest).toBe(1);
+            expect(widgets.bodyMounts.checks).toBe(0);
+        } finally { await screen.unmount(); }
     });
 
     it('re-renders only the widget whose data changed — never the hub or its sibling sections', async () => {

@@ -1,7 +1,7 @@
-import type { SessionListFailure } from './sessionListFailure';
 import { areServerProfileIdentifiersEquivalent } from '../../server/serverProfiles';
 import { readSessionListRowsForServerId, type SessionListRowStateByServerId } from './sessionListRowStateLookup';
 import { canSessionListOrdinaryPageAnswerQuery, type SessionListQueryHomeState } from './sessionListQueryController';
+import type { SessionListFailure } from './sessionListFailure';
 import { matchSessionBotFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import type { SessionBotFilterV1, SessionListQueryV1 } from '@happier-dev/protocol/sessions/listing/query';
 
@@ -84,20 +84,14 @@ export function isSessionListQueryHomeCoverageComplete(input: Readonly<{
     );
 }
 
-function normalizeLastSuccessAt(value: number | null | undefined): number | null {
-    return typeof value === 'number' && Number.isFinite(value) ? value : null;
-}
-
 /**
- * Projects the query controller's per-Home state onto the shared observation fact. The controller
- * already owns `phase` and `freshnessAt`; this only renames them into the shared vocabulary so
- * query-backed and ordinary Homes reach the presentation owner through one shape.
+ * The query controller admits this projection at lifecycle publication, including the ordinary
+ * success fallback. Reading it never rebuilds currentness because the corpus changed.
  */
 export function readSessionListHomeObservationFromQueryState(
-    state: Pick<SessionListQueryHomeState, 'phase' | 'freshnessAt'> | null | undefined,
+    state: Pick<SessionListQueryHomeState, 'homeObservation'> | null | undefined,
 ): SessionListHomeObservation | null {
-    if (!state) return null;
-    return { phase: state.phase, lastSuccessAt: normalizeLastSuccessAt(state.freshnessAt) };
+    return state?.homeObservation ?? null;
 }
 
 /**
@@ -111,7 +105,7 @@ export function readSessionListHomeObservationFromQueryState(
  */
 export function buildSessionListHomeObservations(input: Readonly<{
     concurrentSessionListCacheByServerId?: SessionListObservationCacheByServerId | null;
-    queryStatesByServerId?: Readonly<Record<string, Pick<SessionListQueryHomeState, 'phase' | 'freshnessAt' | 'appliedSourceKind'> | null | undefined>> | null;
+    queryStatesByServerId?: Readonly<Record<string, Pick<SessionListQueryHomeState, 'phase' | 'homeObservation' | 'appliedSourceKind'> | null | undefined>> | null;
 }>): SessionListHomeObservationByServerId {
     const observations: Record<string, SessionListHomeObservation> = {};
     for (const serverId in input.concurrentSessionListCacheByServerId ?? {}) {
@@ -126,10 +120,7 @@ export function buildSessionListHomeObservations(input: Readonly<{
             || (queryState.appliedSourceKind !== 'query' && queryState.phase !== 'error')) continue;
         const observation = readSessionListHomeObservationFromQueryState(queryState);
         if (observation) {
-            observations[serverId] = {
-                phase: observation.phase,
-                lastSuccessAt: observation.lastSuccessAt ?? observations[serverId]?.lastSuccessAt ?? null,
-            };
+            observations[serverId] = observation;
         }
     }
     return observations;

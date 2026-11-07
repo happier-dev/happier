@@ -177,6 +177,10 @@ export function createPersistentUiState<T>(namespace: string, parse: (value: unk
     };
 }
 
+/** Per-device capability presentation history; intentionally no import from the unreleased Settings carrier. */
+export const capabilityDismissalState = createPersistentUiState<number | null>('capability-dismissals-v1',
+    value => typeof value === 'number' && Number.isFinite(value) ? value : null);
+
 export function usePersistentUiStateValue<T>(state: ReturnType<typeof createPersistentUiState<T>>, key: string | null): T | undefined {
     const subscribe = useCallback((listener: () => void) => key === null ? () => {} : state.subscribeKey(key, listener), [key, state]);
     const read = useCallback(() => key === null ? undefined : state.read(key), [key, state]);

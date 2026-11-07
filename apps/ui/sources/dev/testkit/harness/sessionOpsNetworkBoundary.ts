@@ -1,8 +1,8 @@
 import { vi } from 'vitest';
 import type { RuntimeFetch } from '@/utils/system/runtimeFetch';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import { createPlainAccountEncryptionCurrentnessFixture } from '../fixtures/accountEncryptionCurrentness';
-import { createSessionReadBatchFetchBoundary } from './sessionReadBatchHttpBoundary';
+import { createAccountEncryptionCurrentnessFixtureForCredentials, createPlainAccountEncryptionCurrentnessFixture } from '../fixtures/accountEncryptionCurrentness';
+import { createCompactSessionListFetchBoundary } from './sessionReadBatchHttpBoundary';
 import { waitForTestEvent } from '../hooks/waitForTestEvent';
 
 export type SessionOpsRpcRequest = Readonly<{
@@ -38,6 +38,17 @@ type SessionOpsSocketFactory = (serverUrl: string, options: SessionOpsSocketOpti
 // Runtime consumers retain the SDK import between fixture installations.
 const installedSocketBoundary = vi.hoisted(() => ({ current: null as SessionOpsSocketFactory | null }));
 
+/** Hoist this external transport boundary before importing consumers of the shared socket client. */
+export async function createSessionOpsSocketIoClientBoundary(importOriginal: <T>() => Promise<T>) {
+    const actual = await importOriginal<typeof import('socket.io-client')>();
+    const createSocket = (serverUrl: string, options: SessionOpsSocketOptions) => {
+        const current = installedSocketBoundary.current;
+        if (!current) throw new Error('Session operations Socket boundary is not installed');
+        return current(serverUrl, options);
+    };
+    return { ...actual, io: createSocket, connect: createSocket, default: createSocket };
+}
+
 export type SessionOpsNetworkBoundary = Awaited<ReturnType<typeof installSessionOpsNetworkBoundary>>;
 
 /** Scoped operations use real Home/Account admission and custody; only network and device locking are replaced. */
@@ -62,6 +73,7 @@ export async function installSessionOpsNetworkBoundary() {
         const recordedBoundary = { ...boundary, serverUrl, token: options.auth?.token, options };
         socketBoundaries.push(recordedBoundary);
         let timeoutMs: number | null = null;
+        const defaultEmitWithAck = socket.emitWithAck;
         // Pooled sockets retain this transport across a test's spy restoration.
         socket.timeout = vi.fn((value: number) => {
             timeoutMs = value ?? null;
@@ -72,7 +84,7 @@ export async function installSessionOpsNetworkBoundary() {
                 const response = socketAckResponder ? await socketAckResponder({
                     serverUrl, token: options.auth?.token, event, payload, timeoutMs,
                 }) : null;
-                return response !== null ? response : { v: 1, ok: true, admittedSessionIds: [] };
+                return response !== null ? response : defaultEmitWithAck(event, payload);
             }
             if (!payload || typeof payload !== 'object' || !('method' in payload)
                 || typeof payload.method !== 'string' || !('params' in payload)) {
@@ -95,17 +107,7 @@ export async function installSessionOpsNetworkBoundary() {
         return socket;
     };
     installedSocketBoundary.current = createSocket;
-    vi.doMock('socket.io-client', async (importOriginal) => {
-        const actual = await importOriginal<typeof import('socket.io-client')>();
-        return {
-            ...actual,
-            io: (serverUrl: string, options: SessionOpsSocketOptions) => {
-                const current = installedSocketBoundary.current;
-                if (!current) throw new Error('Session operations Socket boundary is not installed');
-                return current(serverUrl, options);
-            },
-        };
-    });
+    vi.doMock('socket.io-client', createSessionOpsSocketIoClientBoundary);
 
     // This harness serves scoped saved Homes. It does not fabricate a focused Sync Account.
     const { upsertServerProfile, adoptHomeProfile } = await import('@/sync/domains/server/serverProfiles');
@@ -126,6 +128,7 @@ export async function installSessionOpsNetworkBoundary() {
         serverId: string;
         accountId: string;
         encryptionMode: 'plain' | 'e2ee';
+        credentials: AuthCredentials;
         settings: ReturnType<typeof createAccountSettingsHttpBoundary>;
     }>();
     const credentialWrites: Array<NonNullable<Awaited<ReturnType<typeof TokenStorage.setCredentialsForServerUrlWithRollback>>>> = [];
@@ -138,13 +141,14 @@ export async function installSessionOpsNetworkBoundary() {
     // Observation only: the real credential owner admits every served and unserved Home.
     let credentialObserver = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation(observeCredentialRead);
     const httpRequests: Array<{ url: string; token: string | null; method: string }> = [];
-    const runtimeFetchBoundary: RuntimeFetch = createSessionReadBatchFetchBoundary(async (input, init) => {
+    const runtimeFetchBoundary: RuntimeFetch = createCompactSessionListFetchBoundary(async (input, init) => {
         const url = new URL(String(input));
         const token = new Headers(init?.headers).get('authorization');
         httpRequests.push({ url: url.href, token, method: (init?.method ?? 'GET').toUpperCase() });
         if (!homes.has(url.origin)) throw new Error(`Unexpected test Home: ${url.origin}`);
         const response = httpResponder ? await httpResponder(input, init) : null;
         if (response !== null) return response;
+        if (url.pathname === '/v2/sessions/read-batch') return undefined;
         const settingsResponse = homes.get(url.origin)!.settings.handle(input, init);
         if (settingsResponse) return settingsResponse;
         // Public saved-Home discovery uses a tokenless readiness probe whose
@@ -152,8 +156,12 @@ export async function installSessionOpsNetworkBoundary() {
         if (url.pathname === '/health') return new Response(null, { status: 200 });
         if (url.pathname === '/v1/auth/ping') return Response.json({});
         if (url.pathname === '/v1/account/encryption') return Response.json({ mode: homes.get(url.origin)!.encryptionMode, updatedAt: 1 });
-        if (url.pathname === '/v1/account/encryption/currentness' && homes.get(url.origin)!.encryptionMode === 'plain') {
-            return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+        if (url.pathname === '/v1/account/encryption/currentness') {
+            const home = homes.get(url.origin)!;
+            if (home.encryptionMode === 'plain') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+            // An E2EE Home reports the persisted identity of the material it issued to this Account.
+            const currentness = createAccountEncryptionCurrentnessFixtureForCredentials(home.credentials);
+            if (currentness.mode === 'e2ee') return Response.json(currentness);
         }
         if (url.pathname === '/v2/cursor') return Response.json({ cursor: 0, changesFloor: 0 });
         const accountId = homes.get(url.origin)?.accountId;
@@ -164,8 +172,9 @@ export async function installSessionOpsNetworkBoundary() {
         if (url.pathname.startsWith('/v1/machines/')) return Response.json({ machine: createPlainMachineRowFixture({
             id: decodeURIComponent(url.pathname.slice('/v1/machines/'.length)), accountId,
         }) });
+        if (/^\/v2\/sessions\/[^/]+$/.test(url.pathname)) return undefined;
         return Response.json({ error: 'not_found' }, { status: 404 });
-    });
+    }, { preferExactSnapshot: true });
     setRuntimeFetch(runtimeFetchBoundary);
     return {
         requests,
@@ -254,7 +263,7 @@ export async function installSessionOpsNetworkBoundary() {
             settings.replaceAccountSettings(accountId, encryptionMode === 'plain'
                 ? { content: { t: 'plain', v: {} }, version: 1 }
                 : { content: null, version: 0 });
-            homes.set(profile.serverUrl, { serverId: profile.id, accountId, encryptionMode, settings });
+            homes.set(profile.serverUrl, { serverId: profile.id, accountId, encryptionMode, credentials, settings });
             const token = credentials.token;
             return { ...profile, accountId, token };
         },

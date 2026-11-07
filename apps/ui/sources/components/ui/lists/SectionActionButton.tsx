@@ -18,6 +18,7 @@ export const SectionActionButton = React.memo(function SectionActionButton(props
     disabled?: boolean;
     loading?: boolean;
     accessibilityLabel?: string;
+    accessibilityHint?: string;
     /** For an action that opens something in place (a picker under the section): whether it is open. */
     expanded?: boolean;
     /** The press target's box (a header action keeps the platform's minimum target around its quiet pill). */
@@ -34,6 +35,7 @@ export const SectionActionButton = React.memo(function SectionActionButton(props
             display="inverted"
             title={props.title}
             accessibilityLabel={props.accessibilityLabel}
+            accessibilityHint={props.accessibilityHint}
             {...(props.destination
                 ? { trailing: <Icon name="caret-right" size={14} color={theme.colors.text.secondary} /> }
                 : { leading: <Icon name={props.icon} size={14} color={theme.colors.text.secondary} /> })}

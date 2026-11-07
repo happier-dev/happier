@@ -74,12 +74,12 @@ it('reads approval and Automation rows from the canonical Inbox grouping without
         automationRuns: [workflowRunRowFromAutomationRun(run)], automationServerId: serverId, openApprovals: [readOpenApprovalInboxEntry(approval)!],
         stalledSessions: [], landings: [], snoozed: [], resolveSession: () => null, resolveOriginRunId: () => null });
     const model: InboxModel = {
-        noticeInvestigation: createAccountNoticeInvestigation({ scope: { serverId, accountId: 'session-account' },
-            isCurrent: () => false, execute: createFixtureActionExecute() }),
         invokePluginSessionControl: async () => ({ kind: 'unavailable' }),
         source: { isDataReady: true, sessionsById: {}, sessionListRowsByServerId: {},
             ordinarySessionListMembershipByServerId: {}, sessionListIndexByServerId: {}, concurrentSessionListCacheByServerId: {} },
         ...createInboxAttentionFixture(serverId),
+        noticeInvestigation: createAccountNoticeInvestigation({ scope: { serverId, accountId: 'session-account' },
+            isCurrent: () => false, execute: createFixtureActionExecute() }),
         automationAttentionItems: [{ key: `automation-run:${run.id}`, run,
             route: `/workflows/runs/${run.id}?target=occurrence&automationId=${run.automationId}` }],
         openApprovals: [approval], openUsageNotices: [], friendRequests: [],

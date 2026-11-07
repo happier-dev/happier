@@ -1,4 +1,5 @@
 import * as React from 'react';
+import 'fake-indexeddb/auto';
 import { useRouter } from 'expo-router';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -22,6 +23,7 @@ const { usePaneMainColumn } = await import('./mainColumn/usePaneMainColumn');
 const { invokeScopeAction, readShellColumnActionOwner } = await import('@/sync/ops/actions/scopeActionFamily');
 const { useAppPaneScope } = await import('./hooks/useAppPaneScope');
 const { useOptionalAppPaneScopeLayout } = await import('./hooks/useAppPaneScopeLayout');
+const { PaneHeader } = await import('./PaneHeader');
 const { createSessionCompanionPanePresentation } = await import('@/components/sessions/companion/presentation/sessionCompanionPanePresentation');
 import type { PaneMainColumnState } from './mainColumn/usePaneMainColumn';
 import { DestinationInstanceContext } from '@/components/appShell/workspace/destinationInstanceContext';
@@ -31,12 +33,12 @@ function Main() {
     const main = usePaneMainColumn();
     return React.createElement('MainStateProbe', { hidden: context.state.scopes.app?.mainHidden, main });
 }
-function Harness(props: Readonly<{ detailsOpen: boolean; unnamed?: boolean; unavailableSide?: boolean }>) {
+function Harness(props: Readonly<{ detailsOpen: boolean; unnamed?: boolean; unavailableSide?: boolean; detailsPane?: React.ReactNode }>) {
     return <AppPaneProvider><AppPaneScopeHost scopeId="app"
         mainColumn={props.unnamed ? undefined : { hideLabel: 'Hide page', showLabel: 'Show page', identity: { name: 'Page' } }}
         main={<Main />}
         rightSidebarAdapter={props.unavailableSide ? { available: false, render: () => null } : undefined}
-        destinationDetails={props.detailsOpen ? { pane: <div />, onClose: () => {} } : null}
+        destinationDetails={props.detailsOpen ? { pane: props.detailsPane ?? <div />, onClose: () => {} } : null}
     /></AppPaneProvider>;
 }
 
@@ -74,10 +76,12 @@ describe('AppPaneScopeHost main column', () => {
     it('lets only the focused app destination reconcile the shared hide preference', async () => {
         const mainColumn = { hideLabel: 'Hide page', showLabel: 'Show page', identity: { name: 'Page' } };
         function RetainedPage(props: Readonly<{ focused: boolean; detailsOpen: boolean }>) {
+            const focus = React.useRef(props.focused);
+            focus.current = props.focused;
             const navigation = useRouter();
             return <DestinationInstanceContext.Provider value={{ tabId: props.focused ? 'active' : 'retained',
                 ref: { kind: 'plugins', params: {} }, pathname: '/plugins',
-                focused: props.focused, visible: true, navigation }}>
+                focused: props.focused, isFocused: () => focus.current, visible: true, navigation }}>
                 <AppPaneScopeHost scopeId="app" mainColumn={mainColumn} main={<Main />}
                     destinationDetails={props.detailsOpen ? { pane: <div />, onClose: () => {} } : null} />
             </DestinationInstanceContext.Provider>;
@@ -152,5 +156,32 @@ describe('AppPaneScopeHost main column', () => {
         await screen.update(<Harness detailsOpen={false} />);
         expect(screen.root.findByType('MainStateProbe')).toBe(main);
         expect(main.props.hidden).toBe(false);
+    });
+
+    it('draws the restore chip itself when the open neighbour has no header to carry it', async () => {
+        const { createSecretSettingsTestHarness } = await import('@/components/settings/secrets/secretSettingsTestHarness');
+        const { settingsParse } = await import('@/sync/domains/settings/settings');
+        const account = await createSecretSettingsTestHarness({ settings: settingsParse({}) });
+        try {
+            const screen = await renderScreen(<Harness detailsOpen />);
+            await act(async () => {
+                expect(await invokeScopeAction('shell.column.set', { column: 'main', visible: false })).toEqual({ ok: true });
+            });
+            expect(screen.findAllHostsByTestId('pane-main-restore-fallback')).toHaveLength(1);
+            expect(screen.findAllHostsByTestId('pane-main-restore-chip')).toHaveLength(1);
+            await act(async () => { screen.pressByTestId('pane-main-restore-chip'); });
+            await vi.waitFor(() => expect(screen.root.findByType('MainStateProbe').props.hidden).toBe(false));
+            expect(screen.findAllHostsByTestId('pane-main-restore-fallback')).toHaveLength(0);
+            await screen.unmount();
+        } finally { await account.dispose(); }
+    });
+
+    it('leaves the restore chip to the neighbour header that draws it', async () => {
+        const screen = await renderScreen(<Harness detailsOpen detailsPane={<PaneHeader title="Details" mainRestoreChip />} />);
+        await act(async () => {
+            expect(await invokeScopeAction('shell.column.set', { column: 'main', visible: false })).toEqual({ ok: true });
+        });
+        expect(screen.findAllHostsByTestId('pane-main-restore-chip')).toHaveLength(1);
+        expect(screen.findAllHostsByTestId('pane-main-restore-fallback')).toHaveLength(0);
     });
 });

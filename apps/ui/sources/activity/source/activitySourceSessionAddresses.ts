@@ -125,3 +125,91 @@ export function createActivitySourceSessionAddressProjection(source: ActivityAtt
 export function collectActivitySourceSessionAddresses(source: ActivityAttentionSource, includeWarmSourceWhenNotReady: boolean): readonly SessionAddress[] {
     return collectAddresses(source, includeWarmSourceWhenNotReady, createAddressAdmission(source));
 }
+
+/** Row collections the store's changed-id publication describes; every other source fact is policy. */
+const ACTIVITY_SOURCE_ROW_FIELDS: ReadonlySet<string> = new Set<keyof ActivityAttentionSource>([
+    'sessionsById', 'sessionListRowsByServerId', 'ordinarySessionListMembershipByServerId', 'sessionListIndexByServerId',
+    // Rebuilt from the concurrent cache and query states, which are compared as policy.
+    'sessionListHomeObservationByServerId',
+]);
+
+function isSameActivitySourcePolicy(previous: ActivityAttentionSource, next: ActivityAttentionSource): boolean {
+    const keys = new Set([...Object.keys(previous), ...Object.keys(next)]) as Set<keyof ActivityAttentionSource>;
+    for (const key of keys) {
+        if (!ACTIVITY_SOURCE_ROW_FIELDS.has(key) && !Object.is(previous[key], next[key])) return false;
+    }
+    return true;
+}
+
+type ActivitySourceAddressDeltaState = Readonly<{ sessionListRenderableDelta?: SessionListRenderableDelta }>;
+
+/**
+ * One Activity projection kept per Session address. A store publication whose policy is unchanged and
+ * whose changed-id revision is the next one re-classifies only the changed addresses through the same
+ * address owner; anything else (a policy change, a revision gap, a row change without a revision step)
+ * rebuilds from complete discovery. `classify` decides an exact address subset and returns an entry
+ * for every admitted address; an address it leaves out is no longer a candidate.
+ */
+export function createActivitySourceAddressTable<T>(params: Readonly<{
+    includeWarmSourceWhenNotReady: boolean;
+    classify: (source: ActivityAttentionSource, addresses: readonly SessionAddress[]) => ReadonlyMap<string, T>;
+    /** An equal re-classification keeps the previous entry, so consumers keep its identity. */
+    isSame?: (previous: T, next: T) => boolean;
+    /** Every entry that is added, replaced or removed. */
+    onChange?: (key: string, previous: T | undefined, next: T | undefined) => void;
+}>) {
+    let previousSource: ActivityAttentionSource | null = null;
+    let previousRevision: number | null = null;
+    let projection: ReturnType<typeof createActivitySourceSessionAddressProjection> | null = null;
+    const entries = new Map<string, T>();
+    let moved = false;
+    const set = (key: string, next: T | undefined) => {
+        const previous = entries.get(key);
+        if (previous === next || (previous !== undefined && next !== undefined && params.isSame?.(previous, next))) return;
+        moved = true;
+        if (next === undefined) entries.delete(key);
+        else entries.set(key, next);
+        params.onChange?.(key, previous, next);
+    };
+    return {
+        entries: (): ReadonlyMap<string, T> => entries,
+        /** The source owner found nothing Activity reads in this publication: the table is current at its revision. */
+        observeUnchangedSource(state: ActivitySourceAddressDeltaState): void {
+            if (previousSource) previousRevision = state.sessionListRenderableDelta?.revision ?? null;
+        },
+        /** Returns whether any entry changed. */
+        update(source: ActivityAttentionSource, state: ActivitySourceAddressDeltaState): boolean {
+            const delta = state.sessionListRenderableDelta;
+            const revision = delta?.revision ?? null;
+            if (previousSource === source) {
+                // The source owner found nothing Activity reads in these rows: the table is current at this revision.
+                previousRevision = revision;
+                return false;
+            }
+            const incremental = previousSource !== null && projection !== null && delta !== undefined
+                && previousRevision !== null && revision === previousRevision + 1
+                && isSameActivitySourcePolicy(previousSource, source)
+                && (delta.ordinaryMembershipChanges !== undefined
+                    || previousSource.ordinarySessionListMembershipByServerId === source.ordinarySessionListMembershipByServerId);
+            previousSource = source;
+            previousRevision = revision;
+            moved = false;
+            if (incremental && projection && delta) {
+                // A hydrated Session can change what its address resolves to without a row change.
+                const changed = projection.update(source, delta.hydratedSessionIds?.length
+                    ? { ...delta, changedSessionIds: [...delta.changedSessionIds, ...delta.hydratedSessionIds] } : delta);
+                const classified = params.classify(source, changed.addresses);
+                for (const address of [...changed.addresses, ...changed.removed]) {
+                    const key = sessionAddressKey(address);
+                    set(key, classified.get(key));
+                }
+                return moved;
+            }
+            projection = createActivitySourceSessionAddressProjection(source, params.includeWarmSourceWhenNotReady);
+            const classified = params.classify(source, projection.all());
+            for (const key of [...entries.keys()]) if (!classified.has(key)) set(key, undefined);
+            for (const [key, value] of classified) set(key, value);
+            return moved;
+        },
+    };
+}

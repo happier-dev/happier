@@ -3,7 +3,7 @@ import type { ArtifactCallerAccessV1 } from '../artifacts/artifactAccessV1.js';
 import { sha1 } from '@noble/hashes/sha1';
 import { bytesToHex, concatBytes } from '@noble/hashes/utils';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
-import { HomeHubLayoutIntentSchema, normalizeHomeHubLayoutV1, HOME_HUB_DEFAULT_LAYOUT, HOME_HUB_BUILTIN_DEFINITIONS,
+import { HomeHubLayoutIntentSchema, normalizeHomeHubLayoutV1, getHomeHubDefaultLayoutV1, HOME_HUB_BUILTIN_DEFINITIONS,
     applyHomeHubLayoutIntent, buildHomeHubLayoutResult, captureHomeHubWidgetPresentationV1, HomeHubMutationErrorV1,
     type HomeHubLayoutIntent, type HomeHubLayoutValue, type HomeHubWidgetInput, type HomeHubBuiltinDefinition, type HomeHubWidgetPresentationV1 } from './homeHubLayoutV1.js';
 
@@ -41,7 +41,7 @@ export type HomeHubArtifactPortV1 = Readonly<{
 function open(artifact: WorkBoardArtifactV1): HomeHubLayoutValue {
     if (artifact.header.kind !== HOME_HUB_ARTIFACT_KIND_V1 || artifact.header.v !== 1 || typeof artifact.body !== 'string') throw new HomeHubMutationErrorV1('invalid_home_hub_record');
     try { return normalizeHomeHubLayoutV1(JSON.parse(artifact.body)); }
-    catch { return HOME_HUB_DEFAULT_LAYOUT; }
+    catch { return getHomeHubDefaultLayoutV1(); }
 }
 const header = { kind: HOME_HUB_ARTIFACT_KIND_V1, v: 1, title: 'Home layout' };
 
@@ -79,7 +79,7 @@ export function createHomeHubArtifactPortV1(transport: HomeHubArtifactTransportV
     return {
         async read(signal) {
             const artifact = await fetch(signal);
-            return accept(artifact ? open(artifact) : HOME_HUB_DEFAULT_LAYOUT, artifact?.revision);
+            return accept(artifact ? open(artifact) : getHomeHubDefaultLayoutV1(), artifact?.revision);
         },
         async describe(layout, signal) { return buildHomeHubLayoutResult(layout, builtins, await widgets(layout, signal)); },
         async captureWidgetPresentation(layout, instanceId, signal) {
@@ -89,7 +89,7 @@ export function createHomeHubArtifactPortV1(transport: HomeHubArtifactTransportV
             const intent = HomeHubLayoutIntentSchema.parse(rawIntent);
             for (;;) {
                 const artifact = await fetch(signal);
-                const current = artifact ? open(artifact) : HOME_HUB_DEFAULT_LAYOUT;
+                const current = artifact ? open(artifact) : getHomeHubDefaultLayoutV1();
                 const evidence = await widgets(current, signal);
                 const next = applyHomeHubLayoutIntent(current, builtins, evidence, intent);
                 const complete = (layout: HomeHubLayoutValue, revision?: WorkBoardArtifactRevisionV1) =>

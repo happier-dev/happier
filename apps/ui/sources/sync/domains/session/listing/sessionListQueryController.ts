@@ -1,4 +1,4 @@
-import type { SessionListQueryV1 } from '@happier-dev/protocol/sessions/listing/query';
+import { SESSION_LIST_PAGE_DEFAULT_LIMIT, type SessionListQueryV1 } from '@happier-dev/protocol/sessions/listing/query';
 
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { normalizeSessionAddress, sessionAddressKey } from '@/sync/domains/session/sessionAddress';
@@ -9,9 +9,15 @@ export type { SessionListQueryFailureReason } from './sessionListFailure';
 
 import { buildSessionListQueryKey } from './sessionListQueryKey';
 import {
+    canRowWriteChangeSessionListMembership,
     canSessionListOrdinaryPageAnswerQuery,
+    isSessionListQueryRowPlaceable,
+    resolveSessionListQueryRowMembership,
+    type SessionListRowMembershipFacets,
+    type SessionListRowPlacementFacts,
 } from './sessionListQuerySelection';
 export { canSessionListOrdinaryPageAnswerQuery };
+import type { SessionListHomeObservation } from './sessionListHomeObservation';
 
 /** One strict-query corpus's applied membership as the store holds it. */
 export type SessionListQueryMembership = Readonly<{
@@ -26,6 +32,7 @@ export type SessionListQueryMembership = Readonly<{
     lastKnown?: true;
 }>;
 
+export type SessionListRowPlacement = Readonly<{ sessionId: string; facts: SessionListRowPlacementFacts }>;
 
 export type SessionListQueryHomeState = Readonly<{
     requestedQueryKey: string;
@@ -37,6 +44,8 @@ export type SessionListQueryHomeState = Readonly<{
     attentionHasNext: boolean;
     phase: 'idle' | 'loading' | 'refreshing' | 'ready' | 'offline' | 'error' | 'not_selected';
     freshnessAt: number | null;
+    /** Admitted Home currentness; membership/cursor changes retain this projection. */
+    homeObservation: SessionListHomeObservation;
     failureReason: SessionListQueryFailureReason | null;
     failureCode: string | null;
     /** The admitted request that failed; retained cursors do not identify that request. */
@@ -95,16 +104,29 @@ export type SessionListQueryHomeController = Readonly<{
     retry(): Promise<void>;
     /**
      * Re-read page one after an Account change. `'structural'` (a row-level Session
-     * write) skips a corpus the ordinary list can answer: its membership is decided by
-     * ownership and archive state, which the exact row refresh already reconciles.
+     * write) replaces only a corpus whose selection can change with that row.
+     * Exact row refresh already reconciles content and escalates archive/access changes.
+     * `rowFacets` narrows that to the membership inputs the writes can move.
      */
-    invalidate(scope?: 'structural'): Promise<void>;
+    /**
+     * `'structural'` re-reads only a corpus a row write can move; `'recover'` (a transport reconnect)
+     * re-reads only a corpus left without a current answer, since the changes catch-up owns the rest.
+     */
+    invalidate(scope?: 'structural' | 'recover', rowFacets?: SessionListRowMembershipFacets): Promise<void>;
     /**
      * Removes one committed-retired (deleted/revoked) Session from this Home's
      * applied membership. A response already in flight is fenced at the list reader,
      * so the address cannot return until a later read admits it again.
      */
     retire(sessionId: string): void;
+    /**
+     * Applies freshly read rows in place: inserts a member at its sort position,
+     * removes a non-member, and leaves an older row below an unread frontier to
+     * paging. Returns false when this query's selection is not decided by row facts.
+     */
+    place(rows: readonly SessionListRowPlacement[], readSortKey: (sessionId: string) => number | null): boolean;
+    /** Incumbent ordinary success remains the fallback until this query has succeeded. */
+    observeOrdinaryLastSuccessAt(lastSuccessAt: number | null): void;
     loadNext(): Promise<void>;
     dispose(): void;
 }>;
@@ -168,9 +190,9 @@ function resolvePageRequestPlan(input: ControllerInput | null): PageRequestPlan 
 
 /**
  * Normalization removes only the cursor fields: this controller owns which page
- * of the corpus is being requested. The caller's validated `limit` is page policy
- * and stays on every initial, ordinary-continuation and attention-continuation
- * request, so a filter builder asking for a non-default page size gets it.
+ * of the corpus is being requested. The caller's validated `limit` owns the
+ * visible page size; a short-page continuation asks for its remaining rows
+ * without changing the corpus identity or the caller's page policy.
  */
 function stripCursorState(query: SessionListQueryV1): SessionListQueryV1 {
     const { cursor: _cursor, attentionCursor: _attentionCursor, ...base } = query;
@@ -221,6 +243,7 @@ export function createSessionListQueryHomeController(params: Readonly<{
     let activeAbortController: AbortController | null = null;
     let inFlight: Promise<void> | null = null;
     let refreshQueued = false;
+    let ordinaryLastSuccessAt: number | null = null;
     let state: SessionListQueryHomeState = {
         requestedQueryKey: '',
         appliedQueryKey: null,
@@ -231,6 +254,7 @@ export function createSessionListQueryHomeController(params: Readonly<{
         attentionHasNext: false,
         phase: 'idle',
         freshnessAt: null,
+        homeObservation: { phase: 'idle', lastSuccessAt: null },
         failureReason: null,
         failureCode: null,
         appliedSourceKind: null,
@@ -245,9 +269,18 @@ export function createSessionListQueryHomeController(params: Readonly<{
     );
 
     const publish = (next: SessionListQueryHomeState): void => {
-        if (disposed || next === state) return;
+        if (disposed) return;
+        const lastSuccessAt = typeof next.freshnessAt === 'number' && Number.isFinite(next.freshnessAt)
+            ? next.freshnessAt : ordinaryLastSuccessAt;
+        // Membership and lifecycle have distinct consumers. Admit a new currentness
+        // fact only when its producing phase or success time actually changes.
+        const homeObservation = state.homeObservation.phase === next.phase
+            && state.homeObservation.lastSuccessAt === lastSuccessAt
+            ? state.homeObservation
+            : { phase: next.phase, lastSuccessAt };
+        if (next === state && homeObservation === state.homeObservation) return;
         const previous = state;
-        state = next;
+        state = next.homeObservation === homeObservation ? next : { ...next, homeObservation };
         if (input?.queryMembership !== 'rowOnly') {
             if (next.appliedQueryKey && (next.appliedQueryKey !== previous.appliedQueryKey || next.addresses !== previous.addresses)) {
                 params.commitMembership?.(next.appliedQueryKey, next.addresses.map((address) => address.sessionId));
@@ -322,18 +355,24 @@ export function createSessionListQueryHomeController(params: Readonly<{
         promise = (async () => {
             try {
                 const completePages: Pick<SessionListFetchResult, 'sessionIds' | 'isSessionCurrent'>[] = [];
+                const pageIds = new Set<string>();
                 let metadataUpgradeRequiredCount = 0;
                 let membershipUnavailableReason: SessionListFetchResult['membershipUnavailableReason'];
                 let nextCursor: string | null = null;
                 let hasNext = false;
                 let attentionNextCursor: string | null = null;
                 let attentionHasNext = false;
+                let readOrdinary = false;
+                let readAttention = false;
+                const pageLimit = requestInput.query.limit ?? SESSION_LIST_PAGE_DEFAULT_LIMIT;
                 while (true) {
                     if (!isRequestCurrent(requestRevision, abortController.signal)) return;
                     const result = await params.fetchPage({
                         source: plan.source,
                         membership: plan.membership,
-                        ...(typeof requestInput.query.limit === 'number'
+                        ...(!complete && plan.source.kind === 'query'
+                            ? { limit: pageLimit - pageIds.size }
+                            : typeof requestInput.query.limit === 'number'
                             ? { limit: requestInput.query.limit }
                             : {}),
                         ...(operation === 'ordinary' ? { cursor: requestedCursor } : {}),
@@ -378,18 +417,39 @@ export function createSessionListQueryHomeController(params: Readonly<{
                     }
 
                     if (operation !== 'attention') {
+                        readOrdinary = true;
                         nextCursor = result.nextCursor;
                         hasNext = result.hasNext;
                     }
                     if (operation !== 'ordinary') {
+                        readAttention = true;
                         attentionNextCursor = result.attentionNextCursor;
                         attentionHasNext = complete ? plan.supportsAttentionContinuation && result.attentionHasNext : result.attentionHasNext;
                     }
+                    completePages.push({ sessionIds: result.sessionIds, isSessionCurrent: result.isSessionCurrent });
+                    for (const id of result.sessionIds) {
+                        if (result.isSessionCurrent?.(id) !== false) pageIds.add(id);
+                    }
+                    metadataUpgradeRequiredCount += result.metadataUpgradeRequiredCount ?? 0;
+                    membershipUnavailableReason ??= result.membershipUnavailableReason;
                     if (complete) {
-                        completePages.push({ sessionIds: result.sessionIds, isSessionCurrent: result.isSessionCurrent });
-                        metadataUpgradeRequiredCount += result.metadataUpgradeRequiredCount ?? 0;
-                        membershipUnavailableReason ??= result.membershipUnavailableReason;
                         if (hasNext && nextCursor) {
+                            operation = 'ordinary';
+                            requestedCursor = nextCursor;
+                            continue;
+                        }
+                        if (attentionHasNext && attentionNextCursor) {
+                            operation = 'attention';
+                            requestedAttentionCursor = attentionNextCursor;
+                            continue;
+                        }
+                    }
+                    // Exact server admission may reject an entire candidate window.
+                    // Fill only this requested visible page, retaining both independent
+                    // cursors; exhaustion is a cursor fact, never a short-row heuristic.
+                    if (!complete && plan.source.kind === 'query'
+                        && pageIds.size < pageLimit) {
+                        if (operation !== 'attention' && hasNext && nextCursor) {
                             operation = 'ordinary';
                             requestedCursor = nextCursor;
                             continue;
@@ -404,7 +464,7 @@ export function createSessionListQueryHomeController(params: Readonly<{
                     // An equal replacement keeps the published membership identity, so a background
                     // refetch never re-publishes unchanged membership to its consumers.
                     const addresses = appendAddresses(family === 'replace' ? [] : state.addresses, serverId,
-                        (complete ? completePages : [result]).flatMap(page => page.sessionIds.filter(
+                        completePages.flatMap(page => page.sessionIds.filter(
                             sessionId => page.isSessionCurrent?.(sessionId) !== false)), family === 'replace' ? state.addresses : undefined);
                     publish({
                         ...state,
@@ -412,14 +472,14 @@ export function createSessionListQueryHomeController(params: Readonly<{
                         appliedSourceKind: plan.source.kind,
                         addresses,
                         metadataUpgradeRequiredCount: complete ? metadataUpgradeRequiredCount
-                            : (family === 'replace' ? 0 : state.metadataUpgradeRequiredCount ?? 0) + (result.metadataUpgradeRequiredCount ?? 0),
+                            : (family === 'replace' ? 0 : state.metadataUpgradeRequiredCount ?? 0) + metadataUpgradeRequiredCount,
                         membershipUnavailableReason: complete ? membershipUnavailableReason
-                            : result.membershipUnavailableReason ?? (family === 'replace' ? undefined : state.membershipUnavailableReason),
-                        ...(complete || family !== 'attention' ? {
+                            : membershipUnavailableReason ?? (family === 'replace' ? undefined : state.membershipUnavailableReason),
+                        ...(readOrdinary ? {
                             nextCursor,
                             hasNext,
                         } : {}),
-                        ...(complete || family !== 'ordinary' ? {
+                        ...(readAttention ? {
                             attentionNextCursor,
                             attentionHasNext,
                         } : {}),
@@ -587,9 +647,20 @@ export function createSessionListQueryHomeController(params: Readonly<{
             }
             return refresh();
         },
-        invalidate: (scope) => {
+        invalidate: (scope, rowFacets) => {
             if (disposed || !input?.selected || !input.online) return Promise.resolve();
-            if (scope === 'structural' && canSessionListOrdinaryPageAnswerQuery(input.query)) return Promise.resolve();
+            // An unread page may hold a member a row write reorders into view, so only a
+            // fully read corpus narrows the re-read to the inputs the writes can move.
+            const fullyRead = !state.hasNext && !state.attentionHasNext;
+            if (scope === 'structural'
+                && !canRowWriteChangeSessionListMembership(input.query, fullyRead ? rowFacets : undefined)) return Promise.resolve();
+            // Row-decided selections are placed from the batch-read row instead (`place`).
+            if (scope === 'structural' && isSessionListQueryRowPlaceable(input.query)) return Promise.resolve();
+            if (scope === 'recover') {
+                // A read already replacing the corpus (the online transition starts one) is the recovery.
+                if (inFlight) return inFlight;
+                if (state.phase === 'ready' && state.appliedQueryKey === state.requestedQueryKey) return Promise.resolve();
+            }
             if (inFlight) {
                 refreshQueued = true;
                 const currentRequest = inFlight;
@@ -601,12 +672,54 @@ export function createSessionListQueryHomeController(params: Readonly<{
             }
             return startPage('replace');
         },
+        place: (rows, readSortKey) => {
+            if (disposed || !input?.selected || !input.online) return true;
+            if (!isSessionListQueryRowPlaceable(input.query)) return false;
+            if (!state.appliedQueryKey) return true;
+            const placementBySessionId = new Map(rows.map(row => [row.sessionId, row.facts]));
+            const sortKeyOf = (sessionId: string) => placementBySessionId.get(sessionId)?.sortKey ?? readSortKey(sessionId);
+            let addresses = state.addresses;
+            for (const { sessionId, facts } of rows) {
+                const member = resolveSessionListQueryRowMembership(input.query, facts);
+                const index = addresses.findIndex(address => address.sessionId === sessionId);
+                const loaded = index >= 0;
+                if (loaded) addresses = addresses.filter(address => address.sessionId !== sessionId);
+                if (!member) continue;
+                const address = loaded ? state.addresses.find(other => other.sessionId === sessionId)! : normalizeSessionAddress(serverId, sessionId);
+                if (!address) continue;
+                // Server order: sort key descending, then id descending.
+                const position = addresses.findIndex(other => {
+                    const otherKey = sortKeyOf(other.sessionId);
+                    return otherKey === null || otherKey < facts.sortKey
+                        || (otherKey === facts.sortKey && other.sessionId < sessionId);
+                });
+                if (position >= 0) addresses = [...addresses.slice(0, position), address, ...addresses.slice(position)];
+                // Older than every loaded row: a loaded member stays last; an unloaded
+                // one belongs to an unread page. An active-storage first page carries
+                // every pinned member, and an includeAttention one every attention row
+                // (while its attention partition is fully read), ahead of the window.
+                else if (loaded || (!state.hasNext && !state.attentionHasNext)
+                    || (input.query.storage === 'active' && facts.pinned)
+                    || (input.query.includeAttention === true && facts.needsAttention && !state.attentionHasNext)) {
+                    addresses = [...addresses, address];
+                }
+            }
+            const unchanged = addresses.length === state.addresses.length
+                && addresses.every((address, index) => address === state.addresses[index]);
+            if (!unchanged) publish({ ...state, addresses });
+            return true;
+        },
         retire: (sessionIdRaw) => {
             const sessionId = String(sessionIdRaw ?? '').trim();
             if (disposed || !sessionId) return;
             const addresses = state.addresses.filter((address) => address.sessionId !== sessionId);
             if (addresses.length === state.addresses.length) return;
             publish({ ...state, addresses });
+        },
+        observeOrdinaryLastSuccessAt: (lastSuccessAt) => {
+            ordinaryLastSuccessAt = typeof lastSuccessAt === 'number' && Number.isFinite(lastSuccessAt)
+                ? lastSuccessAt : null;
+            publish(state);
         },
         loadNext: () => {
             if (inFlight) return inFlight;

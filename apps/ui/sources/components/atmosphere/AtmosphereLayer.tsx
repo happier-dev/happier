@@ -10,6 +10,7 @@ import type { GlassAtmosphereTone } from '@/components/ui/glass/glassMaterial';
 import { useGlassSurfaceColor } from '@/components/ui/glass/useGlassSurfaceColor';
 import { AtmosphereDissolve } from './AtmosphereDissolve';
 import { BackdropCanvas } from './BackdropCanvas';
+import type { BackdropCanvasProps } from './backdropCanvas.types';
 import {
   atmosphereStageStore,
   useAtmosphereScrollY,
@@ -35,7 +36,16 @@ import { atmosphereBandSpan, atmospherePaneSpan, atmospherePictureFrame, atmosph
  * and ink stay legible. The planet is not drawn here: it is an object on Home's page. Decorative, never a target.
  */
 export const AtmosphereLayer = React.memo(function AtmosphereLayer(
-  props: Readonly<{ sheetRadius: number; chrome: boolean }>,
+  props: Readonly<{
+    sheetRadius: number;
+    chrome: boolean;
+    /**
+     * A live resize (the column edge under the pointer) is moving the content on every frame: the tone
+     * stays as it was and is measured once where the content comes to rest, so the glass does not
+     * re-tone the whole shell per frame.
+     */
+    resizing?: boolean;
+  }>,
 ) {
   const snapshot = useAtmosphereStageSnapshot();
   const { theme } = useUnistyles();
@@ -43,7 +53,7 @@ export const AtmosphereLayer = React.memo(function AtmosphereLayer(
   const stage = snapshot.stage;
   // The send dissolve is one of Home's moments (moments are always Home's); off, the page simply hands over.
   const sendMoment = useSetting('homeAtmosphere').moments.send !== false;
-  const sending = snapshot.sending && sendMoment;
+  const sending = snapshot.sendDissolving && sendMoment;
   // A send keeps the last surface on screen until its dissolve has played, even as the session opens.
   const [held, setHeld] = React.useState<AtmosphereStage | null>(null);
   const [left, setLeft] = React.useState(false);
@@ -100,6 +110,7 @@ export const AtmosphereLayer = React.memo(function AtmosphereLayer(
           leaving={leaving}
           sheetRadius={props.sheetRadius}
           chrome={props.chrome}
+          resizing={props.resizing === true}
           onLeft={onLeft}
         />
         {/* Exclusion belongs to the shell backing, beneath the shared reading material.
@@ -126,10 +137,13 @@ const AtmospherePicture = React.memo(function AtmospherePicture(
     leaving: boolean;
     sheetRadius: number;
     chrome: boolean;
+    resizing: boolean;
     onLeft?: () => void;
   }>,
 ) {
   const { theme } = useUnistyles();
+  const resizingRef = React.useRef(props.resizing);
+  resizingRef.current = props.resizing;
   const atmosphere = useAtmosphere(props.stage.surface);
   const resettlePaused = useAtmosphereResettlePaused();
   const pictures = useAtmospherePictureCatalog();
@@ -155,16 +169,16 @@ const AtmospherePicture = React.memo(function AtmospherePicture(
   const renderGroup = React.useMemo(() => ({}), []);
   const frame = atmospherePictureFrame(layout, props.windowFrame, scene);
   const [ready, setReady] = React.useState(false);
-  const [shownKey, setShownKey] = React.useState<string | null>(null);
-  // A new layout is a new canvas and starts unready. A new picture keeps the current frame until its
-  // own render lands in the same canvas, so a change never flashes the page.
-  const key = record ? layout : null;
-  if (key !== shownKey) {
-    setShownKey(key);
-    setReady(false);
-  }
-  const covers = atmosphere.source === 'planet' || (record ? (layout === 'wallpaper' ? ready : true) : false);
-  const behind = covers ? (record && layout === 'wallpaper' ? 'wallpaper' : 'band') : 'none';
+  const paintedCanvases = React.useRef(new Set<object>());
+  // Readiness follows presented pixels, including a surviving split projection. A new source keeps
+  // the old pixels in the same canvas until its own render lands; a replacement canvas starts empty.
+  const onPresentationChange = React.useCallback((canvas: object, painted: boolean) => {
+    if (painted) paintedCanvases.current.add(canvas);
+    else paintedCanvases.current.delete(canvas);
+    setReady(paintedCanvases.current.size > 0);
+  }, []);
+  const covers = atmosphere.shown && (atmosphere.source === 'planet' || (record ? (layout === 'wallpaper' ? ready : true) : false));
+  const behind = covers ? atmosphere.atmosphereBehind : 'none';
   React.useEffect(() => {
     if (behind === 'none') return;
     setBehind(behind);
@@ -174,7 +188,6 @@ const AtmospherePicture = React.memo(function AtmospherePicture(
     atmosphereStageStore.setPictureShown(ready);
     return () => atmosphereStageStore.setPictureShown(false);
   }, [ready]);
-  const onReady = React.useCallback(() => setReady(true), []);
   // Wallpaper: content sits in its pane's column of the window-sized picture, at every scroll position, and
   // head lines stand around the column's centre, inside the haze. Horizon: the band scrolls with the page,
   // so the whole band is where content meets it.
@@ -194,14 +207,16 @@ const AtmospherePicture = React.memo(function AtmospherePicture(
   // haze core's height, on the picture itself, before the haze softens and veils it). With the default look (a
   // built-in picture as released) the haze keeps the head lines legible; a person's own picture or look applies
   // exactly as set.
-  const hazeInput = React.useRef({ adaptive: false, page: '', primary: '' });
+  const hazeInput = React.useRef({ adaptive: false, page: '', primary: '', secondary: '' });
   hazeInput.current = {
     adaptive: pictureHazeIsAdaptive(atmosphere, atmosphere.builtinPicture),
     page: theme.colors.surface.base,
     primary: theme.colors.text.primary,
+    secondary: theme.colors.text.secondary,
   };
   const [haze, setHaze] = React.useState<WallpaperHazeComposition>(AS_COMPOSED_HAZE);
   const publish = React.useCallback(() => {
+    if (resizingRef.current) return;
     const regions = toneRegions.current;
     const { picture: pictureRender, haze: hazeRender } = rendered.current;
     const base = pictureRender && measurePictureTone(pictureRender, pageRef.current, regions.column, regions.focus);
@@ -223,9 +238,9 @@ const AtmospherePicture = React.memo(function AtmospherePicture(
     setTone(tone);
   }, [setTone]);
   // A changed look or theme decides again from the same renders, and so does content settling elsewhere.
-  const { adaptive, page: pageInk, primary } = hazeInput.current;
+  const { adaptive, page: pageInk, primary, secondary } = hazeInput.current;
   const regionsKey = JSON.stringify(toneRegions.current);
-  React.useEffect(() => { publish(); }, [adaptive, pageInk, primary, regionsKey, publish]);
+  React.useEffect(() => { publish(); }, [adaptive, pageInk, primary, secondary, regionsKey, publish, props.resizing]);
   const onRendered = React.useCallback((pixels: AtmospherePixels) => {
     rendered.current.picture = pixels;
     publish();
@@ -274,6 +289,10 @@ const AtmospherePicture = React.memo(function AtmospherePicture(
     layout,
     horizonAt: geometry.horizonAt,
   });
+  const onDissolved = () => {
+    if (leaving) atmosphereStageStore.finishSendDissolve();
+    onLeft?.();
+  };
   const visible = ready && !props.leaving;
   if (layout === 'wallpaper') {
     const size = { width: frame.width, height: frame.height };
@@ -289,17 +308,17 @@ const AtmospherePicture = React.memo(function AtmospherePicture(
         leave="climb"
         height={size.height}
         reducedMotion={atmosphere.reducedMotion}
-        onHidden={props.onLeft}
+        onHidden={onDissolved}
         style={{ position: 'absolute', left: frame.x - props.origin.x, top: frame.y - props.origin.y,
           width: frame.width, height: frame.height }}
       >
-        <BackdropCanvas
+        <PictureCanvas
           resettlePaused={resettlePaused}
           source={record}
           size={size}
           span={span}
           {...job}
-          onReady={onReady}
+          onPresentationChange={onPresentationChange}
           onRendered={onRendered}
           testID="atmosphere-wallpaper"
         />
@@ -320,10 +339,10 @@ const AtmospherePicture = React.memo(function AtmospherePicture(
               leave="climb"
               height={bands[index].height}
               reducedMotion={atmosphere.reducedMotion}
-              onHidden={props.onLeft}
+              onHidden={onDissolved}
             >
               <View style={{ width: pane.rect.width, height: bands[index].height, overflow: 'hidden' }}>
-                <BackdropCanvas
+                <PictureCanvas
                   resettlePaused={resettlePaused}
                   source={record}
                   size={{ width: bandScene.width, height: bandScene.height }}
@@ -331,7 +350,7 @@ const AtmospherePicture = React.memo(function AtmospherePicture(
                   style={{ marginTop: bandScene.y - pane.rect.y, marginLeft: bandScene.x - pane.rect.x }}
                   renderGroup={renderGroup}
                   {...job}
-                  onReady={onReady}
+                  onPresentationChange={onPresentationChange}
                   onRendered={index === 0 ? onRendered : undefined}
                   testID="atmosphere-band"
                 />
@@ -343,6 +362,16 @@ const AtmospherePicture = React.memo(function AtmospherePicture(
     </View>
   );
 });
+
+/** One mounted canvas's paint lifetime, shared by the web and native picture layer. */
+function PictureCanvas({ onPresentationChange, ...props }: Omit<BackdropCanvasProps, 'onReady'> & Readonly<{
+  onPresentationChange: (canvas: object, painted: boolean) => void;
+}>) {
+  const canvas = React.useRef({}).current;
+  React.useLayoutEffect(() => () => onPresentationChange(canvas, false), [canvas, onPresentationChange]);
+  const onReady = React.useCallback(() => onPresentationChange(canvas, true), [canvas, onPresentationChange]);
+  return <BackdropCanvas {...props} onReady={onReady} />;
+}
 
 const WHOLE: PictureToneRegion = { x0: 0, x1: 1, y0: 0, y1: 1 };
 type WallpaperToneRegions = Readonly<{

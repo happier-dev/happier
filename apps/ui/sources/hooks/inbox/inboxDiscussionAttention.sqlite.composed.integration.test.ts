@@ -106,6 +106,7 @@ it('takes a cold SQL/HTTP proposal through the real codec and repository into Ne
                 source: { scope: capturedScope, entries: repository.getSnapshot().attention.discussions } },
             sessionPresentation: base.sessionPresentation, workGroups: [], targetBySessionAddress: new Map(),
             actionOperationEntries: [], pendingReadKeys: new Set(), markAllPending: false, isLoading: false,
+            readUnavailableReasonBySessionAddress: new Map(), markAllReadUnavailableReason: null,
             hasPrimaryAttention: true, hasContent: items().length > 0, showCaughtUp: items().length === 0, spansHomes: false,
             dismissUsageNotice: async () => {}, markRead: async () => {}, resolveActionOperation: () => {},
             settle: async () => {}, setReminder: async () => {},

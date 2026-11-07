@@ -21,6 +21,7 @@ function queryState(overrides: Partial<SessionListQueryHomeState>): SessionListQ
         attentionHasNext: false,
         phase: 'idle',
         freshnessAt: null,
+        homeObservation: { phase: overrides.phase ?? 'idle', lastSuccessAt: overrides.freshnessAt ?? null },
         failureReason: null,
         failureCode: null,
         appliedSourceKind: null,

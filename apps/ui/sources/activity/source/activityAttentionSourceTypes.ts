@@ -10,12 +10,16 @@ import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel
 import type { WorkspacePathDisplayModeV1 } from '@/sync/domains/workspaces/workspaceDisplayPresentation';
 import type { SessionFollowRulesSnapshot } from '@/sync/api/session/sessionFollowRulesApi';
 import type { ActivityPersonalSessionMembership } from './activityPersonalSessionMembership';
+import type { SessionFollowPersonRuleEvaluationProjection } from '@/components/sessions/follow/sessionFollowSourcePresentation';
+
+export type ActivityReceiverRuleEvaluationByServerId = Readonly<Record<string, SessionFollowPersonRuleEvaluationProjection>>;
 
 export type ActivityAttentionSource = Readonly<{
     audienceScopes?: ReadonlyMap<string, ServerAccountScope>;
     audienceLabelsVersion?: string;
     isDataReady: boolean;
     personalFollowRulesByServerId?: Readonly<Record<string, SessionFollowRulesSnapshot>>;
+    receiverRuleEvaluationByServerId?: ActivityReceiverRuleEvaluationByServerId;
     accountDeliveryMutesByServerId?: ActivityPersonalSessionMembership['accountDeliveryMutesByServerId'];
     sessionsById: Readonly<Record<string, Session>>;
     sessionListRowsByServerId: StorageState['sessionListRowsByServerId'];

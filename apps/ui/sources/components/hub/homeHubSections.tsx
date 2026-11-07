@@ -8,7 +8,8 @@ import { t } from '@/text';
 import { readWidgetGroupTitle } from '@/components/widgets/group/widgetGroupTitle';
 
 import { HubAttentionSection } from './HubAttentionSection';
-import { HubComposerSection } from './composer/HubComposerSection';
+import { HomeCompletedBots } from './HomeCompletedBots';
+import { HubComposerSection, type HubComposerSuggestionsPresentation } from './composer/HubComposerSection';
 import { HubSetupSection } from './HubSetupSection';
 import { HOME_HUB_BUILTIN_DEFINITIONS, type HomeHubBuiltinDefinition, type HomeHubSection } from './layout/homeHubLayout';
 export { isHomeHubCardSection } from './layout/homeHubLayout';
@@ -29,7 +30,7 @@ export type HomeHubBuiltinSection = HomeHubBuiltinDefinition & Readonly<{
         placeholder: string;
         frameStyle: WidgetFrameStyle;
         /** How the composer's suggestions stand here: Home decides it once, for the hero and for a moved composer. */
-        composerSuggestions: 'tiles' | 'links' | 'pills';
+        composerSuggestions: HubComposerSuggestionsPresentation;
     }>) => React.ReactNode;
 }>;
 
@@ -44,8 +45,12 @@ export const HOME_HUB_BUILTIN_SECTIONS: readonly HomeHubBuiltinSection[] = Objec
         icon: 'arrow-up',
         description: () => t('homeIndex.startDescription'),
         title: () => t('settingsOverview.homeStartSection'),
-        // The real New Session composer; it keeps its own placeholder, as on `/new`.
-        render: ({ composerSuggestions }) => <HubComposerSection suggestions={composerSuggestions} />,
+        // The real New Session composer; it keeps its own placeholder, as on `/new`. What Bots finished
+        // while the person was away follows the composer wherever it is placed (the hero places it itself).
+        render: ({ composerSuggestions }) => <>
+            <HubComposerSection suggestions={composerSuggestions} />
+            <HomeCompletedBots />
+        </>,
     },
     {
         ...builtin('attention'),

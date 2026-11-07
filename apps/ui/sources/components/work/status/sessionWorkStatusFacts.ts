@@ -1,4 +1,4 @@
-import type { SessionManagedSessionsV1 } from '@happier-dev/protocol';
+import type { SessionManagedSessionsV1 } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
 import { readSessionAwarenessPresentationV1 } from '@happier-dev/protocol/sessions/awareness/presentationV1';
 import type { SessionPersonalAttentionProjectionV1 } from '@happier-dev/protocol/sessions/personal/attention';
 import { resolvePendingRequestAttentionReasonV1 } from '@happier-dev/protocol/sessions/personal/attention';
@@ -50,7 +50,7 @@ export function readSessionWorkStatusFacts(
     // These rows carry their own time, so a detached Session's word never says when it was last seen;
     // the shared presenter still owns whether explicit process-terminal evidence says Stopped.
     const status = getSessionStatus(session, nowMs, {
-        workingTextMode: 'static', includeTitle: false, disconnectedTextMode: 'offline', presentationSource,
+        includeTitle: false, disconnectedTextMode: 'offline', presentationSource,
     });
     return sessionWorkStatusFactsFromStatus(session, status, { nowMs, presentationSource });
 }
@@ -65,7 +65,7 @@ export function sessionWorkStatusFactsFromStatus(
     options: Readonly<{ nowMs?: number; personalAttention?: SessionPersonalAttentionProjectionV1; presentationSource?: SessionListPresentationSource }> = {},
 ): SessionWorkStatusFacts {
     const personal = options.personalAttention
-        ?? resolveSessionPersonalAttentionForViewer(session, options.nowMs ?? Date.now(), [], undefined, options.presentationSource);
+        ?? resolveSessionPersonalAttentionForViewer(session, options.nowMs ?? Date.now(), [], undefined, undefined, options.presentationSource);
     const viewer = personal === session.viewer?.attention ? session.viewer : { attention: personal };
     const requestReason = personal.reasons.includes('permission_required') ? 'permission_required'
         : personal.reasons.includes('user_action_required') ? 'user_action_required' : null;
@@ -99,7 +99,17 @@ export function sessionWorkStatusFactsFromStatus(
         ...(requestFollowEvent ? { requestFollowEvent } : {}),
         archiving: status.state === 'archiving',
         word: status.state === 'archiving' ? status.statusText
-            : readSessionAwarenessPresentationV1({ ...status.awareness, viewer }) === 'unknown' ? t('status.unknownState') : status.statusText,
+            // An unopened identity is still loading, not a runtime diagnosis. Keep confirmed
+            // working/offline/request facts and only omit an unhydrated Unknown word.
+            : readSessionAwarenessPresentationV1({ ...status.awareness, viewer }) === 'unknown'
+                ? (options.presentationSource ? options.presentationSource.metadata : session.metadata) == null
+                    ? '' : t('status.unknownState')
+            // A pending request is named in one short word (lab `clicon:word`): the request it is, not "Action required".
+            // A blocked delivery or blocked input keeps the presenter's own word.
+            : status.state === 'permission_required' ? t('workStatus.words.permission')
+            : status.state === 'action_required' && (requestReason === 'user_action_required'
+                || status.awareness.operational.reasons.includes('action_required')) ? t('workStatus.words.question')
+            : status.statusText,
         // Settled is the Session's own statement — its latest turn completed and it reads Ready — not
         // merely "no turn in flight": a quiet Session with nothing to show is idle, not finished.
         settled: status.awareness.operational.primary === 'ready',

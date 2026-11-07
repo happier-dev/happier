@@ -2,22 +2,33 @@ import type { TranscriptAccountActorMetadata } from "@happier-dev/session-core/m
 import { z } from "zod/mini";
 import type { PermissionMode, ModelMode } from "@/sync/domains/permissions/permissionTypes";
 import type {
-    PendingDeliveryBlockedReason,
-    PendingActivationAuthorizationV1,
+    PendingDeliveryBlockedReason} from "@happier-dev/protocol/sessions/messages/pendingDeliveryBlockedReason";
+import type {
+    PendingActivationAuthorizationV1, PendingActivationFailureDetailsV1} from "@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1";
+import type {
     PrimaryTurnStatusV1,
-    ScmBackendId,
+    SessionRuntimeIssueV1} from "@happier-dev/protocol/sessions/control/runtimeIssueV1";
+import type {
+    ScmBackendId} from "@happier-dev/protocol/scm";
+import type {
     ScmHostingProviderRef,
-    ScmPullRequestStatusProjection,
-    SessionAccessAccountSummaryV1,
-    SessionMessageRole,
+    ScmPullRequestStatusProjection} from "@happier-dev/protocol/scm/pullRequests";
+import type {
+    SessionAccessAccountSummaryV1} from "@happier-dev/protocol/sessions/access/sessionAccessPrincipalV1";
+import type {
+    SessionMessageRole} from "@happier-dev/protocol/sessions/messages/sessionMessageRole";
+import type {
     SessionManagerV1,
-    SessionManagedSessionsV1,
-    SessionRuntimeIssueV1,
-    SessionTurnsProjectionV1,
-    SessionContextUsageSnapshotV1,
+    SessionManagedSessionsV1} from "@happier-dev/protocol/sessions/follow/sessionManagerV1";
+import type {
+    SessionTurnsProjectionV1} from "@happier-dev/protocol/sessions/turns/sessionTurnV1";
+import type {
+    SessionContextUsageSnapshotV1} from "@happier-dev/protocol/usage/contextUsage";
+import type {
     SessionViewerProjectionV1,
-} from "@happier-dev/protocol";
+} from "@happier-dev/protocol/sessions/personal/viewer";
 import type { SessionMessageAcceptedDeliveryFactsV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageDeliveryResolutionV1';
+import type { SessionTeamCredentialBindingIntentV1 } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 import { StoredMachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import type { Metadata, AgentState } from "@happier-dev/session-core/state";
 import type { ComposerOptionsInputV1 } from '@happier-dev/protocol/embed';
@@ -59,6 +70,7 @@ export interface Session {
     pendingCount?: number,
     pendingBlockedCount?: number,
     pendingActivationAuthorization?: PendingActivationAuthorizationV1 | null,
+    pendingActivationFailureDetails?: PendingActivationFailureDetailsV1 | null,
     lastViewedSessionSeq?: number | null,
     unreadSince?: number | null,
     /** Absent only for supported Homes predating private viewer projection. */
@@ -68,8 +80,10 @@ export interface Session {
     pendingRequestObservedAt?: number | null,
     /** The Session this one reports to (ORC R-03). Ids only; membership grants nothing. */
     manager?: SessionManagerV1 | null,
-    origin?: import('@happier-dev/protocol').SessionAwarenessOriginV1,
+    origin?: import('@happier-dev/protocol/sessions/awareness/projectionV1').SessionAwarenessOriginV1,
     workDepth?: number,
+    /** Owner-only Home-accepted provider route; authoritative even while the Session is stopped. */
+    acceptedTeamCredentialBinding?: SessionTeamCredentialBindingIntentV1 | null,
     /** Direct `manager` children, counted by the server (awareness `reports`). */
     managedSessions?: SessionManagedSessionsV1 | null,
     /** Viewer-private Follow census projection; absent is unknown. */
@@ -202,7 +216,7 @@ export type { PendingDeliveryBlockedReason };
 export interface PendingMessage extends TranscriptAccountActorMetadata {
     /** Home-projected Follow original, separate from person-authored encrypted content. */
     pendingHostFollowInput?: import('@happier-dev/protocol/sessions/follow/sessionFollowInputV1').SessionFollowInputV1;
-    recipient?: Extract<import('@happier-dev/protocol').ParticipantRecipientRoutingIdentityV1, { kind: 'execution_run' }>;
+    recipient?: Extract<import('@happier-dev/protocol/messages/structured/participantMessageV1').ParticipantRecipientRoutingIdentityV1, { kind: 'execution_run' }>;
     id: string;
     localId: string | null;
     createdAt: number;
@@ -216,7 +230,9 @@ export interface PendingMessage extends TranscriptAccountActorMetadata {
      * `unresolved` means the launch's terminal wait ended without a known outcome (the input may have been accepted).
      */
     pendingLaunch?: Readonly<{ state: 'starting' }> | Readonly<{ state: 'unresolved' }>
-        | Readonly<{ state: 'failed'; message: string; draftId: string | null }>;
+        | Readonly<{ state: 'failed'; message: string; draftId: string | null;
+            /** The producer's refusal, including its recovery remedy; never inferred from display copy. */
+            failure?: Extract<import('@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1').SessionSpawnNewResultV1, { type: 'error' }> }>;
     /** Durable-outbox authority for local outbound rows; never inferred from the active server. */
     pendingOutboxScope?: import('@/sync/domains/scope/serverAccountScope').ServerAccountScope;
     /** Durable local outbox operation; `cancel` must never be presented or retried as a send. */
@@ -230,12 +246,12 @@ export interface PendingMessage extends TranscriptAccountActorMetadata {
     /** Exact server-projected original input for this Account's held check-in. */
     pendingAutonomousExchangeRoot?: import('@happier-dev/protocol/sessions/messages/autonomousExchangeV1').AutonomousExchangeRootV1;
     /** Descriptive detail for a delivering row; never an outcome or settlement authority. */
-    pendingDeliveryDetail?: import('@happier-dev/protocol').PendingDeliveryDetailV1;
+    pendingDeliveryDetail?: import('@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1').PendingDeliveryDetailV1;
     pendingDeliveryStatusRaw?: string;
     pendingDeliveryBlockedReason?: PendingDeliveryBlockedReason;
     pendingDeliveryBlockedReasonRaw?: string;
     /** Server-owned action intent for this durable Pending row. */
-    pendingRequestedAction?: import('@happier-dev/protocol').PendingRequestedActionV1;
+    pendingRequestedAction?: import('@happier-dev/protocol/sessions/pending/pendingRequestedActionV1').PendingRequestedActionV1;
     /** Corrupt non-null action data is visible and never treated as ordinary enqueue. */
     pendingRequestedActionMalformed?: boolean;
     /** Protocol-owned role for eligibility decisions; null means an older/unknown row. */
@@ -277,6 +293,9 @@ export const MachineLockedReasonSchema = z.enum([
     'content_unreadable',
     'recipient_key_pending',
     'recipient_access_refused',
+    'content_unpublished',
+    'custodian_only',
+    'daemon_upgrade_required',
 ]);
 
 export type MachineLockedReason = z.infer<typeof MachineLockedReasonSchema>;
@@ -289,12 +308,15 @@ export type MachineAvailability =
     }>;
 
 export interface Machine {
-    managedMachineRef?: import('@happier-dev/protocol/machines/managed/managedMachineV1').ManagedMachineRefV1 | null;
     id: string;
+    /** Undefined on an unhydrated placeholder; null is Home's ordinary Machine projection. */
+    managedMachineRef?: import('@happier-dev/protocol/machines/managed/managedMachineV1').ManagedMachineRefV1 | null;
+    /** Home's native qualification and owner-enabled wake presentation; absence makes no claim. */
+    managedInputRuntime?: import('@happier-dev/protocol/machines/managed/managedMachineV1').ManagedMachineInputRuntimeV1 | null;
     access?: import('@happier-dev/protocol/machines/machineAccessV1').AccessibleMachineAccessV1;
     /** Inventory scope derived from the authenticated requester and projected custodian. */
     isShared?: boolean;
-    kind?: import('@happier-dev/protocol').MachineKind;
+    kind?: import('@happier-dev/protocol/machines/machineKind').MachineKind;
     seq: number;
     createdAt: number;
     updatedAt: number;
@@ -312,7 +334,7 @@ export interface Machine {
     /** Existing authenticated Machine row field, in standard base64; never an Account key. */
     installationPublicKey?: string | null;
     contentPublicKeyFingerprint?: string | null;
-    operationProtocolCapabilities?: import('@happier-dev/protocol').MachineOperationProtocolCapabilitiesV1 | null;
+    operationProtocolCapabilities?: import('@happier-dev/protocol/machines/operationProtocolCapabilitiesV1').MachineOperationProtocolCapabilitiesV1 | null;
     operationProtocolCapabilitiesRevision?: number | null;
     metadata: MachineMetadata | null;
     metadataVersion: number;
@@ -504,6 +526,12 @@ export interface ScmWorkingSnapshot {
     pullRequestStatus?: ScmPullRequestStatusProjection | null;
     hasConflicts: boolean;
     entries: ScmWorkingEntry[];
+    /**
+     * A poorer delivery level: `entries` was not sent, so it says nothing about which files changed.
+     * 'summary' carries `summary` (the shared counts); 'facts' measured no working copy at all.
+     */
+    detail?: 'summary' | 'facts';
+    summary?: Readonly<{ changedFiles: number; includedAdded: number; includedRemoved: number; pendingAdded: number; pendingRemoved: number }>;
     totals: {
         isComplete?: boolean;
         includedFiles: number;

@@ -5,7 +5,7 @@ import type { WidgetSizeDeclarationV1 } from '../widgets/widgetPresentationV1.js
 import type { WidgetDefinitionV1 } from '../widgets/widgetDefinitionV1.js';
 
 import {
-    HOME_HUB_DEFAULT_LAYOUT,
+    getHomeHubDefaultLayoutV1,
     HomeHubLayoutV1Schema,
     HomeHubLayoutIntentSchema,
     applyHomeHubLayoutIntent,
@@ -224,7 +224,7 @@ describe('Home customization intents shared with Actions', () => {
         expect(resolveHomeHubLayout(restored, BUILTINS, [SHOWN, AVAILABLE]).sections.find((section) => section.id === SHOWN_ID)?.frameStyle).toBe('plain');
         const cleared = applyHomeHubLayoutIntent(restored, BUILTINS, [SHOWN, AVAILABLE], { kind: 'frameStyle', sectionId: SHOWN_ID, frameStyle: null });
         expect(cleared.sections).toEqual({ 'future-section': { frameStyle: 'card' } });
-        expect(applyHomeHubLayoutIntent({ ...EMPTY_LAYOUT, order: [], hidden: [], sections: stored.sections }, BUILTINS, [], { kind: 'reset' })).toEqual(HOME_HUB_DEFAULT_LAYOUT);
+        expect(applyHomeHubLayoutIntent({ ...EMPTY_LAYOUT, order: [], hidden: [], sections: stored.sections }, BUILTINS, [], { kind: 'reset' })).toEqual(getHomeHubDefaultLayoutV1());
     });
     it('adds a widget, reorders without discarding unknown slots, preserves mandatory sections and restores dismissed setup', () => {
         const stored = { ...EMPTY_LAYOUT, order: ['start', 'future-section', 'attention', 'setup', 'machines', 'usage'], hidden: ['setup:addPhone'] };
@@ -239,7 +239,7 @@ describe('Home customization intents shared with Actions', () => {
         expect(mandatory).toBe(reordered);
         const restored = applyHomeHubLayoutIntent(mandatory, WITH_DEFAULT_HIDDEN, [SHOWN, AVAILABLE], { kind: 'restore_setup' });
         expect(restored.hidden).not.toContain('setup:addPhone');
-        expect(applyHomeHubLayoutIntent(restored, WITH_DEFAULT_HIDDEN, [SHOWN, AVAILABLE], { kind: 'reset' })).toEqual(HOME_HUB_DEFAULT_LAYOUT);
+        expect(applyHomeHubLayoutIntent(restored, WITH_DEFAULT_HIDDEN, [SHOWN, AVAILABLE], { kind: 'reset' })).toEqual(getHomeHubDefaultLayoutV1());
     });
 });
 

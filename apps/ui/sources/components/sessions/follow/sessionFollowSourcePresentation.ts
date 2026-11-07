@@ -2,6 +2,7 @@ import { isPersistentMachine } from '@happier-dev/protocol/machines/machineKind'
 import { supportsMachineSessionFollowContextV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 import type { SessionFollowSourceKeyPreparationWaitingReasonV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowSourceKeyPreparationV1';
 import type { SessionFollowSourceDeliveryStateV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowSourcesApi';
+import { resolveSessionFollowRuleOccurrenceEvaluatorV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleOccurrenceV1';
 
 import { t } from '@/text';
 import { isMachineReachable } from '@/sync/domains/machines/reachability/machineReachability';
@@ -22,7 +23,31 @@ export type SessionFollowSourceRuntimeState =
      * so nothing the destination Runner does can complete the preparation.
      */
     | 'source_key_unavailable'
+    | 'waiting_for_authorized_device'
     | 'catch_up_pending';
+
+/** A known pending original/progress fact, never a match inferred from a private-rule read failure. */
+export type SessionFollowPersonRuleEvaluationInput = Readonly<{
+    accountId: string;
+    ownerAccountId: string;
+    production: 'source' | 'recovery';
+    hasPendingOccurrence: boolean;
+    authorization: 'authorized' | 'absent' | 'locked' | 'wrong_mode';
+}>;
+
+export type SessionFollowPersonRulePendingState = 'waiting_for_authorized_device' | 'catch_up_pending';
+/** Content-free projection of known pending originals; its owning Account must still match at display. */
+export type SessionFollowPersonRuleEvaluationProjection = Readonly<{
+    accountId: string;
+    pendingBySourceSessionId: Readonly<Record<string, SessionFollowPersonRulePendingState>>;
+}>;
+
+export function resolveSessionFollowPersonRulePendingState(
+    input: SessionFollowPersonRuleEvaluationInput,
+): SessionFollowPersonRulePendingState | null {
+    if (!input.hasPendingOccurrence || resolveSessionFollowRuleOccurrenceEvaluatorV1(input) !== 'receiver') return null;
+    return input.authorization === 'authorized' ? 'catch_up_pending' : 'waiting_for_authorized_device';
+}
 
 export function listEligibleSessionFollowSourceCandidates<T extends Readonly<{ id: string }>>(input: Readonly<{
     sessions: readonly T[];
@@ -52,9 +77,11 @@ export function resolveSessionFollowSourceRuntimeState(input: Readonly<{
     sourceEncryptionMode?: 'plain' | 'e2ee' | null;
     preparedInUiLifetime?: boolean;
     hasPendingUpdates?: boolean;
+    personRuleEvaluation?: SessionFollowPersonRuleEvaluationInput;
     nowMs?: number;
 }>): SessionFollowSourceRuntimeState {
     if (input.deliveryState === 'paused_archived') return 'paused_archived';
+    if (input.personRuleEvaluation) return resolveSessionFollowPersonRulePendingState(input.personRuleEvaluation) ?? 'eligible';
     if (!input.machine || !isMachineReachable(input.accountScope, input.machine, input.nowMs)) return 'waiting_for_runtime';
     if (!supportsMachineSessionFollowContextV1(input.machine.operationProtocolCapabilities)) return 'runtime_unsupported';
     if (
@@ -95,6 +122,7 @@ export function sessionFollowSourceRuntimeStateLabel(state: SessionFollowSourceR
         case 'waiting_for_source_key': return t('session.follow.sources.sourceKeyWaiting');
         case 'runner_key_unavailable': return t('session.follow.sources.sourceKeyUnavailable');
         case 'source_key_unavailable': return t('session.follow.sources.sourceSessionKeyUnavailable');
+        case 'waiting_for_authorized_device': return t('session.follow.sources.waitingAuthorizedDevice');
         case 'catch_up_pending': return t('session.follow.sources.catchUpPending');
         // `eligible` is the nominal state: the source is included with the
         // destination's next turn. The Account-Follow word "Following" describes a

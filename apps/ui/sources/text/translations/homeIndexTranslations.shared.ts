@@ -33,6 +33,8 @@ export type HomeIndexTranslation = Readonly<{
     hiddenSetupSteps: string;
     showAgain: (params: Readonly<{ count: number }>) => string;
     reorderHandle: (params: Readonly<{ section: string }>) => string;
+    /** Home's section of unread completed Bot results, under the composer. */
+    completedBotsTitle: string;
 }>;
 
 
@@ -65,4 +67,5 @@ export const homeIndexTranslationsEnglish = { en: {
         hiddenSetupSteps: 'Hidden setup steps',
         showAgain: ({ count }) => `${count} · Show again`,
         reorderHandle: ({ section }) => `Reorder ${section}`,
+        completedBotsTitle: 'Done while you were away',
     } } satisfies Pick<Readonly<Record<string, HomeIndexTranslation>>, "en">;

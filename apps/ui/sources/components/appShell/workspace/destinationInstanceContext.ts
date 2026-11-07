@@ -24,6 +24,8 @@ export type DestinationInstanceContextValue = Readonly<{
     pathname: string;
     focused: boolean;
     visible: boolean;
+    /** Query the current committed destination owner when delayed work settles. */
+    isFocused: () => boolean;
     navigation?: DestinationNavigation;
 }>;
 
@@ -122,7 +124,7 @@ export function useDestinationNavigation() {
         canGoBack: () => instance.navigation?.canGoBack?.() ?? false,
         goBack: () => instance.navigation?.back(),
         setOptions: setOptions ?? ((_options: NativeStackNavigationOptions) => {}),
-        isFocused: () => instance.focused,
+        isFocused: instance.isFocused,
         addListener: (_event: string, _listener: () => void) => () => {},
         getParent: () => undefined,
     } : nativeNavigation, [instance, nativeNavigation, setOptions]);

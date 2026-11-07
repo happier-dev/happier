@@ -21,6 +21,7 @@ function homeState(
         attentionHasNext: false,
         phase: 'ready',
         freshnessAt: 1,
+        homeObservation: { phase: overrides.phase ?? 'ready', lastSuccessAt: overrides.freshnessAt === undefined ? 1 : overrides.freshnessAt },
         failureReason: null,
         failureCode: null,
         appliedSourceKind: overrides.appliedQueryKey === null ? null : 'query',

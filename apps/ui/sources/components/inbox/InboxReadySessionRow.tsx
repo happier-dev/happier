@@ -59,6 +59,8 @@ export const InboxReadySessionRow = React.memo(function InboxReadySessionRow(pro
     statusWord?: string;
     statusTone?: WorkStatusTone;
     pending: boolean;
+    /** Availability and its owning explanation come from the shared Inbox model. */
+    readUnavailableReason?: string;
     showDivider?: boolean;
     onOpen: () => void;
     onMarkRead: () => Promise<void> | void;
@@ -69,18 +71,19 @@ export const InboxReadySessionRow = React.memo(function InboxReadySessionRow(pro
     const { theme } = useUnistyles();
     const swipeableRef = React.useRef<Swipeable | null>(null);
     const isWeb = Platform.OS === 'web';
+    const readDisabled = props.pending || Boolean(props.readUnavailableReason);
     const testIdPrefix = `inbox.ready_session.${props.serverId ?? 'local'}.${props.sessionId}`;
     // The row shows the Session by name, so it demands its content like a visible list row: an undecided one is not "locked".
     const demanded = normalizeSessionAddress(props.serverId, props.sessionId);
     useSessionContentDemand(demanded ? [demanded] : NO_SESSION_ADDRESSES, { tag: 'inbox.hydrateReadySessionRow', hydrate: 'unsettled' });
 
     const markRead = React.useCallback(() => {
-        if (props.pending) return;
+        if (readDisabled) return;
         swipeableRef.current?.close();
         void props.onMarkRead();
-    }, [props.onMarkRead, props.pending]);
+    }, [props.onMarkRead, readDisabled]);
 
-    const accessibilityActions = !isWeb && !props.pending
+    const accessibilityActions = !isWeb && !readDisabled
         ? [{ name: MARK_READ_ACCESSIBILITY_ACTION, label: t('sessionInfo.markSessionRead') }]
         : NO_ACCESSIBILITY_ACTIONS;
     const onAccessibilityAction = accessibilityActions.length > 0
@@ -125,7 +128,8 @@ export const InboxReadySessionRow = React.memo(function InboxReadySessionRow(pro
                     variant="plain"
                     size={28}
                     interactiveTargetGapPx={8}
-                    disabled={props.pending}
+                    disabled={readDisabled}
+                    disabledReason={props.readUnavailableReason}
                     onPress={markRead}
                     icon={props.pending ? (
                         <ActivitySpinner size="small" color={theme.colors.text.secondary} />
@@ -147,12 +151,13 @@ export const InboxReadySessionRow = React.memo(function InboxReadySessionRow(pro
                     testID={`${testIdPrefix}.swipe_mark_read`}
                     accessibilityRole="button"
                     accessibilityLabel={t('sessionInfo.markSessionRead')}
-                    disabled={props.pending}
+                    disabled={readDisabled}
+                    accessibilityHint={props.readUnavailableReason}
                     onPress={markRead}
                     style={({ pressed }) => [
                         styles.swipeAction,
                         pressed ? styles.swipeActionPressed : null,
-                        props.pending ? styles.swipeActionPending : null,
+                        readDisabled ? styles.swipeActionPending : null,
                     ]}
                 >
                     {props.pending ? (
@@ -161,7 +166,7 @@ export const InboxReadySessionRow = React.memo(function InboxReadySessionRow(pro
                         <Icon name="check-circle" size={20} color={theme.colors.button.primary.tint} />
                     )}
                     <Text style={styles.swipeActionText} numberOfLines={2}>
-                        {t('sessionInfo.markSessionRead')}
+                        {props.readUnavailableReason ?? t('sessionInfo.markSessionRead')}
                     </Text>
                 </Pressable>
             )}

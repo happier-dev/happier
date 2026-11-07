@@ -1,6 +1,7 @@
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
 import { SESSION_OWNER_METADATA_PROJECTION } from './readSessionOwnerMetadataView';
+import type { CollectionSessionRequestIdentity } from '@/components/ui/lists/collection/collectionRequestRef';
 
 export type SessionTupleApplyCurrentness = Readonly<{
     metadataCurrent: boolean;
@@ -46,7 +47,11 @@ export function classifySessionTupleApplyCurrentness(
     }
 
     const previousLayoutVersion = readSessionMetadataLayoutVersion(previousSession.metadataLayoutVersion);
-    const incomingLayoutVersion = readSessionMetadataLayoutVersion(incomingSession.metadataLayoutVersion);
+    // Partial update-session publications need not assert a layout. Absence
+    // preserves the retained layout; only an explicit value can regress it.
+    const incomingLayoutVersion = incomingSession.metadataLayoutVersion === undefined
+        ? previousLayoutVersion
+        : readSessionMetadataLayoutVersion(incomingSession.metadataLayoutVersion);
     const metadataLayoutVersionsValid = previousLayoutVersion >= 0 && incomingLayoutVersion >= 0;
     // Layout-1 socket frames carry no access projection. The layout transition
     // itself is the privacy contraction, including when its tuple versions reset.
@@ -81,6 +86,7 @@ type SessionRequestProjection = SessionTupleOrderingFields & Partial<Pick<Sessio
 >> & {
     hasPendingPermissionRequests?: boolean;
     hasPendingUserActionRequests?: boolean;
+    currentRequestRef?: CollectionSessionRequestIdentity | null;
 };
 
 export function shouldPreserveSessionRequestProjection(
@@ -92,8 +98,9 @@ export function shouldPreserveSessionRequestProjection(
     // A newly admitted tuple (including a privacy contraction with reset versions)
     // owns its whole request projection, regardless of the request's creation time.
     if (previous.agentStateVersion !== incoming.agentStateVersion
-        || readSessionMetadataLayoutVersion(previous.metadataLayoutVersion)
-            !== readSessionMetadataLayoutVersion(incoming.metadataLayoutVersion)) return false;
+        || (incoming.metadataLayoutVersion !== undefined
+            && readSessionMetadataLayoutVersion(previous.metadataLayoutVersion)
+                !== readSessionMetadataLayoutVersion(incoming.metadataLayoutVersion))) return false;
     const previousAt = normalizeOrderingNumber(previous.pendingRequestObservedAt);
     const incomingAt = normalizeOrderingNumber(incoming.pendingRequestObservedAt);
     return previousAt !== null && incomingAt !== null && incomingAt < previousAt;
@@ -117,15 +124,23 @@ export function reconcileSessionRequestProjection<T extends SessionRequestProjec
     }
     for (const key of [
         'pendingPermissionRequestCount', 'pendingUserActionRequestCount',
-        'hasPendingPermissionRequests', 'hasPendingUserActionRequests', 'pendingRequestObservedAt',
+        'hasPendingPermissionRequests', 'hasPendingUserActionRequests', 'pendingRequestObservedAt', 'currentRequestRef',
     ] as const) preserve(key);
     return next;
 }
 
+/** Tuple-owned facts retain their independent revision/layout admission in enclosing updates. */
+export const sessionTupleProjectionFields = [
+    'agentState', 'agentStateVersion', 'pendingPermissionRequestCount', 'pendingUserActionRequestCount',
+    'pendingRequestObservedAt', 'hasPendingPermissionRequests', 'hasPendingUserActionRequests', 'currentRequestRef',
+    'metadataLayoutVersion', 'metadataProjection', 'metadata', 'metadataVersion',
+    'ownerMetadataView', SESSION_OWNER_METADATA_PROJECTION, 'composerOptionsInput',
+] as const satisfies readonly (keyof SessionTupleProjection)[];
+
 type SessionTupleProjection = SessionRequestProjection & Partial<Pick<Session,
-    | 'metadata' | 'metadataProjection' | 'ownerMetadataView' | 'composerOptionsInput'
+    | 'metadataProjection' | 'ownerMetadataView' | 'composerOptionsInput'
     | typeof SESSION_OWNER_METADATA_PROJECTION
->>;
+>> & { metadata?: unknown };
 
 /** Merge independently versioned tuple fields before any queue can discard a newer snapshot. */
 export function reconcileSessionTupleProjection<T extends SessionTupleProjection>(

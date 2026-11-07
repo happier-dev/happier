@@ -11,12 +11,12 @@ import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
 import { readSessionAwarenessPresentationRankV1 } from '@happier-dev/protocol/sessions/awareness/presentationV1';
 import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
 import { sessionWorkStatusFactsFromStatus } from '@/components/work/status/sessionWorkStatusFacts';
-
 import { readSessionTurnCompletedAt } from '@/sync/domains/session/sessionLifecycleProjection';
 
 import type { SessionActivityAttention } from './activityAttentionTypes';
 import { isSessionAdmittedToPersonalActivity } from './isSessionAdmittedToPersonalActivity';
 import type { FollowPolicyV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
+import type { SessionPersonalRuleMatch } from '@/sync/domains/session/readState/sessionViewerAttention';
 
 export function buildSessionActivityAttention<T extends SessionPresentationRecord>(params: Readonly<{
     session: T;
@@ -27,13 +27,14 @@ export function buildSessionActivityAttention<T extends SessionPresentationRecor
     /** Count/status consumers use the same facts without private display details. */
     presentation?: 'detail' | 'summary';
     followRulePolicies?: readonly FollowPolicyV1[];
+    followRuleMatches?: readonly SessionPersonalRuleMatch[];
 }>): SessionActivityAttention & Readonly<{ session: T }> {
     const nowMs = params.nowMs ?? Date.now();
     const source = params.presentationSource ? { ...params.presentationSource, messages: params.sessionMessages } : undefined;
     const lifecycle = source?.lifecycle ?? params.session;
     const display = source ? readSessionListPresentationDisplay(source) : params.session;
-    const followRulePolicies = params.followRulePolicies;
-    const personal = resolveSessionPersonalAttentionForViewer(params.session, nowMs, params.sessionMessages, followRulePolicies, source);
+    const followRulePolicies = params.followRulePolicies ?? params.followRuleMatches?.map(match => match.policy);
+    const personal = resolveSessionPersonalAttentionForViewer(params.session, nowMs, params.sessionMessages, followRulePolicies, params.followRuleMatches, source);
     const personalReasons = personal.reasons.filter((reason) => {
         if (reason === 'unread' || reason === 'unread_discussion' || reason === 'ready_after_read') return params.sessionOptions?.showUnread !== false;
         if (reason === 'permission_required') return params.sessionOptions?.showPendingPermissionRequests !== false;

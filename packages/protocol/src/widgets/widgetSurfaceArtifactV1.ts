@@ -4,6 +4,7 @@ import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { sha1 } from '@noble/hashes/sha1';
 import { bytesToHex } from '@noble/hashes/utils';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
+import { createWidgetAreaReadFailureV1, projectWidgetAreaReadExceptionV1 } from './widgetAreaReadFailureV1.js';
 import { generateKeyBetween } from 'fractional-indexing';
 import type {
   HomeHubArtifactTransportV1,
@@ -18,6 +19,7 @@ import {
   type ArtifactCallerAccessV1,
 } from '../artifacts/artifactAccessV1.js';
 import { ArtifactRevisionV1Schema } from '../artifacts/artifactActionsV1.js';
+import type { QualifiedProjectKeyV1 } from '../workspaces/workspaceRefV1.js';
 import {
   AnchoredListPositionV1Schema,
   resolveAnchoredListMoveV1,
@@ -27,6 +29,7 @@ import { getWidgetSharedInputIssuesV1 } from './widgetSharedInputAdmissionV1.js'
 import {
   WidgetInstanceV1Schema,
   WidgetSurfaceRefV1Schema,
+  type WidgetInstanceV1,
   type WidgetSurfaceRefV1,
 } from './widgetInstanceV1.js';
 import {
@@ -152,10 +155,10 @@ export const WidgetAreaPresetResultV1Schema = lazyZodSchema(() =>
 export type WidgetAreaPresetResultV1 = z.infer<
   typeof WidgetAreaPresetResultV1Schema
 >;
-const instanceId = WidgetInstanceV1Schema.shape.id;
 const index = z.number().check(z.int(), z.nonnegative(), z.int());
-export const WidgetAreaLayoutIntentV1Schema = lazyZodSchema(() =>
-  z.union([
+export const WidgetAreaLayoutIntentV1Schema = lazyZodSchema(() => {
+  const instanceId = WidgetInstanceV1Schema.shape.id;
+  return z.union([
     WidgetLayoutItemIntentV1Schema,
     z.strictObject({
       kind: z.literal('remove'),
@@ -172,8 +175,8 @@ export const WidgetAreaLayoutIntentV1Schema = lazyZodSchema(() =>
       expectedInstance: z.optional(WidgetInstanceV1Schema),
       expectedPresentation: z.optional(WidgetExpectedPresentationV1Schema),
     }),
-  ]),
-);
+  ]);
+});
 export type WidgetAreaLayoutIntentV1 = z.infer<
   typeof WidgetAreaLayoutIntentV1Schema
 >;
@@ -490,6 +493,8 @@ export type WidgetSurfaceArtifactPortV1 = Readonly<{
   surface: WidgetSurfaceRefV1;
   read(signal?: AbortSignal): Promise<WidgetAreaLayoutV1>;
   readState(signal?: AbortSignal): Promise<WidgetAreaReadV1>;
+  /** Publish names through this same layout writer before its audience is widened. */
+  prepareSharing(signal?: AbortSignal): Promise<WidgetAreaLayoutV1>;
   apply(
     intent: WidgetAreaLayoutIntentV1,
     signal?: AbortSignal,
@@ -608,6 +613,8 @@ export function createWidgetSurfaceArtifactPortV1(
     surface: WidgetSurfaceRefV1;
     presets?: readonly WidgetAreaPresetV1[];
     isCurrent(): boolean;
+    /** Metadata only; the host's existing title owner names exact unnamed placements in one read. */
+    readTitles?(instances: readonly WidgetInstanceV1[], signal?: AbortSignal): Promise<ReadonlyMap<string, string>>;
   }>,
 ): WidgetSurfaceArtifactPortV1 {
   const surface = WidgetAreaSurfaceRefV1Schema.parse(options.surface);
@@ -682,9 +689,50 @@ export function createWidgetSurfaceArtifactPortV1(
     )
       throw new WidgetAreaMutationErrorV1('widget_shared_input_forbidden');
   };
+  const shareTitles = async (layout: WidgetAreaLayoutV1, signal?: AbortSignal) => {
+    if (surface.owner.kind !== 'project' || !options.readTitles) return layout;
+    const unnamed = flattenWidgetLayoutWidgetsV1(layout.items).flatMap(({ instance }) => instance.displayName === undefined ? [instance] : []);
+    if (unnamed.length === 0) return layout;
+    const titles = await options.readTitles(unnamed, signal);
+    check(signal);
+    const name = (item: Extract<WidgetLayoutItemV1, { kind: 'widget' }>) => {
+      const title = item.instance.displayName === undefined ? titles.get(item.instance.id) : undefined;
+      return title === undefined ? item : { ...item, instance: WidgetInstanceV1Schema.parse({ ...item.instance, displayName: title }) };
+    };
+    let changed = false;
+    const items = layout.items.map(item => {
+      if (item.kind === 'widget') {
+        const next = name(item);
+        if (next !== item) changed = true;
+        return next;
+      }
+      const children = item.children.map(name);
+      if (children.every((child, index) => child === item.children[index])) return item;
+      changed = true;
+      return { ...item, children };
+    });
+    return changed ? { ...layout, items } : layout;
+  };
+  const isShared = (row: HomeHubArtifactV1 | null) => row?.shared === true || (row?.access !== undefined && row.access !== 'owner');
   return {
     surface,
     read: async (signal) => open(await fetch(signal)),
+    async prepareSharing(signal) {
+      for (;;) {
+        const row = await fetch(signal);
+        if (!row) throw new WidgetAreaMutationErrorV1('widget_area_not_found');
+        const current = open(row);
+        admitWrite({ ...row, shared: true }, current);
+        const layout = await shareTitles(current, signal);
+        if (layout === current) return current;
+        check(signal);
+        const result = await transport.update({ artifactId, expectedRevision: row.revision,
+          header: buildWidgetSurfaceArtifactHeaderV1(layout, typeof row.header.sortKey === 'string' ? row.header.sortKey : initialSortKey),
+          body: JSON.stringify(layout), signal });
+        if (result.ok) return layout;
+        if (result.errorCode !== 'version_mismatch') throw new WidgetAreaMutationErrorV1(result.errorCode);
+      }
+    },
     async readState(signal) {
       const row = await fetch(signal);
       const layout = open(row);
@@ -726,12 +774,13 @@ export function createWidgetSurfaceArtifactPortV1(
         const previousLayout = open(row);
         if (!row || !isWidgetAreaPresetEdited(previousLayout, preset))
           return { surface, layout: previousLayout };
-        const layout = {
+        let layout: WidgetAreaLayoutV1 = {
           ...previousLayout,
           name: preset.name,
           items: preset.items,
         };
         admitWrite(row, layout);
+        if (isShared(row)) layout = await shareTitles(layout, signal);
         check(signal);
         const result = await transport.update({
           artifactId,
@@ -773,7 +822,7 @@ export function createWidgetSurfaceArtifactPortV1(
       if (!row || !sameStrictJsonValue(row.revision, capture.expectedRevision))
         throw new WidgetAreaMutationErrorV1('version_mismatch');
       open(row);
-      const layout = capture.previousLayout;
+      const layout = isShared(row) ? await shareTitles(capture.previousLayout, signal) : capture.previousLayout;
       admitWrite(row, layout);
       check(signal);
       const result = await transport.update({
@@ -798,9 +847,10 @@ export function createWidgetSurfaceArtifactPortV1(
         const current = open(row);
         if (row?.access === 'view')
           throw new WidgetAreaMutationErrorV1('artifact_access_forbidden');
-        const next = applyWidgetAreaLayoutIntentV1(current, intent);
+        let next = applyWidgetAreaLayoutIntentV1(current, intent);
         admitWrite(row, next);
         if (next === current) return current;
+        if (isShared(row)) next = await shareTitles(next, signal);
         check(signal);
         const header = buildWidgetSurfaceArtifactHeaderV1(
           next,
@@ -908,6 +958,7 @@ export function createWidgetAreaLayoutArtifactPortV1(
     surface: WidgetSurfaceRefV1;
     presets?: readonly WidgetAreaPresetV1[];
     isCurrent(): boolean;
+    readProjectReference?: (project: QualifiedProjectKeyV1, signal?: AbortSignal) => Promise<'referenced' | 'unreferenced'>;
   }>,
 ) {
   const scope = WidgetAreaSurfaceRefV1Schema.parse(options.surface);
@@ -933,6 +984,10 @@ export function createWidgetAreaLayoutArtifactPortV1(
   };
   const presetFor = (surface: WidgetSurfaceRefV1) =>
     resolveWidgetAreaPresetV1(surface, presets);
+  // A host preset stays unless it is a Project default no accepted Project reference anchors.
+  const isDeleteProtected = async (surface: WidgetSurfaceRefV1, signal?: AbortSignal): Promise<boolean> =>
+    !!presetFor(surface) && (surface.owner.kind !== 'project' || !options.readProjectReference
+      || await options.readProjectReference({ serverId: surface.serverId, projectKey: surface.owner.projectId }, signal) !== 'unreferenced');
   const summarize = (
     surface: WidgetSurfaceRefV1,
     name: string,
@@ -1225,14 +1280,16 @@ export function createWidgetAreaLayoutArtifactPortV1(
         signal,
       );
     },
+    /** The one default-protection rule; a surface asks it before offering a delete that would be refused. */
+    isDeleteProtected: (surface: WidgetSurfaceRefV1, signal?: AbortSignal) => isDeleteProtected(target(surface), signal),
     async delete(input: LayoutMutationV1, signal?: AbortSignal) {
       requireOwner();
       const surface = target(input.surface);
-      if (presetFor(surface))
+      const row = await fetch(surface, signal);
+      if (await isDeleteProtected(surface, signal))
         throw new WidgetAreaMutationErrorV1(
           'widget_area_layout_default_protected',
         );
-      const row = await fetch(surface, signal);
       expectRevision(row, input.expectedRevision);
       if (!row) throw new WidgetAreaMutationErrorV1('widget_area_not_found');
       check(signal);
@@ -1355,7 +1412,10 @@ export function createWidgetAreaActionPortV1(
             : {}),
         };
       } catch (error) {
-        return failure(error);
+        if (error instanceof WidgetAreaMutationErrorV1 && error.code === 'invalid_widget_area_record') {
+          return createWidgetAreaReadFailureV1(error.code);
+        }
+        return projectWidgetAreaReadExceptionV1(error);
       }
     },
     async captureMove(surface, id, _context, signal) {

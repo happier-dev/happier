@@ -25,6 +25,7 @@ function queryState(
         attentionHasNext: false,
         phase,
         freshnessAt,
+        homeObservation: { phase, lastSuccessAt: freshnessAt },
         failureReason: null,
         failureCode: null,
         appliedSourceKind: 'query',
@@ -82,6 +83,7 @@ describe('buildSessionListHomeObservations', () => {
 
         const failedQuery = {
             ...queryState('error', null),
+            homeObservation: { phase: 'error' as const, lastSuccessAt: 1_000 },
             failureReason,
             failureCode: failureReason,
         };

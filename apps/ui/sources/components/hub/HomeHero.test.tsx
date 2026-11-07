@@ -17,7 +17,7 @@ it('reports an excluded visible unfocused Home without a headline, and withdraws
         return <View testID="excluded-home" ref={frame.paneRef} onLayout={frame.measure} />;
     }
     const scene = (visible: boolean) => <DestinationInstanceContext.Provider value={{
-        tabId: 'excluded-home', ref: { kind: 'home', params: {} }, pathname: '/', visible, focused: false,
+        tabId: 'excluded-home', ref: { kind: 'home', params: {} }, pathname: '/', visible, focused: false, isFocused: () => false,
     }}><Home /></DestinationInstanceContext.Provider>;
     const screen = await renderScreen(scene(true), { createNodeMock: () => ({
         measureInWindow: (done: (x: number, y: number, width: number, height: number) => void) => done(400, 20, 600, 800),

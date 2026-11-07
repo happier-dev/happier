@@ -5,7 +5,8 @@ import { renderScreen } from '@/dev/testkit';
 import { DestinationInstanceHost, type DestinationNavigation } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { Text } from '@/components/ui/text/Text';
 import type { InboxModel } from '@/hooks/inbox/useInboxModel';
-import { createInboxAttentionFixture } from '@/dev/testkit/fixtures/inboxFixtures';
+import { createInboxAttentionFixture, createInboxApprovalArtifactFixture } from '@/dev/testkit/fixtures/inboxFixtures';
+import { readOpenApprovalInboxEntry } from '@/sync/domains/artifacts/approvalArtifactAdmission';
 import { createUsageNoticeArtifactFixture } from '@/dev/testkit/fixtures/usageNoticeFixtures';
 import { UsageNoticeArtifactHeaderV1Schema } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { buildInboxWorkGroups } from '@/activity/presentation/buildInboxWorkGroups';
@@ -18,11 +19,10 @@ vi.mock('expo-router', async () => {
 });
 
 function createModel(includeApproval = true): InboxModel {
-    const openApprovals = includeApproval ? [{ id: 'voice-start', title: 'Start Voice', isDecrypted: true as const,
-        header: { title: 'Start Voice', actionId: 'ui.voice_global.start', serverIdentityId: 'voice-home' },
-        headerVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 }] : [];
+    const openApprovals = includeApproval ? [createInboxApprovalArtifactFixture({ id: 'voice-start', title: 'Start Voice',
+        actionId: 'ui.voice_global.start', serverIdentityId: 'voice-home' })] : [];
     const workGroups = buildInboxWorkGroups({ sessionEntries: [], workflowRuns: [], automationRuns: [],
-        automationServerId: null, openApprovals: openApprovals as InboxModel['openApprovals'],
+        automationServerId: null, openApprovals: openApprovals.map(artifact => readOpenApprovalInboxEntry(artifact)!),
         stalledSessions: [], landings: [], snoozed: [], resolveSession: () => null, resolveOriginRunId: () => null });
     const sessionPresentation = { sessionsNeedingAttention: [], readySessions: [], markAllReadTargets: [], pendingRequestHydrationTargets: [] };
     return {
@@ -32,6 +32,7 @@ function createModel(includeApproval = true): InboxModel {
         openApprovals,
         friendRequests: [], sessionPresentation,
         targetBySessionAddress: new Map(), actionOperationEntries: [], pendingReadKeys: new Set(),
+        readUnavailableReasonBySessionAddress: new Map(), markAllReadUnavailableReason: null,
         markAllPending: false, isLoading: false, hasPrimaryAttention: true, hasContent: true, showCaughtUp: false,
         workGroups,
         spansHomes: false, ...createInboxAttentionFixture(),

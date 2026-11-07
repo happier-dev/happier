@@ -139,6 +139,7 @@ function homeState(
         attentionHasNext: false,
         phase: 'ready',
         freshnessAt: 10,
+        homeObservation: { phase: 'ready', lastSuccessAt: 10 },
         failureReason: null,
         failureCode: null,
         appliedSourceKind: 'query',
@@ -164,6 +165,7 @@ function buildPaneState(
         summary: { sessionsReady: true, sessionCount: 1 },
         visibleSessionListIndex: visibleIndex,
         hasHiddenInactiveSessions: false,
+        
         showLoading: false,
         showEmptyState: false,
         query: {
@@ -195,6 +197,22 @@ function buildFilterController(
     return {
         filters,
         defaultFilters: { ...filters, searchQuery: '' },
+        contextDefaultFilters: { ...filters, searchQuery: '' },
+        spaces: [],
+        selectedSpaceId: '',
+        selectedSpace: null,
+        activeSpace: null,
+        spacesEnabled: true,
+        spacesReady: true,
+        spaceSettingsScope: null,
+        includeNeedsYouEverywhere: false,
+        isSpaceModified: false,
+        showCoordinatorsRequest: 0,
+        acknowledgeShowCoordinatorsRequest: () => {},
+        removeAuthoritativelyDeletedSelections: () => {},
+        corpusStorage: 'active',
+        corpusPresentation: 'semantic_query',
+        pagingHomes: undefined,
         updateFilters: () => {},
         setSearchQuery: () => {},
         resetFilters: () => {},
@@ -222,7 +240,8 @@ function buildFilterController(
         viewContextKey: 'global',
         retentionScopeKey: 'global:home-a',
         ...overrides,
-    } as unknown as SessionListViewFilterController;
+        displayFilters: overrides.displayFilters ?? overrides.filters ?? filters,
+    } satisfies SessionListViewFilterController;
 }
 
 const { useSessionListViewStateFromPaneState } = await import('./useSessionListViewState');

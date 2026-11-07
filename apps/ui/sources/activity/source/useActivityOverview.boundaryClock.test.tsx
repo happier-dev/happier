@@ -7,7 +7,7 @@ import { storage } from '@/sync/domains/state/storageStore';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { useSessionsHaveAttention } from '@/hooks/session/useSessionsHaveAttention';
 import type { ActivityOverviewSnapshot } from '@/activity/attention/activityAttentionTypes';
-import { useActivityOverview, useActivityOverviewSummary } from './useActivityOverview';
+import { useActivityOverview, useActivityOverviewSummary, useHomeCompletedBots } from './useActivityOverview';
 import { buildPendingNavigationFromSource } from './buildPendingNavigationFromSource';
 import type { ActivityAttentionSource } from './activityAttentionSourceTypes';
 
@@ -171,6 +171,7 @@ describe('mounted Activity overview boundary clock', () => {
         expect(overview.hasAttention()).toBe(false);
         expect(dot.read()).toBe(false);
     });
+
     it('renders a summary consumer only when the summary changes, not for every Session row write', async () => {
         let renders = 0;
         // Written by the probe's render; a mutable holder keeps TypeScript from narrowing it to its initial null.
@@ -205,4 +206,48 @@ describe('mounted Activity overview boundary clock', () => {
         expect(probe.latest?.totalAttentionCount).toBe(0);
     });
 
+    it('does not publish unrelated ordinary Session freshness boundaries to completed Bots', async () => {
+        const session = { ...storage.getState().sessions['legacy-session']!,
+            seq: 4, latestReadyEventSeq: 4, agentState: { requests: {}, completedRequests: {} },
+            metadata: { ...storage.getState().sessions['legacy-session']!.metadata!, bot: { kind: 'bot' as const } } };
+        const unrelated = { ...session, id: 'ordinary', seq: 1, latestReadyEventSeq: undefined,
+            metadata: { ...session.metadata, bot: undefined }, thinking: true, thinkingAt: NOW_MS - 1_000 };
+        storage.setState({ sessions: { [session.id]: session, [unrelated.id]: unrelated },
+            sessionListRowsByServerId: { 'server-a': {
+                [session.id]: buildSessionListRenderableFromSession(session),
+                [unrelated.id]: buildSessionListRenderableFromSession(unrelated),
+            } }, ordinarySessionListMembershipByServerId: { 'server-a': [session.id, unrelated.id] } });
+        let renders = 0;
+        let completed = 0;
+        function CompletedProbe() {
+            completed = useHomeCompletedBots().readySessions.length;
+            renders += 1;
+            return null;
+        }
+        await renderScreen(<CompletedProbe />);
+        expect(completed).toBe(1);
+        const baseline = renders;
+        await crossTheFreshnessBoundary();
+        expect(renders).toBe(baseline);
+        expect(completed).toBe(1);
+    });
+
+    it('publishes a completed legacy Bot when transient thinking expires without a store write', async () => {
+        const state = storage.getState();
+        const session = { ...state.sessions['legacy-session']!, thinking: true, thinkingAt: NOW_MS - 1_000,
+            seq: 4, latestReadyEventSeq: 4, agentState: { requests: {}, completedRequests: {} },
+            metadata: { ...state.sessions['legacy-session']!.metadata!, bot: { kind: 'bot' as const } } };
+        storage.setState({ sessions: { [session.id]: session }, sessionListRowsByServerId: { 'server-a': {
+            [session.id]: buildSessionListRenderableFromSession(session),
+        } } });
+        let completed = 0;
+        function CompletedProbe() {
+            completed = useHomeCompletedBots().readySessions.length;
+            return null;
+        }
+        await renderScreen(<CompletedProbe />);
+        expect(completed).toBe(0);
+        await crossTheFreshnessBoundary();
+        expect(completed).toBe(1);
+    });
 });

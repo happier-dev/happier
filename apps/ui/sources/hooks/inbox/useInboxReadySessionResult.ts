@@ -10,6 +10,7 @@ import { normalizeSessionAddress, type SessionAddress } from '@/sync/domains/ses
 import { useSessionContentDemand } from '@/sync/domains/session/useSessionContentDemand';
 import { resolveWorkflowRunDisplayName } from '@/components/workflows/presentation/workflowRunDisplayName';
 import { useSessionRealtimeTranscriptConsumer } from '@/hooks/session/useSessionRealtimeTranscriptConsumer';
+import { useHydrateSession } from '@/hooks/session/useHydrateSessionForRoute';
 
 const NO_ADDRESSES: readonly SessionAddress[] = [];
 const NO_SESSION_IDS: readonly string[] = [];
@@ -27,6 +28,11 @@ export function useInboxReadySessionResult(
     const address = normalizeSessionAddress(serverId, sessionId);
     const transcriptAddress = options.transcriptAddress;
     useSessionRealtimeTranscriptConsumer(active ? transcriptAddress?.sessionId : null, transcriptAddress?.serverId);
+    useHydrateSession(active ? transcriptAddress?.sessionId ?? '' : '', 'inbox-ready-session-result', {
+        serverId: transcriptAddress?.serverId,
+        hydrateMessages: true,
+        includeTurnsProjection: true,
+    });
     useSessionContentDemand(address ? [address] : NO_ADDRESSES, {
         tag: 'inbox.hydrateReadySessionRow', hydrate: 'unsettled', active,
     });

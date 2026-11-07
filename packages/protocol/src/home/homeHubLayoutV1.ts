@@ -73,16 +73,30 @@ export type ResolvedHomeHubLayout<W extends HomeHubWidgetInput = HomeHubWidgetIn
 export function isHomeHubCardSection(section: HomeHubSection): boolean {
     return section.kind !== 'builtin' || HOME_HUB_BUILTIN_DEFINITIONS.find(builtin => builtin.id === section.id)?.card === true;
 }
-/** Missing Home only; stored layouts (including an explicit empty one) keep their own items. */
-export const HOME_HUB_DEFAULT_LAYOUT: HomeHubLayoutValue = { v: 1, order: [], hidden: [], items: [{ kind: 'widget',
-    instance: { v: 1, id: 'default:builtin:usage_capacity', definition: { kind: 'builtin', id: 'usage_capacity' },
-        bindings: proposeWidgetInputDefaultBindingsV1(readBuiltinWidgetDescriptorV1({ kind: 'builtin', id: 'usage_capacity' })!) },
-    size: 'full',
-}] };
+let defaultLayout: HomeHubLayoutValue | undefined;
+/** Missing Home only; defer the catalog read until use and retain the shared preset identity. */
+export function getHomeHubDefaultLayoutV1(): HomeHubLayoutValue {
+    return defaultLayout ??= {
+        v: 1, hidden: [],
+        // The first-run showcase (owner 10-31): Capacity beside Triage's "New in PRs & Issues" (its plugin
+        // declares it shown), then the row of three smalls: Machines, Local services and Latest runs (`automations`, last).
+        // The preset names the Triage slot so Machines follows it; without Triage the slot stays unresolved.
+        order: [...HOME_HUB_BUILTIN_DEFINITIONS.filter(section => !section.afterWidgets).map(section => section.id),
+            homeHubDefaultWidgetInstanceId('builtin:usage_capacity'), homeHubDefaultWidgetInstanceId('happier.triage/latest'),
+            homeHubDefaultWidgetInstanceId('builtin:machine_fleet'), homeHubDefaultWidgetInstanceId('builtin:local_services_app')],
+        items: [defaultBuiltinWidget('usage_capacity', 'medium'), defaultBuiltinWidget('machine_fleet', 'small'),
+            defaultBuiltinWidget('local_services_app', 'small')],
+    };
+}
+function defaultBuiltinWidget(id: 'usage_capacity' | 'machine_fleet' | 'local_services_app', size: WidgetSizeV1): WidgetLayoutWidgetV1 {
+    const definition = { kind: 'builtin', id } as const;
+    return { kind: 'widget', size, instance: { v: 1, id: homeHubDefaultWidgetInstanceId('builtin:' + id), definition,
+        bindings: proposeWidgetInputDefaultBindingsV1(readBuiltinWidgetDescriptorV1(definition)!) } };
+}
 /** Normalize stored personal layout content without persisting recovery defaults. */
 export function normalizeHomeHubLayoutV1(value: unknown): HomeHubLayoutValue {
     const parsed = storedLayoutSchema.safeParse(value);
-    if (!parsed.success) return HOME_HUB_DEFAULT_LAYOUT;
+    if (!parsed.success) return getHomeHubDefaultLayoutV1();
     const layout = parsed.data;
     const retained = new Set([...HOME_HUB_BUILTIN_DEFINITIONS.map(section => section.id),
         ...layout.items.map(getWidgetLayoutItemIdV1), ...flattenWidgetLayoutWidgetsV1(layout.items).map(item => item.instance.id)]);
@@ -330,7 +344,7 @@ export function applyHomeHubLayoutIntent(layout: HomeHubLayoutValue, builtins: r
             const next = showAllHomeSetupSteps(layout);
             return next === layout ? layout : materialize(next, builtins, widgets);
         }
-        case 'reset': return layout.order.length || layout.hidden.length || layout.items.length || layout.sections ? HOME_HUB_DEFAULT_LAYOUT : layout;
+        case 'reset': return layout.order.length || layout.hidden.length || layout.items.length || layout.sections ? getHomeHubDefaultLayoutV1() : layout;
         case 'widget_add': {
             const base = materialize(layout, builtins, widgets);
             const presentation = {

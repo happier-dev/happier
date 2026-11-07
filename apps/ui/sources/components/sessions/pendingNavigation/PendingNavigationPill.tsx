@@ -4,8 +4,9 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { useDetailsTabHeaderActionsCompact } from '@/components/appShell/panes/details/header/DetailsTabHeader';
 
-import { useMountedActivityOverviewSummary } from '@/activity/source/useActivityOverview';
-import { buildPendingNavigationFromSource, type PendingNavigationCandidate } from '@/activity/source/buildPendingNavigationFromSource';
+import { usePendingNavigationOverview } from '@/activity/source/usePendingNavigationOverview';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import type { PendingNavigationCandidate } from '@/activity/source/buildPendingNavigationFromSource';
 import { invokeNextPendingRequest, usePendingNavigationLanding, useSessionPendingAnswerToken } from '@/activity/source/pendingNavigationRuntime';
 import { SessionNavigationPill } from '@/components/navigation/SessionNavigationPill';
 import { KeyHint } from '@/components/ui/keyboard/KeyHint';
@@ -20,6 +21,7 @@ import { useDeviceType } from '@/utils/platform/responsive';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import type { ComposerTextStore } from '@/components/sessions/agentInput/composerTextStore';
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 
 export type PendingNavigationPillProps = Readonly<{
     address: SessionAddress | null;
@@ -31,7 +33,7 @@ export type PendingNavigationPillProps = Readonly<{
 /** The Next pill rises off the composer edge it stands on (the docked-capsule motion). */
 const RISE_MOTION = resolveOverlayMotionPreset({ kind: 'popover', direction: 'top' });
 
-export type NextTarget = Readonly<{ title: string; reason: string | null }>;
+export type NextTarget = Readonly<{ title: string; reason: string | null; address?: SessionAddress }>;
 
 /**
  * What the composer pill can truthfully name before Next runs: with one session waiting it is that
@@ -44,6 +46,7 @@ function describeNextTarget(candidates: readonly PendingNavigationCandidate[]): 
     return {
         title: getSessionName(only.session, only.address.serverId),
         reason: only.waitsFor === 'permission' ? t('pendingNavigation.waitsForPermission') : t('pendingNavigation.waitsForInput'),
+        address: only.address,
     };
 }
 
@@ -54,13 +57,11 @@ function describeNextTarget(candidates: readonly PendingNavigationCandidate[]): 
  * - `composer`: after you answer, the Next capsule rises above the composer, naming where Next goes.
  */
 export const PendingNavigationPill = React.memo(function PendingNavigationPill(props: PendingNavigationPillProps) {
-    const { source, nowMs } = useMountedActivityOverviewSummary();
+    // Behind another tab the pill shows nothing the person can see: its pending projection parks until shown.
+    const presented = useLayoutPresentationActive();
+    const { candidates, count } = usePendingNavigationOverview(props.address, props.presentation === 'composer', presented);
     const serverId = props.address?.serverId;
     const sessionId = props.address?.sessionId;
-    const candidates = React.useMemo(() => buildPendingNavigationFromSource({
-        source, nowMs, excluding: serverId && sessionId ? { serverId, sessionId } : null,
-    }), [source, nowMs, serverId, sessionId]);
-    const count = candidates.length;
     const answerToken = useSessionPendingAnswerToken(props.address);
     const landing = usePendingNavigationLanding(props.address);
     const shortcut = useKeyboardShortcutLabel('session.pending.next');
@@ -144,6 +145,7 @@ export function NextComposerPill(props: Readonly<{
     composerText?: ComposerTextStore;
 }>) {
     const { theme } = useUnistyles();
+    const isSessionVisible = useSessionRecordingVisibility();
     const phone = useDeviceType() === 'phone';
     const [dismissed, setDismissed] = React.useState(false);
     const visible = props.target !== null && !dismissed;
@@ -163,7 +165,9 @@ export function NextComposerPill(props: Readonly<{
     // A leaving capsule keeps its last words while it settles out.
     const lastTargetRef = React.useRef<NextTarget | null>(null);
     if (props.target && visible) lastTargetRef.current = props.target;
-    const target = lastTargetRef.current;
+    const heldTarget = lastTargetRef.current;
+    const target = heldTarget?.address && !isSessionVisible(heldTarget.address)
+        ? { ...heldTarget, title: t('message.provenanceSession') } : heldTarget;
     if (!present || !target) return null;
 
     const ink = theme.colors.state.attention.foreground;

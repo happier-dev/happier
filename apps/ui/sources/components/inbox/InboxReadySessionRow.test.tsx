@@ -53,6 +53,7 @@ function findByTestId(tree: renderer.ReactTestRenderer, testID: string) {
 
 async function renderRow(overrides?: Partial<{
     pending: boolean;
+    readUnavailableReason: string;
     serverId: string | null;
     identityDisplay: 'avatar' | 'agentLogo' | 'none';
 }>) {
@@ -68,6 +69,7 @@ async function renderRow(overrides?: Partial<{
             serverId={overrides?.serverId === undefined ? 'server-a' : overrides.serverId}
             title="Unread session"
             pending={overrides?.pending ?? false}
+            readUnavailableReason={overrides?.readUnavailableReason}
             onOpen={onOpen}
             onMarkRead={onMarkRead}
         />,
@@ -174,6 +176,32 @@ describe('InboxReadySessionRow', () => {
 
         const [row] = findByTestId(tree, 'inbox.ready_session.server-a.session-1');
         expect(row.props.accessibilityLabel).toBe('inbox.readySessionAccessibilityLabel');
+    });
+
+    it.each(['ios', 'web'] as const)('explains unavailable read actions on %s while keeping navigation available', async os => {
+        platformState.os = os;
+        const { tree, onMarkRead, onOpen } = await renderRow({ readUnavailableReason: 'Home offline' });
+        const [row] = findByTestId(tree, 'inbox.ready_session.server-a.session-1');
+        expect(row.props.accessibilityActions).toEqual([]);
+        expect(row.props.disabled).toBeFalsy();
+        await renderer.act(async () => { row.props.onPress(); });
+        expect(onOpen).toHaveBeenCalledOnce();
+        if (os === 'web') {
+            const { IconButton } = await import('@/components/ui/buttons/IconButton');
+            const button = tree.root.findByType(IconButton);
+            expect(button.props.disabled).toBe(true);
+            expect(button.props.disabledReason).toBe('Home offline');
+            await renderer.act(async () => { button.props.onPress(); });
+        } else {
+            let action!: renderer.ReactTestRenderer;
+            await renderer.act(async () => { action = renderer.create(tree.root.findByType('Swipeable').props.renderRightActions()); });
+            const button = action.root.findByType('Pressable');
+            expect(button.props.disabled).toBe(true);
+            expect(button.props.accessibilityHint).toBe('Home offline');
+            await renderer.act(async () => { button.props.onPress(); });
+            await renderer.act(async () => { action.unmount(); });
+        }
+        expect(onMarkRead).not.toHaveBeenCalled();
     });
 
     it('scopes its identity to the exact Home so a same-id session elsewhere cannot collide', async () => {

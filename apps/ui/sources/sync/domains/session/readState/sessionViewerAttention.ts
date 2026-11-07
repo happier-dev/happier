@@ -27,7 +27,11 @@ import type { SessionListRenderableSession } from '../listing/sessionListRendera
 import { readSessionListRenderableOwnerMetadataView, readSessionListPresentationRuntime, readSessionListPresentationOwnerMetadata, readSessionListPresentationOwnerMetadataField,
     readSessionListPresentationPendingFlags, readSessionListPresentationPendingObservedAt,
     listSessionListPresentationPendingRequests, type SessionListPresentationSource } from '../listing/sessionListRenderableSessionProjection';
+import type { SessionFollowRuleWitnessV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleV1';
+import type { ViewerReadStateV1 } from '@happier-dev/protocol/sessions/personal/readState';
 
+/** A private match selects the exact Home-projected inception boundary and its own delivery policy. */
+export type SessionPersonalRuleMatch = Readonly<{ policy: FollowPolicyV1; rule?: SessionFollowRuleWitnessV1 }>;
 
 type ViewerAttentionSession = Session | SessionListRenderableSession;
 
@@ -46,6 +50,7 @@ export function readSessionViewerAttentionSignature(session: Session | SessionLi
         viewer?.attention.presentation ?? '',
         viewer?.attention.reasons.join(',') ?? '',
         viewer?.latestFailureSeq ?? '',
+        JSON.stringify(viewer?.ruleReadStates ?? []),
         viewer?.follow.onceDelivery?.event ?? '',
         viewer?.follow.onceDelivery?.requestId ?? '',
         viewer?.follow.onceDelivery?.turnId ?? '',
@@ -135,17 +140,18 @@ export function readSessionPersonalAttentionExpirationsForViewer(
 }
 
 function addRuleAttentionForViewer(session: ViewerAttentionSession, existing: SessionPersonalAttentionProjectionV1,
-    nowMs: number, messages: readonly Message[] | undefined, policies: readonly FollowPolicyV1[], source?: SessionListPresentationSource): SessionPersonalAttentionProjectionV1 {
+    nowMs: number, messages: readonly Message[] | undefined, policies: readonly FollowPolicyV1[],
+    matches: readonly SessionPersonalRuleMatch[], source?: SessionListPresentationSource): SessionPersonalAttentionProjectionV1 {
     const viewer = session.viewer;
     if (!viewer || policies.length === 0) return existing;
     const metadata = ownerMetadataForAttention(session, source);
     const lifecycle = source?.lifecycle ?? session;
     const runtime = projectUiSessionRuntimeAwareness(buildPreViewerRuntimeInput(session, nowMs, messages, source));
     const pending = source ? readSessionListPresentationPendingFlags(source, messages) : 'agentState' in session ? derivePendingRequestFlagsFromSession(session, messages) : session;
-    const projected = resolveSessionPersonalAttentionV1({
+    const project = (readState: ViewerReadStateV1) => resolveSessionPersonalAttentionV1({
         tracked: true, accessible: session.access?.capabilities.readTranscript === true, accountSuspended: false,
         contentAvailable: (source?.metadataLayoutVersion ?? session.metadataLayoutVersion) !== 1 || metadata != null,
-        visibleSessionSeq: resolveSessionListReadableSeq(lifecycle, undefined), readState: viewer.readState,
+        visibleSessionSeq: resolveSessionListReadableSeq(lifecycle, undefined), readState,
         latestReadyEventSeq: lifecycle.latestReadyEventSeq ?? null,
         latestFailureSeq: viewer.latestFailureSeq ?? null,
         hasPrimarySessionFailure: runtime.operational.reasons.includes('failed'),
@@ -157,21 +163,39 @@ function addRuleAttentionForViewer(session: ViewerAttentionSession, existing: Se
         responsible: viewer.relevance.reasons.includes('responsible_for_me'),
         discussion: { hasUnread: false, hasMention: false }, attentionStanding: 'none', reminderDue: false,
     });
-    const selected = new Set(projected.reasons.filter(reason => {
+    const selected = new Set<SessionPersonalAttentionProjectionV1['reasons'][number]>();
+    const select = (projected: SessionPersonalAttentionProjectionV1, readState: ViewerReadStateV1, routePolicies: readonly FollowPolicyV1[]) => projected.reasons.forEach(reason => {
         let event: FollowEventV1 | null = null;
         if (reason === 'failed' || reason === 'permission_required' || reason === 'user_action_required') event = resolveSessionPersonalFollowEventV1(reason);
         else if (reason === 'pending_blocked') event = { kind: 'needs_you', type: 'blocked' };
         else if (reason === 'ready_after_read') event = resolveSessionPersonalFollowEventV1('ready');
         else if (reason === 'unread') {
-            const readyAfterRead = viewer.readState.state === 'tracking' && (lifecycle.latestReadyEventSeq ?? 0) > viewer.readState.lastViewedSessionSeq;
+            const readyAfterRead = readState.state === 'tracking' && (lifecycle.latestReadyEventSeq ?? 0) > readState.lastViewedSessionSeq;
             event = resolveSessionPersonalFollowEventV1(readyAfterRead ? 'ready' : 'message');
         }
-        return event !== null && resolveFollowDeliveryV1({ policies, event }).person.inbox;
-    }));
+        if (event !== null && resolveFollowDeliveryV1({ policies: routePolicies, event }).person.inbox) selected.add(reason);
+    });
+    // Authored rules consume only their exact Home projection. Built-in defaults
+    // retain incumbent read-state behavior and have no stored rule identity.
+    const baseline = project(viewer.readState);
+    const baselinePolicies = matches.length ? matches.filter(match => !match.rule).map(match => match.policy) : policies;
+    if (baselinePolicies.length) select(baseline, viewer.readState, baselinePolicies);
+    if (matches.length) {
+        // Live requests retain their incumbent capability checks even when a
+        // Home cannot yet provide an original-history boundary for this rule.
+        const noCursor = { state: 'not_started' } as const;
+        select(project(noCursor), noCursor, policies);
+    }
+    const projections = new Map(viewer.ruleReadStates?.map(rule => [rule.ruleId, rule]));
+    for (const match of matches) {
+        if (!match.rule) continue;
+        const projection = projections.get(match.rule.ruleId);
+        if (projection?.ruleVersion === match.rule.ruleVersion) select(project(projection.readState), projection.readState, [match.policy]);
+    }
     const reasons = SessionPersonalAttentionReasonV1Schema.options.filter(reason => selected.has(reason)
         || existing.needsAttention && existing.reasons.includes(reason));
     return { needsAttention: reasons.length > 0, reasons, primary: reasons[0] ?? null,
-        presentation: existing.needsAttention ? existing.presentation : projected.presentation };
+        presentation: existing.needsAttention ? existing.presentation : baseline.presentation };
 }
 
 /** Modern viewer facts plus transient private rule interest; no persisted viewer mutation. */
@@ -180,6 +204,7 @@ export function resolveSessionPersonalAttentionForViewer(
     nowMs: number,
     messages?: readonly Message[],
     rulePolicies: readonly FollowPolicyV1[] = [],
+    ruleMatches: readonly SessionPersonalRuleMatch[] = [],
     source?: SessionListPresentationSource,
 ): SessionPersonalAttentionProjectionV1 {
     if (session.archivedAt != null) {
@@ -194,7 +219,7 @@ export function resolveSessionPersonalAttentionForViewer(
             ? readCurrentPersonalFollowOnceOccurrenceForViewer(session, messages, source) : null;
         const existing = current ? addSessionPersonalAttentionReasonV1(session.viewer.attention, current.event === 'permission_required'
             ? 'permission_required' : 'user_action_required') : session.viewer.attention;
-        return addRuleAttentionForViewer(session, existing, nowMs, messages, rulePolicies, source);
+        return addRuleAttentionForViewer(session, existing, nowMs, messages, rulePolicies, ruleMatches, source);
     }
     if (!isSessionPersonallyTrackedForViewer(session)) {
         return QUIET_SESSION_PERSONAL_ATTENTION_V1;

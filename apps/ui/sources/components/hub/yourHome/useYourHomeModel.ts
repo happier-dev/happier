@@ -6,7 +6,8 @@ import {
   forEachActivitySummaryCandidate,
   isActivityCandidateAwaitingPerson,
 } from '@/activity/source/buildActivityOverviewFromSource';
-import { useMountedActivityOverviewSummary } from '@/activity/source/useActivityOverview';
+import { buildActivityOverviewSummaryFromSource } from '@/activity/source/buildActivityOverviewFromSource';
+import { useActivitySourceProjection, type ActivitySourceProjectionInput } from '@/activity/source/useActivityOverview';
 import { useThisComputerMachineId } from '@/components/machines/add/useMachineAddPaths';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
@@ -14,12 +15,10 @@ import {
   resolveDisplayMachineIdForSessionFromState,
   type SessionMachineTargetState,
 } from '@/sync/domains/session/resolveMachineTargetForSessionFromState';
-import { storage, useActiveServerAccountScope, useAllMachines } from '@/sync/domains/state/storage';
+import { useActiveMachineFacts } from '@/sync/domains/state/storage';
+import { retainDeep } from '@/sync/domains/state/structuralSharing';
 import { resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
-import { resolveMachineReachability } from '@/sync/domains/machines/reachability/machineReachability';
-import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
-import { useMachinePresenceNowMs } from '@/hooks/machine/useMachinePresenceNowMs';
-import { selectActiveServerAccountScopeForServer } from '@/sync/domains/scope/activeServerAccountScope';
+import { useMachinePresenceSummaries } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 
 import {
   buildYourHomeModel,
@@ -72,45 +71,62 @@ export function buildYourHomeSessionStates(
 
 const NO_SESSIONS: readonly YourHomeSessionState[] = Object.freeze([]);
 
+type YourHomeActivity = Readonly<{
+  statesByMachine: Readonly<Record<string, readonly YourHomeSessionState[]>>;
+  nextAttentionBoundaryMs: number | null;
+}>;
+
+/**
+ * Each machine's session states, projected on the Activity summary's boundary clock by the shared
+ * selector owner: a Session write that moves no machine's states keeps the published projection, so it
+ * renders no Your Home consumer.
+ */
+function useYourHomeActivity(serverId: string): YourHomeActivity {
+  const project = React.useCallback(({ source, nowMs, state }: ActivitySourceProjectionInput): YourHomeActivity => ({
+    statesByMachine: Object.fromEntries(buildYourHomeSessionStates({
+      source, nowMs, serverId, state: state as SessionMachineTargetState,
+    })),
+    nextAttentionBoundaryMs: buildActivityOverviewSummaryFromSource({
+      source, nowMs, includeWarmSourceWhenNotReady: true,
+    }).nextAttentionBoundaryMs,
+  }), [serverId]);
+  return useActivitySourceProjection(project, retainDeep);
+}
+
 /** The active Home's machines and their sessions, on the Activity summary's boundary clock. */
 export function useYourHomeModel(): YourHomeModel {
-  const { source, nowMs } = useMountedActivityOverviewSummary();
   const serverId = useActiveServerSnapshot().serverId;
-  const allMachines = useAllMachines();
-  const activeScope = useActiveServerAccountScope();
-  const accountScope = selectActiveServerAccountScopeForServer(activeScope, serverId);
-  const reachabilityRevision = useMachineReachabilityRevision();
-  const presenceNowMs = useMachinePresenceNowMs(allMachines);
+  const { statesByMachine } = useYourHomeActivity(serverId);
+  const allMachines = useActiveMachineFacts();
   // A replaced identity (the same computer before a reinstall) is not a machine to show or count.
   const machines = React.useMemo(
     () => allMachines.filter((machine) => !isMachineReplaced(machine)),
     [allMachines],
   );
+  const machineIds = React.useMemo(() => machines.map(machine => machine.id), [machines]);
+  const presence = useMachinePresenceSummaries(serverId, machineIds);
   const names = React.useMemo(
     () => resolveMachineDisplayNames(machines),
     [machines],
   );
   const thisComputerId = useThisComputerMachineId();
+  // A machine heartbeat republishes the facts list; the model keeps its identity while it reads the same.
+  const published = React.useRef<YourHomeModel | undefined>(undefined);
   return React.useMemo(() => {
-    const sessions = buildYourHomeSessionStates({
-      source,
-      nowMs,
-      serverId,
-      state: storage.getState() as SessionMachineTargetState,
-    });
-    return buildYourHomeModel(
-      machines.map((machine) => {
-        const reachability = resolveMachineReachability(accountScope, machine, presenceNowMs);
+    published.current = retainDeep(published.current, buildYourHomeModel(
+      machines.map((machine, index) => {
+        const reachability = presence[index]?.reachability ?? 'unknown';
         const online = reachability === 'unknown' ? null : reachability === 'reachable';
         return {
           id: machine.id,
           name: names.get(machine.id) ?? machine.id,
           online,
-          lastSeenAt: online === false ? (machine.activeAt ?? null) : null,
+          lastSeenAt: online === false ? (presence[index]?.lastSeenAt ?? null) : null,
           isThisComputer: machine.id === thisComputerId,
-          sessions: sessions.get(machine.id) ?? NO_SESSIONS,
+          sessions: statesByMachine[machine.id] ?? NO_SESSIONS,
         };
       }),
-    );
-  }, [machines, names, nowMs, serverId, source, thisComputerId, accountScope, presenceNowMs, reachabilityRevision]);
+    ));
+    return published.current;
+  }, [machines, names, statesByMachine, thisComputerId, presence]);
 }

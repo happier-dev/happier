@@ -3,6 +3,8 @@ import { EMPTY_WORKFLOW_ATTENTION_SOURCE } from '@/hooks/inbox/useWorkflowAttent
 import { ApprovalRequestV2Schema} from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
+import { createAccountNoticeInvestigation } from '@/hooks/inbox/accountNoticeInvestigation';
+import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 
 /** A real admitted approval for presentation fixtures; grouping never fabricates admission. */
 export function createInboxApprovalArtifactFixture(input: Readonly<{
@@ -24,8 +26,10 @@ export function createInboxApprovalArtifactFixture(input: Readonly<{
 
 /** Complete attention inputs shared by Inbox presentation fixtures. */
 export function createInboxAttentionFixture(serverId: string | null = null): Pick<InboxModel, 'workflowAttention' | 'automationAttention' | 'automationAttentionItems'
-    | 'items' | 'sessionCandidates' | 'accountNotices' | 'openAccountNotices' | 'dismissAccountNotice' | 'markItemOpened' | 'discussionAttention' | 'executionRunAttention' | 'artifactSource' | 'machineReachabilityEntries' | 'machineDeletionEntries'> {
+    | 'items' | 'sessionCandidates' | 'accountNotices' | 'openAccountNotices' | 'dismissAccountNotice' | 'markItemOpened' | 'discussionAttention' | 'executionRunAttention' | 'artifactSource' | 'machineReachabilityEntries' | 'machineDeletionEntries' | 'noticeInvestigation'> {
     return {
+        noticeInvestigation: createAccountNoticeInvestigation({ scope: null, isCurrent: () => true,
+            execute: createFrontDoorActionExecute() }),
         artifactSource: { scope: null, phase: 'current', retry: () => undefined },
         workflowAttention: { ...EMPTY_WORKFLOW_ATTENTION_SOURCE, serverId, runIds: [] },
         automationAttention: { ...EMPTY_WORKFLOW_ATTENTION_SOURCE, serverId, runIds: [] },

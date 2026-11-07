@@ -15,7 +15,8 @@ import { t } from '@/text';
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
 import { openExternalSessionsResumeIdPickerModal } from '@/components/sessions/external/browse/openExternalSessionsResumeIdPickerModal';
 import { canBrowseExternalSessions, resolveExternalSessionBrowseLockedSource } from '@/components/sessions/external/browse/resolveExternalSessionBrowseLockedSourceOption';
-import type { PluginProjectionV2, SessionAuthoringExecutionTargetV2 } from '@happier-dev/protocol';
+import type { PluginProjectionV2} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import type { SessionAuthoringExecutionTargetV2 } from '@happier-dev/protocol/sessions/authoring/fieldCatalog';
 import type { RunnerArtifactTarget } from '@happier-dev/protocol/ephemeralRunner/runnerArtifact';
 import type { ServerScopedMachinePoolGroup } from '@/components/sessions/new/components/machineSelection/useMachineSelectionListModel';
 import { useMachinePoolSelection } from '@/components/sessions/new/hooks/machines/useMachinePoolSelection';
@@ -26,9 +27,12 @@ import {
     describeTemporaryComputerUnavailability,
 } from '@/components/sessions/new/hooks/temporaryComputerCopy';
 import { buildTemporaryComputerSelectionRows } from '@/components/sessions/new/components/machineSelection/buildTemporaryComputerSelectionRows';
-import { managedMachineSelectionOptionId, type ManagedMachineSelectionDraft, type ManagedMachineSelectionOffer } from '@/components/sessions/new/components/machineSelection/managedMachineSelection';
+import { managedMachineSelectionOptionId, type ManagedMachineSelectionDraft, type ManagedMachineSelectionOffer, type ManagedMachineUse } from '@/components/sessions/new/components/machineSelection/managedMachineSelection';
 import { SELECTION_LIST_LARGE_POPOVER_SIZE } from '@/components/ui/selectionList';
 import { useNewSessionPlacementSessions } from './useNewSessionPlacementSessions';
+import { createNewSessionPlacementCandidatesSection } from '@/components/sessions/new/newSessionPlacementSelectionStep';
+import type { SessionPlacementCandidateRow } from '@/components/sessions/new/serverStartDraftCandidateSelection';
+import type { PluginUiSessionPlacementCandidateV1 } from '@happier-dev/protocol/plugins/ui';
 import { useNewSessionMachinePickerInventory, type NewSessionMachinePickerInventory } from './useNewSessionMachinePickerInventory';
 
 type MachineSelectionContentProps = NewSessionMachineSelectionContentProps<Machine>;
@@ -59,7 +63,7 @@ function NewSessionPopoverPathSelectionContent(params: React.ComponentProps<type
     return <NewSessionPathSelectionContent {...content} recentPaths={readRecentPaths?.() ?? content.recentPaths} />;
 }
 
-const LARGE_PICKER_LAYOUT: Pick<
+export const LARGE_PICKER_LAYOUT: Pick<
     AgentInputContentPopoverConfig,
     'maxHeightCap' | 'maxWidthCap' | 'keyboardShouldPersistTaps' | 'edgeFades' | 'edgeIndicators' | 'initialVisibility' | 'phonePresentation'
 > = {
@@ -99,6 +103,11 @@ export function useNewSessionInputPopovers(params: Readonly<{
     noFolderSelected: boolean;
     /** Chooses no folder; absent where no-folder is not offered (Temporary computer). */
     onSelectNoFolder?: () => void;
+    /** A seeded draft's unresolved saved projects: the folder picker lists them first. */
+    placementCandidates?: Readonly<{
+        rows: readonly SessionPlacementCandidateRow[];
+        onSelect: (candidate: PluginUiSessionPlacementCandidateV1) => void;
+    }>;
     recentPaths: ReadonlyArray<string>;
     readRecentPaths?: () => ReadonlyArray<string>;
     usePathPickerSearch: boolean;
@@ -126,7 +135,9 @@ export function useNewSessionInputPopovers(params: Readonly<{
     executionTarget: SessionAuthoringExecutionTargetV2 | null;
     managedMachines?: readonly ManagedMachineSelectionOffer[];
     selectedManagedMachine?: ManagedMachineSelectionDraft | null;
-    onSelectManagedMachine?: (draft: ManagedMachineSelectionDraft) => void;
+    onSelectManagedMachine?: ManagedMachineUse;
+    /** Whether the composer holds a drafted prompt; a getter, so typing never re-renders the picker. */
+    managedMachineStartsSession?: () => boolean;
     temporaryComputerAvailability: TemporaryComputerAvailability;
     /**
      * Exact launch-readiness block for the current authoring selection, or null.
@@ -207,6 +218,7 @@ export function useNewSessionInputPopovers(params: Readonly<{
         managedMachines: params.managedMachines,
         selectedManagedMachine: params.selectedManagedMachine,
         onSelectManagedMachine: params.onSelectManagedMachine,
+        managedMachineStartsSession: params.managedMachineStartsSession,
     });
 
     const pathPopover = React.useMemo<AgentInputContentPopoverConfig>(() => ({
@@ -234,6 +246,16 @@ export function useNewSessionInputPopovers(params: Readonly<{
                 favoriteDirectories={params.favoriteDirectories}
                 onChangeFavoriteDirectories={params.setFavoriteDirectories}
                 focusInputOnSelect={false}
+                leadingSections={params.placementCandidates && params.placementCandidates.rows.length > 0 ? [
+                    createNewSessionPlacementCandidatesSection({
+                        rows: params.placementCandidates.rows,
+                        title: t('newSession.pathPicker.suggestedTitle'),
+                        onSelect: (candidate) => {
+                            params.placementCandidates?.onSelect(candidate);
+                            requestClose();
+                        },
+                    }),
+                ] : undefined}
                 noFolderOption={params.onSelectNoFolder ? {
                     selected: params.noFolderSelected,
                     onSelect: () => {
@@ -259,6 +281,7 @@ export function useNewSessionInputPopovers(params: Readonly<{
         params.favoriteDirectories,
         params.noFolderSelected,
         params.onSelectNoFolder,
+        params.placementCandidates,
         params.pathPickerSearchQuery,
         params.recentPaths,
         params.readRecentPaths,
@@ -340,9 +363,10 @@ export function useNewSessionInputPopovers(params: Readonly<{
                     temporaryComputers={temporaryComputers}
                     managedMachines={renderParams.managedMachines}
                     selectedManagedMachine={renderParams.selectedManagedMachine}
-                    onSelectManagedMachine={(draft) => {
+                    managedMachineStartsSession={renderParams.managedMachineStartsSession}
+                    onSelectManagedMachine={(draft, options) => {
                         renderParams.machinePoolSelection.cancelPendingSelection();
-                        renderParams.onSelectManagedMachine?.(draft);
+                        renderParams.onSelectManagedMachine?.(draft, options);
                         requestClose();
                     }}
                     onOpenManagedPresets={renderParams.onOpenMachinePresets ? () => {

@@ -7,7 +7,7 @@ export const sessionLifecycleProjectionFields = [
     'serverId', 'seq', 'updatedAt', 'meaningfulActivityAt', 'lastTurnCompletedAt',
     'active', 'activeAt', 'thinking', 'thinkingAt',
     'latestTurnId', 'latestTurnStatus', 'latestTurnStatusObservedAt',
-    'pendingVersion', 'pendingCount', 'pendingBlockedCount', 'pendingActivationAuthorization',
+    'pendingVersion', 'pendingCount', 'pendingBlockedCount', 'pendingActivationAuthorization', 'pendingActivationFailureDetails',
     'latestReadyEventSeq', 'latestReadyEventAt',
     'runtimeActivityState', 'runtimeActivityActiveCount', 'runtimeActivityObservedAt', 'runtimeActivityRevision',
 ] as const satisfies readonly (keyof Session)[];
@@ -123,7 +123,8 @@ export function reconcileSessionLifecycleProjection<T extends SessionLifecyclePr
     if (isOlder(incoming.pendingVersion, previous.pendingVersion)) {
         applyPatch({ pendingVersion: previous.pendingVersion, pendingCount: previous.pendingCount,
             pendingBlockedCount: previous.pendingBlockedCount,
-            pendingActivationAuthorization: previous.pendingActivationAuthorization });
+            pendingActivationAuthorization: previous.pendingActivationAuthorization,
+            pendingActivationFailureDetails: previous.pendingActivationFailureDetails });
     }
     const previousAuthorization = previous.pendingActivationAuthorization;
     const incomingAuthorization = next.pendingActivationAuthorization;
@@ -135,7 +136,8 @@ export function reconcileSessionLifecycleProjection<T extends SessionLifecyclePr
             || areServerProfileIdentifiersEquivalent(previous.serverId, incoming.serverId))
         && incomingAuthorization.requestedAt === previousAuthorization.requestedAt
         && incomingAuthorization.requestId === previousAuthorization.requestId) {
-        applyPatch({ pendingActivationAuthorization: previousAuthorization });
+        applyPatch({ pendingActivationAuthorization: previousAuthorization,
+            pendingActivationFailureDetails: previous.pendingActivationFailureDetails });
     }
     const runtimeActivity = resolveMergedSessionRuntimeActivityProjectionFields(previous, incoming);
     if (runtimeActivity) applyPatch(runtimeActivity);

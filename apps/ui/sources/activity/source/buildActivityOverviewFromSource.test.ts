@@ -15,14 +15,20 @@ import { ACTIVITY_PERSONAL_SESSION_QUERY } from './activityPersonalSessionMember
 import {
     buildActivityOverviewSummaryFromSource,
     buildActivityOverviewFromSource,
+    forEachActivitySummaryCandidate,
     readActivitySourceAttentionMessages,
 } from './buildActivityOverviewFromSource';
 import type { ActivityAttentionSource } from './activityAttentionSourceTypes';
 import { buildMachineWorkingCounts, machineWorkingKey } from '@/components/machines/work/machineWorkingCounts';
 import { readActivitySessionRulePolicies } from './readActivitySessionRulePolicies';
 import { projectSessionFollowFactsV1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
+import { projectViewerReadStateV1 } from '@happier-dev/protocol/sessions/personal/readState';
 import { buildInboxSessionPresentation } from '@/activity/presentation/buildInboxSessionPresentation';
 import { buildSessionOrganizationSessionKey } from '@/sync/domains/session/organization';
+import { sessionFollowSourceRuntimeStateLabel } from '@/components/sessions/follow/sessionFollowSourcePresentation';
+import { buildInboxSessionContextLine } from '@/components/inbox/workGroups/inboxSessionContextLine';
+import { projectSessionDisplayV1} from '@happier-dev/protocol/sessions';
+import { SessionOwnerMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 
 function pendingAgentState(kind: 'permission' | 'user_action', createdAt = 950) {
     return {
@@ -37,6 +43,55 @@ function pendingAgentState(kind: 'permission' | 'user_action', createdAt = 950) 
         },
     };
 }
+
+it.each(['voice_conversation', 'voice_carrier', 'voice_conversation_retired', 'other-hidden-service'])(
+    'keeps exact hidden Voice custody from a cold compact row (%s)', key => {
+        const session = createSessionFixture({ id: 'cold-custody', serverId: 'server-a', active: true,
+            presence: 'online', agentState: pendingAgentState('permission'),
+            metadata: { path: '/voice', host: 'host', systemSessionV1: { v: 1, key, hidden: true } } });
+        const source = createSource({ sessions: [session] });
+        const overview = buildActivityOverviewFromSource({ source: { ...source, sessionsById: {} }, nowMs: 1_000,
+            directActionsEnabled: true });
+        expect(overview.counts.permissionRequired).toBe(key === 'other-hidden-service' ? 0 : 1);
+    },
+);
+
+it('drops stale full Voice custody after a metadata-only compact key change', () => {
+    const session = createSessionFixture({ id: 'stale-custody', serverId: 'server-a', active: true,
+        metadataVersion: 1, presence: 'online', agentState: pendingAgentState('permission'),
+        metadata: { path: '/voice', host: 'host', systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true } } });
+    const source = createSource({ sessions: [session] });
+    const next = buildSessionListRenderableFromSession({ ...session, metadataVersion: 2,
+        metadata: { ...session.metadata!, systemSessionV1: { v: 1, key: 'other-hidden-service', hidden: true } } },
+        source.sessionListRowsByServerId?.['server-a']?.[session.id]);
+    const overview = buildActivityOverviewFromSource({ source: { ...source,
+        sessionListRowsByServerId: { 'server-a': { [session.id]: next } } }, nowMs: 1_000, directActionsEnabled: true });
+    expect(overview.counts.permissionRequired).toBe(0);
+});
+
+it('carries the real owner display custody fact into a cold layout-1 Activity row and clears it on a key change', () => {
+    const session = { ...createSessionFixture({ id: 'owner-display-custody', serverId: 'server-a', active: true,
+        metadataLayoutVersion: 1, metadataVersion: 1, metadata: null, ownerMetadataView: null,
+        access: createSessionAccessFixture('owner'), pendingPermissionRequestCount: 1, pendingUserActionRequestCount: 0 }),
+        metadataUndecided: true as const };
+    const source = createSource({ sessions: [session] });
+    const display = (key: string) => projectSessionDisplayV1({ sharedMetadata: { v: 1 },
+        ownerMetadata: SessionOwnerMetadataV1Schema.parse({ v: 1,
+            workspace: { path: '/voice', host: 'host' }, system: { systemSessionV1: { v: 1, key, hidden: true } } }) });
+    const voice = buildSessionListRenderableFromSession(session, undefined, undefined, undefined, display('voice_conversation_retired'));
+    const rowSource = (row: typeof voice) => ({ ...source, sessionsById: {},
+        sessionListRowsByServerId: { 'server-a': { [session.id]: row } } });
+    const overview = (row: typeof voice) => buildActivityOverviewFromSource({ source: rowSource(row), nowMs: 1_000, directActionsEnabled: true });
+    const summary = (row: typeof voice) => buildActivityOverviewSummaryFromSource({ source: rowSource(row), nowMs: 1_000 });
+    expect(voice.metadata?.systemSessionKind).toBe('voice_custody');
+    expect(overview(voice).counts.permissionRequired).toBe(1);
+    expect(summary(voice).needsYouCount).toBe(1);
+    const other = buildSessionListRenderableFromSession({ ...session, metadataVersion: 2 }, voice,
+        undefined, undefined, display('other-hidden-service'));
+    expect(other.metadata?.systemSessionKind).toBeUndefined();
+    expect(overview(other).counts.permissionRequired).toBe(0);
+    expect(summary(other).needsYouCount).toBe(0);
+});
 
 function createSource(params: Readonly<{
     sessions: ReadonlyArray<ReturnType<typeof createSessionFixture>>;
@@ -126,6 +181,7 @@ function personalQueryState(
         attentionHasNext: false,
         phase: 'ready',
         freshnessAt: 1,
+        homeObservation: { phase: overrides.phase ?? 'ready', lastSuccessAt: overrides.freshnessAt === undefined ? 1 : overrides.freshnessAt },
         failureReason: null,
         failureCode: null,
         appliedSourceKind: 'query',
@@ -134,6 +190,101 @@ function personalQueryState(
 }
 
 describe('buildActivityOverviewFromSource', () => {
+    it('reads the authorized rule query corpus without making it authoritative personal membership', () => {
+        const session = createSessionFixture({ id: 'rule-query-source', serverId: 'server-a', updatedAt: 950,
+            access: createSessionAccessFixture('edit'), viewer: createSessionViewerFixture(),
+            agentState: pendingAgentState('user_action') });
+        const source: ActivityAttentionSource = { ...createSource({ sessions: [session] }), sessionsById: {},
+            ordinarySessionListMembershipByServerId: {}, sessionListIndexByServerId: {},
+            personalSessionListMembershipByServerId: { 'server-a': [] },
+            personalSessionListQueryStatesByServerId: { 'server-a': personalQueryState('server-a') },
+            ruleSessionMembershipByServerId: { 'server-a': [session.id] },
+            personalFollowRulesByServerId: { 'server-a': { status: 'ready', accountId: 'alice', rules: [{
+                ruleId: 'all-accessible', receiver: { kind: 'account' }, version: 1,
+                definition: { v: 1, enabled: true, policy: { preset: 'important' },
+                    filter: normalizeSessionListFilterV1({ scope: 'all_accessible', homeServerIds: ['server-a'],
+                        startedBy: ['you', 'triggers', 'agents'] }) },
+            }] } },
+        };
+        expect(readActivitySessionRulePolicies(source, { serverId: 'server-a', sessionId: session.id }, session, 1_000))
+            .toEqual([{ preset: 'important' }]);
+        expect(buildActivityOverviewFromSource({ source, nowMs: 1_000 }).candidates.map(candidate => candidate.sessionId))
+            .toEqual([session.id]);
+        expect(source.personalSessionListMembershipByServerId).toEqual({ 'server-a': [] });
+        const unavailable = { ...source, personalFollowRulesByServerId: { 'server-a': { status: 'unavailable' as const, reason: 'scope-retired' } } };
+        expect(buildActivityOverviewFromSource({ source: unavailable, nowMs: 1_000 }).candidates).toEqual([]);
+    });
+
+    it('represents a rule-only foreign source update in Inbox without an explicit Follow or prior read cursor', () => {
+        const viewer = createSessionViewerFixture({
+            readState: projectViewerReadStateV1({ tracked: false, row: null, visibleSessionSeq: 2 }),
+            // Home projects each exact rule's inception boundary without writing a viewer cursor.
+            ruleReadStates: [{ ruleId: 'all-accessible', ruleVersion: 1,
+                readState: projectViewerReadStateV1({ tracked: true,
+                    row: { lastViewedSessionSeq: 1, unreadSince: 950 }, visibleSessionSeq: 2 }) },
+                // A different older rule must not move the matching rule's boundary backwards.
+                { ruleId: 'unrelated-old-rule', ruleVersion: 1,
+                    readState: { state: 'tracking', lastViewedSessionSeq: 0, unreadSince: 1 } }],
+            relevance: { relevant: true, reasons: ['shared_directly_with_me'] },
+        });
+        const session = createSessionFixture({ id: 'foreign-update', serverId: 'server-a', ownerAccountId: 'bob',
+            seq: 2, updatedAt: 950, lastTurnCompletedAt: 950, latestTurnStatus: 'completed', latestReadyEventSeq: 2,
+            access: createSessionAccessFixture('edit'), viewer });
+        const inbox = (value: typeof session, enabled = true, version = 1) => {
+            const source = { ...createSource({ sessions: [value] }), sessionsById: {},
+                personalFollowRulesByServerId: { 'server-a': { status: 'ready' as const, accountId: 'alice', rules: [{
+                    ruleId: 'all-accessible', receiver: { kind: 'account' as const }, version,
+                    definition: { v: 1 as const, enabled, policy: { preset: 'everything' as const },
+                        filter: normalizeSessionListFilterV1({ scope: 'all_accessible', homeServerIds: ['server-a'],
+                            startedBy: ['you', 'triggers', 'agents'] }) },
+                }] } },
+            };
+            expect(readActivitySessionRulePolicies(source, { serverId: 'server-a', sessionId: session.id }, value, 1_000))
+                .toEqual(enabled ? [{ preset: 'everything' }] : []);
+            return buildInboxSessionPresentation({ overview: buildActivityOverviewFromSource({ source, nowMs: 1_000 }) });
+        };
+        // A real retained private cursor is the discriminating neighbor. The rule and source facts are identical.
+        const retained = { ...session, viewer: { ...viewer, readState: projectViewerReadStateV1({ tracked: true,
+            row: { lastViewedSessionSeq: 1, unreadSince: 950 }, visibleSessionSeq: 2 }) } };
+        expect(inbox(retained).readySessions.map(candidate => candidate.sessionId)).toEqual([session.id]);
+        expect(inbox(session).readySessions.map(candidate => candidate.sessionId)).toEqual([session.id]);
+        expect(inbox({ ...session, seq: 1, latestReadyEventSeq: 1 }).readySessions).toEqual([]);
+        expect(inbox({ ...session, seq: 1, latestReadyEventSeq: 1, viewer: { ...viewer,
+            readState: { state: 'tracking', lastViewedSessionSeq: 0, unreadSince: 1 } } }).readySessions).toEqual([]);
+        expect(inbox(session, false).readySessions).toEqual([]);
+        expect(inbox(session, true, 2).readySessions).toEqual([]);
+        const caughtUp = projectViewerReadStateV1({ tracked: true,
+            row: { lastViewedSessionSeq: 2, unreadSince: null }, visibleSessionSeq: 2 });
+        expect(inbox({ ...session, viewer: { ...viewer, readState: caughtUp,
+            ruleReadStates: [{ ruleId: 'all-accessible', ruleVersion: 1, readState: caughtUp }] } }).readySessions).toEqual([]);
+    });
+
+    it('shows known receiver-rule pending state only in its owning Account and Home, then clears it after evaluation', () => {
+        const session = createSessionFixture({ id: 'pending-source', serverId: 'server-a', updatedAt: 950 });
+        const source: ActivityAttentionSource = { ...createSource({ sessions: [session] }),
+            audienceScopes: new Map([['server-a', { serverId: 'server-a', accountId: 'alice' }]]),
+            receiverRuleEvaluationByServerId: { 'server-a': { accountId: 'alice',
+                pendingBySourceSessionId: { [session.id]: 'waiting_for_authorized_device' } } },
+        };
+        const project = (value: ActivityAttentionSource) => buildActivityOverviewFromSource({ source: value, nowMs: 1_000 }).candidates[0]!;
+        const waiting = project(source);
+        expect(waiting.followRuleEvaluationState).toBe('waiting_for_authorized_device');
+        expect(buildInboxSessionContextLine(waiting)).toContain(sessionFollowSourceRuntimeStateLabel('waiting_for_authorized_device'));
+        const authorized = project({ ...source, receiverRuleEvaluationByServerId: { 'server-a': { accountId: 'alice',
+            pendingBySourceSessionId: { [session.id]: 'catch_up_pending' } } } });
+        expect(authorized.followRuleEvaluationState).toBe('catch_up_pending');
+        expect(buildInboxSessionContextLine(authorized)).toContain(sessionFollowSourceRuntimeStateLabel('catch_up_pending'));
+        const excludedSources: readonly ActivityAttentionSource[] = [
+            { ...source, audienceScopes: new Map([['server-a', { serverId: 'server-a', accountId: 'bob' }]]) },
+            { ...source, audienceScopes: new Map([['server-a', { serverId: 'server-b', accountId: 'alice' }]]) },
+            { ...source, audienceScopes: undefined },
+            { ...source, receiverRuleEvaluationByServerId: { 'server-b': source.receiverRuleEvaluationByServerId!['server-a']! } },
+            { ...source, receiverRuleEvaluationByServerId: { 'server-a': { accountId: 'alice', pendingBySourceSessionId: {} } } },
+        ];
+        for (const value of excludedSources) expect(project(value).followRuleEvaluationState).toBeUndefined();
+        expect(project(source).hasAttention).toBe(project({ ...source, receiverRuleEvaluationByServerId: undefined }).hasAttention);
+    });
+
     it('evaluates personal relationship defaults without enrolling a Follow or guessing unknown relationships', () => {
         const base = createSessionFixture({ id: 'default-only', serverId: 'server-a', active: true, activeAt: 950, updatedAt: 950,
             access: createSessionAccessFixture('edit'), agentState: pendingAgentState('user_action') });
@@ -177,7 +328,7 @@ describe('buildActivityOverviewFromSource', () => {
         }
     });
     it('refuses stored list-only attention in an Activity rule even when UI attention is known', () => {
-        const session = createSessionFixture({ id: 'unsupported', serverId: 'server-a',
+        const session = createSessionFixture({ id: 'unsupported', serverId: 'server-a', ownerAccountId: 'alice', origin: { kind: 'none' },
             viewer: createSessionViewerFixture({ attention: { needsAttention: true, reasons: ['user_action_required'],
                 primary: 'user_action_required', presentation: 'full' } }) });
         const source = { ...createSource({ sessions: [session] }), personalFollowRulesByServerId: {
@@ -189,6 +340,20 @@ describe('buildActivityOverviewFromSource', () => {
             }] },
         } };
         expect(readActivitySessionRulePolicies(source, { serverId: 'server-a', sessionId: session.id }, session, 1_000)).toEqual([]);
+    });
+    it('evaluates an exclusion-only status rule with the canonical current Session status', () => {
+        const session = createSessionFixture({ id: 'status-exclusion', serverId: 'server-a', ownerAccountId: 'alice',
+            origin: { kind: 'none' }, viewer: createSessionViewerFixture() });
+        const source = { ...createSource({ sessions: [session] }), personalFollowRulesByServerId: {
+            'server-a': { status: 'ready' as const, accountId: 'alice', rules: [{
+                ruleId: 'status', receiver: { kind: 'account' as const }, version: 0,
+                definition: { v: 1 as const, enabled: true, policy: { preset: 'important' as const },
+                    filter: normalizeSessionListFilterV1({ scope: 'all_accessible', homeServerIds: ['server-a'],
+                        startedBy: ['you', 'triggers', 'agents'], excludedStatuses: ['thinking'] }) },
+            }] },
+        } };
+        expect(readActivitySessionRulePolicies(source, { serverId: 'server-a', sessionId: session.id }, session, 1_000))
+            .toEqual([{ preset: 'important' }]);
     });
     it('uses protected participation reasons for an involving-me rule without treating a mention or Follow as participation', () => {
         const session = createSessionFixture({ id: 'participant', serverId: 'server-a', active: true, activeAt: 950, updatedAt: 950,
@@ -209,6 +374,7 @@ describe('buildActivityOverviewFromSource', () => {
     });
     it('shares a live rule-only request between Inbox and badge despite complete personal membership', () => {
         const session = createSessionFixture({ id: 'rule-only', serverId: 'server-a', active: true, activeAt: 950, updatedAt: 950,
+            projectKey: 'payments',
             access: createSessionAccessFixture('edit'), viewer: createSessionViewerFixture(),
             metadata: { ...createSessionFixture().metadata, path: '/Users/tester/project', host: 'tester.local', projectId: 'payments' },
             agentState: pendingAgentState('user_action'),
@@ -231,7 +397,7 @@ describe('buildActivityOverviewFromSource', () => {
             .toMatchObject({ inboxContentCount: 1, totalAttentionCount: 1, needsYouCount: 1 });
         for (const unavailable of [
             { ...session, encryptedContentAvailability: 'encrypted_content_unavailable' as const },
-            { ...session, metadata: { ...session.metadata, path: '/Users/tester/project', host: 'tester.local', projectId: 'design' } },
+            { ...session, projectKey: 'design', metadata: { ...session.metadata, path: '/Users/tester/project', host: 'tester.local', projectId: 'design' } },
             { ...session, viewer: createSessionViewerFixture({ follow: { follows: false, notificationLevel: 'none' } }) },
         ]) {
             const excluded = { ...source, sessionsById: { [session.id]: unavailable }, sessionListRowsByServerId: {} };
@@ -1232,7 +1398,8 @@ describe('buildActivityOverviewFromSource', () => {
             attentionState: 'permission_required',
             route: `/session/${canonicalSession.id}?serverId=server-a`,
         });
-        expect(buildInboxSessionPresentation({ overview: pendingOverview }).sessionsNeedingAttention[0]?.pendingPermissions).toEqual([]);
+        expect(buildInboxSessionPresentation({ overview: pendingOverview }).sessionsNeedingAttention[0]?.pendingPermissions)
+            .toEqual([]);
 
         const clearedOverview = buildActivityOverviewFromSource({
             source: {
@@ -1563,6 +1730,61 @@ describe('buildActivityOverviewFromSource', () => {
         const second = buildActivityOverviewFromSource({ source, nowMs: 2_000 });
 
         expect(buildStableActivityOverviewFingerprint(first)).toBe(buildStableActivityOverviewFingerprint(second));
+    });
+
+    it.each(['cold', 'mixed'] as const)('reuses admitted list facts across idle Activity passes and replaces only the changed row (%s)', (kind) => {
+        const sessions = Array.from({ length: 1_001 }, (_, index) => createSessionFixture({
+            id: `cold-${index}`, serverId: 'server-a',
+            pendingPermissionRequestCount: 1, pendingUserActionRequestCount: 0,
+            agentState: pendingAgentState('permission'),
+        }));
+        const baseline = createSource({ sessions });
+        const source = kind === 'cold' ? { ...baseline, sessionsById: {} } : { ...baseline,
+            sessionListRowsByServerId: { ...baseline.sessionListRowsByServerId,
+                'server-a': Object.fromEntries(Object.values(baseline.sessionListRowsByServerId['server-a'])
+                    .map(row => [row.id, { ...row, seq: row.seq + 1 }])),
+            },
+        };
+        const first = buildActivityOverviewFromSource({ source, nowMs: 1_000 });
+        const second = buildActivityOverviewFromSource({ source, nowMs: 2_000 });
+        expect(first.candidates).toHaveLength(sessions.length);
+        const firstById = new Map(first.candidates.map(candidate => [candidate.sessionId, candidate.session]));
+        const rebuilt = second.candidates.filter(candidate => candidate.session !== firstById.get(candidate.sessionId));
+        expect(rebuilt).toHaveLength(0);
+
+        const rows = source.sessionListRowsByServerId['server-a'];
+        const changed = { ...rows['cold-500']!, manager: { sessionId: 'new-lead' } };
+        const next = buildActivityOverviewFromSource({ source: { ...source,
+            sessionListRowsByServerId: { ...source.sessionListRowsByServerId,
+                'server-a': { ...rows, [changed.id]: changed } },
+        }, nowMs: 2_000 });
+        expect(next.candidates.filter(candidate => candidate.session !== firstById.get(candidate.sessionId))
+            .map(candidate => candidate.sessionId)).toEqual(['cold-500']);
+        expect(next.candidates.find(candidate => candidate.sessionId === changed.id)?.session.manager)
+            .toEqual({ sessionId: 'new-lead' });
+    });
+
+    it('keeps mixed lifecycle, held requests and private owner facts in summary and detail', () => {
+        const base = createSessionFixture({ id: 'mixed-summary', serverId: 'server-a', active: true, activeAt: 1_000,
+            updatedAt: 950, metadataVersion: 3, agentStateVersion: 3,
+            metadata: { path: '/current', host: 'machine', work: { statusReason: 'Held owner explanation' } },
+            agentState: pendingAgentState('permission') });
+        const initial = createSource({ sessions: [base] });
+        const row = buildSessionListRenderableFromSession({ ...base, seq: base.seq + 1,
+            agentStateVersion: 2, metadataVersion: 2, active: false, activeAt: 100, updatedAt: 100,
+            metadata: { path: '/older', host: 'older' } });
+        const source = { ...initial, sessionListRowsByServerId: { 'server-a': { [row.id]: row } } };
+        const detail = buildActivityOverviewFromSource({ source, nowMs: 1_000 });
+        expect(detail.candidates[0]?.reasons.hasPendingPermissionRequests).toBe(true);
+        expect(buildActivityOverviewSummaryFromSource({ source, nowMs: 1_000 }).needsYouCount).toBe(1);
+        let visited = 0;
+        forEachActivitySummaryCandidate({ source, nowMs: 1_000 }, ({ candidate }) => {
+            visited++;
+            expect(candidate.awareness.statusReason).toBe('Held owner explanation');
+            expect(buildInboxSessionPresentation({ overview: { ...detail, candidates: [candidate] } })
+                .sessionsNeedingAttention[0]?.pendingPermissions[0]?.id).toBe('request_1');
+        });
+        expect(visited).toBe(1);
     });
 
     it('projects the same canonical failed-query freshness as the Session row', () => {

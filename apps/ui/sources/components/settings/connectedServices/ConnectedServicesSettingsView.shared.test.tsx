@@ -70,7 +70,7 @@ it.each([
     const { router } = await import('expo-router');
     const screen = await renderScreen(<DestinationInstanceContext.Provider value={{ tabId: 'services-overview',
         ref: { kind: 'settings', params: { view: 'all' } }, pathname: '/settings/connected-services',
-        focused: true, visible: true, navigation: router,
+        focused: true, isFocused: () => true, visible: true, navigation: router,
     }}><InjectedAuthProvider credentials={{ token: credentials!.token }}>
         <ConnectedServicesSettingsView />
     </InjectedAuthProvider></DestinationInstanceContext.Provider>);
