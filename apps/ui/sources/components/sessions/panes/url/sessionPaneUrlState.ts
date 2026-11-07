@@ -1,4 +1,4 @@
-import { isSafeWorkspaceRelativePath } from '@/utils/path/isSafeWorkspaceRelativePath';
+import { isSessionFilePath } from '@/utils/path/isSessionFilePath';
 import { SESSION_DETAILS_TERMINAL_TAB_KEY } from '@/components/sessions/terminal/embeddedTerminalDocking';
 import {
     createSessionCommitDetailsTab,
@@ -50,7 +50,7 @@ export function parseSessionPaneUrlState(params: Readonly<Record<string, unknown
     const shaRaw = readSingleStringParam(params, 'sha')?.trim() ?? '';
 
     let details: SessionPaneUrlDetailsTarget | null = null;
-    if (detailsRaw === 'file' && pathRaw && isSafeWorkspaceRelativePath(pathRaw)) {
+    if (detailsRaw === 'file' && pathRaw && isSessionFilePath(pathRaw)) {
         details = { kind: 'file', path: pathRaw.trim() };
     }
     if (detailsRaw === 'commit' && shaRaw) {
@@ -113,7 +113,7 @@ export function buildActiveDetailsRouteParams(
 
     if (activeTab.kind === 'file') {
         const path = typeof activeTab.resource?.path === 'string' ? activeTab.resource.path.trim() : '';
-        if (!path || !isSafeWorkspaceRelativePath(path)) return {};
+        if (!path || !isSessionFilePath(path)) return {};
         return serializeSessionPaneUrlState({ details: { kind: 'file', path } });
     }
 
@@ -161,7 +161,7 @@ export function deriveSessionPaneUrlStateFromScopeState(scopeState: PaneScopeSta
             const path = (tab.resource as any)?.path;
             if (typeof path === 'string' && path.trim()) {
                 const trimmedPath = path.trim();
-                if (isSafeWorkspaceRelativePath(trimmedPath)) {
+                if (isSessionFilePath(trimmedPath)) {
                     details = { kind: 'file', path: trimmedPath };
                 }
             }
@@ -211,7 +211,7 @@ export function applySessionPaneUrlState(
 
     if (state.details?.kind === 'file') {
         const fullPath = state.details.path.trim();
-        if (!isSafeWorkspaceRelativePath(fullPath)) return;
+        if (!isSessionFilePath(fullPath)) return;
         pane.openDetailsTab(createSessionFileDetailsTab(fullPath));
         return;
     }

@@ -112,6 +112,26 @@ function pushSessionFileDeepLink(
   router.push(href as never);
 }
 
+function useTranscriptMarkdownLinkPress(params: Readonly<{
+  canOpenFiles: boolean;
+  sessionId: string;
+  workspacePath: string | null | undefined;
+  router: SessionFileDeepLinkRouter;
+}>) {
+  const { canOpenFiles, sessionId, workspacePath, router } = params;
+  return React.useCallback((url: string) => {
+    if (!canOpenFiles) return false;
+    const resolved = resolveTranscriptMarkdownFileLink({ url, workspacePath });
+    if (!resolved) return false;
+    pushSessionFileDeepLink(router, {
+      sessionId,
+      filePath: resolved.filePath,
+      ...(resolved.anchor ? { source: 'file' as const, anchor: resolved.anchor } : {}),
+    });
+    return true;
+  }, [canOpenFiles, sessionId, router, workspacePath]);
+}
+
 function useStructuredMessageJumpHandler(
   sessionId: string,
   enabled: boolean,
@@ -649,18 +669,9 @@ function UserTextBlock(props: {
   const agentSwitchingEnabled = props.forkCommon.agentSwitchingEnabled;
   const sessionForkSupportSource = props.forkCommon.sessionForkSupportSource;
   const workspacePath = props.messageDisplayCommon.workspacePath;
-  const handleMarkdownLinkPress = React.useCallback((url: string) => {
-    if (!props.canOpenFiles) return false;
-    const resolved = resolveTranscriptMarkdownFileLink({ url, workspacePath });
-    if (!resolved) return false;
-    const anchor = resolved.anchor ?? null;
-    pushSessionFileDeepLink(router, {
-      sessionId: props.sessionId,
-      filePath: resolved.filePath,
-      ...(anchor ? { source: 'file' as const, anchor } : {}),
-    });
-    return true;
-  }, [props.canOpenFiles, props.sessionId, router, workspacePath]);
+  const handleMarkdownLinkPress = useTranscriptMarkdownLinkPress({
+    canOpenFiles: props.canOpenFiles, sessionId: props.sessionId, router, workspacePath,
+  });
   const seq = resolveTranscriptMessageSeq(props.message);
   const showForkButton = props.canFork && canForkFromMessage({ session: sessionForkSupportSource, messageSeq: seq, replayEnabled: sessionReplayEnabled, agentSwitchingEnabled });
   const forkSemantics = React.useMemo(() => {
@@ -1107,18 +1118,9 @@ function AgentTextBlock(props: {
   const agentSwitchingEnabled = props.forkCommon.agentSwitchingEnabled;
   const sessionForkSupportSource = props.forkCommon.sessionForkSupportSource;
   const workspacePath = props.messageDisplayCommon.workspacePath;
-  const handleMarkdownLinkPress = React.useCallback((url: string) => {
-    if (!props.canOpenFiles) return false;
-    const resolved = resolveTranscriptMarkdownFileLink({ url, workspacePath });
-    if (!resolved) return false;
-    const anchor = resolved.anchor ?? null;
-    pushSessionFileDeepLink(router, {
-      sessionId: props.sessionId,
-      filePath: resolved.filePath,
-      ...(anchor ? { source: 'file' as const, anchor } : {}),
-    });
-    return true;
-  }, [props.canOpenFiles, props.sessionId, router, workspacePath]);
+  const handleMarkdownLinkPress = useTranscriptMarkdownLinkPress({
+    canOpenFiles: props.canOpenFiles, sessionId: props.sessionId, router, workspacePath,
+  });
   const seq = resolveTranscriptMessageSeq(props.message);
   const showForkButton = props.canFork && canForkFromMessage({ session: sessionForkSupportSource, messageSeq: seq, replayEnabled: sessionReplayEnabled, agentSwitchingEnabled });
   const forkSemantics = React.useMemo(() => {

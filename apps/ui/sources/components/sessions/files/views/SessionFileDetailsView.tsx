@@ -52,6 +52,7 @@ import { useSessionFileDownloadAvailability } from '@/components/sessions/files/
 import { useWorkspaceScopeForSession } from '@/sync/domains/session/resolveWorkspaceScopeForSession';
 import { useSessionImagePreview } from '@/components/sessions/files/content/imagePreview/useSessionImagePreview';
 import { extractSelectedDiffLineKeysFromPatch } from '@/scm/scmPatchSelection';
+import { isSafeWorkspaceRelativePath } from '@/utils/path/isSafeWorkspaceRelativePath';
 const loadRichMarkdownEditorPanel = async () =>
     (await import('@/components/ui/markdown/editor/RichMarkdownEditorPanel')).RichMarkdownEditorPanel;
 
@@ -85,6 +86,7 @@ export function SessionFileDetailsView(props: SessionFileDetailsViewProps) {
     const openTarget = useOpenSessionTarget({ sessionId, scopeId: props.scopeId, serverId: reviewScope?.serverId });
     const setDetailsTabState = pane.setDetailsTabState;
     const filePath = props.filePath;
+    const isWorkspaceFile = isSafeWorkspaceRelativePath(filePath);
     const deepLinkAnchor = props.deepLinkAnchor ?? null;
     const tabKey = React.useMemo(() => `file:${filePath}`, [filePath]);
     const isActive = props.isActive ?? presentation === 'screen';
@@ -141,7 +143,7 @@ export function SessionFileDetailsView(props: SessionFileDetailsViewProps) {
     const snapshotSignature = React.useMemo(() => scmSnapshot ? buildScmDiffSnapshotSignature(scmSnapshot) : null, [scmSnapshot]);
 
     const [displayMode, setDisplayMode] = React.useState<FileDisplayMode>(() => (
-        persistedDraft?.isEditingFile || deepLinkAnchor?.source === 'file' ? 'file' : 'diff'
+        !isWorkspaceFile || persistedDraft?.isEditingFile || deepLinkAnchor?.source === 'file' ? 'file' : 'diff'
     ));
     const displayRequestKey = `${props.scopeId}:${filePath}:${deepLinkKey}`;
     const [displayRequest, setDisplayRequest] = React.useState<{ key: string; mode: FileDisplayMode } | null>(null);
@@ -188,7 +190,7 @@ export function SessionFileDetailsView(props: SessionFileDetailsViewProps) {
         fileHasIncludedDelta: fileEntry?.hasIncludedDelta,
         imagePreviewMaxBytes: filesImagePreviewMaxBytes,
         includeDiff: displayMode === 'diff' && (scmSnapshot == null || fileEntry != null),
-        includeFile: displayMode !== 'diff',
+        includeFile: !isWorkspaceFile || displayMode !== 'diff',
         snapshotSignature,
         isActive,
         refreshFingerprint: `${lineSelectionFingerprint ?? 'none'}:${scmSnapshot?.fetchedAt ?? 'none'}`,
@@ -294,7 +296,7 @@ export function SessionFileDetailsView(props: SessionFileDetailsViewProps) {
         && fileContent?.isBinary !== true
         && typeof fileContent?.content === 'string';
     const syntaxHighlighting = useCodeLinesSyntaxHighlighting(filePath);
-    const reviewCommentsEnabled = reviewCommentsFeatureEnabled === true && Boolean(reviewScope);
+    const reviewCommentsEnabled = isWorkspaceFile && reviewCommentsFeatureEnabled === true && Boolean(reviewScope);
     const reviewCommentDrafts = useWorkspaceReviewCommentsDrafts(reviewScope);
     const reviewDraftHandlers = useWorkspaceReviewCommentDraftHandlers(reviewScope);
 
@@ -323,7 +325,7 @@ export function SessionFileDetailsView(props: SessionFileDetailsViewProps) {
         fileHash: fileContent?.isBinary ? null : (fileContent?.contentHash ?? null),
         fileWriteSupported,
         setFileWriteSupported,
-        fileEditorFeatureEnabled: fileEditorFeatureEnabled === true,
+        fileEditorFeatureEnabled: isWorkspaceFile && fileEditorFeatureEnabled === true,
         filesEditorWebMonacoEnabled: filesEditorWebMonacoEnabled === true,
         filesEditorNativeCodeMirrorEnabled: filesEditorNativeCodeMirrorEnabled === true,
         filesEditorAutoSave: filesEditorAutoSave === true,
@@ -480,18 +482,18 @@ export function SessionFileDetailsView(props: SessionFileDetailsViewProps) {
     if (fatalError) {
         return <FileErrorState theme={theme} filePath={filePath} error={error ?? t('common.error')} onRetry={onRefresh} />;
     }
-    const showDownloadAction = downloadActionsAvailable && (previewTooLarge || isBinaryFile);
+    const showDownloadAction = downloadActionsAvailable && (!isWorkspaceFile || previewTooLarge || isBinaryFile);
     const imagePreviewUri = binaryImagePreview.status === 'loaded' ? binaryImagePreview.uri : null;
     const imagePreviewSvgXml = binaryImagePreview.status === 'loaded' ? binaryImagePreview.svgXml : null;
     const fileHeaderRightElement =
         (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 20 }}>
-                <FileBrowserToolbarIconButton testID="file-header-reveal" accessibilityRole="button" accessibilityLabel={t('files.revealInFiles')} onPress={() => openTarget({ kind: 'fileBrowser', revealPath: filePath })}>
+                {isWorkspaceFile ? <FileBrowserToolbarIconButton testID="file-header-reveal" accessibilityRole="button" accessibilityLabel={t('files.revealInFiles')} onPress={() => openTarget({ kind: 'fileBrowser', revealPath: filePath })}>
                     <Icon name="folder" size={16} color={theme.colors.text.secondary} />
-                </FileBrowserToolbarIconButton>
-                <FileBrowserToolbarIconButton testID="file-header-open-changes" accessibilityRole="button" accessibilityLabel={t('files.openChanges')} onPress={() => openTarget({ kind: 'sourceControl' })}>
+                </FileBrowserToolbarIconButton> : null}
+                {isWorkspaceFile ? <FileBrowserToolbarIconButton testID="file-header-open-changes" accessibilityRole="button" accessibilityLabel={t('files.openChanges')} onPress={() => openTarget({ kind: 'sourceControl' })}>
                     <Icon name="git-branch" size={16} color={theme.colors.text.secondary} />
-                </FileBrowserToolbarIconButton>
+                </FileBrowserToolbarIconButton> : null}
                 {showDownloadAction ? (
                     <FileDownloadButton
                         testID="file-header-download"

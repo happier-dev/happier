@@ -10,7 +10,7 @@ import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneSco
 import { serializeSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
 import { useSessionRouteServerScope } from '@/hooks/session/sessionRouteServerScope';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
-import { isSafeWorkspaceRelativePath } from '@/utils/path/isSafeWorkspaceRelativePath';
+import { isSessionFilePath } from '@/utils/path/isSessionFilePath';
 import { SessionInvalidLinkFallback } from '@/components/sessions/shell/SessionInvalidLinkFallback';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import {
@@ -31,7 +31,7 @@ export default function FileScreen() {
     const sessionHydrated = isSessionRouteHydrationAvailable(routeHydrationState);
     const sessionMissingAfterHydration = isSessionRouteHydrationMissing(routeHydrationState);
     const decodedFilePath = decodeSessionFilePathParam(params.path as string);
-    const filePath = isSafeWorkspaceRelativePath(decodedFilePath) ? decodedFilePath.trim() : '';
+    const filePath = isSessionFilePath(decodedFilePath) ? decodedFilePath.trim() : '';
     const isUnsafeFilePath = Boolean(decodedFilePath) && !filePath;
     const deepLinkAnchor = React.useMemo(
         () => parseSessionFileDeepLinkAnchor(params as Record<string, string | string[] | undefined>),

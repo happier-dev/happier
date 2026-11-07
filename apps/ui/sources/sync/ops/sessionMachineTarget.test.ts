@@ -305,6 +305,33 @@ describe('sessionMachineTarget', () => {
             ...input,
             requestPath: '/home/coder/project-sibling/report.md',
         })).toBe('/home/coder/project-sibling/report.md');
+        expect(resolveMachinePathFromSessionBase({
+            ...input,
+            requestPath: '/tmp/output.md',
+        })).toBe('/tmp/output.md');
+        // The daemon resolves dot segments after the workspace root has been mapped.
+        expect(resolveMachinePathFromSessionBase({
+            ...input,
+            requestPath: '/home/coder/project/../artifacts/output.md',
+        })).toBe('C:\\Users\\alice\\project\\..\\artifacts\\output.md');
+        expect(resolveMachinePathFromSessionBase({
+            ...input,
+            requestPath: '../artifacts/output.md',
+        })).toBe('C:\\Users\\alice\\project\\../artifacts/output.md');
+    });
+
+    it('maps Windows parent paths onto a POSIX machine root while preserving outside absolute targets', async () => {
+        const { resolveMachinePathFromSessionBase } = await import('./sessionMachineTarget');
+        const input = { basePath: '/srv/workspace', agentBasePath: 'C:\\Agent\\Workspace' };
+
+        expect(resolveMachinePathFromSessionBase({
+            ...input,
+            requestPath: 'c:/agent/workspace/../artifacts/output.md',
+        })).toBe('/srv/workspace/../artifacts/output.md');
+        expect(resolveMachinePathFromSessionBase({
+            ...input,
+            requestPath: 'D:\\artifacts\\output.md',
+        })).toBe('D:\\artifacts\\output.md');
     });
 
     it('falls back to project key metadata for inactive sessions', async () => {

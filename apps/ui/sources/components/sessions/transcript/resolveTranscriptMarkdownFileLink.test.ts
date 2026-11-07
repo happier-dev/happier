@@ -44,6 +44,16 @@ describe('resolveTranscriptMarkdownFileLink', () => {
         });
     });
 
+    it.each(['README.md', 'index.ts'])('preserves root-file line and column suffixes for %s', (filePath) => {
+        expect(resolveTranscriptMarkdownFileLink({
+            url: `${filePath}:4:2`,
+            workspacePath: '/work/repo',
+        })).toEqual({
+            filePath, line: 4, column: 2,
+            anchor: { kind: 'line', filePath, line: 4 },
+        });
+    });
+
     it('maps terminal line ranges to workspace-relative paths', () => {
         expect(resolveTranscriptMarkdownFileLink({
             url: 'src/index.ts:5-8',
@@ -113,19 +123,55 @@ describe('resolveTranscriptMarkdownFileLink', () => {
         })).toEqual({ filePath: 'src/index.ts' });
     });
 
-    it('does not treat Windows sibling prefixes as workspace children', () => {
+    it('keeps Windows sibling prefixes as absolute machine targets', () => {
         expect(resolveTranscriptMarkdownFileLink({
             url: 'C:\\Users\\Alice\\project-other\\src\\index.ts',
             workspacePath: 'C:\\Users\\Alice\\project',
-        })).toBeNull();
+        })).toEqual({ filePath: 'c:/users/alice/project-other/src/index.ts' });
     });
 
-    it('does not map paths outside the workspace', () => {
+    it('preserves paths outside the workspace for the authenticated file service', () => {
         expect(resolveTranscriptMarkdownFileLink({
             url: '/Users/leeroy/other/src/index.ts',
             workspacePath: '/Users/leeroy/project',
-        })).toBeNull();
+        })).toEqual({ filePath: '/Users/leeroy/other/src/index.ts' });
     });
+
+    it('preserves encoded spaces and line ranges on external artifact paths', () => {
+        expect(resolveTranscriptMarkdownFileLink({
+            url: '/work/artifacts/my%20report.md#L5-L8',
+            workspacePath: '/work/repo',
+        })).toEqual({
+            filePath: '/work/artifacts/my report.md',
+            line: 5,
+            endLine: 8,
+            anchor: { kind: 'range', filePath: '/work/artifacts/my report.md', startLine: 5, endLine: 8 },
+        });
+    });
+
+    it('does not need a workspace root to identify an absolute machine path', () => {
+        expect(resolveTranscriptMarkdownFileLink({
+            url: '/work/artifacts/report.md',
+            workspacePath: null,
+        })).toEqual({ filePath: '/work/artifacts/report.md' });
+    });
+
+    it('resolves parent-relative links against the session workspace', () => {
+        expect(resolveTranscriptMarkdownFileLink({
+            url: '../repo-task/.scratch/report.md:4',
+            workspacePath: '/work/repo',
+        })).toEqual({
+            filePath: '/work/repo/../repo-task/.scratch/report.md',
+            line: 4,
+            anchor: { kind: 'line', filePath: '/work/repo/../repo-task/.scratch/report.md', line: 4 },
+        });
+    });
+
+    it.each(['javascript:alert(1)', 'mailto:user@example.com', 'ssh://host/report.md', '/work/bad%00.md'])(
+        'does not turn an unsupported or malformed target into a file: %s', (url) => {
+            expect(resolveTranscriptMarkdownFileLink({ url, workspacePath: '/work/repo' })).toBeNull();
+        },
+    );
 
     it('does not trust arbitrary https origins for local file navigation', () => {
         expect(resolveTranscriptMarkdownFileLink({

@@ -335,7 +335,7 @@ This is useful for prompts like:
 
 You can also use `@`-style file search in the composer where supported. The goal is the same: quickly attach relevant workspace context.
 
-## Open workspace file links from the transcript
+## Open file links from the transcript
 
 When an assistant response includes a markdown link to a file in the current workspace, Happier can turn that link into in-app file navigation instead of sending you to a broken browser URL.
 
@@ -349,7 +349,13 @@ Supported link shapes include:
 - Windows drive paths such as `C:\Users\Alice\project\src\index.ts`
 - Windows `file:///C:/...` links and UNC-style file URLs inside the workspace
 
-Happier only opens links that resolve inside the current workspace. Links outside the workspace, traversal paths, and arbitrary non-loopback `http`/`https` URLs stay external or are ignored for workspace navigation.
+<Callout type="info">
+  Opening files outside the session workspace is supported in the current development build and is unreleased.
+</Callout>
+
+Development builds also open absolute machine paths and parent-relative links such as `../repo-task/.scratch/report.md`. These use the session's existing authenticated file service and the machine's filesystem access policy. Container-to-host mapping still applies beneath the mapped workspace; unrelated absolute paths refer to the machine filesystem.
+
+Outside-workspace files open for preview and download. Workspace editing and review controls remain scoped to workspace files. Missing or denied files show an error; unsupported previews offer the existing download action. Shared/public transcript restrictions still apply. Arbitrary non-loopback `http`/`https` links remain external links.
 
 On desktop, opening a workspace file link opens the right sidebar/details pane. On phone-sized layouts, it opens the file in the **Tabs** surface with the session header still visible.
 

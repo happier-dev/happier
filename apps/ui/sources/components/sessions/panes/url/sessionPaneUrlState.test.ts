@@ -38,11 +38,11 @@ describe('sessionPaneUrlState', () => {
         });
 
         it('rejects unsafe file details paths', () => {
-            expect(parseSessionPaneUrlState({ details: 'file', path: '/etc/passwd' })).toBeNull();
             expect(parseSessionPaneUrlState({ details: 'file', path: '~/secrets.txt' })).toBeNull();
             expect(parseSessionPaneUrlState({ details: 'file', path: '../secrets.txt' })).toBeNull();
             expect(parseSessionPaneUrlState({ details: 'file', path: 'src/../../secrets.txt' })).toBeNull();
-            expect(parseSessionPaneUrlState({ details: 'file', path: 'C:\\\\Windows\\\\system.ini' })).toBeNull();
+            expect(parseSessionPaneUrlState({ details: 'file', path: 'https://example.com/report.md' })).toBeNull();
+            expect(parseSessionPaneUrlState({ details: 'file', path: '/work/invalid\0.md' })).toBeNull();
         });
 
         it('parses commit details target', () => {
@@ -221,7 +221,7 @@ describe('sessionPaneUrlState', () => {
 
             applySessionPaneUrlState(pane as any, {
                 rightTabId: 'files',
-                details: { kind: 'file', path: '/etc/passwd' },
+                details: { kind: 'file', path: '../secrets.txt' },
             });
 
             expect(pane.openRight).toHaveBeenCalledWith({ tabId: 'files' });
@@ -229,6 +229,28 @@ describe('sessionPaneUrlState', () => {
             expect(pane.openDetailsTab).toHaveBeenCalledTimes(0);
         });
     });
+
+    it.each(['/work/repo-task/.scratch/my report.md', 'C:/work/artifacts/report.md'])(
+        'preserves machine file %s through pane URL round trips and restoration', (path) => {
+            const details = { kind: 'file' as const, path };
+            const tab = { key: `file:${path}`, kind: 'file', resource: details };
+            const state = { details };
+            const url = serializeSessionPaneUrlState(state);
+            expect(parseSessionPaneUrlState(url)).toEqual(state);
+            expect(buildActiveDetailsRouteParams([tab], tab.key)).toEqual(url);
+            expect(deriveSessionPaneUrlStateFromScopeState({
+                right: { isOpen: false, activeTabId: null },
+                bottom: { isOpen: false, activeTabId: null },
+                details: { isOpen: true, tabs: [tab], activeTabKey: tab.key },
+            })).toEqual(state);
+            const pane = {
+                openRight: vi.fn(), setRightTab: vi.fn(),
+                openBottom: vi.fn(), setBottomTab: vi.fn(), openDetailsTab: vi.fn(),
+            };
+            applySessionPaneUrlState(pane, state);
+            expect(pane.openDetailsTab).toHaveBeenCalledWith(expect.objectContaining({ resource: details }));
+        },
+    );
 
     describe('serializeSessionPaneUrlState', () => {
         it('serializes terminal tab state', () => {

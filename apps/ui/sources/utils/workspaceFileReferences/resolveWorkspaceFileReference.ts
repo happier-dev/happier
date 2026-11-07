@@ -1,5 +1,6 @@
 import type { ReviewCommentAnchor } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 import { isSafeWorkspaceRelativePath } from '@/utils/path/isSafeWorkspaceRelativePath';
+import { isSessionFilePath } from '@/utils/path/isSessionFilePath';
 import {
     isAbsoluteLocalPath,
     normalizeLocalPathForComparison,
@@ -127,20 +128,23 @@ export function resolveWorkspaceFileReference(params: Readonly<{
     if (!rawPath) return null;
 
     const parsed = splitLineSuffix(rawPath);
+    if (/^[a-z][a-z0-9+.-]*:/i.test(parsed.path) && !/^[a-z]:[\\/]/i.test(parsed.path)) return null;
     const normalizedCandidate = normalizeLocalPathForComparison(parsed.path);
-    if (!normalizedCandidate) return null;
+    if (!normalizedCandidate || /[\u0000-\u001f\u007f]/.test(normalizedCandidate)) return null;
+
+    const workspacePath = typeof params.workspacePath === 'string' ? normalizeLocalPathForComparison(params.workspacePath) : null;
 
     if (!isAbsoluteLocalPath(normalizedCandidate)) {
         const relative = normalizeRelativePath(normalizedCandidate);
-        if (!relative || !isSafeWorkspaceRelativePath(relative)) return null;
-        return withOptionalAnchor(relative, parsed);
+        if (isSafeWorkspaceRelativePath(relative)) return withOptionalAnchor(relative, parsed);
+        if (!workspacePath || !isAbsoluteLocalPath(workspacePath) || relative.startsWith('~')) return null;
+        // Keep resolution at the machine boundary, including its platform and container mapping.
+        const absolute = `${workspacePath.replace(/\/$/, '')}/${relative}`;
+        return isSessionFilePath(absolute) ? withOptionalAnchor(absolute, parsed) : null;
     }
 
-    const workspacePath = typeof params.workspacePath === 'string' ? normalizeLocalPathForComparison(params.workspacePath) : null;
-    if (!workspacePath) return null;
-
-    const relative = resolvePathRelativeToRoot({ path: normalizedCandidate, root: workspacePath });
-    if (relative === null) return null;
-    if (!isSafeWorkspaceRelativePath(relative)) return null;
-    return withOptionalAnchor(relative, parsed);
+    if (!isSessionFilePath(normalizedCandidate)) return null;
+    const relative = workspacePath ? resolvePathRelativeToRoot({ path: normalizedCandidate, root: workspacePath }) : null;
+    if (relative !== null && isSafeWorkspaceRelativePath(relative)) return withOptionalAnchor(relative, parsed);
+    return withOptionalAnchor(normalizedCandidate, parsed);
 }
