@@ -3,19 +3,22 @@ import { resolveLinkedExternalSessionAuthorityV1 } from '@happier-dev/protocol/s
 import { SPAWN_SESSION_ERROR_CODES, SpawnSessionExecutionAuthorizationSchema, normalizeSpawnSessionErrorDetail, type SpawnSessionErrorDetail } from '@happier-dev/protocol/spawnSession';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError, readRpcErrorCode, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
+import { ProviderBrokerAdmissionFailureCodeV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { ProviderErrorCodeV1Schema } from '@happier-dev/protocol/providers/errors';
 
 import { buildInactiveSessionResumeSpawnOptions, type InactiveSessionResumeRuntimeOptions } from '@/daemon/sessions/runtimeSnapshot/buildInactiveSessionResumeSpawnOptions';
 import type { StoredCredentials } from '@/persistence';
 import type { SpawnSessionOptions, SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import { createStableSpawnNonce } from '@/session/shared/spawnNonce';
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
-import { callMachineRpc } from '@/session/transport/rpc/machineRpc';
+import { callMachineRpc, executionRunAuthorityCeiling } from '@/session/transport/rpc/machineRpc';
 import { awaitSpawnedSessionId } from './awaitSpawnedSessionId';
 import type { ActionExecutorContext, SessionInitialGoalRequestV1 } from '@happier-dev/protocol';
 import { randomUUID } from 'node:crypto';
 import { logger } from '@/ui/logger';
 import { resolveSessionStartupTimeoutMs } from '@/daemon/spawn/waitForSessionWebhook';
 import { resolveSessionResumeControlIntent } from './sessionExplicitStopIntent';
+import { projectSessionSpawnFailure } from '@/session/creation/projectSessionSpawnFailure';
 
 const resumeDiagnosticCauseCodes = new Set<string>([
   ...Object.values(SPAWN_SESSION_ERROR_CODES),
@@ -44,6 +47,18 @@ export type InactiveSessionResumeResult =
 
 function readNonEmptyString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+/** Keep the spawn owner's native refusal, including replies without a launch detail. */
+function readResumeSpawnErrorDetail(response: unknown, requestId: string): SpawnSessionErrorDetail | undefined {
+  if (!response || typeof response !== 'object') return undefined;
+  const detail = normalizeSpawnSessionErrorDetail(Reflect.get(response, 'errorDetail'));
+  if (detail) return detail;
+  const code = Reflect.get(response, 'errorCode');
+  if (code !== SPAWN_SESSION_ERROR_CODES.AGENT_SIGNED_OUT) return undefined;
+  const failure = projectSessionSpawnFailure({ errorCode: code,
+    errorMessage: Reflect.get(response, 'errorMessage'), agentId: Reflect.get(response, 'agentId'), requestId });
+  return failure.code === SPAWN_SESSION_ERROR_CODES.AGENT_SIGNED_OUT ? failure.launchError : undefined;
 }
 
 export function buildMachineResumeRequest(
@@ -149,7 +164,7 @@ export async function requestInactiveSessionResume(params: Readonly<{
   machineRpcTransport?: (
     method: string,
     request: unknown,
-    options?: Readonly<Pick<Parameters<typeof callMachineRpc>[0], 'signal' | 'timeoutMs' | 'reattachOnReconnect' | 'requestId'>>,
+    options?: Readonly<Pick<Parameters<typeof callMachineRpc>[0], 'signal' | 'timeoutMs' | 'reattachOnReconnect' | 'requestId' | 'authorityCeiling'>>,
   ) => Promise<unknown>;
 }> & (Readonly<{ localId: string; requestId?: never }> | Readonly<{ requestId: string; localId?: never }>)): Promise<InactiveSessionResumeResult> {
   const requestId = params.requestId ?? params.localId;
@@ -223,11 +238,18 @@ export async function requestInactiveSessionResume(params: Readonly<{
       })
     : undefined;
   const spawnRpcRequestId = randomUUID();
+  const authorityCeiling = executionRunAuthorityCeiling({ authority: params.executionAuthority });
   let phase: 'spawn_rpc' | 'nonce_readiness' = 'spawn_rpc';
   const refuse = (failure: Extract<InactiveSessionResumeResult, { ok: false }>, cause: unknown) => {
     logger.infoFile('[SessionResume] Readiness refused', {
       requestId, sessionId: params.sessionId, machineId, spawnRpcRequestId, phase,
       cause: typeof cause === 'string' && resumeDiagnosticCauseCodes.has(cause) ? cause : 'unclassified',
+      // Team/Provider launch producers carry closed codes in errorMessage; other spawn producers carry private prose.
+      ...(cause === SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED ? {
+        spawnRefusalReason: failure.message === 'team_credential_provider_selection_not_current'
+          || ProviderBrokerAdmissionFailureCodeV1Schema.safeParse(failure.message).success
+          || ProviderErrorCodeV1Schema.safeParse(failure.message).success ? failure.message : 'unknown',
+      } : {}),
       outcomeCode: failure.code, elapsedMs: Date.now() - startedAtMs,
       cancelled: params.signal?.aborted === true,
       transport: params.machineRpcTransport && !params.externalAction ? 'direct' : 'machine_rpc',
@@ -247,6 +269,7 @@ export async function requestInactiveSessionResume(params: Readonly<{
           method,
           request,
           { requestId: spawnRpcRequestId, timeoutMs: resolveSessionStartupTimeoutMs(params.timeoutMs),
+            ...authorityCeiling,
             ...(params.signal ? { signal: params.signal } : {}) },
         )
       : await callMachineRpc({
@@ -255,6 +278,7 @@ export async function requestInactiveSessionResume(params: Readonly<{
           method,
           requestId: spawnRpcRequestId,
           request,
+          ...authorityCeiling,
           // Spawn belongs to startup, which can outlive the generic RPC cutoff.
           timeoutMs: resolveSessionStartupTimeoutMs(params.timeoutMs),
           ...(params.signal ? { signal: params.signal } : {}),
@@ -282,8 +306,7 @@ export async function requestInactiveSessionResume(params: Readonly<{
       const message = response && typeof response === 'object' && typeof (response as { errorMessage?: unknown }).errorMessage === 'string'
         ? (response as { errorMessage: string }).errorMessage
         : 'Inactive session resume was rejected; pending custody was retained';
-      const detail = response && typeof response === 'object'
-        ? normalizeSpawnSessionErrorDetail(Reflect.get(response, 'errorDetail')) : undefined;
+      const detail = readResumeSpawnErrorDetail(response, requestId);
       const code = response && typeof response === 'object'
         && Reflect.get(response, 'errorCode') === RPC_ERROR_CODES.FORBIDDEN ? 'authority_unavailable'
         : detail?.kind === 'launch_error' && detail.code === 'plugin_disabled' ? 'plugin_disabled'
@@ -323,6 +346,7 @@ export async function requestInactiveSessionResume(params: Readonly<{
         const request = { spawnNonce, ...(resolverTimeoutMs !== undefined ? { timeoutMs: resolverTimeoutMs } : {}) };
         const options = {
           timeoutMs: null,
+          ...authorityCeiling,
           reattachOnReconnect: {
             readRequest: () => ({ spawnNonce,
               timeoutMs: observation?.readRemainingTimeoutMs() ?? resolverTimeoutMs }),
@@ -349,7 +373,7 @@ export async function requestInactiveSessionResume(params: Readonly<{
         message: ready.type === 'error'
           ? ready.errorMessage
           : 'Inactive session readiness resolved to a different session',
-        ...(ready.type === 'error' && ready.errorDetail ? { errorDetail: ready.errorDetail } : {}),
+        ...(ready.type === 'error' ? { errorDetail: readResumeSpawnErrorDetail(ready, requestId) } : {}),
       }, ready.type === 'error' ? ready.errorCode : 'session_identity_mismatch');
     }
     return { ok: true };

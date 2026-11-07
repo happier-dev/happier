@@ -54,6 +54,211 @@ Plugin failure diagnostics survive the shared attempt owner's non-reconcilable
 outcome response. Claude's known HTTP refusals and credential identity mismatches
 are conclusive results; only a lost exchange response remains outcome unknown.
 
+Retained Sessions resume with their admitted Connected Account binding from
+owner metadata. A cross-Agent transition clears the departing Agent's binding
+and resolves the target through `resolveSessionSpawnConnectedServicesDefaultsPayload`,
+the same Account-purpose default owner used by fresh creation. An existing
+Connected Account is not selected merely because it exists. Without a selected
+target account, Provider or Team route, native sign-in is required on the Machine.
+An `agent_signed_out` resume retains the shared launch diagnostic and request
+identity through `session.open` and a committed `session.agentTransition` result.
+The composer offers the existing Machine Agent sign-in recovery; the Action
+diagnostic also explains selecting a Connected Account or configuring its default.
+Neither refusal changes the committed target or discards pending input.
+
+### Vercel AI Gateway (0.3 development)
+
+The development Provider plugin in `packages/plugins/vercel-ai-gateway` declares
+Anthropic Messages at `/claude-code`, Responses at `/codex/v1` (shared by Codex
+and OpenCode), and Chat Completions at `/coding-agent/v1`. It uses the ordinary
+API-key connection/Saved Secret flow and remains hidden in the model picker by
+default under the shared aggregator policy. The dependency owner has registered
+the package and importer together; generated bundled declarations still await
+the publication owner's integration pass.
+
+Its public `/v1/models` parser is plugin-supplied through `catalogParsers`, not a
+host Provider-id branch. Only language models enter the chat catalog; context
+windows and explicitly advertised reasoning-effort values become canonical model
+descriptors. Missing control metadata remains unknown, and budget/toggle controls
+do not invent effort tiers. The SDK exposes Protocol's existing effort vocabulary
+and builder for bundled and external parser authors alike. Vercel's catalog has
+no structured default; the builder applies Happier's shared selection policy.
+
+The [published development guide](../apps/docs/content/docs/agents/vercel-ai-gateway.mdx)
+covers setup and limitations. Real keyed Claude Code, Codex and OpenCode turns,
+including Codex model discovery and effort application, remain release checks
+requiring a Vercel tenant. OIDC refresh and Sign in with Vercel are outside this
+integration. The connection detail's Usage section renders credit and
+lifetime-spend observations through the shared usage meters described below.
+Tenant-backed and light/dark/phone acceptance remain separate validation work.
+
+### Cloudflare AI Gateway (0.3 development)
+
+The development integration uses the ordinary descriptor-backed connection,
+Saved Secret, Agent compatibility and Team source owners. It has no Cloudflare
+runtime, router, Connected Account or usage meter. The initial catalog is manual;
+local binding readiness is not a remote authentication result and unsupported
+probe/refresh requests make no vendor call. Runtime and tenant evidence remain
+separate from declaration and documentation presence.
+
+The fixed Messages endpoint requires a connection address under
+`https://gateway.ai.cloudflare.com/v1/<account>/<gateway>/anthropic` and an
+unprefixed Anthropic model id. Under the approved pass-through contract, Claude
+uses the user's real Anthropic API key in `x-api-key` and a separately bound
+Cloudflare token in `cf-aig-authorization: Bearer …`; it sends no provider
+Authorization header. The primary `apiKey` slot is the gateway token and the
+Messages transport declares its additional `anthropicApiKey` Saved Secret.
+Gateway-only, placeholder, stored-key and Unified Billing Claude modes are not
+offered pending the named real-tenant release check. Cloudflare's
+[Anthropic contract](https://developers.cloudflare.com/ai-gateway/usage/providers/anthropic/)
+documents the distinct provider and gateway headers; native feasibility does not
+establish tenant acceptance.
+
+The contribution also declares native OpenAI Responses at
+`https://gateway.ai.cloudflare.com/v1/<account>/<gateway>/openai`, using only the
+gateway token and an unchanged, unprefixed OpenAI model id. Installed Codex
+0.162.1 on Linux completed isolated streaming/tool continuation with this
+configuration, including native model listing without a remote catalog GET and
+explicit reasoning effort. This establishes native feasibility, not Cloudflare
+entitlement or model quality; the pairing remains experimental. It uses the
+existing Codex adapter with no OpenAI key or ambient native-auth fallback.
+OpenCode's Responses declaration/materializer requires an Authorization bearer
+key and refuses this gateway-only contract through the shared matcher, before
+native launch. Other Agents still
+need their declared credential/protocol intersection.
+
+Account Chat is declared at
+`https://api.cloudflare.com/client/v4/accounts/<account>/ai/v1`, with an explicit
+`cf-aig-gateway-id` public header and Authorization bearer token. Its model id
+keeps the `author/model` or `@cf/author/model` spelling. OpenCode 1.19.0/Linux
+completed an isolated streaming Read/tool-result continuation using
+`openai/gpt-4.1`; its native title request preserved the same policy too. This
+proves that native configuration, not vendor entitlement or Workers AI model
+tool capability. Other Agent/model combinations remain unmeasured, and the
+manual catalog and unknown capability facts keep consent experimental. The
+[account REST contract](https://developers.cloudflare.com/ai-gateway/usage/rest-api/)
+bills third-party inference through Unified Billing; it does not promise the
+native endpoints' stored-BYOK behavior. These
+families have distinct endpoint/auth/model contracts, so an ordinary address
+override cannot switch between them. FX's Vercel restriction and Gemini's
+protocol requirement remain. Copilot's current native controls cannot preserve
+the required custom routing/privacy/billing headers; its Responses candidate
+is not offered.
+
+The request defaults are `cf-aig-collect-log:false`, `cf-aig-skip-cache:true` and
+`cf-aig-no-wholesale:true`. These are deliberate public policy, never secret
+transport. They suppress stored logs, bypass response caching and retain the
+third-party prepaid-billing restriction respectively; upstream prompt caching,
+Cloudflare exports and upstream retention are separate contracts. See Cloudflare's
+[logging](https://developers.cloudflare.com/ai-gateway/observability/logging/),
+[cache](https://developers.cloudflare.com/ai-gateway/features/caching/) and
+[billing](https://developers.cloudflare.com/ai-gateway/features/unified-billing/)
+contracts. An account-wide
+AI Gateway Run token can reach every gateway and their stored keys in that
+Cloudflare account, as documented by
+[Cloudflare](https://developers.cloudflare.com/ai-gateway/configuration/authentication/).
+Account Chat separately requires Workers AI Read; do not widen a token or
+substitute a deployment credential. No Cloudflare balance or actual-charge API
+is established by this integration.
+
+### Connection usage and credits (0.3 development)
+
+Optional `usageSources` on the canonical Provider contribution declare an endpoint
+template, origin-relative GET path and plugin-local parser. Plugins register
+`usageParsers` through the same activation/registration owner as catalog parsers;
+the parser returns the existing Q1 meter shape, not a second balance model.
+The runtime registry admits the declared parser once per finite probe or usage
+read. That operation keeps its captured implementation through HTTP or command
+completion; plugin replacement or withdrawal affects the next acquisition.
+`providers.usage.refresh` reaches the selected Machine's admitted Provider HTTP
+client and returns existing Provider Account Usage snapshots per source. No
+background polling, Session ledger or Account-settings observation writer is added.
+The shared Action classifies this as a safe read on every surface, without default
+approval. Explicit approval preferences still apply to a person's Refresh action.
+
+A source can declare an optional separate `billingCredential`, including a Saved
+Secret slot and permitted transport. Account and Machine binding writers validate
+that slot against the declaration. It never replaces the inference credential.
+An unbound billing slot yields `not_configured` without a request or account-credit
+meter; the host never falls back to the inference key. Each source captures its
+credential and declaration authority at admission. Its finite read keeps those
+facts through completion; later edits affect the next acquisition, while Account
+identity and local cancellation still apply. Snapshots use provisional source-local
+identity, not an inferred shared billing Account or a fabricated Connected Account revision.
+
+OpenRouter's ordinary key supplies day/week/month/lifetime spend and its optional
+key allowance through `/api/v1/key`, labelled **this key**. Its separately bound
+management key supplies account credits through `/api/v1/credits`. Vercel uses
+its ordinary key for `/v1/credits`, producing remaining USD credits and lifetime
+spend from that one response. Unknown caps stay null and reported negative
+balances are preserved; neither becomes a fabricated percentage or zero.
+
+DeepSeek contributes `/user/balance` through the same admitted GET and
+plugin-parser path. Each `balance_infos` entry produces a separate balance
+meter with its reported `CNY` or `USD` currency; granted and topped-up balances
+are already included in `total_balance` and are not added again. The existing
+meter's optional `currency` presentation field takes precedence when formatting;
+older `unit: 'usd'` meters without it still mean USD. CNY uses the existing
+neutral `unknown` unit so an older reader cannot mistake it for dollars. No
+conversion or cross-currency total is produced.
+
+`ProviderConnectionDetailScreen` mounts `ProviderConnectionUsageSection` for
+connections with declared usage sources. The section groups money rows by
+**This key** and **Account**, shows the observation date and Refresh, and binds
+separate billing credentials through the existing Saved Secret controls. Its
+resource dispatches through the real Action client and rejects stale
+Account/Home/Machine/connection lifetimes. First presented demand acquires once;
+overlapping settings and expanded model-source detail consumers share that
+request at the existing account-usage resource owner. The key includes the
+current Home, Account, Machine and the usage source, endpoint, parser and selected
+credential facts consumed by acquisition. Connection renames, presentation-only
+declaration edits, revision-only changes and unrelated credential slots preserve
+the shared observation, including across focus changes and consumer remounts.
+Hidden demand starts nothing, and the last remaining demand owns cancellation.
+Ordinary refresh/failure retains dated last-known-good facts; credential or
+authority retirement clears them. Automatic acquisition uses the executor's
+non-interactive presentation constraint: when policy requires approval, it stops
+without creating a prompt. Explicit Refresh retains the normal approval policy.
+
+A committed usage push with captured `providerConnectionId` and `machineId`
+invalidates only that connection's current authorized observation. It refreshes
+while demanded; otherwise the next presentation acquires. The socket's captured
+Home/Account fences the hint. Legacy/native usage without the exact source
+continues to invalidate usage queries without inferring a connection from
+current Session metadata. There is no timer, TTL, retry loop or background poll.
+In the 0.3 development picker, the source browse pane shows one balance or allowance,
+its observation date, Refresh, shared approval status and a link to the connection.
+It uses the same usage resource as connection settings, without a billing read
+per model or for collapsed sources.
+Ordinary Agent Session cost remains owned by the existing Session usage-accounting
+path, not this connection summary.
+
+The Provider's optional `requestCost.endpointTemplateIds` and registered
+`requestCostParser` extend that same contribution/activation owner for observed
+terminal charges. OpenRouter declares its Chat Completions endpoint: the existing
+external broker reader passes terminal JSON or final SSE usage to the plugin's
+decoder, which reads `usage.cost` and ignores `cost_details.upstream_inference_cost`.
+The admitted terminal DTO carries optional `reportedCostUsd` to the existing Team
+usage writer with `costSource: 'provider_reported'`, USD and no stored estimate.
+Its immutable request admission retains actor/resource/group attribution and
+idempotency. Ordinary Session Agent observations remain their accounting owner;
+the external observer does not book their requests a second time. Existing
+price estimation and cost-mode projections remain authoritative for estimates
+and selection between cost facts.
+
+Reported per-request charges are supported only for OpenRouter Chat Completions
+traffic through the external Team credential broker, not ordinary Agent Sessions.
+Missing or aborted terminal usage stays unavailable; an explicit zero
+charge remains reported. No Gateway compatibility-route `usage.cost` contract
+was established in the current official Chat Completions, coding-Agent and
+[generation-lookup documentation](https://vercel.com/docs/ai-gateway/observability-and-spend/usage).
+The documented asynchronous generation lookup is a different operation and is
+not polled here. Vercel AI Gateway requests and native Claude/Codex/OpenCode
+requests have no per-request reported charge through this integration. OpenCode's
+native `info.cost` remains an estimate; native API-equivalent cost is not charged
+Gateway spend. Neither
+this decoder nor account-balance reads expand Team cost-limit coverage.
+
 ## User experience
 
 Users manage model sources under **Settings → Providers**. A provider connection may be a built-in plugin contribution or a custom OpenAI-/Anthropic-compatible connection.
@@ -74,6 +279,40 @@ probes and Session launches consume that materializer; they do not infer readine
 from a matching Settings object in the daemon. An unavailable catalog retains its
 typed retry recovery. A missing binding retains the add-secret recovery, and one
 connection's credential failure remains local to its inventory row.
+
+In 0.3 development, `ProviderSettingsIndex` keeps the root as a home over
+`ProviderConnectionsSettingsScreen`, rather than redirecting to a connection.
+Its rail's All entry returns to the same root; explicit connection and
+`newProviderRoute` authoring routes retain their existing owners. The home
+consumes the same Account declarations, connections and selected-Machine facts,
+including feature and foreign-Home admission. Account connection choices remain
+usable without a Machine; local discovery/start and testing retain their exact
+target requirements.
+
+In 0.3 development source, header, invitation and Custom endpoint Add entries
+open the same shared capability picker. Selecting a contribution or Custom
+continues through the existing authoring route; keys, probes and model setup
+remain there rather than running during picker browsing. Found/local choices
+share the collection's existing exact-Machine enable/start continuation.
+
+The development Add picker groups that selected Machine's found candidates and
+local installations before the declared model providers. Its detail data comes
+from `providers/catalog/providerDeclarationDetail.ts`, projected from admitted
+Provider and Agent declarations: API-key requirements, declared catalog strategy
+and static models, source identity and provenance, and positive fits from the
+shared Protocol compatibility resolver. A fit can be experimental and names the
+declared model used to establish it; it does not attest installation, entitlement
+or runtime readiness. Probe-only catalogs may not establish a fit until models
+are known. Missing authentication facts and plugin package versions are omitted;
+the declaration schema revision is not a plugin version. Browsing performs no
+credential materialization or model probe. The detail section composition and
+light/dark/phone acceptance remain with the Store UI integration.
+
+Only the rail's presented filter/query controller answers column Actions while
+the wide home is beside it. A Settings-search reveal uses the existing page
+variant so the requested control remains reachable. Whole-page denied/empty
+states retain their pane claim; a populated home preserves its column. This is
+a development-source routing contract, not completed visual or release evidence.
 
 Local providers are machine-aware. A detected Ollama or LM Studio service appears for the machine on which it is running; using its models requires that target machine to be authorized and available. Account-only browsing can show declared static and manually entered models without asserting that a local service is running. A local/private endpoint must be enabled per machine before Happier resolves its secret or sends it network traffic.
 
@@ -114,10 +353,31 @@ For a declared byte-level tokenizer, UTF-8 byte length is a conservative token
 upper bound; nearest-caret windows retain complete Unicode characters and fit
 context minus prompt overhead and output allowance. The connection's explicit
 per-model `maxTokens` setting supplies that allowance when the model declares
-no upstream default. Missing context, tokenizer evidence or usable output settings
-leaves the model unavailable. DeepSeek's documented FIM output boundary is 4096
-tokens. Catalog model rows carry the same descriptor with these connection settings
-applied, without creating a synthetic Agent or a second model catalog.
+none, or overrides a declared allowance within its output/context limits. In 0.3 development, the existing
+`providers.connections.update` Action accepts a `modelSettings` patch keyed by
+exact model id, for example `{ "qwen2.5-coder:1.5b-base": { "maxTokens": 128 } }`.
+This is an explicit preference, not a suggested default. The revision-checked
+Account writer merges supplied fields, preserves other models and omitted
+preferences, and removes a model's overrides when its patch is `null`. Clearing
+only `maxTokens` with a null field preserves temperature and restores any catalog allowance.
+Missing context, tokenizer evidence or usable output settings leaves the model
+unavailable. DeepSeek's [documented FIM output boundary](https://api-docs.deepseek.com/guides/fim_completion/)
+is 4096 tokens; the DeepSeek Pro contribution declares that usable allowance,
+so a fresh connection needs no manual output setting. No undocumented allowance
+is inferred for the Ollama base checkpoint. The picker admission owner
+`getFileEditorAiSuggestionModelEligibility` returns an explicit exclusion reason
+and connection/model identity, allowing the UI to link missing-allowance models
+to their existing Provider Models editor. The editor's
+`useProviderModelGenerationSettings` hook writes through
+`useProviderConnectionMutation`, not a separate settings writer or model catalog.
+The existing Settings → Providers connection Models page composes that hook in
+its Generation settings / Output allowance editor; missing-allowance picker
+rows link to the same editor rather than disappearing silently. Rendered/live
+journey validation remains part of the 0.3 integration boundary.
+Both Account-only and Machine catalog rows carry the same
+descriptor with these connection settings applied, without creating a synthetic
+Agent or a second model catalog. The picker and Machine inference retain the
+same context/output admission checks.
 
 External endpoints reuse canonical connection resolution, fresh DNS evidence,
 Machine/Account grants, SavedSecret materialization and pinned sockets. Managed
@@ -130,25 +390,26 @@ Responses preserve insertion bytes and actual reported token usage. An absent co
 stays unknown; no pricing estimate is presented as an actual charge. Upstream error
 bodies, prompts, credentials and generated text are not logged by this path.
 
-### Connection usage and credits (0.3 development)
+The development `ai.nextEdit` query extends this same admission/materialization
+path. A model's `nextEdit` fact selects a declared `next-edit-codec` operation;
+the first supported codec is `rewrite-window-v1`. It encodes chronological
+active-file changes and an explicit whole-file target as original/current/updated
+sections, through the selected raw completion endpoint. It does not infer support
+from a model name or fall back to chat or FIM. The connection's existing per-model
+output allowance applies to this operation too. The complete encoded prompt must
+fit its declared context after output allowance; history can be shortened at that
+boundary, while target text cannot be silently narrowed.
 
-`ProviderConnectionDetailScreen` mounts `ProviderConnectionUsageSection` for
-connections with declared usage sources. The section groups money rows by
-**This key** and **Account**, shows the observation date and Refresh, and binds
-separate billing credentials through the existing Saved Secret controls. Its
-resource dispatches through the real Action client and rejects stale
-Account/Home/Machine/connection lifetimes. First presented demand acquires once;
-overlapping settings and expanded model-source detail consumers share that
-request at the existing account-usage resource owner. The key includes the
-current Home, Account, Machine and the usage source, endpoint, parser and selected
-credential facts consumed by acquisition. Connection renames, presentation-only
-declaration edits, revision-only changes and unrelated credential slots preserve
-the shared observation, including across focus changes and consumer remounts.
-Hidden demand starts nothing, and the last remaining demand owns cancellation.
-Ordinary refresh/failure retains dated last-known-good facts; credential or
-authority retirement clears them. Automatic acquisition uses the executor's
-non-interactive presentation constraint: when policy requires approval, it stops
-without creating a prompt. Explicit Refresh retains the normal approval policy.
+The editor preference selects ghost text with `modelId` and next edit with
+nullable `nextEditModelId`, on the same connection. A null next-edit choice can
+use `modelId` only when that exact descriptor declares `nextEdit`; an explicit
+choice is never substituted. Catalog eligibility and Machine admission check
+the requested operation, not either editor capability interchangeably.
+The Machine checks that operation's selected id, the separate next-edit opt-in and the shared exclusions before
+credentials and dispatch. Only a natural completed response can become a rewrite;
+a length stop is refused. Predicted ranges remain data for the editor's guarded
+preview/apply flow and never reach a Machine file writer. This is unreleased 0.3
+source, with rendered and real-model acceptance owned by the editor UI boundary.
 
 ### Provider contributions
 
@@ -159,6 +420,7 @@ without creating a prompt. Explicit Refresh retains the normal approval policy.
 - public, non-secret headers;
 - credential requirements and permitted transports;
 - static and/or probed model catalog declarations;
+- optional usage sources and their separate billing-credential requirements;
 - compatibility capabilities and explicit overrides;
 - safe local-process detection descriptors for local providers;
 - optional legacy-profile migration descriptors.
@@ -177,6 +439,18 @@ The canonical schema is `packages/protocol/src/providers/contributions/v1.ts`. F
 - a monotonic revision and timestamps.
 
 Credential bindings, enablement, machine grants, visibility choices, and manual models belong alongside connections, not inside the immutable contribution. Raw credentials remain SavedSecret resources. The canonical schemas live under `packages/protocol/src/providers/connections/**` and `packages/protocol/src/providers/settings/**`.
+
+In 0.3 development, Account connection descriptions distinguish a pending Machine
+declaration read (`sourceStatus: 'loading'`) from a settled missing source
+(`unavailable`). The Machine declaration reader supplies that lifecycle fact;
+presentation adds no delay or fallback declaration authority. Account gateway
+descriptions use the shared managed-purpose binding resolver to retain
+`managed_purpose_bindings_missing` before a Machine is selected. Provider failure
+normalization consumes the shared Action failure carrier and keeps its typed
+cause and optional request ID. A daemon cause without a Provider recovery code
+remains in `failureCause`, including across a subsequent Action wrapper; raw
+exception prose is excluded. Stale Account and Machine grant repairs expose
+their respective scope through the Provider error presenter.
 
 The 0.3 development storage contract groups connections, grants, bindings,
 manual models, visibility/confirmation choices and unresolved migration conflicts
@@ -357,12 +631,10 @@ Rows carry their source as data; the picker shows "· via <source>" only where a
 heading cannot (a name present under more than one source, or a Provider/Team row
 in Favorites), so identical names are never merged.
 
-Machine model projection that can refresh a catalog uses the existing Provider
-operation wall budget for DNS, managed-purpose lookup and cold catalog demand.
-In development, launch authorization and its `current_only` model projection
-do not borrow an endpoint probe's wall cap. A current-only read does not launch
-or refresh a probe; the containing operation and transport retain cancellation
-and setup lifetime ownership. Each source resolves
+Machine model projection carries the containing operation's cancellation and
+any supplied deadline through DNS, managed-purpose lookup and cold catalog demand.
+A `current_only` read does not launch or refresh a probe. The containing operation
+and transport retain cancellation and setup lifetime ownership. Each source resolves
 independently; a failed source is identified in `refreshFailures` while successful
 sources keep their rows. Refresh reuses the admitted connection facts and reads
 new runtime observations without repeating purpose or parser admission. Provider
@@ -439,6 +711,25 @@ route cannot acquire proof merely because an old process reports the same model
 id: confirmation must also preserve the admitted source and materialization basis.
 Without an observed current model, the publisher leaves current-model metadata
 absent rather than choosing the first catalog entry or a default placeholder.
+Prompt acceptance establishes input custody only; it no longer writes a competing
+applied-model projection. The UI reads the observed current model and uses the
+existing exact source, binding and runner proof to distinguish Running from
+Last reported. `sessionAppliedModelV1` remains a read-only compatibility carrier
+for retained 0.2 Session data when a modern model catalog is absent.
+A child Session can inherit an authorized observed model while a different model
+is configured for a future prompt. That read revalidates the observed source and
+materialization basis before taking its final current-publisher permit; an unknown
+model or withdrawn authority cannot supply an inherited selection.
+
+OpenCode's server-native runtime publishes observed assistant model identity
+through that existing host models service on Provider routes too. Its controller
+reads exact-session native assistant evidence from the existing live/history
+paths (V1 providerID/modelID; released V2 model.id/providerID), not prompt dispatch
+or successful configuration. Current remains unknown until evidence arrives.
+Only an exact match of both the private Provider id and upstream model id maps
+back to the public bound model; other observed models retain their actual
+identity. Re-reading unchanged history produces no new model publication and
+Provider-bound routes do not enumerate the native Provider catalog for proof.
 
 In 0.3 development, Usage contributions retain the applied Provider contribution
 key as `providerId` and its connection identity as `providerConnectionId`, separately
@@ -521,6 +812,16 @@ and bounded Run refusals, offering the child Agent's default, an exact model, or
 cancel. This is implemented development source; target-specific handling of
 multiple refused Review Agents and composed live acceptance remain unverified.
 
+In 0.3 development, a retained Team model selection keeps its Team source through
+prompt dispatch, turn failure, runtime model readback and startup attach. A carried
+V1 model projection or a newer process-default timestamp cannot replace that
+source. Explicit model changes still replace the intent and clear its accepted
+Team binding when switching to native authentication. Resume with a Team intent
+but no matching admitted binding refuses with
+`team_credential_provider_binding_unavailable`; native launches without a selected
+route retain the native sign-in check. A Session whose Team intent and binding
+were already removed needs its Team route selected again through the product.
+
 The running composer's explicit un-arm control uses `session.model.unarm` through
 `useSessionModelUnarm`. The Session transition coordinator restores its actually
 applied model/source through its existing intent writer; callers supply no model
@@ -539,6 +840,18 @@ Host child admission also rejects inherited Team routes for either Voice role;
 recognizing a Team model does not authorize substituting its native tuple.
 Agent-native child definitions retain their Agent's own model rules.
 
+In 0.3 development, a Voice Start refusal retains the typed Provider error through
+the runtime, host presentation and Voice Action read. Copy and recovery come from
+the Provider error presenter and dispatcher. Review compatibility opens the
+Provider detail: select the experimental Agent, then the intended model in the
+shared Session model picker and explicitly confirm its existing Action. Return to
+Voice and start again. New Session and Voice use the same private Account catalog
+confirmation, scoped to the Provider source, Agent, optional model and compatibility
+fingerprint; neither a Session flag nor a Voice setting grants consent. Agents use
+`providers.models.experimental.confirm` with that same projected confirmation,
+then retry their Voice Start. Materialization, incompatibility and credential
+transport refusals retain their own Provider remedies.
+
 The execution-run host projects `resolvedSelection` from its admitted launch
 record for child summaries. Start, activity, finish and host-loss daemon markers
 retain that same projection. Run rows and daemon fallbacks use it with the Run's
@@ -552,6 +865,16 @@ part of the Providers integration journey.
 
 ## Protocol and capability matchmaking
 
+DeepSec review Runs in 0.3 development use the same Provider compatibility,
+authorization and per-Run materialization owner as other Agent launches. Its
+adapter supports credentialed OpenAI Responses through the native Codex harness,
+not Chat Completions or Anthropic. URLs must end in `/v1` without a query or
+fragment; arbitrary public headers and no-auth connections are refused. The
+key is passed only to the child process. An explicit conflicting review harness
+returns `deepsec_provider_harness_mismatch`, rather than changing the requested
+harness. Unbound review Runs keep their existing gateway path. This does not
+add general DeepSec Sessions or Session resume support.
+
 The generic Anthropic-compatible catalog parser and Claude's static model catalog
 share the Protocol-owned model-name and effort-option projection at
 `packages/protocol/src/providers/catalog/anthropic.ts`. Custom compatible
@@ -559,6 +882,33 @@ connections therefore retain catalog parsing independently of Claude plugin
 availability.
 
 Providers declare the protocols their endpoints speak. Agents declare accepted protocols and a provider-binding adapter in their plugin-owned runtime. The host computes compatibility; it does not contain provider-by-agent special cases.
+
+The additional 0.3 development adapters use that same owner: Gemini CLI accepts
+Gemini wire endpoints, Kilo accepts its declared native drivers,
+Copilot CLI accepts Chat Completions and Anthropic, and Droid consumes its native
+custom-model settings. A Chat-only gateway
+cannot drive Gemini CLI. Protocol mismatch remains the typed
+`no_compatible_protocol` refusal; capability and credential requirements apply
+independently. A custom connection may declare a contributed protocol such as
+`gemini` through the existing open-protocol template contract.
+
+The standard custom-connection form still offers its existing OpenAI/Anthropic
+presets. Gemini endpoints currently require a Provider contribution declaring
+`gemini`, or an advanced `providers.connections.create_custom` Action using a
+manual `CustomProviderTemplateV1` with that protocol and raw `x-goog-api-key`
+transport. Adding the Agent adapter does not make an OpenAI preset a Gemini
+endpoint or add a Gemini model-list parser.
+
+Bindings are materialized for the selected Session or Execution Run, with
+credentials in child-only environment values and only references in private
+native config. They never update shared Agent authentication or model config.
+Unsupported native credential/header forms are refused rather than silently
+dropping routing requirements. These development adapters use restart semantics;
+real Agent CLI and Provider-key acceptance is a release check. Native model
+configuration support alone does not establish a safe generic binding for Qwen,
+Pi, Oh My Pi, Kimi, CodeBuddy, Grok, FX or an arbitrary Custom ACP definition. See the
+[Agent catalog](agents-catalog.md#additional-provider-bindings-03-development)
+and the published Agent pages for each native constraint.
 
 Protocol intersection is necessary but not sufficient. Compatibility also accounts for the minimum behaviors an Agent needs:
 
@@ -570,7 +920,7 @@ Protocol intersection is necessary but not sufficient. Compatibility also accoun
 The compatibility result is `verified`, `experimental`, or `incompatible`:
 
 - **verified** bindings may be used normally;
-- **experimental** bindings require an explicit per-Agent confirmation and remain visibly badged;
+- **experimental** personal bindings require an explicit per-Agent confirmation; Team bindings use an informational badge without confirmation;
 - **incompatible** bindings are not selectable.
 
 Provider plugins may declare narrow compatibility overrides for known endpoint quirks. Generic host code must not branch on provider ids.
@@ -612,6 +962,18 @@ approval digest or stale-edit condition. Duplicate/custom-copy preserves effecti
 constraints. Routing, model and effective-policy facts enter the existing
 security fingerprints; localized `publicHeaderHints` are presentation only.
 
+Authentication uses the canonical credential destinations, including arbitrary
+validated custom HTTP-header names. A transport's `additionalCredentials` names
+independently bound Saved Secret slots needed by that transport. Selected-slot
+readiness and late materialization must include them; an absent slot never falls
+back to a native login or another protocol's credential. Agent
+`credentialSupport.requiredApiKeyTransports` declares alternative native API-key
+destinations: at least one must match the selected protocol's primary or
+additional destination. This keeps a gateway-header-only connection incompatible
+with a native Agent that also requires provider authentication. Public header maps
+reject secret-bearing names, case-insensitive credential collisions and controls.
+`credential.authorityDescription` explains scope without carrying secret material.
+
 GitHub forge credentials are Connected Service credentials, not model Provider
 connections. In 0.3 development, GitHub consumers may use the executing machine's
 GitHub CLI login through the existing native materialization path; an explicit
@@ -630,19 +992,18 @@ environment must all match before the daemon resolves or launches it.
 The spawn/probe order is security-sensitive:
 
 1. resolve feature gates, the exact connection, and the target machine; reject tombstoned or missing definitions;
-2. realize endpoint templates/overrides, resolve DNS/locality, and derive the endpoint and binding-security fingerprints;
+2. realize endpoint templates/overrides and derive locality and the endpoint/binding-security facts; configured public Account-enabled endpoints do not require daemon DNS merely to launch an Agent;
 3. verify Agent/protocol/capability compatibility and select the credential transport/materialization kind;
-4. validate the exact account/machine grant or short-lived authorization ticket against the realized fingerprints;
-5. resolve the Saved Secret as late as possible;
+4. admit the exact account/machine grant and capture the authorization ticket, selected model and settings once;
+5. resolve the Saved Secret as late as possible, with the Home authorizing a shared-secret read against the captured Account scope;
 6. materialize the credential into the scoped child environment/config;
-7. revalidate the resolution immediately before use;
-8. atomically commit the prepared binding and spawn or probe.
+7. commit the prepared binding and spawn or probe using the admitted capture, Account scope pin and local cancellation, without repeating catalog/revision/ticket admission.
 
 The endpoint/security fingerprints must exist before an endpoint-bound grant can be validated. No path may authorize by connection id alone and derive the endpoint afterwards.
 
 Daemon and foreground Session admission complete the Provider authorization decision — feature gate, Agent/target compatibility, malformed settings, a changed binding, the cold catalog rejection, and the `agent.resolvePrerequisites` hook — before the requested workspace is created, runner bootstrap material is written, or the Agent Session is opened. A prerequisite hook therefore receives the requested workspace path as a value and must not assume that directory already exists on disk.
 
-In 0.3 development, a managed Session binding is materialized after canonical Session acknowledgement, through the runner's existing managed-binding producer and custody. That producer allows the host to enter Session initialization without an early materialization handoff. For a fresh daemon child, the producer also supplies the admitted binding metadata; existing metadata must still match the selected connection. The returned handoff must match the selected connection, model and materialization before the host publishes the active target. A binding without a late-admission producer retains its early handoff requirement. Foreground late-environment admission keeps its own producer, and native open never substitutes native authentication when managed preparation fails.
+In 0.3 development, a managed Session binding is materialized after canonical Session acknowledgement, through the runner's existing managed-binding producer and custody. That producer allows the host to enter Session initialization without an early materialization handoff. For a fresh daemon child, the producer also supplies the admitted binding metadata; existing metadata must still match the selected connection. The returned handoff must match the selected connection, model and materialization before the host publishes the active target. A binding without a late-admission producer retains its early handoff requirement. Later Profile or MCP environment preparation preserves an already-admitted early binding; it does not require that handoff to be produced a second time. Foreground late-environment admission keeps its own producer, and native open never substitutes native authentication when managed preparation fails.
 
 Provider data must never mutate the daemon's global `process.env`. Agent adapters materialize provider settings into the existing scoped child-spawn environment/configuration choke point.
 
@@ -650,7 +1011,17 @@ Custom-provider forms do not support arbitrary query-parameter credentials or in
 
 Endpoint validation rejects credentials in URLs, unsafe metadata destinations, ambiguous encodings, unsafe redirects, and oversized responses. Redirects are revalidated hop by hop, and credentials are not forwarded across an origin change. DNS is resolved on the daemon for probes, but the spawned Agent may resolve independently; endpoint-bound machine grants remain the authorization boundary for local/private endpoints.
 
-A catalog probe is bounded end to end, not per hop: one wall budget covers pre-dispatch resolution, request establishment and the complete response body across every redirect, and one idle budget bounds the gap between body chunks. Both apply identically to a public endpoint and to a Provider the daemon supervises — a managed probe reaches its service through that service's own supervised request handle, so a response that returns headers and never finishes its body cannot hold a Provider probe slot.
+In 0.3 development, semantic configuration admission does not dial a configured
+endpoint: an Agent may use its own resolver or proxy. Configured HTTPS endpoints
+admitted with Account consent, including legacy opaque Account grants, do not
+require daemon DNS to launch. New destination-only grants retain their deliberate
+Account or Machine scope without DNS. Legacy opaque Machine grants retain the
+DNS evidence required by their existing comparison. Actual daemon fetches still assess DNS,
+destination scope and redirects before disclosing a credential. Connection or
+declaration changes affect the next admission, not an already admitted finite
+personal operation.
+
+A catalog probe carries its containing operation's cancellation and any supplied deadline through pre-dispatch resolution, request establishment and the complete response body across redirects. A managed probe uses its service's supervised request handle. Provider code adds no separate wall, idle, or response-size policy.
 In 0.3 development, agents and UI hosts can call `providers.binding.status` with
 `{machineId, sessionId}`. The authenticated owner-only Session reader supplies the
 persisted launch binding and canonical model intent to the existing daemon
@@ -660,18 +1031,22 @@ fingerprint, ready for explicit `session.runtime.refresh` with
 `mode: 'force_current_cli'`. Reading the proposal does not authorize a restart.
 The explicit `selection`/`launchBinding` input used by the Session UI remains
 available through the same pairing owner; daemon RPC admission is unchanged.
-In 0.3 development, binding-status reads use that same canonical wall budget and carry the RPC caller's cancellation through Home/catalog reads, registry activation, DNS, Gateway purpose resolution and runtime catalog observation. A read that cannot finish returns the existing retryable `provider_catalog_unavailable`; the Session banner offers Retry rather than asserting model incompatibility. The existing daemon RPC completion log identifies the stage where a saved probe or binding-status read expires or is cancelled (`failedPhase`, `causeCode`, `phaseDurationsMs`, `phaseTimingsMs`). Stages cover catalog admission, registry, DNS, purpose/group/account lookup, pre-effect revalidation, managed establishment and catalog dispatch, without logging request or credential contents.
+In 0.3 development, binding-status reads likewise carry the RPC caller's cancellation through Home/catalog reads, registry activation, DNS, Gateway purpose resolution and runtime catalog observation. A supplied deadline returns the existing retryable `provider_catalog_unavailable`; the Session banner offers Retry rather than asserting model incompatibility. Local cancellation retains its existing abandoned/abort result instead of being attributed to an unavailable Provider endpoint or an Agent failure. The existing daemon RPC completion log identifies the stage where a saved probe or binding-status read expires or is cancelled (`failedPhase`, `causeCode`, `phaseDurationsMs`, `phaseTimingsMs`), without logging request or credential contents.
 
-The Session's binding-status reader rechecks after a newly observed completed
-turn, so a recovered Gateway turn can retire an earlier attention banner without
-manual Retry. Existing attention remains while that read is pending and clears
-only when the current binding result permits it; successful output alone does
-not override authorization or a continuing binding failure.
+In 0.3 development, the Session's binding-status reader rechecks a newly observed
+completed turn only while binding attention is present, so a recovered Gateway
+turn can retire an earlier banner without manual Retry. Healthy turns do not
+repeat the binding-status RPC. Changes to the selected connection, grants,
+secret bindings, model, confirmation or admitted declarations arrive through
+the existing catalog/projection push owners and trigger the same reader;
+unrelated catalog changes do not. Selection and applied-binding changes and
+explicit Retry also retain their reads. Existing attention remains while a read
+is pending and clears only when the daemon's binding result permits it;
+successful output alone does not override authorization or a continuing failure.
 
 Before the handler runs, shared RPC admission verifies the caller's current Home/Machine access. This phase uses the forwarded request lifetime, including its deadline, relayed cancellation and target disconnect; cancelling a joining reader waiting on shared Account identity does not cancel the other readers. A Home verification refusal retains its typed error code, and both refusal and cancellation produce the existing `[RPC] Request completed` record with `failedPhase: authorize_request`. A missing completion alone does not establish that the daemon never received the request. These diagnostics and cancellation semantics apply to every RPC using the shared admission owner, including binding status.
 
-In 0.3 development, native broker inference does not use the catalog-response
-byte ceiling. Its ingress retains the request bytes for policy parsing. The
+In 0.3 development, native broker ingress retains the complete request bytes for policy parsing. The
 managed-service carrier owns its complete-message size boundary and reports
 `plugin_managed_service_request_too_large` with the resource, limit and actual
 size. The broker preserves that refusal as HTTP 413 with `request_too_large`.
@@ -679,16 +1054,18 @@ Relay frame limits govern individual chunks, not the complete inference body.
 
 In 0.3 development, connection descriptions and mutations, Profile migration
 admission follow their containing operation's lifetime.
-The endpoint-probe budget does not expire a slow Home or registry read in those
-operations; binding-status reads use the bounded read lifetime described above. A local command catalog fallback consumes the remaining catalog
-deadline and cancellation, with the same canonical catalog-response byte bound
-as HTTP catalogs. Transport settlement during cancellation cannot publish a
+No separate endpoint-probe budget expires a slow Home or registry read in those
+operations. Binding-status reads and a local command catalog fallback consume
+the containing operation's cancellation and any supplied deadline, without a
+Provider-specific response-size limit. Transport settlement during cancellation cannot publish a
 successful withdrawal as a completed operation.
 
 The development local-installation advisory consumes the containing description's
 cancellation signal, without a separate waiter timeout. A description reports
 `localInstallationsStatus: incomplete` if that interest ends before the checks
-settle or the advisory is unavailable; unfinished work never persists absence.
+settle or the advisory is unavailable. Every new inventory reads current OS
+evidence; there is no persisted presence cache or advisory TTL, and a failed OS
+lookup is incomplete evidence rather than absence.
 On cancellation, completed rows remain available, and an uncancellable system-tool
 lookup retains its single-flight custody until its real result settles. An omitted status from
 an older description supplies no completeness observation.
@@ -707,11 +1084,96 @@ counts, elapsed queue age and per-drain batch counts do not discard them.
 The existing whole-operation retry, replay, refresh and maintenance policies
 retain their typed exhausted, paused or unavailable outcomes.
 
+In 0.3 development source, native group-auth materialization compares the selected
+Account, group selection generation and credential revision at its artifact fence.
+An inventory invalidation alone does not supersede that tuple. Missing groups,
+unavailable group or credential reads, and actual generation or credential
+supersession retain distinct closed reason codes through the daemon-to-runner
+refusal and the Run failure record. Requester retirement or revocation retains its
+own refusal; a group mismatch does not become requester unavailability. A refusal
+does not add a retry or grant permission to publish with stale credentials.
+
+In 0.3 development source, Session and detached Run launches share the daemon's
+Home/Account-scoped usage store and qualified pre-launch group coordinator.
+The pool selector retains raw meter model ids and applies model-scoped limits
+only to that requested model; account-wide meters still apply to every model.
+Credential-health and model-entitlement exclusions remain independently enforced.
+The ordinary daemon switch pipeline combines models used by live Sessions bound
+to the exact pool with the model named by a classified failure before selecting a member. A generic
+successful quota probe preserves learned model-entitlement exclusions. When
+policy auto-disables an ineligible member, the daemon first selects a usable
+replacement, then disables the failed member; without a replacement it retains
+the active member and its exclusion evidence. Manual member disabling retains
+the server's priority fallback.
+In that pipeline, a proactive `soft_threshold` switch requires fresh, non-exhausted
+quota above the configured threshold on the replacement while the current member
+remains usable. When admission excludes the current member, a replacement with
+fresh positive quota can restore admission even below that threshold. The quota
+precheck and switch pipeline use the same selector. Outside an incomplete probe,
+failure-driven usage-limit recovery still allows unknown quota evidence.
+Completed switch decisions use the daemon's default file log,
+with profile ids, generations, reason and quota decision trace.
+Generation observation and early divergence use those same live-model, classified
+model and reason inputs, and log their completion through the same owner.
+Superseded reports retain failure evidence on the original profile. They enter
+the existing durable recovery scheduler; current-group continuation still passes
+its dispatch admission checks. A distinct report can rearm a settled attempt,
+while replaying the identical settled report does not run it again.
+Provider-directed quota-probe backoff is per-member evidence: selection excludes
+only the deferred member and can use a proven alternative. If no alternative is
+usable, recovery waits until the earliest relevant provider boundary. After an
+incomplete probe, the selector admits only members with fresh positive quota;
+an unproven sticky member cannot displace a proven replacement. When no member
+has that proof, classified, pre-turn and current-generation recovery use the
+existing retryable quota-proof wait. Spawn admission returns the typed
+quota-probe-incomplete refusal for that unresolved admission.
+Requester retirement does not discard shared Account usage observations.
+Daemon Session preparation (including inactive Session control), foreground
+admission and detached launches all pass their requested model to that launch
+owner; an unborn Session is not resolved through the tracked-Session turn adapter.
+A completed pre-launch probe's hard `no_eligible_member` result is authoritative
+even when the probe began as an advisory soft-threshold check. Stale quota
+observations use the existing freshness/probe owner before admission; an incomplete
+advisory probe does not manufacture confirmed exhaustion.
+Candidate credential preflight uses that candidate's own freshness and health.
+An authentication failure on the previous active member triggers rotation without
+forcing a healthy replacement to refresh its credential.
+When the switch owner refuses all members, spawn preserves its per-member
+exclusion reasons and retry boundaries on the typed error. The sanitized error
+message includes member ids and reason codes so a bare `no_eligible_member`
+does not imply that unknown quota became confirmed exhaustion.
+The read-only pool selection and launch coordinator merge accepted Home quota rows
+through the usage store's recency owner before using the same candidate selector.
+This passive read performs no credential refresh or provider quota probe; missing
+observations remain unknown, and confirmed quota exclusions carry their reset time.
+Fresh Session and execution-run launches (including Voice agents) allow the
+healthy current active member through this same selector. Several Sessions may
+share that member without changing the Pool generation. A launch's earlier quota
+or authentication observation does not make its later admission a switch-away;
+current credential health, quota and model blockers still apply. Classified
+failure switches retain the `current_active` exclusion for the member they leave.
+
+In 0.3 development source, Connected Account/Pool Team model catalogs use the
+declared source-envelope broker application. OpenAI's API-key application is a
+different implementation from the CLIProxyAPI connected-account broker. An
+incompatible requested application retains `provider_incompatible_with_agent`
+through source discovery and the Team catalog's `incompatible` readiness reason.
+This projection does not change grants or use quota exhaustion to hide models.
+
 In 0.3 development source, host launch reads require the canonical purpose-binding
 owner to classify an absent or retired subject, unauthorized purpose or service
 scope, unavailable target, or unselected binding. These refusals retain their
 reason in file diagnostics; none authorizes a durable-default or native-credential
 fallback. Ordinary plugin binding reads retain their nullable contract.
+
+In 0.3 development source, Connected Account coordinators enumerate their declared
+services with one request to the existing qualified-account list route. An explicit
+service set is filtered in the canonical body-free database read, then partitioned
+into the existing per-service observed inventories. A scoped demand still reads
+only its service, and requester runtimes retain their Account/Home qualification.
+These metadata inventories do not replace fresh credential, configuration or
+effect-currentness checks. Payload-free caller labels use the existing HTTP
+request-purpose header and completion logger.
 
 In development source, transient Account catalog reads and an exhausted catalog
 admission or managed-establishment budget return retryable
@@ -728,6 +1190,27 @@ Locality is derived by the endpoint-safety owner, not selected by the user. A ma
 - `machineId`;
 - a normalized endpoint fingerprint;
 - grant metadata/revision.
+
+In 0.3 development, new grants and explicit re-consent write tagged
+destination-only fingerprints: endpoint identity, credential disclosure and
+Machine locality. Probe, usage and model-catalog declarations, and DNS answers,
+do not change that consent identity. Actual endpoint or credential changes still
+require consent; a Machine grant cannot authorize another Machine. Legacy
+opaque fingerprints retain their original declaration comparison; legacy Machine
+grants also retain their DNS-dependent endpoint comparison. Legacy HTTPS Account
+grants follow the configured-launch no-DNS behavior above. A stale legacy grant uses the existing
+re-consent flow to write the new shape; there is no migration, automatic upgrade
+or dual writer. These are grant semantics, not permission to fetch an unsafe
+destination: actual network requests retain destination and redirect validation.
+
+In 0.3 development, enabling a public endpoint with Machine scope refuses with
+`provider_account_scope_required` and directs the person to enable the connection
+for the Account. This scope rule is independent of credentials: an unauthenticated
+local endpoint can receive a Machine grant, and a public connection can be configured
+before its required key is bound. Missing or unavailable keys still refuse use at
+credential admission. A Saved Secret capture failure during an Account catalog
+write retains `provider_secret_unavailable` through the Action result and UI,
+without writing the catalog or presenting a plugin failure.
 
 Changing a local endpoint invalidates the previous grant. The daemon must refuse before secret resolution with an actionable error when the grant is absent or stale. A connection definition may sync across devices; authorization to use a local endpoint does not silently transfer to another machine.
 
@@ -765,6 +1248,16 @@ remain single-vendor. Gateway vendor slots use the connection's existing
 gateway use clears its slot only while that exact pool still owns it; replacing
 a slot preserves other vendors. An empty saved configuration is allowed, but
 does not authorize an unbound runtime.
+
+In 0.3 development, Machine descriptions and probe admission report an unbound
+gateway as `provider_connection_invalid` with the closed
+`reason: managed_purpose_bindings_missing`, non-retryable `review_connection`
+recovery, and no endpoint request. The Protocol Provider error owner defines
+this optional configuration-only reason; the CLI registry owns its projection
+for description, access and probe/spawn admission. A missing or deleted
+connection still reports `provider_connection_not_found`. This is an unreleased
+error-envelope extension, not a new error family, grant or persisted format;
+older errors without a reason remain readable.
 
 In 0.3 development source, model rows can carry `gatewaySlots`, the qualified
 purpose and configured pool/account target for each slot that serves that model.
@@ -822,13 +1315,19 @@ the subsequent stream reached the hub application. In 0.3 development, signed
 Account-connection stream admission binds the Home, Account and exact peer/target
 identities. Private catalog/purpose reads and shared Gateway acquisition run in
 the subsequent HTTP application request, outside native's stream-control deadline,
-matching Team source acquisition. The hub revalidates the source before returning
-endpoint metadata or forwarding inference; a source refusal returns typed HTTP
-failure. Closing the stream cancels acquisition and releases its joined access;
+matching Team source acquisition. The hub admits each endpoint-metadata or
+inference request once through Home before source effects. A fresh source open
+captures its exact endpoint and credential transport; later requests retain
+their own Home admission and acquire the current credential in that source's
+pinned slot. Rename and declaration churn do not retire that capture. A source
+refusal returns typed HTTP failure. Closing the stream cancels acquisition and releases its joined access;
 explicit retirement still ends only the exact signed consumer claim.
 In 0.3 development, retirement first withdraws the recipient's published
-listener; failure to withdraw still blocks runner stop. The carrier then uses
-the existing 30-second Provider endpoint budget for one private release attempt.
+listener; failure to withdraw still blocks runner stop. One private release
+attempt continues under the existing native runtime's custody without delaying
+runner stop or borrowing the ended consumer's cancellation signal. Native
+endpoint shutdown closes its retained control transport; no Provider-local
+release deadline or retry loop is imposed.
 Its `[provider-broker-release]` record ends with `released` after HTTP 204,
 `target_gone` when the authenticated endpoint differs from the signed target,
 or `abandoned` with a closed reason when the remote attempt fails. Each outcome
@@ -852,7 +1351,12 @@ failure writer and preserves shared custody; an open-time failure also releases
 that caller's joined projection. Only a definite stale source ends custody. Account-change facts scope retained
 checks to relevant sources and Connected Services. Saved Secret and Provider
 material changes reach direct delivery once through its snapshot subscription;
-Team, service and recovery facts use the existing Account-change subscription.
+Team authority, service and recovery facts use the existing Account-change subscription.
+Direct-material delivery and withdrawal publish `account/team-credential-material`
+through the same Team audience owner. Recipient currentness and demanded credential
+list/detail/catalog views consume this fact, including the custodian's other clients.
+It does not change source authority and therefore starts no source census. Its
+separate coalescing identity preserves any pending `account/teams` authority fact.
 These checks add no idle timer or release retry loop.
 Run currentness uses Home's existing daemon attestation when a pass runs. Home
 has no Run-end publication with the Run's broker custodian, by decision: Home
@@ -862,15 +1366,25 @@ Run's stream closes before Home records the Run as ended; that claim then lives
 until the next deciding change, an explicit retirement or broker restart.
 Broker restart loses its in-memory claims; native runtime shutdown retains
 responsibility for failed private control closers.
-Recipient currentness, Team catalog, experimental-consent reads and the first
-fresh Home grant finish before the native connection is acquired. The carrier
+Team catalog admission and the first fresh Home grant finish before the native
+connection is acquired. The carrier
 consumes that verified grant once, rechecking its expiry after dial; subsequent
 streams refresh their own grants under the containing operation's lifetime.
 Endpoint discovery then sends the first stream without another Home read in
 between: native's pre-application custody window
-owns connections that have not sent any application stream. Both adapters retain
-their post-discovery revalidation before publishing a binding. A refused
-pre-connection check acquires no tunnel or source claim.
+owns connections that have not sent any application stream. The Account and Team
+adapters publish the captured binding without a post-discovery Home or catalog
+read. The target still authorizes each subsequent HTTP request, so withdrawal
+refuses the next request. Direct delivery similarly finishes from its admitted
+material after disclosure; a new open requires fresh admission. Account/Home
+identity, exact destination and local cancellation remain enforced.
+In 0.3 development, selected-resource revalidation passes the exact resource id
+through the existing Home entitlement read and shared CLI catalog transport;
+Team authorization, application compatibility and withdrawal checks still run.
+Direct-material reconciliation uses that transport's authenticated-custodian
+selection instead of enumerating member Teams. Its candidate-window owner is
+shared with the existing exact-source administration read, whose public response
+remains stripped of private source and Team details.
 In development source,
 `providerBrokerEndpointDiscovery.ts` owns endpoint acquisition and failure
 classification for both Account connections and Team credentials. Its file-only
@@ -882,13 +1396,15 @@ refused or failed refresh. Its elapsed time is the completed refresh duration,
 or the time still pending when discovery fails.
 A refused Home grant refresh, including the first refresh before dial, is retained as
 `broker_refresh_refused` before native transport can turn it into a closed
-socket. Account failures also retain these closed cause/status facts in the
+socket or an HTTP refusal without a broker-code header. Team launch refusals
+keep Home's typed admission code across both forms; only untyped transport
+failures become `provider_endpoint_unavailable`. Account failures also retain these closed cause/status facts in the
 existing `[ProviderBroker] Account connection open refused` and runner dispatch
 refusal records. The hub's `[ProviderBroker] Machine stream admission refused`
 record distinguishes transport identity, binding, signature, unavailable
 resolver/target, target failure and cancellation. Diagnostics contain fixed
-classes rather than error messages, URLs, headers, bodies or signed authority;
-the public refusal remains `provider_endpoint_unavailable`. A missing HTTP
+classes rather than error messages, URLs, headers, bodies or signed authority.
+A missing HTTP
 status alone cannot distinguish a rejected stream from a transport failure.
 Account-connection open and fresh-access refusals also retain Home's existing
 closed admission reason as `admissionReasonCode` in those file records. The
@@ -898,6 +1414,13 @@ error remains `provider_endpoint_unavailable`. An unknown or absent cause still
 returns `broker_unavailable`; raw exceptions and signed authority are never
 forwarded. This reports Home's decision without changing admission or extending
 consumer authority across a transport failure.
+On an untyped discovery transport failure, the host reads native tunnel status
+once before retirement and adds `closingSide` and `closingStage` to the existing
+discovery record. Native status distinguishes local HTTP-head/capability bounds,
+stream decision timeout/closure, target admission refusal and pre-application
+custody. An older addon or an unclassified transport outcome remains unknown;
+the diagnostic never infers a closer from elapsed time. There is no idle status
+poll, new log stream, retry or change to the owning control/HTTP budgets.
 Compare discovery time with the containing daemon-service request duration;
 that request also includes catalog, grant acquisition and binding revalidation.
 Its total duration is not a native stream timeout measurement.
@@ -957,6 +1480,14 @@ facts neither starts a gateway nor acquires a consumer claim.
 Description reobserves the Account catalog without marking an admitted row as
 changed. A confirmed catalog change still withdraws authority through the
 Account observer; an unavailable read returns a catalog error.
+
+In 0.3 development, Session spawn revalidation waits for an already-running
+Account Provider catalog refresh to publish its readable result. It joins that
+read's existing completion signal under the launch's cancellation lifetime,
+then validates the current connection and grants. It does not start another
+catalog read or treat a loading catalog as a missing connection. A failed
+refresh still refuses the launch, and optional history maintenance does not
+hold readable catalog admission.
 
 The runner keeps its own loopback access endpoint across daemon replacement.
 Each new request re-admits the captured binding before obtaining fresh access;
@@ -1101,6 +1632,13 @@ the existing pool-reference and managed-resource review. If no Machine is select
 the Account record is removed and the UI says remote sign-out could not be
 confirmed. An explicitly selected Machine retains provider-side revocation.
 
+Pool membership does not disable Remove account. If the revoke Action reports
+pool references, the controller asks once whether to proceed, naming the pool
+when the loaded membership identifies exactly one. Confirmation retries the same
+Action with pool-reference cleanup; cancellation keeps the account and its
+memberships. The separate Remove from pool action remains available, and
+managed-resource removal keeps its existing review.
+
 ### Team credential resources (development only)
 
 Current 0.3 development source contains the protocol, server routes, and UI foundations for
@@ -1116,6 +1654,19 @@ end-to-end broker, direct-delivery, selection, usage, recovery, and revocation j
 The source Account keeps credential custody. A Team resource stores a typed reference to the
 current source plus audience and use policy; it does not copy a Provider definition or create a
 second credential store.
+
+The vendor-native source prerequisite in 0.3 development extends that same
+Provider source-catalog operation with an explicit private native request. Only
+the source custodian's controller can return the exact model's authorization
+ticket, HTTPS endpoint and header transport; broad Team catalogs retain only an
+opaque ticket reference. It reads current resource disclosure policy
+without opening key material or requiring a Happier
+broker. Before an installation renders headers, the canonical Saved Secret
+operation refreshes the selected record against Home, then rechecks the ticket
+and resource before and after materialization. Withdrawal or rotation refuses
+the old selection. The transient header/redaction lease has awaited cleanup;
+catalog reads never render credentials. This prerequisite alone does not certify
+the managed install, guest launch or complete vendor-native journey.
 
 In 0.3 development, the qualified account profile's optional `statusReason`
 projects the existing credential health `lastRefreshFailureKind` when its status
@@ -1133,7 +1684,20 @@ authentication-attempt errors remain separate facts, not account sign-out causes
 The same owner-only metadata projection includes stored health observations
 `lastRefreshFailureAt`, `lastRefreshSuccessAt` and `providerHttpStatus` only when
 present. It does not expose credential content or raw provider error text and
-does not backfill missing observations.
+does not backfill missing observations. Spawn reconnect diagnostics keep their
+existing code and may include `diagnostics.reconnectCause`: `credential_missing`,
+`listed_needs_reauth` or `stored_health_rejected`. The last value identifies the
+exact stored-health refusal; an otherwise unclassified provider rejection does
+not acquire that cause.
+
+Qualified refresh settlement records the attempt time and the observed success
+or failure time through the existing health writer. Codex token-endpoint
+failures also carry their numeric HTTP status into that writer. Status-only
+observations do not establish a refresh, and a refresh that returns unchanged
+credentials does not establish a successful token rotation. Historical missing
+fields remain unknown. Plugin-reported expiry still drives daemon scheduling;
+the list's nullable expiry is the stored public row observation, not a read of
+private credential values.
 
 After a qualified refresh returns a replacement, caller cancellation no longer
 interrupts replacement preparation, the existing credential CAS, or successful
@@ -1143,47 +1707,131 @@ Runtime currentness admits the exchange; registry retirement after a successful
 exchange does not veto its replacement. Account-mode authority, credential and
 configuration CAS, and refresh-lease checks still apply during settlement.
 
-For brokered Connected Account and Pool sources, the daemon's model projector reads
-the CLIProxyAPI contribution's credential-free catalog for the exact upstream
-purpose. The plugin generates those rows from its pinned SDK source. This read
-requires a current selection from the Connected Account purpose-binding owner;
+Codex and Claude token-endpoint 4xx failures (except 429) use cli-common's
+`classifyConnectedAccountTokenEndpointFailure`, projected through the Plugin SDK.
+Only the OAuth body's `error` code participates: `invalid_grant` and
+`invalid_client` take precedence, then HTTP 401/403, otherwise `unknown`.
+Plugins carry the existing kind in `diagnostic.details.credentialRefreshFailureKind`;
+the daemon's credential-health writer persists it as `lastRefreshFailureKind`.
+Response bodies, error descriptions and token fields are not retained in that
+diagnostic. Existing records without a cause stay unchanged until a later
+refresh failure; no backfill is attempted.
+
+In unreleased 0.3 source, Codex uses the same owner's structured
+`parseConnectedAccountTokenEndpointFailure` result to retain an explicitly
+allowlisted OAuth code in `diagnostic.details.providerErrorCode`. Health stores
+that code in its existing `providerErrorCode` field, falling back to the plugin
+diagnostic code when no safe provider code is available. The normalized failure
+kind and authentication outcome stay unchanged. The parser's fixed allowlist
+excludes descriptions, unknown codes and response bodies. Credential-health
+write logs identify the qualified account and credential/configuration revisions;
+refresh-lease logs identify the machine, daemon owner and returned acquisition
+result. These observations do not prove the cause of a provider invalidation.
+
+In development source, a selected Connected Account in `needs_reauth`, including
+the actual active member of a Connected Service Pool, retains
+`connected_service_credential_reconnect_required` through source catalogs,
+readiness, broker admission and Session failure projection. The source still
+exists: this is an authentication repair, not a missing model or unreachable
+broker. Shared-credential surfaces ask the source owner to reconnect it; where
+the viewer already receives a custodian display name, that name accompanies the
+handoff. In 0.3 development, a confirmed health transition into `needs_reauth`
+also asks the existing Pool switch coordinator to rotate to a healthy eligible
+member. The Pool's automatic-switch policy, auth-expiry opt-out and Manual
+strategy remain authoritative; auth-expiry switching is enabled by default within
+that policy. The coordinator commits the same lease/CAS/generation transition
+used by usage-limit rotation. A member stays excluded until its health recovers.
+Passive reads reflect the committed active member and never choose an alternative
+themselves. If rotation cannot select a healthy member, they retain the typed
+reconnect reason. Ordinary rotation preserves Team resource/model selections;
+the next read observes the new member. Genuine upstream `model_not_found`
+responses remain model failures. This source contract is not loaded-runtime or
+release certification.
+
+For brokered Connected Account and Pool sources in development, the daemon's model
+projector uses the exact selected source Account's native model observation. The
+source plugin's unique Agent declaring that Connected Account service supplies
+the existing native-listing path; the Session's worker Agent need not be installed
+on the broker. A missing or ambiguous source mapping retains the CLIProxyAPI
+contribution's pinned declarations as explicitly unverified, without merging them
+into an observed list. This read requires a current selection from the Connected Account purpose-binding owner;
 the custodian's personal Provider-connections catalog need not be loaded for
 this source-only read. An explicit Account context uses its own purpose resolver
 and currentness proof. Ordinary personal Provider projections still require
-their admitted catalog. The source-only read neither starts a Gateway nor
-schedules a probe. A saved Gateway does not replace
-this source catalog. Ordinary saved Gateway model reads retain their probe path.
-In development, Team source reads describe the gateway's declared protocols,
-capabilities and pinned family models without activating the worker Agent on
-the broker. Source-any readiness uses the same unbound catalog observation;
+their admitted catalog. Browsing and explicit Refresh reuse the native observation
+owner's demand, cancellation and source isolation; they never start a Gateway,
+deliver material to a recipient, or switch the selected Pool member. Native
+executable listing retains that Agent's existing executable requirements. Admission
+reads use the same owner's current-only observation without dispatching a fresh
+model-list request. A saved Gateway does not replace this source catalog. Ordinary
+saved Gateway model reads retain their probe path.
+Source-any readiness uses the same unbound source selection;
 it does not enumerate broker-local Agents. Saved Provider sources retain their
 own connection/security/grant and observed-catalog admission.
-These rows retain account-unverified, experimental/unconfirmed presentation.
-The actual worker's admitted adapter computes compatibility at selection and
-launch. A source-reported compatibility or confirmation is not worker authority.
-The existing `providers.models.experimental.confirm` Action and private catalog
-also accept the projection's exact `connectedAccountTarget` and source-qualified
-catalog ref. This creates no saved Provider connection or grant. Source projections
-use revision zero; saved Gateways retain their captured connection revision.
-Team rows also carry an opaque confirmation source key, without the private
-Account or Pool target. The worker model-projection RPC accepts a
-`teamCredentialModel` and returns its locally computed compatibility and
-fingerprint. The recipient uses that result with the existing Account
-confirmation Action (`catalogSourceKey`, revision zero). The shared Protocol
-Action executor matches worker compatibility against the requesting Account's private
-catalog; a worker custodian's `confirmed` bit never supplies recipient consent.
-UI, CLI and MCP adapters supply their captured Account catalog readers to that executor.
-After saving consent, selection rereads the worker and that same Account catalog
-before committing. The shared Protocol confirmation matcher checks the source,
-Agent, model scope and actual adapter fingerprint;
-launch recomputes them before materialization. Confirmed rows stay experimental
-and account-unverified. Ordinary Pool member changes and access-token refresh do not
-change this static compatibility confirmation. A changed target or compatibility
-fingerprint requires its own confirmation.
 
-In development source, Team runtime admission demand-loads the recipient's
-Provider catalog in the captured Account context and rereads that same authority
-after broker/tunnel work. The daemon Account cannot supply recipient consent.
+External Provider requests, public model listing, resource Test and request-policy
+support read that same source catalog without an executing Agent. Their application
+identifies the source implementation, endpoint and protocol; registering another
+Agent on the broker does not change the available routes or models. A canonical
+model id stays listed when protocol presentations use different display names.
+Aliases that identify different canonical models remain ambiguous. Session and Run
+launches still carry their actual Agent target and apply its compatibility rules.
+
+The pinned CLIProxyAPI serving registry is also a route constraint. Managed
+custody passes the admitted projection's exact ids, purpose and source revision
+through its private consumer document. The wrapper registers those ids using
+the pinned SDK's public per-client registration mechanism; it neither fetches
+another list nor aliases or rewrites model ids. Consumer admission/currentness
+and settlement own those registrations, so simultaneous sources cannot borrow
+one another's models. The coupled private wrapper health contract is v3; startup
+refuses an older wrapper whose strict consumer reader cannot admit observations.
+Changed or stale projections withdraw admission. A
+successful empty observation admits no models. With no observation, the existing
+static serving registry remains an explicitly unverified fallback, not evidence
+of Account entitlement. This is development implementation, not release certification.
+
+The Team model DTO carries the source catalog's optional `confidence` and
+`sources` facts separately from route readiness. Static Connected Account rows
+remain `account_unverified`; picker descriptions, accessible names and Team
+catalog summaries show the existing “Not checked” label. An available route
+does not establish that this Account serves the model, and an Experimental
+badge does not change that observation. Older source projections may
+omit these presentation facts; omission supplies no verification evidence.
+Direct declaration browsing retains its route marker even before a material
+reference exists, so it cannot share a brokered observation through RPC
+deduplication. Connected Account declarations on that pre-execution route stay
+unverified and browsing does not initiate material delivery.
+
+After Direct delivery, the running Session uses its execution Machine's accepted
+source context and existing in-session model publication path. An Agent's model
+observation replaces the prior declared list in the Session picker, including a
+successful empty list; publication does not redeliver material or reopen the
+Session. Codex native Connected Account Sessions obtain that observation from
+their authenticated app-server's model list. Provider-bound Sessions retain
+their authorized Provider catalog owner, rather than borrowing a native
+Account's list. There is no additional pre-launch discovery seam. These are
+development-source contracts, not loaded-runtime certification.
+
+Brokered usage limits block brokered choices only. Current Direct model rows
+remain selectable under that limit; reconnect, withdrawal and missing or stale
+Direct material still refuse selection. UI and CLI consume the same Protocol
+delivery-readiness rule. Experimental compatibility stays separate.
+The actual worker's admitted adapter computes compatibility at selection and
+launch. Source-reported compatibility is not worker authority.
+A present refused model retains the worker's typed reason through launch and the
+public spawn result; `provider_model_not_found` denotes a missing exact model row,
+not a compatibility refusal.
+Experimental Team Agent/model pairings require no confirmation from either the
+custodian or recipient, across brokered, Direct and vendor-native delivery.
+Their informational Experimental badge is separate from Not checked catalog
+evidence. The worker still computes actual compatibility and refuses hard
+incompatibility. Personal Provider confirmation retains its existing
+Account-scoped owner and `providers.models.experimental.confirm` Action.
+Retained Team confirmation records are ignored at the storage read boundary;
+old personal records remain readable. No database migration is required.
+
+Team runtime admission retains the captured requesting Account for resource
+entitlement and transport authority.
 The daemon's shared Session/Run binding composition also uses that captured
 Account's bearer and Home for the entitled-resource catalog and broker-open
 requests, and its Account identity for the signed machine-carrier tunnel.
@@ -1196,18 +1844,14 @@ the daemon/runner boundary and construction diagnostics; they are not daemon
 authority failures.
 The Agent receives the local machine-carrier capability through its declared raw
 credential header, not a public-header/config literal; signed Home authority
-remains with the admitted stream. This transport correction changes the worker
-compatibility fingerprint where applicable, so an earlier confirmation may need
-to be renewed through the existing Account confirmation Action.
+remains with the admitted stream. Security/currentness fingerprints continue
+to bind the admitted source and transport.
 
-The custodian's confirmation never filters recipients' source catalogs,
-eligibility, request-policy facts or resource Test candidates. Team policy and
-current source membership decide what is offered; the recipient's own consent
-decides experimental selection/launch admission. This source/worker contract
-does not by itself prove a working native turn. The consuming UI must request
-worker compatibility before offering confirmation, and launch must read an
-application-qualified catalog through the accepted Session/Run binding.
-Loaded-runtime replay remains a separate integration check.
+Team policy and current source membership decide what is offered; actual worker
+compatibility decides selection/launch admission without experimental consent.
+Launch reads an application-qualified catalog through
+the accepted Session/Run binding. Source support alone does not prove a working
+native turn; loaded-runtime replay remains a separate integration check.
 
 The development daemon launch composition normalizes a fresh Session's
 service-purpose Team selection together with its effective model before
@@ -1215,14 +1859,25 @@ Session binding admission. It uses the declared Agent/Provider application
 and an exact currently offered Team model row, not a personal Provider
 connection or a model-name inference. Explicit model-source choices retain
 precedence; an unavailable or ambiguous model source is refused rather than
-falling back to native authentication. A Team model launch commits its Session
+falling back to native authentication. A Team model source with no selected
+model refuses with `team_credential_model_selection_required` and asks the
+person to choose a Team model; the daemon does not infer one. Pool member
+rotation preserves the selection while its resource and exact model remain
+available. Catalog, broker and reconnect refusals retain their existing typed
+codes through the launch result and the shared UI failure presenter. Broker
+software incompatibility retains `update_required`, rather than a missing-model
+diagnosis. Runtime opens use the selected delivery mode: an exhausted brokered
+allowance does not block an offered Direct model, while a confirmed source
+reconnect requirement still refuses both modes.
+A Team model launch commits its Session
 before native-auth preflight. Owner detail projects the Home-written model-slot
 witness into the protected attach snapshot; rejoin reads that Session's accepted
 selection rather than treating a new caller intent as accepted. The attaching
 host consumes the snapshot before capturing native runtime inputs. Only an
 accepted brokered inference binding satisfies native-auth preflight; native
-Sessions retain their sign-in check. Broker open and each request still enforce
-current resource, source and consumer authority, including Execution Run custody.
+Sessions retain their sign-in check. Broker open admits the job against current
+resource, source and consumer authority, including Execution Run custody; each
+later request only checks that the admitted job is still active (see Brokered).
 The running route display reads the runtime-opened source from the existing
 `sessionModelsV1.activeSelectionV1` carrier. Its closed V2 witness retains the
 accepted Team model identity alongside the exact model tuple and runner; native
@@ -1234,17 +1889,24 @@ itself distinguish a Team source from native sign-in. Pending choices remain
 separate from the applied source; retained proof may describe history without
 authorizing a replacement runner. This is unreleased 0.3 development behavior;
 the daemon, Home metadata reader and UI must load the matching source together.
+In the development composer, the local restart marker bridges only the wait for
+the durable model intent echo, whether V1 or V2. After that echo, the shared
+selection disposition decides whether a transition is still pending. A Team
+selection applied from another device therefore clears the marker and the armed
+Send continuation from its actual runtime witness, without comparing it to a
+native-only selection key.
 New Session credential readiness uses the selected current Team model's binding
 facts and the Agent's admitted authentication-isolation declaration, as Account
 Provider selections do. When that binding replaces native authentication, native
-sign-in is not a launch prerequisite; installation, worker compatibility and
-experimental-model confirmation remain required.
+sign-in is not a launch prerequisite; installation and worker compatibility
+remain required.
 The picker retains the last successfully admitted Team catalog choices during a
 background refresh, including a matching Home wake. Refresh freshness is separate
 from picker eligibility: an explicit invalidation, observer gap, failed read or
 refusal withdraws eligibility until a successful reread. Retained choices do not
-authorize credential use; launch, broker open and each request still recheck the
-current grant, resource and source through their existing owners.
+authorize credential use; launch and broker open recheck the current grant,
+resource and source through their existing owners, and each request checks that
+the admitted job is still active.
 The new-Session model picker's existing Refresh also reloads this Team catalog,
 alongside native/configuration and Provider observations. Favorites runs that
 shared refresh once across its Agent collectors.
@@ -1259,16 +1921,102 @@ leased Agent requirements and uses the same paginated Session catalog transport
 as launch normalization. The composed recipient Pool → Action/CLI spawn →
 native-turn journey and loaded-runtime replay still require integrated validation.
 
-Resource access has two intentionally different privacy contracts:
+#### Vendor-native Team delivery (development contract)
+
+The unreleased 0.3 delivery contract adds `vendor-native` alongside brokered and
+direct. Integration is in progress; these contracts do not establish loaded
+availability, completed isolation or a real Vercel turn. Focused tests exercise
+explicit Action/HTTP source composition. The approved first-use contract extends
+ordinary spawn approval to that Session's exact custodian-authorized native binding;
+terminal lifetime removal does not require a live spawn or turn ingress. Current
+source and loaded integration evidence are tracked separately; loaded integration
+remains parked. A resource's custodian
+owns one ordered `preferredAllowedModes` allowance; new resources default to
+`['brokered']`. Audience grants contain independent allowed route sets. Native
+permission must be explicit in both; legacy `both` never includes future routes.
+Team administration alone cannot authorize vendor disclosure.
+
+Native allowance, native source replacement and native audience grants require
+person-reviewed confirmation through the canonical Action admission, even when
+ordinary Action prompts have a persisted waiver. The existing host-owned,
+same-Action confirmation can carry the editor's reviewed vendor consequences;
+an explicit Ask preference still applies. Unchanged disclosure authority does
+not make an ordinary metadata edit a new disclosure decision. This uses the
+existing approval/replay mechanism, not a separate native consent setting.
+
+The existing Provider Team-binding owner selects the custodian's most-preferred
+allowed, entitled mode supported by the exact Machine and current source/runtime
+facts. Picker, CLI and launch consume that result. There is no member route
+chooser or per-Session override. Native installation requires a supporting
+provisioner, qualified tenant/runtime, compatible HTTPS header transport, exact
+managed placement and lawful co-located source custody. Missing declaration,
+unknown support or unavailable installation authority makes native unavailable;
+an allowed lower mode may be offered by this same owner, never silently selected
+during an admitted launch.
+
+Installation is the ordinary `machines.managed.credentials.install` Action on the
+exact controller. The host recomputes the complete policy from current active
+bindings, keyed per binding, and the provisioner applies one logical replacement.
+Home distinguishes retained owned rules from currently authorized desired uses;
+the controller consumes that classification. Disabled resources and withdrawn
+audiences are omitted from desired policy without losing their owned descriptors.
+Withdrawal alone does not block a binding's release or require opening the
+withdrawn source. The controller's confirmed completion reports the actual
+post-submission owned and desired binding keys applied to the vendor; Home does
+not reconstruct that cohort from entitlements that may have changed during IO.
+The exact released binding is retired, while acknowledged omitted confirmed
+peers return to prepared with their accepted selections intact. Unknown or
+submitted effects remain retained and block ready use across the managed
+resource. An exact prepared, never-submitted binding can still report known
+absence without opening credential material or requiring a new Use grant.
+For Vercel, running and saved policy acknowledgements are both required. Partial
+or unknown IO, including an abandoned remote mutation after local cancellation,
+remains unconfirmed. Compensation alone does not establish remote settlement.
+The same composer owns lifecycle reconciliation and awaited owning-Session cleanup;
+unimplemented transitions refuse before new use. No event replay, new timer or
+controller request occurs for each inference request on an unchanged installed
+binding.
+
+The member guest receives the final Provider endpoint and a random placeholder.
+Vercel substitutes the admitted headers outside the guest; the real inference key
+is intentionally disclosed to Vercel's control plane. The separate Vercel
+provisioning credential never becomes Agent authentication. Native delivery is
+not a general OAuth-refresh, request-signing, external-key or detached-Run route.
+Future vendor adapters must implement and qualify the same public provisioner
+seam before advertising support.
+
+**Upstream key rotation/revocation is the hard stop; controller-offline policy
+removal is not guaranteed.** Installed rules may continue working while the
+controller is offline; new installs and changes need control-plane reachability.
+Native traffic bypasses Happier's per-request membership, body/model policy and
+request/token/cost limits. Existing Agent usage remains observation, never native
+quota enforcement or authenticated per-member billing identity. Configure verified
+Gateway/vendor restrictions at their own owner. Vercel's current
+[vendor documentation](https://vercel.com/kb/guide/vercel-sandbox-vs-e2b)
+includes Hobby in credential-transformation availability; Happier must still
+qualify the actual tenant and exact resource rather than infer support from a
+plan label. Vercel's [matchers](https://vercel.com/docs/sandbox/concepts/firewall#credentials-brokering)
+select substitution, not an arbitrary request-body firewall.
+
+Placeholders permit use within their sandbox. Co-members sharing one Agent OS
+user can read each other's placeholders until per-member users and private
+execution material are implemented and verified. API projection filtering is
+not OS isolation; same-Account Sessions and privileged owners remain trusted.
+Separately granted direct access still permits intentional material disclosure.
+
+Resource access therefore has three distinct delivery/privacy contracts:
 
 - **Brokered** access keeps usable credential material on one exact broker Machine. A custodian
   can configure that Machine directly or choose a personal Machine Pool. For a genuinely new
   Pool-backed open, the source-owning daemons return only current eligibility status, the Home
   applies the canonical Pool selector once, and the ordinary exact-Machine broker path continues.
-  In 0.3 development, same-host recipients use distinct daemon Machine and endpoint
-  identities. If the resolved target (including a Pool-selected target) coincides with
-  the initiator Machine or endpoint, open returns `resource_unavailable` before model
-  projection or signing.
+  In 0.3 development, the worker may use its own Machine as the broker, including
+  through a Pool. The native carrier uses that endpoint's active local Machine
+  admission instead of an unsupported Iroh self-connection. Fresh signed authority,
+  per-request admission, target capabilities and acceptor withdrawal still apply.
+  Separate daemons on one host retain distinct Machine and endpoint identities;
+  another Machine claiming the initiator's endpoint is refused with
+  `resource_unavailable` before model projection or signing.
   An external API key's retained operation must stay on its selected exact Machine. Pool tier
   reordering, disabling and removal affect future opens only. Lost presence, unavailable source
   readiness or a failed RPC is not proof of retirement and must not trigger reselection.
@@ -1276,8 +2024,19 @@ Resource access has two intentionally different privacy contracts:
   operation lifetime or arbitrate requests before first admission. The approved correction
   extends the existing external-key/admission aggregate with a private current-operation binding
   and compare-and-clear retirement from actual daemon custody cleanup. That integrated path is
-  not yet complete; read-only model listing must not establish an operation. The Home admits the current Account, Team resource, Session or execution run, policy, limits,
-  and placement for each request; the broker then performs the Provider request. Recipients do
+  not yet complete; read-only model listing must not establish an operation. The Home admits the current Account, Team resource, Session or execution run, policy
+  and placement once per job, at broker open (a Session's generation also needs the turn the
+  Session-binding owner admitted at turn begin). Each later request reads only whether that job
+  is still active (signed credential epoch, resource row and revision, the Session with its admitted
+  turn, or the Run occurrence) and admits its usage and limits. The custodian's source and member are
+  not re-read per request: a replaced source withdraws the route and the next acquisition re-admits; the broker then
+  performs the Provider request. Revoking a member or grant wakes the custodian, whose retained
+  revalidation withdraws the route, so the next request cannot reach the source; the next open or
+  turn is refused at admission. Tightening the Team sign-in policy (or removing the factor that
+  qualified the credential) is decided at admission only: admitted routes run to their natural end,
+  and the next open, grant refresh or turn re-qualifies. Signing the credential out ends the route on
+  its next request. A source that needs reconnecting is refused by the broker's own source owner
+  before it asks the Home. Recipients do
   not receive credential bytes, the private Pool roster, or Pool-management authority.
   Source-member currentness is checked by `resolveTeamCredentialSourceMemberCurrentnessInTx`
   with brokered delivery: the account or enabled Pool member must still belong to the pinned
@@ -1286,6 +2045,25 @@ Resource access has two intentionally different privacy contracts:
 - **Direct** access deliberately discloses usable current material to an authorized recipient for
   a source that supports export. Future revocation can stop new retrieval, but cannot recall
   material already delivered or enforce later out-of-product requests.
+- **Vendor-native** access discloses the admitted key to a supporting cloud vendor,
+  whose external egress rule replaces a guest placeholder. It preserves the
+  source/entitlement owners while giving up Happier per-request enforcement.
+
+In 0.3 development, the installed controller replaces the complete current
+vendor-native policy. Admission and fresh secret acquisition remain separate:
+withdrawal refuses a new use or acquisition, but does not turn a completed vendor
+write into an unknown result. A later confirmed replacement settles earlier
+unknown outcomes and abandoned submission markers; an actual partial live/saved
+write still reports unknown.
+
+Session, binding, resource and Account deletion do not retain rows solely as
+native cleanup proof. Before cascading those rows, the server publishes the
+existing managed-policy invalidation. The controller re-reads the current set,
+including an empty set, at start/reconnect and on that invalidation through the
+same per-resource writer used by explicit installation. Vercel recognises its
+rules by the existing `x-happier-attribution` header, refuses unmarked rules and
+writes only changed policy projections. An offline controller cannot remove a
+rule until its next connection; deletion is not immediate vendor revocation.
 
 Broker placement has one interpreter. The resource row carries two nullable columns,
 `brokerMachineId` and `brokerPoolId`, and `readTeamCredentialBrokerPlacement` in
@@ -1332,7 +2110,36 @@ Readiness and failures use the typed Team-credential result unions; clients must
 reported recovery action and must not silently fall back to a personal connection or from direct
 to brokered delivery.
 
+In development 0.3, the Shared credentials page combines the member's custodied
+administration rows with the existing least-privilege recipient catalog. Entitled
+resources remain visible with their typed readiness and owner-recovery guidance,
+including Brokered-only resources whose source needs reconnect and has no selectable
+models. This does not widen administration disclosure or change model eligibility.
+Saved-resource Test results carry their typed cause and existing request ID into
+the collapsed Details disclosure: the broker request ID after dispatch, or the
+HTTP request ID for preflight answers. Optional `failureDetail` preserves only
+the closed application refusal code, carrier stage and actual HTTP status when
+one was received. It contains no upstream body or arbitrary headers. These
+optional output fields are a direct development contract change; matching
+producers and readers reload together. New readers accept old replies without
+diagnostics; older strict readers reject replies with the additional fields.
+Optionality does not establish compatibility in that direction. The generic
+`upstream_unavailable` result alone does not establish a vendor outage: the
+carrier also uses it for incomplete or malformed application responses. Closed
+broker application refusal codes remain available to Test Details.
+
 The development readiness owner preserves typed source-projection failures.
+Generic recipient catalogs, application-qualified catalogs and credential
+administration consume the launch placement resolver through the Team broker
+readiness projection. An offline selected broker returns `broker_unavailable`;
+unknown presence retains `projection_unavailable`. Reads select the demanded
+Machine presence rooms, without changing resource revisions or adding a poll.
+Current direct material remains independently usable when brokerage is unavailable.
+The strict Session creation adapter preserves a closed preflight cause carried
+by `SPAWN_VALIDATION_FAILED`, so retained operation results and the Session error
+presenter can explain broker recovery using the credential owner's guidance.
+These are development-source behaviors; loaded-runtime validation is separate.
+
 An application-qualified catalog read distinguishes an unavailable transport,
 an invalid response, missing source authorization, incompatible rows and a
 current empty catalog with bounded `broker_unavailable.reason` values. These
@@ -1481,13 +2288,54 @@ that catalog is current and writable. Authorization, encryption-mode/material,
 and invalid-content failures withdraw the catalog at its existing read owner;
 the screen does not preserve its own copy after that withdrawal.
 
+The Provider, connected-account configuration and connected metadata catalog
+owners retain their admitted snapshots during ordinary transport refresh; an
+equal result publishes nothing. Explicit invalidation still marks retained data
+stale, and admission failures still withdraw private content. Provider Machine
+target presentation subscribes to label and eligibility facts at the Machine
+owner, while execution resolves the current raw inventory.
+
 Large catalogs must use the app's virtualized option-list path. OpenRouter-scale catalogs must not render hundreds of model rows through a direct `.map()` of pressables.
 
-Catalog and health refresh is demand-driven. Enabling a connection, a semantic connection-detail or model-picker read, an explicit Test/Refresh, or an eligible read of expired cached data may schedule work through the canonical Provider probe scheduler. Cache expiry makes that read schedule a refresh; it does not create a timer, background crawler, lease, or global refresh budget. The scheduler owns single-flight execution, concurrency, retry/backoff, and freshness. UI and plugin code must not add a second polling path.
+Catalog and health refresh is demand-driven. Enabling a connection, a semantic connection-detail or model-picker read, or an explicit Test/Refresh schedules work through the canonical Provider probe scheduler. Concurrent identical demands share one operation, and each caller can withdraw independently. The last caller leaving aborts cancellable work; a boundary that cannot abort retains its pending work until settlement. A settled failure does not impose a local retry delay; an endpoint's actual `Retry-After` remains observable and manual Refresh can retry immediately. There are no Provider-specific concurrency ceilings, freshness TTLs, background crawlers, or retry timers. Catalog refresh already publishes health for the endpoints it observes, so the same demand does not request those observations twice.
 
-An Agent may declare a native credential source for that same catalog observation. The host reads only the declared secret file under the Agent's declared native home and routes the credential into the existing Provider catalog observer; native authentication does not create a second HTTP probe, catalog parser, cache, or refresh scheduler. Claude uses this path for its native Claude Code OAuth login when no selected Connected Service supplies the catalog credential. Its account setting and environment kill switch are evaluated before either credential source, cache, or network is touched.
+In 0.3 development, the connection header and Test row consume the same current
+Machine health projection. Test re-reads that projection after settlement;
+its success is not retained as a separate health verdict. A later observation
+can change the result while the last-known model catalog remains visible.
+Mounted detail and Machine readers consume updates from the shared check owner
+without replacing the Account catalog an open editor read. A failed refresh
+marks retained model membership stale; it does not make its count zero. Models
+leave active membership only after a successful catalog omits them. Until a
+model list is available, the detail uses the Machine's retained count rather
+than the Account's static/manual-only count. Selected shared-secret admission
+accepts unrelated Account-preference advances while the Account scope and
+Provider catalog authority remain unchanged; actual authority changes still
+refuse admission before HTTP dispatch.
+In 0.3 development, connection readers derive Account rows from the shared
+catalog snapshot rather than issuing their own Account describe Actions. The
+catalog loader owns observation and pushed invalidation. Local write receipts
+advance all readers, including an editor's revision basis; an unrelated remote
+refresh does not overwrite an open draft. Machine checks remain keyed by their
+exact Home, Account, credential, Machine and connection query. Refreshing one
+query does not fan out private describes to neighboring panes.
 
-A model-picker read waits for the demand it schedules only when a connection is **cold**: it has no catalog observation yet and would therefore contribute no row at all. Answering that read immediately would be a silently empty picker with nothing to follow it, because the projection response is the only completion signal the client has. A connection that already holds an observation—even an empty, stale, or failed one—renders from that observation and keeps its refresh advisory, so an unreachable endpoint never blocks a later read. Waiting does not change work ownership: the demand still goes to the one probe scheduler, which keeps its single-flight execution, admission concurrency, typed local-capacity refusal, and failure backoff. Demand the scheduler refuses for capacity is left for a later read; no caller retains a second queue for it.
+In 0.3 development, Connected Service pool detail, the index and choosers share
+the Account profile's `connectedAccountGroupsV4` projection. Remote edits update
+an open detail through the existing profile push; detail does not fetch or retain
+a separate pool list. The server projects optional pool policy fields through
+the same Home feature decisions for profile pushes, list reads and mutation
+replies. A successful edit returns its acknowledged CAS revision for a draft's
+next member write without replacing the pushed profile with a private copy.
+
+Authenticated HTTP 401/403 retains `provider_endpoint_unauthorized`; HTTP 5xx
+needs attention, while a transport failure is unreachable. Usage-source
+credential results remain separate: a successful public catalog read does not
+establish that the inference or billing key is accepted.
+
+In 0.3 development, an Agent may declare an ordered native endpoint and credential target for that same catalog observation. The host reads declared environment or native-home sources and executes an eligible user settings helper under the containing request's lifetime. It routes the target through the existing Provider observer, parser, cache and refresh scheduler. Claude uses this path when no selected Connected Service supplies the catalog credential; its account setting and environment kill switch run before credentials, helpers, cache or network are touched. The helper runs as a shell command on the execution machine in the selected workspace directory. A configured helper failure shows the built-in catalog with a failed refresh without substituting another account's credentials; a saved native OAuth login is eligible only for the default endpoint. [Agent catalog ownership](agents-catalog.md) describes the native preflight settings and gateway contract.
+
+A model-picker read waits for the demand it schedules only when a connection is **cold**: it has no catalog observation yet and would therefore contribute no row at all. Answering that read immediately would be a silently empty picker with nothing to follow it, because the projection response is the only completion signal the client has. A connection that already holds an observation—even an empty, stale, or failed one—renders from that observation and keeps its refresh advisory, so an unreachable endpoint never blocks a later read. Waiting and advisory reads use the same single-flight scheduler. Explicit model Load requests one fresh catalog observation after its effect; an older in-flight GET cannot confirm the load.
 
 ### Manual reasoning-effort declarations (0.3 development)
 
@@ -1525,6 +2373,15 @@ An explicit `supported: false` reports no effort support. A manual declaration
 does not override this report or prove endpoint health or Agent compatibility.
 Tier declaration is currently authored through the Action or CLI.
 
+Session and Execution Run admission refuse an explicitly requested, non-null
+`reasoning_effort` unless the selected model declares that exact value and the
+Agent supports Provider effort. The shared Provider authorization owner returns
+non-retryable `provider_model_config_option_unsupported` before runner startup;
+retrying the same explicit launch choice preserves that requirement. Clearing or
+omitting the option leaves inherited/default configuration to the Agent's
+normalization. A model switch does not make retained effort a fresh explicit
+choice; for example, Codex omits unsupported inherited effort at startup.
+
 ## Session lifecycle
 
 In 0.3 development, Codex app-server turns bound to a Provider connection map
@@ -1541,6 +2398,15 @@ with the existing retryable `retry` recovery. A retry-exhaustion marker alone
 does not establish reachability. This attribution does not change Codex's native
 request/stream retry policy; Session input settlement owns whether a retry
 control can safely resubmit the retained input.
+
+In 0.3 development, a failed model switch reports the Agent's actual running
+model and a visible failure; it never silently switches back. If runtime
+application succeeds but publishing its active facts fails, the existing
+reconciliation result retains the known applied selection and prompt admission
+stays fenced until the facts recover; an unavailable publisher may require the
+existing explicit runner restart. A next-prompt configuration is not proof
+that the running model changed. Runtime-origin drift likewise reports the
+observed model without automatically restoring a previous selection.
 
 At launch, Happier persists the structured model selection plus exact non-secret resolution metadata: connection revision, chosen protocol, `compatibilityFingerprint`, `bindingSecurityFingerprint`, and the materialization kind. It does not persist a transient compatibility status, a derived materialization fingerprint, or credentials in session metadata.
 
@@ -1560,6 +2426,26 @@ In the development Session-creation Action path, a daemon Provider rejection ret
 Development Resume alerts use the same Provider-error presentation as Session
 creation and retain the specific Provider code in Technical details. Arbitrary
 private validation diagnostics remain outside the alert message.
+
+In 0.3 development, a requester Session's protected local custody retains its
+Account identity across Stop and physical runner exit. Cold Resume rebuilds the
+requester runtime through that custody and uses the same Account-qualified
+Connected Account homes as birth. Runner cleanup releases the live runtime, not
+the retained Session's private birth. Unavailable requester custody does not
+authorize another Account's runtime. Historical custody already deleted by an
+older daemon cannot be reconstructed from native transcript files.
+Resume and Session creation share the existing Connected Service diagnostic
+presenter, including `provider_session_state_unavailable_for_resume`; local
+paths and native Session ids remain outside the alert.
+
+In 0.3 development, an exhausted Connected Account pool keeps its existing
+`no_eligible_member` launch cause and per-member pool-selection exclusions in
+the same spawn result. The start-error presenter groups those reasons using the
+usage pool's reason-copy owner. “Sign in again” opens the existing Connect sheet
+for a member excluded for invalid authentication; “Use another account” opens
+its saved-account selection and updates the composer's existing binding. Neither
+action automatically retries Start. A Session committed before this refusal
+follows the existing [pre-runner archival and retry contract](./cli-architecture.md#session-spawning).
 
 In 0.3 development, unexpected launch preparation, Agent activation and model
 projection failures use the existing `agent_error` result. They do not establish
@@ -1610,6 +2496,8 @@ Provider conversion counts an Agent default as a real preference, so a default-o
 After conversion, a person's current retained Profile preference takes precedence over a historical migration default. A model tied to another Agent remains in migration history and becomes applicable again when that Agent is selected; it cannot retarget the current Profile. The current native model choice likewise precedes migration history. These are current-source semantics, not a mixed-version or rollback promise.
 
 Migration descriptors are plugin-owned provider facts. New writes use provider connections; compatibility readers are boundary-owned and narrowly preserve the deployed legacy shapes.
+
+In development 0.3, resume and respawn restore an omitted Launch Profile identity from the Session owner metadata. An explicit empty identity selects Default Environment. The daemon then uses its existing Account-scoped Profile defaults and saved-secret materialization owners; retained legacy Profile environments are restored through that same defaults owner. Missing, disabled, or migrated Profiles refuse the launch. Saved-secret materialization retains its canonical policy: required bindings and exact one-shot references fail closed when unavailable; optional defaults may be omitted. Persisted Provider resume selection remains authoritative over current Profile model defaults. This requires the updated CLI daemon and adds no new wire or persisted format.
 
 ## Adding a provider plugin
 

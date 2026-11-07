@@ -634,7 +634,8 @@ async function activateTargetAndAdmitInput(params: Readonly<{
       ...(params.externalAction ? { externalAction: params.externalAction,
         executionAuthority: params.externalAction.context.authority } : {}),
     }).catch(() => null);
-    if (!resumed?.ok) return committed.committed('target_start_failed');
+    if (!resumed?.ok) return committed.committed('target_start_failed',
+      resumed?.errorDetail?.kind === 'launch_error' ? resumed.errorDetail : undefined);
   }
 
   // `accepted` still means exactly what section 6.1 says: the current view and
@@ -1118,6 +1119,7 @@ export async function runSessionAgentTransition(
   });
 
   const divider = buildSessionAgentTransitionDividerPayload({
+    sessionId,
     ...readCryptoContext(stoppedSession),
     submittedLocalId: localId,
     fromAgentId: sourceAgentId,

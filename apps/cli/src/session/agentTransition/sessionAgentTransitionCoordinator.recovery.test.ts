@@ -8,6 +8,9 @@ import {
 } from '@happier-dev/protocol';
 
 import { runSessionAgentTransition } from './sessionAgentTransitionCoordinator';
+import { requestInactiveSessionResume } from '@/session/services/requestInactiveSessionResume';
+import { buildSpawnResumeUnreachableErrorResult } from '@/daemon/connectedServices/buildSpawnResumeUnreachableErrorResult';
+import { ConnectedServiceSpawnResumeUnreachableError } from '@/daemon/connectedServices/resolveConnectedServiceAuthForSpawn';
 import {
   buildTransitionRequest,
   createTransitionDepsHarness,
@@ -180,25 +183,49 @@ describe('section 7.5 recovery projection', () => {
     }
   });
 
-  it('row 6 — target current, matching divider, target not running: target_start_failed', async () => {
+  it('row 6 — target current, matching divider, target not running: retains native sign-in refusal', async () => {
     const harness = createTransitionDepsHarness({
       findTranscriptMessageByLocalId: vi.fn(async () => foundDivider({
         fromAgentId: 'claude',
         toAgentId: 'codex',
       })) as never,
-      requestInactiveSessionResume: vi.fn(async () => ({
-        ok: false as const,
-        code: 'unsupported' as const,
-        message: 'resume rejected',
-      })),
+      requestInactiveSessionResume: params => requestInactiveSessionResume({ ...params,
+        machineRpcTransport: async () => ({ type: 'error', errorCode: 'agent_signed_out',
+          agentId: 'codex', errorMessage: 'Sign in before starting a session.' }),
+      }),
     });
-    harness.setMetadata({ ...TARGET_CURRENT_METADATA });
+    harness.setMetadata({ ...TARGET_CURRENT_METADATA, path: '/repo' });
 
-    expect(await runTransition(harness)).toEqual({
+    expect(await runTransition(harness)).toMatchObject({
       type: 'partially_applied',
       localId: TEST_LOCAL_ID,
       applied: 'current_view_committed',
       code: 'target_start_failed',
+      errorDetail: { kind: 'launch_error', code: 'agent_signed_out',
+        failureCause: { requestId: TEST_LOCAL_ID, failureReason: 'authentication_required' } },
+    });
+  });
+
+  it('preserves resume-unreachable recovery through the transition result schema', async () => {
+    const spawnFailure = buildSpawnResumeUnreachableErrorResult(new ConnectedServiceSpawnResumeUnreachableError({
+      agentId: 'codex', vendorResumeId: 'missing-session', cwd: '/repo',
+      targetMaterializedRoot: '/tmp/target-account', reason: 'no_resumable_session_file',
+    }));
+    const harness = createTransitionDepsHarness({
+      findTranscriptMessageByLocalId: vi.fn(async () => foundDivider({
+        fromAgentId: 'claude', toAgentId: 'codex',
+      })) as never,
+      requestInactiveSessionResume: params => requestInactiveSessionResume({ ...params,
+        machineRpcTransport: async () => spawnFailure,
+      }),
+    });
+    harness.setMetadata({ ...TARGET_CURRENT_METADATA, path: '/repo' });
+
+    expect(await runTransition(harness)).toMatchObject({
+      type: 'partially_applied', applied: 'current_view_committed', code: 'target_start_failed',
+      errorDetail: { kind: 'launch_error', code: 'provider_session_state_unavailable_for_resume',
+        uxDiagnostic: { code: 'provider_session_state_unavailable_for_resume', retryable: false,
+          diagnostics: { reason: 'no_resumable_session_file' } } },
     });
   });
 

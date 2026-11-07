@@ -1,5 +1,7 @@
 export const DAEMON_LOG_SUFFIX = '-daemon.log';
 export const LOG_FILE_SUFFIX = '.log';
+/** Launch-owned stderr capture for the current daemon, never an Account setting. */
+export const DAEMON_STDERR_LOG_PATH_ENV = 'HAPPIER_DAEMON_STDERR_LOG_PATH';
 
 export const DEFAULT_CRASHED_SESSION_LOG_KEEP_COUNT = 20;
 
@@ -86,7 +88,8 @@ export function createLogRetentionOwner(input: Readonly<{
     async run(days: number | null, nowMs: number, operation: Readonly<{ beforeEffect?: () => Promise<void> }> = {}): Promise<LogRetentionPassResult> {
       const logsDir = join(input.happyHomeDir, 'logs');
       const policy = resolveLogRetention({ settings: { logRetentionDays: days }, env: input.env });
-      const keepPaths = [...await input.currentLogPaths(), ...resolveCrashedSessionLogKeepPaths(logsDir, input.env), ...resolveLiveSessionLogKeepPaths(logsDir)];
+      const stderrPath = (input.env ?? process.env)[DAEMON_STDERR_LOG_PATH_ENV];
+      const keepPaths = [...await input.currentLogPaths(), ...(stderrPath ? [stderrPath] : []), ...resolveCrashedSessionLogKeepPaths(logsDir, input.env), ...resolveLiveSessionLogKeepPaths(logsDir)];
       const result = { pruned: 0, freedBytes: 0, nextDueAtMs: null as number | null };
       let stopped = false;
       const ageMs = days === null ? null : days * 86_400_000;

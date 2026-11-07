@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import type { ActiveAccountSettingsKeys } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { randomBytes } from 'node:crypto';
 import { ApiClient } from '@/api/api';
 import { waitForObservation } from '@/api/client/accountEncryptionCurrentnessObservation';
@@ -15,7 +16,7 @@ import { createProviderAccountUsagePersistenceScheduler } from '../connectedServ
 import { ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore } from '../connectedServices/accountGroups/quotas/ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore';
 import { startDaemonConnectedServiceRuntime } from '../startup/startDaemonRuntimeBootstrap';
 import type { AdmittedRequesterSessionBootstrap, RequesterSessionRuntimeContext } from './requesterSessionCredentials';
-import { rethrowRequesterHomeReadFailure, runWithRequesterSessionCurrentnessCheckpoint } from "@/daemon/sessionEncryption/requesterCurrentness";
+import { rethrowRequesterHomeReadFailure } from "@/daemon/sessionEncryption/requesterCurrentness";
 import type { RequesterWorkAttributionV1 } from '../lifecycle/requesterWorkAttribution';
 import { createCliProfileStoreForOperation } from '@/settings/profiles/profileStore';
 import { ProfileCatalogUnavailableError, readProfilesFromAccountSettings,
@@ -23,8 +24,9 @@ import { ProfileCatalogUnavailableError, readProfilesFromAccountSettings,
 import { readAuthoringMemoryLastUsedProfile } from '@/settings/profiles/readAuthoringMemoryLastUsedProfile';
 import type { ProfileCatalogSnapshotV1, ProfileCatalogUnavailableReasonV1 } from '@happier-dev/protocol/profiles/profileCatalogV1';
 import { createAccountSessionFollowRuleCache } from '@/agent/runtime/session/follow/accountSessionFollowRuleCache';
+import { createObservedAccountRunFollowRoutes } from '@/agent/runtime/session/follow/accountRunFollowRoutes';
 import { createRequesterSessionFollowSourceReconciliation } from './requesterSessionFollowSourceReconciliation';
-import { logger } from '@/ui/logger';
+import { stopRequesterSessionBackgroundLoops } from './stopRequesterSessionBackgroundLoops';
 
 type CoordinatorInput = Parameters<typeof startDaemonConnectedServiceRuntime>[0];
 
@@ -75,22 +77,23 @@ export async function createRequesterSessionRuntimeContext(input: Readonly<{
   // Background coordinators also supply cancellation signals. Surface their
   // failed observation to the owning loop's backoff; only explicit preparation
   // entrypoints may retain an accepted Action while Home recovers.
-  // Settings recovery and requester qualification form one read-only guard.
-  // Reuse its proof here; later publication and effect guards still start fresh.
-  const isCurrent = async (signal?: AbortSignal) => runWithRequesterSessionCurrentnessCheckpoint(async () => {
+  const isCurrent = async (signal?: AbortSignal) => {
     if (disposed || signal?.aborted) return false;
     const readerSignal = signal ? AbortSignal.any([signal, lifetime.signal]) : lifetime.signal;
     try {
       return await bootstrap.ensureAccountSettingsCurrent(readerSignal)
-        && await waitForObservation(savedSecrets.isCurrent(), readerSignal)
-        && await bootstrap.ensureAccountSettingsCurrent(readerSignal) && !disposed;
+        && await waitForObservation(savedSecrets.isCurrent(readerSignal), readerSignal)
+        && !disposed;
     } catch (error) { rethrowRequesterHomeReadFailure(error); return false; }
-  }, { readOnly: true });
+  };
   if (!await isCurrent(input.signal)) return null;
   const sessionFollowRuleCache = createAccountSessionFollowRuleCache({ accountId: bootstrap.attribution.accountId,
     credentials: bootstrap.credentials, serverHttpBaseUrl: bootstrap.serverHttpBaseUrl,
-    signal: lifetime.signal, isCurrent, subscribeInvalidation: bootstrap.subscribeSessionFollowRules });
-  const followSourceReconciliation = createRequesterSessionFollowSourceReconciliation({ bootstrap, sessionFollowRuleCache, isCurrent });
+    signal: lifetime.signal, subscribeInvalidation: bootstrap.subscribeSessionFollowRules,
+    subscribeSourceInvalidation: bootstrap.subscribeSessionFollowSources });
+  const sessionFollowRunRoutes = createObservedAccountRunFollowRoutes({ accountId: bootstrap.attribution.accountId,
+    credentials: bootstrap.credentials, serverHttpBaseUrl: bootstrap.serverHttpBaseUrl, signal: lifetime.signal });
+  const followSourceReconciliation = createRequesterSessionFollowSourceReconciliation({ bootstrap, sessionFollowRuleCache });
   const connectedServiceRuntimeRegistry = input.coordinatorInput.connectedServiceRuntimeRegistry.scopeToRequester(target => {
     const tracked = [...input.coordinatorInput.pidToTrackedSession.values()].find(candidate => candidate.happySessionId === target.sessionId);
     const stamp = target.requesterWorkAttributionV1 ?? tracked?.requesterWorkAttributionV1;
@@ -103,30 +106,28 @@ export async function createRequesterSessionRuntimeContext(input: Readonly<{
     if (disposed || !snapshot) throw requesterAccountContextUnavailable();
     return snapshot;
   };
-  const withHome = <T>(operation: () => Promise<T>) => {
+  const withHome = <T>(operation: () => Promise<T>, signal?: AbortSignal) => {
+    signal?.throwIfAborted();
     if (disposed) return Promise.reject<T>(requesterAccountContextUnavailable());
     return runWithServerHttpBaseUrl(bootstrap.serverHttpBaseUrl, operation);
   };
   const api = await withHome(() => ApiClient.create(bootstrap.credentials));
-  const listeners = new Set<() => void>();
-  const releaseSettingsPublication = bootstrap.subscribeAccountSettings(() => {
-    for (const listener of listeners) listener();
-  });
-  const profileStore = createCliProfileStoreForOperation({ operationContext: savedSecrets });
+  const profileStore = createCliProfileStoreForOperation({ operationContext: savedSecrets, signal: lifetime.signal });
   let profileProjection: Awaited<ReturnType<typeof profileStore.readCatalog>> | null = null;
   const refreshAccountSettings = async (minSettingsVersion?: number, signal?: AbortSignal) => {
-    // Catalog readers and commits consume one refresh's requester observation.
-    // Keep publication outside it so Home revocation during a read still wins.
-    const refreshed = await runWithRequesterSessionCurrentnessCheckpoint(async () => {
-      if (disposed || !await bootstrap.refreshAccountSettings(minSettingsVersion, signal) || !await isCurrent(signal)) return false;
+    // Readers and publication retain the admitted custody and encryption identity.
+    const refreshed = await (async () => {
+      if (disposed || signal?.aborted || !await bootstrap.refreshAccountSettings(minSettingsVersion, signal)) return false;
       const snapshot = readSnapshot();
       try {
-        const projection = await profileStore.readCatalog();
-        if (!await isCurrent() || !await savedSecrets.commitProfileCatalog({ expectedSettingsVersion: snapshot.settingsVersion,
+        const reader = signal ? createCliProfileStoreForOperation({ operationContext: savedSecrets,
+          signal: AbortSignal.any([signal, lifetime.signal]) }) : profileStore;
+        const projection = await reader.readCatalog();
+        if (disposed || signal?.aborted || !await savedSecrets.commitProfileCatalog({ expectedSettingsVersion: snapshot.settingsVersion,
           catalog: projection.catalog })) return false;
         profileProjection = projection;
       } catch (error) {
-        if (!await isCurrent()) { profileProjection = null; return false; }
+        if (disposed || signal?.aborted) { profileProjection = null; return false; }
         const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
         const reason: ProfileCatalogUnavailableReasonV1 = code === 'unsupported' || code === 'unauthorized' || code === 'forbidden'
           ? code : 'unreachable';
@@ -137,23 +138,20 @@ export async function createRequesterSessionRuntimeContext(input: Readonly<{
       const current = readSnapshot();
       await Promise.all([
         ...(current.connectedPurposeCatalog ? [readActiveConnectedAccountCatalog({ credentials: bootstrap.credentials,
-          key: 'purposes', operationContext: savedSecrets })] : []),
+          key: 'purposes', operationContext: savedSecrets, signal: lifetime.signal })] : []),
         ...(current.connectedConfigurationCatalog ? [readActiveConnectedAccountCatalog({ credentials: bootstrap.credentials,
-          key: 'configurations', operationContext: savedSecrets })] : []),
+          key: 'configurations', operationContext: savedSecrets, signal: lifetime.signal })] : []),
       ]);
       return true;
-    }).catch(error => { rethrowRequesterHomeReadFailure(error); throw error; });
-    if (!refreshed || !await isCurrent(signal)) return false;
-    for (const listener of listeners) listener();
+    })().catch(error => { rethrowRequesterHomeReadFailure(error); throw error; });
+    if (!refreshed || disposed || signal?.aborted) return false;
     return true;
   };
   const readAccountLaunchProfiles: RequesterSessionRuntimeContext['readAccountLaunchProfiles'] = async () => {
-    if (!await isCurrent()) throw new ProfileCatalogUnavailableError('unavailable');
     const snapshot = readSnapshot();
     const projection = profileProjection;
     if (!projection || projection.catalog !== snapshot.profileCatalog) throw new ProfileCatalogUnavailableError('unavailable');
-    const lastUsedProfile = await withHome(() => readAuthoringMemoryLastUsedProfile(bootstrap.credentials));
-    if (!await isCurrent()) throw new ProfileCatalogUnavailableError('unavailable');
+    const lastUsedProfile = await withHome(() => readAuthoringMemoryLastUsedProfile(bootstrap.credentials, lifetime.signal));
     const current = readSnapshot();
     if (current.settingsVersion !== snapshot.settingsVersion || current.profileCatalog !== projection.catalog) {
       throw new ProfileCatalogUnavailableError('unavailable');
@@ -163,30 +161,31 @@ export async function createRequesterSessionRuntimeContext(input: Readonly<{
   };
   const token = bootstrap.credentials.token;
   const directMaterial = createHttpTeamCredentialDirectMaterialClient({ token, serverUrl: bootstrap.serverHttpBaseUrl,
-    readRecipientEncryptionMaterial: async signal => { if (!await isCurrent(signal)) return { mode: 'e2ee_unavailable' };
+    readRecipientEncryptionMaterial: async signal => {
+      signal?.throwIfAborted();
+      if (disposed) return { mode: 'e2ee_unavailable' };
       const mode = await withHome(() => api.getAccountEncryptionMode({ signal }));
       const encryption = bootstrap.credentials.encryption;
       return mode === 'plain' ? { mode: 'plain' } : mode === 'e2ee' && encryption
         ? { mode: 'e2ee', secretKeyOrSeed: encryption.type === 'dataKey' ? encryption.machineKey : encryption.secret }
         : { mode: 'e2ee_unavailable' }; },
   });
-  const { store, established, qualifiedConnectedAccountApi, purposes } = createRequesterConnectedAccountPurposeBindingRuntime({
+  const { established, qualifiedConnectedAccountApi, purposes } = createRequesterConnectedAccountPurposeBindingRuntime({
     operationContext: savedSecrets, accountId: bootstrap.attribution.accountId, machineId: bootstrap.attribution.machineId,
     reloadController: pluginReloadController,
     getAccountEncryptionMode: async options => await withHome(() => api.getAccountEncryptionMode(options)),
-    isCurrent, subscribe: listener => { listeners.add(listener); return { dispose: () => { listeners.delete(listener); } }; },
+    // New secret acquisition admits through the captured credential owner.
+    isCurrent: savedSecrets.isCurrent, signal: lifetime.signal,
     allowNativeAccountCredentials: bootstrap.allowNativeAccountCredentials === true, openTeamDirect: directMaterial.open,
     resolveQualifiedConnectedAccountV4Support: input.resolveQualifiedConnectedAccountV4Support,
   });
   const providerAccountUsageStore = input.providerAccountUsageStore;
   const providerAccountUsagePersistence = createProviderAccountUsagePersistenceScheduler({
     api: { getAccountEncryptionMode: async options => {
-      if (!await isCurrent()) throw requesterAccountContextUnavailable();
       return await withHome(() => api.getAccountEncryptionMode(options));
     } }, credentials: bootstrap.credentials, now: () => Date.now(), randomBytes,
     serverScope: bootstrap.attribution.serverId, accountScope: bootstrap.attribution.accountId,
     writeQualifiedProviderAccountUsage: async request => {
-      if (!await isCurrent()) throw requesterAccountContextUnavailable();
       return await withHome(() => writeQualifiedProviderAccountUsageV4(request));
     },
   });
@@ -195,23 +194,27 @@ export async function createRequesterSessionRuntimeContext(input: Readonly<{
   const { activeServerDir, connectedServicesMaterializationBaseDir } = resolveRequesterSessionRuntimeDirectories({
     activeServerDir: input.activeServerDir, connectedServicesMaterializationBaseDir: input.connectedServicesMaterializationBaseDir,
     attribution: bootstrap.attribution });
+  let releaseConnectedAccountObservation: (() => void) | undefined;
   let coordinators: Awaited<ReturnType<typeof startDaemonConnectedServiceRuntime>> | null = null;
   let retirement: Promise<void> | undefined;
   const dispose = () => retirement ??= (async () => {
     disposed = true;
     lifetime.abort();
     sessionFollowRuleCache.dispose();
+    sessionFollowRunRoutes.dispose();
     followSourceReconciliation.dispose();
-    releaseSettingsPublication();
+    releaseConnectedAccountObservation?.();
     profileProjection = null;
     if (input.bootstrapOwnership !== 'borrowed') savedSecrets.withdrawCatalog();
     providerAccountUsagePersistence.dispose();
-    listeners.clear();
     coordinators?.connectedServiceQuotasCoordinator?.disposeInBandQuotaPersistence();
+    stopRequesterSessionBackgroundLoops({
+      loops: [coordinators?.connectedServiceRefreshLoopHandle, coordinators?.connectedServiceQuotasLoopHandle],
+      onError: () => input.coordinatorInput.logger.warn('[DAEMON RUN] Requester background observation retirement failed'),
+    });
     const results = await Promise.allSettled([
       ...(input.bootstrapOwnership === 'borrowed' ? [] : [bootstrap.dispose()]),
-      Promise.resolve(coordinators?.connectedServiceRefreshLoopHandle?.stop()),
-      Promise.resolve(coordinators?.connectedServiceQuotasLoopHandle?.stop()), daemonSessionMutationCustody.close(),
+      daemonSessionMutationCustody.close(),
     ]);
     const failures = results.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
     if (failures.length) throw new AggregateError(failures, 'Requester Account runtime retirement incomplete');
@@ -219,26 +222,27 @@ export async function createRequesterSessionRuntimeContext(input: Readonly<{
   try {
     coordinators = await withHome(() => startDaemonConnectedServiceRuntime({ ...input.coordinatorInput,
     activeServerDir, api, credentials: bootstrap.credentials, accountSettingsSnapshot: () => savedSecrets.readSnapshot(),
+    savedSecretOperationContext: savedSecrets,
     connectedServiceRuntimeRegistry,
-    connectedServicesMaterializationBaseDir, isAccountRuntimeCurrent: isCurrent, runAccountOperation: withHome,
+    connectedServicesMaterializationBaseDir, runAccountOperation: withHome,
     allowNativeAccountState: bootstrap.allowNativeAccountCredentials === true,
     connectedAccountsOwner: purposes.owner,
     activatePurposeBindings: purposes.activatePurposeBindings,
     providerAccountUsageStore, connectedServiceRuntimeQuotaSnapshots, daemonSessionMutationCustody,
     qualifiedConnectedAccountEstablishedRuntimeOwner: established,
-    listScheduledQualifiedConnectedAccounts: service => purposes.listCoordinatorAccounts(undefined, service),
+    listScheduledQualifiedConnectedAccounts: (service, signal) => purposes.listCoordinatorAccounts(signal, service),
     subscribeConnectedAccountInvalidations: listener => {
       const releasePurpose = purposes.subscribeInvalidations(listener);
-      const releaseObservation = bootstrap.subscribeConnectedAccounts(event => { purposes.invalidate(event); });
-      return () => { releaseObservation(); releasePurpose(); };
+      // The runtime owns one demanded source, shared by both coordinators.
+      releaseConnectedAccountObservation ??= bootstrap.subscribeConnectedAccounts(event => {
+        purposes.invalidate(event, event.resetQuotaSchedule ? 'requester-recovery' : 'requester-account-changes');
+      });
+      return releasePurpose;
     },
-    subscribeAccountSettingsSnapshot: listener => {
-      const subscription = store.subscribe(listener);
-      return () => subscription.dispose();
-    },
+    subscribeAccountSettingsSnapshot: bootstrap.subscribeAccountSettings,
     listQualifiedConnectedAccountGroupQuotaTargets: purposes.listGroupQuotaTargets, onQualifiedConnectedAccountCredentialUpdated: () => purposes.invalidate(),
     }));
-    if (!await isCurrent(input.signal)) {
+    if (disposed || input.signal?.aborted) {
       await dispose();
       return null;
     }
@@ -246,13 +250,12 @@ export async function createRequesterSessionRuntimeContext(input: Readonly<{
     try { await dispose(); } catch (cleanupError) { throw new AggregateError([error, cleanupError], 'Requester Account runtime startup failed'); }
     throw error;
   }
-  return Object.freeze({ bootstrap, isCurrent, api, sessionFollowRuleCache,
+  return Object.freeze({ bootstrap, isCurrent, api, sessionFollowRuleCache, sessionFollowRunRoutes,
     bindSessionFollowSourceReconciliation: followSourceReconciliation.bind,
     readAccountSettingsSnapshot: readSnapshot, refreshAccountSettings, readAccountLaunchProfiles,
-    subscribeAccountSettingsSnapshot: (listener: () => void) => {
+    subscribeAccountSettingsSnapshot: (listener: () => void, keys: ActiveAccountSettingsKeys) => {
       if (disposed) throw requesterAccountContextUnavailable();
-      listeners.add(listener);
-      return () => { listeners.delete(listener); };
+      return bootstrap.subscribeAccountSettings(listener, keys);
     },
     activeServerDir, connectedServicesMaterializationBaseDir, qualifiedConnectedAccountApi,
     connectedAccountsOwner: purposes.owner,

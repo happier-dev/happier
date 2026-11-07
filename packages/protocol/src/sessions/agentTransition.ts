@@ -6,6 +6,7 @@ import { isSessionAgentTransitionDividerLocalId } from './agentTransitionDivider
 import { PendingLocalIdSchema } from './pending/pendingLocalId.js';
 import { SessionUserMessageSendRequestSchema } from './userMessageRpc.js';
 import { AgentIdV1Schema } from '../agents/agentIdV1.js';
+import { SessionSpawnLaunchErrorV1Schema } from './creation/sessionSpawnLaunchErrorV1.js';
 
 /**
  * Same-Session cross-Agent continuation — the frozen shared contract.
@@ -270,6 +271,7 @@ const SessionAgentTransitionPartiallyAppliedResultV1Schema = lazyZodSchema(() =>
       localId: PendingLocalIdSchema,
       applied: z.literal('current_view_committed'),
       code: SessionAgentTransitionCurrentViewCommittedCodeV1Schema,
+      errorDetail: z.optional(SessionSpawnLaunchErrorV1Schema),
     }),
 ]));
 

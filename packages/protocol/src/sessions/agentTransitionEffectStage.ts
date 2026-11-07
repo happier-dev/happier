@@ -4,6 +4,7 @@ import type {
   SessionAgentTransitionResultV1,
   SessionAgentTransitionSourceStoppedCodeV1,
 } from './agentTransition.js';
+import type { SessionSpawnLaunchErrorV1 } from './creation/sessionSpawnLaunchErrorV1.js';
 
 /* ------------------------------------------------------------------------- *
  * The single construction site for every `session.agentTransition` result arm
@@ -146,13 +147,14 @@ export type SessionAgentTransitionCurrentViewCommitted = Readonly<{
    * claim provider acceptance.
    */
   accepted: () => SessionAgentTransitionResultV1;
-  committed: (code: SessionAgentTransitionCurrentViewCommittedCodeV1) => SessionAgentTransitionResultV1;
+  committed: (code: SessionAgentTransitionCurrentViewCommittedCodeV1, errorDetail?: SessionSpawnLaunchErrorV1) => SessionAgentTransitionResultV1;
 }>;
 
 function buildCurrentViewCommitted(localId: string): SessionAgentTransitionCurrentViewCommitted {
   return Object.freeze({
     accepted: () => ({ type: 'accepted', localId }),
-    committed: (code) => ({ type: 'partially_applied', localId, applied: 'current_view_committed', code }),
+    committed: (code, errorDetail) => ({ type: 'partially_applied', localId, applied: 'current_view_committed', code,
+      ...(errorDetail ? { errorDetail } : {}) }),
   } satisfies SessionAgentTransitionCurrentViewCommitted);
 }
 

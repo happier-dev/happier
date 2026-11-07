@@ -1,18 +1,19 @@
-import type { AccountE2eeCustody } from '@happier-dev/sync-client';
+import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 /**
  * Minimal persistence functions for Happier CLI
  * 
  * Handles settings and private key storage in ~/.happier/ or local .happier/
  */
 
-import { randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto'
 import tweetnacl from 'tweetnacl';
 import { isDeepStrictEqual } from 'node:util';
-import { FileHandle } from 'node:fs/promises';
-import { readFile, writeFile, mkdir, open, unlink, rename, stat, chmod, readdir } from 'node:fs/promises';
-import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync } from 'node:fs';
-import { constants } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { FileHandle } from 'node:fs/promises'
+import { readFile, writeFile, mkdir, open, unlink, rename, stat, chmod, readdir } from 'node:fs/promises'
+import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync } from 'node:fs'
+import { constants } from 'node:fs'
+import type { AccountE2eeCustody } from '@happier-dev/sync-client'
+import { dirname, join } from 'node:path'
 import { resolveBuildDefaultProfile, resolveDefaultWebappUrl } from '@happier-dev/cli-common/happierCloud';
 import { configuration } from './configuration';
 import { resolveCliApiToken } from './auth/cliApiToken';
@@ -351,7 +352,7 @@ export interface DaemonLocallyPersistedState {
   controlToken?: string;
 }
 
-const DaemonLocallyPersistedStateSchemaV2 = z.object({
+const DaemonLocallyPersistedStateSchemaV2 = lazyZodSchema(() => z.object({
   pid: z.number().check(z.int(), z.positive()),
   httpPort: z.number().check(z.int(), z.nonnegative()),
   startedAt: z.number().check(z.int(), z.nonnegative()),
@@ -372,22 +373,22 @@ const DaemonLocallyPersistedStateSchemaV2 = z.object({
 }).check(z.refine(state => state.httpPort > 0 || (
   state.controlToken === undefined && state.startupSource !== undefined
   && state.startedWithPublicReleaseChannel !== undefined && state.machineControlReady === false
-), { message: 'A startup publication has no control listener or ready Machine' }));
+), { message: 'A startup publication has no control listener or ready Machine' })));
 
 // Legacy format (string timestamps, no control token).
-const DaemonLocallyPersistedStateSchemaLegacy = z.object({
+const DaemonLocallyPersistedStateSchemaLegacy = lazyZodSchema(() => z.object({
   pid: z.number().check(z.int(), z.positive()),
   httpPort: z.number().check(z.int(), z.positive()),
   startTime: z.string(),
   startedWithCliVersion: z.string(),
   lastHeartbeat: z.optional(z.string()),
   daemonLogPath: z.optional(z.string()),
-});
+}));
 
-export const DaemonLocallyPersistedStateSchema = z.union([
+export const DaemonLocallyPersistedStateSchema = lazyZodSchema(() => z.union([
   DaemonLocallyPersistedStateSchemaV2,
   DaemonLocallyPersistedStateSchemaLegacy,
-]);
+]));
 
 function parseDateToEpochMs(value: string): number | null {
   const ms = Date.parse(value);
@@ -658,7 +659,7 @@ export async function updateSettings(
 // Authentication
 //
 
-const credentialsSchema = z.object({
+const credentialsSchema = lazyZodSchema(() => z.object({
   token: z.optional(z.string()),
   secret: z.nullish(z.string().check(z.base64())), // Legacy
   encryption: z.nullish(z.object({
@@ -667,7 +668,7 @@ const credentialsSchema = z.object({
   })),
   /** This computer's own reclassification of its keys; absent means active. */
   custody: z.optional(z.literal('historical')),
-})
+}))
 
 export type AccountEncryptionCredentials =
   | {
@@ -679,8 +680,8 @@ export type AccountEncryptionCredentials =
 
 /**
  * Invocation-only credential provenance. It is deliberately not persisted:
- * a stored bearer proves an interactive CLI session, while a selected API
- * Token is Account automation and must never inherit present-user authority.
+ * an ordinary stored bearer proves an interactive CLI session. Private Agent
+ * Session custody and API Tokens must never inherit present-user authority.
  */
 export type CredentialProvenance = 'stored_session' | 'api_token';
 
@@ -741,6 +742,26 @@ export function bindRequesterSessionCredentialScope(credentials: StoredCredentia
   return credentials;
 }
 
+/** Preserve invocation-only context while a host parser validates/clones the
+ * credential bytes. Serialized/authored scope properties are not custody and
+ * must not downgrade into an interactive stored-session identity. */
+export function preserveStoredCredentialsHostContext(source: unknown, normalized: StoredCredentials): StoredCredentials {
+  if (!source || typeof source !== 'object' || !('token' in source) || source.token !== normalized.token) return normalized;
+  const scope = Object.getOwnPropertyDescriptor(source, 'requesterSessionCredentialScope');
+  if (scope) {
+    const value: unknown = scope.value;
+    if (scope.enumerable !== false || scope.writable !== false || scope.configurable !== false
+      || !('value' in scope) || !value || typeof value !== 'object' || !Object.isFrozen(value)) return normalized;
+    Object.defineProperty(normalized, 'requesterSessionCredentialScope', scope);
+  }
+  const provenance = Object.getOwnPropertyDescriptor(source, 'credentialProvenance');
+  if (provenance && 'value' in provenance
+    && (provenance.value === 'stored_session' || provenance.value === 'api_token')) {
+    Object.defineProperty(normalized, 'credentialProvenance', provenance);
+  }
+  return normalized;
+}
+
 /** Canonical access.key representation; private Session custody uses the same codec. */
 export function decodeStoredCredentials(value: unknown): StoredCredentials | null {
   const parsed = credentialsSchema.safeParse(value);
@@ -755,6 +776,34 @@ export function decodeStoredCredentials(value: unknown): StoredCredentials | nul
     ? { token: credentials.token!, encryption, ...(credentials.custody ? { accountE2eeCustody: credentials.custody } : {}),
         credentialProvenance: 'stored_session' }
     : { token: credentials.token!, encryption: null, credentialProvenance: 'stored_session' };
+}
+
+/** Any in-hand credential: custody is read from what the caller holds, not from disk. */
+export type AccountE2eeCustodyHolder = Readonly<{ encryption: unknown; accountE2eeCustody?: 'historical' }>;
+
+/** The custody input to the shared Account mode admission decision. */
+export function readAccountE2eeCustody(credentials: AccountE2eeCustodyHolder): AccountE2eeCustody {
+  if (!credentials.encryption) return 'absent';
+  return credentials.accountE2eeCustody === 'historical' ? 'historical' : 'active';
+}
+
+/**
+ * Custody of the Account E2EE material this computer stores beside `token`.
+ * A bearer no stored credential holds carries no keys here: API tokens and
+ * private Session custody are read through their own exact owners.
+ */
+export async function readAccountE2eeCustodyForToken(token: string): Promise<AccountE2eeCustody> {
+  if (process.env.HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE !== undefined || resolveCliApiToken()) {
+    const scoped = await readStoredCredentials().catch(() => null);
+    if (scoped?.token === token) return readAccountE2eeCustody(scoped);
+    if (process.env.HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE !== undefined) return 'absent';
+  }
+  const serverIds = await readdir(configuration.serversDir).catch(() => [] as string[]);
+  for (const serverId of new Set([configuration.activeServerId, ...serverIds, 'cloud'])) {
+    const stored = await readStoredCredentialsForServerId(serverId).catch(() => null);
+    if (stored?.token === token) return readAccountE2eeCustody(stored);
+  }
+  return 'absent';
 }
 
 /** The person's explicit reclassification of this computer's keys; the bytes never change. */
@@ -817,12 +866,15 @@ export function sameStoredCredentials(
 
 /**
  * Only the credential reader may attest an interactive stored CLI session.
- * Synthetic/legacy callers without this marker fail closed as automation.
+ * Private Agent Session custody is not an interactive terminal sign-in, even
+ * when it borrows that sign-in's bearer. Synthetic/legacy callers without this
+ * marker likewise fail closed as automation.
  */
 export function hasStoredSessionCredentialProvenance(
   credentials: StoredCredentials | null | undefined,
 ): boolean {
-  return credentials?.credentialProvenance === 'stored_session';
+  return credentials?.credentialProvenance === 'stored_session'
+    && !credentials.requesterSessionCredentialScope?.requesterSession;
 }
 
 export async function readCredentials(): Promise<Credentials | null> {
@@ -889,6 +941,12 @@ async function readStoredCredentialsFile(path: string, options?: Readonly<{ inva
 export async function readStoredCredentialsForServerId(serverIdRaw: string): Promise<StoredCredentials | null> {
   const serverId = String(serverIdRaw ?? '').trim();
   if (!isServerIdFilesystemSafe(serverId)) return null;
+  // A saved-Home selector cannot escape the child's authoritative custody or
+  // turn its borrowed Account bearer into a present-person terminal sign-in.
+  if (process.env.HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE !== undefined) {
+    const credentials = await readStoredCredentials();
+    return credentials?.requesterSessionCredentialScope?.serverId === serverId ? credentials : null;
+  }
   const primaryPath = join(configuration.serversDir, serverId, 'access.key');
   if (existsSync(primaryPath)) return await readStoredCredentialsFile(primaryPath);
   if (serverId === 'cloud' && existsSync(configuration.legacyPrivateKeyFile)) {
@@ -1692,25 +1750,4 @@ export async function releaseDaemonLock(lockHandle: FileHandle): Promise<void> {
   if (!ownRaw) return;
   daemonLockRawByHandle.delete(lockHandle);
   await reclaimJsonOwnerFileLockSnapshot(configuration.daemonLockFile, ownRaw).catch(() => undefined);
-}
-
-export type AccountE2eeCustodyHolder = Readonly<{ encryption: unknown; accountE2eeCustody?: 'historical' }>;
-
-export function readAccountE2eeCustody(credentials: AccountE2eeCustodyHolder): AccountE2eeCustody {
-  if (!credentials.encryption) return 'absent';
-  return credentials.accountE2eeCustody === 'historical' ? 'historical' : 'active';
-}
-
-export async function readAccountE2eeCustodyForToken(token: string): Promise<AccountE2eeCustody> {
-  if (process.env.HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE !== undefined || resolveCliApiToken()) {
-    const scoped = await readStoredCredentials().catch(() => null);
-    if (scoped?.token === token) return readAccountE2eeCustody(scoped);
-    if (process.env.HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE !== undefined) return 'absent';
-  }
-  const serverIds = await readdir(configuration.serversDir).catch(() => [] as string[]);
-  for (const serverId of new Set([configuration.activeServerId, ...serverIds, 'cloud'])) {
-    const stored = await readStoredCredentialsForServerId(serverId).catch(() => null);
-    if (stored?.token === token) return readAccountE2eeCustody(stored);
-  }
-  return 'absent';
 }

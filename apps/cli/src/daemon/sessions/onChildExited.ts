@@ -1,4 +1,3 @@
-import { settleFinalExitPublisher } from './sessionTerminalSettlement';
 import { isPidPresent } from '@happier-dev/cli-common/process';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import { logger } from '@/ui/logger';
@@ -23,6 +22,7 @@ import { stageObservedExit } from './stageObservedExit';
 import type { SkillStore } from '@/prompts/skills/store/skillStore';
 import { readRetainedPlainRunnerExitMarker } from './retireTerminalControlServiceability';
 import type { SessionSpawnLaunchErrorV1 } from '@happier-dev/protocol/spawnSession';
+import { settleFinalExitPublisher } from './sessionTerminalSettlement';
 import { releaseUnretainedRequesterSessionRuntimeContext } from '../sessionEncryption/requesterSessionCredentials';
 
 export type ChildExit = {
@@ -268,11 +268,23 @@ export function createOnChildExited(params: Readonly<{
       }
       if (!isCurrentPidOwner()) return;
       const resourceCleanupStartedAtMs = Date.now();
-      const cleanupComplete = await cleanupPidSessionResources({
+      const observeStopExitPhase = async <T>(phase: 'pid_resources' | 'requester_release', operation: () => Promise<T>): Promise<T> => {
+        if (typeof tracked.stopRequestedAtMs !== 'number') return await operation();
+        const startedAtMs = Date.now();
+        logger.infoFile('[DAEMON STOP] Runner exit phase started', { sessionId: tracked.happySessionId, pid, phase });
+        try {
+          return await operation();
+        } finally {
+          logger.infoFile('[DAEMON STOP] Runner exit phase settled', {
+            sessionId: tracked.happySessionId, pid, phase, elapsedMs: Date.now() - startedAtMs,
+          });
+        }
+      };
+      const cleanupComplete = await observeStopExitPhase('pid_resources', () => cleanupPidSessionResources({
         pid,
         spawnResourceCleanupByPid,
         sessionAttachCleanupByPid,
-      });
+      }));
       if (!cleanupComplete || !isCurrentPidOwner()) return;
       const requester = tracked.requesterSessionRuntimeContext;
       // Consume only this PID's custody once its dependents have finished.
@@ -281,8 +293,10 @@ export function createOnChildExited(params: Readonly<{
       try {
         // Recovery may replace the launch-time requester. The observed runner
         // exit retires the current pointer after its dependent PID resources.
-        if (requester) await releaseUnretainedRequesterSessionRuntimeContext(requester,
-          [...pidToTrackedSession.values()].map(candidate => candidate.requesterSessionRuntimeContext));
+        await observeStopExitPhase('requester_release', async () => {
+          if (requester) await releaseUnretainedRequesterSessionRuntimeContext(requester,
+            [...pidToTrackedSession.values()].map(candidate => candidate.requesterSessionRuntimeContext));
+        });
       } catch (error) {
         if (requester && !tracked.requesterSessionRuntimeContext) tracked.requesterSessionRuntimeContext = requester;
         logger.warn('[DAEMON RUN] Requester retirement incomplete; retaining exit custody', { pid, error });
@@ -317,6 +331,8 @@ export function createOnChildExited(params: Readonly<{
       }
 
       const finalSessionId = normalizeSessionId(tracked.happySessionId);
+      // A physical exit (including Stop) leaves the Session resumable. Keep its
+      // private birth so cold Resume selects the original requester Account.
       if (shouldReportSessionEnd && finalSessionId && params.skillStore) {
         try {
           const skillsStartedAtMs = Date.now();

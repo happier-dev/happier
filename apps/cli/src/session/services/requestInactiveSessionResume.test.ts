@@ -9,7 +9,10 @@ import {
 } from '@happier-dev/protocol';
 
 const { callMachineRpc } = vi.hoisted(() => ({ callMachineRpc: vi.fn() }));
-vi.mock('@/session/transport/rpc/machineRpc', () => ({ callMachineRpc }));
+vi.mock('@/session/transport/rpc/machineRpc', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/session/transport/rpc/machineRpc')>(),
+  callMachineRpc,
+}));
 
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import { requestInactiveSessionResume } from './requestInactiveSessionResume';
@@ -40,6 +43,18 @@ const metadata = {
   runtimeDescriptorV1: { v: 1, agentId: 'claude', agent: {} },
   claudeSessionId: 'provider-session-1',
 };
+
+it('retains native sign-in recovery and request identity when inactive resume is refused', async () => {
+  const result = await requestInactiveSessionResume({ credentials, sessionId: 'session-1',
+    rawSession: rawSession(), metadata, localId: 'resume-auth-request',
+    machineRpcTransport: async () => ({ type: 'error', errorCode: 'agent_signed_out',
+      agentId: 'claude', errorMessage: 'Sign in before starting a session.' }),
+  });
+  expect(result).toMatchObject({ ok: false, code: 'resume_failed', errorDetail: {
+    kind: 'launch_error', code: 'agent_signed_out',
+    failureCause: { phase: 'authentication', failureReason: 'authentication_required', requestId: 'resume-auth-request' },
+  } });
+});
 
 const providerMetadata = {
   ...metadata,
@@ -115,6 +130,23 @@ function metadataWithLaunchCorrespondence() {
 }
 
 describe('requestInactiveSessionResume', () => {
+  it.each(['present_user', 'account_automation'] as const)('respects a person hold for %s Resume intent', async executionAuthority => {
+    const stop = { v: 1, cause: 'explicit_stop', requestId: 'person-stop', requestedAtMs: 100 } as const;
+    const heldMetadata = { ...metadata, sessionExplicitStopV1: stop };
+    callMachineRpc.mockResolvedValue({ type: 'success', sessionId: 'session-1' });
+    const result = await requestInactiveSessionResume({ credentials, sessionId: 'session-1',
+      requestId: 'explicit-resume', rawSession: rawSession(), metadata: heldMetadata, executionAuthority });
+    if (executionAuthority === 'present_user') {
+      expect(result).toEqual({ ok: true });
+      expect(callMachineRpc.mock.calls[0]?.[0]?.request).toMatchObject({ type: 'resume-session',
+        sessionId: 'session-1', executionAuthorization: { provenance: 'user_request', requestId: 'explicit-resume' } });
+    } else {
+      expect(result).toMatchObject({ ok: false, code: 'held_by_person' });
+      expect(callMachineRpc).not.toHaveBeenCalled();
+    }
+    expect(heldMetadata.sessionExplicitStopV1).toEqual(stop);
+  });
+
   it.each([false, true])('keeps malformed Stop authority distinct from archive (archived=%s)', async archived => {
     const result = await requestInactiveSessionResume({ credentials, sessionId: 'session-1', requestId: 'malformed-stop',
       rawSession: rawSession(archived ? { archivedAt: 123 } : {}),
@@ -139,6 +171,13 @@ describe('requestInactiveSessionResume', () => {
       metadataLayoutVersion: 1, sharedMetadata: { version: 2 }, agentState: { version: 0 } } });
     callMachineRpc.mockResolvedValue(outcome === 'refused'
       ? { type: 'error', errorMessage: 'rejected' } : { type: 'success', sessionId: 'session-1' });
+    const agentStartContext = resolveCliAgentStartContextV1({
+      sessionId: outcome === 'foreign_manager' ? 'unrelated-session' : 'direct-manager', machineId: 'machine-1',
+      directory: '/repo', backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
+      metadata: {}, starterDepth: 0, turnDepth: 1, callerPermissionMode: 'default',
+      settings: accountSettingsParse({}), roles: {},
+    });
+    if (!agentStartContext || 'ok' in agentStartContext) throw new Error('Expected admitted caller context');
     try {
       const result = await requestInactiveSessionResume({ credentials: { token: 'plain-owner', encryption: null },
         sessionId: 'session-1', requestId: 'resume-held', rawSession: saved, metadata: heldMetadata,
@@ -148,12 +187,7 @@ describe('requestInactiveSessionResume', () => {
           surface: 'agent' as const, authority: 'account_automation' as const,
           actionCaller: { kind: 'session' as const, sessionId: outcome === 'foreign_manager' ? 'unrelated-session' : 'direct-manager',
             starterDepth: 0, turnDepth: 1 }, actionRequestId: 'resume-held',
-          ...(outcome !== 'unbound_manager' ? { agentStartContext: resolveCliAgentStartContextV1({
-            sessionId: outcome === 'foreign_manager' ? 'unrelated-session' : 'direct-manager', machineId: 'machine-1',
-            directory: '/repo', backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
-            metadata: {}, starterDepth: 0, turnDepth: 1, callerPermissionMode: 'default',
-            settings: accountSettingsParse({}), roles: {},
-          }) ?? undefined } : {}),
+          ...(outcome !== 'unbound_manager' ? { agentStartContext } : {}),
         } } : {}),
       });
       if (outcome === 'success' || outcome === 'manager_child') {
@@ -461,7 +495,7 @@ describe('requestInactiveSessionResume', () => {
       rawSession: rawSession(), metadata, waitForReady: true })).resolves.toEqual({ ok: true });
   });
 
-  it('keeps resume and nonce readiness on the supplied exact Machine transport', async () => {
+  it.each(['account_automation', 'present_user'] as const)('keeps resume and nonce readiness on the supplied exact Machine transport (%s)', async executionAuthority => {
     vi.useFakeTimers();
     callMachineRpc.mockRejectedValue(new Error('The ordinary replacement-aware route must not observe this admitted startup'));
     let spawnNonce = '';
@@ -480,7 +514,7 @@ describe('requestInactiveSessionResume', () => {
       throw new Error(`Unexpected exact Machine operation: ${method}`);
     });
     const resumed = requestInactiveSessionResume({ credentials, sessionId: 'session-1', localId: 'local-1',
-      rawSession: rawSession(), metadata, waitForReady: true, machineRpcTransport: transport });
+      rawSession: rawSession(), metadata, waitForReady: true, machineRpcTransport: transport, executionAuthority });
     await vi.runAllTimersAsync();
     await expect(resumed).resolves.toEqual({ ok: true });
     expect(transport.mock.calls).toMatchObject([
@@ -489,6 +523,10 @@ describe('requestInactiveSessionResume', () => {
       [RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE, expect.objectContaining({ spawnNonce }),
         expect.objectContaining({ timeoutMs: null, reattachOnReconnect: { readRequest: expect.any(Function) } })],
     ]);
+    for (const [, , options] of transport.mock.calls) {
+      if (executionAuthority === 'account_automation') expect(options).toHaveProperty('authorityCeiling', 'account_automation');
+      else expect(options).not.toHaveProperty('authorityCeiling');
+    }
     expect(callMachineRpc).not.toHaveBeenCalled();
   });
 
@@ -668,6 +706,27 @@ describe('requestInactiveSessionResume', () => {
       phase: 'spawn_rpc', cause: 'unclassified', outcomeCode: 'resume_failed',
     }));
     expect(JSON.stringify(diagnostic.mock.calls)).not.toMatch(/private transport detail|private-code|account-token/);
+  });
+
+  it('logs only closed spawn refusal reasons in the existing readiness diagnostic', async () => {
+    const diagnostic = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
+    for (const [errorMessage, spawnRefusalReason] of [
+      ['team_credential_provider_selection_not_current', 'team_credential_provider_selection_not_current'],
+      ['provider_connection_changed', 'provider_connection_changed'],
+      ['broker_unavailable', 'broker_unavailable'],
+      ['private_native_refusal', 'unknown'],
+      ['team_credential_provider_selection_not_current\nprivate credential detail', 'unknown'],
+      ['private credential detail at /private/workspace', 'unknown'],
+    ]) {
+      diagnostic.mockClear();
+      callMachineRpc.mockResolvedValueOnce({ type: 'error', errorCode: 'SPAWN_VALIDATION_FAILED', errorMessage });
+      await expect(requestInactiveSessionResume({ credentials, sessionId: 'session-1', localId: 'local-1',
+        rawSession: rawSession(), metadata })).resolves.toMatchObject({ ok: false, code: 'resume_failed' });
+      expect(diagnostic).toHaveBeenCalledWith('[SessionResume] Readiness refused', expect.objectContaining({
+        phase: 'spawn_rpc', cause: 'SPAWN_VALIDATION_FAILED', outcomeCode: 'resume_failed', spawnRefusalReason,
+      }));
+      expect(JSON.stringify(diagnostic.mock.calls)).not.toMatch(/private_native_refusal|private credential detail|account-token/);
+    }
   });
 
   it('identifies caller cancellation without logging the abort reason', async () => {

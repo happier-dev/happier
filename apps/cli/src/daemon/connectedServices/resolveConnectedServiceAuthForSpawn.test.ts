@@ -4,18 +4,22 @@ import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import axios from 'axios';
+import { fetch as providerFetch } from 'undici';
 
 import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import {
   ConnectedServiceAuthGroupV1Schema,
+  ConnectedServiceAuthGroupPolicyV1Schema,
   ConnectedServiceIdSchema,
   BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
   buildProviderAccountUsageRecordId,
+  buildQualifiedPluginContributionKey,
   buildConnectedServiceCredentialRecord,
   sealAccountScopedBlobCiphertext,
   sealQualifiedConnectedAccountContentEnvelope,
   QualifiedConnectedAccountGroupV4Schema,
+  QualifiedConnectedAccountGroupActiveAccountV4Schema,
   QualifiedConnectedAccountListResponseV4Schema,
   QualifiedConnectedAccountCredentialSnapshotV4Schema,
   QualifiedConnectedAccountRefreshLeaseV4Schema,
@@ -29,6 +33,10 @@ import type { ApiClient } from '@/api/api';
 import { parseConnectedServicesLaunchAuth, resolveConnectedServicesLaunchAuth } from '@/cli/connectedServicesLaunchAuth';
 import { logger } from '@/utils/logger';
 import { ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore } from './accountGroups/quotas/ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore';
+import { ConnectedServiceQuotasCoordinator } from './quotas/ConnectedServiceQuotasCoordinator';
+import { createProviderAccountUsageStore } from './accountUsage/store';
+import { createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator } from './runtimeAuth/createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator';
+import { readConnectedServiceChildSelectionsFromEnv } from './connectedServiceChildEnvironment';
 import {
   ConnectedServiceAuthGroupSwitchCoordinator,
   InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry,
@@ -65,6 +73,12 @@ import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/ad
 import { createQualifiedConnectedAccountEstablishedRuntimeOwner } from './qualifiedConnectedAccountEstablishedRuntimeOwner';
 import { resolveConnectedServiceMaterializedRootDir } from './materialize/resolveConnectedServiceMaterializedRootDir';
 import { resolveConnectedServiceHomeDir, resolveConnectedServiceGroupHomeDir } from './homes/resolveConnectedServiceHomeDir';
+
+// Genuine provider HTTP boundary; keep the package's real dispatcher and other services.
+vi.mock('undici', async importOriginal => {
+  const runtime = await importOriginal<typeof import('undici')>();
+  return { ...runtime, fetch: vi.fn(runtime.fetch) };
+});
 
 async function readCodexConnectedAccountLaunchRegistration() {
   let captured: unknown;
@@ -210,7 +224,18 @@ function createSpawnPreflightRefreshService(input: Readonly<{
   api: ApiClient;
   activeServerDir: string;
   baseDir: string;
-}>) {
+}>, providerRefusal?: 'invalid_grant') {
+  if (providerRefusal) {
+    // Exercise real provider classification with a conclusive HTTP refusal.
+    const refreshHttpFixture = vi.mocked(providerFetch).mockImplementation(async input => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url !== 'https://auth.openai.com/oauth/token') throw new Error('Unexpected refresh fixture endpoint');
+      return new Response(JSON.stringify({ error: providerRefusal }), {
+        status: 400, headers: { 'content-type': 'application/json' },
+      }) as unknown as Awaited<ReturnType<typeof providerFetch>>;
+    });
+    onTestFinished(() => refreshHttpFixture.mockReset());
+  }
   return new ConnectedServiceRefreshCoordinator({
     ...input,
     machineIdProvider: () => 'spawn-refresh-fixture',
@@ -447,6 +472,10 @@ async function createSpawnPreTurnSwitchScenario(input: Readonly<{
   }>;
   switchError?: Error;
   activeRemainingPercent?: number;
+  activeRemainingPercentAtSelection?: number;
+  backupRemainingPercent?: number | null;
+  useRealSwitchCoordinator?: boolean;
+  initialQuota?: 'missing' | 'stale';
   rereadGroup?: Readonly<Record<string, unknown>> | null;
   rereadError?: Error;
   activateQualifiedPurposeBindings?: NonNullable<
@@ -574,25 +603,20 @@ async function createSpawnPreTurnSwitchScenario(input: Readonly<{
     getConnectedServiceCredentialPlain,
     getConnectedServiceCredentialSealed: vi.fn(async () => null),
   } as unknown as ApiClient;
-  const accountUsageStore = {
-    resolveBySource: vi.fn((source: {
-      serviceId: string;
-      profileId: string;
-      groupId?: string | null;
-      groupGeneration?: number | null;
-    }) => {
-      if (
-        source.serviceId !== 'happier.agent.codex/openai-codex'
-        || source.groupId !== 'codex-main'
-        || source.groupGeneration !== 5
-      ) {
-        return null;
-      }
-      if (source.profileId === 'primary') return createProviderAccountUsageSnapshot('primary', input.activeRemainingPercent ?? 5);
-      if (source.profileId === 'backup') return createProviderAccountUsageSnapshot('backup', 60);
-      return null;
-    }),
-  };
+  if (input.initialQuota) group.members = group.members.filter(member => member.profileId === 'primary');
+  const accountUsageStore = createProviderAccountUsageStore();
+  for (const [profileId, remaining] of [
+    ['primary', input.activeRemainingPercent ?? 5],
+    ['backup', input.backupRemainingPercent === undefined ? 60 : input.backupRemainingPercent],
+  ] as const) {
+    if (remaining === null || input.initialQuota === 'missing' || input.initialQuota && profileId !== 'primary') continue;
+    const snapshot = createProviderAccountUsageSnapshot(profileId, remaining);
+    accountUsageStore.recordSnapshot(input.initialQuota === 'stale'
+      ? { ...snapshot, fetchedAtMs: 0, observedAtMs: 0, staleAfterMs: 1 }
+      : snapshot, {
+      sources: [{ serviceId: 'happier.agent.codex/openai-codex', profileId, bindingKind: 'group_member', groupId: 'codex-main', groupGeneration: 5 }],
+    });
+  }
   const switchBeforeTurn = vi.fn(async () => {
     if (input.switchError) throw input.switchError;
     return input.switchResult!;
@@ -601,7 +625,7 @@ async function createSpawnPreTurnSwitchScenario(input: Readonly<{
     pluginId: 'happier.agent.codex',
     localId: 'openai-codex',
   } as const;
-  const qualifiedGroup = QualifiedConnectedAccountGroupV4Schema.parse({
+  let qualifiedGroup = QualifiedConnectedAccountGroupV4Schema.parse({
     v: 1,
     ref: { service: qualifiedService, groupId: 'codex-main' },
     incarnation: 'qualified-group-codex-main',
@@ -633,14 +657,62 @@ async function createSpawnPreTurnSwitchScenario(input: Readonly<{
       credentialRevision: `csr_${profileId === 'primary' ? '0123456789ABCDEFGHJKMNPQRS' : 'ZYXWVUTSRQPONLKJHGFEDCBA1'}`,
       configurationReady: true,
       configurationRevision: null,
+      providerIdentity: { accountId: `acct-${profileId}` },
       scopes: [],
     })),
   });
   const readQualifiedConnectedAccountGroupV4 = vi.fn(async () => qualifiedGroup);
   const listQualifiedConnectedAccountsV4 = vi.fn(async () => qualifiedAccounts);
 
+  const quotas = new ConnectedServiceQuotasCoordinator({ api, credentials, quotaFetchers: [],
+    accountUsageStore, randomBytes: length => new Uint8Array(length), now: () => 1_000,
+    ...(input.initialQuota ? { qualifiedConnectedAccountRuntime: {
+      resolvePeerClass: () => 'advertised_v4' as const,
+      establishedRuntimeOwner: {
+        invokeWithReceipt: request => spawnFixtureContext.getStore()!.established.invokeWithReceipt(request),
+        invokeScheduledWithReceipts: request => spawnFixtureContext.getStore()!.established.invokeScheduledWithReceipts(request),
+        readQuotaSourceSnapshot: request => spawnFixtureContext.getStore()!.established.readQuotaSourceSnapshot(request),
+      },
+      listScheduledAccounts: async () => qualifiedAccounts.accounts,
+      readQuota: async () => null,
+      writeProviderAccountUsage: async () => ({ success: true }),
+      listGroupQuotaTargets: async request => qualifiedAccounts.accounts
+        .filter(profile => request.accountIds.includes(profile.ref.accountId))
+        .map(profile => ({ profile, groupGeneration: qualifiedGroup.generation })),
+    } } : {}),
+  });
+  onTestFinished(() => quotas.disposeInBandQuotaPersistence());
+  const realCoordinator = createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator({
+    token: credentials.token, accountUsageStore, nowMs: () => 1_000,
+    probeQuotaSnapshotsForGroup: request => quotas.probeGroupQuotaSnapshots({
+      ...request, serviceId: buildQualifiedPluginContributionKey(request.serviceId),
+    }),
+    api: {
+      readGroup: async () => {
+        // Home/usage transport advances accepted quota between launch's first
+        // observation and the coordinator's authoritative selection read.
+        if (input.activeRemainingPercentAtSelection !== undefined) {
+          accountUsageStore.recordSnapshot(createProviderAccountUsageSnapshot('primary', input.activeRemainingPercentAtSelection), {
+            sources: [{ serviceId: 'happier.agent.codex/openai-codex', profileId: 'primary', bindingKind: 'group_member', groupId: 'codex-main', groupGeneration: 5 }],
+          });
+        }
+        return qualifiedGroup;
+      },
+      listAccounts: async () => qualifiedAccounts,
+      setActiveAccount: async request => {
+        const mutation = QualifiedConnectedAccountGroupActiveAccountV4Schema.parse(request.mutation);
+        qualifiedGroup = { ...qualifiedGroup, activeConnectedAccountId: mutation.connectedAccountId,
+          generation: qualifiedGroup.generation + 1 };
+        return qualifiedGroup;
+      },
+      updateRuntimeState: async () => { throw new Error('Unexpected pre-turn runtime-state write'); },
+    },
+    applyGeneration: async () => ({ ok: true as const }),
+  });
+
   return {
     getConnectedServiceAuthGroup,
+    accountUsageStore,
     readQualifiedConnectedAccountGroupV4,
     listQualifiedConnectedAccountsV4,
     getConnectedServiceCredentialPlain,
@@ -665,10 +737,11 @@ async function createSpawnPreTurnSwitchScenario(input: Readonly<{
       resolveQualifiedPurposeBindingSnapshot:
         createAppliedQualifiedPurposeBindingSnapshotResolver('codex'),
       accountUsageStore,
-      quotaFreshnessMs: 60_000,
       nowMs: () => 1_000,
       sessionId: 'session-single-spawn-switch',
-      authGroupSwitchCoordinator: { switchBeforeTurn },
+      authGroupSwitchCoordinator: input.useRealSwitchCoordinator ? {
+        switchBeforeTurn: request => realCoordinator.switchBeforeTurn({ ...request, serviceId: qualifiedService }),
+      } : { switchBeforeTurn },
       qualifiedConnectedAccountApi: {
         readGroup: readQualifiedConnectedAccountGroupV4,
         listAccounts: listQualifiedConnectedAccountsV4,
@@ -696,7 +769,10 @@ const EXTERNAL_CONNECTED_ACCOUNT_PURPOSE = Object.freeze({
   purpose: 'external-spawn-test',
 });
 
-async function createExternalSpawnRefreshFixture() {
+async function createExternalSpawnRefreshFixture(input: Readonly<{
+  needsReauth?: boolean;
+  onCredentialRead?: () => void;
+}> = {}) {
   const runtime = await createAuthoredAdmittedPluginRuntimeFixture({
     plugins: [{
       manifest: {
@@ -747,10 +823,14 @@ async function createExternalSpawnRefreshFixture() {
       randomBytes: (length) => new Uint8Array(length),
     }),
     metadata: { scopes: [] },
+    ...(input.needsReauth ? { health: { v: 1, status: 'needs_reauth', reconnectRequired: true } } : {}),
   });
   // The Account credential store is the boundary. Keep status admission, plugin
   // execution, currentness and refresh classification on their real owners.
-  const readCredential: NonNullable<Parameters<typeof createQualifiedConnectedAccountEstablishedRuntimeOwner>[0]['readCredential']> = async () => credential;
+  const readCredential: NonNullable<Parameters<typeof createQualifiedConnectedAccountEstablishedRuntimeOwner>[0]['readCredential']> = async () => {
+    input.onCredentialRead?.();
+    return credential;
+  };
   const established = createQualifiedConnectedAccountEstablishedRuntimeOwner({
     reloadController: runtime.controller,
     credentials: { token: 'happy-token', encryption: null },
@@ -913,11 +993,13 @@ describe('resolveConnectedServiceAuthForSpawn V4 group ingress', () => {
     const log = vi.spyOn(logger, 'infoFile');
     try {
     const refresh = scenario !== 'unchanged';
-    const refreshFixture = refresh && scenario !== 'unfenced'
-      ? await createExternalSpawnRefreshFixture()
-      : null;
-    let metadataReads = 0;
     let requesterCurrent = true;
+    const refreshFixture = refresh && scenario !== 'unfenced'
+      ? await createExternalSpawnRefreshFixture({
+          needsReauth: scenario === 'profile_revoked',
+          onCredentialRead: () => { if (scenario === 'requester_revoked') requesterCurrent = false; },
+        })
+      : null;
     const materializationKey = `external-direct-${scenario}`;
     const baseDir = await mkdtemp(join(tmpdir(), 'happier-external-direct-spawn-'));
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-external-direct-spawn-server-'));
@@ -926,8 +1008,6 @@ describe('resolveConnectedServiceAuthForSpawn V4 group ingress', () => {
     const listConnectedServiceProfiles = vi.fn(async () => ({ profiles: [] }));
     const credentialRevision = 'csr_0123456789ABCDEFGHJKMNPQRS';
     const listAccounts = vi.fn(async () => {
-      metadataReads += 1;
-      if (metadataReads > 1 && scenario === 'requester_revoked') requesterCurrent = false;
       return QualifiedConnectedAccountListResponseV4Schema.parse({
       service: EXTERNAL_CONNECTED_ACCOUNT_SERVICE,
       accounts: [{
@@ -935,7 +1015,7 @@ describe('resolveConnectedServiceAuthForSpawn V4 group ingress', () => {
           service: EXTERNAL_CONNECTED_ACCOUNT_SERVICE,
           accountId: 'external-direct',
         },
-        status: metadataReads > 1 && scenario === 'profile_revoked' ? 'needs_reauth' : 'connected',
+        status: 'connected',
         authenticationModeId: 'manual',
         revisionSemantics: scenario === 'unfenced' ? 'legacy_unfenced' : 'revisioned',
         credentialRevision: scenario === 'unfenced' ? null : credentialRevision,
@@ -952,6 +1032,7 @@ describe('resolveConnectedServiceAuthForSpawn V4 group ingress', () => {
         accountId: 'external-direct',
       },
     });
+    const resolvePurposeSnapshot = vi.fn(() => snapshot);
 
     const resolveSpawn = () => resolveConnectedServiceAuthForSpawnImpl({
       agentId: 'codex',
@@ -985,7 +1066,7 @@ describe('resolveConnectedServiceAuthForSpawn V4 group ingress', () => {
         activeServerDir,
         baseDir,
       }) } : {}),
-      resolveQualifiedPurposeBindingSnapshot: () => snapshot,
+      resolveQualifiedPurposeBindingSnapshot: resolvePurposeSnapshot,
       activateQualifiedPurposeBindings: (purposeSnapshot) =>
         externalPurposeOwner!.activateSessionPurposeBindings({
           sessionId: `${materializationKey}-subject`,
@@ -999,7 +1080,7 @@ describe('resolveConnectedServiceAuthForSpawn V4 group ingress', () => {
       : resolveSpawn();
     if (scenario === 'profile_revoked' || scenario === 'requester_revoked' || scenario === 'unfenced') {
       if (scenario === 'profile_revoked') {
-        await expect(launch).rejects.toMatchObject({ kind: 'profile_action_required' });
+        await expect(launch).rejects.toMatchObject({ kind: 'reconnect_required' });
       } else if (scenario === 'unfenced') {
         await expect(launch).rejects.toMatchObject({ kind: 'active_profile_missing' });
       } else {
@@ -1013,9 +1094,9 @@ describe('resolveConnectedServiceAuthForSpawn V4 group ingress', () => {
     expect(listAccounts).toHaveBeenCalledWith({
       service: EXTERNAL_CONNECTED_ACCOUNT_SERVICE,
     });
-    // Binding resolution already read this profile. Only a refresh needs a
-    // second metadata observation, so rotation/revocation is still observed.
-    expect(listAccounts).toHaveBeenCalledTimes(refresh ? 2 : 1);
+    // Refresh owns the resulting profile; unchanged selection never relists it.
+    expect(listAccounts).toHaveBeenCalledTimes(1);
+    expect(resolvePurposeSnapshot).toHaveBeenCalledTimes(1);
     expect(getConnectedServiceCredentialPlain).not.toHaveBeenCalled();
     expect(getConnectedServiceCredentialSealed).not.toHaveBeenCalled();
     expect(listConnectedServiceProfiles).not.toHaveBeenCalled();
@@ -1030,7 +1111,7 @@ describe('resolveConnectedServiceAuthForSpawn V4 group ingress', () => {
     })]);
     await result?.cleanupOnExit?.();
     await result?.materializationPurposeLease?.dispose();
-    for (const phase of ['credential_binding_resolution', ...(refresh ? ['credential_read'] : []), 'purpose_activation']) {
+    for (const phase of ['credential_binding_resolution', ...(refresh ? ['credential_refresh'] : []), 'purpose_activation']) {
       expect(log).toHaveBeenCalledWith('[CONNECTED ACCOUNT] Materialization phase', expect.objectContaining({
         materializationKey, phase, status: 'completed', durationMs: expect.any(Number),
       }));
@@ -1041,6 +1122,8 @@ describe('resolveConnectedServiceAuthForSpawn V4 group ingress', () => {
   });
 
   it('admits a novel qualified group through the real spawn materialization owner without a scalar gate', async () => {
+    const log = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
+    onTestFinished(() => log.mockRestore());
     const baseDir = await mkdtemp(join(tmpdir(), 'happier-external-group-spawn-'));
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-external-group-spawn-server-'));
     const credentialRevision = 'csr_0123456789ABCDEFGHJKMNPQRS';
@@ -1144,6 +1227,53 @@ describe('resolveConnectedServiceAuthForSpawn V4 group ingress', () => {
       credentialRevision,
     })]);
     await result?.cleanupOnExit?.();
+    // The launch output still consumes the admitted pool selection. Its
+    // resolution must also expose each awaited boundary without account data.
+    const rows = log.mock.calls.flatMap(([marker, row]) => marker === '[CONNECTED ACCOUNT] Materialization phase'
+      && row && typeof row === 'object' ? [row as Record<string, unknown>] : []);
+    const root = rows.find(row => row.materializationKey === 'external-group'
+      && row.phase === 'credential_binding_resolution' && row.status === 'started');
+    expect(root).toBeDefined();
+    for (const phase of ['binding_group_read', 'binding_account_list', 'group_selection']) {
+      const starts = rows.filter(row => row.phase === phase && row.status === 'started'
+        && row.parentPhaseId === root?.phaseId);
+      expect(starts, phase).toHaveLength(1);
+      expect(rows).toContainEqual(expect.objectContaining({
+        phase, phaseId: starts[0]?.phaseId, parentPhaseId: root?.phaseId,
+        status: 'completed', durationMs: expect.any(Number),
+      }));
+    }
+    expect(JSON.stringify(rows)).not.toMatch(/happy-token|external-active|credentialRevision|accounts|Fallbacks/);
+  });
+
+  it('records a failed binding metadata read and preserves its error without logging account material', async () => {
+    const log = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
+    onTestFinished(() => log.mockRestore());
+    const failure = new Error('synthetic-private-boundary-payload');
+    const snapshot = externalSpawnPurposeSnapshot({
+      kind: 'account', account: { service: EXTERNAL_CONNECTED_ACCOUNT_SERVICE, accountId: 'private-profile' },
+    });
+    const listAccounts = vi.fn(async (): Promise<never> => { throw failure; });
+    await expect(resolveConnectedServiceAuthForSpawnImpl({
+      agentId: 'codex', materializationKey: 'failed-binding-metadata',
+      connectedServicesBindingsRaw: { v: 2, bindingsByServiceId: {
+        [EXTERNAL_CONNECTED_ACCOUNT_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'private-profile' },
+      } },
+      activeServerDir: '/unused-before-metadata', baseDir: '/unused-before-metadata',
+      credentials: { token: 'synthetic-private-token', encryption: null }, api: {} as ApiClient,
+      qualifiedConnectedAccountApi: { readGroup: async () => null, listAccounts },
+      resolveQualifiedPurposeBindingSnapshot: () => snapshot,
+    })).rejects.toBe(failure);
+    expect(listAccounts).toHaveBeenCalledTimes(1);
+    const records = log.mock.calls.flatMap(([marker, row]) => marker === '[CONNECTED ACCOUNT] Materialization phase'
+      && row && typeof row === 'object' ? [row as Record<string, unknown>] : []);
+    const outer = records.find(row => row.phase === 'credential_binding_resolution' && row.status === 'started');
+    const child = records.find(row => row.phase === 'binding_account_list' && row.status === 'started');
+    expect(child).toMatchObject({ parentPhaseId: outer?.phaseId });
+    expect(records).toContainEqual(expect.objectContaining({ phaseId: child?.phaseId,
+      phase: 'binding_account_list', status: 'failed', durationMs: expect.any(Number) }));
+    expect(records).toContainEqual(expect.objectContaining({ phaseId: outer?.phaseId, status: 'failed' }));
+    expect(JSON.stringify(records)).not.toMatch(/synthetic-private|private-profile|Error|stack|token/);
   });
 
   it('uses the qualified V4 group reader for scalar group bindings', async () => {
@@ -1945,7 +2075,6 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       baseDir,
       credentials,
       api,
-      quotaFreshnessMs: 60_000,
       nowMs: () => 1_000,
     })).rejects.toMatchObject({
       name: 'ConnectedServiceAuthGroupSwitchCoordinatorUnavailableError',
@@ -2113,7 +2242,6 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       baseDir,
       credentials,
       api,
-      quotaFreshnessMs: 60_000,
       nowMs: () => now,
       sessionId: 'session-1',
       authGroupSwitchCoordinator,
@@ -2298,7 +2426,6 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       credentials,
       api,
       accountUsageStore,
-      quotaFreshnessMs: 60_000,
       nowMs: () => now,
       sessionId: 'session-1',
       authGroupSwitchCoordinator,
@@ -2310,6 +2437,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       serviceId: 'happier.agent.codex/openai-codex',
       groupId: 'codex-main',
       reason: 'soft_threshold',
+      allowCurrentProfileRetry: true,
       observedProfileId: 'primary',
     });
     expect(authGroupSwitchCoordinator.switchBeforeTurn).toHaveBeenCalledTimes(1);
@@ -2392,7 +2520,26 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
     expect(JSON.stringify(connectedServiceAuth!.env)).not.toContain('backup-access');
   });
 
-  it('retains the authoritative current group when a soft-threshold quota probe is incomplete', async () => {
+  it('admits fresh Sessions on the healthy current member after quota evidence advances during start', async () => {
+    const scenario = await createSpawnPreTurnSwitchScenario({
+      activeRemainingPercent: 0, backupRemainingPercent: 0,
+      activeRemainingPercentAtSelection: 60, useRealSwitchCoordinator: true,
+    });
+    // Both launches share one pool member; neither needs a switch-away or a
+    // generation change. The initial quota reason must not exclude that member.
+    for (let start = 0; start < 2; start++) {
+      const materialized = await scenario.run();
+      try {
+        expect(readConnectedServiceChildSelectionsFromEnv(materialized!.env)?.get('happier.agent.codex/openai-codex'))
+          .toMatchObject({ kind: 'group', activeProfileId: 'primary', generation: 5 });
+      } finally {
+        await materialized?.materializationPurposeLease?.dispose();
+        await materialized?.cleanupOnExit?.();
+      }
+    }
+  });
+
+  it('PORT-PS-AB waits at spawn when a soft-threshold quota probe is genuinely incomplete', async () => {
     const scenario = await createSpawnPreTurnSwitchScenario({
       switchError: new ConnectedServiceAuthGroupQuotaProbeIncompleteError({
         status: 'incomplete',
@@ -2402,40 +2549,76 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       }),
     });
 
-    await expect(scenario.run()).resolves.not.toBeNull();
+    await expect(scenario.run()).rejects.toMatchObject({ code: 'connected_service_auth_group_quota_probe_incomplete' });
     expect(scenario.switchBeforeTurn).toHaveBeenCalledWith({
       sessionId: 'session-single-spawn-switch',
       serviceId: 'happier.agent.codex/openai-codex',
       groupId: 'codex-main',
       reason: 'soft_threshold',
+      allowCurrentProfileRetry: true,
       observedProfileId: 'primary',
     });
     expect(scenario.readQualifiedConnectedAccountGroupV4).toHaveBeenCalledTimes(1);
     expect(scenario.getConnectedServiceAuthGroup).not.toHaveBeenCalled();
-    expect(scenario.getConnectedServiceCredentialPlain).toHaveBeenCalledWith({
-      serviceId: 'openai-codex',
-      profileId: 'primary',
-    });
+    expect(scenario.getConnectedServiceCredentialPlain).not.toHaveBeenCalled();
   });
 
-  it('fails closed on incomplete hard usage-limit quota evidence', async () => {
-    const incomplete = new ConnectedServiceAuthGroupQuotaProbeIncompleteError({
-      status: 'incomplete',
-      requestedProfileCount: 2,
-      completedProfileCount: 0,
-      reason: 'deadline_exceeded',
-    });
+  it.each([null, 0])('PORT-PS-AB distinguishes incomplete probe waits from proven exhaustion at spawn (%s)', async backupRemainingPercent => {
     const scenario = await createSpawnPreTurnSwitchScenario({
-      activeRemainingPercent: 0,
-      switchError: incomplete,
+      activeRemainingPercent: 0, backupRemainingPercent, useRealSwitchCoordinator: true,
     });
-
-    await expect(scenario.run()).rejects.toBe(incomplete);
-    expect(scenario.switchBeforeTurn).toHaveBeenCalledWith(expect.objectContaining({
-      reason: 'usage_limit',
-      observedProfileId: 'primary',
-    }));
+    await expect(scenario.run()).rejects.toMatchObject({ code: backupRemainingPercent === null
+      ? 'connected_service_auth_group_quota_probe_incomplete' : 'no_eligible_member' });
     expect(scenario.getConnectedServiceCredentialPlain).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { initialQuota: 'missing' as const, remainingPercent: 0, allowed: false },
+    { initialQuota: 'missing' as const, remainingPercent: null, allowed: false },
+    { initialQuota: 'stale' as const, remainingPercent: 60, allowed: true },
+  ])('uses refreshed provider evidence for spawn admission ($initialQuota → $remainingPercent)', async ({ initialQuota, remainingPercent, allowed }) => {
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1_000);
+    onTestFinished(() => clock.mockRestore());
+    const scenario = await createSpawnPreTurnSwitchScenario({
+      initialQuota, activeRemainingPercent: 0, useRealSwitchCoordinator: true,
+    });
+    const requests: string[] = [];
+    const providerHttp = vi.mocked(providerFetch).mockImplementation(async input => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url !== 'https://chatgpt.com/backend-api/wham/usage') throw new Error('Unexpected quota provider endpoint');
+      requests.push(url);
+      return new Response(JSON.stringify({ plan_type: 'plus', rate_limit: {
+        primary_window: { used_percent: 100 - (remainingPercent ?? 0), reset_at: 100_000,
+          limit_window_seconds: 604_800 },
+      // The fixture response implements the Fetch surface consumed by the HTTP owner.
+      } }), { status: remainingPercent === null ? 503 : 200 }) as unknown as Awaited<ReturnType<typeof providerFetch>>;
+    });
+    onTestFinished(() => providerHttp.mockReset());
+    const result = scenario.run();
+    await result.catch(() => {});
+    // One admitted member needs one provider observation, including unavailable evidence.
+    expect(requests).toHaveLength(1);
+    if (remainingPercent !== null) {
+      expect(scenario.accountUsageStore.resolveBySource({ serviceId: 'happier.agent.codex/openai-codex',
+        profileId: 'primary', bindingKind: 'group_member', groupId: 'codex-main', groupGeneration: 5 }))
+        .toMatchObject({ state: 'loaded_data', confidence: 'confirmed', meters: [
+          expect.objectContaining({ remainingPct: remainingPercent, limitScope: 'account', modelId: null }),
+          expect.anything(),
+        ] });
+    }
+    if (!allowed) {
+      await expect(result).rejects.toMatchObject({ code: remainingPercent === null
+        ? 'connected_service_auth_group_quota_probe_incomplete' : 'no_eligible_member' });
+    } else {
+      const materialized = await result;
+      expect(materialized).not.toBeNull();
+      onTestFinished(async () => {
+        await materialized?.materializationPurposeLease?.dispose();
+        await materialized?.cleanupOnExit?.();
+      });
+      expect(readConnectedServiceChildSelectionsFromEnv(materialized!.env)?.get('happier.agent.codex/openai-codex'))
+        .toMatchObject({ kind: 'group', activeProfileId: 'primary', generation: 5 });
+    }
   });
 
   it('uses coordinator-returned authority without a second group reread', async () => {
@@ -2560,8 +2743,8 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
         nowMs: now,
       }),
       memberStatesByProfileId: new Map([
-        ['primary', { quotaSnapshot: { capturedAtMs: now, effectiveRemainingPercent: 5 } }],
-        ['backup', { quotaSnapshot: { capturedAtMs: now, effectiveRemainingPercent: 80 } }],
+        ['primary', { quotaSnapshot: { staleAfterMs: 60_000, capturedAtMs: now, effectiveRemainingPercent: 5 } }],
+        ['backup', { quotaSnapshot: { staleAfterMs: 60_000, capturedAtMs: now, effectiveRemainingPercent: 80 } }],
       ]),
     };
     const commitSwitch = vi.fn(async () => ({ ...serverState, activeProfileId: 'backup', generation: 2 }));
@@ -2573,7 +2756,6 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
     const coordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
       leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(),
       nowMs: () => now,
-      quotaFreshnessMs: 60_000,
       loadState: async () => serverState,
       commitSwitch,
       applyGeneration,
@@ -2632,7 +2814,6 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       },
       api,
       accountUsageStore,
-      quotaFreshnessMs: 60_000,
       nowMs: () => now,
       sessionId: 'session-preflight-authority',
       authGroupSwitchCoordinator: coordinator,
@@ -2788,7 +2969,6 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       baseDir,
       credentials,
       api,
-      quotaFreshnessMs: 60_000,
       nowMs: () => now,
       sessionId: 'session-1',
       authGroupSwitchCoordinator,
@@ -3064,7 +3244,6 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
         encryption: { type: 'legacy', secret: new Uint8Array(32).fill(4) },
       },
       api,
-      quotaFreshnessMs: 60_000,
       nowMs: () => 1_000,
     })).rejects.toMatchObject({
       name: 'ConnectedServiceAuthGroupSwitchCoordinatorUnavailableError',
@@ -3156,7 +3335,6 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
     const coordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
       leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(),
       nowMs: () => 1_000,
-      quotaFreshnessMs: 60_000,
       loadState: async () => buildConnectedServiceAuthGroupSwitchState({
         group,
         runtimeQuotaSnapshots: new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(),
@@ -3228,7 +3406,6 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
         encryption: { type: 'legacy', secret: new Uint8Array(32).fill(4) },
       },
       api,
-      quotaFreshnessMs: 60_000,
       nowMs: () => 1_000,
       sessionId: 'sess-coordinator-health',
       authGroupSwitchCoordinator: coordinator,
@@ -3407,7 +3584,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       }
     }
     const authGroupSwitchCoordinator = new BoundSwitchCoordinator();
-    const refreshService = createSpawnPreflightRefreshService({ credentials, api, activeServerDir, baseDir });
+    const refreshService = createSpawnPreflightRefreshService({ credentials, api, activeServerDir, baseDir }, 'invalid_grant');
     const params: Parameters<typeof resolveConnectedServiceAuthForSpawn>[0] & {
       credentialRefreshService: SpawnPreflightRefreshService;
       authGroupSwitchCoordinator: SpawnAuthGroupSwitchCoordinator;
@@ -3593,7 +3770,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       activeProfileId: null,
       generation: 5,
     }));
-    const refreshService = createSpawnPreflightRefreshService({ credentials, api, activeServerDir, baseDir });
+    const refreshService = createSpawnPreflightRefreshService({ credentials, api, activeServerDir, baseDir }, 'invalid_grant');
 
     await expect(resolveConnectedServiceAuthForSpawn({
       agentId: 'codex',
@@ -3624,7 +3801,6 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
         switchAfterClassifiedFailure,
       },
       credentialRefreshService: refreshService,
-      quotaFreshnessMs: 60_000,
       nowMs: () => 1_000,
     })).rejects.toMatchObject({
       name: 'ConnectedServiceSpawnCredentialRefreshError',
