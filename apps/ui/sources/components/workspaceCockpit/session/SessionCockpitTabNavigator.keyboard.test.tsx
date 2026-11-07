@@ -1,8 +1,18 @@
+// @vitest-environment jsdom
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen } from '@/dev/testkit';
+import { renderScreen as renderTestScreen } from '@/dev/testkit';
+import { DefaultTheme, ThemeProvider } from '@react-navigation/native';
+
+function renderScreen(element: React.ReactElement) {
+    return renderTestScreen(element, { wrapper: DefaultNavigationTheme });
+}
+
+function DefaultNavigationTheme({ children }: React.PropsWithChildren) {
+    return <ThemeProvider value={DefaultTheme}>{children}</ThemeProvider>;
+}
 
 const navigatorState = vi.hoisted(() => ({
     screenOptions: null as null | Record<string, unknown>,
@@ -34,19 +44,23 @@ const navigationFocusState = vi.hoisted(() => {
     };
 });
 
-vi.mock('@react-navigation/native', () => ({
-    NavigationContainer: ({ children, linking }: { children?: React.ReactNode; linking?: Record<string, unknown> }) => {
-        navigatorState.navigationContainerLinking = linking ?? null;
-        return React.createElement('NavigationContainer', { linking }, children);
-    },
-    NavigationIndependentTree: ({ children }: { children?: React.ReactNode }) =>
-        React.createElement('NavigationIndependentTree', null, children),
-    useIsFocused: () => React.useSyncExternalStore(
-        navigationFocusState.subscribe,
-        navigationFocusState.getSnapshot,
-        navigationFocusState.getSnapshot,
-    ),
-}));
+vi.mock('@react-navigation/native', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@react-navigation/native')>();
+    return {
+        ...actual,
+        NavigationContainer: (props: React.ComponentProps<typeof actual.NavigationContainer>) => {
+            const { linking } = props;
+            navigatorState.navigationContainerLinking = linking ?? null;
+            // The native locale is outside this test; keep the SDK's theme path real.
+            return React.createElement(actual.NavigationContainer, { ...props, direction: 'ltr', documentTitle: { enabled: false } });
+        },
+        useIsFocused: () => React.useSyncExternalStore(
+            navigationFocusState.subscribe,
+            navigationFocusState.getSnapshot,
+            navigationFocusState.getSnapshot,
+        ),
+    };
+});
 
 // Models the one navigator contract this suite depends on: `initialRouteName` seeds the
 // active route at MOUNT and is ignored on every later render, so only `navigation.navigate`
@@ -100,10 +114,13 @@ vi.mock('@react-navigation/bottom-tabs', () => {
     };
 });
 
-vi.mock('./SessionCockpitSurfaceScreen', () => ({
-    SessionCockpitSurfaceScreen: (props: Record<string, unknown>) =>
-        React.createElement('SessionCockpitSurfaceScreen', props),
-}));
+vi.mock('./SessionCockpitSurfaceScreen', async () => {
+    const { useTheme } = await import('@react-navigation/native');
+    return {
+        SessionCockpitSurfaceScreen: (props: Record<string, unknown>) =>
+            React.createElement('SessionCockpitSurfaceScreen', { ...props, navigationTheme: useTheme() }),
+    };
+});
 
 vi.mock('./SessionCockpitSurfaceNavigation', () => ({
     SessionCockpitSurfaceNavigationProvider: ({
@@ -294,6 +311,29 @@ describe('SessionCockpitTabNavigator session switching', () => {
         navigatorState.persistedSurfaces = [];
         navigatorState.surfaceSwitchers = [];
         navigationFocusState.setFocused(true);
+    });
+
+    it('inherits the app navigation theme and updates it without resetting the active surface', async () => {
+        const { DarkTheme, DefaultTheme, ThemeProvider } = await import('@react-navigation/native');
+        const { SessionCockpitTabNavigator } = await import('./SessionCockpitTabNavigator');
+        const darkTheme = { ...DarkTheme, colors: { ...DarkTheme.colors, background: '#191717' } };
+        const renderNavigator = (theme: typeof DarkTheme) => (
+            <ThemeProvider value={theme}>
+                <SessionCockpitTabNavigator initialSurface="chat" scopeId="session:s1" sessionId="s1" terminalTabAvailable={false} />
+            </ThemeProvider>
+        );
+        const screen = await renderScreen(renderNavigator(darkTheme));
+        const readSceneThemes = () => screen.findAllByType('SessionCockpitSurfaceScreen')
+            .map((scene) => scene.props.navigationTheme);
+
+        expect(readSceneThemes()).toEqual(Array(5).fill(darkTheme));
+        await act(async () => navigatorState.surfaceSwitchers[0]?.('git'));
+        await screen.update(renderNavigator(DefaultTheme));
+        expect(readSceneThemes()).toEqual(Array(5).fill(DefaultTheme));
+        expect(screen.findByType('BottomTabNavigator').props.activeRouteName).toBe('git');
+        await screen.update(renderNavigator(darkTheme));
+        expect(readSceneThemes()).toEqual(Array(5).fill(darkTheme));
+        expect(screen.findByType('BottomTabNavigator').props.activeRouteName).toBe('git');
     });
 
     it('opens the destination session on its own initial surface instead of the previous session active surface', async () => {
