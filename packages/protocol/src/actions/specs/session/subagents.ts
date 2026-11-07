@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
 import type { PreNormalizedActionSpec } from '../definition.js';
 import { PlanStartInputSchema, DelegateStartInputSchema, VoiceAgentStartInputSchema } from '../executionRuns.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
@@ -7,6 +8,8 @@ import { EXECUTION_RUN_ACTION_PERMISSION_INPUTS, EXECUTION_RUN_ACTION_PERMISSION
 import { SubagentLifecycleDetailV1Schema, SubagentRefInputV1Schema, SubagentRefV1Schema, SubagentStatusV1Schema } from '../../../sessions/subagents/subagentRefV1.js';
 import { RPC_METHODS } from '../../../rpc/methods.js';
 import { StrictJsonValueSchema } from '../../../json/strictJsonValue.js';
+import { readRecord } from '../../../inputs/inputRecords.js';
+import { resolveExecutionRunMachineRuntimeDemand } from '../../executor/sessionScope.js';
 
 
 export const SubagentListInputSchema = lazyZodSchema(() => z.looseObject({
@@ -46,9 +49,12 @@ export const SubagentWatchSnapshotOutputSchema = lazyZodSchema(() => z.looseObje
   subagents: z.array(SubagentRefV1Schema),
 }));
 
-export const SUBAGENT_ACTION_SPECS = Object.freeze([
+function createSubagentActionSpecs() {
+  return Object.freeze([
   {
     id: 'subagents.plan.start', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
+    machineRuntimeDemandForInput: (input, context) => resolveExecutionRunMachineRuntimeDemand(
+      readRecord(readRecord(input).target).kind === 'detached' ? { sessionId: null } : input, context),
     title: 'Start plan run',
     sideEffectClass: 'external',
     safety: 'safe',
@@ -136,6 +142,7 @@ export const SUBAGENT_ACTION_SPECS = Object.freeze([
 	  } satisfies PreNormalizedActionSpec,
   {
     id: 'subagents.delegate.start', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
+    machineRuntimeDemandForInput: resolveExecutionRunMachineRuntimeDemand,
     title: 'Start delegate run',
     sideEffectClass: 'external',
     safety: 'safe',
@@ -229,6 +236,7 @@ export const SUBAGENT_ACTION_SPECS = Object.freeze([
 	  } satisfies PreNormalizedActionSpec,
   {
     id: 'voice_agent.start', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
+    machineRuntimeDemandForInput: resolveExecutionRunMachineRuntimeDemand,
     title: 'Start voice agent run',
     sideEffectClass: 'external',
     safety: 'safe',
@@ -452,4 +460,6 @@ export const SUBAGENT_ACTION_SPECS = Object.freeze([
     },
   } satisfies PreNormalizedActionSpec,
 ] as const);
+}
 
+export const SUBAGENT_ACTION_SPECS: ReturnType<typeof createSubagentActionSpecs> = lazyActionSpecArray(createSubagentActionSpecs);

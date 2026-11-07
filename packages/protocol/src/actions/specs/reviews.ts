@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { ReviewFindingsApplyInputV1Schema, ReviewFindingsApplyResultV1Schema } from '../../reviews/reviewApplyV1.js';
@@ -6,11 +7,18 @@ import { ReviewStartInputSchema } from '../../reviews/reviewStart.js';
 import { ReviewWalkthroughInputSchema, ReviewExplainFindingsInputSchema } from '../../reviews/reviewNarration.js';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import type { PreNormalizedActionSpec } from './definition.js';
+import { readRecord } from '../../inputs/inputRecords.js';
+import { resolveExecutionRunMachineRuntimeDemand } from '../executor/sessionScope.js';
 
 
-export const REVIEW_ACTION_SPECS = Object.freeze([
+function createReviewActionSpecs() {
+  return Object.freeze([
   {
     id: 'review.start', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
+    machineRuntimeDemandForInput: (input, context) => resolveExecutionRunMachineRuntimeDemand(
+      readRecord(readRecord(input).target).kind === 'detached'
+        || context.actionCaller?.kind === 'workflowRun' && readRecord(input).sessionId === undefined
+        ? { sessionId: null } : input, context),
     title: 'Start review',
     sideEffectClass: 'external',
     safety: 'safe',
@@ -185,6 +193,9 @@ export const REVIEW_ACTION_SPECS = Object.freeze([
     outputSchema: StrictJsonValueSchema,
   } satisfies PreNormalizedActionSpec,
 ] as const);
+}
+
+export const REVIEW_ACTION_SPECS: ReturnType<typeof createReviewActionSpecs> = lazyActionSpecArray(createReviewActionSpecs);
 
 
 
@@ -195,7 +206,8 @@ export const ReviewEnginesListInputSchema = lazyZodSchema(() => z.looseObject({
   scope: z.optional(z.literal('paths')),
 }));
 
-export const REVIEW_ENGINE_DISCOVERY_ACTION_SPECS = Object.freeze([
+function createReviewEngineDiscoveryActionSpecs() {
+  return Object.freeze([
   {
     id: 'review.engines.list', executionPlacement: 'session', approval: {result: 'required'},
     title: 'List review engines',
@@ -232,4 +244,6 @@ export const REVIEW_ENGINE_DISCOVERY_ACTION_SPECS = Object.freeze([
     inputSchema: ReviewEnginesListInputSchema,
   } satisfies PreNormalizedActionSpec,
 ] as const);
+}
 
+export const REVIEW_ENGINE_DISCOVERY_ACTION_SPECS: ReturnType<typeof createReviewEngineDiscoveryActionSpecs> = lazyActionSpecArray(createReviewEngineDiscoveryActionSpecs);

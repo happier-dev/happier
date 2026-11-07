@@ -1,4 +1,5 @@
-import { MACHINE_TERMINAL_ACTION_IDS } from './machineTerminalActionIdsV1.js';
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
+import { MACHINE_TERMINAL_ACTION_IDS, isMachineTerminalOpenOrRestartActionIdV1 } from './machineTerminalActionIdsV1.js';
 export { MACHINE_TERMINAL_ACTION_IDS } from './machineTerminalActionIdsV1.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
@@ -13,7 +14,7 @@ import { TerminalStreamInputRequestSchema, TerminalStreamInputResponseSchema } f
 import type { ApprovalPresentationContext, PreNormalizedActionSpec } from '../actionSpecs.js';
 import { actionInputServerId } from './definition.js';
 import { RPC_METHODS } from '../../rpc/methods.js';
-import { readRecord } from '../../inputs/inputRecords.js';
+import { readRecord, readNonEmptyString } from '../../inputs/inputRecords.js';
 export type MachineTerminalActionId = typeof MACHINE_TERMINAL_ACTION_IDS[number];
 /** Selected only by the receiving service_shell owner after typed admission.
  * Ordinary terminal opens retain their existing immediate completion.
@@ -74,8 +75,8 @@ function describeMachineTerminalApprovalSummary(actionId: MachineTerminalActionI
 }
 function row<TId extends MachineTerminalActionId>(actionId: TId, title: string, rpcMethod: string, read = false): MachineTerminalSpec<TId> {
   return {
-    id: actionId, approval: actionId === 'machines.terminal.open' || actionId === 'machines.terminal.restart' ? { result: 'required', flow: 'deferred' } : { result: 'required' },
-    requiredAuthority: actionId === 'machines.terminal.open' || actionId === 'machines.terminal.restart' ? 'account_automation' : 'present_user',
+    id: actionId, approval: isMachineTerminalOpenOrRestartActionIdV1(actionId) ? { result: 'required', flow: 'deferred' } : { result: 'required' },
+    requiredAuthority: isMachineTerminalOpenOrRestartActionIdV1(actionId) ? 'account_automation' : 'present_user',
     ...(actionId === 'machines.terminal.close' ? { confirmVerb: { key: 'common.close', fallback: 'Close' } }
       : actionId === 'machines.terminal.restart' ? { confirmVerb: { key: 'localServices.effectReview.restart', fallback: 'Restart' } } : {}),
     // Open/restart also route typed package scripts through the finite Project
@@ -88,6 +89,15 @@ function row<TId extends MachineTerminalActionId>(actionId: TId, title: string, 
       : 'Operate on a requester-owned Machine terminal through the canonical daemon PTY owner. Project shells retain their accepted checkout. Interactive input and resize remain under admitted terminal custody.',
     safety: read ? 'safe' : 'danger', sideEffectClass: read ? 'read' : 'danger',
     executionPlacement: 'machine', placements: [],
+    ...(isMachineTerminalOpenOrRestartActionIdV1(actionId) ? {
+      machineRuntimeDemandForInput: (input: unknown) => {
+        const value = readRecord(input);
+        const machineId = readNonEmptyString(value.machineId);
+        const serverId = readNonEmptyString(value.serverId);
+        return machineId ? { target: { kind: 'machine' as const, machineId }, ...(serverId ? { serverId } : {}) } : null;
+      },
+    } : {}),
+    originalExecution: { daemonIngressSurfaces: ['cli'] },
     surfaces: { ui: true, cli: true, agent: true, mcp: true, voice: true, rpc: false },
     bindings: { rpcMethod, mcpToolName: actionId.replaceAll('.', '_'), voiceClientToolName: actionId.replaceAll('.', '_') },
     cli: { commands: [{ path: actionId.split('.'), visibility: 'canonical' }] },
@@ -96,7 +106,7 @@ function row<TId extends MachineTerminalActionId>(actionId: TId, title: string, 
     inputHints: { fields: [
       { path: 'serverId', title: 'Home ID', widget: 'text', required: true },
       { path: 'machineId', title: 'Machine ID', widget: 'text', required: true },
-      ...(actionId === 'machines.terminal.open' || actionId === 'machines.terminal.restart' ? [
+      ...(isMachineTerminalOpenOrRestartActionIdV1(actionId) ? [
         { path: 'terminalKey', title: 'Terminal key', widget: 'text' as const, required: true },
         { path: 'workspace', title: 'Accepted Project checkout', widget: 'json' as const },
         { path: 'cwd', title: 'Working directory', widget: 'text' as const },
@@ -115,7 +125,8 @@ function row<TId extends MachineTerminalActionId>(actionId: TId, title: string, 
     ] },
   };
 }
-export const MACHINE_TERMINAL_ACTION_SPECS = [
+function createMachineTerminalActionSpecs() {
+  return [
   row('machines.terminal.open', 'Open machine terminal', RPC_METHODS.DAEMON_TERMINAL_ENSURE),
   row('machines.terminal.list', 'List machine terminals', RPC_METHODS.DAEMON_TERMINAL_LIST, true),
   row('machines.terminal.read', 'Read machine terminal', RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES, true),
@@ -123,6 +134,9 @@ export const MACHINE_TERMINAL_ACTION_SPECS = [
   row('machines.terminal.close', 'Close machine terminal', RPC_METHODS.DAEMON_TERMINAL_CLOSE),
   row('machines.terminal.restart', 'Restart machine terminal', RPC_METHODS.DAEMON_TERMINAL_RESTART),
 ] as const;
+}
+
+export const MACHINE_TERMINAL_ACTION_SPECS: ReturnType<typeof createMachineTerminalActionSpecs> = lazyActionSpecArray(createMachineTerminalActionSpecs);
 export function isMachineTerminalActionId(value: string): value is MachineTerminalActionId {
   return (MACHINE_TERMINAL_ACTION_IDS as readonly string[]).includes(value);
 }

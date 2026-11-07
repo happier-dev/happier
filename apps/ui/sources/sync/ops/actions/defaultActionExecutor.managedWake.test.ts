@@ -17,6 +17,7 @@ import { PLUGIN_MANIFEST } from '../../../../../../packages/plugins/machine-verc
 import { captureLazyActionAccountContext } from './actionAccountContext';
 import { replacePluginAccountAvailabilityProjection } from '@/sync/domains/plugins/availability/projection';
 import { bindPresentUserActionConfirmation } from './presentUserConfirmation';
+import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 
 installApprovalCommonModuleMocks();
 afterEach(async () => { await standardCleanup(); });
@@ -148,7 +149,7 @@ it.each(['power', 'send'] as const)('prepares original Account %s provider roles
     } finally { await homes.dispose(); }
 });
 
-it.each(['agent', 'person', 'running', 'manual', 'passive', 'required', 'waived', 'agent-send', 'person-send'] as const)(
+it.each(['agent', 'person', 'running', 'manual', 'passive', 'required', 'waived', 'agent-send', 'person-send', 'person-send-now'] as const)(
     'prepares %s runtime demand through default UI admission without extra effects or passive reads', async mode => {
     // Each external Account has its own real Settings baseline; retained live Settings must not mask a new fixture document.
     const homeId = `srv_wake_${mode}`;
@@ -165,6 +166,7 @@ it.each(['agent', 'person', 'running', 'manual', 'passive', 'required', 'waived'
     });
     const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'owner', encryptionMode: 'plain' });
     const queries: unknown[] = [];
+    const wakeAdmissions: unknown[] = [];
     const inventoryRequests: string[] = [];
     const guest = createPlainMachineRowFixture({ id: 'guest', accountId: 'owner', machine: createMachineFixture({
         id: 'guest', active: mode === 'running', presenceProtocolVersion: 1,
@@ -190,6 +192,15 @@ it.each(['agent', 'person', 'running', 'manual', 'passive', 'required', 'waived'
             queries.push(request.body);
             return Response.json(machine);
         }
+        if (mode === 'person-send-now' && request.path === '/v1/actions/machines.managed.power.set') {
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(request.body);
+            expect(envelope.target).toEqual({ kind: 'machine', machineId: 'controller' });
+            expect(envelope.input).toMatchObject({ managedId: machine.id, intent: 'start' });
+            wakeAdmissions.push(envelope);
+            return Response.json({ v: 1, actionId: 'machines.managed.power.set', requestId: envelope.requestId,
+                execution: { ok: false, errorCode: 'native_resource_unavailable', error: 'native_resource_unavailable' } });
+        }
+        if (mode === 'person-send-now' && request.path.endsWith('/actions/list')) return Response.json({ machines: [] });
         if (request.path.includes('/machines/managed/')) throw new Error('Preparation cannot issue native work');
         return sessions.handle(request);
     } });
@@ -197,11 +208,12 @@ it.each(['agent', 'person', 'running', 'manual', 'passive', 'required', 'waived'
         // Admission consumes the active Account's admitted Settings projection, not an incidental bootstrap fetch.
         const state = storage.getState();
         state.applySettings({ ...state.settings, actionsSettingsV1: settings }, (state.settingsVersion ?? 0) + 1);
-        const person = mode === 'person' || mode === 'required' || mode === 'person-send';
-        const send = mode === 'agent-send' || mode === 'person-send';
+        const person = mode === 'person' || mode === 'required' || mode === 'person-send' || mode === 'person-send-now';
+        const send = mode === 'agent-send' || mode === 'person-send' || mode === 'person-send-now';
         const actionId = send ? 'session.message.send' : mode === 'passive' ? 'daemon.filesystem.listDirectory' : 'daemon.filesystem.readFile';
         const prepared = await createDefaultActionExecutor().prepare(actionId, send
-            ? { sessionId: 'requested-session', message: 'Wake only after accepted input', reply: 'none' }
+            ? { sessionId: 'requested-session', message: 'Wake only after accepted input', reply: 'none',
+                ...(mode === 'person-send-now' ? { requestedAction: { v: 1, kind: 'send_now' } } : {}) }
             : { rootPath: '/workspace', path: 'README.md' }, {
             surface: person ? 'ui' : 'agent', authority: person ? 'present_user' : 'account_automation', actionCaller: { kind: 'host' },
             ...(mode === 'agent-send' ? { defaultSessionId: 'caller', callerPermissionMode: 'default',
@@ -225,6 +237,12 @@ it.each(['agent', 'person', 'running', 'manual', 'passive', 'required', 'waived'
         }
         expect(queries).toEqual(mode === 'passive' || mode === 'manual' ? [] : [{ homeId, managedId: machine.id }]);
         expect(inventoryRequests).toEqual(mode === 'passive' ? [] : ['/v1/machines']);
+        if (mode === 'person-send-now') {
+            if (prepared.kind !== 'ready') throw new Error('expected_ready_send');
+            const result = await prepared.invocation.run();
+            expect(wakeAdmissions, JSON.stringify(result)).toHaveLength(1);
+            expect(result).toMatchObject({ ok: false, errorCode: 'native_resource_unavailable' });
+        }
     } finally { await homes.dispose(); }
 });
 

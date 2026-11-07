@@ -28,6 +28,7 @@ import { ExecutionRunActionPermissionModeSchema } from '../executionRunActionPer
 import { StructuredQuestionAnswersV1Schema } from '../../tools/structuredQuestionAnswersV1.js';
 import { TeamCredentialProviderModelSelectionV1Schema } from '../../teams/credentials/resourceV1.js';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
+import { resolveExecutionRunMachineRuntimeDemand } from '../executor/sessionScope.js';
 
 
 export const BackendTargetKeyInputSchema = lazyZodSchema(() => z.union([BackendTargetKeySchema, BackendTargetKeyV2Schema]));
@@ -39,6 +40,7 @@ export const IntentStartCommonSchema = lazyZodSchema(() => z.looseObject({
   backendTargetKeys: z.array(BackendTargetKeyInputSchema).check(z.minLength(1)),
   instructions: z.string().check(z.trim(), z.minLength(1)),
   permissionMode: z.optional(ExecutionRunActionPermissionModeSchema),
+  approvalProfileId: ExecutionRunStartRequestBaseSchema.shape.approvalProfileId,
   retentionPolicy: z.optional(z.enum(['ephemeral', 'resumable'])),
   runClass: z.optional(z.enum(['bounded', 'long_lived'])),
   ioMode: z.optional(z.enum(['request_response', 'streaming'])),
@@ -344,6 +346,7 @@ function createExecutionRunActionSpecs(): ExecutionRunActionSpecs {
   return Object.freeze([
   {
     id: 'execution.run.start', executionPlacement: 'machine', approval: {result: 'optional',flow: 'deferred'},
+    machineRuntimeDemandForInput: resolveExecutionRunMachineRuntimeDemand,
     title: 'Start execution run',
     description: `Start a new execution run. Resolve dependent model, config, and connected-service options with draftInput.backendTargetKey set to the selected backend option.value; then supply the schema-defined backendTarget object to start. Set waitForCompletion=true to wait for a terminal run result. waitTimeoutSeconds only bounds this observation; it never stops, retries, or starts the run. ${EXECUTION_RUN_SESSION_SCOPE_DESCRIPTION}`,
     safety: 'safe',
@@ -576,6 +579,7 @@ function createExecutionRunActionSpecs(): ExecutionRunActionSpecs {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'execution.run.ensure_or_start', executionPlacement: 'machine', approval: {result: 'optional',flow: 'deferred'},
+    machineRuntimeDemandForInput: resolveExecutionRunMachineRuntimeDemand,
     title: 'Ensure or start execution run',
     description: `Ensure an existing execution run, or start a new one when no run id is supplied. ${EXECUTION_RUN_SESSION_SCOPE_DESCRIPTION}`,
     safety: 'safe',
@@ -607,6 +611,7 @@ function createExecutionRunActionSpecs(): ExecutionRunActionSpecs {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'execution.run.stream.start', executionPlacement: 'machine', approval: {result: 'optional',flow: 'deferred'},
+    machineRuntimeDemandForInput: resolveExecutionRunMachineRuntimeDemand,
     title: 'Start execution run stream',
     description: `Start a bounded streaming turn for an execution run. ${EXECUTION_RUN_SESSION_SCOPE_DESCRIPTION}`,
     safety: 'safe',

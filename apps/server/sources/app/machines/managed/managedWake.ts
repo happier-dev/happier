@@ -133,6 +133,8 @@ export async function prepareManagedFiniteActionWake(input: Readonly<{
             method: `${controllerBinding.machineId}:${MANAGED_FINITE_WAKE_RPC_METHOD}`,
             callParams: ManagedFiniteWakeRequestV1Schema.parse({ target: wakeTarget, actionOrigin: input.actionOrigin }),
             authorization: ACTION_API_SERVER_ORIGIN,
+            // The invoking HTTP/socket request owns cancellation throughout wake.
+            timeoutMs: null,
             cancellation: { targetRequestId: requestId, signal: input.signal, onTargetSelected: candidate => { targetSocketId = candidate.id; } },
             onSubmittedUnknown: () => { unknown = true; },
             targetGuard: {

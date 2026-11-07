@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { describeCreateDirectoryApprovalSummary, describeDeleteApprovalSummary, describeRenameApprovalSummary, describeUploadApprovalSummary, describeWriteFileApprovalSummary, projectWriteFileApprovalInput } from './filesystemApprovalPresentation.js';
 import { FilesystemReadFileInputSchema, FilesystemReadFileOutputSchema, FilesystemWriteFileInputSchema, FilesystemWriteFileOutputSchema, FilesystemListDirectoryInputSchema, FilesystemListDirectoryOutputSchema, FilesystemGetDirectoryTreeInputSchema, FilesystemGetDirectoryTreeOutputSchema, FilesystemCreateDirectoryInputSchema, FilesystemRenameInputSchema, FilesystemDeleteInputSchema, FilesystemCopyInputSchema, FilesystemCopyOutputSchema, FilesystemMutationOutputSchema, FilesystemUploadInputSchema, FilesystemUploadOutputSchema, FilesystemDownloadInputSchema, FilesystemDownloadOutputSchema, FilesystemTransferCancelInputSchema, FilesystemTransferCancelOutputSchema } from '../filesystemActionFamily.js';
 import { DaemonFilesystemListDirectoryRequestSchema } from '../../machines/fileBrowser.js';
@@ -7,9 +8,12 @@ import { DAEMON_ADMIN_RPC_SURFACES, DAEMON_ADMIN_INPUT_HINTS, EmptyObjectSchema 
 import type { PreNormalizedActionSpec } from './definition.js';
 
 
-export const FILESYSTEM_ACTION_SPECS = Object.freeze([
+function createFilesystemActionSpecs() {
+  return Object.freeze([
   {
     id: 'daemon.filesystem.readFile', executionPlacement: 'machine', approvalPolicy: { rpcConfirmation: true }, approval: {result: 'required'},
+    machineRuntimeDemandForInput: (_input, context) => context.externalActionTarget?.kind === 'machine'
+      ? { target: context.externalActionTarget, ...(context.serverId ? { serverId: context.serverId } : {}) } : null,
     title: 'Read file',
     description: 'Read a bounded file or byte range under the explicitly admitted workspace root. A range length uses the daemon inline-read ceiling; its offset defaults to zero.',
     safety: 'safe',
@@ -241,4 +245,6 @@ export const FILESYSTEM_ACTION_SPECS = Object.freeze([
     inputHints: DAEMON_ADMIN_INPUT_HINTS,
   } satisfies PreNormalizedActionSpec,
 ] as const);
+}
 
+export const FILESYSTEM_ACTION_SPECS: ReturnType<typeof createFilesystemActionSpecs> = lazyActionSpecArray(createFilesystemActionSpecs);

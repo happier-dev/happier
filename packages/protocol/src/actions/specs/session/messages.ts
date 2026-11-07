@@ -1,4 +1,7 @@
+import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
 import type { ActionSpecSurfaceBindings, PreNormalizedActionSpec } from '../definition.js';
+import { resolveSessionIdFromInput } from '../../executor/sessionScope.js';
+import { readRecord } from '../../../inputs/inputRecords.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { SessionIdSchema } from '../../../sessions/idsV1.js';
 import { RawIngressStructuredInputV1Schema } from '../../../runtime/input/structuredInputV1.js';
@@ -199,9 +202,20 @@ export const SessionExchangeControlInputSchema = lazyZodSchema(() => sessionExch
 }));
 export const SessionExchangeControlPublicInputSchema = lazyZodSchema(() => sessionExchangeControlInputArms({}));
 
-export const SESSION_MESSAGE_ACTION_SPECS = Object.freeze([
+function createSessionMessageActionSpecs() {
+  return Object.freeze([
   {
     id: 'session.message.send', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
+    machineRuntimeDemandForInput: (input, context) => {
+      // The existing selector owner expands groups into exact leaves; a selector is not a Session id.
+      const requested = readRecord(input).sessionId;
+      if (requested !== undefined && typeof requested !== 'string') return null;
+      const sessionId = resolveSessionIdFromInput(input, context);
+      return sessionId ? { target: { kind: 'session', sessionId },
+        // Send-now demands execution before publisher delivery, including an asleep guest.
+        ...(readRecord(readRecord(input).requestedAction).kind === 'send_now' ? {} : { activation: 'accepted-input' as const }),
+        ...(context.serverId ? { serverId: context.serverId } : {}) } : null;
+    },
     sessionTarget: { field: 'sessionId', cardinality: 'many' },
     title: 'Send a message to a session',
     sideEffectClass: 'external',
@@ -318,4 +332,6 @@ export const SESSION_MESSAGE_ACTION_SPECS = Object.freeze([
     ] },
   } satisfies PreNormalizedActionSpec,
 ] as const);
+}
 
+export const SESSION_MESSAGE_ACTION_SPECS: ReturnType<typeof createSessionMessageActionSpecs> = lazyActionSpecArray(createSessionMessageActionSpecs);
