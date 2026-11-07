@@ -1,7 +1,6 @@
 import { Platform } from 'react-native';
 import type { SettingOperationContext, SettingOperationResult } from '@/components/settings/catalog/settingDeclarations';
 import { storage } from '@/sync/domains/state/storage';
-import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { readLocalConversationVoiceSettings, readLocalDirectVoiceSettings, readVoiceProviderSettingsConfig } from '@/sync/domains/settings/voiceSettings';
 import { BundledSpeechDaemonClient } from '@/voice/credentials/bundledSpeechClient';
 import { resolveVoiceExecutionMachineId } from './executionMachine';
@@ -17,27 +16,30 @@ export async function invokeVoiceCatalogSettingsOperation(entry: VoiceProviderRe
     const descriptor = entry.providerSettings;
     if (!descriptor) return { status: 'unavailable', reason: 'provider_settings_unavailable' };
     const registration = getExternalVoiceProviderRegistration(entry.providerId);
-    const scope = storage.getState().settingsScope;
     const captured = await context.readSettings();
     const local = captured.voice.providerId === 'local_conversation' ? readLocalConversationVoiceSettings(captured.voice)
         : captured.voice.providerId === 'local_direct' ? readLocalDirectVoiceSettings(captured.voice) : null;
     const selectedProviderId = entry.kind === 'voice.speech-engine.v1' ? local?.tts.provider : captured.voice.providerId;
     if ((operation === 'preview' || operation === 'stop') && selectedProviderId !== entry.providerId) return { status: 'unavailable', reason: 'provider_not_selected' };
     const machineId = resolveVoiceExecutionMachineId();
-    const voiceMaterial = JSON.stringify(captured.voice);
-    const current = () => !context.signal?.aborted && context.isCurrent()
-        && registry.get(entry.providerId)?.providerSettings === descriptor
-        && getExternalVoiceProviderRegistration(entry.providerId) === registration
-        && (entry.kind !== 'voice.speech-engine.v1' || resolveVoiceExecutionMachineId() === machineId)
-        && areAccountSettingsScopesEqual(storage.getState().settingsScope, scope)
-        && JSON.stringify(storage.getState().settings.voice) === voiceMaterial;
+    const current = () => !context.signal?.aborted && context.isCurrent();
+    const playbackCurrent = () => {
+        if (!current() || registry.get(entry.providerId)?.providerSettings !== descriptor
+            || getExternalVoiceProviderRegistration(entry.providerId) !== registration
+            || entry.kind === 'voice.speech-engine.v1' && resolveVoiceExecutionMachineId() !== machineId) return false;
+        const voice = storage.getState().settings.voice;
+        if (entry.kind !== 'voice.speech-engine.v1') return voice.providerId === entry.providerId;
+        const local = voice.providerId === 'local_conversation' ? readLocalConversationVoiceSettings(voice)
+            : voice.providerId === 'local_direct' ? readLocalDirectVoiceSettings(voice) : null;
+        return local?.tts.provider === entry.providerId;
+    };
     if (!current()) return { status: 'cancelled' };
     if (operation === 'stop') return { status: 'completed', value: { stopped: stopRealtimeCatalogPreview(entry.providerId) } };
     if (operation === 'preview' && Platform.OS === 'web' && typeof navigator !== 'undefined' && !navigator.userActivation?.isActive) return { status: 'unavailable', reason: 'audio_user_gesture_required' };
     const client = entry.kind === 'voice.speech-engine.v1'
         ? { fetchVoiceCatalog: (signal?: AbortSignal | null) => new BundledSpeechDaemonClient().fetchCatalog(entry, 'voices', signal, machineId) }
         : createVoiceSettingsCatalogClient(entry.providerId, () => {
-        const voice = storage.getState().settings.voice;
+        const voice = captured.voice;
         const envelope = voice.providers[entry.providerId];
         if (!current() || envelope && envelope.schemaVersion !== descriptor.schemaVersion) throw new Error('provider_settings_retired');
         const config = descriptor.parseConfig(envelope ? readVoiceProviderSettingsConfig(voice, entry.providerId) : descriptor.defaultConfig);
@@ -48,14 +50,14 @@ export async function invokeVoiceCatalogSettingsOperation(entry: VoiceProviderRe
     if (!declaredRows && !client) return { status: 'unavailable', reason: 'voice_catalog_unavailable' };
     try {
         const rows = declaredRows ?? await fetchVoiceSettingsCatalog(client!, context.signal);
-        if (!current() || JSON.stringify((await context.readSettings()).voice) !== voiceMaterial) return { status: 'cancelled' };
+        if (!current()) return { status: 'cancelled' };
         if (operation === 'list' || operation === 'retry') return { status: 'completed', value: { rows: projectVoiceSettingsCatalogList(rows) } };
         const voiceId = context.input?.kind === 'voice_preview' ? context.input.voiceId : null;
         const row = rows.find(candidate => candidate.id === voiceId);
         if (!row) return { status: 'unavailable', reason: 'voice_not_found' };
-        return await playRealtimeCatalogPreview({ providerId: entry.providerId, row, signal: context.signal, isCurrent: current,
+        return await playRealtimeCatalogPreview({ providerId: entry.providerId, row, signal: context.signal, isCurrent: playbackCurrent,
             subscribeCurrent(listener) {
-                const unsubscribeSettings = storage.subscribe(listener);
+                const unsubscribeSettings = storage.subscribe(listener, { settings: ['voice'], settingsScope: true, profileScope: true });
                 const unsubscribeRegistration = subscribeExternalVoiceProviderRegistrations(listener);
                 return () => { unsubscribeSettings(); unsubscribeRegistration(); };
             },

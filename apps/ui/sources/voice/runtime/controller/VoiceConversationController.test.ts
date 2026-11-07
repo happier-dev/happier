@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import 'fake-indexeddb/auto';
 import { createDeferred as deferred, waitForTestEvent } from '@/dev/testkit';
 import type { VoiceRealtimeJsonValue, VoiceRealtimeToolCallV1 } from '@happier-dev/protocol';
 import type { PartialOptions as ElevenLabsSdkStartOptions } from '@elevenlabs/client';
@@ -2189,6 +2190,68 @@ describe('VoiceConversationController', () => {
     ]);
     await controller.stop();
     await expect(toolBarrier.run({ responseId: 'response-after-stop', calls })).rejects.toMatchObject({ code: 'disposed' });
+  });
+
+  it('submits the real admitted mutation result after more than thirty seconds through the controller', async () => {
+    const { createVoiceSettingsAccountTestHarness } = await import('@/voice/settings/panels/voiceSettingsAccountTestHarness');
+    const { settingsParse } = await import('@/sync/domains/settings/settings');
+    const { createDefaultRealtimeToolBarrier } = await import('@/voice/tools/defaultRealtimeToolBarrier');
+    const account = await createVoiceSettingsAccountTestHarness(settingsParse({ voice: { providerId: 'local_conversation', audibleWaitingCue: true },
+      actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'settings.set': ['voice'] } } }));
+    const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+    expect(await createDefaultActionExecutor().execute('settings.get', { anchor: 'voiceConversations.audibleWaitingCue' }, {
+      surface: 'agent', authority: 'account_automation', serverId: account.scope.serverId,
+      expectedAccountId: account.scope.accountId,
+    })).toMatchObject({ ok: true, result: { value: true } });
+    const preflight = await createDefaultActionExecutor().execute('settings.set', { anchor: 'voiceConversations.audibleWaitingCue', value: true }, {
+      surface: 'voice', serverId: account.scope.serverId,
+    });
+    expect(preflight, JSON.stringify(preflight)).toMatchObject({ ok: true });
+    const connection = createConnectionFixture();
+    const calls = [{ v: 1 as const, responseId: 'slow-response', callId: 'slow-call',
+      toolName: 'action_execute', order: 0, arguments: { actionId: 'settings.set',
+        input: { anchor: 'voiceConversations.audibleWaitingCue', value: false } } }];
+    connection.events.push(openAiToolResponse('slow-response', calls));
+    const entered = deferred<void>();
+    const release = deferred<void>();
+    const submitted = deferred<readonly unknown[]>();
+    const request = account.request.getMockImplementation()!;
+    // Only the Home HTTP write is delayed; controller, handlers and Action admission stay real.
+    account.request.mockImplementation(async (input, init) => {
+      if (new URL(String(input)).pathname === '/v2/account/settings' && init?.method === 'POST') {
+        entered.resolve();
+        await release.promise;
+      }
+      return request(input, init);
+    });
+    const barrier = createDefaultRealtimeToolBarrier({
+      resolveSessionId: () => null, effectCalls: 'stable_ids',
+      currentSessionAddress: { serverId: account.scope.serverId, sessionId: 'slow-tool-session' },
+      submitResults: async (_responseId, results) => { submitted.resolve(results); },
+      continueResponse: async () => {},
+    });
+    const controller = createVoiceConversationController({
+      adapter: createAdapter(), machine: createMachineFixture().machine,
+      createConnection: async () => connection.connection, isSelectionCurrent: () => true,
+      onCanonicalEvent: async () => {}, createToolBarrier: () => barrier,
+    });
+    vi.useFakeTimers();
+    try {
+      await controller.start({ controlSessionId: 'slow-tool-session' });
+      await Promise.race([entered.promise, submitted.promise.then(result => { throw new Error(JSON.stringify(result)); })]);
+      await vi.advanceTimersByTimeAsync(30_001);
+      release.resolve();
+      expect(await submitted.promise).toEqual([expect.objectContaining({
+        callId: 'slow-call', status: 'success', output: expect.objectContaining({ ok: true,
+          result: expect.objectContaining({ anchor: 'voiceConversations.audibleWaitingCue', value: false }) }),
+      })]);
+      expect(account.persistedSettings.voice.audibleWaitingCue).toBe(false);
+    } finally {
+      release.resolve();
+      await controller.stop();
+      vi.useRealTimers();
+      await account.dispose();
+    }
   });
 
   it('detaches provider delivery but preserves the attempt tool barrier across reconnect', async () => {

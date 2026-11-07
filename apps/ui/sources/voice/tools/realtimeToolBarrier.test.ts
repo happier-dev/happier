@@ -45,15 +45,13 @@ describe('realtime tool barrier', () => {
     expect(continueResponse).toHaveBeenCalledTimes(1);
   });
 
-  it('returns safe terminal results for mixed allow, deny, error, and timeout outcomes', async () => {
+  it('returns safe terminal results for mixed allow, deny, and error outcomes', async () => {
     const barrier = createRealtimeToolBarrier({
-      timeoutMs: 10,
       authorizeCall: async (input) => input.callId === 'denied'
         ? { status: 'denied' as const, code: 'permission_denied' }
         : { status: 'allowed' as const },
-      executeCall: async (input, signal) => {
+      executeCall: async (input) => {
         if (input.callId === 'error') throw new Error('/secret/path raw failure');
-        if (input.callId === 'timeout') return await new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new Error('late secret')), { once: true }));
         return { ok: true };
       },
       redactResult: (value) => value,
@@ -63,16 +61,14 @@ describe('realtime tool barrier', () => {
 
     const result = await barrier.run({
       responseId: 'response-1',
-      calls: [call('success', 0), call('denied', 1), call('error', 2), call('timeout', 3)],
+      calls: [call('success', 0), call('denied', 1), call('error', 2)],
     });
     expect(result.results.map(({ status, errorCode }) => ({ status, errorCode }))).toEqual([
       { status: 'success', errorCode: undefined },
       { status: 'denied', errorCode: 'permission_denied' },
       { status: 'error', errorCode: 'tool_failed' },
-      { status: 'timeout', errorCode: 'tool_timeout' },
     ]);
     expect(JSON.stringify(result)).not.toContain('/secret/path');
-    expect(JSON.stringify(result)).not.toContain('late secret');
   });
 
   it('redacts before submission and never retains or submits raw private output', async () => {
@@ -637,7 +633,7 @@ describe('realtime tool barrier', () => {
     expect(executeCall).toHaveBeenCalledTimes(1);
   });
 
-  it('reports outcome_unknown when a timed-out mutation ignores abort and commits late', async () => {
+  it('retains outcome_unknown when a person cancels a mutation that ignores abort and commits late', async () => {
     let commitLate!: () => void;
     let committed = false;
     const executeCall = vi.fn(async () => await new Promise((resolve) => {
@@ -648,7 +644,6 @@ describe('realtime tool barrier', () => {
     }));
     const submitResults = vi.fn(async () => undefined);
     const barrier = createRealtimeToolBarrier({
-      timeoutMs: 10,
       classifyCall: () => 'mutation',
       authorizeCall: async () => ({ status: 'allowed' as const }),
       executeCall,
@@ -657,9 +652,13 @@ describe('realtime tool barrier', () => {
       continueResponse: async () => undefined,
     });
     const input = { responseId: 'response-1', calls: [call('late-mutation', 0)] };
+    const controller = new AbortController();
+    const pending = barrier.run({ ...input, signal: controller.signal });
+    await vi.waitFor(() => expect(executeCall).toHaveBeenCalledTimes(1));
+    controller.abort();
 
-    await expect(barrier.run(input)).resolves.toMatchObject({
-      status: 'submitted',
+    await expect(pending).resolves.toMatchObject({
+      status: 'cancelled',
       results: [expect.objectContaining({
         callId: 'late-mutation',
         status: 'error',

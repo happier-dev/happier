@@ -55,7 +55,6 @@ type RealtimeToolBarrierDeps = Readonly<{
     signal: AbortSignal,
   ) => Promise<void>;
   continueResponse: (responseId: string, signal: AbortSignal) => Promise<void>;
-  timeoutMs?: number;
   maxResponses?: number;
   maxCallsPerResponse?: number;
 }>;
@@ -133,16 +132,14 @@ function projectResultToCall(
 
 function terminalResult(
   call: VoiceRealtimeToolCallV1,
-  status: Exclude<VoiceRealtimeToolResultV1['status'], 'success'>,
+  status: 'denied' | 'cancelled' | 'error',
   errorCode: string,
 ): VoiceRealtimeToolResultV1 {
   const fallbackCode = status === 'denied'
     ? 'permission_denied'
     : status === 'cancelled'
       ? 'tool_cancelled'
-      : status === 'timeout'
-        ? 'tool_timeout'
-        : 'tool_failed';
+      : 'tool_failed';
   const safeErrorCode = SAFE_ERROR_CODE_PATTERN.test(errorCode) ? errorCode : fallbackCode;
   return VoiceRealtimeToolResultV1Schema.parse({
     v: 1,
@@ -172,7 +169,6 @@ async function raceWithAbort<T>(startOperation: () => Promise<T>, signal: AbortS
 }
 
 export function createRealtimeToolBarrier(deps: RealtimeToolBarrierDeps) {
-  const timeoutMs = clampPositiveInteger(deps.timeoutMs, 30_000);
   const maxResponses = clampPositiveInteger(deps.maxResponses, 128);
   const maxCallsPerResponse = clampPositiveInteger(deps.maxCallsPerResponse, 64);
   const responses = new Map<string, ResponseRecord>();
@@ -268,11 +264,6 @@ export function createRealtimeToolBarrier(deps: RealtimeToolBarrierDeps) {
     const controller = new AbortController();
     const abort = () => controller.abort();
     responseSignal.addEventListener('abort', abort, { once: true });
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      controller.abort();
-    }, timeoutMs);
     try {
       const authorization = await raceWithAbort(
         () => deps.authorizeCall(call, controller.signal),
@@ -306,7 +297,6 @@ export function createRealtimeToolBarrier(deps: RealtimeToolBarrierDeps) {
           if (effectClass !== 'read_only' && (controller.signal.aborted || !(error instanceof RealtimeToolExecutionError))) {
             return terminalResult(call, 'error', 'outcome_unknown');
           }
-          if (timedOut) return terminalResult(call, 'timeout', 'tool_timeout');
           if (error instanceof RealtimeToolExecutionError) {
             return terminalResult(call, error.resultStatus, error.safeCode);
           }
@@ -354,20 +344,18 @@ export function createRealtimeToolBarrier(deps: RealtimeToolBarrierDeps) {
         if (effectOutcome?.result) {
           return projectResultToCall(effectOutcome.result, call);
         }
-        if (effectClass !== 'read_only' && effectOutcome && (responseSignal.aborted || timedOut)) {
+        if (effectClass !== 'read_only' && effectOutcome && responseSignal.aborted) {
           return projectResultToCall(await effectOutcome.promise, call);
         }
         throw error;
       }
     } catch (error) {
       if (responseSignal.aborted) return terminalResult(call, 'cancelled', 'tool_cancelled');
-      if (timedOut) return terminalResult(call, 'timeout', 'tool_timeout');
       if (error instanceof RealtimeToolExecutionError) {
         return terminalResult(call, error.resultStatus, error.safeCode);
       }
       return terminalResult(call, 'error', 'tool_failed');
     } finally {
-      clearTimeout(timer);
       responseSignal.removeEventListener('abort', abort);
       controller.abort();
     }

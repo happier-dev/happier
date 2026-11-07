@@ -40,7 +40,6 @@ type VoiceHandlerBarrierDeps = Readonly<{
     signal: AbortSignal,
   ) => Promise<void>;
   continueResponse: (responseId: string, signal: AbortSignal) => Promise<void>;
-  timeoutMs?: number;
   maxResponses?: number;
 }>;
 
@@ -58,7 +57,6 @@ type DefaultRealtimeToolBarrierDeps = Readonly<{
     signal: AbortSignal,
   ) => Promise<void>;
   continueResponse: (responseId: string, signal: AbortSignal) => Promise<void>;
-  timeoutMs?: number;
   maxResponses?: number;
 }>;
 
@@ -120,7 +118,6 @@ export function createRealtimeToolBarrierForVoiceHandlers(deps: VoiceHandlerBarr
     ),
     submitResults: deps.submitResults,
     continueResponse: deps.continueResponse,
-    ...(deps.timeoutMs !== undefined ? { timeoutMs: deps.timeoutMs } : {}),
     ...(deps.maxResponses !== undefined ? { maxResponses: deps.maxResponses } : {}),
   });
 }
@@ -147,7 +144,6 @@ export function createDefaultRealtimeToolBarrier(deps: DefaultRealtimeToolBarrie
     },
     submitResults: deps.submitResults,
     continueResponse: deps.continueResponse,
-    ...(deps.timeoutMs !== undefined ? { timeoutMs: deps.timeoutMs } : {}),
     ...(deps.maxResponses !== undefined ? { maxResponses: deps.maxResponses } : {}),
   });
 }

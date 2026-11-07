@@ -5,7 +5,6 @@ import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValu
 import { getDefaultModelPackId, resolveCanonicalModelPackId } from '@happier-dev/protocol/voice/modelPacks/catalog';
 import type { SettingOperationContext, SettingOperationResult } from '@/components/settings/catalog/settingDeclarations';
 import { Modal } from '@/modal';
-import type { Settings } from '@/sync/domains/settings/settings';
 import { readLocalConversationVoiceSettings, readLocalDirectVoiceSettings, readVoiceDiagnosticsSettings, voiceSettingsParse, writeVoiceDiagnosticsSettings } from '@/sync/domains/settings/voiceSettings';
 import { storage } from '@/sync/domains/state/storage';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
@@ -77,24 +76,8 @@ export async function invokeVoiceSettingsOperation(operation: VoiceSettingsOpera
         if (!current()) return { status: 'cancelled' };
         const voice = voiceSettingsParse(settings.voice);
         const machineId = resolveVoiceExecutionMachineId();
-        const material = (latest: Settings) => {
-            if (operation !== 'readiness_inspect') return JSON.stringify(latest.voice);
-            const machine = resolveVoiceExecutionMachinePresentationFromState(storage.getState());
-            return JSON.stringify({ voice: latest.voice, backendEnabledByTargetKey: latest.backendEnabledByTargetKey,
-                featureToggles: latest.featureToggles, experiments: latest.experiments, secrets: latest.secrets,
-                executionMachine: { machineId: machine.machineId, selectedMachineId: machine.selectedMachineId, selectionKind: machine.selectionKind } });
-        };
-        // Explicit model-pack Actions retain their admitted target. Preference edits
-        // do not withdraw that work; Account retirement and local cancel still do.
-        const explicitModelTarget = input?.kind === 'model_pack';
-        const capturedMaterial = explicitModelTarget ? null : material(settings);
-        const selectionCurrent = () => current() && (explicitModelTarget || resolveVoiceExecutionMachineId() === machineId);
-        const operationCurrent = async () => {
-            if (explicitModelTarget) return current();
-            if (!selectionCurrent()) return false;
-            const latest = await context.readSettings();
-            return selectionCurrent() && material(latest) === capturedMaterial;
-        };
+        // Finite work keeps its admitted operands. The Settings owner retires
+        // the captured Account; the person's signal cancels this invocation.
         if (input && 'machineId' in input && input.machineId && input.machineId !== machineId) return unavailable('execution_machine_changed');
 
         if (operation === 'tts_preview_stop') {
@@ -106,38 +89,38 @@ export async function invokeVoiceSettingsOperation(operation: VoiceSettingsOpera
         if (operation === 'memory_forget') {
             const confirmed = await Modal.confirm(t('settingsVoice.local.conversation.resetVoiceAgent.title'),
                 t('settingsVoice.local.conversation.resetVoiceAgent.confirmBody'), { confirmText: t('common.reset') });
-            if (!confirmed || !await operationCurrent()) return { status: 'cancelled' };
+            if (!confirmed || !current()) return { status: 'cancelled' };
             const { resetGlobalVoiceAgentPersistence } = await import('@/voice/agent/resetGlobalVoiceAgentPersistence');
-            if (!await operationCurrent()) return { status: 'cancelled' };
+            if (!current()) return { status: 'cancelled' };
             await resetGlobalVoiceAgentPersistence();
-            return selectionCurrent() ? completed() : { status: 'cancelled' };
+            return current() ? completed() : { status: 'cancelled' };
         }
         const diagnostics = readVoiceDiagnosticsSettings(voice);
         if (operation === 'diagnostics_enabled' && input?.kind === 'diagnostics_enabled') {
             if (input.enabled) {
                 const confirmed = await Modal.confirm(tLoose('settingsVoice.diagnostics.consentTitle'),
                     tLoose('settingsVoice.diagnostics.consentBody'), { confirmText: tLoose('settingsVoice.diagnostics.consentAction') });
-                if (!confirmed || !await operationCurrent()) return { status: 'cancelled' };
+                if (!confirmed || !current()) return { status: 'cancelled' };
             }
             await context.mutateSettings(latest => {
-                if (!selectionCurrent() || material(latest) !== capturedMaterial) return null;
+                if (!current()) return null;
                 const before = readVoiceDiagnosticsSettings(latest.voice);
                 return { voice: writeVoiceDiagnosticsSettings(latest.voice, { ...before, enabled: input.enabled,
                     consentVersion: input.enabled ? 1 : null,
                     captureSttInput: input.enabled ? before.captureSttInput || !before.captureTtsOutput : before.captureSttInput }) };
             });
             // Runtime sync remains the sole desired-versus-actual policy writer.
-            return selectionCurrent() ? completed({ enabled: input.enabled }) : { status: 'cancelled' };
+            return current() ? completed({ enabled: input.enabled }) : { status: 'cancelled' };
         }
         if (operation === 'diagnostics_retry_shutdown' && input?.kind === 'diagnostics_revocation') {
             const obligation = readVoiceDiagnosticsRuntimeStatus().revocationObligations.find(candidate => candidate.key === input.key && candidate.revision === input.revision);
             if (!obligation) return unavailable('revocation_obligation_changed');
             const { storage } = await import('@/sync/domains/state/storage');
-            if (!await operationCurrent()) return { status: 'cancelled' };
+            if (!current()) return { status: 'cancelled' };
             const scope = storage.getState().settingsScope;
             const result = await retryVoiceDiagnosticsRevocation({ obligation, settings: diagnostics,
                 persistenceScope: scope ? { serverId: scope.serverId, accountId: scope.accountId } : null, signal: context.signal });
-            if (!await operationCurrent()) return { status: 'cancelled' };
+            if (!current()) return { status: 'cancelled' };
             if (!result.ok) return unavailable('diagnostics_shutdown_failed');
             return result.acknowledged ? completed() : unavailable('diagnostics_shutdown_unacknowledged');
         }
@@ -150,15 +133,15 @@ export async function invokeVoiceSettingsOperation(operation: VoiceSettingsOpera
             if (attempt.sessionId !== input.sessionId || !attempt.canStop) return unavailable('diagnostics_session_unavailable');
             const confirmed = await Modal.confirm(tLoose('settingsVoice.diagnostics.sessionOptOutConfirmTitle'),
                 tLoose('settingsVoice.diagnostics.sessionOptOutConfirmBody'), { confirmText: tLoose('settingsVoice.diagnostics.sessionOptOut') });
-            if (!confirmed || !await operationCurrent() || getVoiceSessionAttemptId() !== attemptId || getVoiceSessionSnapshot().sessionId !== attempt.sessionId) return { status: 'cancelled' };
+            if (!confirmed || !current() || getVoiceSessionAttemptId() !== attemptId || getVoiceSessionSnapshot().sessionId !== attempt.sessionId) return { status: 'cancelled' };
             const result = await revokeVoiceDiagnosticsSessionAuthorization({ machineId: input.machineId, sessionId: input.sessionId,
                 authorizationId: resolveVoiceDiagnosticsCaptureAuthorizationId(input.sessionId), signal: context.signal });
-            if (!await operationCurrent()) return { status: 'cancelled' };
+            if (!current()) return { status: 'cancelled' };
             return result.ok && result.acknowledged ? completed() : unavailable('diagnostics_session_opt_out_failed');
         }
         if (operation === 'diagnostics_inspect') {
             const daemonStatus = machineId ? await createVoiceDiagnosticsClientForMachine(machineId).status(context.signal) : null;
-            if (!await operationCurrent()) return { status: 'cancelled' };
+            if (!current()) return { status: 'cancelled' };
             return completed({ daemonStatus, clientRuntime: readVoiceDiagnosticsRuntimeStatus(),
                 processingDisclosures: projectVoiceProcessingDisclosures(voice) });
         }
@@ -167,23 +150,23 @@ export async function invokeVoiceSettingsOperation(operation: VoiceSettingsOpera
             const client = createVoiceDiagnosticsClientForMachine(machineId);
             if (operation === 'diagnostics_cleanup') {
                 const result = await applyVoiceDiagnosticsMachinePolicy({ machineId, settings: diagnostics, waitSignal: context.signal });
-                if (!await operationCurrent()) return { status: 'cancelled' };
+                if (!current()) return { status: 'cancelled' };
                 return result.applied && result.acknowledged ? completed(result.status) : unavailable('diagnostics_cleanup_unacknowledged');
             }
             if (operation === 'diagnostics_delete') {
                 const confirmed = await Modal.confirm(tLoose('settingsVoice.diagnostics.deleteConfirmTitle'),
                     tLoose('settingsVoice.diagnostics.deleteConfirmBody'), { confirmText: tLoose('settingsVoice.diagnostics.deleteAction'), destructive: true });
-                if (!confirmed || !await operationCurrent()) return { status: 'cancelled' };
+                if (!confirmed || !current()) return { status: 'cancelled' };
                 await client.deleteAll(context.signal);
-                return await operationCurrent() ? completed() : { status: 'cancelled' };
+                return current() ? completed() : { status: 'cancelled' };
             }
             if (operation === 'diagnostics_export' && input?.kind === 'diagnostics_export') {
                 const status = await client.status(context.signal);
                 const artifact = status.artifacts.find(candidate => candidate.id === input.artifactId);
                 if (!artifact) return unavailable('diagnostics_artifact_not_found');
                 const { exportVoiceDiagnosticArtifact } = await import('@/voice/diagnostics/exportDiagnosticArtifact');
-                if (!await operationCurrent()) return { status: 'cancelled' };
-                return { status: await exportVoiceDiagnosticArtifact({ client, artifact, signal: context.signal, isCurrent: operationCurrent }) };
+                if (!current()) return { status: 'cancelled' };
+                return { status: await exportVoiceDiagnosticArtifact({ client, artifact, signal: context.signal, isCurrent: current }) };
             }
         }
 
@@ -199,7 +182,7 @@ export async function invokeVoiceSettingsOperation(operation: VoiceSettingsOpera
             const { projectVoiceSettingsCatalogList } = await import('./panels/realtime/voiceCatalog');
             const catalog = await readLocalNeuralVoiceCatalog({ config: tts.localNeural,
                 originMachineId: machineId, signal: context.signal });
-            return await operationCurrent() ? completed({ rows: projectVoiceSettingsCatalogList(catalog.rows, true) }) : { status: 'cancelled' };
+            return current() ? completed({ rows: projectVoiceSettingsCatalogList(catalog.rows, true) }) : { status: 'cancelled' };
         }
         if (operation === 'tts_test' || operation === 'tts_preview') {
             if (voice.providerId !== 'local_direct' && voice.providerId !== 'local_conversation') return unavailable('local_voice_service_not_selected');
@@ -209,7 +192,14 @@ export async function invokeVoiceSettingsOperation(operation: VoiceSettingsOpera
             if (!spec) return unavailable('voice_tts_provider_unavailable');
             if (operation === 'tts_preview' && tts.provider !== 'local_neural') return unavailable('voice_preview_unavailable');
             const previewTts = input?.kind === 'voice_preview' ? { ...tts, localNeural: { ...tts.localNeural, voiceId: input.voiceId } } : tts;
-            if (!await operationCurrent()) return { status: 'cancelled' };
+            const playbackCurrent = () => {
+                if (!current() || resolveVoiceExecutionMachineId() !== machineId) return false;
+                const latestVoice = storage.getState().settings.voice;
+                if (latestVoice.providerId !== voice.providerId) return false;
+                const latestConfig = adapterId === 'local_direct' ? readLocalDirectVoiceSettings(latestVoice) : readLocalConversationVoiceSettings(latestVoice);
+                return latestConfig.tts.provider === tts.provider;
+            };
+            if (!current()) return { status: 'cancelled' };
             const { createVoicePlaybackController } = await import('@/voice/runtime/playback/VoicePlaybackController');
             const { localNeuralTtsPreviewController } = await import('./panels/localTts/providers/localNeural/previewLocalNeuralTts');
             const preview = previewTts.provider === 'local_neural'
@@ -220,9 +210,9 @@ export async function invokeVoiceSettingsOperation(operation: VoiceSettingsOpera
             try {
                 primeWebAudioPlayback();
                 await spec.test({ cfgTts: previewTts, voice, networkTimeoutMs: cfg.networkTimeoutMs, sample: t('settingsVoice.local.testTtsSample'),
-                    signal: context.signal, isCurrent: () => selectionCurrent() && (preview?.isCurrent() ?? true),
+                    signal: context.signal, isCurrent: () => playbackCurrent() && (preview?.isCurrent() ?? true),
                     registerPlaybackStopper: preview?.registerPlaybackStopper ?? playback!.registerStopper.captureAttempt!() });
-                return await operationCurrent() && (preview?.isCurrent() ?? true) ? completed() : { status: 'cancelled' };
+                return current() && (preview?.isCurrent() ?? true) ? completed() : { status: 'cancelled' };
             } catch (error) {
                 // Stop or replacement retires this sample even when native
                 // synthesis/playback rejects while unwinding its cancellation.
@@ -245,14 +235,14 @@ export async function invokeVoiceSettingsOperation(operation: VoiceSettingsOpera
         if (cancelsModel) {
             if (!cancellation || cancellation.target.execution !== execution
                 || execution === 'daemon' && cancellation.target.machineId !== machineId) return unavailable('model_operation_changed');
-            if (!await operationCurrent()) return { status: 'cancelled' };
+            if (!current()) return { status: 'cancelled' };
             return await cancellation.cancel(context.signal) ? completed({ packId }) : unavailable('model_operation_changed');
         }
         if (isRoleModel && execution === 'device') {
             if (!packId) return unavailable('model_pack_unselected');
             const { invokeVoiceDeviceModelPackOperation } = await import('./voiceDeviceModelPackOperation');
             return await invokeVoiceDeviceModelPackOperation({ operation: operation.endsWith('_remove') ? 'remove' : operation.endsWith('_update') ? 'update' : 'prepare',
-                packId, role, signal: context.signal, isCurrent: operationCurrent,
+                packId, role, signal: context.signal, isCurrent: current,
                 onDownloadStarted: modelPresentation?.onDownloadStarted,
                 onProgress: modelPresentation?.onProgress,
                 onUpdateChecked: modelPresentation?.onUpdateChecked });
@@ -260,37 +250,37 @@ export async function invokeVoiceSettingsOperation(operation: VoiceSettingsOpera
         if (operation === 'readiness_inspect') {
             if (purpose === 'conversation' && !voice.providerId) return unavailable('provider_unselected');
             const inspection = await inspectVoiceSettingsSemanticReadiness({ settings, purpose, context,
-                machine: resolveVoiceExecutionMachinePresentationFromState(storage.getState()), isCurrent: selectionCurrent });
-            return await operationCurrent() ? completed(inspection) : { status: 'cancelled' };
+                machine: resolveVoiceExecutionMachinePresentationFromState(storage.getState()), isCurrent: current });
+            return current() ? completed(inspection) : { status: 'cancelled' };
         }
         if (!machineId) return unavailable('execution_machine_unavailable');
         const client = new DaemonVoiceInferenceClient();
         const scope = { machineId };
         const catalog = captureDaemonVoiceModelCatalogObservation(machineId);
         if (operation === 'models_inspect') {
-            const statuses = await catalog.read({ client, requireNewObservation: true, isCurrent: selectionCurrent, signal: context.signal });
-            return statuses && await operationCurrent() ? completed({ machineId, models: statuses,
+            const statuses = await catalog.read({ client, requireNewObservation: true, isCurrent: current, signal: context.signal });
+            return statuses && current() ? completed({ machineId, models: statuses,
                 catalog: buildModelCatalogRows({ statuses,
                     selectedSttPackId: stt.localNeural.assetId, selectedTtsPackId: tts.localNeural.assetId }),
             }) : { status: 'cancelled' };
         }
         if (!packId) return unavailable('model_pack_unselected');
-        const statuses = await catalog.read({ client, packIds: [packId], requireNewObservation: true, isCurrent: selectionCurrent, signal: context.signal });
+        const statuses = await catalog.read({ client, packIds: [packId], requireNewObservation: true, isCurrent: current, signal: context.signal });
         if (!statuses) return { status: 'cancelled' };
         const rows = buildModelCatalogRows({ statuses, selectedSttPackId: stt.localNeural.assetId, selectedTtsPackId: tts.localNeural.assetId });
         const row = [...rows.stt, ...rows.tts].find(candidate => candidate.packId === packId);
         if (!row) return unavailable('model_pack_unavailable');
-        if (!await operationCurrent()) return { status: 'cancelled' };
+        if (!current()) return { status: 'cancelled' };
         if (operation === 'model_default') {
             if (!row.canSetDefault) return unavailable('model_pack_unavailable');
             await context.mutateSettings(latest => {
                 const next = updateVoiceLocalConversationSetting(latest.voice, row.kind === 'stt_sherpa' ? 'stt.localNeural.assetId' : 'tts.localNeural.assetId', packId);
-                return selectionCurrent() && (explicitModelTarget || material(latest) === capturedMaterial) && next ? { voice: next } : null;
+                return current() && next ? { voice: next } : null;
             });
-            return selectionCurrent() ? completed({ packId }) : { status: 'cancelled' };
+            return current() ? completed({ packId }) : { status: 'cancelled' };
         }
         return await invokeDaemonModelPackOperation({ operation: operation === 'model_remove' || operation.endsWith('_remove') ? 'remove' : 'install',
-            row, client, scope, signal: context.signal, isCurrent: operationCurrent });
+            row, client, scope, signal: context.signal, isCurrent: current });
     } catch (error) {
         modelPresentation?.onError?.(error);
         if (!current()) return { status: 'cancelled' };
