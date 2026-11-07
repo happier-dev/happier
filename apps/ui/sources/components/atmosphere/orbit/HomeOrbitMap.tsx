@@ -6,15 +6,18 @@ import {
   StyleSheet as RNStyleSheet,
   View,
 } from 'react-native';
-import Svg, { Circle as SvgCircle, Line as SvgLine, Text as SvgText } from 'react-native-svg';
+import Svg, { Circle as SvgCircle, Line as SvgLine, Path, Text as SvgText } from 'react-native-svg';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { PlanetCanvas } from '@/components/atmosphere/PlanetCanvas';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { workStatusGlyphColor } from '@/components/work/status/workStatusTreatment';
+import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
+import { t } from '@/text';
 
+import { HomeOrbitBotMoon } from './HomeOrbitBotMoon';
 import { placeOrbitMoonLabel, type HomeOrbitScene } from './homeOrbitScene';
 
 // react-native-svg's web WebShape forwards CSS style; its native Circle/Line declarations omit it.
@@ -46,6 +49,11 @@ export type HomeOrbitMapProps = Readonly<{
   travel?: Readonly<{ id: string; dotKeys: readonly string[] }> | null;
   /** A ring scene's mark, drawn centred on its place (an MCP server's mark, the "+N" count). */
   renderRingMark?: (key: string) => React.ReactNode;
+  /**
+   * A Bot scene's live inputs (`scene.bots`, lab R6 "Bots orbit Home"): each moon's face drawn into the
+   * mark slot, its name, and where a press goes. Moons are the map's only targets.
+   */
+  bots?: HomeOrbitBotsProps;
   /** The map is art; the legend and the present sentence carry its facts. */
   accessibilityLabel: string;
   small?: boolean;
@@ -68,19 +76,20 @@ export const HomeOrbitMap = React.memo(function HomeOrbitMap(
   const amber = workStatusGlyphColor(theme.colors, 'attention');
   // The lab's lattice: at least 3 device px with crisp dots, never a dithered smudge at small sizes.
   const dpr = Math.min(2, PixelRatio.get() || 1);
+  const canvasSize = scene.canvas?.size ?? 0;
   const planet = React.useMemo(
     () => ({
       theme: theme.dark ? ('dark' as const) : ('light' as const),
       R: scene.pr,
-      cx: scene.canvas.size / 2,
-      cy: scene.canvas.size / 2,
-      view: { w: scene.canvas.size, h: scene.canvas.size },
+      cx: canvasSize / 2,
+      cy: canvasSize / 2,
+      view: { w: canvasSize, h: canvasSize },
       time: 0,
       rate: 0,
       pitch: Math.max(1.5, 3 / dpr),
       dpr,
     }),
-    [dpr, scene.canvas.size, scene.pr, theme.dark],
+    [canvasSize, dpr, scene.pr, theme.dark],
   );
   const f = (value: number) => Number(value.toFixed(1));
   const previewing = highlightKeys != null;
@@ -89,7 +98,7 @@ export const HomeOrbitMap = React.memo(function HomeOrbitMap(
   const transition: SvgWebStyle =
     Platform.OS === 'web' && !reducedMotion
       ? ({
-          transition: `opacity ${previewing ? motionTokens.durationMs.fast : motionTokens.overlay.popover.exitMs}ms ease-out, r ${previewing ? motionTokens.durationMs.fast : motionTokens.overlay.popover.exitMs}ms ease-out`,
+          transition: `opacity ${previewing ? motionTokens.durationMs.fast : motionTokens.overlay.popover.exitMs}ms ${motionTokens.easingCss.standard}, r ${previewing ? motionTokens.durationMs.fast : motionTokens.overlay.popover.exitMs}ms ${motionTokens.easingCss.standard}`,
         } as SvgWebStyle)
       : undefined;
   // The same fade for the ring's marks, which are views (react-native-web transition style keys).
@@ -98,7 +107,7 @@ export const HomeOrbitMap = React.memo(function HomeOrbitMap(
       ? ({
           transitionProperty: 'opacity',
           transitionDuration: `${previewing ? motionTokens.durationMs.fast : motionTokens.overlay.popover.exitMs}ms`,
-          transitionTimingFunction: 'ease-out',
+          transitionTimingFunction: motionTokens.easingCss.standard,
         } as object)
       : null;
   const travelStyle = useTravelStyle(props.travel ?? null, scene, reducedMotion);
@@ -115,6 +124,7 @@ export const HomeOrbitMap = React.memo(function HomeOrbitMap(
   return (
     <View
       testID={props.testID}
+      pointerEvents="box-none"
       style={[styles.scene, { width: scene.width, height: scene.height }]}
     >
       <View
@@ -143,17 +153,31 @@ export const HomeOrbitMap = React.memo(function HomeOrbitMap(
               strokeDasharray={orbit.off ? '0 7' : '0 4.2'}
             />
           ))}
+          {scene.bots?.paths.map((d, index) => (
+            <Path
+              key={`bot-orbit:${index}`}
+              d={d}
+              fill="none"
+              stroke={ink}
+              strokeOpacity={0.26}
+              strokeWidth={1.3}
+              strokeLinecap="round"
+              strokeDasharray="0 4.2"
+            />
+          ))}
         </Svg>
-        <PlanetCanvas
-          width={scene.canvas.size}
-          height={scene.canvas.size}
-          options={planet}
-          style={{
-            position: 'absolute',
-            left: scene.canvas.left,
-            top: scene.canvas.top,
-          }}
-        />
+        {scene.canvas ? (
+          <PlanetCanvas
+            width={scene.canvas.size}
+            height={scene.canvas.size}
+            options={planet}
+            style={{
+              position: 'absolute',
+              left: scene.canvas.left,
+              top: scene.canvas.top,
+            }}
+          />
+        ) : null}
         <Svg
           width={scene.width}
           height={scene.height}
@@ -338,6 +362,51 @@ export const HomeOrbitMap = React.memo(function HomeOrbitMap(
           })}
         </View>
       ) : null}
+      {scene.bots && props.bots
+        ? scene.bots.moons.map((moon) => (
+            <HomeOrbitBotMoon
+              key={moon.key}
+              moon={moon}
+              cx={scene.px}
+              cy={scene.py}
+              pr={scene.pr}
+              eligible={props.bots!.eligible}
+              continuous={props.bots!.continuous}
+              mark={(size, done) => props.bots!.renderMark(moon.key, size, done)}
+              label={props.bots!.labels[moon.key] ?? null}
+              accessibilityLabel={props.bots!.accessibilityLabels[moon.key] ?? moon.key}
+              onPress={() => props.bots!.onPress(moon.key)}
+              spark={props.bots!.sparks[moon.key] ?? 0}
+              ink={ink}
+              testID={props.testID ? `${props.testID}.bot.${moon.key}` : undefined}
+            />
+          ))
+        : null}
+      {scene.bots?.more && props.bots?.onMore ? (
+        // The Bots with no room in the hero: one "+N" that opens the Bots list.
+        <Pressable
+          testID={props.testID ? `${props.testID}.more` : undefined}
+          accessibilityRole="button"
+          accessibilityLabel={t('bots.roster.moreOnHomeA11y', { count: scene.bots.more.count })}
+          onPress={props.bots.onMore}
+          style={[
+            styles.more,
+            {
+              left: scene.bots.more.x - scene.bots.more.size / 2,
+              top: scene.bots.more.y - scene.bots.more.size / 2,
+              width: scene.bots.more.size,
+              height: scene.bots.more.size,
+              borderRadius: scene.bots.more.size / 2,
+              backgroundColor: theme.colors.surface.base,
+              borderColor: theme.colors.border.default,
+            },
+          ]}
+        >
+          <Text variant="micro" emphasis="medium" numberOfLines={1}>
+            {t('bots.roster.moreOnHome', { count: scene.bots.more.count })}
+          </Text>
+        </Pressable>
+      ) : null}
       {props.onBodyPress
         ? scene.moons.map((moon) => (
             <Pressable
@@ -361,6 +430,23 @@ export const HomeOrbitMap = React.memo(function HomeOrbitMap(
     </View>
   );
 });
+
+export type HomeOrbitBotsProps = Readonly<{
+  /** The mark slot: a Bot's face at the moon's size; `done` while its spark plays. */
+  renderMark: (key: string, size: number, done: boolean) => React.ReactNode;
+  /** Drawn under a moon (working and needs-you moons are named; quiet ones rest unnamed). */
+  labels: Readonly<Record<string, string>>;
+  accessibilityLabels: Readonly<Record<string, string>>;
+  onPress: (key: string) => void;
+  /** Opens the Bots list from the hero's "+N" (the Bots with no room in it). */
+  onMore?: () => void;
+  /** The map is on screen, the app viewed and reduced motion off: only then does a moon move. */
+  eligible: boolean;
+  /** Reactions only retains finite parks/sparks while the working orbit rests. */
+  continuous?: boolean;
+  /** Each Bot's completion count since this map mounted: a new value drops one spark. */
+  sparks: Readonly<Record<string, number>>;
+}>;
 
 /** A web-only CSS style on an SVG element (transition, transform-box), typed as the element's style prop. */
 type SvgWebStyle = React.CSSProperties | undefined;
@@ -410,7 +496,7 @@ function useTravelStyle(
         return phase.at === 'from'
           ? { opacity: 0 }
           : ({
-              transition: `opacity ${motionTokens.successMoment.reducedCrossFadeMs}ms ease-out`,
+              transition: `opacity ${motionTokens.successMoment.reducedCrossFadeMs}ms ${motionTokens.easingCss.standard}`,
             } as SvgWebStyle);
       }
       if (phase.at === 'from') {
@@ -426,7 +512,7 @@ function useTravelStyle(
         transform: 'translate(0px, 0px) scale(1)',
         transformBox: 'fill-box',
         transformOrigin: 'center',
-        transition: `transform ${motionTokens.spring.travel.durationMs}ms ${motionTokens.easingCss.standard} ${delay}ms, opacity ${motionTokens.durationMs.fast}ms ease-out ${delay}ms`,
+        transition: `transform ${motionTokens.spring.travel.durationMs}ms ${motionTokens.easingCss.standard} ${delay}ms, opacity ${motionTokens.durationMs.fast}ms ${motionTokens.easingCss.standard} ${delay}ms`,
       } as SvgWebStyle;
     },
     [order, phase, reducedMotion, scene.px, scene.py, travelId],
@@ -439,6 +525,12 @@ const styles = StyleSheet.create(() => ({
     position: 'absolute',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  more: {
+    position: 'absolute',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: RNStyleSheet.hairlineWidth,
   },
   moonHit: {
     position: 'absolute',

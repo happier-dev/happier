@@ -11,6 +11,8 @@ import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRec
 import { ALL_SESSIONS_RECORDING_VISIBLE, type SessionRecordingVisibility } from '@/sync/domains/session/listing/recordingPrivacy';
 
 import { orderBots, readBotActivity, type BotOrderRow, type OrderedBot } from './botActivity';
+import { getSessionName } from '@/utils/sessions/sessionUtils';
+import { t } from '@/text';
 
 /** How many faces the closed Bots entries show before the roster opens (lab `b-rail Ap`). */
 const SUMMARY_FACE_COUNT = 3;
@@ -157,4 +159,29 @@ export function useBotsSummary(): BotsSummary {
   const isSessionVisible = useSessionRecordingVisibility();
   const read = React.useMemo(() => createBotsSummaryReader(serverIds, isSessionVisible), [serverIds, isSessionVisible]);
   return useBotsSelection(serverIds, read, true, undefined, isSessionVisible);
+}
+
+/**
+ * The Bots' names in roster order, read from the loaded Bot rows. The selection is one joined string, so
+ * the reader renders again only when a name changes.
+ */
+export function useOrderedBotNames(bots: readonly OrderedBot[]): readonly string[] {
+  const joined = storage((state) =>
+    bots
+      .map((bot) => {
+        const session = state.sessionListBotRowsByServerId[bot.serverId]?.[bot.sessionId];
+        return session ? getSessionName(session, bot.serverId, { snapshotOnly: true }) : '';
+      })
+      .join('\u0000'),
+  );
+  return React.useMemo(() => joined.split('\u0000'), [joined]);
+}
+
+/** What a Bot's face says to a screen reader: its name, and that it needs you or is working. */
+export function orderedBotAccessibilityLabel(bot: OrderedBot, name: string): string {
+  return bot.activity === 'needsYou'
+    ? t('bots.roster.rowNeedsYou', { name })
+    : bot.activity === 'working'
+      ? t('bots.roster.rowWorking', { name })
+      : name;
 }

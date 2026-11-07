@@ -1,3 +1,5 @@
+import { HAPPIER_TYPE_SCALE } from '@happier-dev/plugin-ui/presentation';
+
 /**
  * The Home orbit scene, moved from the atmosphere lab (`at-widget.js scene()`): flat, faint dotted
  * circles centred on the planet; each body (a machine) is a moon on its circle, and what it holds
@@ -50,10 +52,12 @@ export type HomeOrbitScene = Readonly<{
     y: number;
     tone: HomeOrbitDotTone;
   }>[];
-  /** The planet canvas: a square of 4.2 planet radii centred on the planet. */
-  canvas: Readonly<{ left: number; top: number; size: number }>;
+  /** The planet canvas: a square of 4.2 planet radii centred on the planet; null when the host draws the planet. */
+  canvas: Readonly<{ left: number; top: number; size: number }> | null;
   /** A ring scene's marks and their tethers (`layoutHomeOrbitRing`); absent on an orbit scene. */
   ring?: HomeOrbitRing;
+  /** A Bot scene's moons (`layoutHomeOrbitBots`); absent on the machine and ring scenes. */
+  bots?: HomeOrbitBots;
 }>;
 
 /**
@@ -274,4 +278,313 @@ function fitMoonLabel(label: string, fits: number): string {
   const suffix = tail > 0 ? label.slice(tail) : '';
   if (suffix && fits - suffix.length >= 3) return `${label.slice(0, fits - suffix.length - 1)}…${suffix}`;
   return `${label.slice(0, Math.max(1, fits - 1))}…`;
+}
+
+export type HomeOrbitBotActivity = 'quiet' | 'working' | 'needsYou';
+
+/** One Bot for the orbit, in the roster's order (needs you, then working, then the rest). */
+export type HomeOrbitBotInput = Readonly<{ key: string; activity: HomeOrbitBotActivity }>;
+
+/**
+ * A tilted orbit around the planet (lab R6 `worldMount`): an ellipse whose near side leans down, so
+ * `sin(angle) > 0` is in front of the planet and `< 0` behind it.
+ */
+export type HomeOrbitBotOrbit = Readonly<{ rx: number; ry: number }>;
+
+export type HomeOrbitBotMoon = Readonly<{
+  key: string;
+  activity: HomeOrbitBotActivity;
+  orbit: HomeOrbitBotOrbit;
+  /** Where the moon stands on its orbit when it is not travelling, in radians. */
+  angle: number;
+  /** Radians per second while it works; a quiet or needs-you moon has none. */
+  speed: number;
+  /** The face's drawn size: a list size, so the face itself stays still. */
+  size: number;
+  /** Needs you: the moon leaves its orbit and waits here, in front of the planet. */
+  park: Readonly<{ x: number; y: number }> | null;
+  /**
+   * How wide its name may be under the face, kept within the room to its neighbours so names never
+   * overlap. Only a waiting moon is named; one in orbit (0) would cross its neighbours' names.
+   */
+  labelWidth: number;
+}>;
+
+export type HomeOrbitBots = Readonly<{
+  /** Each orbit lane's dotted path, already cut where the planet hides it. */
+  paths: readonly string[];
+  moons: readonly HomeOrbitBotMoon[];
+  /** The Bots with no room in the hero: one "+N" stands here for them; null when every Bot is shown. */
+  more: Readonly<{ count: number; x: number; y: number; size: number }> | null;
+}>;
+
+/** Home shows at most this many Bot moons; the rest are one "+N" (the fold Home's Machine moons use). */
+export const HOME_ORBIT_BOT_MOON_LIMIT = 4;
+
+/** A moon's name is at most this wide (its label box), and keeps within the room to its neighbours. */
+export const HOME_ORBIT_BOT_LABEL_MAX_WIDTH_PX = 160;
+
+
+export type HomeOrbitBotOptions = Readonly<{
+  /** Each lane's half-axes as multiples of the planet's radius (Rise's planet needs `ry` past 1 to show). */
+  lanes?: readonly Readonly<{ rx: number; ry: number }>[];
+  /** Each lane's first moon's angle, in radians (the lab's 0.5, 3.75 and 2.4 by default). */
+  startAngles?: readonly number[];
+  /** Where on the arc in front the first needs-you moon waits, in radians. */
+  parkAngle?: number;
+  moonSize?: number;
+  parkedSize?: number;
+  /**
+   * Content over the moons' layer, in the area's coordinates (Home's headline and composer). It takes the
+   * pointer, so a moon resting or waiting under it could be seen but not pressed; moons rest clear of it.
+   */
+  keepOut?: readonly HomeOrbitRect[];
+}>;
+
+export type HomeOrbitRect = Readonly<{ x: number; y: number; width: number; height: number }>;
+
+/** Whether a moon of this size standing at `p` overlaps any of the content boxes. */
+function blocked(keepOut: readonly HomeOrbitRect[], p: Readonly<{ x: number; y: number }>, size: number): boolean {
+  const half = size / 2;
+  return keepOut.some((r) => p.x + half > r.x && p.x - half < r.x + r.width && p.y + half > r.y && p.y - half < r.y + r.height);
+}
+
+/** Lab R6: the orbits lean by this share of their width. */
+export const HOME_ORBIT_BOT_TILT = -0.18;
+/** Lab R6 speeds: a working moon travels 0.55 rad/s; the outer lanes slow a little, as the lab's do. */
+const WORKING_SPEED = 0.55;
+/** Lanes as multiples of the planet's radius, from the lab's 300/64, 280/110 and 360/92 over a 121 px planet, eased in toward Home's larger planet. */
+const DEFAULT_LANES = [
+  { rx: 1.45, ry: 0.5 },
+  { rx: 1.8, ry: 0.68 },
+  { rx: 2.15, ry: 0.86 },
+] as const;
+const DEFAULT_START_ANGLES = [0.5, 3.75, 2.4] as const;
+/** Two moons on one lane keep this many face widths of arc between them. */
+const MOON_SPACING = 1.8;
+
+/** A point on a Bot orbit: its place on the page, its depth (front > 0) and its depth scale (lab 0.78–1). */
+export function homeOrbitBotPoint(
+  cx: number,
+  cy: number,
+  orbit: HomeOrbitBotOrbit,
+  angle: number,
+): { x: number; y: number; z: number; scale: number } {
+  'worklet';
+  const z = Math.sin(angle);
+  return {
+    x: cx + Math.cos(angle) * orbit.rx,
+    y: cy + z * orbit.ry + Math.cos(angle) * orbit.rx * HOME_ORBIT_BOT_TILT,
+    z,
+    scale: 0.78 + 0.22 * (z * 0.5 + 0.5),
+  };
+}
+
+/** Whether a point on the far side of an orbit is hidden by the planet's disc. */
+export function isHomeOrbitBotBehindPlanet(
+  cx: number,
+  cy: number,
+  pr: number,
+  point: Readonly<{ x: number; y: number; z: number }>,
+): boolean {
+  'worklet';
+  return point.z < 0 && Math.hypot(point.x - cx, point.y - cy) < pr;
+}
+
+/**
+ * The Bot scene (lab R6 "Bots orbit Home"): the host draws Home's planet; each Bot is a moon on a tilted
+ * orbit around it. Lanes fill in the roster's order, the moons on a lane spaced evenly from its start
+ * angle. A lane holds as many moons as its length fits; past that the remaining Bots, last in the
+ * roster's order, are not drawn (they stay in the roster). Needs-you moons wait in front, on an arc
+ * just outside the first lane, inside the area.
+ */
+export function layoutHomeOrbitBots(
+  area: Readonly<{ width: number; height: number }>,
+  planet: Readonly<{ px: number; py: number; pr: number }>,
+  bots: readonly HomeOrbitBotInput[],
+  o: HomeOrbitBotOptions = {},
+): HomeOrbitScene {
+  const { px, py, pr } = planet;
+  const size = o.moonSize ?? 30;
+  const parkedSize = o.parkedSize ?? 40;
+  const lanes = (o.lanes ?? DEFAULT_LANES).map((lane) => ({ rx: Math.round(lane.rx * pr), ry: Math.round(lane.ry * pr) }));
+  // Where each lane can show a resting moon: in the area and in front of (or clear of) the planet.
+  const keepOut = o.keepOut ?? [];
+  const rests = lanes.map((orbitLane) => visibleRestArc(area, planet, orbitLane, size, keepOut));
+  const capacity = lanes.map((orbitLane, k) =>
+    Math.max(1, Math.floor((rests[k]!.whole ? 2 * Math.PI * Math.sqrt((orbitLane.rx ** 2 + orbitLane.ry ** 2) / 2) : rests[k]!.length) / (size * MOON_SPACING))),
+  );
+  // A few moons: they fold to four and "+N", as Home's Machine moons do (Store S1); the Bots that wait
+  // for the person come first, then the roster's order.
+  const shown = [...bots.filter((bot) => bot.activity === 'needsYou'), ...bots.filter((bot) => bot.activity !== 'needsYou')]
+    .slice(0, HOME_ORBIT_BOT_MOON_LIMIT);
+  const parked = shown.filter((bot) => bot.activity === 'needsYou');
+  const orbiting = shown.filter((bot) => bot.activity !== 'needsYou');
+  // Round-robin over the lanes in order, so the first Bots spread over every orbit before any doubles up.
+  const byLane: HomeOrbitBotInput[][] = lanes.map(() => []);
+  let lane = 0;
+  let unplaced = 0;
+  for (const bot of orbiting) {
+    let tries = 0;
+    while (tries < lanes.length && byLane[lane]!.length >= capacity[lane]!) {
+      lane = (lane + 1) % lanes.length;
+      tries++;
+    }
+    if (tries === lanes.length) { unplaced += 1; continue; }
+    byLane[lane]!.push(bot);
+    lane = (lane + 1) % lanes.length;
+  }
+  const moons: HomeOrbitBotMoon[] = [];
+  byLane.forEach((members, k) => {
+    // The lab's start angles, one per lane, then even spacing round the lane.
+    const starts = o.startAngles ?? DEFAULT_START_ANGLES;
+    const start = starts[k % starts.length]! + Math.floor(k / starts.length) * 0.9;
+    const rest = rests[k]!;
+    // The lab spaces a lane's moons round the whole lane. Where part of the lane is off the page (a
+    // Corner or Side planet) the moons rest along the stretch the page shows instead, so none is lost.
+    const lab = members.map((_, i) => start + (2 * Math.PI * i) / members.length);
+    const angles = rest.whole || rest.span === 0 || lab.every((angle) => rest.shows(angle))
+      ? lab
+      : members.map((_, i) => rest.from + (rest.span * (i + 0.5)) / members.length);
+    members.forEach((bot, i) => {
+      moons.push({
+        key: bot.key,
+        activity: bot.activity,
+        orbit: lanes[k]!,
+        angle: angles[i]!,
+        speed: bot.activity === 'working' ? WORKING_SPEED * (lanes[0]!.rx / lanes[k]!.rx) : 0,
+        size,
+        park: null,
+        labelWidth: 0,
+      });
+    });
+  });
+  // Front-left of the planet, just outside the first lane; each next one a face further round the arc.
+  const parkOrbit = { rx: lanes[0]!.rx * 1.12, ry: lanes[0]!.ry * 1.12 };
+  // Measured on the arc's tighter side, so neighbours on the short axis keep their room too.
+  const parkStep = (parkedSize * 1.4) / Math.max(1, Math.min(parkOrbit.rx, parkOrbit.ry));
+  const margin = parkedSize / 2 + 4;
+  // The slots along the arc a waiting moon can take: wholly on the page and clear of the hero content.
+  // Past them a moon would be pushed onto another (the 50-Bot pile-up), so the rest count toward "+N".
+  const slotCount = Math.max(1, Math.floor((2 * Math.PI) / parkStep));
+  const parkStart = o.parkAngle ?? 0.72 * Math.PI;
+  const free: { angle: number; at: { x: number; y: number } }[] = [];
+  for (let slot = 0; slot < slotCount; slot++) {
+    const angle = parkStart + slot * parkStep;
+    const at = homeOrbitBotPoint(px, py, parkOrbit, angle);
+    const inside = at.x >= margin && at.x <= area.width - margin && at.y >= margin && at.y <= area.height - margin;
+    if (inside && !blocked(keepOut, at, parkedSize)) free.push({ angle, at });
+  }
+  // With Bots left over, the slot after the shown waiting moons holds their "+N" instead of one more face.
+  const leftOver = bots.length > shown.length || unplaced + Math.max(0, parked.length - free.length) > 0;
+  const parkedShown = parked.slice(0, leftOver ? Math.max(0, Math.min(parked.length, free.length - 1)) : parked.length);
+  const moreSlot = leftOver ? free[parkedShown.length] ?? null : null;
+  const overflow = bots.length - moons.length - parkedShown.length;
+  const named = parkedShown.map((bot, index) => ({ bot, ...free[index]! }));
+  named.forEach(({ bot, angle, at }) => {
+    moons.push({
+      key: bot.key,
+      activity: bot.activity,
+      orbit: lanes[0]!,
+      angle,
+      speed: 0,
+      size: parkedSize,
+      park: at,
+      labelWidth: parkedLabelWidth(at, named.map((entry) => entry.at)),
+    });
+  });
+  const more = moreSlot && overflow > 0 ? { count: overflow, x: moreSlot.at.x, y: moreSlot.at.y, size: parkedSize } : null;
+  const used = new Set(moons.filter((moon) => moon.park === null).map((moon) => moon.orbit));
+  const paths = lanes.filter((orbitLane) => used.has(orbitLane)).map((orbitLane) => botOrbitPath(px, py, pr, orbitLane));
+  return {
+    width: area.width,
+    height: area.height,
+    px,
+    py,
+    pr,
+    orbits: [],
+    moons: [],
+    dots: [],
+    canvas: null,
+    bots: { paths, moons, more },
+  };
+}
+
+/**
+ * A waiting moon's name width: the room to the nearest other waiting moon whose name shares its line
+ * (the label's own line height), never more than the label box.
+ */
+function parkedLabelWidth(at: Readonly<{ x: number; y: number }>, all: readonly Readonly<{ x: number; y: number }>[]): number {
+  const line = HAPPIER_TYPE_SCALE.meta.lineHeight;
+  let width = HOME_ORBIT_BOT_LABEL_MAX_WIDTH_PX;
+  for (const other of all) {
+    if (other === at || Math.abs(other.y - at.y) >= line) continue;
+    width = Math.min(width, Math.abs(other.x - at.x));
+  }
+  return width;
+}
+
+const REST_STEPS = 180;
+
+/**
+ * The longest stretch of a lane where a resting moon is wholly in the area, not hidden by the planet
+ * and not under the hero's content: where it starts and how far it runs (radians), its length on the page, and whether the whole
+ * lane qualifies.
+ */
+function visibleRestArc(
+  area: Readonly<{ width: number; height: number }>,
+  planet: Readonly<{ px: number; py: number; pr: number }>,
+  orbit: HomeOrbitBotOrbit,
+  size: number,
+  keepOut: readonly HomeOrbitRect[],
+): Readonly<{ whole: boolean; from: number; span: number; length: number; shows: (angle: number) => boolean }> {
+  const half = size / 2;
+  const shows = (angle: number) => {
+    const p = homeOrbitBotPoint(planet.px, planet.py, orbit, angle);
+    return p.x >= half && p.x <= area.width - half && p.y >= half && p.y <= area.height - half
+      && !isHomeOrbitBotBehindPlanet(planet.px, planet.py, planet.pr, p) && !blocked(keepOut, p, size);
+  };
+  const step = (2 * Math.PI) / REST_STEPS;
+  const ok = Array.from({ length: REST_STEPS }, (_, i) => shows(i * step));
+  if (ok.every(Boolean)) return { whole: true, from: 0, span: 2 * Math.PI, length: Infinity, shows };
+  // Walk twice round so a stretch that crosses angle 0 is found whole.
+  let best = { from: 0, count: 0 };
+  let runFrom = 0;
+  let run = 0;
+  for (let i = 0; i < REST_STEPS * 2; i++) {
+    if (ok[i % REST_STEPS]) {
+      if (run === 0) runFrom = i;
+      run += 1;
+      if (run > best.count && run <= REST_STEPS) best = { from: runFrom, count: run };
+    } else run = 0;
+  }
+  if (best.count < 2) return { whole: false, from: 0, span: 0, length: 0, shows };
+  // Keep a step clear of each end, where a moon would touch the edge or the planet.
+  const from = (best.from + 1) * step;
+  const span = (best.count - 2) * step;
+  let length = 0;
+  let last = homeOrbitBotPoint(planet.px, planet.py, orbit, from);
+  for (let i = 1; i <= best.count - 2; i++) {
+    const next = homeOrbitBotPoint(planet.px, planet.py, orbit, from + i * step);
+    length += Math.hypot(next.x - last.x, next.y - last.y);
+    last = next;
+  }
+  return { whole: false, from, span, length, shows };
+}
+
+/** The lane's dotted path as SVG, leaving out the stretch the planet hides. */
+function botOrbitPath(cx: number, cy: number, pr: number, orbit: HomeOrbitBotOrbit): string {
+  const steps = 120;
+  let d = '';
+  let pen = false;
+  for (let i = 0; i <= steps; i++) {
+    const point = homeOrbitBotPoint(cx, cy, orbit, (i / steps) * 2 * Math.PI);
+    if (isHomeOrbitBotBehindPlanet(cx, cy, pr, point)) {
+      pen = false;
+      continue;
+    }
+    d += `${pen ? 'L' : 'M'}${point.x.toFixed(1)} ${point.y.toFixed(1)}`;
+    pen = true;
+  }
+  return d;
 }
