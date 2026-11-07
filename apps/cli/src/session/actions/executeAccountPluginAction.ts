@@ -1,43 +1,47 @@
 import { createActionExecutor, type ActionExecutorContext, type ActionExecutorDeps } from '@happier-dev/protocol/actions/actionExecutor';
 import type { ActionId } from '@happier-dev/protocol';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
-import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
-import type { CurrentProcessPluginActionExecutionAttempt } from './createDaemonPluginActionExecutor';
+import { normalizeServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { resolveAccountExecutionRuntime, type AccountExecutionRuntime, type RetainedAccountExecutionRuntime } from '@/plugins/runtime/accountExecutionRuntime';
+import { readPluginActionExecutionReference, type CurrentProcessPluginActionExecutionAttempt } from './createDaemonPluginActionExecutor';
 import { createCommittedContributedActionDefinitionLister, createCommittedContributedActionInvoker,
   createCommittedContributedActionSchemaReader, createRegistryInputTypeDeps } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
-import { getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createCredentialedTargetActionCurrentIntent } from './approvals/credentialedTargetActionCurrentIntent';
 import { ensureCliActionPolicySettings } from './ensureCliActionPolicySettings';
 import type { createCliActionExecutorHarness } from './createCliActionExecutorHarness';
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { readCurrentAccountPluginExecutionSelection } from '@/plugins/runtime/accountPluginActivationSource';
-import { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
+import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/merged';
+import { readResolvedActionContribution } from '@/plugins/projection/registry/actions';
+import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
+import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 
 /** Selects Account custody for the incumbent runtime and invocation owners. */
 export async function executeAccountPluginAction(params: Readonly<{
-  host: Parameters<typeof createCliActionExecutorHarness>[0];
+  host: Pick<Parameters<typeof createCliActionExecutorHarness>[0], 'credentials' | 'serverHttpBaseUrl'
+    | 'savedSecretOperationContext' | 'isCredentialCurrent' | 'happyHomeDir' | 'resolveServerFeaturesSnapshot'
+    | 'runtimeActionMachineId' | 'serverId' | 'onApprovalRequested'>;
   deps: ActionExecutorDeps;
   actionId: string;
   input: unknown;
   context?: ActionExecutorContext;
+  accountRuntime?: RetainedAccountExecutionRuntime;
+  inheritedInvocation?: NonNullable<Parameters<typeof createCommittedContributedActionInvoker>[0]>['inheritedInvocation'];
 }>): Promise<CurrentProcessPluginActionExecutionAttempt> {
   const credentials = params.host.credentials;
   if (!credentials || !params.host.serverHttpBaseUrl) return { matched: false };
-  const input = typeof params.input === 'object' && params.input !== null ? params.input : null;
-  const ref = input && 'action' in input && typeof input.action === 'object' && input.action !== null
-    ? input.action : null;
-  const metadataId = input && (params.actionId === 'action.spec.get' && 'id' in input ? input.id
-    : params.actionId === 'action.options.resolve' && 'actionId' in input ? input.actionId : null);
-  const identity = parseQualifiedPluginActionId(typeof metadataId === 'string' ? metadataId : params.actionId);
-  const pluginId = ref && 'pluginId' in ref && typeof ref.pluginId === 'string' ? ref.pluginId
-    : identity?.pluginId;
-  const localId = ref && 'localId' in ref && typeof ref.localId === 'string' ? ref.localId
-    : identity?.localId;
+  const identity = readPluginActionExecutionReference(params.actionId, params.input);
+  const pluginId = identity?.pluginId;
+  const localId = identity?.localId;
   // Discovery and invocation use the incumbent catalog; Account custody never
   // permits evaluating a Machine handler from these bytes.
   const search = params.actionId === 'action.spec.search';
   if (!pluginId && !search) return { matched: false };
+  if (params.accountRuntime) {
+    return await executeInAccountRuntime(params, await params.accountRuntime.read(), true);
+  }
   if (params.host.isCredentialCurrent && !await params.host.isCredentialCurrent()) return { matched: true,
     result: { ok: false, errorCode: 'plugin_action_generation_retired', error: 'plugin_action_generation_retired' } };
   const unavailableSource = (error: unknown): null => {
@@ -48,13 +52,15 @@ export async function executeAccountPluginAction(params: Readonly<{
     throw error;
   };
   return await runWithServerHttpBaseUrl(params.host.serverHttpBaseUrl, async () => {
-    // A first policy read establishes Account identity before the invocation
-    // captures it. Nested host Actions then share that same current lifetime.
-    await ensureCliActionPolicySettings(credentials, params.host.serverHttpBaseUrl);
+    const requester = readRequesterAccountActionContext(params.context?.externalActionExecutionAuthorization);
+    const capturedOperation = requester?.savedSecretOperationContext ?? params.host.savedSecretOperationContext;
+    // A received invocation retains its admitted Account holder. Ordinary
+    // local ingress establishes its own explicit credential's policy first.
+    if (!capturedOperation) await ensureCliActionPolicySettings(credentials, params.host.serverHttpBaseUrl);
     params.context?.signal?.throwIfAborted();
     const lifetime = getActiveAccountSettingsSnapshotLifetimeToken();
-    const isCurrent = () => lifetime === getActiveAccountSettingsSnapshotLifetimeToken()
-      && !params.context?.signal?.aborted;
+    const isCurrent = () => !params.context?.signal?.aborted && (capturedOperation
+      ? capturedOperation.readSnapshot() !== null : lifetime === getActiveAccountSettingsSnapshotLifetimeToken());
     if (!search && pluginId) {
       // Most daemon callbacks address Machine Actions. Read their current
       // Account override before constructing an executable Account runtime;
@@ -67,50 +73,98 @@ export async function executeAccountPluginAction(params: Readonly<{
       if (!selection) return { matched: false, accountSelectionUnavailable: true };
       if (selection.kind === 'unavailable' && selection.code !== 'plugin_account_execution_unavailable') return {
         matched: true, result: { ok: false, errorCode: selection.code, error: selection.code } };
-      const execution = selection.kind === 'available'
-        ? selection.manifest.contributes.actions.find(action => action.id === localId)?.execution
-        : getResolvedContributionRegistry().actions.find(action => action.identity?.pluginId === pluginId
-          && action.identity?.localId === localId)?.definition.execution;
+      // Placement belongs to the full declaration owner, including installed
+      // authors; the Machine invoker still owns executable admission.
+      const resolvedAction = selection.kind !== 'available' && identity
+        ? readResolvedActionContribution(await resolveMergedContributionRegistry({
+          ...(params.host.happyHomeDir ? { happyHomeDir: params.host.happyHomeDir } : {}),
+        }), identity) : null;
+      const declaration = selection.kind === 'available'
+        ? selection.manifest.contributes.actions.find(action => action.id === localId)
+        : resolvedAction?.admittedTarget?.declaration;
+      const execution = declaration?.execution;
       if (typeof execution !== 'object' || execution === null || !('target' in execution)
-        || execution.target !== 'account') return { matched: false, accountSelectionUnavailable: true };
+        || execution.target !== 'account') return { matched: false, accountSelectionUnavailable: true,
+          ...(typeof execution === 'object' && execution !== null && 'target' in execution
+            && (execution.target === 'daemon' || execution.target === 'client')
+            ? { executionPlacement: execution.target === 'daemon' ? 'machine' as const : 'client' as const } : {}) };
     }
-    const registry = await resolveExecutablePluginRuntimeRegistry({
+    const snapshot = getActiveAccountSettingsSnapshot();
+    // The existing invocation-context producer can capture only this local
+    // credential's just-admitted snapshot; shared ingress never borrows it.
+    const operationContext = capturedOperation ?? (!params.context?.externalActionExecutionAuthorization
+      && !params.context?.externalActionCredential && !params.context?.rpcSessionAuthorization
+      && snapshot?.scopeKey === resolveAccountSettingsScopeKeyForToken(credentials.token)
+      ? createInvocationSavedSecretOperationContextV1({ credentials, snapshot, serverHttpBaseUrl: params.host.serverHttpBaseUrl!,
+        isCurrent: async () => isCurrent() && (!params.host.isCredentialCurrent || await params.host.isCredentialCurrent()) }) : undefined);
+    if (operationContext && (operationContext.credentials.token !== credentials.token
+      || normalizeServerHttpBaseUrl(operationContext.serverHttpBaseUrl) !== normalizeServerHttpBaseUrl(params.host.serverHttpBaseUrl!))) {
+      return { matched: true, result: { ok: false, errorCode: 'authorityChanged', error: 'authorityChanged' } };
+    }
+    const isCredentialCurrent = async () => isCurrent()
+      && (!operationContext || await operationContext.isCurrent(params.context?.signal))
+      && (!params.host.isCredentialCurrent || await params.host.isCredentialCurrent());
+    const explicitMachineId = params.host.runtimeActionMachineId
+      ?? (params.context?.externalActionTarget?.kind === 'machine' ? params.context.externalActionTarget.machineId : undefined)
+      ?? params.context?.executionRunTargetMachineId;
+    const machineId = explicitMachineId ?? params.context?.defaultSessionMachineId;
+    const runtime = await resolveAccountExecutionRuntime({
       ...(params.host.happyHomeDir ? { happyHomeDir: params.host.happyHomeDir } : {}),
       ...(params.context?.signal ? { signal: params.context.signal } : {}),
-      accountExecution: { credentials, serverUrl: params.host.serverHttpBaseUrl!, isCurrent,
-        ...(params.host.isCredentialCurrent ? { isCredentialCurrent: params.host.isCredentialCurrent } : {}),
+      ...(params.host.resolveServerFeaturesSnapshot ? { resolveServerFeaturesSnapshot: params.host.resolveServerFeaturesSnapshot } : {}),
+      accountExecution: { credentials, serverUrl: params.host.serverHttpBaseUrl!, isCurrent, isCredentialCurrent,
+        ...(operationContext ? { savedSecretOperationContext: operationContext } : {}),
         ...(params.host.serverId ? { serverId: params.host.serverId } : {}),
         ...(params.context?.serverIdentityId ? { serverIdentityId: params.context.serverIdentityId } : {}),
-        ...(params.context?.executionRunTargetMachineId ? { machineId: params.context.executionRunTargetMachineId } : {}) },
+        ...(machineId ? { machineId } : {}),
+        ...(explicitMachineId ? { explicitMachineId } : {}) },
     }).catch(unavailableSource);
     // A non-search call reaches runtime construction only after its exact
     // current declaration selected Account execution. Losing that source does
     // not turn the invocation into an independently admitted Machine Action.
     const accountHandlerUnavailable = { matched: true as const, result: { ok: false as const,
       errorCode: 'plugin_action_handler_missing', error: 'plugin_action_handler_missing' } };
-    if (!registry) return search ? { matched: false } : accountHandlerUnavailable;
-    try {
-      const selection = pluginId ? registry.readAccountExecutionSelection?.(pluginId) : null;
-      if (selection?.kind === 'unavailable' && selection.code !== 'plugin_account_execution_unavailable') return { matched: true,
-        result: { ok: false, errorCode: selection.code, error: selection.code } };
-      if (!search && !registry.contributes.actions.some(action => action.identity?.pluginId === pluginId
-        && action.identity?.localId === localId && typeof action.definition.execution === 'object'
-        && action.definition.execution !== null && 'target' in action.definition.execution
-        && action.definition.execution.target === 'account')) return accountHandlerUnavailable;
-      // Borrow the same finite runtime for nested schema/invocation reads; the
-      // owning invocation disposes it once, after approval and settlement.
-      const lease = { registry, source: 'ephemeral' as const, durableRevision: -1, release: async () => {} };
-      const list = createCommittedContributedActionDefinitionLister({ tryAcquireRuntimeRegistryLease: () => lease });
-      const executor = createActionExecutor({ ...params.deps,
-        ...createRegistryInputTypeDeps(registry),
-        listContributedActionDefinitions: list,
-        readContributedActionSchemas: createCommittedContributedActionSchemaReader(list),
-        invokeContributedAction: createCommittedContributedActionInvoker({
-          acquireRuntimeRegistryLease: async () => lease,
-          requestCurrentIntent: createCredentialedTargetActionCurrentIntent(credentials),
-        }),
-      });
-      return { matched: true, result: await executor.execute(params.actionId as ActionId, params.input, params.context) };
-    } finally { await registry.dispose(); }
+    if (!runtime) return search ? { matched: false } : accountHandlerUnavailable;
+    try { return await executeInAccountRuntime(params, runtime); }
+    finally { await runtime.registry.dispose(); }
   });
+}
+
+/** Retained and one-shot hosts share the canonical contributed Action admission. */
+async function executeInAccountRuntime(params: Parameters<typeof executeAccountPluginAction>[0],
+  { registry, purposeRuntime }: AccountExecutionRuntime, allowUnmatched = false): Promise<CurrentProcessPluginActionExecutionAttempt> {
+  const credentials = params.host.credentials!;
+  const identity = readPluginActionExecutionReference(params.actionId, params.input);
+  const pluginId = identity?.pluginId;
+  const search = params.actionId === 'action.spec.search';
+  const selection = pluginId ? registry.readAccountExecutionSelection?.(pluginId) : null;
+  if (selection?.kind === 'unavailable' && selection.code !== 'plugin_account_execution_unavailable') return { matched: true,
+    result: { ok: false, errorCode: selection.code, error: selection.code } };
+  const selectedAction = identity ? readResolvedActionContribution(registry.contributes, identity) : null;
+  if (!search && !(typeof selectedAction?.definition.execution === 'object'
+    && selectedAction.definition.execution !== null && 'target' in selectedAction.definition.execution
+    && selectedAction.definition.execution.target === 'account')) return allowUnmatched ? { matched: false } : { matched: true, result: { ok: false,
+    errorCode: 'plugin_action_handler_missing', error: 'plugin_action_handler_missing' } };
+  // Nested schema and invocation reads borrow the containing runtime. Its
+  // Session or one-shot owner disposes it after its own lifetime.
+  const lease = { registry, source: 'ephemeral' as const, durableRevision: -1, release: async () => {} };
+  const list = createCommittedContributedActionDefinitionLister({ tryAcquireRuntimeRegistryLease: () => lease });
+  const executor = createActionExecutor({ ...params.deps,
+    ...createRegistryInputTypeDeps(registry),
+    listContributedActionDefinitions: list,
+    readContributedActionSchemas: createCommittedContributedActionSchemaReader(list),
+    invokeContributedAction: createCommittedContributedActionInvoker({
+      ...(params.inheritedInvocation ? { inheritedInvocation: params.inheritedInvocation } : {}),
+      acquireRuntimeRegistryLease: async () => lease,
+      requestCurrentIntent: createCredentialedTargetActionCurrentIntent(credentials, {
+        onApprovalRequested: params.host.onApprovalRequested,
+      }),
+      ...(purposeRuntime ? { connectedAccountPurposeBindingOwner: purposeRuntime.purposes } : {}),
+    }),
+  });
+  // Generic Action tools pass qualified plugin ids; the shared executor
+  // admits contributed calls through its canonical action.invoke wrapper.
+  const action = parseQualifiedPluginActionId(params.actionId);
+  return { matched: true, result: await executor.execute(action ? 'action.invoke' : params.actionId as ActionId,
+    action ? { action, input: params.input } : params.input, params.context) };
 }

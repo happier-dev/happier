@@ -12,7 +12,7 @@ vi.mock('@/persistence', async (importOriginal) => ({
 }));
 import { handleActionsCommand, resolveActionDefinitionForCliCompletion } from './actions';
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
-import { API_TOKEN_FULL_GRANT_V1, createBlockingApprovalCoordinator, type ApprovalRequest } from '@happier-dev/protocol';
+import { API_TOKEN_FULL_GRANT_V1, createBlockingApprovalCoordinator, createDeploymentApprovalScopeResolverV1, DeploymentEnvironmentGetResultV1Schema, type ApprovalRequest, type ActionExecutorDeps } from '@happier-dev/protocol';
 import type { StoredCredentials } from '@/persistence';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
@@ -28,8 +28,6 @@ import { seedTestServerProfile } from '@/testkit/serverProfiles';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createClientActionReverseDispatcher } from '@/session/actions/clientActionReverseDispatch';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-
-import { createDeploymentApprovalScopeResolverV1, DeploymentEnvironmentGetResultV1Schema, type ActionExecutorDeps } from '@happier-dev/protocol';
 import { executeActionOperationActionV1, type ActionOperationMachineTransportV1 } from '@happier-dev/protocol/actions/executor/actionOperationActions';
 import { createActionOperationStore } from '@/daemon/actionOperations/actionOperationStore';
 import axios from 'axios';
@@ -112,6 +110,11 @@ function finiteDeploymentTransport(submit: NonNullable<ActionExecutorDeps['deplo
   return transport;
 }
 
+function finiteDeploymentExecutor(submit: NonNullable<ActionExecutorDeps['deploymentAction']>) {
+  const transport = finiteDeploymentTransport(submit);
+  return createActionExecutor({ ...createUnavailableActionTransportDeps(), deploymentAction: transport,
+    resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(transport), isActionApprovalRequired: () => false });
+}
 
 function contributedActionDefinition() {
   return {
@@ -191,7 +194,11 @@ describe('actions root command', () => {
         resolveSessionTarget: async () => { throw new Error('Unexpected Session lookup'); } }),
     });
     expect(JSON.parse(output), output).toMatchObject({ ok: true, data: receipt });
-    expect(notice.mock.calls.flat().join(' ')).toContain('cli-forwarded');
+    expect(notice.mock.calls.map(([line]) => JSON.parse(String(line)))).toContainEqual({
+      v: 1, ok: true, kind: 'actions_invoke', data: {
+        kind: 'approval_request_created', artifactId: 'cli-forwarded', actionId: request.actionId,
+      },
+    });
     expect(approvalTerminal.promptInput).toHaveBeenCalledTimes(yes ? 0 : 1);
     expect(native).toHaveBeenCalledOnce();
   });
@@ -217,6 +224,55 @@ describe('actions root command', () => {
     });
     expect(JSON.parse(output), output).toMatchObject({ ok: true, data: result });
     expect(process.exitCode ?? 0).toBe(0);
+  });
+
+  it.each(['succeeded', 'resumed', 'held', 'deferred', 'deferred-other', 'uncertain', 'mismatched'] as const)('finite operation uses one owner wait for %s', async outcome => {
+    let output = '';
+    vi.spyOn(process.stdout, 'write').mockImplementation((chunk, ...args) => {
+      output += String(chunk);
+      const callback = args.find(argument => typeof argument === 'function');
+      if (typeof callback === 'function') callback();
+      return true;
+    });
+    const store = createActionOperationStore();
+    const scope = { accountId: 'account', machineId: 'controller' };
+    const actionId = outcome === 'deferred-other' ? 'projects.script.run' : 'deployments.deploy';
+    store.create({ operationId: 'operation', actionId, scope,
+      title: 'Deploy', cancellation: 'unsupported', inputIdentity: 'reviewed' });
+    store.markRunning('operation');
+    const receipt = { ok: true as const, environmentId: 'staging', revision: 2,
+      deploymentId: 'deployment', deploymentRevision: 1, state: 'succeeded' as const };
+    // Only the Machine RPC hop is substituted. The operation adapter, snapshot
+    // producer, strict response schema, executor and CLI stay real.
+    const rpc = vi.fn<ActionOperationMachineTransportV1>(async () => {
+      if (outcome === 'resumed') store.updateProgress('operation', { kind: 'phase', phase: 'waiting_for_approval', label: 'Waiting' });
+      if (outcome === 'succeeded' || outcome === 'resumed') store.succeed('operation', receipt);
+      else if (outcome === 'deferred' || outcome === 'deferred-other') store.succeed('operation', { kind: 'approval_request_created', actionId, artifactId: 'approval' });
+      else if (outcome === 'held') store.updateProgress('operation', { kind: 'phase', phase: 'waiting_for_approval', label: 'Waiting' });
+      else store.updateObservation('operation', { kind: 'outcome_uncertain', code: 'outcome_unknown' });
+      const operation = store.get(scope, 'operation');
+      return { kind: 'found' as const, operation: outcome === 'mismatched' ? { ...operation, operationId: 'another-operation' } : operation };
+    });
+    const operationInputs: unknown[] = [];
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+      actionOperationAction: args => {
+        operationInputs.push(args.input);
+        return executeActionOperationActionV1({ ...args, transport: async request => rpc(request) });
+      }, isActionApprovalRequired: () => false });
+    await handleActionsCommand(['invoke', 'action.operations.get', '--input-json', JSON.stringify({
+      serverId: 'home', machineId: 'controller', operationId: 'operation',
+    }), '--wait', '--json'], {
+      readCredentialsFn: async () => credentials('api_token'),
+      createExecutorFn: () => ({ ...executor, resolveSessionTarget: async () => { throw new Error('No Session'); } }),
+    });
+    const successful = outcome === 'succeeded' || outcome === 'resumed';
+    const held = outcome === 'held' || outcome === 'deferred' || outcome === 'deferred-other';
+    expect(process.exitCode ?? 0, output).toBe(successful ? 0 : held ? 3 : 5);
+    expect(JSON.parse(output)).toMatchObject(successful ? { ok: true, data: receipt }
+      : { ok: false, error: { code: held ? 'approval_waiting' : 'outcome_unknown' } });
+    expect(rpc).toHaveBeenCalledOnce();
+    expect(rpc).toHaveBeenCalledWith(expect.objectContaining({ payload: { operationId: 'operation', waitForTerminal: true } }));
+    expect(operationInputs).toEqual([{ serverId: 'home', machineId: 'controller', operationId: 'operation', waitForTerminal: true }]);
   });
 
   it.each(['succeeded', 'held', 'missing', 'mismatched', 'home-alias', 'foreign-home'] as const)('finite pending submission observes its recorded host for %s', async outcome => {
@@ -274,6 +330,65 @@ describe('actions root command', () => {
     expect(rpc).toHaveBeenCalledTimes(outcome === 'missing' || outcome === 'mismatched' || outcome === 'foreign-home' ? 0 : 1);
   });
 
+  it.each([
+    ['succeeded', 0, undefined],
+    ['running_unverified', 0, undefined],
+    ['failed', 1, 'deployment_failed'],
+    ['cancelled', 1, 'cancelled'],
+    ['waitingApproval', 3, 'approval_waiting'],
+    ['outcome_unknown', 5, 'outcome_unknown'],
+    ['queued', 5, 'outcome_unknown'],
+    ['running', 5, 'outcome_unknown'],
+  ] as const)('finite deployment %s has exit %s without another submission', async (state, exitCode, code) => {
+    let output = '';
+    vi.spyOn(process.stdout, 'write').mockImplementation((chunk, ...args) => {
+      output += String(chunk);
+      const callback = args.find(argument => typeof argument === 'function');
+      if (typeof callback === 'function') callback();
+      return true;
+    });
+    const receipt = { ok: true as const, environmentId: 'staging', revision: 2,
+      deploymentId: 'deployment', deploymentRevision: 1, state };
+    // Deployment storage/effect transport is the system boundary; parsing,
+    // Action admission and the CLI outcome projection remain real.
+    const submit = vi.fn(async () => receipt);
+    const executor = finiteDeploymentExecutor(submit);
+    await handleActionsCommand(['invoke', 'deployments.deploy', '--input-json', JSON.stringify({
+      serverId: 'home', environmentId: 'staging', expectedRevision: 1, targetLinkId: 'target',
+      expectedTargetLinkRevision: 1, contentArtifactId: 'content', contentHeaderVersion: 1,
+      contentBodyVersion: 1, requestKey: 'run-1',
+    }), '--wait', '--json'], {
+      readCredentialsFn: async () => credentials('api_token'),
+      createExecutorFn: () => ({ ...executor, resolveSessionTarget: async () => { throw new Error('No Session'); } }),
+    });
+    expect(process.exitCode ?? 0, output).toBe(exitCode);
+    expect(JSON.parse(output)).toMatchObject(code ? { ok: false, error: { code } } : { ok: true, data: receipt });
+    expect(submit).toHaveBeenCalledOnce();
+  });
+
+  it('finite controller-offline failure keeps its typed remedy and exit distinct from Ask and failure', async () => {
+    let output = '';
+    vi.spyOn(process.stdout, 'write').mockImplementation((chunk, ...args) => {
+      output += String(chunk);
+      const callback = args.find(argument => typeof argument === 'function');
+      if (typeof callback === 'function') callback();
+      return true;
+    });
+    const details = { role: 'controller' as const, machineIds: ['controller'], nextActions: ['start' as const] };
+    const submit = vi.fn(async () => ({ ok: false as const, errorCode: 'machine_unavailable', error: 'machine_unavailable', details }));
+    const executor = finiteDeploymentExecutor(submit);
+    await handleActionsCommand(['invoke', 'deployments.deploy', '--input-json', JSON.stringify({
+      serverId: 'home', environmentId: 'staging', expectedRevision: 1, targetLinkId: 'target',
+      expectedTargetLinkRevision: 1, contentArtifactId: 'content', contentHeaderVersion: 1,
+      contentBodyVersion: 1, requestKey: 'run-1',
+    }), '--wait', '--json'], {
+      readCredentialsFn: async () => credentials('api_token'),
+      createExecutorFn: () => ({ ...executor, resolveSessionTarget: async () => { throw new Error('No Session'); } }),
+    });
+    expect(process.exitCode, output).toBe(4);
+    expect(JSON.parse(output)).toMatchObject({ ok: false, error: { code: 'machine_unavailable', details } });
+    expect(submit).toHaveBeenCalledOnce();
+  });
 
   it.each([false, true])('opens a Session not already viewed by the signed-in client (exact Machine: %s)', async exactMachine => {
     vi.spyOn(console, 'log').mockImplementation(() => undefined);
@@ -1006,6 +1121,24 @@ describe('actions root command', () => {
     expect(readCredentialsFn).not.toHaveBeenCalled();
   });
 
+  it.each([['--help', '--json'], ['--input-json', '{}', '--json']])('rejects retired combined Publish through the unknown Action boundary with %j', async (...args) => {
+    let output = '';
+    vi.spyOn(process.stdout, 'write').mockImplementation((chunk, encodingOrCallback, callback) => {
+      output += String(chunk);
+      if (typeof encodingOrCallback === 'function') encodingOrCallback();
+      callback?.();
+      return true;
+    });
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const readCredentialsFn = vi.fn(async () => credentials('api_token'));
+    await handleActionsCommand(['invoke', 'deployments.publish', ...args], { readCredentialsFn });
+    expect(process.exitCode).toBe(1);
+    expect(JSON.parse(output)).toMatchObject({
+      ok: false, error: { code: 'invalid_arguments' },
+    });
+    expect(readCredentialsFn).not.toHaveBeenCalled();
+  });
+
   it('rejects an unknown Action field before reading credentials', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     vi.spyOn(console, 'log').mockImplementation(() => undefined);
@@ -1023,7 +1156,7 @@ describe('actions root command', () => {
     const pluginId = 'example.plugin';
     const actionId = `${pluginId}/actions/do-work`;
     const inputSchema = { type: 'object', additionalProperties: false, required: ['note'],
-      properties: { note: { type: 'string', allOf: [{ $ref: '#/definitions/Note' }] } },
+      properties: { note: { type: 'string', allOf: [{ $ref: '#/definitions/Note' }] }, wait: { type: 'boolean' } },
       definitions: { Note: { type: 'string', pattern: '^review:' } } };
     const outputSchema = { type: 'object', additionalProperties: false, required: ['ok'], properties: { ok: { type: 'boolean' } } };
     // Authored plugin bytes/native effects are synthetic; committed source,
@@ -1052,9 +1185,12 @@ describe('actions root command', () => {
     await handleActionsCommand(['invoke', actionId, '--note', 'review:done'], deps);
     expect(process.exitCode).toBeUndefined();
     expect(readInputs()).toEqual([{ note: 'review:done' }]);
+    await handleActionsCommand(['invoke', actionId, '--note', 'review:wait', '--wait'], deps);
+    expect(process.exitCode).toBeUndefined();
+    expect(readInputs()).toEqual([{ note: 'review:done' }, { note: 'review:wait', wait: true }]);
     await handleActionsCommand(['invoke', actionId, '--note', 'invalid'], deps);
     expect(process.exitCode).toBe(1);
-    expect(readInputs()).toEqual([{ note: 'review:done' }]);
+    expect(readInputs()).toEqual([{ note: 'review:done' }, { note: 'review:wait', wait: true }]);
   });
 
   it('discovers a contributed Action and compiles its canonical fields before invocation', async () => {

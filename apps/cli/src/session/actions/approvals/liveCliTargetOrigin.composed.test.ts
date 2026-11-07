@@ -12,7 +12,7 @@ import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider
 import { createCliApprovalsArtifactStore } from './artifactStore';
 import { createCredentialedTargetActionCurrentIntent } from './credentialedTargetActionCurrentIntent';
 
-it.each(['unchanged', 'changed-input'] as const)('resumes the original CLI target approval through its published origin (%s)', async mode => {
+it.each(['unchanged', 'changed-input', 'local-reject', 'presentation-failure'] as const)('resumes the original CLI target approval through its published origin (%s)', async mode => {
   const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'alice', session: 'terminal', tokenEpoch: 1,
     provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
   const credentials = { token, encryption: null, credentialProvenance: 'stored_session' } as const;
@@ -85,9 +85,21 @@ it.each(['unchanged', 'changed-input'] as const)('resumes the original CLI targe
     });
   });
   const lifetime = new AbortController();
+  const pendingApprovals: string[] = [];
+  let notificationSignal: AbortSignal | undefined;
+  let notified!: () => void;
+  const notification = new Promise<void>(resolve => { notified = resolve; });
   let effects = 0;
   const pending = runWithServerHttpBaseUrl(serverUrl, async () => {
-    const admitted = await createCredentialedTargetActionCurrentIntent(credentials)({
+    const admitted = await createCredentialedTargetActionCurrentIntent(credentials, {
+      onApprovalRequested: async (artifactId, signal, decide) => {
+        pendingApprovals.push(artifactId);
+        notificationSignal = signal;
+        notified();
+        if (mode === 'local-reject') return await decide('reject');
+        if (mode === 'presentation-failure') throw new Error('approval presentation failed');
+      },
+    })({
       action: { qualifiedId: 'acme.tunnel/actions/configure', pluginId: 'acme.tunnel', localId: 'configure', occurrenceId: 'tunnel',
         sourceCustody: { kind: 'development', registeredRootId: 'tunnel-root' }, dangerLevel: 'writesRemote', scopes: ['global'],
         surfaces: ['cli'], hostAccess: [], input: { hostname: 'qa.example.test', service: 'http://127.0.0.1:37597' },
@@ -106,6 +118,19 @@ it.each(['unchanged', 'changed-input'] as const)('resumes the original CLI targe
   void pending.catch(() => undefined);
   try {
     const artifactId = await Promise.race([published, pending.then(result => { throw new Error(`Original invocation ended before publication: ${JSON.stringify(result)}`); })]);
+    // A published live wait must be visible before another device decides it.
+    await notification;
+    expect(pendingApprovals).toEqual([artifactId]);
+    if (mode === 'local-reject' || mode === 'presentation-failure') {
+      if (mode === 'local-reject') {
+        expect(await pending).toMatchObject({ status: 'rejected', code: 'plugin_action_current_intent_rejected' });
+        expect(await runWithServerHttpBaseUrl(serverUrl, () => store.targetActionApprovalsGet({ artifactId })))
+          .toMatchObject({ status: 'rejected' });
+      } else await expect(pending).rejects.toThrow('approval presentation failed');
+      expect(notificationSignal?.aborted).toBe(true);
+      expect(effects).toBe(0);
+      return;
+    }
     const standalone = createCliActionExecutorFromCredentials({ credentials, serverId: 'deciding-cli', serverApiUrl: serverUrl,
       actionsSettingsProvider: createActionSettingsProvider() });
     if (mode === 'changed-input') {
@@ -129,6 +154,7 @@ it.each(['unchanged', 'changed-input'] as const)('resumes the original CLI targe
     } else {
       expect(decided, JSON.stringify({ decided, calls })).toMatchObject({ ok: true });
       expect(await pending).toMatchObject({ status: 'approved' });
+      expect(notificationSignal?.aborted).toBe(true);
       expect(await runWithServerHttpBaseUrl(serverUrl, () => store.targetActionApprovalsGet({ artifactId }))).toMatchObject({ status: 'executed', execution: { ok: true } });
       expect(effects).toBe(1);
       expect(await runWithServerHttpBaseUrl(serverUrl, () => standalone.execute('approval.request.decide',

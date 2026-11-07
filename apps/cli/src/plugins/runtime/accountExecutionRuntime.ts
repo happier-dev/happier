@@ -3,6 +3,7 @@ import { createConnectedServiceCredentialApi } from '@/api/client/connectedServi
 import { resolveQualifiedConnectedAccountAtomicV4Negotiation } from '@/api/client/qualifiedConnectedAccountApi';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createRequesterConnectedAccountPurposeBindingRuntime } from '@/daemon/connectedServices/purposeBindings/createRequesterConnectedAccountPurposeBindingRuntime';
+import { isCustodianMachineAdmission } from '@/daemon/lifecycle/requesterWorkAttribution';
 import { fetchServerFeaturesSnapshot, type CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import type { PluginReloadController, PluginRuntimeRegistryLease } from './reload/controller';
 import { pluginReloadController } from './reload/singleton';
@@ -13,6 +14,8 @@ export type AccountExecutionRuntimeInput = Readonly<{
     accountExecution: NonNullable<RegistryInput['accountExecution']>;
     happyHomeDir?: string;
     signal?: AbortSignal;
+    /** A containing Machine operation holds this registry until Account execution ends. */
+    credentialRuntimeRegistry?: PluginRuntimeRegistryLease['registry'];
     resolveServerFeaturesSnapshot?: () => CliServerFeaturesSnapshot | undefined | Promise<CliServerFeaturesSnapshot | undefined>;
 }>;
 
@@ -23,16 +26,17 @@ export async function resolveAccountExecutionRuntime(input: AccountExecutionRunt
         const operationContext = authority.savedSecretOperationContext;
         const accountId = readAccountIdFromToken(authority.credentials.token);
         let registry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>>;
-        const borrowAccountRegistry = (): PluginRuntimeRegistryLease => ({
-            registry, source: 'ephemeral', durableRevision: -1, release: async () => {},
+        const readCredentialRegistry = () => input.credentialRuntimeRegistry ?? registry;
+        const borrowCredentialRegistry = (): PluginRuntimeRegistryLease => ({
+            registry: readCredentialRegistry(), source: 'ephemeral', durableRevision: -1, release: async () => {},
         });
-        // Purpose services borrow their containing Account registry. The daemon
-        // publication owner is not an execution authority for this Account host.
-        const accountRegistryAccess: Pick<PluginReloadController,
+        // Purpose services use the containing operation's held registry, or their
+        // Account registry when no Machine is involved. Neither owns publication.
+        const credentialRegistryAccess: Pick<PluginReloadController,
             'acquireRuntimeRegistry' | 'tryAcquireRuntimeRegistry' | 'isRuntimeRegistryCurrent' | 'subscribe'> = {
-            acquireRuntimeRegistry: async () => borrowAccountRegistry(),
-            tryAcquireRuntimeRegistry: borrowAccountRegistry,
-            isRuntimeRegistryCurrent: candidate => candidate === registry,
+            acquireRuntimeRegistry: async () => borrowCredentialRegistry(),
+            tryAcquireRuntimeRegistry: borrowCredentialRegistry,
+            isRuntimeRegistryCurrent: candidate => candidate === readCredentialRegistry(),
             subscribe: pluginReloadController.subscribe,
         };
         let qualifiedSupport: Promise<ReturnType<typeof resolveQualifiedConnectedAccountAtomicV4Negotiation>> | undefined;
@@ -48,9 +52,10 @@ export async function resolveAccountExecutionRuntime(input: AccountExecutionRunt
             const credentialApi = createConnectedServiceCredentialApi(authority.credentials);
             return createRequesterConnectedAccountPurposeBindingRuntime({ operationContext, accountId,
                 ...(authority.machineId ? { machineId: authority.machineId } : {}),
-                reloadController: accountRegistryAccess,
+                reloadController: credentialRegistryAccess,
                 isCurrent: async () => await authority.isCurrent() && await authority.isCredentialCurrent?.() !== false,
-                allowNativeAccountCredentials: false,
+                allowNativeAccountCredentials: operationContext.machineAdmission?.actorAccountId === accountId
+                    && isCustodianMachineAdmission(operationContext.machineAdmission),
                 getAccountEncryptionMode: options => runWithServerHttpBaseUrl(authority.serverUrl,
                     () => credentialApi.getAccountEncryptionMode(options)),
                 resolveQualifiedConnectedAccountV4Support: resolveQualifiedSupport,

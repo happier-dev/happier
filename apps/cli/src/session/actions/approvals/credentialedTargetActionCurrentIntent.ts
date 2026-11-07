@@ -9,10 +9,13 @@ import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { PUBLIC_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/actionSpecs';
 import { createTargetActionApprovalDecision } from '@happier-dev/protocol/actions/targetActionApprovalDecision';
 import { createLiveCliApprovalOrigin } from './liveOrigin';
+import type { ActionExecuteResult } from '@happier-dev/protocol';
+import type { CliApprovalRequestedHandler } from './deferredResult';
 
 /** Bind the incumbent target-Action approval owner to this Home's Account material. */
 export function createCredentialedTargetActionCurrentIntent(
   credentials: StoredCredentials,
+  options?: Readonly<{ onApprovalRequested?: CliApprovalRequestedHandler }>,
 ): (request: TargetActionCurrentIntentRequest) => Promise<TargetActionCurrentIntentResult> {
   const store = createCliApprovalsArtifactStore({ credentials });
   return async currentIntent => {
@@ -28,6 +31,21 @@ export function createCredentialedTargetActionCurrentIntent(
     const intent = origin?.surface === 'cli' && origin.caller.kind === 'host'
       && !origin.externalActionExecutionAuthorization && origin.accountId === undefined && accountId
       ? { ...currentIntent, executionOriginV1: { ...origin, accountId } } : currentIntent;
+    const onApprovalRequested = origin?.surface === 'cli' && origin.caller.kind === 'host'
+      ? options?.onApprovalRequested : undefined;
+    const notificationLifetime = new AbortController();
+    const signal = intent.signal ? AbortSignal.any([intent.signal, notificationLifetime.signal]) : notificationLifetime.signal;
+    let notify!: (artifactId: string) => void;
+    const notification = new Promise<void | ActionExecuteResult>((resolve, reject) => {
+      notify = artifactId => {
+        void Promise.resolve().then(() => onApprovalRequested?.(artifactId, signal, async decision =>
+          await decide({ artifactId, decision, signal, context: {
+            surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+            ...(accountId ? { runtimeAccountId: accountId } : {}),
+          } }) ?? { ok: false, errorCode: 'approval_not_found', error: 'approval_not_found' },
+        )).then(resolve, reject);
+      };
+    });
     const read = async (artifactId: string) => liveOrigin.validateRead(artifactId,
       await runWithServerHttpBaseUrl(serverUrl, () => store.targetActionApprovalsGet({ artifactId })));
     const update: typeof store.targetActionApprovalsUpdate = args =>
@@ -44,6 +62,7 @@ export function createCredentialedTargetActionCurrentIntent(
       create: async (request, onReady) => {
         const created = await liveOrigin.publish({ request }, () => store.targetActionApprovalsCreate({ request, onReady }));
         liveOrigin.waiterReady(created.artifactId);
+        if (onApprovalRequested && request.approvalInputCustody === 'live_only') notify(created.artifactId);
         return created;
       },
       read,
@@ -53,11 +72,17 @@ export function createCredentialedTargetActionCurrentIntent(
         serverUrl,
         entityId: artifactId,
       }, { onChange, onError }),
-    })({ ...intent, reportUnavailable }));
+    })({ ...intent, signal, reportUnavailable }));
     // Publication consumes resolveApprovalExecutor through the existing origin
     // publisher; this adapter does not decide which host owns live custody.
-    return await liveOrigin.run({ surface: intent.executionOriginV1?.surface ?? 'cli',
-      authority: intent.executionOriginV1?.authority, actionCaller: intent.executionOriginV1?.caller,
-      ...(intent.signal ? { signal: intent.signal } : {}) }, execute);
+    const pending = liveOrigin.run({ surface: intent.executionOriginV1?.surface ?? 'cli',
+      authority: intent.executionOriginV1?.authority, actionCaller: intent.executionOriginV1?.caller, signal }, execute);
+    try {
+      return await Promise.race([pending, notification.then(result => result && !result.ok
+        ? { status: 'unavailable' as const, code: result.errorCode } : pending)]);
+    } finally {
+      notificationLifetime.abort();
+      await pending.catch(() => undefined);
+    }
   };
 }

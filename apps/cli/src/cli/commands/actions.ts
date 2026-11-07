@@ -1,4 +1,3 @@
-import { promptConfirmYesNo } from '@/terminal/prompts/promptConfirmYesNo';
 import { showHelp } from '../actions/discoveryHelp';
 import { randomUUID } from 'node:crypto';
 import type { CliApprovalRequestedHandler } from '@/session/actions/approvals/deferredResult';
@@ -16,7 +15,15 @@ import { FilesystemUploadInputSchema, FilesystemDownloadInputSchema } from '@hap
 import { createCredentialedFilesystemTransferClient } from '@/machines/transfer/createCredentialedFilesystemTransferClient';
 import { tryHandleApprovalRequestCreated } from '@/cli/commands/session/shared/tryHandleApprovalRequestCreated';
 import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
+import { ACTION_CLI_PROJECT_TARGET_VALUE_FLAGS, readActionCliExecutionTarget } from '@/cli/actions/executionTarget';
 import { finiteActionExitCode, supportsFiniteActionOutcome, readFiniteActionOutcome, readFiniteActionOperationAddress } from '@/cli/actions/finiteOutcome';
+import { renderDeploymentGithubActionsStep } from '@/cli/actions/deploymentCiStep';
+import { DeploymentEnvironmentGetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { ArtifactActionOutputSchemasV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import { readDeploymentEnvironmentForHost } from '@/deployments/readEnvironmentForHost';
+import { createConnectedServiceCredentialApi } from '@/api/client/connectedServiceCredentialApi';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { executeSessionMcpAction, hasSessionMcpContext } from './toolsSessionMcp';
 import {
   isPrivateSecretCliWrite, needsSavedSecretsInputPreparation, prepareSavedSecretsCliInput,
   SavedSecretsInputFailure, SavedSecretsInputReadApproval,
@@ -51,9 +58,10 @@ import {
 } from '@/cli/actions/parseCommandInput';
 import type { CommandContext } from '@/cli/commandRegistry';
 import { assertCommandArguments, argvBeforeOptionTerminator, readFlagValue, readRawFlagValue } from '@/cli/commands/shared/argvFlags';
-import { printJsonEnvelope, wantsJson, writeJsonStdout } from '@/cli/output/jsonEnvelope';
+import { printJsonEnvelope, wantsJson, writeJsonStdout, type SessionControlJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { readStoredCredentials, readStoredCredentialsForServerId } from '@/persistence';
 import { getServerProfile } from '@/server/serverProfiles';
+import { promptConfirmYesNo } from '@/terminal/prompts/promptConfirmYesNo';
 import { createServerUrlServerFeaturesSnapshotStore } from '@/features/serverFeaturesSnapshotStore';
 import {
   ACTION_CLI_SERVER_ID_FLAG,
@@ -61,8 +69,6 @@ import {
   resolveActionCliCredentialTarget,
 } from '@/cli/actions/actionServerTarget';
 
-const ACTION_CLI_PROJECT_DIRECTORY_FLAG = '--project-directory' as const;
-const ACTION_CLI_WORKSPACE_REF_ID_FLAG = '--workspace-ref-id' as const;
 const ACTION_CLI_SOURCE_PATH_FLAG = '--source-path' as const;
 const ACTION_CLI_DESTINATION_PATH_FLAG = '--destination-path' as const;
 function invokeUsage(actionId?: string): string {
@@ -77,8 +83,7 @@ const INVOKE_TRANSPORT_VALUE_FLAGS = [
   ACTION_CLI_MACHINE_ID_FLAG,
   ACTION_CLI_REQUEST_ID_FLAG,
   ACTION_CLI_SERVER_ID_FLAG,
-  ACTION_CLI_PROJECT_DIRECTORY_FLAG,
-  ACTION_CLI_WORKSPACE_REF_ID_FLAG,
+  ...ACTION_CLI_PROJECT_TARGET_VALUE_FLAGS,
   ACTION_CLI_SOURCE_PATH_FLAG,
   ACTION_CLI_DESTINATION_PATH_FLAG,
 ] as const;
@@ -283,11 +288,60 @@ function unwrapOuterActionResult(result: ActionExecuteResult): unknown {
 
 async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal, requestId?: string): Promise<void> {
   const subcommand = args[0];
+  const sessionMcp = hasSessionMcpContext();
   if (
     !subcommand
     || subcommand === 'help'
     || ACTION_CLI_HELP_FLAGS.includes(subcommand as typeof ACTION_CLI_HELP_FLAGS[number])
   ) { showHelp(); return; }
+  if (subcommand === 'get' && hasInvokeOption(args, '--github-actions')) {
+    if (sessionMcp) throwActionFailure({ ok: false, errorCode: 'client_required',
+      error: 'Generate a deployment CI step from a person CLI outside the Session.' });
+    const usage = 'Usage: happier actions get deployments.deploy --github-actions --environment <id> --server-id <id>';
+    assertCommandArguments(args, { usage, startIndex: 1, booleanFlags: ['--github-actions', '--json'],
+      valueFlags: ['--environment', ACTION_CLI_SERVER_ID_FLAG], maxPositionals: 1 });
+    if (args[1] !== 'deployments.deploy') invalidInvokeArguments(usage);
+    const environmentId = readRawFlagValue(args, '--environment');
+    const requestedServerId = readActionCliServerId(args, true);
+    if (!environmentId || !requestedServerId) invalidInvokeArguments(usage);
+    const { credentials, fixedServer, serverIdentityId, canonicalServerUrl } = await resolveActionCliCredentialTarget({
+      requestedServerId, requireServerIdentityId: true, deps,
+    });
+    if (!fixedServer || !serverIdentityId || !canonicalServerUrl) throw Object.assign(new Error('The selected Home identity is unavailable.'), {
+      code: 'server_identity_unavailable',
+    });
+    if (!credentials) throwActionFailure({ ok: false, errorCode: 'not_authenticated', error: 'Sign in before generating a deployment step.' });
+    const mode = await runWithServerHttpBaseUrl(fixedServer.serverApiUrl, () =>
+      createConnectedServiceCredentialApi(credentials).getAccountEncryptionMode({ usage: 'fresh-authority', signal }));
+    if (mode !== 'plain') throwActionFailure({ ok: false, errorCode: 'client_required',
+      error: mode === 'e2ee' ? 'Encrypted deployment automation requires the in-process Happier SDK client.'
+        : 'Account encryption mode could not be verified for this Home.' });
+    const executor = await deps.createExecutorFn({ credentials, ...fixedServer, serverIdentityId,
+      readCredentials: () => deps.readCredentialsForServerIdFn(fixedServer.serverId), externalActionClient: true });
+    const context = { ...actionContext(signal), serverId: fixedServer.serverId, serverIdentityId };
+    const detail = await readDeploymentEnvironmentForHost({ environmentId, context }, {
+      readMetadata: async () => {
+        const value = DeploymentEnvironmentGetResultV1Schema.parse(unwrapOuterActionResult(await executor.execute(
+          'deployments.environments.get', { serverId: serverIdentityId, environmentId }, context)));
+        if (!value.ok) throwActionFailure({ ok: false, errorCode: value.error, error: value.error });
+        if (value.environment.serverId !== serverIdentityId) throwActionFailure({ ok: false,
+          errorCode: 'deployment_access_denied', error: 'deployment_access_denied' });
+        return value;
+      },
+      open: async artifactId => ArtifactActionOutputSchemasV1['artifact.get'].parse(unwrapOuterActionResult(
+        await executor.execute('artifact.get', { artifactId }, context))).artifact,
+      assertCurrent: async () => {
+        signal?.throwIfAborted();
+        if ((await deps.readCredentialsForServerIdFn(fixedServer.serverId))?.token !== credentials.token) {
+          throwActionFailure({ ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' });
+        }
+      },
+    });
+    if (detail.content.definition.kind !== 'repository') throwActionFailure({ ok: false,
+      errorCode: 'needs_repository', error: 'A SHA helper requires a repository deployment definition.' });
+    console.log(renderDeploymentGithubActionsStep({ serverIdentityId, serverApiUrl: canonicalServerUrl, environmentId }));
+    return;
+  }
   const json = wantsJson(args);
   if (subcommand !== 'invoke') throw Object.assign(new Error(`Unknown actions subcommand: ${subcommand}\n${invokeUsage()}`), { code: 'unknown_subcommand' });
   const requested = args[1];
@@ -361,30 +415,29 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal, 
   if ((isUpload || isDownload) && !readFlagValue(args, ACTION_CLI_MACHINE_ID_FLAG)) invalidInvokeArguments(`${ACTION_CLI_MACHINE_ID_FLAG} is required for filesystem transfer.`, requested);
 
   const requestedServerId = readActionCliServerId(args, true);
+  if (sessionMcp && (requestedServerId !== null || INVOKE_TRANSPORT_VALUE_FLAGS.some(flag =>
+    flag !== ACTION_CLI_REQUEST_ID_FLAG && readRawFlagValue(args, flag) !== null))) {
+    invalidInvokeArguments('Session MCP selects the Home and execution context. Supply resource targets in the Action input.');
+  }
   if ((isUpload || isDownload) && requestedServerId === null) invalidInvokeArguments(`${ACTION_CLI_SERVER_ID_FLAG} is required for filesystem transfer.`, requested);
-  if (localInvocation?.requiresServerId && requestedServerId === null) {
+  if (!sessionMcp && localInvocation?.requiresServerId && requestedServerId === null) {
     throw Object.assign(
       new Error(`Option ${ACTION_CLI_SERVER_ID_FLAG} is required for this Home-scoped Action.`),
       { code: 'invalid_arguments' },
     );
   }
-  const { credentials, fixedServer, serverIdentityId } = await resolveActionCliCredentialTarget({
+  const { credentials, fixedServer, serverIdentityId } = sessionMcp
+    ? { credentials: null, fixedServer: null, serverIdentityId: undefined }
+    : await resolveActionCliCredentialTarget({
     requestedServerId,
     requireServerIdentityId: localInvocation?.requiresServerId === true,
     deps,
   });
   if ((isUpload || isDownload) && !fixedServer) invalidInvokeArguments(`${ACTION_CLI_SERVER_ID_FLAG} is required for filesystem transfer.`, requested);
-  if (!credentials) throw Object.assign(new Error('Not authenticated. Run "happier auth login" first.'), { code: 'not_authenticated' });
+  if (!sessionMcp && !credentials) throw Object.assign(new Error('Not authenticated. Run "happier auth login" first.'), { code: 'not_authenticated' });
   const machineId = readFlagValue(args, ACTION_CLI_MACHINE_ID_FLAG) ?? undefined;
-  const projectDirectory = readFlagValue(args, ACTION_CLI_PROJECT_DIRECTORY_FLAG) ?? undefined;
-  const workspaceRefId = readFlagValue(args, ACTION_CLI_WORKSPACE_REF_ID_FLAG) ?? undefined;
-  if ((projectDirectory || workspaceRefId) && !machineId) {
-    invalidInvokeArguments(`${ACTION_CLI_MACHINE_ID_FLAG} is required for a Workflow project target.`);
-  }
-  if (workspaceRefId && !projectDirectory) {
-    invalidInvokeArguments(`${ACTION_CLI_PROJECT_DIRECTORY_FLAG} is required with ${ACTION_CLI_WORKSPACE_REF_ID_FLAG}.`);
-  }
-  const executorOptions = {
+  const executionTarget = readActionCliExecutionTarget(args, machineId);
+  const executorOptions = credentials ? {
     credentials,
     ...(serverIdentityId ? { serverIdentityId } : {}),
     onRequesterSessionCredentialDisclosure: (disclosure: Parameters<typeof confirmCliRequesterCredentialDisclosure>[0]) =>
@@ -395,7 +448,10 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal, 
     externalActionClient: true as const,
     onApprovalRequested: async (artifactId: string, confirmationSignal: AbortSignal,
       decide: Parameters<CliApprovalRequestedHandler>[2]): Promise<ActionExecuteResult> => {
-      console.error(`Waiting for approval: ${artifactId}`);
+      if (json) console.error(JSON.stringify({ v: 1, ok: true, kind: 'actions_invoke',
+        data: { kind: 'approval_request_created', artifactId, actionId: requested },
+      } satisfies SessionControlJsonEnvelope));
+      else console.error(`Waiting for approval: ${artifactId}`);
       let approve = hasInvokeOption(args, INVOKE_YES_FLAG);
       if (!approve) {
         try {
@@ -409,10 +465,11 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal, 
         ? { ok: false, errorCode: 'approval_rejected', error: 'approval_rejected' } : decision;
     },
     ...(machineId ? { machineId } : {}),
-  };
-  const executor = await deps.createExecutorFn(fixedServer
+  } : null;
+  const executor = executorOptions ? await deps.createExecutorFn(fixedServer
     ? { ...executorOptions, ...fixedServer }
-    : executorOptions);
+    : executorOptions) : null;
+  const executeAction = executor ? executor.execute : executeSessionMcpAction;
   const context = { ...actionContext(signal),
     ...(fixedServer ? { serverId: fixedServer.serverId } : {}),
     ...(serverIdentityId ? { serverIdentityId } : {}) };
@@ -420,7 +477,7 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal, 
   let contributedExecutionPlacement: ActionDefinitionV1['executionPlacement'];
   if (contributed) {
     const discoveryContext = { ...context, actionRequestId: requestId };
-    const discovery = await executor.execute(
+    const discovery = await executeAction(
       'action.spec.get',
       { id: requested, includeOutputSchema: true },
       discoveryContext,
@@ -439,7 +496,7 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal, 
       const definition = await readCompleteActionSpecV1({ actionId: requested, ...(signal ? { signal } : {}),
         read: async input => unwrapOuterActionResult(input.schemaPath === undefined
           ? discovery
-          : await executor.execute('action.spec.get', input, discoveryContext)),
+          : await executeAction('action.spec.get', input, discoveryContext)),
       });
       contributedExecutionPlacement = definition.executionPlacement;
       compiled = compileDiscoveredActionFields(definition);
@@ -451,7 +508,7 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal, 
       if (!input || typeof input !== 'object' || Array.isArray(input)) invalidInvokeArguments('Action input must be an object.', requested);
       input = await prepareSavedSecretsCliInput({ actionId: requested,
         input: input as Readonly<Record<string, unknown>>, secretInput: definition, signal,
-        execute: (actionId, readInput) => executor.execute(actionId, readInput, { ...context, actionRequestId: randomUUID() }),
+        execute: (actionId, readInput) => executeAction(actionId, readInput, { ...context, actionRequestId: randomUUID() }),
       });
       validateDiscoveredActionInput(definition, input);
     }
@@ -471,7 +528,7 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal, 
       resolvedInput = await prepareSavedSecretsCliInput({ actionId: invocation.actionId,
         input: resolvedInput as Readonly<Record<string, unknown>>, signal,
         secretInput: getActionSpec(invocation.actionId),
-        execute: (actionId, input) => executor.execute(actionId, input, { ...context, actionRequestId: randomUUID() }),
+        execute: (actionId, input) => executeAction(actionId, input, { ...context, actionRequestId: randomUUID() }),
       });
     } catch (error) {
       if (error instanceof SavedSecretsInputReadApproval) {
@@ -485,7 +542,7 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal, 
     resolvedInput = validated.data;
   }
   let defaultSessionId: string | null = null;
-  if (!contributed && resolvedInput && typeof resolvedInput === 'object' && !Array.isArray(resolvedInput)) {
+  if (executor && !contributed && resolvedInput && typeof resolvedInput === 'object' && !Array.isArray(resolvedInput)) {
     const candidateSessionId = (resolvedInput as Readonly<Record<string, unknown>>).sessionId;
     if (typeof candidateSessionId === 'string') {
       const resolved = await executor.resolveSessionTarget(candidateSessionId);
@@ -504,24 +561,12 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal, 
     ...context,
     actionRequestId: invocation.requestId,
     ...(defaultSessionId ? { defaultSessionId } : {}),
-    ...(machineId ? {
-      externalActionTarget: {
-        kind: 'machine' as const,
-        machineId,
-        ...(projectDirectory ? {
-          project: {
-            machineId,
-            directory: projectDirectory,
-            ...(workspaceRefId ? { workspaceRefId } : {}),
-          },
-        } : {}),
-      },
-    } : {}),
+    ...(executionTarget ? { externalActionTarget: executionTarget } : {}),
   };
   let data: unknown;
-  if ((isUpload || isDownload) && machineId && fixedServer) {
+  if ((isUpload || isDownload) && machineId && fixedServer && credentials) {
     const transfer = await createCredentialedFilesystemTransferClient({ credentials, ...fixedServer,
-      executeAction: async (actionId, input, context) => await executor.execute(actionId, input, { ...invocationOptions, ...context }),
+      executeAction: async (actionId, input, context) => await executeAction(actionId, input, { ...invocationOptions, ...context }),
       ...(signal ? { signal } : {}),
     });
     try {
@@ -534,8 +579,9 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal, 
         : { ok: false, error: outcome.error, errorCode: outcome.errorCode ?? 'filesystem_transfer_failed', details: outcome });
     } finally { await transfer.close(); }
   } else {
-    data = unwrapOuterActionResult(await executor.execute(invocation.actionId, resolvedInput, invocationOptions));
+    data = unwrapOuterActionResult(await executeAction(invocation.actionId, resolvedInput, invocationOptions));
   }
+  if (sessionMcp && await tryHandleApprovalRequestCreated({ envelopeKind: 'actions_invoke', json, result: data })) return;
   if (wait) {
     const address = invocation.actionId === 'action.operations.get' ? null : await readFiniteActionOperationAddress(resolvedInput, data);
     if (address) {
@@ -546,7 +592,7 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal, 
         ? resolvedInput.environmentId : undefined;
       const observationInput = { ...address,
         ...(typeof environmentId === 'string' ? { environmentId } : {}), waitForTerminal: true };
-      const observed = unwrapOuterActionResult(await executor.execute('action.operations.get', observationInput,
+      const observed = unwrapOuterActionResult(await executeAction('action.operations.get', observationInput,
         { ...invocationOptions, actionRequestId: randomUUID() }));
       data = readFiniteActionOutcome({ actionId: 'action.operations.get', input: observationInput, result: observed });
     } else data = readFiniteActionOutcome({ actionId: invocation.actionId, input: resolvedInput, result: data });
@@ -564,7 +610,7 @@ export async function handleActionsCommand(
   signal?: AbortSignal,
 ): Promise<void> {
   const subcommand = args[0];
-  if (subcommand === 'search' || subcommand === 'get') {
+  if (subcommand === 'search' || subcommand === 'get' && !hasInvokeOption(args, '--github-actions')) {
     const command = findCompiledActionCliCommand(
       ['actions', subcommand],
       listCompiledActionCliCommands(),
