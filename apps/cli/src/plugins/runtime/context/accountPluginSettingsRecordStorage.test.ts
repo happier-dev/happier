@@ -9,6 +9,7 @@ import {
 } from '@happier-dev/protocol';
 
 import type { StoredCredentials } from '@/persistence';
+import { projectExecutionRunError, sanitizeExecutionRunError } from '@/agent/runtime/bridges/executionRun/errors';
 import {
     clearActiveAccountSettingsSnapshot,
     setActiveAccountSettingsSnapshot,
@@ -58,6 +59,40 @@ const settingsModel = createStablePluginSettingsModel({ pluginId: 'example.tasks
 describe('Account plugin Settings record storage', () => {
     afterEach(() => clearActiveAccountSettingsSnapshot());
 
+    it.each([
+        ['record-http', 'plugin_settings_record_http_error', 503],
+        ['mode-http', 'plugin_settings_mode_http_error', 401],
+        ['mode-invalid', 'plugin_settings_mode_invalid_response', 200],
+        ['record-invalid', 'plugin_settings_record_invalid', 200],
+        ['envelope', 'plugin_settings_mode_envelope_mismatch', 200],
+        ['transport', 'plugin_settings_transport_error', undefined],
+    ] as const)('retains %s failure through detached Run error projection without response content', async (scenario, code, status) => {
+        // Detached Runs borrow the daemon's Settings host. Keep its record
+        // adapter/store real and replace only credential and HTTP boundaries.
+        const get = vi.fn(async (url: string) => {
+            if (scenario === 'transport') throw new Error('PRIVATE_RESPONSE_CONTENT');
+            if (url.endsWith('/encryption')) return {
+                status: scenario === 'mode-http' ? 401 : 200,
+                data: scenario === 'mode-invalid' ? { private: 'PRIVATE_RESPONSE_CONTENT' }
+                    : { mode: scenario === 'envelope' ? 'e2ee' : 'plain', updatedAt: 1 },
+            };
+            return { status: scenario === 'record-http' ? 503 : 200,
+                data: scenario === 'record-invalid' ? { private: 'PRIVATE_RESPONSE_CONTENT' }
+                    : { status: 'present', revision: 4,
+                        content: { t: 'plain', v: { v: 1, values: { theme: 'PRIVATE_RESPONSE_CONTENT' } } } } };
+        });
+        const store = createAccountSettingsBackedSettingsRecordStore(createAccountPluginSettingsRecordStorage({
+            readCredentials: async () => plainCredentials, isCurrentAccount: () => true,
+            resolveBaseUrl: () => 'https://server.example', http: { get, post: vi.fn() },
+        }));
+        const error = await store.read(settingsModel).catch((error: unknown) => error);
+        const projected = projectExecutionRunError(sanitizeExecutionRunError(error, value => value));
+        expect(projected).toMatchObject({ code });
+        if (status !== undefined) expect(projected.message).toContain(`HTTP ${status}`);
+        expect(JSON.stringify(projected)).not.toContain('PRIVATE_RESPONSE_CONTENT');
+        expect(get).toHaveBeenCalledTimes(scenario === 'record-http' || scenario === 'transport' ? 1 : 2);
+    });
+
     it.each(['beforeRead', 'duringRecord', 'duringMode'] as const)(
         'fails closed when asynchronous captured authority retires %s', async phase => {
             let current = true;
@@ -76,7 +111,7 @@ describe('Account plugin Settings record storage', () => {
             });
             const access = await adapter.bindOperation();
             if (phase === 'beforeRead') current = false;
-            await expect(access.readRecord(settingsModel)).resolves.toEqual({ status: 'unavailable' });
+            await expect(access.readRecord(settingsModel)).resolves.toMatchObject({ status: 'unavailable', error: expect.objectContaining({ code: expect.any(String) }) });
             expect(get).toHaveBeenCalledTimes(phase === 'beforeRead' ? 0 : phase === 'duringRecord' ? 1 : 2);
         },
     );
@@ -164,7 +199,7 @@ describe('Account plugin Settings record storage', () => {
             expect(record.values.opaque).toBe('Account A private value');
             current = accountB;
             return { record: { ...record, revision: 5, values: { ...record.values, theme: 'light' } }, result: 'updated' };
-        })).rejects.toMatchObject({ code: 'plugin_settings_persistence_unavailable' });
+        })).rejects.toMatchObject({ code: 'plugin_settings_account_context_changed' });
         expect(calls).toBe(1);
         expect(post).not.toHaveBeenCalled();
     });
@@ -234,9 +269,9 @@ describe('Account plugin Settings record storage', () => {
         });
         const access = await adapter.bindOperation();
         if (phase === 'beforeRead') reselect();
-        await expect(access.readRecord(settingsModel)).resolves.toEqual({ status: 'unavailable' });
+        await expect(access.readRecord(settingsModel)).resolves.toMatchObject({ status: 'unavailable', error: expect.objectContaining({ code: expect.any(String) }) });
         await expect(access.writeRecord(settingsModel, { expectedRevision: 4, values: { theme: 'light' } }))
-            .resolves.toEqual({ status: 'unavailable' });
+            .resolves.toMatchObject({ status: 'unavailable', error: expect.objectContaining({ code: expect.any(String) }) });
         expect(get).toHaveBeenCalledTimes(phase === 'beforeRead' ? 0 : 1);
         expect(post).not.toHaveBeenCalled();
     });
@@ -251,9 +286,9 @@ describe('Account plugin Settings record storage', () => {
         });
         const access = await adapter.bindOperation();
         baseUrl = 'https://server-b.example';
-        await expect(access.readRecord(settingsModel)).resolves.toEqual({ status: 'unavailable' });
+        await expect(access.readRecord(settingsModel)).resolves.toMatchObject({ status: 'unavailable', error: expect.objectContaining({ code: expect.any(String) }) });
         await expect(access.writeRecord(settingsModel, { expectedRevision: 4, values: { theme: 'light' } }))
-            .resolves.toEqual({ status: 'unavailable' });
+            .resolves.toMatchObject({ status: 'unavailable', error: expect.objectContaining({ code: expect.any(String) }) });
         expect(get).not.toHaveBeenCalled();
         expect(post).not.toHaveBeenCalled();
     });
@@ -316,7 +351,7 @@ describe('Account plugin Settings record storage', () => {
             resolveBaseUrl: () => 'https://server.example',
         });
 
-        await expect((await adapter.bindOperation()).readRecord(model)).resolves.toEqual({ status: 'unavailable' });
+        await expect((await adapter.bindOperation()).readRecord(model)).resolves.toMatchObject({ status: 'unavailable', error: expect.objectContaining({ code: expect.any(String) }) });
         expect(get).toHaveBeenCalledWith(
             'https://server.example/v1/account/encryption',
             expect.any(Object),
@@ -407,7 +442,7 @@ describe('Account plugin Settings record storage', () => {
         };
 
         await expect((await adapter.bindOperation()).writeRecord(model, request)).resolves.toEqual({ status: 'outcomeUnknown' });
-        await expect((await adapter.bindOperation()).writeRecord(model, request)).resolves.toEqual({ status: 'unavailable' });
+        await expect((await adapter.bindOperation()).writeRecord(model, request)).resolves.toMatchObject({ status: 'unavailable', error: expect.objectContaining({ code: expect.any(String) }) });
         await expect((await adapter.bindOperation()).writeRecord(model, request)).resolves.toEqual({ status: 'outcomeUnknown' });
     });
 
@@ -515,6 +550,6 @@ describe('Account plugin Settings record storage', () => {
             },
             resolveBaseUrl: () => 'https://server.example',
         });
-        await expect((await locked.bindOperation()).readRecord(model)).resolves.toEqual({ status: 'unavailable' });
+        await expect((await locked.bindOperation()).readRecord(model)).resolves.toMatchObject({ status: 'unavailable', error: expect.objectContaining({ code: expect.any(String) }) });
     });
 });

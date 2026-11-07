@@ -61,12 +61,25 @@ function requestConfig(credentials: StoredCredentials, signal?: AbortSignal): Re
     };
 }
 
-function unavailableRead(): PluginAccountSettingsRecordRead {
-    return Object.freeze({ status: 'unavailable' as const });
+function persistenceFailure(code: string, phase: string, httpStatus?: number): PluginError {
+    return new PluginError({ code,
+        message: `Account plugin settings ${phase} failed: ${code}${httpStatus === undefined ? '' : ` (HTTP ${httpStatus})`}` });
 }
 
-function unavailableWrite(): PluginAccountSettingsRecordWriteResult {
-    return Object.freeze({ status: 'unavailable' as const });
+function unavailableRead(error: PluginError): PluginAccountSettingsRecordRead {
+    return Object.freeze({ status: 'unavailable' as const, error });
+}
+
+function unavailableWrite(error: PluginError): PluginAccountSettingsRecordWriteResult {
+    return Object.freeze({ status: 'unavailable' as const, error });
+}
+
+/** Boundary exception codes are non-content; never copy messages, request config or bodies. */
+function boundaryFailure(error: unknown, phase: string): PluginError {
+    if (isPluginError(error)) return error;
+    const code = error instanceof Error && 'code' in error && typeof error.code === 'string'
+        ? error.code : 'plugin_settings_transport_error';
+    return persistenceFailure(code, phase);
 }
 
 function outcomeUnknownWrite(): PluginAccountSettingsRecordWriteResult {
@@ -89,32 +102,33 @@ function parseAccountRecordResponse(
     value: unknown,
     credentials: StoredCredentials,
     mode: 'plain' | 'e2ee',
+    httpStatus: number,
 ): PluginAccountSettingsRecordRead {
     const parsed = PluginAccountSettingsReadResponseV1Schema.safeParse(value);
-    if (!parsed.success) return unavailableRead();
+    if (!parsed.success) return unavailableRead(persistenceFailure('plugin_settings_record_invalid', 'record read', httpStatus));
     if (parsed.data.status === 'absent' || parsed.data.status === 'deleted') return parsed.data;
     const content = parsed.data.content;
     if (mode === 'plain') {
-        if (content.t !== 'plain') return unavailableRead();
+        if (content.t !== 'plain') return unavailableRead(persistenceFailure('plugin_settings_mode_envelope_mismatch', 'record read', httpStatus));
         const values = parseValues(content.v);
         return values === null
-            ? unavailableRead()
+            ? unavailableRead(persistenceFailure('plugin_settings_values_invalid', 'record read', httpStatus))
             : Object.freeze({
                 status: 'present' as const,
                 revision: parsed.data.revision,
                 values,
             });
     }
-    if (content.t !== 'encrypted') return unavailableRead();
-    if (!credentials.encryption) return unavailableRead();
+    if (content.t !== 'encrypted') return unavailableRead(persistenceFailure('plugin_settings_mode_envelope_mismatch', 'record read', httpStatus));
     const opened = openAccountScopedBlobCiphertext({
         kind: PLUGIN_ACCOUNT_SETTINGS_ACCOUNT_SCOPED_BLOB_KIND_V1,
-        material: resolveMaterial(credentials),
+        material: resolveMaterial(requireAccountSettingsEncryptionCredentials(credentials)),
         ciphertext: content.c,
     });
-    const values = opened ? parseValues(opened.value) : null;
+    if (!opened) return unavailableRead(persistenceFailure('plugin_settings_record_decryption_failed', 'record read', httpStatus));
+    const values = parseValues(opened.value);
     return values === null
-        ? unavailableRead()
+        ? unavailableRead(persistenceFailure('plugin_settings_values_invalid', 'record read', httpStatus))
         : Object.freeze({
             status: 'present' as const,
             revision: parsed.data.revision,
@@ -171,14 +185,20 @@ export function createAccountPluginSettingsRecordStorage(params: Readonly<{
             model: StablePluginSettingsModel,
             options?: Readonly<{ signal?: AbortSignal }>,
         ): Promise<PluginAccountSettingsRecordRead> {
-            if (!credentials || !await isStillCurrent(options?.signal)) return unavailableRead();
+            if (!credentials) return unavailableRead(persistenceFailure('plugin_settings_credentials_unavailable', 'record read'));
+            if (!await isStillCurrent(options?.signal)) return unavailableRead(persistenceFailure('plugin_settings_account_context_changed', 'record read'));
+            let phase = 'record read';
             try {
                 const response = await http.get(
                     `${baseUrl}/v1/account/plugin-settings/${encodePluginId(model.identity.pluginId)}`,
                     requestConfig(credentials, options?.signal),
                 );
-                if (!await isStillCurrent(options?.signal)) return unavailableRead();
-                if (response.status < 200 || response.status >= 300) return unavailableRead();
+                if (!await isStillCurrent(options?.signal)) return unavailableRead(persistenceFailure('plugin_settings_account_context_changed', phase));
+                if (response.status < 200 || response.status >= 300) {
+                    const unavailable = PluginAccountSettingsStorageUnavailableV1Schema.safeParse(response.data);
+                    return unavailableRead(persistenceFailure(unavailable.success ? unavailable.data.error : 'plugin_settings_record_http_error', phase, response.status));
+                }
+                phase = 'encryption mode read';
                 const mode = await readAccountEncryptionModeOnce({
                     credentials,
                     request: async () => await http.get(
@@ -186,13 +206,13 @@ export function createAccountPluginSettingsRecordStorage(params: Readonly<{
                         requestConfig(credentials, options?.signal),
                     ),
                 });
-                if (!await isStillCurrent(options?.signal)) return unavailableRead();
-                if (mode.kind !== 'resolved') return unavailableRead();
-                return parseAccountRecordResponse(response.data, credentials, mode.mode);
+                if (!await isStillCurrent(options?.signal)) return unavailableRead(persistenceFailure('plugin_settings_account_context_changed', phase));
+                if (mode.kind !== 'resolved') return unavailableRead(persistenceFailure(`plugin_settings_mode_${mode.kind}`, phase, mode.status));
+                phase = 'record decode';
+                return parseAccountRecordResponse(response.data, credentials, mode.mode, response.status);
             } catch (error) {
                 options?.signal?.throwIfAborted();
-                void error;
-                return unavailableRead();
+                return unavailableRead(boundaryFailure(error, phase));
             }
         }
 
@@ -204,7 +224,8 @@ export function createAccountPluginSettingsRecordStorage(params: Readonly<{
             }>,
             options?: Readonly<{ signal?: AbortSignal }>,
         ): Promise<PluginAccountSettingsRecordWriteResult> {
-            if (!credentials || !await isStillCurrent(options?.signal)) return unavailableWrite();
+            if (!credentials) return unavailableWrite(persistenceFailure('plugin_settings_credentials_unavailable', 'record write'));
+            if (!await isStillCurrent(options?.signal)) return unavailableWrite(persistenceFailure('plugin_settings_account_context_changed', 'record write'));
             let values: ReturnType<typeof PluginAccountSettingsValuesV1Schema.parse>;
             try {
                 values = PluginAccountSettingsValuesV1Schema.parse({ v: 1, values: request.values });
@@ -220,8 +241,8 @@ export function createAccountPluginSettingsRecordStorage(params: Readonly<{
                         requestConfig(credentials, options?.signal),
                     ),
                 });
-                if (!await isStillCurrent(options?.signal)) return unavailableWrite();
-                if (mode.kind !== 'resolved') return unavailableWrite();
+                if (!await isStillCurrent(options?.signal)) return unavailableWrite(persistenceFailure('plugin_settings_account_context_changed', 'encryption mode read'));
+                if (mode.kind !== 'resolved') return unavailableWrite(persistenceFailure(`plugin_settings_mode_${mode.kind}`, 'encryption mode read', mode.status));
                 const content = mode.mode === 'plain'
                     ? { t: 'plain' as const, v: values }
                     : {
@@ -243,7 +264,7 @@ export function createAccountPluginSettingsRecordStorage(params: Readonly<{
                     response.status === 503
                     && PluginAccountSettingsStorageUnavailableV1Schema.safeParse(response.data).success
                 ) {
-                    return unavailableWrite();
+                    return unavailableWrite(persistenceFailure('plugin_account_settings_storage_unavailable', 'record write', response.status));
                 }
                 if (response.status < 200 || response.status >= 300) return outcomeUnknownWrite();
                 const parsed = PluginAccountSettingsMutationResponseV1Schema.safeParse(response.data);
@@ -253,7 +274,7 @@ export function createAccountPluginSettingsRecordStorage(params: Readonly<{
                 if (isPluginError(error)) throw error;
                 if (issued) return outcomeUnknownWrite();
                 options?.signal?.throwIfAborted();
-                return unavailableWrite();
+                return unavailableWrite(boundaryFailure(error, 'record write preparation'));
             }
         }
 

@@ -279,13 +279,13 @@ export type PluginAccountSettingsRecordRead =
     }>
     | Readonly<{ status: 'absent' }>
     | Readonly<{ status: 'deleted'; revision: number }>
-    | Readonly<{ status: 'unavailable' }>;
+    | Readonly<{ status: 'unavailable'; error?: PluginError }>;
 
 export type PluginAccountSettingsRecordWriteResult =
     | Readonly<{ status: 'updated'; revision: number }>
     | Readonly<{ status: 'conflict'; revision: number }>
     | Readonly<{ status: 'outcomeUnknown' }>
-    | Readonly<{ status: 'unavailable' }>;
+    | Readonly<{ status: 'unavailable'; error?: PluginError }>;
 
 export type PluginAccountSettingsRecordAccess = Readonly<{
     readRecord(
@@ -342,6 +342,7 @@ async function readAccountPluginSettingsRecord(
 ): Promise<AccountPluginSettingsRecordState> {
     const source = await adapter.readRecord(model, options);
     if (source.status === 'unavailable') {
+        if (source.error) throw source.error;
         throw settingsError(
             'plugin_settings_persistence_unavailable',
             'Account plugin settings persistence is unavailable',
@@ -451,6 +452,7 @@ export function createAccountSettingsBackedSettingsRecordStore(
                 options,
             );
             if (response.status === 'unavailable') {
+                if (response.error) throw response.error;
                 throw settingsError(
                     'plugin_settings_persistence_unavailable',
                     'Account plugin settings persistence is unavailable',
