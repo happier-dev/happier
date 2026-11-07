@@ -58,10 +58,15 @@ import { deriveWorkflowSessionInputLocalIdV2 } from '@happier-dev/protocol/sessi
 import * as sessionRpc from '@/session/transport/rpc/sessionRpc';
 import { DiscussionMachinePublicationV2Schema, type DiscussionAgentPostPublicationV1,
   type DiscussionWorkflowPostPublicationV1 } from '@happier-dev/protocol/discussions/api';
-import { SessionMessageReplyAccountMutationV1Schema, SessionMessageReplyReadResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
+import { SessionMessageReplyAccountMutationV1Schema, SessionMessageReplyReadResultV1Schema, deriveSessionMessageReplyReturnLocalIdV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
 import { createPluginInvocationActionsService } from '@/plugins/runtime/invocation/services/actions';
 import { createPluginActionCallerMaterializationFixture } from '@/plugins/runtime/invocation/services/actionCaller.testkit';
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
+import { ApprovalRequestV2Schema, type ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
+import { createDaemonApprovalExecutionOriginCurrentness, createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
+import { fetchAccountProfile } from '@/api/accountProfile';
+import { AccountProfileSchema } from '@happier-dev/protocol';
 
 const credentials = { token: 'token-1', encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) } };
 const keyless = { token: 'token-1', encryption: null };
@@ -1603,6 +1608,88 @@ describe('Home Discussion resource transport', () => {
     expect(axiosRequest.mock.calls.some(([request]) => request.method === 'POST')).toBe(false);
   });
 
+  it.each((['plain', 'e2ee'] as const).flatMap(mode => [
+    { mode, foreignOrigin: false }, { mode, foreignOrigin: true },
+  ]))('settles a second-opinion private draft through the real $mode approval decision (foreign origin: $foreignOrigin)', async ({ mode, foreignOrigin }) => {
+    let stored: ApprovalRequestV2 | null = null;
+    const accountCredentials = mode === 'plain' ? keyless : credentials;
+    const key = await createResourceDataKey({ credentials: accountCredentials, mode });
+    const crypto: SessionStoredContentCryptoContext = key.mode === 'plain' ? plain
+      : { mode: 'e2ee', ctx: { encryptionKey: key.dataKey, encryptionVariant: 'dataKey' } };
+    const transport = axiosRequest.getMockImplementation()!;
+    axiosRequest.mockImplementation(async request => {
+      if (request.url.endsWith('/encryption/currentness')) return { status: 200, data: currentness(mode) };
+      if (request.url.endsWith('/discussions/discussion-1')) return { status: 200,
+        data: { discussion: wireSummary(crypto, key.dataEncryptionKey) } };
+      if (request.url.endsWith('/participants')) return { status: 200, data: DiscussionParticipantsListResponseV1Schema.parse({
+        discussionId: 'discussion-1', ownerAccountId: 'account-1', access: 'owner', grants: [],
+        participants: [{ participant: { kind: 'session', sessionId: 'participant-session' },
+          answerPolicy: 'drafts_for_approval', createdAt: 1 }],
+      }) };
+      return transport(request);
+    });
+    axiosGet.mockResolvedValue({ status: 200, data: AccountProfileSchema.parse({ id: 'account-1' }) });
+    // Replace HTTP, persistence, host identity and Session publication boundaries;
+    // Action admission, origin currentness, transitions and replay stay real.
+    const postAgentMessage = vi.fn<NonNullable<Parameters<typeof createDiscussionActionDeps>[0]['postAgentMessage']>>(async raw => {
+      const request = DiscussionAgentPostRequestV1Schema.parse(raw);
+      return { v: 1, ok: true, value: { message: { ...wireMessage(crypto), content: request.request.content,
+        replyTarget: request.request.replyTarget, producerV1: { v: 1, kind: 'agent', sessionId: request.sessionId } }, messageSeq: 1 } };
+    });
+    const executor = createActionExecutor({ discussionAction: action({ credentials: accountCredentials, postAgentMessage }),
+      sessionSendMessage: async ({ localId }) => ({ status: 'accepted', localId }),
+      approvalsCreate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(request); return { artifactId: 'private-draft' }; },
+      approvalsGet: async () => stored,
+      approvalsUpdate: async ({ request }) => {
+        if (!stored) throw new Error('Missing draft');
+        const transition = decideApprovalRequestTransition(stored, request);
+        if (!transition.ok) return transition;
+        stored = ApprovalRequestV2Schema.parse(request);
+        return { ok: true };
+      },
+      isApprovalExecutionOriginCurrent: createDaemonApprovalExecutionOriginCurrentness({
+        accountId: 'account-1', machineId: 'machine-1', serverId: 'server-1',
+        resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: 'srv_home', machineId: 'machine-1' }),
+        resolveTarget: createDaemonExternalActionTargetResolver({ credentials: accountCredentials }),
+        isAccountCurrent: async () => (await fetchAccountProfile({ token: accountCredentials.token })).id === 'account-1',
+        listAccountApiTokens: async () => ({ tokens: [] }),
+        resolveCurrentSessionAgentSpawnPolicyV1: async () => accountSettingsParse({}).sessionAgentSpawnPolicyV1,
+      }),
+    });
+    const draft = { discussionId: 'discussion-1', localId: deriveSessionMessageReplyReturnLocalIdV1({
+      sessionId: 'participant-session', localId: 'question-input', acceptedTurnId: 'question-turn' }),
+      content: { v: 1, parts: [{ t: 'text', text: 'OPINION_READY' }] },
+      replyTarget: { kind: 'message', messageId: 'question-message' } };
+    expect(await executor.execute('discussion.reply', draft, { serverId: 'server-1', serverIdentityId: 'srv_home',
+      runtimeAccountId: 'account-1', surface: 'agent', authority: 'account_automation', actionRequestId: draft.localId,
+      defaultSessionId: 'participant-session', defaultSessionMachineId: 'machine-1',
+      externalActionTarget: { kind: 'machine', machineId: 'machine-1' },
+      sessionInputSource: { sourceSessionId: 'participant-session', sourceInputId: 'question-input', sourceTurnId: 'question-turn', via: 'action',
+        discussionAddressing: { discussionId: draft.discussionId, messageId: draft.replyTarget.messageId, throughSeq: 1,
+          participantSessionId: 'participant-session' } },
+      actionCaller: { kind: 'session', sessionId: 'participant-session', starterDepth: 0, turnDepth: 0 } }))
+      .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    expect(stored).toMatchObject({ status: 'open', discussionDraftReview: true });
+    expect(postAgentMessage).not.toHaveBeenCalled();
+    if (foreignOrigin) {
+      const original = ApprovalRequestV2Schema.parse(stored);
+      stored = ApprovalRequestV2Schema.parse({ ...original, executionOriginV1: { ...original.executionOriginV1, accountId: 'foreign-account' } });
+    }
+    const decision = await executor.execute('approval.request.decide', { artifactId: 'private-draft', decision: 'approve' },
+      { surface: 'ui', authority: 'present_user', serverId: 'server-1', serverIdentityId: 'srv_home', runtimeAccountId: 'account-1' });
+    if (foreignOrigin) {
+      expect(decision).toMatchObject({ ok: false, errorCode: 'approval_stale' });
+      expect(postAgentMessage).not.toHaveBeenCalled();
+      return;
+    }
+    expect(decision, JSON.stringify(decision))
+      .toMatchObject({ ok: true, result: { status: 'executed' } });
+    expect(stored).toMatchObject({ status: 'executed', execution: { ok: true } });
+    expect(postAgentMessage.mock.calls[0]?.[0]).toMatchObject({ sessionId: 'participant-session', discussionId: draft.discussionId,
+      request: { localId: draft.localId, replyTarget: draft.replyTarget } });
+    expect(axiosRequest.mock.calls.some(([request]) => request.method === 'POST')).toBe(false);
+  });
+
   it.each([undefined, 'approval'])('publishes a reviewed Discussion with optional Artifact %s', async artifactId => {
     let transportIssues: readonly Readonly<{ code: string; path: readonly PropertyKey[] }>[] = [];
     const postAgentMessage: NonNullable<Parameters<typeof createDiscussionActionDeps>[0]['postAgentMessage']> = async (request, options) => {
@@ -1620,6 +1707,7 @@ describe('Home Discussion resource transport', () => {
     const result = await action({ postAgentMessage })({ actionId: 'discussion.post',
       input: { discussionId: 'discussion-1', localId: 'post-1', content },
       context: { serverId: 'server-1', surface: 'agent', authority: 'account_automation', defaultSessionId: 'participant-session',
+        approvalOrigin: null,
         approvedActionReplay: { ...(artifactId ? { artifactId } : {}), origin: { surface: 'agent',
           caller: { kind: 'session', sessionId: 'participant-session', starterDepth: 0, turnDepth: 0 } } } } });
     expect(transportIssues).toEqual([]);

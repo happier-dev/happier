@@ -257,7 +257,8 @@ export function createDiscussionActionDeps(options: Readonly<{
       if (context.defaultSessionId !== undefined && context.defaultSessionId !== admittedSessionId) {
         return failure('discussion_action_session_mismatch');
       }
-      if (context.approvalOrigin !== undefined) {
+      // A reviewed draft without a tool call replays with an explicit null origin.
+      if (context.approvalOrigin !== undefined && context.approvalOrigin !== null) {
         if (!origin.success) return failure('discussion_action_approval_origin_invalid');
         if (origin.data.sessionId !== admittedSessionId) return failure('discussion_action_approval_session_mismatch');
       }
