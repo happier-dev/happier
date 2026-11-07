@@ -18,11 +18,38 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', a
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 installDisconnectedServerSocketBoundary();
+// Load the cold module graph after boundary installation, before per-test
+// lifecycle hooks. Each test still resets its Home and rebinds the real bridge.
+await loadSyncSingletonForTests();
 
 beforeEach(async () => { await homes.reset(); await loadSyncSingletonForTests(); rpc.machine.mockReset(); });
 afterEach(async () => { vi.useRealTimers(); await homes.reset(); });
 
 describe('Storage receipt through the captured UI Action Home', () => {
+    it.each(['EACCES', 'EPERM', 'carried cause wins', 'returned Action failure'] as const)(
+        'preserves the observed legacy daemon %s cause through the real UI Action and permission remedy', async variant => {
+            const serverId = await homes.addHome({ name: 'Storage Home', serverUrl: 'https://legacy-storage-cause.test', accountId: 'owner', currentAccount: true });
+            // Live old dd5 summary reply on #76: live-rows-post76-argv.jsonl,
+            // 2026-11-06T13:26:48Z. Only the Machine network reply is replaced.
+            const legacyCause = { phase: 'dispatch', errorClass: 'Error', errorCode: variant === 'EPERM' ? 'EPERM' : 'EACCES', httpStatus: null };
+            const carriedCause = { phase: 'rpc.handler', errorClass: 'Error', errorCode: 'EPERM', httpStatus: null };
+            const cause = variant === 'carried cause wins' ? carriedCause : legacyCause;
+            rpc.machine.mockResolvedValue({ error: 'Permission denied /private/storage', errorCode: 'action_failed',
+                details: { kind: 'actionException', ...legacyCause },
+                ...(variant === 'returned Action failure' ? { ok: false } : {}),
+                ...(variant === 'carried cause wins' ? { failureCause: carriedCause } : {}) });
+            const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+            const result = await createDefaultActionExecutor().execute('machines.storage.summary.get', { machineId: 'machine' },
+                { surface: 'ui', serverId, expectedAccountId: 'owner' });
+            expect(result).toMatchObject({ ok: false, errorCode: 'action_failed', failureCause: cause });
+            const client = await fetchMachineStorageSummaryViaAction({ serverId, expectedAccountId: 'owner', machineId: 'machine' });
+            expect(client).toMatchObject({ ok: false, reason: 'permission_denied', errorCode: 'action_failed', failureCause: cause });
+            expect(JSON.stringify(client)).not.toContain('/private/storage');
+            if (client.ok) throw new Error('Expected the typed permission refusal');
+            const { describeStorageFailure } = await import('@/components/machines/storage/storageViewModel');
+            expect(describeStorageFailure(client).reason).toMatch(/permission.*try again/i);
+        });
+
     it('keeps a qualified UI terminal read on its terminal RPC rather than original daemon admission', async () => {
         const serverId = await homes.addHome({ name: 'Terminal Home', serverUrl: 'https://terminal-home-wire.test', accountId: 'owner', currentAccount: true });
         homes.answer(serverId, 'POST /v1/machines/read-batch', { body: { results: [{ machineId: 'terminal-machine', status: 'found',

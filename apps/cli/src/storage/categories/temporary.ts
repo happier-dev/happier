@@ -25,7 +25,13 @@ export async function temporaryCanGo(path: string, context: StorageCategoryConte
     // Only direct legacy happier-* directories have the pre-boot cleanup contract. A modern
     // missing/broken marker is unavailable ownership, not evidence that its process exited.
     const bootedAt = context.deps.bootedAt;
-    if (!legacy || bootedAt === undefined || await exists(getHappierTempDirOwnerPath(path))) return check;
+    if (!legacy || bootedAt === undefined) return check;
+    let markerUnavailable = false;
+    const markerExists = await exists(getHappierTempDirOwnerPath(path), () => {
+        markerUnavailable = true;
+        unavailableDirectory(context, 'temporary')(path);
+    });
+    if (markerExists || markerUnavailable) return check;
     const uid = process.getuid?.();
     const legacyStat = await listedEntryStat(path, unavailableDirectory(context, 'temporary'));
     // The OS prefix cannot prove another user's custody. Legacy Windows paths have no
@@ -41,7 +47,7 @@ export async function temporaryCanGo(path: string, context: StorageCategoryConte
 export const temporary: StorageCategoryDefinition = {
     ...filesystemCategoryAdapters,
     id: 'temporary',
-    roots: context => [getHappierTempRoot(context.deps.tempRoot), ...scopedRoots(context),
+    roots: context => [getHappierTempRoot(context.deps.tempRoot), ...scopedRoots(context), join(context.deps.happyHomeDir, 'tools'),
         ...(context.deps.installDir ? [join(context.deps.installDir, '.tmp')] : [])],
     async items(context) {
         const result = [];
@@ -49,13 +55,13 @@ export const temporary: StorageCategoryDefinition = {
         const markedRoot = getHappierTempRoot(tempParent);
         const denied = unavailableDirectory(context, 'temporary');
         // An unavailable OS temp listing never turns the unowned OS parent into a storage item.
-        const legacy = (await entries(tempParent, () => denied(markedRoot))).filter(path => basename(path).startsWith('happier-') && path !== markedRoot);
-        const candidates = [...await entries(markedRoot, denied), ...legacy];
+        const legacy = (await entries(tempParent, () => denied(markedRoot), context.discoveryPaths)).filter(path => basename(path).startsWith('happier-') && path !== markedRoot);
+        const candidates = [...await entries(markedRoot, denied, context.discoveryPaths), ...legacy];
         const scratchRoots = [...(context.deps.installDir ? [join(context.deps.installDir, '.tmp')] : []),
-            ...(await directoriesAtDepth(join(context.deps.happyHomeDir, 'tools'), 1, denied)).map(tool => join(tool, '.tmp'))];
+            ...(await directoriesAtDepth(join(context.deps.happyHomeDir, 'tools'), 1, denied, context.discoveryPaths)).map(tool => join(tool, '.tmp'))];
         for (const scratchRoot of [...new Set(scratchRoots)]) {
-            candidates.push(...await entries(getHappierTempRoot(scratchRoot), denied),
-                ...(await entries(scratchRoot, denied)).filter(path => path !== getHappierTempRoot(scratchRoot)));
+            candidates.push(...await entries(getHappierTempRoot(scratchRoot), denied, context.discoveryPaths),
+                ...(await entries(scratchRoot, denied, context.discoveryPaths)).filter(path => path !== getHappierTempRoot(scratchRoot)));
         }
         // Independent sibling metadata must not pay a scan-ingestion turn for
         // every directory. Preserve listing order after the reads settle.
@@ -68,9 +74,9 @@ export const temporary: StorageCategoryDefinition = {
         result.push(...listed.filter(item => item !== null));
         const facts = new Map(context.temporaryFacts.map(fact => [fact.path, fact.state]));
         for (const root of scopedRoots(context)) {
-            let paths = await entries(root, denied);
-            if (basename(root) === 'composer-media-stages') paths = (await Promise.all(paths.map(path => directoriesAtDepth(path, 1, denied)))).flat();
-            if (basename(root) === 'scm') paths = (await Promise.all(paths.map(path => entries(path, denied)))).flat();
+            let paths = await entries(root, denied, context.discoveryPaths);
+            if (basename(root) === 'composer-media-stages') paths = (await Promise.all(paths.map(path => directoriesAtDepth(path, 1, denied, context.discoveryPaths)))).flat();
+            if (basename(root) === 'scm') paths = (await Promise.all(paths.map(path => entries(path, denied, context.discoveryPaths)))).flat();
             for (const path of paths) {
                 const state = facts.get(path);
                 result.push(item('temporary', path, state === 'in_use' || isInUse(path, context) ? inUse

@@ -51,6 +51,7 @@ import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
 import { useMachineResourcesPolicy } from '@/sync/domains/machines/resources/useMachineResourcesPolicy';
 import { StorageScanStartNotice } from '@/components/machines/storage/StorageScanStartNotice';
+import { StorageReadNotice } from './StorageReadNotice';
 import { useMachineStorageScan } from '@/sync/domains/machines/storage/useMachineStorageScan';
 import { useMachineStorageSummary } from '@/sync/domains/machines/storage/useMachineStorageSummary';
 import { getPreferredLanguage, t } from '@/text';
@@ -240,8 +241,15 @@ export const StorageWholeDiskView = React.memo(function StorageWholeDiskView(
     ...target,
     ...(scan ? { scanId: scan.scanId, view } : {}),
   });
+  const readNotice = <StorageReadNotice issues={[...(props.summary.incomplete ?? []), ...(scanState.page?.incomplete ?? [])]}
+    onRetry={scanState.retry} />;
   const collect = useStorageCollect({ ...target, readOnly: props.offline });
   const [starting, setStarting] = React.useState(false);
+  // The address as it is when the start is acknowledged, not as it was when the person pressed the control.
+  const paramsRef = React.useRef(props.params);
+  paramsRef.current = props.params;
+  const setParamsRef = React.useRef(props.setParams);
+  setParamsRef.current = props.setParams;
   const setPolicy = policy.set;
   const startScan = React.useCallback(
     (
@@ -262,11 +270,20 @@ export const StorageWholeDiskView = React.memo(function StorageWholeDiskView(
               return;
             }
           }
-          await scanState.start({
+          const started = await scanState.start({
             target: request,
             ...(resume ? { resume: true } : {}),
           });
           setStarting(false);
+          // A different target is a different scan: the page's address (opened folder, file list, explicit
+          // volume) belongs to the scan being left, so it returns to the new scan's root. Resume continues
+          // the same scan and a refused start changes nothing.
+          if (started.ok && !resume) {
+            const address = paramsRef.current;
+            if (address.nodeId || address.files || address.volumeId) {
+              setParamsRef.current({ ...address, nodeId: undefined, files: undefined, volumeId: undefined });
+            }
+          }
         })(),
         { tag: 'StorageWholeDisk.start' },
       );
@@ -311,6 +328,7 @@ export const StorageWholeDiskView = React.memo(function StorageWholeDiskView(
   if (!scan || (!enabled && scan.status !== 'complete')) {
     return (
       <View testID="machine-storage-disk-never">
+        {readNotice}
         {props.sentence}
         {props.offline ? (
           // Offline: nothing can start a scan, so the page says why in the invite's place, and nothing else.
@@ -383,6 +401,33 @@ export const StorageWholeDiskView = React.memo(function StorageWholeDiskView(
       </View>
     );
   }
+  const rootRefusal = scan.status === 'failed'
+    ? scan.unreadable.examples.find(example =>
+        scanState.page?.coverage.some(coverage => !coverage.complete && coverage.path === example.path))?.reason
+    : undefined;
+  if (rootRefusal === 'read_only_filesystem' || rootRefusal === 'pseudo_or_cloud_filesystem') {
+    return (
+      <View testID="machine-storage-disk" onLayout={layout.onLayout}>
+        {readNotice}
+        <ItemGroup>
+          <SurfaceStateCard
+            testID="machine-storage-disk-root-unavailable"
+            kind="unavailable"
+            title={t('machineStorage.disk.startFailed.title')}
+            reason={rootRefusal === 'read_only_filesystem'
+              ? t('machineStorage.disk.readOnlyRoot')
+              : t('machineStorage.disk.systemRoot')}
+            action={props.offline ? undefined : {
+              label: t('machineStorage.disk.chooseFolder'),
+              onPress: chooseFolder,
+              testID: 'machine-storage-disk-folder',
+            }}
+          />
+          {startNotice}
+        </ItemGroup>
+      </View>
+    );
+  }
   const running = scan.status === 'running';
   const stopped =
     scan.status === 'failed' ||
@@ -407,6 +452,7 @@ export const StorageWholeDiskView = React.memo(function StorageWholeDiskView(
     scan.unreadable.counts.permission + scan.unreadable.counts.os_private;
   return (
     <View testID="machine-storage-disk" onLayout={layout.onLayout}>
+      {readNotice}
       <StorageSaySection
         testID="machine-storage-disk-sentence"
         lead={volume ? t('machineStorage.sentence.free', { free: formatMachineBytes(volume.freeBytes, 'storage') }) : null}
@@ -423,7 +469,9 @@ export const StorageWholeDiskView = React.memo(function StorageWholeDiskView(
                   sized: formatMachineBytes(scan.progress.sizedBytes, 'storage'),
                 })
             : stopped
-              ? t('machineStorage.disk.stoppedSentence')
+              ? 'folderPath' in scan.target
+                ? t('machineStorage.disk.stoppedSentenceFolder', { target: targetName })
+                : t('machineStorage.disk.stoppedSentence')
               : unreadable > 0
                 ? t('machineStorage.disk.unreadableSentence', {
                     count: unreadable,
@@ -441,7 +489,8 @@ export const StorageWholeDiskView = React.memo(function StorageWholeDiskView(
         ].filter(Boolean).join(' ')}
       />
       {volume ? (
-        <ItemGroup header="none">
+        // Its own section like the Happier view's disk: the sentence, the disk and the scan's progress each keep the page's gap.
+        <ItemGroup>
           <StorageVolumeRow volume={volume} compact={layout.compact} />
         </ItemGroup>
       ) : null}
@@ -477,9 +526,9 @@ export const StorageWholeDiskView = React.memo(function StorageWholeDiskView(
                   })
                 : t('machineStorage.disk.stoppedTitleOpen')
             }
-            reason={t('machineStorage.disk.stoppedBody', {
-              sized: formatMachineBytes(scan.progress.sizedBytes, 'storage'),
-            })}
+            reason={scan.progress.sizedBytes > 0
+              ? t('machineStorage.disk.stoppedBody', { sized: formatMachineBytes(scan.progress.sizedBytes, 'storage') })
+              : t('machineStorage.disk.stoppedBodyNone')}
             action={
               props.offline
                 ? undefined
@@ -643,11 +692,26 @@ export const StorageWholeDiskView = React.memo(function StorageWholeDiskView(
           loading={scanState.scanStatus === 'loading' && !scanState.page}
           {...(root ? { expectedRows: root.childCount } : {})}
           reading={reading}
+          // A failed read, or one the Machine answered without the listed scan, is not an empty folder: it says so
+          // and offers the read again.
+          {...(scanState.scanStatus === 'error' || (scanState.page && !scanState.page.state) ? { onRetryRead: scanState.retry } : {})}
           previousScanAt={scan.previousScanAt ?? null}
           onOpen={open}
           machineName={props.machineName}
         />
       </ItemGroup>
+      {props.offline ? null : (
+        <ScanFolderShortcuts
+          serverId={props.serverId}
+          machineId={props.machineId}
+          homeDir={facts.homeDir}
+          shortcuts={props.summary.scanShortcuts}
+          disabled={starting || running}
+          waiting={running}
+          onScan={(folderPath) => startScan({ folderPath })}
+          onChoose={chooseFolder}
+        />
+      )}
       <StoragePileDock
         serverId={props.serverId}
         machineId={props.machineId}
@@ -682,7 +746,7 @@ function ScanProgress(
       : null;
   return (
     <>
-      <ItemGroup header="none">
+      <ItemGroup>
         <View
           testID="machine-storage-disk-progress"
           style={styles.progress}
@@ -1126,6 +1190,13 @@ function ScanFolderShortcuts(
     shortcuts: StorageSummary['scanShortcuts'];
     disabled: boolean;
     onScan: (folderPath: string) => void;
+    /**
+     * A page that already holds a scan has no invitation card to carry "Choose a folder…", so the group leads
+     * with it and names itself for what it now is: another folder, not the first one.
+     */
+    onChoose?: () => void;
+    /** The machine runs one scan at a time: while one runs the rows stay in place, off, and the group says why. */
+    waiting?: boolean;
   }>,
 ) {
   usePreferredLanguage();
@@ -1139,12 +1210,23 @@ function ScanFolderShortcuts(
     }
     return out;
   }, [props.homeDir, props.shortcuts]);
-  if (places.length === 0) return null;
+  if (places.length === 0 && !props.onChoose) return null;
   return (
     <ItemGroup
-      title={t('machineStorage.disk.shortcutsTitle')}
-      description={t('machineStorage.disk.shortcutsNote')}
+      title={t(props.onChoose ? 'machineStorage.disk.scanAnotherTitle' : 'machineStorage.disk.shortcutsTitle')}
+      description={t(props.waiting ? 'machineStorage.disk.scanAnotherWaiting' : 'machineStorage.disk.shortcutsNote')}
     >
+      {props.onChoose ? (
+        <Item
+          testID="machine-storage-disk-folder"
+          icon={<Icon name="folder-open" />}
+          title={t('machineStorage.disk.chooseFolder')}
+          disabled={props.disabled}
+          onPress={props.onChoose}
+          showChevron={false}
+          showDivider={places.length > 0}
+        />
+      ) : null}
       {places.map((place, index) => (
         <Item
           key={place.path}
@@ -1184,6 +1266,8 @@ function DiskList(
     /** The open folder's known child count: its loading rows reserve that many. */
     expectedRows?: number;
     reading: boolean;
+    /** Set when the level's read failed: its empty state is the failure and this retry, never "Nothing here.". */
+    onRetryRead?: () => void;
     previousScanAt: number | null;
     onOpen: (nodeId: string) => void;
     machineName: string;
@@ -1451,6 +1535,14 @@ function DiskList(
               kind="loading"
               size="line"
               title={t('common.loading')}
+            />
+          ) : props.onRetryRead ? (
+            <SurfaceStateCard
+              testID="machine-storage-disk-list-unreadable"
+              kind="error"
+              size="line"
+              title={t('machineStorage.disk.levelUnreadable')}
+              action={{ label: t('machineStorage.tryAgain'), onPress: props.onRetryRead }}
             />
           ) : (
             <SurfaceStateCard

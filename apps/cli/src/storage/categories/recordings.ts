@@ -1,4 +1,4 @@
-import { exists, inUse, item } from './filesystem';
+import { exists, inUse, item, isCategoryPathInScope, unavailableDirectory } from './filesystem';
 import { z } from 'zod/mini';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -31,7 +31,8 @@ export const recordings: StorageCategoryDefinition = {
     id: 'recordings', roots: context => context.recordings.map(recording => recording.path),
     async items(context) {
         const result = [];
-        for (const recording of context.recordings) if (await exists(recording.path)) result.push(item('recordings', recording.path,
+        for (const recording of context.recordings) if (await isCategoryPathInScope(recording.path, context.discoveryPaths)
+            && await exists(recording.path, unavailableDirectory(context, 'recordings'))) result.push(item('recordings', recording.path,
             recording.active ? inUse : { verdict: 'caution', reason: { code: 'not_rebuildable' }, collectable: true, loses: [{ code: 'not_rebuildable' }] },
             { title: recording.title ?? recording.recordingId, evidence: ['browser_recording_owner',
                 ...(recording.expiresAtMs !== undefined && recording.expiresAtMs <= context.now ? ['recording_expired'] satisfies StorageCategoryItem['evidence'] : [])] }));

@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile, utimes, chmod, realpath } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile, utimes, chmod, realpath, symlink } from 'node:fs/promises';
 import * as filesystem from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -19,6 +19,7 @@ import { readStorageWorktrees } from '@/daemon/resources/readStorageWorktrees';
 import { managedAcpInstallId } from '@happier-dev/cli-common/agents';
 import { createDaemonEventLoopStallMonitor } from '@/daemon/diagnostics/daemonEventLoopStallMonitor';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { MachineStoragePolicyV1Schema } from '@happier-dev/protocol/storage/storageV1';
 
 // The real filesystem remains underneath; only one test projects an OS ownership fact.
 vi.mock('node:fs/promises', async importOriginal => {
@@ -39,6 +40,197 @@ async function fixture() {
 }
 
 describe('Happier storage category catalog', () => {
+    it.each(['sessionFolders', 'temporary'] as const)('keeps readable %s siblings and Check when an ownership probe is denied', async categoryId => {
+        const f = await fixture();
+        const owner = createManagedSessionDirectories({ activeServerDir: f.activeServerDir });
+        const first = categoryId === 'sessionFolders' ? await owner.materializeForFreshSpawn({ sessionCreationTag: 'denied' }) : undefined;
+        const second = categoryId === 'sessionFolders' ? await owner.materializeForFreshSpawn({ sessionCreationTag: 'readable' }) : undefined;
+        const denied = first?.directory ?? await f.add(join(f.tempRoot, 'happier-denied'));
+        const readable = second?.directory ?? await f.add(join(f.tempRoot, 'happier-readable'));
+        const blocked = categoryId === 'sessionFolders' ? denied : getHappierTempDirOwnerPath(denied);
+        const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+        const boundary = vi.mocked(filesystem.lstat).mockImplementation(async (...args) => {
+            if (String(args[0]) === blocked) throw Object.assign(new Error('Denied ownership probe'), { code: 'EACCES' });
+            return actual.lstat(...args);
+        });
+        try {
+            const snapshot = await createStorageCategoryCatalog({ ...f, managedSessionDirectories: owner,
+                bootedAt: Date.now() + 1_000 }).discoverSnapshot();
+            expect(snapshot.items.find(item => item.path === readable)).toMatchObject({ categoryId });
+            expect(snapshot.items.find(item => item.path === denied)).toMatchObject({ categoryId, verdict: 'check', collectable: false });
+            expect(snapshot.incomplete).toContainEqual({ categoryId, reason: 'permission_denied',
+                remedy: 'grant_admin_access_or_run_as_machine_owner' });
+        } finally { boundary.mockImplementation(actual.lstat); }
+    });
+    it('keeps readable recordings and denied ancestry protection when one recording is unreadable', async () => {
+        const f = await fixture();
+        const parent = join(f.happyHomeDir, 'cache', 'recording-archive');
+        const denied = await f.add(join(parent, 'denied'));
+        const readable = await f.add(join(parent, 'readable'));
+        const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+        // Only the OS read is denied; category discovery and descendant
+        // protection remain the real catalog used by read and effect callers.
+        const boundary = vi.mocked(filesystem.lstat).mockImplementation(async (...args) => {
+            if (String(args[0]) === denied) throw Object.assign(new Error('Denied recording'), { code: 'EACCES' });
+            return actual.lstat(...args);
+        });
+        try {
+            const snapshot = await createStorageCategoryCatalog({ ...f, readRecordings: () => [
+                { recordingId: 'denied', path: denied, active: false },
+                { recordingId: 'readable', path: readable, active: false },
+            ] }).discoverSnapshot();
+            expect(snapshot.items.find(item => item.path === parent)).toMatchObject({ verdict: 'check', collectable: false });
+            expect(snapshot.items.find(item => item.path === readable)).toMatchObject({ categoryId: 'recordings',
+                evidence: ['browser_recording_owner'], verdict: 'caution' });
+            expect(snapshot.items.find(item => item.path === denied)).toMatchObject({ categoryId: 'recordings',
+                verdict: 'check', collectable: false, evidence: ['directory_permission_unavailable'] });
+            expect(snapshot.incomplete).toEqual([{ categoryId: 'recordings', reason: 'permission_denied',
+                remedy: 'grant_admin_access_or_run_as_machine_owner' }]);
+        } finally { boundary.mockImplementation(actual.lstat); }
+    });
+    it('keeps unavailable SCM supplementation explicit when path-use facts are absent', async () => {
+        const f = await fixture();
+        const candidate = await f.add(join(f.root, 'unavailable-scm'));
+        const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+        const boundary = vi.mocked(filesystem.lstat).mockImplementation(async (...args) => {
+            if (String(args[0]) === join(candidate, '.git')) throw Object.assign(new Error('Denied'), { code: 'EACCES' });
+            return actual.lstat(...args);
+        });
+        try {
+            const items = await createStorageCategoryCatalog(f).discover([candidate], []);
+            expect(items.find(item => item.path === candidate)).toMatchObject({ categoryId: 'worktrees', verdict: 'check', collectable: false });
+        } finally { boundary.mockImplementation(actual.lstat); }
+    });
+    it('keeps retained descendant facts unchanged when supplementing unrelated SCM paths', async () => {
+        const f = await fixture();
+        const parent = join(f.root, '.dev', 'worktree', 'parent');
+        const nested = await f.add(join(parent, 'nested'));
+        const candidates = await Promise.all(['first-checkout', 'second-checkout'].map(name => f.add(join(f.root, name))));
+        const catalog = createStorageCategoryCatalog({ ...f, scmRegistry: createScmBackendRegistry([]),
+            readProjects: () => ({ status: 'ready', projects: [{ repositoryRoot: f.root }] }),
+            readInUsePaths: () => ({ reliable: true, paths: [] }),
+            readWorktrees: () => [{ path: parent, repositoryRoot: f.root, pullRequestState: null,
+                facts: { path: parent, changeCount: 0, ahead: 0, upstream: 'origin/main', upstreamGone: false,
+                    mergedIntoDefault: true, headOid: '123456' } }, { path: nested, repositoryRoot: f.root }],
+        });
+        let current = await catalog.discover();
+        const retained = current.find(item => item.path === parent)!;
+        expect(retained.loses?.filter(reason => reason.code === 'facts_unavailable')).toHaveLength(1);
+        const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+        const boundary = vi.mocked(filesystem.lstat).mockImplementation(async (...args) => {
+            if (candidates.some(candidate => String(args[0]) === join(candidate, '.git')))
+                throw Object.assign(new Error('Denied'), { code: 'EACCES' });
+            return actual.lstat(...args);
+        });
+        try {
+            for (const candidate of candidates) {
+                current = await catalog.discover([candidate], current);
+                expect(current.find(item => item.path === candidate)).toMatchObject({ categoryId: 'worktrees', verdict: 'check' });
+                const projected = current.find(item => item.path === parent)!;
+                expect(projected.loses?.filter(reason => reason.code === 'facts_unavailable')).toHaveLength(1);
+                expect(projected).toEqual(retained);
+            }
+        } finally { boundary.mockImplementation(actual.lstat); }
+    });
+    it('preserves live managed-tool temporary facts on a page without walking unrelated tools or logs', async () => {
+        const f = await fixture();
+        const tool = await f.add(join(f.happyHomeDir, 'tools', 'selected'));
+        const unrelated = await f.add(join(f.happyHomeDir, 'tools', 'unrelated'));
+        const live = createHappierTempDir({ root: join(tool, '.tmp'), purpose: 'storage-page' });
+        createHappierTempDir({ root: join(unrelated, '.tmp'), purpose: 'unrelated' });
+        const logs = await f.add(join(f.happyHomeDir, 'logs'));
+        const catalog = createStorageCategoryCatalog({ ...f, readProjects: () => ({ status: 'ready', projects: [] }),
+            readInUsePaths: () => ({ reliable: true, paths: [] }) });
+        const full = await catalog.discover();
+        expect(full.find(item => item.path === live)).toMatchObject({ categoryId: 'temporary', verdict: 'keep', reason: { code: 'in_use' } });
+        expect(full.find(item => item.path === tool)).toMatchObject({ verdict: 'keep', loses: [{ code: 'in_use' }] });
+        const directory = vi.spyOn(filesystem, 'readdir');
+        try {
+            const page = await catalog.discoverPage([tool], { reliable: true, paths: [] });
+            expect(page.find(item => item.path === live)).toEqual(full.find(item => item.path === live));
+            expect(page.find(item => item.path === tool)).toEqual(full.find(item => item.path === tool));
+            expect(directory.mock.calls.filter(([path]) => String(path) === logs || String(path).startsWith(unrelated))).toHaveLength(0);
+            directory.mockClear();
+            await catalog.discoverPage([join(logs, 'bytes')], { reliable: true, paths: [] });
+            expect(directory.mock.calls).toHaveLength(0);
+        } finally { directory.mockRestore(); }
+    });
+    it('retains encountered SCM ownership for a page inside a checkout outside the managed worktree parent', async () => {
+        const f = await fixture();
+        const repository = await f.add(join(f.root, 'external-checkout'));
+        await mkdir(join(repository, '.git'));
+        const selected = await f.add(join(repository, 'selected'));
+        const catalog = createStorageCategoryCatalog({ ...f, scmRegistry: createScmBackendRegistry([]),
+            readProjects: () => ({ status: 'ready', projects: [{ repositoryRoot: repository }] }),
+            readInUsePaths: () => ({ reliable: true, paths: [] }) });
+        const full = await catalog.discover([repository]);
+        expect(full.find(item => item.path === repository)).toMatchObject({ categoryId: 'worktrees', verdict: 'check' });
+        const page = await catalog.discoverPage([selected], { reliable: true, paths: [] });
+        expect(page.find(item => item.path === repository)).toEqual(full.find(item => item.path === repository));
+    });
+    it.skipIf(process.platform === 'win32')('matches physical scan paths to category roots reached through a symlink', async () => {
+        const f = await fixture();
+        const selected = await f.add(join(f.happyHomeDir, 'cache', 'selected'));
+        const alias = join(f.root, 'home-alias'); await symlink(f.happyHomeDir, alias, 'dir');
+        const recording = join(selected, 'bytes');
+        const catalog = createStorageCategoryCatalog({ ...f, happyHomeDir: alias,
+            readRecordings: async () => [{ recordingId: 'recording', path: join(alias, 'cache', 'selected', 'bytes'), active: true }],
+            readProjects: () => ({ status: 'ready', projects: [] }), readInUsePaths: () => ({ reliable: true, paths: [] }) });
+        const page = await catalog.discoverPage([selected], { reliable: true, paths: [] });
+        expect(page.find(item => item.path === selected)).toMatchObject({ categoryId: 'caches', verdict: 'keep', reason: { code: 'contains' } });
+        expect(page.find(item => item.path === recording)).toMatchObject({ categoryId: 'recordings', verdict: 'keep', reason: { code: 'in_use' } });
+    });
+    it('reads one owned log beside a thousand retained siblings without listing the inventory', async () => {
+        const f = await fixture();
+        const logs = join(f.happyHomeDir, 'logs'); await mkdir(logs);
+        const selected = join(logs, 'selected.log');
+        await Promise.all([writeFile(selected, 'selected'), ...Array.from({ length: 1000 }, (_, index) =>
+            writeFile(join(logs, `unrelated-${index}.log`), 'retained'))]);
+        const catalog = createStorageCategoryCatalog({ ...f, now: () => 1,
+            readProjects: () => ({ status: 'ready', projects: [] }), readInUsePaths: () => ({ reliable: true, paths: [] }) });
+        const baseline = (await catalog.discover()).find(item => item.path === selected);
+        expect(baseline).toMatchObject({ categoryId: 'logs', verdict: 'keep', reason: { code: 'recent' } });
+        const directory = vi.spyOn(filesystem, 'readdir');
+        try {
+            const page = await catalog.discoverPage([selected], { reliable: true, paths: [] });
+            expect(page.find(item => item.path === selected)).toEqual(baseline);
+            expect(page.filter(item => item.categoryId === 'logs').map(item => item.path)).toEqual([selected]);
+            expect(directory.mock.calls).toHaveLength(0);
+            const held = await catalog.discoverPage([selected], { reliable: true, paths: [selected] });
+            expect(held.find(item => item.path === selected)).toMatchObject({ verdict: 'keep', reason: { code: 'in_use' } });
+            expect(directory.mock.calls).toHaveLength(0);
+        } finally { directory.mockRestore(); }
+    });
+    it('derives old log suggestions from retention policy and keeps Forever and current logs', async () => {
+        const f = await fixture();
+        const now = 100 * 86_400_000;
+        const root = join(f.happyHomeDir, 'logs'); await mkdir(root);
+        const threshold = join(root, 'threshold.log');
+        const retained = join(root, 'retained.log');
+        const current = join(root, 'current.log');
+        for (const [path, ageDays] of [[threshold, 30], [retained, 20], [current, 60]] as const) {
+            await writeFile(path, 'log');
+            await utimes(path, (now - ageDays * 86_400_000) / 1000, (now - ageDays * 86_400_000) / 1000);
+        }
+        let policy = MachineStoragePolicyV1Schema.parse({ logRetentionDays: 30 });
+        const catalog = createStorageCategoryCatalog({ ...f, now: () => now,
+            readPolicy: () => policy, currentLogPaths: () => [current] });
+        const discoverLogs = async () => new Map((await catalog.discover()).filter(item => item.categoryId === 'logs')
+            .map(item => [item.path, item]));
+        const initial = await discoverLogs();
+        expect(initial.get(threshold)).toMatchObject({ verdict: 'safe', reason: { code: 'old' },
+            categoryGroup: { id: 'old', olderThanDays: 30 } });
+        expect(initial.get(retained)).toMatchObject({ verdict: 'keep', reason: { code: 'recent' }, categoryGroup: { id: 'recent' } });
+        expect(initial.get(current)).toMatchObject({ verdict: 'keep', reason: { code: 'in_use' } });
+        policy = MachineStoragePolicyV1Schema.parse({ logRetentionDays: 7 });
+        expect((await discoverLogs()).get(retained)).toMatchObject({ verdict: 'safe', reason: { code: 'old' },
+            categoryGroup: { id: 'old', olderThanDays: 7 } });
+        policy = MachineStoragePolicyV1Schema.parse({ logRetentionDays: null });
+        const forever = await discoverLogs();
+        expect(forever.get(threshold)).toMatchObject({ verdict: 'keep', reason: { code: 'recent' }, categoryGroup: { id: 'recent' } });
+        expect(forever.get(retained)).toMatchObject({ verdict: 'keep', reason: { code: 'recent' }, categoryGroup: { id: 'recent' } });
+        expect(forever.get(current)).toMatchObject({ verdict: 'keep', reason: { code: 'in_use' } });
+    });
     it('does not wait for legacy temporary descendants when the directory itself changed after boot', async () => {
         const f = await fixture();
         const legacy = await f.add(join(f.tempRoot, 'happier-running-scan'));
@@ -336,7 +528,7 @@ describe('Happier storage category catalog', () => {
         const now = 100 * 24 * 60 * 60 * 1000;
         const catalog = createStorageCategoryCatalog({ ...f, managedSessionDirectories: owner, now: () => now,
             readTrackedSessions: () => [{ sessionId: 'known', cwd, running: false, stoppedAt: 1 }],
-            readPolicy: () => ({ suggestUnusedAfterDays: 10 }) });
+            readPolicy: () => MachineStoragePolicyV1Schema.parse({ suggestUnusedAfterDays: 10 }) });
         const byPath = new Map((await catalog.discover()).map(item => [item.path, item]));
         expect(byPath.get(allocated.directory)).toMatchObject({ sessionId: 'known', verdict: 'caution', reason: { code: 'attachments_go' } });
         expect(byPath.get(knownUpload)).toMatchObject({ sessionId: 'known', verdict: 'caution' });
@@ -345,7 +537,7 @@ describe('Happier storage category catalog', () => {
         expect((await catalog.discover()).map(item => item.itemId)).toEqual([...byPath.values()].map(item => item.itemId));
         const recent = createStorageCategoryCatalog({ ...f, managedSessionDirectories: owner, now: () => now,
             readTrackedSessions: () => [{ sessionId: 'known', cwd, running: false, stoppedAt: now - 35 * 24 * 60 * 60 * 1000 }],
-            readPolicy: () => ({ suggestUnusedAfterDays: 40 }) });
+            readPolicy: () => MachineStoragePolicyV1Schema.parse({ suggestUnusedAfterDays: 40 }) });
         expect((await recent.discover()).find(item => item.path === knownUpload)).toMatchObject({ verdict: 'keep', reason: { code: 'recent' } });
     });
 

@@ -1,7 +1,7 @@
 import * as React from 'react';
 import type { DiskNodeV1, DiskScanViewV1, DiskScanStateV1, HappierStorageSummaryV1, MachineStorageScanGetResultV1 } from '@happier-dev/protocol/storage/storageV1';
 import type { MachineStorageReadInput, MachineStorageResult, MachineStorageScanStartInput } from './machineRpc';
-import { machineStorageStore, type MachineStorageScanState, type MachineStorageState } from './machineStorageStore';
+import { machineStorageStore, type MachineStorageScanStartFailure, type MachineStorageScanState, type MachineStorageState } from './machineStorageStore';
 import { selectStorageScan, selectStorageStatus, useMachineStorageDemand, useMachineStorageSelection, useMachineStorageTarget, type MachineStorageHookInput } from './useMachineStorage';
 
 export type MachineStorageScanHookInput = MachineStorageHookInput & Readonly<{ scanId?: string; view?: DiskScanViewV1 }>;
@@ -13,6 +13,8 @@ export type MachineStorageScanHookResult = Readonly<{
     scanStatus: MachineStorageScanState['status'];
     page: MachineStorageScanGetResultV1 | null;
     nodes: readonly DiskNodeV1[];
+    /** Why the last start did not happen, until the next attempt or a started scan. */
+    startFailure: MachineStorageScanStartFailure | null;
     start: (request: Omit<MachineStorageScanStartInput, keyof MachineStorageReadInput>) => Promise<MachineStorageResult<DiskScanStateV1>>;
     cancel: (scanId: string) => Promise<MachineStorageResult<DiskScanStateV1>>;
     skip: (scanId: string, path: string) => Promise<MachineStorageResult<DiskScanStateV1>>;
@@ -39,9 +41,12 @@ export function useMachineStorageScan(input: MachineStorageScanHookInput): Machi
         ? machineStorageStore.cancelScan({ ...key, scanId }) : Promise.resolve({ ok: false, reason: 'request_failed' }), [key, enabled]);
     const skip = React.useCallback<MachineStorageScanHookResult['skip']>((scanId, path) => enabled
         ? machineStorageStore.skipScan({ ...key, scanId, path }) : Promise.resolve({ ok: false, reason: 'request_failed' }), [key, enabled]);
+    const subscribeFailure = React.useCallback((listener: () => void) => machineStorageStore.observeScanStartFailure(key, listener), [key]);
+    const failureSnapshot = React.useCallback(() => machineStorageStore.getScanStartFailure(key), [key]);
+    const startFailure = React.useSyncExternalStore(subscribeFailure, failureSnapshot, failureSnapshot);
     const scanStatus = details.status;
     const page = details.page;
     const nodes = page?.nodes ?? EMPTY_NODES;
-    return React.useMemo(() => ({ status, wholeDisk, offline, retry, scanStatus, page, nodes, start, cancel, skip }),
-        [status, wholeDisk, offline, retry, scanStatus, page, nodes, start, cancel, skip]);
+    return React.useMemo(() => ({ status, wholeDisk, offline, retry, scanStatus, page, nodes, startFailure, start, cancel, skip }),
+        [status, wholeDisk, offline, retry, scanStatus, page, nodes, startFailure, start, cancel, skip]);
 }

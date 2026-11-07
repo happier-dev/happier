@@ -11,10 +11,11 @@ import type { NativeDiskScanRecord, NativeDiskScanSummary } from '../measure/nat
 import { dropScanRelations, scanDataTables, scanIndexSchema } from './scanIndexSchema';
 import { logger } from '@/ui/logger';
 import { directoryEvidence, installScanAggregation, reaggregateScan } from './scanIndexAggregation';
+import { prepareScanBaseline, retainsParentScanHistory, scanStateMatchesTarget } from './scanIndexHistory';
 
 export type StorageScanVolume = Readonly<{ id: string; mountPath: string; usedBytes: number; deviceId?: string; reservedBytes?: number; apfsContainerId?: string }>;
 export type ScanAdmission = Readonly<{ volumeId: string; root: string; target: DiskScanStateV1['target'];
-    usedBytes: number; reservedBytes?: number; apfsContainerId?: string; fullDiskAccess: DiskScanStateV1['fullDiskAccess']; resume?: boolean; relistOnly?: boolean }>;
+    usedBytes?: number; reservedBytes?: number; apfsContainerId?: string; fullDiskAccess: DiskScanStateV1['fullDiskAccess']; resume?: boolean; relistOnly?: boolean }>;
 export type TrustedDiskNode = Readonly<{ volumeId: string; scanId: string; path: string; pathBytes?: Buffer; node: DiskNodeV1; complete: boolean; materialized: boolean; summarized: boolean; scannedAt: number }>;
 const valueRow = z.object({ value: z.string() });
 const nodeRow = z.object({ id: z.string(), parent: z.nullable(z.string()), data: z.string() });
@@ -24,7 +25,6 @@ const completedFactsRow = z.object({ complete: z.number(), scanned: z.number(), 
 const pathRow = z.object({ path: z.string() });
 const referenceRow = z.object({ ref: z.number() });
 const positionedReferenceRow = z.object({ position: z.number(), ref: z.number() });
-const sqlRow = z.record(z.string(), z.unknown());
 type AllocationFact = NonNullable<Extract<NativeDiskScanRecord, { type: 'dir' }>['allocationFacts']>[number];
 const dataTables = scanDataTables;
 const schema = (namespace = '') => `
@@ -95,9 +95,18 @@ function readState(db: SqliteDatabaseSync): DiskScanStateV1 | null {
     const value = metadata(db, 'state');
     if (!value) return null;
     const state = StoredDiskScanStateV1Schema.parse(JSON.parse(value) as unknown);
-    // Also repair reads of stopped indexes written before termination counters
-    // were reconciled. No rescan or UI-side reconstruction is necessary.
-    if (state.status !== 'running') Object.assign(state.progress, retainedTargetProgress(db));
+    // Older local folder indexes used zero for an unknown denominator. Folder
+    // totals were never measured; normalize them here for every reader/resume.
+    // A measured whole-volume zero remains a real observation.
+    if ('folderPath' in state.target) delete state.progress.usedBytes;
+    // Committed entries can arrive before the helper's next progress heartbeat.
+    // The same indexed root that feeds the list establishes the minimum completed
+    // work for every reader. Stopped indexes use its reconciled total exactly.
+    const retained = retainedTargetProgress(db);
+    if (retained) Object.assign(state.progress, state.status === 'running' ? {
+        sizedBytes: Math.max(state.progress.sizedBytes, retained.sizedBytes),
+        items: Math.max(state.progress.items, retained.items),
+    } : retained);
     return state;
 }
 function migrateEnumeration(db: SqliteDatabaseSync, table = 'dirs', namespace = '') {
@@ -292,20 +301,11 @@ function reclaimScanSpace(db: SqliteDatabaseSync) {
     // invocations leave reusable space for ingestion; baselines stay intact.
     db.exec(`DELETE FROM paths WHERE ref NOT IN (SELECT ref FROM entries UNION SELECT parent FROM entries WHERE parent IS NOT NULL UNION SELECT owner FROM allocation_observations UNION SELECT path FROM allocation_observations); PRAGMA incremental_vacuum;`);
 }
-async function prepareScanAdmission(db: SqliteDatabaseSync, input: ScanAdmission, yieldRow: (row: unknown) => Promise<void>) {
-    if (metadata(db, 'completeState') && !metadata(db, 'baselineState')) {
-        for (const table of dataTables) db.exec(`DROP TABLE IF EXISTS baseline_${table}; CREATE TABLE baseline_${table} AS SELECT * FROM ${table} WHERE 0`);
-        // Build empty indexes before copying, so their maintenance is part of
-        // each row's work rather than a full retained-tree sort at the end.
-        db.exec(scanIndexSchema('', 'baseline_'));
-        for (const table of dataTables) {
-            const columns = db.prepare(`PRAGMA table_info(${table})`).all().map(value => z.object({ name: z.string() }).parse(value).name);
-            const insert = db.prepare(`INSERT INTO baseline_${table} VALUES(${columns.map(() => '?').join(',')})`);
-            for (const row of db.prepare(`SELECT * FROM ${table}`).iterate()) {
-                const values = sqlRow.parse(row); insert.run(...columns.map(column => values[column])); await yieldRow(row);
-            }
-        }
-        saveMetadata(db, 'baselineState', metadata(db, 'completeState')!);
+async function prepareScanAdmission(db: SqliteDatabaseSync, input: ScanAdmission, yieldRow: () => Promise<void>) {
+    const completeState = metadata(db, 'completeState');
+    if (completeState) {
+        const baseline = await prepareScanBaseline(db, input.target, { completeState, baselineState: metadata(db, 'baselineState'), status: readState(db)?.status }, yieldRow);
+        if (baseline) saveMetadata(db, 'baselineState', baseline);
     }
     if (!input.relistOnly) {
         // Resolve one normalized reference at a time. The path-based nodes
@@ -321,8 +321,8 @@ async function prepareScanAdmission(db: SqliteDatabaseSync, input: ScanAdmission
         let position = 0;
         for (let raw = next.get(position); raw; raw = next.get(position)) {
             const row = positionedReferenceRow.parse(raw);
-            for (const child of children.iterate(row.ref)) { stage.run(referenceRow.parse(child).ref); await yieldRow(child); }
-            position = row.position; await yieldRow(row);
+            for (const child of children.iterate(row.ref)) { stage.run(referenceRow.parse(child).ref); await yieldRow(); }
+            position = row.position; await yieldRow();
         }
         const facts = db.prepare('SELECT path,key FROM allocation_observations WHERE owner=?');
         const removeFact = db.prepare('DELETE FROM allocation_observations WHERE owner=? AND path=? AND key=?');
@@ -337,21 +337,21 @@ async function prepareScanAdmission(db: SqliteDatabaseSync, input: ScanAdmission
         for (const raw of db.prepare('SELECT ref FROM replacing').iterate()) {
             const { ref } = referenceRow.parse(raw); const previous = parent.get(ref);
             const previousParent = previous ? parentRow.parse(previous).parent : null;
-            for (const rawFact of facts.iterate(ref)) { const fact = factRow.parse(rawFact); removeFact.run(ref, fact.path, fact.key); await yieldRow(rawFact); }
+            for (const rawFact of facts.iterate(ref)) { const fact = factRow.parse(rawFact); removeFact.run(ref, fact.path, fact.key); await yieldRow(); }
             removeEntry.run(ref); removeDirectory.run(ref); removeCoverage.run(ref); removeFrontier.run(ref);
             clearDirty.run(ref, ref);
             if (previousParent !== null) clearDirty.run(previousParent, previousParent);
-            await yieldRow(previous ?? raw);
+            await yieldRow();
         }
         db.exec('DROP TABLE replacing');
     }
     for (const table of ['frontier', 'boundaries'] as const) {
         const remove = db.prepare(`DELETE FROM ${table} WHERE path=?`);
-        for (const row of db.prepare(`SELECT path FROM ${table}`).iterate()) { remove.run(pathRow.parse(row).path); await yieldRow(row); }
+        for (const row of db.prepare(`SELECT path FROM ${table}`).iterate()) { remove.run(pathRow.parse(row).path); await yieldRow(); }
     }
     const reset = db.prepare('UPDATE dirs SET started=0 WHERE id=?');
     const startedRow = z.object({ id: z.string(), started: z.number() });
-    for (const raw of db.prepare('SELECT * FROM dirs').iterate()) { const row = startedRow.parse(raw); if (row.started !== 0) reset.run(row.id); await yieldRow(raw); }
+    for (const raw of db.prepare('SELECT * FROM dirs').iterate()) { const row = startedRow.parse(raw); if (row.started !== 0) reset.run(row.id); await yieldRow(); }
     // Deleted paths/free pages are reusable by the new scan. The existing
     // successful-completion boundary reclaims anything it does not reuse;
     // admission need not walk the retained tree again just to reclaim it.
@@ -423,6 +423,15 @@ export function createStorageScanIndex(deps: Readonly<{ activeServerDir: string;
         }
     }
     function completeHistory(volumeId: string, db: SqliteDatabaseSync, state: DiskScanStateV1) {
+        attachPrevious(volumeId, db);
+        // A child refresh does not complete its parent again. Keep that
+        // parent's snapshot while only descendant targets have completed;
+        // the child retains its own baseline for since reads.
+        const baselineState = metadata(db, 'baselineState');
+        if (baselineState && retainsParentScanHistory(db, metadata(db, 'root')!, metadata(db, 'wholeDiskRoot'), baselineState)) {
+            saveMetadata(db, 'completeState', JSON.stringify(state));
+            return;
+        }
         if (metadata(db, 'baselineState')) {
             if (hasPreviousAttachment(db)) db.exec('DETACH DATABASE previous');
             const previousDb = openProtectedSqliteDatabaseSync(previousFile(volumeId)); previousDb.exec('PRAGMA auto_vacuum=INCREMENTAL'); previousDb.close();
@@ -521,14 +530,16 @@ export function createStorageScanIndex(deps: Readonly<{ activeServerDir: string;
             // half-deleted subtree is published to readers.
             const db = openProtectedSqliteDatabaseSync(file(input.volumeId));
             const pageBytes = z.object({ page_size: z.number() }).parse(db.prepare('PRAGMA page_size').get()).page_size;
-            let workBytes = 0;
-            const yieldRow = async (row: unknown) => {
-                // One native SQLite page is the cooperative work quantum.
-                // JSON bytes conservatively estimate a row's stored payload
-                // (including its names/values), not an exact allocation count.
-                // This bounds work between yields without limiting scan data.
-                workBytes += Buffer.byteLength(JSON.stringify(row));
-                if (workBytes >= pageBytes) { workBytes = 0; await yieldToEventLoop(); }
+            // SQLite leaf pages have an 8-byte header; every table cell needs
+            // a 2-byte pointer plus at least one byte each for payload length
+            // and rowid (sqlite.org/fileformat.html#b_tree_pages). Use that
+            // maximum row count as a work quantum, not a byte/time estimate.
+            // Baseline copying remains O(total); no row payload is encoded to
+            // schedule it, and no limit is imposed on admitted scan data.
+            const rowsPerTurn = Math.floor((pageBytes - 8) / (2 + 1 + 1));
+            let workRows = 0;
+            const yieldRow = async () => {
+                if (++workRows >= rowsPerTurn) { workRows = 0; await yieldToEventLoop(); }
                 if (closed) throw Object.assign(new Error('Scan index closed'), { name: 'AbortError' });
                 options.throwIfCancelled?.();
             };
@@ -545,13 +556,18 @@ export function createStorageScanIndex(deps: Readonly<{ activeServerDir: string;
                 saveMetadata(db, 'root', input.root); db.prepare("DELETE FROM meta WHERE key='drawableNodes'").run();
                 saveMetadata(db, 'skippedPaths', '[]');
                 progressBases.set(db, { sizedBytes: 0, items: 0 });
-                saveMetadata(db, 'usedBytes', String(input.usedBytes)); saveMetadata(db, 'reservedBytes', String(input.reservedBytes ?? 0));
+                const usedBytes = 'volumeId' in input.target ? input.usedBytes : undefined;
+                if (usedBytes === undefined) db.prepare("DELETE FROM meta WHERE key='usedBytes'").run();
+                else saveMetadata(db, 'usedBytes', String(usedBytes));
+                saveMetadata(db, 'reservedBytes', String(input.reservedBytes ?? 0));
                 saveMetadata(db, 'apfsContainerId', input.apfsContainerId ?? '');
-                const priorCoverage = metadata(db, 'baselineState') && db.prepare('SELECT scanned,complete FROM baseline_coverage WHERE path=?').get(input.root);
+                const baselineState = metadata(db, 'baselineState');
+                const priorCoverage = baselineState && scanStateMatchesTarget(baselineState, input.target)
+                    && db.prepare('SELECT scanned,complete FROM baseline_coverage WHERE path=?').get(input.root);
                 const priorAt = priorCoverage ? z.object({ scanned: z.number(), complete: z.number() }).parse(priorCoverage) : undefined;
                 const state: DiskScanStateV1 = { scanId: randomUUID(), target: input.target, status: 'running', startedAt: now(),
                     ...(priorAt?.complete ? { previousScanAt: priorAt.scanned } : {}),
-                    progress: { sizedBytes: 0, usedBytes: input.usedBytes, items: 0 }, unreadable: { counts: { permission: 0, os_private: 0, timeout: 0, io: 0 }, examples: [] },
+                    progress: { sizedBytes: 0, ...(usedBytes === undefined ? {} : { usedBytes }), items: 0 }, unreadable: { counts: { permission: 0, os_private: 0, timeout: 0, io: 0 }, examples: [] },
                     fullDiskAccess: input.fullDiskAccess };
                 // Admission has already removed the replaced subtree. Publish
                 // its ancestors' exact retained totals before awaiting stdout.
@@ -602,14 +618,16 @@ export function createStorageScanIndex(deps: Readonly<{ activeServerDir: string;
             logger.infoFile('[storage-scan] index-finish-start', { scanId: state.scanId, atMs: Date.now() });
             transaction(db, () => reaggregateScan(db, now()));
             logger.infoFile('[storage-scan] index-aggregate-end', { scanId: state.scanId, atMs: Date.now(), elapsedMs: performance.now() - finishStarted });
-            state.status = typeof summary === 'string' ? summary : summary.termination === 'completed' ? 'complete' : summary.termination;
+            const root = typeof summary === 'string' ? undefined : metadata(db, 'root');
+            const excludedRoot = typeof summary === 'string' ? undefined : summary.skipped.find(value => value.path === root && value.reason !== 'user');
+            state.status = excludedRoot ? 'failed' : typeof summary === 'string' ? summary : summary.termination === 'completed' ? 'complete' : summary.termination;
             state.finishedAt = now(); delete state.progress.currentPath; delete state.progress.stuckSinceMs;
             // Abrupt process cancellation has no terminal helper summary. The
             // retained target in this index still owns the total already sized.
             const total = retainedTargetProgress(db);
             Object.assign(state.progress, total);
             if (typeof summary !== 'string') {
-                state.unreadable = { counts: summary.unreadableCounts, examples: summary.unreadable };
+                state.unreadable = { counts: summary.unreadableCounts, examples: [...summary.unreadable, ...(excludedRoot ? [excludedRoot] : [])] };
                 if (summary.apfsLocalSnapshotCount !== undefined) state.apfsLocalSnapshotCount = summary.apfsLocalSnapshotCount;
                 else delete state.apfsLocalSnapshotCount;
                 state.progress.sizedBytes = total?.sizedBytes ?? summary.allocatedBytes; state.progress.items = total?.items ?? summary.items;
@@ -619,6 +637,7 @@ export function createStorageScanIndex(deps: Readonly<{ activeServerDir: string;
                         db.exec('DELETE FROM frontier; INSERT INTO frontier SELECT path FROM frontier_replacement');
                     } else if (summary.pendingFrontier) { db.exec('DELETE FROM frontier'); for (const path of summary.pendingFrontier) db.prepare('INSERT OR IGNORE INTO frontier VALUES(?)').run(path); }
                     for (const boundary of [...summary.unreadable, ...summary.skipped]) db.prepare('INSERT OR REPLACE INTO boundaries VALUES(?,?)').run(boundary.path, boundary.reason);
+                    if (excludedRoot) db.prepare('INSERT OR REPLACE INTO coverage VALUES(?,?,0)').run(excludedRoot.path, state.finishedAt);
                     const skipped = z.array(z.string()).parse(JSON.parse(metadata(db, 'skippedPaths') ?? '[]') as unknown);
                     saveMetadata(db, 'skippedPaths', JSON.stringify([...new Set([...skipped, ...summary.skipped.map(value => value.path)])]));
                 });

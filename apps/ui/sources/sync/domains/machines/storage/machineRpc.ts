@@ -15,11 +15,11 @@ import {
 } from '@happier-dev/protocol/storage/storageV1';
 import { MachineResourcesPolicyMutationResultV1Schema } from '@happier-dev/protocol/machines/resources/machineResourcesPolicyV1';
 import type { MachineStorageActionId } from '@happier-dev/protocol/actions/specs/storage';
-import { createRpcCallError, readRpcErrorCode, isRpcMethodNotFoundResult } from '@happier-dev/protocol/rpcErrors';
-import { ActionApprovalRequestCreatedResultSchema, isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createRpcCallError, isRpcError, readRpcErrorCode, isRpcMethodNotFoundResult } from '@happier-dev/protocol/rpcErrors';
+import { ActionApprovalRequestCreatedResultSchema, isActionApprovalDeclinedErrorCode, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
-import type { FrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { isMachineDaemonRpcUnsupportedError } from '../machineDaemonRpcErrors';
 
 export type MachineStorageKey = Readonly<{ machineId: string; serverId?: string | null; expectedAccountId?: string | null; daemonStateVersion?: number | null }>;
@@ -51,7 +51,14 @@ export type MachineStorageTrashMoveInput = ScopedInput<MachineStorageTrashMoveIn
 export type MachineStorageDeleteNowInput = ScopedInput<MachineStorageDeleteNowInputV1> & Readonly<{ reviewedByPerson?: boolean }>;
 export type MachineStorageTrashEmptyInput = ScopedInput<MachineStorageTrashEmptyInputV1>;
 export type MachineStorageTrashRestoreInput = ScopedInput<MachineStorageTrashRestoreInputV1>;
-export type MachineStorageResult<T> = Readonly<{ ok: true; value: T }> | Readonly<{ ok: false; reason: 'older_happier' | 'request_failed' | 'invalid_response' | 'approval_requested' | 'declined' }>;
+export type MachineStorageFailure = Readonly<{
+    ok: false;
+    reason: 'older_happier' | 'policy_unavailable' | 'whole_disk_disabled' | 'permission_denied' | 'request_failed' | 'invalid_response' | 'approval_requested' | 'declined';
+    errorCode?: string;
+    failureCause?: ActionFailureCauseV1;
+    error?: string;
+}>;
+export type MachineStorageResult<T> = Readonly<{ ok: true; value: T }> | MachineStorageFailure;
 export type MachineStorageClients = Readonly<{
     summaryClient: (input: MachineStorageReadInput) => Promise<MachineStorageResult<HappierStorageSummaryV1>>;
     categoryClient: (input: MachineStorageCategoryInput) => Promise<MachineStorageResult<MachineStorageCategoryListResultV1>>;
@@ -78,27 +85,47 @@ async function result<T>(input: MachineStorageReadInput, request: () => Promise<
         // The transport owns cancellation settlement. A consumed acknowledgement
         // is still the operation's result when the caller retires afterward.
         if (isRpcMethodNotFoundResult(raw)) return { ok: false, reason: 'older_happier' };
+        // A policy writer can lose readiness after the Storage operation's initial check.
+        if (typeof raw === 'object' && raw !== null && 'status' in raw && raw.status === 'unavailable'
+            && 'reason' in raw && raw.reason === 'policy_unavailable') return { ok: false, reason: 'policy_unavailable' };
         // The Action's own approval setting asked first: it runs once someone approves it.
         if (ActionApprovalRequestCreatedResultSchema.safeParse(raw).success) return { ok: false, reason: 'approval_requested' };
         const parsed = parse(raw);
         return parsed.success ? { ok: true, value: parsed.data } : { ok: false, reason: 'invalid_response' };
     } catch (error) {
-        return { ok: false, reason: isMachineDaemonRpcUnsupportedError(error) ? 'older_happier'
-            : isActionApprovalDeclinedErrorCode(readRpcErrorCode(error)) ? 'declined'
-            : readRpcErrorCode(error) === 'invalid_action_output' ? 'invalid_response' : 'request_failed' };
+        const errorCode = readRpcErrorCode(error);
+        const failureCause = isRpcError(error) ? error.failureCause : undefined;
+        // Loaded 0.2.10 daemons report native permission errors as action_failed.
+        // Translate their typed cause here until those Machines are updated;
+        // never inspect the raw error message, which can contain a private path.
+        const legacyPermissionDenied = errorCode === 'action_failed'
+            && (failureCause?.errorCode === 'EACCES' || failureCause?.errorCode === 'EPERM');
+        const reason = isMachineDaemonRpcUnsupportedError(error) ? 'older_happier'
+            : errorCode === 'policy_unavailable' ? 'policy_unavailable'
+            : errorCode === 'storage_whole_disk_disabled' ? 'whole_disk_disabled'
+            : errorCode === 'storage_permission_denied' || legacyPermissionDenied ? 'permission_denied'
+            : isActionApprovalDeclinedErrorCode(errorCode) ? 'declined'
+            : errorCode === 'invalid_action_output' ? 'invalid_response' : 'request_failed';
+        // Old daemons can return only { error }. The Action then has only its
+        // wrapper cause: keep that projected reason without inferring a native code.
+        const legacyError = reason === 'request_failed' && errorCode === 'action_failed'
+            && (!failureCause || failureCause.errorClass === 'RpcError' && failureCause.errorCode === errorCode)
+            && error instanceof Error ? error.message : undefined;
+        // Typed permission failures keep their safe explanation and diagnostics.
+        return { ok: false, reason, ...(reason === 'permission_denied' ? {
+            ...(errorCode ? { errorCode } : {}),
+            ...(failureCause ? { failureCause } : {}),
+        } : {}), ...(legacyError ? { error: legacyError } : {}) };
     }
 }
 
-let actionExecute: FrontDoorActionExecute | undefined;
+const actionExecute = createFrontDoorActionExecute();
 async function execute(input: MachineStorageReadInput & Readonly<{ reviewedByPerson?: boolean }>, actionId: MachineStorageActionId, extra: Readonly<Record<string, unknown>> = {}): Promise<unknown> {
-    if (!actionExecute) actionExecute = (await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')).createFrontDoorActionExecute();
-    const outcome = await actionExecute(actionId, {
+    const outcome = await (input.reviewedByPerson ? actionExecute.confirmed : actionExecute)(actionId, {
         machineId: input.machineId, ...(input.serverId ? { serverId: input.serverId } : {}), ...extra,
     }, { surface: 'ui', ...(input.serverId ? { serverId: input.serverId } : {}),
-        ...(input.expectedAccountId ? { expectedAccountId: input.expectedAccountId } : {}), ...(input.signal ? { signal: input.signal } : {}),
-        // A completed review of this exact Action replaces the default confirmation; explicit Action settings still apply.
-        ...(input.reviewedByPerson ? { authority: 'present_user' as const, presentUserConfirmation: { actionId } } : {}) });
-    if (!outcome.ok) throw createRpcCallError({ error: outcome.error, errorCode: outcome.errorCode });
+        ...(input.expectedAccountId ? { expectedAccountId: input.expectedAccountId } : {}), ...(input.signal ? { signal: input.signal } : {}) });
+    if (!outcome.ok) throw createRpcCallError({ error: outcome.error, errorCode: outcome.errorCode, failureCause: outcome.failureCause });
     return outcome.result;
 }
 

@@ -29,9 +29,11 @@ import { useMachineStorageCleanup } from '@/sync/domains/machines/storage/useMac
 import { useMachineStorageItems } from '@/sync/domains/machines/storage/useMachineStorageItems';
 import { useMachineStorageScan } from '@/sync/domains/machines/storage/useMachineStorageScan';
 import { useMachineStorageSummary } from '@/sync/domains/machines/storage/useMachineStorageSummary';
+import { useMachineField } from '@/sync/store/hooks';
 import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { getVersionSupportState } from '@/utils/system/versionUtils';
 
 import { StorageBreakdown } from './StorageBreakdown';
 import { StorageCategoryPage } from './StorageCategoryPage';
@@ -40,6 +42,7 @@ import { StorageItemRow } from './StorageItemRow';
 import { StorageSaySection } from './StoragePageHead';
 import { StoragePileDock } from './StoragePileDock';
 import { StoragePolicyNotice } from './StoragePolicyNotice';
+import { StorageReadNotice } from './StorageReadNotice';
 import { formatStorageDay } from './storageCategoryText';
 import { StorageProtectedFoldersPage } from './StorageProtectedFoldersPage';
 import {
@@ -59,6 +62,7 @@ import { useMachineTabCompactLayout } from '@/components/machines/page/useMachin
 import { useMachineTabFacts } from '@/components/machines/page/useMachineTabFacts';
 import {
   describeStorageSentence,
+  describeStorageFailure,
   readStorageCanGoBytes,
   selectStorageTabView,
   storageVolumeName,
@@ -179,6 +183,7 @@ function StorageTabControls(
           sizedAt={storage.summary.sizedAt}
           offline={storage.offline}
           stale={storage.status === 'error' && !storage.offline}
+          failure={storage.failure}
           sizing={sizing}
           onSizeAgain={storage.offline ? null : onSizeAgain}
         />
@@ -224,7 +229,8 @@ function ScanFreshness(
     machineId: props.machineId,
     serverId: props.serverId,
   });
-  if (!scan || scan.status === 'running' || !scan.finishedAt) return null;
+  // Only a finished scan has an age; a stopped one is said, with Resume, by the view itself.
+  if (!scan || scan.status !== 'complete' || !scan.finishedAt) return null;
   return (
     <SurfaceFreshnessLine
       testID="machine-storage-scan-freshness"
@@ -257,6 +263,7 @@ function StorageMainView(
   }>,
 ) {
   const { recipient } = useMachineTabFacts(props.serverId, props.machineId);
+  const cliVersion = useMachineField(props.machineId, 'metadata', 'happyCliVersion', { serverId: props.serverId });
   const storage = useMachineStorageSummary({
     machineId: props.machineId,
     serverId: props.serverId,
@@ -266,6 +273,7 @@ function StorageMainView(
     summary: storage.summary,
     offline: storage.offline,
     recipient,
+    failure: storage.failure,
   });
   const layout = useMachineTabCompactLayout();
   const { retry } = storage;
@@ -291,12 +299,18 @@ function StorageMainView(
   }
   if (view.kind === 'policy_unavailable') return <StoragePolicyNotice onRetry={retry} />;
   if (view.kind === 'error') {
+    const failure = describeStorageFailure(view.failure);
+    const reason = view.failure?.error && getVersionSupportState(cliVersion ?? undefined) === 'unsupported'
+      ? `${failure.reason} ${t('sessionInfo.updateCliInstructions')}`
+      : failure.reason;
     return (
       <ItemGroup header="none">
         <SurfaceStateCard
           testID="machine-storage-error"
           kind="error"
           size="line"
+          {...failure}
+          reason={reason}
           title={t('machineStorage.states.error', {
             machine: props.machineName,
           })}
@@ -324,6 +338,7 @@ function StorageMainView(
           />
         </ItemGroup>
       ) : null}
+      {view.kind === 'ready' && !disk ? <StorageReadNotice issues={view.summary.incomplete} onRetry={retry} /> : null}
       {view.kind === 'loading' ? (
         <StorageLoading />
       ) : disk ? (
@@ -375,7 +390,7 @@ function isStorageNothingToClear(
   summary: StorageSummary,
   scope: Readonly<{ recipient: boolean; policyUnavailable: boolean }>,
 ): boolean {
-  return !scope.recipient && !scope.policyUnavailable && readStorageCanGoBytes(summary) === 0 && summary.suggestionsTop.length === 0;
+  return !scope.recipient && !scope.policyUnavailable && !summary.incomplete?.length && readStorageCanGoBytes(summary) === 0 && summary.suggestionsTop.length === 0;
 }
 
 /** The Happier view (lab `rs` H / Hp / HR / RD / LD): what Happier keeps, what can go, and the pile. */
@@ -511,7 +526,7 @@ function StorageHappierView(
               {...(lowDisk
                 ? {
                     readyNote: t('machineStorage.lowDisk.pileNote', {
-                      volume: storageVolumeName(lowDisk),
+                      volume: storageVolumeName(lowDisk, 'sentence'),
                     }),
                   }
                 : {})}
@@ -838,6 +853,7 @@ function StorageFreshnessLine(
     sizedAt: number;
     offline: boolean;
     stale: boolean;
+    failure?: ReturnType<typeof useMachineStorageSummary>['failure'];
     sizing: boolean;
     onSizeAgain: (() => void) | null;
   }>,
@@ -849,6 +865,7 @@ function StorageFreshnessLine(
       ? t('machineStorage.offlineAsOf', { time })
       : t('machineStorage.sized', { time });
   const failed = props.stale && !props.sizing;
+  const failure = describeStorageFailure(props.failure);
   return (
     <SurfaceFreshnessLine
       testID="machine-storage-freshness"
@@ -856,7 +873,7 @@ function StorageFreshnessLine(
       busy={props.sizing}
       signal={props.offline ? 'quiet' : undefined}
       tone={failed ? 'warning' : 'neutral'}
-      reason={failed ? `${label} · ${t('machineStorage.sizeAgainFailed')}` : label}
+      reason={failed ? `${label} · ${failure.reason ?? t('machineStorage.sizeAgainFailed')}` : label}
       action={props.onSizeAgain && !props.sizing ? {
         label: props.stale ? t('machineStorage.tryAgain') : t('machineStorage.sizeAgain'),
         testID: 'machine-storage-size-again',

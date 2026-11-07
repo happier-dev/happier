@@ -151,6 +151,9 @@ func diskSetBackgroundPriority() error {
 	}
 	return nil
 }
+
+var diskReadMountFacts = unix.Statfs
+
 func diskShouldSkip(path, root string, meta diskMetadata) (bool, string) {
 	for _, prefix := range []string{"/proc", "/sys", "/dev", "/run", "/snap"} {
 		if diskPathContains(prefix, path) && !diskPathContains(prefix, root) {
@@ -159,7 +162,10 @@ func diskShouldSkip(path, root string, meta diskMetadata) (bool, string) {
 	}
 	if meta.kind == "folder" {
 		var fs unix.Statfs_t
-		if unix.Statfs(path, &fs) == nil {
+		if diskReadMountFacts(path, &fs) == nil {
+			if fs.Flags&unix.ST_RDONLY != 0 {
+				return true, "read_only_filesystem"
+			}
 			switch fs.Type {
 			case unix.FUSE_SUPER_MAGIC, unix.PROC_SUPER_MAGIC, unix.SYSFS_MAGIC, unix.DEVPTS_SUPER_MAGIC, unix.SECURITYFS_MAGIC, unix.CGROUP_SUPER_MAGIC, unix.CGROUP2_SUPER_MAGIC:
 				return true, "pseudo_or_cloud_filesystem"

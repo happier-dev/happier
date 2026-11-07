@@ -52,6 +52,36 @@ afterEach(async () => {
 });
 
 describe('native disk measurement process boundary', () => {
+    it.each([
+        { reason: 'read_only_filesystem', excludedRoot: true },
+        { reason: 'pseudo_or_cloud_filesystem', excludedRoot: true },
+        { reason: 'read_only_filesystem', excludedRoot: false },
+    ])('retains an ineligible root reason $reason through the scan lifecycle (root=$excludedRoot)', async ({ reason, excludedRoot }) => {
+        const index = createStorageScanIndex({ activeServerDir: scratch });
+        const runner = createStorageScanRunner({ index,
+            readEnabled: () => true, readVolumes: () => [{ id: 'volume', mountPath: scratch, usedBytes: 0 }],
+            fullDiskAccess: () => ({ state: 'not_applicable', binary: { name: 'fixture', path: process.execPath } }) });
+        try {
+            await runner.initialize();
+            const state = await runner.start({ target: { folderPath: scratch } });
+            await vi.waitFor(() => expect(processBoundary.spawn).toHaveBeenCalledOnce());
+            helper.stdout.write(JSON.stringify({ v: 1, type: 'summary', termination: 'completed', unreadable: [],
+                unreadableCounts: { permission: 0, os_private: 0, timeout: 0, io: 0 }, skipped: [{ path: excludedRoot ? scratch : join(scratch, 'excluded-child'), reason }],
+                backendByDirCounts: {}, allocatedBytes: 0, items: 0 }) + '\n');
+            helper.close();
+            await runner.wait(state.scanId);
+            const result = MachineStorageScanGetResultV1Schema.parse(await runner.get({ scanId: state.scanId }));
+            if (!excludedRoot) {
+                expect(result.state?.status).toBe('complete');
+                expect(result.state?.unreadable.examples).toEqual([]);
+                return;
+            }
+            expect(result.state?.status).toBe('failed');
+            expect(result.state?.unreadable.examples).toContainEqual({ path: scratch, reason });
+            expect(result.coverage).toContainEqual({ path: scratch, scannedAt: expect.any(Number), complete: false });
+            expect(result.nodes).toEqual([]);
+        } finally { await runner.dispose(); }
+    });
     it.each([undefined, 0, 3])('persists observed APFS local snapshot count %s through the production runner and strict reader', async count => {
         const index = createStorageScanIndex({ activeServerDir: scratch });
         const runner = createStorageScanRunner({ index,

@@ -1,6 +1,8 @@
 import type { HappierStorageCategoryIdV1, HappierStorageSummaryV1 } from '@happier-dev/protocol/storage/storageV1';
 
+import { formatMachineBytes } from '@/components/machines/vitals/machineVitalsPresentation';
 import type { MachineStorageState } from '@/sync/domains/machines/storage/machineStorageStore';
+import type { MachineStorageFailure } from '@/sync/domains/machines/storage/machineRpc';
 import { t } from '@/text';
 
 /**
@@ -17,9 +19,11 @@ export type StorageCategory = StorageSummary['categories'][number];
 
 export type StorageTabView =
     | Readonly<{ kind: 'not_reported' }>
+    /** The machine's resources policy cannot be read and nothing was sized before: nothing to show but the notice. */
+    | Readonly<{ kind: 'policy_unavailable' }>
     /** First sizing in progress (never sized): the boxes are reserved. */
     | Readonly<{ kind: 'loading' }>
-    | Readonly<{ kind: 'error' }>
+    | Readonly<{ kind: 'error'; failure?: MachineStorageState['failure'] }>
     | Readonly<{ kind: 'offline_empty' }>
     | Readonly<{
         kind: 'ready';
@@ -28,6 +32,8 @@ export type StorageTabView =
         offline: boolean;
         /** Sizing again did not land; the sizes shown are the last good ones. */
         stale: boolean;
+        /** Protection and cleanup await the machine's resources policy: the sizes are the last good ones, no cleanup is offered. */
+        policyUnavailable: boolean;
         /** The person uses this machine without managing it: totals only (STO-29). */
         recipient: boolean;
     }>;
@@ -37,14 +43,29 @@ export function selectStorageTabView(input: Readonly<{
     summary: StorageSummary | null;
     offline: boolean;
     recipient: boolean;
+    failure?: MachineStorageState['failure'];
 }>): StorageTabView {
     if (input.status === 'not_reported') return { kind: 'not_reported' };
     if (input.summary) {
-        return { kind: 'ready', summary: input.summary, offline: input.offline, stale: input.status === 'error' && !input.offline, recipient: input.recipient };
+        return { kind: 'ready', summary: input.summary, offline: input.offline, stale: input.status === 'error' && !input.offline,
+            policyUnavailable: input.status === 'policy_unavailable', recipient: input.recipient };
     }
     if (input.offline) return { kind: 'offline_empty' };
-    if (input.status === 'error') return { kind: 'error' };
+    if (input.status === 'policy_unavailable') return { kind: 'policy_unavailable' };
+    if (input.status === 'error') return { kind: 'error', ...(input.failure ? { failure: input.failure } : {}) };
     return { kind: 'loading' };
+}
+
+/** Human recovery stays separate from the daemon's secret-free diagnostic fields. */
+export function describeStorageFailure(failure: Omit<MachineStorageFailure, 'ok'> | undefined) {
+    const cause = failure?.failureCause;
+    return {
+        ...(failure?.reason === 'permission_denied' ? {
+            reason: `${t('machineStorage.states.permissionDeniedReason')} ${t('machineStorage.states.permissionDeniedRemedy')}`,
+        } : failure?.error ? { reason: failure.error } : {}),
+        diagnosticCode: failure?.errorCode,
+        diagnosticDetail: cause ? [cause.phase, cause.errorClass, cause.errorCode, cause.httpStatus].filter(value => value !== null).join(' · ') : undefined,
+    };
 }
 
 // ── Totals and the sentence ──────────────────────────────────────────────────────────────────────────
@@ -81,14 +102,15 @@ export type StorageSentenceFacts = Readonly<{
     trashEmptiesAt: number | null;
 }>;
 
-export function describeStorageSentence(summary: StorageSummary, options: Readonly<{ recipient: boolean }>): StorageSentenceFacts {
+export function describeStorageSentence(summary: StorageSummary, options: Readonly<{ recipient: boolean; policyUnavailable?: boolean }>): StorageSentenceFacts {
+    const managed = !options.recipient && options.policyUnavailable !== true;
     const headline = selectStorageHeadlineVolume(summary);
     const holding = summary.volumes.filter(volume => volume.happierBytes > 0).length;
     return {
         freeBytes: headline ? headline.freeBytes : null,
         happierBytes: readHappierStorageBytes(summary),
         where: !headline ? { kind: 'none' } : holding > 1 ? { kind: 'across', count: holding } : { kind: 'volume', label: storageVolumeName(headline) },
-        canGoBytes: options.recipient ? null : readStorageCanGoBytes(summary),
+        canGoBytes: managed ? readStorageCanGoBytes(summary) : null,
         trashBytes: options.recipient ? 0 : summary.volumes.reduce((total, volume) => total + (volume.trashFreesBytes ?? 0), 0),
         trashEmptiesAt: options.recipient ? null : summary.trash.emptiesNextAt ?? null,
     };
@@ -96,12 +118,22 @@ export function describeStorageSentence(summary: StorageSummary, options: Readon
 
 /**
  * A disk's name: its own label; an unnamed root (Linux `/`, whose label is often just its mount path) reads as
- * the system disk, never a bare slash.
+ * the system disk, never a bare slash. Every surface naming a machine's disk (Storage, vitals, attention, alerts)
+ * names it here; `sentence` is the form inside a sentence ("nl2’s system disk is nearly full").
  */
-export function storageVolumeName(volume: StorageVolume): string {
-    const label = volume.volume.label.trim();
-    if (label && label !== volume.volume.mountPath) return label;
-    return volume.volume.mountPath === '/' ? t('machineStorage.volumes.systemDisk') : volume.volume.mountPath;
+export function machineDiskName(
+    disk: Readonly<{ label: string | null; mountPath?: string | null }>,
+    form: 'title' | 'sentence' = 'title',
+): string {
+    const label = disk.label?.trim() ?? '';
+    const mountPath = disk.mountPath ?? label;
+    if (label && label !== mountPath) return label;
+    if (mountPath === '/') return t(form === 'sentence' ? 'machineStorage.volumes.systemDiskInSentence' : 'machineStorage.volumes.systemDisk');
+    return mountPath;
+}
+
+export function storageVolumeName(volume: StorageVolume, form: 'title' | 'sentence' = 'title'): string {
+    return machineDiskName({ label: volume.volume.label, mountPath: volume.volume.mountPath }, form);
 }
 
 /** The mount path beside the name, when it says something the name does not ("/Volumes/Work"). */
@@ -161,8 +193,10 @@ export function resolveStorageVolumeParts(volume: StorageVolume): StorageVolumeP
 
 /** Recordings appear only once there are some; every other kind is always listed (STO-2). */
 export function orderStorageCategories(summary: StorageSummary): readonly StorageCategory[] {
+    // Only kinds with content (lab `rs` H): one holding nothing yet, still being counted aside, is folded away.
     return summary.categories
-        .filter(category => category.categoryId !== 'recordings' || category.count > 0 || category.size.allocatedBytes > 0)
+        .filter(category => category.count > 0 || category.size.allocatedBytes > 0 || isStorageCategoryPartial(category)
+            || (category.categoryId === 'trash' && summary.trash.count > 0))
         .slice()
         .sort((a, b) => b.size.allocatedBytes - a.size.allocatedBytes);
 }
@@ -194,6 +228,15 @@ export function readStorageCategoryFact(category: StorageCategory, key: 'canGoCo
 /** A category whose owner could not tell everything it holds (its size is a floor). */
 export function isStorageCategoryPartial(category: StorageCategory): boolean {
     return category.size.atLeast || category.detailFacts.factsReported === false;
+}
+
+/**
+ * A size as every Storage surface says it: a lower bound keeps its "≥" on disk rows, Map tiles, Rings arcs,
+ * category sizes and item rows alike. The one place that decides how an `atLeast` figure reads.
+ */
+export function formatStorageSize(bytes: number, atLeast: boolean): string {
+    const size = formatMachineBytes(bytes, 'storage');
+    return atLeast ? `≥ ${size}` : size;
 }
 
 export type StorageRingPart = Readonly<{

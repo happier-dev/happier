@@ -342,6 +342,12 @@ func diskScanStream(ctx context.Context, control *diskControl, request diskScanR
 				summary.Skipped = append(summary.Skipped, diskIssue{path, "foreign_device"})
 				return nil
 			}
+			if meta.kind == "folder" || meta.kind == "package" {
+				if skip, reason := diskShouldSkip(path, request.Root, meta); skip {
+					summary.Skipped = append(summary.Skipped, diskIssue{path, reason})
+					return nil
+				}
+			}
 			facts := diskAllocationFacts(path, meta)
 			if meta.cloudOnly {
 				facts = nil

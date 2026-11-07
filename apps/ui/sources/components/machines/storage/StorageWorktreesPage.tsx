@@ -31,11 +31,12 @@ import {
 import { StorageItemRow } from './StorageItemRow';
 import { StoragePileDock } from './StoragePileDock';
 import { StoragePolicyNotice } from './StoragePolicyNotice';
+import { StorageReadNotice } from './StorageReadNotice';
 import { describeStorageVerdict, storageEvidenceLabel } from './storageReasonPresentation';
 import { toStorageItemRef } from '@/sync/domains/machines/storage/pileRef';
 import { storageVerdictStartsTicked } from '@/sync/domains/machines/storage/storageVerdictSelection';
 import { StorageVolumeRow } from './StorageVolumes';
-import { selectStorageHeadlineVolume } from './storageViewModel';
+import { describeStorageFailure, selectStorageHeadlineVolume } from './storageViewModel';
 
 type Filter = 'all' | 'canDelete' | 'keep';
 type Sort = 'size' | 'used' | 'name';
@@ -149,6 +150,7 @@ export const StorageWorktreesPage = React.memo(function StorageWorktreesPage(
           />
         ) : null}
       </StoragePageHead>
+      <StorageReadNotice issues={list.page?.incomplete} onRetry={list.retry} />
       {headline ? (
         <ItemGroup header="none">
           <StorageVolumeRow volume={headline} compact={layout.compact} />
@@ -229,9 +231,10 @@ export const StorageWorktreesPage = React.memo(function StorageWorktreesPage(
                     })
                   : t('machineStorage.page.loading')
             }
+            {...describeStorageFailure(list.failure)}
             action={
               list.status === 'error' && !list.offline
-                ? { label: t('machineStorage.tryAgain'), onPress: list.retry }
+                ? { label: t('machineStorage.tryAgain'), onPress: list.retry, testID: 'machine-storage-worktrees-retry' }
                 : undefined
             }
           />

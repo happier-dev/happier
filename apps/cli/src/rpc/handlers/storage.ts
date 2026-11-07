@@ -3,21 +3,21 @@ import type { StorageService, StorageServiceDeps, StorageOperationActor } from '
 import { parkWatch } from '@/daemon/lifecycle/parkWatch';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { isPermissionError } from '@/storage/categories/filesystem';
 import {
-    HappierStorageSummaryV1Schema, MachineStorageSummaryGetInputV1Schema,
-    MachineStorageCategoryListInputV1Schema, MachineStorageCategoryListResultV1Schema,
-    MachineStorageSizeRefreshInputV1Schema, MachineStorageWatchInputV1Schema, MachineStorageWatchResultV1Schema,
-    type HappierStorageSummaryV1,
-    MachineStoragePileGetInputV1Schema, MachineStoragePileSetInputV1Schema, MachineStoragePileResultV1Schema,
-    MachineStorageItemsCheckInputV1Schema, PileReviewV1Schema, MachineStorageTrashMoveInputV1Schema,
-    MachineStorageDeleteNowInputV1Schema, PileApplyResultV1Schema, MachineStorageTrashEmptyInputV1Schema,
-    MachineStorageTrashRestoreInputV1Schema, TrashEmptyResultV1Schema, TrashRestoreResultV1Schema,
-    MachineStorageWorktreesListInputV1Schema, MachineStorageSuggestionsListInputV1Schema, MachineStorageItemsListResultV1Schema,
-    MachineStorageSuggestionsDeclineInputV1Schema, MachineStorageSuggestionsDeclineResultV1Schema,
-    DiskScanStateV1Schema, MachineStorageScanStartInputV1Schema, MachineStorageScanGetInputV1Schema, MachineStorageScanGetResultV1Schema,
+    MachineStorageSummaryGetInputV1Schema, MachineStorageCategoryListInputV1Schema,
+    MachineStorageSizeRefreshInputV1Schema, MachineStorageWatchInputV1Schema,
+    type HappierStorageSummaryV1, type MachineStorageWatchResultV1,
+    MachineStoragePileGetInputV1Schema, MachineStoragePileSetInputV1Schema,
+    MachineStorageItemsCheckInputV1Schema, MachineStorageTrashMoveInputV1Schema,
+    MachineStorageDeleteNowInputV1Schema, MachineStorageTrashEmptyInputV1Schema,
+    MachineStorageTrashRestoreInputV1Schema,
+    MachineStorageWorktreesListInputV1Schema, MachineStorageSuggestionsListInputV1Schema,
+    MachineStorageSuggestionsDeclineInputV1Schema,
+    MachineStorageScanStartInputV1Schema, MachineStorageScanGetInputV1Schema,
     MachineStorageScanCancelInputV1Schema, MachineStorageScanSkipInputV1Schema, MachineStorageProtectedAddInputV1Schema, MachineStorageProtectedRemoveInputV1Schema,
 } from '@happier-dev/protocol/storage/storageV1';
-import { MachineResourcesPolicyMutationResultV1Schema } from '@happier-dev/protocol/machines/resources/machineResourcesPolicyV1';
 import { doesMachineRpcTargetMatchAdmission } from '@/api/machine/machineRpcAuthorization';
 import { timeWebLatencyPhase } from '@/daemon/externalActions/webLatencyTrace';
 import { buildActionExecutorContextForRpc } from './_actionDispatchAdapter';
@@ -117,6 +117,24 @@ async function callStorageOwner<T>(invoke: () => Promise<T>, beforeDisclosure: (
         if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'unauthorized') {
             throw new RpcError('Machine access denied', RPC_ERROR_CODES.FORBIDDEN);
         }
+        if (isPermissionError(error)) {
+            // Catalog sizing and Trash manifests reach the same filesystem boundary.
+            // Classify once here, preserving the native cause without its private path.
+            throw new RpcError('Permission denied accessing storage. Restore the daemon user’s access to that volume, then retry.',
+                'storage_permission_denied', projectActionFailureCauseV1(error, 'storage.owner'));
+        }
+        if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'policy_unavailable') {
+            throw new RpcError('Storage policy is unavailable', error.code);
+        }
+        if (typeof error === 'object' && error !== null && 'code' in error
+            && (error.code === 'storage_whole_disk_disabled' || error.code === 'disabled')) {
+            // The scan runner can observe opt-out after the service's initial
+            // policy check. Both paths carry the same public Storage refusal.
+            throw new RpcError('Whole-disk scan disabled', 'storage_whole_disk_disabled');
+        }
+        if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'storage_scan_unavailable') {
+            throw new RpcError('Scan unavailable', error.code);
+        }
         if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'storage_item_not_collectable') {
             throw new RpcError('Storage item cannot be collected; use the reference from the served storage view', error.code);
         }
@@ -150,21 +168,7 @@ export function registerDaemonStorageRpcHandlers(rpc: RpcHandlerRegistrar, optio
         const assertLocalAuthority = async () => {
             if (!await matches(true) || !await matches(true)) throw new RpcError('Machine access denied', RPC_ERROR_CODES.FORBIDDEN);
         };
-        const verifyCurrent = async () => {
-            const verified = async () => context?.verifyMachineAdmissionCurrent && await context.verifyMachineAdmissionCurrent()
-                || deny('machine_currentness');
-            if (!await matches() || !await verified() || !await matches()) {
-                throw new RpcError('Machine access denied', RPC_ERROR_CODES.FORBIDDEN);
-            }
-        };
-        const assertCurrentAuthority = async () => {
-            const verified = async () => context?.verifyMachineAuthorityCurrent && await context.verifyMachineAuthorityCurrent()
-                || deny('machine_authority_currentness');
-            if (!await matches(true) || !await verified() || !await matches(true)) {
-                throw new RpcError('Machine access denied', RPC_ERROR_CODES.FORBIDDEN);
-            }
-        };
-        return { target, canManage, accountId: admitted?.actorAccountId ?? '', assertCurrent, assertLocalAuthority, verifyCurrent, assertCurrentAuthority };
+        return { target, canManage, accountId: admitted?.actorAccountId ?? '', assertCurrent, assertLocalAuthority };
     };
     async function readActor(access: ReturnType<typeof admission>, context?: RpcHandlerContext, effect = false): Promise<StorageOperationActor> {
         const sessionIds = access.canManage ? undefined : new Set(await options.readOwnSessionIds(access.accountId));
@@ -182,10 +186,10 @@ export function registerDaemonStorageRpcHandlers(rpc: RpcHandlerRegistrar, optio
             }
         };
         const assertCurrentAuthority = async () => {
-            // Session custody may await the requester owner. Verify Home authority
-            // once, after that await, at the service's actual effect boundary.
+            // Finite operations consume dispatch admission. Keep local target and
+            // Session custody checks at their native effect boundaries.
             await refreshSessionCustody();
-            await (effect ? access.assertCurrentAuthority() : access.verifyCurrent());
+            await assertLocal();
         };
         return { accountId: access.accountId,
             kind: context?.callerAuthority === 'present_user' && !context.sessionActionOrigin ? 'person' : 'agent',
@@ -204,8 +208,8 @@ export function registerDaemonStorageRpcHandlers(rpc: RpcHandlerRegistrar, optio
             const service = await timeWebLatencyPhase('storage.rpc.service', () => options.getService(access.target!));
             await timeWebLatencyPhase('storage.rpc.current', access.assertCurrent);
             return timeWebLatencyPhase('storage.service.summary', () => service.summary({ actor, signal: context?.signal }));
-        }, access.verifyCurrent);
-        return HappierStorageSummaryV1Schema.parse(projectSummary(summary, access.canManage));
+        }, access.assertCurrent);
+        return projectSummary(summary, access.canManage);
     });
     rpc.registerHandler(RPC_METHODS.DAEMON_STORAGE_CATEGORY_LIST, async (raw: unknown, context) => {
         const request = MachineStorageCategoryListInputV1Schema.parse(raw);
@@ -217,8 +221,8 @@ export function registerDaemonStorageRpcHandlers(rpc: RpcHandlerRegistrar, optio
             await timeWebLatencyPhase('storage.rpc.current', access.assertCurrent);
             return timeWebLatencyPhase('storage.service.category-list', () => service.categoryList(request.categoryId, { actor, signal: context?.signal, cursor: request.cursor,
                 assertCurrent: actor.assertCurrent, ...(actor.sessionIds ? { sessionIds: actor.sessionIds } : {}) }));
-        }, access.verifyCurrent);
-        return MachineStorageCategoryListResultV1Schema.parse(result);
+        }, access.assertCurrent);
+        return result;
     });
     rpc.registerHandler(RPC_METHODS.DAEMON_STORAGE_SIZE_REFRESH, async (raw: unknown, context) => {
         const request = MachineStorageSizeRefreshInputV1Schema.parse(raw);
@@ -229,8 +233,8 @@ export function registerDaemonStorageRpcHandlers(rpc: RpcHandlerRegistrar, optio
             const service = await options.getService(access.target!);
             await access.assertCurrent();
             return service.refresh({ actor, categoryId: request.categoryId, signal: context?.signal });
-        }, access.verifyCurrent);
-        return HappierStorageSummaryV1Schema.parse(summary);
+        }, access.assertCurrent);
+        return summary;
     });
     rpc.registerHandler(RPC_METHODS.DAEMON_STORAGE_WATCH, async (raw: unknown, context) => {
         const request = MachineStorageWatchInputV1Schema.parse(raw);
@@ -241,7 +245,8 @@ export function registerDaemonStorageRpcHandlers(rpc: RpcHandlerRegistrar, optio
             const service = await options.getService(access.target!);
             await access.assertCurrent();
             // Warm only the owner snapshot. The actor projection is disclosed
-            // below and must gather fresh protection there, never while parking.
+            // below and follows the Storage owner's protection lifetime, never
+            // gathering discarded protection while parking.
             const first = await service.summary({ signal: context?.signal });
             await access.assertCurrent();
             const cursor = request.sinceRevision ?? first.revision;
@@ -249,13 +254,13 @@ export function registerDaemonStorageRpcHandlers(rpc: RpcHandlerRegistrar, optio
                 read: () => service.summary({ actor, signal: context?.signal }), subscribe: service.subscribe,
                 signal: context?.signal });
             const summary = parked.changed ? await parked.snapshot : undefined;
-            return MachineStorageWatchResultV1Schema.parse(summary
-                ? { changed: true, summary: projectSummary(summary, access.canManage) } : { changed: false });
-        }, access.verifyCurrent);
+            return (summary
+                ? { changed: true, summary: projectSummary(summary, access.canManage) } : { changed: false }) satisfies MachineStorageWatchResultV1;
+        }, access.assertCurrent);
     });
     function registerOperation<I extends Readonly<{ serverId?: string; machineId: string }>, O>(
-        method: string, requestSchema: Readonly<{ parse(raw: unknown): I }>, responseSchema: Readonly<{ parse(raw: unknown): O }>,
-        invoke: (service: StorageService, request: I, options: Readonly<{ actor: StorageOperationActor; signal?: AbortSignal }>) => Promise<unknown>,
+        method: string, requestSchema: Readonly<{ parse(raw: unknown): I }>,
+        invoke: (service: StorageService, request: I, options: Readonly<{ actor: StorageOperationActor; signal?: AbortSignal }>) => Promise<O>,
         manageOnly = false, effect = false,
     ) {
         rpc.registerHandler(method, async (raw: unknown, context) => {
@@ -267,22 +272,22 @@ export function registerDaemonStorageRpcHandlers(rpc: RpcHandlerRegistrar, optio
                 const service = await timeWebLatencyPhase('storage.rpc.service', () => options.getService(access.target!));
                 await timeWebLatencyPhase('storage.rpc.current', access.assertCurrent);
                 // This dispatch accepts the daemon operation. Closing a sheet or transport
-                // cannot cancel an accepted cleanup; live authority remains rechecked by its owner.
+                // cannot cancel an accepted cleanup; its owner keeps local safety and custody checks.
                 if (effect) await access.assertLocalAuthority();
                 return invoke(service, request, { actor, ...(effect ? {} : { signal: context?.signal }) });
-            }, effect ? access.assertCurrentAuthority : access.verifyCurrent);
-            return responseSchema.parse(result);
+            }, effect ? access.assertLocalAuthority : access.assertCurrent);
+            return result;
         });
     }
-    registerOperation(RPC_METHODS.DAEMON_STORAGE_PILE_GET, MachineStoragePileGetInputV1Schema, MachineStoragePileResultV1Schema,
+    registerOperation(RPC_METHODS.DAEMON_STORAGE_PILE_GET, MachineStoragePileGetInputV1Schema,
         (service, _request, operation) => service.pileGet(operation));
-    registerOperation(RPC_METHODS.DAEMON_STORAGE_PILE_SET, MachineStoragePileSetInputV1Schema, MachineStoragePileResultV1Schema,
+    registerOperation(RPC_METHODS.DAEMON_STORAGE_PILE_SET, MachineStoragePileSetInputV1Schema,
         (service, request, operation) => service.pileSet(request, operation), false, true);
-    registerOperation(RPC_METHODS.DAEMON_STORAGE_ITEMS_CHECK, MachineStorageItemsCheckInputV1Schema, PileReviewV1Schema,
+    registerOperation(RPC_METHODS.DAEMON_STORAGE_ITEMS_CHECK, MachineStorageItemsCheckInputV1Schema,
         (service, request, operation) => service.itemsCheck(request.refs, operation));
-    registerOperation(RPC_METHODS.DAEMON_STORAGE_TRASH_MOVE, MachineStorageTrashMoveInputV1Schema, PileApplyResultV1Schema,
+    registerOperation(RPC_METHODS.DAEMON_STORAGE_TRASH_MOVE, MachineStorageTrashMoveInputV1Schema,
         (service, request, operation) => service.trashMove(request, operation), false, true);
-    registerOperation(RPC_METHODS.DAEMON_STORAGE_DELETE_NOW, MachineStorageDeleteNowInputV1Schema, PileApplyResultV1Schema,
+    registerOperation(RPC_METHODS.DAEMON_STORAGE_DELETE_NOW, MachineStorageDeleteNowInputV1Schema,
         (service, request, operation) => service.deleteNow(request, operation), false, true);
     rpc.registerHandler(RPC_METHODS.DAEMON_STORAGE_DOCKER_PRUNE, async (raw: unknown, context) => {
         const request = MachineStorageDockerPruneInputV1Schema.parse(raw);
@@ -305,26 +310,26 @@ export function registerDaemonStorageRpcHandlers(rpc: RpcHandlerRegistrar, optio
         }, access.assertLocalAuthority);
         return result;
     });
-    registerOperation(RPC_METHODS.DAEMON_STORAGE_TRASH_EMPTY, MachineStorageTrashEmptyInputV1Schema, TrashEmptyResultV1Schema,
+    registerOperation(RPC_METHODS.DAEMON_STORAGE_TRASH_EMPTY, MachineStorageTrashEmptyInputV1Schema,
         (service, request, operation) => service.trashEmpty(request, operation), false, true);
-    registerOperation(RPC_METHODS.DAEMON_STORAGE_TRASH_RESTORE, MachineStorageTrashRestoreInputV1Schema, TrashRestoreResultV1Schema,
+    registerOperation(RPC_METHODS.DAEMON_STORAGE_TRASH_RESTORE, MachineStorageTrashRestoreInputV1Schema,
         (service, request, operation) => service.trashRestore(request, operation), false, true);
-    registerOperation(RPC_METHODS.DAEMON_STORAGE_WORKTREES_LIST, MachineStorageWorktreesListInputV1Schema, MachineStorageItemsListResultV1Schema,
+    registerOperation(RPC_METHODS.DAEMON_STORAGE_WORKTREES_LIST, MachineStorageWorktreesListInputV1Schema,
         (service, request, operation) => service.worktreesList(request, operation), true);
-    registerOperation(RPC_METHODS.DAEMON_STORAGE_SUGGESTIONS_LIST, MachineStorageSuggestionsListInputV1Schema, MachineStorageItemsListResultV1Schema,
+    registerOperation(RPC_METHODS.DAEMON_STORAGE_SUGGESTIONS_LIST, MachineStorageSuggestionsListInputV1Schema,
         (service, request, operation) => service.suggestionsList(request, operation), true);
-    registerOperation(RPC_METHODS.DAEMON_STORAGE_SUGGESTIONS_DECLINE, MachineStorageSuggestionsDeclineInputV1Schema, MachineStorageSuggestionsDeclineResultV1Schema,
+    registerOperation(RPC_METHODS.DAEMON_STORAGE_SUGGESTIONS_DECLINE, MachineStorageSuggestionsDeclineInputV1Schema,
         (service, request, operation) => service.suggestionsDecline(request, operation), true, true);
-    registerOperation(RPC_METHODS.DAEMON_STORAGE_SCAN_START, MachineStorageScanStartInputV1Schema, DiskScanStateV1Schema,
+    registerOperation(RPC_METHODS.DAEMON_STORAGE_SCAN_START, MachineStorageScanStartInputV1Schema,
         (service, request, operation) => service.scanStart(request, operation), true, true);
-    registerOperation(RPC_METHODS.DAEMON_STORAGE_SCAN_GET, MachineStorageScanGetInputV1Schema, MachineStorageScanGetResultV1Schema,
+    registerOperation(RPC_METHODS.DAEMON_STORAGE_SCAN_GET, MachineStorageScanGetInputV1Schema,
         (service, request, operation) => service.scanGet(request, operation), true);
-    registerOperation(RPC_METHODS.DAEMON_STORAGE_SCAN_CANCEL, MachineStorageScanCancelInputV1Schema, DiskScanStateV1Schema,
+    registerOperation(RPC_METHODS.DAEMON_STORAGE_SCAN_CANCEL, MachineStorageScanCancelInputV1Schema,
         (service, request, operation) => service.scanCancel(request, operation), true, true);
-    registerOperation(RPC_METHODS.DAEMON_STORAGE_SCAN_SKIP, MachineStorageScanSkipInputV1Schema, DiskScanStateV1Schema,
+    registerOperation(RPC_METHODS.DAEMON_STORAGE_SCAN_SKIP, MachineStorageScanSkipInputV1Schema,
         (service, request, operation) => service.scanSkip(request, operation), true, true);
-    registerOperation(RPC_METHODS.DAEMON_STORAGE_PROTECTED_ADD, MachineStorageProtectedAddInputV1Schema, MachineResourcesPolicyMutationResultV1Schema,
+    registerOperation(RPC_METHODS.DAEMON_STORAGE_PROTECTED_ADD, MachineStorageProtectedAddInputV1Schema,
         (service, request, operation) => service.protectedAdd(request, operation), true, true);
-    registerOperation(RPC_METHODS.DAEMON_STORAGE_PROTECTED_REMOVE, MachineStorageProtectedRemoveInputV1Schema, MachineResourcesPolicyMutationResultV1Schema,
+    registerOperation(RPC_METHODS.DAEMON_STORAGE_PROTECTED_REMOVE, MachineStorageProtectedRemoveInputV1Schema,
         (service, request, operation) => service.protectedRemove(request, operation), true, true);
 }

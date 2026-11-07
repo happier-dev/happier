@@ -17,6 +17,7 @@ import { ensureProtectedLocalStateDirectory, readProtectedLocalStateFile, verify
 import { measureNativeDisk } from '../measure/nativeDiskMeasure';
 import { assertStoragePathIdentity, readStoragePathIdentity, removeStoragePath, type StoragePathIdentity } from './removeStoragePath';
 import { renameStoragePathNoReplace } from './renameStoragePath';
+import { isPermissionError } from '../categories/filesystem';
 
 const execute = promisify(execFile);
 const component = z.string().check(z.regex(/^[A-Za-z0-9_-]+$/u));
@@ -41,7 +42,7 @@ export type TrashOwnerAdapter = Readonly<{
 export type TrashStoreDeps = Readonly<{
     happyHomeDir: string; osUserId: string; target: Readonly<{ machineId: string; serverId?: string }>;
     readVolumes(): readonly Readonly<{ id: string; mount: string }>[];
-    activityLog: Pick<ActivityLog, 'append' | 'read' | 'markUndone'>;
+    activityLog: Pick<ActivityLog, 'append' | 'markUndone'>;
     attributionFor(accountId: string): Attribution;
     classifyRestorePath(path: string): Promise<StorageReasonV1 | null>;
     readEmptyAfterDays(): number | null;
@@ -116,18 +117,30 @@ export function createTrashStore(deps: TrashStoreDeps) {
         return { root, directory, manifest, payloadPath: join(directory, 'payload') };
     }
     type Record = Awaited<ReturnType<typeof load>>;
-    async function records(selection: TrashSelection = {}): Promise<Record[]> {
+    async function records(selection: TrashSelection = {}, onPermissionDenied?: () => void): Promise<Record[]> {
         const result: Record[] = [];
         for (const root of await roots()) {
-            if (selection.volumeId && selection.volumeId !== root.volumeId || !await present(root.path)) continue;
-            await verifyProtectedLocalStatePath(root.path, 'directory');
-            for (const entryId of await readdir(root.path)) {
+            if (selection.volumeId && selection.volumeId !== root.volumeId) continue;
+            let entryIds: string[];
+            try {
+                if (!await present(root.path)) continue;
+                await verifyProtectedLocalStatePath(root.path, 'directory');
+                entryIds = await readdir(root.path);
+            } catch (error) {
+                // Read projections disclose missing coverage; effects retain the
+                // strict enumeration path and never treat denied roots as empty.
+                if (!onPermissionDenied || !isPermissionError(error)) throw error;
+                onPermissionDenied();
+                continue;
+            }
+            for (const entryId of entryIds) {
                 if (activePreparations.has(entryId)) continue;
                 if (!component.safeParse(entryId).success || selection.entryIds && !selection.entryIds.includes(entryId)) continue;
                 try {
                     const record = await load(root, entryId);
                     if (!selection.batchId || selection.batchId === record.manifest.entry.batchId) result.push(record);
                 } catch (error) {
+                    if (onPermissionDenied && isPermissionError(error)) onPermissionDenied();
                     // An interrupted prepare can leave a directory without a manifest.
                     // Keep unknown bytes untouched: without the manifest neither owner
                     // authority nor safe recovery can be established for this entry.
@@ -156,7 +169,6 @@ export function createTrashStore(deps: TrashStoreDeps) {
         const flag = kind === 'trash_moved' ? 'movedReceiptRecorded' : 'emptiedReceiptRecorded';
         if (record.manifest[flag]) return;
         const id = `${record.manifest.entry.entryId}-${kind}`;
-        if (await deps.activityLog.read(id)) { await beforeEffect?.(); record.manifest[flag] = true; await save(record); return; }
         const entry = record.manifest.entry;
         await beforeEffect?.();
         await deps.activityLog.append({ v: 1, id, at: now(), kind, rule: 'approved_proposal', outcome: 'done',
@@ -173,13 +185,13 @@ export function createTrashStore(deps: TrashStoreDeps) {
     }
     async function restoredReceipt(record: Record, beforeEffect?: () => Promise<void>) {
         const ref = `${record.manifest.entry.entryId}-trash_moved`;
-        if ((await deps.activityLog.read(ref))?.undoneAt !== undefined) return;
         await beforeEffect?.();
         await deps.activityLog.markUndone({ id: `${record.manifest.entry.entryId}-restored`, at: now(), ref,
             attribution: record.manifest.restoreAttribution ?? { kind: 'unknown' } });
     }
     function failure(error: unknown): { status: 'refused' | 'failed'; reason: StorageReasonV1 } {
         const code = (error as NodeJS.ErrnoException)?.code;
+        if (code === 'policy_unavailable') return { status: 'failed', reason: { code } };
         if (code === 'destination_occupied' || code === 'unauthorized' || code === 'changed_since_review' || code === 'in_use') return { status: 'refused', reason: { code } };
         if (['owner_unavailable', 'owner_data_invalid', 'restore_unsupported', 'restore_path_unsupported'].includes(code ?? '')) {
             return { status: 'refused', reason: { code: 'unsupported', detail: { cause: code! } } };
@@ -235,13 +247,16 @@ export function createTrashStore(deps: TrashStoreDeps) {
                 if (retire) await retire({ sourcePath, payloadPath: record.payloadPath, beforeEffect });
                 else { await beforeEffect(); await renameStoragePathNoReplace(sourcePath, record.payloadPath, undefined, identity); }
                 await assertStoragePathIdentity(record.payloadPath, identity);
-                await measure(record); record.manifest.phase = 'moved'; await save(record);
-                await receipt(record, 'trash_moved', 0); notify(); return record.manifest.entry;
+                try {
+                    await measure(record); record.manifest.phase = 'moved'; await save(record);
+                    await receipt(record, 'trash_moved', 0); return record.manifest.entry;
+                } finally { notify(); }
             }).finally(() => { activePreparations.delete(entry.entryId); }) };
         },
-        async list(selection: TrashSelection = {}, visible?: (entry: TrashEntryV1, ownerData?: JsonValue) => Promise<boolean>): Promise<TrashEntryV1[]> {
+        async list(selection: TrashSelection = {}, visible?: (entry: TrashEntryV1, ownerData?: JsonValue) => Promise<boolean>,
+            onPermissionDenied?: () => void): Promise<TrashEntryV1[]> {
             const entries: TrashEntryV1[] = [];
-            for (const { manifest } of await records(selection)) {
+            for (const { manifest } of await records(selection, onPermissionDenied)) {
                 if (manifest.phase !== 'prepared' && (!visible || await visible(manifest.entry, manifest.ownerData))) entries.push(manifest.entry);
             }
             return entries;
@@ -249,6 +264,7 @@ export function createTrashStore(deps: TrashStoreDeps) {
         async read(entryId: string): Promise<TrashEntryV1 | null> { return (await records({ entryIds: [entryId] }))[0]?.manifest.entry ?? null; },
         restore(selection: TrashSelection, input: Readonly<{ beside?: boolean; actorAccountId: string; custodianAccountId?: string; assertCurrentAuthority?: () => Promise<void>; assertEntryAuthority?: TrashEntryAuthorityCheck }>) {
             return serialize(async () => {
+                let changed = false;
                 const outcomes: { entryId: string; status: 'restored' | 'refused' | 'failed'; path?: string; reason?: StorageReasonV1 }[] = [];
                 // Owned children were retired first; their original parents must exist before reinstatement.
                 const restoring = (await records(selection)).sort((left, right) => Buffer.byteLength(storagePathToFs(left.manifest.entry.originalPath))
@@ -289,15 +305,17 @@ export function createTrashStore(deps: TrashStoreDeps) {
                         } else { await beforeEffect(); await renameStoragePathNoReplace(record.payloadPath, physical, undefined, record.manifest.identity); }
                         await assertStoragePathIdentity(physical, record.manifest.identity);
                         if (await present(record.payloadPath)) throw new Error('Trash reinstate left its payload behind');
+                        changed = true;
                         await restoredReceipt(record);
                         await cleanup(record); outcomes.push({ entryId: entry.entryId, status: 'restored', path: physical });
                     } catch (error) { outcomes.push({ entryId: entry.entryId, ...failure(error) }); }
                 }
-                notify(); return { outcomes };
+                if (changed) notify(); return { outcomes };
             });
         },
         empty(selection: TrashSelection, input: Readonly<{ actorAccountId: string; custodianAccountId: string; scheduled?: boolean; canRunOwnerOperation?: () => boolean | Promise<boolean>; assertCurrentAuthority?: () => Promise<void>; assertEntryAuthority?: TrashEntryAuthorityCheck }>) {
             return serialize(async () => {
+                let changed = false;
                 const outcomes: { entryId: string; status: 'deleted' | 'refused' | 'failed'; reason?: StorageReasonV1 }[] = [];
                 let freedBytes = 0;
                 for (const record of await records(selection)) {
@@ -334,11 +352,12 @@ export function createTrashStore(deps: TrashStoreDeps) {
                         if (adapter) await adapter.discard({ payloadPath: record.payloadPath, beforeEffect });
                         else await removeStoragePath(record.payloadPath, { allowedRoot: record.directory, expectedIdentity: record.manifest.identity, beforeEffect });
                         if (await present(record.payloadPath)) throw new Error('Trash discard left its payload behind');
+                        changed = true;
                         await receipt(record, 'trash_emptied', bytes); await cleanup(record);
                         freedBytes += bytes; outcomes.push({ entryId: entry.entryId, status: 'deleted' });
                     } catch (error) { outcomes.push({ entryId: entry.entryId, ...failure(error) }); }
                 }
-                notify(); return { outcomes, freedBytes };
+                if (changed) notify(); return { outcomes, freedBytes };
             });
         },
         reconcile(input: Readonly<{ canRunOwnerOperation?: () => boolean | Promise<boolean>; beforeEffect?: () => Promise<void> }> = {}) {

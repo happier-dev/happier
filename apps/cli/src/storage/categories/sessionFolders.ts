@@ -2,7 +2,7 @@ import { basename, dirname, join } from 'node:path';
 import { z } from 'zod/mini';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { DEFAULT_SESSION_MEDIA_TRANSFER_CONFIG } from '@/transfers/targets/resolveSessionMediaTransferTarget';
-import { check, directoriesAtDepth, entries, exists, inUse, item, unavailableDirectory, opaqueItemTitle } from './filesystem';
+import { check, directoriesAtDepth, entries, exists, inUse, item, unavailableDirectory, opaqueItemTitle, isCategoryPathInScope } from './filesystem';
 import { StorageCategoryAdapterError } from './types';
 import type { StorageCategoryContext, StorageCategoryDefinition, StorageCategoryVerdict, StorageCategoryAdapter, StorageCategoryCatalogDeps } from './types';
 import { bindFilesystemItem, filesystemAdapterForEntry } from './filesystemAdapters';
@@ -80,7 +80,7 @@ export const sessionFolders: StorageCategoryDefinition = {
         const result = [];
         const managedRoot = join(context.deps.activeServerDir, 'session-directories');
         const byPath = new Map(context.allocations.map(entry => [entry.directory, entry]));
-        for (const path of await directoriesAtDepth(managedRoot, 1, unavailableDirectory(context, 'sessionFolders'))) {
+        for (const path of await directoriesAtDepth(managedRoot, 1, unavailableDirectory(context, 'sessionFolders'), context.discoveryPaths)) {
             if (basename(path) === '.owners') continue;
             const record = byPath.get(path);
             if (record?.inTrash) continue;
@@ -89,13 +89,15 @@ export const sessionFolders: StorageCategoryDefinition = {
                 ...(record?.sessionId ? { sessionId: record.sessionId } : {}) });
         }
         // The ownership record may name an allocation omitted by a transient directory relist.
-        for (const record of context.allocations) if (!record.inTrash && !result.some(value => value.path === record.directory) && await exists(record.directory)) {
+        for (const record of context.allocations) if (!record.inTrash
+            && await isCategoryPathInScope(record.directory, context.discoveryPaths)
+            && !result.some(value => value.path === record.directory) && await exists(record.directory, unavailableDirectory(context, 'sessionFolders'))) {
             result.push({ ...item('sessionFolders', record.directory, sessionFolderCanGo(record.sessionId, context),
                 { title: opaqueItemTitle(record.directory, 'Session folder'), evidence: ['managed_session_directory_record'] }),
                 ...(record.sessionId ? { sessionId: record.sessionId } : {}) });
         }
-        for (const root of uploadRoots(context)) for (const category of await entries(root, unavailableDirectory(context, 'sessionFolders'))) {
-            for (const path of await directoriesAtDepth(category, 1, unavailableDirectory(context, 'sessionFolders'))) {
+        for (const root of uploadRoots(context)) for (const category of await entries(root, unavailableDirectory(context, 'sessionFolders'), context.discoveryPaths)) {
+            for (const path of await directoriesAtDepth(category, 1, unavailableDirectory(context, 'sessionFolders'), context.discoveryPaths)) {
                 const sessionId = context.sessions.find(session => session.sessionId === basename(path))?.sessionId;
                 result.push({ ...item('sessionFolders', path, sessionFolderCanGo(sessionId ?? null, context),
                     { title: opaqueItemTitle(path, 'Session attachments'), evidence: ['session_workspace_upload'] }),

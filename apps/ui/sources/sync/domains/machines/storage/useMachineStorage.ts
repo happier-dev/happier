@@ -12,7 +12,7 @@ export function useMachineStorageTarget(input: MachineStorageHookInput) {
     React.useEffect(() => {
         machineStorageStore.daemonStateChanged(key, daemonStateVersion);
     }, [key, daemonStateVersion]);
-    return { key, enabled, offline };
+    return { key, enabled, offline, daemonStateVersion };
 }
 
 export function useMachineStorageSelection<T>(key: MachineStorageKey, select: (state: MachineStorageState) => T): T {
@@ -23,6 +23,7 @@ export function useMachineStorageSelection<T>(key: MachineStorageKey, select: (s
 
 export const selectStorageStatus = (state: MachineStorageState) => state.status;
 export const selectStorageSummary = (state: MachineStorageState) => state.summary;
+export const selectStorageFailure = (state: MachineStorageState) => state.failure;
 export const selectStoragePile = (state: MachineStorageState) => state.summary?.pile ?? null;
 export const selectStorageScan = (state: MachineStorageState) => state.summary?.wholeDisk ?? null;
 

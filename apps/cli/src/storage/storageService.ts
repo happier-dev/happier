@@ -1,9 +1,7 @@
-import { HappierStorageSummaryV1Schema, MachineStorageCategoryListResultV1Schema,
-    type HappierStorageSummaryV1, type HappierStorageCategoryIdV1, type MachineStorageCategoryListResultV1,
-    type StorageSizeV1, type StorageItemV1 } from '@happier-dev/protocol/storage/storageV1';
-import { MachineStoragePolicyV1Schema } from '@happier-dev/protocol/storage/storageV1';
+import { type HappierStorageSummaryV1, type HappierStorageCategoryIdV1, type MachineStorageCategoryListResultV1,
+    type StorageSizeV1, type StorageItemV1, type StorageReadIssueV1 } from '@happier-dev/protocol/storage/storageV1';
 import { canonicalAbsolutePathsEqual, isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
-import { createStorageCategoryCatalog, publicStorageItem, type StorageCategoryCatalogDeps, type StorageCategoryItem, type StorageCategoryDiscoverySnapshot } from './categoryCatalog';
+import { createStorageCategoryCatalog, publicStorageItem, type StorageCategoryCatalogDeps, type StorageCategoryItem } from './categoryCatalog';
 import { measureNativeDisk, type NativeDiskMeasurement } from './measure/nativeDiskMeasure';
 import type { ActivityLog } from '@/daemon/guard/activityLog';
 import type { MachineStoragePolicyV1 } from '@happier-dev/protocol/storage/storageV1';
@@ -11,7 +9,7 @@ import type { MachineGuardActivityEntryV1 } from '@happier-dev/protocol/machines
 import { createStorageOperations } from './storageOperations';
 import type { StorageProtectionFacts } from './protection/protectedPaths';
 import { readStorageScanHints, resolveStorageScanShortcuts, storageCandidateRepositoryFacts, type CompletedStorageSuggestionScan } from './suggestions/recognizers';
-import { readStorageIgnoredPaths } from './worktrees/readStorageIgnoredPaths';
+import { readRepositoryIgnoredPaths } from '@/scm/readRepositoryIgnoredPaths';
 import { homedir } from 'node:os';
 import type { ScmBackendRegistry } from '@/scm/registry';
 import type { MachineResourcesPolicyRuntime } from '@/daemon/resources/machineResourcesPolicy';
@@ -27,9 +25,12 @@ import type { SizedStorageCategoryItem, StoragePathUse } from './categories/type
 import { logger } from '@/ui/logger';
 import { timeWebLatencyPhase } from '@/daemon/externalActions/webLatencyTrace';
 import { scmWorktreeMutationActivity } from '@/scm/worktreeMutationActivity';
+import { isDeepStrictEqual } from 'node:util';
+import { storagePolicyUnavailableError } from './storagePolicy';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import type { MachineStorageDockerPruneInputV1 } from '@happier-dev/protocol/storage/storageV1';
 import type { createStorageDockerPruneForHost } from './dockerPrune';
+import { storagePermissionReadIssue } from './categories/filesystem';
 
 export type StorageEnvironmentProtectionFacts = Pick<StorageProtectionFacts,
     'platform' | 'systemPaths' | 'personalFolders' | 'knownFolders' | 'env' | 'browserProfileRoots' | 'cloudSyncedFolders'>;
@@ -48,24 +49,24 @@ export type StorageOperationActor = Readonly<{
 
 export type StorageServiceDeps = Readonly<{
     dockerPrune?: ReturnType<typeof createStorageDockerPruneForHost>;
-    catalog: StorageCategoryCatalogDeps;
+    /** The Storage owner supplies the catalog's policy reader; callers cannot inject a second one. */
+    catalog: Omit<StorageCategoryCatalogDeps, 'readPolicy'>;
     readVolumes: () => readonly Readonly<{ id: string; label: string; mount: string; totalBytes: number; availableBytes: number;
         reservedBytes?: number; apfsContainerId?: string; availableIncludingPurgeableBytes?: number }>[];
     readVolumesReported?: () => boolean;
     subscribeChanges?: (listener: () => void) => () => void;
-    subscribeVolumeChanges?: (listener: () => void) => () => void;
     nowMs?: () => number;
     machineId?: string;
     serverId?: string;
     custodianAccountId?: string;
     homeDir?: string;
     activityLog?: ActivityLog;
-    readPolicy?: () => MachineStoragePolicyV1;
-    resourcesPolicy?: Pick<MachineResourcesPolicyRuntime, 'read' | 'set' | 'subscribe'>;
+    /** The only Storage policy source. Not ready (loading, locked, offline) is unknown, never a default. */
+    resourcesPolicy: Pick<MachineResourcesPolicyRuntime, 'read' | 'set' | 'subscribe'>;
     canRunStorageOwnerOperation?: () => boolean | Promise<boolean>;
     readLowPower?: () => boolean;
     readIndexedStorageItem?: (ref: StorageItemRefV1) => Promise<TrustedDiskNode | null>;
-    maintenance?: Omit<StorageMaintenanceDeps, 'readPolicy' | 'getTrashStore' | 'runScheduledScan'>;
+    maintenance?: Omit<StorageMaintenanceDeps, 'readPolicy' | 'subscribePolicy' | 'getTrashStore' | 'runScheduledScan'>;
     attributionFor?: (accountId: string) => MachineGuardActivityEntryV1['attribution'];
     /** Existing OS/browser owners supply facts; this service performs no environment discovery. */
     readStorageProtectionFacts?: () => StorageEnvironmentProtectionFacts | Promise<StorageEnvironmentProtectionFacts>;
@@ -77,7 +78,19 @@ export type StorageServiceDeps = Readonly<{
 
 export function createStorageService(deps: StorageServiceDeps) {
     let currentTrashRoots: readonly string[] = [];
-    const catalog = createStorageCategoryCatalog({ ...deps.catalog, scmRegistry: deps.scmRegistry ?? deps.catalog.scmRegistry,
+    // One policy availability owner for every Storage reader. Maintenance skips
+    // effects on unknown; protection, projections and effects refuse instead of
+    // classifying against presentation defaults (empty protected folders).
+    const readPolicy = (): MachineStoragePolicyV1 | undefined => {
+        const snapshot = deps.resourcesPolicy.read();
+        return snapshot.status === 'ready' ? snapshot.policy.storage : undefined;
+    };
+    const requirePolicy = (): MachineStoragePolicyV1 => {
+        const policy = readPolicy();
+        if (!policy) throw storagePolicyUnavailableError();
+        return policy;
+    };
+    const catalog = createStorageCategoryCatalog({ ...deps.catalog, readPolicy: requirePolicy, scmRegistry: deps.scmRegistry ?? deps.catalog.scmRegistry,
         trashRoots: () => currentTrashRoots.length ? currentTrashRoots
         : deps.catalog.trashRoots?.() ?? [] });
     const now = deps.nowMs ?? Date.now;
@@ -87,41 +100,28 @@ export function createStorageService(deps: StorageServiceDeps) {
     let dirty = true;
     let revision = 0;
     let cached: HappierStorageSummaryV1 | null = null;
-    // Discovery and sizing are two phases of the same event-invalidated storage
-    // snapshot. Disk pages need its catalog facts, not a new sizing operation.
-    let catalogSnapshot: Promise<StorageCategoryDiscoverySnapshot> | undefined;
     let scanOwner: Promise<Readonly<{ runner: StorageScanRunner; index: StorageScanIndex }>> | undefined;
     let scanLifecycleKey: string | undefined;
     let scanLifecycle: Promise<void> = Promise.resolve();
     let scheduledPolicyKey: string | undefined;
     const scheduledSubscriptions: (() => void)[] = [];
-    const readWholeDiskEnabled = (): boolean | undefined => {
-        // The daemon's presentation defaults cannot authorize deleting retained
-        // scans before its canonical resources policy has loaded (or while locked).
-        if (deps.resourcesPolicy) {
-            const snapshot = deps.resourcesPolicy.read();
-            return snapshot.status === 'ready' ? snapshot.policy.storage.wholeDiskEnabled : undefined;
-        }
-        return deps.readPolicy?.().wholeDiskEnabled;
-    };
+    // Unknown policy cannot authorize deleting retained scans (STO6).
+    const readWholeDiskEnabled = (): boolean | undefined => readPolicy()?.wholeDiskEnabled;
     const currentScheduledPolicyKey = () => {
-        const policy = deps.readPolicy?.();
+        const policy = readPolicy();
         return readWholeDiskEnabled() === true && policy?.scheduledScan
             ? JSON.stringify(policy.scheduledScan) : undefined;
     };
     let items: readonly SizedStorageCategoryItem[] = [];
+    let sizedTrashEntries: Awaited<ReturnType<typeof operations.trashEntries>> = [];
+    // Same event-invalidated observation as sizes; only its presentation window
+    // crosses summary RPC/watch. Keep all rows for fresh actor filtering/backfill.
+    let suggestions: readonly StorageItemV1[] = [];
     type Operation = { controller: AbortController; readers: number; done: Promise<HappierStorageSummaryV1> };
     let pending: Operation | null = null;
     const abortError = () => Object.assign(new Error('Storage request cancelled'), { name: 'AbortError' });
     const notify = () => { for (const listener of listeners) listener(); };
-    const invalidate = () => { if (disposed) return; dirty = true; catalogSnapshot = undefined; revision += 1; notify(); };
-    function readCatalogSnapshot(inUse?: StoragePathUse): Promise<StorageCategoryDiscoverySnapshot> {
-        if (catalogSnapshot) return catalogSnapshot;
-        const snapshot = catalog.discoverSnapshot([], inUse);
-        catalogSnapshot = snapshot;
-        void snapshot.catch(() => { if (catalogSnapshot === snapshot) catalogSnapshot = undefined; });
-        return snapshot;
-    }
+    const invalidate = () => { if (disposed) return; dirty = true; revision += 1; notify(); };
     const reconcileScans = () => {
         if (!scanOwner || disposed) return;
         const key = JSON.stringify([readWholeDiskEnabled(), deps.readVolumesReported?.() ?? true,
@@ -140,27 +140,9 @@ export function createStorageService(deps: StorageServiceDeps) {
         });
     };
     const unsubscribe = deps.subscribeChanges?.(() => { invalidate(); reconcileScans(); });
+    // Policy edges change availability, protection and retention verdicts.
+    const unsubscribePolicy = deps.resourcesPolicy.subscribe(() => { invalidate(); reconcileScans(); });
     const unsubscribeWorktrees = scmWorktreeMutationActivity.subscribe(invalidate);
-    const unsubscribeVolumes = deps.subscribeVolumeChanges?.(() => {
-        reconcileScans();
-        if (disposed || !cached) return;
-        const previous = new Map(cached.volumes.map(volume => [volume.volume.volumeId, volume]));
-        const volumes = deps.readVolumes().map(volume => ({
-            volume: { volumeId: volume.id, label: volume.label, mountPath: volume.mount },
-            totalBytes: volume.totalBytes, freeBytes: volume.availableBytes,
-            ...(volume.availableIncludingPurgeableBytes === undefined ? {} : { availableIncludingPurgeableBytes: volume.availableIncludingPurgeableBytes }),
-            happierBytes: previous.get(volume.id)?.happierBytes ?? 0,
-            pileBytes: previous.get(volume.id)?.pileBytes ?? 0,
-            trashBytes: previous.get(volume.id)?.trashBytes ?? 0,
-            ...(previous.get(volume.id)?.pileFreesBytes === undefined ? {} : { pileFreesBytes: previous.get(volume.id)!.pileFreesBytes }),
-            ...(previous.get(volume.id)?.trashFreesBytes === undefined ? {} : { trashFreesBytes: previous.get(volume.id)!.trashFreesBytes }),
-            ...(previous.get(volume.id)?.canGoBytes === undefined ? {} : { canGoBytes: previous.get(volume.id)!.canGoBytes }),
-        }));
-        if (JSON.stringify(volumes) === JSON.stringify(cached.volumes)) return;
-        // Capacity is sampled by plan 20. Reusing that edge must not periodically resize trees.
-        cached = { ...cached, revision: ++revision, volumes };
-        notify();
-    });
     const assertActive = (signal?: AbortSignal) => { if (disposed || signal?.aborted) throw abortError(); };
     async function scans() {
         assertActive();
@@ -185,8 +167,8 @@ export function createStorageService(deps: StorageServiceDeps) {
                             ...(projects?.projects?.map(project => project.repositoryRoot) ?? []),
                             ...(worktrees?.map(worktree => worktree.path) ?? []),
                         ])], facts: { protection: { ...environment, homeDir: deps.homeDir ?? homedir() }, now: now(),
-                            suggestUnusedAfterDays: deps.readPolicy?.().suggestUnusedAfterDays ?? 30,
-                            readIgnoredPaths: repositoryRoot => readStorageIgnoredPaths({ repositoryRoot,
+                            suggestUnusedAfterDays: requirePolicy().suggestUnusedAfterDays,
+                            readIgnoredPaths: repositoryRoot => readRepositoryIgnoredPaths({ repositoryRoot,
                                 happyHomeDir: deps.catalog.happyHomeDir, registry: deps.scmRegistry }) } });
                     },
                     fullDiskAccess: () => ({ state: process.platform === 'darwin' ? 'unknown' : 'not_applicable',
@@ -214,7 +196,7 @@ export function createStorageService(deps: StorageServiceDeps) {
                         }
                     };
                     scheduledSubscriptions.push(deps.maintenance.subscribeIdle(resume),
-                        deps.maintenance.subscribePower(resume), deps.maintenance.subscribePolicy(policyChanged));
+                        deps.maintenance.subscribePower(resume), deps.resourcesPolicy.subscribe(policyChanged));
                 }
                 return { index, runner };
             })();
@@ -258,13 +240,16 @@ export function createStorageService(deps: StorageServiceDeps) {
     async function measure(signal: AbortSignal, measuredRevision: number): Promise<HappierStorageSummaryV1> {
         await timeWebLatencyPhase('storage.summary.prepare', () => operations.prepareRead());
         // Catalog, protection and recognition describe this same sizing operation.
-        // Discard its process observation on settlement; later actor/effect reads
-        // acquire current protection independently, including after slow sizing.
+        // Later actor/effect reads acquire current protection independently,
+        // including after slow sizing. Vitals publishes capacity independently.
         const inUse = await timeWebLatencyPhase('storage.facts.in-use', () => deps.catalog.readInUsePaths?.()
             ?? { reliable: false, paths: [] });
-        const discovery = await timeWebLatencyPhase('storage.summary.catalog', () => readCatalogSnapshot(inUse));
-        const candidates = discovery.items;
+        const discovery = await timeWebLatencyPhase('storage.summary.catalog', () => catalog.discoverSnapshot([], inUse));
+        // Denied ancestry remains in the catalog's protection facts. It is not
+        // a readable sizing candidate and must not be probed again here.
+        const candidates = discovery.items.filter(item => item.evidence.length !== 1 || item.evidence[0] !== 'directory_permission_unavailable');
         const incompleteCategories = new Set(discovery.incompleteCategoryIds);
+        const incomplete = [...(discovery.incomplete ?? [])];
         assertActive(signal);
         const projected = await timeWebLatencyPhase('storage.summary.projection', () => operations.projectCatalogItems(candidates.map(item => ({ ...item, size: emptySize() })), inUse));
         const volumeFacts = deps.readVolumes();
@@ -273,7 +258,7 @@ export function createStorageService(deps: StorageServiceDeps) {
             .sort((left, right) => right.mount.length - left.mount.length)[0];
         // The recognizer/protection owners decide eligible sets before native sizing.
         // Missing native facts remove that root from the union rather than granting eligibility.
-        const provisionalSuggestions = await timeWebLatencyPhase('storage.summary.provisional-suggestions', () => operations.summarySuggestions(projected, inUse));
+        const provisionalSuggestions = await timeWebLatencyPhase('storage.summary.provisional-suggestions', () => operations.readSuggestionInventory(projected, inUse));
         const unions = [
             ...catalog.categoryIds.map(categoryId => ({ id: `category:${categoryId}`,
                 paths: projected.filter(item => item.categoryId === categoryId && canGo(item)).map(item => item.path), excludeIncomplete: true })),
@@ -286,7 +271,10 @@ export function createStorageService(deps: StorageServiceDeps) {
         assertActive(signal);
         const byPath = new Map(measured.perPath.map(path => [path.path, path]));
         const unionById = new Map(('unions' in measured ? measured.unions : undefined)?.map(union => [union.id, union]));
-        const trashEntries = await timeWebLatencyPhase('storage.summary.trash', () => operations.trashEntries());
+        const trashEntries = await timeWebLatencyPhase('storage.summary.trash', () => operations.trashEntries(undefined, () => {
+            incompleteCategories.add('trash');
+            if (!incomplete.some(issue => issue.categoryId === 'trash')) incomplete.push(storagePermissionReadIssue('trash'));
+        }));
         const nextItems = projected.map(item => {
             const value = byPath.get(item.path);
             const measuredSize = value ? sizeOf(value) : { ...emptySize(), atLeast: true };
@@ -308,10 +296,19 @@ export function createStorageService(deps: StorageServiceDeps) {
             const size = sumSizes(members);
             if (incompleteCategories.has(categoryId)) size.atLeast = true;
             if (eligibleMeasurement?.atLeast) size.atLeast = true;
-            return { categoryId, size, canGoBytes: eligibleMeasurement?.totalExclusiveBytes ?? 0,
-                count: members.length, detailFacts: { canGoCount: eligible.length,
+            const facts = { categoryId, size, canGoBytes: eligibleMeasurement?.totalExclusiveBytes ?? 0,
+                count: categoryId === 'trash' ? trashEntries.length : members.length, detailFacts: { canGoCount: eligible.length,
                     keepCount: members.filter(item => item.verdict === 'keep').length,
                     factsReported: !incompleteCategories.has(categoryId) } };
+            const previous = cached?.categories.find(category => category.categoryId === categoryId);
+            const detailItems = (rows: readonly SizedStorageCategoryItem[]) => rows.map(item => ({
+                item: publicStorageItem(item), group: item.categoryGroup,
+            }));
+            // Compare only when the catalog is measured, never on scan progress arrivals.
+            const unchanged = previous && isDeepStrictEqual({ ...previous, revision: undefined }, { ...facts, revision: undefined })
+                && isDeepStrictEqual(detailItems(items.filter(item => item.categoryId === categoryId)), detailItems(members))
+                && (categoryId !== 'trash' || isDeepStrictEqual(sizedTrashEntries, trashEntries));
+            return { ...facts, revision: unchanged ? previous.revision : measuredRevision };
         });
         assertActive(signal);
         const byVolume = new Map<string, number>();
@@ -320,12 +317,18 @@ export function createStorageService(deps: StorageServiceDeps) {
             if (volume) byVolume.set(volume.id, (byVolume.get(volume.id) ?? 0) + item.size.allocatedBytes);
         }
         const trash = categories.find(category => category.categoryId === 'trash');
-        if (trash) trash.count = trashEntries.length;
-        const suggestionsTop = await timeWebLatencyPhase('storage.summary.suggestions', () => operations.summarySuggestions(nextItems, inUse));
-        const environment = await timeWebLatencyPhase('storage.summary.environment', () => deps.readStorageProtectionFacts?.());
-        const result = HappierStorageSummaryV1Schema.parse({
+        const nextSuggestions = await timeWebLatencyPhase('storage.summary.suggestions', () => operations.readSuggestionInventory(nextItems, inUse));
+        const [environment, projects] = await Promise.all([
+            timeWebLatencyPhase('storage.summary.environment', () => deps.readStorageProtectionFacts?.()), deps.catalog.readProjects?.(),
+        ]);
+        const scanShortcuts = await resolveStorageScanShortcuts({ protection: { ...environment, homeDir: deps.homeDir ?? homedir() } }, [
+            ...(projects?.projects ?? []).map(project => project.repositoryRoot),
+            ...(deps.catalog.readTrackedSessions?.() ?? []).map(session => session.cwd),
+        ]);
+        const result: HappierStorageSummaryV1 = {
             revision: dirty ? measuredRevision : Math.max(measuredRevision, revision), sizedAt: now(),
-            scanShortcuts: resolveStorageScanShortcuts({ protection: { ...environment, homeDir: deps.homeDir ?? homedir() } }),
+            ...(incomplete.length ? { incomplete } : {}),
+            scanShortcuts,
             volumes: volumeFacts.map(volume => ({ volume: { volumeId: volume.id, label: volume.label, mountPath: volume.mount },
                 totalBytes: volume.totalBytes, freeBytes: volume.availableBytes, happierBytes: byVolume.get(volume.id) ?? 0,
                 ...(volume.availableIncludingPurgeableBytes === undefined ? {} : { availableIncludingPurgeableBytes: volume.availableIncludingPurgeableBytes }),
@@ -335,15 +338,17 @@ export function createStorageService(deps: StorageServiceDeps) {
                     .reduce((sum, item) => sum + item.size.freesBytes, 0),
                 trashBytes: nextItems.filter(item => item.categoryId === 'trash' && volumeFor(item.path)?.id === volume.id)
                     .reduce((sum, item) => sum + item.size.allocatedBytes, 0) })),
-            categories, suggestionsTop,
+            categories, ...operations.projectSummarySuggestions(nextSuggestions),
             pile: { count: 0, freesBytes: 0, droppedSinceLastView: [] },
             trash: { count: trash?.count ?? 0, allocatedBytes: trash?.size.allocatedBytes ?? 0 },
             wholeDisk: { enabled: readWholeDiskEnabled() === true,
                 scans: scanOwner ? (await timeWebLatencyPhase('storage.summary.scan-state', () => scanOwner!)).index.states() : [] },
-        });
+        };
         // Cancellation or owner retirement cannot replace the last-known-good snapshot.
         assertActive(signal);
         items = nextItems;
+        sizedTrashEntries = trashEntries;
+        suggestions = nextSuggestions;
         cached = result;
         notify();
         return result;
@@ -393,12 +398,23 @@ export function createStorageService(deps: StorageServiceDeps) {
     }
     async function summary(options: Readonly<{ signal?: AbortSignal; actor?: StorageOperationActor }> = {}): Promise<HappierStorageSummaryV1> {
         assertActive(options.signal);
+        requirePolicy();
         const measured = cached && !dirty && !pending ? cached : await timeWebLatencyPhase('storage.summary.measurement', () => join(begin(), options.signal));
+        // One-shot Action reads join the current capacity from Vitals without
+        // publishing a Storage revision or measuring any Storage tree.
+        const capacity = new Map(deps.readVolumes().map(volume => [volume.id, volume]));
         const current = { ...measured, revision, wholeDisk: {
             enabled: readWholeDiskEnabled() === true,
             scans: scanOwner ? [...(await timeWebLatencyPhase('storage.summary.scans', scans)).index.states()] : [],
-        } };
-        return options.actor ? timeWebLatencyPhase('storage.summary.actor-projection', () => operations.summaryForActor(current, options.actor!, items)) : current;
+        }, volumes: measured.volumes.map(volume => {
+            const latest = capacity.get(volume.volume.volumeId);
+            if (!latest) return volume;
+            const { availableIncludingPurgeableBytes: _previousPurgeable, ...facts } = volume;
+            return { ...facts, totalBytes: latest.totalBytes, freeBytes: latest.availableBytes,
+                ...(latest.availableIncludingPurgeableBytes === undefined ? {} : { availableIncludingPurgeableBytes: latest.availableIncludingPurgeableBytes }) };
+        }) };
+        requirePolicy();
+        return options.actor ? timeWebLatencyPhase('storage.summary.actor-projection', () => operations.summaryForActor(current, options.actor!, items, suggestions)) : current;
     }
     const readCompletedStorageScan: NonNullable<StorageServiceDeps['readCompletedStorageScan']> = deps.readCompletedStorageScan ?? (async inUse => {
         if (readWholeDiskEnabled() !== true) return null;
@@ -419,16 +435,16 @@ export function createStorageService(deps: StorageServiceDeps) {
         }
         return { status: 'complete' as const, scope: 'whole-disk' as const, candidates: candidates() };
     });
-    const operations = createStorageOperations({ deps: { ...deps, readCompletedStorageScan,
+    const operations = createStorageOperations({ readPolicy: requirePolicy, deps: { ...deps, readCompletedStorageScan,
         readIndexedStorageItem: deps.readIndexedStorageItem ?? (async ref => (await scans()).index.readNode(ref.itemId) ?? null) }, catalog, revision: () => revision, invalidate,
         setTrashRoots: paths => { currentTrashRoots = paths; },
-        readCatalogItems: async () => (await readCatalogSnapshot()).items,
         readSizedItems: async signal => { await summary({ signal }); return items; },
+        readIncomplete: () => cached?.incomplete ?? [],
     });
     const protectedFolders = createStorageProtectedFolders({ resourcesPolicy: deps.resourcesPolicy,
         readProtectionFacts: operations.readProtectionFacts });
     const maintenance = deps.maintenance ? createStorageMaintenance({ ...deps.maintenance,
-        readPolicy: () => deps.readPolicy?.() ?? MachineStoragePolicyV1Schema.parse({}),
+        readPolicy, subscribePolicy: deps.resourcesPolicy.subscribe,
         getTrashStore: operations.maintenanceTrash,
         runScheduledScan: async () => {
             const key = currentScheduledPolicyKey();
@@ -446,15 +462,18 @@ export function createStorageService(deps: StorageServiceDeps) {
         async initialize() { await scans(); await maintenance?.start(); },
         async scanStart(request: MachineStorageScanStartInputV1, options: Readonly<{ actor: StorageOperationActor; signal?: AbortSignal }>) {
             await assertScanActor(options.actor, options.signal);
+            requirePolicy();
             if (readWholeDiskEnabled() !== true) throw Object.assign(new Error('Whole-disk scan disabled'), { code: 'storage_whole_disk_disabled' });
             const owner = await scans();
             await assertScanActor(options.actor, options.signal);
-            return owner.runner.start(request, { beforeEffect: () => assertScanAuthority(options.actor, options.signal) });
+            requirePolicy();
+            return owner.runner.start(request, { beforeEffect: async () => { await assertScanAuthority(options.actor, options.signal); requirePolicy(); } });
         },
         async scanGet(request: MachineStorageScanGetInputV1, options: Readonly<{ actor: StorageOperationActor; signal?: AbortSignal }>) {
             await timeWebLatencyPhase('storage.page.actor', () => assertScanActor(options.actor, options.signal));
+            requirePolicy();
             const owner = await timeWebLatencyPhase('storage.page.scans', scans);
-            const result = await timeWebLatencyPhase('storage.page.snapshot', () => owner.runner.get(request, { beforeEffect: () => assertScanAuthority(options.actor, options.signal) }));
+            const result = await timeWebLatencyPhase('storage.page.snapshot', () => owner.runner.get(request, { beforeEffect: async () => { await assertScanAuthority(options.actor, options.signal); requirePolicy(); } }));
             const pageNodes = [...(result.root ? [result.root] : []), ...result.nodes, ...(result.insights ? [
                 ...result.insights.largestDistinct, ...result.insights.changes.grew,
                 ...result.insights.changes.shrank, ...result.insights.changes.appeared,
@@ -467,9 +486,12 @@ export function createStorageService(deps: StorageServiceDeps) {
             const insightVolume = target && ('volumeId' in target ? target.volumeId
                 : [...deps.readVolumes()].sort((left, right) => right.mount.length - left.mount.length)
                     .find(volume => storagePathContains(volume.mount, target.folderPath))?.id);
+            const incomplete: StorageReadIssueV1[] = [];
             const insights = result.insights ? { ...result.insights,
                 largestDistinct: project(result.insights.largestDistinct),
-                trashBytes: (await timeWebLatencyPhase('storage.page.trash', () => operations.trashEntries())).filter(entry => entry.volumeId === insightVolume)
+                trashBytes: insightVolume === undefined ? 0 : (await timeWebLatencyPhase('storage.page.trash', () => operations.trashEntries(undefined, () => {
+                    if (!incomplete.length) incomplete.push(storagePermissionReadIssue('trash'));
+                }, { volumeId: insightVolume })))
                     .reduce((total, entry) => total + entry.size.allocatedBytes, 0),
                 changes: {
                     grew: project(result.insights.changes.grew),
@@ -479,7 +501,9 @@ export function createStorageService(deps: StorageServiceDeps) {
                 },
             } : undefined;
             await timeWebLatencyPhase('storage.page.disclosure', () => assertScanActor(options.actor, options.signal));
-            return { ...result, nodes, ...(result.root ? { root: projected.get(result.root.nodeId) ?? result.root } : {}), ...(insights ? { insights } : {}) };
+            requirePolicy();
+            return { ...result, nodes, ...(result.root ? { root: projected.get(result.root.nodeId) ?? result.root } : {}),
+                ...(insights ? { insights } : {}), ...(incomplete.length ? { incomplete } : {}) };
         },
         async scanCancel(request: MachineStorageScanCancelInputV1, options: Readonly<{ actor: StorageOperationActor; signal?: AbortSignal }>) {
             logger.infoFile('[storage-scan] cancel-service-entry', { scanId: request.scanId, atMs: Date.now() });
@@ -496,8 +520,10 @@ export function createStorageService(deps: StorageServiceDeps) {
         },
         async scanSkip(request: MachineStorageScanSkipInputV1, options: Readonly<{ actor: StorageOperationActor; signal?: AbortSignal }>) {
             await assertScanActor(options.actor, options.signal);
+            requirePolicy();
             const owner = await scans();
             await assertScanAuthority(options.actor, options.signal);
+            requirePolicy();
             const result = await owner.runner.skip(request.scanId, request.path);
             if (!result) throw Object.assign(new Error('Scan unavailable'), { code: 'storage_scan_unavailable' });
             return result;
@@ -513,19 +539,24 @@ export function createStorageService(deps: StorageServiceDeps) {
                 assertActive(options.signal);
                 // The Trash owner already measured each manifest when it moved
                 // the payload. Reading its current entries needs no catalog scan.
-                const trashEntries = await operations.trashEntries(options.actor);
+                const incomplete: StorageReadIssueV1[] = [];
+                const trashEntries = await operations.trashEntries(options.actor, () => {
+                    if (!incomplete.length) incomplete.push(storagePermissionReadIssue('trash'));
+                });
                 assertActive(options.signal);
                 if (!options.actor) await options.assertCurrent?.();
                 assertActive(options.signal);
-                return MachineStorageCategoryListResultV1Schema.parse({ categoryId, revision, sizedAt: now(),
+                return { categoryId, revision, sizedAt: now(),
+                    ...(incomplete.length ? { incomplete } : {}),
                     trashEntries, items: trashEntries.map(entry => ({ itemId: entry.entryId, kind: 'category-item', categoryId: 'trash',
                         path: entry.originalPath, title: entry.title, size: entry.size, lastChangedAt: entry.movedAt,
-                        evidence: ['trash_entry'], verdict: 'safe', reason: { code: 'old' }, collectable: false })) });
+                        evidence: ['trash_entry'], verdict: 'safe', reason: { code: 'old' }, collectable: false })) };
             }
             const current = await summary({ signal: options.signal });
-            // Refresh the caller's readonly Session scope after measurement, before
-            // projection strips the private binding used to enforce that scope.
+            // The admitted caller's readonly Session scope filters the snapshot;
+            // keep local lifetime checks before stripping its private bindings.
             await options.assertCurrent?.();
+            requirePolicy();
             const visible = items.filter(item => item.categoryId === categoryId && (options.sessionIds === undefined
                 || item.sessionId !== undefined && options.sessionIds.has(item.sessionId)));
             const groups = new Map<StorageCategoryGroupV1['id'], StorageCategoryGroupV1>();
@@ -535,24 +566,28 @@ export function createStorageService(deps: StorageServiceDeps) {
                 group.itemIds.push(item.itemId); groups.set(group.id, group);
             }
             const order: StorageCategoryGroupV1['id'][] = ['stopped', 'old', 'recent'];
-            return MachineStorageCategoryListResultV1Schema.parse({ categoryId, revision: current.revision, sizedAt: current.sizedAt,
+            const incomplete = current.incomplete?.filter(issue => issue.categoryId === categoryId);
+            return { categoryId, revision: current.revision, sizedAt: current.sizedAt,
+                ...(incomplete?.length ? { incomplete } : {}),
                 items: visible.map(publicStorageItem),
-                ...(groups.size ? { groups: [...groups.values()].sort((left, right) => order.indexOf(left.id) - order.indexOf(right.id)) } : {}) });
+                ...(groups.size ? { groups: [...groups.values()].sort((left, right) => order.indexOf(left.id) - order.indexOf(right.id)) } : {}) };
         },
         async refresh(options: Readonly<{ categoryId?: HappierStorageCategoryIdV1; signal?: AbortSignal; actor?: StorageOperationActor }> = {}) {
             assertActive(options.signal);
+            requirePolicy();
             await options.actor?.assertCurrentAuthority();
             assertActive(options.signal);
             // Rebuild the native union: a changed category can share inodes with any other category.
-            catalogSnapshot = undefined;
             const current = await join(begin(), options.signal);
-            return options.actor ? operations.summaryForActor(current, options.actor, items) : current;
+            requirePolicy();
+            return options.actor ? operations.summaryForActor(current, options.actor, items, suggestions) : current;
         },
         revision: () => revision,
         async dockerPrune(request: MachineStorageDockerPruneInputV1, options: Readonly<{
             actor: StorageOperationActor; context: ActionExecutorContext;
         }>) {
             assertActive(options.context.signal);
+            requirePolicy();
             await options.actor.assertCurrentAuthority();
             assertActive(options.context.signal);
             if (!deps.dockerPrune) return { kind: 'unsupported' as const, reason: 'native_runtime_unavailable' as const, removed: [], kept: [] };
@@ -562,7 +597,7 @@ export function createStorageService(deps: StorageServiceDeps) {
         },
         subscribe(listener: () => void) { assertActive(); listeners.add(listener); return () => { listeners.delete(listener); }; },
         invalidate,
-        dispose() { if (disposed) return; disposed = true; operations.dispose(); unsubscribe?.(); unsubscribeWorktrees(); unsubscribeVolumes?.();
+        dispose() { if (disposed) return; disposed = true; operations.dispose(); unsubscribe?.(); unsubscribePolicy(); unsubscribeWorktrees();
             maintenance?.stop();
             for (const release of scheduledSubscriptions) release();
             if (scanOwner) void scanOwner.then(owner => owner.runner.dispose(), () => {});

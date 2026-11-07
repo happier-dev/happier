@@ -2,7 +2,7 @@ import type { DaemonPublicVoiceModelPackEntry, DaemonPublicVoiceModelPackRuntime
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { BrowserRecordingDaemonService } from '@/daemon/browser/recording/service';
 import type { createManagedSessionDirectories, ManagedSessionDirectoryEntry } from '@/session/creation/managedSessionDirectories';
-import type { HappierStorageCategoryIdV1, StorageItemV1, StorageReasonV1, StorageCategoryGroupV1 } from '@happier-dev/protocol/storage/storageV1';
+import type { HappierStorageCategoryIdV1, StorageItemV1, StorageReasonV1, StorageCategoryGroupV1, MachineStoragePolicyV1, StorageReadIssueV1 } from '@happier-dev/protocol/storage/storageV1';
 import type { ScmWorktreeEnrichmentEntry } from '@happier-dev/protocol/scm';
 import type { SessionDraftPresence } from '@/session/drafts/readSessionDraftPresence';
 import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
@@ -40,7 +40,9 @@ export type StorageCategoryItem = StorageCleanupItem & Readonly<{ categoryId: Ha
 export type SizedStorageCategoryItem = StorageCategoryItem & Pick<StorageItemV1, 'size'>;
 export type StorageTrackedSession = Readonly<{ sessionId: string; cwd: string; running: boolean; stoppedAt?: number; archived?: boolean }>;
 export type StoragePathUse = Readonly<{ reliable: boolean; paths: readonly string[];
-    sessions?: readonly Readonly<{ path: string; sessionId: string }>[];
+    /** Same-principal cwd holders protect that folder and its ancestors, not its descendants. */
+    cwdPaths?: readonly string[];
+    sessions?: readonly Readonly<{ path: string; sessionId: string; tree?: boolean }>[];
 }>;
 export type StorageTemporaryFact = Readonly<{ path: string; state: 'closed' | 'delivered' | 'ended' | 'in_use' | 'unknown' }>;
 export type StorageIsolationFact = Readonly<{ path: string; state: 'finished' | 'running' | 'unknown_owner' | 'unknown' }>;
@@ -51,6 +53,7 @@ export type StorageProjectFacts = Readonly<{ status: 'ready'; projects: readonly
 export type StorageCategoryDiscoverySnapshot = Readonly<{
     items: readonly StorageCategoryItem[];
     incompleteCategoryIds: readonly HappierStorageCategoryIdV1[];
+    incomplete?: readonly StorageReadIssueV1[];
 }>;
 export type StorageWorktree = Readonly<{ path: string; repositoryRoot: string; title?: string;
     isMain?: boolean; facts?: ScmWorktreeEnrichmentEntry; pullRequestState?: 'open' | 'closed' | 'merged' | null;
@@ -83,7 +86,7 @@ export type StorageCategoryCatalogDeps = Readonly<{
     readLiveRunnerSnapshotPaths?: () => Readonly<{ reliable: boolean; paths: ReadonlySet<string> }>;
     readLiveSkillCachePaths?: () => SkillCachePaths | Promise<SkillCachePaths>;
     readInUsePaths?: () => StoragePathUse | Promise<StoragePathUse>;
-    readPolicy?: () => Readonly<{ suggestUnusedAfterDays: number }>;
+    readPolicy?: () => Readonly<Pick<MachineStoragePolicyV1, 'suggestUnusedAfterDays' | 'logRetentionDays'>>;
     readTemporaryFacts?: () => Promise<readonly StorageTemporaryFact[]>;
     readIsolationFacts?: () => readonly StorageIsolationFact[] | Promise<readonly StorageIsolationFact[]>;
     currentLogPaths?: () => readonly string[] | Promise<readonly string[]>;
@@ -111,10 +114,13 @@ export type StorageCategoryVerdict = Readonly<{
     categoryGroup?: StorageCategoryItem['categoryGroup'];
 }>;
 export type StorageCategoryContext = Readonly<{
+    /** Physical page paths; absent for full category inventory. Never effect authority. */
+    discoveryPaths?: readonly string[];
     pathComparator: StoragePathComparator;
     deps: StorageCategoryCatalogDeps;
     now: number;
     unusedBefore: number;
+    logRetentionDays: number | null;
     sessions: readonly StorageTrackedSession[];
     projects: readonly StorageProject[];
     projectsAvailable: boolean;

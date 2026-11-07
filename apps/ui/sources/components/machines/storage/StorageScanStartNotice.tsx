@@ -3,6 +3,7 @@ import * as React from 'react';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import type { MachineStorageScanStartFailure } from '@/sync/domains/machines/storage/machineStorageStore';
 import { t } from '@/text';
+import { describeStorageFailure } from './storageViewModel';
 
 /**
  * A scan that did not start says why in one calm line, with the way forward: Try again, or for a machine that
@@ -35,6 +36,7 @@ export function StorageScanStartNotice(props: Readonly<{
           : reason === 'approval_requested'
             ? t('machineStorage.disk.startFailed.approval')
             : t('machineStorage.disk.startFailed.generic')}
+      {...describeStorageFailure(props.failure)}
       {...(action ? { action } : {})}
     />
   );

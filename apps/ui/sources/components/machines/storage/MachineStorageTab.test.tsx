@@ -31,6 +31,7 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { MachinePageListHostContext, type MachinePageListHost } from '@/components/machines/page/machinePageContext';
 
+vi.mock('socket.io-client', async (importOriginal) => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 installDisconnectedServerSocketBoundary();
 const routerPush = vi.hoisted(() => vi.fn());
 vi.mock('expo-router', () => ({ useRouter: () => ({ push: routerPush }) }));
@@ -38,6 +39,9 @@ const transport = vi.hoisted(() => ({ rpc: vi.fn() }));
 // The platform clipboard boundary; Copy path's own owner runs above it.
 const clipboard = vi.hoisted(() => ({ setStringAsync: vi.fn(async (_text: string) => true) }));
 vi.mock('expo-clipboard', () => clipboard);
+// The folder chooser is a modal presentation boundary; the scan Action that follows its answer runs for real.
+const folderChooser = vi.hoisted(() => ({ open: vi.fn(async (_input: unknown): Promise<string | null> => null) }));
+vi.mock('@/components/ui/pathBrowser/openMachinePathBrowserModal', () => ({ openMachinePathBrowserModal: folderChooser.open }));
 // The modal presentation boundary: the review sheet's own component is rendered by the test from what the tab hands it.
 const modal = vi.hoisted(() => ({ current: null as null | Awaited<ReturnType<typeof import('@/dev/testkit/mocks/modal')['createModalModuleMock']>> }));
 vi.mock('@/modal', async () => {
@@ -212,10 +216,204 @@ async function holdingSession(serverId: string) {
 }
 
 const before = storage.getState();
-beforeEach(async () => { viewport.start = 0; viewport.listeners.clear(); await home.reset(); installHomeGovernanceBoundaries(httpBoundary); machineStorageStore.reset(); transport.rpc.mockReset(); routerPush.mockReset(); });
+beforeEach(async () => { viewport.start = 0; viewport.listeners.clear(); await home.reset(); installHomeGovernanceBoundaries(httpBoundary); machineStorageStore.reset(); transport.rpc.mockReset(); routerPush.mockReset(); folderChooser.open.mockReset(); });
 afterEach(async () => { standardCleanup(); setPreferredLanguageFromSettings('en'); machineStorageStore.reset(); storage.setState(before); await home.reset(); });
 
 describe('MachineStorageTab', () => {
+    it.each(['0.2.10', '0.0.9', 'custom-build'])('shows an old daemon untyped Storage reason for %s with only existing minimum-version update guidance, then recovers on retry', async version => {
+        // Actual 0.2.10 direct daemon reply: browser-r77-pressure-storage-transport-correct.json.
+        const reason = "EACCES: permission denied, lstat '/boot/efi/.happier-trash-1000'";
+        let failed = true;
+        const { screen } = await mount({ id: 'storage' }, { metadata: { ...machine().metadata!, happyCliVersion: version } }, ({ method }) => {
+            if (failed && method === RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET) return { error: reason };
+            return undefined;
+        });
+        await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('machine-storage-error')).not.toBeNull()); });
+        expect(screen.getTextContent()).toContain(reason);
+        if (version === '0.0.9') expect(screen.getTextContent()).toContain(t('sessionInfo.updateCliInstructions'));
+        else expect(screen.getTextContent()).not.toContain(t('sessionInfo.updateCliInstructions'));
+        failed = false;
+        await act(async () => { screen.pressByTestId('machine-storage-retry'); });
+        await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('machine-storage')).not.toBeNull()); });
+        expect(screen.getTextContent()).not.toContain(reason);
+    });
+
+    it.each([
+        ['summary', { id: 'storage' }, RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET, 'caches'],
+        ['category', { id: 'storage', page: 'category', categoryId: 'caches' }, RPC_METHODS.DAEMON_STORAGE_CATEGORY_LIST, 'caches'],
+        ['worktrees', { id: 'storage', page: 'worktrees' }, RPC_METHODS.DAEMON_STORAGE_WORKTREES_LIST, 'worktrees'],
+        ['suggestions', { id: 'storage', page: 'suggestions' }, RPC_METHODS.DAEMON_STORAGE_SUGGESTIONS_LIST, 'caches'],
+    ] as const)('keeps readable Storage data and explains an incomplete %s read', async (_label, params, method, categoryId) => {
+        const readable = { ...item('readable', 'Readable storage', GB, 'safe', 'downloads_again'), categoryId };
+        let partial = true;
+        const issues = [{ categoryId, reason: 'permission_denied', remedy: 'grant_admin_access_or_run_as_machine_owner' }];
+        const { screen } = await mount(params, {}, rpc => {
+            if (rpc.method !== method) return undefined;
+            const incomplete = partial ? issues : [];
+            if (method === RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET) return { ...SUMMARY, incomplete };
+            if (method === RPC_METHODS.DAEMON_STORAGE_CATEGORY_LIST) return { ...CACHES, items: [readable], incomplete };
+            return { revision: 1, items: [readable], incomplete };
+        });
+        await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('machine-storage-incomplete')).not.toBeNull()); });
+        expect(screen.getTextContent()).toContain(t(`machineStorage.categories.${categoryId}.title`));
+        expect(screen.getTextContent()).toMatch(/permission/i);
+        expect(screen.getTextContent()).toMatch(/administrator|admin access/i);
+        expect(screen.getTextContent()).toMatch(/Machine owner/i);
+        expect(screen.findByTestId('machine-storage-error')).toBeNull();
+        if (_label === 'summary') expect(screen.getTextContent()).toContain(formatMachineBytes(17.6 * GB, 'storage'));
+        else expect(screen.getTextContent()).toContain('Readable storage');
+        partial = false;
+        await act(async () => { screen.pressByTestId('machine-storage-incomplete-retry'); });
+        await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('machine-storage-incomplete')).toBeNull()); });
+    });
+
+    it('keeps readable scan rows with the typed incomplete Trash reason and recovers on retry', async () => {
+        const scan: DiskScanStateV1 = { scanId: 'partial-scan', target: { folderPath: '/Users/leeroy' }, status: 'complete',
+            startedAt: 1, finishedAt: 2, progress: { sizedBytes: GB, items: 1 },
+            unreadable: { counts: { permission: 0, os_private: 0, timeout: 0, io: 0 }, examples: [] },
+            fullDiskAccess: { state: 'not_applicable', binary: { name: 'happier-support', path: '/x' } } };
+        let partial = true;
+        const { screen } = await mount({ id: 'storage', view: 'disk' }, { metadata: { ...machine().metadata!,
+            resourcesPolicyV1: MachineResourcesPolicyV1Schema.parse({ v: 1, storage: { wholeDiskEnabled: true } }) } }, ({ method }) => {
+            if (method === RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET) return { ...SUMMARY, wholeDisk: { enabled: true, scans: [scan] } };
+            if (method === RPC_METHODS.DAEMON_STORAGE_SCAN_GET) return { state: scan, coverage: [], nodes: [{
+                nodeId: '/Users/leeroy/readable', parentId: '/Users/leeroy', name: 'Readable scanned folder', kind: 'folder',
+                size: size(GB), logicalBytes: GB, items: 1, changedAt: 1, childCount: 0,
+                flags: { happier: false, protection: 'none', atLeast: false, inUse: false },
+            }], incomplete: partial ? [{ categoryId: 'trash', reason: 'permission_denied', remedy: 'grant_admin_access_or_run_as_machine_owner' }] : [] };
+            return undefined;
+        });
+        await vi.waitFor(async () => { await act(async () => {}); expect(screen.getTextContent()).toContain('Readable scanned folder'); });
+        expect(screen.findByTestId('machine-storage-disk-list-unreadable')).toBeNull();
+        expect(screen.findByTestId('machine-storage-incomplete')).not.toBeNull();
+        expect(screen.getTextContent()).toContain(t('machineStorage.categories.trash.title'));
+        expect(screen.getTextContent()).toMatch(/permission/i);
+        expect(screen.getTextContent()).toMatch(/administrator|admin access/i);
+        expect(screen.getTextContent()).toMatch(/Machine owner/i);
+        partial = false;
+        await act(async () => { screen.pressByTestId('machine-storage-incomplete-retry'); });
+        await vi.waitFor(async () => { await act(async () => {}); expect(screen.findByTestId('machine-storage-incomplete')).toBeNull(); });
+        expect(screen.getTextContent()).toContain('Readable scanned folder');
+    });
+
+    it.each([
+        ['read_only_filesystem', /read.only/i],
+        ['pseudo_or_cloud_filesystem', /system/i],
+    ] as const)('explains a native root refusal %s and recovers when choosing another folder is denied', async (reason, explanation) => {
+        const path = '/boot/efi';
+        const scan: DiskScanStateV1 = { scanId: 'excluded-root', target: { folderPath: path }, status: 'failed',
+            startedAt: 1, finishedAt: 2, progress: { sizedBytes: 0, items: 0 },
+            unreadable: { counts: { permission: 0, os_private: 0, timeout: 0, io: 0 }, examples: [{ path, reason }] },
+            fullDiskAccess: { state: 'not_applicable', binary: { name: 'happier-support', path: '/x' } } };
+        let currentScan = scan;
+        let denied = true;
+        const { screen } = await mount({ id: 'storage', view: 'disk' }, { metadata: { ...machine().metadata!,
+            resourcesPolicyV1: MachineResourcesPolicyV1Schema.parse({ v: 1, storage: { wholeDiskEnabled: true } }) } }, ({ method }) => {
+            if (method === RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET) return { ...SUMMARY, wholeDisk: { enabled: true, scans: [currentScan] } };
+            if (method === RPC_METHODS.DAEMON_STORAGE_SCAN_GET) return { state: currentScan, coverage: [{ path, scannedAt: 2, complete: false }], nodes: [] };
+            if (method === RPC_METHODS.DAEMON_STORAGE_SCAN_START) {
+                if (denied) throw new RpcError('Permission denied', 'storage_permission_denied', { phase: 'storage.owner', errorClass: 'Error', errorCode: 'EACCES', httpStatus: null });
+                currentScan = { scanId: 'writable-root', target: { folderPath: '/writable' }, status: 'running', startedAt: 3,
+                    progress: scan.progress, unreadable: { ...scan.unreadable, examples: [] }, fullDiskAccess: scan.fullDiskAccess };
+                return currentScan;
+            }
+            return undefined;
+        });
+        await vi.waitFor(async () => { await act(async () => {}); expect(screen.findByTestId('machine-storage-disk-root-unavailable')).not.toBeNull(); });
+        expect(screen.findByTestId('machine-storage-disk-root-unavailable')).not.toBeNull();
+        expect(screen.getTextContent()).toMatch(explanation);
+        expect(screen.getTextContent()).toMatch(/writable folder or disk/i);
+        expect(screen.findByTestId('machine-storage-disk-folder')).not.toBeNull();
+        expect(screen.findByTestId('machine-storage-disk-resume')).toBeNull();
+        folderChooser.open.mockResolvedValueOnce('/writable');
+        await act(async () => { screen.pressByTestId('machine-storage-disk-folder'); });
+        await vi.waitFor(async () => { await act(async () => {}); expect(screen.findByTestId('machine-storage-disk-start-failed')).not.toBeNull(); });
+        expect(screen.getTextContent()).toMatch(/permission/i);
+        expect(screen.getTextContent()).toMatch(/permissions.*try again/i);
+        denied = false;
+        await act(async () => { screen.pressByTestId('machine-storage-disk-start-retry'); });
+        await vi.waitFor(async () => {
+            await act(async () => {});
+            expect(screen.findByTestId('machine-storage-disk-root-unavailable')).toBeNull();
+            expect(screen.findByTestId('machine-storage-disk-start-failed')).toBeNull();
+        });
+    });
+
+    it.each([
+        ['typed', 'storage_permission_denied', 'storage.trash.read', 'EACCES'],
+        ['0.2 EACCES', 'action_failed', 'dispatch', 'EACCES'],
+        ['0.2 EPERM', 'action_failed', 'dispatch', 'EPERM'],
+    ] as const)('explains a %s Storage permission failure through the real Action and recovers on retry', async (_label, errorCode, phase, nativeCode) => {
+        let denied = true;
+        const { screen } = await mount({ id: 'storage' }, {}, ({ method }) => {
+            if (denied && (method === RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET || method === RPC_METHODS.DAEMON_STORAGE_SIZE_REFRESH)) {
+                throw new RpcError("Permission denied, lstat '/private/storage/.happier-trash-1000'", errorCode, {
+                    phase, errorClass: 'Error', errorCode: nativeCode, httpStatus: null,
+                });
+            }
+            return undefined;
+        });
+        await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('machine-storage-error')).not.toBeNull()); });
+        expect(screen.findByTestId('machine-storage-error-details-toggle')).not.toBeNull();
+        expect(screen.getTextContent()).toMatch(/permission/i);
+        expect(screen.getTextContent()).toMatch(/check.*permissions.*try again/i);
+        expect(screen.getTextContent()).not.toContain('storage_permission_denied');
+        expect(screen.getTextContent()).not.toContain('/private/storage');
+
+        await act(async () => { screen.pressByTestId('machine-storage-error-details-toggle'); });
+        expect(screen.getTextContent()).toContain(errorCode);
+        expect(screen.getTextContent()).toContain(phase);
+        expect(screen.getTextContent()).toContain(nativeCode);
+
+        denied = false;
+        await act(async () => { screen.pressByTestId('machine-storage-retry'); });
+        await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('machine-storage')).not.toBeNull()); });
+        expect(screen.findByTestId('machine-storage-error')).toBeNull();
+        expect(screen.getTextContent()).not.toContain('storage_permission_denied');
+
+        denied = true;
+        await act(async () => { screen.pressByTestId('machine-storage-size-again'); });
+        await act(async () => { await vi.waitFor(() => expect(screen.getTextContent()).toMatch(/check.*permissions.*try again/i)); });
+        expect(screen.findByTestId('machine-storage')).not.toBeNull();
+        denied = false;
+        await act(async () => { screen.pressByTestId('machine-storage-size-again'); });
+        await act(async () => { await vi.waitFor(() => expect(screen.getTextContent()).not.toMatch(/folder permissions/i)); });
+    });
+
+    it.each([
+        ['Trash', { id: 'storage', page: 'category', categoryId: 'trash' }, RPC_METHODS.DAEMON_STORAGE_CATEGORY_LIST, 'machine-storage-page-error', 'machine-storage-page-retry'],
+        ['Caches', { id: 'storage', page: 'category', categoryId: 'caches' }, RPC_METHODS.DAEMON_STORAGE_CATEGORY_LIST, 'machine-storage-page-error', 'machine-storage-page-retry'],
+        ['Worktrees', { id: 'storage', page: 'worktrees' }, RPC_METHODS.DAEMON_STORAGE_WORKTREES_LIST, 'machine-storage-worktrees-state', 'machine-storage-worktrees-retry'],
+        ['Suggestions', { id: 'storage', page: 'suggestions' }, RPC_METHODS.DAEMON_STORAGE_SUGGESTIONS_LIST, 'machine-storage-suggestions-can-be-rebuilt-error', 'machine-storage-suggestions-can-be-rebuilt-retry'],
+    ] as const)('explains a permission failure on the %s read page and retries through the real Action', async (_label, params, method, cardId, retryId) => {
+        let denied = true;
+        const { screen } = await mount(params, {}, rpc => {
+            if (rpc.method !== method) return undefined;
+            if (denied && (method !== RPC_METHODS.DAEMON_STORAGE_SUGGESTIONS_LIST || rpc.payload?.group === 'can-be-rebuilt')) {
+                throw new RpcError('EACCES: denied /private/storage', 'storage_permission_denied', {
+                    phase: 'storage.owner', errorClass: 'Error', errorCode: 'EACCES', httpStatus: null,
+                });
+            }
+            return method === RPC_METHODS.DAEMON_STORAGE_CATEGORY_LIST
+                ? { revision: 1, sizedAt: SUMMARY.sizedAt, categoryId: rpc.payload?.categoryId, items: [] }
+                : { revision: 1, items: [] };
+        });
+        await act(async () => { await vi.waitFor(() => expect(screen.getTextContent()).toContain(t('machineStorage.page.error'))); });
+        expect(screen.getTextContent()).toContain(t('machineStorage.states.permissionDeniedReason'));
+        expect(screen.getTextContent()).toContain(t('machineStorage.states.permissionDeniedRemedy'));
+        expect(screen.getTextContent()).not.toContain('/private/storage');
+        expect(screen.getTextContent()).not.toContain('storage_permission_denied');
+        await act(async () => { screen.pressByTestId(`${cardId}-details-toggle`); });
+        expect(screen.getTextContent()).toContain('storage_permission_denied');
+        expect(screen.getTextContent()).toContain('storage.owner');
+        expect(screen.getTextContent()).toContain('EACCES');
+        denied = false;
+        await act(async () => { screen.pressByTestId(retryId); });
+        await act(async () => { await vi.waitFor(() => expect(screen.getTextContent()).not.toContain(t('machineStorage.page.error'))); });
+        expect(screen.getTextContent()).not.toContain(t('machineStorage.states.permissionDeniedRemedy'));
+        expect(screen.getTextContent()).not.toContain('storage_permission_denied');
+    });
+
     it('shows unavailable policy instead of an empty protected-folder list', async () => {
         const { screen } = await mount({ id: 'storage', page: 'protected' }, { metadata: null });
         await act(async () => {});
@@ -323,6 +521,35 @@ describe('MachineStorageTab', () => {
         expect(modal.current!.spies.confirm).not.toHaveBeenCalled();
     });
 
+    it.each([
+        ['the last item', 0, 0],
+        ['one of several', 1, 64],
+    ] as const)('explains a newer scan dropping %s from the pile, and the pile bar stays until Done when nothing is left', async (_case, count, freesBytes) => {
+        const dropped = [{ itemId: 'vanished', path: '/logs/vanished.txt', reason: { code: 'old' as const } }];
+        const pile = { count, freesBytes, droppedSinceLastView: dropped };
+        const acknowledgements: unknown[] = [];
+        const { screen } = await mount({ id: 'storage' }, {}, rpc => {
+            if (rpc.method === RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET) return { ...SUMMARY, pile };
+            if (rpc.method === RPC_METHODS.DAEMON_STORAGE_PILE_GET) return { revision: 2,
+                items: count ? [resolved({ itemId: 'kept', path: '/logs/kept' })] : [], summary: pile };
+            if (rpc.method === RPC_METHODS.DAEMON_STORAGE_PILE_SET) {
+                acknowledgements.push(rpc.payload);
+                pile.droppedSinceLastView = [];
+                return { revision: 3, items: [], summary: pile };
+            }
+            return undefined;
+        });
+        await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('machine-storage-pile')).not.toBeNull()); });
+        expect(screen.getTextContent()).toContain(t('machineStorage.pile.dropped', { count: 1 }));
+        if (count) {
+            expect(screen.findByTestId('machine-storage-pile-review')).not.toBeNull();
+            return;
+        }
+        expect(screen.findByTestId('machine-storage-pile-review')).toBeNull();
+        await act(async () => { screen.pressByTestId('machine-storage-pile-done'); });
+        await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('machine-storage-pile')).toBeNull()); });
+        expect(acknowledgements).toEqual([expect.objectContaining({ acknowledgeDropped: ['vanished'] })]);
+    });
     it('asks nothing more once the person has reviewed a permanent delete in the sheet', async () => {
         const ref = resolved({ itemId: 'old-log', path: '/logs/old' });
         const calls: Rpc[] = [];
@@ -821,6 +1048,76 @@ describe('MachineStorageTab', () => {
         expect(screen.findByTestId('machine-storage-trash-undo')).not.toBeNull();
     });
 
+    it('says why Undo was refused when the original place is occupied, offers Put back beside it, and shows where it went', async () => {
+        const entry = { entryId: 'e-old', batchId: 'batch-1', volumeId: 'mac', originalPath: '/Users/leeroy/logs/old.log', title: 'old.log', categoryId: 'logs',
+            size: size(64), movedAt: 1, movedBy: { accountId: 'owner', kind: 'person' }, emptiesAt: null, restorable: true };
+        const restores: Rpc[] = [];
+        const { screen, serverId } = await mount({ id: 'storage' }, {}, (rpc) => {
+            switch (rpc.method) {
+                case RPC_METHODS.DAEMON_STORAGE_CATEGORY_LIST: return { revision: 1, sizedAt: SUMMARY.sizedAt, categoryId: 'trash', items: [], trashEntries: [entry] };
+                case RPC_METHODS.DAEMON_STORAGE_TRASH_MOVE: return { batchId: 'batch-1', mode: 'trash', inTrashBytes: 64, freedBytes: 0, trashEntryIds: ['e-old'],
+                    outcomes: [{ itemId: 'log-1', status: 'moved' }] };
+                case RPC_METHODS.DAEMON_STORAGE_TRASH_RESTORE: {
+                    restores.push(rpc);
+                    return rpc.payload?.beside
+                        ? { outcomes: [{ entryId: 'e-old', status: 'restored', path: '/Users/leeroy/logs/old (restored).log' }] }
+                        : { outcomes: [{ entryId: 'e-old', status: 'refused', reason: { code: 'destination_occupied' } }] };
+                }
+                default: return undefined;
+            }
+        });
+        const resolution = await resolveServerCredentialAccountScope(serverId);
+        if (resolution.kind !== 'bound') throw new Error('Storage Home must be bound');
+        const scope = { serverId: resolution.scope.serverId, expectedAccountId: resolution.scope.accountId, machineId: 'machine' };
+        await act(async () => { await machineStorageStore.applyPile({ ...scope, mode: 'trash',
+            items: [{ ref: resolved({ itemId: 'log-1', path: '/Users/leeroy/logs/old.log' }) as never, expect: 'expect-log-1', claimedVerdict: 'safe' }] }); });
+        await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('machine-storage-pile-undo')).not.toBeNull()); });
+        expect(screen.findByTestId('machine-storage-restore-recovery')).toBeNull();
+
+        await act(async () => { screen.pressByTestId('machine-storage-pile-undo'); });
+        await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('machine-storage-restore-recovery-e-old-beside')).not.toBeNull()); });
+        // The refused item is named, with the reason; the receipt still holds it in Trash.
+        const refused = screen.getTextContent();
+        expect(refused).toContain('old.log');
+        expect(refused).toContain(t('machineStorage.page.putBackOccupied'));
+        expect(refused).toContain('1 item in Trash');
+        expect(restores).toHaveLength(1);
+        expect(restores[0]!.payload).not.toHaveProperty('beside');
+
+        await act(async () => { screen.pressByTestId('machine-storage-restore-recovery-e-old-beside'); });
+        await act(async () => { await vi.waitFor(() => expect(restores).toHaveLength(2)); });
+        expect(restores[1]!.payload).toMatchObject({ entryIds: ['e-old'], beside: true });
+        // Everything is back, so the bar's line is gone; the success says where it went and waits for Done.
+        await act(async () => { await vi.waitFor(() => expect(screen.getTextContent()).toContain(t('machineStorage.page.putBackAs', { path: '~/logs/old (restored).log' }))); });
+        expect(screen.findByTestId('machine-storage-restore-recovery-e-old-beside')).toBeNull();
+        expect(screen.findByTestId('machine-storage-pile-undo')).toBeNull();
+        expect(screen.getTextContent()).toContain('old.log');
+        await act(async () => { screen.pressByTestId('machine-storage-restore-recovery-done'); });
+        expect(screen.findByTestId('machine-storage-restore-recovery')).toBeNull();
+    });
+
+    it('names a refused Put back at the top of the Trash page and offers it beside the occupant', async () => {
+        const entry = { entryId: 'e-page', batchId: 'batch-9', volumeId: 'mac', originalPath: '/Users/leeroy/logs/page.log', title: 'page.log', categoryId: 'logs',
+            size: size(64), movedAt: 1, movedBy: { accountId: 'owner', kind: 'person' }, emptiesAt: null, restorable: true };
+        const restores: Rpc[] = [];
+        const { screen } = await mount({ id: 'storage', page: 'category', categoryId: 'trash' }, {}, (rpc) => {
+            if (rpc.method === RPC_METHODS.DAEMON_STORAGE_CATEGORY_LIST) return { revision: 1, sizedAt: SUMMARY.sizedAt, categoryId: 'trash', items: [], trashEntries: [entry] };
+            if (rpc.method !== RPC_METHODS.DAEMON_STORAGE_TRASH_RESTORE) return undefined;
+            restores.push(rpc);
+            return rpc.payload?.beside
+                ? { outcomes: [{ entryId: 'e-page', status: 'restored', path: '/Users/leeroy/logs/page (restored).log' }] }
+                : { outcomes: [{ entryId: 'e-page', status: 'refused', reason: { code: 'destination_occupied' } }] };
+        });
+        await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('machine-storage-trash-e-page-put-back')).not.toBeNull()); });
+        expect(screen.findByTestId('machine-storage-restore-recovery')).toBeNull();
+        await act(async () => { screen.pressByTestId('machine-storage-trash-e-page-put-back'); });
+        await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('machine-storage-restore-recovery-e-page-beside')).not.toBeNull()); });
+        expect(screen.getTextContent()).toContain(t('machineStorage.page.putBackOccupied'));
+        await act(async () => { screen.pressByTestId('machine-storage-restore-recovery-e-page-beside'); });
+        await act(async () => { await vi.waitFor(() => expect(screen.getTextContent()).toContain(t('machineStorage.page.putBackAs', { path: '~/logs/page (restored).log' }))); });
+        expect(restores.map(call => Boolean(call.payload?.beside))).toEqual([false, true]);
+    });
+
     it('tells one count story when the check keeps an item where it is: title, sections and action agree', async () => {
         const pile = [resolved({ itemId: 'wt-a', path: '/Users/leeroy/dev/happier/.dev/worktree/a' }),
             resolved({ itemId: 'wt-b', path: '/Users/leeroy/dev/happier/.dev/worktree/b' })];
@@ -1125,6 +1422,42 @@ describe('MachineStorageTab', () => {
         expect(screen.getTextContent()).not.toContain(t('machineStorage.disk.volumeMeta', {
             used: formatMachineBytes(994 * GB - 412 * GB, 'storage'), total: formatMachineBytes(994 * GB, 'storage') }));
     });
+    it('says which scan stopped and offers only Resume, never a "Scanned" age for a scan that didn’t finish', async () => {
+        const stopped: DiskScanStateV1 = { scanId: 'folder-scan', target: { folderPath: '/Users/leeroy/.cache' }, status: 'interrupted', startedAt: 3, finishedAt: 4,
+            progress: { sizedBytes: 2 * GB, usedBytes: 0, items: 9 },
+            unreadable: { counts: { permission: 0, os_private: 0, timeout: 0, io: 0 }, examples: [] },
+            fullDiskAccess: { state: 'not_applicable', binary: { name: 'happier-support', path: '/x' } } };
+        const { screen } = await mount({ id: 'storage', view: 'disk' }, { metadata: { ...machine().metadata!,
+            resourcesPolicyV1: MachineResourcesPolicyV1Schema.parse({ v: 1, storage: { wholeDiskEnabled: true } }) } }, ({ method }) => {
+            if (method === RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET) return { ...SUMMARY, wholeDisk: { enabled: true, scans: [stopped] } };
+            if (method === RPC_METHODS.DAEMON_STORAGE_SCAN_GET) return { state: stopped, coverage: [], nodes: [] };
+            if (method === RPC_METHODS.DAEMON_STORAGE_PILE_GET) return { revision: 1, items: [], summary: SUMMARY.pile };
+            return undefined;
+        });
+        await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('machine-storage-disk-stopped')).not.toBeNull()); });
+        const text = screen.getTextContent();
+        expect(text).toContain('.cache didn’t finish.');
+        expect(text).not.toContain('whole-disk');
+        expect(screen.findByTestId('machine-storage-scan-freshness')).toBeNull();
+    });
+    it('says a scanned folder could not be read, with Try again, instead of calling it empty', async () => {
+        const scan: DiskScanStateV1 = { scanId: 'folder-scan', target: { folderPath: '/Users/leeroy/.cache' }, status: 'complete', startedAt: 3, finishedAt: 4,
+            progress: { sizedBytes: 2 * GB, usedBytes: 0, items: 9 },
+            unreadable: { counts: { permission: 0, os_private: 0, timeout: 0, io: 0 }, examples: [] },
+            fullDiskAccess: { state: 'not_applicable', binary: { name: 'happier-support', path: '/x' } } };
+        // A failed read, and a read the Machine answers without the scan the summary lists (it no longer knows it).
+        for (const read of [() => Promise.reject(new Error('no answer')), () => ({ state: null, nodes: [], coverage: [] })]) {
+            const { screen } = await mount({ id: 'storage', view: 'disk' }, { metadata: { ...machine().metadata!,
+                resourcesPolicyV1: MachineResourcesPolicyV1Schema.parse({ v: 1, storage: { wholeDiskEnabled: true } }) } }, ({ method }) => {
+                if (method === RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET) return { ...SUMMARY, wholeDisk: { enabled: true, scans: [scan] } };
+                if (method === RPC_METHODS.DAEMON_STORAGE_SCAN_GET) return read();
+                if (method === RPC_METHODS.DAEMON_STORAGE_PILE_GET) return { revision: 1, items: [], summary: SUMMARY.pile };
+                return undefined;
+            });
+            await vi.waitFor(async () => { await act(async () => {}); expect(screen.findByTestId('machine-storage-disk-list-unreadable')).not.toBeNull(); });
+            expect(screen.getTextContent()).not.toContain(t('machineStorage.disk.emptyLevel'));
+        }
+    });
     it('identifies the selected scan folder and its own allocation in List, Map and Rings', async () => {
         const folder = '/Users/leeroy/Development/archive';
         const scan = { scanId: 'folder-scan', target: { folderPath: folder }, status: 'complete',
@@ -1220,7 +1553,154 @@ describe('MachineStorageTab', () => {
         expect(calls.find(call => call.method === RPC_METHODS.DAEMON_STORAGE_SCAN_START)?.payload).toMatchObject({ target: { folderPath: '/Users/leeroy' } });
     });
 
-    it('says why a scan did not start and clears the line when Try again starts it', async () => {
+    it.each(['complete', 'cancelled'] as const)('keeps Choose a folder and the shortcuts reachable on a %s scan, and starts the new target', async status => {
+        const scan = DiskScanStateV1Schema.parse({ scanId: 'retained', target: { folderPath: '/Users/leeroy/old' }, status, startedAt: 1, finishedAt: 2,
+            progress: { sizedBytes: 4096, items: 3 }, unreadable: { counts: { permission: 0, os_private: 0, timeout: 0, io: 0 }, examples: [] },
+            fullDiskAccess: { state: 'not_applicable', binary: { name: 'fixture', path: '/fixture' } } });
+        const starts: Rpc[] = [];
+        folderChooser.open.mockResolvedValueOnce('/Users/leeroy/other');
+        const base = machine();
+        const { screen } = await mount({ id: 'storage', view: 'disk' }, { metadata: { ...base.metadata!,
+            resourcesPolicyV1: MachineResourcesPolicyV1Schema.parse({ v: 1, storage: { wholeDiskEnabled: true } }) } }, (rpc) => {
+            if (rpc.method === RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET) return { ...SUMMARY, wholeDisk: { enabled: true, scans: [scan] } };
+            if (rpc.method === RPC_METHODS.DAEMON_STORAGE_SCAN_GET) return { state: scan, coverage: [], nodes: [] };
+            if (rpc.method === RPC_METHODS.DAEMON_STORAGE_PILE_GET) return { revision: 1, items: [], summary: SUMMARY.pile };
+            if (rpc.method === RPC_METHODS.DAEMON_STORAGE_SCAN_START) { starts.push(rpc); return { ...scan, scanId: 'next', target: rpc.payload?.target }; }
+            return undefined;
+        });
+        await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('machine-storage-disk-folder')).not.toBeNull()); });
+        // The first-scan invitation is gone; the entry points stay because the page can still start a scan.
+        expect(screen.findByTestId('machine-storage-disk-invite')).toBeNull();
+        await act(async () => { screen.pressByTestId('machine-storage-disk-folder'); });
+        await act(async () => { await vi.waitFor(() => expect(starts).toHaveLength(1)); });
+        expect(starts[0]!.payload).toMatchObject({ target: { folderPath: '/Users/leeroy/other' } });
+        await act(async () => { screen.pressByTestId('machine-storage-disk-shortcut-0'); });
+        await act(async () => { await vi.waitFor(() => expect(starts).toHaveLength(2)); });
+        expect(starts[1]!.payload).toMatchObject({ target: { folderPath: '/Users/leeroy' } });
+    });
+
+    describe('Scan another folder follows the new scan (RV-A2-F1)', () => {
+        const scanState = (extra: Record<string, unknown>) => DiskScanStateV1Schema.parse({ status: 'complete', startedAt: 1, finishedAt: 2,
+            progress: { sizedBytes: 4096, items: 3 }, unreadable: { counts: { permission: 0, os_private: 0, timeout: 0, io: 0 }, examples: [] },
+            fullDiskAccess: { state: 'not_applicable', binary: { name: 'fixture', path: '/fixture' } }, ...extra });
+        const folder = (nodeId: string, parentId: string) => ({ nodeId, parentId, name: nodeId.split('/').pop(), kind: 'folder', size: size(4096), logicalBytes: 4096,
+            items: 1, changedAt: 1, deltaSincePrevious: 0, flags: { happier: false, protection: 'none', atLeast: false, inUse: false }, childCount: 0 });
+        /** A daemon holding the scans it started: a read of a node answers only for the scan that has it. */
+        function daemon(retained: DiskScanStateV1, nodesByScan: Readonly<Record<string, ReadonlyArray<ReturnType<typeof folder>>>>, refuse = false) {
+            const scans = [retained];
+            const reads: Array<{ scanId?: string; nodeId?: string }> = [];
+            const answer = (rpc: Rpc) => {
+                if (rpc.method === RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET) return { ...SUMMARY, wholeDisk: { enabled: true, scans } };
+                if (rpc.method === RPC_METHODS.DAEMON_STORAGE_PILE_GET) return { revision: 1, items: [], summary: SUMMARY.pile };
+                if (rpc.method === RPC_METHODS.DAEMON_STORAGE_SCAN_START) {
+                    if (refuse) return { ok: false, errorCode: 'storage_scan_unavailable', error: 'Scan unavailable' };
+                    const started = scanState({ scanId: 'next', target: rpc.payload?.target, startedAt: 5, finishedAt: 6 });
+                    scans.push(started);
+                    return started;
+                }
+                if (rpc.method === RPC_METHODS.DAEMON_STORAGE_SCAN_GET) {
+                    const payload = rpc.payload as { scanId?: string; view?: { nodeId?: string } };
+                    const scanId = payload.scanId ?? '';
+                    reads.push({ scanId, nodeId: payload.view?.nodeId });
+                    const all = nodesByScan[scanId] ?? [];
+                    const level = payload.view?.nodeId ? all.filter(node => node.parentId === payload.view?.nodeId) : all.filter(node => node.parentId === '/');
+                    return { state: scans.find(scan => scan.scanId === scanId) ?? scans[0], coverage: [], nodes: level };
+                }
+                return undefined;
+            };
+            return { answer, reads };
+        }
+        const enabled = () => ({ metadata: { ...machine().metadata!, resourcesPolicyV1: MachineResourcesPolicyV1Schema.parse({ v: 1, storage: { wholeDiskEnabled: true } }) } });
+        const retainedFolder = scanState({ scanId: 'retained', target: { folderPath: '/Users/leeroy/old' } });
+
+        it.each([
+            ['the folder picker', 'machine-storage-disk-folder'],
+            ['a shortcut', 'machine-storage-disk-shortcut-0'],
+        ])('shows the new scan\'s folders after %s starts it from a drilled folder', async (_label, control) => {
+            const d = daemon(retainedFolder, {
+                retained: [folder('/Users/leeroy/old/sub', '/')],
+                next: [folder('/Users/leeroy/other/docs', '/')],
+            });
+            folderChooser.open.mockResolvedValueOnce('/Users/leeroy/other');
+            const { screen } = await mount({ id: 'storage', view: 'disk', nodeId: '/Users/leeroy/old/sub' }, enabled(), d.answer, true);
+            await act(async () => { await vi.waitFor(() => expect(screen.findByTestId(control)).not.toBeNull()); });
+            await act(async () => { screen.pressByTestId(control); });
+            await act(async () => { await vi.waitFor(() => expect(d.reads.some(read => read.scanId === 'next')).toBe(true)); });
+            // The new scan is read from its own root, never from the folder the old scan was opened at.
+            expect(d.reads.filter(read => read.scanId === 'next').every(read => read.nodeId === undefined)).toBe(true);
+            await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('machine-storage-disk-row-/Users/leeroy/other/docs')).not.toBeNull()); });
+        });
+
+        it('shows the new scan\'s folders after a folder is chosen from an explicitly selected volume', async () => {
+            const volumeScan = scanState({ scanId: 'retained', target: { volumeId: 'work' } });
+            const d = daemon(volumeScan, { retained: [folder('/Volumes/Work/media', '/')], next: [folder('/Users/leeroy/other/docs', '/')] });
+            folderChooser.open.mockResolvedValueOnce('/Users/leeroy/other');
+            const { screen } = await mount({ id: 'storage', view: 'disk', volumeId: 'work' }, enabled(), d.answer, true);
+            await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('machine-storage-disk-folder')).not.toBeNull()); });
+            await act(async () => { screen.pressByTestId('machine-storage-disk-folder'); });
+            await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('machine-storage-disk-row-/Users/leeroy/other/docs')).not.toBeNull()); });
+        });
+
+        it('keeps the current address when the start is refused, and when the same scan is resumed', async () => {
+            const refused = daemon(retainedFolder, { retained: [folder('/Users/leeroy/old/sub', '/')] }, true);
+            folderChooser.open.mockResolvedValueOnce('/Users/leeroy/other');
+            const first = await mount({ id: 'storage', view: 'disk', nodeId: '/Users/leeroy/old/sub' }, enabled(), refused.answer);
+            await act(async () => { await vi.waitFor(() => expect(first.screen.findByTestId('machine-storage-disk-folder')).not.toBeNull()); });
+            await act(async () => { first.screen.pressByTestId('machine-storage-disk-folder'); });
+            await act(async () => { await vi.waitFor(() => expect(first.screen.findByTestId('machine-storage-disk-start-failed')).not.toBeNull()); });
+            expect(first.setParams).not.toHaveBeenCalled();
+            // Resume continues the scan being looked at, so it stays where the person was.
+            const stopped = scanState({ scanId: 'retained', target: { folderPath: '/Users/leeroy/old' }, status: 'cancelled' });
+            const resumable = daemon(stopped, { retained: [folder('/Users/leeroy/old/sub', '/')] });
+            const second = await mount({ id: 'storage', view: 'disk', nodeId: '/Users/leeroy/old/sub' }, enabled(), resumable.answer);
+            await act(async () => { await vi.waitFor(() => expect(second.screen.findByTestId('machine-storage-disk-resume')).not.toBeNull()); });
+            await act(async () => { second.screen.pressByTestId('machine-storage-disk-resume'); });
+            await act(async () => { await vi.waitFor(() => expect(transport.rpc.mock.calls.some(call => (call[0] as Rpc).method === RPC_METHODS.DAEMON_STORAGE_SCAN_START)).toBe(true)); });
+            expect(second.setParams).not.toHaveBeenCalled();
+        });
+    });
+
+    it.each([[0, 'stoppedBodyNone'], [4096, 'stoppedBody']] as const)('says only that resuming continues when %i bytes were sized on a stopped scan (%s)', async (sizedBytes, key) => {
+        const scan = DiskScanStateV1Schema.parse({ scanId: 'stopped', target: { folderPath: '/Users/leeroy/old' }, status: 'cancelled', startedAt: 1, finishedAt: 2,
+            progress: { sizedBytes, items: 0 }, unreadable: { counts: { permission: 0, os_private: 0, timeout: 0, io: 0 }, examples: [] },
+            fullDiskAccess: { state: 'not_applicable', binary: { name: 'fixture', path: '/fixture' } } });
+        const base = machine();
+        const { screen } = await mount({ id: 'storage', view: 'disk' }, { metadata: { ...base.metadata!,
+            resourcesPolicyV1: MachineResourcesPolicyV1Schema.parse({ v: 1, storage: { wholeDiskEnabled: true } }) } }, (rpc) => {
+            if (rpc.method === RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET) return { ...SUMMARY, wholeDisk: { enabled: true, scans: [scan] } };
+            if (rpc.method === RPC_METHODS.DAEMON_STORAGE_SCAN_GET) return { state: scan, coverage: [], nodes: [] };
+            return undefined;
+        });
+        await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('machine-storage-disk-stopped')).not.toBeNull()); });
+        const text = screen.getTextContent();
+        expect(text).toContain(key === 'stoppedBody' ? t('machineStorage.disk.stoppedBody', { sized: formatMachineBytes(sizedBytes, 'storage') }) : t('machineStorage.disk.stoppedBodyNone'));
+        // Nothing sized is no figure at all, never "The 0 B already sized".
+        if (sizedBytes === 0) expect(text).not.toContain(formatMachineBytes(0, 'storage'));
+    });
+
+    it('keeps the entry points on a running scan but off: the machine scans one folder at a time', async () => {
+        const scan = DiskScanStateV1Schema.parse({ scanId: 'retained', target: { folderPath: '/Users/leeroy/old' }, status: 'running', startedAt: 1,
+            progress: { sizedBytes: 4096, items: 3 }, unreadable: { counts: { permission: 0, os_private: 0, timeout: 0, io: 0 }, examples: [] },
+            fullDiskAccess: { state: 'not_applicable', binary: { name: 'fixture', path: '/fixture' } } });
+        const starts: Rpc[] = [];
+        const base = machine();
+        const { screen } = await mount({ id: 'storage', view: 'disk' }, { metadata: { ...base.metadata!,
+            resourcesPolicyV1: MachineResourcesPolicyV1Schema.parse({ v: 1, storage: { wholeDiskEnabled: true } }) } }, (rpc) => {
+            if (rpc.method === RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET) return { ...SUMMARY, wholeDisk: { enabled: true, scans: [scan] } };
+            if (rpc.method === RPC_METHODS.DAEMON_STORAGE_SCAN_GET) return { state: scan, coverage: [], nodes: [] };
+            if (rpc.method === RPC_METHODS.DAEMON_STORAGE_PILE_GET) return { revision: 1, items: [], summary: SUMMARY.pile };
+            if (rpc.method === RPC_METHODS.DAEMON_STORAGE_SCAN_START) { starts.push(rpc); return scan; }
+            return undefined;
+        });
+        await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('machine-storage-disk-folder')).not.toBeNull()); });
+        expect(screen.getTextContent()).toContain(t('machineStorage.disk.scanAnotherWaiting'));
+        for (const id of ['machine-storage-disk-folder', 'machine-storage-disk-shortcut-0']) {
+            expect(screen.findByTestId(id)!.props.accessibilityState).toMatchObject({ disabled: true });
+        }
+        expect(starts).toEqual([]);
+    });
+
+    it.each(['unavailable', 'permission'] as const)('says why a scan did not start (%s) and clears the line when Try again starts it', async failure => {
         const starts: Rpc[] = [];
         const running = DiskScanStateV1Schema.parse({ scanId: 'scan', target: { folderPath: '/Users/leeroy' }, status: 'running', startedAt: 100,
             progress: { sizedBytes: 0, items: 0 }, unreadable: { counts: { permission: 0, os_private: 0, timeout: 0, io: 0 }, examples: [] },
@@ -1230,6 +1710,9 @@ describe('MachineStorageTab', () => {
             resourcesPolicyV1: MachineResourcesPolicyV1Schema.parse({ v: 1, storage: { wholeDiskEnabled: true } }) } }, (rpc) => {
             if (rpc.method !== RPC_METHODS.DAEMON_STORAGE_SCAN_START) return undefined;
             starts.push(rpc);
+            if (starts.length === 1 && failure === 'permission') throw new RpcError('EACCES: denied /private/storage', 'storage_permission_denied', {
+                phase: 'storage.owner', errorClass: 'Error', errorCode: 'EACCES', httpStatus: null,
+            });
             return starts.length === 1 ? { ok: false, errorCode: 'storage_scan_unavailable', error: 'Scan unavailable' } : running;
         });
         await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('machine-storage-disk-shortcut-0')).not.toBeNull()); });
@@ -1239,7 +1722,15 @@ describe('MachineStorageTab', () => {
         // The invitation stays: the page is still the one that can start a scan.
         expect(screen.findByTestId('machine-storage-disk-invite')).not.toBeNull();
         expect(screen.getTextContent()).toContain(t('machineStorage.disk.startFailed.title'));
-        expect(screen.getTextContent()).toContain(t('machineStorage.disk.startFailed.generic'));
+        if (failure === 'permission') {
+            expect(screen.getTextContent()).toContain(t('machineStorage.states.permissionDeniedReason'));
+            expect(screen.getTextContent()).toContain(t('machineStorage.states.permissionDeniedRemedy'));
+            expect(screen.getTextContent()).not.toContain('/private/storage');
+            await act(async () => { screen.pressByTestId('machine-storage-disk-start-failed-details-toggle'); });
+            expect(screen.getTextContent()).toContain('storage_permission_denied');
+            expect(screen.getTextContent()).toContain('storage.owner');
+            expect(screen.getTextContent()).toContain('EACCES');
+        } else expect(screen.getTextContent()).toContain(t('machineStorage.disk.startFailed.generic'));
         expect(screen.findByTestId('machine-storage-disk-start-turn-on')).toBeNull();
         await act(async () => { screen.pressByTestId('machine-storage-disk-start-retry'); });
         await act(async () => { await vi.waitFor(() => expect(starts).toHaveLength(2)); });

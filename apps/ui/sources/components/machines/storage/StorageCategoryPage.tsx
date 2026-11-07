@@ -20,12 +20,15 @@ import { useMachineTabCompactLayout } from '@/components/machines/page/useMachin
 import { formatStorageDay } from './storageCategoryText';
 import { describeStorageVerdict, storageCategoryTitle, storageEvidenceLabel } from './storageReasonPresentation';
 import { StorageItemRow } from './StorageItemRow';
-import type { StorageCategory } from './storageViewModel';
+import { describeStorageFailure, type StorageCategory } from './storageViewModel';
 import { useMachineTabFacts } from '@/components/machines/page/useMachineTabFacts';
 import { useMachineStorageCleanup } from '@/sync/domains/machines/storage/useMachineStorageCleanup';
 import { useStorageCollect, type StorageCollectController } from './StorageCollectToggle';
 import { StoragePageHead, StorageSayLine } from './StoragePageHead';
+import { StorageRestoreRecovery, useTrackedRestoreRefusals } from './StorageRestoreRecovery';
 import { StoragePileDock } from './StoragePileDock';
+import { StoragePolicyNotice } from './StoragePolicyNotice';
+import { StorageReadNotice } from './StorageReadNotice';
 
 /**
  * One kind's page (plan 40 STO-6, lab `rs` SUB): a back link, the kind's name, one sentence, one list
@@ -49,6 +52,7 @@ export const StorageCategoryPage = React.memo(function StorageCategoryPage(props
         putBack: offline ? null : (entryId: string) => { void cleanup.restore({ entryIds: [entryId] }); } }), [cleanup, collect, offline]);
     const layout = useMachineTabCompactLayout();
     const first = useMachineStorageCategory({ machineId: props.machineId, serverId: props.serverId, categoryId: props.categoryId });
+    const refusals = useTrackedRestoreRefusals(cleanup.restoreOutcomes, { entries: first.page?.trashEntries ?? [] });
     const policy = useMachineResourcesPolicy({ serverId: props.serverId, machineId: props.machineId }).policy?.storage ?? null;
     const trashEmptiesAt = summary.summary?.trash.emptiesNextAt ?? null;
     const title = storageCategoryTitle(props.categoryId);
@@ -62,6 +66,7 @@ export const StorageCategoryPage = React.memo(function StorageCategoryPage(props
             <StoragePageHead title={title} onBack={props.onBack}>
                 {first.category ? <CategorySentence category={first.category} policy={policy} trashEmptiesAt={trashEmptiesAt} /> : null}
             </StoragePageHead>
+            <StorageReadNotice issues={first.page?.incomplete} onRetry={first.retry} />
             {/* The machine groups a whole list in one answer; a paged list keeps its one biggest-first run. */}
             {first.page?.groups?.length && !first.page.nextCursor && props.categoryId !== 'trash' ? (
                 <CategoryPageGroups page={first.page} largest={largest} homeDir={homeDir} compact={layout.compact} actions={rowActions} />
@@ -82,6 +87,10 @@ export const StorageCategoryPage = React.memo(function StorageCategoryPage(props
                             }} />
                         </View>
                         : undefined}>
+                    {props.categoryId === 'trash' && refusals.ids.length > 0 ? (
+                        <StorageRestoreRecovery placement="list" ids={refusals.ids} entries={refusals.entries} outcomes={cleanup.restoreOutcomes}
+                            homeDir={homeDir} compact={layout.compact} onPutBackBeside={offline ? null : cleanup.putBackBeside} onDone={refusals.dismiss} />
+                    ) : null}
                     <CategoryPageRows page={first.page} largest={largest} homeDir={homeDir} compact={layout.compact} last={cursors.length === 0} actions={rowActions} />
                     {cursors.map((cursor, index) => (
                         <CategoryPageChunk key={cursor} serverId={props.serverId} machineId={props.machineId} categoryId={props.categoryId}
@@ -102,16 +111,19 @@ export const StorageCategoryPage = React.memo(function StorageCategoryPage(props
                         title={t('machineStorage.states.offlineTitle', { machine: props.machineName })}
               reason={t('machineStorage.states.offlineReason')} />
                 </ItemGroup>
+            ) : first.status === 'policy_unavailable' ? (
+                <StoragePolicyNotice onRetry={first.retry} />
             ) : first.status === 'error' || first.status === 'not_reported' ? (
                 <ItemGroup>
                     <SurfaceStateCard testID="machine-storage-page-error" kind={first.status === 'error' ? 'error' : 'unavailable'} size="line"
                         title={first.status === 'error' ? t('machineStorage.page.error') : t('machineStorage.states.notReported', { machine: props.machineName })}
-                        action={first.status === 'error' && !first.offline ? { label: t('machineStorage.tryAgain'), onPress: first.retry } : undefined} />
+                        {...describeStorageFailure(first.failure)}
+                        action={first.status === 'error' && !first.offline ? { label: t('machineStorage.tryAgain'), onPress: first.retry, testID: 'machine-storage-page-retry' } : undefined} />
                 </ItemGroup>
             ) : (
                 <CategoryPageLoading />
             )}
-            {summary.summary ? (
+            {summary.summary && summary.status !== 'policy_unavailable' ? (
                 <StoragePileDock serverId={props.serverId} machineId={props.machineId} machineName={props.machineName}
                     summary={summary.summary} compact={layout.compact} readOnly={offline}
                     omitTrashReceipt={props.categoryId === 'trash'} />
@@ -268,7 +280,7 @@ function CategoryPageChunk(props: Readonly<{
     const chunk = useMachineStorageCategory({ machineId: props.machineId, serverId: props.serverId, categoryId: props.categoryId, cursor: props.cursor });
     if (!chunk.page) {
         return chunk.status === 'error'
-            ? <SurfaceStateCard kind="error" size="line" title={t('machineStorage.page.error')} action={{ label: t('machineStorage.tryAgain'), onPress: chunk.retry }} />
+            ? <SurfaceStateCard kind="error" size="line" title={t('machineStorage.page.error')} {...describeStorageFailure(chunk.failure)} action={{ label: t('machineStorage.tryAgain'), onPress: chunk.retry }} />
             : <SurfaceStateCard kind="loading" size="line" title={t('machineStorage.page.loading')} />;
     }
     const next = chunk.page.nextCursor;
