@@ -69,6 +69,7 @@ writeFileSync(join(output, 'index.js'), 'export const value = ' + JSON.stringify
   }
   assert.deepEqual((await runWorkspacePackageBuild(options)).built, [], 'a repeated preparation must reuse current outputs');
 });
+
 test('a configured workspace build refreshes stale controller and target dist before returning', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'happier-target-workspace-build-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -125,9 +126,14 @@ writeFileSync(process.env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR + '/index.js', readF
     assert.equal(child.stdout, '2');
   }
   assert.deepEqual((await runWorkspacePackageBuild(options)).built, [], 'unchanged controller output must be reused');
+  writeFileSync(join(controller, 'packages/example/src/index.ts'),
+    'export const initial = 1;\nexport const newlyAdded = 2;\nexport const afterReplicaFailure = 3;\n');
   await assert.rejects(runWorkspacePackageBuild({ ...options,
     runDevTargetCommandImpl: async () => ({ code: 255, signal: null }),
   }), /command-worker/);
+  // A failed replica still fails the invocation, but never withholds the
+  // controller's own publication from local consumers.
+  assert.match(readFileSync(join(controller, 'packages/example/dist/index.js'), 'utf8'), /afterReplicaFailure/);
 });
 for (const { compiledAlready, buildMode, changeAfterManifest } of [
   { compiledAlready: false, buildMode: 'strict' },

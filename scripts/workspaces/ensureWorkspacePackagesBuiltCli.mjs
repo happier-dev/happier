@@ -46,12 +46,15 @@ export async function runWorkspacePackageBuild({
   if (normalizedPackageNames.length === 0 && normalizedComponentDirs.length === 0) {
     throw new Error('Workspace package build requires at least one workspace package name or component.');
   }
-  let targetResult;
-  if (prepareConfiguredTargets) {
-    const { prepareWorkspacePackageBuildTargets } = await import('./prepareWorkspacePackageBuildTargets.mjs');
-    targetResult = await prepareWorkspacePackageBuildTargets({ repoRoot, env,
-      packageNames: normalizedPackageNames, componentDirs: normalizedComponentDirs, runDevTargetCommandImpl });
-  }
+  // Replicas publish their own ignored dist on their own hosts. One failed
+  // replica still fails this invocation, but settles only after the
+  // controller's own publication so it never withholds local outputs.
+  const targetPreparation = prepareConfiguredTargets
+    ? import('./prepareWorkspacePackageBuildTargets.mjs')
+      .then(({ prepareWorkspacePackageBuildTargets }) => prepareWorkspacePackageBuildTargets({ repoRoot, env,
+        packageNames: normalizedPackageNames, componentDirs: normalizedComponentDirs, runDevTargetCommandImpl }))
+      .then((value) => ({ value }), (error) => ({ error }))
+    : null;
 
   // Configured replicas do not publish the controller's ignored dist. Prepare
   // this checkout through the same owner before admitting its local consumers.
@@ -79,7 +82,6 @@ export async function runWorkspacePackageBuild({
     preparedComponents.push({ componentDir: resolvedComponentDir, pluginFailures: prepared.pluginFailures });
   }
   const result = {
-    ...targetResult,
     ok: results.every((result) => result.ok !== false),
     built: [...new Set(results.flatMap((result) => result.built ?? []))],
     skipped: [...new Set(results.flatMap((result) => result.skipped ?? []))],
@@ -122,6 +124,9 @@ export async function runWorkspacePackageBuild({
       });
     }
   }
+  const target = await targetPreparation;
+  if (target?.error) throw target.error;
+  if (target?.value) result.preparedTargets = target.value.preparedTargets;
   return result;
 }
 
