@@ -748,6 +748,14 @@ after explicit detach; it is not proof that the workload was cleaned up.
 A successful partial teardown
 does not prove an entire link was cleaned up.
 
+Delete, unlink and explicit detach use ReadCommitted transactions. Their shared
+disposition owner locks the exact Environment before admission and revision
+checks, then atomically changes its records and publishes to the Account.
+Unrelated Account cursor publication can complete during this work without
+invalidating a transaction-wide Serializable snapshot. Competing Environment
+writers still serialize on the existing Environment row lock; revision and
+teardown-proof refusals remain owned by disposition. This does not add retries.
+
 The canonical signed transition writer retains the admitted `teardownProof` on
 the receipt. Final disposition validates that proof against the current custody
 and resource revision; private receipt Artifact content is not server authority.
@@ -2428,10 +2436,23 @@ installation. It reads topology from the existing private Environment content;
 no new selection is persisted on the Environment. A `cloudflareTunnel`
 Environment requires a full named Domain selection in `content.ingress` before
 admission, otherwise the Action returns `cloudflare_selection_required` and a
-remedy. Missing recorded topology similarly returns `domain_ingress_required`
-instead of silently choosing public Caddy. A named selection supplied by the
-caller takes precedence. The named-selection picker consumes the Cloudflare
-plugin's eligible-selection Action when that producer becomes available.
+remedy. With no recorded ingress, the native placement owner permits one active
+Machine's public Caddy route; several active Machines return
+`domain_ingress_required` with a remedy. A named selection supplied by the caller
+takes precedence.
+
+The Environment Domains Add form is also the Store recovery entry. It consumes
+the Cloudflare plugin's existing `cloudflare-named/selections-read` Action through
+the UI Action executor. Omitted `zoneId` lists the configured account's zones;
+`zone_list_unavailable` exposes an explicit zone ID field. With a selected zone,
+the same Action returns complete eligible tunnel selections. The form prefills
+only a unique zone or tunnel, requires a person's explicit choice when there are
+several, and writes the selected `content.ingress` without a second eligibility
+or authority decision. Account, connector image and connector version are
+explicit inputs; connector discovery remains unavailable. Reads happen on a
+person's press, with no polling. A form without recorded topology visibly offers
+deployment topology or a named Cloudflare selection; native placement decides
+whether deployment topology alone is sufficient.
 
 A Domain header can expose the current operation address derived from its
 existing private execution captures. The UI reads that exact controller
