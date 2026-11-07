@@ -1,4 +1,5 @@
 import type * as React from 'react';
+import type { ActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
 
 export type PresentationNoticeSeverity = 'info' | 'warning' | 'error';
 
@@ -30,6 +31,8 @@ export type PresentationNotice = Readonly<{
     /** The part of `message` that names its subject; the host sets it in the stronger weight. */
     emphasis?: string;
     undo?: PresentationNoticeUndo;
+    /** Result custody for an inverse whose original surface may already be closed. */
+    approval?: ActionApprovalContinuation;
     /** Stays until dismissed, retired by its publisher, or replaced by a newer notice. */
     sticky?: boolean;
 }>;

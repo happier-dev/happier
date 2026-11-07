@@ -5,7 +5,7 @@ import { WorkspaceFilesReplaceActionInputSchema } from '@happier-dev/protocol/ac
 import { StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { DaemonWorkspaceFileReplacePreviewResponseSchema } from '@happier-dev/protocol/machines/workspaceFiles';
 
-import { act, flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
+import { act, flushHookEffects, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { subscribeAcknowledgedWorkspaceFileWrites } from './workspaceFileAcknowledgements';
 import type {
@@ -31,6 +31,9 @@ const { createWorkspaceFileDetailsTab } = await import('@/components/appShell/pa
 const { unsavedWorkspaceFilePaths, useDetailsTabUnsavedKeys } = await import('@/components/appShell/panes/details/workspace/detailsTabChrome');
 const { buildProjectPaneScopeId } = await import('@/components/projects/detail/projectPaneScope');
 const { useWorkspaceFileEditorState } = await import('@/components/workspaces/files/details/workspaceFileDetails/useWorkspaceFileEditorState');
+const { useReplaceUndoOnClose } = await import('@/components/appShell/search/replace/useReplaceUndoOnClose');
+const { PresentationNoticeHost } = await import('@/components/sessions/presentation/PresentationNoticeHost');
+const { readPresentationNotice, retirePresentationNotice } = await import('@/components/sessions/presentation/presentationNotices');
 const { readWorkspaceFileEditorDraft } = await import('@/components/workspaces/files/details/workspaceFileDetails/workspaceFileEditorDraft');
 const { storage } = await import('@/sync/domains/state/storage');
 const {
@@ -256,6 +259,36 @@ describe('useWorkspaceReplace', () => {
     let scope = { serverId: 'home', machineId: 'mac', rootPath: '/repo' };
     const previewOk = { ok: true, files: [modal, doc], skipped: { notText: 1 }, hasMore: false, coverage: 'complete' };
     let account = lifetime();
+
+    it('shows every unmodified target when an oversized apply reply is explicitly truncated', async () => {
+        rpc.call.mockImplementation((request: { method: string }) => request.method === 'daemon.workspaceFiles.replace.preview.v1'
+            ? previewOk : { ok: true, truncated: true,
+                results: [{ path: modal.path, status: 'failed', reason: 'transport_ceiling' }] });
+        const hook = await renderHook(() => useWorkspaceReplace({ scope, accountLifetime: account, matcher, unsavedPaths: [] }));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().canApply).toBe(true));
+        await act(async () => { await hook.getCurrent().apply(); });
+        expect(hook.getCurrent().results).toEqual([
+            { path: modal.path, status: 'failed', reason: 'transport_ceiling' },
+            { path: doc.path, status: 'failed', reason: 'transport_ceiling' },
+        ]);
+        expect(hook.getCurrent().canUndo).toBe(false);
+    });
+
+    it('keeps unapplied Undo receipts recoverable when the refusal reply is truncated', async () => {
+        rpc.call.mockImplementation((request: { method: string; payload?: { operation?: { kind: string } } }) => {
+            if (request.method === 'daemon.workspaceFiles.replace.preview.v1') return previewOk;
+            if (request.payload?.operation?.kind === 'restore') return { ok: true, truncated: true, results: [] };
+            return { ok: true, results: [{ path: doc.path, status: 'replaced', hash: hash('c'), matchCount: 1,
+                edits: [{ startUtf16: 4, deleteLength: 19, insertText: 'useSettingsModalKey', originalText: 'useSettingsRouteKey' }] }] };
+        });
+        const hook = await renderHook(() => useWorkspaceReplace({ scope, accountLifetime: account, matcher, unsavedPaths: [] }));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().canApply).toBe(true));
+        await act(async () => { hook.getCurrent().toggleFile(modal.path); });
+        await act(async () => { await hook.getCurrent().apply(); });
+        await act(async () => { expect(await hook.getCurrent().undo()).toMatchObject({ restored: 0, changed: 0, error: 'failed' }); });
+        expect(hook.getCurrent().canUndo).toBe(true);
+        expect(hook.getCurrent().results).toMatchObject([{ path: doc.path, status: 'replaced', hash: hash('c') }]);
+    });
 
     it('refuses the whole reviewed edit set when a real editor becomes dirty after preview, before its text debounce', async () => {
         const workspaceRefs = [{ id: 'replace-dirty-workspace', serverId: scope.serverId,
@@ -528,9 +561,11 @@ describe('useWorkspaceReplace', () => {
     it('re-previews on every replacement change and holds apply until the preview matches what is typed', async () => {
         let resolveSecond: (value: unknown) => void = () => {};
         rpc.call.mockResolvedValueOnce(previewOk).mockImplementationOnce(() => new Promise((resolve) => { resolveSecond = resolve; }));
-        const hook = await renderHook((props: { replacement: string }) => useWorkspaceReplace({
-            scope, accountLifetime: account, matcher: { ...matcher, replacement: props.replacement }, unsavedPaths: [],
-        }), { initialProps: { replacement: 'useSettingsModalKey' } });
+        const hook = await renderHook((props: { replacement: string }) => {
+            const { binding } = useServerCredentialAccountScopeBinding(scope.serverId);
+            return useWorkspaceReplace({ scope: binding ? { ...scope, serverId: binding.scope.serverId } : null,
+                accountLifetime: binding ?? null, matcher: { ...matcher, replacement: props.replacement }, unsavedPaths: [] });
+        }, { initialProps: { replacement: 'useSettingsModalKey' } });
         await waitForHomeGovernance(() => expect(hook.getCurrent().canApply).toBe(true));
         expect(hook.getCurrent().preview?.files).toHaveLength(2);
         expect(hook.getCurrent().canApply).toBe(true);
@@ -539,8 +574,8 @@ describe('useWorkspaceReplace', () => {
         expect(hook.getCurrent().preview?.files).toHaveLength(2);
         expect(hook.getCurrent().stale).toBe(true);
         expect(hook.getCurrent().canApply).toBe(false);
-        expect(rpc.call).toHaveBeenLastCalledWith(expect.objectContaining({ method: 'daemon.workspaceFiles.replace.preview.v1',
-            payload: expect.objectContaining({ replacement: 'useSettingsKey', rootPath: '/repo' }) }));
+        await waitForHomeGovernance(() => expect(rpc.call).toHaveBeenLastCalledWith(expect.objectContaining({ method: 'daemon.workspaceFiles.replace.preview.v1',
+            payload: expect.objectContaining({ replacement: 'useSettingsKey', rootPath: '/repo' }) })));
         await act(async () => { resolveSecond(previewOk); });
         await flushHookEffects();
         expect(hook.getCurrent().stale).toBe(false);
@@ -557,7 +592,11 @@ describe('useWorkspaceReplace', () => {
                 effects++;
                 return { ok: true, results: [{ path: doc.path, status: 'replaced', hash: hash('e'), matchCount: 1, edits }] };
             } } });
-        const hook = await renderHook(() => useWorkspaceReplace({ scope, accountLifetime: account, matcher, unsavedPaths: [] }));
+        const hook = await renderHook(() => {
+            const { binding } = useServerCredentialAccountScopeBinding(scope.serverId);
+            return useWorkspaceReplace({ scope: binding ? { ...scope, serverId: binding.scope.serverId } : null,
+                accountLifetime: binding ?? null, matcher, unsavedPaths: [] });
+        });
         await waitForHomeGovernance(() => expect(hook.getCurrent().canApply).toBe(true));
         let applying: Promise<void> = Promise.resolve();
         await act(async () => { applying = hook.getCurrent().apply(); });
@@ -570,6 +609,7 @@ describe('useWorkspaceReplace', () => {
         const artifactId = hook.getCurrent().approval!.request.artifactId;
         expect(await decideApprovalAsInbox(scope.serverId, artifactId, 'approve')).toMatchObject({ ok: true, result: { status: 'executed' } });
         await act(async () => { publishHomeAccountChange(scope.serverId, [artifactId]); });
+        await waitForHomeGovernance(() => expect(hook.getCurrent()).toMatchObject({ approval: null, applying: false }));
         await act(async () => { await applying; });
         expect(effects).toBe(1);
         expect(hook.getCurrent()).toMatchObject({ approval: null, applyError: null, canUndo: true });
@@ -606,9 +646,10 @@ describe('useWorkspaceReplace', () => {
         await waitForHomeGovernance(() => expect(hook.getCurrent().approval?.status).toBe('waiting'));
         const artifactId = hook.getCurrent().approval!.request.artifactId;
         expect(await decideApprovalAsInbox(scope.serverId, artifactId, 'approve')).toMatchObject({
-            ok: true, result: { status: 'failed', execution: { ok: false, errorCode } },
+            ok: true, result: { status: errorCode === 'action_outcome_unknown' ? 'outcome_unknown' : 'failed', execution: { ok: false, errorCode } },
         });
         await act(async () => { publishHomeAccountChange(scope.serverId, [artifactId]); });
+        await waitForHomeGovernance(() => expect(hook.getCurrent()).toMatchObject({ approval: null, applying: false, undoing: false }));
         await act(async () => { await completing; });
         expect(hook.getCurrent()).toMatchObject({ approval: null, applyError: expectedError });
         expect(hook.getCurrent().results).toEqual(operation === 'replace' ? null : [
@@ -620,7 +661,11 @@ describe('useWorkspaceReplace', () => {
     it('returns a declined replace to its review without claiming a write', async () => {
         rpc.call.mockResolvedValueOnce(previewOk);
         await homes.requireUiApproval(scope.serverId, 'workspace.files.replace');
-        const hook = await renderHook(() => useWorkspaceReplace({ scope, accountLifetime: account, matcher, unsavedPaths: [] }));
+        const hook = await renderHook(() => {
+            const { binding } = useServerCredentialAccountScopeBinding(scope.serverId);
+            return useWorkspaceReplace({ scope: binding ? { ...scope, serverId: binding.scope.serverId } : null,
+                accountLifetime: binding ?? null, matcher, unsavedPaths: [] });
+        });
         await waitForHomeGovernance(() => expect(hook.getCurrent().canApply).toBe(true));
         let applying: Promise<void> = Promise.resolve();
         await act(async () => { applying = hook.getCurrent().apply(); });
@@ -628,6 +673,7 @@ describe('useWorkspaceReplace', () => {
         const artifactId = hook.getCurrent().approval!.request.artifactId;
         await decideApprovalAsInbox(scope.serverId, artifactId, 'reject');
         await act(async () => { publishHomeAccountChange(scope.serverId, [artifactId]); });
+        await waitForHomeGovernance(() => expect(hook.getCurrent()).toMatchObject({ approval: null, applying: false }));
         await act(async () => { await applying; });
         expect(hook.getCurrent()).toMatchObject({ approval: null, results: null, applyError: 'declined', canApply: true });
         expect(rpc.call).toHaveBeenCalledTimes(1);
@@ -638,7 +684,11 @@ describe('useWorkspaceReplace', () => {
         rpc.call.mockResolvedValueOnce(previewOk)
             .mockResolvedValueOnce({ ok: true, results: [{ path: doc.path, status: 'changed' }] })
             .mockImplementationOnce(() => new Promise(resolve => { completeRefresh = resolve; }));
-        const hook = await renderHook(() => useWorkspaceReplace({ scope, accountLifetime: account, matcher, unsavedPaths: [] }));
+        const hook = await renderHook(() => {
+            const { binding } = useServerCredentialAccountScopeBinding(scope.serverId);
+            return useWorkspaceReplace({ scope: binding ? { ...scope, serverId: binding.scope.serverId } : null,
+                accountLifetime: binding ?? null, matcher, unsavedPaths: [] });
+        });
         await waitForHomeGovernance(() => expect(hook.getCurrent().canApply).toBe(true));
         await act(async () => { await hook.getCurrent().apply(); });
         await act(async () => { hook.getCurrent().resetResults(); });
@@ -646,7 +696,7 @@ describe('useWorkspaceReplace', () => {
         expect(hook.getCurrent().loading).toBe(true);
         expect(hook.getCurrent().canApply).toBe(false);
         await act(async () => { await hook.getCurrent().apply(); });
-        expect(rpc.call).toHaveBeenCalledTimes(3);
+        await waitForHomeGovernance(() => expect(rpc.call).toHaveBeenCalledTimes(3));
         await act(async () => { completeRefresh(previewOk); });
         await flushHookEffects();
         expect(hook.getCurrent().canApply).toBe(true);
@@ -668,6 +718,41 @@ describe('useWorkspaceReplace', () => {
         expect(hook.getCurrent().canApply).toBe(false);
         expect(hook.getCurrent().preview?.files).toHaveLength(2);
         expect(rpc.call).toHaveBeenCalledTimes(1);
+    });
+
+    it('continues closed Replace Undo through its approval and retains the original target', async () => {
+        retirePresentationNotice();
+        const screen = await renderScreen(React.createElement(PresentationNoticeHost));
+        const edits = [{ startUtf16: 4, deleteLength: 19, insertText: 'useSettingsModalKey', originalText: 'useSettingsRouteKey' }];
+        rpc.call.mockResolvedValueOnce(previewOk)
+            .mockResolvedValueOnce({ ok: true, results: [{ path: doc.path, status: 'replaced', hash: hash('e'), matchCount: 1, edits }] })
+            .mockResolvedValueOnce({ ok: true, results: [{ path: doc.path, status: 'restored', hash: hash('b') }] });
+        const hook = await renderHook(() => {
+            const model = useWorkspaceReplace({ scope, accountLifetime: account, matcher, unsavedPaths: [] });
+            useReplaceUndoOnClose(model, 'Machine');
+            return model;
+        });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().canApply).toBe(true));
+        await act(async () => { await hook.getCurrent().apply(); });
+        await homes.requireUiApproval(scope.serverId, 'workspace.files.replace');
+        await installOwnMachineApprovalReplayBoundary({ harness: homes, serverId: scope.serverId, accountId: 'acct', machineId: 'mac',
+            machineFilesystemEffects: { workspaceFilesReplace: async input => rpc.call({ method: 'workspace.files.replace',
+                machineId: 'mac', payload: input, serverId: scope.serverId, accountId: 'acct' }) } });
+        await hook.unmount();
+        await waitForHomeGovernance(() => expect(readPresentationNotice()?.undo).toBeDefined());
+        await screen.pressByTestIdAsync('current-session-presentation-notice-undo');
+        await waitForHomeGovernance(() => expect(readPresentationNotice()?.approval?.artifactId).toBeDefined());
+        expect(screen.findByTestId('presentation-notice-approval')).not.toBeNull();
+        const artifactId = readPresentationNotice()!.approval!.artifactId;
+        expect(rpc.call).toHaveBeenCalledTimes(2);
+        expect(await decideApprovalAsInbox(scope.serverId, artifactId, 'approve')).toMatchObject({ ok: true });
+        await act(async () => { publishHomeAccountChange(scope.serverId, [artifactId]); });
+        await waitForHomeGovernance(() => expect(rpc.call).toHaveBeenCalledTimes(3));
+        const { t } = await import('@/text');
+        await waitForHomeGovernance(() => expect(readPresentationNotice()?.message).toBe(t('universalSearch.replace.undoneTitle')));
+        expect(rpc.call.mock.calls[2]![0]).toMatchObject({ payload: { rootPath: '/repo',
+            operation: { kind: 'restore', files: [{ path: doc.path, expectedHash: hash('e'), edits }] } } });
+        retirePresentationNotice();
     });
 
     it('retains original-target Undo approval while another folder is selected', async () => {

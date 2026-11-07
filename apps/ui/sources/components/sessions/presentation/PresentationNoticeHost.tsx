@@ -1,10 +1,11 @@
 import * as React from 'react';
-import { Animated, Platform, Pressable, View } from 'react-native';
+import { Animated, Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { GlassSurface } from '@/components/ui/glass/GlassSurface';
 
 import { Text } from '@/components/ui/text/Text';
-import { Icon } from '@/components/ui/icons/Icon';
+import { IconButton } from '@/components/ui/buttons/IconButton';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { t } from '@/text';
 import { Typography } from '@/constants/Typography';
 import {
@@ -17,12 +18,15 @@ import { resolveThemeSurfaceBorderStyle } from '@/components/ui/surfaces/resolve
 import { resolveThemeRaisedEdge } from '@/components/ui/surfaces/themeRaisedEdge';
 import { SurfaceRim } from '@/components/ui/surfaces/SurfaceRim';
 import { surfaceUsesRim } from '@/components/ui/surfaces/surfaceEdgeTreatment';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { resolveOverlayPointerEvents } from '@/components/ui/overlays/resolveOverlayPointerEvents';
 import { useOptionalSafeAreaInsets } from '@/hooks/ui/useOptionalSafeAreaInsets';
 import { FLOATING_OVERLAY_METRICS } from '@/components/ui/overlays/floatingOverlayMetrics';
 import { tryRenderWebPortal } from '@/components/ui/popover/portal';
 import { NOTICE_Z_INDEX } from '@/components/ui/overlays/overlayLayers';
+import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
+import { useInPlaceApprovalReview } from '@/components/approvals/ApprovalReviewInPlace';
+import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
+import type { ActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
 
 import {
     readPresentationNotice,
@@ -90,12 +94,11 @@ const stylesheet = StyleSheet.create((theme) => ({
     noticeLeading: {
         flexShrink: 0,
     },
+    // The one interactive element in an otherwise passive notice: drawn as a label, reached by its hit area.
     undoControl: {
-        // The one interactive element in an otherwise passive notice, so it keeps
-        // the platform's own accessible target rather than a copied constant.
-        minHeight: resolveMinimumInteractiveTargetSize(Platform.OS),
         justifyContent: 'center',
         paddingHorizontal: theme.space.s8,
+        paddingVertical: theme.space.s4,
         borderRadius: 8,
     },
     undoControlActive: {
@@ -107,11 +110,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     // A sticky notice stays until it is dismissed (RU-22): the × sits after Undo, quieter than it.
     dismissControl: {
-        minHeight: resolveMinimumInteractiveTargetSize(Platform.OS),
-        minWidth: resolveMinimumInteractiveTargetSize(Platform.OS),
-        alignItems: 'center',
-        justifyContent: 'center',
-        borderRadius: 8,
         marginLeft: -theme.space.s8,
     },
 }));
@@ -127,6 +125,15 @@ function renderNoticeMessage(message: string, emphasis: string | undefined, emph
             {message.slice(at + emphasis.length)}
         </>
     );
+}
+
+function NoticeApproval({ registration }: Readonly<{ registration: ActionApprovalContinuation }>) {
+    const approval = useActionApprovalContinuation({ scopeKey: registration.artifactId,
+        serverId: registration.scope?.serverId ?? '', onExecuted: () => {} });
+    React.useEffect(() => { approval.requestApproval(registration); }, [approval.requestApproval, registration]);
+    const review = useInPlaceApprovalReview({ ...approval, serverId: registration.scope?.serverId ?? null });
+    return <ActionApprovalPendingNotice message={t('approvals.waitingForYou')} presentation="inline" summary={approval.approvalSummary}
+        onOpenApproval={review.reopen} testID="presentation-notice-approval" />;
 }
 
 export const PresentationNoticeHost = React.memo(function PresentationNoticeHost() {
@@ -206,34 +213,32 @@ export const PresentationNoticeHost = React.memo(function PresentationNoticeHost
             >
                 <GlassSurface surfaceGroup="floating" style={[StyleSheet.absoluteFillObject, { borderRadius: NOTICE_RADIUS_PX }]}>{null}</GlassSurface>
                 {shown.leading ? <View style={styles.noticeLeading}>{shown.leading}</View> : null}
-                <Text style={styles.noticeText}>{renderNoticeMessage(shown.message, shown.emphasis, styles.noticeEmphasis)}</Text>
+                {shown.approval && !leaving ? <NoticeApproval key={shown.approval.artifactId} registration={shown.approval} />
+                    : <Text style={styles.noticeText}>{renderNoticeMessage(shown.message, shown.emphasis, styles.noticeEmphasis)}</Text>}
                 {shownUndo ? (
-                    <Pressable
+                    <HappierPressable
                         testID={leaving ? undefined : 'current-session-presentation-notice-undo'}
                         accessibilityRole="button"
                         accessibilityLabel={shownUndo.label}
-                        hitSlop={8}
                         onPress={onUndoPress}
-                        onFocus={() => setUndoControlEngaged(true)}
-                        onBlur={() => setUndoControlEngaged(false)}
-                        onHoverIn={() => setUndoControlEngaged(true)}
-                        onHoverOut={() => setUndoControlEngaged(false)}
+                        onFocusChange={setUndoControlEngaged}
+                        onHoverChange={setUndoControlEngaged}
                         style={({ pressed }) => [styles.undoControl, pressed && styles.undoControlActive]}
                     >
                         <Text style={styles.undoLabel}>{shownUndo.label}</Text>
-                    </Pressable>
+                    </HappierPressable>
                 ) : null}
                 {shown.sticky ? (
-                    <Pressable
-                        testID={leaving ? undefined : 'current-session-presentation-notice-dismiss'}
-                        accessibilityRole="button"
-                        accessibilityLabel={t('common.close')}
-                        hitSlop={4}
-                        onPress={() => retirePresentationNotice(shown.key)}
-                        style={({ pressed }) => [styles.dismissControl, pressed && styles.undoControlActive]}
-                    >
-                        <Icon name="x" size={14} color={theme.colors.text.secondary} />
-                    </Pressable>
+                    <View style={styles.dismissControl}>
+                        <IconButton
+                            testID={leaving ? undefined : 'current-session-presentation-notice-dismiss'}
+                            iconName="x"
+                            iconSize={14}
+                            variant="plain"
+                            accessibilityLabel={t('common.close')}
+                            onPress={() => retirePresentationNotice(shown.key)}
+                        />
+                    </View>
                 ) : null}
                 <SurfaceRim role="floating" radius={NOTICE_RADIUS_PX} border="modal" />
             </Animated.View>

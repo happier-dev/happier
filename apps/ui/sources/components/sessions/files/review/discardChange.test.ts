@@ -3,7 +3,7 @@ import * as React from 'react';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { renderHook, standardCleanup } from '@/dev/testkit';
+import { renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { act } from 'react-test-renderer';
 import { createEncryptedTransferChunkEnvelope } from '@/sync/domains/transfers/runtime/transferRuntime/plumbing/transferChunkEncryption';
 import { createTransferManifestHasher } from '@/sync/domains/transfers/runtime/transferRuntime/plumbing/transferManifestHasher';
@@ -11,6 +11,11 @@ import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/e
 import type { DetailsTab } from '@/components/appShell/panes/model/appPaneReducer';
 import { V2SessionListResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
 import type { ScmWorkingEntry } from '@happier-dev/protocol/scm';
+import { applyInverseEdits } from '@happier-dev/protocol/diff/hunks';
+import { WorkspaceFilesReplaceActionInputSchema, WorkspaceFilesReplaceActionOutputSchema } from '@happier-dev/protocol/actions/actionSpecs';
+import { ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
+import { decideApprovalAsInbox, installOwnMachineApprovalReplayBoundary } from '@/dev/testkit/harness/approvalInbox';
+import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
@@ -30,7 +35,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
     if (request && typeof request === 'object' && 'method' in request && request.method === 'daemon.directTransfer.export.release') return { success: true };
     const response = rpc.responses.shift();
     if (response instanceof Error) throw response;
-    return response;
+    return typeof response === 'function' ? response(request) : response;
   },
 }));
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true }).module);
@@ -42,6 +47,7 @@ const { useHunkDiscard } = await import('@/components/workspaces/scm/review/hunk
 const { useFileChangesReview } = await import('@/components/workspaces/files/file/changes/useFileChangesReview');
 const { useAskSelectionTargetContext } = await import('@/components/ui/code/selection/useAskSelection');
 const { readPresentationNotice, retirePresentationNotice, publishPresentationNotice } = await import('@/components/sessions/presentation/presentationNotices');
+const { PresentationNoticeHost } = await import('@/components/sessions/presentation/PresentationNoticeHost');
 
 const messages = { discarded: 'discarded', restored: 'restored', kept_edited: 'kept', undone: 'undone', undo_conflict: 'undo conflict',
   undo: 'undo', moved_on: 'moved on', update_required: 'update required', unsupported: 'unsupported', unavailable: 'unavailable', unknown: 'unknown', note_failed: 'file changed; note delivery failed', undo_unavailable: 'file changed; Undo unavailable' };
@@ -68,7 +74,7 @@ describe('comparison Discard and guarded Undo', () => {
           rpc.requests.push({ payload: input });
           const response = rpc.responses.shift();
           if (response instanceof Error) throw response;
-          return response;
+          return typeof response === 'function' ? response(input, context.requestId) : response;
         },
       });
       homes.answer(serverId, '/v1/machines', { body: [boundary.machine] });
@@ -187,6 +193,125 @@ describe('comparison Discard and guarded Undo', () => {
     expect(rpc.responses).toHaveLength(0);
   });
 
+  it('confirms exact selected-hunk Undo bytes from the admitted operation receipt without a file read', async () => {
+    const original = '\uFEFFconst message = "Welcome";\r\nconst punctuation = "!";\r\n';
+    const discarded = original.replace('Welcome', 'Hello');
+    let disk = original;
+    let requestId: string | undefined;
+    const edits = [{ startUtf16: original.indexOf('Welcome'), deleteLength: 'Welcome'.length,
+      insertText: 'Hello', originalText: 'Welcome' }];
+    rpc.responses.push(() => {
+      disk = discarded;
+      return { success: true, entries: [{ path: 'a.txt', status: 'reverted', hashBefore: beforeHash,
+        hashAfter: afterHash, inverseEdits: edits }] };
+    }, (input: unknown, admittedRequestId?: string) => {
+      const request = WorkspaceFilesReplaceActionInputSchema.parse(input);
+      if (request.operation.kind !== 'restore') throw new Error('Undo must use the restore owner');
+      expect(request.operation.files[0]?.expectedHash).toBe(afterHash);
+      const restored = applyInverseEdits(disk, request.operation.files[0]!.edits);
+      if (!restored.ok) throw new Error('Undo did not restore the selected change');
+      disk = restored.text;
+      requestId = admittedRequestId;
+      return { operation: { operationId: 'undo-operation' } };
+    }, () => ({ kind: 'found', operation: ActionOperationSnapshotV1Schema.parse({
+      version: 1, operationId: 'undo-operation', revision: 3, actionId: 'workspace.files.replace',
+      state: 'succeeded', scope: { accountId: 'review-account', machineId: 'm1' }, requestId,
+      title: 'Undo', createdAt: 1, startedAt: 2, settledAt: 3, cancellation: 'supported',
+      result: { ok: true, results: [{ path: 'a.txt', status: 'restored', hash: beforeHash }] },
+    }) }));
+    const result = await discardChange(input());
+    expect(disk).toBe(discarded);
+    if (!result.ok || !result.undo) throw new Error('Undo must be available');
+    expect(await result.undo()).toEqual({ success: true });
+    expect(new TextEncoder().encode(disk)).toEqual(new TextEncoder().encode(original));
+    expect(readPresentationNotice()).toMatchObject({ message: messages.undone });
+    expect(rpc.requests).toHaveLength(3);
+    expect(rpc.responses).toHaveLength(0);
+  });
+
+  it('keeps selected-hunk Undo pending for approval and confirms exact bytes after approval', async () => {
+    await homes.requireUiApproval(serverId, 'workspace.files.replace');
+    await installOwnMachineApprovalReplayBoundary({ harness: homes, serverId, accountId: 'review-account', machineId: 'm1',
+      machineFilesystemEffects: { workspaceFilesReplace: async (input, context) => {
+        const response = rpc.responses.shift();
+        if (typeof response !== 'function') throw new Error('Unexpected approved restore');
+        return WorkspaceFilesReplaceActionOutputSchema.parse(response(input, context.actionRequestId));
+      } } });
+    const screen = await renderScreen(React.createElement(PresentationNoticeHost));
+    const original = '\uFEFFWelcome\r\nunchanged!\r\n';
+    let disk = original;
+    let requestId: string | undefined;
+    const edits = [{ startUtf16: 1, deleteLength: 7, insertText: 'Hello', originalText: 'Welcome' }];
+    rpc.responses.push(() => {
+      disk = original.replace('Welcome', 'Hello');
+      return { success: true, entries: [{ path: 'a.txt', status: 'reverted', hashBefore: beforeHash,
+        hashAfter: afterHash, inverseEdits: edits }] };
+    }, (input: unknown, admittedRequestId?: string) => {
+      const request = WorkspaceFilesReplaceActionInputSchema.parse(input);
+      if (request.operation.kind !== 'restore') throw new Error('Undo must use restore');
+      expect(request.operation.files[0]?.expectedHash).toBe(afterHash);
+      const restored = applyInverseEdits(disk, request.operation.files[0]!.edits);
+      if (!restored.ok) throw new Error('Undo did not restore the selected change');
+      disk = restored.text;
+      requestId = admittedRequestId;
+      return { operation: { operationId: 'approved-undo-operation' } };
+    }, () => ({ kind: 'found', operation: ActionOperationSnapshotV1Schema.parse({
+      version: 1, operationId: 'approved-undo-operation', revision: 3, actionId: 'workspace.files.replace',
+      state: 'succeeded', scope: { accountId: 'review-account', machineId: 'm1' }, requestId,
+      title: 'Undo', createdAt: 1, startedAt: 2, settledAt: 3, cancellation: 'supported',
+      result: { ok: true, results: [{ path: 'a.txt', status: 'restored', hash: beforeHash }] },
+    }) }));
+    const { buildReviewUnits } = await import('@happier-dev/protocol/scm/comparisonOccurrences');
+    const { t } = await import('@/text');
+    const unit = buildReviewUnits('a.txt', 'combined', '@@ -1 +1 @@\n-Hello\n+Welcome\n')[0]!;
+    const hook = await renderHook(() => useHunkDiscard({ scope: { machineId: 'm1', serverId, rootPath: '/repo' },
+      sessionId: null, machineName: 'Machine', unreachable: false, refresh: () => {} }));
+    await act(async () => { await hook.getCurrent().discard({ path: 'a.txt', changeKey: unit.key,
+      source: { kind: 'live', root: '/repo' }, unit }); });
+    const undo = readPresentationNotice()?.undo;
+    if (!undo) throw new Error('Undo must be available');
+    let completion: unknown;
+    await act(async () => { completion = undo.run(); });
+    await vi.waitFor(() => expect(homes.artifacts(serverId).list()).toHaveLength(1));
+    expect(readPresentationNotice()).toMatchObject({ message: t('approvals.waitingForYou'), severity: 'info',
+      approval: { artifactId: homes.artifacts(serverId).list()[0]!.id } });
+    await vi.waitFor(() => expect(screen.findByTestId('presentation-notice-approval')).not.toBeNull());
+    expect(disk).toBe(original.replace('Welcome', 'Hello'));
+    expect(homes.requestsFor('/v1/actions/workspace.files.replace')).toHaveLength(0);
+    const artifactId = homes.artifacts(serverId).list()[0]!.id;
+    expect(await decideApprovalAsInbox(serverId, artifactId, 'approve')).toMatchObject({ ok: true });
+    await act(async () => { publishHomeAccountChange(serverId, [artifactId]); });
+    await vi.waitFor(async () => expect(await completion).toEqual({ success: true }));
+    expect(new TextEncoder().encode(disk)).toEqual(new TextEncoder().encode(original));
+    expect(readPresentationNotice()).toMatchObject({ message: t('hunkReview.noticeUndone') });
+  });
+
+  it('continues whole-file binary Undo after approval without changing the preimage', async () => {
+    await homes.requireUiApproval(serverId, 'daemon.filesystem.writeFile');
+    await installOwnMachineApprovalReplayBoundary({ harness: homes, serverId, accountId: 'review-account', machineId: 'm1' });
+    const screen = await renderScreen(React.createElement(PresentationNoticeHost));
+    let disk = 'discarded';
+    rpc.responses.push({ success: true, entries: [{ path: 'a.txt', status: 'restored', hashBefore: beforeHash,
+      hashAfter: afterHash, previous: { inlineBase64: 'AP+ADQo=' } }] }, (request: unknown) => {
+      expect(request).toMatchObject({ payload: { content: 'AP+ADQo=', expectedHash: afterHash } });
+      disk = 'AP+ADQo=';
+      return { success: true, hash: beforeHash };
+    });
+    const result = await discardChange(input());
+    if (!result.ok || !result.undo) throw new Error('Undo must be available');
+    let completion: ReturnType<NonNullable<typeof result.undo>> | undefined;
+    await act(async () => { completion = result.undo!(); });
+    await vi.waitFor(() => expect(readPresentationNotice()?.approval?.artifactId).toBeDefined());
+    expect(screen.findByTestId('presentation-notice-approval')).not.toBeNull();
+    expect(disk).toBe('discarded');
+    const artifactId = readPresentationNotice()!.approval!.artifactId;
+    expect(await decideApprovalAsInbox(serverId, artifactId, 'approve')).toMatchObject({ ok: true });
+    await act(async () => { publishHomeAccountChange(serverId, [artifactId]); });
+    await vi.waitFor(async () => expect(await completion).toEqual({ success: true }));
+    expect(disk).toBe('AP+ADQo=');
+    expect(readPresentationNotice()).toMatchObject({ message: messages.undone });
+  });
+
   it('refuses selected-hunk Undo after a later write through the restore owner', async () => {
     rpc.responses.push({ success: true, entries: [{ path: 'a.txt', status: 'reverted', hashBefore: beforeHash, hashAfter: afterHash,
       inverseEdits: [{ startUtf16: 1, deleteLength: 3, insertText: 'old', originalText: 'new' }] }] },
@@ -292,9 +417,9 @@ describe('comparison Discard and guarded Undo', () => {
     expect(hook.getCurrent().undoAvailable).toBe(true);
     rpc.responses.push({ success: true, hash: beforeHash });
     await act(async () => { hook.getCurrent().keyboard.undo?.(); });
-    expect(rpc.requests).toEqual(expect.arrayContaining([expect.objectContaining({ payload: expect.objectContaining({
+    await vi.waitFor(() => expect(rpc.requests).toEqual(expect.arrayContaining([expect.objectContaining({ payload: expect.objectContaining({
       content: 'b2xkCg==', expectedHash: afterHash,
-    }) })]));
+    }) })])));
     expect(hook.getCurrent().undoAvailable).toBe(false);
     await restore();
     const fileUndo = readPresentationNotice()!.undo!.run;

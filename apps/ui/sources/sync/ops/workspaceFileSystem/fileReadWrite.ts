@@ -27,9 +27,12 @@ import {
     isFilesystemWriteGuardErrorCode,
 } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import { MACHINE_CARRIER_TRANSPORT_FAILED_ERROR_CODE, MACHINE_CARRIER_UNAVAILABLE_ERROR_CODE } from '@/sync/domains/transfers/runtime/transferRuntime';
-import { invokeWorkspaceFileSystemAction } from './actionInvocation';
+import { invokeWorkspaceFileSystemAction, projectWorkspaceFileSystemActionFailure, type WorkspaceFileSystemFailure } from './actionInvocation';
 import { callAdmittedFilesystemActionRpc } from '@/sync/ops/actions/filesystemActionDeps';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
+import { captureLazyActionAccountContext, withActionAccountRequestSignal } from '@/sync/ops/actions/actionAccountContext';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { resumeActionExecutionResult, type ActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
 
 const WORKSPACE_FILE_INLINE_MAX_BYTES_ENV_KEY = 'EXPO_PUBLIC_HAPPIER_SESSION_FILE_INLINE_MAX_BYTES';
 const DEFAULT_WORKSPACE_FILE_INLINE_MAX_BYTES = 256 * 1024;
@@ -58,7 +61,7 @@ function bytesToHex(bytes: Uint8Array): string {
 
 export type WorkspaceReadFileResponse =
   | Readonly<{ success: true; content: string; sizeBytes?: number; eof?: boolean }>
-  | Readonly<{ success: false; error: string }>;
+  | WorkspaceFileSystemFailure;
 
 /**
  * The workspace file-details owner exposes this narrow stat alongside its
@@ -82,7 +85,7 @@ export type WorkspaceStatFileResponse =
       /** SHA-256 of the file bytes when the daemon can provide an exact revision. */
       contentHash?: string;
     }>
-  | Readonly<{ success: false; error: string; errorCode?: string }>;
+  | WorkspaceFileSystemFailure;
 
 export async function workspaceStatFile(
     target: WorkspaceFileSystemTarget,
@@ -150,12 +153,7 @@ export async function workspaceReadFile(
                 : { success: false, error: read.error };
         } } : {}),
     });
-    if (!result.ok) {
-        return {
-            success: false,
-            error: result.error,
-        };
-    }
+    if (!result.ok) return projectWorkspaceFileSystemActionFailure(result);
 
     const response = FilesystemReadFileOutputSchema.safeParse(result.result);
     if (!response.success) {
@@ -185,12 +183,12 @@ export async function workspaceReadFile(
 
 export type WorkspaceWriteFileResponse =
   | Readonly<{ success: true; hash: string }>
-  | Readonly<{ success: false; error: string; errorCode?: string; approvalArtifactId?: string; kind: WorkspaceWriteFileFailureKind }>;
+  | Readonly<WorkspaceFileSystemFailure & { approvalArtifactId?: string; kind: WorkspaceWriteFileFailureKind }>;
 
 export type WorkspaceWriteFileFailureKind = 'conflict' | 'approval_required' | 'unreachable' | 'unsupported' | 'failed';
 
 export function classifyWorkspaceWriteFileFailure(
-    failure: Readonly<{ success: false; error: string; errorCode?: string; approvalArtifactId?: string }>,
+    failure: Readonly<WorkspaceFileSystemFailure & { approvalArtifactId?: string }>,
 ): Extract<WorkspaceWriteFileResponse, { success: false }> {
     const code = failure.errorCode;
     const kind: WorkspaceWriteFileFailureKind = isFilesystemWriteGuardErrorCode(code) ? 'conflict'
@@ -215,21 +213,29 @@ export async function workspaceWriteFile(
     path: string,
     content: string | Uint8Array,
     expectedHash?: string | null,
-    options?: Readonly<{ signal?: AbortSignal | null }>,
+    options?: Readonly<{ signal?: AbortSignal | null; accountId?: string | null;
+        onApprovalPending?: (registration: ActionApprovalContinuation) => void }>,
 ): Promise<WorkspaceWriteFileResponse> {
     options?.signal?.throwIfAborted();
     const contentBytes = typeof content === 'string' ? new TextEncoder().encode(content) : content;
     const inlineMaxBytes = resolveWorkspaceFileInlineMaxBytes();
+    const serverId = target.serverId ?? captureActiveServerAccountScopeLifetime()?.scope.serverId;
+    const account = options?.onApprovalPending && serverId ? await captureLazyActionAccountContext(serverId) : null;
+    try {
 
     // View cancellation ends observation; an admitted write keeps the Action's
     // Account lifetime and must not be reported as definitely unwritten.
-    const operation = invokeWorkspaceFileSystemAction(target, 'daemon.filesystem.writeFile', {
+    const input = {
         rootPath: target.rootPath,
         path: resolveMachineAbsolutePath({ rootPath: target.rootPath, agentRootPath: target.agentRootPath,
             requestPath: path, pathKind: 'workspace_entry' }),
         content: encodeBase64(contentBytes, 'base64'),
         ...(expectedHash === undefined ? {} : { expectedHash }),
-    }, contentBytes.byteLength > inlineMaxBytes ? { delivery: async ({ context }) => {
+    };
+    const accountId = options?.accountId ?? account?.accountId;
+    const operation = invokeWorkspaceFileSystemAction(account ? { ...target, serverId: account.serverId } : target,
+        'daemon.filesystem.writeFile', input, { ...(accountId ? { accountId } : {}),
+        ...(contentBytes.byteLength > inlineMaxBytes ? { delivery: async ({ context }) => {
         const recoveryObservation = mergeAbortSignals([options?.signal ?? undefined, context.signal]);
         try {
             const sha256 = bytesToHex(await digest('SHA-256', contentBytes));
@@ -294,13 +300,20 @@ export async function workspaceWriteFile(
                 errorCode: normalizeWorkspaceWriteFileErrorCode(readRpcErrorCode(error)),
             };
         } finally { recoveryObservation.dispose(); }
-    } } : undefined);
-    const result = await observeTransferOperation(operation, options?.signal);
-    if (!result.ok) return classifyWorkspaceWriteFileFailure({ success: false, error: result.error,
+    } } : {}) });
+    let result = await observeTransferOperation(operation, options?.signal);
+    if (account && options?.onApprovalPending && result.ok && ActionApprovalRequestCreatedResultSchema.safeParse(result.result).success) {
+        result = await withActionAccountRequestSignal({ accountLifetime: account.accountOnlyLifetime }, options.signal ?? undefined,
+            signal => resumeActionExecutionResult({ result, actionId: 'daemon.filesystem.writeFile', actionInput: input,
+                scope: { serverId: account.serverId, accountId: account.accountId }, signal,
+                onApprovalPending: options.onApprovalPending! }));
+    }
+    if (!result.ok) return classifyWorkspaceWriteFileFailure({ ...projectWorkspaceFileSystemActionFailure(result),
         errorCode: normalizeWorkspaceWriteFileErrorCode(result.errorCode) });
     const approval = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
     if (approval.success) return classifyWorkspaceWriteFileFailure({ success: false, error: 'The Action awaits approval.', errorCode: 'approval_required', approvalArtifactId: approval.data.artifactId });
     const response = FilesystemWriteFileOutputSchema.safeParse(result.result);
     if (!response.success) return classifyWorkspaceWriteFileFailure({ success: false, error: 'The filesystem Action response could not be validated.', errorCode: 'invalid_action_output' });
     return response.data.success ? response.data : classifyWorkspaceWriteFileFailure(response.data);
+    } finally { account?.dispose(); }
 }

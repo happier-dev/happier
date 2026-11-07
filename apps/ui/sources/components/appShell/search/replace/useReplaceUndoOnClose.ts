@@ -34,7 +34,10 @@ function publishClosedOutcome(outcome: WorkspaceReplaceCloseOutcome, machine: st
     ...(undo ? { undo: {
       label: t('universalSearch.replace.undo'),
       run: () => {
-        void undo().then((result) => {
+        void undo(approval => {
+          publishPresentationNotice({ key: NOTICE_KEY, severity: 'info', sticky: true,
+            message: t('approvals.waitingForYou'), approval });
+        }).then((result) => {
           if (!result) { retirePresentationNotice(NOTICE_KEY); return; }
           if (result.approval) return;
           publishPresentationNotice({

@@ -333,7 +333,7 @@ type ApplySettlement = Readonly<{
 export type WorkspaceReplaceCloseOutcome = ApplySettlement & Readonly<{
   machineId: string;
   results: readonly WorkspaceReplaceFileResult[];
-  undo: (() => Promise<WorkspaceReplaceUndoOutcome | null>) | null;
+  undo: ((onApprovalPending: (registration: ActionApprovalContinuation) => void) => Promise<WorkspaceReplaceUndoOutcome | null>) | null;
 }>;
 
 export type WorkspaceReplaceModel = Readonly<{
@@ -823,6 +823,7 @@ export function useWorkspaceReplace(
         return { error: code, approval: null };
       }
       const cancelled = new Set(response.cancelled ?? []);
+      const answered = new Set(response.results.map(result => result.path));
       setResultState({ key: preview.key, scope, options, results: [
         ...response.results.map((result): WorkspaceReplaceFileResult => ({
           ...result,
@@ -830,13 +831,12 @@ export function useWorkspaceReplace(
         ...selection
           .filter(
             (file) =>
-              cancelled.has(file.path) &&
-              !response.results.some((result) => result.path === file.path),
+              !answered.has(file.path) &&
+              (cancelled.has(file.path) || response.truncated),
           )
-          .map((file): WorkspaceReplaceFileResult => ({
-            path: file.path,
-            status: 'cancelled',
-          })),
+          .map((file): WorkspaceReplaceFileResult => cancelled.has(file.path)
+            ? { path: file.path, status: 'cancelled' }
+            : { path: file.path, status: 'failed', reason: 'transport_ceiling' }),
         ...unsavedFiles.map((file): WorkspaceReplaceFileResult => ({
           path: file.path,
           status: 'skipped',
@@ -867,7 +867,7 @@ export function useWorkspaceReplace(
   const canRestore = undoable.length > 0 && !undoing && !applying && !approval && resultAccountIsCurrent;
   const canUndo = results !== null && canRestore;
   const restore = React.useCallback(
-    async (path?: string, inSurface = false): Promise<WorkspaceReplaceUndoOutcome | null> => {
+    async (path?: string, inSurface = false, onApprovalPending?: (registration: ActionApprovalContinuation) => void): Promise<WorkspaceReplaceUndoOutcome | null> => {
       const resultState = retainedResult.current;
       const account = currentAccount.current;
       if (!resultState || restoring.current || applyController.current || pendingRestoreApproval.current === resultState.key
@@ -880,7 +880,8 @@ export function useWorkspaceReplace(
       restoring.current = true;
       setUndoing(true);
       setApplyFailure(null);
-      // Only the open surface waits on an approval; after close the notice's Undo leaves it to the Inbox.
+      const requestApproval = inSurface && authorRef.current.isCurrent()
+        ? authorRef.current.approval.requestApproval : onApprovalPending;
       const awaited = { approval: null as WorkspaceReplaceApproval | null };
       try {
         const response = await machineWorkspaceFileReplaceApply(
@@ -889,9 +890,10 @@ export function useWorkspaceReplace(
             rootPath: resultState.scope.rootPath,
             operation: buildWorkspaceFileRestoreOperation(targets),
           },
-          inSurface && authorRef.current.isCurrent() ? { ...resultState.options, continuationSignal: authorRef.current.getSignal(),
+          requestApproval ? { ...resultState.options,
+            ...(inSurface ? { continuationSignal: authorRef.current.getSignal() } : {}),
             onApprovalPending: (registration) => {
-              authorRef.current.approval.requestApproval(registration);
+              requestApproval(registration);
               pendingRestoreApproval.current = resultState.key;
               awaited.approval = { operation: 'restore', serverId: resultState.options.serverId, status: 'waiting',
                 request: createdApproval(registration, 'workspace.files.replace') };
@@ -929,7 +931,9 @@ export function useWorkspaceReplace(
         );
         let restoredCount = 0;
         let changedCount = 0;
-        let failedCount = 0;
+        let failedCount = response.truncated
+          ? targets.filter(target => !outcome.has(target.path)).length
+          : 0;
         for (const restored of response.results) {
           if (restored.status === 'restored') restoredCount += 1;
           else if (restored.status === 'changed') changedCount += 1;
@@ -997,7 +1001,7 @@ export function useWorkspaceReplace(
     const results = retained?.key === target.key ? retained.results : [];
     return { ...settlement, machineId: target.scope.machineId, results,
       undo: !restoring.current && pendingRestoreApproval.current !== target.key && undoableResults(results).length > 0
-        ? () => restore() : null };
+        ? onApprovalPending => restore(undefined, false, onApprovalPending) : null };
   }, [restore]);
 
   const resetResults = React.useCallback(() => {

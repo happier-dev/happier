@@ -8,6 +8,7 @@ import { downloadBulkPayloadViaDirectExportToDestination } from '@/sync/domains/
 import { publishPresentationNotice, readPresentationNotice, retirePresentationNotice, subscribePresentationNotices,
   type PresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { sendFileReviewNote } from './sendFileReviewNote';
+import { t } from '@/text';
 
 type FailureReason = 'moved_on' | 'update_required' | 'unsupported' | 'unavailable' | 'unknown';
 export type DiscardChangeMessages = Readonly<Record<FailureReason | 'discarded' | 'restored' | 'kept_edited' | 'undone' | 'undo_conflict' | 'undo' | 'note_failed' | 'undo_unavailable', string>>;
@@ -108,7 +109,9 @@ export async function discardChange(params: DiscardChangeParams): Promise<Discar
           const result = await machineWorkspaceFileReplaceApply(params.target.machineId, {
             rootPath: params.target.rootPath,
             operation: { kind: 'restore', files: [{ path: params.entry.path, expectedHash: entry.hashAfter, edits: entry.inverseEdits }] },
-          }, { serverId: params.target.serverId });
+          }, { serverId: params.target.serverId, onApprovalPending: approval => {
+            publishPresentationNotice({ key, message: t('approvals.waitingForYou'), severity: 'info', sticky: true, approval });
+          } });
           const restored = result.ok ? result.results.find(file => file.path === params.entry.path) : undefined;
           if (restored?.status !== 'restored') {
             notice(restored?.status === 'changed' ? params.messages.undo_conflict : params.messages.unknown, 'error');
@@ -117,7 +120,11 @@ export async function discardChange(params: DiscardChangeParams): Promise<Discar
           }
         } else {
           if (!retainedPrevious) { notice(params.messages.undo_unavailable, 'error'); return { success: false }; }
-          const result = await workspaceWriteFile(params.target, params.entry.path, retainedPrevious, entry.hashAfter);
+          const result = await workspaceWriteFile(params.target, params.entry.path, retainedPrevious, entry.hashAfter, {
+            onApprovalPending: approval => {
+              publishPresentationNotice({ key, message: t('approvals.waitingForYou'), severity: 'info', sticky: true, approval });
+            },
+          });
           if (!result.success) {
             notice(['hash_mismatch', 'expected_file_absent', 'expected_file_missing'].includes(result.errorCode ?? '')
               ? params.messages.undo_conflict : params.messages.unknown, 'error');
