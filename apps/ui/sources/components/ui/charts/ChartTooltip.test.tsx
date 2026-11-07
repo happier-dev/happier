@@ -5,7 +5,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { pressTestInstance, renderScreen } from '@/dev/testkit';
 
-vi.mock('@/components/ui/popover', () => ({
+vi.mock('@/components/ui/popover', async importOriginal => ({
+    ...(await importOriginal<typeof import('@/components/ui/popover')>()),
     Popover: (props: Record<string, unknown> & { children?: React.ReactNode | ((params: { maxHeight: number; maxWidth: number }) => React.ReactNode) }) => {
         const React = require('react');
         return React.createElement(
@@ -25,9 +26,11 @@ vi.mock('@/components/ui/overlays/FloatingOverlay', () => ({
     },
 }));
 
+// Transform the real command-owner graph during collection rather than the first interaction's timeout.
+const { ChartTooltip } = await import('./ChartTooltip');
+
 describe('ChartTooltip', () => {
     it('reports selected semantic values through the host overlay trigger on touch and keyboard focus', async () => {
-        const { ChartTooltip } = await import('./ChartTooltip');
         let selected = false;
         const screen = await renderScreen(<ChartTooltip testID="exact" title="Monday" value="North 0.00004, South unknown" accentColor="#007AFF"
             accessibilityLabel="Monday: North 0.00004, South unknown" onSelect={() => { selected = true; }}><View /></ChartTooltip>);
@@ -40,8 +43,6 @@ describe('ChartTooltip', () => {
         expect(selected).toBe(true);
     });
     it('opens on press and renders the tooltip payload', async () => {
-        const { ChartTooltip } = await import('./ChartTooltip');
-
         const screen = await renderScreen(
             <ChartTooltip
                 testID="usage-chart-tooltip"
@@ -69,8 +70,6 @@ describe('ChartTooltip', () => {
     });
 
     it('press while hovered keeps the tooltip open — mouse hover opens it, the click must not toggle it away (D-R4-3)', async () => {
-        const { ChartTooltip } = await import('./ChartTooltip');
-
         const screen = await renderScreen(
             <ChartTooltip
                 testID="usage-chart-tooltip"

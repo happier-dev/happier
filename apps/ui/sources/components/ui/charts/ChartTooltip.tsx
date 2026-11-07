@@ -6,6 +6,8 @@ import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { Popover } from '@/components/ui/popover';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { t } from '@/text';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
 type ChartTooltipProps = Readonly<{
     children: React.ReactNode;
@@ -106,6 +108,18 @@ export function ChartTooltip(props: ChartTooltipProps): React.ReactElement {
     const focusedRef = React.useRef(false);
     const openedByFocusRef = React.useRef(false);
     const resolvedTriggerTestID = triggerTestID ?? (testID ? `${testID}-trigger` : undefined);
+    const commands = useCurrentUiContextLocalCommands(disabled ? [] : [
+        { key: 'reveal', title: `${title}: ${value}`, description: subtitle,
+            invoke: () => { props.onSelect?.(); setOpen(true); } },
+        { key: 'activate', title: props.accessibilityLabel ?? title, invoke: () => {
+            props.onSelect?.();
+            // Touch on web may focus before pressing; keep that newly opened value visible.
+            const keepOpen = hoveredRef.current || openedByFocusRef.current;
+            openedByFocusRef.current = false;
+            setOpen(current => keepOpen ? true : !current);
+        } },
+        ...(open ? [{ key: 'dismiss', title: `${t('common.close')} ${title}`, invoke: () => setOpen(false) }] : []),
+    ], { unbound: 'local' });
 
     if (disabled) {
         return <>{children}</>;
@@ -113,22 +127,18 @@ export function ChartTooltip(props: ChartTooltipProps): React.ReactElement {
 
     const interaction = {
         onPress: () => {
-            props.onSelect?.();
-            // Touch on web may focus before pressing. That first press keeps its newly opened value visible.
-            const keepOpen = hoveredRef.current || openedByFocusRef.current;
-            openedByFocusRef.current = false;
-            setOpen((current) => keepOpen ? true : !current);
+            void commands.invoke('activate');
         },
         onFocusChange: (focused: boolean) => {
             focusedRef.current = focused;
             openedByFocusRef.current = focused;
-            if (focused) { props.onSelect?.(); setOpen(true); }
-            else if (!hoveredRef.current) setOpen(false);
+            if (focused) void commands.invoke('reveal');
+            else if (!hoveredRef.current) void commands.invoke('dismiss');
         },
         onHoverChange: (hovered: boolean) => {
             hoveredRef.current = hovered;
-            if (hovered) { props.onSelect?.(); setOpen(true); }
-            else if (!focusedRef.current) setOpen(false);
+            if (hovered) void commands.invoke('reveal');
+            else if (!focusedRef.current) void commands.invoke('dismiss');
         },
     };
 
@@ -161,7 +171,7 @@ export function ChartTooltip(props: ChartTooltipProps): React.ReactElement {
                 portal={{ web: true, native: true, matchAnchorWidth: false, anchorAlign: 'center' }}
                 maxWidthCap={260}
                 maxHeightCap={180}
-                onRequestClose={() => setOpen(false)}
+                onRequestClose={() => { void commands.invoke('dismiss'); }}
             >
                 {() => (
                     <FloatingOverlay scrollEnabled={false}>

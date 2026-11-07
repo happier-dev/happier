@@ -52,7 +52,7 @@ The genuine Session-agent/finite-CLI/server path passed both present/absent-row 
 
 ## Validation and ownership
 
-Canonical command publication remains the existing current-context owner; controls and agents consume the same mounted declarations.
+Canonical command publication remains the existing current-context owner; controls and agents consume the same mounted declarations. The folder browser's mutation controls pass 29 cases, but a separate read audit found raw filesystem RPCs beneath the chooser; canonical read admission is being corrected before claiming that corridor complete.
 Five APIs need no extra control: `usage.recap.compose/deliver/export` already share the private composer feature; `usage.recap.private.export` exposes bytes behind existing delivery; `usage.prices.get` is the displayed data read. Inventory records each disposition.
 Business effects remain existing Action owners; the external-session direct RPC fallback is removed.
 Command-driven resource reads are also being routed through canonical Action admission while retaining the existing Resource lifecycle.
@@ -61,9 +61,9 @@ Disabling only two Resource caller-context relays reproduced forbidden HTTP read
 The six-suite core batch reached 134 passes and 11 failures; actual price-retirement/prompt REDs and fixture corrections await GREEN. Plans' corrected full file passes 28/28 (`plans-capacity-green.log`); lens owner/series 15/15 and selector touch 1/1 pass. The requested post-deployment entry rerun passed 7/7 at 15:25Z (`entry-loads-4.log`); it did not encounter the later reported CLI load break.
 Adjacent pagination stopped before collection on the deployment-reference subpath; the integration owner was notified. No dependency repair was attempted here.
 Later focused rows stopped before Vitest on the Claude plugin importer/lockfile mismatch; browser collection also exposed an undeclared `session.list.sections` setting. Both prerequisites were routed to Systemic. At 14:14Z Systemic declared lock/install consistent; one corrected retry per row is running. Borrowed Expo remains parked on a separate missing protocol module.
-The shared ChartTooltip test reached actual missing-command RED; its reveal/select/dismiss producer is now extended and GREEN is pending. A later deployment initialization failure blocked native adjacent and lens placement collection; O-DEPLOY confirmed its repair at 15:05Z.
+ChartTooltip's real mounted exact-value journey passes after actual missing-command RED; all three existing tooltip interactions also pass, with boundary exports retained and cold imports collected before tests. Lens owner/series15 plus real DOM placement1 pass. Earlier deployment initialization failures were repaired at 15:05Z.
 No source-fix live pass is claimed from the retained reload-121 browser. Three existing controls were compared in the loaded product.
-Committed `332b4603`: native-price, Sources/Coach, recap, modal and required selector owners; private index/CAS, current compatible foreign hunks retained. Remaining controls and adjacent checks continue. A partial Usage board RESULT records the boundary; final RESULT remains pending.
+Committed `332b4603`, `eb0202c1`, `f2269bfd`: native-price, Sources/Coach, recap, selectors, Plans, modal bridge and delegated approvals; private index/CAS, compatible foreign hunks named. Both latest entry-load runs pass7/7. Remaining controls and adjacent checks continue; final Usage RESULT remains pending.
 The shared compiler wave ended with CLI/UI **not run** on Cloudflare declaration preparation; no UI delta proof is claimed or duplicate compiler queued. Plugin-UI's two new public-props assertions concern foreign Collection/DetailsPane props. The 11:42Z ruling keeps focused GREEN + entry-loads as the commit gate; integration owns compiler recovery.
 
 ## Residual risk
