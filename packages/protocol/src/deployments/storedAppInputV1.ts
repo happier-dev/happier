@@ -17,6 +17,16 @@ import { WorkspaceManifestRelativePathSchema } from '../workspaces/manifestSchem
 /** Shared serialized leaves: feature-owned Environment records compose these same definitions. */
 export const DeploymentDigestV1Schema = lazyZodSchema(() => z.string().check(z.regex(/^sha256:[0-9a-f]{64}$/u)));
 export const DeploymentTextV1Schema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
+/** Release preferences shared by private Environment records and reviewed update operands. */
+export const OwnServerEnvironmentReleasePolicyV1Schema = z.strictObject({
+    rollout: z.enum(['recreate', 'startFirst']), autoRestorePreviousRelease: z.boolean(),
+});
+/** Multi-server ingress intent. Source/placement admission validates the referenced edge. */
+export const DeploymentIngressV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+    z.strictObject({ kind: z.literal('cloudflareTunnel') }),
+    z.strictObject({ kind: z.literal('edgeCaddy'), edgeMachineId: id }),
+]));
+export type DeploymentIngressV1 = z.infer<typeof DeploymentIngressV1Schema>;
 /** Target enablement may offer retention without changing the allocation silently. */
 export const DeploymentTargetManagedRetentionV1Schema = lazyZodSchema(() => z.enum(['keep', 'until-delete']));
 export const DeploymentComposeSelectorsV1Schema = lazyZodSchema(() => z.strictObject({
@@ -70,6 +80,9 @@ export type DeploymentSourceIntentV1 = z.infer<typeof DeploymentSourceIntentV1Sc
 export const DeploymentSourceIntentV1ProtocolSchema = projectZodProtocolSchema(DeploymentSourceIntentV1Schema);
 export const DeploymentSourceMethodV1Schema = lazyZodSchema(() => z.enum(['gitIntegration', 'upload']));
 export type DeploymentSourceMethodV1 = z.infer<typeof DeploymentSourceMethodV1Schema>;
+export const DeploymentOnFailureV1Schema = lazyZodSchema(() => z.enum(['rollbackAll', 'keepPartial']));
+export type DeploymentOnFailureV1 = z.infer<typeof DeploymentOnFailureV1Schema>;
+export const DEFAULT_DEPLOYMENT_ON_FAILURE_V1: DeploymentOnFailureV1 = 'rollbackAll';
 /** Reference only: Automation owns the evidence and authenticates this exact current occurrence. */
 export const DeploymentPendingTriggerOccurrenceV1Schema = lazyZodSchema(() => z.strictObject({
     automationId: asProtocolZod(AutomationIdV1Schema), triggerId: AutomationTriggerIdSchema,
@@ -79,6 +92,7 @@ export type DeploymentPendingTriggerOccurrenceV1 = z.infer<typeof DeploymentPend
 export const DeploymentPendingDeployIntentV1Schema = lazyZodSchema(() => z.strictObject({
     sourceIntent: DeploymentSourceIntentV1Schema, requestKey: id, targetLinkId: id,
     actionOperationId: id, sourceMethod: z.optional(DeploymentSourceMethodV1Schema),
+    onFailure: z.optional(DeploymentOnFailureV1Schema),
     triggerOccurrence: z.optional(DeploymentPendingTriggerOccurrenceV1Schema),
 }));
 export type DeploymentPendingDeployIntentV1 = z.infer<typeof DeploymentPendingDeployIntentV1Schema>;
@@ -103,9 +117,12 @@ export const DeploymentSecretBindingSourceV1Schema = lazyZodSchema(() => z.stric
 }));
 export type DeploymentSecretBindingSourceV1 = z.infer<typeof DeploymentSecretBindingSourceV1Schema>;
 const publicValue = lazyZodSchema(() => z.strictObject({ kind: z.literal('value'), value: z.string() }));
+export const DeploymentReferenceSourceV1Schema = lazyZodSchema(() => z.strictObject({
+    kind: z.literal('reference'), environmentId: id, export: DeploymentTextV1Schema, via: z.enum(['auto', 'privateNetwork', 'public']),
+}));
 export const DeploymentNonSecretVariableBindingSourceV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
     publicValue,
-    z.strictObject({ kind: z.literal('reference'), environmentId: id, export: DeploymentTextV1Schema, via: z.enum(['auto', 'privateNetwork', 'public']) }),
+    DeploymentReferenceSourceV1Schema,
     z.discriminatedUnion('fact', [
         z.strictObject({ kind: z.literal('deploymentFact'), fact: z.enum(['primaryUrl', 'commitSha', 'deploymentId', 'environmentName']) }),
         z.strictObject({ kind: z.literal('deploymentFact'), fact: z.literal('domainUrl'), domainId: id }),
