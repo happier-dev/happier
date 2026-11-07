@@ -495,7 +495,7 @@ function createTriagePlugin() {
         // views already carry, which is a proper noun rather than translated
         // copy — the same reason `ui.views` declares it directly.
         title: TRIAGE_DISPLAY_NAME,
-        description: 'Finds pull requests, issues and error groups matching what the reader typed.',
+        description: 'Search configured GitHub issues, pull requests and error groups by title or repository text. Each result.command.input contains entryRef and sourceInstance. For an exact GitHub issue URL, including before pin issue, unpin or subscribe, use entries/resolve-resource-v1 instead; it explains how to obtain instance, localRef and routingToken for source Actions. For a text-search result, call entries/read-detail-v1 for instance and entries/reobserve-v1 for the current observation.outcome.locator.routingToken, using its entryRef and sourceInstance.sourceInstanceId.',
         // Search and automated callers share the Account scan/fold owner.
         surfaces: ['ui', 'agent', 'mcp', 'cli'],
         // The provider section IS the affordance. A query Action is not also a
@@ -718,7 +718,7 @@ function createTriagePlugin() {
       },
       [TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1]: {
         title: 'Read the durable facts of one entry',
-        description: 'Reads the configured connection one entry was observed through, and the sessions it is linked to.',
+        description: 'Reads the configured connection and linked Sessions for an exact entry. First resolve a GitHub issue or pull request URL with entries/resolve-resource-v1, or search entries/search-v1. Pass v:1, its entryRef and sourceInstanceId from sourceInstance.sourceInstanceId. On kind read, result.instance is the configured instance required by source read and mutation Actions. The localRef uses kindId, collisionScope and entryId from entryRef; routingToken comes from the resolved locator, not instance.configuration.token. No mounted UI is required.',
         // Mounted self and host automated callers resolve the exact connection;
         // unrelated plugins cannot borrow private source configuration.
         surfaces: ['ui', 'agent', 'mcp', 'cli'],
@@ -731,8 +731,8 @@ function createTriagePlugin() {
         run: createTriageReadEntryDetailActionHandler(),
       },
       [TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1]: {
-        title: 'Resolve a resource URL to an entry',
-        description: 'Resolves a resource URL through active configured sources to an exact entry and connection, without scanning the list.',
+        title: 'Resolve a GitHub issue or other resource URL',
+        description: 'Resolve a GitHub issue or pull request URL before pin issue, unpin, subscribe or other source Actions, without scanning the list. Pass v:1 and resource:{kind:"issue",url:"https://github.com/OWNER/REPO/issues/NUMBER"}; pull requests use kind:"pullRequest" and /pull/NUMBER. The resolved result contains entryRef, sourceInstance and locator.routingToken. Next call happier.triage/actions/entries/read-detail-v1 with v:1, entryRef and sourceInstanceId:sourceInstance.sourceInstanceId to obtain result.instance. For source Actions, use that instance, localRef:{kindId,collisionScope,entryId} from entryRef, and routingToken from locator.routingToken. Keep these returned values unchanged; do not invent routing fields. A missing route or unavailable result cannot be used for a write.',
         surfaces: ['ui', 'agent', 'mcp', 'cli'],
         placementBindings: [],
         dangerLevel: 'safe',

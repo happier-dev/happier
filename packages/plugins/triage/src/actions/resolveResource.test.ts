@@ -1,4 +1,5 @@
 import { expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { definePlugin, type PluginServices } from '@happier-dev/plugin-sdk';
 import { createPluginTestkit, type PluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
@@ -7,7 +8,12 @@ import { PLUGIN_MANIFEST, TRIAGE_PLUGIN, TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V
 import { createTestkitCorpusCollections } from '../corpus/testkit/corpusCollections.test-support.js';
 import { CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../corpus/collections/ids.js';
 import { toCorpusStoredValue } from '../corpus/collections/rowCodec.js';
-import { TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1 } from './resolveResourceProtocol.js';
+import { TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1, TriageResolveResourceActionResultV1Schema } from './resolveResourceProtocol.js';
+import { TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1, TriageReadEntryDetailResultV1Schema } from './entryDetailProtocol.js';
+import { getActionDefinitionForCatalogSurface, listActionDefinitionsForCatalogSurface, searchActionDefinitionSummaries } from '@happier-dev/protocol/actions/actionCatalog';
+import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
+import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
 
 const fixture = createTriageSourceV1Fixture();
 const resource = { kind: 'pullRequest' as const, url: 'https://github.com/octo/repo/pull/17' };
@@ -90,6 +96,27 @@ async function withSource(mode: 'plain' | 'e2ee', run: (input: Readonly<{
 
 const protocol = TriageSourcesContributionProtocolV1;
 
+it.each(['github issue', 'pin issue'])('discovers the existing exact-entry resolver from "%s"', query => {
+    // Search beside the published provider catalog so provider mutations cannot
+    // crowd the exact-entry prerequisite out of the first discovery page.
+    const github = PluginManifestV2Schema.parse(JSON.parse(readFileSync(new URL(
+        '../../../../../apps/cli/assets/bundled-plugin-manifests/scm-github.json', import.meta.url,
+    ), 'utf8')));
+    const envelope = getActionDefinitionForCatalogSurface({ id: 'action.spec.search', surface: 'agent' })!;
+    const definitions = [PLUGIN_MANIFEST, github].flatMap(manifest => manifest.contributes.actions.filter(action => action.surfaces.includes('agent')).map(action => ({
+        ...envelope,
+        id: formatQualifiedPluginActionId({ pluginId: manifest.id, localId: action.id }),
+        title: resolvePluginLocalizedStringV2Text(action.title),
+        description: action.description === undefined ? null : resolvePluginLocalizedStringV2Text(action.description),
+    })));
+    const results = searchActionDefinitionSummaries([
+        ...listActionDefinitionsForCatalogSurface({ surface: 'agent' }), ...definitions,
+    ], { query, limit: 10 });
+    expect(results.map(action => action.id)).toContain(formatQualifiedPluginActionId({
+        pluginId: PLUGIN_MANIFEST.id, localId: TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1,
+    }));
+});
+
 it.each(['plain', 'e2ee'] as const)('resolves a URL through agent admission in a %s Account, without a mounted page', async mode => {
     const action = PLUGIN_MANIFEST.contributes.actions.find(entry => entry.id === TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1);
     expect(action, 'the URL read must be declared for agent callers').toBeDefined();
@@ -99,12 +126,19 @@ it.each(['plain', 'e2ee'] as const)('resolves a URL through agent admission in a
     await withSource(mode, async ({ plugin, seed, requests }) => {
         seed(1);
         const sourceInstance = { ...fixture.configuredInstance.instance, sourceInstanceId: '00000000-0000-4000-8000-000000000001' };
-        expect(await plugin.invokeAction(action.id, { v: 1, resource }, { surface: 'agent' })).toEqual({
+        const resolved = TriageResolveResourceActionResultV1Schema.parse(await plugin.invokeAction(action.id, { v: 1, resource }, { surface: 'agent' }));
+        expect(resolved).toEqual({
             kind: 'resolved', sourceInstance,
             entryRef: { source: sourceInstance.source, ...fixture.getInput.localRef },
             locator: fixture.getResult.kind === 'present' ? fixture.getResult.locator : {},
         });
         expect(requests).toEqual([{ v: 1, instance: { ...fixture.configuredInstance, instance: sourceInstance }, resource }]);
+        if (resolved.kind !== 'resolved') throw new Error('Expected exact URL resolution');
+        const detail = TriageReadEntryDetailResultV1Schema.parse(await plugin.invokeAction(TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1, {
+            v: 1, entryRef: resolved.entryRef,
+            sourceInstanceId: resolved.sourceInstance.sourceInstanceId,
+        }, { surface: 'agent' }));
+        expect(detail).toMatchObject({ kind: 'read', instance: { ...fixture.configuredInstance, instance: sourceInstance } });
     });
 });
 
