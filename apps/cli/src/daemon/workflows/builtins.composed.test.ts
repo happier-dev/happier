@@ -15,6 +15,7 @@ import { withExecutionRunStartFailureDetails } from '@happier-dev/protocol';
 import {
   getWorkflowStarterExamplesV1, materializeWorkflowAcceptedSnapshotV1,
   resolveBuiltinWorkflowDefinitionV1, type WorkflowDefinitionV1, type WorkflowAcceptedAuthorizationV1, type WorkflowStep,
+  captureWorkflowDiscussionV1,
 } from '@happier-dev/protocol/workflows';
 import { workflowInvocationKey, type WorkflowStepExecutor } from './coordinator';
 import { bindAutomationWorkflowInputs, WorkflowInputResolutionError, type WorkflowJsonValue } from './input';
@@ -37,7 +38,7 @@ import { sealWorkflowAcceptedSnapshotStoredEnvelopeV1, sealWorkflowProgressStore
 import { WorkflowRunSummaryV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { WorkflowRunRecipientCensusResponseV1Schema } from '@happier-dev/protocol/workflows/workflowRunKeyV1';
 import type { SessionMessageReplyOutcomeV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
-import { DiscussionReadResultV1Schema } from '@happier-dev/protocol/discussions/actions';
+import { DiscussionOpenedMessageV1Schema, DiscussionReadResultV1Schema } from '@happier-dev/protocol/discussions/actions';
 
 const agentTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
 const engine = buildBackendTargetKeyV2(agentTarget);
@@ -86,6 +87,7 @@ async function accepted(definition: WorkflowDefinitionV1, evidence: Record<strin
 
 type NativeRun = { localInputId: string; value: JsonValue; intent: string; failed?: boolean };
 type Fixtures = {
+  serverId?: string;
   happierGoal?: boolean;
   checks?: readonly JsonValue[];
   rawAgentOutput?: (value: JsonValue) => string;
@@ -156,6 +158,7 @@ function harness(fixtures: Fixtures = {}) {
       if (operation.operation !== 'get' || !retained) throw new Error('unexpected_run_read');
       const runId = String(operation.runId);
       return { run: WorkflowRunSummaryV1Schema.parse({ id: runId, sourceArtifactId: null, ownerAccountId: 'account', visibleTeamId: null,
+        attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
         origin: { kind: 'direct' }, state: 'running', revision: 1, machineId: workspace.machineId,
         workflowCustodyState: 'pending', originDeliveryAckRevision: null,
         availability: { pause: true, resumeBoundary: false, restoreWorkspace: false, cancel: true, inspectExecution: false, disabledReasons: [] },
@@ -301,7 +304,7 @@ function harness(fixtures: Fixtures = {}) {
   const context = (params: { runId: string; authorization: WorkflowAcceptedAuthorizationV1; originSessionId?: string; workDepth?: number; role?: unknown }): ActionExecutorContext => {
     const role = ResolvedRoleV1Schema.safeParse(params.role);
     return {
-    surface: 'agent', serverId: 'home', authority: 'account_automation', callerPermissionMode: params.authorization.admittedPermissionCeiling,
+    surface: 'agent', serverId: fixtures.serverId ?? 'home', authority: 'account_automation', callerPermissionMode: params.authorization.admittedPermissionCeiling,
     actionCaller: { kind: 'workflowRun', runId: params.runId, authorization: params.authorization },
     ...(fixtures.actionsSettings ? { actionsSettings: fixtures.actionsSettings } : {}),
     defaultSessionId: params.originSessionId ?? null,
@@ -394,11 +397,56 @@ function harness(fixtures: Fixtures = {}) {
 
 describe('built-ins through accepted materialization and native leaf adapters', () => {
   const participants = ['one', 'two'].map(sessionId => ({ kind: 'session' as const, session: { serverId: 'home', sessionId } }));
+  it('executes every captured role participant and preserves exact nested answer dependencies after a roster edit', async () => {
+    const discussion = { serverId: 'home', discussionId: 'discussion' };
+    const message = (id: string, seq: number, sessionId?: string, parent?: string) => DiscussionOpenedMessageV1Schema.parse({
+      id, seq, discussionId: discussion.discussionId, localId: null, authorAccountId: null, accountActor: null,
+      producerV1: sessionId ? { v: 1, kind: 'agent', sessionId } : null,
+      content: { v: 1, parts: [{ t: 'text', text: 'Compare' }] }, mentionedAccountIds: [], createdAt: seq,
+      messageRef: { kind: 'discussion', discussion, messageId: id },
+      ...(parent ? { replyTarget: { kind: 'message', messageId: parent } } : {}),
+    });
+    const messages = [message('question', 1), message('one', 2, 'one', 'question'), message('two', 3, 'two', 'question'),
+      message('three', 4, 'three', 'question'), message('four', 5, 'four', 'question'), message('review', 6, 'reviewer', 'one'),
+      message('peer-review', 7, 'peer-reviewer', 'one'), message('contrast', 8, 'contraster', 'one')];
+    const draft = captureWorkflowDiscussionV1({ discussion, messageIds: messages.map(message => message.id), choices: [
+      { messageId: 'three', role: 'step', instruction: 'Consider the risks independently.' },
+      { messageId: 'four', role: 'step', instruction: 'Consider the risks independently.' },
+      { messageId: 'contrast', role: 'step', instruction: 'Compare the exact supplied answer with the question.' },
+    ] }, messages);
+    expect(draft.status).toBe('ready');
+    if (!draft.definition) throw new Error('missing_capture_definition');
+    const h = harness({ session: id => id === 'step_1' ? 'EXACT-ANSWER' : id === 'step_3' ? 'OTHER-ROLE-ANSWER' : 'REVIEW' });
+    expect(await h.run(draft.definition, { ...draft.inputs, participants: [...participants,
+      { kind: 'session', session: { serverId: 'home', sessionId: 'extra' } }] })).toMatchObject({ state: 'succeeded' });
+    expect(h.sessionInputs.filter(input => input.stepId === 'step_1').map(input => input.sessionId).sort())
+      .toEqual(['extra', 'one', 'two']);
+    expect(h.sessionInputs.filter(input => input.stepId === 'step_3')).toHaveLength(2);
+    const reviews = h.sessionInputs.filter(input => input.stepId === 'step_5');
+    expect(reviews).toHaveLength(2);
+    for (const reviewed of reviews) {
+      expect(reviewed.text).toContain('EXACT-ANSWER');
+      expect(reviewed.text).not.toContain('OTHER-ROLE-ANSWER');
+    }
+  });
   it('runs Fresh opinions independently and skips synthesis when every participant passes', async () => {
     const h = harness({ reply: () => ({ kind: 'pass' }) });
     expect(await h.run(builtin('fresh-opinions'), { question: 'Compare', participants, synthesis: true })).toMatchObject({ state: 'succeeded' });
     expect(h.sessionInputs.map(input => input.stepId)).toEqual(['answer', 'answer']);
     expect(h.sessionInputs.every(input => !input.text.includes('session finished'))).toBe(true);
+  });
+  it.each([2, 23])('executes exactly the selected %s Fresh-opinion reviewers without a cutoff or hidden participant effects', async count => {
+    const selected = Array.from({ length: count }, (_, index) => ({ kind: 'session' as const,
+      session: { serverId: 'home', sessionId: `selected-reviewer-${index}` } }));
+    const question = `Review the source at /work/${'nested-review-source/'.repeat(96)}answer.ts`;
+    const h = harness({ session: () => 'Independent selected answer',
+      reply: sessionId => ({ kind: 'answer', result: { sessionId, messageId: 'selected-answer' } }) });
+    expect(await h.run(builtin('fresh-opinions'), { question, participants: selected, synthesis: false }))
+      .toMatchObject({ state: 'succeeded' });
+    expect(h.sessionInputs).toHaveLength(count);
+    expect(h.sessionInputs.map(input => input.sessionId).sort()).toEqual(selected.map(row => row.session.sessionId).sort());
+    expect(h.sessionInputs.every(input => input.stepId === 'answer' && input.text.includes(question))).toBe(true);
+    expect(h.launches).toHaveLength(0);
   });
   it('synthesizes successful and failed Fresh opinions without retrying the failed participant', async () => {
     const h = harness({ session: id => id === 'answer' ? 'FAST-ANSWER' : 'SYNTHESIS',
@@ -484,11 +532,22 @@ describe('built-ins through accepted materialization and native leaf adapters', 
     expect(turns.slice(2).every(input => input.text.includes('NEW-HUMAN-CONTEXT') && input.text.includes('READDRESS-TWO'))).toBe(true);
     expect(reads).toBe(3);
   });
-  it('refuses a foreign-Home Debate context page before any participant turn', async () => {
+  it('retains a Discussion scope refusal in the failed Debate round row', async () => {
+    const h = harness({ serverId: 'foreign-home', discussionRead: async () => { throw new Error('unexpected_discussion_read'); } });
+    const snapshot = await accepted(builtin('debate'), { question: 'Compare', participants, rounds: 2 }, false, true);
+    expect(await h.runAccepted(snapshot, false)).toMatchObject({ state: 'failed' });
+    expect(h.store.list().find(row => row.blockId === 'context')).toMatchObject({ lifecycle: 'failed',
+      reason: 'invalid_reference_scope', reasonMessage: 'invalid_reference_scope' });
+    expect(h.sessionInputs).toHaveLength(0);
+  });
+  it('retains the typed refusal for a foreign-Home Debate context page before any participant turn', async () => {
     const h = harness({ discussionRead: async () => DiscussionReadResultV1Schema.parse({
       v: 1, serverId: 'foreign-home', discussionId: 'discussion', messageSeq: 2, hasMoreOlder: false, incomplete: false, messages: [],
     }) });
-    await expect(h.run(builtin('debate'), { question: 'Compare', participants, rounds: 2 })).rejects.toThrow('content_unavailable');
+    await expect(h.run(builtin('debate'), { question: 'Compare', participants, rounds: 2 }))
+      .rejects.toThrow('workflow_discussion_context_unavailable');
+    expect(h.store.list().find(row => row.blockId === 'context')).toMatchObject({ lifecycle: 'failed',
+      reason: 'workflow_discussion_context_unavailable' });
     expect(h.sessionInputs).toHaveLength(0);
   });
   it('dispatches input-bound scalar engines and replays the accepted selections after authored defaults change', async () => {
@@ -550,7 +609,7 @@ describe('built-ins through accepted materialization and native leaf adapters', 
     const unexpected = async (): Promise<never> => { throw new Error('Unexpected persistence operation'); };
     const deps: WorkflowTriggerActionsDependencies = {
       newId: (kind) => kind === 'automation' ? 'firing-automation' : 'firing-trigger',
-      resolveWorkflow: async () => builtin('keep-going'),
+      resolveWorkflow: async () => ({ definition: builtin('keep-going') }),
       resolveSession: async () => ({ project: { machineId: workspace.machineId, directory: workspace.directory }, nativeGoalOwner: false }),
       resolveRunTrigger: async (runId) => claims.get(runId) ?? null,
       openContext: async (row) => row.executionRecipe?.v === 2 && row.executionRecipe.workflow.t === 'plain'
@@ -653,17 +712,22 @@ describe('built-ins through accepted materialization and native leaf adapters', 
     expect(h.reviewReads).toEqual([]);
     expect(h.launches).toEqual([]);
   });
-  it('rechecks admitted reviewSession access after preparation and refuses revocation before comment transport', async () => {
-    const h = harness({ reviewSessionAccess: observation => observation === 1 });
+  it('resolves the admitted reviewSession once through comment transport', async () => {
+    let accessObservations = 0;
+    const h = harness({ reviewSessionAccess: observation => {
+      accessObservations = observation;
+      return observation === 1;
+    } });
     const definition: WorkflowDefinitionV1 = { version: 1, defaults: {},
       inputs: [{ name: 'reviewSession', valueType: 'json', required: true, inputType: { hostType: 'session' } }],
       blocks: [{ kind: 'action', id: 'read', actionId: 'reviews.comments.list',
         input: { sessionId: { kind: 'input', name: 'reviewSession', path: ['sessionId'] } } }] };
     await expect(h.run(definition, { reviewSession: { serverId: 'home', sessionId: 'review-target' } }))
-      .rejects.toThrow('unsupported_action');
+      .resolves.toMatchObject({ state: 'succeeded' });
     expect(h.launches).toEqual([]);
-    expect(h.reviewReads).toEqual([]);
+    expect(h.reviewReads).toEqual(['review-target']);
     expect(h.sessionTargets).toEqual([]);
+    expect(accessObservations).toBe(1);
   });
   it.each(['raw', 'fenced'])('checks first with %s Judge output, continues only from round two, completes the origin goal, and returns its recorded stop arm', async (encoding) => {
     const h = harness({ checks: [{ verdict: 'progress' }, { verdict: 'done' }],

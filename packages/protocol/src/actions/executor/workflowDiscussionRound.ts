@@ -100,7 +100,7 @@ export async function executeWorkflowDiscussionRoundProjectV1(input: unknown, co
         if (!deps.discussionAction || !context.serverId) return unavailable();
         const read = await readWorkflowDiscussionContextV1({ origin, scope: 'so_far', ...(sinceSeq === undefined ? {} : { afterSeq: sinceSeq }),
           context, discussionAction: deps.discussionAction, resolveServerProfileScopeId: deps.resolveServerProfileScopeId });
-        if (!read.ok) return unavailable();
+        if (!read.ok) return { ok: false, errorCode: read.code, error: read.code };
         throughSeq = read.context.throughSeq;
         messages.push(...read.context.messages.filter(message => !message.producerV1));
         const addressed = new Set(messages.flatMap(message => message.addressingV1?.participantSessionIds
