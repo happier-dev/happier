@@ -1,6 +1,6 @@
 import { memo, type ReactElement, type ReactNode } from 'react';
-import { Pressable, View, type ViewStyle } from 'react-native';
-import type { HappierGestureResponderEvent } from '../portableTypes.js';
+import { Platform, Pressable, View, type ViewStyle } from 'react-native';
+import type { HappierGestureResponderEvent, HappierPortableStyle } from '../portableTypes.js';
 import type { HappierWorkMapNode } from './workMap.js';
 import { resolveHappierWorkStatusSurfaceStyle, softenHappierWorkColor, type HappierWorkStatusTone } from './workStatus.js';
 import type { HappierWorkColors, HappierWorkHost, HappierWorkTextRole, HappierWorkTheme } from './workTheme.js';
@@ -16,6 +16,13 @@ function selectedCardRing(colors: HappierWorkColors, tone: HappierWorkStatusTone
     : tone === 'danger' ? softenHappierWorkColor(colors.danger.border, 0.7) ?? colors.danger.border : colors.text;
   return { boxShadow: `0 0 0 2px ${colors.surface}, 0 0 0 3.5px ${ring}` };
 }
+
+/**
+ * Web only: a node's name wraps between its words and never inside one. The browser's default for text
+ * (`overflow-wrap: break-word`) split "changelog" across two lines in a narrow lane; the portable style
+ * has no overflow-wrap, but react-native-web still receives it.
+ */
+const WRAP_BY_WORD = Platform.select<HappierPortableStyle>({ web: { overflowWrap: 'normal' } as unknown as HappierPortableStyle });
 
 function detailRole(compact: boolean): HappierWorkTextRole {
   return compact ? 'mapDetailCompact' : 'mapDetail';
@@ -52,6 +59,7 @@ type WorkMapItemProps<TNode extends HappierWorkMapNode> = Readonly<{
   status: ReactNode;
   detail: ReactNode;
   children: ReactNode;
+  joinCaption?: ReactNode;
 }>;
 
 /** The shared row boundary consumes retained producer slots with default prop identity semantics. */
@@ -95,7 +103,7 @@ function WorkMapItemView<TNode extends HappierWorkMapNode>(props: WorkMapItemPro
           // narrow lane or nested frame. Only a compact full-width map keeps each node to one line
           // (lab `.wm.sm`); its lane cards wrap like any other.
           numberOfLines={compact && !(appearance === 'card' && inLane) ? 1 : undefined}
-          style={{ color: appearance === 'lane' ? theme.colors.secondaryText : theme.colors.text, overflow: 'hidden' }}
+          style={{ color: appearance === 'lane' ? theme.colors.secondaryText : theme.colors.text, overflow: 'hidden', ...WRAP_BY_WORD }}
         >
           {node.label}
           {node.labelDetail === undefined ? null : (
@@ -122,6 +130,7 @@ function WorkMapItemView<TNode extends HappierWorkMapNode>(props: WorkMapItemPro
       {row}
       {props.detail}
       {props.children}
+      {props.joinCaption}
     </View>
   );
   return props.rootSequencePosition === undefined ? item : (

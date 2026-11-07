@@ -44,6 +44,13 @@ export type HappierWorkMapNodePresentation = Readonly<{
   tone?: HappierWorkStatusTone;
   /** A quieter card for something that does not happen (a refused hand-off): same anatomy, softer ink. */
   muted?: boolean;
+  /**
+   * The children are alternatives, and only one of them runs (an If's Yes and Otherwise): this word
+   * ("or") sits between them on a dashed rule, and nothing joins them underneath.
+   */
+  alternatives?: string;
+  /** A caption under the children saying how they rejoin ("All 3 lanes finish"), on a bar that closes the lanes. */
+  join?: string;
 }>;
 
 export type HappierWorkMapDensity = 'regular' | 'compact';
@@ -132,6 +139,8 @@ const GEOMETRY: Readonly<Record<HappierWorkMapDensity, WorkMapGeometry>> = {
   },
 };
 const LANE_GAP = 8;
+/** The width of the dashed rule and its word between two alternatives. */
+const ALTERNATIVE_RULE_WIDTH = 20;
 const CARD_BORDER_WIDTH = 1;
 
 const DEFAULT_PRESENTATION: HappierWorkMapNodePresentation = Object.freeze({});
@@ -216,6 +225,19 @@ function createWorkMapStyles(theme: HappierWorkTheme, density: HappierWorkMapDen
     leadStub: { ...connector, left: g.markX, top: -g.itemGap, height: g.itemGap, width: hairline },
     bus: { ...connector, left: g.markX, top: 0, height: hairline },
     laneStub: { ...connector, left: g.markX, top: -g.connectorGap, height: g.connectorGap, width: hairline },
+    // Joined lanes: each lane's rail runs on from under its last card to a bar that closes the lanes,
+    // and the caption hangs under that bar on the spine that continues down.
+    lanesJoined: { alignItems: 'stretch', paddingBottom: g.connectorGap },
+    laneJoinRail: { flexGrow: 1, minHeight: g.connectorGap },
+    laneJoinRailLine: { ...connector, left: g.markX, top: 0, bottom: -g.connectorGap, width: hairline },
+    joinBus: { ...connector, left: g.markX, bottom: 0, height: hairline },
+    join: { paddingTop: g.itemGap, paddingLeft: g.markX + theme.spacing.small, minHeight: g.headerMinHeight / 1.5 },
+    joinRail: { ...connector, left: g.markX, top: 0, bottom: 0, width: hairline },
+    joinStacked: { paddingLeft: g.railIndent },
+    // Alternatives: a dashed rule with the word in the middle, never a bar.
+    alternativeRule: { width: ALTERNATIVE_RULE_WIDTH, alignSelf: 'stretch', alignItems: 'center', gap: theme.spacing.xsmall },
+    alternativeDash: { flexGrow: 1, width: 0, borderLeftWidth: 1, borderStyle: 'dashed', borderColor: theme.colors.border },
+    alternativeStacked: { paddingLeft: g.railIndent - g.markX + theme.spacing.small, paddingVertical: 2 },
   });
 }
 
@@ -240,9 +262,9 @@ export function HappierWorkMapView<TNode extends HappierWorkMapNode>(props: Happ
   // Lanes sit side by side only when every lane still holds its deepest card at a readable width after
   // the frames and rails inside it take their room; otherwise they stack, judged by the map's own
   // measured width (a docked pane narrows it as much as a phone does), never by the device.
-  const lanesFit = (childNodeIds: readonly string[], availableWidth: number | null) => {
+  const lanesFit = (childNodeIds: readonly string[], availableWidth: number | null, gutter: number) => {
     if (availableWidth === null) return true;
-    const laneWidth = (availableWidth - LANE_GAP * (childNodeIds.length - 1)) / childNodeIds.length;
+    const laneWidth = (availableWidth - gutter * (childNodeIds.length - 1)) / childNodeIds.length;
     const nestedInset = childNodeIds.reduce((widest, nodeId) => Math.max(widest, nestedInsetByNodeId.get(nodeId) ?? 0), 0);
     return laneWidth >= HAPPIER_WORK_MAP_LANE_MIN_WIDTH + nestedInset;
   };
@@ -316,9 +338,21 @@ export function HappierWorkMapView<TNode extends HappierWorkMapNode>(props: Happ
     const indent = ordinaryIndent * scale;
     const railGeometry = scale === 1 ? null : { left: (g.markX - g.railIndent) * scale };
     const compressedNode = compressed || scale < 1;
+    const alternatives = presentation.alternatives;
+    const join = presentation.join;
+    // Between two alternatives sits their dashed rule, so each gap holds it as well as the lane gaps.
+    const laneGutter = alternatives === undefined ? LANE_GAP : 2 * LANE_GAP + ALTERNATIVE_RULE_WIDTH;
     const lanes = presentation.childLayout === 'lanes'
       && node.childNodeIds.length > 1
-      && lanesFit(node.childNodeIds, rowWidth);
+      && lanesFit(node.childNodeIds, rowWidth, laneGutter);
+    const detailRole = compact ? 'mapDetailCompact' : 'mapDetail';
+    const alternativeWord = (key: string, stacked: boolean) => alternatives === undefined ? null : (
+      <View key={`or:${key}`} testID={`${testIDPrefix}-or-${key}`} style={stacked ? styles.alternativeStacked : styles.alternativeRule}>
+        {stacked ? null : <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.alternativeDash} />}
+        <Text role={detailRole} style={{ color: theme.colors.mutedText }}>{alternatives}</Text>
+        {stacked ? null : <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.alternativeDash} />}
+      </View>
+    );
     const leading = props.renderLeading?.(node) ?? null;
     const rowPadding = appearance === 'card'
       ? g.markX - g.mark / 2 + g.cardPaddingRight + 2 * CARD_BORDER_WIDTH
@@ -348,17 +382,27 @@ export function HappierWorkMapView<TNode extends HappierWorkMapNode>(props: Happ
         count={node.childNodeIds.length}
         density={density}
         styles={styles}
+        bus={alternatives === undefined}
+        joined={join !== undefined}
       >
-        {node.childNodeIds.map((childNodeId) => (
+        {node.childNodeIds.flatMap((childNodeId, index) => [
+          index === 0 ? null : alternativeWord(childNodeId, false),
           <View key={childNodeId} style={styles.lane}>
-            <View
-              accessibilityElementsHidden
-              importantForAccessibility="no-hide-descendants"
-              style={styles.laneStub}
-            />
-            {renderNode(childNodeId, true, rowWidth === null ? null : (rowWidth - LANE_GAP * (node.childNodeIds.length - 1)) / node.childNodeIds.length, compressedNode)}
-          </View>
-        ))}
+            {alternatives === undefined ? (
+              <View
+                accessibilityElementsHidden
+                importantForAccessibility="no-hide-descendants"
+                style={styles.laneStub}
+              />
+            ) : null}
+            {renderNode(childNodeId, true, rowWidth === null ? null : (rowWidth - laneGutter * (node.childNodeIds.length - 1)) / node.childNodeIds.length, compressedNode)}
+            {join === undefined ? null : (
+              <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.laneJoinRail}>
+                <View style={styles.laneJoinRailLine} />
+              </View>
+            )}
+          </View>,
+        ])}
       </WorkMapLanes>
     ) : (
       <View
@@ -369,6 +413,7 @@ export function HappierWorkMapView<TNode extends HappierWorkMapNode>(props: Happ
       >
         {node.childNodeIds.map((childNodeId, index) => (
           <View key={childNodeId} style={appearance === 'lane' ? null : styles.sequenceItem}>
+            {index === 0 ? null : alternativeWord(childNodeId, true)}
             {appearance === 'lane' ? (index === 0 ? null : <WorkMapSpine style={styles.spine} />) : (
               <>
                 <View
@@ -389,6 +434,13 @@ export function HappierWorkMapView<TNode extends HappierWorkMapNode>(props: Happ
             {renderNode(childNodeId, inLane, rowWidth === null ? null : rowWidth - indent, compressedNode)}
           </View>
         ))}
+      </View>
+    );
+
+    const joinCaption = join === undefined || children === null ? null : (
+      <View testID={`${testIDPrefix}-join-${node.nodeId}`} style={lanes ? styles.join : [styles.join, styles.joinStacked]}>
+        {lanes ? <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.joinRail} /> : null}
+        <Text role={detailRole} style={{ color: theme.colors.secondaryText }}>{join}</Text>
       </View>
     );
 
@@ -418,9 +470,9 @@ export function HappierWorkMapView<TNode extends HappierWorkMapNode>(props: Happ
         subtitle={subtitle}
         status={props.renderStatus?.(node)}
         detail={props.renderDetail?.(node)}
-      >
-        {children}
-      </WorkMapItem>
+        children={children}
+        joinCaption={joinCaption}
+      />
     );
   };
 
@@ -447,6 +499,10 @@ function WorkMapLanes(props: Readonly<{
   count: number;
   density: HappierWorkMapDensity;
   styles: WorkMapStyles;
+  /** The bar the lanes hang from; alternatives hang from none. */
+  bus: boolean;
+  /** A second bar under the lanes, where they rejoin. */
+  joined: boolean;
   children: ReactNode;
 }>) {
   const { styles } = props;
@@ -458,22 +514,31 @@ function WorkMapLanes(props: Readonly<{
       testID={props.testID}
       accessibilityRole="list"
       accessibilityLabel={props.accessibilityLabel}
-      style={styles.lanes}
+      style={[styles.lanes, props.joined ? styles.lanesJoined : null]}
       onLayout={(event) => {
         const next = Math.round(event.nativeEvent.layout.width);
         setWidth((current) => (current === next ? current : next));
       }}
     >
-      <View
-        accessibilityElementsHidden
-        importantForAccessibility="no-hide-descendants"
-        style={styles.leadStub}
-      />
-      {width > 0 ? (
+      {props.bus ? (
+        <View
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+          style={styles.leadStub}
+        />
+      ) : null}
+      {props.bus && width > 0 ? (
         <View
           accessibilityElementsHidden
           importantForAccessibility="no-hide-descendants"
           style={[styles.bus, { right: Math.max(0, laneWidth - markX) }]}
+        />
+      ) : null}
+      {props.joined && width > 0 ? (
+        <View
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+          style={[styles.joinBus, { right: Math.max(0, laneWidth - markX) }]}
         />
       ) : null}
       {props.children}
