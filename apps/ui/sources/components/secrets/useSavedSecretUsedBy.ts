@@ -12,11 +12,7 @@ export function useSavedSecretUsedBy(scope: ServerAccountScope | null, ref: stri
     const serverId = scope?.serverId;
     const accountId = scope?.accountId;
     const captured = React.useMemo(() => serverId && accountId ? { serverId, accountId } : null, [serverId, accountId]);
-    const retainSettings = useShallow((settings: ReturnType<typeof readSavedSecretUsedBySources>['settings']) => settings);
-    const readShallow = useShallow(() => {
-        const source = readSavedSecretUsedBySources(captured);
-        return { ...source, settings: retainSettings(source.settings) };
-    });
+    const readShallow = useShallow(() => readSavedSecretUsedBySources(captured));
     const active = presented && Boolean(ref && captured);
     const read = React.useCallback(() => active ? readShallow(undefined) : null, [active, readShallow]);
     const source = React.useSyncExternalStore(active ? subscribeSavedSecretUsedBySources : noSubscription, read, read);

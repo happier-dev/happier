@@ -53,6 +53,7 @@ export type SessionModelMode = NonNullable<Session['modelMode']>;
 
 export interface SettingsDomainSlice {
     settings: Settings;
+    savedSecretReferenceSettings: import('./domains/settings').SettingsDomain['savedSecretReferenceSettings'];
     settingsVersion: number | null;
     settingsScope: AccountSettingsScope | null;
     localSettings: LocalSettings;

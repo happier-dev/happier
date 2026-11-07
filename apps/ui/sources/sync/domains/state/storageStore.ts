@@ -25,6 +25,7 @@ import { syncPerformanceTelemetry } from '../../runtime/syncPerformanceTelemetry
 import { observeStoragePerformance } from '../../store/storagePerformance';
 import { readStorageState, scopeStorageSubscriptions } from './scopedStorage';
 import { publishSessionRelations } from '../../store/domains/sessionRelations';
+import { projectSavedSecretReferenceSettings } from '../../store/domains/settingsSavedSecretReferences';
 
 export type { KnownEntitlements } from '../../store/types';
 export type { SessionListViewItem } from '../session/listing/sessionListViewData';
@@ -81,7 +82,11 @@ storage.setState = (partial: StorageState | Partial<StorageState> | ((state: Sto
     setSnapshot(state => {
         const update = typeof partial === 'function' ? partial(state) : partial;
         if (update === state) return state;
-        const snapshot = replace ? update as StorageState : { ...state, ...update };
+        const incomingSnapshot = replace ? update as StorageState : { ...state, ...update };
+        const savedSecretReferenceSettings = projectSavedSecretReferenceSettings(incomingSnapshot.settings,
+            state.settings, state.savedSecretReferenceSettings);
+        const snapshot = savedSecretReferenceSettings === incomingSnapshot.savedSecretReferenceSettings ? incomingSnapshot
+            : { ...incomingSnapshot, savedSecretReferenceSettings };
         const sessionRelationsByServerId = publishSessionRelations(state, snapshot);
         return sessionRelationsByServerId === snapshot.sessionRelationsByServerId ? snapshot : { ...snapshot, sessionRelationsByServerId };
     }, true);

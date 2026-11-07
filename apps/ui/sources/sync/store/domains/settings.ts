@@ -38,6 +38,7 @@ import { loadHomeViewState } from '@/sync/domains/server/serverProfiles';
 import { normalizeServerSelectionGroupsForSettings } from '@/sync/domains/server/selection/serverSelectionSettingsAdapter';
 
 import type { StoreGet, StoreSet } from './_shared';
+import { projectSavedSecretReferenceSettings } from './settingsSavedSecretReferences';
 
 function reconcilePurchasesReferences(previous: Purchases, next: Purchases): Purchases {
     if (areAccountSettingsJsonValuesEqual(previous, next)) return previous;
@@ -74,6 +75,8 @@ function safeSetPreferredLanguageFromSettings(preferredLanguage: unknown): void 
 
 export type SettingsDomain = {
     settings: Settings;
+    /** Raw census inputs, published only when a reference-bearing Settings root changes. */
+    savedSecretReferenceSettings: Readonly<Record<string, unknown>>;
     settingsVersion: number | null;
     settingsScope: AccountSettingsScope | null;
     localSettings: LocalSettings;
@@ -204,6 +207,7 @@ function buildSettingsProjectionState<S extends SettingsDomain & SettingsDomainD
     return {
         ...state,
         settings: nextSettings,
+        savedSecretReferenceSettings: projectSavedSecretReferenceSettings(nextSettings, state.settings, state.savedSecretReferenceSettings),
         settingsVersion: nextVersion,
         settingsScope,
         sessionListIndexByServerId: nextSessionListIndexByServerId,
@@ -268,6 +272,7 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
 
     return {
         settings,
+        savedSecretReferenceSettings: projectSavedSecretReferenceSettings(settings),
         settingsVersion: version,
         settingsScope: null,
         localSettings,

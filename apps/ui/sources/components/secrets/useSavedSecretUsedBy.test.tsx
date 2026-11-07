@@ -122,12 +122,15 @@ it('opens one secret with one real census, zero fetches and no rereads on render
     const retained = hook.getCurrent();
     presented = false;
     await hook.rerender();
-    await act(async () => getStorage().setState({ profile: AccountProfileSchema.parse({ id: scope.accountId }) }));
+    await act(async () => getStorage().setState({
+        profile: AccountProfileSchema.parse({ id: scope.accountId }),
+        settings: settingsParse({ ...getStorage().getState().settings, futureCarrier: { secretRef: otherRef } }),
+    }));
     expect(hook.getCurrent()).toBe(retained);
     expect(reads).toHaveBeenCalledTimes(beforeHidden);
     presented = true;
     await hook.rerender();
-    expect(hook.getCurrent()).toEqual([]);
+    expect(hook.getCurrent()).toEqual([{ owner: 'unknown', path: 'futureCarrier.secretRef' }]);
     expect(reads).toHaveBeenCalledTimes(beforeHidden + 1);
 });
 
