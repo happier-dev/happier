@@ -19,6 +19,8 @@ import type { DeploymentBackupTestResultV1 } from '@happier-dev/protocol/deploym
 import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
 import { presentSavedSecretReferencePicker } from '@/components/ui/forms/valueRefs/presentSavedSecretReferencePicker';
 import { Switch } from '@/components/ui/forms/Switch';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import type { PluginUiBackupDestinationProjection } from '@/sync/domains/plugins/ui/projection';
 
@@ -327,6 +329,8 @@ const CONFIG_LABEL: Readonly<Record<string, 'setupEndpoint' | 'setupBucket' | 's
   endpoint: 'setupEndpoint', bucket: 'setupBucket', prefix: 'setupPrefix', region: 'setupRegion',
 };
 type DestinationEntry = PluginUiBackupDestinationProjection;
+/** A search seed for the Store, not an identity: it only finds the plugins that add backup storage. */
+const STORE_BACKUP_QUERY = 'backup';
 type ConfigField = Readonly<{ key: string; required: boolean; minLength: number }>;
 
 /** The text fields a destination's own configuration schema declares, in its order. */
@@ -351,6 +355,7 @@ export function DeploymentBackupSetup(props: Readonly<{
   onSave: (configuration: DeploymentBackupConfigurationV1) => Promise<boolean>;
   testID: string;
 }>) {
+  const router = useRouter();
   const destinations = useAppShellPluginUiProjection((value) => value.pluginUiProjection?.backupDestinationsById);
   const destination = React.useMemo(() => Object.values(destinations ?? {})
     .find((entry) => entry.definition.resticTransport === 's3') ?? null, [destinations]);
@@ -393,16 +398,31 @@ export function DeploymentBackupSetup(props: Readonly<{
   };
   const setField = (key: string) => (text: string) => setFields((current) => current ? { ...current, [key]: text } : current);
   const setKeepField = (field: KeepField) => (text: string) => setKeep((current) => ({ ...current, [field]: text }));
+  if (!destination) {
+    // No storage is installed for backups yet: the next step is the Store, searched for backup storage.
+    const openStore = () => router.push(buildPluginsHomeRoute('app', { view: 'search', query: STORE_BACKUP_QUERY }));
+    return (
+      <Item
+        testID={id}
+        title={t('projects.deployments.settingsSections.setupTitle')}
+        subtitle={t('projects.deployments.settingsSections.setupNoDestination')}
+        onPress={openStore}
+        rightElement={
+          <SectionActionButton testID={`${id}.store`} title={t('projects.deployments.settingsSections.setupOpenStore')}
+            onPress={openStore} />
+        }
+      />
+    );
+  }
   return (
     <>
       <Item
         testID={id}
         title={t('projects.deployments.settingsSections.setupTitle')}
-        subtitle={!destination ? t('projects.deployments.settingsSections.setupNoDestination')
-          : fields && !complete ? t('projects.deployments.settingsSections.setupIncomplete')
-            : t('projects.deployments.settingsSections.setupBody')}
-        mode="info"
-        rightElement={!destination ? undefined : fields ? (
+        subtitle={fields && !complete ? t('projects.deployments.settingsSections.setupIncomplete')
+          : t('projects.deployments.settingsSections.setupBody')}
+        {...(fields ? { mode: 'info' as const } : { onPress: start })}
+        rightElement={fields ? (
           <View style={styles.checks}>
             <SectionActionButton testID={`${id}.cancel`} title={t('projects.deployments.settingsSections.setupCancel')}
               disabled={saving} onPress={() => setFields(null)} />

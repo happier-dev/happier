@@ -1112,7 +1112,9 @@ describe('Environment → Settings: checks, backups, previews', () => {
       expect(await settle(`${id}.needsRepository`)).not.toBeNull();
       expect(screen.findByTestId(`${id}.setup`)).toBeNull();
       // One message: no empty preview list under the reason.
-      expect(screen.findByTestId('project-deployments.environment.settings.previews.empty')).toBeNull();
+      for (const state of ['empty', 'error', 'loading', 'denied']) {
+        expect(screen.findByTestId(`project-deployments.environment.settings.previews.${state}`)).toBeNull();
+      }
     } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
   });
 
@@ -1439,7 +1441,7 @@ describe('Environment → Settings: checks, backups, previews', () => {
       homes.answer(stateHome, path, { select: () => ({ body: answer }) });
       const settled = await renderTab(
         'settings',
-        createDeploymentEnvironmentDetailV1(),
+        templateDetail,
         {},
         { lifetime: stateAccount.accountLifetime },
       );

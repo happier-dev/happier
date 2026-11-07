@@ -435,7 +435,7 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
             ) : null}
             {detail.environment.purpose === 'preview' ? (
               <PreviewOfRow {...props} testID={section('previews')} />
-            ) : props.lifetime ? (
+            ) : props.lifetime && detail.content.previewTemplate ? (
               <TemplatePreviewRows
                 lifetime={props.lifetime}
                 demand={props.demand}

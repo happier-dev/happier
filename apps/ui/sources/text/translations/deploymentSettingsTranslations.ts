@@ -73,6 +73,7 @@ type DeploymentSettingsTranslations = Readonly<{
   scheduleTurnOn: string;
   setupNoDestination: string;
   setupRoleBody: string;
+  setupOpenStore: string;
   addCheck: string;
   addCheckUnavailable: string;
 }>;
@@ -153,8 +154,9 @@ export const deploymentSettingsTranslations = {
     scheduleOff: 'Off · backs up every night at 02:00, checks each copy and keeps your counts',
     scheduleOn: 'On · every night at 02:00',
     scheduleTurnOn: 'Turn on',
-    setupNoDestination: 'No backup storage is available here · the Backup destinations plugin adds S3',
+    setupNoDestination: 'Backups need somewhere to keep the copies. Add backup storage from the Store first.',
     setupRoleBody: "Your storage uses this credential; turn off any it doesn't",
+    setupOpenStore: 'Open Store',
     addCheck: 'Add check',
     addCheckUnavailable:
       "Checks can't be set up from here · open the Machine's Services page",
@@ -233,8 +235,9 @@ export const deploymentSettingsTranslations = {
     scheduleOff: 'Выключено · каждую ночь в 02:00 копирует, проверяет и хранит заданное число',
     scheduleOn: 'Включено · каждую ночь в 02:00',
     scheduleTurnOn: 'Включить',
-    setupNoDestination: 'Хранилище для копий недоступно · плагин «Хранилища резервных копий» добавляет S3',
+    setupNoDestination: 'Копиям нужно место для хранения. Сначала добавьте хранилище в Магазине.',
     setupRoleBody: 'Ваше хранилище использует этот ключ; выключите лишние',
+    setupOpenStore: 'Открыть Магазин',
     addCheck: 'Добавить проверку',
     addCheckUnavailable:
       'Проверки нельзя настроить отсюда · откройте страницу служб машины',
@@ -312,8 +315,9 @@ export const deploymentSettingsTranslations = {
     scheduleOff: 'Wyłączone · co noc o 02:00 kopiuje, sprawdza i zachowuje Twoje liczby',
     scheduleOn: 'Włączone · co noc o 02:00',
     scheduleTurnOn: 'Włącz',
-    setupNoDestination: 'Brak magazynu kopii · wtyczka Miejsca docelowe kopii dodaje S3',
+    setupNoDestination: 'Kopie potrzebują miejsca. Najpierw dodaj magazyn kopii ze Sklepu.',
     setupRoleBody: 'Twój magazyn używa tego poświadczenia; wyłącz zbędne',
+    setupOpenStore: 'Otwórz Sklep',
     addCheck: 'Dodaj sprawdzenie',
     addCheckUnavailable:
       'Sprawdzeń nie można tu skonfigurować · otwórz stronę usług maszyny',
@@ -394,8 +398,9 @@ export const deploymentSettingsTranslations = {
     scheduleOff: 'Desactivadas · cada noche a las 02:00 copia, comprueba y conserva tus cifras',
     scheduleOn: 'Activadas · cada noche a las 02:00',
     scheduleTurnOn: 'Activar',
-    setupNoDestination: 'No hay almacenamiento de copias aquí · el plugin Destinos de copia añade S3',
+    setupNoDestination: 'Las copias necesitan un lugar donde guardarse. Añade primero un almacenamiento desde la Tienda.',
     setupRoleBody: 'Tu almacenamiento usa esta credencial; desactiva las que no use',
+    setupOpenStore: 'Abrir Tienda',
     addCheck: 'Añadir comprobación',
     addCheckUnavailable:
       'Las comprobaciones no se configuran aquí · abre la página de servicios de la máquina',
@@ -478,8 +483,9 @@ export const deploymentSettingsTranslations = {
     scheduleOff: 'Désactivées · chaque nuit à 02:00, sauvegarde, vérifie et conserve vos nombres',
     scheduleOn: 'Activées · chaque nuit à 02:00',
     scheduleTurnOn: 'Activer',
-    setupNoDestination: 'Aucun stockage de sauvegarde ici · le plugin Destinations de sauvegarde ajoute S3',
+    setupNoDestination: 'Les sauvegardes ont besoin d’un endroit où être gardées. Ajoutez d’abord un stockage depuis la Boutique.',
     setupRoleBody: 'Votre stockage utilise cet identifiant ; désactivez ceux qu’il n’utilise pas',
+    setupOpenStore: 'Ouvrir la Boutique',
     addCheck: 'Ajouter une vérification',
     addCheckUnavailable:
       'Les vérifications ne se configurent pas ici · ouvrez la page Services de la machine',
@@ -561,8 +567,9 @@ export const deploymentSettingsTranslations = {
     scheduleOff: 'Disattivati · ogni notte alle 02:00 copia, verifica e conserva i tuoi numeri',
     scheduleOn: 'Attivi · ogni notte alle 02:00',
     scheduleTurnOn: 'Attiva',
-    setupNoDestination: 'Nessuno storage per i backup qui · il plugin Destinazioni di backup aggiunge S3',
+    setupNoDestination: 'I backup hanno bisogno di un posto dove stare. Aggiungi prima uno storage dallo Store.',
     setupRoleBody: 'Il tuo storage usa questa credenziale; disattiva quelle che non usa',
+    setupOpenStore: 'Apri lo Store',
     addCheck: 'Aggiungi controllo',
     addCheckUnavailable:
       'I controlli non si configurano qui · apri la pagina Servizi della macchina',
@@ -645,8 +652,9 @@ export const deploymentSettingsTranslations = {
     scheduleOff: 'Desativados · todas as noites às 02:00 copia, verifica e mantém as suas contagens',
     scheduleOn: 'Ativados · todas as noites às 02:00',
     scheduleTurnOn: 'Ativar',
-    setupNoDestination: 'Sem armazenamento de backups aqui · o plugin Destinos de backup adiciona S3',
+    setupNoDestination: 'Os backups precisam de um sítio onde ficar. Adicione primeiro armazenamento na Loja.',
     setupRoleBody: 'O seu armazenamento usa esta credencial; desative as que não usa',
+    setupOpenStore: 'Abrir Loja',
     addCheck: 'Adicionar verificação',
     addCheckUnavailable:
       'As verificações não se configuram aqui · abra a página Serviços da máquina',
@@ -728,8 +736,9 @@ export const deploymentSettingsTranslations = {
     scheduleOff: 'Desactivades · cada nit a les 02:00 copia, comprova i conserva les teves xifres',
     scheduleOn: 'Activades · cada nit a les 02:00',
     scheduleTurnOn: 'Activa',
-    setupNoDestination: 'No hi ha emmagatzematge de còpies aquí · el connector Destinacions de còpia afegeix S3',
+    setupNoDestination: 'Les còpies necessiten un lloc on guardar-se. Afegeix primer un emmagatzematge des de la Botiga.',
     setupRoleBody: 'El teu emmagatzematge fa servir aquesta credencial; desactiva les que no faci servir',
+    setupOpenStore: 'Obre la Botiga',
     addCheck: 'Afegeix una comprovació',
     addCheckUnavailable:
       'Les comprovacions no es configuren aquí · obre la pàgina Serveis de la màquina',
@@ -811,8 +820,9 @@ export const deploymentSettingsTranslations = {
     scheduleOff: 'Aus · sichert jede Nacht um 02:00, prüft jede Kopie und behält Ihre Anzahl',
     scheduleOn: 'An · jede Nacht um 02:00',
     scheduleTurnOn: 'Einschalten',
-    setupNoDestination: 'Hier ist kein Backup-Speicher verfügbar · das Plugin Backup-Ziele fügt S3 hinzu',
+    setupNoDestination: 'Backups brauchen einen Ort für die Kopien. Fügen Sie zuerst Backup-Speicher aus dem Store hinzu.',
     setupRoleBody: 'Ihr Speicher nutzt diese Zugangsdaten; schalten Sie nicht genutzte aus',
+    setupOpenStore: 'Store öffnen',
     addCheck: 'Prüfung hinzufügen',
     addCheckUnavailable:
       'Prüfungen lassen sich hier nicht einrichten · Dienste-Seite der Maschine öffnen',
@@ -888,8 +898,9 @@ export const deploymentSettingsTranslations = {
     scheduleOff: '关闭 · 每晚 02:00 备份、校验每个副本并按你的数量保留',
     scheduleOn: '开启 · 每晚 02:00',
     scheduleTurnOn: '开启',
-    setupNoDestination: '此处没有可用的备份存储 · 备份目标插件提供 S3',
+    setupNoDestination: '备份需要一个存放副本的地方。请先从商店添加备份存储。',
     setupRoleBody: '你的存储使用此凭据；关闭不用的凭据',
+    setupOpenStore: '打开商店',
     addCheck: '添加检查',
     addCheckUnavailable: '无法在此设置检查 · 请打开机器的服务页面',
   },
@@ -964,8 +975,9 @@ export const deploymentSettingsTranslations = {
     scheduleOff: '關閉 · 每晚 02:00 備份、驗證每個副本並依你的數量保留',
     scheduleOn: '開啟 · 每晚 02:00',
     scheduleTurnOn: '開啟',
-    setupNoDestination: '此處沒有可用的備份儲存 · 備份目標外掛提供 S3',
+    setupNoDestination: '備份需要一個存放副本的地方。請先從商店新增備份儲存。',
     setupRoleBody: '你的儲存使用此憑證；關閉不使用的憑證',
+    setupOpenStore: '開啟商店',
     addCheck: '新增檢查',
     addCheckUnavailable: '無法在此設定檢查 · 請開啟機器的服務頁面',
   },
@@ -1042,8 +1054,9 @@ export const deploymentSettingsTranslations = {
     scheduleOff: 'オフ · 毎晩 02:00 にバックアップし、各コピーを確認して保持数を守ります',
     scheduleOn: 'オン · 毎晩 02:00',
     scheduleTurnOn: 'オンにする',
-    setupNoDestination: 'ここで使えるバックアップストレージがありません · バックアップ先プラグインが S3 を追加します',
+    setupNoDestination: 'バックアップにはコピーの保存先が必要です。まずストアからバックアップストレージを追加してください。',
     setupRoleBody: 'ストレージがこの認証情報を使います。使わないものはオフにしてください',
+    setupOpenStore: 'ストアを開く',
     addCheck: 'チェックを追加',
     addCheckUnavailable:
       'ここではチェックを設定できません · マシンのサービスページを開いてください',
