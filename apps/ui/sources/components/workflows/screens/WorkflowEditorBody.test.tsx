@@ -1211,27 +1211,29 @@ function flattenTestStyle(style: unknown, state: Readonly<Record<string, boolean
 describe('workflow editor body', () => {
     it('keeps the authoring Session in the one details companion and retires its hidden renderer', async () => {
         const harness = await loadHarness();
-        const screen = await renderBody(harness, { authoringSessionId: 'author-session', authoringServerId: 'server-a', onSave: () => {} });
-        // One companion beside the page at a time (Plan T companion rule): the agent conversation opens as
-        // "Edit with an agent", and Workflow settings replaces it from the rail with no inner tabs.
-        // eslint-disable-next-line no-console
-        console.log('DBG1', JSON.stringify(screen.findByType(AppPaneScopeHost).props.destinationDetails?.pane?.props?.testID), screen.findByTestId('workflowEditor-companion:settings') !== null);
-        expect(screen.findHostByTestId('workflow-editor-agent-pane-header')).not.toBeNull();
+        const screen = await renderBody(harness, { authoringSessionId: 'author-session', authoringServerId: 'server-a',
+            onSave: () => {}, triggersSummary: 'Manual' });
+        // One companion beside the page at a time (Plan T companion rule): the agent conversation is the
+        // details companion "Edit with an agent"; Workflow settings replaces it, with no inner tabs.
+        const companion = () => screen.findByType(AppPaneScopeHost).props.destinationDetails;
+        expect(companion()).toMatchObject({ companion: true, pane: { props: { testID: 'workflow-editor-agent-pane' } } });
         expect(screen.findByTestId('workflow-editor-details-tabs:settings')).toBeNull();
-        await screen.pressByTestIdAsync('workflowEditor-companion:settings');
-        // eslint-disable-next-line no-console
-        console.log('DBG2', JSON.stringify(screen.findByType(AppPaneScopeHost).props.destinationDetails?.pane?.props?.testID));
-        expect(screen.findHostByTestId('workflow-editor-settings-pane-header')).not.toBeNull();
-        expect(screen.findHostByTestId('workflow-editor-agent-pane-header')).toBeNull();
-        expect(screen.findByTestId('session-in-pane-inactive:author-session')).not.toBeNull();
+        await screen.pressByTestIdAsync('workflow-editor-triggers-chip');
+        expect(companion()).toMatchObject({ companion: true, pane: { props: { testID: 'workflow-editor-settings-pane' } } });
+        // The hidden conversation keeps its place without mounting its Session graph.
+        const hidden = React.Children.toArray(companion()?.pane.props.children)
+            .find((child): child is React.ReactElement<{ sessionId: string; active: boolean }> =>
+                React.isValidElement(child) && (child.props as { sessionId?: string }).sessionId === 'author-session');
+        expect(hidden?.props.active).toBe(false);
     });
     it('offers Edit with an agent in the header and shows its seeded composer in the Agent tab (04 §4.7; DESIGN-1 B8)', async () => {
         const harness = await loadHarness();
         const onEditWithAgent = vi.fn();
-        const header = await renderBody(harness, { onEditWithAgent, onSave: () => {} });
-        // No agent conversation yet: the rail offers no agent companion and nothing opens as a modal.
-        expect(header.findByTestId('workflowEditor-companion:agent')).toBeNull();
-        await header.pressByTestIdAsync('workflowEditor-companion:settings');
+        const header = await renderBody(harness, { onEditWithAgent, onSave: () => {}, triggersSummary: 'Manual' });
+        // No agent conversation yet: no agent companion and nothing opens as a modal.
+        expect(header.findByType(AppPaneScopeHost).props.destinationDetails).toBeNull();
+        await header.pressByTestIdAsync('workflow-editor-triggers-chip');
+        expect(header.findByType(AppPaneScopeHost).props.destinationDetails?.pane.props.testID).toBe('workflow-editor-settings-pane');
         // Docked panes use the lab's compact action, while retaining its name
         // for assistive technology and the same authoring command.
         const editAction = header.findHostByTestId('workflow-editor-edit-with-agent');
@@ -1246,15 +1248,16 @@ describe('workflow editor body', () => {
             onEditWithAgent,
             onSave: () => {},
             authoringDraft: { draftId: 'agent-draft-1', serverId: 'server-a', isCurrent: () => true, onSessionCreated: () => {} },
+            triggersSummary: 'Manual',
         });
-        expect(seeded.findHostByTestId('workflow-editor-agent-pane-header')).not.toBeNull();
-        expect(seeded.findByTestId('workflow-editor-agent-draft')).not.toBeNull();
+        const seededCompanion = () => seeded.findByType(AppPaneScopeHost).props.destinationDetails;
+        expect(seededCompanion()?.pane.props.testID).toBe('workflow-editor-agent-pane');
         // Pressing it again returns to that conversation instead of starting another.
-        await seeded.pressByTestIdAsync('workflowEditor-companion:settings');
-        expect(seeded.findByTestId('workflow-editor-agent-draft')).toBeNull();
+        await seeded.pressByTestIdAsync('workflow-editor-triggers-chip');
+        expect(seededCompanion()?.pane.props.testID).toBe('workflow-editor-settings-pane');
         await seeded.pressByTestIdAsync('workflow-editor-edit-with-agent');
         expect(onEditWithAgent).toHaveBeenCalledTimes(1);
-        expect(seeded.findByTestId('workflow-editor-agent-draft')).not.toBeNull();
+        expect(seededCompanion()?.pane.props.testID).toBe('workflow-editor-agent-pane');
     });
     it('can suppress only its title field when a wrapper owns the visible name', async () => {
         const harness = await loadHarness();
@@ -2784,10 +2787,15 @@ describe('workflow editor body', () => {
 
     it('keeps the machine control visibly unresolved rather than fabricating a default', async () => {
         const harness = await loadHarness();
-        const screen = await renderBody(harness, { machineName: null });
-        // It names the missing Machine and folder, not an unrelated Agent issue.
-        expect(screen.getTextContent()).toContain('workflows.editor.targetRequired');
-        expect(screen.getTextContent()).not.toContain('workflows.issue.target_unavailable');
+        const screen = await renderBody(harness, { projectTarget: null, machineName: null });
+        // The read-only Where field describes the unset target without asking someone who cannot edit to choose.
+        const text = screen.getTextContent();
+        expect(text).toContain('workflows.editor.targetNotChosen');
+        expect(text).not.toContain('workflows.editor.targetRequired');
+        expect(text).not.toContain('Mac Studio');
+        expect(text).not.toContain('/Users/me/project');
+        expect(text).not.toContain('workflows.issue.target_unavailable');
+        await screen.unmount();
     });
 
     it('switches to Flow and restores the exact prompt focus through the existing focus owner', async () => {
