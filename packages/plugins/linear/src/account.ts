@@ -1,3 +1,4 @@
+import type { ConnectedAccountPortableRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { ConnectedAccountRuntime, ConnectedAccountHealthResult } from '@happier-dev/plugin-sdk/connected-accounts';
 import { LINEAR_ORIGIN, LINEAR_PERSONAL_KEY } from './contracts.js';
 import { LinearRequestError, requestLinearGraphql, record } from './api.js';
@@ -7,7 +8,7 @@ type AccountContext = Parameters<ConnectedAccountRuntime['status']>[0];
 const unavailable = { code: 'linear/verificationUnavailable', severity: 'error' as const, message: 'Linear could not confirm this connection. Try again when it is reachable.' };
 const rejected = { code: 'linear/credentialRejected', severity: 'error' as const, message: 'Linear rejected this personal API key. Check its access and try again.' };
 
-async function verify(authorization: string, context: Pick<AccountContext, 'services' | 'signal'>) {
+async function verify(authorization: string, context: { services: Pick<AccountContext['services'], 'http'>; signal: AbortSignal }) {
   const result = await requestLinearGraphql({ context, authorization, operationName: 'LinearAccount',
     query: 'query LinearAccount { viewer { id name } }' });
   const viewer = record(result.viewer);
@@ -28,6 +29,16 @@ async function health(context: AccountContext, options?: { signal?: AbortSignal 
     return { status: 'unavailable', diagnostic: unavailable };
   }
 }
+
+const materializeLinearCredentials: NonNullable<ConnectedAccountPortableRuntime['materialize']> = async (request, context, options) => {
+    if (request.kind !== 'httpHeaders' || request.origin !== LINEAR_ORIGIN) throw new Error('linear/materializationUnsupported');
+    if (!request.headerNames.some((header) => header.toLowerCase() === 'authorization')) return { kind: 'httpHeaders', headers: EMPTY_HEADERS };
+    const key = (await context.credentials.get(LINEAR_PERSONAL_KEY, options))?.trim();
+    if (!key) throw new Error('linear/credentialsUnavailable');
+    // Personal API keys are the Authorization value itself, without Bearer.
+    // https://linear.app/developers/graphql#authentication
+    return { kind: 'httpHeaders', headers: { authorization: key } };
+  };
 
 export const linearConnectedAccountRuntime: ConnectedAccountRuntime = {
   authentication: { modes: { [LINEAR_PERSONAL_KEY]: {
@@ -50,13 +61,10 @@ export const linearConnectedAccountRuntime: ConnectedAccountRuntime = {
   status: health,
   refresh: health,
   async revoke() { return { status: 'remoteUnsupported' }; },
-  async materialize(request, context, options) {
-    if (request.kind !== 'httpHeaders' || request.origin !== LINEAR_ORIGIN) throw new Error('linear/materializationUnsupported');
-    if (!request.headerNames.some((header) => header.toLowerCase() === 'authorization')) return { kind: 'httpHeaders', headers: EMPTY_HEADERS };
-    const key = (await context.credentials.get(LINEAR_PERSONAL_KEY, options))?.trim();
-    if (!key) throw new Error('linear/credentialsUnavailable');
-    // Personal API keys are the Authorization value itself, without Bearer.
-    // https://linear.app/developers/graphql#authentication
-    return { kind: 'httpHeaders', headers: { authorization: key } };
-  },
+  materialize: materializeLinearCredentials,
+};
+
+export const linearPortableAccountRuntime: ConnectedAccountPortableRuntime = {
+    authentication: linearConnectedAccountRuntime.authentication,
+    materialize: materializeLinearCredentials,
 };

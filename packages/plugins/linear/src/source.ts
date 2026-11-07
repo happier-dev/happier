@@ -1,14 +1,13 @@
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { LinearSourceContext } from './api.js';
 import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
 import { isExternalActionResultWithinResponseEnvelopeLimitV1 } from '@happier-dev/plugin-sdk/actions';
 import {
   TriageGetInputV1Schema, TriageListInstancesInputV1Schema, TriageScanInputV1Schema,
   TriageListInstancesResultV1Schema, TriageGetResultV1Schema, TriageScanResultV1Schema,
-  TriageEntryLocatorV1Schema, MAX_TRIAGE_TEXT_UTF8_BYTES_V1, MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1, MAX_TRIAGE_ROW_FACTS_V1,
+  TriageEntryLocatorV1Schema, MAX_TRIAGE_TEXT_UTF8_BYTES_V1, MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1,
   TriageListScopeUnitsConnectedAccountInputV1Schema, TriageListScopeUnitsResultV1Schema,
   type TriageListScopeUnitsResultV1, type TriageListScopeUnitsInputV1,
   projectTriageDisplayTextV1,
-  triageTaskTransitionCapabilitiesV1,
   type TriageGetResultV1, type TriageListInstancesResultV1, type TriageScanResultV1,
   type TriageConfiguredSourceInstanceV1, type TriageSourceEntryLocalRefV1, type TriageRowFactV1,
 } from '@happier-dev/triage-protocol/v1';
@@ -44,7 +43,7 @@ function admitLinearScopeDraft(draft: Pick<TriageListScopeUnitsInputV1['draft'],
   catch { throw linearFailure('configurationInvalid'); }
 }
 
-export async function listLinearScopeUnits(input: unknown, context: PluginInvocationContext): Promise<TriageListScopeUnitsResultV1> {
+export async function listLinearScopeUnits(input: unknown, context: LinearSourceContext): Promise<TriageListScopeUnitsResultV1> {
   const parsed = TriageListScopeUnitsConnectedAccountInputV1Schema.parse(input);
   try {
     const { account, configuration } = admitLinearScopeDraft(parsed.draft);
@@ -69,14 +68,14 @@ export async function listLinearScopeUnits(input: unknown, context: PluginInvoca
   } catch (error) { return { kind: 'failed', failure: failureFrom(error, context.signal) }; }
 }
 
-async function viewerId(context: PluginInvocationContext, account: ConnectedAccountRef): Promise<string> {
+async function viewerId(context: LinearSourceContext, account: ConnectedAccountRef): Promise<string> {
   const data = await requestLinearGraphql({ context, account, operationName: 'LinearViewer', query: 'query LinearViewer { viewer { id } }' });
   const id = record(data.viewer).id;
   if (typeof id !== 'string' || id.length === 0) throw linearFailure('viewerInvalid');
   return id;
 }
 
-export async function listLinearInstances(input: unknown, context: PluginInvocationContext): Promise<TriageListInstancesResultV1> {
+export async function listLinearInstances(input: unknown, context: LinearSourceContext): Promise<TriageListInstancesResultV1> {
   TriageListInstancesInputV1Schema.parse(input);
   const listing = await readTriageSourceAccountListingV1({ connectedAccounts: context.services.connectedAccounts, purpose: LINEAR_PURPOSE, signal: context.signal });
   if (listing.kind === 'unbound') return { kind: 'complete', candidates: [], failures: [] };
@@ -121,10 +120,6 @@ export function projectLinearIssue(issue: LinearIssue, currentViewer: string): E
   add('parent', 'Parent issue', issue.parent?.identifier);
   add('due', 'Due date', issue.dueDate);
   if (issue.estimate !== null) add('estimate', 'Estimate', String(issue.estimate));
-  if (facts.length > MAX_TRIAGE_ROW_FACTS_V1) {
-    facts.splice(MAX_TRIAGE_ROW_FACTS_V1);
-    truncated = true;
-  }
   const involvement: ('author' | 'assignee' | 'subscribed')[] = [];
   if (issue.creator?.id === currentViewer) involvement.push('author');
   if (issue.assignee?.id === currentViewer) involvement.push('assignee');
@@ -143,6 +138,7 @@ export function projectLinearIssue(issue: LinearIssue, currentViewer: string): E
       ...(text(issue.identifier) ? { designation: text(issue.identifier) } : {}),
       scopeLabel: text(issue.team.name) || text(issue.team.key) || issue.team.id, scopeUnitId: issue.team.id,
       ...(issue.creator?.name && text(issue.creator.name) ? { authorLabel: text(issue.creator.name) } : {}),
+      assigneeLabel: issue.assignee === null ? null : text(issue.assignee.name) || undefined,
       ...(Number.isFinite(createdAtMs) ? { createdAtMs } : {}),
       ...(Number.isFinite(dueAtMs) ? { dueDate: issue.dueDate } : {}),
       ...(issue.state.type === 'completed' && Number.isFinite(completedAtMs) ? { completedAtMs } : {}),
@@ -180,7 +176,7 @@ function involvementFilter(kind: LinearConfiguration['involvement'], viewer: str
   return kind === 'mine' ? { or: [assignee, author, subscribed] } : kind === 'assignee' ? assignee : kind === 'author' ? author : kind === 'subscribed' ? subscribed : {};
 }
 
-export async function scanLinearSource(input: unknown, context: PluginInvocationContext): Promise<TriageScanResultV1> {
+export async function scanLinearSource(input: unknown, context: LinearSourceContext): Promise<TriageScanResultV1> {
   const parsed = TriageScanInputV1Schema.parse(input);
   try {
     const { account, configuration } = admitLinearInstance(parsed.instance);
@@ -220,7 +216,7 @@ export async function scanLinearSource(input: unknown, context: PluginInvocation
   } catch (error) { return { kind: 'failed', failure: failureFrom(error, context.signal) }; }
 }
 
-export async function readLinearIssue(input: Readonly<{ instance: TriageConfiguredSourceInstanceV1; localRef: TriageSourceEntryLocalRefV1 }>, context: PluginInvocationContext, includeDescription = false): Promise<Readonly<{ issue: LinearIssue; viewer: string }>> {
+export async function readLinearIssue(input: Readonly<{ instance: TriageConfiguredSourceInstanceV1; localRef: TriageSourceEntryLocalRefV1 }>, context: LinearSourceContext, includeDescription = false): Promise<Readonly<{ issue: LinearIssue; viewer: string }>> {
   const { account, configuration } = admitLinearInstance(input.instance, input.localRef);
   const viewer = await viewerId(context, account);
   const data = await requestLinearGraphql({ context, account, operationName: 'LinearIssue', query: `query LinearIssue($id: String!, $viewerId: ID!) { issue(id: $id) { ${LINEAR_ISSUE_FIELDS} ${includeDescription ? 'description' : ''} } }`, variables: { id: input.localRef.entryId, viewerId: viewer } });
@@ -232,7 +228,7 @@ export async function readLinearIssue(input: Readonly<{ instance: TriageConfigur
   return { issue, viewer };
 }
 
-export async function getLinearEntry(input: unknown, context: PluginInvocationContext): Promise<TriageGetResultV1> {
+export async function getLinearEntry(input: unknown, context: LinearSourceContext): Promise<TriageGetResultV1> {
   const parsed = TriageGetInputV1Schema.parse(input);
   try {
     const read = await readLinearIssue(parsed, context, true);
@@ -255,10 +251,10 @@ export async function getLinearEntry(input: unknown, context: PluginInvocationCo
         ...(children === undefined ? {} : { children: { total: children.length, entries: children.map((entry) => linearEntryRef(entry.id)), complete: true as const } }),
         ...(blockedBy === undefined ? {} : { blockedBy: blockedBy.map((entry) => linearEntryRef(entry.id)) }),
       },
-      taskCapabilities: { ...observation.snapshot.taskCapabilities, ...(states === undefined ? {} : triageTaskTransitionCapabilitiesV1(
-        states.map((state) => ({ id: state.id, label: projectTriageDisplayTextV1(state.title).value || state.id,
+      taskCapabilities: { ...observation.snapshot.taskCapabilities, ...(states === undefined ? {} : {
+        transitions: states.map((state) => ({ id: state.id, label: projectTriageDisplayTextV1(state.title).value || state.id,
           state: linearState({ type: state.body ?? '', name: state.title }) })),
-      )) },
+      }) },
     } };
     context.signal.throwIfAborted();
     if (isExternalActionResultWithinResponseEnvelopeLimitV1(enriched)) return TriageGetResultV1Schema.parse(enriched);
@@ -271,7 +267,7 @@ export async function getLinearEntry(input: unknown, context: PluginInvocationCo
   catch (error) { return { kind: 'unresolved', localRef: parsed.localRef, failure: failureFrom(error, context.signal) }; }
 }
 
-export async function collectLinearDetail(input: Readonly<{ instance: TriageConfiguredSourceInstanceV1; localRef: TriageSourceEntryLocalRefV1 }>, section: LinearDetailInput['section'], context: PluginInvocationContext): Promise<Extract<LinearDetailResult, { kind: 'ready' }>['entries']> {
+export async function collectLinearDetail(input: Readonly<{ instance: TriageConfiguredSourceInstanceV1; localRef: TriageSourceEntryLocalRefV1 }>, section: LinearDetailInput['section'], context: LinearSourceContext): Promise<Extract<LinearDetailResult, { kind: 'ready' }>['entries']> {
   const entries = [];
   let after: string | undefined;
   let walk: CursorCycleWalkV1 | null = null;
@@ -290,7 +286,7 @@ export async function collectLinearDetail(input: Readonly<{ instance: TriageConf
   return entries;
 }
 
-export async function readLinearDetail(input: unknown, context: PluginInvocationContext): Promise<LinearDetailResult> {
+export async function readLinearDetail(input: unknown, context: LinearSourceContext): Promise<LinearDetailResult> {
   const parsed = LinearDetailInputSchema.parse(input);
   try {
     const { account, configuration } = admitLinearInstance(parsed.instance, parsed.localRef);

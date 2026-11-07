@@ -1,4 +1,4 @@
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { LinearSourceContext } from './api.js';
 import {
   TriageTaskCreateInputV1Schema, TriageTaskEditInputV1Schema, TriageTaskTransitionInputV1Schema,
   type TriageTaskFieldsV1, type TriageTaskWriteResultV1, type TriageSourceFailureV1,
@@ -51,7 +51,7 @@ function fieldsMatch(issue: LinearIssue, fields: TriageTaskFieldsV1): boolean {
 }
 
 async function dispatchMutation(input: EntryInput['instance'], operationName: string, query: string,
-  variables: Record<string, unknown>, payloadName: string, entityName: string, context: PluginInvocationContext): Promise<Dispatch> {
+  variables: Record<string, unknown>, payloadName: string, entityName: string, context: LinearSourceContext): Promise<Dispatch> {
   try {
     const { account } = admitLinearInstance(input);
     const data = await requestLinearGraphql({ context, account, operationName, query, variables });
@@ -83,7 +83,7 @@ async function settleWrite(dispatch: () => Promise<Dispatch>, confirm: (result: 
   return settled.kind === 'unchanged' ? { kind: 'uncertain', observation: settled.observation } : settled;
 }
 
-async function confirmIssue(input: EntryInput, fields: TriageTaskFieldsV1, context: PluginInvocationContext,
+async function confirmIssue(input: EntryInput, fields: TriageTaskFieldsV1, context: LinearSourceContext,
   options: Readonly<{ stateId?: string; addedLabels?: readonly string[]; removedLabels?: readonly string[] }> = {}): Promise<LinearWriteResult> {
   try {
     const read = await readLinearIssue(input, context, true);
@@ -98,8 +98,9 @@ async function confirmIssue(input: EntryInput, fields: TriageTaskFieldsV1, conte
   } catch (error) { return { kind: 'uncertain', failure: failureFrom(error, context.signal) }; }
 }
 
-export async function createLinearIssue(input: unknown, context: PluginInvocationContext): Promise<LinearWriteResult> {
+export async function createLinearIssue(input: unknown, context: LinearSourceContext): Promise<LinearWriteResult> {
   const parsed = TriageTaskCreateInputV1Schema.parse(input);
+  if (parsed.initialStatusId !== undefined) return { kind: 'refused', reason: 'linear/unsupportedField' };
   const refusal = refusedFields(parsed.fields, true);
   if (refusal || parsed.kindId !== 'issue') return { kind: 'refused', reason: refusal ?? 'linear/kindUnsupported' };
   try {
@@ -118,14 +119,14 @@ export async function createLinearIssue(input: unknown, context: PluginInvocatio
   } catch (error) { return { kind: 'failed', failure: failureFrom(error, context.signal) }; }
 }
 
-async function updateIssue(input: EntryInput, native: Record<string, unknown>, context: PluginInvocationContext,
+async function updateIssue(input: EntryInput, native: Record<string, unknown>, context: LinearSourceContext,
   confirm: () => Promise<LinearWriteResult>): Promise<LinearWriteResult> {
   return settleWrite(() => dispatchMutation(input.instance, 'LinearUpdate',
     'mutation LinearUpdate($id: String!, $input: IssueUpdateInput!) { issueUpdate(id: $id, input: $input) { success issue { id } } }',
     { id: input.localRef.entryId, input: native }, 'issueUpdate', 'issue', context), async () => confirm());
 }
 
-export async function editLinearIssue(input: unknown, context: PluginInvocationContext): Promise<LinearWriteResult> {
+export async function editLinearIssue(input: unknown, context: LinearSourceContext): Promise<LinearWriteResult> {
   const parsed = TriageTaskEditInputV1Schema.parse(input);
   const refusal = refusedFields(parsed.fields, false);
   if (refusal) return { kind: 'refused', reason: refusal };
@@ -140,8 +141,9 @@ export async function editLinearIssue(input: unknown, context: PluginInvocationC
   } catch (error) { return { kind: 'failed', failure: failureFrom(error, context.signal) }; }
 }
 
-export async function transitionLinearIssue(input: unknown, context: PluginInvocationContext): Promise<LinearWriteResult> {
+export async function transitionLinearIssue(input: unknown, context: LinearSourceContext): Promise<LinearWriteResult> {
   const parsed = TriageTaskTransitionInputV1Schema.parse(input);
+  if ((parsed.fieldValues?.length ?? 0) > 0) return { kind: 'refused', reason: 'linear/unsupportedField' };
   try {
     const current = await readLinearIssue(parsed, context);
     const states = await collectLinearDetail(parsed, 'transitions', context);
@@ -151,7 +153,7 @@ export async function transitionLinearIssue(input: unknown, context: PluginInvoc
   } catch (error) { return { kind: 'failed', failure: failureFrom(error, context.signal) }; }
 }
 
-export async function commentLinearIssue(input: unknown, context: PluginInvocationContext): Promise<LinearWriteResult> {
+export async function commentLinearIssue(input: unknown, context: LinearSourceContext): Promise<LinearWriteResult> {
   const parsed = LinearCommentInputSchema.parse(input);
   try {
     await readLinearIssue(parsed, context);

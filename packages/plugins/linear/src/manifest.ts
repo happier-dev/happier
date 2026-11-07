@@ -1,28 +1,16 @@
+import { LINEAR_ACCOUNT_ACTIONS } from './accountActions.js';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
-import {
-  TriageSourcesContributionProtocolV1, TriageSourceConnectedAccountInputsV1,
-  TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
-} from '@happier-dev/triage-protocol/v1';
-import { withTriageSourceSettingsTranslationsV1 } from '@happier-dev/triage-sources/translations';
-import { LINEAR_UI_TRANSLATIONS } from './ui/translations.js';
-import { linearConnectedAccountRuntime } from './account.js';
-import {
-  LINEAR_PLUGIN_ID, LINEAR_SOURCE_ID, LINEAR_SERVICE_ID, LINEAR_PURPOSE, LINEAR_ORIGIN, LINEAR_ACTIONS,
-  LINEAR_DETAIL_SECTIONS, LINEAR_DETAIL_TITLES, LINEAR_PERSONAL_KEY,
-  LinearDetailInputSchema, LinearDetailResultSchema, LinearCommentInputSchema, LINEAR_CREATE_FIELDS, LINEAR_EDIT_FIELDS,
-} from './contracts.js';
-import { listLinearInstances, listLinearScopeUnits, scanLinearSource, getLinearEntry, readLinearDetail } from './source.js';
-import { createLinearIssue, editLinearIssue, transitionLinearIssue, commentLinearIssue } from './mutations.js';
+import { TriageSourcesContributionProtocolV1, TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1 } from '@happier-dev/triage-protocol/v1';
+
+import { linearConnectedAccountRuntime, linearPortableAccountRuntime } from './account.js';
+import { LINEAR_PLUGIN_ID, LINEAR_SOURCE_ID, LINEAR_SERVICE_ID, LINEAR_PURPOSE, LINEAR_ORIGIN, LINEAR_ACTIONS, LINEAR_DETAIL_SECTIONS, LINEAR_DETAIL_TITLES, LINEAR_PERSONAL_KEY, LINEAR_CREATE_FIELDS, LINEAR_EDIT_FIELDS } from './contracts.js';
 
 const sources = TriageSourcesContributionProtocolV1;
-const hostAccess = [LINEAR_PURPOSE, 'linear-graphql'];
-const bindings = [{ path: 'instance.binding.account', purpose: LINEAR_PURPOSE }];
 
 export const LINEAR_PLUGIN = definePlugin({
   id: LINEAR_PLUGIN_ID, version: '0.0.0', displayName: 'Linear',
   description: 'Live Linear team issues in PRs, Issues & Tasks.',
-  engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
   entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: { required: [
     { id: 'linear-graphql', capability: 'network', reason: 'Read and edit Linear issues in the included teams.',
@@ -40,93 +28,42 @@ export const LINEAR_PLUGIN = definePlugin({
     settingsGroups: [{ id: 'linear', title: 'Linear', icon: 'settings', defaultRank: 40 }],
     settingsPages: [{ id: 'triage-sources', group: { kind: 'plugin', localId: 'linear' }, title: 'PRs, Issues & Tasks',
       subtitle: 'Choose which Linear teams appear in PRs, Issues & Tasks.', icon: 'settings', renderer: 'linear-sources', defaultRank: 10 }],
-    translations: withTriageSourceSettingsTranslationsV1(LINEAR_UI_TRANSLATIONS),
+    translations: [
+      { locale: "en", resourceId: "i18n-en" },
+      { locale: "de", resourceId: "i18n-de" },
+      { locale: "ru", resourceId: "i18n-ru" },
+      { locale: "pl", resourceId: "i18n-pl" },
+      { locale: "es", resourceId: "i18n-es" },
+      { locale: "fr", resourceId: "i18n-fr" },
+      { locale: "it", resourceId: "i18n-it" },
+      { locale: "pt", resourceId: "i18n-pt" },
+      { locale: "ca", resourceId: "i18n-ca" },
+      { locale: "zh-Hans", resourceId: "i18n-zh-hans" },
+      { locale: "zh-Hant", resourceId: "i18n-zh-hant" },
+      { locale: "ja", resourceId: "i18n-ja" },
+    ],
   },
   actions: {
-    [LINEAR_ACTIONS.listInstances]: {
-      title: 'Discover Linear workspaces', description: 'List the workspace for each connected Linear account.', placementBindings: [],
-      surfaces: sources.operations.listInstances.declaration.surfaces, dangerLevel: 'safe',
-      inputSchema: TriageSourceConnectedAccountInputsV1.listInstances.jsonSchema,
-      resultSchema: sources.operations.listInstances.declaration.resultSchema.jsonSchema,
-      hostAccess, run: listLinearInstances,
+        ...LINEAR_ACCOUNT_ACTIONS,
     },
-    [LINEAR_ACTIONS.listScopeUnits]: {
-      title: 'List Linear teams', description: 'Search teams in this Linear workspace.', placementBindings: [],
-      surfaces: sources.operations.listScopeUnits.declaration.surfaces, dangerLevel: 'safe',
-      inputSchema: TriageSourceConnectedAccountInputsV1.listScopeUnits.jsonSchema,
-      resultSchema: sources.operations.listScopeUnits.declaration.resultSchema.jsonSchema,
-      hostAccess, connectedAccountPurposeBindings: [{ path: 'draft.binding.account', purpose: LINEAR_PURPOSE }], run: listLinearScopeUnits,
-    },
-    [LINEAR_ACTIONS.scan]: {
-      title: 'Read Linear team issues', description: 'Read a page of live Linear issues.', placementBindings: [],
-      surfaces: sources.operations.scan.declaration.surfaces, dangerLevel: 'safe',
-      inputSchema: TriageSourceConnectedAccountInputsV1.scan.jsonSchema,
-      resultSchema: sources.operations.scan.declaration.resultSchema.jsonSchema,
-      hostAccess, connectedAccountPurposeBindings: bindings, run: scanLinearSource,
-    },
-    [LINEAR_ACTIONS.get]: {
-      title: 'Read a Linear issue', description: 'Read the current issue through its configured workspace and team selection.', placementBindings: [],
-      surfaces: sources.operations.get.declaration.surfaces, dangerLevel: 'safe',
-      inputSchema: TriageSourceConnectedAccountInputsV1.get.jsonSchema,
-      resultSchema: sources.operations.get.declaration.resultSchema.jsonSchema,
-      hostAccess, connectedAccountPurposeBindings: bindings, run: getLinearEntry,
-    },
-    [LINEAR_ACTIONS.detail]: {
-      title: 'Read Linear issue details', description: 'Read the description, labels, relations, comments or workflow states.', placementBindings: [],
-      surfaces: ['plugin', 'ui', 'agent', 'mcp', 'cli'], dangerLevel: 'safe',
-      inputSchema: LinearDetailInputSchema.jsonSchema, resultSchema: LinearDetailResultSchema.jsonSchema,
-      hostAccess, connectedAccountPurposeBindings: bindings, run: readLinearDetail,
-    },
-    [LINEAR_ACTIONS.create]: {
-      title: 'Create a Linear issue', description: 'Create one issue in an included Linear team.', placementBindings: [],
-      surfaces: sources.operations.create.declaration.surfaces, dangerLevel: 'writesRemote',
-      confirmation: { title: 'Create this Linear issue?', confirmLabel: 'Create issue' },
-      inputSchema: TriageSourceConnectedAccountInputsV1.create.jsonSchema,
-      resultSchema: sources.operations.create.declaration.resultSchema.jsonSchema,
-      hostAccess, connectedAccountPurposeBindings: bindings, run: createLinearIssue,
-    },
-    [LINEAR_ACTIONS.edit]: {
-      title: 'Edit a Linear issue', description: 'Change supported fields on the live Linear issue.', placementBindings: [],
-      surfaces: sources.operations.edit.declaration.surfaces, dangerLevel: 'writesRemote',
-      confirmation: { title: 'Edit this Linear issue?', confirmLabel: 'Save changes' },
-      inputSchema: TriageSourceConnectedAccountInputsV1.edit.jsonSchema,
-      resultSchema: sources.operations.edit.declaration.resultSchema.jsonSchema,
-      hostAccess, connectedAccountPurposeBindings: bindings, run: editLinearIssue,
-    },
-    [LINEAR_ACTIONS.transition]: {
-      title: 'Change a Linear issue state', description: 'Move an issue to an available state in its native team workflow.', placementBindings: [],
-      surfaces: sources.operations.transition.declaration.surfaces, dangerLevel: 'writesRemote',
-      confirmation: { title: 'Change this Linear issue’s state?', confirmLabel: 'Change state' },
-      inputSchema: TriageSourceConnectedAccountInputsV1.transition.jsonSchema,
-      resultSchema: sources.operations.transition.declaration.resultSchema.jsonSchema,
-      hostAccess, connectedAccountPurposeBindings: bindings, run: transitionLinearIssue,
-    },
-    [LINEAR_ACTIONS.comment]: {
-      title: 'Comment on a Linear issue', description: 'Publish one comment on this issue in Linear.', placementBindings: [],
-      surfaces: ['plugin', 'ui', 'agent', 'mcp', 'cli'], dangerLevel: 'writesRemote',
-      confirmation: { title: 'Publish this comment in Linear?', confirmLabel: 'Publish comment' },
-      inputSchema: LinearCommentInputSchema.jsonSchema,
-      resultSchema: sources.operations.edit.declaration.resultSchema.jsonSchema,
-      hostAccess, connectedAccountPurposeBindings: bindings, run: commentLinearIssue,
-    },
-  },
   connectedAccountDescriptors: {
     [LINEAR_SERVICE_ID]: {
       declaration: {
         title: 'Linear account', description: 'Personal API key for the Linear teams you can access.',
-        authentication: { defaultModeId: LINEAR_PERSONAL_KEY, modes: [{
+        authentication: { account: { artifactId: 'linear-account-runtime', exportName: 'activate' }, defaultModeId: LINEAR_PERSONAL_KEY, modes: [{
           id: LINEAR_PERSONAL_KEY, kind: 'manual', title: 'Personal API key',
-          directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 }, outcomeReconciliation: 'none',
-          fields: [{ id: LINEAR_PERSONAL_KEY, title: 'Linear personal API key',
-            description: 'A key with Read access and the issue/comment write permissions you want to use.',
-            schema: { type: 'string', minLength: 1 }, secret: true }],
-      setup: {
+          setup: {
             url: 'https://linear.app',
             checklist: ['In Linear, open Settings > Account > Security & Access and create a personal API key.', 'Give it Read access, the teams you need, and the write permissions for the issue and comment actions you want to use.', 'Copy the key and paste it here.'],
             createKeyTitle: 'Open Linear',
           },
+          credentialOrigin: 'authentication',
+          directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 }, outcomeReconciliation: 'none',
+          fields: [{ id: LINEAR_PERSONAL_KEY, title: 'Linear personal API key',
+            description: 'A key with Read access and the issue/comment write permissions you want to use.',
+            schema: { type: 'string', minLength: 1 }, secret: true }],
         }] },
-      }, runtime: linearConnectedAccountRuntime,
+      }, runtime: linearConnectedAccountRuntime, accountRuntime: linearPortableAccountRuntime,
     },
   },
   contributesTo: { [TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1]: { [TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1]: {
@@ -152,5 +89,19 @@ export const LINEAR_PLUGIN = definePlugin({
       surfaces: { detail: { renderer: 'linear-detail', fallbackRenderers: ['linear-detail-fallback'] } },
     }),
   } } },
+  resources: {
+    "i18n-en": { kind: 'asset', path: "assets/i18n/en.json", contentType: 'application/json' },
+    "i18n-de": { kind: 'asset', path: "assets/i18n/de.json", contentType: 'application/json' },
+    "i18n-ru": { kind: 'asset', path: "assets/i18n/ru.json", contentType: 'application/json' },
+    "i18n-pl": { kind: 'asset', path: "assets/i18n/pl.json", contentType: 'application/json' },
+    "i18n-es": { kind: 'asset', path: "assets/i18n/es.json", contentType: 'application/json' },
+    "i18n-fr": { kind: 'asset', path: "assets/i18n/fr.json", contentType: 'application/json' },
+    "i18n-it": { kind: 'asset', path: "assets/i18n/it.json", contentType: 'application/json' },
+    "i18n-pt": { kind: 'asset', path: "assets/i18n/pt.json", contentType: 'application/json' },
+    "i18n-ca": { kind: 'asset', path: "assets/i18n/ca.json", contentType: 'application/json' },
+    "i18n-zh-hans": { kind: 'asset', path: "assets/i18n/zh-Hans.json", contentType: 'application/json' },
+    "i18n-zh-hant": { kind: 'asset', path: "assets/i18n/zh-Hant.json", contentType: 'application/json' },
+    "i18n-ja": { kind: 'asset', path: "assets/i18n/ja.json", contentType: 'application/json' },
+  },
 });
 export const PLUGIN_MANIFEST = LINEAR_PLUGIN.manifest;

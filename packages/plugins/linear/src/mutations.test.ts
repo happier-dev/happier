@@ -1,4 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { activate as activateAccount } from './accountRuntime.js';
+import { LINEAR_PLUGIN } from './manifest.js';
+import { LINEAR_ACTIONS } from './contracts.js';
 import { createLinearIssue, editLinearIssue, transitionLinearIssue, commentLinearIssue } from './mutations.js';
 import { host, instance, issue, localRef, page } from './fixtures.test-support.js';
 
@@ -41,9 +45,41 @@ describe('Linear native writes', () => {
       }
       return { issue: { ...issue, title: created ? 'New work' : issue.title, description: 'Native description', priority: 1 } };
     });
-    expect(await createLinearIssue({ v: 1, instance, kindId: 'issue', fields: { title: 'New work', body: 'Native description', priority: 1 } }, h.context))
-      .toMatchObject({ kind: 'applied', observation: { localRef, snapshot: { title: 'New work' } } });
-    expect(h.request.mock.calls.filter(([request]) => new TextDecoder().decode(request.body).includes('mutation LinearCreate'))).toHaveLength(1);
+    expect(await createLinearIssue({ v: 1, instance, kindId: 'issue', initialStatusId: 'native-state',
+      fields: { title: 'New work', body: 'Native description', priority: 1 } }, h.context))
+      .toEqual({ kind: 'refused', reason: 'linear/unsupportedField' });
+    expect(h.request).not.toHaveBeenCalled();
+    const kit = await createPluginTestkit({ manifest: LINEAR_PLUGIN.manifest,
+      module: { activate: LINEAR_PLUGIN.activate, activateAccount }, services: h.context.services });
+    try {
+      expect(await kit.invokeAction(LINEAR_ACTIONS.create, { v: 1, instance, kindId: 'issue', fields: { title: 'New work', body: 'Native description', priority: 1 } }))
+        .toMatchObject({ kind: 'applied', observation: { localRef, snapshot: { title: 'New work' } } });
+      expect(h.request.mock.calls.filter(([request]) => new TextDecoder().decode(request.body).includes('mutation LinearCreate'))).toHaveLength(1);
+      h.request.mockClear();
+      h.materializeListedAccount.mockRejectedValue(new Error('selected account unavailable'));
+      expect(await kit.invokeAction(LINEAR_ACTIONS.create, { v: 1, instance, kindId: 'issue', fields: { title: 'Another issue' } }))
+        .toMatchObject({ kind: 'failed', failure: { class: 'authentication' } });
+      expect(h.request).not.toHaveBeenCalled();
+    } finally { await kit.dispose(); }
+  });
+
+  it('keeps an Account Linear edit cancelled after dispatch uncertain without replay', async () => {
+    const controller = new AbortController();
+    const h = host(({ operationName }) => {
+      if (operationName === 'LinearViewer') return { viewer: { id: 'viewer-1' } };
+      if (operationName === 'LinearUpdate') { controller.abort(); throw new Error('cancelled after send'); }
+      return { issue };
+    });
+    const kit = await createPluginTestkit({ manifest: LINEAR_PLUGIN.manifest,
+      module: { activate: LINEAR_PLUGIN.activate, activateAccount }, services: h.context.services });
+    try {
+      const handler = kit.registration('actions', LINEAR_ACTIONS.edit);
+      if (!handler) throw new Error('Missing Account edit Action');
+      // Observe source settlement before the Action RPC discards an aborted reply.
+      expect(await handler({ v: 1, instance, localRef, fields: { title: 'Changed title' } }, { ...h.context, signal: controller.signal }))
+        .toMatchObject({ kind: 'uncertain' });
+      expect(h.request.mock.calls.filter(([request]) => new TextDecoder().decode(request.body).includes('mutation LinearUpdate'))).toHaveLength(1);
+    } finally { await kit.dispose(); }
   });
 
   it('edits through issueUpdate and refuses to claim applied if Linear ignores a requested field', async () => {
@@ -89,7 +125,11 @@ describe('Linear native writes', () => {
       }
       return { issue: { ...issue, description: null, state: transitioned ? { id: 'done-state', name: 'Done', type: 'completed' } : issue.state } };
     });
-    expect(await transitionLinearIssue({ v: 1, instance, localRef, transitionId: 'done-state' }, h.context))
+    expect(await transitionLinearIssue({ v: 1, instance, localRef, transitionId: 'done-state',
+      fieldValues: [{ fieldId: 'resolution', value: 'done' }] }, h.context))
+      .toEqual({ kind: 'refused', reason: 'linear/unsupportedField' });
+    expect(h.request).not.toHaveBeenCalled();
+    expect(await transitionLinearIssue({ v: 1, instance, localRef, transitionId: 'done-state', fieldValues: [] }, h.context))
       .toMatchObject({ kind: 'applied', observation: { snapshot: { state: { presentation: 'resolved', completionReason: 'completed' } } } });
   });
 

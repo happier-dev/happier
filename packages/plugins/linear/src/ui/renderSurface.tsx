@@ -4,18 +4,19 @@ import {
   Banner, Button, EmptyState, ErrorState, Item, ItemGroup, LoadingState, ScrollArea,
   Text, defineUiSurface, useExecutePluginAction, usePluginTranslation, useTabPanelActivity,
 } from '@happier-dev/plugin-ui';
-import { TriageActivityAgentTail, TriageDetailInstance, TriageDetailPanel, useTriageDetailRequest } from '@happier-dev/triage-sources/ui';
+import { TriageActivityAgentTail, TriageDetailInstance, TriageDetailPanel, TriageSourceCommentComposer, useTriageDetailRequest } from '@happier-dev/triage-sources/ui';
 import {
   TriageDetailSurfaceInputV1Schema, triagePagedPanelInitialState, triagePagedPanelReducer,
   describeTriageSourceFailureV1, type TriageDetailSurfaceInputV1, type TriageSourceFailureV1,
   type TriagePagedPanelEventV1, type TriagePagedPanelStateV1,
 } from '@happier-dev/triage-protocol/v1';
 import {
-  LINEAR_ACTIONS, LINEAR_PLUGIN_ID, LINEAR_DETAIL_SECTIONS, LinearDetailResultSchema,
+  LINEAR_ACTIONS, LINEAR_PLUGIN_ID, LINEAR_DETAIL_SECTIONS, LinearCommentInputSchema, LinearDetailResultSchema,
   type LinearDetailInput, type LinearDetailEntrySchema,
 } from '../contracts.js';
 
 const action = { pluginId: LINEAR_PLUGIN_ID, localId: LINEAR_ACTIONS.detail };
+const commentAction = { pluginId: LINEAR_PLUGIN_ID, localId: LINEAR_ACTIONS.comment };
 type Entry = ReturnType<typeof LinearDetailEntrySchema.parse>;
 type Section = LinearDetailInput['section'];
 
@@ -23,6 +24,7 @@ const reduceDetailPanel = (
   state: TriagePagedPanelStateV1<Entry, TriageSourceFailureV1>,
   event: TriagePagedPanelEventV1<Entry, TriageSourceFailureV1>,
 ) => triagePagedPanelReducer(state, event);
+
 
 function DetailSection({ input, section }: { input: TriageDetailSurfaceInputV1; section: Section }): React.ReactElement {
   const text = usePluginTranslation();
@@ -61,6 +63,10 @@ function DetailSection({ input, section }: { input: TriageDetailSurfaceInputV1; 
     return () => { token.current += 1; };
   }, [active, load]);
   if (readAuthority.current !== request || state.kind === 'idle' || state.kind === 'loading') return <LoadingState title={text('plugins.linear.detail.loading')} />;
+  const webUrl = input.observation.locator.webUrl;
+  const composer = section !== 'comments' ? null : <TriageSourceCommentComposer action={commentAction}
+    buildInput={(body) => { const parsed = LinearCommentInputSchema.safeParse({ v: 1, ...request, body }); return parsed.success ? parsed.data : null; }}
+    sourceName="Linear" {...(webUrl === undefined ? {} : { sourceUrl: webUrl })} onPublished={() => load()} />;
   return <>
     {state.failure && <ErrorState title={describeTriageSourceFailureV1(state.failure, text('plugins.linear.detail.unavailable'), text)}
       action={<Button variant="secondary" title={text('plugins.linear.detail.retry')} onPress={() => load(state.continuation ?? undefined)} />} />}
@@ -73,6 +79,7 @@ function DetailSection({ input, section }: { input: TriageDetailSurfaceInputV1; 
         onPress={() => load(state.continuation ?? undefined)} />}
     </>}
     {section === 'comments' ? <TriageActivityAgentTail /> : null}
+    {composer}
   </>;
 }
 
@@ -80,7 +87,7 @@ function LinearDetail(context: RenderContext): React.ReactElement {
   const text = usePluginTranslation();
   const parsed = TriageDetailSurfaceInputV1Schema.safeParse(context.launchInput);
   if (!parsed.success) return <ErrorState title={text('plugins.linear.detail.unavailable')} />;
-  return <TriageDetailInstance><TriageDetailPanel panel={parsed.data.panel ?? 'overview'} ariaLabel="Linear"
+  return <TriageDetailInstance scrollOwner={parsed.data.panelScrollOwner}><TriageDetailPanel scrollOwner={parsed.data.panelScrollOwner} panel={parsed.data.panel ?? 'overview'} ariaLabel="Linear"
     panels={Object.fromEntries(LINEAR_DETAIL_SECTIONS.map((section) => [section === 'comments' ? 'activity' : section,
       <ScrollArea key={section}><DetailSection input={parsed.data} section={section} /></ScrollArea>,
     ]))} /></TriageDetailInstance>;
