@@ -365,4 +365,36 @@ describe('Environment service row ⋯ (P1 §3)', () => {
       });
     }
   });
+
+  it('opens the Logs companion on the row\'s service, and Build shows the serving receipt\'s own steps (P11)', async () => {
+    const { detail, serving, controller, scope } = environment();
+    const service = serving.content.ownServer?.approvedInputBasis.services[0] ?? serving.content.images[0]!.service;
+    const instance = 'instance-a';
+    answerServices(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [MachineServiceRowV1Schema.parse({
+      serviceId: `${instance}/${service}`, name: service, authority: 'project', lifecyclePurpose: 'deployment',
+      generation: 'generation-7', state: 'running', environmentId: detail.environment.id,
+      deployment: { deploymentId: serving.deployment.id, installationId: 'installation-a', service: { kind: 'deployment', machineId,
+        environmentId: detail.environment.id, environmentInstanceId: instance, composeService: service, serviceId: `${instance}/${service}` } },
+      capabilities: { start: true, stop: true, restart: true, logs: true, accounting: false },
+    })] }));
+    const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+    const { ModalProvider } = await import('@/modal');
+    const screen = await renderScreen(<ModalProvider><DeploymentEnvironmentDetail controller={controller}
+      environmentId={detail.environment.id} demand={{ mounted: true, visible: true, focused: true }} accountId={accountId}
+      serverId={serverId} phone={false} deploy={null} review={{ pendingId: null, request: () => {}, open: () => {} }}
+      onOpenReceipt={() => {}} lifetime={lifetime} /></ModalProvider>);
+    const menu = `project-deployments.environment.services.${service}.menu`;
+    try {
+      // Nothing reads or renders logs until the companion is open.
+      expect(screen.findByTestId('environment-logs.runtime')).toBeNull();
+      await waitForHomeGovernance(() => expect(screen.findByTestId(menu)).not.toBeNull());
+      await screen.pressByTestIdAsync(menu);
+      await waitForHomeGovernance(() => expect(screen.findByTestId(`project-deployments.environment.services.${service}.logs`)).not.toBeNull());
+      await screen.pressByTestIdAsync(`project-deployments.environment.services.${service}.logs`);
+      // The row's service opens on Runtime.
+      await waitForHomeGovernance(() => expect(screen.findByTestId('environment-logs.runtime')).not.toBeNull());
+      await screen.pressByTestIdAsync('environment-logs.view:build');
+      await waitForHomeGovernance(() => expect(screen.findByTestId('environment-logs.build')).not.toBeNull());
+    } finally { await act(async () => { controller.retire(); }); }
+  });
 });

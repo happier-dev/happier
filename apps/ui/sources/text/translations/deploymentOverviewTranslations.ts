@@ -22,6 +22,12 @@ type DeploymentOverviewTranslations = Readonly<{
   definitionTitle: string;
   definitionStored: (params: { revision: number }) => string;
   definitionNotDeployed: string;
+  logsTitle: string;
+  logsBuild: string;
+  logsRuntime: string;
+  logsService: string;
+  logsEmpty: string;
+  logsNoBuild: string;
 }>;
 
 export const deploymentOverviewTranslations = {
@@ -46,6 +52,12 @@ export const deploymentOverviewTranslations = {
     definitionTitle: "Definition",
     definitionStored: ({ revision }) => `Stored in Happier · revision ${revision}`,
     definitionNotDeployed: "not deployed yet",
+    logsTitle: "Logs",
+    logsBuild: "Build",
+    logsRuntime: "Runtime",
+    logsService: "Service",
+    logsEmpty: "No logs yet",
+    logsNoBuild: "Nothing has been deployed here, so there is no build log.",
   },
   "fr": {
     controllerPausedTitle: "Tâches et alertes en pause",
@@ -68,6 +80,12 @@ export const deploymentOverviewTranslations = {
     definitionTitle: "Définition",
     definitionStored: ({ revision }) => `Stockée dans Happier · révision ${revision}`,
     definitionNotDeployed: "pas encore déployée",
+    logsTitle: "Journaux",
+    logsBuild: "Build",
+    logsRuntime: "Exécution",
+    logsService: "Service",
+    logsEmpty: "Pas encore de journaux",
+    logsNoBuild: "Rien n’a encore été déployé ici, il n’y a donc pas de journal de build.",
   },
   "de": {
     controllerPausedTitle: "Jobs und Warnungen pausiert",
@@ -90,6 +108,12 @@ export const deploymentOverviewTranslations = {
     definitionTitle: "Definition",
     definitionStored: ({ revision }) => `In Happier gespeichert · Revision ${revision}`,
     definitionNotDeployed: "noch nicht deployt",
+    logsTitle: "Logs",
+    logsBuild: "Build",
+    logsRuntime: "Laufzeit",
+    logsService: "Dienst",
+    logsEmpty: "Noch keine Logs",
+    logsNoBuild: "Hier wurde noch nichts deployt, daher gibt es kein Build-Log.",
   },
   "es": {
     controllerPausedTitle: "Tareas y alertas en pausa",
@@ -112,6 +136,12 @@ export const deploymentOverviewTranslations = {
     definitionTitle: "Definición",
     definitionStored: ({ revision }) => `Guardada en Happier · revisión ${revision}`,
     definitionNotDeployed: "aún no desplegada",
+    logsTitle: "Registros",
+    logsBuild: "Build",
+    logsRuntime: "Ejecución",
+    logsService: "Servicio",
+    logsEmpty: "Aún no hay registros",
+    logsNoBuild: "Aquí no se ha desplegado nada, así que no hay registro de build.",
   },
   "it": {
     controllerPausedTitle: "Job e avvisi in pausa",
@@ -134,6 +164,12 @@ export const deploymentOverviewTranslations = {
     definitionTitle: "Definizione",
     definitionStored: ({ revision }) => `Salvata in Happier · revisione ${revision}`,
     definitionNotDeployed: "non ancora distribuita",
+    logsTitle: "Log",
+    logsBuild: "Build",
+    logsRuntime: "Esecuzione",
+    logsService: "Servizio",
+    logsEmpty: "Ancora nessun log",
+    logsNoBuild: "Qui non è stato distribuito nulla, quindi non c’è un log di build.",
   },
   "pt": {
     controllerPausedTitle: "Tarefas e alertas em pausa",
@@ -156,6 +192,12 @@ export const deploymentOverviewTranslations = {
     definitionTitle: "Definição",
     definitionStored: ({ revision }) => `Salva no Happier · revisão ${revision}`,
     definitionNotDeployed: "ainda não implantada",
+    logsTitle: "Logs",
+    logsBuild: "Build",
+    logsRuntime: "Execução",
+    logsService: "Serviço",
+    logsEmpty: "Ainda não há logs",
+    logsNoBuild: "Nada foi implantado aqui, então não há log de build.",
   },
   "ca": {
     controllerPausedTitle: "Tasques i alertes en pausa",
@@ -178,6 +220,12 @@ export const deploymentOverviewTranslations = {
     definitionTitle: "Definició",
     definitionStored: ({ revision }) => `Desada a Happier · revisió ${revision}`,
     definitionNotDeployed: "encara no desplegada",
+    logsTitle: "Registres",
+    logsBuild: "Build",
+    logsRuntime: "Execució",
+    logsService: "Servei",
+    logsEmpty: "Encara no hi ha registres",
+    logsNoBuild: "Aquí no s’ha desplegat res, així que no hi ha registre de build.",
   },
   "pl": {
     controllerPausedTitle: "Zadania i alerty wstrzymane",
@@ -200,6 +248,12 @@ export const deploymentOverviewTranslations = {
     definitionTitle: "Definicja",
     definitionStored: ({ revision }) => `Zapisana w Happier · rewizja ${revision}`,
     definitionNotDeployed: "jeszcze niewdrożona",
+    logsTitle: "Logi",
+    logsBuild: "Build",
+    logsRuntime: "Działanie",
+    logsService: "Usługa",
+    logsEmpty: "Brak logów",
+    logsNoBuild: "Nic tu jeszcze nie wdrożono, więc nie ma logu builda.",
   },
   "ru": {
     controllerPausedTitle: "Задачи и оповещения приостановлены",
@@ -222,6 +276,12 @@ export const deploymentOverviewTranslations = {
     definitionTitle: "Определение",
     definitionStored: ({ revision }) => `Хранится в Happier · ревизия ${revision}`,
     definitionNotDeployed: "ещё не развёрнуто",
+    logsTitle: "Логи",
+    logsBuild: "Сборка",
+    logsRuntime: "Работа",
+    logsService: "Сервис",
+    logsEmpty: "Логов пока нет",
+    logsNoBuild: "Здесь ещё ничего не развёрнуто, поэтому лога сборки нет.",
   },
   "ja": {
     controllerPausedTitle: "ジョブとアラートは一時停止中",
@@ -244,6 +304,12 @@ export const deploymentOverviewTranslations = {
     definitionTitle: "定義",
     definitionStored: ({ revision }) => `Happier に保存 · リビジョン ${revision}`,
     definitionNotDeployed: "まだデプロイされていません",
+    logsTitle: "ログ",
+    logsBuild: "ビルド",
+    logsRuntime: "実行時",
+    logsService: "サービス",
+    logsEmpty: "ログはまだありません",
+    logsNoBuild: "まだ何もデプロイされていないため、ビルドログはありません。",
   },
   "zh-Hans": {
     controllerPausedTitle: "作业和告警已暂停",
@@ -266,6 +332,12 @@ export const deploymentOverviewTranslations = {
     definitionTitle: "定义",
     definitionStored: ({ revision }) => `存储在 Happier 中 · 修订 ${revision}`,
     definitionNotDeployed: "尚未部署",
+    logsTitle: "日志",
+    logsBuild: "构建",
+    logsRuntime: "运行时",
+    logsService: "服务",
+    logsEmpty: "暂无日志",
+    logsNoBuild: "这里还没有部署任何内容，因此没有构建日志。",
   },
   "zh-Hant": {
     controllerPausedTitle: "作業和警示已暫停",
@@ -288,5 +360,11 @@ export const deploymentOverviewTranslations = {
     definitionTitle: "定義",
     definitionStored: ({ revision }) => `儲存在 Happier 中 · 修訂 ${revision}`,
     definitionNotDeployed: "尚未部署",
+    logsTitle: "日誌",
+    logsBuild: "建置",
+    logsRuntime: "執行時",
+    logsService: "服務",
+    logsEmpty: "尚無日誌",
+    logsNoBuild: "這裡還沒有部署任何內容，因此沒有建置日誌。",
   },
 } satisfies Record<SupportedLanguage, DeploymentOverviewTranslations>;
