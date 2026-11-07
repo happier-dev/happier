@@ -84,6 +84,16 @@ function newSessionDocument() {
 }
 
 describe('session draft protocol', () => {
+  it('reads stored asks and a pending model Ask without starting a Session', () => {
+    const stored = JSON.parse('{"kind":"ask","target":{"selector":"workers"},"reply":"return"}');
+    expect(SessionDraftSessionMessagingValueV1Schema.parse(stored)).toEqual(stored);
+    const pending = { kind: 'ask_new_session', launch: {
+      executionTarget: { serverId: 'home', machineId: 'macbook' },
+      directory: { kind: 'path', path: '/workspace/checkout' },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+    } };
+    expect(SessionDraftSessionMessagingValueV1Schema.parse(JSON.parse(JSON.stringify(pending)))).toEqual(pending);
+  });
   it('pins the complete synchronized field inventory to server-v0.2.11', () => {
     expect(SYNCED_SESSION_AUTHORING_FIELD_IDS_V1).toEqual([
       'machineId',

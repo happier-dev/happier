@@ -1,8 +1,8 @@
 import * as React from 'react';
-import { type LayoutChangeEvent, Pressable, StyleSheet as RNStyleSheet, View } from 'react-native';
+import { type LayoutChangeEvent, StyleSheet as RNStyleSheet, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import type { ParticipantRecipientV1 } from '@happier-dev/protocol';
+import type { ParticipantRecipientV1 } from '@happier-dev/protocol/messages/structured/participantMessageV1';
 import type { SessionDraftSessionMessagingValueV1 } from '@happier-dev/protocol/drafts/sessionDrafts';
 import type { SessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 
@@ -18,12 +18,16 @@ import type { SessionParticipantTarget } from '@/sync/domains/session/participan
 import { t } from '@/text';
 import { useSessionDisplayTitles } from '@/utils/sessions/sessionDisplayTitle';
 import { useDiscussionTitleProjections } from '@/sync/ops/discussions/useDiscussionRepositorySnapshot';
+import { useSessionSelector } from '@/sync/domains/state/storage';
+import { useMachinePresenceSummary } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 
 import { AGENT_INPUT_MENU_ICON_SIZE_PX } from '../definitions/agentInputChipIconMetrics';
 import { resolveSessionParticipantTargetLabel } from './recipientOptions';
 import { SessionTalkDiscussionChoices } from './SessionTalkDiscussionChoices';
 import { createSessionTalkMatchingFilter, SessionTalkMatchingStep } from './SessionTalkMatchingStep';
 import { useSessionTalkTargets, type SessionTalkTargets } from './sessionTalkTargets';
+import { SessionTalkModelStep } from './SessionTalkModelStep';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 export type SessionTalkIntent = SessionDraftSessionMessagingValueV1;
 export type SessionTalkVerb = 'send' | 'ask' | 'post_update';
@@ -58,7 +62,7 @@ export function readSessionTalkVerb(
   return intent
     ? intent.kind === 'post_update'
       ? 'post_update'
-      : intent.kind
+      : intent.kind === 'ask_new_session' ? 'ask' : intent.kind
     : null;
 }
 
@@ -68,6 +72,7 @@ export function readSessionTalkTarget(
   if (
     !intent ||
     intent.kind === 'post_update' ||
+    intent.kind === 'ask_new_session' ||
     typeof intent.target === 'string'
   )
     return null;
@@ -130,7 +135,14 @@ export function SessionTalkPicker(props: SessionTalkPickerProps) {
   const selectedTarget = readSessionTalkTarget(props.intent);
   const selected = selectedTarget?.selector ?? null;
   // The Discussion selector needs one Discussion; the step below chooses it, and the row then previews it.
-  const [step, setStep] = React.useState<'targets' | 'discussion' | 'matching'>('targets');
+  const [step, setStep] = React.useState<'targets' | 'discussion' | 'matching' | 'model'>('targets');
+  const sourceMachineId = useSessionSelector(props.sessionId, props.serverId, session => session?.metadata?.machineId ?? null);
+  const sourceDirectory = useSessionSelector(props.sessionId, props.serverId, session => session?.metadata?.path ?? null);
+  const modelLaunch = props.intent?.kind === 'ask_new_session' ? props.intent.launch : null;
+  const modelTarget = modelLaunch?.executionTarget ?? (props.serverId && sourceMachineId
+    ? { serverId: props.serverId, machineId: sourceMachineId } : null);
+  const modelPresence = useMachinePresenceSummary(modelTarget?.serverId, modelTarget?.machineId);
+  const modelAvailable = modelTarget !== null && modelPresence.reachability === 'reachable';
   const [discussionId, setDiscussionId] = React.useState<string | null>(
     () => (selectedTarget?.selector === 'discussion' ? selectedTarget.discussionId : null),
   );
@@ -140,7 +152,7 @@ export function SessionTalkPicker(props: SessionTalkPickerProps) {
   const [draftFilter, setDraftFilter] = React.useState<SessionListFilterV1 | null>(null);
   const matchingFilter = step === 'matching' ? draftFilter : chosenFilter;
   const targets = useSessionTalkTargets(props.sessionId, props.serverId, {
-    enabled: verb !== 'post_update',
+    enabled: verb !== 'post_update' && step !== 'model',
     ...(step === 'matching' ? { selectors: ['matching'] as const } : step === 'discussion' ? { selectors: ['discussion'] as const } : {}),
     ...(discussionId ? { discussionId } : {}),
     ...(matchingFilter ? { matchingFilter } : {}),
@@ -161,6 +173,7 @@ export function SessionTalkPicker(props: SessionTalkPickerProps) {
       setVerb(next);
       setStep('targets');
       if (next === 'post_update') props.onIntentChange({ kind: 'post_update' });
+      else if (next === 'ask' && props.intent?.kind === 'ask_new_session') return;
       else if (props.intent)
         props.onIntentChange(buildSessionTalkIntent(next, lastTarget.current));
     },
@@ -185,6 +198,7 @@ export function SessionTalkPicker(props: SessionTalkPickerProps) {
   const listFrame = bodyMinHeight > 0 ? bodyMinHeight + footerHeight + theme.space.s8 : undefined;
   const budget = props.maxHeight !== undefined ? props.maxHeight - verbHeight - 2 * theme.space.s8 : undefined;
   const matchingFrame = listFrame !== undefined && budget !== undefined ? Math.min(listFrame, budget) : listFrame ?? budget;
+  const inlineStep = step === 'matching' || step === 'model';
 
   const chooseTarget = (target: SessionTalkTarget) => {
     props.participants?.onRecipientChange(null);
@@ -255,15 +269,27 @@ export function SessionTalkPicker(props: SessionTalkPickerProps) {
           )}
         </Text>
       </View>
-      {/* The Matching step fills the frame the list set; it never grows it. */}
+      {/* Inline steps fill the frame the list set; they never grow it. */}
       <View
-        style={{ minHeight: step === 'matching' ? matchingFrame ?? 0 : bodyMinHeight }}
-        onLayout={step === 'matching' ? undefined : onBodyLayout}
+        style={{ minHeight: inlineStep ? matchingFrame ?? 0 : bodyMinHeight }}
+        onLayout={inlineStep ? undefined : onBodyLayout}
       >
       {verb === 'post_update' ? (
         <SessionTalkAudience
           sessionId={props.sessionId}
           serverId={props.serverId}
+        />
+      ) : step === 'model' && modelTarget ? (
+        <SessionTalkModelStep
+          target={modelTarget}
+          seed={modelLaunch ? { existingDraft: modelLaunch } : { ...(sourceDirectory ? { directory: sourceDirectory } : {}) }}
+          frameHeight={matchingFrame}
+          onBack={() => setStep('targets')}
+          onUse={launch => {
+            props.participants?.onRecipientChange(null);
+            props.onIntentChange({ kind: 'ask_new_session', launch });
+            props.requestClose();
+          }}
         />
       ) : step === 'matching' && props.serverId && draftFilter ? (
         <SessionTalkMatchingStep
@@ -333,6 +359,16 @@ export function SessionTalkPicker(props: SessionTalkPickerProps) {
               />
             );
           })}
+          {verb === 'ask' ? <Item
+            testID="session-talk-target:model"
+            rowRole="menu"
+            title={t('session.participants.talk.modelChoose')}
+            subtitle={modelAvailable ? t('session.participants.talk.modelHint') : t('newSession.recipeComposerMachineNotReady')}
+            disabled={!modelAvailable}
+            selected={modelLaunch !== null}
+            showDivider={false}
+            onPress={() => setStep('model')}
+          /> : null}
           <Item
             testID="session-talk-target:matching"
             rowRole="menu"
@@ -406,7 +442,7 @@ export function SessionTalkPicker(props: SessionTalkPickerProps) {
         </View>
       )}
       </View>
-      {step === 'matching' && verb !== 'post_update' ? null : (
+      {(step === 'matching' || step === 'model') && verb !== 'post_update' ? null : (
       <View style={styles.footer} onLayout={onFooterLayout}>
         <Icon
           name="users"
@@ -529,16 +565,15 @@ function SessionTalkAudience(
           }
           rightElement={
             followers.loading ? undefined : (
-              <Pressable
+              <HappierPressable
                 accessibilityRole="button"
                 onPress={followers.refresh}
-                hitSlop={8}
                 testID="session-talk-audience-retry"
               >
                 <Text variant="meta" style={styles.link}>
                   {t('common.retry')}
                 </Text>
-              </Pressable>
+              </HappierPressable>
             )
           }
           showChevron={false}

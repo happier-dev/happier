@@ -15,6 +15,17 @@ import { RawIngressStructuredInputV1Schema } from '@happier-dev/protocol/runtime
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { createPlainSessionCurrentProjectionRecordFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { deriveSessionMessageInvocationLocalIdV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageInvocationV1';
+import { normalizeRawMessage, RawRecordSchema } from '@happier-dev/session-core/raw';
+import { createReducer, reducer } from '@happier-dev/session-core/reducer';
+import { readSessionMessageInvocation } from '@/components/sessions/transcript/references/readSessionMessageInvocation';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
+import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { createSessionDraftRepository } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
+import { createSessionDraftPrivatePayloadV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
+import { projectSessionSpawnNewActionResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 
 const rpc = vi.hoisted(() => vi.fn());
 // The guarded Machine RPC is the physical network boundary; transfer parsing and custody stay real.
@@ -61,6 +72,129 @@ function snapshot(text: string, referenceStart: number | null): ComposerSubmissi
 }
 
 describe('Session composer messaging handoff', () => {
+    it('starts a model Ask on Send, retaining the spawned Session and exact message identity after a refused send', async () => {
+        const serverId = await homes.addHome({ name: 'Model Ask', serverUrl: 'https://model-ask.test', accountId: 'alice', currentAccount: true });
+        homes.answer(serverId, '/v2/sessions/source', { body: { session: createPlainSessionCurrentProjectionRecordFixture({ id: 'source' }) } });
+        const values = new Map<string, string>();
+        const createRepository = () => createSessionDraftRepository({ syncEnabled: false,
+            storage: { getString: key => values.get(key), set: (key, value) => { values.set(key, value); }, delete: key => { values.delete(key); } },
+            cipher: { seal: async (address, document) => ({ t: 'plain', v: createSessionDraftPrivatePayloadV2(address, document) }),
+                open: async (_address, content) => content.t === 'plain' ? content.v.document : null },
+        });
+        let repository = createRepository();
+        const scope = { serverId, accountId: 'alice' };
+        const intent = { kind: 'ask_new_session', launch: { executionTarget: { serverId, machineId: 'macbook' },
+            directory: { kind: 'path', path: '/repo' }, agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } } } as const;
+        repository.writeExistingSessionDraft({ scope, sessionId: 'source', patch: { text: 'Review this', sessionMessaging: intent } });
+        const attempt = repository.getOrCreateSessionMessagingDraftMutationAttempt({ scope, sessionId: 'source', intent,
+            currentness: repository.captureSessionDraftCurrentness({ scope, address: { kind: 'session', sessionId: 'source' } }) });
+        if (!attempt) throw new Error('Draft attempt required');
+        homes.answer(serverId, '/v2/sessions/source/messages', { body: { didWrite: true, message: {
+            id: 'ask-entry', localId: deriveSessionMessageInvocationLocalIdV1(attempt.localId), seq: 1, createdAt: 10,
+        } } });
+        const spawns: string[] = [];
+        const messages: Array<{ sessionId: string; localId?: string; reply?: string; returnToSessionId?: string }> = [];
+        const execute = createFrontDoorActionExecute(createActionExecutor(createActionExecutorBoundaryFixture({
+            sessionSpawnNew: async input => {
+                spawns.push(String(input.creationKey));
+                if (spawns.length === 1) return { type: 'error', code: 'spawn_failed', retryable: true };
+                return projectSessionSpawnNewActionResultV1({ type: 'success', disposition: 'created', sessionId: 'model-session',
+                    executionTarget: intent.launch.executionTarget, organizationPlacement: { folderId: null, tagIds: [] }, initialInput: { status: 'notRequested' } });
+            },
+            sessionSendMessage: async input => {
+                messages.push(input);
+                return messages.length === 1 ? { status: 'rejected', code: 'session_input_target_unavailable' }
+                    : { status: 'accepted', localId: input.localId };
+            },
+        })));
+        const send = () => messaging.submitSessionComposerMessagingAction({ scope, sessionId: 'source', localId: attempt.localId,
+            text: 'Review this', intent, execute, draftRepository: repository, isCurrent: () => true, isAccountCurrent: () => true,
+            actionInput: { message: 'Review this', localId: attempt.localId, requestedAction: { v: 1, kind: 'send_now' } },
+            context: { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, runtimeAccountId: 'alice', serverId },
+        });
+        expect(spawns).toEqual([]);
+        expect(readSessionComposerMessagingHandoff(await send())).toBe('unaccepted');
+        expect(messages).toEqual([]);
+        expect(repository.readSessionMessagingDraftMutationAttempt({ scope, sessionId: 'source' })?.localId).toBe(attempt.localId);
+        expect(readSessionComposerMessagingHandoff(await send())).toBe('unaccepted');
+        expect(repository.readSessionMessagingDraftMutationAttempt({ scope, sessionId: 'source' })?.custody?.targets.targets)
+            .toEqual([{ serverId, sessionId: 'model-session' }]);
+        repository = createRepository();
+        expect(readSessionComposerMessagingHandoff(await send())).toBe('accepted');
+        expect(spawns).toHaveLength(2);
+        expect(new Set(spawns).size).toBe(1);
+        expect(messages).toHaveLength(2);
+        expect(messages).toEqual([expect.objectContaining({ sessionId: 'model-session', localId: attempt.localId, reply: 'return', returnToSessionId: 'source' }),
+            expect.objectContaining({ sessionId: 'model-session', localId: attempt.localId, reply: 'return', returnToSessionId: 'source' })]);
+    });
+
+    it('persists one non-executing source entry with the frozen targets and immediate refusals', async () => {
+        const serverId = await homes.addHome({ name: 'Ask source', serverUrl: 'https://ask-source.test', accountId: 'alice', currentAccount: true });
+        const source = createPlainSessionCurrentProjectionRecordFixture({ id: 'source' });
+        homes.answer(serverId, '/v2/sessions/source', { body: { session: source } });
+        let stored: unknown = null;
+        homes.answer(serverId, '/v2/sessions/source/messages', { select: async input => {
+            stored = input;
+            return { body: { didWrite: true, message: { id: 'source-entry', localId: deriveSessionMessageInvocationLocalIdV1('ask-attempt'), seq: 1, createdAt: 10 } } };
+        } });
+        await messaging.recordSessionComposerMessageResult({ scope: { serverId, accountId: 'alice' }, sessionId: 'source',
+            localId: 'ask-attempt', text: 'Review this', intent: { kind: 'ask', target: { selector: 'workers' }, reply: 'return' },
+            result: { ok: true, result: sendOutputSchema.parse({ kind: 'fanout', results: [
+                { target: { serverId, sessionId: 'a' }, result: admitted('accepted', 'ask-attempt') },
+                { target: { serverId, sessionId: 'b' }, result: { ok: false, errorCode: 'permission_denied', error: 'private error prose' } },
+            ] }) }, isCurrent: () => true });
+        expect(stored).toMatchObject({ localId: deriveSessionMessageInvocationLocalIdV1('ask-attempt'), messageRole: 'event', content: { t: 'plain', v: {
+            role: 'agent', content: { type: 'event', data: { type: 'message', message: 'Review this',
+                sessionMessageInvocationV1: { v: 1, localId: 'ask-attempt', reply: 'return', target: { selector: 'workers' }, targets: [
+                    { target: { serverId, sessionId: 'a' }, localId: 'ask-attempt', immediate: { status: 'accepted' } },
+                    { target: { serverId, sessionId: 'b' }, localId: 'ask-attempt', immediate: { status: 'rejected', code: 'permission_denied' } },
+                ] } } },
+        } } });
+        expect(JSON.stringify(stored)).not.toContain('private error prose');
+        const normalizedSource = () => {
+            if (!stored || typeof stored !== 'object' || !('content' in stored)) throw new Error('Source entry must exist');
+            const content = stored.content;
+            if (!content || typeof content !== 'object' || !('v' in content)) throw new Error('Plain source content required');
+            const normalized = normalizeRawMessage('source-entry', deriveSessionMessageInvocationLocalIdV1('ask-attempt'), 10,
+                RawRecordSchema.parse(content.v), { messageRole: 'event', seq: 1 });
+            if (!normalized) throw new Error('Source entry must normalize');
+            return normalized;
+        };
+        const state = createReducer();
+        const initial = reducer(state, [normalizedSource()]).messages[0]!;
+        // The Home harness also records its synthetic GET probe while projecting
+        // batch components; only the body-bearing POST is a physical batch read.
+        expect(homes.requests.filter(request => request.path === '/v2/sessions/read-batch' && request.input !== null
+            || request.path === '/v2/sessions/source/messages').map(request => request.path))
+            .toEqual(['/v2/sessions/read-batch', '/v2/sessions/source/messages']);
+        homes.answer(serverId, `/v2/sessions/source/messages/by-local-id/${encodeURIComponent(deriveSessionMessageInvocationLocalIdV1('ask-attempt'))}`, { select: () => {
+            if (!stored || typeof stored !== 'object' || !('content' in stored)) throw new Error('Source entry must exist');
+            return { body: { message: { id: 'source-entry', localId: deriveSessionMessageInvocationLocalIdV1('ask-attempt'), seq: 1,
+                createdAt: 10, messageRole: 'event', content: stored.content } } };
+        } });
+        await messaging.recordSessionComposerMessageResult({ scope: { serverId, accountId: 'alice' }, sessionId: 'source',
+            localId: 'ask-attempt', text: 'Review this', intent: { kind: 'ask', target: { selector: 'workers' }, reply: 'return' },
+            result: { ok: true, result: sendOutputSchema.parse({ kind: 'fanout', results: [
+                { target: { serverId, sessionId: 'b' }, result: admitted('accepted', 'ask-attempt') },
+                { target: { serverId, sessionId: 'new-worker' }, result: admitted('accepted', 'ask-attempt') },
+            ] }) }, isCurrent: () => true });
+        expect(stored).toMatchObject({ content: { v: { content: { data: { sessionMessageInvocationV1: { targets: [
+            { target: { serverId, sessionId: 'a' }, localId: 'ask-attempt', immediate: { status: 'accepted' } },
+            { target: { serverId, sessionId: 'b' }, localId: 'ask-attempt', immediate: { status: 'accepted' } },
+        ] } } } } } });
+        // The server publishes this same durable row as message-updated. A retry
+        // receipt must replace the event's data, without duplicating the Ask.
+        const corrected = { ...normalizedSource(), isAuthoritativeUpdate: true as const };
+        const updated = reducer(state, [corrected]).messages;
+        expect(updated).toHaveLength(1);
+        expect(updated[0]).toMatchObject({ id: initial.id, realID: initial.realID, localId: initial.localId, createdAt: initial.createdAt, seq: initial.seq });
+        expect(readSessionMessageInvocation(updated[0]!, { serverId, sessionId: 'source' })?.invocation.targets)
+            .toEqual(expect.arrayContaining([
+                expect.objectContaining({ target: { serverId, sessionId: 'b' }, immediate: { status: 'accepted' } }),
+            ]));
+        expect(state.messages.size).toBe(1);
+        expect(reducer(state, [structuredClone(corrected)]).messages).toEqual([]);
+    });
     it('distinguishes a partial target handoff from a fully admitted fanout', () => {
         const accepted = admitted('accepted', 'request-a');
         const failure = ActionExecuteFailureSchema.parse({ ok: false, errorCode: 'session_target_unavailable', error: 'Target unavailable' });

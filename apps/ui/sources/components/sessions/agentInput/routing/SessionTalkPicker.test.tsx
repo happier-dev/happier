@@ -33,7 +33,7 @@ const { SessionTalkPicker } = await import('./SessionTalkPicker');
 const { SessionTalkMatchingStep } = await import('./SessionTalkMatchingStep');
 const { useSessionTalkTargets } = await import('./sessionTalkTargets');
 const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
-const { resolveSessionTalkChipLabel } =
+const { resolveSessionTalkChipLabel, createRecipientActionChip } =
   await import('../definitions/createRecipientActionChip');
 type Intent = React.ComponentProps<typeof SessionTalkPicker>['intent'];
 
@@ -110,6 +110,40 @@ async function renderPicker(initial: Intent = null) {
 }
 
 describe('SessionTalkPicker (composer To: Send · Ask · Post update)', () => {
+  it('keeps a failed model Ask editable beside its Retry control', async () => {
+    const retries: number[] = [];
+    const openings: string[] = [];
+    const chip = createRecipientActionChip({ isReadOnly: false, participantTargets: [], recipient: null,
+      onRecipientChange: () => {}, sessionTalk: { sessionId: 'api', serverId,
+        intent: { kind: 'ask_new_session', launch: { executionTarget: { serverId, machineId: 'macbook' },
+          directory: { kind: 'path', path: '/repo' }, agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } } },
+        onIntentChange: () => {}, failure: { busy: false, onRetry: () => { retries.push(1); } },
+      } });
+    if (!chip) throw new Error('Model Ask chip required');
+    const screen = await renderScreen(<>{chip.render({ chipStyle: () => ({}), showLabel: true,
+      iconColor: '#000', textStyle: {}, countTextStyle: {}, popoverAnchorRef: React.createRef(),
+      toggleCollapsedPopover: key => openings.push(key) })}</>);
+    expect(screen.getTextContent()).toContain('session.participants.talk.modelAskFailed');
+    await act(async () => screen.pressByTestId('session-model-ask-chip-retry'));
+    expect(retries).toEqual([1]);
+    await act(async () => screen.pressByTestId('agent-input-recipient-chip'));
+    expect(openings).toHaveLength(1);
+  });
+
+  it('offers a model only for Ask and explains an unavailable source Machine without starting anything', async () => {
+    seedRelations();
+    const { screen, writes, closes } = await renderPicker();
+    const row = screen.findByTestId('session-talk-target:model');
+    expect(row).not.toBeNull();
+    expect(row?.props.disabled).toBe(true);
+    expect(screen.getTextContent()).toContain('newSession.recipeComposerMachineNotReady');
+    expect(writes).toEqual([]);
+    expect(closes).toEqual([]);
+    expect(homes.requests.some(request => request.path.includes('spawn'))).toBe(false);
+    await act(async () => screen.pressByTestId('session-talk-verb:send'));
+    expect(screen.findByTestId('session-talk-target:model')).toBeNull();
+  });
+
   it('settles Matching across equal filter renders and overlapping Account wakes without restarting its live read', async () => {
     seedRelations();
     homes.answer(serverId, '/v2/account/session-follow-rules', { body: { rules: [] } });

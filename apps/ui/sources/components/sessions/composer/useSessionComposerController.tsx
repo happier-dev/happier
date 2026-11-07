@@ -295,6 +295,7 @@ import { type SessionPresentationIntentApplier } from "@/components/sessions/com
 import { ComposerAuxiliaryFrame } from "@/components/sessions/shell/view/ComposerAuxiliaryFrame";
 import { COMPOSER_CONTENT_HORIZONTAL_INSET } from "@/components/sessions/agentInput/composerContentInset";
 import { WarningActionBanner, type WarningActionBannerProps } from "@/components/sessions/shell/view/WarningActionBanner";
+import { RowStatusLine } from '@/components/ui/status/RowStatusLine';
 import { useComposerBannerCollapse } from "@/components/sessions/composerBanners/ComposerBannerCollapseProvider";
 import { buildCollapsedComposerBannerBadge, buildComposerBannerHideAction } from "@/components/sessions/composerBanners/composerBannerCollapse";
 import { readExternalSessionLink } from "@/sync/domains/session/external/readExternalSessionLink";
@@ -827,6 +828,13 @@ export function useSessionComposerController({
         },
     }), [collapsedAgentInputTextHeight, setInputExpanded, isInputExpanded]);
     const [isComposerSending, setIsComposerSending] = React.useState(false);
+    const [modelAskFailure, setModelAskFailure] = React.useState<Readonly<{
+        sessionId: string; scopeKey: string; intentSignature: string; message: string;
+    }> | null>(null);
+    React.useEffect(() => {
+        if (!modelAskFailure) return;
+        return composerTextStore.subscribe(() => setModelAskFailure(null));
+    }, [composerTextStore, modelAskFailure]);
     const sessionComposerAdmissionReservationsRef = React.useRef(new Set<string>());
     const runWithSessionComposerAdmissionReservation = React.useCallback(<T,>(
         submit: () => Promise<T>,
@@ -5209,10 +5217,28 @@ export function useSessionComposerController({
             });
         }, [composerPluginActionController, composerPluginActionScopeSignal, openSessionComposerContributedAction]);
         const composerPluginActionChips = composerPluginPresentation.extraActionChips;
+        const agentInputSendRef = React.useRef<(options?: AgentInputSendOptions) => Promise<ActionExecuteResult>>(async () => ({
+            ok: false, errorCode: 'session_input_target_unavailable', error: 'session_input_target_unavailable',
+        }));
+        const handleAgentInputSend = React.useCallback(
+            (options?: AgentInputSendOptions) => {
+                if (!sessionAccountLifetime) return;
+                const submission = activeComposerRefRef.current.kind === 'session'
+                    ? submitSessionDraft({ sessionTarget: { ...sessionAccountLifetime.scope, sessionId }, sendOptions: options })
+                    : agentInputSendRef.current(options);
+                fireAndForget(submission, { tag: 'SessionView.composer.dispatch' });
+            },
+            [sessionAccountLifetime, sessionId],
+        );
+        const currentModelAskFailure = modelAskFailure && modelAskFailure.sessionId === sessionId
+            && modelAskFailure.scopeKey === sessionAccountScopeKey
+            && modelAskFailure.intentSignature === JSON.stringify(recipientState.sessionMessage) ? modelAskFailure : null;
         const sessionTalk = React.useMemo(() => ({
             sessionId, serverId: sessionRouteServerId ?? null,
             intent: recipientState.sessionMessage, onIntentChange: recipientState.setSessionMessage,
-        }), [sessionId, sessionRouteServerId, recipientState.sessionMessage, recipientState.setSessionMessage]);
+            ...(currentModelAskFailure ? { failure: { busy: isComposerSending, onRetry: handleAgentInputSend } } : {}),
+        }), [sessionId, sessionRouteServerId, recipientState.sessionMessage, recipientState.setSessionMessage,
+            currentModelAskFailure, isComposerSending, handleAgentInputSend]);
         const routingControls = useSessionAgentInputRoutingControls({
             isReadOnly,
             participantTargets,
@@ -6102,20 +6128,6 @@ export function useSessionComposerController({
         && !recipientState.recipient && !recipientState.scmDiffSummaryDiscussion
         && !armedContinuationTarget && !armedRouteContinuation
         && resolveVoiceSessionComposerRouting({ conversationSessionId: sessionId, sessionMetadata: ownerMetadata })?.kind !== 'adapter_text';
-    const agentInputSendRef = React.useRef<(options?: AgentInputSendOptions) => Promise<ActionExecuteResult>>(async () => ({
-        ok: false, errorCode: 'session_input_target_unavailable', error: 'session_input_target_unavailable',
-    }));
-    const handleAgentInputSend = React.useCallback(
-        (options?: AgentInputSendOptions) => {
-            if (!sessionAccountLifetime) return;
-            const submission = activeComposerRefRef.current.kind === 'session'
-                ? submitSessionDraft({ sessionTarget: { ...sessionAccountLifetime.scope, sessionId }, sendOptions: options })
-                : agentInputSendRef.current(options);
-            fireAndForget(submission,
-                { tag: 'SessionView.composer.dispatch' });
-        },
-        [sessionAccountLifetime, sessionId],
-    );
     const handleAgentInputAbort = useEventCallback(async () => {
         const lifetime = sessionAccountLifetime;
         try {
@@ -6142,6 +6154,11 @@ export function useSessionComposerController({
     const input = shouldShowInput ? (
         <PluginContextualResourceStoreProvider>
             <View>
+            {currentModelAskFailure ? (
+                <ComposerAuxiliaryFrame>
+                    <RowStatusLine testID="session-model-ask-failure" tone="bad" text={currentModelAskFailure.message} />
+                </ComposerAuxiliaryFrame>
+            ) : null}
             {authSurfaceState && !authRecoveryBanner.collapsed ? (
                 <ComposerAuxiliaryFrame>
                     <SessionAuthRecoveryBanner
@@ -6864,7 +6881,7 @@ export function useSessionComposerController({
                                                     isCurrent: () => outboundAccountLifetime.isCurrent() && !composerPluginActionScopeSignal.aborted,
                                                     isAccountCurrent: acceptedOutboundAccountLifetime.isCurrent,
                                                     actionInput: {
-                                                    sessionId: sessionMessaging.target, message: reviewedMessage,
+                                                    ...(sessionMessaging.kind !== 'ask_new_session' ? { sessionId: sessionMessaging.target } : {}), message: reviewedMessage,
                                                     ...(attempt ? { localId: attempt.localId } : {}),
                                                     requestedAction: { v: 1, kind: 'send_now' },
                                                     ...(submittedPermissionMode ? { permissionModeOverride: submittedPermissionMode } : {}),
@@ -6884,7 +6901,11 @@ export function useSessionComposerController({
                                             if (!admitted) {
                                                 if (!outboundAccountLifetime.isCurrent() || composerPluginActionScopeSignal.aborted) return { status: 'rejected' };
                                                 // The draft and its retry identity stay; say what actually happened.
-                                                if (outcome?.kind === 'partial') {
+                                                if (sessionMessaging.kind === 'ask_new_session' && outcome?.kind !== 'approval_pending') {
+                                                    setModelAskFailure({ sessionId, scopeKey: serverAccountScopeKeySuffix(outboundAccountLifetime.scope),
+                                                        intentSignature: JSON.stringify(sessionMessaging),
+                                                        message: (outcome?.kind === 'unaccepted' ? outcome.error : !result.ok ? result.error : null) ?? t('errors.failedToSendMessage') });
+                                                } else if (outcome?.kind === 'partial') {
                                                     Modal.alert(t('session.participants.talk.partialTitle'), t('session.participants.talk.partialBody', {
                                                         accepted: outcome.accepted, total: outcome.total }));
                                                 } else if (outcome?.kind === 'approval_pending') {
@@ -6895,6 +6916,7 @@ export function useSessionComposerController({
                                                 return { status: 'rejected' };
                                             }
                                             if (!acceptedOutboundAccountLifetime.isCurrent()) return { status: 'rejected' };
+                                            setModelAskFailure(null);
                                             handoff.accept();
                                             if (attempt) clearSessionMessagingDraftMutationAttempt({ scope: outboundAccountLifetime.scope,
                                                 sessionId, localId: attempt.localId });

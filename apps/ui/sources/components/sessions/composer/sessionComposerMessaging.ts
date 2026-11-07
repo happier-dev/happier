@@ -13,6 +13,9 @@ import type { ComposerSubmissionSnapshot } from './composerSubmissionCoordinator
 import { projectSessionMessageInvocationV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageInvocationV1';
 import { persistSessionMessageInvocation } from '@/sync/api/session/sessionMessageInvocationApi';
 import type { FrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { readActionApprovalRequestCreatedError } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { buildManualSessionCreationKey } from '@/sync/domains/session/spawn/manualSessionSpawnOperation';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { readSessionMessagingDraftMutationAttempt, retainSessionMessagingDraftCustody, flushSessionDraftLocally,
     type SessionDraftRepository, type SessionMessagingDraftCustody } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
@@ -24,7 +27,7 @@ export async function recordSessionComposerMessageResult(input: Readonly<{
     sessionId: string;
     localId: string;
     text: string;
-    intent: Exclude<SessionComposerMessageIntent, { kind: 'post_update' }>;
+    intent: Extract<SessionComposerMessageIntent, { kind: 'send' | 'ask' }>;
     result: ActionExecuteResult;
     isCurrent: () => boolean;
 }>): Promise<void> {
@@ -37,8 +40,9 @@ export async function recordSessionComposerMessageResult(input: Readonly<{
 }
 
 /** The composer admits the real Action and retains its result before relinquishing the captured draft. */
-export async function submitSessionComposerMessagingAction(input: Omit<Parameters<typeof recordSessionComposerMessageResult>[0], 'result'>
-    & Readonly<{ execute: FrontDoorActionExecute; actionInput: unknown; context: Parameters<FrontDoorActionExecute>[2];
+export async function submitSessionComposerMessagingAction(input: Omit<Parameters<typeof recordSessionComposerMessageResult>[0], 'result' | 'intent'>
+    & Readonly<{ intent: Exclude<SessionComposerMessageIntent, { kind: 'post_update' }>;
+        execute: FrontDoorActionExecute; actionInput: Readonly<Record<string, unknown>>; context: Parameters<FrontDoorActionExecute>[2];
         /** Captured Home/Account authority survives presentation retirement, never Account retirement. */
         isAccountCurrent: () => boolean;
         draftRepository?: Pick<SessionDraftRepository, 'readSessionMessagingDraftMutationAttempt' | 'retainSessionMessagingDraftCustody' | 'flushSessionDraftLocally'>;
@@ -48,6 +52,35 @@ export async function submitSessionComposerMessagingAction(input: Omit<Parameter
     const attempt = repository.readSessionMessagingDraftMutationAttempt(input);
     if (!attempt || attempt.localId !== input.localId) throw new Error('Composer draft attempt unavailable');
     let custody = attempt.custody;
+    let intent = input.intent;
+    let actionInput = input.actionInput;
+    if (intent.kind === 'ask_new_session') {
+        if (!custody) {
+            const { executeSessionSpawnNewAction, resolveSessionSpawnNewResultFailureMessage } = await import('@/sync/ops/actions/sessionSpawnNewAction');
+            let spawn: Awaited<ReturnType<typeof executeSessionSpawnNewAction>>;
+            try {
+                spawn = await executeSessionSpawnNewAction({ ...intent.launch, creationKey: buildManualSessionCreationKey(attempt.localId) },
+                    { ...input.context, surface: 'ui', actionRequestId: attempt.localId }, { execute: input.execute });
+            } catch (error) {
+                const approval = readActionApprovalRequestCreatedError(error);
+                if (!approval) throw error;
+                return { ok: true, result: { kind: 'approval_request_created', actionId: 'session.spawn_new', artifactId: approval.artifactId } };
+            }
+            if (!spawn.ok) return spawn;
+            if (spawn.result.type !== 'success') return { ok: false,
+                errorCode: spawn.result.type === 'error' ? spawn.result.code : RPC_ERROR_CODES.OUTCOME_UNKNOWN,
+                error: resolveSessionSpawnNewResultFailureMessage(spawn.result),
+            };
+            custody = { targets: { actionId: 'session.message.send', field: 'sessionId', selector: false,
+                targets: [{ serverId: intent.launch.executionTarget.serverId, sessionId: spawn.result.sessionId }] }, results: [] };
+            if (!repository.retainSessionMessagingDraftCustody({ ...input, custody })) throw new Error('Composer draft attempt retired');
+            await repository.flushSessionDraftLocally(input);
+        }
+        // The existing draft custody owns the created Session, including after reload.
+        // No second launch record or new retry identity is needed for this recipe.
+        intent = { kind: 'ask', target: custody.targets.targets[0].sessionId, reply: 'return' };
+        actionInput = { ...actionInput, sessionId: intent.target, reply: 'return', returnToSessionId: input.sessionId };
+    }
     const addressKey = (target: SessionMessagingDraftCustody['targets']['targets'][number]) => JSON.stringify([target.serverId, target.sessionId]);
     const previous = new Map(custody?.results.map(row => [addressKey(row.target), row]));
     const remaining = custody?.targets.targets.filter(target => {
@@ -64,7 +97,7 @@ export async function submitSessionComposerMessagingAction(input: Omit<Parameter
     // inference. Only unresolved leaves enter the existing Action executor.
     const result: ActionExecuteResult = custody && remaining?.length === 0
         ? custody.targets.selector ? { ok: true, result: { kind: 'fanout', results: custody.results } } : custody.results[0].result
-        : await input.execute('session.message.send', input.actionInput, {
+        : await input.execute('session.message.send', actionInput, {
         ...input.context,
         ...(resolved ? { sessionTargetsV1: resolved } : {}),
         onSessionTargetsResolved: notice => {
@@ -101,7 +134,7 @@ export async function submitSessionComposerMessagingAction(input: Omit<Parameter
         await repository.flushSessionDraftLocally(input);
         combined = custody.targets.selector ? { ok: true, result: { kind: 'fanout', results: custody.results } } : custody.results[0].result;
     }
-    await recordSessionComposerMessageResult({ ...input, result: combined, isCurrent: input.isAccountCurrent });
+    await recordSessionComposerMessageResult({ ...input, intent, result: combined, isCurrent: input.isAccountCurrent });
     return combined;
 }
 

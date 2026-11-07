@@ -1,7 +1,6 @@
-import { getRecipientActionChipPlacement } from './agentInputActionChipPlacements';
 import * as React from 'react';
 
-import type { ParticipantRecipientV1 } from '@happier-dev/protocol';
+import type { ParticipantRecipientV1 } from '@happier-dev/protocol/messages/structured/participantMessageV1';
 
 import type {
     AgentInputExtraActionChip,
@@ -10,8 +9,10 @@ import type {
 import type { SelectionListStep } from '@/components/ui/selectionList';
 import type { SessionParticipantTarget } from '@/sync/domains/session/participants/participantTargets';
 import { t } from '@/text';
+import { getRecipientActionChipPlacement } from './agentInputActionChipPlacements';
+export { getRecipientActionChipPlacement } from './agentInputActionChipPlacements';
 
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { RecipientChip, resolveRecipientMultiSelectLabel } from '../routing/RecipientChip';
@@ -28,6 +29,9 @@ import {
     resolveRecipientLabel,
     resolveRecipientPopoverSelectedOptionId,
 } from '../routing/recipientOptions';
+import { AgentInputRailChip } from '@/components/sessions/agentInput/definitions/agentInputChipRowReach';
+import { resolveExecutableModelParticipantDisplay } from '@/components/sessions/authoring/useExecutableParticipantLabel';
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 
 /**
  * Shared root-step builder used by BOTH the chip-definition factory (action-menu
@@ -119,6 +123,7 @@ export type SessionTalkChipBinding = Readonly<{
     serverId: string | null;
     intent: SessionTalkIntent | null;
     onIntentChange: (next: SessionTalkIntent | null) => void;
+    failure?: Readonly<{ busy: boolean; onRetry: () => void }>;
 }>;
 
 /** "To" while chatting; otherwise the whole sentence: "Ask Siblings", "Post update". */
@@ -127,6 +132,9 @@ export function resolveSessionTalkChipLabel(
     participantLabel: string | null,
 ): string {
     if (intent?.kind === 'post_update') return t('session.participants.talk.chipPostUpdate');
+    if (intent?.kind === 'ask_new_session') return t('session.participants.talk.chipModelAsk', {
+        model: resolveExecutableModelParticipantDisplay(intent.launch, []).modelLabel,
+    });
     const selector = readSessionTalkSelector(intent);
     if (intent && selector) {
         return t(intent.kind === 'ask' ? 'session.participants.talk.chipAsk' : 'session.participants.talk.chipSend', {
@@ -200,7 +208,8 @@ function createSessionTalkChip(params: Readonly<{
     sessionTalk: SessionTalkChipBinding;
 }>): AgentInputExtraActionChip {
     const participantLabel = params.recipient ? resolveRecipientLabel(params.participantTargets, params.recipient) : null;
-    const label = resolveSessionTalkChipLabel(params.sessionTalk.intent, participantLabel);
+    const failure = params.sessionTalk.intent?.kind === 'ask_new_session' ? params.sessionTalk.failure : undefined;
+    const label = failure ? t('session.participants.talk.modelAskFailed') : resolveSessionTalkChipLabel(params.sessionTalk.intent, participantLabel);
     const participants = params.participantTargets.length > 0 || params.recipient
         ? { targets: params.participantTargets, recipient: params.recipient, onRecipientChange: params.onRecipientChange }
         : null;
@@ -208,7 +217,7 @@ function createSessionTalkChip(params: Readonly<{
         key: SESSION_RECIPIENT_CHIP_KEY,
         controlId: 'recipient',
         placement: { ...getRecipientActionChipPlacement(), pending: params.recipient !== null || params.sessionTalk.intent !== null },
-        stabilityKey: JSON.stringify([params.sessionTalk.intent, params.recipient, params.participantTargets.length]),
+        stabilityKey: JSON.stringify([params.sessionTalk.intent, params.recipient, params.participantTargets.length, failure?.busy ?? null]),
         collapsedContentPopover: {
             title: t('session.participants.talk.title'),
             label,
@@ -230,7 +239,8 @@ function createSessionTalkChip(params: Readonly<{
             ),
         },
         render: ({ chipStyle, iconColor, textStyle, showLabel, chipAnchorRef, toggleCollapsedPopover }) => (
-            <Pressable
+            <View style={styles.chipRow}>
+            <AgentInputRailChip
                 ref={chipAnchorRef}
                 testID="agent-input-recipient-chip"
                 accessibilityRole="button"
@@ -239,19 +249,22 @@ function createSessionTalkChip(params: Readonly<{
                     hapticsLight();
                     toggleCollapsedPopover?.(SESSION_RECIPIENT_CHIP_KEY);
                 }}
-                hitSlop={{ top: 8, bottom: 10, left: 4, right: 4 }}
-                style={(state) => chipStyle(state.pressed)}
+                style={chipStyle}
             >
                 <View style={styles.chipRow}>
                     <Icon name="navigation-arrow" size={AGENT_INPUT_CHIP_ICON_SIZE_PX} color={iconColor} style={AGENT_INPUT_CHIP_ICON_STYLE} />
-                    {showLabel ? <Text numberOfLines={1} style={textStyle}>{label}</Text> : null}
+                    {showLabel ? <Text numberOfLines={1} style={[textStyle, failure ? styles.failedText : undefined]}>{label}</Text> : null}
                 </View>
-            </Pressable>
+            </AgentInputRailChip>
+            {failure ? <TextLinkButton testID="session-model-ask-chip-retry" label={t('common.retry')}
+                disabled={failure.busy} onPress={failure.onRetry} /> : null}
+            </View>
         ),
     };
 }
 
 const styles = StyleSheet.create((theme) => ({
+    failedText: { color: theme.colors.state.danger.foreground },
     chipRow: {
         flexDirection: 'row',
         alignItems: 'center',

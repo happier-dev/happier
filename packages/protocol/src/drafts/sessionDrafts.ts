@@ -9,6 +9,7 @@ import {
 } from '../json/strictJsonValue.js';
 import { ParticipantRecipientV1Schema } from '../messages/structured/participantMessageV1.js';
 import { SessionTargetV1Schema } from '../actions/sessionTargetV1.js';
+import { SessionServerStartSpawnDraftV1Schema } from '../sessions/creation/sessionSpawnNewInputV2.js';
 import { ScmDiffSummaryDiscussInputSchema } from '../scm/diffSummaryResult.js';
 import {
   SyncedSessionAuthoringValueV1Schema,
@@ -115,6 +116,7 @@ export const SessionDraftSessionMessagingValueV1Schema = lazyZodSchema(() => z.d
     timeoutSeconds: z.optional(z.number().check(z.int(), z.positive())),
   }),
   z.strictObject({ kind: z.literal('post_update') }),
+  z.strictObject({ kind: z.literal('ask_new_session'), launch: SessionServerStartSpawnDraftV1Schema }),
 ]));
 export type SessionDraftSessionMessagingValueV1 = z.infer<typeof SessionDraftSessionMessagingValueV1Schema>;
 

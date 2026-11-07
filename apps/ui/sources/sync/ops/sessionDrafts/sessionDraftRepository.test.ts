@@ -1,17 +1,19 @@
 import { describe, expect, it, vi } from 'vitest';
 import type {
     SessionDraftAddressV1,
+    SessionDraftDocumentV1} from '@happier-dev/protocol/drafts/sessionDrafts';
+import type {
     SessionDraftAddressV2,
-    SessionDraftDocumentV1,
     SessionDraftDocumentV2,
     SessionDraftStoredContentEnvelopeV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/drafts/sessionDraftsV2';
 import {
     canonicalSessionDraftAddressV1,
-    createSessionDraftPrivatePayloadV2,
     SessionDraftDocumentV1Schema,
     SessionDraftPrivatePayloadV1Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/drafts/sessionDrafts';
+import {
+    createSessionDraftPrivatePayloadV2} from '@happier-dev/protocol/drafts/sessionDraftsV2';
 
 import { createDeferred, requireComposerDraftDocument } from '@/dev/testkit';
 import { createSessionDraftCipher } from '@/sync/encryption/sessionDraftEncryption';
@@ -52,6 +54,25 @@ function createMemoryStorage() {
         delete: (key: string) => values.delete(key),
     };
 }
+
+it('re-reads only the transferred draft after subscribe while retaining sibling draft ownership', async () => {
+    const storage = createMemoryStorage();
+    const main = createSessionDraftRepository({ storage, cipher: plainCipher(), syncEnabled: false });
+    main.writeExistingSessionDraft({ scope, sessionId: 'session-a', patch: { text: 'Before move' } });
+    main.writeExistingSessionDraft({ scope, sessionId: 'sibling', patch: { text: 'Sibling' } });
+    await main.flushSessionDraftLocally({ scope });
+    const destination = createSessionDraftRepository({ storage, cipher: plainCipher(), syncEnabled: false });
+    destination.writeExistingSessionDraft({ scope, sessionId: 'session-a', patch: { text: 'Edited in window' } });
+    await destination.flushSessionDraftLocally({ scope });
+    const changed = vi.fn();
+    const unsubscribe = main.subscribeSessionDraft(scope, sessionAddress, changed);
+    const sibling = main.getSessionDraftSnapshot(scope, { kind: 'session', sessionId: 'sibling' });
+    await main.reloadSessionDraftFromLocalPersistence({ scope, address: sessionAddress });
+    expect(main.getSessionComposerDraftSnapshot(scope, sessionAddress)?.composer.text.value).toBe('Edited in window');
+    expect(main.getSessionDraftSnapshot(scope, { kind: 'session', sessionId: 'sibling' })).toBe(sibling);
+    expect(changed).toHaveBeenCalledTimes(1);
+    unsubscribe();
+});
 
 function plainCipher(): SessionDraftRepositoryCipher {
     return {
@@ -126,6 +147,37 @@ describe('sessionDraftRepository', () => {
         expect(reader.getSessionComposerDraftSnapshot(scope, address)?.composer.text.value).toBe('Frame-owned draft');
     });
 
+    it('recovers only an unambiguous locally retained New Session launch after a repository reload', async () => {
+        const storage = createMemoryStorage();
+        const interruptedDraftId = uuid(956);
+        const writer = createSessionDraftRepository({ storage, cipher: plainCipher(), syncEnabled: false });
+        writer.writeNewSessionDraft({ scope, draftId: interruptedDraftId,
+            patch: { text: 'Preserve this first turn' }, materializationIntent: 'userEdit' });
+        writer.writeSessionDraftLocalSupplement({ scope,
+            address: { kind: 'newSession', draftId: interruptedDraftId },
+            patch: { launchUserAttemptId: 'interrupted-attempt', embedNewSessionOwnerId: 'embed-parent' } });
+
+        const restored = createSessionDraftRepository({ storage, cipher: plainCipher(), syncEnabled: false });
+        await restored.prepareLocalSessionDraftScope(scope);
+        expect(restored.resolveInterruptedNewSessionDraftId(scope, 'embed-parent')).toBe(interruptedDraftId);
+
+        const appDraftId = uuid(958);
+        restored.writeNewSessionDraft({ scope, draftId: appDraftId,
+            patch: { text: 'Signed-in app launch' }, materializationIntent: 'userEdit' });
+        restored.writeSessionDraftLocalSupplement({ scope,
+            address: { kind: 'newSession', draftId: appDraftId },
+            patch: { launchUserAttemptId: 'app-attempt' } });
+        expect(restored.resolveInterruptedNewSessionDraftId(scope, 'embed-parent')).toBe(interruptedDraftId);
+
+        const competingDraftId = uuid(957);
+        restored.writeNewSessionDraft({ scope, draftId: competingDraftId,
+            patch: { text: 'A different in-flight launch' }, materializationIntent: 'userEdit' });
+        restored.writeSessionDraftLocalSupplement({ scope,
+            address: { kind: 'newSession', draftId: competingDraftId },
+            patch: { launchUserAttemptId: 'competing-attempt', embedNewSessionOwnerId: 'embed-parent' } });
+        expect(restored.resolveInterruptedNewSessionDraftId(scope, 'embed-parent')).toBeNull();
+    });
+
     it('seals the qualified Doc passage in the existing Account draft payload and restores it on another repository', async () => {
         const address = { kind: 'newDiscussion' } as const;
         const passage = { ref: { kind: 'doc' as const, artifactId: 'notes', serverId: scope.serverId },
@@ -155,6 +207,25 @@ describe('sessionDraftRepository', () => {
         expect(afterRead).not.toHaveProperty('submission');
         expect(afterRead).toMatchObject({ recipients: { value: recipients } });
         expect(afterRefusal.getSessionComposerDraftSnapshot(scope, address)?.composer.text.value).toBe('Review this');
+    });
+
+    it('preserves a pending model Ask and its retry identity across persistence and reload', async () => {
+        const storage = createMemoryStorage();
+        const repository = createSessionDraftRepository({ storage, cipher: plainCipher(), syncEnabled: false });
+        const intent = { kind: 'ask_new_session', launch: {
+            executionTarget: { serverId: scope.serverId, machineId: 'macbook' },
+            directory: { kind: 'path', path: '/workspace/checkout' },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+        } } as const;
+        repository.writeExistingSessionDraft({ scope, sessionId: sessionAddress.sessionId, patch: { text: 'Check this change', sessionMessaging: intent } });
+        const attempt = repository.getOrCreateSessionMessagingDraftMutationAttempt({ scope, sessionId: sessionAddress.sessionId,
+            currentness: repository.captureSessionDraftCurrentness({ scope, address: sessionAddress }), intent });
+        await repository.flushSessionDraftLocally({ scope });
+        const reloaded = createSessionDraftRepository({ storage, cipher: plainCipher(), syncEnabled: false });
+        await reloaded.reloadSessionDraftFromLocalPersistence({ scope, address: sessionAddress });
+        expect(readSessionMessagingFromDraft(reloaded.getSessionDraftSnapshot(scope, sessionAddress)?.document)).toEqual(intent);
+        expect(reloaded.getOrCreateSessionMessagingDraftMutationAttempt({ scope, sessionId: sessionAddress.sessionId,
+            currentness: reloaded.captureSessionDraftCurrentness({ scope, address: sessionAddress }), intent })).toEqual(attempt);
     });
 
     it('retains one local message identity for the exact captured Session draft across reloads and Homes', () => {
@@ -3072,6 +3143,7 @@ describe('sessionDraftRepository', () => {
 
     it('hydrates openable records while preserving a listed draft whose session context is unavailable', async () => {
         const baseCipher = plainCipher();
+        let contextAvailable = false;
         const unavailableAddress = { kind: 'session', sessionId: 'session-b' } as const;
         const laterAddress = { kind: 'newSession', draftId: uuid(235) } as const;
         const firstDocument = createSessionDocument('first', uuid(233));
@@ -3100,7 +3172,7 @@ describe('sessionDraftRepository', () => {
             cipher: {
                 seal: baseCipher.seal,
                 open: vi.fn(async (address, content) => {
-                    if (address.kind === 'session' && address.sessionId === unavailableAddress.sessionId) {
+                    if (!contextAvailable && address.kind === 'session' && address.sessionId === unavailableAddress.sessionId) {
                         throw new SessionDraftContextUnavailableError();
                     }
                     return baseCipher.open(address, content);
@@ -3115,7 +3187,7 @@ describe('sessionDraftRepository', () => {
             patch: { text: 'preserve locally' },
         });
 
-        await repository.ensureSessionDraftRepositoryHydrated(scope);
+        expect(await repository.ensureSessionDraftRepositoryHydrated(scope)).toBe(false);
 
         expect(repository.getSessionDraftSnapshot(scope, sessionAddress)?.document).toEqual(firstDocument);
         expect(repository.getSessionDraftSnapshot(scope, laterAddress)?.document).toEqual(laterDocument);
@@ -3126,6 +3198,11 @@ describe('sessionDraftRepository', () => {
             document: { composer: { text: { value: 'preserve locally' } } },
         });
         expect(transport.read).not.toHaveBeenCalled();
+        contextAvailable = true;
+        expect(await repository.ensureSessionDraftRepositoryHydrated(scope)).toBe(true);
+        expect(repository.getSessionDraftSnapshot(scope, unavailableAddress)?.document).toMatchObject({
+            composer: { text: { value: 'preserve locally' } },
+        });
     });
 
     it('preserves a locally known draft when exact-read hydration cannot load its session context', async () => {
