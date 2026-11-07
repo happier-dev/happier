@@ -68,6 +68,7 @@ const CURRENT_SOURCE_RESOLUTION_CONCURRENCY = 4;
  */
 export class ConnectedServiceCurrentSourceHydrationConflictError extends Error {
   override readonly name = 'ConnectedServiceCurrentSourceHydrationConflictError';
+  readonly status = 409;
 }
 
 export type ConnectedServiceCurrentSourceHydrationResult = Readonly<{

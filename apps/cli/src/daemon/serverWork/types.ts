@@ -85,6 +85,13 @@ export type DaemonServerWorkRequest<TPayload> = Readonly<{
   payload: TPayload;
   payloadBytes: number;
   run: (payload: TPayload) => Promise<void>;
+  /** Retry transient failures/readiness deferrals until success or lifecycle cancellation. */
+  retry?: Readonly<{
+    signal: AbortSignal;
+    baseDelayMs: number;
+    maxDelayMs: number;
+    jitterMs: number;
+  }>;
 }>;
 
 export type DaemonServerWorkSnapshot = Readonly<{

@@ -1,5 +1,7 @@
 import type { ManagedConnectionState } from '@happier-dev/connection-supervisor';
 
+import { computeRestartDelayMs } from '@/subprocess/supervision/backoff';
+
 import { classifyDaemonServerWorkError } from './classifyDaemonServerWorkError';
 import type {
   DaemonServerWorkBudget,
@@ -208,7 +210,7 @@ export function createDaemonServerWorkScheduler(params: Readonly<{
     return await params.budget.awaitIdle(0);
   }
 
-  async function runWork<TPayload>(work: DaemonServerWorkRequest<TPayload>): Promise<DaemonServerWorkOutcome> {
+  async function runWorkAttempt<TPayload>(work: DaemonServerWorkRequest<TPayload>): Promise<DaemonServerWorkOutcome> {
     const purpose = String(work.purpose);
     const key = String(work.key);
     const payloadBytes = normalizePayloadBytes(work.payloadBytes);
@@ -239,6 +241,7 @@ export function createDaemonServerWorkScheduler(params: Readonly<{
     addPending(key, payloadBytes);
     try {
       await params.budget.run({ purpose }, async () => {
+        if (work.retry?.signal.aborted) return;
         await work.run(work.payload);
       });
       const completedAt = now();
@@ -267,6 +270,38 @@ export function createDaemonServerWorkScheduler(params: Readonly<{
       return { status: 'failed', classification };
     } finally {
       removePending(key, payloadBytes);
+    }
+  }
+
+  async function runWork<TPayload>(work: DaemonServerWorkRequest<TPayload>): Promise<DaemonServerWorkOutcome> {
+    let attempt = 0;
+    while (true) {
+      if (work.retry?.signal.aborted) return { status: 'suppressed', reason: 'shutdown' };
+      const outcome = await runWorkAttempt(work);
+      if (work.retry?.signal.aborted) return { status: 'suppressed', reason: 'shutdown' };
+      if (!work.retry || (outcome.status !== 'deferred'
+        && !(outcome.status === 'failed' && outcome.classification.retryable))) return outcome;
+      attempt += 1;
+      const retryAfterMs = outcome.status === 'failed' ? outcome.classification.retryAfterMs : outcome.retryAfterMs;
+      const delayMs = Math.max(retryAfterMs ?? 0, computeRestartDelayMs({
+        attempt,
+        baseDelayMs: work.retry.baseDelayMs,
+        maxDelayMs: work.retry.maxDelayMs,
+        jitterMs: work.retry.jitterMs,
+        random: Math.random,
+      }));
+      const stats = getKeyStats(String(work.key), now());
+      stats.backoffReason = outcome.status === 'failed' ? outcome.classification.kind : outcome.reason;
+      stats.nextEligibleAt = now() + delayMs;
+      // The scheduler owns both readiness deferrals and failure retries. No timer survives shutdown.
+      const signal = work.retry.signal;
+      await new Promise<void>((resolve) => {
+        const onAbort = () => { clearTimeout(timer); signal.removeEventListener('abort', onAbort); resolve(); };
+        const timer = setTimeout(() => { signal.removeEventListener('abort', onAbort); resolve(); }, delayMs);
+        timer.unref?.();
+        signal.addEventListener('abort', onAbort, { once: true });
+        if (signal.aborted) onAbort();
+      });
     }
   }
 

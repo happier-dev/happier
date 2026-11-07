@@ -2,7 +2,24 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { ConnectedServiceUsageSourceV1 } from '@happier-dev/protocol';
 
+import { createDaemonServerWorkBudget } from './serverWork/createDaemonServerWorkBudget';
+import { createDaemonServerWorkScheduler } from './serverWork/createDaemonServerWorkScheduler';
+import { resolveConnectedServiceQuotasDaemonOptions } from './connectedServices/quotas/resolveConnectedServiceQuotasDaemonOptions';
+
 import { activateConnectedServiceQuotaAutomationAfterProviderAccountUsageHydration } from './connectedServices/accountUsage/startupActivation';
+
+function activationServerWork() {
+  const options = resolveConnectedServiceQuotasDaemonOptions({});
+  return {
+    serverWorkScheduler: createDaemonServerWorkScheduler({ budget: createDaemonServerWorkBudget({ maxConcurrentWrites: 1 }) }),
+    retry: {
+      signal: new AbortController().signal,
+      baseDelayMs: options.failureBackoffMinMs,
+      maxDelayMs: options.failureBackoffMaxMs,
+      jitterMs: options.failureBackoffMinMs * options.failureBackoffJitterPct,
+    },
+  };
+}
 
 function deferred<T>(): Readonly<{
   promise: Promise<T>;
@@ -46,6 +63,7 @@ describe('startDaemon provider-account usage startup composition', () => {
     });
 
     const activation = activateConnectedServiceQuotaAutomationAfterProviderAccountUsageHydration({
+      ...activationServerWork(),
       enabled: true,
       quotaFetchers: [
         { serviceId: 'openai-codex' },
@@ -94,6 +112,7 @@ describe('startDaemon provider-account usage startup composition', () => {
     const onActivationError = vi.fn();
 
     await expect(activateConnectedServiceQuotaAutomationAfterProviderAccountUsageHydration({
+      ...activationServerWork(),
       enabled: true,
       quotaFetchers: [{ serviceId: 'openai-codex' }],
       awaitReadiness: async () => {},
@@ -120,6 +139,7 @@ describe('startDaemon provider-account usage startup composition', () => {
     const startLoop = vi.fn();
 
     await expect(activateConnectedServiceQuotaAutomationAfterProviderAccountUsageHydration({
+      ...activationServerWork(),
       enabled: false,
       quotaFetchers: [{ serviceId: 'openai-codex' }],
       awaitReadiness,

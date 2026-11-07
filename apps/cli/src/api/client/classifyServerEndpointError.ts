@@ -1,3 +1,4 @@
+import { isAccountSettingsStaleError } from '@/settings/accountSettings/accountSettingsRefreshError';
 import { readHttpStatus } from './httpStatusError';
 
 export type ServerEndpointErrorKind =
@@ -165,7 +166,7 @@ export function classifyServerEndpointError(
       retryAfterMs: readRetryAfterMs(error),
     };
   }
-  if (code === 'HAPPIER_ACCOUNT_MODE_UNKNOWN') {
+  if (code === 'HAPPIER_ACCOUNT_MODE_UNKNOWN' || isAccountSettingsStaleError(error)) {
     return {
       kind: 'dependency_unavailable',
       retryable: true,

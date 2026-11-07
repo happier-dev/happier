@@ -1933,6 +1933,21 @@ builder publishes the resolved home even when the daemon inherited no home overr
 
 ### Connected-service quota refresh outcomes (development)
 
+Quota automation starts only after account settings are ready and Provider Account
+Usage has hydrated from the current connected-service inventory. Startup activation
+runs as background daemon server work, sharing its budget, connectivity gate,
+transient-error classification and sampled warning logs. Transient settings,
+network, timeout, inventory-conflict and server failures retry until activation or
+shutdown. Delays use the existing quota failure-backoff bounds and jitter through
+the daemon's backoff calculator; activation does not hold machine connection open.
+Authentication and invalid-content failures leave the policy disabled and emit a
+warning. Shutdown cancels retry waits and prevents late coordinator creation.
+
+Late activation assigns the same coordinator, schedules current-source refresh and
+starts the same quota loop as successful startup. Connectivity pause/resume reads
+the current loop handle, so a loop created after machine connection still follows
+connectivity changes.
+
 An explicit quota refresh records a request, then the daemon quota coordinator
 publishes its outcome through the existing Provider Account Usage owner.
 Protocol's `isProviderAccountUsageRefreshRequestSettled` is the completion rule:
