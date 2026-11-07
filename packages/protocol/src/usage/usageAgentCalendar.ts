@@ -3,7 +3,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import type { UsageAnalyticsContribution, UsageAnalyticsQueryResponse } from './usageAnalyticsContracts.js';
 import { createEmptyUsageSelectedCost, mergeUsageSelectedCosts, resolveUsageContributionCosts, selectResolvedUsageCost,
     type UsageSelectedCostAccumulator } from './usageAggregation.js';
-import { resolveUsageBucketBounds, resolveUsageCalendarDateStart, resolveUsageCalendarInstant } from './usageCalendar.js';
+import { createUsageFixedBucketResolver, resolveUsageBucketBounds, resolveUsageCalendarDateStart, resolveUsageCalendarInstant } from './usageCalendar.js';
 import type { UsageCostMode } from './usageCostFacts.js';
 import { isUsageNightHour, summarizeUsageConcurrency, UsageNightHoursV1Schema,
     type UsageWorkIntervalSegment, type UsageWorkIntervalsInput, type UsageWorkIntervalsProjection } from './usageWorkIntervals.js';
@@ -370,14 +370,15 @@ function projectUsageAgentCalendarPopulation(input: UsageAgentCalendarInput): Us
     };
     const projectBuckets = (granularity: 'day' | 'week' | 'hour', hours?: readonly BucketFacts[]): { facts: BucketFacts[]; buckets: CalendarBucket[] } => {
         const buckets = new Map<number, BucketFacts>();
+        const boundsAt = createUsageFixedBucketResolver(granularity, period.startMs, timeZoneOffsetMinutes);
         for (let cursor = period.startMs; granularity !== 'hour' && cursor < period.endMs;) {
-            const bounds = resolveUsageBucketBounds(granularity, cursor, timeZoneOffsetMinutes);
+            const bounds = boundsAt(cursor);
             const endMs = Math.min(period.endMs, bounds.bucketEndMs);
             buckets.set(bounds.bucketStartMs, { startMs: cursor, endMs, ...createBucketPopulation() });
             cursor = endMs;
         }
         const bucketAt = (instant: number) => {
-            const bounds = resolveUsageBucketBounds(granularity, instant, timeZoneOffsetMinutes);
+            const bounds = boundsAt(instant);
             let bucket = buckets.get(bounds.bucketStartMs);
             if (!bucket && granularity === 'hour' && instant >= period.startMs && instant < period.endMs) {
                 bucket = { startMs: Math.max(period.startMs, bounds.bucketStartMs), endMs: Math.min(period.endMs, bounds.bucketEndMs),

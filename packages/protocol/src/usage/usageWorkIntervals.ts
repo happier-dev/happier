@@ -1,4 +1,4 @@
-import { resolveUsageCalendarInstant } from './usageCalendar.js';
+import { createUsageFixedBucketResolver, resolveUsageCalendarInstant } from './usageCalendar.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import type { SessionTurnV1 } from '../sessions/turns/sessionTurnV1.js';
@@ -357,12 +357,14 @@ function computeUsageWorkIntervals(input: UsageWorkIntervalsInput): UsageWorkInt
     if (result.unknownEndCount || result.invalidIntervalCount) result.coverage = 'partial';
     const days = new Map<string, { date: string; busyMs: number; waitMs: number }>();
     const cells = new Map<string, { weekday: number; hour: number; busyMs: number; waitMs: number }>();
-    const calendarByInstant = new Map<number, ReturnType<typeof resolveUsageCalendarInstant>>();
+    const hourBoundsAt = createUsageFixedBucketResolver('hour', input.period.startMs, input.timeZoneOffsetMinutes);
+    const calendarByHour = new Map<number, ReturnType<typeof resolveUsageCalendarInstant>>();
     const calendarAt = (instant: number) => {
-        let calendar = calendarByInstant.get(instant);
+        const bucketStartMs = hourBoundsAt(instant).bucketStartMs;
+        let calendar = calendarByHour.get(bucketStartMs);
         if (!calendar) {
-            calendar = resolveUsageCalendarInstant(instant, input.timeZoneOffsetMinutes);
-            calendarByInstant.set(instant, calendar);
+            calendar = resolveUsageCalendarInstant(bucketStartMs, input.timeZoneOffsetMinutes);
+            calendarByHour.set(bucketStartMs, calendar);
         }
         return calendar;
     };

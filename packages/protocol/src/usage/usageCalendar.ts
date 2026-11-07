@@ -46,6 +46,23 @@ export function resolveUsageBucketBounds(
     };
 }
 
+/** Fixed query offsets make hours, days and weeks equal-width partitions.
+ * Resolve the calendar origin once for the range, then place its rows arithmetically.
+ * Months deliberately stay with resolveUsageBucketBounds because their widths vary.
+ */
+export function createUsageFixedBucketResolver(
+    granularity: 'hour' | 'day' | 'week',
+    rangeStartMs: number,
+    timeZoneOffsetMinutes: number,
+): (timestampMs: number) => UsageBucketBounds {
+    const origin = resolveUsageBucketBounds(granularity, rangeStartMs, timeZoneOffsetMinutes);
+    const widthMs = origin.bucketEndMs - origin.bucketStartMs;
+    return timestampMs => {
+        const bucketStartMs = origin.bucketStartMs + Math.floor((timestampMs - origin.bucketStartMs) / widthMs) * widthMs;
+        return { bucketStartMs, bucketEndMs: bucketStartMs + widthMs };
+    };
+}
+
 /** Calendar labels and weekday/hour cells use the same offset as their bucket. */
 export function resolveUsageCalendarInstant(timestampMs: number, timeZoneOffsetMinutes: number) {
     const localValue = new Date(timestampMs + timeZoneOffsetMinutes * MINUTES_TO_MILLISECONDS);

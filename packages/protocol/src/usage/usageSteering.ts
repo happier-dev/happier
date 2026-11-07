@@ -1,6 +1,6 @@
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { resolveUsageBucketBounds, resolveUsageCalendarInstant } from './usageCalendar.js';
+import { createUsageFixedBucketResolver, resolveUsageCalendarInstant } from './usageCalendar.js';
 import { mergeUsageWorkIntervalSegments, type UsageClosedTurnFact, type UsageWorkIntervalFact,
     type UsageWorkIntervalsProjection, type UsageWorkPermissionFact } from './usageWorkIntervals.js';
 import type { UsageAcceptedInputFact } from './resolveUsageHowYouWork.js';
@@ -47,16 +47,21 @@ export function projectUsageSteering(input: Readonly<{
         byAnsweringClient: { ios: 0, android: 0, web: 0, desktop: 0, unknown: 0 } });
     const agents = new Map<string | null, UsageSteeringSummary['byAgent'][number]>();
     const hours = new Map<string, UsageSteeringSummary['hourly'][number]>();
+    const hourBoundsAt = createUsageFixedBucketResolver('hour', input.period.startMs, input.timeZoneOffsetMinutes);
     const agent = (agentId: string | null) => {
         let row = agents.get(agentId);
         if (!row) { row = { agentId, ...empty() }; agents.set(agentId, row); }
         return row;
     };
     const hour = (agentId: string | null, instant: number) => {
-        const { date, weekday, hour } = resolveUsageCalendarInstant(instant, input.timeZoneOffsetMinutes);
-        const key = JSON.stringify([agentId, date, hour]);
+        const bucketStartMs = hourBoundsAt(instant).bucketStartMs;
+        const key = JSON.stringify([agentId, bucketStartMs]);
         let row = hours.get(key);
-        if (!row) { row = { agentId, date, weekday, hour, ...empty() }; hours.set(key, row); }
+        if (!row) {
+            const { date, weekday, hour } = resolveUsageCalendarInstant(bucketStartMs, input.timeZoneOffsetMinutes);
+            row = { agentId, date, weekday, hour, ...empty() };
+            hours.set(key, row);
+        }
         return row;
     };
     const inPeriod = (time: number) => Number.isSafeInteger(time) && time >= input.period.startMs && time < input.period.endMs;
@@ -85,7 +90,7 @@ export function projectUsageSteering(input: Readonly<{
             const row = agent(agentId);
             row[field] = (row[field] ?? 0) + spans.reduce((sum, span) => sum + span.endMs - span.startMs, 0);
             for (const span of spans) for (let cursor = span.startMs; cursor < span.endMs;) {
-                const end = Math.min(span.endMs, resolveUsageBucketBounds('hour', cursor, input.timeZoneOffsetMinutes).bucketEndMs);
+                const end = Math.min(span.endMs, hourBoundsAt(cursor).bucketEndMs);
                 const cell = hour(agentId, cursor);
                 cell[field] = (cell[field] ?? 0) + end - cursor;
                 cursor = end;

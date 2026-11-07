@@ -1,6 +1,6 @@
 import type { UsageAnalyticsContribution, UsageAnalyticsQueryRequest, UsagePricingPopulation } from './usageAnalyticsContracts.js';
 import { resolveUsageCalendarLeaders, resolveUsageCalendarShare, type UsageAgentCalendar } from './usageAgentCalendar.js';
-import { resolveUsageBucketBounds, resolveUsageCalendarInstant } from './usageCalendar.js';
+import { createUsageFixedBucketResolver, resolveUsageCalendarInstant } from './usageCalendar.js';
 import type { UsageCostMode } from './usageCostFacts.js';
 import type { UsageModelPriceCatalog, UsageModelPriceOverridesV1 } from './usageModelPriceCatalog.js';
 import { buildUsagePricingPopulation, mergeUsagePricingPopulations, priceUsagePricingPopulation, resolveUsagePricingPopulationStates } from './usagePricingPopulation.js';
@@ -19,8 +19,9 @@ export function buildUsageSummaryCalendarPricing(value: UsageAgentCalendar, rows
     // query-wide admission before partitioning identical row objects by cell.
     const states = resolveUsagePricingPopulationStates(selected);
     const hourlyAgents = new Map<string, UsageAnalyticsContribution[]>();
+    const hourBoundsAt = createUsageFixedBucketResolver('hour', value.period.startMs, query.timeZoneOffsetMinutes);
     for (const row of selected) {
-        const bounds = resolveUsageBucketBounds('hour', row.observedAtMs, query.timeZoneOffsetMinutes);
+        const bounds = hourBoundsAt(row.observedAtMs);
         const key = agentTarget(target('hours', Math.max(value.period.startMs, bounds.bucketStartMs)), row.agentId);
         const group = hourlyAgents.get(key) ?? [];
         group.push(row);
@@ -39,19 +40,24 @@ function calendarPricingTargets(value: UsageAgentCalendar, populations: Readonly
         group.push(population);
         groups.set(key, group);
     };
-    for (const hour of value.hours) for (const agent of hour.agents) {
-        const population = populations[agentTarget(target('hours', hour.startMs), agent.agentId)];
-        if (!population) continue;
+    const families = ([['days', 'day'], ['weeks', 'week'], ['hours', 'hour']] as const).map(([family, granularity]) => ({
+        family, boundsAt: createUsageFixedBucketResolver(granularity, value.period.startMs, value.timeZoneOffsetMinutes),
+    }));
+    for (const hour of value.hours) {
         const local = resolveUsageCalendarInstant(hour.startMs, value.timeZoneOffsetMinutes);
         const keys = [target('period', 0), target('weekdayHourBuckets', `${local.weekday}:${local.hour}`),
             target('hourOfDayBuckets', local.hour)];
-        for (const [family, granularity] of [['days', 'day'], ['weeks', 'week'], ['hours', 'hour']] as const) {
-            const bounds = resolveUsageBucketBounds(granularity, hour.startMs, value.timeZoneOffsetMinutes);
+        for (const { family, boundsAt } of families) {
+            const bounds = boundsAt(hour.startMs);
             keys.push(target(family, Math.max(value.period.startMs, bounds.bucketStartMs)));
         }
-        for (const key of keys) {
-            append(key, population);
-            append(agentTarget(key, agent.agentId), population);
+        for (const agent of hour.agents) {
+            const population = populations[agentTarget(target('hours', hour.startMs), agent.agentId)];
+            if (!population) continue;
+            for (const key of keys) {
+                append(key, population);
+                append(agentTarget(key, agent.agentId), population);
+            }
         }
     }
     return Object.fromEntries([...groups].map(([key, group]) => [key, mergeUsagePricingPopulations(group)]));

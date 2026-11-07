@@ -25,6 +25,7 @@ import { RPC_ERROR_CODES } from '../rpc/errors.js';
 import { OperationUpdateRequiredV1Schema, type OperationUpdateRequiredV1 } from '../compat/operationUpdateRequiredV1.js';
 import { PublicProfilePrivateFactsSchema, PublicProfilePrivateFieldCoverageSchema, PublicProfilePrivateAccountingFactsSchema } from '../account/publicProfileAccounting.js';
 import { readUsageAccountingSessionMembership } from './usageAccountingMembership.js';
+import { resolveUsageBucketBounds } from './usageCalendar.js';
 export type { UsagePlanInsights } from './usagePlanInsights.js';
 
 /** Source transport currentness is separate from accounting completeness. */
@@ -682,17 +683,10 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput): U
     const detailAuthorized = canRetainUsageReadFailure(detailSnapshot?.errorCode);
     const readDetail = detailAuthorized ? detailSnapshot?.detail : undefined;
     const priorDetail = admitted?.howYouWork.inputs.detail as UsageHowYouWorkDetailInput | undefined;
-    // The opened query has already selected its authorized membership. Keep
-    // unchanged nested evidence identities when another source replaces its
-    // snapshot, so interval work follows facts rather than source wrappers.
-    const facts = readDetail?.facts && priorDetail?.facts && sameStrictJsonValue(readDetail.facts, priorDetail.facts)
-      ? priorDetail.facts : readDetail?.facts;
-    const activityAtMs = readDetail?.activityAtMs && priorDetail?.activityAtMs
-      && sameStrictJsonValue(readDetail.activityAtMs, priorDetail.activityAtMs)
-      ? priorDetail.activityAtMs : readDetail?.activityAtMs;
-    const observedDetail = readDetail && (facts !== readDetail.facts || activityAtMs !== readDetail.activityAtMs)
-      ? { ...readDetail, ...(facts === readDetail.facts ? {} : { facts }),
-        ...(activityAtMs === readDetail.activityAtMs ? {} : { activityAtMs }) } : readDetail;
+    // Reconcile the complete admitted detail, including its wrapper. Source
+    // phases rebuild equal arrays; retaining only facts still re-runs every
+    // downstream detail reducer for those unchanged publications.
+    const observedDetail = readDetail && priorDetail ? retainUsageMembers(readDetail, priorDetail) : readDetail;
     const pendingDetail = !detailSnapshot && input.sources?.some(source => source.source === 'how_you_work' && source.status === 'pending');
     // A failed replacement has no new admission. A supplied detail (including
     // an unknown/refused result) supersedes old facts even if another read failed.
@@ -746,11 +740,15 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput): U
       ? { startHour: retainedNightHours.startHour, endHour: retainedNightHours.endHour } : undefined) : configuredNightHours ?? undefined;
     const retainedHowYouWork = retainedDetail?.howYouWork;
     const detailNowMs = input.nowMs ?? detailSnapshot?.asOfMs;
+    const sessionCoverage = detailAuthorized ? detailSnapshot?.sessionCoverage : undefined;
     const calendarStartMs = endMs === undefined ? undefined
       : resolveUsageQueryPeriod(query, endMs).startMs === undefined ? undefined : startMs;
     const detailFacts = projectAdmittedUsageInputs(admitted?.howYouWork, {
       accounting: snapshot?.value, detail: observedDetail, calendar: calendar.value, startMs, endMs, calendarStartMs,
-      sessionCoverage: detailAuthorized ? detailSnapshot?.sessionCoverage : undefined, nowMs: detailNowMs,
+      selectedSessions: sessionCoverage?.selected, admittedSessions: sessionCoverage?.admitted, unreadSessions: sessionCoverage?.notRead,
+      // The resolver uses this clock only to select today's calendar day.
+      todayStartMs: detailNowMs === undefined ? undefined
+        : resolveUsageBucketBounds('day', detailNowMs, query.timeZoneOffsetMinutes).bucketStartMs,
       nightStartHour: nightHours?.startHour, nightEndHour: nightHours?.endHour,
       retaining: retainedHowYouWork !== undefined,
       retained: retainedHowYouWork === admitted?.howYouWork.value && admitted?.howYouWork.inputs.retaining
@@ -763,7 +761,7 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput): U
       includeSteering: query.includeTranscriptEvidence,
       includeAgentCalendar: query.includeActivity || query.includeModelTimeline,
       costMode: query.costBasis,
-      sessionCoverage: detailAuthorized ? detailSnapshot?.sessionCoverage : undefined,
+      sessionCoverage,
       retained: retainedHowYouWork,
       nowMs: detailNowMs, nightHours,
     }));
