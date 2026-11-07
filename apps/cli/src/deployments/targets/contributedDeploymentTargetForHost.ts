@@ -1,10 +1,14 @@
 import { randomUUID } from 'node:crypto';
-import { DeploymentDeployInputV1Schema, type ActionExecutorContext } from '@happier-dev/protocol';
-import type { HostReviewedChildrenPlanV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { DeploymentDeployInputV1Schema, DeploymentReceiptObserveInputV1Schema, DeploymentTeardownDetachInputV1Schema,
+    type ActionExecutorContext } from '@happier-dev/protocol';
+import type { HostReviewedChildrenPlanV1, HostReviewedChildrenPreparationV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionApprovalRequestCreatedResultSchema, isActionOutcomeUnknownErrorCodeV1,
     type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DeploymentPlatformContentV1Schema, DeploymentReceiptFailureV1Schema, type DeploymentPlatformContentV1,
-    type DeploymentContentV1, type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol';
+    type DeploymentContentV1, type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1,
+    type DeploymentReceiptFailureV1 } from '@happier-dev/deployment-protocol';
+import { DeploymentSourceAdmissionFailureV1Schema, type DeploymentExecutionFailureDetailsV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
+import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { DeploymentTargetRoleCommonInputV1Schema, DeploymentTargetRoleInputSchemasV1,
     DeploymentTargetRoleResultV1Schema, type DeploymentTargetRuntimeRoleV1 } from '@happier-dev/protocol/plugins/contributions/v2';
 import { normalizeStrictJsonValue, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -24,6 +28,10 @@ import type { OwnServerDeploymentTransition, OwnServerDeploymentTargetHostInput 
 import { readDeploymentSourceIntentForHost } from '../readDeploymentSourceIntentForHost';
 import { readDeploymentTargetV1 } from './deploymentTargetCatalog';
 import { admitDeploymentTargetRoleForHost } from './admitDeploymentTargetRoleForHost';
+import { projectDeploymentFailure as failure } from '../deploymentFailure';
+import { resolveScmHostingRefForHost, type ExecuteScmSourceReadAction } from '@/scm/hostingProviders/resolveRefForHost';
+import { DeploymentLogsReadSuccessV1Schema, type DeploymentLogsReadInputV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
+import { DeploymentTargetLogsResultV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 
 type ContentReference = Pick<ReturnType<typeof DeploymentDeployInputV1Schema.parse>,
     'contentArtifactId' | 'contentHeaderVersion' | 'contentBodyVersion'>;
@@ -33,6 +41,7 @@ type Host = Readonly<{
     credentials: StoredCredentials; serverId: string; serverHttpBaseUrl: string; machineId: string;
     resolveRequesterIdentity: import('../readDeploymentSourceIntentForHost').DeploymentSourceRequesterIdentityResolver;
     acquirePluginRuntimeRegistryLease?(): Promise<PluginRuntimeRegistryLease>;
+    executeSourceReadAction?: ExecuteScmSourceReadAction;
     readEnvironment(request: Readonly<{ environmentId: string; context: ActionExecutorContext }>): Promise<DeploymentEnvironmentDetailV1>;
     readReceipt(request: Readonly<{ environmentId: string; deploymentId: string; context: ActionExecutorContext }>): Promise<DeploymentReceiptDetailV1>;
     readPreparedDeploymentContent(request: Readonly<{ input: ReturnType<typeof DeploymentDeployInputV1Schema.parse>; context: ActionExecutorContext }>):
@@ -44,12 +53,29 @@ type Host = Readonly<{
         ReturnType<OwnServerDeploymentTargetHostInput['writeTransition']>;
 }>;
 const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
-const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
 const codeOf = (error: unknown) => error instanceof Error && 'code' in error && typeof error.code === 'string'
     ? error.code : 'deployment_content_unavailable';
 const deployRole = (method: 'gitIntegration' | 'upload'): Role => method === 'upload' ? 'uploadDeploy' : 'deploy';
 
+function receiptFailureContent(content: DeploymentPlatformContentV1, result: ActionExecuteFailure,
+    fallbackPhase: DeploymentReceiptFailureV1['phase']): DeploymentPlatformContentV1 & { failure: DeploymentReceiptFailureV1 } {
+    const authorDetails = result.details && typeof result.details === 'object' && 'details' in result.details
+        ? result.details.details : undefined;
+    const phase = DeploymentReceiptFailureV1Schema.shape.phase.safeParse(
+        authorDetails && typeof authorDetails === 'object' && 'phase' in authorDetails ? authorDetails.phase : undefined);
+    const sourceAdmission = DeploymentSourceAdmissionFailureV1Schema.safeParse(authorDetails);
+    return { ...content, failure: DeploymentReceiptFailureV1Schema.parse(projectDeploymentFailureRecoveryV1({ code: result.errorCode,
+        phase: phase.success ? phase.data : fallbackPhase,
+        ...(sourceAdmission.success ? { sourceAdmission: sourceAdmission.data } : {}),
+        ...(result.failureCause ? { failureCause: result.failureCause } : {}),
+        ...(typeof result.effectAttempted === 'boolean' ? { effectAttempted: result.effectAttempted } : {}) })) };
+}
+
 /** The deployment factory consumes declared Actions; their existing executor owns placement and policy. */
+export const deploymentTeardownDetachPreview = {
+    summary: 'Detach this target link and keep any remote resources running. Their data and ongoing costs remain.',
+};
+
 export function createContributedDeploymentTargetForHost(host: Host) {
     async function withRole<T>(request: ScopeRequest, environment: DeploymentEnvironmentDetailV1, role: Role,
         run: (scope: Readonly<{
@@ -69,7 +95,8 @@ export function createContributedDeploymentTargetForHost(host: Host) {
             const descriptor = readDeploymentTargetV1(link.source, lease.registry.contributes.deploymentTargets);
             if (!descriptor || descriptor.role !== 'runtime' || descriptor.targetKind !== link.targetKind) return refuse('deployment_target_role_unavailable');
             const readAction = (role: Role) => {
-                const reference = descriptor.actions[role];
+                const reference = role === 'logs.build' ? descriptor.actions.logs?.build
+                    : role === 'logs.runtime' ? descriptor.actions.logs?.runtime : descriptor.actions[role];
                 if (!reference || reference.kind !== 'plugin') return refuse('unsupported_action');
                 const action = parseQualifiedPluginActionId(reference.actionId);
                 if (!action) return refuse('deployment_target_role_unavailable');
@@ -82,7 +109,7 @@ export function createContributedDeploymentTargetForHost(host: Host) {
             // A retry can observe the retained receipt instead of sending it again.
             // Both declarations come from this same selected target and registry lease.
             const children: HostReviewedChildrenPlanV1['children'] = [{ action, role },
-                ...(role !== 'observe' && descriptor.actions.observe
+                ...(role !== 'observe' && !role.startsWith('logs.') && descriptor.actions.observe
                     ? [{ action: readAction('observe').action, role: 'observe' }] : [])];
             const principal = row.content?.credentialPrincipal;
             if (principal?.kind !== 'account' || principal.target.kind !== 'account') return refuse('deployment_target_role_unavailable');
@@ -132,7 +159,10 @@ export function createContributedDeploymentTargetForHost(host: Host) {
             const assertCurrent = scope.assertCurrent;
             const source = await readDeploymentSourceIntentForHost({ request: { environment, context: request.context,
                 sourceIntent: request.sourceIntent, sha: request.sha, requireWorkspace: sourceMethod === 'upload' },
-                host: { ...host, credentials: scope.credentials, assertAuthority: assertCurrent } });
+                host: { ...host, credentials: scope.credentials, assertAuthority: assertCurrent,
+                    resolveRepositoryRef: (repository, ref, context) => resolveScmHostingRefForHost({ repository, ref, context,
+                        acquireRuntimeRegistryLease: host.acquirePluginRuntimeRegistryLease,
+                        executeSourceReadAction: host.executeSourceReadAction }) } });
             const content = DeploymentPlatformContentV1Schema.parse({ sourceIntent: source.sourceIntent, sourceMethod,
                 machines: [], images: [], machineResults: [], steps: [], platform: {
                     targetLinkRevision: scope.common.expectedTargetLinkRevision,
@@ -168,7 +198,12 @@ export function createContributedDeploymentTargetForHost(host: Host) {
                 sourceIntent: candidate.sourceIntent, actionId: request.actionId, requireWorkspace: candidate.sourceMethod === 'upload' },
                 host: { ...host, credentials: scope.credentials, assertAuthority: scope.assertCurrent } });
             await source.assertSourceCurrent();
+            const summary = [role === deployRole(candidate.sourceMethod) && candidate.sourceIntent.kind === 'repository'
+                && environment.content.definition.kind === 'repository'
+                ? `Deploy ${environment.content.definition.ref} at ${candidate.sourceIntent.sha.slice(0, 7)}.` : undefined,
+                candidate.platform.preparedNative?.reviewNotice].filter(Boolean).join(' ');
             return { input: request.input, hostReviewedChildren: { children: scope.children }, preview: normalizeStrictJsonValue({ sourceIntent: candidate.sourceIntent,
+                ...(summary ? { summary } : {}),
                 sourceMethod: candidate.sourceMethod, platform: { targetLinkRevision: candidate.platform.targetLinkRevision,
                     credentialPrincipal: candidate.platform.credentialPrincipal, providerIdentity: candidate.platform.providerIdentity,
                     providerEnvironment: candidate.platform.providerEnvironment,
@@ -176,6 +211,27 @@ export function createContributedDeploymentTargetForHost(host: Host) {
                     ...(candidate.platform.preparedNative ? { preparedNative: candidate.platform.preparedNative } : {}) },
                     controllerMachineId: environment.environment.controllerMachineId }) };
         });
+    }
+
+    async function prepareTeardownDetach(request: ScopeRequest & Pick<ReturnType<typeof DeploymentTeardownDetachInputV1Schema.parse>,
+        'reason' | 'requestKey'>, environment: DeploymentEnvironmentDetailV1) {
+        const row = environment.targetLinks.find(item => item.targetLink.id === request.targetLinkId);
+        if (!row || row.targetLink.source.kind !== 'plugin') return null;
+        if (!host.acquirePluginRuntimeRegistryLease) return refuse('deployment_target_role_unavailable');
+        const lease = await host.acquirePluginRuntimeRegistryLease();
+        try {
+            const link = row.targetLink;
+            const descriptor = readDeploymentTargetV1(link.source, lease.registry.contributes.deploymentTargets);
+            if (!descriptor || descriptor.role !== link.role || descriptor.targetKind !== link.targetKind)
+                return refuse('deployment_target_role_unavailable');
+            if (descriptor.actions.teardown) return null;
+            await host.assertCurrent(request.context);
+            return { input: DeploymentTeardownDetachInputV1Schema.parse({ serverId: host.serverId,
+                environmentId: environment.environment.id, expectedRevision: environment.environment.revision,
+                targetLinkId: link.id, expectedTargetLinkRevision: link.revision, requestKey: request.requestKey,
+                reason: request.reason, detachKeepRunning: true }),
+                preview: deploymentTeardownDetachPreview };
+        } finally { await lease.release(); }
     }
 
     async function prepareTeardownChildren(request: ScopeRequest,
@@ -186,8 +242,76 @@ export function createContributedDeploymentTargetForHost(host: Host) {
         });
     }
 
+    async function writeObservation(receipt: DeploymentReceiptDetailV1, content: DeploymentPlatformContentV1,
+        observation: ReturnType<typeof DeploymentTargetRoleResultV1Schema.parse>, context: ActionExecutorContext,
+        environmentRevision: number) {
+        // A provider's read timestamp is liveness, not new receipt content.
+        if (receipt.deployment.state === observation.state && sameStrictJsonValue(
+            { ...content.platform.observation, observedAtMs: 0 }, { ...observation, observedAtMs: 0 })) {
+            return { ok: true as const, environmentId: receipt.deployment.environmentId, revision: environmentRevision,
+                deploymentId: receipt.deployment.id, deploymentRevision: receipt.deployment.revision, state: receipt.deployment.state };
+        }
+        const written = await host.writeTransition({ environmentId: receipt.deployment.environmentId,
+            deploymentId: receipt.deployment.id, receiptHeader: receipt.deployment,
+            expectedRevision: receipt.deployment.revision, state: observation.state,
+            content: { ...content, steps: observation.steps ?? content.steps,
+                platform: { ...content.platform, observation } }, context });
+        return written.ok ? written : { ...failure('outcome_unknown'), effectAttempted: true };
+    }
+
+    /** A finite observer spends the retained receipt's controller proof, never another Deploy request. */
+    async function prepareObservation(request: Readonly<{
+        input: ReturnType<typeof DeploymentReceiptObserveInputV1Schema.parse>; context: ActionExecutorContext;
+    }>): Promise<HostReviewedChildrenPreparationV1 | ActionExecuteFailure> {
+        try {
+            if (request.input.serverId !== host.serverId) return failure('server_scope_mismatch');
+            const environment = await host.readEnvironment({ environmentId: request.input.environmentId, context: request.context });
+            const receipt = await host.readReceipt({ environmentId: request.input.environmentId,
+                deploymentId: request.input.deploymentId, context: request.context });
+            const row = environment.targetLinks.find(item => item.targetLink.id === receipt.deployment.targetLinkId);
+            if (row?.targetLink.source.kind !== 'plugin') return failure('unsupported_action');
+            const content = DeploymentPlatformContentV1Schema.parse(receipt.content);
+            const identity = readInstallationIdentityIfExistsSync();
+            const accepted = receipt.deployment.acceptedExecution;
+            if (!identity || !accepted || accepted.controller.machineId !== host.machineId
+                || accepted.controller.installationId !== identity.installationId
+                || environment.environment.controllerMachineId !== host.machineId) return failure('machine_unavailable');
+            if (receipt.deployment.state !== 'queued' && receipt.deployment.state !== 'running') {
+                return { children: [], executeAdmittedAction: async () => ({ ok: true, result: {
+                    ok: true, environmentId: environment.environment.id, revision: environment.environment.revision,
+                    deploymentId: receipt.deployment.id, deploymentRevision: receipt.deployment.revision, state: receipt.deployment.state,
+                } }) };
+            }
+            // A queued receipt without a provider id has not handed off its native effect yet.
+            if (!content.platform.observation.providerDeploymentId) return failure('outcome_unknown');
+            return await withRole<HostReviewedChildrenPreparationV1>({ environmentId: request.input.environmentId,
+                targetLinkId: receipt.deployment.targetLinkId, context: request.context }, environment, 'observe', async scope => {
+                const input = DeploymentTargetRoleInputSchemasV1.observe.parse({ ...scope.common,
+                    deploymentId: receipt.deployment.id, expectedDeploymentRevision: receipt.deployment.revision,
+                    actionOperationId: receipt.deployment.actionOperationId,
+                    providerDeploymentId: content.platform.observation.providerDeploymentId });
+                await scope.admit(input, 'execution', receipt);
+                return { children: [{ action: scope.action, role: 'observe', input: normalizeStrictJsonValue(input) }],
+                    executeAdmittedAction: async ({ context }) => {
+                        try {
+                            if (!context.hostReviewedChild) return failure('unsupported_action');
+                            const result = await context.hostReviewedChild.invoke({ action: scope.action, role: 'observe',
+                                input: normalizeStrictJsonValue(input) });
+                            if (!result.ok) return result;
+                            const observation = DeploymentTargetRoleResultV1Schema.safeParse(result.result);
+                            if (!observation.success || observation.data.providerDeploymentId !== content.platform.observation.providerDeploymentId)
+                                return failure('outcome_unknown');
+                            const written = await writeObservation(receipt, content, observation.data, context, environment.environment.revision);
+                            return written.ok ? { ok: true, result: written } : written;
+                        } catch (error) { return failure(context.signal?.aborted ? 'cancelled' : codeOf(error), error); }
+                    } };
+            });
+        } catch (error) { return failure(request.context.signal?.aborted ? 'cancelled' : codeOf(error), error); }
+    }
+
     async function execute(request: DeploymentReceiptDispatchV1) {
         let receipt: DeploymentReceiptDetailV1 | undefined;
+        let providerInvocationStarted = false;
         let providerEffectObserved = false;
         let transitionAttempted = false;
         let effectContent: DeploymentPlatformContentV1 | undefined;
@@ -243,22 +367,23 @@ export function createContributedDeploymentTargetForHost(host: Host) {
                         providerDeploymentId: priorProviderDeploymentId } } : {}),
                 });
                 await scope.admit(input, 'execution', receipt);
+                providerInvocationStarted = true;
                 const result = await request.context.hostReviewedChild!.invoke({ action: scope.action, role,
                     input: normalizeStrictJsonValue(input) });
                 if (!result.ok) {
                     const unknown = isActionOutcomeUnknownErrorCodeV1(result.errorCode) || result.effectAttempted === true;
-                    const authorDetails = result.details && typeof result.details === 'object' && 'details' in result.details
-                        ? result.details.details : undefined;
-                    const providerFailure = DeploymentReceiptFailureV1Schema.safeParse({ code: result.errorCode,
-                        phase: authorDetails && typeof authorDetails === 'object' && 'phase' in authorDetails
-                            ? authorDetails.phase : undefined });
-                    const failureContent = providerFailure.success ? { ...content, failure: providerFailure.data } : content;
+                    const failureContent = receiptFailureContent(content, result, result.effectAttempted === false
+                        ? 'admission' : role === 'observe' || role === 'teardown' ? role : 'send');
                     providerEffectObserved = unknown;
                     transitionAttempted = true;
                     await host.writeTransition({ environmentId: request.input.environmentId, deploymentId: receipt!.deployment.id,
                         receiptHeader: receipt!.deployment, expectedRevision: receipt!.deployment.revision, state: unknown ? 'outcome_unknown' : 'failed', content: failureContent, context: request.context })
                         .catch(() => undefined);
-                    return result;
+                    return { ...result, details: {
+                        serverId: host.serverId, environmentId: request.input.environmentId,
+                        targetLinkId: receipt!.deployment.targetLinkId, deploymentId: receipt!.deployment.id,
+                        failure: failureContent.failure,
+                    } satisfies DeploymentExecutionFailureDetailsV1 };
                 }
                 const deferred = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
                 if (deferred.success) return refuse('action_interactive_review_required');
@@ -275,27 +400,72 @@ export function createContributedDeploymentTargetForHost(host: Host) {
                 effectContent = { ...content, steps: observation.data.steps ?? content.steps,
                     platform: { ...content.platform, observation: observation.data } };
                 transitionAttempted = true;
-                const written = await host.writeTransition({ environmentId: request.input.environmentId, deploymentId: receipt!.deployment.id,
-                    receiptHeader: receipt!.deployment, expectedRevision: receipt!.deployment.revision, state: observation.data.state,
-                    content: effectContent, context: request.context });
-                return written.ok ? written : { ...failure('outcome_unknown'), effectAttempted: true };
+                return writeObservation(receipt!, content, observation.data, request.context, environment.environment.revision);
             });
         } catch (error) {
             if (providerEffectObserved) {
+                const result = { ...failure('outcome_unknown', error), effectAttempted: true };
                 if (!transitionAttempted && receipt && effectContent) {
                     await host.writeTransition({ environmentId: request.input.environmentId, deploymentId: receipt.deployment.id,
-                        receiptHeader: receipt.deployment, expectedRevision: receipt.deployment.revision, state: 'outcome_unknown', content: effectContent,
+                        receiptHeader: receipt.deployment, expectedRevision: receipt.deployment.revision, state: 'outcome_unknown',
+                        content: receiptFailureContent(effectContent, result, 'observe'),
                         context: request.context }).catch(() => undefined);
                 }
-                return { ...failure('outcome_unknown'), effectAttempted: true };
+                return result;
             }
+            const result = { ...failure(request.context.signal?.aborted ? 'cancelled' : codeOf(error), error),
+                ...(!providerInvocationStarted ? { effectAttempted: false } : {}) };
             if (ownsReceipt && receipt && effectContent && !transitionAttempted) {
                 await host.writeTransition({ environmentId: request.input.environmentId, deploymentId: receipt.deployment.id,
                     receiptHeader: receipt.deployment, expectedRevision: receipt.deployment.revision, state: request.context.signal?.aborted ? 'cancelled' : 'failed',
-                    content: effectContent, context: request.context }).catch(() => undefined);
+                    content: receiptFailureContent(effectContent, result, providerInvocationStarted ? 'send' : 'admission'),
+                    context: request.context }).catch(() => undefined);
             }
-            return failure(request.context.signal?.aborted ? 'cancelled' : codeOf(error));
+            return result;
         }
     }
-    return { prepareCandidate, prepareAction, prepareTeardownChildren, execute };
+    /** Select the target's declared reader once; own-server keeps its native reader. */
+    async function prepareLogs(request: Readonly<{ input: DeploymentLogsReadInputV1; context: ActionExecutorContext }>):
+        Promise<HostReviewedChildrenPreparationV1 | ActionExecuteFailure | null> {
+        try {
+            const address = request.input;
+            if (address.serverId !== host.serverId || address.machineId !== host.machineId) return failure('target_mismatch');
+            const environment = await host.readEnvironment({ environmentId: address.environmentId, context: request.context });
+            const row = environment.targetLinks.find(row => row.targetLink.id === address.targetLinkId);
+            if (!row) return failure('target_mismatch');
+            if (row.targetLink.source.kind !== 'plugin') return null;
+            const role = address.kind === 'build' ? 'logs.build' : 'logs.runtime';
+            const receipt = await host.readReceipt({ environmentId: address.environmentId, deploymentId: address.deploymentId, context: request.context });
+            return await withRole<HostReviewedChildrenPreparationV1 | ActionExecuteFailure | null>({ environmentId: address.environmentId, targetLinkId: address.targetLinkId,
+                context: request.context }, environment, role, async scope => {
+                const input = DeploymentTargetRoleInputSchemasV1[role].parse({ ...scope.common,
+                    deploymentId: receipt.deployment.id, expectedDeploymentRevision: receipt.deployment.revision,
+                    actionOperationId: receipt.deployment.actionOperationId,
+                    ...(receipt.content.platform?.observation.providerDeploymentId
+                        ? { providerDeploymentId: receipt.content.platform.observation.providerDeploymentId } : {}),
+                    ...(address.cursor ? { cursor: address.cursor } : {}),
+                    ...(address.kind === 'build' ? { ...(address.ref ? { ref: address.ref } : {}),
+                        ...(address.tail ? { tail: address.tail } : {}) } : { service: address.service }) });
+                await scope.admit(input, 'execution', receipt);
+                return { children: [{ action: scope.action, role, input: normalizeStrictJsonValue(input) }],
+                    executeAdmittedAction: async ({ context }) => {
+                        if (!context.hostReviewedChild) return failure('unsupported_action');
+                        const result = await context.hostReviewedChild.invoke({ action: scope.action, role, input: normalizeStrictJsonValue(input) });
+                        if (!result.ok) return result;
+                        const logs = DeploymentTargetLogsResultV1ProtocolSchema.parse(result.result);
+                        return { ok: true, result: DeploymentLogsReadSuccessV1Schema.parse({ ok: true,
+                            environmentId: address.environmentId, deploymentId: address.deploymentId, targetLinkId: address.targetLinkId,
+                            machineId: address.machineId, installationId: address.installationId, kind: address.kind,
+                            ...(address.kind === 'runtime' ? { service: address.service } : {}), logs }) };
+                    } };
+            });
+        } catch (error) {
+            const code = request.context.signal?.aborted ? 'cancelled'
+                : error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : 'deployment_failed';
+            return code === 'unsupported_action' ? { ...failure(code), details: {
+                requiredFact: `deploymentTarget.actions.logs.${request.input.kind}`,
+                remedy: 'Choose a log kind declared by this deployment target.' } } : failure(code, error);
+        }
+    }
+    return { prepareCandidate, prepareAction, prepareTeardownDetach, prepareTeardownChildren, prepareObservation, prepareLogs, execute };
 }

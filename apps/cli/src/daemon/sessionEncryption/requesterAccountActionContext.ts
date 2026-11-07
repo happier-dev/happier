@@ -1,11 +1,11 @@
 import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
-import type { RequesterEnvironmentAccessObservation } from '@/api/client/accountEncryptionCurrentnessObservation';
 import type { ExternalActionExecutionAuthorizationV1, ExternalActionRequesterAccountProjectionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import type { StoredCredentials } from '@/persistence';
 import type { AccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import type { ResolveExternalActionEncryption } from '../externalActions/executeExternalAction';
+import type { RequesterEnvironmentAccessObservation } from '@/api/client/accountEncryptionCurrentnessObservation';
 
 export type RetainedRequesterAccountCustody = Readonly<{
   isCurrent(): Promise<boolean>;
@@ -16,6 +16,8 @@ export type RetainedRequesterAccountCustody = Readonly<{
 /** Finite Account custody at an admitted ingress, never a Session or a credential store. */
 export type RequesterAccountActionContext = Readonly<{
   invocation?: ExternalActionRequesterInvocationV1;
+  /** Host-local retained controller packet; never serialized as Action input or a new credential. */
+  deploymentChildExecution?: import('@happier-dev/protocol/socketRpc').WorkspaceSyncSourceExecutionV1;
   deploymentChild?: import('@happier-dev/protocol').DeploymentChildRpcV1;
   credentials: StoredCredentials;
   accountEncryptionCurrentness: AccountEncryptionCurrentnessResponse;
@@ -28,19 +30,21 @@ export type RequesterAccountActionContext = Readonly<{
   /** Local installed custody, separate from fresh Home effect authorization. */
   isCustodyCurrent?: () => Promise<boolean>;
   refreshAccountSettings(signal?: AbortSignal): Promise<boolean>;
+  /** Existing requester Account/Home feed; invalidation only, never an access grant. */
+  subscribeEnvironmentAccess(listener: (event: RequesterEnvironmentAccessObservation) => void): () => void;
   /** Retained relationship custody needs an installed lifetime owner independent of finite ingress. */
   retainCustody?: () => RetainedRequesterAccountCustody;
   retain(): () => Promise<void>;
   dispose(): Promise<void>;
-
-subscribeEnvironmentAccess(listener: (event: RequesterEnvironmentAccessObservation) => void): () => void;
-
-
-
-deploymentChildExecution?: import('@happier-dev/protocol/socketRpc').WorkspaceSyncSourceExecutionV1;
 }>;
 
 export const requesterActionContext = Symbol('admittedRequesterAccountActionContext');
+
+/** Enumerable only for host-local object spread; HTTP header enumeration omits Symbols. */
+export const requesterAccountEncryptionMode = Symbol('admittedRequesterAccountEncryptionMode');
+export type RequesterAccountAuthorizationHeaders = Readonly<Record<string, string>> & Readonly<{
+  [requesterAccountEncryptionMode]?: 'plain' | 'e2ee';
+}>;
 
 /** Host-local custody facet; strict parsing/JSON forwarding cannot carry credentials or settings. */
 export function readRequesterAccountActionContext(authorization?: ExternalActionExecutionAuthorizationV1): RequesterAccountActionContext | null {
@@ -49,8 +53,21 @@ export function readRequesterAccountActionContext(authorization?: ExternalAction
   return projection?.[requesterActionContext] ?? null;
 }
 
-/** Enumerable only for host-local object spread; HTTP header enumeration omits Symbols. */
-export const requesterAccountEncryptionMode = Symbol('admittedRequesterAccountEncryptionMode');
-export type RequesterAccountAuthorizationHeaders = Readonly<Record<string, string>> & Readonly<{
-  [requesterAccountEncryptionMode]?: 'plain' | 'e2ee';
-}>;
+/** Keep admitted custody when its owner enriches the same signed root. */
+export function rebindRequesterAccountActionContext(
+  authorization: ExternalActionExecutionAuthorizationV1,
+  previous: ExternalActionExecutionAuthorizationV1,
+): ExternalActionExecutionAuthorizationV1 {
+  const context = readRequesterAccountActionContext(previous);
+  if (!context) return authorization;
+  const projection = { ...previous.requesterAccountProjection! };
+  const carrier: ExternalActionExecutionAuthorizationV1 = Object.defineProperties({ ...authorization }, {
+    ...Object.getOwnPropertyDescriptors(authorization),
+    requesterAccountProjection: { value: projection, enumerable: false },
+  });
+  Object.defineProperty(projection, requesterActionContext, {
+    value: Object.freeze({ ...context, authorization: carrier }), enumerable: false,
+  });
+  Object.freeze(projection);
+  return Object.freeze(carrier);
+}

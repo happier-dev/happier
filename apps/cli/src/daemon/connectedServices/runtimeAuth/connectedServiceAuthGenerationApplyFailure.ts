@@ -5,6 +5,18 @@ export type ConnectedServiceAuthGenerationApplyFailure = Readonly<{
   diagnostics?: unknown;
 }>;
 
+export function isRetryableConnectedServiceCredentialApplyFailure(
+  errorCode: unknown,
+): errorCode is 'credential_revision_missing' | 'credential_revision_superseded' {
+  return errorCode === 'credential_revision_missing' || errorCode === 'credential_revision_superseded';
+}
+
+export function createConnectedServiceAuthGenerationApplyFailureError(failure: ConnectedServiceAuthGenerationApplyFailure): Error {
+  return Object.assign(new Error(`${CONNECTED_SERVICE_AUTH_GENERATION_APPLY_FAILED_PREFIX}${failure.errorCode}`), {
+    connectedServiceAuthGenerationApplyFailure: failure,
+  });
+}
+
 export function readConnectedServiceAuthGenerationApplyFailure(
   error: unknown,
 ): ConnectedServiceAuthGenerationApplyFailure | null {

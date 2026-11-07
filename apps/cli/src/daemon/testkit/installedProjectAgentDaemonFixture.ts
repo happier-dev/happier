@@ -12,7 +12,7 @@ import { createAdmittedPluginRuntimeFixture, createAuthoredAdmittedPluginRuntime
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import type { PluginReloadController } from '@/plugins/runtime/reload/controller';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
-import { createRequesterSessionRuntimeContextResolver, releaseUnretainedRequesterSessionRuntimeContext,
+import { createRequesterSessionCredentialCustody, createRequesterSessionRuntimeContextResolver, releaseUnretainedRequesterSessionRuntimeContext,
   resolveRequesterSessionBootstrapFromCustody, type RequesterSessionRuntimeContext, type ResolveRequesterSessionRuntimeContext } from '@/daemon/sessionEncryption/requesterSessionCredentials';
 import { startDaemonSessionControlRuntime } from '@/daemon/startup/startDaemonSessionControlRuntime';
 import { readOrCreateDeviceLocalSecretStorage } from '@/daemon/deviceLocalSecretStorage';
@@ -49,10 +49,15 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
   authoredPlugin?: Parameters<typeof createAuthoredAdmittedPluginRuntimeFixture>[0]['plugins'][number],
   controller?: PluginReloadController,
   requesterOptions?: Partial<Pick<Parameters<typeof createRequesterSessionRuntimeContext>[0], 'resolveQualifiedConnectedAccountV4Support'>>
+  & { reattachedFromDiskMarker?: true }
     & Partial<Pick<Parameters<typeof startDaemonSessionControlRuntime>[0], 'resolveCurrentMachineExecutionOriginContext' | 'processEnv' | 'openTeamCredentialProviderBinding'>>
-    & Partial<Pick<Parameters<typeof startDaemonSessionControlRuntime>[0], 'credentials' | 'externalActionAccountId' | 'agentIsolation' | 'onLocalServicesRoutesReady' | 'resolveServerFeaturesSnapshot' | 'releaseSessionOwnedNativeBindings' | 'getApiMachineForSessions' | 'externalSessionHostOperationOwner'>>
-    & Pick<NonNullable<Parameters<typeof createInstalledProjectAgentLaunchFixture>[0]>, 'machineAccess' | 'serverId' | 'homeServerIdentityId' | 'accountSettings' | 'machineRpcMethods'>
-    & { requesterCredentials?: StoredCredentials; ordinaryAccountSession?: boolean }): Promise<InstalledProjectAgentDaemonFixture> {
+    & Partial<Pick<Parameters<typeof startDaemonSessionControlRuntime>[0], 'credentials' | 'externalActionAccountId' | 'agentIsolation' | 'managedProviderOperationAuthority'
+      | 'releaseSessionOwnedNativeBindings' | 'getApiMachineForSessions' | 'onLocalServicesRoutesReady' | 'resolveServerFeaturesSnapshot' | 'externalSessionHostOperationOwner'>>
+    & Pick<NonNullable<Parameters<typeof createInstalledProjectAgentLaunchFixture>[0]>, 'machineAccess' | 'accountActionCredentials' | 'serverId' | 'homeServerIdentityId' | 'accountSettings' | 'machineRpcMethods'>
+    & { requesterCredentials?: StoredCredentials; ordinaryAccountSession?: boolean; retainIncompleteRequesterCustody?: boolean;
+      /** Process-census boundary authors the runner before tracked authority is constructed. */
+      runnerIdentity?: (happyHomeDir: string) => InstalledProjectAgentDaemonFixtureOwners['runner'];
+    }): Promise<InstalledProjectAgentDaemonFixture> {
   let daemonCredentials = requesterOptions?.credentials ?? { token: 'custodian-token', encryption: null };
   const serverId = requesterOptions?.serverId ?? 'session-home';
   // This Home fixture owns original admission; normal fixtures retain its
@@ -60,10 +65,10 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
   const fixtureHome = requesterOptions?.homeServerIdentityId
     ?? (await requesterOptions?.resolveCurrentMachineExecutionOriginContext?.())?.serverIdentityId
     ?? 'srv_installed_project_fixture';
-  const birth = {
+  const birth = requesterOptions?.retainIncompleteRequesterCustody ? {} : {
     homeServerIdentityId: fixtureHome, boundSessionId: 'project-session',
   };
-  const accountActionCredentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'requester',
+  const accountActionCredentials = requesterOptions?.accountActionCredentials ?? { token: `e30.${Buffer.from(JSON.stringify({ sub: 'requester',
     provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`, encryption: null };
   const fixture = await createInstalledProjectAgentLaunchFixture(unassociated
     ? { prepareProject: false, serverId, ...birth, requesterCredentials: requesterOptions?.requesterCredentials, machineAccess: requesterOptions?.machineAccess,
@@ -72,8 +77,7 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
       resolveCurrentMachineExecutionOriginContext: requesterOptions?.resolveCurrentMachineExecutionOriginContext,
       ...(requesterOptions?.ordinaryAccountSession ? { accountActionCredentials } : {}) }
     : { serverId, ...birth, accountActionCredentials, machineAccess: requesterOptions?.machineAccess,
-      accountSettings: requesterOptions?.accountSettings,
-      machineRpcMethods: requesterOptions?.machineRpcMethods,
+      accountSettings: requesterOptions?.accountSettings, machineRpcMethods: requesterOptions?.machineRpcMethods,
       resolveCurrentMachineExecutionOriginContext: requesterOptions?.resolveCurrentMachineExecutionOriginContext });
   const { f, machine } = fixture;
   const signal: AbortSignal = fixture.signal;
@@ -104,9 +108,11 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
   await plugin.registry.activateContributionsOnDemand([{ ...agent.identity, family: 'agents' }]);
   const retainedAgent = plugin.registry.agentRuntimesByAgentId.get(agent.id)?.sessionRunnerFactoryBinding;
   if (!retainedAgent) throw new Error(`Missing genuine retained Agent binding (${bundledAgentId ?? 'acme.project-launch/agent'}); registered: ${[...plugin.registry.agentRuntimesByAgentId.keys()].join(', ')}; diagnostics: ${JSON.stringify(plugin.registry.pluginDiagnosticsByPluginId[bundledAgentId ? `happier.agent.${bundledAgentId}` : 'acme.project-launch'])}`);
-  const runner = { pid: process.pid, processStartTimeMs: 1, processCommandHash: 'a'.repeat(64), snapshotIdentity: 'fixture-runner' };
+  const runner = requesterOptions?.runnerIdentity?.(f.directory)
+    ?? { pid: process.pid, processStartTimeMs: 1, processCommandHash: 'a'.repeat(64), snapshotIdentity: 'fixture-runner' };
   const sessionId = requesterOptions?.ordinaryAccountSession ? 'ordinary-native-owner' : 'project-session';
   const tracked: TrackedSession = { pid: process.pid, sessionRunnerPid: process.pid, startedBy: 'daemon', happySessionId: sessionId,
+    ...(requesterOptions?.reattachedFromDiskMarker ? { reattachedFromDiskMarker: true } : {}),
     ...(requesterOptions?.ordinaryAccountSession ? {} : { requesterWorkAttributionV1: f.bootstrap.attribution }),
     processStartTimeMs: runner.processStartTimeMs, processCommandHash: runner.processCommandHash,
     runnerAgentSourceCustodyV1: retainedAgent.sourceCustody,
@@ -142,12 +148,13 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
   const daemon = await startDaemonSessionControlRuntime({ machineId: 'machine', serverId, serverBaseUrl: 'https://session-home.test',
     externalSessionHostOperationOwner: requesterOptions?.externalSessionHostOperationOwner,
     agentIsolation: requesterOptions?.agentIsolation,
+    managedProviderOperationAuthority: requesterOptions?.managedProviderOperationAuthority,
     skillStore,
     resolveCurrentMachineExecutionOriginContext: requesterOptions?.resolveCurrentMachineExecutionOriginContext,
     openTeamCredentialProviderBinding: requesterOptions?.openTeamCredentialProviderBinding,
+    releaseSessionOwnedNativeBindings: requesterOptions?.releaseSessionOwnedNativeBindings,
     onLocalServicesRoutesReady: requesterOptions?.onLocalServicesRoutesReady,
     resolveServerFeaturesSnapshot: requesterOptions?.resolveServerFeaturesSnapshot,
-    releaseSessionOwnedNativeBindings: requesterOptions?.releaseSessionOwnedNativeBindings,
     externalActionAccountId: requesterOptions?.externalActionAccountId ?? 'custodian', credentials: daemonCredentials, api: {} as never,
     deviceLocalSecretStorage,
     pluginRuntimeController: plugin.controller, connectedServiceRuntimeRegistry,
@@ -170,6 +177,9 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
   // The launch-only fixture predates that owner and cannot publish its routes.
   machine.setRPCHandlers({ spawnSession: daemon.spawnSession, stopSession: daemon.stopSession, requestShutdown() {} }, {
     ...(daemon.externalActionIngressOwner ? { externalActionIngressOwner: daemon.externalActionIngressOwner } : {}),
+    // Rebinding produced daemon routes must retain the same admitted Account
+    // policy; invocation-owned settings are not ambient focused-Account state.
+    ...(fixture.actionsSettingsProvider ? { actionsSettingsProvider: fixture.actionsSettingsProvider } : {}),
   });
   createRequesterRuntime = async bootstrap => {
     requesterRecoveryStage = 'runtime';
@@ -186,9 +196,16 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
     requesterRecoveryStage = context ? 'ready' : 'runtime_refused';
     return context;
   };
-  // Keep the separately admitted Account runtime for fixture materialization;
-  // native dispatch still resolves the ordinary tracked Session itself.
-  const requester = requesterOptions?.ordinaryAccountSession
+  if (requesterOptions?.retainIncompleteRequesterCustody) {
+    const custody = await createRequesterSessionCredentialCustody({ happyHomeDir: f.directory,
+      sessionId, attribution: f.bootstrap.attribution, credentials: f.bootstrap.credentials });
+    onTestFinished(custody.cleanup);
+  }
+  // Ordinary or deliberately incomplete targets cannot recover a private birth.
+  // Keep the separately admitted Account runtime for fixture callers, but do
+  // not attach it to the tracked Session: real dispatch must still recover and
+  // reject incomplete custody through the production resolver.
+  const requester = requesterOptions?.ordinaryAccountSession || requesterOptions?.retainIncompleteRequesterCustody
     ? await createRequesterRuntime(f.bootstrap) : await resolveRequesterRuntime(sessionId, f.bootstrap.attribution);
   if (!requester) throw new Error(`Missing requester runtime (${requesterRecoveryStage})`);
   const services = readControl()?.agentRuntimeDaemonServices;

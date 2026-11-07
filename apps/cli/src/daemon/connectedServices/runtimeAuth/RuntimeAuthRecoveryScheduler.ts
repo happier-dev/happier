@@ -25,8 +25,10 @@ import {
 import { resolveRuntimeAuthRecoveryResultDisposition } from './resolveRuntimeAuthRecoveryResultDisposition';
 import { sanitizeConnectedServiceDiagnosticString } from './sanitizeConnectedServiceDiagnosticString';
 import { sanitizeConnectedServiceRuntimeFailureClassification } from './sanitizeConnectedServiceRuntimeFailureClassification';
+import { readRuntimeAuthFailureReportSourceIdentity } from './runtimeAuthFailureReportIdentity';
 import type { ConnectedServiceRuntimeFailureClassification } from './types';
-import { readConnectedServiceAuthGenerationApplyFailure } from './connectedServiceAuthGenerationApplyFailure';
+import { isRetryableConnectedServiceCredentialApplyFailure, readConnectedServiceAuthGenerationApplyFailure } from './connectedServiceAuthGenerationApplyFailure';
+import { ConnectedServiceAuthGroupSwitchLeaseExpiredError } from '../accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
 import {
   buildRuntimeAuthRecoveryKey,
   type RuntimeAuthRecoveryKeyParts,
@@ -40,6 +42,10 @@ import {
 type RuntimeAuthRecoveryStatus = 'waiting' | 'checking' | 'resumed_awaiting_proof' | 'cancelled' | 'exhausted' | 'recovered';
 type RuntimeAuthRecoveryPhase = 'handler' | 'apply';
 export type RuntimeAuthRecoveryTransition = 'working' | 'scheduled' | 'terminal' | 'recovered';
+
+export function buildRuntimeAuthRecoveryAttemptId(reportId: string | undefined): string | undefined {
+  return reportId ? `runtime-auth-attempt:${reportId.replace(/^runtime-auth-report:/, '')}` : undefined;
+}
 
 export type RuntimeAuthRecoveryPendingVisibleEvent = Readonly<{
   attemptId: string;
@@ -69,6 +75,7 @@ export type RuntimeAuthRecoveryIntent = Readonly<{
   failurePhase: RuntimeAuthRecoveryPhase;
   failureReason: string;
   classification: ConnectedServiceRuntimeFailureClassification;
+  /** cli-v0.2.17's retained journal reader requires this key; it has no counter meaning now. */
   switchesThisTurn: number;
   attemptCount: number;
   maxAttempts: number;
@@ -80,13 +87,8 @@ export type RuntimeAuthRecoveryIntent = Readonly<{
   pendingTargetCredentialRevision?: ConnectedServiceCredentialRevisionV1 | null;
   terminalAtMs?: number | null;
   terminalReason?: string | null;
-  // S2: separate bounded budget for DEGRADED endpoint/lifecycle retries so a long local
-  // outage does not consume the normal `attemptCount` budget and dead-letter a recoverable
-  // session faster than a real provider failure.
+  // Observation counts retained for diagnostics, never retry ceilings.
   degradedAttemptCount?: number;
-  // Bounded budget for COALESCED stale-profile replays (same pending proof target, no proof
-  // yet): each coalesced replay rolls the attempt increment back, so without a bound the
-  // switch pipeline would re-run forever for an idle session.
   coalescedReplayCount?: number;
 }>;
 
@@ -136,21 +138,25 @@ export type RuntimeAuthRecoveryScheduleResult =
       retryable: false;
       reason: string;
       errorClassification?: DaemonServerWorkErrorClassification | null;
+      attemptId?: string;
+      transition?: RuntimeAuthRecoveryTransition;
+      resumePromptMode?: 'standard' | 'off' | 'custom';
     }>;
 
 export type RuntimeAuthRecoverySchedulerLike = Readonly<{
   beginClassifiedFailure(input: Readonly<{
     reportId?: string;
     sessionId: string;
-    switchesThisTurn: number;
+    switchesThisTurn?: number;
     classification: ConnectedServiceRuntimeFailureClassification;
     resumePromptMode?: 'standard' | 'off' | 'custom';
+    deferToScheduler?: boolean;
   }>): Promise<RuntimeAuthRecoveryScheduleResult>;
   enqueueHandlerFailure(input: Readonly<{
     reportId?: string;
     expectedAttemptId?: string;
     sessionId: string;
-    switchesThisTurn: number;
+    switchesThisTurn?: number;
     classification: ConnectedServiceRuntimeFailureClassification;
     error: unknown;
   }>): Promise<RuntimeAuthRecoveryScheduleResult>;
@@ -158,7 +164,7 @@ export type RuntimeAuthRecoverySchedulerLike = Readonly<{
     reportId?: string;
     expectedAttemptId?: string;
     sessionId: string;
-    switchesThisTurn: number;
+    switchesThisTurn?: number;
     classification: ConnectedServiceRuntimeFailureClassification;
     result: unknown;
   }>): Promise<RuntimeAuthRecoveryScheduleResult>;
@@ -207,15 +213,8 @@ export type RuntimeAuthRecoveryProofByIdentityInput = Readonly<{
   observedAtMs?: number;
 }>;
 
-const DEFAULT_RUNTIME_AUTH_RECOVERY_MAX_ATTEMPTS = 3;
 const DEFAULT_RUNTIME_AUTH_RECOVERY_BASE_BACKOFF_MS = 1_000;
 const DEFAULT_RUNTIME_AUTH_RECOVERY_MAX_BACKOFF_MS = 60_000;
-const DEFAULT_RUNTIME_AUTH_RECOVERY_TERMINAL_RECORD_RETENTION_MS = 7 * 24 * 60 * 60_000;
-// S2: a long local-endpoint/lifecycle outage must be waited out (re-driven on each wake) on a
-// separate, much larger budget than the normal provider-failure attempt budget, while staying
-// bounded so it never waits forever.
-const DEFAULT_RUNTIME_AUTH_RECOVERY_MAX_DEGRADED_ATTEMPTS = 60;
-const DEFAULT_RUNTIME_AUTH_RECOVERY_MAX_COALESCED_REPLAYS = 12;
 const DEFAULT_RUNTIME_AUTH_RECOVERY_DEGRADED_BACKOFF_MS = 60_000;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -259,7 +258,6 @@ export function normalizeRuntimeAuthRecoveryIntent(value: unknown): RuntimeAuthR
   if (!record || record.v !== 1) return null;
   if (!isRuntimeAuthRecoveryStatus(record.status)) return null;
   if (!isRuntimeAuthRecoveryPhase(record.failurePhase)) return null;
-  if (typeof record.switchesThisTurn !== 'number' || !Number.isFinite(record.switchesThisTurn)) return null;
   if (typeof record.attemptCount !== 'number' || !Number.isFinite(record.attemptCount)) return null;
   if (typeof record.maxAttempts !== 'number' || !Number.isFinite(record.maxAttempts)) return null;
   if (record.nextRetryAtMs !== null && typeof record.nextRetryAtMs !== 'number') return null;
@@ -301,6 +299,9 @@ export function normalizeRuntimeAuthRecoveryIntent(value: unknown): RuntimeAuthR
       ? record.resumePromptMode
       : 'standard',
     classification,
+    switchesThisTurn: 0,
+    maxAttempts: 0,
+    ...(record.status === 'resumed_awaiting_proof' ? { nextRetryAtMs: null } : {}),
     armedAtMs: typeof record.armedAtMs === 'number' && Number.isFinite(record.armedAtMs)
       ? Math.trunc(record.armedAtMs)
       : 0,
@@ -375,6 +376,7 @@ function resolveRuntimeAuthRecoveryDisposition(input: Readonly<{
   return resolveRuntimeAuthRecoveryResultDisposition({
     result: input.result,
     classificationFailureKind: input.intent.classification.kind,
+    classificationProfileId: input.intent.classification.profileId,
     classificationResetsAtMs: input.intent.classification.resetsAtMs ?? null,
     additionalWaitCandidatesMs: [input.intent.nextRetryAtMs],
     nowMs: input.nowMs,
@@ -479,35 +481,16 @@ function resolveDegradedReason(result: unknown): string {
     : 'session_endpoint_unavailable';
 }
 
-// Build the recover-loop outcome for a DEGRADED lifecycle/endpoint-unavailable result.
-//
-// The durable scheduler already incremented `attemptCount` (via markChecking) for this tick. A
-// degraded outcome must NOT consume the normal attempt budget, so we roll `attemptCount` back to
-// its pre-tick value and instead advance a separate, much larger `degradedAttemptCount` budget.
-// This lets a long local outage be waited out (re-driven on every wake) without dead-lettering a
-// recoverable session, while staying bounded: once the degraded budget is exhausted we surface an
-// action-required terminal rather than waiting forever.
+// Preserve the distinction between provider attempts and a local endpoint outage;
+// neither observation imposes a retry ceiling on the recovery lifecycle.
 function buildDegradedRecoveryOutcome(input: Readonly<{
   intent: RuntimeAuthRecoveryIntent;
   reason: string;
   nowMs: number;
-  maxDegradedAttempts: number;
   degradedBackoffMs: number;
-}>): { status: 'wait'; nextRetryAtMs: number; lastError: string; intent: RuntimeAuthRecoveryIntent }
-  | { status: 'terminal'; lastError: string; intent: RuntimeAuthRecoveryIntent } {
+}>): { status: 'wait'; nextRetryAtMs: number; lastError: string; intent: RuntimeAuthRecoveryIntent } {
   const preTickAttemptCount = Math.max(0, input.intent.attemptCount - 1);
   const degradedAttemptCount = (input.intent.degradedAttemptCount ?? 0) + 1;
-  if (degradedAttemptCount >= input.maxDegradedAttempts) {
-    return {
-      status: 'terminal',
-      lastError: 'degraded_recovery_attempts_exhausted',
-      intent: {
-        ...input.intent,
-        attemptCount: preTickAttemptCount,
-        degradedAttemptCount,
-      },
-    };
-  }
   return {
     status: 'wait',
     nextRetryAtMs: input.nowMs + input.degradedBackoffMs,
@@ -559,6 +542,10 @@ function classifyApplyFailure(result: unknown): Readonly<{
 }> | null {
   const failure = readApplyFailureDiagnostics(result);
   if (!failure.errorCode) return null;
+
+  if (isRetryableConnectedServiceCredentialApplyFailure(failure.errorCode)) {
+    return { classification: { kind: 'protocol_error', retryable: true }, lastError: failure.errorCode };
+  }
 
   if (
     failure.errorCode === 'post_switch_verification_failed'
@@ -653,6 +640,23 @@ function classifyApplyFailure(result: unknown): Readonly<{
   return {
     classification,
     lastError: classification.kind,
+  };
+}
+
+function classifyHandlerError(error: unknown): Readonly<{
+  classification: DaemonServerWorkErrorClassification;
+  degradedReason: string | null;
+}> {
+  if (error instanceof ConnectedServiceAuthGroupSwitchLeaseExpiredError) {
+    return {
+      classification: { kind: 'timeout', retryable: true },
+      degradedReason: 'connected_service_auth_group_switch_lease_expired',
+    };
+  }
+  const classification = classifyDaemonServerWorkError(error);
+  return {
+    classification,
+    degradedReason: classification.kind === 'network' ? 'session_endpoint_unavailable' : null,
   };
 }
 
@@ -806,12 +810,6 @@ function resolveEarlierRetryAtMs(
   return Math.min(previous, next);
 }
 
-function resolveStricterMaxAttempts(previous: number, next: number): number {
-  if (previous <= 0) return next;
-  if (next <= 0) return previous;
-  return Math.min(previous, next);
-}
-
 function mergePendingVisibleEvents(
   previous: ReadonlyArray<RuntimeAuthRecoveryPendingVisibleEvent> | undefined,
   next: ReadonlyArray<RuntimeAuthRecoveryPendingVisibleEvent> | undefined,
@@ -888,14 +886,19 @@ function mergeRuntimeAuthRecoveryIntent(
   next: RuntimeAuthRecoveryIntent,
 ): RuntimeAuthRecoveryIntent {
   if (!previous || !hasSameRuntimeAuthRecoveryKey(previous, next)) return next;
-  if (previous.status === 'recovered') return next;
-  if (previous.status === 'cancelled' || previous.status === 'exhausted') {
+  if (previous.status === 'recovered' || previous.status === 'cancelled' || previous.status === 'exhausted') {
     if (previous.attemptId === next.attemptId) return previous;
     // Only a fresh in-band provider report owns a new recovery epoch. A later handler/apply
     // failure without the original attempt id is still fallout from the settled attempt and must
     // not revive it merely because its caller omitted the report id.
-    return next.lastSettledTransition === 'working' ? next : previous;
+    return next.lastSettledTransition === 'working'
+      || (next.lastSettledTransition === 'scheduled' && next.failureReason === 'source_tuple_superseded')
+      ? next : previous;
   }
+  if (!isDeepStrictEqual(
+    readRuntimeAuthFailureReportSourceIdentity({ ...previous.classification, runtimeIssueFingerprint: undefined }),
+    readRuntimeAuthFailureReportSourceIdentity({ ...next.classification, runtimeIssueFingerprint: undefined }),
+  )) return next;
   if (next.classification.runtimeIssueFingerprint
     && next.classification.runtimeIssueFingerprint !== previous.classification.runtimeIssueFingerprint) return next;
   const classification = previous.classification.runtimeIssueFingerprint
@@ -921,11 +924,12 @@ function mergeRuntimeAuthRecoveryIntent(
     status: previous.status,
     armedAtMs: previous.armedAtMs,
     attemptCount: previous.attemptCount,
-    maxAttempts: resolveStricterMaxAttempts(previous.maxAttempts, next.maxAttempts),
+    maxAttempts: 0,
     nextRetryAtMs: resolveEarlierRetryAtMs(previous.nextRetryAtMs, next.nextRetryAtMs),
-    pendingTargetProfileId: next.pendingTargetProfileId ?? null,
-    pendingTargetGeneration: next.pendingTargetGeneration ?? null,
-    pendingTargetCredentialRevision: next.pendingTargetCredentialRevision ?? null,
+    // Enqueues carry no pending target; only result settlement replaces this tuple.
+    pendingTargetProfileId: previous.pendingTargetProfileId ?? null,
+    pendingTargetGeneration: previous.pendingTargetGeneration ?? null,
+    pendingTargetCredentialRevision: previous.pendingTargetCredentialRevision ?? null,
     terminalAtMs: next.terminalAtMs ?? null,
     terminalReason: next.terminalReason ?? null,
   };
@@ -961,9 +965,9 @@ function isStaleProfileReplayForPendingProofTarget(input: Readonly<{
   // The pending proof target is matched by PROFILE, deliberately NOT by group generation:
   // sibling sessions thrash the shared group generation between replays (incident
   // 2026-06-12, gen 81→87), so an exact-generation match never holds and the attempt
-  // rollback is defeated — replays burn the dead-letter budget while the session is
-  // legitimately waiting for proof of the SAME target profile. The rollback stays
-  // bounded by the coalesced-replay budget.
+  // rollback would otherwise count another provider attempt while the Session is
+  // waiting for proof of the same target profile. Timer-driven proof replay is absent;
+  // explicit manual checks retain this diagnostic distinction.
   const currentTargetProfileId = input.pendingTarget?.activeProfileId ?? null;
   if (!currentTargetProfileId) return false;
   if (input.intent.pendingTargetProfileId !== currentTargetProfileId) return false;
@@ -979,18 +983,14 @@ type SupersededPendingProofIntent = Readonly<{
 export class RuntimeAuthRecoveryScheduler implements RuntimeAuthRecoverySchedulerLike {
   readonly #nowMs: () => number;
   readonly #baseBackoffMs: number;
-  readonly #maxAttempts: number;
-  readonly #maxCoalescedReplays: number;
-  readonly #maxDegradedAttempts: number;
   readonly #degradedBackoffMs: number;
-  readonly #providerOutcomePendingWaitMs: number | null;
   readonly #jitterMs: () => number;
   readonly #scheduler: DurableBackoffRecoveryScheduler<RuntimeAuthRecoveryIntent>;
   readonly #recordDiagnostic: ((event: RuntimeAuthRecoveryDiagnostic) => void) | null;
   readonly #recoveryKeysBySessionId = new Map<string, Set<string>>();
   #pendingVisibleEventDrainTimer: ReturnType<typeof setTimeout> | null = null;
   #pendingVisibleEventDrainInFlight = false;
-  #pendingVisibleEventDrainRequested = false;
+  readonly #pendingVisibleEventDrainRequested = new Set<string>();
   #pendingVisibleEventDrainDisposed = false;
   #pendingVisibleEventDeliver: ((delivery: RuntimeAuthRecoveryVisibleEventDelivery) => Promise<void>) | null = null;
   #pendingVisibleEventRetryDelayMs = 2_000;
@@ -1001,17 +1001,14 @@ export class RuntimeAuthRecoveryScheduler implements RuntimeAuthRecoverySchedule
     baseBackoffMs?: number;
     maxBackoffMs?: number;
     jitterMs?: () => number;
-    maxAttempts?: number;
-    maxCoalescedReplays?: number;
-    providerOutcomePendingWaitMs?: number;
-    maxDegradedAttempts?: number;
     degradedBackoffMs?: number;
     recover: (input: Readonly<{
       sessionId: string;
-      switchesThisTurn: number;
+      switchesThisTurn?: number;
       classification: ConnectedServiceRuntimeFailureClassification;
       resumePromptMode: 'standard' | 'off' | 'custom';
       recoveryInvocationSource: 'scheduler_retry';
+      interruptedOriginId?: string;
     }>) => Promise<unknown>;
     continueAfterUsageLimitReset?: (intent: RuntimeAuthRecoveryIntent) => Promise<unknown>;
     gate?: (input: { sessionId: string; intent: RuntimeAuthRecoveryIntent }) =>
@@ -1023,21 +1020,16 @@ export class RuntimeAuthRecoveryScheduler implements RuntimeAuthRecoverySchedule
     this.#nowMs = deps.nowMs;
     this.#baseBackoffMs = clampPositiveInteger(deps.baseBackoffMs, DEFAULT_RUNTIME_AUTH_RECOVERY_BASE_BACKOFF_MS);
     const maxBackoffMs = clampPositiveInteger(deps.maxBackoffMs, DEFAULT_RUNTIME_AUTH_RECOVERY_MAX_BACKOFF_MS);
-    this.#maxAttempts = clampPositiveInteger(deps.maxAttempts, DEFAULT_RUNTIME_AUTH_RECOVERY_MAX_ATTEMPTS);
-    this.#maxCoalescedReplays = typeof deps.maxCoalescedReplays === 'number'
-      && Number.isFinite(deps.maxCoalescedReplays)
-      && deps.maxCoalescedReplays >= 0
-      ? Math.trunc(deps.maxCoalescedReplays)
-      : DEFAULT_RUNTIME_AUTH_RECOVERY_MAX_COALESCED_REPLAYS;
-    this.#maxDegradedAttempts = clampPositiveInteger(deps.maxDegradedAttempts, DEFAULT_RUNTIME_AUTH_RECOVERY_MAX_DEGRADED_ATTEMPTS);
     this.#degradedBackoffMs = clampPositiveInteger(deps.degradedBackoffMs, DEFAULT_RUNTIME_AUTH_RECOVERY_DEGRADED_BACKOFF_MS);
-    this.#providerOutcomePendingWaitMs = typeof deps.providerOutcomePendingWaitMs === 'number'
-      && Number.isFinite(deps.providerOutcomePendingWaitMs)
-      && deps.providerOutcomePendingWaitMs > 0
-      ? Math.trunc(deps.providerOutcomePendingWaitMs)
-      : null;
     this.#jitterMs = deps.jitterMs ?? (() => 0);
     this.#recordDiagnostic = deps.recordDiagnostic ?? null;
+    // Only attempts restored before this process's intake lost their in-band owner.
+    // Live initial attempts keep their null deadline until the handler settles.
+    const restoredInitialAttemptIds = new Set((deps.durableStore?.readAll?.() ?? []).flatMap(([, value]) => {
+      const intent = normalizeRuntimeAuthRecoveryIntent(value);
+      return intent?.status === 'waiting' && intent.lastSettledTransition === 'working'
+        && intent.nextRetryAtMs === null && intent.attemptId ? [intent.attemptId] : [];
+    }));
     this.#scheduler = new DurableBackoffRecoveryScheduler<RuntimeAuthRecoveryIntent>({
       nowMs: deps.nowMs,
       baseBackoffMs: this.#baseBackoffMs,
@@ -1050,11 +1042,13 @@ export class RuntimeAuthRecoveryScheduler implements RuntimeAuthRecoverySchedule
         : intent.status === 'recovered'
           ? 'cancelled'
           : intent.status,
-      getNextRetryAtMs: (intent) => intent.nextRetryAtMs,
+      getNextRetryAtMs: (intent) => intent.nextRetryAtMs ?? (
+        intent.status === 'waiting' && intent.lastSettledTransition === 'working'
+          && intent.attemptId && restoredInitialAttemptIds.has(intent.attemptId)
+          ? deps.nowMs() : null
+      ),
       getAttemptCount: (intent) => intent.attemptCount,
-      getMaxAttempts: (intent) => intent.maxAttempts,
-      terminalRecordRetentionMs: DEFAULT_RUNTIME_AUTH_RECOVERY_TERMINAL_RECORD_RETENTION_MS,
-      getTerminalPruneReferenceMs: (intent) => intent.terminalAtMs ?? intent.armedAtMs,
+      getMaxAttempts: () => 0,
       markChecking: (intent, attemptCount) => ({
         ...intent,
         status: 'checking',
@@ -1109,12 +1103,12 @@ export class RuntimeAuthRecoveryScheduler implements RuntimeAuthRecoverySchedule
               : await continueAfterReset(intent)
             : await deps.recover({
                 sessionId: intent.sessionId,
-                switchesThisTurn: intent.switchesThisTurn,
                 classification: intent.classification,
                 resumePromptMode: intent.resumePromptMode === 'off' || intent.resumePromptMode === 'custom'
                   ? intent.resumePromptMode
                   : 'standard',
                 recoveryInvocationSource: 'scheduler_retry',
+                interruptedOriginId: intent.attemptId ?? this.#keyForIntent(intent),
               });
           if (asRecord(result)?.status === 'continuation_cancelled') {
             return { status: 'terminal' as const, lastError: 'usage_limit_continuation_cancelled', intent: {
@@ -1160,25 +1154,22 @@ export class RuntimeAuthRecoveryScheduler implements RuntimeAuthRecoverySchedule
               intent,
               pendingTarget,
             });
-            // Each coalesced replay re-runs the full switch pipeline, so the attempt
-            // rollback must be budgeted: once `maxCoalescedReplays` is spent, replays
-            // consume the normal attempt budget and the recovery settles terminal
-            // instead of looping forever for an idle session.
             const coalescedReplayCount = intent.coalescedReplayCount ?? 0;
             const rollbackAttempt = (alreadyAwaitingContinuationProof && context.reason === 'manual')
               || (!continuingAfterReset && (isUntargetedProviderOutcomeProofWaitRefresh({
               intent,
               pendingTarget,
-            }) || (coalescedReplay && coalescedReplayCount < this.#maxCoalescedReplays)));
+            }) || coalescedReplay));
             const unprovenOutcomeError = continuingAfterReset
               ? 'usage_limit_continuation_awaiting_provider_outcome'
               : RUNTIME_AUTH_RECOVERY_UNPROVEN_PROVIDER_OUTCOME_ERROR;
             return {
-              status: 'wait' as const,
-              lastError: unprovenOutcomeError,
+              status: 'pending' as const,
+              wakeResult: { status: 'waiting' },
               intent: {
                 ...intent,
                 status: 'resumed_awaiting_proof',
+                nextRetryAtMs: null,
                 attemptCount: rollbackAttempt ? Math.max(0, intent.attemptCount - 1) : intent.attemptCount,
                 lastError: unprovenOutcomeError,
                 ...(coalescedReplay ? { coalescedReplayCount: coalescedReplayCount + 1 } : {}),
@@ -1200,12 +1191,6 @@ export class RuntimeAuthRecoveryScheduler implements RuntimeAuthRecoverySchedule
                       pendingTargetCredentialRevision: intent.pendingTargetCredentialRevision ?? null,
                     }),
               },
-              ...(this.#providerOutcomePendingWaitMs === null
-                ? {}
-                : { nextRetryAtMs: alreadyAwaitingContinuationProof && context.reason === 'manual'
-                    && intent.nextRetryAtMs !== null
-                    ? intent.nextRetryAtMs
-                    : this.#nowMs() + this.#providerOutcomePendingWaitMs }),
             };
           }
           if (disposition?.kind === 'terminal') {
@@ -1233,14 +1218,12 @@ export class RuntimeAuthRecoveryScheduler implements RuntimeAuthRecoverySchedule
           }
           // S2: a degraded daemon-lifecycle / endpoint-unavailable outcome is non-terminal — keep
           // the recovery waiting so a healthy daemon/endpoint re-drives it. Route it onto the
-          // bounded degraded-retry track so a long local outage does not burn the normal attempt
-          // budget (and so it never waits forever).
+          // local retry path so a local outage is not counted as a provider attempt.
           if (isDegradedLifecycleRecoveryResult(result)) {
             return buildDegradedRecoveryOutcome({
               intent,
               reason: resolveDegradedReason(result),
               nowMs: this.#nowMs(),
-              maxDegradedAttempts: this.#maxDegradedAttempts,
               degradedBackoffMs: this.#degradedBackoffMs,
             });
           }
@@ -1288,25 +1271,25 @@ export class RuntimeAuthRecoveryScheduler implements RuntimeAuthRecoverySchedule
               },
             };
           }
-          const errorClassification = classifyDaemonServerWorkError(error);
+          const handlerError = classifyHandlerError(error);
+          const errorClassification = handlerError.classification;
           if (!errorClassification.retryable) {
             return { status: 'terminal' as const, lastError: errorClassification.kind };
           }
           // S2: a connection-level endpoint outage thrown during the recovery fetch
           // (ECONNREFUSED / socket hang up / reset = `network`) is a degraded local condition, not a
-          // provider failure. Route it onto the bounded degraded-retry track so a long local outage
-          // cannot dead-letter the session before the normal attempt budget. A `timeout` is left on
-          // the normal track: a slow-but-reachable endpoint can be a genuine recoverable failure.
-          if (errorClassification.kind === 'network') {
+          // provider failure. Group lease contention likewise waits for local coordination without
+          // spending provider attempts. Both use the existing local retry path. Other
+          // timeouts stay on the normal track: a slow-but-reachable endpoint can be recoverable.
+          if (handlerError.degradedReason) {
             return buildDegradedRecoveryOutcome({
               intent: {
                 ...intent,
                 lastError: readErrorMessage(error) ?? errorClassification.kind,
                 lastErrorClassification: errorClassification,
               },
-              reason: 'session_endpoint_unavailable',
+              reason: handlerError.degradedReason,
               nowMs: this.#nowMs(),
-              maxDegradedAttempts: this.#maxDegradedAttempts,
               degradedBackoffMs: this.#degradedBackoffMs,
             });
           }
@@ -1412,20 +1395,21 @@ export class RuntimeAuthRecoveryScheduler implements RuntimeAuthRecoverySchedule
   async beginClassifiedFailure(input: Readonly<{
     reportId?: string;
     sessionId: string;
-    switchesThisTurn: number;
+    switchesThisTurn?: number;
     classification: ConnectedServiceRuntimeFailureClassification;
     resumePromptMode?: 'standard' | 'off' | 'custom';
+    deferToScheduler?: boolean;
   }>): Promise<RuntimeAuthRecoveryScheduleResult> {
-    const retryAfterMs = resolveClassifiedFailureRetryAfterMs({
+    // The old member's reset does not govern a retry on its proven adopted successor.
+    const retryAfterMs = input.deferToScheduler ? undefined : resolveClassifiedFailureRetryAfterMs({
       classification: input.classification,
       nowMs: this.#nowMs(),
     });
     return await this.#enqueue({
       sessionId: input.sessionId,
-      switchesThisTurn: input.switchesThisTurn,
       classification: input.classification,
       failurePhase: 'handler',
-      failureReason: 'classified_failure_reported',
+      failureReason: input.deferToScheduler ? 'source_tuple_superseded' : 'classified_failure_reported',
       lastError: input.classification.kind,
       errorClassification: {
         kind: mapRuntimeFailureKindToDaemonWorkErrorKind(input.classification.kind),
@@ -1435,8 +1419,8 @@ export class RuntimeAuthRecoveryScheduler implements RuntimeAuthRecoverySchedule
       terminalReason: null,
       resumePromptMode: input.resumePromptMode,
       reportId: input.reportId,
-      transition: 'working',
-      projectVisibleEvent: false,
+      transition: input.deferToScheduler ? 'scheduled' : 'working',
+      projectVisibleEvent: input.deferToScheduler === true,
     });
   }
 
@@ -1444,7 +1428,7 @@ export class RuntimeAuthRecoveryScheduler implements RuntimeAuthRecoverySchedule
     reportId?: string;
     expectedAttemptId?: string;
     sessionId: string;
-    switchesThisTurn: number;
+    switchesThisTurn?: number;
     classification: ConnectedServiceRuntimeFailureClassification;
     error: unknown;
   }>): Promise<RuntimeAuthRecoveryScheduleResult> {
@@ -1452,7 +1436,6 @@ export class RuntimeAuthRecoveryScheduler implements RuntimeAuthRecoverySchedule
     if (thrownApplyFailure) {
       return await this.#enqueue({
         sessionId: input.sessionId,
-        switchesThisTurn: input.switchesThisTurn,
         classification: input.classification,
         failurePhase: 'apply',
         failureReason: thrownApplyFailure.failureReason,
@@ -1467,10 +1450,9 @@ export class RuntimeAuthRecoveryScheduler implements RuntimeAuthRecoverySchedule
         projectVisibleEvent: true,
       });
     }
-    const errorClassification = classifyDaemonServerWorkError(input.error);
+    const errorClassification = classifyHandlerError(input.error).classification;
     return await this.#enqueue({
       sessionId: input.sessionId,
-      switchesThisTurn: input.switchesThisTurn,
       classification: input.classification,
       failurePhase: 'handler',
       lastError: readErrorMessage(input.error) ?? errorClassification.kind,
@@ -1489,14 +1471,13 @@ export class RuntimeAuthRecoveryScheduler implements RuntimeAuthRecoverySchedule
     reportId?: string;
     expectedAttemptId?: string;
     sessionId: string;
-    switchesThisTurn: number;
+    switchesThisTurn?: number;
     classification: ConnectedServiceRuntimeFailureClassification;
     result: unknown;
   }>): Promise<RuntimeAuthRecoveryScheduleResult> {
     const applyFailure = classifyApplyFailure(input.result);
     return await this.#enqueue({
       sessionId: input.sessionId,
-      switchesThisTurn: input.switchesThisTurn,
       classification: input.classification,
       failurePhase: 'apply',
       failureReason: applyFailure?.failureReason
@@ -1569,11 +1550,19 @@ export class RuntimeAuthRecoveryScheduler implements RuntimeAuthRecoverySchedule
     return intents;
   }
 
+  /** Arm durable deadlines after publication; the shared scheduler owns asynchronous execution. */
+  hydrate(): ReadonlyArray<RuntimeAuthRecoveryIntent> {
+    const intents = this.#scheduler.hydrate();
+    for (const intent of intents) this.#rememberIntent(intent);
+    return intents;
+  }
+
   async drainPendingVisibleEvents(
     deliver: (delivery: RuntimeAuthRecoveryVisibleEventDelivery) => Promise<void>,
+    sessionId?: string,
   ): Promise<number> {
     let delivered = 0;
-    const intents = Array.from(this.#recoveryKeysBySessionId.keys())
+    const intents = (sessionId ? [sessionId] : Array.from(this.#recoveryKeysBySessionId.keys()))
       .flatMap((sessionId) => this.#readForSession(sessionId, { schedule: false }));
     for (const intent of intents) {
       const recoveryKey = this.#keyForIntent(intent);
@@ -1589,6 +1578,7 @@ export class RuntimeAuthRecoveryScheduler implements RuntimeAuthRecoverySchedule
 
   schedulePendingVisibleEventDrain(input: Readonly<{
     deliver: (delivery: RuntimeAuthRecoveryVisibleEventDelivery) => Promise<void>;
+    sessionId?: string;
     delayMs?: number;
     retryDelayMs?: number;
     onError?: (error: unknown) => void;
@@ -1599,7 +1589,13 @@ export class RuntimeAuthRecoveryScheduler implements RuntimeAuthRecoverySchedule
       ? Math.min(60_000, Math.max(0, Math.trunc(input.retryDelayMs)))
       : this.#pendingVisibleEventRetryDelayMs;
     this.#pendingVisibleEventDrainError = input.onError ?? this.#pendingVisibleEventDrainError;
-    this.#pendingVisibleEventDrainRequested = true;
+    const sessionIds = input.sessionId ? [input.sessionId] : this.#recoveryKeysBySessionId.keys();
+    for (const sessionId of sessionIds) {
+      if (this.#readForSession(sessionId, { schedule: false }).some(intent => intent.pendingVisibleEvents?.length)) {
+        this.#pendingVisibleEventDrainRequested.add(sessionId);
+      }
+    }
+    if (this.#pendingVisibleEventDrainRequested.size === 0) return;
     if (this.#pendingVisibleEventDrainTimer || this.#pendingVisibleEventDrainInFlight) return;
     const delayMs = typeof input.delayMs === 'number' && Number.isFinite(input.delayMs)
       ? Math.max(0, Math.trunc(input.delayMs))
@@ -1611,21 +1607,42 @@ export class RuntimeAuthRecoveryScheduler implements RuntimeAuthRecoverySchedule
     this.#pendingVisibleEventDrainTimer.unref?.();
   }
 
+  /** Existing receiver/reconnect signals request admission, never periodic rediscovery. */
+  wakePendingVisibleEventDrain(sessionId?: string): void {
+    if (this.#pendingVisibleEventDeliver) {
+      this.schedulePendingVisibleEventDrain({ deliver: this.#pendingVisibleEventDeliver, sessionId, delayMs: 0 });
+    }
+  }
+
   async #runPendingVisibleEventDrain(): Promise<void> {
     const deliver = this.#pendingVisibleEventDeliver;
     if (!deliver || this.#pendingVisibleEventDrainInFlight) return;
     this.#pendingVisibleEventDrainInFlight = true;
-    this.#pendingVisibleEventDrainRequested = false;
+    const sessionIds = Array.from(this.#pendingVisibleEventDrainRequested);
+    this.#pendingVisibleEventDrainRequested.clear();
     try {
-      await this.drainPendingVisibleEvents(deliver);
-    } catch (error) {
-      if (!this.#pendingVisibleEventDrainDisposed) this.#pendingVisibleEventDrainRequested = true;
-      this.#pendingVisibleEventDrainError?.(error);
+      for (const sessionId of sessionIds) {
+        if (this.#pendingVisibleEventDrainDisposed) break;
+        try {
+          await this.drainPendingVisibleEvents(deliver, sessionId);
+        } catch (error) {
+          // Pre-admission misses retain custody until a real wake. Staged delivery
+          // and lost ACKs retain their existing outbox/retry ownership.
+          const sessionUnavailable = typeof error === 'object' && error !== null
+            && 'code' in error && error.code === 'session_unavailable';
+          if (!this.#pendingVisibleEventDrainDisposed && !sessionUnavailable) {
+            this.#pendingVisibleEventDrainRequested.add(sessionId);
+          }
+          this.#pendingVisibleEventDrainError?.(error);
+        }
+      }
     } finally {
       this.#pendingVisibleEventDrainInFlight = false;
     }
-    if (!this.#pendingVisibleEventDrainDisposed && this.#pendingVisibleEventDrainRequested) {
-      this.schedulePendingVisibleEventDrain({ deliver, delayMs: this.#pendingVisibleEventRetryDelayMs });
+    if (!this.#pendingVisibleEventDrainDisposed && this.#pendingVisibleEventDrainRequested.size > 0) {
+      // Keep the queued scope: a failed receiver must not poll other parked Sessions.
+      const sessionId = this.#pendingVisibleEventDrainRequested.values().next().value;
+      this.schedulePendingVisibleEventDrain({ deliver, sessionId, delayMs: this.#pendingVisibleEventRetryDelayMs });
     }
   }
 
@@ -1839,6 +1856,7 @@ export class RuntimeAuthRecoveryScheduler implements RuntimeAuthRecoverySchedule
         const next: RuntimeAuthRecoveryIntent = {
           ...current,
           status: 'resumed_awaiting_proof',
+          nextRetryAtMs: null,
           lastError: input.expectedPendingTargetCredentialRevision !== undefined
             ? current.lastError
             : 'recovery_unproven_awaiting_provider_outcome',
@@ -1856,9 +1874,6 @@ export class RuntimeAuthRecoveryScheduler implements RuntimeAuthRecoverySchedule
                 pendingTargetGeneration: current.pendingTargetGeneration ?? null,
                 pendingTargetCredentialRevision: current.pendingTargetCredentialRevision ?? null,
               }),
-          ...(this.#providerOutcomePendingWaitMs === null
-            ? {}
-            : { nextRetryAtMs: this.#nowMs() + this.#providerOutcomePendingWaitMs }),
         };
         return { intent: next, result: next };
       },
@@ -1890,6 +1905,7 @@ export class RuntimeAuthRecoveryScheduler implements RuntimeAuthRecoverySchedule
         const disposition = resolveRuntimeAuthRecoveryResultDisposition({
           result: input.result,
           classificationFailureKind: input.classificationFailureKind,
+          classificationProfileId: current.classification.profileId,
           classificationResetsAtMs: input.classificationResetsAtMs,
           nowMs: this.#nowMs(),
         });
@@ -2089,7 +2105,6 @@ export class RuntimeAuthRecoveryScheduler implements RuntimeAuthRecoverySchedule
   async #enqueue(input: Readonly<{
     reportId?: string;
     sessionId: string;
-    switchesThisTurn: number;
     classification: ConnectedServiceRuntimeFailureClassification;
     failurePhase: RuntimeAuthRecoveryPhase;
     failureReason?: string;
@@ -2186,11 +2201,6 @@ export class RuntimeAuthRecoveryScheduler implements RuntimeAuthRecoverySchedule
       groupId,
       recoveryKey,
     });
-    const inheritedAttemptCount = supersededPendingProof.reduce(
-      (maxAttemptCount, { intent }) => Math.max(maxAttemptCount, intent.attemptCount),
-      0,
-    );
-    const inheritedPendingTarget = supersededPendingProof[0]?.intent ?? null;
     const nextRetryAtMs = resolveInitialRetryAtMs({
       nowMs,
       baseBackoffMs: this.#baseBackoffMs,
@@ -2198,7 +2208,7 @@ export class RuntimeAuthRecoveryScheduler implements RuntimeAuthRecoverySchedule
       errorClassification: input.errorClassification ?? { kind: 'protocol_error', retryable: true },
     });
     const attemptId = input.expectedAttemptId
-      ?? (input.reportId ? `runtime-auth-attempt:${input.reportId.replace(/^runtime-auth-report:/, '')}` : undefined);
+      ?? buildRuntimeAuthRecoveryAttemptId(input.reportId);
     const uxDiagnostic = input.projectVisibleEvent
       ? buildRuntimeAuthRecoveryScheduledUxDiagnostic({
           classification,
@@ -2239,18 +2249,17 @@ export class RuntimeAuthRecoveryScheduler implements RuntimeAuthRecoverySchedule
         input.failurePhase === 'handler' ? 'handler_transient_failure' : 'apply_transient_failure'
       ),
       classification,
-      switchesThisTurn: input.switchesThisTurn,
-      attemptCount: inheritedAttemptCount,
-      maxAttempts: this.#maxAttempts,
-      // The control route owns the one initial in-band attempt. Only a typed
-      // handler/apply failure transitions this intent to `scheduled` and arms
-      // the durable retry timer.
+      attemptCount: 0,
+      switchesThisTurn: 0,
+      maxAttempts: 0,
+      // Ordinary reports retain their initial in-band attempt. Proven adopted successors
+      // enter scheduled custody directly so only the guarded retry can continue their work.
       nextRetryAtMs: input.transition === 'working' ? null : nextRetryAtMs,
       lastError: input.lastError,
       lastErrorClassification: input.errorClassification,
-      pendingTargetProfileId: inheritedPendingTarget?.pendingTargetProfileId ?? null,
-      pendingTargetGeneration: inheritedPendingTarget?.pendingTargetGeneration ?? null,
-      pendingTargetCredentialRevision: inheritedPendingTarget?.pendingTargetCredentialRevision ?? null,
+      pendingTargetProfileId: null,
+      pendingTargetGeneration: null,
+      pendingTargetCredentialRevision: null,
       terminalAtMs: null,
       terminalReason: null,
     };
@@ -2294,12 +2303,15 @@ export class RuntimeAuthRecoveryScheduler implements RuntimeAuthRecoverySchedule
         reason: 'runtime_auth_recovery_stale_settlement',
       };
     }
-    if (persistedIntent.status === 'cancelled' || persistedIntent.status === 'exhausted') {
+    if (persistedIntent.status === 'recovered' || persistedIntent.status === 'cancelled' || persistedIntent.status === 'exhausted') {
       return {
         status: 'terminal_non_retry',
         retryable: false,
         reason: `runtime_auth_recovery_${persistedIntent.status}`,
         errorClassification: persistedIntent.lastErrorClassification,
+        ...(persistedIntent.attemptId ? { attemptId: persistedIntent.attemptId } : {}),
+        ...(persistedIntent.lastSettledTransition ? { transition: persistedIntent.lastSettledTransition } : {}),
+        resumePromptMode: persistedIntent.resumePromptMode,
       };
     }
     await this.#clearSupersededPendingProofIntents(supersededPendingProof);

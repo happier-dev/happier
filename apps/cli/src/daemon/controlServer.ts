@@ -1,6 +1,4 @@
-import type { ActionExecuteResult } from '@happier-dev/protocol/actions';
-import { requiresOriginalAccountMachineActionProof } from '@/api/externalActionExecutionAuthorization';
-import { requiresManagedMachineDaemonIngress } from './externalActions/reconcileExternalActionTarget';
+import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 /**
  * HTTP control server for daemon management
  * Provides endpoints for listing sessions, stopping sessions, and daemon shutdown
@@ -10,20 +8,25 @@ import fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import { isDeepStrictEqual } from 'node:util';
 import { z } from 'zod/mini';
 import { SessionFollowOccurrenceNotificationSchema, type SessionFollowOccurrenceNotification } from './sessions/sessionActivityChangedContract';
-import { SessionActivityChangedResponseSchema, type SessionActivityChangedResult } from './sessions/sessionActivityChangedContract';
+import { SessionActivityChangedResponseSchema, projectSessionFollowOccurrenceDiagnostic, type SessionActivityChangedResult } from './sessions/sessionActivityChangedContract';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
 import { configuration } from '@/configuration';
+import { ScmDiffSummaryResultRevisionHintSchema, type ScmDiffSummaryResultRevisionHint } from '@happier-dev/protocol/scm/diffSummaryResult';
 import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/sessionTeamCredentialLaunch';
 import { DoctorSnapshotResourceVitalsSchema, type DoctorSnapshotResourceVitals } from '@happier-dev/protocol/diagnostics/doctorSnapshot';
 import { createDaemonAdmissionDrain, DaemonAdmissionRefusalCodeSchema, EXECUTION_RUN_ADMISSION_PATH, ExecutionRunDaemonAdmissionResponseSchema, waitForDaemonAdmission, type DaemonAdmissionDrain } from './lifecycle/admissionDrain';
 import { AUTHORITY_CEILING_HEADER_V1, resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
-import { waitForTerminalPresentUserPolicyRefresh, type TerminalPresentUserPolicyScope } from '@/settings/accountSettings/resolveEffectiveTerminalPresentUserPolicy';
 import { logger } from '@/ui/logger';
 import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
-import { projectActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { resolveRuntimeActionExecutionFamily } from '@happier-dev/protocol/actions/executor/dispatch';
-import { classifyActionTransportFailure } from '@/api/client/classifyServerEndpointError';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions';
+import { requiresOriginalAccountMachineActionProof } from '@/api/externalActionExecutionAuthorization';
+import { requiresManagedMachineDaemonIngress } from './externalActions/reconcileExternalActionTarget';
+import { projectExternalActionRunNowIdempotencyKeyV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import type { SessionStopIntent } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
+import { projectActionExecuteFailure, readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { isPluginError } from '@happier-dev/protocol/plugins/errors';
 import { canExecuteSessionRuntimeAction } from './sessionRuntimeActionAdmission';
+import { classifyActionTransportFailure, classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
 import { createDaemonControlAuthGuard } from './controlAuth';
 import { PROCESS_LAUNCH_NOTIFICATION_PATH, ProcessLaunchNotificationRequestSchema,
   ProcessLaunchNotificationResultSchema, invalidateProcessLaunchDiscovery } from '@/processes/launchNotification';
@@ -33,7 +36,8 @@ import { SessionStartedSuccessReportSchema } from './sessions/sessionStartedRepo
 import type { SkillStore } from '@/prompts/skills/store/skillStore';
 import type { SkillUsageRecorder } from '@/prompts/skills/store/skillUsage';
 import { createDaemonControlRequestLifetime } from './controlRequestLifetime';
-import { isCanonicalSpawnSessionId as isCanonicalSessionId } from './sessions/resolveSpawnWebhookResult';
+import { createSignedRootActionApprovalAcknowledgement } from './externalActions/signedRootActionApproval';
+import { isCanonicalSpawnSessionId as isCanonicalSessionId } from './sessions/isCanonicalSpawnSessionId';
 import type { RecoveredSpawnNonceAdmissionResult } from './spawn/recoveredSpawnNonceAdmission';
 import {
   BROWSER_RUNTIME_ACTION_CONTROL_PATH,
@@ -70,8 +74,8 @@ import {
   type ConnectedServiceRunRuntimeAuthRefreshHandler,
   ConnectedServiceRunRejectedStartRequestSchema,
   ConnectedServiceRunRejectedStartResultSchema,
-  type ConnectedServiceRunRejectedStartHandler,
   ConnectedServiceRunMaterializationFailureResponseSchema,
+  type ConnectedServiceRunRejectedStartHandler,
   ConnectedServiceRunMaterializeRequestSchema,
   ConnectedServiceRunMaterializeSuccessResponseSchema,
   ConnectedServiceRunReleaseRequestSchema,
@@ -220,6 +224,8 @@ import type {
   RuntimeAuthRecoveryScheduleResult,
   RuntimeAuthRecoverySchedulerLike,
 } from './connectedServices/runtimeAuth/RuntimeAuthRecoveryScheduler';
+import { buildRuntimeAuthRecoveryAttemptId } from './connectedServices/runtimeAuth/RuntimeAuthRecoveryScheduler';
+import { buildRuntimeAuthRecoveryKey } from './connectedServices/runtimeAuth/runtimeAuthRecoveryKey';
 import {
   ConnectedServiceDaemonAuthBridgeRefreshResultSchema,
   type SessionConnectedServiceRuntimeAuthRefreshHandler,
@@ -234,8 +240,10 @@ import type {
 import {
   authorizeTrackedRunnerAgentDaemonServiceOperation,
 } from './agentRuntime/authorizeTrackedRunnerAgentDaemonServiceOperation';
+import { nativeRealtimeInputAdmissionV1Equal, nativeRealtimeInputWitnessMatchesV1 } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceTurnWitness';
 import { buildConnectedServiceRuntimeAuthSwitchAttemptLogContext } from './connectedServices/runtimeAuth/buildConnectedServiceRuntimeAuthSwitchAttemptLogContext';
 import { registerDaemonControlRequestTiming } from './diagnostics/registerDaemonControlRequestTiming';
+import { registerBugReportDiagnosticsRoute } from './diagnostics/registerBugReportDiagnosticsRoute';
 import {
   applyAuthorizedRuntimeAuthFailureSourceBinding,
   type RuntimeAuthFailureSourceAuthorization,
@@ -270,11 +278,9 @@ import {
   type SignedRootActionExecuteRequest,
 } from './externalActions/signedRootActionControl';
 
-const DEFAULT_DAEMON_CONTROL_BODY_LIMIT_BYTES = 8 * 1024 * 1024;
-const DAEMON_CONTROL_BODY_LIMIT_BYTES_ENV_KEY = 'HAPPIER_DAEMON_CONTROL_BODY_LIMIT_BYTES';
 const E2E_DAEMON_CONTROL_PORT_ENV_KEY = 'HAPPIER_E2E_DAEMON_CONTROL_PORT';
 const DAEMON_DIST_CLOSURE_FINGERPRINT_PATTERN = /^[a-f0-9]{16}$/;
-const DaemonDistClosureFingerprintSchema = z.string().check(z.regex(DAEMON_DIST_CLOSURE_FINGERPRINT_PATTERN));
+const DaemonDistClosureFingerprintSchema = lazyZodSchema(() => z.string().check(z.regex(DAEMON_DIST_CLOSURE_FINGERPRINT_PATTERN)));
 type DaemonSelfRestartRequest = Readonly<{
   successorDistClosureFingerprint?: string;
   successorServerUrls?: Readonly<{
@@ -283,18 +289,16 @@ type DaemonSelfRestartRequest = Readonly<{
   }>;
 }>;
 type DaemonExternalActionApi = Readonly<{
+  currentServerId: string;
+  currentAccountId?: string;
+  currentServerHttpBaseUrl?: string;
+  verifyPat: DaemonPatVerifier;
+  readEncryptionAccess?: AccountServerPatEncryptionAccessReader;
+  executor: ExternalActionExecutor;
   executeOriginalAccountAction?: (request: SignedRootActionExecuteRequest & Readonly<{
     authority: 'present_user' | 'account_automation'; signal: AbortSignal;
   }>) => Promise<ActionExecuteResult>;
   resolveManagedControlControllerTarget?: (actionId: string, input: unknown, signal: AbortSignal) => Promise<Readonly<{ kind: 'machine'; machineId: string }> | null>;
-
-  currentServerId: string;
-  currentAccountId?: string;
-  currentServerHttpBaseUrl?: string;
-  terminalPolicyScope?: TerminalPresentUserPolicyScope;
-  verifyPat: DaemonPatVerifier;
-  readEncryptionAccess?: AccountServerPatEncryptionAccessReader;
-  executor: ExternalActionExecutor;
   acquirePluginRuntimeRegistryLease?: Parameters<typeof executeExternalAction>[0]['acquirePluginRuntimeRegistryLease'];
   resolvePluginExecutionOriginContext?: Parameters<typeof executeExternalAction>[0]['resolvePluginExecutionOriginContext'];
   resolveAccountPluginExecutionSelection?: Parameters<typeof executeExternalAction>[0]['resolveAccountPluginExecutionSelection'];
@@ -323,10 +327,10 @@ function resolveDaemonControlListenPort(env: NodeJS.ProcessEnv): number {
 
 // Session SDK callbacks carry non-authoritative launch hints. Its incumbent ingress drops
 // extras; Run identity envelopes use the same canonical schema with strict unknown handling.
-const SessionConnectedServiceRuntimeAuthRefreshSelectionSchema = z.discriminatedUnion('kind', [
+const SessionConnectedServiceRuntimeAuthRefreshSelectionSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: undefined }) as z.ZodMiniObject<T['shape'], z.core.$strip>)(ConnectedServiceRuntimeAuthRefreshSelectionSchema._zod.def.options[0]),
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: undefined }) as z.ZodMiniObject<T['shape'], z.core.$strip>)(ConnectedServiceRuntimeAuthRefreshSelectionSchema._zod.def.options[1]),
-]);
+]));
 
 
 function resolveThrownSpawnSessionErrorCode(error: unknown): string {
@@ -535,18 +539,6 @@ function findAgentRuntimeDaemonServiceAuthorizedSession(
   return null;
 }
 
-function resolveDaemonControlBodyLimitBytes(): number {
-  const raw = String(process.env[DAEMON_CONTROL_BODY_LIMIT_BYTES_ENV_KEY] ?? '').trim();
-  if (!raw) return DEFAULT_DAEMON_CONTROL_BODY_LIMIT_BYTES;
-
-  const parsed = Number.parseInt(raw, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return DEFAULT_DAEMON_CONTROL_BODY_LIMIT_BYTES;
-  }
-
-  return Math.max(1024 * 1024, Math.min(parsed, 64 * 1024 * 1024));
-}
-
 function sendBadRequest(reply: FastifyReply, body: Readonly<{
   success: false;
   error: string;
@@ -590,6 +582,7 @@ async function beginRuntimeAuthRecoveryIntake(input: Readonly<{
   switchesThisTurn: number;
   classification: ConnectedServiceRuntimeFailureClassification;
   resumePromptMode: SessionUsageLimitRecoveryResumePromptModeV1;
+  deferToScheduler?: boolean;
 }>): Promise<Readonly<{
   ok: true;
   created: boolean;
@@ -603,6 +596,7 @@ async function beginRuntimeAuthRecoveryIntake(input: Readonly<{
       switchesThisTurn: input.switchesThisTurn,
       classification: input.classification,
       resumePromptMode: input.resumePromptMode,
+      ...(input.deferToScheduler ? { deferToScheduler: true } : {}),
     });
     return { ok: true, created: true, recovery };
   } catch (error) {
@@ -651,22 +645,35 @@ type SpawnNonceAdmissionResult =
 // Success remains shape-compatible with released runners; failure is a strict
 // terminal counterpart on the same authenticated callback and carries no
 // Session/metadata truth because no Session was created or rejoined.
-const SessionStartedFailureReportSchema = z.strictObject({
+const SessionStartedFailureReportSchema = lazyZodSchema(() => z.strictObject({
   result: z.literal('failure'),
   spawnNonce: z.string().check(z.trim(), z.minLength(1)),
   errorDetail: SessionCreationTerminalSpawnErrorDetailSchema,
-});
+}));
 
-const SessionStartedReportSchema = z.union([
+const SessionStartedReportSchema = lazyZodSchema(() => z.union([
   SessionStartedSuccessReportSchema,
   SessionStartedFailureReportSchema,
-]);
+]));
 
 export type ConnectedAccountRequestAuthControlRoutes = Readonly<{
   authenticate: (capability: unknown) => ConnectedAccountRequestAuthSubject | null;
 }> & Pick<
   ConnectedAccountRequestAuthService,
   'lookupRequestAuth' | 'refreshAfterAuthFailure' | 'reportQuotaFailure'
+>;
+
+export type RuntimeAuthFailureReportIntake = (body: Readonly<{
+  reportId?: string;
+  sessionId: string;
+  switchesThisTurn?: number;
+  resumePromptMode?: SessionUsageLimitRecoveryResumePromptModeV1;
+  classification: ConnectedServiceRuntimeFailureClassification;
+}>) => Promise<
+  | Readonly<{ ok: true; result: unknown; resumePromptMode?: SessionUsageLimitRecoveryResumePromptModeV1;
+      recoveryReceipt?: Readonly<{ reportId: string; attemptId: string }> }>
+  | Readonly<{ ok: false; errorCode: 'connected_service_runtime_auth_invalid_classification'
+      | 'connected_service_runtime_auth_handler_unavailable' | 'connected_service_runtime_auth_recovery_intake_failed' }>
 >;
 
 export function createDaemonControlApp({
@@ -686,6 +693,7 @@ export function createDaemonControlApp({
   admissionDrain: suppliedAdmissionDrain,
   onHappySessionWebhook,
   onSessionActivityChanged,
+  onScmDiffSummaryResultUpdated,
   onSessionStartupFailure,
   resolveRecoveredSpawnNonce,
   admitPersistedTakeover,
@@ -705,6 +713,7 @@ export function createDaemonControlApp({
   authorizeConnectedServiceRuntimeAuthFailure,
   resolveConnectedServiceRuntimeAuthResumePromptMode,
   runtimeAuthRecoveryScheduler,
+  onRuntimeAuthFailureReportIntakeReady,
   handleSessionConnectedServiceAuthSwitch,
   handleSessionConnectedServiceRuntimeAuthRefresh,
   handleSessionRunnerRestart,
@@ -743,7 +752,7 @@ export function createDaemonControlApp({
   readDoctorResourceVitals?: () => DoctorSnapshotResourceVitals;
   readPluginCatalogProjection?: () => import('@/plugins/daemon/catalogProjection').DaemonPluginCatalogProjection;
   prepareStopSession?: (trackedSession: TrackedSession) => Promise<void> | void;
-  stopSession: (sessionId: string, intent?: 'explicit_stop', signal?: AbortSignal) => Promise<StopSessionResult>;
+  stopSession: (sessionId: string, intent: SessionStopIntent, signal?: AbortSignal) => Promise<StopSessionResult>;
   spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
   requestShutdown: () => void;
   beforeShutdown?: () => Promise<void>;
@@ -757,7 +766,8 @@ export function createDaemonControlApp({
     reconcileCanonicalReadiness?: (tracked: TrackedSession) => Promise<void>,
     sessionCreationOutcome?: SessionCreationOutcome,
   ) => void | Promise<void>;
-  onSessionActivityChanged?: (sessionId: string | null, followOccurrence?: SessionFollowOccurrenceNotification) => void | SessionActivityChangedResult | Promise<void | SessionActivityChangedResult>;
+  onSessionActivityChanged?: (sessionId: string | null, followOccurrence?: SessionFollowOccurrenceNotification, executionRunId?: string) => void | SessionActivityChangedResult | Promise<void | SessionActivityChangedResult>;
+  onScmDiffSummaryResultUpdated?: (change: ScmDiffSummaryResultRevisionHint) => void;
   /**
    * Settles the existing PID-correlated spawn waiter for a strict terminal
    * creation failure. It is intentionally separate from ordinary Session
@@ -822,6 +832,7 @@ export function createDaemonControlApp({
     explicit?: SessionUsageLimitRecoveryResumePromptModeV1;
   }>) => Promise<SessionUsageLimitRecoveryResumePromptModeV1>;
   runtimeAuthRecoveryScheduler?: RuntimeAuthRecoverySchedulerLike | null;
+  onRuntimeAuthFailureReportIntakeReady?: (intake: RuntimeAuthFailureReportIntake) => void;
   handleConnectedServiceTurnLifecycle?: (
     input: ConnectedServiceTurnLifecycleRequestBody,
   ) => Promise<ConnectedServiceTurnLifecycleResult>;
@@ -895,7 +906,9 @@ export function createDaemonControlApp({
 
   const app = fastify({
     logger: false, // We use our own logger
-    bodyLimit: resolveDaemonControlBodyLimitBytes(),
+    // Control payloads follow the native parser/buffer boundary. Individual
+    // transports with a declared envelope budget retain their route limits.
+    bodyLimit: Number.MAX_SAFE_INTEGER,
   });
   registerDaemonControlRequestTiming(app, {
     debug: (message, data) => logger.debug(message, data),
@@ -910,6 +923,7 @@ export function createDaemonControlApp({
     registerDaemonExternalActionRoute(app, {
       currentMachineId: machineId,
       ...externalActionApi,
+      get currentServerHttpBaseUrl() { return externalActionApi.currentServerHttpBaseUrl; },
     });
   }
   const runtimeAuthReportClaims = new Map<string, Readonly<{
@@ -1191,6 +1205,7 @@ export function createDaemonControlApp({
   });
 
   const requireAuth = createDaemonControlAuthGuard(normalizedControlToken);
+  registerBugReportDiagnosticsRoute(app, { controlToken: normalizedControlToken, machineId });
   typed.post(PROCESS_LAUNCH_NOTIFICATION_PATH, {
     onRequest: requireAuth,
     schema: { body: ProcessLaunchNotificationRequestSchema, response: { 200: ProcessLaunchNotificationResultSchema } },
@@ -1219,6 +1234,8 @@ export function createDaemonControlApp({
     schema: { body: DaemonAgentInstallListRequestSchema, response: { 200: DaemonAgentInstallListResponseSchema } },
   }, async () => await getDaemonAgentInstallJobOwner().list());
   if (externalActionApi) {
+    const approvalAcknowledgement = createSignedRootActionApprovalAcknowledgement();
+    app.addHook('onClose', async () => await approvalAcknowledgement.close());
     app.post(SIGNED_ROOT_ACTION_EXECUTE_PATH, { preHandler: requireAuth }, async (request, reply) => {
       const parsed = SignedRootActionExecuteRequestSchema.safeParse(request.body);
       if (!parsed.success) {
@@ -1229,17 +1246,19 @@ export function createDaemonControlApp({
         });
       }
       const lifetime = createDaemonControlRequestLifetime(request, reply);
-      const progress: { phase: 'terminal_policy' | 'execution' } = { phase: 'terminal_policy' };
       try {
         return await lifetime.run(async () => {
           const surface = parsed.data.surface ?? 'cli';
-          const terminalPolicy = surface === 'mcp' || request.headers[AUTHORITY_CEILING_HEADER_V1] === 'account_automation'
-            ? 'disallowed'
-            : await waitForTerminalPresentUserPolicyRefresh(externalActionApi.terminalPolicyScope);
-          progress.phase = 'execution';
-          const authority = resolveInvocationAuthority({
-            credential: surface === 'mcp' ? 'account' : 'terminal', surface, terminalPolicy,
-          });
+          let idempotencyKey: string | undefined;
+          try {
+            idempotencyKey = projectExternalActionRunNowIdempotencyKeyV1(parsed.data.actionId, parsed.data.input);
+          } catch {
+            return await reply.code(400).send({ ok: false, errorCode: 'invalid_envelope', error: 'invalid_envelope' });
+          }
+          // Preserve the local caller's ceiling through Home admission and Ask replay.
+          const authority = surface === 'mcp' || request.headers[AUTHORITY_CEILING_HEADER_V1] === 'account_automation'
+            ? 'account_automation'
+            : resolveInvocationAuthority({ credential: 'terminal', surface });
           const controlControllerTarget = await externalActionApi.resolveManagedControlControllerTarget?.(
             parsed.data.actionId, parsed.data.input, lifetime.signal) ?? null;
           if (requiresManagedMachineDaemonIngress(parsed.data.actionId,
@@ -1261,47 +1280,54 @@ export function createDaemonControlApp({
               serverIdentityId: origin.serverIdentityId, accountId: externalActionApi.currentAccountId,
               machineId, installationId,
             }) : undefined;
-          const execution = await executeExternalAction({
-            actionId: parsed.data.actionId,
-            envelope: {
-              v: 1,
-              input: parsed.data.input,
-              ...(parsed.data.target ? { target: parsed.data.target } : {}),
-              ...(parsed.data.actionRequestId ? { requestId: parsed.data.actionRequestId } : {}),
+          return await approvalAcknowledgement.execute({ actionId: parsed.data.actionId, surface, signal: lifetime.signal,
+            run: async (signal, operationOwnerUpdate) => {
+              const execution = await executeExternalAction({
+                actionId: parsed.data.actionId,
+                envelope: {
+                  v: 1,
+                  input: parsed.data.input,
+                  ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
+                  ...(parsed.data.target ? { target: parsed.data.target } : {}),
+                  ...(parsed.data.actionRequestId ? { requestId: parsed.data.actionRequestId } : {}),
+                },
+                principal: {
+                  authority,
+                },
+                localRootInvocation: { caller: { kind: 'host' }, surface, authority },
+                surface,
+                currentMachineId: machineId,
+                currentServerId: externalActionApi.currentServerId,
+                currentAccountId: externalActionApi.currentAccountId,
+                ...(authenticatedLocalRootCustody ? { authenticatedLocalRootCustody } : {}),
+                resolveTarget: externalActionApi.resolveTarget,
+                executor: externalActionApi.executor,
+                acquirePluginRuntimeRegistryLease: externalActionApi.acquirePluginRuntimeRegistryLease,
+                resolvePluginExecutionOriginContext: externalActionApi.resolvePluginExecutionOriginContext,
+                resolveAccountPluginExecutionSelection: externalActionApi.resolveAccountPluginExecutionSelection,
+                signal,
+                ...(operationOwnerUpdate ? { operationOwnerUpdate } : {}),
+              });
+              if (execution.kind === 'invalid_request') {
+                reply.code(400);
+                return {
+                  ok: false,
+                  errorCode: execution.errorCode,
+                  error: execution.errorCode,
+                };
+              }
+              if (execution.response.v !== 1) throw new Error('Local signed Action returned an unexpected envelope version');
+              return execution.response.execution;
             },
-            principal: {
-              authority,
-            },
-            localRootInvocation: { caller: { kind: 'host' }, surface, authority },
-            surface,
-            currentMachineId: machineId,
-            currentServerId: externalActionApi.currentServerId,
-            currentAccountId: externalActionApi.currentAccountId,
-            ...(authenticatedLocalRootCustody ? { authenticatedLocalRootCustody } : {}),
-            resolveTarget: externalActionApi.resolveTarget,
-            executor: externalActionApi.executor,
-            acquirePluginRuntimeRegistryLease: externalActionApi.acquirePluginRuntimeRegistryLease,
-            resolvePluginExecutionOriginContext: externalActionApi.resolvePluginExecutionOriginContext,
-            resolveAccountPluginExecutionSelection: externalActionApi.resolveAccountPluginExecutionSelection,
-            signal: lifetime.signal,
           });
-          if (execution.kind === 'invalid_request') {
-            return await reply.code(400).send({
-              ok: false,
-              errorCode: execution.errorCode,
-              error: execution.errorCode,
-            });
-          }
-          if (execution.response.v !== 1) throw new Error('Local signed Action returned an unexpected envelope version');
-          return execution.response.execution;
         });
       } catch (error) {
         const { sideEffectClass } = getActionSpec(parsed.data.actionId);
         const errorCode = classifyActionTransportFailure(error, {
           mutation: sideEffectClass !== 'none' && sideEffectClass !== 'read',
-          requestIssued: progress.phase === 'execution', cancelled: lifetime.signal.aborted,
+          requestIssued: true, cancelled: lifetime.signal.aborted,
         }) ?? 'internal_error';
-        logger.debug('[CONTROL SERVER] Root Action request ended', { requestId: request.id, actionId: parsed.data.actionId, phase: progress.phase, errorCode });
+        logger.debug('[CONTROL SERVER] Root Action request ended', { requestId: request.id, actionId: parsed.data.actionId, errorCode });
         return { ok: false, errorCode, error: errorCode };
       } finally {
         lifetime.dispose();
@@ -1448,10 +1474,7 @@ export function createDaemonControlApp({
             request.input,
             {
               surface: request.surface,
-              authority: resolveInvocationAuthority({
-                credential: 'terminal', surface: request.surface,
-                terminalPolicy: await waitForTerminalPresentUserPolicyRefresh(externalActionApi.terminalPolicyScope),
-              }),
+              authority: resolveInvocationAuthority({ credential: 'terminal', surface: request.surface }),
               actionCaller: { kind: 'host' },
               ...(request.requiredDangerLevel ? { requiredContributedActionDangerLevel: request.requiredDangerLevel } : {}),
               ...(request.defaultSessionId ? { defaultSessionId: request.defaultSessionId } : {}),
@@ -1917,10 +1940,26 @@ export function createDaemonControlApp({
     return { current: Boolean(attempt && attempt.requestId === requestId && !attempt.signal.aborted) };
   });
 
+  // The one machine result store is written by both Session and daemon processes.
+  typed.post('/scm-diff-summary-result-updated', {
+    schema: { body: ScmDiffSummaryResultRevisionHintSchema,
+      response: { 200: z.strictObject({ ok: z.literal(true) }), 401: authSchema401,
+        503: daemonAdmissionRefusedRouteResponseSchema } },
+    preHandler: requireAuth,
+  }, async (request, reply) => {
+    if (admissionDrain.isPublicationQuiescing()) {
+      reply.code(503);
+      return daemonAdmissionRefusedResponse();
+    }
+    onScmDiffSummaryResultUpdated?.(request.body);
+    return { ok: true as const };
+  });
+
   // Session reports itself after creation
   typed.post('/session-activity-changed', {
     schema: {
-      body: z.strictObject({ sessionId: z.nullable(z.string().check(z.minLength(1))), followOccurrence: z.optional(SessionFollowOccurrenceNotificationSchema) }),
+      body: z.strictObject({ sessionId: z.nullable(z.string().check(z.minLength(1))), followOccurrence: z.optional(SessionFollowOccurrenceNotificationSchema),
+        executionRunId: z.optional(z.string().check(z.minLength(1))) }),
       response: { 200: SessionActivityChangedResponseSchema, 401: authSchema401,
         503: daemonAdmissionRefusedRouteResponseSchema },
     },
@@ -1932,23 +1971,30 @@ export function createDaemonControlApp({
     }
     const occurrence = request.body.followOccurrence;
     const runOriginal = occurrence && 'original' in occurrence ? occurrence.original : undefined;
-    const diagnose = (status: 'started' | 'completed' | 'failed' | 'ignored') => {
+    const diagnose = (status: 'started' | 'completed' | 'failed' | 'ignored', error?: unknown) => {
+      const failure = status === 'failed' ? readUnexpectedActionErrorDiagnosticV1(error) : null;
+      const classification = status === 'failed' ? classifyServerEndpointError(error) : null;
       if (occurrence && 'sourceSessionId' in occurrence) logger.debug('[Session Follow] Occurrence ingress', {
         requestId: request.id, status,
+        // Reuse closed diagnostic vocabularies; exception text and transport
+        // payloads may carry private source content or credentials.
+        ...(failure && classification ? { ...failure, phase: 'dispatch',
+          errorCode: failure.errorCode ?? (isPluginError(error) && error.code === 'project_requester_home_unavailable'
+            ? error.code : classification.kind), retryable: classification.retryable } : {}),
         // An ignored source has not matched a tracked Session. Its authored
         // identity cannot become diagnostic content merely by reaching ingress.
-        ...(status === 'ignored' ? {} : { sourceSessionId: occurrence.sourceSessionId,
-          ...('sourceMessage' in occurrence ? { sourceMessageSeq: occurrence.sourceMessage.seq }
-            : { agentStateVersion: occurrence.sourceRequests.agentStateVersion }) }),
+        ...(status === 'ignored' ? {} : projectSessionFollowOccurrenceDiagnostic(occurrence)),
       });
     };
-    if (runOriginal || getChildren().some(tracked => tracked.happySessionId === request.body.sessionId)) {
-      if (runOriginal ? runOriginal.source.kind === 'workflow_run' || runOriginal.source.sessionId === request.body.sessionId
+    if (runOriginal || request.body.executionRunId || getChildren().some(tracked => tracked.happySessionId === request.body.sessionId)) {
+      if (runOriginal ? runOriginal.source.kind === 'workflow_run'
+        || ('sessionId' in runOriginal.source ? runOriginal.source.sessionId === request.body.sessionId
+          : request.body.sessionId === null && runOriginal.source.machineId === machineId)
         : !occurrence || 'sourceSessionId' in occurrence && occurrence.sourceSessionId === request.body.sessionId) {
         diagnose('started');
         let result: void | SessionActivityChangedResult;
-        try { result = await onSessionActivityChanged?.(request.body.sessionId, request.body.followOccurrence); }
-        catch (error) { diagnose('failed'); throw error; }
+        try { result = await onSessionActivityChanged?.(request.body.sessionId, request.body.followOccurrence, request.body.executionRunId); }
+        catch (error) { diagnose('failed', error); throw error; }
         diagnose('completed');
         if (result?.personalFollow?.sourceSessionId === request.body.sessionId) {
           return { ok: true as const, personalFollow: result.personalFollow };
@@ -2088,6 +2134,263 @@ export function createDaemonControlApp({
     return { status: 'ok' as const };
   });
 
+  const intakeRuntimeAuthFailureReport: RuntimeAuthFailureReportIntake = async (body) => {
+    return await claimRuntimeAuthReport({
+      reportId: body.reportId,
+      retainSettled: result => result.ok === true,
+      execute: async () => {
+    if (!handleConnectedServiceRuntimeAuthFailure) {
+
+      return {
+        ok: false as const,
+        errorCode: 'connected_service_runtime_auth_handler_unavailable' as const,
+      };
+    }
+    const startedAtMs = Date.now();
+    const sessionId = body.sessionId;
+    const switchesThisTurn = body.switchesThisTurn ?? 0;
+    let classification = sanitizeConnectedServiceRuntimeFailureClassification(body.classification);
+    if (!classification) {
+
+      return {
+        ok: false as const,
+        errorCode: 'connected_service_runtime_auth_invalid_classification' as const,
+      };
+    }
+    if (admissionDrain.isPublicationQuiescing()) {
+      return {
+        ok: true as const,
+        result: {
+          status: 'daemon_lifecycle_unavailable' as const,
+          reason: 'recovery_deferred_shutdown' as const,
+        },
+      };
+    }
+    let sourceAuthorization: Awaited<ReturnType<NonNullable<
+      typeof authorizeConnectedServiceRuntimeAuthFailure
+    >>> | undefined;
+    try {
+      sourceAuthorization = await authorizeConnectedServiceRuntimeAuthFailure?.({ sessionId, classification });
+    } catch (error) {
+      logger.warn('[CONTROL SERVER] Connected-service runtime auth source verification unavailable', {
+        sessionId,
+        serviceId: classification.serviceId,
+        error: readSafeDaemonControlErrorDiagnostic(error),
+      });
+
+      return {
+        ok: false as const,
+        errorCode: 'connected_service_runtime_auth_recovery_intake_failed' as const,
+      };
+    }
+    classification = applyAuthorizedRuntimeAuthFailureSourceBinding(classification, sourceAuthorization);
+    let resumePromptMode: SessionUsageLimitRecoveryResumePromptModeV1;
+    try {
+      resumePromptMode = await (resolveConnectedServiceRuntimeAuthResumePromptMode?.({
+        sessionId,
+        classification,
+        ...(body.resumePromptMode ? { explicit: body.resumePromptMode } : {}),
+      }) ?? Promise.resolve(body.resumePromptMode ?? 'standard'));
+    } catch (error) {
+      logger.warn('[CONTROL SERVER] Runtime-auth continuation policy unavailable', {
+        sessionId, error: readSafeDaemonControlErrorDiagnostic(error),
+      });
+      return { ok: false as const, errorCode: 'connected_service_runtime_auth_recovery_intake_failed' as const };
+    }
+    const deferToScheduler = sourceAuthorization?.status === 'recovery_superseded'
+      && 'adoptedTarget' in sourceAuthorization
+      && Boolean(sourceAuthorization.adoptedTarget)
+      && Boolean(runtimeAuthRecoveryScheduler?.beginClassifiedFailure);
+    if (sourceAuthorization && sourceAuthorization.status !== 'authorized' && !deferToScheduler) {
+      const result = await handleConnectedServiceRuntimeAuthFailure({
+        sessionId,
+        switchesThisTurn,
+        ...(body.reportId ? { interruptedOriginId: buildRuntimeAuthRecoveryAttemptId(body.reportId) } : {}),
+        resumePromptMode,
+        classification,
+        sourceAuthorization,
+      });
+      return {
+        ok: true as const,
+        result,
+        ...(resolveConnectedServiceRuntimeAuthResumePromptMode ? { resumePromptMode } : {}),
+      };
+    }
+    const recoveryKey = {
+      sessionId,
+      serviceId: classification.serviceId,
+      profileId: classification.profileId ?? null,
+      groupId: classification.groupId ?? null,
+      failingAccessTokenFingerprint: classification.failingAccessTokenFingerprint ?? null,
+    };
+    const intake = await beginRuntimeAuthRecoveryIntake({
+      ...(body.reportId ? { reportId: body.reportId } : {}),
+      runtimeAuthRecoveryScheduler,
+      sessionId,
+      switchesThisTurn,
+      classification,
+      resumePromptMode,
+      ...(deferToScheduler ? { deferToScheduler: true } : {}),
+    });
+    if (!intake.ok) {
+      const diagnostic = readSafeDaemonControlErrorDiagnostic(intake.error);
+      logger.warn('[CONTROL SERVER] Connected-service runtime auth recovery intake failed', {
+        ...buildConnectedServiceRuntimeAuthSwitchAttemptLogContext({
+          sessionId,
+          classification,
+          handlerFailure: {
+            errorCode: 'runtime_auth_recovery_intake_failed',
+            errorName: diagnostic.name,
+            errorMessage: diagnostic.message,
+          },
+          routedThroughFsm: false,
+          startedAtMs,
+          finishedAtMs: Date.now(),
+        }),
+        kind: classification.kind,
+        error: diagnostic,
+      });
+
+      return {
+        ok: false as const,
+        errorCode: 'connected_service_runtime_auth_recovery_intake_failed' as const,
+      };
+    }
+    if (intake.created) {
+      resumePromptMode = readRuntimeAuthRecoveryResumePromptMode(intake.recovery);
+    }
+    const recoveryAttemptId = readRuntimeAuthRecoveryAttemptId(intake.recovery);
+    const recoveryReceipt = body.reportId && recoveryAttemptId
+      ? {
+          reportId: body.reportId,
+          attemptId: recoveryAttemptId,
+        }
+      : null;
+    const buildAcceptedResponse = (result: unknown) => ({
+      ok: true as const,
+      result,
+      ...(resolveConnectedServiceRuntimeAuthResumePromptMode ? { resumePromptMode } : {}),
+      ...(recoveryReceipt ? { recoveryReceipt } : {}),
+    });
+    if (intake.created && !isRuntimeAuthRecoveryScheduled(intake.recovery)) {
+      return buildAcceptedResponse(intake.recovery);
+    }
+    if (deferToScheduler) {
+      return buildAcceptedResponse(buildRuntimeAuthRecoveryScheduledResult({ classification, recovery: intake.recovery }));
+    }
+    try {
+      const result = await handleConnectedServiceRuntimeAuthFailure({
+        sessionId,
+        switchesThisTurn,
+        interruptedOriginId: recoveryAttemptId ?? buildRuntimeAuthRecoveryKey(recoveryKey),
+        resumePromptMode,
+        classification,
+        ...(sourceAuthorization ? { sourceAuthorization } : {}),
+      });
+      if (isConnectedServiceRuntimeAuthApplyFailure(result) && runtimeAuthRecoveryScheduler) {
+        try {
+          const recovery = await runtimeAuthRecoveryScheduler.enqueueApplyFailure({
+            ...(body.reportId ? { reportId: body.reportId } : {}),
+            ...(recoveryAttemptId ? { expectedAttemptId: recoveryAttemptId } : {}),
+            sessionId,
+            switchesThisTurn,
+            classification,
+            result,
+          });
+          if (isRuntimeAuthRecoveryScheduled(recovery)) {
+            return buildAcceptedResponse({
+                ...buildRuntimeAuthRecoveryScheduledResult({
+                  classification,
+                  recovery,
+                  originalResult: result,
+                }),
+            });
+          }
+        } catch (schedulerError) {
+          logger.warn('[CONTROL SERVER] Connected-service runtime auth recovery scheduling failed after apply failure', {
+            sessionId,
+            error: readSafeDaemonControlErrorDiagnostic(schedulerError),
+          });
+        }
+      }
+      await runtimeAuthRecoveryScheduler?.settleResultByKey?.({
+        ...recoveryKey,
+        ...(recoveryAttemptId ? { expectedAttemptId: recoveryAttemptId } : {}),
+        result,
+        classificationFailureKind: classification.kind,
+        classificationResetsAtMs: classification.resetsAtMs ?? null,
+      }).catch((error) => {
+        logger.warn('[CONTROL SERVER] Connected-service runtime auth recovery result settlement failed', {
+          sessionId,
+          error: readSafeDaemonControlErrorDiagnostic(error),
+        });
+      });
+      if (isLocallyCompleteWithoutProof(result)) {
+        await runtimeAuthRecoveryScheduler?.markAwaitingProviderOutcomeProofByKey?.({
+          ...recoveryKey,
+          ...(recoveryAttemptId ? { expectedAttemptId: recoveryAttemptId } : {}),
+          result,
+        }).catch((error) => {
+          logger.warn('[CONTROL SERVER] Connected-service runtime auth recovery proof-wait mark failed after local completion', {
+            sessionId,
+            error: readSafeDaemonControlErrorDiagnostic(error),
+          });
+        });
+      }
+      return buildAcceptedResponse(result);
+    } catch (error) {
+      const diagnostic = readSafeDaemonControlErrorDiagnostic(error);
+      logger.warn('[CONTROL SERVER] Connected-service runtime auth failure handler failed', {
+        ...buildConnectedServiceRuntimeAuthSwitchAttemptLogContext({
+          sessionId,
+          classification,
+          handlerFailure: {
+            errorCode: 'unexpected_error',
+            errorName: diagnostic.name,
+            errorMessage: diagnostic.message,
+          },
+          routedThroughFsm: false,
+          startedAtMs,
+          finishedAtMs: Date.now(),
+        }),
+        kind: classification.kind,
+        error: diagnostic,
+      });
+      if (runtimeAuthRecoveryScheduler) {
+        try {
+          const recovery = await runtimeAuthRecoveryScheduler.enqueueHandlerFailure({
+            ...(body.reportId ? { reportId: body.reportId } : {}),
+            ...(recoveryAttemptId ? { expectedAttemptId: recoveryAttemptId } : {}),
+            sessionId,
+            switchesThisTurn,
+            classification,
+            error,
+          });
+          if (isRuntimeAuthRecoveryScheduled(recovery)) {
+            return buildAcceptedResponse({
+                ...buildRuntimeAuthRecoveryScheduledResult({
+                  classification,
+                  recovery,
+                }),
+            });
+          }
+        } catch (schedulerError) {
+          logger.warn('[CONTROL SERVER] Connected-service runtime auth recovery scheduling failed after handler failure', {
+            sessionId,
+            error: readSafeDaemonControlErrorDiagnostic(schedulerError),
+          });
+        }
+      }
+      return buildAcceptedResponse({
+          status: 'recovery_handler_failed' as const,
+          errorCode: 'unexpected_error' as const,
+      });
+    }
+      },
+    });
+  };
+  onRuntimeAuthFailureReportIntakeReady?.(intakeRuntimeAuthFailureReport);
+
   typed.post('/connected-service-runtime-auth/failure', {
     schema: {
       body: z.object({
@@ -2134,250 +2437,10 @@ export function createDaemonControlApp({
     },
     preHandler: requireAuth,
   }, async (request, reply) => {
-    return await claimRuntimeAuthReport({
-      reportId: request.body.reportId,
-      retainSettled: (result) => result.ok === true,
-      onResult: (result) => {
-        if (result.ok === true) return;
-        reply.code(
-          result.errorCode === 'connected_service_runtime_auth_invalid_classification'
-            ? 400
-            : result.errorCode === 'connected_service_runtime_auth_handler_unavailable'
-              ? 501
-              : 503,
-        );
-      },
-      execute: async () => {
-    if (!handleConnectedServiceRuntimeAuthFailure) {
-      reply.code(501);
-      return {
-        ok: false as const,
-        errorCode: 'connected_service_runtime_auth_handler_unavailable' as const,
-      };
-    }
-    const startedAtMs = Date.now();
-    const sessionId = request.body.sessionId;
-    const switchesThisTurn = request.body.switchesThisTurn ?? 0;
-    let classification = sanitizeConnectedServiceRuntimeFailureClassification(request.body.classification);
-    if (!classification) {
-      reply.code(400);
-      return {
-        ok: false as const,
-        errorCode: 'connected_service_runtime_auth_invalid_classification' as const,
-      };
-    }
-    if (admissionDrain.isPublicationQuiescing()) {
-      return {
-        ok: true as const,
-        result: {
-          status: 'daemon_lifecycle_unavailable' as const,
-          reason: 'recovery_deferred_shutdown' as const,
-        },
-      };
-    }
-    let sourceAuthorization: Awaited<ReturnType<NonNullable<
-      typeof authorizeConnectedServiceRuntimeAuthFailure
-    >>> | undefined;
-    try {
-      sourceAuthorization = await authorizeConnectedServiceRuntimeAuthFailure?.({ sessionId, classification });
-    } catch (error) {
-      logger.warn('[CONTROL SERVER] Connected-service runtime auth source verification unavailable', {
-        sessionId,
-        serviceId: classification.serviceId,
-        error: readSafeDaemonControlErrorDiagnostic(error),
-      });
-      reply.code(503);
-      return {
-        ok: false as const,
-        errorCode: 'connected_service_runtime_auth_recovery_intake_failed' as const,
-      };
-    }
-    classification = applyAuthorizedRuntimeAuthFailureSourceBinding(classification, sourceAuthorization);
-    let resumePromptMode = await (resolveConnectedServiceRuntimeAuthResumePromptMode?.({
-      sessionId,
-      classification,
-      ...(request.body.resumePromptMode ? { explicit: request.body.resumePromptMode } : {}),
-    }) ?? Promise.resolve(request.body.resumePromptMode ?? 'standard')).catch(() => 'standard' as const);
-    if (sourceAuthorization && sourceAuthorization.status !== 'authorized') {
-      const result = await handleConnectedServiceRuntimeAuthFailure({
-        sessionId,
-        switchesThisTurn,
-        ...(request.body.reportId ? { interruptedOriginId: request.body.reportId } : {}),
-        resumePromptMode,
-        classification,
-        sourceAuthorization,
-      });
-      return {
-        ok: true as const,
-        result,
-        ...(resolveConnectedServiceRuntimeAuthResumePromptMode ? { resumePromptMode } : {}),
-      };
-    }
-    const recoveryKey = {
-      sessionId,
-      serviceId: classification.serviceId,
-      profileId: classification.profileId ?? null,
-      groupId: classification.groupId ?? null,
-      failingAccessTokenFingerprint: classification.failingAccessTokenFingerprint ?? null,
-    };
-    const intake = await beginRuntimeAuthRecoveryIntake({
-      ...(request.body.reportId ? { reportId: request.body.reportId } : {}),
-      runtimeAuthRecoveryScheduler,
-      sessionId,
-      switchesThisTurn,
-      classification,
-      resumePromptMode,
-    });
-    if (!intake.ok) {
-      const diagnostic = readSafeDaemonControlErrorDiagnostic(intake.error);
-      logger.warn('[CONTROL SERVER] Connected-service runtime auth recovery intake failed', {
-        ...buildConnectedServiceRuntimeAuthSwitchAttemptLogContext({
-          sessionId,
-          classification,
-          handlerFailure: {
-            errorCode: 'runtime_auth_recovery_intake_failed',
-            errorName: diagnostic.name,
-            errorMessage: diagnostic.message,
-          },
-          routedThroughFsm: false,
-          startedAtMs,
-          finishedAtMs: Date.now(),
-        }),
-        kind: classification.kind,
-        error: diagnostic,
-      });
-      reply.code(503);
-      return {
-        ok: false as const,
-        errorCode: 'connected_service_runtime_auth_recovery_intake_failed' as const,
-      };
-    }
-    if (intake.created) {
-      resumePromptMode = readRuntimeAuthRecoveryResumePromptMode(intake.recovery);
-    }
-    const recoveryAttemptId = readRuntimeAuthRecoveryAttemptId(intake.recovery);
-    const recoveryReceipt = request.body.reportId && recoveryAttemptId
-      ? {
-          reportId: request.body.reportId,
-          attemptId: recoveryAttemptId,
-        }
-      : null;
-    const buildAcceptedResponse = (result: unknown) => ({
-      ok: true as const,
-      result,
-      ...(resolveConnectedServiceRuntimeAuthResumePromptMode ? { resumePromptMode } : {}),
-      ...(recoveryReceipt ? { recoveryReceipt } : {}),
-    });
-    try {
-      const result = await handleConnectedServiceRuntimeAuthFailure({
-        sessionId,
-        switchesThisTurn,
-        ...(request.body.reportId ? { interruptedOriginId: request.body.reportId } : {}),
-        resumePromptMode,
-        classification,
-        ...(sourceAuthorization ? { sourceAuthorization } : {}),
-      });
-      if (isConnectedServiceRuntimeAuthApplyFailure(result) && runtimeAuthRecoveryScheduler) {
-        try {
-          const recovery = await runtimeAuthRecoveryScheduler.enqueueApplyFailure({
-            ...(request.body.reportId ? { reportId: request.body.reportId } : {}),
-            ...(recoveryAttemptId ? { expectedAttemptId: recoveryAttemptId } : {}),
-            sessionId,
-            switchesThisTurn,
-            classification,
-            result,
-          });
-          if (isRuntimeAuthRecoveryScheduled(recovery)) {
-            return buildAcceptedResponse({
-                ...buildRuntimeAuthRecoveryScheduledResult({
-                  classification,
-                  recovery,
-                  originalResult: result,
-                }),
-            });
-          }
-        } catch (schedulerError) {
-          logger.debug('[CONTROL SERVER] Connected-service runtime auth recovery scheduling failed after apply failure', {
-            sessionId,
-            error: readSafeDaemonControlErrorDiagnostic(schedulerError),
-          });
-        }
-      }
-      await runtimeAuthRecoveryScheduler?.settleResultByKey?.({
-        ...recoveryKey,
-        ...(recoveryAttemptId ? { expectedAttemptId: recoveryAttemptId } : {}),
-        result,
-        classificationFailureKind: classification.kind,
-        classificationResetsAtMs: classification.resetsAtMs ?? null,
-      }).catch((error) => {
-        logger.debug('[CONTROL SERVER] Connected-service runtime auth recovery result settlement failed', {
-          sessionId,
-          error: readSafeDaemonControlErrorDiagnostic(error),
-        });
-      });
-      if (isLocallyCompleteWithoutProof(result)) {
-        await runtimeAuthRecoveryScheduler?.markAwaitingProviderOutcomeProofByKey?.({
-          ...recoveryKey,
-          ...(recoveryAttemptId ? { expectedAttemptId: recoveryAttemptId } : {}),
-          result,
-        }).catch((error) => {
-          logger.debug('[CONTROL SERVER] Connected-service runtime auth recovery proof-wait mark failed after local completion', {
-            sessionId,
-            error: readSafeDaemonControlErrorDiagnostic(error),
-          });
-        });
-      }
-      return buildAcceptedResponse(result);
-    } catch (error) {
-      const diagnostic = readSafeDaemonControlErrorDiagnostic(error);
-      logger.warn('[CONTROL SERVER] Connected-service runtime auth failure handler failed', {
-        ...buildConnectedServiceRuntimeAuthSwitchAttemptLogContext({
-          sessionId,
-          classification,
-          handlerFailure: {
-            errorCode: 'unexpected_error',
-            errorName: diagnostic.name,
-            errorMessage: diagnostic.message,
-          },
-          routedThroughFsm: false,
-          startedAtMs,
-          finishedAtMs: Date.now(),
-        }),
-        kind: classification.kind,
-        error: diagnostic,
-      });
-      if (runtimeAuthRecoveryScheduler) {
-        try {
-          const recovery = await runtimeAuthRecoveryScheduler.enqueueHandlerFailure({
-            ...(request.body.reportId ? { reportId: request.body.reportId } : {}),
-            ...(recoveryAttemptId ? { expectedAttemptId: recoveryAttemptId } : {}),
-            sessionId,
-            switchesThisTurn,
-            classification,
-            error,
-          });
-          if (isRuntimeAuthRecoveryScheduled(recovery)) {
-            return buildAcceptedResponse({
-                ...buildRuntimeAuthRecoveryScheduledResult({
-                  classification,
-                  recovery,
-                }),
-            });
-          }
-        } catch (schedulerError) {
-          logger.debug('[CONTROL SERVER] Connected-service runtime auth recovery scheduling failed after handler failure', {
-            sessionId,
-            error: readSafeDaemonControlErrorDiagnostic(schedulerError),
-          });
-        }
-      }
-      return buildAcceptedResponse({
-          status: 'recovery_handler_failed' as const,
-          errorCode: 'unexpected_error' as const,
-      });
-    }
-      },
-    });
+    const result = await intakeRuntimeAuthFailureReport(request.body);
+    if (!result.ok) reply.code(result.errorCode === 'connected_service_runtime_auth_invalid_classification'
+      ? 400 : result.errorCode === 'connected_service_runtime_auth_handler_unavailable' ? 501 : 503);
+    return result;
   });
 
   typed.post('/connected-service-turn-lifecycle', {
@@ -3104,13 +3167,16 @@ export function createDaemonControlApp({
       };
     }
     const releasesNewWork = request.body.operation.kind === 'turn.admission.authorize'
+      || request.body.operation.kind === 'native_realtime.input.admit'
       || request.body.operation.kind === 'execution_run.snapshot.acquire_v1'
       || request.body.operation.kind === 'mcp.request_auth.open'
       || request.body.operation.kind === 'mcp.plugin.prepare'
       || request.body.operation.kind === 'mcp.plugin.materialize'
+      || request.body.operation.kind === 'mcp.plugin.discover'
       || request.body.operation.kind === 'session.input.admit'
       || request.body.operation.kind === 'managed_server.supervision.authorize';
-    if (releasesNewWork ? admissionDrain.isFinalShutdown() : admissionDrain.isPublicationQuiescing()) {
+    if (request.body.operation.kind !== 'native_realtime.input.retire'
+      && (releasesNewWork ? admissionDrain.isFinalShutdown() : admissionDrain.isPublicationQuiescing())) {
       reply.code(503);
       const refusal = daemonAdmissionRefusal();
       return admissionDrain.isFinalShutdown() ? daemonAdmissionRefusedResponse() : {
@@ -3156,7 +3222,7 @@ export function createDaemonControlApp({
         && witness.agentStartCaller.sessionId !== request.body.context.sessionId) {
         return false;
       }
-      if (childAction) return childActionAuthorized;
+      if (childAction) return !witness.nativeRealtimeAdmission && childActionAuthorized;
       const foregroundAdmission =
         subject?.readAdmission() ?? null;
       const trackedWitnessAuthorized = trackedAuthority
@@ -3169,8 +3235,9 @@ export function createDaemonControlApp({
           allowIdleCurrentGeneration: false,
         })
         : false;
-      const foregroundWitnessAuthorized = Boolean(
-        foregroundAdmission
+      const foregroundWitnessAuthorized = witness.nativeRealtimeAdmission
+        ? nativeRealtimeInputWitnessMatchesV1(subject?.readNativeRealtimeAdmission(), witness, request.body.context.sessionId)
+        : Boolean(foregroundAdmission
         && foregroundAdmission.turnId
           === witness.turnId
         && foregroundAdmission.inputId
@@ -3229,7 +3296,8 @@ export function createDaemonControlApp({
       // may precede a slow MCP result; it does not revoke an accepted effect.
       // Runner replacement, source retirement and request cancellation still
       // own its lifetime, and a new request still needs a live turn witness.
-      const acceptedAction = request.body.operation.kind === 'action.execute';
+      const acceptedAction = request.body.operation.kind === 'action.execute'
+        && !request.body.operation.witness.nativeRealtimeAdmission;
       if (trackedAuthorityAtDispatch) {
         return await trackedAuthorityRemainsCurrent() && (acceptedAction || turnWitnessIsCurrent());
       }
@@ -3264,26 +3332,90 @@ export function createDaemonControlApp({
     };
     let result: AgentRuntimeDaemonServiceResponseV1;
     try {
-      // A managed activity probe can overlap an already opening/open Session.
-      // Keep its request in the incumbent drain lifetime rather than turning
-      // that reversible closure into a terminal pre-effect input refusal.
-      while (releasesNewWork && isDaemonQuiescing()) {
-        try {
-          await waitForDaemonAdmission(admissionDrain, requestLifetime.signal);
-        } catch (error) {
-          if (!admissionDrain.isFinalShutdown()) throw error;
-          reply.code(503);
-          return daemonAdmissionRefusedResponse();
+    if (request.body.operation.kind === 'turn.admission.authorize'
+      && request.body.operation.witness.nativeRealtimeAdmission) {
+      reply.code(403);
+      return { ok: false as const, error: { code: 'agent_runtime_daemon_service_turn_forbidden',
+        message: 'Native input is not a Queue turn admission' } };
+    }
+    // New native input uses the same incumbent drain lifetime as ordinary admission.
+    while (releasesNewWork && isDaemonQuiescing()) {
+      try {
+        await waitForDaemonAdmission(admissionDrain, requestLifetime.signal);
+      } catch (error) {
+        if (!admissionDrain.isFinalShutdown()) throw error;
+        reply.code(503);
+        return daemonAdmissionRefusedResponse();
+      }
+      requestLifetime.signal.throwIfAborted();
+      if (!await isCurrent()) {
+        reply.code(403);
+        return { ok: false as const, error: { code: 'agent_runtime_daemon_service_forbidden',
+          message: 'Agent runtime daemon service request is forbidden' } };
+      }
+    }
+    const nativeOperation = request.body.operation;
+    if (nativeOperation.kind === 'native_realtime.input.admit' || nativeOperation.kind === 'native_realtime.input.retire') {
+      if (!await isCurrent()) return admissionCustodyUnavailable();
+      requestLifetime.signal.throwIfAborted();
+      const admission = nativeOperation.admission;
+      if (trackedAuthority) {
+        const current = trackedAuthority.tracked;
+        const native = current.agentRuntimeDaemonServiceNativeRealtimeAdmission;
+        // A fact cannot survive replacement of its exact runner/source owner.
+        if (native && (!isDeepStrictEqual(native.runner, trackedAuthority.runner)
+          || !pluginSourceCustodyV1Equal(native.sourceCustody, trackedAuthority.retainedAgent.sourceCustody))) {
+          delete current.agentRuntimeDaemonServiceNativeRealtimeAdmission;
         }
-        requestLifetime.signal.throwIfAborted();
-        if (!await isCurrent()) {
+        const live = current.agentRuntimeDaemonServiceNativeRealtimeAdmission;
+        if (nativeOperation.kind === 'native_realtime.input.admit') {
+          if (live && !nativeRealtimeInputAdmissionV1Equal(live.admission, admission)) {
+            reply.code(403);
+            return { ok: false as const, error: { code: 'agent_runtime_daemon_service_turn_forbidden',
+              message: 'A different native input is already live' } };
+          }
+          current.agentRuntimeDaemonServiceNativeRealtimeAdmission ??= Object.freeze({
+            admission: Object.freeze({ ...admission }), runner: trackedAuthority.runner,
+            sourceCustody: trackedAuthority.retainedAgent.sourceCustody,
+          });
+        } else if (nativeRealtimeInputAdmissionV1Equal(live?.admission, admission)) {
+          delete current.agentRuntimeDaemonServiceNativeRealtimeAdmission;
+        }
+      } else if (nativeOperation.kind === 'native_realtime.input.admit') {
+        if (!foregroundSubject?.admitNativeRealtimeInput(admission)) {
           reply.code(403);
-          return { ok: false as const, error: {
-            code: 'agent_runtime_daemon_service_forbidden',
-            message: 'Agent runtime daemon service request is forbidden',
-          } };
+          return { ok: false as const, error: { code: 'agent_runtime_daemon_service_turn_forbidden',
+            message: 'Native input admission is unavailable' } };
+        }
+      } else foregroundSubject?.retireNativeRealtimeInput(admission);
+      if (nativeOperation.kind === 'native_realtime.input.admit') {
+        const retireExactAdmission = () => {
+          if (trackedAuthority) {
+            const current = trackedAuthority.tracked;
+            if (nativeRealtimeInputAdmissionV1Equal(current.agentRuntimeDaemonServiceNativeRealtimeAdmission?.admission, admission)) {
+              delete current.agentRuntimeDaemonServiceNativeRealtimeAdmission;
+            }
+          } else foregroundSubject?.retireNativeRealtimeInput(admission);
+        };
+        try {
+          if (!await isCurrent()) {
+            retireExactAdmission();
+            return admissionCustodyUnavailable();
+          }
+          requestLifetime.signal.throwIfAborted();
+          const currentAdmission = trackedAuthority
+            ? trackedAuthority.tracked.agentRuntimeDaemonServiceNativeRealtimeAdmission?.admission
+            : foregroundSubject?.readNativeRealtimeAdmission();
+          if (!nativeRealtimeInputAdmissionV1Equal(currentAdmission, admission)) return admissionCustodyUnavailable();
+        } catch (error) {
+          retireExactAdmission();
+          throw error;
         }
       }
+      return nativeOperation.kind === 'native_realtime.input.admit'
+        ? { ok: true as const, result: { kind: 'native_realtime.input.admission' as const, admission } }
+        : { ok: true as const, result: { kind: 'native_realtime.input.retired' as const } };
+    }
       requestLifetime.signal.throwIfAborted();
       result = await agentRuntimeDaemonServices.dispatch(
         request.body,
@@ -4200,14 +4332,19 @@ export function createDaemonControlApp({
         })),
       response: {
         200: z.object({
-          status: z.string()
+          status: z.string(),
+          sessionResults: z.optional(z.array(z.object({
+            sessionId: z.string(),
+            result: StopSessionResultSchema,
+          }))),
         }),
         401: authSchema401,
       }
     },
     preHandler: requireAuth,
-  }, async (request) => {
+  }, async (request, reply) => {
     const stopSessions = request.body?.stopSessions === true;
+    const sessionResults: Array<{ sessionId: string; result: StopSessionResult }> = [];
     const releaseDrain = admissionDrain.beginTemporaryDrain();
     try {
     logger.debug('[CONTROL SERVER] Stop daemon request received', {
@@ -4234,47 +4371,49 @@ export function createDaemonControlApp({
         }
         try {
           // eslint-disable-next-line no-await-in-loop
-          const result = await stopSession(id);
+          const result = await stopSession(id, 'lifecycle_control');
+          sessionResults.push({ sessionId: id, result });
           if (result.status !== 'stopped' && result.status !== 'not_found') {
             cleanupComplete = false;
             logger.debug(`[CONTROL SERVER] Session ${id} stop incomplete`, result);
           }
         } catch (error) {
           cleanupComplete = false;
+          sessionResults.push({ sessionId: id, result: { status: 'incomplete', reason: 'explicit_stop_failed' } });
           logger.debug(`[CONTROL SERVER] Failed to stop session ${id}`, error);
         }
       }
       if (!cleanupComplete) {
-        return { status: 'session_cleanup_incomplete' };
+        return { status: 'session_cleanup_incomplete', sessionResults };
       }
     }
 
     admissionDrain.beginShutdown();
 
-    // Give time for response to arrive
-    setTimeout(() => {
+    // Accepted Stop survives a lost caller, but teardown must not race a
+    // response whose native write is still pending.
+    const shutdownAfterResponse = () => {
+      reply.raw.removeListener('finish', shutdownAfterResponse);
+      reply.raw.removeListener('close', shutdownAfterResponse);
       logger.debug('[CONTROL SERVER] Triggering daemon shutdown');
-      const runBeforeShutdown = async (): Promise<void> => {
-        if (!beforeShutdown) return;
-        try {
-          await beforeShutdown();
-        } catch (error) {
-          logger.debug('[CONTROL SERVER] beforeShutdown hook failed (best-effort)', error);
-        }
-      };
-
       void (async () => {
         try {
-          await runBeforeShutdown();
+          await beforeShutdown?.();
         } catch (error) {
-          logger.debug('[CONTROL SERVER] stopSessions failed', error);
+          logger.debug('[CONTROL SERVER] beforeShutdown hook failed (best-effort)', error);
         } finally {
           requestShutdown();
         }
       })();
-    }, 50);
+    };
+    if (reply.raw.writableFinished || reply.raw.destroyed) {
+      shutdownAfterResponse();
+    } else {
+      reply.raw.once('finish', shutdownAfterResponse);
+      reply.raw.once('close', shutdownAfterResponse);
+    }
 
-    return { status: 'stopping' };
+    return { status: 'stopping', ...(stopSessions ? { sessionResults } : {}) };
     } finally { releaseDrain(); }
   });
 
@@ -4298,6 +4437,7 @@ export function startDaemonControlServer({
   admissionDrain,
   onHappySessionWebhook,
   onSessionActivityChanged,
+  onScmDiffSummaryResultUpdated,
   onSessionStartupFailure,
   resolveRecoveredSpawnNonce,
   admitPersistedTakeover,
@@ -4318,6 +4458,7 @@ export function startDaemonControlServer({
   authorizeConnectedServiceRuntimeAuthFailure,
   resolveConnectedServiceRuntimeAuthResumePromptMode,
   runtimeAuthRecoveryScheduler,
+  onRuntimeAuthFailureReportIntakeReady,
   handleSessionConnectedServiceAuthSwitch,
   handleSessionConnectedServiceRuntimeAuthRefresh,
   handleSessionRunnerRestart,
@@ -4354,7 +4495,7 @@ export function startDaemonControlServer({
   readDoctorResourceVitals?: () => DoctorSnapshotResourceVitals;
   readPluginCatalogProjection?: () => import('@/plugins/daemon/catalogProjection').DaemonPluginCatalogProjection;
   prepareStopSession?: (trackedSession: TrackedSession) => Promise<void> | void;
-  stopSession: (sessionId: string, intent?: 'explicit_stop', signal?: AbortSignal) => Promise<StopSessionResult>;
+  stopSession: (sessionId: string, intent: SessionStopIntent, signal?: AbortSignal) => Promise<StopSessionResult>;
   spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
   requestShutdown: () => void;
   beforeShutdown?: () => Promise<void>;
@@ -4368,7 +4509,8 @@ export function startDaemonControlServer({
     reconcileCanonicalReadiness?: (tracked: TrackedSession) => Promise<void>,
     sessionCreationOutcome?: SessionCreationOutcome,
   ) => void | Promise<void>;
-  onSessionActivityChanged?: (sessionId: string | null, followOccurrence?: SessionFollowOccurrenceNotification) => void | SessionActivityChangedResult | Promise<void | SessionActivityChangedResult>;
+  onSessionActivityChanged?: (sessionId: string | null, followOccurrence?: SessionFollowOccurrenceNotification, executionRunId?: string) => void | SessionActivityChangedResult | Promise<void | SessionActivityChangedResult>;
+  onScmDiffSummaryResultUpdated?: (change: ScmDiffSummaryResultRevisionHint) => void;
   onSessionStartupFailure?: (input: Readonly<{
     spawnNonce: string;
     errorDetail: SessionCreationTerminalSpawnErrorDetail;
@@ -4433,6 +4575,7 @@ export function startDaemonControlServer({
     explicit?: SessionUsageLimitRecoveryResumePromptModeV1;
   }>) => Promise<SessionUsageLimitRecoveryResumePromptModeV1>;
   runtimeAuthRecoveryScheduler?: RuntimeAuthRecoverySchedulerLike | null;
+  onRuntimeAuthFailureReportIntakeReady?: (intake: RuntimeAuthFailureReportIntake) => void;
   handleConnectedServiceTurnLifecycle?: (
     input: ConnectedServiceTurnLifecycleRequestBody,
   ) => Promise<ConnectedServiceTurnLifecycleResult>;
@@ -4498,6 +4641,7 @@ export function startDaemonControlServer({
       admissionDrain,
       onHappySessionWebhook,
       onSessionActivityChanged,
+      onScmDiffSummaryResultUpdated,
       onSessionStartupFailure,
       resolveRecoveredSpawnNonce,
       admitPersistedTakeover,
@@ -4527,6 +4671,7 @@ export function startDaemonControlServer({
       authorizeConnectedServiceRuntimeAuthFailure,
       resolveConnectedServiceRuntimeAuthResumePromptMode,
       runtimeAuthRecoveryScheduler,
+  onRuntimeAuthFailureReportIntakeReady,
       handleSessionConnectedServiceAuthSwitch,
       handleSessionConnectedServiceRuntimeAuthRefresh,
       handleSessionRunnerRestart,

@@ -1,4 +1,11 @@
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { RetentionCapabilitiesV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
+
+/** Native OS boundary; unavailable preparation preserves the existing provider API path. */
+export type ManagedGuestLocalStop = Readonly<{
+    prepare(effect: NonNullable<RetentionCapabilitiesV1['guestLocalStop']>, signal?: AbortSignal):
+        Promise<(() => Promise<void>) | null>;
+}>;
 
 /** Home's admitted continuation may finish through native Stop or provider-native Suspend. */
 export function hasSubmittedManagedRetentionEffect(machine: ManagedMachineV1, continuationRequestId?: string): boolean {
@@ -6,4 +13,12 @@ export function hasSubmittedManagedRetentionEffect(machine: ManagedMachineV1, co
         && continuationRequestId !== undefined && machine.submittedNativeEffect?.requestId === continuationRequestId
         && (machine.desired === 'stop' || machine.desired === 'suspend')
         && machine.submittedNativeEffect?.intent === machine.desired;
+}
+
+/** Home policy custody may continue; explicit power-down retains its separate owner. */
+export function canPrepareManagedRetentionPolicy(machine: ManagedMachineV1, continuationRequestId?: string): boolean {
+    if (machine.desired === 'delete' || machine.submittedNativeEffect?.intent === 'delete') return false;
+    if (hasSubmittedManagedRetentionEffect(machine, continuationRequestId)) return true;
+    return !machine.submittedNativeEffect
+        && (continuationRequestId !== undefined || machine.desired !== 'stop' && machine.desired !== 'suspend');
 }

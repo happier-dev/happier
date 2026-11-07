@@ -1,10 +1,30 @@
-import { AsyncLocalStorage } from 'node:async_hooks';
 import { PluginError, isPluginError } from '@happier-dev/plugin-sdk/errors';
 import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
 import { resolveOfflineReconnectionBackoffDelayMs } from '@/api/offline/serverConnectionErrors';
 import { delayUnrefAbortable } from '@/utils/time';
+import { AsyncLocalStorage } from 'node:async_hooks';
 
-import type { WebLatencyTracePoint } from '../externalActions/webLatencyTrace';
+/** Labels for existing local decisions, never credentials or another admission check. */
+export const REQUESTER_CURRENTNESS_REFUSAL_BRANCHES = [
+  'local_abort_signal', 'installation_custody', 'observed_account_encryption_currentness', 'currentness_exception',
+] as const;
+export type RequesterCurrentnessRefusalBranch = typeof REQUESTER_CURRENTNESS_REFUSAL_BRANCHES[number];
+const currentnessRefusal = new AsyncLocalStorage<{ branch?: RequesterCurrentnessRefusalBranch }>();
+
+export function recordRequesterCurrentnessRefusal(branch: RequesterCurrentnessRefusalBranch): false {
+  const diagnostic = currentnessRefusal.getStore();
+  if (diagnostic && diagnostic.branch === undefined) diagnostic.branch = branch;
+  return false;
+}
+
+/** Scope diagnostics to one header request; private projections keep their null contract. */
+export async function captureRequesterCurrentnessRefusal<T>(read: () => Promise<T>): Promise<Readonly<{
+  value: T; branch?: RequesterCurrentnessRefusalBranch;
+}>> {
+  const diagnostic: { branch?: RequesterCurrentnessRefusalBranch } = {};
+  const value = await currentnessRefusal.run(diagnostic, read);
+  return { value, ...(diagnostic.branch ? { branch: diagnostic.branch } : {}) };
+}
 
 /** Unavailable Home evidence is not a rejected requester. Keep the existing
  * runner failure/respawn policy's retryable disposition and expose only a safe code. */
@@ -19,7 +39,6 @@ export function rethrowRequesterHomeReadFailure(error: unknown): void {
       message: 'Requester Home is temporarily unavailable. Retry when it is available.' });
   }
 }
-
 /** Only preparation reads may re-enter here, never an admitted Action effect.
  * The accepted Action owns the lifetime; the shared backoff supplies pacing,
  * without adding a competing request deadline or attempt ceiling. Callers
@@ -43,50 +62,4 @@ export async function readRequesterHomeWithinActionLifetime<T>(read: () => Promi
       throw error;
     }
   }
-}
-
-export type RequesterCurrentnessObservation = Readonly<{ pending: Promise<boolean>; trace?: WebLatencyTracePoint }>;
-
-export const requesterCurrentnessCheckpoint = new AsyncLocalStorage<{
-  active: boolean;
-  observations: Map<object, RequesterCurrentnessObservation>;
-}>();
-
-/** Preparation's nested readers prove the same requester fact. Share
- * that observation only until this checkpoint ends; each effect checkpoint
- * starts fresh, including when it interrupts a preparation for setup/review.
- * Local retirement and encryption-observation fences are still checked by
- * every reader. This does not retain authority between preparations or later
- * credential requests.
- */
-export async function runWithRequesterSessionCurrentnessCheckpoint<T>(
-  work: () => Promise<T>,
-  options?: Readonly<{ readOnly: true }>,
-): Promise<T> {
-  const parent = requesterCurrentnessCheckpoint.getStore();
-  // A nested read-only catalog preparation belongs to the containing bounded
-  // observation. Effects still open fresh checkpoints by default, or leave
-  // preparation explicitly; neither may inherit a settled read observation.
-  if (options?.readOnly && parent?.active) return await work();
-  parent?.observations.clear();
-  const checkpoint = { active: true, observations: new Map<object, RequesterCurrentnessObservation>() };
-  return await requesterCurrentnessCheckpoint.run(checkpoint, async () => {
-    try { return await work(); }
-    finally {
-      checkpoint.active = false;
-      checkpoint.observations.clear();
-      parent?.observations.clear();
-    }
-  });
-}
-
-/** Catalog transfer can promote Secrets or write source rows while satisfying
- * a read. Its incumbent effect checks must remain fresh, outside preparation
- * reuse; returning to preparation must not resurrect the earlier observation.
- */
-export async function runWithoutRequesterSessionCurrentnessCheckpoint<T>(work: () => Promise<T>): Promise<T> {
-  const parent = requesterCurrentnessCheckpoint.getStore();
-  parent?.observations.clear();
-  try { return await requesterCurrentnessCheckpoint.exit(work); }
-  finally { parent?.observations.clear(); }
 }

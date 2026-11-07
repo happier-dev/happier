@@ -1,39 +1,36 @@
+import { MACHINE_REACHABILITY_ACTION_IDS_V1 } from '@happier-dev/protocol/machines/reachability/actionIdsV1';
 import { isSessionStopChildRootV1 } from '@happier-dev/protocol/actions/sessionSections';
-import type { ExternalActionApprovalReplay } from "@/rpc/handlers/externalAction";
-
-
-
-
-
-
-
-import { prepareApprovedDiscussionAgentPublication } from "@/discussions/discussionAgentPublisher";
-import { prepareManagedMachineSetupApplyInput } from '@happier-dev/cli-common/machines/managed';
 import { projectSessionSpawnNewActionInputV2 } from "@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2";
 import { isManagedControllerCodecActionV1, openManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { isDeploymentActionIdV1 } from "@happier-dev/protocol";
-
-import { createDaemonDeploymentActionDeps } from "@/deployments/createDaemonDeploymentActionDeps";
+import { prepareManagedMachineSetupApplyInput } from '@happier-dev/cli-common/machines/managed';
+import { createRequesterBoundDeploymentActionDeps } from './deploymentActionDeps';
+import { isCustodianMachineAdmission } from '@/daemon/lifecycle/requesterWorkAttribution';
+import { executeScmSourceReadForRequester } from '@/scm/hostingProviders/resolveRefForHost';
 import type { MachineVitalsSampleV1 } from "@happier-dev/protocol/machines/vitals/machineVitalsSampleV1";
 import { createOwnServerDeploymentRuntimeForHost } from "@/deployments/targets/ownServer/ownServerDeploymentHostRuntime";
 import { actionStartTargetUnavailableV1, measureActionStartPhaseV1 } from "@happier-dev/protocol/actions/executor/agentStartAdmission";
 import { DiscussionAgentPublisherResponseV1Schema } from "@happier-dev/protocol/discussions/api";
-import { type DiscussionAgentPublisherPrivateRequestV1 } from "@/discussions/discussionAgentPublisher";
+import { prepareApprovedDiscussionAgentPublication, type DiscussionAgentPublisherPrivateRequestV1 } from "@/discussions/discussionAgentPublisher";
 import { createApprovedDiscussionAgentPublisher } from "@/discussions/approvedDiscussionAgentPublisher";
 import { createApprovedWorkflowDiscussionPublisher } from "@/discussions/approvedWorkflowDiscussionPublisher";
 import { runTracedExternalActionStage } from "@/daemon/externalActions/externalActionPhase";
 import { timeApprovalPhase, withApprovalActionTrace } from '@/daemon/externalActions/webLatencyTrace';
 import { createEndOwnerRemainder } from "@/daemon/processes/endOwnerRemainder";
 import { createApprovedApiTokenExecutionPreparer } from "@/daemon/externalActions/prepareApprovedApiTokenExecution";
+import { createDaemonApprovalExecutionAuthorizationPreparer } from "@/daemon/externalActions/approvalExecutionAuthorization";
 import { join } from "node:path";
 import type { ActionOperationRpcContext } from "@/daemon/actionOperations/actionOperationRpcHandlers";
-import { createDaemonManagedMachineActionAdapter, createManagedSessionStartApprovalObserver } from "@/daemon/startup/managedMachineActionAdapter";
+import { createDaemonManagedMachineActionAdapter } from "@/daemon/startup/managedMachineActionAdapter";
+import type { RecordedApprovalExecutionObservationArgs } from '@/session/actions/createCliActionExecutorHarness';
 import { observeAccountChanges } from "@/api/observeAccountChanges";
 import type { ActionExecuteResult, ActionExecutorContext } from "@happier-dev/protocol";
 import type { RpcActionExecutorContext } from "@/rpc/handlers/_actionDispatchAdapter";
 import { sameStrictJsonValue } from "@happier-dev/protocol/json/strictJsonValue";
 import { arePluginMachineMaterializationRefsEqual } from "@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1";
 import { getActionSpec } from "@happier-dev/protocol/actions/actionSpecs";
+import { isMachineSetupPlanRpcChildV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { resolveRuntimeActionExecutionFamily } from "@happier-dev/protocol/actions/executor/dispatch";
 import { callExactMachineRpc } from "@/session/transport/rpc/machineRpc";
 import { createClientActionReverseDispatcher } from "@/session/actions/clientActionReverseDispatch";
@@ -42,13 +39,14 @@ import { createProviderErrorV1 as createForegroundProviderError } from "@happier
 import { configuration } from "@/configuration";
 import { runWithServerHttpBaseUrl } from "@/api/client/serverHttpBaseUrl";
 import type { RequesterSessionRuntimeContext } from "@/daemon/sessionEncryption/requesterSessionCredentials";
-import { isOriginalOwnAccountActionCustody } from "@/daemon/sessionEncryption/requesterAccountActionProjection";
+import { isOriginalOwnAccountActionCustody, readApiTokenDeploymentArtifactStore } from "@/daemon/sessionEncryption/requesterAccountActionProjection";
 import { readRequesterAccountActionContext, type RequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
 import { createProjectFiniteAction } from "@/workspaces/projectSetup/projectFiniteAction";
 import type { RpcHandlerContext } from "@/api/rpc/types";
 import { decodeBase64 } from "@happier-dev/protocol/crypto/base64";
 import { readAccountIdFromToken as readPreviewAccountIdFromToken } from "@/cloud/decodeJwtPayload";
-import { readAccountRoleOverridesFromSnapshot } from "@/settings/accountSettings/activeAccountSettingsSnapshot";
+import { createSnapshotActionSettingsProvider } from "@/settings/actionsSettingsProvider";
+import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { createCommittedInputTypeDeps } from "@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps";
 import { prepareRequesterSessionBootstrap } from "@/daemon/sessionEncryption/requesterSessionCredentials";
 import { readRequesterHomeWithinActionLifetime } from "@/daemon/sessionEncryption/requesterCurrentness";
@@ -60,13 +58,13 @@ import { createMachineRecipeReadAction } from "@/machines/setup/machineRecipeAct
 import { createLocalServicesDaemonRuntimeActionExecutor } from "@/daemon/local/services/actions/runtimeActionExecutor";
 import { createLocalServicesDaemonFeatureGate } from "@/daemon/local/services/featureGate";
 import { dispatchManagedSessionStart, dispatchManagedMachineSetup, dispatchManagedMachineSetupPlan,
-  dispatchLocalManagedMachineSetup, dispatchLocalManagedMachineSetupPlan, isManagedSessionStartTransportAvailable, isReviewedServiceMoveChild, isReviewedMachineSetupPlanChild, isReviewedSecondOpinionModelSpawnChild, isReviewedSessionStopChild, projectExternalActionRequesterHttpAuthorization } from "@/api/externalActionExecutionAuthorization";
+  dispatchLocalManagedMachineSetup, dispatchLocalManagedMachineSetupPlan, isManagedSessionStartTransportAvailable, isReviewedServiceMoveChild, isReviewedMachineSetupPlanChild, isReviewedSecondOpinionModelSpawnChild, isReviewedSessionStopChild } from "@/api/externalActionExecutionAuthorization";
 import type { SessionSpawnDirectTargetTransport } from "@/session/actions/createCliActionDeps";
 import type { ExternalSessionPluginAdmissionOwner } from "@/session/actions/externalSessions/pluginExternalSessionAdmissionOwner";
 import type { ActionExecutorDeps, RuntimeActionExecute } from "@happier-dev/protocol/actions";
 import { createDaemonExternalActionContributedApprovalReplay, createDaemonExternalActionContributedDefinitionLister, createDaemonExternalActionContributedInvoker } from "@/daemon/externalActions/createDaemonExternalActionContributedInvoker";
 import { createDaemonApprovalExecutionOriginCurrentnessFromCredentials } from "@/daemon/externalActions/daemonExternalActionTargetResolver";
-import type { ExternalActionIngressOwner } from "@/rpc/handlers/externalAction";
+import type { ExternalActionApprovalReplay, ExternalActionIngressOwner } from "@/rpc/handlers/externalAction";
 import type { CurrentMachineExecutionOriginContext } from "@/api/machine/resolveCurrentMachineExecutionOriginContext";
 import { readInstallationIdentityIfExistsSync } from "@/daemon/identity/store";
 import { readStoredCredentialsForServerId, sameStoredCredentials } from "@/persistence";
@@ -83,15 +81,42 @@ import { createProviderRedactionLease } from "@/providers/spawn/redaction";
 import { createManagedProviderOperationAuthority } from "@/daemon/connectedServices/purposeBindings/managedProviderOperationAuthority";
 import { createMachineSharedProviderGatewayResolver } from "@/providers/lifecycle/sharedGatewayIdentity";
 import type { QualifiedConnectedAccountV4Support } from "@/daemon/connectedServices/qualifiedConnectedAccountV4Support";
-import { ExternalActionRequesterInvocationV1Schema } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { createWorkflowRequesterCustody } from '@/daemon/workflows/requesterCustody';
 
-/** Preserve an admitted host invocation; signed Session origins retain their own provenance. */
-function readManagedChildInvocation(context: ActionExecutorContext) {
-  const parsed = ExternalActionRequesterInvocationV1Schema.safeParse({ caller: context.actionCaller ?? { kind: 'host' },
-    surface: context.surface, authority: context.authority, callerPermissionMode: context.callerPermissionMode,
-    callerInputConstraints: context.callerInputConstraints, workspaceWrites: context.workspaceWrites,
-    defaultSessionId: context.defaultSessionId });
-  return parsed.success ? parsed.data : undefined;
+type DaemonExternalActionExecutor = Pick<ReturnType<typeof createCliActionExecutorFromCredentials>,
+  'execute' | 'continueConfidentialApprovalRequest'> & Readonly<{ replayApprovedApprovalRequest: ExternalActionApprovalReplay }>;
+
+export function requiresPortableSessionSpawnServerIdentity(actionId: string, input: unknown): boolean {
+  if (actionId === 'session.spawn_new' || actionId === 'approval.request.decide') return true;
+  if (actionId !== 'approval.request.create' || !input || typeof input !== 'object' || Array.isArray(input)) return false;
+  return (input as Readonly<Record<string, unknown>>).actionId === 'session.spawn_new';
+}
+
+export function createRequesterAccountOperationContext(input: Readonly<{
+  machineId: string; custodianAccountId: string | null;
+  installationIdentity: ReturnType<typeof readInstallationIdentityIfExistsSync>;
+}>) {
+  return (apiMachine: ApiMachineClient, requester: RequesterAccountActionContext,
+    role: 'use' | 'manage', signal?: AbortSignal): ActionOperationRpcContext => {
+    if (!input.installationIdentity || !input.custodianAccountId) {
+      throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
+    }
+    // Resource mode belongs to the installed controller, not the requester.
+    const ownCustodian = isOriginalOwnAccountActionCustody(requester.authorization.binding)
+      && requester.authorization.binding.custodianAccountId === input.custodianAccountId;
+    return {
+      machineAdmission: {
+        actorAccountId: requester.authorization.binding.accountId,
+        custodianAccountId: input.custodianAccountId,
+        machineId: input.machineId,
+        installationId: input.installationIdentity.installationId,
+        role: requester.authorization.binding.admittedMachineRole ?? (ownCustodian ? 'manage' : role),
+        encryptionMode: apiMachine.getMachineEncryptionMode(),
+      },
+      verifyMachineAdmissionCurrent: requester.isCurrent,
+      ...(signal ? { signal } : {}),
+    };
+  };
 }
 
 export type DaemonExternalActionExecutorFactory = (credentials: Parameters<typeof createCliActionExecutorFromCredentials>[0]['credentials'], getCurrentTurnWorkDepth?: Parameters<
@@ -108,6 +133,8 @@ export function createDaemonExternalActionExecution({
 machineId: string;
 readDoctorResourceVitals?: () => Readonly<{ sample: MachineVitalsSampleV1 | null }>;
 projectProviderModelsForAccount?: import('@/providers/modelManagement/runtimeServices').RuntimeProviderModelManagementServices['projectModelsForAccount'];
+readProviderForAccount?: import('@/providers/runtimeServices').RuntimeProviderAccountRead;
+prepareTeamCredentialNativeSource?: import('@/providers/modelManagement/runtimeServices').RuntimeProviderModelManagementServices['prepareTeamCredentialNativeSource'];
 serverId: string;
 serverBaseUrl: string;
 runtimeActionExecute?: RuntimeActionExecute;
@@ -190,12 +217,13 @@ resolveServerFeaturesSnapshot?: () =>
       confidential?: Readonly<{ input: unknown }>,
       replayIngress?: Parameters<ExternalActionApprovalReplay>[1],
     ): Promise<ActionExecuteResult> => withApprovalActionTrace(actionId, () => timeApprovalPhase<ActionExecuteResult>('approval.daemon.invoke', async () => {
+
       context?.recordActionStartDiagnostic?.({ phase: 'credentialed_factory', requesterRuntimeBound: Boolean(requesterRuntime) });
       const trace = <T>(stage: string, operation: () => T | Promise<T>) => runTracedExternalActionStage(
         actionId, context?.actionRequestId, stage, operation);
       if (requesterAccountContext) {
         // The private opener already admitted this exact invocation at Home.
-        // Keep custody live here; the reached native effect rechecks authority.
+        // Keep its local custody live; Home admits the next invocation.
         if (!await trace('daemon.requester_currentness', () => (requesterAccountContext.isCustodyCurrent ?? requesterAccountContext.isCurrent)())
           || !await trace('daemon.requester_settings', () => requesterAccountContext.refreshAccountSettings(context?.signal ?? replay?.signal))) {
           const code = (context?.signal ?? replay?.signal)?.aborted ? 'cancelled' : 'not_authenticated';
@@ -238,8 +266,8 @@ resolveServerFeaturesSnapshot?: () =>
         observedServerIdentityId = origin.serverIdentityId;
         const binding = context.externalActionExecutionAuthorization.binding;
         const movePacket = context.workspaceSyncSourceExecution;
-        const setupPlanChild = (binding.actionId === 'machines.setup.plan' || binding.actionId === 'machines.setup.apply')
-          && actionId === 'machines.setup.plan';
+        const setupPlanChild = isMachineSetupPlanRpcChildV1({ rootActionId: binding.actionId,
+          effectActionId: actionId, method: RPC_METHODS.MACHINE_SETUP_PLAN });
         // A Move child is deliberately SOURCE-bound. The receiving RPC owner
         // has already opened its exact requester/recipient custody; keep that
         // root while executing the reviewed child at this installed native owner.
@@ -275,18 +303,22 @@ resolveServerFeaturesSnapshot?: () =>
             || !isSessionActionCallerCurrent || !await isSessionActionCallerCurrent()) {
             return actionStartTargetUnavailableV1(context, 'credentialed_factory', 'target_binding_mismatch');
           }
-          const result = await callExactMachineRpc({ credentials, machineId: binding.machineId,
-            serverUrl: requesterRuntime?.bootstrap.serverHttpBaseUrl ?? params.serverBaseUrl,
-            authorityCeiling: 'account_automation', method: getActionSpec(actionId).bindings?.rpcMethod ?? actionId,
-            request: { v: 1, kind: 'targeted_action_rpc', target, input }, requestId: binding.requestId,
-            timeoutMs: null, requireCurrentMachine: true,
-            externalAction: { context, effectActionId: actionId,
-              installationId: installation.installationId, privateKey: installation.privateKey },
-            ...(context.signal ? { signal: context.signal } : {}) });
-          if (result && typeof result === 'object' && 'errorCode' in result && typeof result.errorCode === 'string') {
-            return { ok: false, errorCode: result.errorCode, error: result.errorCode };
+          // Cancellation's incumbent Action adapter owns the qualified Address
+          // to raw operation operand, after the same source admission above.
+          if (actionId !== 'action.operations.cancel') {
+            const result = await callExactMachineRpc({ credentials, machineId: binding.machineId,
+              serverUrl: requesterRuntime?.bootstrap.serverHttpBaseUrl ?? params.serverBaseUrl,
+              authorityCeiling: 'account_automation', method: getActionSpec(actionId).bindings?.rpcMethod ?? actionId,
+              request: { v: 1, kind: 'targeted_action_rpc', target, input }, requestId: binding.requestId,
+              timeoutMs: null, requireCurrentMachine: true,
+              externalAction: { context, effectActionId: actionId,
+                installationId: installation.installationId, privateKey: installation.privateKey },
+              ...(context.signal ? { signal: context.signal } : {}) });
+            if (result && typeof result === 'object' && 'errorCode' in result && typeof result.errorCode === 'string') {
+              return { ok: false, errorCode: result.errorCode, error: result.errorCode };
+            }
+            return { ok: true, result };
           }
-          return { ok: true, result };
         }
       }
       if (requiresPortableSessionSpawnServerIdentity(actionId, input)) {
@@ -420,6 +452,21 @@ resolveServerFeaturesSnapshot?: () =>
           : resolvedSessionSpawnDirectTargetTransport;
       const projectWorkerAction = params.resolveProjectWorkerAction?.();
       const apiMachineForSessions = params.getApiMachineForSessions();
+      const admittedRoot = executionContext?.externalActionExecutionAuthorization?.binding;
+      if (executionContext && !executionContext.machineAdmission
+        && executionContext.verifyMachineAdmissionCurrent && apiMachineForSessions
+        && admittedRoot?.admittedMachineRole && admittedRoot.machineId === params.machineId) {
+        // Home already decided Machine access for this exact signed root. HTTP
+        // ingress has no separate Socket RPC admission carrier; project the same
+        // admitted facts here, with resource mode from the installed Machine.
+        executionContext = { ...executionContext, machineAdmission: {
+          actorAccountId: admittedRoot.accountId, custodianAccountId: admittedRoot.custodianAccountId,
+          machineId: admittedRoot.machineId, installationId: admittedRoot.installationId,
+          role: admittedRoot.admittedMachineRole, encryptionMode: apiMachineForSessions.getMachineEncryptionMode(),
+        } };
+        context = executionContext;
+      }
+      const filesystemActionExecute = apiMachineForSessions?.createFilesystemActionExecutor(params.serverId);
       const resolveRequesterIngress = (context?: RpcActionExecutorContext, role: 'use' | 'manage' = 'use'): RpcHandlerContext | undefined => {
         // Replay restores the original private requester ports after constructing
         // this executor. Resolve them at the effect, not from approval.request.decide.
@@ -429,8 +476,12 @@ resolveServerFeaturesSnapshot?: () =>
         // Machine ingress. Preserve it for the installed requester/runtime
         // owner; only that owner may select Account custody and assess readiness.
         if (!requester) {
-          if (context?.machineAdmission && context.verifyMachineAdmissionCurrent)
-            return { ...context, signal: context.signal ?? new AbortController().signal };
+          // A complete effect-context pair wins. Never combine half of it with
+          // a different replay ingress, and never replace the Artifact's root.
+          if (context?.machineAdmission !== undefined || context?.verifyMachineAdmissionCurrent !== undefined) {
+            return context.machineAdmission && typeof context.verifyMachineAdmissionCurrent === 'function'
+              ? { ...context, signal: context.signal ?? new AbortController().signal } : undefined;
+          }
           if (replayIngress !== undefined) {
             const receivingAdmission = replayIngress.machineAdmission;
             const receivingCurrentness = replayIngress.verifyMachineAdmissionCurrent;
@@ -494,12 +545,15 @@ resolveServerFeaturesSnapshot?: () =>
       }
       const fallbackProjectAction = params.resolveProjectAction?.();
       let deploymentHomeId = observedServerIdentityId ?? executionContext?.serverIdentityId;
-      const isDeploymentAction = isDeploymentActionIdV1(actionId) || actionId === 'machines.services.adopt';
-      if (isDeploymentAction && !deploymentHomeId) {
+      const needsDeploymentDeps = isDeploymentActionIdV1(actionId)
+        || actionId === 'projects.readiness.read'
+        || actionId === 'machines.services.adopt'
+        || actionId === 'machines.setup.plan' || actionId === 'machines.setup.apply';
+      if (needsDeploymentDeps && !deploymentHomeId) {
         const origin = await params.resolveCurrentMachineExecutionOriginContext?.(executionContext?.signal);
         if (origin?.machineId === params.machineId) deploymentHomeId = origin.serverIdentityId;
       }
-      if (isDeploymentAction && !deploymentHomeId) {
+      if (needsDeploymentDeps && !deploymentHomeId) {
         return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
       }
       const withDeploymentIngress = (context: ActionExecutorContext) => {
@@ -510,40 +564,45 @@ resolveServerFeaturesSnapshot?: () =>
           ...(ingress?.requesterSessionBootstrap ? { requesterSessionBootstrap: ingress.requesterSessionBootstrap } : {}),
         };
       };
-      const deploymentDeps = (isDeploymentAction || actionId === 'approval.request.decide') && deploymentHomeId ? createDaemonDeploymentActionDeps({resolveRequesterIdentity: async context => apiMachineForSessions
+      const deploymentDeps = (needsDeploymentDeps || actionId === 'approval.request.decide') && deploymentHomeId ? createRequesterBoundDeploymentActionDeps({
+        ...(readApiTokenDeploymentArtifactStore(executionContext?.externalActionExecutionAuthorization)
+          ? { accountArtifacts: readApiTokenDeploymentArtifactStore(executionContext?.externalActionExecutionAuthorization)! } : {}),
+        credentials, installedCredentials: params.credentials, serverId: deploymentHomeId,
+        resolveRequesterIdentity: async context => apiMachineForSessions
           ? await apiMachineForSessions.resolveDeploymentSourceRequesterIdentity(context)
           : { kind: 'unknown', reason: 'requester_authority_unavailable' },
-
-        credentials, serverId: deploymentHomeId,
         acquirePluginRuntimeRegistryLease: acquireDaemonPluginRuntimeRegistryLease,
+        executeSourceReadAction: (action, input, context) => executeScmSourceReadForRequester(executor, action, input, context),
+        executePreparedPendingDeploy: (input, context) => executor.execute('deployments.deploy', input, context),
         ...(apiMachineForSessions ? { runActionOperation: request => apiMachineForSessions.runActionOperation({
           ...request, context: withDeploymentIngress(request.context),
         }) } : {}),
-        ...(apiMachineForSessions ? { readOperation: (operationId: string, context: ActionExecutorContext) => apiMachineForSessions.readRestorePreparation({
+        ...(apiMachineForSessions ? { preparePendingDeploymentObservation: async (request: Parameters<ApiMachineClient['preparePendingDeploymentObservation']>[0]) => {
+          const observe = await apiMachineForSessions.preparePendingDeploymentObservation({ ...request, context: withDeploymentIngress(request.context) });
+          return observe ? (context: ActionExecutorContext) => observe(withDeploymentIngress(context)) : undefined;
+        }, readOperation: (operationId: string, context: ActionExecutorContext) => apiMachineForSessions.readRestorePreparation({
           operationId, context: withDeploymentIngress(context),
+        }), readBackupOperations: (target, context) => apiMachineForSessions.readDeploymentBackupOperations({
+          target, context: withDeploymentIngress(context),
         }) } : {}),
-
         ...(requesterAccountContext ? { savedSecretOperationContext: requesterAccountContext.savedSecretOperationContext }
           : requesterRuntime ? { savedSecretOperationContext: requesterRuntime.bootstrap.savedSecretOperationContext } : {}),
         serverHttpBaseUrl: requesterAccountContext?.serverHttpBaseUrl ?? requesterRuntime?.bootstrap.serverHttpBaseUrl ?? params.serverBaseUrl,
         machineId: params.machineId,
         readMachineVitals: () => params.readDoctorResourceVitals?.().sample ?? null,
         ...(apiMachineForSessions ? { ensureServiceObservations: () => apiMachineForSessions.ensureEnvironmentServices() } : {}),
-        runtime: createOwnServerDeploymentRuntimeForHost({resolveRequesterIdentity: async context => apiMachineForSessions
-            ? await apiMachineForSessions.resolveDeploymentSourceRequesterIdentity(context)
-            : { kind: 'unknown', reason: 'requester_authority_unavailable' },
-
+        runtime: createOwnServerDeploymentRuntimeForHost({
           // The native receiver consumes only installation grants and the admitted
           // requester's source projection, never the controller's Account keys.
           credentials: params.credentials,
           credentialProfileId: params.serverId,
+          resolveRequesterIdentity: async context => apiMachineForSessions
+            ? await apiMachineForSessions.resolveDeploymentSourceRequesterIdentity(context)
+            : { kind: 'unknown', reason: 'requester_authority_unavailable' },
           serverId: deploymentHomeId, serverHttpBaseUrl: params.serverBaseUrl, machineId: params.machineId,
           acquirePluginRuntimeRegistryLease: acquireDaemonPluginRuntimeRegistryLease,
           assertInstalledCurrent: async () => {
-            if (shutdownCancellationDomains.daemonWorkSignal.aborted
-              || !sameStoredCredentials(params.credentials, await readStoredCredentialsForServerId(params.serverId))) {
-              throw Object.assign(new Error('Installed deployment custody is no longer current'), { code: 'action_forbidden' });
-            }
+            shutdownCancellationDomains.daemonWorkSignal.throwIfAborted();
           },
           signal: shutdownCancellationDomains.daemonWorkSignal,
         }),
@@ -571,11 +630,7 @@ resolveServerFeaturesSnapshot?: () =>
         return Boolean(runtime && runtime.accountId === machine.custodianAccountId
           && sameStoredCredentials(credentials, runtime.credentials) && await runtime.isCurrent?.());
       };
-      const isManagedApprovalRequesterRuntimeCurrent = async (context: ActionExecutorContext, machine: import('@happier-dev/protocol').ManagedMachineV1) => {
-        if (requesterAccountContext) return requesterAccountContext.isCurrent();
-        if (requesterRuntime) return requesterRuntime.isCurrent();
-        return isInstalledManagedAccountCurrent(context, machine);
-      };
+      const observeRecordedApprovalExecution = (args: RecordedApprovalExecutionObservationArgs): Promise<ActionExecuteResult> => executor.observeRecordedApprovalExecution(args);
       const invocationApprovalCurrentness = requesterAccountContext
         ? createDaemonApprovalExecutionOriginCurrentnessFromCredentials({
             credentials, machineId: params.machineId, serverId: params.serverId,
@@ -586,51 +641,25 @@ resolveServerFeaturesSnapshot?: () =>
               ? { resolveServerFeaturesSnapshot: params.resolveServerFeaturesSnapshot } : {}),
           })
         : externalActionApprovalExecutionOriginCurrentness;
-      const prepareInvocationApprovalExecutionAuthorization: NonNullable<import('@happier-dev/protocol/actions/executor/types').ActionExecutorDeps['prepareApprovalExecutionAuthorization']> = async ({ authorization, signal }) => {
-        if ('credentialId' in authorization.binding) {
-          // Artifact decoding drops private ports. Rebuild the same signed
-          // HTTP custody used at ingress without lending Account credentials.
-          const binding = authorization.binding;
-          const installation = readInstallationIdentityIfExistsSync();
-          const origin = await params.resolveCurrentMachineExecutionOriginContext?.(signal);
-          if (!installation || installation.installationId !== binding.installationId
-            || origin?.serverIdentityId !== binding.serverIdentityId
-            || origin.machineId !== binding.machineId || binding.machineId !== params.machineId) return null;
-          const projected = await projectExternalActionRequesterHttpAuthorization({ authorization,
-            serverId: params.serverId, serverIdentityId: origin.serverIdentityId,
-            serverHttpBaseUrl: params.serverBaseUrl, target: binding.target,
-            installationId: installation.installationId, privateKey: installation.privateKey,
-            ...(signal ? { signal } : {}),
+      const prepareInvocationApprovalExecutionAuthorization = createDaemonApprovalExecutionAuthorizationPreparer({
+        machineId: params.machineId, serverId: params.serverId, serverBaseUrl: params.serverBaseUrl,
+        resolveCurrentMachineExecutionOriginContext: params.resolveCurrentMachineExecutionOriginContext,
+        requesterAccountContext,
+        prepareRequesterAccountContext: externalActionIngressOwner?.prepareRequesterAccountContext,
+        resolveEncryption: externalActionIngressOwner?.resolveEncryption,
+        readAdmittedRequesterActionsSettings: async ({ authorization, signal }) => {
+          const workSignal = signal ?? shutdownCancellationDomains.daemonWorkSignal;
+          const runtime = await resolveInstalledObservationRuntime({
+            externalActionExecutionAuthorization: authorization, signal: workSignal,
           });
-          return projected ? { authorization: projected } : null;
-        }
-        // Match first admission's custody classification. Session/Workflow
-        // carriers retain their existing owners rather than borrowing this
-        // installation's ordinary Account credentials.
-        if (!authorization.requesterAccountContext && !isOriginalOwnAccountActionCustody(authorization.binding)) {
-          const binding = authorization.binding;
-          const requester = requesterAccountContext;
-          if (!requester || !('authentication' in binding)
-            || (binding.authentication.kind !== 'account' && binding.authentication.kind !== 'terminal')
-            || binding.sessionActionOrigin || binding.workflowActionOrigin
-            || binding.accountId !== requester.authorization.binding.accountId
-            || binding.serverIdentityId !== requester.authorization.binding.serverIdentityId
-            || binding.machineId !== params.machineId) return { authorization };
-          // Stored approval provenance has no credential box. The deciding
-          // invocation already holds this requester's admitted private custody;
-          // rehydrate the unchanged root through the incumbent ingress owner.
-          const installation = readInstallationIdentityIfExistsSync();
-          if (!installation || installation.installationId !== binding.installationId) return null;
-          const sealed = await requester.authorization.requesterAccountProjection?.sealRequesterAccountContext?.({
-            authorization, purpose: { kind: 'external_action' },
-            installationPublicKey: decodeBase64(installation.publicKey, 'base64url'),
-          });
-          if (!sealed) return null;
-          authorization = sealed;
-        }
-        return await externalActionIngressOwner?.prepareRequesterAccountContext?.({ authorization,
-          ...(signal ? { signal } : {}) }) ?? null;
-      };
+          if (!runtime || runtime.accountId !== authorization.binding.accountId) return null;
+          const snapshot = await runWithServerHttpBaseUrl(runtime.serverHttpBaseUrl, () =>
+            bootstrapAccountSettingsContext({ credentials: runtime.credentials, signal: workSignal,
+              mode: 'blocking', publication: 'invocation' }));
+          return snapshot.settings.actionsSettingsV1;
+        },
+        daemonWorkSignal: shutdownCancellationDomains.daemonWorkSignal,
+      });
       const invocationContributedApprovalReplay = requesterAccountContext || externalActionContributedApprovalReplay
         ? createDaemonExternalActionContributedApprovalReplay({ credentials,
             isApprovalExecutionOriginCurrent: invocationApprovalCurrentness,
@@ -668,6 +697,9 @@ resolveServerFeaturesSnapshot?: () =>
         custodianAccountId: requesterRuntime.bootstrap.savedSecretOperationContext.machineAdmission?.custodianAccountId,
         isCurrent: () => requesterRuntime.isCurrent(),
       } : null;
+      // Only the ordinary installed-credential invocation leaves the existing
+      // authenticated Machine transport in charge. Any native/requester/replay
+      // claim, even a half pair, stays with the native owner and fails closed.
       const ordinaryReachabilityTransport = (actionId === 'machines.reachability.inspect'
         || actionId === 'machines.reachability.configure')
         && sameStoredCredentials(credentials, params.credentials)
@@ -682,12 +714,73 @@ resolveServerFeaturesSnapshot?: () =>
         && executionContext?.rpcSessionAuthorization === undefined
         && executionContext?.requesterSessionBootstrap === undefined;
       const reachabilityHost = !ordinaryReachabilityTransport && apiMachineForSessions
-        && (!['machines.reachability.inspect', 'machines.reachability.configure'].includes(actionId)
+        && (!MACHINE_REACHABILITY_ACTION_IDS_V1.some(id => id === actionId)
           || input && typeof input === 'object' && 'machineId' in input && input.machineId === params.machineId)
         ? apiMachineForSessions : null;
+      let composerAttachmentLease: ReturnType<typeof pluginRuntimeController.tryAcquireRuntimeRegistry> = null;
+      const createProviderReadContext = async (actionContext: ActionExecutorContext): Promise<import('@/providers/modelManagement/runtimeServices').RuntimeProviderAccountModelProjectionContext | null> => {
+        if (!providerProjectionAccount) return null;
+        const signal = actionContext.signal ?? new AbortController().signal;
+        const isCurrent = async () => !signal.aborted && !isRuntimePublicationQuiescing()
+          && await providerProjectionAccount.isCurrent()
+          && await providerProjectionAccount.operationContext.isCurrent(signal);
+        if (!await isCurrent()) return null;
+        const { purposes } = createRequesterConnectedAccountPurposeBindingRuntime({
+          operationContext: providerProjectionAccount.operationContext,
+          accountId: providerProjectionAccount.accountId, machineId: params.machineId,
+          reloadController: pluginRuntimeController, isCurrent,
+          getAccountEncryptionMode: async options => (await fetchAccountEncryptionCurrentness({ credentials: providerProjectionAccount.operationContext.credentials, token: providerProjectionAccount.operationContext.credentials.token,
+            serverBaseUrl: providerProjectionAccount.operationContext.serverHttpBaseUrl, ...(options?.signal ? { signal: options.signal } : {}) })).mode,
+          subscribe: () => ({ dispose() {} }),
+          allowNativeAccountCredentials: providerProjectionAccount.operationContext.machineAdmission?.actorAccountId
+            === providerProjectionAccount.accountId
+            && isCustodianMachineAdmission(providerProjectionAccount.operationContext.machineAdmission),
+          resolveQualifiedConnectedAccountV4Support: () => params.resolveQualifiedConnectedAccountV4Support?.() ?? 'indeterminate',
+        });
+        return {
+          getAccountSettingsSnapshot: providerProjectionAccount.operationContext.readSnapshot,
+          resolveManagedPurposeBindingIntent: purposes.resolveBindingIntent,
+          resolveManagedPurposeBindingIntentSelection: purposes.resolveBindingIntentSelection,
+          savedSecretOperationContext: providerProjectionAccount.operationContext,
+          managedRuntimeAccount: {
+            readCredentials: async () => await isCurrent() ? providerProjectionAccount.operationContext.credentials : null,
+            connectedAccountsOwner: purposes,
+            operationAuthority: createManagedProviderOperationAuthority({
+              materializationBaseDir: join(configuration.happyHomeDir, 'providers', 'managed-operation-auth'),
+              purposeBindingOwner: purposes, requestAuthRegistry: connectedAccountRequestAuthRegistry,
+              resolveRequestAuthHttpPort: requireConnectedAccountRequestAuthHttpPort,
+              createRedactionLease: () => createProviderRedactionLease({ values: [] }),
+            }),
+            resolveSharedGateway: createMachineSharedProviderGatewayResolver({ machineId: params.machineId,
+              readAccountId: () => providerProjectionAccount.accountId,
+              readOrigin: async () => await isCurrent()
+                ? await params.resolveCurrentMachineExecutionOriginContext?.(signal) ?? null : null }),
+          },
+          accountReadScope: {
+            serverUrl: providerProjectionAccount.operationContext.serverHttpBaseUrl,
+            readCredentials: async () => providerProjectionAccount.operationContext.credentials,
+            readAccountSettingsSnapshot: async () => providerProjectionAccount.operationContext.readSnapshot(),
+            isCurrent,
+          },
+          signal, isCurrent,
+        };
+      };
       const executor: ReturnType<
         typeof createCliActionExecutorFromCredentials
       > = await trace('daemon.cli_factory', () => createCliActionExecutorFromCredentials({
+        ...(requesterAccountContext ? { workflowRequesterCustody: createWorkflowRequesterCustody({
+          credentials: requesterAccountContext.credentials, happyHomeDir: configuration.happyHomeDir,
+          attribution: { serverId: params.serverId, accountId: requesterAccountContext.authorization.binding.accountId,
+            machineId: params.machineId, installationId: requesterAccountContext.authorization.binding.installationId },
+          serverHttpBaseUrl: requesterAccountContext.serverHttpBaseUrl,
+          ...(observedServerIdentityId ? { homeServerIdentityId: observedServerIdentityId } : {}),
+        }) } : {}),
+        // Resolve only when Session input needs declarations, and keep the
+        // canonical runtime alive through preparation and acceptance.
+        resolveComposerAttachmentSendPreparation: () => {
+          composerAttachmentLease ??= pluginRuntimeController.tryAcquireRuntimeRegistry();
+          return composerAttachmentLease?.registry.composerAttachments ?? null;
+        },
         ...(requesterAccountContext ? { admittedAccountEncryptionMode: requesterAccountContext.accountEncryptionCurrentness?.mode ?? 'unknown' } : {}),
         ...(sessionStopEffect ? { sessionStop: sessionStopEffect } : {}),
         postWorkflowDiscussionMessage: createApprovedWorkflowDiscussionPublisher({
@@ -753,14 +846,19 @@ resolveServerFeaturesSnapshot?: () =>
             && (!requesterAccountContext || authorization.token !== requesterAccountContext.authorization.token
               || !sameStrictJsonValue(authorization.binding, requesterAccountContext.authorization.binding))
             ? authorization.requesterAccountExecutor : undefined;
-          return apiMachineForSessions.runActionOperation({ ...request, context: { ...request.context,
+          return apiMachineForSessions.runActionOperation({ ...request,
+            ...(request.actionId === 'deployments.deploy' && deploymentDeps ? {
+              recoverPendingDeployment: () => deploymentDeps.readPendingDeploymentRecovery(request.input, request.context),
+            } : {}), context: { ...request.context,
             ...(ingress?.machineAdmission ? { machineAdmission: ingress.machineAdmission,
               verifyMachineAdmissionCurrent: ingress.verifyMachineAdmissionCurrent } : {}),
             ...(ingress?.requesterSessionBootstrap ? { requesterSessionBootstrap: ingress.requesterSessionBootstrap } : {}),
           }, ...(moveExecutor ? { execute: operation => moveExecutor.execute('projects.service.relocate', request.input, operation) } : {}) });
         } } : {}),
-        ...(reachabilityHost ? {
+        ...(deploymentDeps || reachabilityHost ? {
           prepareHostReviewedChildren: async request => {
+            const deployment = await deploymentDeps?.prepareHostReviewedChildren(request);
+            if (deployment) return deployment;
             if (!reachabilityHost || request.actionId !== 'machines.reachability.inspect'
               && request.actionId !== 'machines.reachability.configure') return null;
             const ingress = resolveRequesterIngress(request.context,
@@ -810,89 +908,47 @@ resolveServerFeaturesSnapshot?: () =>
                   verifyMachineAdmissionCurrent: ingress.verifyMachineAdmissionCurrent } : {}) } });
           },
         } : {}),
-        // Only an authenticated native child reaches this singleton adapter.
-        // Ordinary full-list roots retain the canonical composer dependency.
-        ...(apiMachineForSessions && actionId === 'machines.setup.apply' && input && typeof input === 'object'
-          && 'machineId' in input && input.machineId === params.machineId
-          && 'targets' in input && Array.isArray(input.targets) && input.targets.length === 1
-          && executionContext?.externalActionExecutionAuthorization
-          && (executionContext.actionCaller?.kind === 'workflowRun'
-            || executionContext.externalActionExecutionAuthorization.binding.managedContinuation) ? {
-          machineSetupApply: async request => {
-            const target = request.input.targets[0];
-            if (request.input.targets.length !== 1 || !target || target.machineId !== params.machineId
-              || request.input.machineId !== target.machineId || request.input.homeId !== target.homeId) {
-              return { ok: false as const, errorCode: 'target_mismatch', error: 'target_mismatch' };
-            }
-            const origin = await params.resolveCurrentMachineExecutionOriginContext?.(request.signal ?? request.context.signal);
-            if (!origin || !externalActionInstallationIdentity || origin.machineId !== params.machineId) return { ok: false as const, errorCode: 'target_unavailable', error: 'target_unavailable' };
-            const ingress = resolveRequesterIngress(request.context, 'manage');
-            const { createMachineSetupAction } = await import('@/machines/setup/machineSetupAction');
-            return createMachineSetupAction({ apiMachine: apiMachineForSessions, machineId: params.machineId,
-              homeId: origin.serverIdentityId, installation: externalActionInstallationIdentity, ownerRemainder })({ ...request, input: target,
-                context: { ...request.context, ...(ingress?.machineAdmission ? { machineAdmission: ingress.machineAdmission,
-                  verifyMachineAdmissionCurrent: ingress.verifyMachineAdmissionCurrent } : {}) } });
-          },
-        } : {}),
         ...(requesterAccountContext ? { savedSecretOperationContext: requesterAccountContext.savedSecretOperationContext } : {}),
-        ...(providerProjectionAccount && params.projectProviderModelsForAccount
-          && providerProjectionAccount.custodianAccountId
+        ...(providerProjectionAccount && providerProjectionAccount.custodianAccountId
           && providerProjectionAccount.accountId !== providerProjectionAccount.custodianAccountId ? {
-            projectModelsForAccount: async (request, actionContext) => {
-              const signal = actionContext.signal ?? new AbortController().signal;
-              const isCurrent = async () => !signal.aborted && !isRuntimePublicationQuiescing()
-                && await providerProjectionAccount.isCurrent()
-                && await providerProjectionAccount.operationContext.isCurrent(signal);
-              if (!await isCurrent()) return { status: 'error', error: createForegroundProviderError('provider_authorization_changed') };
-              const { purposes } = createRequesterConnectedAccountPurposeBindingRuntime({
-                operationContext: providerProjectionAccount.operationContext,
-                accountId: providerProjectionAccount.accountId, machineId: params.machineId,
-                reloadController: pluginRuntimeController, isCurrent,
-                getAccountEncryptionMode: async options => (await fetchAccountEncryptionCurrentness({ token: providerProjectionAccount.operationContext.credentials.token,
-                  serverBaseUrl: providerProjectionAccount.operationContext.serverHttpBaseUrl, ...(options?.signal ? { signal: options.signal } : {}) })).mode,
-                subscribe: () => ({ dispose() {} }),
-                allowNativeAccountCredentials: false,
-                resolveQualifiedConnectedAccountV4Support: () => params.resolveQualifiedConnectedAccountV4Support?.() ?? 'indeterminate',
-              });
-              return await params.projectProviderModelsForAccount!(request, {
-                getAccountSettingsSnapshot: providerProjectionAccount.operationContext.readSnapshot,
-                resolveManagedPurposeBindingIntent: purposes.resolveBindingIntent,
-                resolveManagedPurposeBindingIntentSelection: purposes.resolveBindingIntentSelection,
-                savedSecretOperationContext: providerProjectionAccount.operationContext,
-                managedRuntimeAccount: {
-                  readCredentials: async () => await isCurrent() ? providerProjectionAccount.operationContext.credentials : null,
-                  connectedAccountsOwner: purposes,
-                  operationAuthority: createManagedProviderOperationAuthority({
-                    materializationBaseDir: join(configuration.happyHomeDir, 'providers', 'managed-operation-auth'),
-                    purposeBindingOwner: purposes, requestAuthRegistry: connectedAccountRequestAuthRegistry,
-                    resolveRequestAuthHttpPort: requireConnectedAccountRequestAuthHttpPort,
-                    createRedactionLease: () => createProviderRedactionLease({ values: [] }),
-                  }),
-                  resolveSharedGateway: createMachineSharedProviderGatewayResolver({ machineId: params.machineId,
-                    readAccountId: () => providerProjectionAccount.accountId,
-                    readOrigin: async () => await isCurrent()
-                      ? await params.resolveCurrentMachineExecutionOriginContext?.(signal) ?? null : null }),
-                },
-                accountReadScope: {
-                  serverUrl: providerProjectionAccount.operationContext.serverHttpBaseUrl,
-                  readCredentials: async () => providerProjectionAccount.operationContext.credentials,
-                  readAccountSettingsSnapshot: async () => providerProjectionAccount.operationContext.readSnapshot(),
-                  isCurrent,
-                },
-                signal, isCurrent,
-              });
-            },
+            ...(params.projectProviderModelsForAccount ? {
+              projectModelsForAccount: async (request, actionContext) => {
+                const account = await createProviderReadContext(actionContext);
+                return account ? await params.projectProviderModelsForAccount!(request, account)
+                  : { status: 'error', error: createForegroundProviderError('provider_authorization_changed') };
+              },
+            } : {}),
+            ...(params.readProviderForAccount ? {
+              readProviderForAccount: async (request, actionContext) => {
+                const account = await createProviderReadContext(actionContext);
+                return account ? await params.readProviderForAccount!(request, account)
+                  : { status: 'error', error: createForegroundProviderError('provider_authorization_changed') };
+              },
+            } : {}),
           } : {}),
         ...(requesterRuntime
           ? { requesterSessionBootstrap: requesterRuntime.bootstrap }
           : {}),
         ...(projectAction ? { projectAction } : {}),
         ...(deploymentDeps ? { deploymentAction: deploymentDeps.deploymentAction,
+          deploymentRestore: deploymentDeps.deploymentRestore,
+          deploymentBackupAction: deploymentDeps.deploymentBackupAction,
+          projectReadinessRead: deploymentDeps.projectReadinessRead,
+          prepareDeploymentEnvironmentCreate: deploymentDeps.prepareDeploymentEnvironmentCreate,
           deploymentTemplateInstantiate: deploymentDeps.deploymentTemplateInstantiate,
           prepareDeploymentTemplateInstantiation: deploymentDeps.prepareDeploymentTemplateInstantiation,
           resolveEnvironmentApprovalScope: deploymentDeps.resolveEnvironmentApprovalScope,
-          prepareDeploymentAction: deploymentDeps.prepareDeploymentAction } : {}),
-        ...(projectWorkerAction ? { projectWorkerAction } : {}),
+          prepareDeploymentAction: deploymentDeps.prepareDeploymentAction,
+          prepareDeploymentTeardown: deploymentDeps.prepareDeploymentTeardown } : {}),
+        ...(projectWorkerAction ? { projectWorkerAction: request => {
+          const ingress = resolveRequesterIngress(request.context);
+          return projectWorkerAction({ ...request, context: ingress ? { ...request.context,
+            machineAdmission: ingress.machineAdmission,
+            verifyMachineAdmissionCurrent: ingress.verifyMachineAdmissionCurrent,
+            ...(ingress.callerInputAuthorization
+              ? { externalActionExecutionAuthorization: ingress.callerInputAuthorization } : {}),
+          } : request.context });
+        } } : {}),
         ...(apiMachineForSessions
           ? {
               projectDefinitionAction: request =>
@@ -904,10 +960,17 @@ resolveServerFeaturesSnapshot?: () =>
           : {}),
         ...(apiMachineForSessions
           ? {
-              filesystemActionExecute:
-                apiMachineForSessions.createFilesystemActionExecutor(
-                  params.serverId,
-                ),
+              ...(filesystemActionExecute ? { filesystemActionExecute: async (request: Parameters<NonNullable<ActionExecutorDeps['filesystemActionExecute']>>[0]) => {
+                const ingress = resolveRequesterIngress(request.context);
+                // Carry only the admitted receiving pair; the approved Action
+                // keeps its original root, authority, input and cancellation.
+                return await filesystemActionExecute({ ...request, context: { ...request.context,
+                  ...(ingress?.machineAdmission && ingress.verifyMachineAdmissionCurrent ? {
+                    machineAdmission: ingress.machineAdmission,
+                    verifyMachineAdmissionCurrent: ingress.verifyMachineAdmissionCurrent,
+                  } : {}),
+                } });
+              } } : {}),
               workspaceFilesReplace: apiMachineForSessions.createWorkspaceFileReplaceActionExecutor(params.serverId),
               workspaceFilesReplacePreview: apiMachineForSessions.createWorkspaceFileReplacePreviewActionExecutor(params.serverId),
               languageIntelligenceApply: apiMachineForSessions.createLanguageIntelligenceApplyActionExecutor(params.serverId),
@@ -925,25 +988,15 @@ resolveServerFeaturesSnapshot?: () =>
               (await requesterRuntime.isCurrent())
                 ? credentials
                 : null
+          // The installed replay and all its nested effects retain the same
+          // Account/Home holder. Ambient profile changes belong to later work.
+          : actionId === 'approval.request.decide' ? async () => credentials
           : async () => await readStoredCredentialsForServerId(params.serverId),
         ...(requesterAccountContext
-          ? { actionsSettingsProvider: {
-              getActionsSettings: () => readRequesterAccountSnapshot().settings.actionsSettingsV1,
-              getAccountSettings: () => readRequesterAccountSnapshot().settings,
-              getAccountRoleOverrides: () => readAccountRoleOverridesFromSnapshot(readRequesterAccountSnapshot()),
-            } }
+          ? { actionsSettingsProvider: createSnapshotActionSettingsProvider(readRequesterAccountSnapshot) }
           : requesterRuntime
           ? {
-              actionsSettingsProvider: {
-                getActionsSettings: () =>
-                  requesterRuntime.readAccountSettingsSnapshot().settings.actionsSettingsV1,
-                getAccountSettings: () =>
-                  requesterRuntime.readAccountSettingsSnapshot().settings,
-                getAccountRoleOverrides: () =>
-                  readAccountRoleOverridesFromSnapshot(
-                    requesterRuntime.readAccountSettingsSnapshot(),
-                  ),
-              },
+              actionsSettingsProvider: createSnapshotActionSettingsProvider(() => requesterRuntime.readAccountSettingsSnapshot()),
             }
           : {}),
         serverId: params.serverId,
@@ -969,7 +1022,9 @@ resolveServerFeaturesSnapshot?: () =>
             }
           : {}),
         pluginActionExecutionOwner: 'current_process',
-        ...accountPluginActions,
+        // Admitted requester custody owns portable Account Actions, including
+        // preparation reads before a reviewed child Action is dispatched.
+        ...(requesterAccountContext ? { accountPluginActions: true as const } : accountPluginActions),
         ...(params.pluginChangeService ? { pluginChangeService: params.pluginChangeService } : {}),
         revalidatePluginActionCallerMaterialization: async (reference) => {
           const lease = await acquireDaemonPluginRuntimeRegistryLease();
@@ -988,6 +1043,7 @@ resolveServerFeaturesSnapshot?: () =>
         },
         managedMachineAction: managedPolicyAction?.managedMachineAction ?? createDaemonManagedMachineActionAdapter({
           credentials,
+          ...(params.prepareTeamCredentialNativeSource ? { prepareTeamCredentialNativeSource: params.prepareTeamCredentialNativeSource } : {}),
           machineId: params.machineId,
           serverBaseUrl: params.serverBaseUrl,
           serverId: params.serverId,
@@ -1017,7 +1073,7 @@ resolveServerFeaturesSnapshot?: () =>
                 ? await (requesterAccountContext ? requesterAccountContext.resolveEncryption : externalActionIngressOwner?.resolveEncryption)?.(context.signal, authorization) : undefined;
               if (!controllerCustody && authorization.binding.accountEncryptionMode === 'e2ee' && encryption?.serverIdentityId !== authorization.binding.serverIdentityId)
                 return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
-              const child = { serverId: params.serverId, authorization, authority: context.authority, invocation: readManagedChildInvocation(context),
+              const child = { serverId: params.serverId, authorization, authority: context.authority, context, observeRecordedApprovalExecution,
                 continuation: { managedId: machine.id, creationRequestId: authorization.binding.requestId, expectedIntentRevision: machine.intentRevision },
                 installationId: externalActionInstallationIdentity.installationId, privateKey: externalActionInstallationIdentity.privateKey,
                 serverHttpBaseUrl: params.serverBaseUrl, ...(encryption ? { material: encryption.material } : {}), ...(context.signal ? { signal: context.signal } : {}) };
@@ -1027,7 +1083,7 @@ resolveServerFeaturesSnapshot?: () =>
               if (!await isCurrent()) return { ok: false, errorCode: 'intent_changed', error: 'intent_changed' };
               return dispatchManagedMachineSetup({ ...child, input });
             }
-            const local = { context, credentials, custodianAccountId: machine.custodianAccountId,
+            const local = { context, credentials, custodianAccountId: machine.custodianAccountId, observeRecordedApprovalExecution,
               serverHttpBaseUrl: params.serverBaseUrl, isCurrent: async () => await isCurrent()
                 && await isInstalledManagedAccountCurrent(context, machine) };
             const input = await prepareManagedMachineSetupApplyInput({ target, creation: { preset, setup }, isCurrent: local.isCurrent,
@@ -1124,10 +1180,11 @@ resolveServerFeaturesSnapshot?: () =>
                 };
               }
               return await dispatchManagedSessionStart({
+                observeRecordedApprovalExecution,
                 input,
                 authorization,
                 authority: context.authority,
-                invocation: readManagedChildInvocation(context),
+                context,
                 continuation: {
                   managedId: machine.id,
                   creationRequestId: authorization.binding.requestId,
@@ -1149,16 +1206,7 @@ resolveServerFeaturesSnapshot?: () =>
               requesterRuntime,
             ).execute('session.spawn_new', projectSessionSpawnNewActionInputV2(input), context);
           },
-          observeSessionStartApproval: createManagedSessionStartApprovalObserver({
-            credentials, machineId: params.machineId,
-            observeRecordedApprovalExecution: args => executor.observeRecordedApprovalExecution(args),
-            isRequesterRuntimeCurrent: isManagedApprovalRequesterRuntimeCurrent,
-          }),
-          observeEnvironmentSetupApproval: createManagedSessionStartApprovalObserver({
-            actionId: 'machines.setup.apply', credentials, machineId: params.machineId,
-            observeRecordedApprovalExecution: args => executor.observeRecordedApprovalExecution(args),
-            isRequesterRuntimeCurrent: isManagedApprovalRequesterRuntimeCurrent,
-          }),
+          observeRecordedApprovalExecution,
           observeActionExecution: request => {
             if (!apiMachineForSessions) return Promise.resolve({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' });
             const rpcContext = resolveRequesterIngress(executionContext);
@@ -1272,18 +1320,12 @@ resolveServerFeaturesSnapshot?: () =>
               },
               machineActionDirectTargetTransport: {
                 machineId: params.machineId,
-                machineSetupRemove: async request => {
-                  if (request.input.machineId !== params.machineId)
-                    return { ok: false as const, errorCode: 'target_mismatch', error: 'target_mismatch' };
-                  const origin = await params.resolveCurrentMachineExecutionOriginContext?.(request.signal ?? request.context.signal);
-                  if (!origin || !externalActionInstallationIdentity || origin.machineId !== params.machineId)
-                    return { ok: false as const, errorCode: 'target_unavailable', error: 'target_unavailable' };
-                  const ingress = resolveRequesterIngress(request.context, 'manage');
-                  const { createMachineSetupRemoveAction } = await import('@/machines/setup/machineSetupAction');
-                  return createMachineSetupRemoveAction({ apiMachine: apiMachineForSessions, machineId: params.machineId,
-                    homeId: origin.serverIdentityId, installation: externalActionInstallationIdentity, ownerRemainder })({ ...request,
-                      context: { ...request.context, ...(ingress?.machineAdmission ? { machineAdmission: ingress.machineAdmission,
-                        verifyMachineAdmissionCurrent: ingress.verifyMachineAdmissionCurrent } : {}) } });
+                workspaceSyncPreflightTarget: async (request, context) => {
+                  const ingress = resolveRequesterIngress(context.localActionContext ?? executionContext);
+                  if (!ingress?.machineAdmission || !ingress.verifyMachineAdmissionCurrent) {
+                    throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
+                  }
+                  return apiMachineForSessions.preflightWorkspaceSyncRelationshipTarget(request, { ...context, ...ingress });
                 },
                 machineSetupUpdatesApply: async request => {
                   if (request.input.machineId !== params.machineId)
@@ -1298,7 +1340,35 @@ resolveServerFeaturesSnapshot?: () =>
                       context: { ...request.context, ...(ingress?.machineAdmission ? { machineAdmission: ingress.machineAdmission,
                         verifyMachineAdmissionCurrent: ingress.verifyMachineAdmissionCurrent } : {}) } });
                 },
-
+                machineSetupRemove: async request => {
+                  if (request.input.machineId !== params.machineId)
+                    return { ok: false as const, errorCode: 'target_mismatch', error: 'target_mismatch' };
+                  const origin = await params.resolveCurrentMachineExecutionOriginContext?.(request.signal ?? request.context.signal);
+                  if (!origin || !externalActionInstallationIdentity || origin.machineId !== params.machineId)
+                    return { ok: false as const, errorCode: 'target_unavailable', error: 'target_unavailable' };
+                  const ingress = resolveRequesterIngress(request.context, 'manage');
+                  const { createMachineSetupRemoveAction } = await import('@/machines/setup/machineSetupAction');
+                  return createMachineSetupRemoveAction({ apiMachine: apiMachineForSessions, machineId: params.machineId,
+                    homeId: origin.serverIdentityId, installation: externalActionInstallationIdentity, ownerRemainder })({ ...request,
+                      context: { ...request.context, ...(ingress?.machineAdmission ? { machineAdmission: ingress.machineAdmission,
+                        verifyMachineAdmissionCurrent: ingress.verifyMachineAdmissionCurrent } : {}) } });
+                },
+                machineSetupApply: async request => {
+                  const target = request.input.targets[0];
+                  if (request.input.targets.length !== 1 || !target || target.machineId !== params.machineId
+                    || request.input.machineId !== target.machineId || request.input.homeId !== target.homeId) {
+                    return { ok: false as const, errorCode: 'target_mismatch', error: 'target_mismatch' };
+                  }
+                  const origin = await params.resolveCurrentMachineExecutionOriginContext?.(request.signal ?? request.context.signal);
+                  if (!origin || !externalActionInstallationIdentity || origin.machineId !== params.machineId)
+                    return { ok: false as const, errorCode: 'target_unavailable', error: 'target_unavailable' };
+                  const ingress = resolveRequesterIngress(request.context, 'manage');
+                  const { createMachineSetupAction } = await import('@/machines/setup/machineSetupAction');
+                  return createMachineSetupAction({ apiMachine: apiMachineForSessions, machineId: params.machineId,
+                    homeId: origin.serverIdentityId, installation: externalActionInstallationIdentity, ownerRemainder })({ ...request, input: target,
+                      context: { ...request.context, ...(ingress?.machineAdmission ? { machineAdmission: ingress.machineAdmission,
+                        verifyMachineAdmissionCurrent: ingress.verifyMachineAdmissionCurrent } : {}) } });
+                },
                 machineServiceAction: request => apiMachineForSessions.executeMachineServiceAction(request),
                 openProject: async (input, context) => {
                   const ingress = resolveRequesterIngress(context);
@@ -1344,7 +1414,10 @@ resolveServerFeaturesSnapshot?: () =>
             ? await runWithServerHttpBaseUrl(requesterAccountContext.serverHttpBaseUrl,
               execute)
             : await execute();
-        } finally { await timeApprovalPhase('approval.daemon.requester_release', () => release?.()); }
+        } finally {
+          await composerAttachmentLease?.release();
+          await timeApprovalPhase('approval.daemon.requester_release', () => release?.());
+        }
       };
       // Native owners, including Project finite execution, attach observation
       // after approval. Recording an Ask here caches its receipt as execution.
@@ -1365,6 +1438,3 @@ resolveServerFeaturesSnapshot?: () =>
   };
   return createExternalActionExecutor;
 }
-
-type DaemonExternalActionExecutor = Pick<ReturnType<typeof createCliActionExecutorFromCredentials>,
-  'execute' | 'continueConfidentialApprovalRequest'> & Readonly<{ replayApprovedApprovalRequest: ExternalActionApprovalReplay }>;

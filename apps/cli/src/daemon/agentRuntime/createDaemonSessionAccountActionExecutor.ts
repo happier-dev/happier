@@ -1,8 +1,11 @@
+import { projectSessionActionIssuerRefusal } from '@/api/externalActionIssuerRefusal';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
 import { SessionSpawnNewAgentAuthoringInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { AgentStartSessionCallerV1Schema, readAgentStartCallerWorkDepthV1 } from '@happier-dev/protocol/account/settings/admitAgentStartV1';
 import { readSessionAccessProjectionRoleV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import type { createActionExecutor, ActionExecuteResult, ActionExecutorContext, ExternalActionExecutionAuthorizationV1, ExternalActionTargetV1 } from '@happier-dev/protocol';
+import type { ExternalActionRequestEnvelope } from '@happier-dev/protocol/actions/externalActionApi';
 import { isSessionActionRpcMethodV1, type SessionActionRpcOriginV1 } from '@happier-dev/protocol/socketRpc';
 import { sameStrictJsonValue, StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
@@ -35,6 +38,7 @@ import { bindScmActionToSessionWorkspace } from '@/scm/actions/placement';
 import { requiresExplicitScmMachineTarget } from '@happier-dev/protocol/actions/actionSpecs';
 import { readContributedActionExecutionPlacement } from '@/session/actions/readContributedActionExecutionPlacement';
 import { readServerIdentityIdFromFeaturesSnapshot, type CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
+import { refreshAccountSettingsForMinimumVersion } from '@/settings/accountSettings/refreshAccountSettingsForMinimumVersion';
 
 type SessionActionOperation = Extract<AgentRuntimeDaemonServiceRequestV1['operation'], { kind: 'action.execute' }>;
 type SessionActionAuthority = Readonly<{ sessionId: string; isCurrent(): Promise<boolean>; signal?: AbortSignal }>;
@@ -95,7 +99,11 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
   /** Host-only producer of original Home authority; author input cannot install this port. */
   prepareExternalActionAuthorization?: (input: SessionAccountActionAuthorizationPreparation) => Promise<Readonly<{
     authorization: ExternalActionExecutionAuthorizationV1; target: ExternalActionTargetV1;
-  }> | null | undefined>;
+    /** Exact V1/V2 envelope retained by the original Home authorization producer. */
+    originalActionEnvelope?: ExternalActionRequestEnvelope;
+    /** Home-observed version that must govern daemon-side Account policy admission. */
+    accountSettingsVersion?: number;
+  }> | ActionExecuteFailure | null | undefined>;
 }>) {
   const actionSettingsProvider = runWithServerHttpBaseUrl(params.serverHttpBaseUrl, () => createActionSettingsProvider({
     scopeKey: resolveAccountSettingsScopeKeyForToken(params.token),
@@ -151,9 +159,12 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
       return refuse('caller_witness_invalid');
     }
     // Process/Session custody does not authorize borrowing the daemon Account.
-    // The exact authenticated Home's owner projection proves same-account use;
-    // a shared recipient requires its own admitted requester execution channel.
-    const readCallerRefusal = (): Promise<SessionAccountActionRefusalReason | null> => runTracedExternalActionStage(
+    // The exact authenticated Home's owner projection proves same-account use
+    // once, at this Action's admission; a shared recipient requires its own
+    // admitted requester execution channel. Later steps of the admitted Action
+    // use runtime custody and cancellation; a changed owner applies at the next
+    // Action admission.
+    const callerRefusal = await runTracedExternalActionStage(
       operation.actionId, operation.requestId, 'session_action.caller_currentness', async (): Promise<SessionAccountActionRefusalReason | null> => {
       try {
         return await readRequesterHomeWithinActionLifetime(async (): Promise<SessionAccountActionRefusalReason | null> => {
@@ -170,12 +181,7 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
         return 'session_owner_read_failed';
       }
     });
-    const isCallerCurrent = async (): Promise<boolean> => {
-      const reason = await readCallerRefusal();
-      if (reason && !authority.signal?.aborted) logRefusal(reason);
-      return reason === null;
-    };
-    const callerRefusal = await readCallerRefusal();
+    const isCallerCurrent = async (): Promise<boolean> => !authority.signal?.aborted && await authority.isCurrent();
     if (callerRefusal) return refuse(callerRefusal, authority.signal?.aborted ? 'cancelled' : 'target_unavailable');
     const reviewCommentPrincipal = operation.reviewCommentPrincipal;
     if (reviewCommentPrincipal && (reviewCommentPrincipal.actor.kind !== 'agent'
@@ -183,10 +189,11 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
       || reviewCommentPrincipal.currentIntent !== undefined || reviewCommentPrincipal.proof !== undefined)) {
       return { ok: false, errorCode: 'review_comment_permission_denied', error: 'review_comment_permission_denied' };
     }
-    // Session spawn authoring retains inherited choices until the canonical
+    // Agent authoring retains inherited choices until the canonical
     // start owner resolves them. Malformed known fields still fail before Home proof.
+    const actionSpec = getActionSpec(operation.actionId);
     const inputSchema = operation.actionId === 'session.spawn_new'
-      ? SessionSpawnNewAgentAuthoringInputV2Schema : getActionSpec(operation.actionId).inputSchema;
+      ? SessionSpawnNewAgentAuthoringInputV2Schema : actionSpec.surfaceBindings?.agent?.inputSchema ?? actionSpec.inputSchema;
     const parsedInput = inputSchema.safeParse(operation.input ?? {});
     if (!parsedInput.success) return actionInputValidationFailure(parsedInput.error);
     if (operation.actionId.startsWith('scm.')) {
@@ -211,6 +218,7 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
       recordActionStartDiagnostic,
       surface: operationSurface, authority: 'account_automation', serverId: params.serverId,
       actionCaller: caller.data,
+      ...(witness.nativeRealtimeAdmission ? { nativeRealtimeInput: true as const } : {}),
       ...(operation.executionRun ? {
         runtimeRunId: operation.executionRun.runId,
         runtimeRunOccurrenceId: operation.executionRun.occurrenceId,
@@ -245,8 +253,6 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
       // contribution retains the wrapper's incumbent Machine authorization.
       if (actual.placement === 'account') executionPlacement = 'account';
       accountPluginActions = executionPlacement === 'account';
-      const reason = await readCallerRefusal();
-      if (reason) return refuse(reason, authority.signal?.aborted ? 'cancelled' : 'target_unavailable');
     }
     // Origin-required Session RPCs retain the authenticated source Machine
     // channel. Wrapping them in an external root loses native Session authority
@@ -304,7 +310,15 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
         return { ok: false, errorCode: error.code, error: error.code };
       throw error;
     }
-    if (external === null) return refuse('external_authorization_refused', authority.signal?.aborted ? 'cancelled' : 'target_unavailable');
+    if (external === null) {
+      logRefusal('external_authorization_refused');
+      return projectSessionActionIssuerRefusal({ ok: false, phase: 'preparation',
+        requiredFact: 'session_authorization_preparation' }, params.machineId, authority.signal);
+    }
+    if (external && 'ok' in external) {
+      logRefusal('external_authorization_refused');
+      return authority.signal?.aborted ? { ok: false, errorCode: 'cancelled', error: 'cancelled' } : external;
+    }
     if (operation.actionId.startsWith('scm.') && operation.scmWorkspace && external
       && (external.target.kind !== 'machine' || external.target.machineId !== operation.scmWorkspace.machineId
         || !sameStrictJsonValue(external.target.project, operation.scmWorkspace))) {
@@ -323,9 +337,20 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
         || params.machineId !== undefined && external.authorization.binding.sessionActionSource.machineId !== params.machineId))) {
       return refuse('external_authorization_binding_mismatch', authority.signal?.aborted ? 'cancelled' : 'target_unavailable');
     }
-    if (external) {
-      const reason = await readCallerRefusal();
-      if (reason) return refuse(reason, authority.signal?.aborted ? 'cancelled' : 'target_unavailable');
+    if (external?.accountSettingsVersion !== undefined) {
+      const credentials = params.credentials;
+      const accountSettingsVersion = external.accountSettingsVersion;
+      if (!credentials) return refuse('external_authorization_preparation_failed');
+      try {
+        await runWithServerHttpBaseUrl(params.serverHttpBaseUrl, () => refreshAccountSettingsForMinimumVersion({
+          credentials,
+          minSettingsVersion: accountSettingsVersion,
+          mode: 'blocking',
+        }));
+      } catch {
+        return refuse('external_authorization_preparation_failed',
+          authority.signal?.aborted ? 'cancelled' : 'target_unavailable');
+      }
     }
     const docMutation = operation.actionId === 'doc.comment.reply' || operation.actionId === 'doc.edit.propose'
       ? prepareDocDiscussionMutationV1(operation.actionId, operation.input, params.serverId) : undefined;
@@ -378,6 +403,7 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
       ...context,
       ...(source ? { defaultSessionMachineId: source.machineId } : {}),
       ...(external ? { externalActionExecutionAuthorization: external.authorization, externalActionTarget: external.target } : {}),
+      ...(external?.originalActionEnvelope ? { originalActionEnvelope: external.originalActionEnvelope } : {}),
     }));
     if (!outcome.ok && outcome.errorCode === 'target_unavailable') {
       const scopeFailure = ActionCurrentSessionScopeFailureDetailsV1Schema.safeParse(outcome.details);

@@ -1,7 +1,15 @@
 import { isDeepStrictEqual } from 'node:util';
+import { z } from 'zod/mini';
 import type { ActionExecutorContext, DeploymentReceiptResultV1 } from '@happier-dev/protocol';
-import { DEPLOYMENT_TEARDOWN_STEPS_V1, type DeploymentTeardownResourceV1, type DeploymentTeardownStepProofV1, type DeploymentTeardownStepV1 } from '@happier-dev/deployment-protocol';
+import {
+    DEPLOYMENT_TEARDOWN_STEPS_V1,
+    DeploymentTeardownStepProofV1Schema,
+    type DeploymentTeardownResourceV1,
+    type DeploymentTeardownStepProofV1,
+    type DeploymentTeardownStepV1,
+} from '@happier-dev/deployment-protocol';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import type { DeploymentReceiptDispatchV1 } from '../createCliDeploymentActionDeps';
 import type { OwnServerDeploymentTargetHostInput, OwnServerDeploymentTransition } from '../targets/ownServer/ownServerDeploymentTarget';
 
@@ -17,10 +25,12 @@ export type DeploymentTeardownBoundaryRequest = Readonly<{
     resources: readonly DeploymentTeardownResourceV1[];
     context: ActionExecutorContext;
 }>;
-export type DeploymentTeardownObservation =
-    | Readonly<{ kind: 'proved'; resources: DeploymentTeardownStepProofV1['resources'] }>
-    | Readonly<{ kind: 'needed' }>
-    | Readonly<{ kind: 'unknown' | 'failed'; reason: string }>;
+export const DeploymentTeardownObservationSchema = z.union([
+    z.strictObject({ kind: z.literal('proved'), resources: DeploymentTeardownStepProofV1Schema.shape.resources }),
+    z.strictObject({ kind: z.literal('needed') }),
+    z.strictObject({ kind: z.enum(['unknown', 'failed']), reason: z.string().check(z.minLength(1)) }),
+]);
+export type DeploymentTeardownObservation = z.infer<typeof DeploymentTeardownObservationSchema>;
 
 /** Each implementation delegates to its real resource owner. Absence is unsupported,
  * never an assumption that an unimplemented removal already happened. */
@@ -34,6 +44,14 @@ const kinds: Record<DeploymentTeardownStepV1, readonly DeploymentTeardownResourc
     admit: [], settleDeploy: [], removeTarget: ['workload', 'network', 'data', 'providerResource'], removeDomain: ['domain'],
     removeRelease: ['release'], withdrawBindings: ['binding'], verify: ['workload', 'network', 'data', 'domain', 'release', 'binding', 'providerResource'],
 };
+
+export function selectDeploymentTeardownStepResources(input: Readonly<{
+    resources: readonly DeploymentTeardownResourceV1[]; step: DeploymentTeardownStepV1; machineId: string;
+    allMachines: boolean;
+}>): DeploymentTeardownResourceV1[] {
+    return input.resources.filter(resource => kinds[input.step].includes(resource.kind)
+        && (resource.machineId === input.machineId || resource.machineId === undefined && input.allMachines));
+}
 
 /** One finite continuation, invoked by the deployment Action carrier. No loop,
  * queue or alternate progress store survives the request. */
@@ -59,7 +77,8 @@ export function createDeploymentTeardownExecutor(host: Pick<OwnServerDeploymentT
         }
         if (request.input.serverId !== host.serverId || !link || !intent || receipt.deployment.operation !== 'teardown'
             || receipt.deployment.environmentId !== request.input.environmentId || receipt.deployment.targetLinkId !== link.id
-            || intent.targetLinkRevision !== link.revision || intent.reason !== request.input.reason
+            || intent.targetLinkRevision + (receipt.deployment.state === 'succeeded' ? 1 : 0) !== link.revision
+            || intent.reason !== request.input.reason
             || !isDeepStrictEqual(intent.machines.map(member => member.machineId), request.input.machines ?? link.machines)
             || intent.machines.some(member => !link.members.some(current => current.machineId === member.machineId
                 && current.installationId === member.installationId))
@@ -68,6 +87,7 @@ export function createDeploymentTeardownExecutor(host: Pick<OwnServerDeploymentT
             revision: environment.environment.revision, deploymentId: receipt.deployment.id,
             deploymentRevision: receipt.deployment.revision, state: receipt.deployment.state });
         if (receipt.deployment.state === 'succeeded' || receipt.deployment.state === 'cancelled') return result();
+        if (request.context.operationAcceptance?.operationId !== receipt.deployment.actionOperationId) return failure('deployment_conflict');
         if (receipt.deployment.cancelRequestedAtMs !== undefined || request.context.signal?.aborted) return failure('cancelled');
 
         const write = async (state: OwnServerDeploymentTransition['state'], proof?: DeploymentTeardownStepProofV1) => {
@@ -99,8 +119,8 @@ export function createDeploymentTeardownExecutor(host: Pick<OwnServerDeploymentT
                 }
                 receipt = fresh;
                 const prior = receipt.content.teardown!.proofs.find(proof => proof.machineId === member.machineId && proof.step === step);
-                const resources = intent.resources.filter(resource => kinds[step].includes(resource.kind)
-                    && (resource.machineId === member.machineId || (resource.machineId === undefined && intent.machines.length === link.machines.length)));
+                const resources = selectDeploymentTeardownStepResources({ resources: intent.resources, step,
+                    machineId: member.machineId, allMachines: intent.machines.length === link.machines.length });
                 const expected = resources.map(resource => ({ resourceId: resource.id,
                     disposition: resource.disposition === 'retain' ? 'retained' as const : 'absent' as const }));
                 const complete = (proof: DeploymentTeardownStepProofV1['resources']) => proof.length === expected.length
@@ -112,8 +132,12 @@ export function createDeploymentTeardownExecutor(host: Pick<OwnServerDeploymentT
                     deploymentId: receipt.deployment.id, actionOperationId: receipt.deployment.actionOperationId,
                     ...member, step, resources, context: request.context };
                 let observed: DeploymentTeardownObservation;
+                let failureCause: ActionExecuteFailure['failureCause'];
                 try { observed = await boundary.observe(operation); }
-                catch { observed = { kind: 'unknown', reason: 'observation_unavailable' }; }
+                catch (error) {
+                    failureCause = normalizeActionExecutorThrownError(error, 'deployment.teardown.observe').failureCause;
+                    observed = { kind: 'unknown', reason: failureCause?.errorCode ?? 'observation_unavailable' };
+                }
                 if (observed.kind === 'needed' && prior && prior.state !== 'failed') {
                     observed = { kind: 'unknown', reason: 'removal_unproved' };
                 } else if (observed.kind === 'needed') {
@@ -123,7 +147,10 @@ export function createDeploymentTeardownExecutor(host: Pick<OwnServerDeploymentT
                     if (current.deployment.cancelRequestedAtMs !== undefined || current.deployment.state === 'cancelled'
                         || request.context.signal?.aborted) return failure('cancelled');
                     try { observed = await boundary.execute(operation); }
-                    catch { observed = { kind: 'unknown', reason: 'removal_unproved' }; }
+                    catch (error) {
+                        failureCause = normalizeActionExecutorThrownError(error, 'deployment.teardown.execute').failureCause;
+                        observed = { kind: 'unknown', reason: failureCause?.errorCode ?? 'removal_unproved' };
+                    }
                 }
                 if (observed.kind === 'proved') {
                     if (!complete(observed.resources)) observed = { kind: 'unknown', reason: 'resource_proof_incomplete' };
@@ -133,9 +160,13 @@ export function createDeploymentTeardownExecutor(host: Pick<OwnServerDeploymentT
                     if (saved) return saved;
                 } else {
                     const state = observed.kind === 'failed' ? 'failed' : 'outcome_unknown';
+                    const reason = observed.kind === 'needed' ? 'removal_unproved' : observed.reason;
                     const saved = await write(state, { step, ...member, state, resources: [],
-                        reason: observed.kind === 'needed' ? 'removal_unproved' : observed.reason });
-                    return saved ?? result();
+                        reason });
+                    const { ok: _ok, ...receiptDetails } = result();
+                    return saved ?? { ok: false, errorCode: state === 'failed' ? 'deployment_failed' : 'outcome_unknown',
+                        error: `${step}: ${state}`, details: { ...receiptDetails, step, reason },
+                        ...(failureCause ? { failureCause } : {}) };
                 }
             }
         }
