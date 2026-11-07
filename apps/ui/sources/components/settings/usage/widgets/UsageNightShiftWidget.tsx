@@ -16,7 +16,7 @@ import { t } from '@/text';
 import { usageSignatureAccent } from '../usageAccent';
 import { usageGridTooltip } from '../usageGridPresentation';
 import { USAGE_SETTINGS } from '../usageSettings';
-import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { useCurrentUiContextLocalCommands, type CurrentUiContextCommandInvocation } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { UsagePlanDisclosure } from './plans/UsagePlanParts';
 import {
@@ -54,11 +54,11 @@ export function UsageNightShiftWidget(props: UsageBodyProps) {
   const [draft, setDraft] = React.useState<{ startHour: number | null; endHour: number | null }>(() => chosen ?? { startHour: null, endHour: null });
   const [open, setOpen] = React.useState<'startHour' | 'endHour' | null>(null);
   React.useEffect(() => { setDraft(chosen ?? { startHour: null, endHour: null }); setOpen(null); }, [chosen, settingsScope]);
-  const choose = async (endpoint: 'startHour' | 'endHour', id: string, context?: ActionExecutorContext) => {
+  const choose = async (endpoint: 'startHour' | 'endHour', id: string, invocation?: CurrentUiContextCommandInvocation) => {
     if (!isCurrent()) return false;
     setOpen(null);
     if (id === 'clear') {
-      const accepted = await setSetting(USAGE_SETTINGS.settings.nightHours, null, { callerContext: context });
+      const accepted = await setSetting(USAGE_SETTINGS.settings.nightHours, null, { invocation });
       if (accepted && isCurrent()) setDraft({ startHour: null, endHour: null });
       return accepted;
     }
@@ -66,7 +66,7 @@ export function UsageNightShiftWidget(props: UsageBodyProps) {
     setDraft(next);
     if (next.startHour !== null && next.endHour !== null && next.startHour !== next.endHour) {
       return await setSetting(USAGE_SETTINGS.settings.nightHours,
-        { startHour: next.startHour, endHour: next.endHour }, { callerContext: context });
+        { startHour: next.startHour, endHour: next.endHour }, { invocation });
     }
     return true;
   };
@@ -78,9 +78,9 @@ export function UsageNightShiftWidget(props: UsageBodyProps) {
       ...Array.from({ length: 24 }, (_, hour) => hour)
         .filter(hour => draft[endpoint === 'startHour' ? 'endHour' : 'startHour'] !== hour)
         .map(hour => ({ key: `${endpoint}:${hour}`, title: `${label}: ${clock(hour)}`,
-          invoke: (_input?: unknown, context?: ActionExecutorContext) => choose(endpoint, String(hour), context) })),
+          invoke: (_input: unknown, _context: ActionExecutorContext, invocation: CurrentUiContextCommandInvocation) => choose(endpoint, String(hour), invocation) })),
       { key: `${endpoint}:clear`, title: `${label}: ${t('usage.board.howYouWork.nightClear')}`,
-        invoke: (_input?: unknown, context?: ActionExecutorContext) => choose(endpoint, 'clear', context) },
+        invoke: (_input: unknown, _context: ActionExecutorContext, invocation: CurrentUiContextCommandInvocation) => choose(endpoint, 'clear', invocation) },
     ];
   }));
   const controls = <View style={styles.controls}>

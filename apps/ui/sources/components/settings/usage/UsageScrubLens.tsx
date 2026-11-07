@@ -20,7 +20,7 @@ import {
 import { Popover } from '@/components/ui/popover';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
 import { useDeviceType, usePresentationWindowDimensions } from '@/utils/platform/responsive';
-import { useCurrentUiContextLocalCommands, type CurrentUiContextLocalCommand } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { useCurrentUiContextLocalCommands, type CurrentUiContextLocalCommand, type CurrentUiContextCommandInvocation } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { t } from '@/text';
 
@@ -54,7 +54,7 @@ export type ScrubLensRow = Readonly<{
   /** The series' own colour, shown as its key. */
   color?: string;
   /** Choosing the row while the lens is held, with the localized name of that choice. */
-  onPress?: (context?: ActionExecutorContext) => boolean | void | Promise<boolean | void>;
+  onPress?: (context?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation) => boolean | void | Promise<boolean | void>;
   pressLabel?: string;
   selected?: boolean;
 }>;
@@ -265,7 +265,7 @@ export const ScrubLens: React.FC<ScrubLensProps> = ({
   });
   if (held && content) for (const row of content.rows) if (row.onPress) definitions.push({
     key: `row:${row.id ?? row.label}`, title: row.pressLabel ?? row.label,
-    invoke: (_input, context) => row.onPress?.(context),
+    invoke: (_input, context, invocation) => row.onPress?.(context, invocation),
   });
   const commands = useCurrentUiContextLocalCommands(definitions);
   const commandsRef = React.useRef(commands);

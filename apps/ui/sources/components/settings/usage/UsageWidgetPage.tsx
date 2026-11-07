@@ -13,7 +13,7 @@ import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
 import { HomeReachabilityGate, useActiveHomeUnavailable } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
 import { PluginUiScrollActivityProvider } from '@happier-dev/plugin-ui/advanced';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
-import { CurrentUiContextCommandsProvider } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { CurrentUiContextCommandsProvider, type CurrentUiContextCommandInvocation } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import { publishPresentationNotice, retirePresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import {
@@ -380,7 +380,7 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
   React.useLayoutEffect(() => { publishedLayoutSelection.current = selectLayout; }, [selectLayout]);
   // Toolbar and chart intents borrow the published command, not a second setter path.
   const admittedFilters = React.useMemo(() => scopeFilters.map(filter => ({
-    ...filter, select: (id: string, context?: ActionExecutorContext) => selectFilter(filter.field, id, context),
+    ...filter, select: (id: string, context?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation) => selectFilter(filter.field, id, context, invocation),
   })), [scopeFilters, selectFilter]);
   const drill = React.useMemo(() => usageDrillFromPageFilters(admittedFilters), [admittedFilters]);
 

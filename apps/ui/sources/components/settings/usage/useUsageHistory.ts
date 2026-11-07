@@ -3,7 +3,7 @@ import { getUsageQueryKey, normalizeUsageQuery } from '@happier-dev/protocol/inp
 import { USAGE_HISTORY_ACTION_IDS } from '@happier-dev/protocol/usage/usageActionIdsV1';
 import type { UsageHistoryReadInput, UsageHistoryReadState } from '@happier-dev/protocol/usage/usageSessionEvidence';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
-import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import type { CurrentUiContextCommandInvocation } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
@@ -15,8 +15,8 @@ import type { UsageWidgetQueryIdentity } from './useUsageWidgetResource';
 export type UsageHistoryModel = Readonly<{
     state: UsageHistoryReadState | null;
     notRead: number;
-    readNow(callerContext?: ActionExecutorContext): Promise<ActionExecuteResult>;
-    cancel(callerContext?: ActionExecutorContext): Promise<ActionExecuteResult>;
+    readNow(invocation?: CurrentUiContextCommandInvocation): Promise<ActionExecuteResult>;
+    cancel(invocation?: CurrentUiContextCommandInvocation): Promise<ActionExecuteResult>;
 }>;
 
 /** Passive progress subscription; only the shared Action can admit or cancel a read. */
@@ -41,11 +41,13 @@ export function useUsageHistory(input: Readonly<{
     const getSnapshot = React.useCallback(() => context && query && context.accountLifetime.isCurrent()
         ? getUiUsageHistoryState(context, query) : null, [context, query]);
     const state = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
-    const invoke = React.useCallback((operation: UsageHistoryReadInput['operation'], callerContext?: ActionExecutorContext): Promise<ActionExecuteResult> => {
+    const invoke = React.useCallback((operation: UsageHistoryReadInput['operation'], invocation?: CurrentUiContextCommandInvocation): Promise<ActionExecuteResult> => {
         if (!context || !query) return Promise.resolve({ ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' });
-        return execution.execute(USAGE_HISTORY_ACTION_IDS.read, { query, operation }, { callerContext });
-    }, [context, query, execution.execute]);
-    const readNow = React.useCallback((callerContext?: ActionExecutorContext) => invoke('read', callerContext), [invoke]);
-    const cancel = React.useCallback((callerContext?: ActionExecutorContext) => invoke('cancel', callerContext), [invoke]);
+        return invocation
+            ? invocation.execute(execution, USAGE_HISTORY_ACTION_IDS.read, { query, operation }, { signal: execution.getSignal() })
+            : execution.execute(USAGE_HISTORY_ACTION_IDS.read, { query, operation });
+    }, [context, query, execution.execute, execution.executeForCaller, execution.binding, execution.getSignal]);
+    const readNow = React.useCallback((invocation?: CurrentUiContextCommandInvocation) => invoke('read', invocation), [invoke]);
+    const cancel = React.useCallback((invocation?: CurrentUiContextCommandInvocation) => invoke('cancel', invocation), [invoke]);
     return React.useMemo(() => ({ state, notRead: state?.progress.notRead ?? 0, readNow, cancel }), [state, readNow, cancel]);
 }

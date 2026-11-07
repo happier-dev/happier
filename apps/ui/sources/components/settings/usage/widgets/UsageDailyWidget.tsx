@@ -164,9 +164,7 @@ export function UsageDailyWidget(props: UsageBodyProps) {
         pressLabel: selected
           ? t('usage.board.page.drillRemove', { name })
           : t('usage.board.page.drillFilterTo', { name }),
-        onPress: () => {
-          drill.toggle('agents', agentId);
-        },
+        onPress: (callerContext, invocation) => drill.toggle('agents', agentId, callerContext, invocation),
       };
     },
     [drill, drillable, agentForSeries],

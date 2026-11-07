@@ -1,4 +1,6 @@
 import * as React from 'react';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import type { CurrentUiContextCommandInvocation } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { UsageAccountingMetricSchema, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { buildUsageSettingsRouteTarget } from './usageRouteParams';
@@ -17,7 +19,7 @@ export type UsageDrill = Readonly<{
   /** Whether the one filter row already holds this value. */
   selected(field: UsageDrillField, id: string): boolean;
   /** Adds the value to the one filter row, or takes it back out. False when it is not offered. */
-  toggle(field: UsageDrillField, id: string): boolean | Promise<boolean>;
+  toggle(field: UsageDrillField, id: string, callerContext?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation): boolean | Promise<boolean>;
 }>;
 
 /**
@@ -31,7 +33,7 @@ export function usageDrillFromPageFilters(
   return {
     available: (field) => byField.has(field),
     selected: (field, id) => byField.get(field)?.selected.includes(id) ?? false,
-    toggle: (field, id) => byField.get(field)?.select(id) ?? false,
+    toggle: (field, id, callerContext, invocation) => byField.get(field)?.select(id, callerContext, invocation) ?? false,
   };
 }
 

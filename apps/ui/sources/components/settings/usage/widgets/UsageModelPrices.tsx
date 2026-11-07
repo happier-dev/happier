@@ -28,12 +28,11 @@ import {
 import { formatTokenCount, formatUsageCost } from '@/utils/format/usageNumbers';
 import { t } from '@/text';
 import { USAGE_SETTINGS } from '../usageSettings';
-import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { usageDimensionLabel } from './usageBodyKit';
 import { Modal, type CustomModalInjectedProps } from '@/modal';
 import { usePlanText } from './plans/UsagePlanParts';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
-import { useCurrentUiContextCommandBridge, useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { useCurrentUiContextCommandBridge, useCurrentUiContextLocalCommands, type CurrentUiContextCommandInvocation } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
 type RateField = 'input' | 'output' | 'cacheRead' | 'cacheWrite';
 const RATE_FIELDS: readonly RateField[] = [
@@ -226,7 +225,7 @@ function UsageModelPriceRow(
   const disclosure = useCurrentUiContextLocalCommands([{ key: 'toggle',
     title: `${modelId}: ${t(expanded ? 'usage.showLess' : 'common.details')}`,
     invoke: () => { setExpanded(value => !value); return true; } }], { foregroundOverlay: true });
-  const write = async (override: UsageModelPriceOverridesV1[string] | null, callerContext?: ActionExecutorContext) => {
+  const write = async (override: UsageModelPriceOverridesV1[string] | null, invocation?: CurrentUiContextCommandInvocation) => {
     setBusy(true);
     try {
       const intent = createUsageModelPriceSettingsIntent(props.overrides, {
@@ -236,7 +235,7 @@ function UsageModelPriceRow(
       const accepted = await setSetting(
         USAGE_SETTINGS.settings.modelPrices,
         intent.input.value,
-        { callerContext },
+        { invocation },
       );
       if (accepted) setExpanded(false);
     } finally {
@@ -283,8 +282,8 @@ function UsageModelPriceRow(
         busy={busy}
         testID={props.testID}
         onCancel={() => setExpanded(false)}
-        onMap={async (target, callerContext) => {
-          await write({ kind: 'map', modelId: target }, callerContext);
+        onMap={async (target, invocation) => {
+          await write({ kind: 'map', modelId: target }, invocation);
         }}
         {...(props.row.override ? { onReset: () => { void write(null); } } : {})}
         onSave={(rates) => {
@@ -308,7 +307,7 @@ function UsageModelPriceFields(
     busy: boolean;
     testID: string;
     onCancel: () => void;
-    onMap: (target: string, callerContext?: ActionExecutorContext) => void | Promise<void>;
+    onMap: (target: string, invocation?: CurrentUiContextCommandInvocation) => void | Promise<void>;
     onReset?: () => void;
     onSave: (rates: {
       inputUsdPerMillion: number;
@@ -437,7 +436,7 @@ function UsageModelPriceMapChip(
     targets: readonly string[];
     disabled: boolean;
     testID: string;
-    onChoose: (target: string, callerContext?: ActionExecutorContext) => void | Promise<void>;
+    onChoose: (target: string, invocation?: CurrentUiContextCommandInvocation) => void | Promise<void>;
   }>,
 ) {
   const options = React.useMemo(
@@ -468,8 +467,8 @@ function UsageModelPriceMapChip(
               inputPlaceholder: t('usage.board.page.priceSearchModels'),
               sections: [{ kind: 'static', id: 'targets', options }],
             }}
-            onSelect={async (id, _option, callerContext) => {
-              await props.onChoose(id, callerContext);
+            onSelect={async (id, _option, callerContext, invocation) => {
+              await props.onChoose(id, invocation);
               close(callerContext);
             }}
             onRequestClose={close}

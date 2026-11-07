@@ -19,6 +19,7 @@ import { USAGE_SCOPE_FILTER_ALL, type UsageWidgetPageFilter } from './useUsageWi
 import { getAgentIdentityColor } from '@/agents/catalog/catalog';
 import { UsageAgentMark } from './widgets/usageBodyKit';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import type { CurrentUiContextCommandInvocation } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
 const COST_BASIS_TITLE = { auto: 'usage.board.page.costBasisAuto', reported: 'usage.board.page.costBasisReported',
     estimated: 'usage.board.page.costBasisEstimated', api_equivalent: 'usage.board.page.factApiEquivalent' } as const;
@@ -37,7 +38,7 @@ export function UsageFilterBar(
     /** The usage read that tells which cost bases exist has not answered yet. */
     costBasisPending: boolean;
     onPeriodChange(period: UsagePeriod): Promise<boolean>;
-    onCostBasisChange(costBasis: UsageWidgetPageScope['costBasis'], callerContext?: ActionExecutorContext): Promise<boolean>;
+    onCostBasisChange(costBasis: UsageWidgetPageScope['costBasis'], callerContext?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation): Promise<boolean>;
     /** The displayed widgets' shared metric; `null` when they differ or none is shown. */
     metric: 'tokens' | 'cost' | null;
     onMetricChange: ((metric: 'tokens' | 'cost') => void) | null;
@@ -136,8 +137,8 @@ export function UsageFilterBar(
               label: t(COST_BASIS_TITLE[option]),
             })),
             selectedId: page.scope.costBasis,
-            onChange: (id: string, callerContext?: ActionExecutorContext) => {
-              void props.onCostBasisChange(id as UsageWidgetPageScope['costBasis'], callerContext);
+            onChange: (id: string, callerContext?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation) => {
+              void props.onCostBasisChange(id as UsageWidgetPageScope['costBasis'], callerContext, invocation);
             },
             testID: `${props.testID}.costBasis`,
           },
@@ -272,9 +273,9 @@ function UsageScopeSections(props: Readonly<{
       currentUiContextForegroundOverlay
       rootStep={step}
       selection={{ kind: 'multiple', selectedIds }}
-      onSelect={(id, _option, callerContext) => {
+      onSelect={(id, _option, callerContext, invocation) => {
         const [field, option] = id.split(SECTION_KEY);
-        props.filters.find(filter => filter.id === field)?.onChange?.(option ?? '', callerContext);
+        props.filters.find(filter => filter.id === field)?.onChange?.(option ?? '', callerContext, invocation);
       }}
       onRequestClose={props.onRequestClose}
       listAccessibilityLabel={t('usage.board.page.filtersLabel')}

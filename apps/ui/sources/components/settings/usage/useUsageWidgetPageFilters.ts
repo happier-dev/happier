@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import type { CurrentUiContextCommandInvocation } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { readUsageScopeOptions } from '@happier-dev/protocol/usage/usageFilterOptions';
 import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
@@ -27,7 +28,7 @@ export type UsageWidgetPageFilter = Readonly<{
     selected: readonly string[];
     /** `agentId`: the Agent a source belongs to. `partial`: this source has a coverage gap; its detail is said once, on "All". */
     options: readonly Readonly<{ id: string; label: string; subtitle?: string; agentId?: string; partial?: boolean }>[];
-    select(id: string, callerContext?: ActionExecutorContext): boolean | Promise<boolean>;
+    select(id: string, callerContext?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation): boolean | Promise<boolean>;
 }>;
 
 const CAPTURE_KIND_KEY = {

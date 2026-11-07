@@ -324,12 +324,11 @@ it('uses the same mounted projection-window intent for agent, picker and small m
 
 it('binds unread Sessions to one Read now fact and page command, cancels the running read and settles when read', async () => {
     const calls: string[] = [];
-    const surfaces: (ActionExecutorContext['surface'] | undefined)[] = [];
     const model = (status: NonNullable<UsageHistoryModel['state']>['status'], progress: Partial<NonNullable<UsageHistoryModel['state']>['progress']>): UsageHistoryModel => {
         const state = { status, progress: { selected: 1300, notRead: 0, completed: 0, failed: 0, ...progress } };
         return { state, notRead: state.progress.notRead,
-            readNow: async (context?: ActionExecutorContext) => { calls.push('read'); surfaces.push(context?.surface); return { ok: true, result: state }; },
-            cancel: async (context?: ActionExecutorContext) => { calls.push('cancel'); surfaces.push(context?.surface); return { ok: true, result: state }; } };
+            readNow: async () => { calls.push('read'); return { ok: true, result: state }; },
+            cancel: async () => { calls.push('cancel'); return { ok: true, result: state }; } };
     };
     const historyCommand = () => reader!.readCurrentUiContext()!.commands.filter(command =>
         command.title === t('usage.board.page.historyReadCommand') || command.title === t('usage.board.page.historyCancelCommand'));
@@ -339,7 +338,6 @@ it('binds unread Sessions to one Read now fact and page command, cancels the run
     expect(historyCommand().map(command => command.title)).toEqual([t('usage.board.page.historyReadCommand')]);
     await invoke(historyCommand()[0]!.id);
     expect(calls).toEqual(['read']);
-    expect(surfaces).toEqual(['agent']);
 
     historyModel = model('reading', { notRead: 1120, completed: 120 });
     await rerender();
@@ -348,7 +346,6 @@ it('binds unread Sessions to one Read now fact and page command, cancels the run
     await act(async () => { historyFact!.onPress(); });
     await flushHookEffects({ cycles: 4 });
     expect(calls).toEqual(['read', 'cancel']);
-    expect(surfaces).toEqual(['agent', 'ui']);
 
     // A cancelled read keeps what it converted; the rest are still not read.
     historyModel = model('cancelled', { notRead: 1120, completed: 120 });
@@ -376,7 +373,6 @@ it('binds unread Sessions to one Read now fact and page command, cancels the run
     await flushHookEffects({ cycles: 4 });
     await invoke(historyCommand()[0]!.id);
     expect(calls).toEqual(['read', 'cancel', 'read', 'read', 'read']);
-    expect(surfaces.slice(-2)).toEqual(['ui', 'agent']);
 
     historyModel = model('complete', { completed: 1240 });
     await rerender();

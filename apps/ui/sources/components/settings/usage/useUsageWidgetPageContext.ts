@@ -6,7 +6,7 @@ import { useOptionalCurrentUiContextReader, usePublishCurrentUiContext } from '@
 import type { CurrentUiContextMountedEnrichment, CurrentUiContextMountedCommand } from '@/components/appShell/currentUiContext/currentUiContextModel';
 import { executeMountedCurrentUiContextCommand } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
-import { useCurrentUiContextComposedCommands, useCurrentUiContextLocalCommandDefinitions } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { useCurrentUiContextComposedCommands, useCurrentUiContextLocalCommandDefinitions, type CurrentUiContextCommandInvocation } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { USAGE_PERIODS, getUsagePeriodDefinition, type UsagePeriod } from '@/sync/api/account/usagePeriods';
 import { t } from '@/text';
 import type { UsageHistoryModel } from './useUsageHistory';
@@ -145,8 +145,8 @@ function pageCommandKey(kind: string, ...ids: string[]): string {
 export function usePublishUsageWidgetPageContext(input: UsageWidgetPagePublicationInput): Readonly<{
     selectLayout(layoutId: string, signal?: AbortSignal): Promise<boolean>;
     selectPeriod(period: UsagePeriod): Promise<boolean>;
-    selectCostBasis(costBasis: UsageWidgetPageScope['costBasis'], callerContext?: ActionExecutorContext): Promise<boolean>;
-    selectFilter(field: string, id: string, callerContext?: ActionExecutorContext): Promise<boolean>;
+    selectCostBasis(costBasis: UsageWidgetPageScope['costBasis'], callerContext?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation): Promise<boolean>;
+    selectFilter(field: string, id: string, callerContext?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation): Promise<boolean>;
     retryRead(): Promise<boolean>;
     retryLayouts(): Promise<boolean>;
     /** The history read's one fact and control for the page header; null once every Session was read. */
@@ -155,7 +155,7 @@ export function usePublishUsageWidgetPageContext(input: UsageWidgetPagePublicati
     const { page } = input;
     const descendantCommands = useCurrentUiContextComposedCommands();
     const reader = useOptionalCurrentUiContextReader();
-    const { execute } = useMountedActionExecution(input.authority?.scope);
+    const execution = useMountedActionExecution(input.authority?.scope);
     const latest = React.useRef(input);
     latest.current = input;
     const mounted = React.useRef(true);
@@ -176,12 +176,12 @@ export function usePublishUsageWidgetPageContext(input: UsageWidgetPagePublicati
     const historyAbsorbed = describedHistory?.failed === true && input.retryRead !== undefined;
     const historyRead = historyAbsorbed ? null : describedHistory;
     const historyTitle = historyRead ? t(historyRead.operation === 'cancel' ? 'usage.board.page.historyCancelCommand' : 'usage.board.page.historyReadCommand') : null;
-    const runHistory = React.useCallback((operation: 'read' | 'cancel', callerContext?: ActionExecutorContext): boolean => {
+    const runHistory = React.useCallback((operation: 'read' | 'cancel', invocation?: CurrentUiContextCommandInvocation): boolean => {
         const history = latest.current.history;
         if (!canChange() || !history) return false;
         // The read lasts as long as the window's history needs. Its progress and settlement are the
         // history state the page shows, so the command returns once started instead of holding its caller.
-        void (operation === 'cancel' ? history.cancel(callerContext) : history.readNow(callerContext)).catch(() => {});
+        void (operation === 'cancel' ? history.cancel(invocation) : history.readNow(invocation)).catch(() => {});
         return true;
     }, [canChange]);
 
@@ -193,15 +193,15 @@ export function usePublishUsageWidgetPageContext(input: UsageWidgetPagePublicati
         ...(input.filterCommands ?? []).map(({ field, id, title, invoke }) => ({ key: pageCommandKey('filter', field, id), title, invoke: (_input?: unknown, context?: ActionExecutorContext) => invoke(context) })),
         ...(input.layouts ?? []).map(layout => ({ key: pageCommandKey('layout', layout.id), title: layout.name, invoke: (_input?: unknown, context?: ActionExecutorContext) => applyLayout(layout.id, context?.signal, context) })),
         ...(input.retryRead ? [{ key: pageCommandKey('retry', 'read'), title: t('usage.board.page.retryRead'),
-            invoke: async (_input?: unknown, context?: ActionExecutorContext) => {
+            invoke: async (_input: unknown, context: ActionExecutorContext, invocation: CurrentUiContextCommandInvocation) => {
                 // One Retry for everything the page could not read: the shared reads, the Sessions and the views.
                 const current = latest.current;
-                if (historyAbsorbed) runHistory('read', context);
+                if (historyAbsorbed) runHistory('read', invocation);
                 await Promise.all([current.retryRead?.(context), current.retryLayouts?.(context)]);
                 return true;
             } }] : []),
         ...(historyRead && historyTitle ? [{ key: pageCommandKey('history', historyRead.operation), title: historyTitle,
-            invoke: (_input?: unknown, context?: ActionExecutorContext) => runHistory(historyRead.operation, context) }] : []),
+            invoke: (_input: unknown, _context: ActionExecutorContext, invocation: CurrentUiContextCommandInvocation) => runHistory(historyRead.operation, invocation) }] : []),
         ...(input.retryLayouts && !input.retryRead ? [{ key: pageCommandKey('retry', 'layouts'), title: `${t('usage.board.page.viewsLabel')}: ${t('common.retry')}`,
             invoke: async (_input?: unknown, context?: ActionExecutorContext) => { await input.retryLayouts!(context); return true; } }] : []),
     ], canChange);
@@ -217,19 +217,19 @@ export function usePublishUsageWidgetPageContext(input: UsageWidgetPagePublicati
     usePublishCurrentUiContext(publication?.enrichment ?? null);
     const currentPublication = React.useRef(publication);
     React.useLayoutEffect(() => { currentPublication.current = publication; }, [publication]);
-    const invoke = React.useCallback(async (command: CurrentUiContextMountedCommand | undefined, callerContext?: ActionExecutorContext): Promise<boolean> => {
+    const invoke = React.useCallback(async (command: CurrentUiContextMountedCommand | undefined, invocation?: CurrentUiContextCommandInvocation): Promise<boolean> => {
         if (!canChange()) return false;
         return (await executeMountedCurrentUiContextCommand({ reader, command,
-            execute: (actionId, value) => execute(actionId, value, callerContext ? { callerContext } : undefined) })).ok;
-    }, [canChange, execute, reader]);
+            execute: (actionId, value) => invocation ? invocation.execute(execution, actionId, value) : execution.execute(actionId, value) })).ok;
+    }, [canChange, execution.execute, execution.executeForCaller, execution.binding, reader]);
     // Menus close before invoking their queued callback. Resolve its semantic intent
     // from the committed publication, never the retired descriptor captured at close.
     // The current-context owner retires commands when their declaration or authority changes.
     const selectLayout = React.useCallback((id: string, signal?: AbortSignal) => signal?.aborted ? Promise.resolve(false)
         : invoke(currentPublication.current?.definitions.find(row => row.key === pageCommandKey('layout', id))?.command), [invoke]);
     const selectPeriod = React.useCallback((id: UsagePeriod) => invoke(currentPublication.current?.definitions.find(row => row.key === pageCommandKey('period', id))?.command), [invoke]);
-    const selectCostBasis = React.useCallback((id: UsageWidgetPageScope['costBasis'], context?: ActionExecutorContext) => invoke(currentPublication.current?.definitions.find(row => row.key === pageCommandKey('cost', id))?.command, context), [invoke]);
-    const selectFilter = React.useCallback((field: string, id: string, context?: ActionExecutorContext) => invoke(currentPublication.current?.definitions.find(row => row.key === pageCommandKey('filter', field, id))?.command, context), [invoke]);
+    const selectCostBasis = React.useCallback((id: UsageWidgetPageScope['costBasis'], _context?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation) => invoke(currentPublication.current?.definitions.find(row => row.key === pageCommandKey('cost', id))?.command, invocation), [invoke]);
+    const selectFilter = React.useCallback((field: string, id: string, _context?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation) => invoke(currentPublication.current?.definitions.find(row => row.key === pageCommandKey('filter', field, id))?.command, invocation), [invoke]);
     const retryRead = React.useCallback(() => invoke(currentPublication.current?.definitions.find(row => row.key === pageCommandKey('retry', 'read'))?.command), [invoke]);
     const retryLayouts = React.useCallback(() => invoke(currentPublication.current?.definitions.find(row => row.key === pageCommandKey('retry', 'layouts'))?.command), [invoke]);
     const historyOperation = historyRead?.operation;

@@ -1,10 +1,11 @@
-import { useCallback, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useMemo, type ReactNode } from 'react';
 import { StyleSheet as RNStyleSheet, View } from 'react-native';
 import { describeHappierSeriesBucket, type HappierSeries, type HappierSeriesBucket, type StackedSeriesChartProps } from '@happier-dev/plugin-ui/presentation';
 
 import { resolveUsageBucketBounds } from '@happier-dev/protocol/usage/usageCalendar';
 import { resolveUsageCostBasis, resolveUsageCostForSelection } from '@happier-dev/protocol/usage/usageCostFacts';
-import { type UsagePageCostSelection, type UsageAnalyticsCoverage, type UsageAnalyticsQueryResponse, type UsageCostMode } from '@happier-dev/protocol';
+import { type UsagePageCostSelection, type UsageCostMode } from '@happier-dev/protocol/usage/usageCostFacts';
+import { type UsageAnalyticsCoverage, type UsageAnalyticsQueryResponse} from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 
 import { ChartTooltip, HorizontalChartFrame } from '@/components/ui/charts';
 import type { UsageHourRhythm, UsageModelMix, UsageTrendPoint } from '@/sync/api/account/usageAnalytics';
@@ -12,7 +13,6 @@ import { formatUsageHourLabel } from '@/sync/api/account/formatUsageRhythmLabel'
 import { t } from '@/text';
 import { formatTokenCount, formatTokenCountLong, formatUsageCost } from '@/utils/format/usageNumbers';
 import { useMotionPreferences } from '@/components/instrument';
-import { DrawnLinePath } from '@/components/instrument/charts/DrawnLinePath';
 import { ChartInkFade } from '@/components/instrument/charts/LineFade';
 import { INSTRUMENT_DURATIONS } from '@/components/instrument/motion/motionTokens';
 import { useEntrancesEnabled } from './usageEntrance';
@@ -45,26 +45,12 @@ export function useUsageSeriesMotion(pointCount: number, identity: 'bucket' | 's
     return { barMotion, reducedMotion: motion.level === 'minimal' };
 }
 
-/** Preserve the canonical draw/fade engine and the surface's entrance-once policy. */
-export function useUsageSeriesLineInk() {
-    const motion = useMotionPreferences();
-    const entrancesEnabled = useEntrancesEnabled();
-    const renderLinePath: NonNullable<StackedSeriesChartProps['renderLinePath']> = (path, ink) =>
-        <DrawnLinePath path={path} width={ink.width} height={ink.height} color={ink.color}
-            strokeWidth={ink.strokeWidth} animateOnMount={entrancesEnabled && !ink.reducedMotion} />;
-    return { renderLinePath, reducedMotion: motion.level === 'minimal' };
-}
-
 export function useUsageSeriesAreaInk() {
     const motion = useMotionPreferences();
     const entrancesEnabled = useEntrancesEnabled();
     const renderInk: NonNullable<StackedSeriesChartProps['renderInk']> = (visual, reducedMotion) =>
         <ChartInkFade animateEntrance={entrancesEnabled && !reducedMotion} durationMs={INSTRUMENT_DURATIONS.entranceEmphasis}>{visual}</ChartInkFade>;
     return { renderInk, reducedMotion: motion.level === 'minimal' };
-}
-
-export function usageSparkSeries(values: readonly number[], label: string, color: string): readonly HappierSeries[] {
-    return [{ id: 'trend', label, color, points: values.map((y, index) => ({ id: String(index), x: index + 1, y })) }];
 }
 
 export function createUsageHourRhythmSeries(rhythm: UsageHourRhythm, color: string, emptyColor?: string): readonly HappierSeries[] {
@@ -273,16 +259,16 @@ export function usageSeriesValueFormatter(metric: 'tokens' | 'cost' | 'requests'
 }
 
 /** What choosing one series in the lens or the legend does (a drill), worded by its caller. */
-export type UsageSeriesChoice = Readonly<{ onPress: () => void; pressLabel: string; selected: boolean }>;
+export type UsageSeriesChoice = Readonly<{ onPress: NonNullable<ScrubLensRow['onPress']>; pressLabel: string; selected: boolean }>;
 
-/**
- * The all-series lens over a chart's own plot (lab `kitstates` lens). The chart hands over its bucket
- * slots and exact values; nothing here scales, sums a series or reads data. A bucket's total is shown
- * only when every series in it is known.
- */
-export function useUsageSeriesLens(input: Readonly<{
-    series: readonly HappierSeries[];
-    format: (value: number) => string;
+/** The chart's plot as it hands it to a lens: bucket slots, ink, reading and selection. */
+export type SeriesLensPlot = Parameters<NonNullable<StackedSeriesChartProps['renderPlotOverlay']>>[0];
+
+type SeriesLensOptions = Readonly<{
+    /** Source series; only their per-bucket source details and overlay flag are read here. */
+    series?: readonly HappierSeries[];
+    /** The caller's units; the chart's own reading when absent. */
+    format?: (value: number) => string;
     accentColor: string;
     /** What the numbers mean, said once under them (cost basis). */
     footer?: string;
@@ -290,36 +276,48 @@ export function useUsageSeriesLens(input: Readonly<{
     /** A point's title when its caller says it only on demand (unlabelled time points); the bucket's label otherwise. */
     pointTitle?: (bucket: HappierSeriesBucket) => string;
     testID?: string;
-}>): Pick<StackedSeriesChartProps, 'renderPlotOverlay' | 'onSelect'> {
-    const { series, format, accentColor, footer, choice, pointTitle, testID } = input;
+}>;
+
+/**
+ * The all-series lens over a chart's own plot (lab `kitstates` lens): a crosshair on the bucket and, beside
+ * it, the bucket's label over one swatch · name · value row per series in the plot's own ink. The chart hands
+ * over its bucket slots, colours, reading and selection; nothing here scales, sums a series or reads data.
+ * A bucket's total is shown only when every series in it is known. Usage, Vitals and agent-made charts share it.
+ */
+export function SeriesPlotLens(props: SeriesLensOptions & Readonly<{ plot: SeriesLensPlot }>) {
+    const { plot, series, accentColor, footer, choice, pointTitle, testID } = props;
+    const format = props.format ?? plot.format;
+    const resolveContent = (index: number): ScrubLensContent | null => {
+        const bucket = plot.buckets[index];
+        if (!bucket) return null;
+        const known = bucket.values.every((entry) => entry.value !== null);
+        const rows = bucket.values.flatMap((entry, seriesIndex): ScrubLensRow[] => {
+            const chosen = choice?.(entry.seriesId) ?? null;
+            const color = entry.color ?? plot.seriesColors[seriesIndex];
+            const parent = { id: entry.seriesId, label: entry.label, ...(color ? { color } : {}),
+                value: entry.value === null ? t('common.unavailable') : format(entry.value),
+                ...(chosen ? chosen : {}) };
+            const details = (series?.find(part => part.id === entry.seriesId) as UsageSourceSeries | undefined)?.sourceDetails?.[bucket.id] ?? [];
+            return [parent, ...details.map(part => ({ id: part.id, label: part.label,
+                value: part.value === null ? t('common.unavailable') : format(part.value) }))];
+        });
+        return { title: pointTitle ? pointTitle(bucket) : bucket.label, rows, ...(footer ? { footer } : {}),
+            // Comparison overlays are independent observations, never additive parts.
+            ...(known && bucket.values.length > 1 && !series?.some(entry => entry.overlay)
+                ? { total: format(bucket.values.reduce((sum, entry) => sum + (entry.value ?? 0), 0)) } : {}) };
+    };
     // The chart's own keyboard selection: the lens shows where the viewer is reading.
-    const [focusedId, setFocusedId] = useState<string | null>(null);
-    const onSelect = useCallback((bucketId: string) => setFocusedId(bucketId), []);
-    const renderPlotOverlay = useCallback<NonNullable<StackedSeriesChartProps['renderPlotOverlay']>>((plot) => {
-        const colors = new Map(series.map((entry) => [entry.id, entry.color]));
-        const resolveContent = (index: number): ScrubLensContent | null => {
-            const bucket = plot.buckets[index];
-            if (!bucket) return null;
-            const known = bucket.values.every((entry) => entry.value !== null);
-            const rows = bucket.values.flatMap((entry): ScrubLensRow[] => {
-                const chosen = choice?.(entry.seriesId) ?? null;
-                const color = entry.color ?? colors.get(entry.seriesId);
-                const parent = { id: entry.seriesId, label: entry.label, ...(color ? { color } : {}),
-                    value: entry.value === null ? t('common.unavailable') : format(entry.value),
-                    ...(chosen ? chosen : {}) };
-                const details = (series.find(part => part.id === entry.seriesId) as UsageSourceSeries | undefined)?.sourceDetails?.[bucket.id] ?? [];
-                return [parent, ...details.map(part => ({ id: part.id, label: part.label,
-                    value: part.value === null ? t('common.unavailable') : format(part.value) }))];
-            });
-            return { title: pointTitle ? pointTitle(bucket) : bucket.label, rows, ...(footer ? { footer } : {}),
-                // Comparison overlays are independent observations, never additive parts.
-                ...(known && bucket.values.length > 1 && !series.some(entry => entry.overlay)
-                    ? { total: format(bucket.values.reduce((sum, entry) => sum + (entry.value ?? 0), 0)) } : {}) };
-        };
-        const focusIndex = focusedId === null ? -1 : plot.buckets.findIndex((bucket) => bucket.id === focusedId);
-        return <ScrubLens style={RNStyleSheet.absoluteFill} accentColor={accentColor} resolveContent={resolveContent}
-            layout={{ centers: plot.centers }}
-            focusIndex={focusIndex < 0 ? null : focusIndex} {...(testID ? { testID } : {})} />;
-    }, [series, format, accentColor, footer, choice, pointTitle, focusedId, testID]);
-    return { renderPlotOverlay, onSelect };
+    const focusIndex = plot.selectedBucketId === null ? -1 : plot.buckets.findIndex((bucket) => bucket.id === plot.selectedBucketId);
+    return <ScrubLens style={RNStyleSheet.absoluteFill} accentColor={accentColor} resolveContent={resolveContent}
+        layout={{ centers: plot.centers }}
+        focusIndex={focusIndex < 0 ? null : focusIndex} {...(testID ? { testID } : {})} />;
+}
+
+export function useUsageSeriesLens(input: SeriesLensOptions): Pick<StackedSeriesChartProps, 'renderPlotOverlay'> {
+    const { series, format, accentColor, footer, choice, pointTitle, testID } = input;
+    const renderPlotOverlay = useCallback<NonNullable<StackedSeriesChartProps['renderPlotOverlay']>>((plot) =>
+        <SeriesPlotLens plot={plot} series={series} format={format} accentColor={accentColor} footer={footer}
+            choice={choice} pointTitle={pointTitle} testID={testID} />,
+    [series, format, accentColor, footer, choice, pointTitle, testID]);
+    return { renderPlotOverlay };
 }

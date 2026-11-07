@@ -31,7 +31,7 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions/execut
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { renderMountedCurrentUiContext } from '@/dev/testkit/harness/mountedCurrentUiContext';
 import { useOptionalCurrentUiContextReader, type CurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
-import { CurrentUiContextCommandsProvider } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { CurrentUiContextCommandsProvider, type CurrentUiContextCommandInvocation } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { useUsageWidgetPageContext, usePublishUsageWidgetPageContext } from './useUsageWidgetPageContext';
 import { getUsagePeriodDefinition, type UsagePeriod } from '@/sync/api/account/usagePeriods';
@@ -79,7 +79,7 @@ function BodyProbe(props: Readonly<{ resource: UsageWidgetResource; instanceId: 
 }
 
 describe('Usage widget shared Resource selection', () => {
-    it('keeps an actual held Daily Agent choice behind Usage Action policy while UI Retry succeeds', async () => {
+    it('keeps an actual held Daily Agent choice behind Usage Action policy while UI Retry reacquires accounting', async () => {
         const startMs = Date.parse('2024-04-22T00:00:00Z');
         const endMs = startMs + 86_400_000;
         const entry = (key: string) => ({ key, eventCount: 1, tokens: accounting.totals.tokens,
@@ -115,7 +115,7 @@ describe('Usage widget shared Resource selection', () => {
             const published = usePublishUsageWidgetPageContext({ authority, page, costBasisOptions: [],
                 filterCommands: commands, retryRead: model.error ? model.refresh : undefined });
             const admitted = filters.map(filter => ({ ...filter,
-                select: (id: string, context?: ActionExecutorContext) => published.selectFilter(filter.field, id, context) }));
+                select: (id: string, context?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation) => published.selectFilter(filter.field, id, context, invocation) }));
             mounted.reader = useOptionalCurrentUiContextReader();
             return model.slice ? <UsageDrillProvider value={usageDrillFromPageFilters(admitted)}>
                 <UsageDailyWidget id="usage_daily" query={selectedQuery} slice={model.slice} model={model}
@@ -134,6 +134,9 @@ describe('Usage widget shared Resource selection', () => {
         };
         try {
             await expect.poll(() => mounted.model?.slice?.accounting).toBeDefined();
+            await expect.poll(() => mounted.model?.pending).toBe(false);
+            const initialError = mounted.model?.error;
+            expect(initialError?.code, 'the constructed Account has no Connected accounts for its independent quota source').toBe('no_connected_accounts');
             const chart = screen.findHostByTestId('held-origin.chart');
             expect(chart, 'native layout measures the real Daily chart before its plot overlay mounts').toBeTruthy();
             await act(async () => { chart!.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 640, height: 240 } } }); });
@@ -155,8 +158,9 @@ describe('Usage widget shared Resource selection', () => {
             const retry = mounted.reader!.readCurrentUiContext()!.commands.find(command => command.title === t('usage.board.page.retryRead'));
             expect(retry).toBeDefined();
             await invoke(retry!.id, 'ui');
+            await expect.poll(() => mounted.model?.pending).toBe(false);
             await expect.poll(() => mounted.model?.slice?.accounting).toBeDefined();
-            expect(mounted.model?.error).toBeNull();
+            expect(mounted.model?.error).toEqual(initialError);
             expect(posts()).toBeGreaterThan(beforeChoice);
         } finally { storage.setState({ settings }); await screen.unmount(); }
     });
