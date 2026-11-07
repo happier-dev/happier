@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { type Fastify } from "../../types";
+import packageJson from "../../../../../package.json";
 import {
     ClientVersionCheckRequestV1Schema,
     ClientVersionCheckResponseV1Schema,
@@ -29,6 +30,7 @@ export function versionRoutes(app: Fastify) {
             response: {
                 200: z.object({
                     ok: z.literal(true),
+                    version: z.string(),
                     source_sha: z.string().regex(/^[a-f0-9]{40}$/).optional(),
                 }),
             },
@@ -37,6 +39,7 @@ export function versionRoutes(app: Fastify) {
         const sourceSha = String(process.env.HAPPIER_RELEASE_SOURCE_SHA ?? '').trim();
         return {
             ok: true as const,
+            version: packageJson.version,
             ...(/^[a-f0-9]{40}$/.test(sourceSha) ? { source_sha: sourceSha } : {}),
         };
     });

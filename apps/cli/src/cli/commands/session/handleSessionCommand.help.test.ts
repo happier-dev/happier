@@ -45,6 +45,7 @@ describe('handleSessionCommand help output', () => {
 
   it.each([
     [['list', '--help'], 'happier session list [--active]'],
+    [['recover-aliases', '--help'], 'happier session recover-aliases --provider <id> --snapshot <file> --observed-at <epoch-ms>'],
     [['status', '--help'], 'happier session status <session-id-or-prefix-or-tag>'],
     [['create', '--help'], 'happier session create [options]\n\nOptions:\n  [--path <path>]'],
     [['send', '--help'], 'happier session send <session-id-or-prefix-or-tag> <message>'],

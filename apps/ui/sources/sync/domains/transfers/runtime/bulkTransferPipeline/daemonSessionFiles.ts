@@ -7,6 +7,7 @@ import {
 } from '@/sync/runtime/sessionMachineRpcFallback';
 import { createSessionFileTransferRpcCaller } from './sessionFileTransferRpcCaller';
 import { mergeTransferChunks } from './mergeTransferChunks';
+import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@/sync/runtime/rpcErrors';
 
 import {
     type BulkTransferFileDestination,
@@ -19,6 +20,37 @@ import {
 } from './uploadBulkPayloadFromFile';
 
 type SessionRpcFailure = Readonly<{ success: false; error: string; errorCode?: string }>;
+
+/** A small authenticated RPC resolves a link; file bytes go directly to the device's browser. */
+export async function resolveDaemonSessionFileDownloadUrl(params: Readonly<{
+    sessionId: string;
+    path: string;
+}>): Promise<Readonly<{ success: true; url: string | null }> | SessionRpcFailure> {
+    try {
+        const response = await createSessionFileTransferRpcCaller({ sessionId: params.sessionId }).call<
+            Readonly<{ success: true; url: string | null }> | SessionRpcFailure, Readonly<{ path: string }>
+        >({
+            request: { path: params.path },
+            machineMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_URL,
+            sessionMethod: RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_URL,
+            toMachineRequest: rebasePathRequestToMachineTarget,
+        });
+        // Released daemons without link support keep their existing transfer behaviour.
+        if (!response.success && (response.errorCode === RPC_ERROR_CODES.METHOD_NOT_FOUND
+            || response.errorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE)) return { success: true, url: null };
+        if (response.success && response.url !== null) {
+            const url = new URL(response.url);
+            if (url.protocol !== 'https:' || !url.hostname.endsWith('.ts.net') || url.username || url.password
+                || !url.pathname.startsWith('/browse/') || url.search !== '?download=1' || url.hash) {
+                return { success: false, error: 'Invalid direct download URL' };
+            }
+        }
+        return response;
+    } catch (error) {
+        if (isRpcMethodNotFoundError(error) || isRpcMethodNotAvailableError(error)) return { success: true, url: null };
+        return { success: false, error: error instanceof Error ? error.message : 'Unable to resolve direct download' };
+    }
+}
 
 type SessionStatFileRequest = Readonly<{ path: string }>;
 

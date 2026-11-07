@@ -5,6 +5,7 @@ import {
     ConnectedServiceQuotaSnapshotV1Schema,
     sealAccountScopedBlobCiphertext,
     sealConnectedServiceCredentialCiphertext,
+    type ProviderAccountSubscriptionV1,
 } from '@happier-dev/protocol';
 import { storeConnectedServiceCredentialForAccount } from '@/sync/domains/connectedServices/storeConnectedServiceCredentialForAccount';
 import { getServerFetchUrl } from '@/dev/testkit/mocks/serverFetch';
@@ -38,6 +39,57 @@ function quota(organizationId?: string) {
 describe('connectedServiceQuotaSnapshotStore cloud credential identity', () => {
     beforeEach(() => __resetConnectedServiceQuotaSnapshotStore());
     afterEach(() => { __resetConnectedServiceQuotaSnapshotStore(); vi.unstubAllGlobals(); });
+
+    it.each(['plain', 'e2ee'] as const)('does not replace a newer %s usage value with an older response, but accepts a genuinely newer zero', async (mode) => {
+        let fetchedAt = 1000;
+        let remainingPct = 0;
+        let subscription: ProviderAccountSubscriptionV1 | undefined;
+        vi.stubGlobal('fetch', async (input: RequestInfo | URL) => {
+            const url = getServerFetchUrl(input).pathname;
+            if (url.endsWith('/quotas/refresh')) return Response.json({ success: true });
+            if (url.endsWith('/credential')) {
+                const record = credential('org-a');
+                return Response.json(mode === 'plain' ? { content: { t: 'plain', v: record } }
+                    : { sealed: { format: 'account_scoped_v1', ciphertext: sealConnectedServiceCredentialCiphertext({ material, payload: record, randomBytes: (n) => new Uint8Array(n).fill(3) }) }, metadata: { kind: 'oauth' } });
+            }
+            if (url.endsWith('/quotas')) {
+                const meters = [{ meterId: 'five_hour', label: '5 hour', used: null, limit: null, unit: 'unknown',
+                    remainingPct, utilizationPct: 100 - remainingPct, resetsAt: null, status: 'ok', details: {} }];
+                const snapshot = { ...quota('org-a'), fetchedAt, meters, ...(subscription ? { subscription } : {}) };
+                const recordKey = { providerId: 'claude', accountSubjectId: 'same-user', subjectKind: 'account', quotaScope: 'organization', quotaScopeId: 'org-a' } as const;
+                return Response.json(mode === 'plain' ? { content: { t: 'plain', v: snapshot }, metadata: { ...metadata, fetchedAt } }
+                    : { sealed: { format: 'account_scoped_v1', ciphertext: sealAccountScopedBlobCiphertext({
+                        kind: 'provider_account_usage_snapshot', material, payload: {
+                            v: 1, recordId: buildProviderAccountUsageRecordId(recordKey), recordKey, providerId: 'claude',
+                            accountSubject: { kind: 'providerSubject', id: 'same-user' }, observedAtMs: fetchedAt, fetchedAtMs: fetchedAt,
+                            staleAfterMs: 60000, source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data', planLabel: null, accountLabel: null, meters,
+                            ...(subscription ? { subscription } : {}),
+                        }, randomBytes: (n) => new Uint8Array(n).fill(4),
+                    }) }, metadata: { ...metadata, fetchedAt } });
+            }
+            if (url.endsWith('/health') || url.endsWith('/v1/auth/ping')) return new Response('', { status: 200 });
+            return Response.json({ error: 'not_found' }, { status: 404 });
+        });
+        const context = { credentials, credentialScope: 'recency', serviceId: 'claude-subscription', profileId: 'work', resolveAccountMode: async () => mode } as const;
+        const key = buildQuotaSnapshotScopeKey(context.credentialScope, context.serviceId, context.profileId);
+        const remaining = () => getQuotaSnapshotEntry(key).snapshot?.meters[0]?.remainingPct;
+        await refreshQuotaSnapshot(key, context);
+        expect(getQuotaSnapshotEntry(key).error).toBeNull();
+        expect(remaining()).toBe(0);
+        fetchedAt = 2000;
+        remainingPct = 30;
+        await refreshQuotaSnapshot(key, context);
+        expect(remaining()).toBe(30);
+        fetchedAt = 1000;
+        remainingPct = 0;
+        subscription = { status: 'subscribed', renewal: 'on', observedAtMs: 4000, staleAfterMs: 60000 };
+        await refreshQuotaSnapshot(key, context);
+        expect(remaining()).toBe(30);
+        expect(getQuotaSnapshotEntry(key).snapshot?.subscription).toEqual(subscription);
+        fetchedAt = 3000;
+        await refreshQuotaSnapshot(key, context);
+        expect(remaining()).toBe(0);
+    });
 
     it.each(['plain', 'e2ee'] as const)('qualifies %s cloud usage against the current credential, including released relays without public organization metadata', async (mode) => {
         let currentOrganization = 'org-a';

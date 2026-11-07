@@ -92,13 +92,30 @@ vi.mock('@/components/tools/shell/permissions/PermissionFooter', () => ({
     },
 }));
 
+const { PermissionPromptCard } = await import('./PermissionPromptCard');
+
 describe('PermissionPromptCard (preview)', () => {
+    it('scrolls request content separately from the decision footer when height-bounded', async () => {
+        toolDetailSetting = 'summary';
+        const screen = await renderScreen(<PermissionPromptCard
+            request={{ id: 'p1', tool: 'Bash', arguments: { command: 'pwd' } } as PendingPermissionRequest}
+            location={null}
+            sessionId="s1"
+            metadata={null}
+            canApprovePermissions
+            {...{ maxHeightPx: 480 }}
+        />);
+        const body = screen.findByTestId('permission-prompt-scroll-body');
+        expect(body).not.toBeNull();
+        expect(body!.findAllByType('PermissionFooter' as any)).toHaveLength(0);
+        expect(screen.findAllByType('PermissionFooter' as any)).toHaveLength(1);
+    });
+
     it('hides the open-details action when the prompt location is not durably addressable', async () => {
         toolDetailSetting = 'summary';
         mockedToolName = 'edit';
         mockedToolInput = { path: 'file.ts' };
         mockedHeaderText = { normalizedToolName: 'edit', title: 'Edit', subtitle: null, statusText: null };
-        const { PermissionPromptCard } = await import('./PermissionPromptCard');
 
         const request = { id: 'perm1', tool: 'edit', arguments: { path: 'file.ts' } } as PendingPermissionRequest;
 
@@ -124,7 +141,6 @@ describe('PermissionPromptCard (preview)', () => {
         mockedHeaderText = { normalizedToolName: 'edit', title: 'Edit', subtitle: null, statusText: null };
         routerPush.mockReset();
         navigateWithBlurOnWebSpy.mockClear();
-        const { PermissionPromptCard } = await import('./PermissionPromptCard');
 
         const request = { id: 'perm1', tool: 'edit', arguments: { path: 'file.ts' } } as PendingPermissionRequest;
 
@@ -155,7 +171,6 @@ describe('PermissionPromptCard (preview)', () => {
         mockedToolName = 'edit';
         mockedToolInput = { path: 'file.ts' };
         mockedHeaderText = { normalizedToolName: 'edit', title: 'Edit', subtitle: null, statusText: null };
-        const { PermissionPromptCard } = await import('./PermissionPromptCard');
 
         const request = { id: 'perm1', tool: 'edit', arguments: { path: 'file.ts' } } as PendingPermissionRequest;
 
@@ -175,7 +190,6 @@ describe('PermissionPromptCard (preview)', () => {
         mockedToolName = 'edit';
         mockedToolInput = { path: 'file.ts' };
         mockedHeaderText = { normalizedToolName: 'edit', title: 'Edit', subtitle: null, statusText: null };
-        const { PermissionPromptCard } = await import('./PermissionPromptCard');
 
         const request = { id: 'perm1', tool: 'edit', arguments: { path: 'file.ts' } } as PendingPermissionRequest;
 
@@ -195,7 +209,6 @@ describe('PermissionPromptCard (preview)', () => {
         mockedToolName = 'edit';
         mockedToolInput = { path: 'file.ts' };
         mockedHeaderText = { normalizedToolName: 'edit', title: 'Edit', subtitle: null, statusText: null };
-        const { PermissionPromptCard } = await import('./PermissionPromptCard');
 
         const request = { id: 'perm1', tool: 'edit', arguments: { path: 'file.ts' } } as PendingPermissionRequest;
 
@@ -215,7 +228,6 @@ describe('PermissionPromptCard (preview)', () => {
         mockedToolName = 'Bash';
         mockedToolInput = { command: 'COMMAND_SUBTITLE' };
         mockedHeaderText = { normalizedToolName: 'Bash', title: 'Run command', subtitle: 'COMMAND_SUBTITLE', statusText: null };
-        const { PermissionPromptCard } = await import('./PermissionPromptCard');
 
         const request = { id: 'perm1', tool: 'Bash', arguments: { command: 'COMMAND_SUBTITLE' } } as PendingPermissionRequest;
 
@@ -243,7 +255,6 @@ describe('PermissionPromptCard (preview)', () => {
         mockedToolInput = { path: 'file.ts' };
         mockedHeaderText = { normalizedToolName: 'edit', title: 'Edit', subtitle: null, statusText: null };
 
-        const { PermissionPromptCard } = await import('./PermissionPromptCard');
         const request = { id: 'perm-inactive', tool: 'edit', arguments: { path: 'file.ts' } } as PendingPermissionRequest;
 
         const screen = await renderScreen(
@@ -267,7 +278,6 @@ describe('PermissionPromptCard (preview)', () => {
         mockedToolInput = { command: 'mkdir -p .reviews/subagents' };
         mockedHeaderText = { normalizedToolName: 'Bash', title: 'Run command', subtitle: null, statusText: null };
 
-        const { PermissionPromptCard } = await import('./PermissionPromptCard');
         const request = {
             id: 'perm-stale-mode',
             tool: 'Bash',

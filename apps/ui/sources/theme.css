@@ -71,21 +71,23 @@ html {
     display: block;
 }
 
-/* Webkit Scrollbars (Chrome, Safari, Edge) */
+/* Webkit Scrollbars (Chrome, Safari, Edge)
+   16px keeps the thumb easy to grab on high-DPI screens and beside pane resize handles (#751);
+   px is deliberate so the bar tracks browser zoom rather than the in-app text scale. */
 ::-webkit-scrollbar {
-    width: 12px;
-    height: 12px;
+    width: 16px;
+    height: 16px;
 }
 
 ::-webkit-scrollbar-track {
     background: var(--colors-surface-inset);
-    border-radius: 6px;
+    border-radius: 8px;
 }
 
 ::-webkit-scrollbar-thumb {
     background: var(--colors-text-secondary);
-    border-radius: 6px;
-    border: 2px solid transparent;
+    border-radius: 8px;
+    border: 3px solid transparent;
     background-clip: padding-box;
 }
 
@@ -100,7 +102,7 @@ html {
 
 /* Firefox */
 * {
-    scrollbar-width: thin;
+    scrollbar-width: auto;
     scrollbar-color: var(--colors-text-secondary) var(--colors-surface-inset);
 }
 
@@ -149,11 +151,11 @@ html[data-happy-backdrop-blur="off"] [data-vaul-overlay] {
 
 /* Ensure scrollbars are visible on hover for macOS */
 ::-webkit-scrollbar:horizontal {
-    height: 12px;
+    height: 16px;
 }
 
 ::-webkit-scrollbar:vertical {
-    width: 12px;
+    width: 16px;
 }
 
 /* Pierre diffs (web/desktop)

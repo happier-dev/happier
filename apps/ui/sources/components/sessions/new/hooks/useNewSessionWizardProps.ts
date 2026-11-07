@@ -115,6 +115,7 @@ export function useNewSessionWizardProps(params: Readonly<{
     setAgentType: (agent: AgentId) => void;
     agentPickerTitle?: NewSessionWizardAgentProps['agentPickerTitle'];
     agentPickerOptions?: NewSessionWizardAgentProps['agentPickerOptions'];
+    agentPickerUsageGaugesByOptionId?: NewSessionWizardAgentProps['agentPickerUsageGaugesByOptionId'];
     agentPickerSelectedOptionId?: NewSessionWizardAgentProps['agentPickerSelectedOptionId'];
     onAgentPickerSelect?: NewSessionWizardAgentProps['onAgentPickerSelect'];
     selectedBackendEntry?: ResolvedBackendCatalogEntry | null;
@@ -167,6 +168,7 @@ export function useNewSessionWizardProps(params: Readonly<{
     emptyAutocompleteKinds: readonly ComposerSuggestionKindId[];
     emptyAutocompleteSuggestions: ActiveSuggestionsHandler;
     connectionStatus?: any;
+    providerUsageGauge?: NewSessionWizardFooterProps['providerUsageGauge'];
     machinePopover?: NewSessionWizardFooterProps['machinePopover'];
     pathPopover?: NewSessionWizardFooterProps['pathPopover'];
     resumeSessionId: string;
@@ -367,6 +369,7 @@ export function useNewSessionWizardProps(params: Readonly<{
             setAgentType: params.setAgentType,
             agentPickerTitle: params.agentPickerTitle,
             agentPickerOptions: params.agentPickerOptions,
+            agentPickerUsageGaugesByOptionId: params.agentPickerUsageGaugesByOptionId,
             agentPickerSelectedOptionId: params.agentPickerSelectedOptionId,
             onAgentPickerSelect: params.onAgentPickerSelect,
             selectedBackendEntry: params.selectedBackendEntry,
@@ -396,6 +399,7 @@ export function useNewSessionWizardProps(params: Readonly<{
         params.agentType,
         params.agentLabel,
         params.agentPickerOptions,
+        params.agentPickerUsageGaugesByOptionId,
         params.agentPickerSelectedOptionId,
         params.agentPickerTitle,
         params.favoriteModelSelections,
@@ -483,6 +487,7 @@ export function useNewSessionWizardProps(params: Readonly<{
             emptyAutocompleteKinds: params.emptyAutocompleteKinds,
             emptyAutocompleteSuggestions: params.emptyAutocompleteSuggestions,
             connectionStatus: params.connectionStatus,
+            providerUsageGauge: params.providerUsageGauge,
             machinePopover: params.machinePopover,
             pathPopover: params.pathPopover,
             resumeSessionId: params.resumeSessionId,
@@ -504,6 +509,7 @@ export function useNewSessionWizardProps(params: Readonly<{
         params.resumePersistedLaunchKey,
         params.canCreate,
         params.connectionStatus,
+        params.providerUsageGauge,
         params.emptyAutocompleteKinds,
         params.emptyAutocompleteSuggestions,
         params.handleCreateSession,

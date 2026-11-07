@@ -9,6 +9,8 @@ import { Typography } from '@/constants/Typography';
 import { MermaidRenderer } from './MermaidRenderer';
 import { t } from '@/text';
 import { MarkdownSpansView } from './MarkdownSpansView';
+import { parseMarkdownSpans } from './parseMarkdownSpans';
+import { MarkdownTextReferencesContext, linkifyMarkdownTextReferences } from './MarkdownTextReferences';
 import { MarkdownCodeBlock } from './MarkdownCodeBlock';
 import { serializeMarkdownTable } from './serializeMarkdownTable';
 import type { StreamingTextRevealPreset } from './streaming/streamingTextRevealConfig';
@@ -77,7 +79,7 @@ export const MarkdownBlockView = React.memo((props: MarkdownBlockViewProps) => {
     } else if (block.type === 'mermaid') {
         return <MermaidRenderer content={block.content} />;
     } else if (block.type === 'options') {
-        return <RenderOptionsBlock items={block.items} first={props.first} last={props.last} selectable={props.selectable} onOptionPress={props.onOptionPress} onOptionLongPress={props.onOptionLongPress} textStyle={props.textStyle} />;
+        return <RenderOptionsBlock items={block.items} first={props.first} last={props.last} selectable={props.selectable} onOptionPress={props.onOptionPress} onOptionLongPress={props.onOptionLongPress} onLinkPress={props.onLinkPress} textStyle={props.textStyle} />;
     } else if (block.type === 'table') {
         return (
             <RenderTableBlock
@@ -231,6 +233,7 @@ function RenderOptionsBlock(props: {
     selectable: boolean,
     onOptionPress?: (option: Option) => void,
     onOptionLongPress?: OptionLongPressHandler,
+    onLinkPress?: (url: string) => boolean | void,
     textStyle?: StyleProp<TextStyle>,
 }) {
     const optionTextStyle = [style.optionText, props.textStyle];
@@ -247,12 +250,13 @@ function RenderOptionsBlock(props: {
                             textStyle={optionTextStyle}
                             onOptionPress={props.onOptionPress}
                             onOptionLongPress={props.onOptionLongPress}
+                            onLinkPress={props.onLinkPress}
                         />
                     );
                 } else {
                     return (
                         <View key={index} style={style.optionItem}>
-                            <Text selectable={props.selectable} style={optionTextStyle}>{item}</Text>
+                            <MarkdownOptionText item={item} selectable={props.selectable} textStyle={optionTextStyle} onLinkPress={props.onLinkPress} />
                         </View>
                     );
                 }
@@ -268,6 +272,7 @@ function MarkdownOptionButton(props: {
     textStyle: StyleProp<TextStyle>,
     onOptionPress: (option: Option) => void,
     onOptionLongPress?: OptionLongPressHandler,
+    onLinkPress?: (url: string) => boolean | void,
 }) {
     const feedback = useTemporaryCopyFeedback();
     const feedbackKey = String(props.index);
@@ -305,7 +310,7 @@ function MarkdownOptionButton(props: {
             onPress={handlePress}
             onLongPress={props.onOptionLongPress ? handleLongPress : undefined}
         >
-            <Text selectable={isSelectable} style={props.textStyle}>{props.item}</Text>
+            <MarkdownOptionText item={props.item} selectable={isSelectable} textStyle={props.textStyle} onLinkPress={props.onLinkPress} />
             <CopiedPill
                 visible={feedback.isCopied(feedbackKey)}
                 testID={`markdown-option-copy-feedback:${props.index}`}
@@ -316,6 +321,23 @@ function MarkdownOptionButton(props: {
 }
 
 // NOTE: span rendering extracted into MarkdownSpansView for unit-testable link hardening.
+function MarkdownOptionText(props: Readonly<{
+    item: string;
+    selectable: boolean;
+    textStyle: StyleProp<TextStyle>;
+    onLinkPress?: (url: string) => boolean | void;
+}>) {
+    const references = React.useContext(MarkdownTextReferencesContext);
+    const spans = parseMarkdownSpans(linkifyMarkdownTextReferences(props.item, references), false);
+    if (!spans.some((span) => span.url)) {
+        return <Text selectable={props.selectable} style={props.textStyle}>{props.item}</Text>;
+    }
+    return (
+        <Text selectable={props.selectable} style={props.textStyle}>
+            <MarkdownSpansView spans={spans} baseStyle={props.textStyle} linkStyle={style.link} onLinkPress={props.onLinkPress} />
+        </Text>
+    );
+}
 
 // Table rendering uses column-first layout to ensure consistent column widths.
 // Each column is rendered as a vertical container with all its cells (header + data).
@@ -428,7 +450,9 @@ function RenderTableCellContent(props: Readonly<{
     streamingRevealPreset?: StreamingTextRevealPreset;
     agentTexMath: boolean;
 }>) {
-    if (!containsPotentialEnrichedMath(props.markdown, props.agentTexMath)) {
+    const references = React.useContext(MarkdownTextReferencesContext);
+    const hasTextReferences = linkifyMarkdownTextReferences(props.markdown, references) !== props.markdown;
+    if (!hasTextReferences && !containsPotentialEnrichedMath(props.markdown, props.agentTexMath)) {
         return <Text selectable={props.selectable} style={props.textStyle}>{props.markdown}</Text>;
     }
 
@@ -712,6 +736,11 @@ const style = StyleSheet.create((theme) => ({
         paddingVertical: 12,
         borderWidth: 1,
         borderColor: theme.colors.border.default,
+        // Coloured side lines set question options apart from user message bubbles (same colour for every option).
+        borderLeftWidth: 4,
+        borderRightWidth: 4,
+        borderLeftColor: theme.colors.state.warning.foreground,
+        borderRightColor: theme.colors.state.warning.foreground,
         position: 'relative',
     },
     optionItemPressed: {

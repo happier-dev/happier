@@ -10,13 +10,14 @@ import { Icon } from '@/components/ui/icons/Icon';
 type CopiedPillProps = Readonly<{
     visible: boolean;
     testID?: string;
+    label?: string;
     style?: StyleProp<ViewStyle>;
 }>;
 
 export function CopiedPill(props: CopiedPillProps) {
     if (!props.visible) return null;
 
-    const label = t('common.copied');
+    const label = props.label ?? t('common.copied');
 
     return (
         <View

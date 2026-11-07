@@ -108,12 +108,15 @@ import { buildOutgoingUserTextRecord } from './domains/messages/outgoingUserMess
 import { resolveSentFrom } from './domains/messages/sentFrom';
 import { NormalizedMessage, normalizeRawMessage, RawRecord, RawRecordSchema } from './typesRaw';
 import { applySettings, Settings, settingsDefaults, settingsParse, SUPPORTED_SCHEMA_VERSION } from './domains/settings/settings';
+import { CONNECTED_DEVICE_KEY_PREFIX } from './domains/settings/connectedDevices';
+import { readCurrentAppRuntimeInfo } from './runtime/readCurrentAppRuntimeInfo';
 import {
     assertUiSessionEncryptionModeAllowed,
     resolveUiClientEncryptionRequirement,
 } from './domains/settings/clientEncryptionRequirement';
 import { Profile, profileDefaults } from './domains/profiles/profile';
 import {
+    getPersistenceStorage,
     loadSessionMaterializedMaxSeqById,
     saveSessionMaterializedMaxSeqById,
     loadChangesCursor,
@@ -223,7 +226,7 @@ import { initializeTracking, tracking, trackLogout } from '@/track';
 import { applyCrashReportsOptOut } from '@/utils/system/sentry';
 import { parseToken } from '@/utils/auth/parseToken';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { isTauriDesktop } from '@/utils/platform/tauri';
+import { invokeTauri, isTauriDesktop } from '@/utils/platform/tauri';
 import { RevenueCat } from './domains/purchases';
 import { purchasesDefaults } from './domains/purchases/purchases';
 import { trackPaywallPresented, trackPaywallPurchased, trackPaywallCancelled, trackPaywallRestored, trackPaywallError } from '@/track';
@@ -1164,6 +1167,7 @@ class Sync {
     }
 
     private resumeAfterForegroundTransition(tag: string): void {
+        void this.reportConnectedDevice();
         const resume = this.resumeSync('app-foreground');
         fireAndForget(resume, { tag });
         try {
@@ -2010,6 +2014,7 @@ class Sync {
         this.hydrateWarmCachesForActiveServer();
         this.syncJsThreadLagTelemetryRuntime();
         await this.#init();
+        this.startConnectedDeviceReporting();
 
         // UX: avoid blocking login forever if initial sync fetches hang/retry indefinitely.
         // We still kick off the sync work in #init(); this just bounds the time we block the login call.
@@ -2046,6 +2051,50 @@ class Sync {
         this.hydrateWarmCachesForActiveServer();
         this.syncJsThreadLagTelemetryRuntime();
         await this.#init();
+        this.startConnectedDeviceReporting();
+    }
+
+    private connectedDeviceTimer: ReturnType<typeof setInterval> | null = null;
+
+    private async reportConnectedDevice(): Promise<void> {
+        if (!this.pendingSettingsScope || !this.isForeground) return;
+        const generation = this.serverScopeGeneration;
+        const platform = this.usesPersistentDesktopSync ? 'desktop' : Platform.OS;
+        if (platform !== 'desktop' && platform !== 'web' && platform !== 'android' && platform !== 'ios') return;
+        const persistent = getPersistenceStorage();
+        const idKey = 'connected-device-client-id-v1';
+        let id = persistent.getString(idKey);
+        if (!id) {
+            id = randomUUID();
+            persistent.set(idKey, id);
+        }
+        let name = Constants.deviceName ?? null;
+        let appVersion = readCurrentAppRuntimeInfo().appVersion;
+        if (platform === 'desktop') {
+            try {
+                const identity = await invokeTauri<{ name: string | null; version: string }>('desktop_client_identity');
+                name = identity.name || name;
+                appVersion = identity.version || appVersion;
+            } catch {
+                // Older desktop executables do not expose their native identity.
+                appVersion = null;
+            }
+        }
+        if (generation !== this.serverScopeGeneration || !this.pendingSettingsScope) return;
+        this.applySettings({
+            [`${CONNECTED_DEVICE_KEY_PREFIX}${id}`]: {
+                name,
+                platform,
+                appVersion,
+                lastSeen: Date.now(),
+            },
+        }, { source: 'system' });
+    }
+
+    private startConnectedDeviceReporting(): void {
+        if (this.connectedDeviceTimer) clearInterval(this.connectedDeviceTimer);
+        void this.reportConnectedDevice();
+        this.connectedDeviceTimer = setInterval(() => void this.reportConnectedDevice(), 60 * 60 * 1000);
     }
 
     /**
@@ -2130,6 +2179,8 @@ class Sync {
     }
 
     private resetServerScopedRuntimeState = () => {
+        if (this.connectedDeviceTimer) clearInterval(this.connectedDeviceTimer);
+        this.connectedDeviceTimer = null;
         this.changesCatchUpQueuedAfterResume = false;
         this.postSubscriptionChangesCatchUpPending = false;
         this.sessionDraftSyncEnabled = false;

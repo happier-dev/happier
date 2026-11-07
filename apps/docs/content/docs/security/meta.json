@@ -2,6 +2,7 @@
   "title": "Security",
   "pages": [
     "index",
-    "encryption"
+    "encryption",
+    "app-lock"
   ]
 }

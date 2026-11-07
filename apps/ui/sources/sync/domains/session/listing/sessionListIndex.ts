@@ -12,6 +12,7 @@ export type SessionListIndexItem =
         title: string;
         headerKind?: 'date' | 'server' | 'active' | 'inactive' | 'sessions' | 'project' | 'pinned' | 'attention' | 'working' | 'shared' | 'folder';
         groupKey?: string;
+        section?: Extract<SessionListViewItem, { type: 'header' }>['section'];
         workspaceKey?: string;
         seedSessionId?: string | null;
         workspaceScopeHint?: Readonly<{ serverId: string; machineId: string; rootPath: string }> | null;
@@ -128,6 +129,7 @@ export function areSessionListIndexItemsEqual(
     return previous.title === next.title
         && previous.headerKind === next.headerKind
         && previous.groupKey === next.groupKey
+        && previous.section === next.section
         && previous.workspaceKey === next.workspaceKey
         && (previous.seedSessionId ?? null) === (next.seedSessionId ?? null)
         && previous.serverId === next.serverId
@@ -149,6 +151,7 @@ export function buildSessionListIndexItemFromViewItem(item: SessionListViewItem)
             title: item.title,
             headerKind: item.headerKind,
             groupKey: item.groupKey,
+            section: item.section,
             workspaceKey: item.workspaceKey,
             seedSessionId: item.seedSessionId ?? null,
             workspaceScopeHint: item.workspaceScopeHint ?? null,
@@ -190,6 +193,7 @@ export function buildSessionListIndexItemFromViewItem(item: SessionListViewItem)
 type SessionListNodeIdHeaderInput = Readonly<{
     headerKind?: string;
     groupKey?: string;
+    section?: Extract<SessionListViewItem, { type: 'header' }>['section'];
     serverId?: string;
     workspaceKey?: string;
     folderId?: string;
@@ -209,10 +213,13 @@ function buildSessionListIndexHeaderNodeId(item: SessionListNodeIdHeaderInput): 
     const hintMachineId = String(workspaceScopeHint?.machineId ?? '').trim();
     const hintRootPath = String(workspaceScopeHint?.rootPath ?? '').trim();
 
-    if (groupKey) return `header:${headerKind}:${groupKey}${folderId ? `:${folderId}` : ''}`;
+    // Collapse/order keys identify the project across sections; node ids identify each rendered row.
+    const sectionSuffix = item.section ? `:section:${item.section}` : '';
+    if (groupKey) return `header:${headerKind}:${groupKey}${folderId ? `:${folderId}` : ''}${sectionSuffix}`;
 
     const parts = [
         `header:${headerKind}`,
+        item.section ? `section:${item.section}` : null,
         serverId ? `server:${serverId}` : null,
         workspaceKey ? `workspace:${workspaceKey}` : null,
         folderId ? `folder:${folderId}` : null,

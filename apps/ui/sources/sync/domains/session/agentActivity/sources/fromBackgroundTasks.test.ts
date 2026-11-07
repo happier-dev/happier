@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { SessionBackgroundTaskRecordV1 } from '@happier-dev/protocol';
 
+import { deriveAgentActivityCounts } from '../deriveAgentActivityCounts';
 import {
     deriveAgentActivityEntries,
     toAgentActivityCountable,
@@ -100,5 +101,53 @@ describe('deriveBackgroundTaskActivityEntries', () => {
     it('round-trips its entry id', () => {
         expect(readBackgroundTaskEntryTaskId(buildBackgroundTaskEntryId('task_9'))).toBe('task_9');
         expect(readBackgroundTaskEntryTaskId('workflow_agent:wf_1:a1')).toBeNull();
+    });
+});
+
+describe('deriveBackgroundTaskActivityEntries (acknowledged stale reports)', () => {
+    function derive(
+        records: readonly SessionBackgroundTaskRecordV1[],
+        acknowledgedUpdatedAtByTaskId: Readonly<Record<string, number>>,
+    ) {
+        const entries = deriveBackgroundTaskActivityEntries({
+            records,
+            fallbackTitle: FALLBACK_TITLE,
+            acknowledgedUpdatedAtByTaskId,
+        });
+        const merged = deriveAgentActivityEntries({ headline: null, local: entries });
+        return { entries, counts: deriveAgentActivityCounts(merged.entries.map(toAgentActivityCountable)) };
+    }
+
+    it('stops counting an acknowledged running report as live, without calling it an outcome', () => {
+        const { entries, counts } = derive([record()], { task_1: 1_700_000_010_000 });
+
+        expect(entries[0]?.status).toBe('unknown');
+        expect(counts.liveBackgroundTasks).toBe(0);
+        expect(counts.live).toBe(0);
+    });
+
+    it('shows the report as running again once newer evidence arrives', () => {
+        const { entries, counts } = derive(
+            [record({ updatedAt: 1_700_000_020_000 })],
+            { task_1: 1_700_000_010_000 },
+        );
+
+        expect(entries[0]?.status).toBe('running');
+        expect(counts.liveBackgroundTasks).toBe(1);
+    });
+
+    it('does not let an acknowledgement for one task hide another', () => {
+        const { counts } = derive([record({ taskId: 'task_2' })], { task_1: 1_700_000_010_000 });
+
+        expect(counts.liveBackgroundTasks).toBe(1);
+    });
+
+    it('keeps a real terminal outcome even when its earlier report was acknowledged', () => {
+        const { entries } = derive(
+            [record({ status: 'succeeded', updatedAt: 1_700_000_010_000 })],
+            { task_1: 1_700_000_010_000 },
+        );
+
+        expect(entries[0]?.status).toBe('succeeded');
     });
 });

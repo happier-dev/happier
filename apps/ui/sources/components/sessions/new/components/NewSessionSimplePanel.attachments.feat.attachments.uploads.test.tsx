@@ -74,6 +74,8 @@ installNewSessionComponentsCommonModuleMocks({
     },
 });
 
+vi.mock('@/auth/context/AuthContext', () => ({ useAuth: () => ({ credentials: null }) }));
+
 vi.mock('react-native-safe-area-context', () => ({
     SafeAreaProvider: ({ children }: { children?: React.ReactNode }) => children,
     SafeAreaView: 'SafeAreaView',

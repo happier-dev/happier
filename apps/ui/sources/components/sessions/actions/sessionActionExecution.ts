@@ -79,11 +79,11 @@ function canDeleteCurrentSession(target: SessionActionTarget): boolean {
     return target.canDelete && readCurrentSessionActionTarget(target)?.canDelete === true;
 }
 
-async function executeDeleteAction(target: SessionActionTarget, context?: SessionActionExecutionContext): Promise<void | false> {
+async function executeDeleteAction(target: SessionActionTarget, context?: SessionActionExecutionContext, sessionName?: string): Promise<void | false> {
     if (!target.canDelete && !target.canStopAndDelete) throw new HappyError(t('sessionInfo.failedToDeleteSession'), false);
     const confirmed = await Modal.confirm(
         t('sessionInfo.deleteSession'),
-        t(target.canStopAndDelete ? 'sessionInfo.stopAndDeleteSessionWarning' : 'sessionInfo.deleteSessionWarning'),
+        `${sessionName ? `${sessionName}\n\n` : ''}${t(target.canStopAndDelete ? 'sessionInfo.stopAndDeleteSessionWarning' : 'sessionInfo.deleteSessionWarning')}`,
         { cancelText: t('common.cancel'), confirmText: t(target.canStopAndDelete ? 'sessionInfo.stopAndDeleteSession' : 'sessionInfo.deleteSession'), destructive: true },
     );
     if (!confirmed) return false;
@@ -113,6 +113,15 @@ async function executeDeleteAction(target: SessionActionTarget, context?: Sessio
     }
     if (!canDeleteCurrentSession(target)) throw new HappyError(t('sessionInfo.failedToDeleteSession'), false);
     throwIfFailed(await deleteSession(target.sessionId, { serverId: target.serverId }), t('sessionInfo.failedToDeleteSession'));
+}
+
+/** Row-menu deletion uses the same confirmation and stop lifecycle as other session surfaces. */
+export async function executeDirectSessionDelete(params: Readonly<{
+    target: SessionActionTarget;
+    sessionName: string;
+    context?: SessionActionExecutionContext;
+}>): Promise<void | false> {
+    return await executeDeleteAction(params.target, params.context, params.sessionName);
 }
 
 function resolveStopArchiveFlow(context: SessionActionExecutionContext | undefined) {

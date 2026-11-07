@@ -111,6 +111,21 @@ describe('ApiClient connected services quotas v3', () => {
 
   afterEach(() => vi.unstubAllGlobals());
 
+  it('reads validated pending usage requests in the authenticated account scope and rejects malformed responses', async () => {
+    const api = await ApiClient.create(createTestCredentials());
+    const recordId = createProviderAccountUsageSnapshot().recordId;
+    mockGet.mockResolvedValueOnce({ status: 200, data: { recordIds: [recordId] } });
+    await expect(api.listProviderAccountUsageRefreshRequests()).resolves.toEqual([recordId]);
+    expect(mockGet).toHaveBeenLastCalledWith(expect.stringContaining('/v2/connect/provider-account-usage/refresh-requests'),
+      expect.objectContaining({ headers: { Authorization: 'Bearer happy-token' } }));
+    mockGet.mockResolvedValueOnce({ status: 200, data: { recordIds: ['unvalidated-id'] } });
+    await expect(api.listProviderAccountUsageRefreshRequests()).rejects.toThrow();
+    mockGet.mockRejectedValueOnce(createAxiosResponseError({ status: 404 }));
+    await expect(api.listProviderAccountUsageRefreshRequests()).resolves.toBeNull();
+    mockGet.mockRejectedValueOnce(createAxiosResponseError({ status: 403 }));
+    await expect(api.listProviderAccountUsageRefreshRequests()).rejects.toThrow();
+  });
+
   it('gets the account encryption mode from /v1/account/encryption', async () => {
     mockGet.mockResolvedValue({ status: 200, data: { mode: 'plain', updatedAt: 1 } });
 

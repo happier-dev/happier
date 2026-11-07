@@ -31,15 +31,15 @@ function readCodexRateLimitMeter(rawSnapshot: unknown, key: 'primary' | 'seconda
   return meter;
 }
 
+function isCodexRateLimitMeterExhausted(meter: Record<string, unknown> | null): boolean {
+  const usedPercent = readFiniteNumber(meter?.usedPercent ?? meter?.used_percent ?? meter?.utilizationPct ?? meter?.utilization_pct);
+  if (usedPercent !== null && usedPercent >= 100) return true;
+  const status = readString(meter?.status)?.toLowerCase();
+  return status === 'exhausted' || status === 'limited' || status === 'rate_limited';
+}
+
 export function isCodexRateLimitSnapshotExhausted(rawSnapshot: unknown): boolean {
-  for (const key of ['primary', 'secondary'] as const) {
-    const meter = readCodexRateLimitMeter(rawSnapshot, key);
-    const usedPercent = readFiniteNumber(meter?.usedPercent ?? meter?.used_percent ?? meter?.utilizationPct ?? meter?.utilization_pct);
-    if (usedPercent !== null && usedPercent >= 100) return true;
-    const status = readString(meter?.status)?.toLowerCase();
-    if (status === 'exhausted' || status === 'limited' || status === 'rate_limited') return true;
-  }
-  return false;
+  return (['primary', 'secondary'] as const).some((key) => isCodexRateLimitMeterExhausted(readCodexRateLimitMeter(rawSnapshot, key)));
 }
 
 function readRelativeResetSeconds(meter: Record<string, unknown> | null): number | null {
@@ -59,11 +59,13 @@ function readCodexRateLimitMeterResetAtMs(meter: Record<string, unknown> | null,
   return relativeSeconds !== null ? Math.trunc(nowMs + relativeSeconds * 1000) : null;
 }
 
-export function readEarliestCodexRateLimitResetAtMs(rawSnapshot: unknown, nowMs: number = Date.now()): number | null {
+export function readCodexRateLimitRecoveryResetAtMs(rawSnapshot: unknown, nowMs: number = Date.now()): number | null {
   const resets = (['primary', 'secondary'] as const)
-    .map((key) => readCodexRateLimitMeterResetAtMs(readCodexRateLimitMeter(rawSnapshot, key), nowMs))
-    .filter((value): value is number => value !== null);
-  return resets.length > 0 ? Math.min(...resets) : null;
+    .map((key) => readCodexRateLimitMeter(rawSnapshot, key))
+    .filter(isCodexRateLimitMeterExhausted)
+    .map((meter) => readCodexRateLimitMeterResetAtMs(meter, nowMs));
+  if (resets.length === 0 || resets.some((value) => value === null)) return null;
+  return Math.max(...resets.filter((value): value is number => value !== null));
 }
 
 export function readCodexRateLimitPlanType(rawSnapshot: unknown): string | null {

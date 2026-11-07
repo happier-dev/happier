@@ -6,6 +6,7 @@ import { createSessionFixture, pressTestInstanceAsync, renderScreen, standardCle
 import { createSessionItemTestRowModel, installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 import {
     SESSION_ACTION_ARCHIVE_ID,
+    SESSION_ACTION_DELETE_ID,
     SESSION_ACTION_MARK_READ_ID,
     SESSION_ACTION_MARK_UNREAD_ID,
     SESSION_ACTION_MOVE_TO_FOLDER_ID,
@@ -78,6 +79,7 @@ type ArchiveSpyResult = Readonly<{
 const archiveSpy = vi.fn(async (): Promise<ArchiveSpyResult> => ({ success: true, archivedAt: 1 }));
 const modalConfirmSpy = vi.fn(async () => true);
 let hideInactiveSessions = false;
+let directDeleteEnabled = false;
 
 vi.mock('@/sync/ops', () => ({
     sessionStopWithServerScope: stopSpy,
@@ -131,6 +133,7 @@ installSessionShellCommonModuleMocks({
                 useSession: () => null,
                 useSetting: (key: string) => {
                     if (key === 'hideInactiveSessions') return hideInactiveSessions;
+                    if (key === 'sessionListDirectDeleteEnabled') return directDeleteEnabled;
                     return false;
                 },
             },
@@ -161,6 +164,28 @@ describe('SessionItem server-scoped mutations', () => {
     afterEach(() => {
         standardCleanup();
         hideInactiveSessions = false;
+        directDeleteEnabled = false;
+    });
+
+    it('asks for confirmation from the session menu before deleting', async () => {
+        directDeleteEnabled = true;
+        modalConfirmSpy.mockClear();
+        modalConfirmSpy.mockResolvedValueOnce(false);
+        const session = createSessionFixture({ id: 'direct-delete-menu', active: true });
+        const screen = await renderScreen(
+            <SessionItem session={session} serverId="server_d" selected={false}
+                isFirst isLast isSingle variant="default" compact={false}
+                nativeContextMenuOpen onNativeContextMenuOpenChange={vi.fn()} />,
+        );
+        const menu = screen.root.findAll((node: any) => node.type === 'ContextMenu').find((node: any) =>
+            node.props.items?.some((item: any) => item.id === SESSION_ACTION_DELETE_ID));
+        expect(menu).toBeTruthy();
+        await act(async () => { menu!.props.onSelect(SESSION_ACTION_DELETE_ID); });
+        expect(modalConfirmSpy).toHaveBeenCalledWith(
+            'sessionInfo.deleteSession',
+            expect.stringContaining('Session'),
+            expect.objectContaining({ destructive: true }),
+        );
     });
 
     it('does not mount closed native ContextMenu shells until the row menu opens', async () => {

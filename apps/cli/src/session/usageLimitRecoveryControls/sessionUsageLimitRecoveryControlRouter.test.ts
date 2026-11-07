@@ -180,7 +180,7 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
         issueFingerprint: 'usage-limit:codex:turn-1:1700000000000:1700000060000',
         resumePromptMode: 'off',
         resetAtMs: 1_700_000_060_000,
-        nextCheckAtMs: 1_700_000_060_000,
+        nextCheckAtMs: 1_700_000_065_000,
         selectedAuth: { kind: 'native' },
       },
     });
@@ -258,7 +258,7 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
       status: 'waiting', attemptCount: 0, lastProbeError: null,
       issueFingerprint: buildUsageLimitIssueFingerprint(issue),
       resetAtMs: issue.usageLimit?.resetAtMs,
-      nextCheckAtMs: issue.usageLimit?.resetAtMs,
+      nextCheckAtMs: issue.usageLimit!.resetAtMs! + 5_000,
     });
     expect(persisted).not.toHaveProperty('runtimeAuthRecoveryAttemptId');
     expect(persisted.armedAtMs).toBeGreaterThan(terminal.armedAtMs);
@@ -494,7 +494,7 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
         status: 'waiting',
         issueFingerprint: 'usage-limit:codex:turn-1:1700000000000:no-reset',
         resetAtMs: null,
-        nextCheckAtMs: 1_700_000_090_000,
+        nextCheckAtMs: 1_700_000_095_000,
         selectedAuth: { kind: 'native' },
       },
     });

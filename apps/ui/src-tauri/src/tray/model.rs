@@ -14,8 +14,8 @@ use serde_json::Value;
 
 use crate::menu::ids::{
     resolve_desktop_menu_action, service_menu_id, DesktopMenuAction, ServiceMenuAction,
-    OPEN_SETTINGS_MENU_ID, OPEN_UPDATES_MENU_ID, QUIT_APP_MENU_ID, SHOW_MAIN_WINDOW_MENU_ID,
-    STOP_SERVICES_AND_QUIT_MENU_ID, TOGGLE_START_AT_LOGIN_MENU_ID,
+    LOCK_NOW_MENU_ID, OPEN_SETTINGS_MENU_ID, OPEN_UPDATES_MENU_ID, QUIT_APP_MENU_ID,
+    SHOW_MAIN_WINDOW_MENU_ID, STOP_SERVICES_AND_QUIT_MENU_ID, TOGGLE_START_AT_LOGIN_MENU_ID,
 };
 
 /// The tray's platform theme; macOS instead uses AppKit's template tint.
@@ -184,6 +184,7 @@ pub struct TrayLabels {
     pub open: String,
     pub open_in_happier: String,
     pub settings: String,
+    pub lock_now: String,
     pub start_at_login: String,
     pub quit: String,
     pub quit_keep_services: String,
@@ -219,11 +220,12 @@ impl Default for TrayLabels {
             open: "Open Happier".into(),
             open_in_happier: "Open in Happier".into(),
             settings: "Settings…".into(),
+            lock_now: "Lock now".into(),
             start_at_login: "Start at login".into(),
             quit: "Quit Happier".into(),
             quit_keep_services: "Quit Happier (keep background services running)".into(),
             quit_stop_services: "Quit Happier and stop background services".into(),
-            stop_services_and_quit: "Stop background services and quit".into(),
+            stop_services_and_quit: "Quit Happier (stop background services)".into(),
             connected: "Connected".into(),
             offline: "Offline".into(),
             needs_attention: "Needs attention".into(),
@@ -257,11 +259,12 @@ impl TrayLabels {
     /// Replaces every blank label with its English default.
     pub fn with_fallbacks(mut self) -> Self {
         let english = Self::default();
-        let pairs: [(&mut String, String); 30] = [
+        let pairs: [(&mut String, String); 31] = [
             (&mut self.title, english.title),
             (&mut self.open, english.open),
             (&mut self.open_in_happier, english.open_in_happier),
             (&mut self.settings, english.settings),
+            (&mut self.lock_now, english.lock_now),
             (&mut self.start_at_login, english.start_at_login),
             (&mut self.quit, english.quit),
             (&mut self.quit_keep_services, english.quit_keep_services),
@@ -361,6 +364,8 @@ pub struct TrayMenuModel {
     pub updates: Option<UpdatesItem>,
     /// The login-start setting; `None` while unknown (nothing to flip).
     pub start_at_login: Option<bool>,
+    /// The per-device app lock is configured in this webview.
+    pub app_lock_enabled: bool,
     /// A tray action is running; the service actions wait for it.
     pub busy: bool,
     /// The last status-read or login-item failure, shown alongside a failed service action.
@@ -378,6 +383,7 @@ impl TrayMenuModel {
             services: ServiceList::Unread,
             updates: None,
             start_at_login: None,
+            app_lock_enabled: false,
             busy: false,
             notice: None,
             action_notice: None,
@@ -635,7 +641,7 @@ fn service_submenu(model: &TrayMenuModel, row: &ServiceRow) -> MenuEntry {
 /// ✓ Start at login
 /// ───
 /// Quit Happier                  ⌘Q
-/// Stop background services and quit
+/// Quit Happier (stop background services)
 /// ```
 pub fn build_menu_entries(model: &TrayMenuModel) -> Vec<MenuEntry> {
     let labels = &model.labels;
@@ -714,6 +720,9 @@ pub fn build_menu_entries(model: &TrayMenuModel) -> Vec<MenuEntry> {
     });
     entries.push(MenuEntry::Separator);
 
+    if model.platform == MenuPlatform::Windows && model.app_lock_enabled {
+        entries.push(action(LOCK_NOW_MENU_ID, &labels.lock_now, true, None));
+    }
     entries.push(action(
         QUIT_APP_MENU_ID,
         match model.start_at_login {

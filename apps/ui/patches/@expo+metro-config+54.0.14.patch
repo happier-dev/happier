@@ -11,3 +11,23 @@ index d7433e4..1882aea 100644
      }
      return asset;
  }
+diff --git a/node_modules/@expo/metro-config/build/serializer/withExpoSerializers.js b/node_modules/@expo/metro-config/build/serializer/withExpoSerializers.js
+--- a/node_modules/@expo/metro-config/build/serializer/withExpoSerializers.js
++++ b/node_modules/@expo/metro-config/build/serializer/withExpoSerializers.js
+@@ -126,6 +126,16 @@ function createDefaultExportCustomSerializer(config, configOptions = {}) {
+                     map: getEnsuredMaps(),
+                 };
+             }
++            // A production-mode dev-server bundle does not request a source map.
++            // Generating one here synchronously rereads every module and blocks
++            // the server on large worktrees. Keep maps for explicit map requests,
++            // inline maps, and export/embed output.
++            if (typeof inputOptions.sourceUrl === 'string' &&
++                /\.bundle(?:[?#]|$)/.test(inputOptions.sourceUrl) &&
++                !inputOptions.serializerOptions?.output &&
++                inputOptions.inlineSourceMap !== true) {
++                return bundleCode;
++            }
+         }
+         if (isPossiblyDev) {
+             if (bundleMap == null) {

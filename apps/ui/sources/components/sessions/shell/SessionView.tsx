@@ -3,6 +3,7 @@ import { sendPendingMessageWithIntent } from '@/components/sessions/pending/pend
 import { resolveNewSessionCapabilityProbeContext } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 import type { SessionModelDiscoveryContext } from '@/components/sessions/agentInput/components/AgentInputModelDiscoveryDetail';
 import Color from 'color';
+import { isAgentAuthProbeSafeForBackgroundChecks } from '@happier-dev/agents';
 import { isRecoveredHistoryTranscriptObservationProvenance } from '@happier-dev/protocol';
 
 import { AgentContentView } from '@/components/sessions/transcript/AgentContentView';
@@ -27,7 +28,7 @@ import { createGoalActionChip } from '@/components/sessions/agentInput/definitio
 import { AttachmentFilePicker } from '@/components/sessions/attachments/AttachmentFilePicker';
 import type { AttachmentDraft } from '@/components/sessions/attachments/attachmentDraftModel';
 import type { AttachmentFilePickerHandle, PickedAttachment } from '@/components/sessions/attachments/AttachmentFilePicker.types';
-import { openAttachmentFilePickerFiles, openAttachmentFilePickerImages } from '@/components/sessions/attachments/attachmentFilePickerActions';
+import { openAttachmentFilePickerCamera, openAttachmentFilePickerFiles, openAttachmentFilePickerImages } from '@/components/sessions/attachments/attachmentFilePickerActions';
 import { resolveReviewCommentDraftAnchorsForPrompt } from '@/components/sessions/reviews/comments/resolveReviewCommentDraftAnchorsForPrompt';
 import { readNonBlankSessionControlIdentifier } from '@/sync/domains/sessionControl/opaqueIdentifiers';
 import { useSessionFileUploadAvailability } from '@/components/sessions/files/useSessionFileUploadAvailability';
@@ -44,9 +45,6 @@ import {
     resolveSessionIntentionalRestartRecoveryEvidenceAtMs,
     type SessionIntentionalRestartSignal,
 } from '@/components/sessions/agentInput/hooks/sessionIntentionalRestartSignal';
-import {
-    resolveConnectedServiceDisplayName,
-} from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
 import type { ComposerSuggestionKindId } from '@/components/autocomplete/composerSuggestionKinds';
 import { resolveSessionComposerSuggestions } from '@/components/sessions/agentInput/sessionComposerSuggestions';
 import { ChatHeaderView } from '@/components/sessions/transcript/ChatHeaderView';
@@ -84,6 +82,7 @@ import { VoiceSurface } from '@/components/voice/surface/VoiceSurface';
 import { useDraft } from '@/hooks/session/useDraft';
 import {
     areSessionDraftCurrentnessCapturesEqual,
+    getSessionDraftErrorReason,
     type SessionDraftCurrentness,
 } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import {
@@ -128,7 +127,6 @@ import {
 import {
     SPAWN_SESSION_ERROR_CODES,
     buildBackendTargetKey,
-    isConnectedServiceCredentialHealthStatusUsable,
     isConnectedServiceResumeUnreachableSpawnErrorDetail,
     isConnectedServiceUxDiagnosticSpawnErrorDetail,
     type ComposerAgentContinuationIntentV1,
@@ -170,7 +168,7 @@ import { t, type TranslationKey } from '@/text';
 import { tracking, trackMessageSent } from '@/track';
 import { isRunningOnMac } from '@/utils/platform/platform';
 import { randomUUID } from '@/platform/randomUUID';
-import { useDeviceType, useIsLandscape, useIsTablet } from '@/utils/platform/responsive';
+import { useDeviceType, useHeaderHeight, useIsLandscape, useIsTablet } from '@/utils/platform/responsive';
 import { getSessionAvatarId, getSessionName, listPendingPermissionRequests, shouldReadTranscriptForPendingRequests, shouldShowAbortButtonForSessionState, useSessionStatus, type PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
 import { deriveTranscriptInteractionFromSession } from '@/utils/sessions/deriveTranscriptInteraction';
 import { runAfterInteractionsWithFallback } from '@/utils/timing/runAfterInteractionsWithFallback';
@@ -196,6 +194,11 @@ import type { AgentActivityCounts } from '@/sync/domains/session/agentActivity/d
 import { hasSessionSubagentLaunchCards } from '@/agents/registry/sessionSubagentUiBehavior';
 import { useSurfaceAnchorPathname } from '@/components/sessions/shell/surface/sessionSurfaceAnchorPathname';
 import { isExecutionRunNotRunningSendError, sessionExecutionRunSend } from '@/sync/ops/sessionExecutionRuns';
+import { resolveProviderUsageGaugeWindowMode } from '@/components/sessions/usage/resolveProviderUsageGaugeWindowMode';
+import { useProviderUsageAutoRefresh } from '@/hooks/server/connectedServices/useProviderUsageAutoRefresh';
+import { useProviderUsageRefresh } from '@/hooks/server/connectedServices/useProviderUsageRefresh';
+import { useProviderUsageGauges } from '@/components/sessions/usage/useProviderUsageGauges';
+import { connectedServiceQuotaGaugeFormatter } from '@/components/sessions/usage/connectedServiceQuotaGaugeFormatter';
 import { nowServerMs } from '@/sync/runtime/time';
 import { readSessionUiTelemetryNowMs } from '@/sync/runtime/performance/sessionUiTelemetry';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
@@ -238,26 +241,12 @@ import { isModelSelectableForSession, type SessionModelOptionsContext } from '@/
 import { getInactiveSessionUiState } from '@/components/sessions/model/inactiveSessionUi';
 import { useSessionMachineReachability } from '@/components/sessions/model/useSessionMachineReachability';
 import { useCLIDetection } from '@/hooks/auth/useCLIDetection';
-import {
-    computeConnectedServiceQuotaGaugeViewModel,
-    selectConnectedServiceSessionProviderUsageGaugeSource,
-    type ConnectedServiceQuotaGaugeLabelFormatter,
-    type ConnectedServiceQuotaGaugeWindowMode,
-} from '@/sync/domains/connectedServices/connectedServiceQuotaGauge';
 import { resolveConnectedServiceQuotaRecoveryCreditReceiptNoticeKey } from '@/sync/domains/connectedServices/connectedServiceQuotaRecoveryCreditReceiptPresentation';
 import { useConnectedServiceQuotaSnapshots } from '@/hooks/server/connectedServices/useConnectedServiceQuotaSnapshots';
-import { useConnectedServiceAuthGroupsQuery } from '@/hooks/server/connectedServices/useConnectedServiceAuthGroupsQuery';
-import { useProviderAccountUsageSnapshots } from '@/hooks/server/connectedServices/useProviderAccountUsageSnapshots';
-import {
-    selectProviderUsageDisplaySnapshot,
-    type ProviderUsageDisplaySnapshotSource,
-} from '@/sync/domains/connectedServices/accountUsage/selectors';
-import {
-    connectedServiceProfileKey,
-    resolveConnectedServiceProfileLabel,
-} from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
-import { resolveConnectedServiceCredentialHealthStatus } from '@/sync/domains/connectedServices/resolveConnectedServiceCredentialHealthStatus';
-import { resolveConnectedServiceProjectionSignature } from '@/sync/domains/connectedServices/resolveConnectedServiceProjectionSignature';
+import { useProviderUsageGauge } from '@/hooks/server/connectedServices/useProviderUsageGauge';
+import type { ConnectedServiceQuotaGaugeViewModel } from '@/sync/domains/connectedServices/connectedServiceQuotaGauge';
+import type { ProviderUsageDisplaySnapshotSource } from '@/sync/domains/connectedServices/accountUsage/selectors';
+import { connectedServiceProfileKey } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
 import { resolveConnectedServiceQuotaProfileRefForSession } from './resolveConnectedServiceQuotaProfileRefForSession';
 import { usePathname, useRouter } from 'expo-router';
 import * as React from 'react';
@@ -589,29 +578,6 @@ function readDiagnosticString(
     }
     return null;
 }
-
-function resolveConnectedServiceProviderDisplayName(serviceId: string): string | null {
-    const parsed = ConnectedServiceIdSchema.safeParse(serviceId);
-    if (!parsed.success) return null;
-    return resolveConnectedServiceDisplayName(parsed.data, t);
-}
-
-const connectedServiceQuotaGaugeFormatter: ConnectedServiceQuotaGaugeLabelFormatter = {
-    unavailable: () => t('common.unavailable'),
-    remaining: ({ percent }) => t('agentInput.providerUsage.remaining', { percent }),
-    remainingWithReset: ({ percent, reset }) => t('agentInput.providerUsage.remainingWithReset', { percent, reset }),
-    used: ({ used, limit }) => t('agentInput.providerUsage.usedCount', { used, limit }),
-    durationNow: () => t('agentInput.providerUsage.duration.now'),
-    durationOutdated: () => t('agentInput.providerUsage.duration.outdated'),
-    durationDaysHours: ({ days, hours }) => t('agentInput.providerUsage.duration.daysHours', { days, hours }),
-    durationHoursMinutes: ({ hours, minutes }) => t('agentInput.providerUsage.duration.hoursMinutes', { hours, minutes }),
-    durationHours: ({ hours }) => t('agentInput.providerUsage.duration.hours', { hours }),
-    durationMinutes: ({ minutes }) => t('agentInput.providerUsage.duration.minutes', { minutes }),
-    subscriptionEnds: ({ date }) => t('connectedServices.subscription.ends', { date }),
-    subscriptionEndsInDays: ({ days }) => t('connectedServices.subscription.endsInDays', { days }),
-    subscriptionRenews: ({ date }) => t('connectedServices.subscription.renews', { date }),
-    subscriptionRenewsInDays: ({ days }) => t('connectedServices.subscription.renewsInDays', { days }),
-};
 
 function isOwnedSessionRootPathname(pathname: string | null | undefined, sessionId: string): boolean {
     const normalizedPathname = typeof pathname === 'string' ? pathname.trim() : '';
@@ -1589,9 +1555,11 @@ export const SessionView = React.memo((props: SessionViewProps) => {
         });
     }, [router]);
     const safeArea = useSafeAreaInsets();
+    const safeAreaTopInset = props.safeAreaTopMode === 'external' ? 0 : safeArea.top;
     const headerSafeAreaTopMode = props.headerSafeAreaTopMode ?? props.safeAreaTopMode ?? 'internal';
     const isLandscape = useIsLandscape();
     const deviceType = useDeviceType();
+    const headerHeight = useHeaderHeight();
     const { width: windowWidth } = useWindowDimensions();
     const realtimeStatus = useRealtimeStatus();
     const isTablet = useIsTablet();
@@ -1914,7 +1882,13 @@ export const SessionView = React.memo((props: SessionViewProps) => {
 
             {/* Header - always shown on desktop/Mac, hidden in landscape mode only on actual phones */}
             {showTopHeader && shouldRenderSessionSurface && (
-                <View style={{ zIndex: 1000 }}>
+                <View style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    zIndex: 1000
+                }}>
                     <ChatHeaderView
                         {...headerProps}
                         onBackPress={handleBackPress}
@@ -1927,7 +1901,7 @@ export const SessionView = React.memo((props: SessionViewProps) => {
             )}
 
             {/* Content based on state */}
-            <View style={{ flex: 1 }}>
+            <View style={{ flex: 1, paddingTop: showTopHeader ? safeAreaTopInset + headerHeight : 0 }}>
                 {!session && authSurfaceState ? (
                     <SessionAuthRecoveryFallback message={authSurfaceState.message} />
                 ) : routeHydrationRetrying ? (
@@ -3819,25 +3793,12 @@ function SessionViewLoaded({
     const settings = useSettings();
     const voiceEnabled = useFeatureEnabled('voice');
     const reviewCommentsEnabled = useFeatureEnabled('files.reviewComments');
-    const connectedServiceQuotasEnabled = useFeatureEnabled('connectedServices.quotas');
     const attachmentsUploadsFeatureEnabled = useFeatureEnabled('attachments.uploads', {
         scopeKind: 'spawn',
         serverId: capabilityServerId,
     });
     const attachmentsUploadsTransferAvailable = useSessionFileUploadAvailability(sessionId);
     const attachmentsUploadsEnabled = attachmentsUploadsFeatureEnabled && attachmentsUploadsTransferAvailable;
-    const sessionProviderUsageGaugeWindowModesSetting = useSetting('sessionProviderUsageGaugeWindowModes');
-    const pinnedQuotaMeterIdsByKey = useSetting('connectedServicesQuotaPinnedMeterIdsByKey');
-    const sessionProviderUsageGaugeMode = useSetting('sessionProviderUsageGaugeMode');
-    const sessionProviderUsageGaugeWindowModeSetting = useSetting('sessionProviderUsageGaugeWindowMode');
-    const sessionProviderUsageGaugeWindowMode: ConnectedServiceQuotaGaugeWindowMode =
-        sessionProviderUsageGaugeWindowModeSetting === 'daily'
-        || sessionProviderUsageGaugeWindowModeSetting === 'weekly'
-        || sessionProviderUsageGaugeWindowModeSetting === 'primary'
-        || sessionProviderUsageGaugeWindowModeSetting === 'secondary'
-        || sessionProviderUsageGaugeWindowModeSetting === 'session'
-            ? sessionProviderUsageGaugeWindowModeSetting
-            : 'most_constrained';
     const connectedServiceQuotaProfileRef = React.useMemo(() => (
         resolveConnectedServiceQuotaProfileRefForSession({
             metadata: session.metadata,
@@ -3845,30 +3806,6 @@ function SessionViewLoaded({
             accountProfileConnectedServicesV2: accountProfile?.connectedServicesV2 ?? [],
         })
     ), [accountProfile?.connectedServicesV2, agentId, session.metadata]);
-    const connectedServiceQuotaGroupService = React.useMemo(() => (
-        connectedServiceQuotaProfileRef?.groupId
-            ? accountProfile?.connectedServicesV2.find((service) => (
-                service.serviceId === connectedServiceQuotaProfileRef.serviceId
-            )) ?? null
-            : null
-    ), [accountProfile?.connectedServicesV2, connectedServiceQuotaProfileRef]);
-    const connectedServiceQuotaGroupServiceId = React.useMemo(() => {
-        if (!connectedServiceQuotaProfileRef?.groupId) return null;
-        const parsed = ConnectedServiceIdSchema.safeParse(connectedServiceQuotaProfileRef.serviceId);
-        return parsed.success ? parsed.data : null;
-    }, [connectedServiceQuotaProfileRef]);
-    const connectedServiceQuotaAuthGroups = useConnectedServiceAuthGroupsQuery({
-        serviceId: connectedServiceQuotaGroupServiceId,
-        enabled: connectedServiceQuotaGroupServiceId !== null,
-        serviceProjectionSignature: resolveConnectedServiceProjectionSignature(connectedServiceQuotaGroupService),
-    });
-    const connectedServiceQuotaLimitSelection = React.useMemo(() => {
-        if (!connectedServiceQuotaProfileRef?.groupId) return undefined;
-        const group = connectedServiceQuotaAuthGroups.groups.find((group) => (
-            group.groupId === connectedServiceQuotaProfileRef.groupId
-        ));
-        return group ? group.policy.quotaLimitSelection : null;
-    }, [connectedServiceQuotaAuthGroups.groups, connectedServiceQuotaProfileRef?.groupId]);
     const sessionAgentCatalogEntries = React.useMemo(() => getResolvedBackendCatalogEntries({
         enabledAgentIds,
         acpCatalogSettingsV1: settings.acpCatalogSettingsV1,
@@ -3964,6 +3901,18 @@ function SessionViewLoaded({
     // Read here rather than beside the composer's other draft work because the
     // armed Agent is a Session draft value like the rest, and the picker below is
     // the one owner that writes it.
+    const [agentPickerUsageDemanded, setAgentPickerUsageDemanded] = React.useState(false);
+    const catalogAgentIds = React.useMemo(() => sessionAgentCatalogEntries.flatMap((entry) => (
+        entry.builtInAgentId ? [entry.builtInAgentId] : []
+    )), [sessionAgentCatalogEntries]);
+    const isLocallyAttached = !isHiddenSystemSessionSession && isSessionLocallyAttached(session);
+    const cliAvailability = useCLIDetection(machineId ?? null, {
+        autoDetect: isLocallyAttached || agentPickerUsageDemanded,
+        includeLoginStatus: isLocallyAttached && isAgentAuthProbeSafeForBackgroundChecks(agentId),
+        includeLoginStatusForAgentIds: isLocallyAttached && isAgentAuthProbeSafeForBackgroundChecks(agentId) ? [agentId] : [],
+        agentIds: agentPickerUsageDemanded ? catalogAgentIds : [agentId],
+        serverId: capabilityServerId,
+    });
     const inSessionAgentPicker = useInSessionAgentPickerControls({
         sessionId,
         accountScope: activeServerAccountScope,
@@ -3971,6 +3920,7 @@ function SessionViewLoaded({
         currentAgentLabel,
         currentAgentSessionActive: session.active,
         entries: sessionAgentCatalogEntries,
+        cliAvailabilityByAgentId: cliAvailability.available,
         favoriteBackendTargetKeys: settings.favoriteBackendTargetKeysV1,
         featureDecision: agentSwitchingDecision,
         source: agentContinuationSource,
@@ -4061,108 +4011,58 @@ function SessionViewLoaded({
         sessionId,
     ]);
 
-    const connectedServiceQuotaProfileCredentialUsable = React.useMemo(() => {
-        if (connectedServiceQuotaProfileRef?.credentialHealthStatus === undefined) return true;
-        return isConnectedServiceCredentialHealthStatusUsable(
-            resolveConnectedServiceCredentialHealthStatus(connectedServiceQuotaProfileRef.credentialHealthStatus),
-        );
-    }, [connectedServiceQuotaProfileRef?.credentialHealthStatus]);
-    const connectedServiceQuotaSnapshots = useConnectedServiceQuotaSnapshots(
-        connectedServiceQuotaProfileRef ? [connectedServiceQuotaProfileRef] : [],
-    );
-    const connectedServiceQuotaProfileKey = connectedServiceQuotaProfileRef
-        ? connectedServiceProfileKey(connectedServiceQuotaProfileRef)
-        : null;
-    const connectedServiceQuotaSnapshot = connectedServiceQuotaProfileKey
-        ? connectedServiceQuotaSnapshots.snapshotsByKey[connectedServiceQuotaProfileKey] ?? null
-        : null;
-    const connectedServiceQuotaDisplaySnapshot = connectedServiceQuotaSnapshot;
     const providerAccountUsageRecordIds = React.useMemo(
         () => readProviderAccountUsageRecordIdsFromMetadata(session.metadata),
         [session.metadata],
     );
-    const providerAccountUsageSnapshotsByRecordId = useProviderAccountUsageSnapshots(providerAccountUsageRecordIds);
-    const connectedServiceQuotaActiveAccountLabel = React.useMemo(() => {
-        if (!connectedServiceQuotaProfileRef) return connectedServiceQuotaDisplaySnapshot?.accountLabel ?? null;
-        return resolveConnectedServiceProfileLabel({
-            labelsByKey: settings.connectedServicesProfileLabelByKey,
-            serviceId: connectedServiceQuotaProfileRef.serviceId,
-            profileId: connectedServiceQuotaProfileRef.profileId,
-        }) ?? connectedServiceQuotaDisplaySnapshot?.accountLabel ?? connectedServiceQuotaProfileRef.profileId;
-    }, [
-        connectedServiceQuotaProfileRef,
-        connectedServiceQuotaDisplaySnapshot?.accountLabel,
-        settings.connectedServicesProfileLabelByKey,
-    ]);
-    const providerUsageDisplaySnapshotSource = React.useMemo(() => (
-        selectProviderUsageDisplaySnapshot({
-            providerId: liveComposerState.agentId,
-            metadataRecordIds: providerAccountUsageRecordIds,
-            accountUsageSnapshotsByRecordId: providerAccountUsageSnapshotsByRecordId,
-            connectedServiceProfileRef: connectedServiceQuotaProfileRef,
-            connectedServiceQuotaView: connectedServiceQuotaDisplaySnapshot,
-        })
-    ), [
-        connectedServiceQuotaProfileRef,
-        connectedServiceQuotaDisplaySnapshot,
-        liveComposerState.agentId,
-        providerAccountUsageRecordIds,
-        providerAccountUsageSnapshotsByRecordId,
-    ]);
-    const providerUsageGaugeSource = React.useMemo(() => {
-        if (!connectedServiceQuotasEnabled || sessionProviderUsageGaugeMode === 'hidden') return null;
-        if (!connectedServiceQuotaProfileCredentialUsable) return null;
-        return selectConnectedServiceSessionProviderUsageGaugeSource({
-            providerId: liveComposerState.agentId,
-            connectedServiceSnapshot: providerUsageDisplaySnapshotSource?.snapshot ?? null,
-            connectedServiceRefProvenance: providerUsageDisplaySnapshotSource?.connectedServiceRefProvenance ?? null,
-            sessionCheckNowSupported: usageLimitRecoveryCheckNowSupported,
-            recoveryCredits: usageLimitRecoveryCredits,
-            runtimeIssue: session.lastRuntimeIssue ?? null,
-        });
-    }, [
-        connectedServiceQuotasEnabled,
-        connectedServiceQuotaProfileCredentialUsable,
-        liveComposerState.agentId,
-        providerUsageDisplaySnapshotSource,
-        session.lastRuntimeIssue,
-        sessionProviderUsageGaugeMode,
-        usageLimitRecoveryCredits,
-        usageLimitRecoveryCheckNowSupported,
-    ]);
-    const providerUsageGauge = React.useMemo(() => {
-        const gaugeSource = providerUsageGaugeSource;
-        if (!gaugeSource) return null;
-        return computeConnectedServiceQuotaGaugeViewModel({
-            snapshot: gaugeSource.snapshot,
-            activeModelId: modelMode,
-            windowMode: sessionProviderUsageGaugeWindowMode,
-            windowModes: sessionProviderUsageGaugeWindowModesSetting,
-            additionalMeterIds: connectedServiceQuotaProfileRef
-                && gaugeSource.snapshot.serviceId === connectedServiceQuotaProfileRef.serviceId
-                ? pinnedQuotaMeterIdsByKey[connectedServiceProfileKey(gaugeSource.snapshot)] ?? []
-                : [],
-            quotaLimitSelection: connectedServiceQuotaLimitSelection,
-            nowMs: nowServerMs(),
-            formatter: connectedServiceQuotaGaugeFormatter,
-            providerDisplayName: resolveConnectedServiceProviderDisplayName(gaugeSource.snapshot.serviceId),
-            activeAccountDisplayLabel: providerUsageDisplaySnapshotSource?.kind === 'connected_service_quota_view'
-                && gaugeSource.snapshot === connectedServiceQuotaDisplaySnapshot
-                ? connectedServiceQuotaActiveAccountLabel
-                : gaugeSource.snapshot.accountLabel ?? null,
-        });
-    }, [
-        connectedServiceQuotaActiveAccountLabel,
-        modelMode,
-        connectedServiceQuotaDisplaySnapshot,
-        providerUsageDisplaySnapshotSource?.kind,
-        providerUsageGaugeSource,
-        connectedServiceQuotaProfileRef,
-        pinnedQuotaMeterIdsByKey,
-        connectedServiceQuotaLimitSelection,
-        sessionProviderUsageGaugeWindowModesSetting,
-        sessionProviderUsageGaugeWindowMode,
-    ]);
+    const {
+        gauge: providerUsageGauge,
+        gaugeSource: providerUsageGaugeSource,
+        displaySnapshotSource: providerUsageDisplaySnapshotSource,
+        profileKey: connectedServiceQuotaProfileKey,
+        windowMode: sessionProviderUsageGaugeWindowMode,
+    } = useProviderUsageGauge({
+        providerId: liveComposerState.agentId,
+        profileRef: connectedServiceQuotaProfileRef,
+        modelId: modelMode,
+        metadataRecordIds: providerAccountUsageRecordIds,
+        runtimeIssue: session.lastRuntimeIssue ?? null,
+        sessionCheckNowSupported: usageLimitRecoveryCheckNowSupported,
+        recoveryCredits: usageLimitRecoveryCredits,
+    });
+    // Usage rings in the Agent picker rail. Quota is fetched for the other Agents only once the
+    // picker has been approached; the running Agent reuses the composer's own gauge.
+    const signalAgentPickerUsageIntent = React.useCallback(() => {
+        setAgentPickerUsageDemanded(true);
+        inSessionAgentPicker.onAgentPickerIntent();
+    }, [inSessionAgentPicker.onAgentPickerIntent]);
+    const { gauges: providerUsageGaugesByAgentId } = useProviderUsageGauges({
+        agentIds: catalogAgentIds,
+        accountProfileConnectedServicesV2: accountProfile?.connectedServicesV2 ?? [],
+        windowMode: sessionProviderUsageGaugeWindowMode,
+        fetchEnabled: agentPickerUsageDemanded,
+    });
+    const agentPickerUsageGaugesByOptionId = React.useMemo(() => {
+        const gauges = new Map<string, ConnectedServiceQuotaGaugeViewModel>();
+        for (const entry of sessionAgentCatalogEntries) {
+            const gauge = entry.builtInAgentId ? providerUsageGaugesByAgentId.get(entry.builtInAgentId) : undefined;
+            if (gauge) gauges.set(entry.targetKey, gauge);
+        }
+        // The running Agent's own composer gauge is the most precise one for this session.
+        const currentGauge = providerUsageGauge ?? providerUsageGaugesByAgentId.get(liveComposerState.agentId);
+        if (currentGauge) gauges.set(`engine:${liveComposerState.agentId}`, currentGauge);
+        return gauges;
+    }, [liveComposerState.agentId, providerUsageGauge, providerUsageGaugesByAgentId, sessionAgentCatalogEntries]);
+    // Once another Agent is armed in the picker, the composer's usage ring follows that Agent.
+    const armedUsageAgentId = armedContinuationTarget ? resolveAgentIdFromFlavor(armedContinuationTarget.agentId) : null;
+    const composerProviderUsageGauge = armedUsageAgentId
+        ? providerUsageGaugesByAgentId.get(armedUsageAgentId) ?? null
+        : providerUsageGauge;
+    useProviderUsageAutoRefresh();
+    const refreshProviderUsage = useProviderUsageRefresh({
+        connectedProfileRef: connectedServiceQuotaProfileRef,
+        recordIds: providerAccountUsageRecordIds,
+    });
     const providerUsageGaugeConnectedServiceProfileRef =
         providerUsageGaugeSource
         && isConnectedServiceBoundProviderUsageDisplaySource(providerUsageDisplaySnapshotSource)
@@ -4370,8 +4270,13 @@ function SessionViewLoaded({
     } = useDraft(sessionId, composerTextStore, { active: surfaceFocused });
     const draftConflictBanner = useSessionDraftConflictComposerBanner(draftConflict);
     const draftSyncStatusBadge = React.useMemo(
-        () => buildSessionDraftSyncStatusBadge(draftStatus ?? 'clean'),
-        [draftStatus],
+        () => buildSessionDraftSyncStatusBadge(
+            draftStatus ?? 'clean',
+            draftScope
+                ? { readErrorReason: () => getSessionDraftErrorReason(draftScope, { kind: 'session', sessionId }) }
+                : undefined,
+        ),
+        [draftScope, draftStatus, sessionId],
     );
     const [pendingMessageEdit, setPendingMessageEdit] = React.useState<PendingMessageComposerEditState | null>(null);
     const pendingMessageEditRef = React.useRef(pendingMessageEdit);
@@ -4964,13 +4869,6 @@ function SessionViewLoaded({
     // running to take it". The disposition owner decides it; the two effects
     // below only route it, and neither re-decides it.
     const armedContinuationAwaitingRuntime = armedContinuationDisposition?.awaitingRuntime === true;
-    const isLocallyAttached = !isHiddenSystemSessionSession && isSessionLocallyAttached(session);
-    const cliAvailability = useCLIDetection(machineId ?? null, {
-        autoDetect: isLocallyAttached,
-        includeLoginStatus: isLocallyAttached,
-        agentIds: [agentId],
-        serverId: capabilityServerId,
-    });
     const cliAuthStatus = cliAvailability.authStatus[agentId] ?? null;
     const canReleaseLocalControl = shouldOfferLocalControlRelease(session, cliAuthStatus?.state ?? null);
     const [controlSwitchTo, setControlSwitchTo] = React.useState<'remote' | null>(null);
@@ -5187,6 +5085,9 @@ function SessionViewLoaded({
         const handlePickAttachmentImage = React.useCallback(() => {
             openAttachmentFilePickerImages(filePickerRef.current);
         }, [filePickerRef]);
+        const handleTakeAttachmentPhoto = React.useCallback(() => {
+            openAttachmentFilePickerCamera(filePickerRef.current);
+        }, [filePickerRef]);
         const handleAppendLinkedPath = React.useCallback((path: string) => {
             setDraftValue((prev) => {
                 const base = prev ?? '';
@@ -5209,6 +5110,7 @@ function SessionViewLoaded({
             onPickAttachmentFile: handlePickAttachmentFile,
             onPickAttachmentImage: handlePickAttachmentImage,
             onPasteAttachmentImage: pasteAttachmentImage,
+            onTakeAttachmentPhoto: handleTakeAttachmentPhoto,
             onAppendLinkedPath: handleAppendLinkedPath,
             reviewCommentsEnabled,
             reviewScope,
@@ -6365,6 +6267,7 @@ function SessionViewLoaded({
                 <ComposerAuxiliaryFrame>
                     <SessionUsageLimitRecoveryBanner
                         temporaryThrottle={visibleUsageLimitRecoveryPresentation.banner.temporaryThrottle}
+                        resetCountdown={visibleUsageLimitRecoveryPresentation.banner.resetCountdown}
                         surfaceFocused={surfaceFocused}
                         testID={visibleUsageLimitRecoveryPresentation.banner.testID}
                         actionTestID={visibleUsageLimitRecoveryPresentation.banner.primaryAction.testID}
@@ -6440,7 +6343,9 @@ function SessionViewLoaded({
                 agentType={liveComposerState.agentId}
                 armedContinuationTarget={armedContinuationTarget}
                 composeAgentPickerOptions={inSessionAgentPicker.composeAgentPickerOptions}
-                onAgentPickerIntent={inSessionAgentPicker.onAgentPickerIntent}
+                onAgentPickerIntent={signalAgentPickerUsageIntent}
+                agentPickerUsageGaugesByOptionId={agentPickerUsageGaugesByOptionId}
+                onProviderUsageRefresh={refreshProviderUsage}
                 onAgentPickerVisibilityChange={inSessionAgentPicker.onAgentPickerVisibilityChange}
                 agentPickerSelectedOptionId={inSessionAgentPicker.agentPickerSelectedOptionId}
                 attachments={attachmentsUploadsEnabled ? agentInputAttachments : undefined}
@@ -6461,7 +6366,7 @@ function SessionViewLoaded({
                 profileId={liveComposerState.profileId ?? undefined}
                 onProfileClick={liveComposerState.profileId !== null ? handleProfileClick : undefined}
                 statusBadges={agentInputStatusBadges}
-                providerUsageGauge={providerUsageGauge}
+                providerUsageGauge={composerProviderUsageGauge}
                 onProviderUsageRecoveryCreditPress={providerUsageRecoveryCreditAction}
                 providerUsageRecoveryCreditPending={providerUsageRecoveryCreditActionPending}
                 activeStatusBadgeKey={activeStatusBadgeKey}

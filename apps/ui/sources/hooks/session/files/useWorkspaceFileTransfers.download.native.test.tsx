@@ -12,12 +12,13 @@ const native = vi.hoisted(() => ({
     deleteError: null as Error | null,
     rpc: vi.fn(),
     iosShare: vi.fn(), iosAvailable: vi.fn(),
+    openUrl: vi.fn(),
 }));
 
 installSessionFilesHookCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({ Platform: { OS: 'android' } });
+        return createReactNativeWebMock({ Platform: { OS: 'android' }, Linking: { openURL: native.openUrl } });
     },
     storage: async (importOriginal) => await importOriginal(),
 });
@@ -63,13 +64,13 @@ vi.mock('expo-file-system', () => ({
 
 import type { useWorkspaceFileTransfers } from './useWorkspaceFileTransfers';
 
-async function setPlatform(os: 'android' | 'ios') {
+async function setPlatform(os: 'android' | 'ios' | 'web') {
     const { Platform } = await import('react-native');
     Object.defineProperty(Platform, 'OS', { configurable: true, value: os });
 }
 
 describe('native workspace downloads through the canonical transfer pipeline', () => {
-    afterEach(() => vi.useRealTimers());
+    afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
     beforeEach(async () => {
         const { storage } = await import('@/sync/domains/state/storage');
         storage.setState({
@@ -77,6 +78,7 @@ describe('native workspace downloads through the canonical transfer pipeline', (
             machines: { 'machine-1': createMachineFixture({ id: 'machine-1', active: true }) },
         });
         await setPlatform('android');
+        native.openUrl.mockReset().mockResolvedValue(undefined);
         native.iosShare.mockReset().mockResolvedValue(undefined);
         native.iosAvailable.mockReset().mockResolvedValue(true);
         native.files.clear();
@@ -89,6 +91,7 @@ describe('native workspace downloads through the canonical transfer pipeline', (
         native.openFile.mockReset().mockResolvedValue(undefined);
         native.shareFile.mockReset().mockResolvedValue(undefined);
         native.rpc.mockReset().mockImplementation(async (_machine: string, method: string) => {
+            if (method === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_URL) return { success: true, url: null };
             if (method === RPC_METHODS.STAT_FILE) return { success: true, exists: true, kind: 'file', sizeBytes: 4 };
             if (method === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_INIT) return {
                 success: true, downloadId: 'download-1', chunkSizeBytes: 4, sizeBytes: 4, name: 'recording.mp4',
@@ -110,6 +113,72 @@ describe('native workspace downloads through the canonical transfer pipeline', (
         await renderScreen(<Test />);
         return () => api!;
     }
+
+    it.each(['android', 'ios', 'web'] as const)('hands an approved Tailnet download to the browser without transferring bytes on %s', async (os) => {
+        await setPlatform(os);
+        if (os === 'web') vi.stubGlobal('open', native.openUrl);
+        const rpc = native.rpc.getMockImplementation()!;
+        const url = 'https://files.example.ts.net:9443/browse/projects/recording.mp4?download=1';
+        native.rpc.mockImplementation(async (machine: string, method: string, ...args: unknown[]) => {
+            if (method === 'daemon.bulkTransfer.download.url') return { success: true, url, name: 'recording.mp4' };
+            return rpc(machine, method, ...args);
+        });
+        const api = await mount();
+        await act(async () => { expect(await api().startDownload({ path: 'recording.mp4', asZip: false })).toEqual({ ok: true }); });
+        if (os === 'web') expect(native.openUrl).toHaveBeenCalledWith(url, '_self', 'noopener,noreferrer');
+        else expect(native.openUrl).toHaveBeenCalledWith(url);
+        expect(native.rpc.mock.calls.map(call => call[1])).not.toContain(RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_INIT);
+        expect(native.files.size).toBe(0);
+        expect(api().downloadState.status).toBe('idle');
+    });
+
+    it.each([
+        { success: false, error: 'Access denied' },
+        { success: true, url: 'http://files.example.ts.net/browse/projects/private?download=1' },
+    ])('does not open or transfer after a rejected/invalid link: %j', async response => {
+        native.rpc.mockResolvedValue(response);
+        const api = await mount();
+        await act(async () => { expect((await api().startDownload({ path: 'private', asZip: false })).ok).toBe(false); });
+        expect(native.openUrl).not.toHaveBeenCalled();
+        expect(native.rpc.mock.calls.map(call => call[1])).not.toContain(RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_INIT);
+    });
+
+    it('reports browser handoff failure without restarting an app download', async () => {
+        native.rpc.mockResolvedValue({ success: true, url: 'https://files.example.ts.net/browse/projects/file?download=1' });
+        native.openUrl.mockRejectedValue(new Error('No browser available'));
+        const api = await mount();
+        await act(async () => { expect((await api().startDownload({ path: 'file', asZip: false })).ok).toBe(false); });
+        expect(api().downloadState.status).toBe('error');
+    });
+
+    it('retains the released transfer path when an older daemon lacks the link method', async () => {
+        const rpc = native.rpc.getMockImplementation()!;
+        native.rpc.mockImplementation(async (machine: string, method: string, ...args: unknown[]) => {
+            if (method === RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_URL) return {
+                success: false, error: 'Method not found', errorCode: 'RPC_METHOD_NOT_FOUND',
+            };
+            return rpc(machine, method, ...args);
+        });
+        const api = await mount();
+        await act(async () => { expect(await api().startDownload({ path: 'recording.mp4', asZip: false })).toEqual({ ok: true }); });
+        expect(native.saveFile.mock.calls[0]?.[1]).toBe('recording.mp4');
+        expect(native.openUrl).not.toHaveBeenCalled();
+    });
+
+    it('does not hand off a link after the owner cancels the pending lookup', async () => {
+        const lookup = createDeferred<{ success: true; url: string }>();
+        native.rpc.mockImplementation(async () => lookup.promise);
+        const api = await mount();
+        let download: ReturnType<ReturnType<typeof useWorkspaceFileTransfers>['startDownload']> | undefined;
+        await act(async () => { download = api().startDownload({ path: 'file', asZip: false }); });
+        expect(api().downloadState.status).toBe('downloading');
+        await act(async () => {
+            api().cancelDownload();
+            lookup.resolve({ success: true, url: 'https://files.example.ts.net/browse/projects/file?download=1' });
+            expect(await download).toMatchObject({ ok: false, canceled: true });
+        });
+        expect(native.openUrl).not.toHaveBeenCalled();
+    });
 
     it('saves complete bytes to the selected Android document on repeated download', async () => {
         const api = await mount();

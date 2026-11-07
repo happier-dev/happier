@@ -3,6 +3,7 @@ import type { ConnectedServiceQuotaMeterV1 } from '@happier-dev/protocol';
 
 import type { MeterTone } from '@/components/ui/lists/MeterBar';
 import type { StatusPillVariant } from '@/components/ui/status/StatusPill';
+import { t } from '@/text';
 import type { AccountHealth } from '@/sync/domains/connectedServices/deriveAccountHealth';
 import {
     buildConnectedServiceQuotaGaugeMeterRows,
@@ -15,6 +16,33 @@ import { resolveQuotaTone } from '@/sync/domains/connectedServices/resolveQuotaT
 import { resolveQuotaToneColor } from '@/sync/domains/connectedServices/resolveQuotaToneColor';
 
 type Theme = UnistylesThemes[keyof UnistylesThemes];
+
+/**
+ * Real `t()`-backed gauge formatter so the USAGE rows carry localized
+ * remaining/used/reset labels. Mirrors the canonical formatter in
+ * `ConnectedServiceQuotaMeterRow` (single duration vocabulary).
+ */
+export const GAUGE_LABEL_FORMATTER: ConnectedServiceQuotaGaugeLabelFormatter = {
+    unavailable: () => t('common.unavailable'),
+    remaining: ({ percent }) => t('connectedServices.quota.remaining', { percent }),
+    remainingWithReset: ({ percent, reset }) =>
+        t('connectedServices.quota.remainingWithReset', { percent, reset }),
+    used: ({ used, limit }) => t('connectedServices.account.usedDetail', { used, limit }),
+    durationNow: () => t('connectedServices.quota.duration.now'),
+    durationOutdated: () => t('connectedServices.quota.duration.outdated'),
+    durationDaysHours: ({ days, hours }) => t('connectedServices.quota.duration.daysHours', { days, hours }),
+    durationHoursMinutes: ({ hours, minutes }) => t('connectedServices.quota.duration.hoursMinutes', { hours, minutes }),
+    durationMinutes: ({ minutes }) => t('connectedServices.quota.duration.minutes', { minutes }),
+    durationHoursMinutesSeconds: ({ hours, minutes, seconds }) =>
+        t('connectedServices.quota.duration.hoursMinutesSeconds', { hours, minutes, seconds }),
+    durationMinutesSeconds: ({ minutes, seconds }) =>
+        t('connectedServices.quota.duration.minutesSeconds', { minutes, seconds }),
+    subscriptionEnds: ({ date }) => t('connectedServices.subscription.ends', { date }),
+    subscriptionEndsInDays: ({ days }) => t('connectedServices.subscription.endsInDays', { days }),
+    subscriptionRenews: ({ date }) => t('connectedServices.subscription.renews', { date }),
+    subscriptionRenewsInDays: ({ days }) => t('connectedServices.subscription.renewsInDays', { days }),
+};
+
 
 /**
  * Pure presentation model for `AccountBlock`. Keeps the tone/health mapping in a
@@ -35,7 +63,9 @@ export type AccountUsageRow = Readonly<{
      * reverting 5ad4d06be).
      */
     remaining: number | null;
-    detailLabel: string;
+    /** The remaining percent and reset instant; the view derives the live detail label from them. */
+    remainingPct: number | null;
+    resetAtMs: number | null;
 }>;
 
 function clamp01(value: number): number {
@@ -60,7 +90,8 @@ export function resolveAccountUsageRows(
         label: row.label,
         tone: resolveQuotaTone(row.remainingPct),
         remaining: row.remainingPct === null ? null : clamp01(row.remainingPct / 100),
-        detailLabel: row.detailRightLabel,
+        remainingPct: row.remainingPct,
+        resetAtMs: row.resetAtMs,
     }));
 }
 

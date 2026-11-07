@@ -3,6 +3,10 @@ import { describe, expect, it } from 'vitest';
 import { MachineMetadataSchema } from './storageTypes';
 
 describe('MachineMetadataSchema', () => {
+    it('retains the daemon fork build identifier', () => {
+        const parsed = MachineMetadataSchema.parse({ host: 'host', platform: 'linux', happyCliVersion: '0.2.19', happyForkVersion: '0.2.19-fork.15', happyHomeDir: '/tmp/happier', homeDir: '/tmp' });
+        expect(parsed.happyForkVersion).toBe('0.2.19-fork.15');
+    });
     it('accepts windowsRemoteSessionLaunchMode on Windows machines', () => {
         const parsed = MachineMetadataSchema.parse({
             host: 'host',

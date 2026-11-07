@@ -292,6 +292,9 @@ export const UI_FEATURE_REGISTRY = {
     bugReports: {
         settingsToggle: undefined,
     },
+    'appLock.emailRecovery': {
+        settingsToggle: undefined,
+    },
     'attachments.uploads': {
         settingsToggle: {
             showInSettings: true,

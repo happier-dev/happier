@@ -26,6 +26,7 @@ import { AppHeaderCloseButton } from '@/components/navigation/AppHeaderCloseButt
 import { DesktopPetOverlayRuntimeMount } from '@/components/pets/runtime/DesktopPetOverlayRuntimeMount';
 import { PetAppShellCompanionMount } from '@/components/pets/runtime/PetAppShellCompanionMount';
 import { isDesktopPetOverlayWindowContext } from '@/components/pets/desktop/runtime/isDesktopPetOverlayWindowContext';
+import { isSessionFileWindowContext } from '@/components/sessions/files/window/sessionFileWindowRoute';
 import { SessionCockpitChromeRegistryProvider } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { RootLayoutNavigationEffects } from '@/components/navigation/root/RootLayoutNavigationEffects';
@@ -139,6 +140,9 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
     // Use custom header on Android and Mac Catalyst, native header on iOS (non-Catalyst)
     const shouldUseCustomHeader = Platform.OS === 'android' || isRunningOnMac() || Platform.OS === 'web';
     const isDesktopPetOverlayWindow = isDesktopPetOverlayWindowContext();
+    // A file window is a second app instance; tray, badges, notifications, pets and release notes
+    // belong to the main window only, or they would run twice.
+    const isSessionFileWindow = isSessionFileWindowContext();
     const baseStackScreenOptions = React.useMemo(() => createAppStackScreenOptions({
         headerBackTitle: t('common.back'),
         shouldUseCustomHeader,
@@ -191,15 +195,23 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
 
     return (
         <SessionCockpitChromeRegistryProvider>
-            <ActivityBadgeRuntime />
-            <ActivityLocalNotificationRuntime />
-            <DesktopTrayRuntime />
-            {auth.isAuthenticated ? <AuthenticatedAppShellRuntimes /> : null}
+            {isSessionFileWindow ? null : (
+                <>
+                    <ActivityBadgeRuntime />
+                    <ActivityLocalNotificationRuntime />
+                    <DesktopTrayRuntime />
+                    {auth.isAuthenticated ? <AuthenticatedAppShellRuntimes /> : null}
+                </>
+            )}
             <NavigatorSafeAreaBleed>
             <Stack screenOptions={baseStackScreenOptions} screenLayout={renderAppStackScreen}>
             <Stack.Screen
                 name="desktop/pet-overlay"
                 options={DESKTOP_PET_OVERLAY_SCREEN_OPTIONS}
+            />
+            <Stack.Screen
+                name="file-window"
+                options={{ headerShown: false }}
             />
             <Stack.Screen
                 name="index"

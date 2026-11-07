@@ -1,9 +1,10 @@
 import * as React from 'react';
-import { Platform, Pressable, View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol';
 
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
+import { PressableSurface } from '@/components/ui/interaction/PressableSurface';
 import { TabBadge } from '@/components/ui/navigation/tabBadge/TabBadge';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { Popover } from '@/components/ui/popover';
@@ -75,12 +76,15 @@ const ActionOperationActivityButtonChrome = React.memo(function ActionOperationA
     if (!visible) return null;
 
     const tintColor = props.tintColor ?? theme.colors.chrome.header.foreground;
+    const accessibilityLabel = t('inbox.updates');
     return (
         <View ref={anchorRef} collapsable={false} style={styles.anchor}>
-            <Pressable
+            <PressableSurface
                 testID={props.testID ?? 'action-operation-activity-button'}
                 accessibilityRole="button"
-                accessibilityLabel={t('inbox.updates')}
+                accessibilityLabel={accessibilityLabel}
+                webTooltip={accessibilityLabel}
+                focusRingRadius={(props.buttonSize ?? 44) / 2}
                 accessibilityState={{ expanded: open }}
                 onPress={(event) => {
                     if (!open) props.onOpen();
@@ -105,14 +109,13 @@ const ActionOperationActivityButtonChrome = React.memo(function ActionOperationA
                     }
                     setOpen((current) => !current);
                 }}
-                style={({ pressed }) => [
+                style={[
                     styles.button,
                     props.buttonSize != null ? {
                         width: props.buttonSize,
                         height: props.buttonSize,
                         borderRadius: props.buttonSize / 2,
                     } : null,
-                    pressed ? styles.buttonPressed : null,
                 ]}
             >
                 <View style={styles.glyph}>
@@ -123,7 +126,7 @@ const ActionOperationActivityButtonChrome = React.memo(function ActionOperationA
                         <TabBadge testID="action-operation-activity-attention-dot" variant="dot" />
                     )}
                 </View>
-            </Pressable>
+            </PressableSurface>
             {open ? props.renderDetails({
                 anchorRef,
                 anchor: webAnchorRect ? {
@@ -312,10 +315,6 @@ const styles = StyleSheet.create((theme) => ({
         alignItems: 'center',
         justifyContent: 'center',
         borderRadius: 22,
-    },
-    buttonPressed: {
-        opacity: 0.68,
-        transform: [{ scale: 0.96 }],
     },
     glyph: {
         position: 'relative',

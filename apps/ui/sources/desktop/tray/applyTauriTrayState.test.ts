@@ -20,6 +20,7 @@ describe('applyTauriTrayState', () => {
             labels: {} as never,
             services: { status: 'pending' },
             serviceAutostart: null,
+            appLockEnabled: false,
             taskParams: {},
         } as const;
 
@@ -30,7 +31,7 @@ describe('applyTauriTrayState', () => {
 
     it('hands back only a screen the native side can ask for', async () => {
         const { applyTauriTrayState } = await import('./applyTauriTrayState');
-        const state = { label: 'x', detail: 'y', labels: {} as never, services: { status: 'pending' }, serviceAutostart: null, taskParams: {} } as const;
+        const state = { label: 'x', detail: 'y', labels: {} as never, services: { status: 'pending' }, serviceAutostart: null, appLockEnabled: false, taskParams: {} } as const;
 
         invokeTauri.mockResolvedValueOnce('settings');
         await expect(applyTauriTrayState(state)).resolves.toBe('settings');
@@ -40,7 +41,7 @@ describe('applyTauriTrayState', () => {
 
     it('hands back the relay a tray row\'s Open picked, by the relay the row names (D11-3)', async () => {
         const { applyTauriTrayState } = await import('./applyTauriTrayState');
-        const state = { label: 'x', detail: 'y', labels: {} as never, services: { status: 'pending' }, serviceAutostart: null, taskParams: {} } as const;
+        const state = { label: 'x', detail: 'y', labels: {} as never, services: { status: 'pending' }, serviceAutostart: null, appLockEnabled: false, taskParams: {} } as const;
 
         invokeTauri.mockResolvedValueOnce('relay:https://work.example.com');
         await expect(applyTauriTrayState(state)).resolves.toEqual({ relayUrl: 'https://work.example.com' });

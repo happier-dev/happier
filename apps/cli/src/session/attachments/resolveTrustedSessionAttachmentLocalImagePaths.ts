@@ -113,7 +113,7 @@ export async function readTrustedSessionAttachmentLocalImages(params: Readonly<{
   const metadata = asRecord(params.metadata);
   const trusted = new Map<string, Buffer>();
   if (!metadata) return trusted;
-  const configuredMaxBytes = params.maxBytes ?? configuration.filesUploadMaxFileBytes;
+  const configuredMaxBytes = params.maxBytes ?? configuration.filesImageReadMaxBytes;
   const maxBytes = Math.min(configuredMaxBytes, bufferConstants.MAX_LENGTH - 1);
 
   const candidatePaths = readAttachmentEnvelopeLocalImagePaths(metadata);

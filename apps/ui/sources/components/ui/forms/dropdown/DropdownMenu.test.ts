@@ -3,12 +3,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { findTestInstanceByTypeWithProps, pressTestInstance, renderScreen } from '@/dev/testkit';
 import { installDropdownCommonModuleMocks } from './dropdownTestHelpers';
+import type { SelectableMenuCategory } from './selectableMenuTypes';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 installDropdownCommonModuleMocks();
 
+let menuCategoriesOverride: ReadonlyArray<SelectableMenuCategory> | null = null;
 const useSelectableMenuSpy = vi.fn();
 const handleSelectableKeyPressSpy = vi.fn();
 let uiItemDensitySetting: 'comfortable' | 'cozy' | 'compact' = 'comfortable';
@@ -50,7 +52,7 @@ vi.mock('@/components/ui/forms/dropdown/useSelectableMenu', () => ({
         return {
             searchQuery: '',
             selectedIndex: 0,
-            filteredCategories: [],
+            filteredCategories: menuCategoriesOverride ?? [],
             inputRef: { current: null },
             setSelectedIndex: () => {},
             handleSearchChange: () => {},
@@ -96,9 +98,27 @@ vi.mock('@/components/ui/text/Text', () => ({
 }));
 
 describe('DropdownMenu', () => {
+    it('lets uncapped menus use the window while retaining explicit caller limits', async () => {
+        const { DropdownMenu } = await import('./DropdownMenu');
+        for (const cap of [undefined, 240]) {
+            const screen = await renderScreen(React.createElement(DropdownMenu, {
+                open: true,
+                onOpenChange: () => {},
+                items: [{ id: 'a', title: 'A' }],
+                onSelect: () => {},
+                trigger: React.createElement('View'),
+                maxHeightCap: cap,
+            }));
+            const popover = screen.findByType('Popover');
+            expect(popover.props.maxHeightCap).toBe(cap ?? 600);
+            expect(popover.props.placementMinSpace).toBe(cap ?? 320);
+        }
+    });
+
     beforeEach(() => {
         vi.resetModules();
         useSelectableMenuSpy.mockReset();
+        menuCategoriesOverride = null;
         handleSelectableKeyPressSpy.mockReset();
         uiItemDensitySetting = 'comfortable';
     });
@@ -388,95 +408,48 @@ describe('DropdownMenu', () => {
         expect(onSelect).toHaveBeenCalledWith('move-to-folder:root');
     });
 
-    describe('submenu hover intent', () => {
-        const items = [
-            { id: 'color', title: 'Set color', submenu: { items: [{ id: 'color:blue', title: 'Blue' }] } },
+    it('dismisses a hover submenu when another visible parent item is hovered', async () => {
+        const scheduled: FrameRequestCallback[] = [];
+        vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+            scheduled.push(callback);
+            return scheduled.length;
+        });
+        const { DropdownMenu } = await import('./DropdownMenu');
+        menuCategoriesOverride = [{ id: 'visible', title: '', items: [
+            { id: 'color', title: 'Set color', hasSubmenu: true },
             { id: 'rename', title: 'Rename' },
-        ];
-        async function renderMenu() {
-            const { DropdownMenu } = await import('./DropdownMenu');
-            const screen = await renderScreen(React.createElement(DropdownMenu, {
-                open: true, onOpenChange: vi.fn(), items, onSelect: vi.fn(), trigger: React.createElement('View'),
-            }));
-            const results = () => screen.findAllByType('SelectableMenuResults' as any)[0];
-            const popovers = () => screen.findAllByType('Popover' as any);
-            const submenuSurface = () => screen.findByTestId('dropdown-submenu-surface') as any;
-            return { screen, results, popovers, submenuSurface };
-        }
-        const mouse = { nativeEvent: { pointerType: 'mouse' } };
-        beforeEach(() => {
-            vi.useFakeTimers();
-        });
-        afterEach(() => {
-            vi.useRealTimers();
-        });
+        ] }];
+        const screen = await renderScreen(React.createElement(DropdownMenu, {
+            open: true,
+            onOpenChange: () => {},
+            items: [
+                { id: 'rename', title: 'Rename' },
+                { id: 'color', title: 'Set color', submenu: { items: [{ id: 'blue', title: 'Blue' }] } },
+            ],
+            onSelect: () => {},
+            trigger: React.createElement('View'),
+        }));
+        const rootResults = screen.findByType('SelectableMenuResults');
+        act(() => rootResults.props.onOpenSubmenu('color', {
+            current: { getBoundingClientRect: () => ({ width: 280, height: 36 }) },
+        }));
+        expect(screen.findAllByType('Popover')).toHaveLength(2);
+        act(() => rootResults.props.onSelectionChange(0));
+        expect(screen.findAllByType('Popover')).toHaveLength(2);
+        act(() => rootResults.props.onSelectionChange(1));
+        expect(screen.findAllByType('Popover')).toHaveLength(1);
 
-        it('does not open a submenu when the pointer only passes over its row', async () => {
-            const menu = await renderMenu();
-            act(() => {
-                menu.results()?.props?.onHoverItem?.({ id: 'color', hasSubmenu: true }, { current: 'row' });
-            });
-            act(() => {
-                vi.advanceTimersByTime(40);
-                menu.results()?.props?.onHoverItem?.({ id: 'rename' }, { current: 'other-row' });
-            });
-            act(() => {
-                vi.advanceTimersByTime(1000);
-            });
-            expect(menu.popovers()).toHaveLength(1);
+        // An anchor that settles after the pointer left must not reopen the dismissed submenu.
+        let anchorReady = false;
+        act(() => rootResults.props.onOpenSubmenu('color', {
+            current: { getBoundingClientRect: () => ({ width: anchorReady ? 280 : 0, height: 36 }) },
+        }));
+        act(() => rootResults.props.onSelectionChange(1));
+        anchorReady = true;
+        act(() => {
+            while (scheduled.length > 0) scheduled.shift()?.(0);
         });
-
-        it('opens after a short dwell beside the whole parent row, so a flip to the left clears the parent menu', async () => {
-            const menu = await renderMenu();
-            const rowAnchor = { current: 'color-row' };
-            act(() => {
-                menu.results()?.props?.onHoverItem?.({ id: 'color', hasSubmenu: true }, rowAnchor);
-            });
-            act(() => {
-                vi.advanceTimersByTime(400);
-            });
-            expect(menu.popovers()).toHaveLength(2);
-            expect(menu.popovers()[1]?.props?.anchorRef).toBe(rowAnchor);
-            expect(menu.popovers()[1]?.props?.placement).toBe('auto-horizontal');
-        });
-
-        it('closes the open submenu when another parent row is hovered, but keeps it while the pointer moves into it', async () => {
-            const menu = await renderMenu();
-            act(() => {
-                menu.results()?.props?.onHoverItem?.({ id: 'color', hasSubmenu: true }, { current: 'row' });
-            });
-            act(() => {
-                vi.advanceTimersByTime(400);
-            });
-            // Diagonal travel crosses Rename on its way into the submenu: entering the submenu keeps it.
-            act(() => {
-                menu.results()?.props?.onHoverItem?.({ id: 'rename' }, { current: 'other-row' });
-                vi.advanceTimersByTime(60);
-                menu.submenuSurface().props.onPointerEnter(mouse);
-                vi.advanceTimersByTime(1000);
-            });
-            expect(menu.popovers()).toHaveLength(2);
-
-            // Leaving the submenu for a sibling closes it after the grace period.
-            act(() => {
-                menu.submenuSurface().props.onPointerLeave(mouse);
-                menu.results()?.props?.onHoverItem?.({ id: 'rename' }, { current: 'other-row' });
-                vi.advanceTimersByTime(1000);
-            });
-            expect(menu.popovers()).toHaveLength(1);
-        });
-
-        it('ignores touch pointer leave so a tapped submenu stays open', async () => {
-            const menu = await renderMenu();
-            act(() => {
-                menu.results()?.props?.onOpenSubmenu?.('color', { current: 'row' });
-            });
-            act(() => {
-                menu.submenuSurface().props.onPointerLeave({ nativeEvent: { pointerType: 'touch' } });
-                vi.advanceTimersByTime(1000);
-            });
-            expect(menu.popovers()).toHaveLength(2);
-        });
+        expect(screen.findAllByType('Popover')).toHaveLength(1);
     });
 
     it('reveals the swatch highlight only once the person hovers or uses the keyboard', async () => {

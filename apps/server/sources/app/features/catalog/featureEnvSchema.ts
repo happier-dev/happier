@@ -1,4 +1,6 @@
 export const FEATURE_ENV_KEYS = Object.freeze({
+  appLockEmailRecoveryEnabled: 'HAPPIER_FEATURE_APP_LOCK__EMAIL_RECOVERY__ENABLED',
+
   automationsEnabled: 'HAPPIER_FEATURE_AUTOMATIONS__ENABLED',
 
   bugReportsEnabled: 'HAPPIER_FEATURE_BUG_REPORTS__ENABLED',

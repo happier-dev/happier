@@ -428,6 +428,37 @@ describe('ResizableDockedPane (web pointer drag)', () => {
 
         expect(onDragWidthPx).toHaveBeenLastCalledWith(null, null);
     });
+
+    // #751: a descendant positioned past the handle's own band inherits its resize cursor and
+    // pointer capture, creating a second resize strip over the neighbouring scrollbar.
+    it.each(['left', 'right'] as const)('keeps every resize hit target inside the handle band (resizeEdge=%s)', async (resizeEdge) => {
+        const { ResizableDockedPane } = await import('./ResizableDockedPane');
+
+        const { tree } = await renderScreen(<ResizableDockedPane
+                    widthPx={320}
+                    minWidthPx={200}
+                    maxWidthPx={480}
+                    resizeEdge={resizeEdge}
+                    onCommitWidthPx={vi.fn()}
+                >
+                    <ViewStub />
+                </ResizableDockedPane>);
+
+        const webHandle = findFirstByType(tree, 'Pressable');
+        expect(webHandle).toBeTruthy();
+        const handleWidth = webHandle!.props.style?.width;
+        expect(typeof handleWidth).toBe('number');
+
+        const overhangingDescendants = webHandle!.findAll((node) => {
+            if (node === webHandle || typeof node.type !== 'string') return false;
+            const style = node.props.style ?? {};
+            if (style.position !== 'absolute') return false;
+            const inset = typeof style[resizeEdge] === 'number' ? style[resizeEdge] : 0;
+            const width = typeof style.width === 'number' ? style.width : 0;
+            return inset + width > handleWidth;
+        });
+        expect(overhangingDescendants).toHaveLength(0);
+    });
 });
 
 function ViewStub() {

@@ -19,8 +19,10 @@ import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Eyebrow } from '@/components/ui/text/Eyebrow';
 import { Text } from '@/components/ui/text/Text';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
+import { useNowMs } from '@/hooks/time/useNowMs';
 import { Modal } from '@/modal';
 import type { QuotaResetRow } from '@/sync/domains/connectedServices/buildQuotaResetRows';
+import { resolveConnectedServiceQuotaMeterDetailLabel } from '@/sync/domains/connectedServices/connectedServiceQuotaGauge';
 import { resolveSubscriptionEndTime } from '@/sync/domains/connectedServices/resolveSubscriptionEndTime';
 import {
     isConnectedServiceItemCollapsed,
@@ -32,7 +34,7 @@ import type { ConnectedServiceCredentialHealthStatusV1, ConnectedServiceId } fro
 import type { ProviderAccountSubscriptionV1 } from '@happier-dev/protocol';
 import { t } from '@/text';
 
-import { type AccountUsageRow, type CapacityRingDatum } from './accountBlockModel';
+import { GAUGE_LABEL_FORMATTER, type AccountUsageRow, type CapacityRingDatum } from './accountBlockModel';
 import { ConnectedServiceCapacityAvatar, CONNECTED_SERVICE_GAUGE_BOX, CONNECTED_SERVICE_GAUGE_SIZE } from '../ConnectedServiceCapacityAvatar';
 import { Icon } from '@/components/ui/icons/Icon';
 
@@ -276,6 +278,37 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingHorizontal: 16,
     },
 }));
+
+const ACCOUNT_USAGE_COUNTDOWN_TICK_MS = 1_000;
+
+/**
+ * One USAGE meter's detail caption. It owns the shared one-second clock, so the open account view
+ * counts its reset down live without re-rendering the whole block.
+ */
+const AccountUsageMeterDetail = React.memo(function AccountUsageMeterDetail(props: Readonly<{
+    testID: string;
+    row: AccountUsageRow;
+    captionStyle: React.ComponentProps<typeof Text>['style'];
+}>) {
+    const nowMs = useNowMs(ACCOUNT_USAGE_COUNTDOWN_TICK_MS);
+    const detailLabel = resolveConnectedServiceQuotaMeterDetailLabel({
+        remainingPct: props.row.remainingPct,
+        resetAtMs: props.row.resetAtMs,
+        nowMs,
+        formatter: GAUGE_LABEL_FORMATTER,
+    });
+    if (props.row.remaining === null) return <Text style={props.captionStyle}>{detailLabel}</Text>;
+    return (
+        <MeterBar
+            testID={props.testID}
+            tone={props.row.tone}
+            // Remaining-first fill: matches the row's "% left" label and the
+            // capacity rings (battery model — see accountBlockModel).
+            fillFraction={props.row.remaining}
+            caption={detailLabel}
+        />
+    );
+});
 
 function formatResetExpiryDate(expiresAtMs: number): string {
     try {
@@ -705,16 +738,11 @@ export const AccountBlockView = React.memo<AccountBlockViewProps>((props) => {
                                             />
                                     </Pressable>
                                 </View>
-                                {row.remaining !== null ? (
-                                    <MeterBar
-                                        testID={`${testID}:meter:${row.meterId}`}
-                                        tone={row.tone}
-                                        // Remaining-first fill: matches the row's "% left" label and the
-                                        // capacity rings (battery model — see accountBlockModel).
-                                        fillFraction={row.remaining}
-                                        caption={row.detailLabel}
-                                    />
-                                ) : <Text style={styles.subscriptionMeta}>{row.detailLabel}</Text>}
+                                <AccountUsageMeterDetail
+                                    testID={`${testID}:meter:${row.meterId}`}
+                                    row={row}
+                                    captionStyle={styles.subscriptionMeta}
+                                />
                             </View>
                         </ItemGroupColumn>
                     ))}

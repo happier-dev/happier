@@ -10,7 +10,9 @@ import {
   type ConnectedServiceProfileActionRoute,
 } from '@/sync/domains/connectedServices/resolveConnectedServiceProfileActionRoute';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-import { useProfile } from '@/sync/store/hooks';
+import { useLatestProviderUsageRecordIdsByAgent, useProfile } from '@/sync/store/hooks';
+import { isAgentId, type AgentId } from '@/agents/catalog/catalog';
+import { useProviderUsageGauges } from '@/components/sessions/usage/useProviderUsageGauges';
 import type { ConnectedServiceId } from '@happier-dev/agents';
 import type { ConnectedServiceBindingsV1 } from '@happier-dev/protocol';
 
@@ -30,11 +32,19 @@ import {
 } from '@/components/sessions/new/modules/connectedServicesNewSessionBindings';
 import type { ConnectedServicesAuthWarningCode } from '@/components/settings/connectedServices/model/resolveConnectedServicesAuthLabel';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
+import { resolveConnectedServiceQuotaProfileRefFromBindings } from '@/components/sessions/shell/resolveConnectedServiceQuotaProfileRefForSession';
+import { useProviderUsageGauge } from '@/hooks/server/connectedServices/useProviderUsageGauge';
+import type { ConnectedServiceQuotaGaugeViewModel } from '@/sync/domains/connectedServices/connectedServiceQuotaGauge';
 
 export type NewSessionConnectedServicesResult = Readonly<{
   connectedServicesBindingsPayload: ConnectedServiceBindingsV1 | null;
   connectedServicesAuthChip: AgentInputExtraActionChip | null;
+  /** Quota gauge for the connected account the new session will spawn with, when one is selected. */
+  providerUsageGauge: ConnectedServiceQuotaGaugeViewModel | null;
+  providerUsageGaugesByAgentId: ReadonlyMap<AgentId, ConnectedServiceQuotaGaugeViewModel>;
 }>;
+
+const NO_USAGE_AGENTS: readonly AgentId[] = [];
 
 function resolveDefaultAuthWarningLabel(warningCode: ConnectedServicesAuthWarningCode | undefined): string | undefined {
   const key = resolveConnectedServicesAuthWarningTranslationKey(warningCode);
@@ -53,6 +63,8 @@ function buildConnectedServiceProfileSettingsPath(route: ConnectedServiceProfile
 export function useNewSessionConnectedServices(params: Readonly<{
   agentCore: NewSessionConnectedServicesAgentCore;
   agentOptionState: Record<string, unknown> | null;
+  modelId?: string | null;
+  usageAgentIds?: readonly AgentId[];
   settings: {
     connectedServicesProfileLabelByKey: Record<string, string | undefined>;
     connectedServicesDefaultProfileByServiceId: Record<string, string | undefined>;
@@ -266,5 +278,28 @@ export function useNewSessionConnectedServices(params: Readonly<{
       supportedConnectedServiceIds,
     ]);
 
-  return { connectedServicesBindingsPayload, connectedServicesAuthChip };
+  const providerUsageProfileRef = React.useMemo(() => resolveConnectedServiceQuotaProfileRefFromBindings({
+    supportedServiceIds: supportedConnectedServiceIds,
+    agentOptionState: null,
+    connectedServicesPayload: connectedServicesBindingsPayload,
+    accountProfileConnectedServicesV2: accountProfile?.connectedServicesV2 ?? [],
+  }), [accountProfile?.connectedServicesV2, connectedServicesBindingsPayload, supportedConnectedServiceIds]);
+  const latestRecordIdsByAgent = useLatestProviderUsageRecordIdsByAgent();
+  const nativeUsageRecordIds = React.useMemo(() => (
+    isAgentId(agentId) ? latestRecordIdsByAgent.get(agentId) ?? [] : []
+  ), [agentId, latestRecordIdsByAgent]);
+  const { gauge: providerUsageGauge, windowMode } = useProviderUsageGauge({
+    providerId: agentId || null,
+    profileRef: providerUsageProfileRef,
+    metadataRecordIds: nativeUsageRecordIds,
+    modelId: params.modelId ?? null,
+  });
+  const { gauges: providerUsageGaugesByAgentId } = useProviderUsageGauges({
+    agentIds: params.usageAgentIds ?? NO_USAGE_AGENTS,
+    accountProfileConnectedServicesV2: accountProfile?.connectedServicesV2 ?? [],
+    windowMode,
+    fetchEnabled: true,
+  });
+
+  return { connectedServicesBindingsPayload, connectedServicesAuthChip, providerUsageGauge, providerUsageGaugesByAgentId };
 }

@@ -55,7 +55,9 @@ export function PopoverPortalTargetProvider(props: { children: React.ReactNode }
                 // then mount the portal host just outside the *outermost* clipping ancestor while
                 // staying within the dialog subtree. (Many modal cards have multiple nested
                 // overflow:auto/hidden wrappers.)
-                let node: HTMLElement | null = anchor;
+                // The zero-sized marker itself has overflow:hidden to stay invisible. Only its
+                // ancestors can clip the popup; treating the marker as one traps the host in a pane.
+                let node: HTMLElement | null = anchor.parentElement;
                 const stopAt = dialogContent ?? document.body;
                 let outermostClip: HTMLElement | null = null;
                 while (node && node !== stopAt && node !== document.body) {

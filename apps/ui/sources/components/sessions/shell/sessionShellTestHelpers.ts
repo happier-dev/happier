@@ -165,6 +165,7 @@ export function createSessionItemTestRowModel(
         identityDisplay: 'avatar',
         activeColorMode: 'activityAndAttention',
         workingIndicatorMode: 'spinner',
+        updatedSessionAnimation: 'none',
         workingIndicatorPaused: false,
         hideInactiveSessions: input.hideInactiveSessions ?? false,
     };

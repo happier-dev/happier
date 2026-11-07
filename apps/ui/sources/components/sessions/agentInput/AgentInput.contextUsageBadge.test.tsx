@@ -1,5 +1,5 @@
 import React from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { createReducer } from '@/sync/reducer/reducer';
 import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
@@ -70,6 +70,7 @@ installAgentInputCommonModuleMocks({
                 if (key === 'agentInput.context.usedDetail') {
                     return `${params?.percent} • ${params?.used}/${params?.total} context used`;
                 }
+                if (key === 'connectedServices.account.usedDetail') return `${params?.used}/${params?.limit} used`;
                 if (key === 'agentInput.context.windowTitle') return 'Context Window';
                 if (key === 'agentInput.context.description') return 'Automatically compacts its context when needed.';
                 if (key === 'agentInput.providerUsage.titleForProvider') return `${params?.provider} usage`;
@@ -77,6 +78,11 @@ installAgentInputCommonModuleMocks({
                 if (key === 'connectedServices.quota.recoveryCreditTitle') return `${params?.count} reset available`;
                 if (key === 'connectedServices.quota.recoveryCreditSubtitle') return 'Use a reset to restore usage immediately.';
                 if (key === 'session.usageLimitRecovery.consumeResetCreditAction') return 'Use reset';
+                if (key === 'agentInput.providerUsage.remainingWithReset') return `${params?.percent} left · resets in ${params?.reset}`;
+                if (key === 'agentInput.providerUsage.duration.hoursMinutes') return `${params?.hours}h ${params?.minutes}m`;
+                if (key === 'agentInput.providerUsage.duration.minutes') return `${params?.minutes}m`;
+                if (key === 'agentInput.providerUsage.duration.hoursMinutesSeconds') return `${params?.hours}h ${params?.minutes}m ${params?.seconds}s`;
+                if (key === 'agentInput.providerUsage.duration.minutesSeconds') return `${params?.minutes}m ${params?.seconds}s`;
                 return key;
             },
         });
@@ -290,6 +296,10 @@ vi.mock('@/sync/domains/sessionControl/configOptionsControl', () => ({
     computeSessionConfigOptionControls: () => null,
 }));
 
+afterEach(() => {
+    vi.useRealTimers();
+});
+
 describe('AgentInput (context usage badge)', () => {
     it('renders host-provided trailing status actions even without another status item', async () => {
         const { AgentInput } = await import('./AgentInput');
@@ -368,7 +378,7 @@ describe('AgentInput (context usage badge)', () => {
         const badge = screen.findByTestId('agent-input-context-usage-badge');
         expect(badge).toBeTruthy();
         expect(screen.findByTestId('agent-input-context-usage-ring')).toBeTruthy();
-        expect(screen.findByTestId('agent-input-context-usage-value')?.props.children).toBe('19');
+        expect(screen.findByTestId('agent-input-context-usage-value')?.props.children).toBe('81');
         expect(String(badge?.props.accessibilityLabel ?? '')).toContain('38.7k/200k');
         expect(Boolean(screen.findByTestId('agent-input-context-usage-label'))).toBe(showLabels);
 
@@ -404,7 +414,7 @@ describe('AgentInput (context usage badge)', () => {
 
         const badge = screen.findByTestId('agent-input-context-usage-badge');
         expect(badge).toBeTruthy();
-        expect(screen.findByTestId('agent-input-context-usage-value')?.props.children).toBe('90');
+        expect(screen.findByTestId('agent-input-context-usage-value')?.props.children).toBe('10');
         expect(String(badge?.props.accessibilityLabel ?? '')).toContain('180k/200k');
 
         act(() => screen.tree.unmount());
@@ -429,7 +439,7 @@ describe('AgentInput (context usage badge)', () => {
         );
 
         expect(screen.findByTestId('agent-input-context-usage-badge')).toBeTruthy();
-        expect(screen.findByTestId('agent-input-context-usage-value')?.props.children).toBe('0');
+        expect(screen.findByTestId('agent-input-context-usage-value')?.props.children).toBe('100');
 
         act(() => screen.tree.unmount());
     });
@@ -489,6 +499,9 @@ describe('AgentInput (context usage badge)', () => {
 
     it('renders the provider quota gauge beside the context gauge when reliable usage exists', async () => {
         captured.last = null;
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-05-12T00:00:00.000Z'));
+        const resetAtMs = Date.now() + 2 * 60 * 60 * 1000;
         const { AgentInput } = await import('./AgentInput');
 
         const providerUsageGauge: ConnectedServiceQuotaGaugeViewModel = {
@@ -534,6 +547,7 @@ describe('AgentInput (context usage badge)', () => {
                     detailRightLabel: '18% left · resets in 2h',
                     usedLimitSemantics: 'used',
                     usedLimitLabel: '82/100 used',
+                    resetAtMs,
                     resetLabel: '2h',
                     tone: 'warning',
                 },
@@ -582,7 +596,7 @@ describe('AgentInput (context usage badge)', () => {
         expect(providerUsageOverlays[0]?.props.scrollEnabled).toBe(true);
         expect(screen.getTextContent()).toContain('Claude usage');
         expect(screen.getTextContent()).toContain('Work account');
-        expect(screen.getTextContent()).toContain('18% left · resets in 2h');
+        expect(screen.getTextContent()).toContain('18% left · resets in 2h 0m');
         expect(screen.getTextContent()).toContain('82/100 used');
         expect(screen.getTextContent()).toContain('1 reset available');
         expect(screen.getTextContent()).toContain('Use a reset to restore usage immediately.');
@@ -638,6 +652,7 @@ describe('AgentInput (context usage badge)', () => {
                     detailRightLabel: '18% left · resets in 2h',
                     usedLimitSemantics: 'used',
                     usedLimitLabel: '82/100 used',
+                    resetAtMs: null,
                     resetLabel: '2h',
                     tone: 'warning',
                 },
@@ -676,7 +691,7 @@ describe('AgentInput (context usage badge)', () => {
         });
 
         expect(screen.findByTestId('agent-input-hidden-usage-overflow-popover')).toBeTruthy();
-        expect(screen.getTextContent()).toContain('38.7k/200k context used');
+        expect(screen.getTextContent()).toContain('38.7k/200k used');
 
         act(() => screen.tree.unmount());
     });
@@ -764,6 +779,41 @@ describe('AgentInput (context usage badge)', () => {
             popover?.props.onRequestClose();
         });
         expect(screen.findByTestId('session-work-state-popover')).toBeNull();
+
+        act(() => screen.tree.unmount());
+    });
+
+    it('measures the context ring against the armed Agent\'s window instead of the running model\'s', async () => {
+        captured.last = null;
+        const { AgentInput } = await import('./AgentInput');
+        const usageData = {
+            inputTokens: 2_000,
+            outputTokens: 1_200,
+            cacheCreation: 8_000,
+            cacheRead: 170_000,
+            contextSize: 180_000,
+            contextSizeIsReported: false,
+            contextWindowTokens: 1_000_000,
+        };
+        const baseProps = {
+            value: '',
+            placeholder: 'Type',
+            onChangeText: () => {},
+            onSend: () => {},
+            autocompleteKinds: [],
+            autocompleteSuggestions: async () => [],
+            agentType: 'claude' as any,
+            onAgentClick: () => {},
+            usageData,
+            alwaysShowContextSize: true,
+        };
+
+        const screen = await renderScreen(<AgentInput {...baseProps} />);
+        expect(screen.findByTestId('agent-input-context-usage-value')?.props.children).toBe('82');
+
+        await screen.update(<AgentInput {...baseProps} armedContinuationTarget={{ agentId: 'claude', label: 'Claude' }} />);
+        // The armed Agent's default window (200k) replaces the running model's live 1M window.
+        expect(screen.findByTestId('agent-input-context-usage-value')?.props.children).toBe('10');
 
         act(() => screen.tree.unmount());
     });

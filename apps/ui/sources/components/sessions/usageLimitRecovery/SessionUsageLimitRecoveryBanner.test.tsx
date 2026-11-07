@@ -22,6 +22,30 @@ import { SessionUsageLimitRecoveryBanner } from './SessionUsageLimitRecoveryBann
 describe('overload recovery countdown', () => {
     let restoreAppState: (() => void) | null = null;
     afterEach(() => { restoreAppState?.(); vi.useRealTimers(); });
+    it('shows the live limit countdown immediately after the reset time', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_700_000_000_000);
+        const appState = createReactNativeAppStateEmitter();
+        restoreAppState = appState.install(AppState);
+        const deadline = Date.now() + 12_000;
+        const screen = await renderScreen(<SessionUsageLimitRecoveryBanner
+            testID="recovery" title="Usage limit reached"
+            body="Wait until 17:17:06 before continuing. 1 reset available."
+            resetCountdown={{ deadlineMs: deadline, timeLabel: '17:17:06' }} surfaceFocused
+        />);
+        expect(screen.getTextContent()).toContain('17:17:06 (0h 0m 12s) before continuing. 1 reset available.');
+        await act(async () => { vi.advanceTimersByTime(1_000); });
+        expect(screen.getTextContent()).toContain('17:17:06 (0h 0m 11s) before continuing.');
+        await act(async () => { vi.advanceTimersByTime(11_000); });
+        expect(screen.getTextContent()).not.toContain('(0h 0m');
+        await act(async () => { screen.tree.update(<SessionUsageLimitRecoveryBanner
+            testID="recovery" body="Wait until tomorrow before continuing."
+            resetCountdown={{ deadlineMs: Date.now() + 25 * 3_600_000, timeLabel: 'tomorrow' }} surfaceFocused
+        />); });
+        expect(screen.getTextContent()).toContain('tomorrow (25h 0m 0s)');
+        await act(async () => { vi.advanceTimersByTime(1_000); });
+        expect(screen.getTextContent()).toContain('tomorrow (24h 59m 59s)');
+    });
     it('updates only the banner leaf and removes its timer when no scheduled retry remains', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(1_700_000_000_000);

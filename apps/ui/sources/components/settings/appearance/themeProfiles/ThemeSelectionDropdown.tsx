@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -8,6 +9,7 @@ import type { ThemeProfileMode, ThemeProfilesLocalStateV1 } from '@/theme/profil
 import { getActiveThemeProfileIdForMode } from '@/theme/profiles/themeProfilePersistence';
 import { buildThemePresetSourceOptions, type ThemePresetSourceOption } from './themeProfilePresetOptions';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
+import { IconAction } from '@/components/ui/buttons/IconAction';
 
 type ThemeSelectionBaseProps = Readonly<{
     open: boolean;
@@ -117,53 +119,81 @@ export const ThemeSelectionDropdown = React.memo(function ThemeSelectionDropdown
         ),
     })), [options, theme.colors.accent.indigo, theme.colors.status.connecting]);
 
+    const selectTheme = (itemId: string) => {
+        if (props.variant === 'current') {
+            const option = options.find((entry) => entry.id === itemId);
+            if (option) props.onSelectTheme(option);
+            return;
+        }
+        props.onSelectProfile(itemId === props.mode ? null : itemId);
+    };
+    const selectedIndex = options.findIndex((option) => option.id === selectedId);
+    const previous = options[selectedIndex - 1];
+    const next = selectedIndex >= 0 ? options[selectedIndex + 1] : undefined;
+    const testID = props.variant === 'current'
+        ? 'settings-theme-selector'
+        : `settings-theme-${props.mode}-selector`;
+
     return (
-        <DropdownMenu
-            open={props.open}
-            onOpenChange={props.onOpenChange}
-            variant="selectable"
-            search={false}
-            selectedId={selectedId}
-            showCategoryTitles={false}
-            matchTriggerWidth={true}
-            connectToTrigger={true}
-            rowKind="item"
-            itemTrigger={{
-                title: props.variant === 'current'
-                    ? t('settingsAppearance.theme')
-                    : props.mode === 'dark'
-                    ? t('settingsAppearance.themeOptions.dark')
-                    : t('settingsAppearance.themeOptions.light'),
-                subtitle: props.variant === 'current'
-                    ? t('settingsAppearance.themeDescription')
-                    : props.mode === 'dark'
-                    ? t('settingsAppearance.themeDescriptions.dark')
-                    : t('settingsAppearance.themeDescriptions.light'),
-                icon: (
-                    <Icon
-                        name={props.variant === 'current'
-                            ? 'circle-half'
-                            : props.mode === 'dark' ? 'moon' : 'sun'}
-                        size={29}
-                        color={theme.colors.status.connecting}
-                    />
-                ),
-                showSelectedSubtitle: false,
-                itemProps: {
-                    testID: props.variant === 'current'
-                        ? 'settings-theme-selector-trigger'
-                        : `settings-theme-${props.mode}-selector-trigger`,
-                },
-            }}
-            items={items}
-            onSelect={(itemId) => {
-                if (props.variant === 'current') {
-                    const option = options.find((entry) => entry.id === itemId);
-                    if (option) props.onSelectTheme(option);
-                    return;
-                }
-                props.onSelectProfile(itemId === props.mode ? null : itemId);
-            }}
-        />
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <View style={{ flex: 1, minWidth: 0 }}>
+                <DropdownMenu
+                    open={props.open}
+                    onOpenChange={props.onOpenChange}
+                    variant="selectable"
+                    search={false}
+                    selectedId={selectedId}
+                    showCategoryTitles={false}
+                    matchTriggerWidth={true}
+                    connectToTrigger={true}
+                    rowKind="item"
+                    itemTrigger={{
+                        title: props.variant === 'current'
+                            ? t('settingsAppearance.theme')
+                            : props.mode === 'dark'
+                            ? t('settingsAppearance.themeOptions.dark')
+                            : t('settingsAppearance.themeOptions.light'),
+                        subtitle: props.variant === 'current'
+                            ? t('settingsAppearance.themeDescription')
+                            : props.mode === 'dark'
+                            ? t('settingsAppearance.themeDescriptions.dark')
+                            : t('settingsAppearance.themeDescriptions.light'),
+                        icon: (
+                            <Icon
+                                name={props.variant === 'current'
+                                    ? 'circle-half'
+                                    : props.mode === 'dark' ? 'moon' : 'sun'}
+                                size={29}
+                                color={theme.colors.status.connecting}
+                            />
+                        ),
+                        showSelectedSubtitle: false,
+                        itemProps: { testID: `${testID}-trigger` },
+                    }}
+                    items={items}
+                    onSelect={selectTheme}
+                />
+            </View>
+            <View style={{ flexDirection: 'row', paddingEnd: 8, gap: 4 }}>
+                <IconAction
+                    testID={`${testID}-previous`}
+                    accessibilityLabel={`${t('settingsAppearance.theme')}: ${t('common.previous')}`}
+                    disabled={!previous}
+                    style={{ minWidth: 44, minHeight: 44 }}
+                    onPress={() => { if (previous) selectTheme(previous.id); }}
+                >
+                    <Icon name="caret-up" size={20} color={theme.colors.text.secondary} />
+                </IconAction>
+                <IconAction
+                    testID={`${testID}-next`}
+                    accessibilityLabel={`${t('settingsAppearance.theme')}: ${t('common.next')}`}
+                    disabled={!next}
+                    style={{ minWidth: 44, minHeight: 44 }}
+                    onPress={() => { if (next) selectTheme(next.id); }}
+                >
+                    <Icon name="caret-down" size={20} color={theme.colors.text.secondary} />
+                </IconAction>
+            </View>
+        </View>
     );
 });

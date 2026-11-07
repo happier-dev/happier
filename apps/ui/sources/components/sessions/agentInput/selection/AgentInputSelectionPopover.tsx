@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import { Platform } from 'react-native';
-import { MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS, Popover } from '@/components/ui/popover';
+import { MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS, Popover, type PopoverOutsidePointerEventsMode } from '@/components/ui/popover';
 import { useAgentInputPopoverLayout } from './useAgentInputPopoverLayout';
 
 export type AgentInputSelectionPopoverProps = Readonly<{
@@ -11,6 +11,8 @@ export type AgentInputSelectionPopoverProps = Readonly<{
     onRequestClose: () => void;
     maxHeightCap?: number;
     maxWidthCap?: number;
+    placement?: 'top' | 'bottom';
+    outsidePointerEventsMode?: PopoverOutsidePointerEventsMode;
     children: (args: Readonly<{ maxHeight: number }>) => React.ReactNode;
 }>;
 
@@ -18,6 +20,7 @@ export function AgentInputSelectionPopover(props: AgentInputSelectionPopoverProp
     const popoverLayout = useAgentInputPopoverLayout({
         open: props.open,
         maxHeightCap: props.maxHeightCap,
+        placement: props.placement,
     });
     // On web, agent-input popovers should be constrained to the viewport (not to an in-modal boundary
     // provider), so they can extend outside sheet-like modal cards.
@@ -54,7 +57,7 @@ export function AgentInputSelectionPopover(props: AgentInputSelectionPopoverProp
             // closure until after the click event completes.
             backdrop={{
                 style: { backgroundColor: 'transparent' },
-                blockOutsidePointerEvents: Platform.OS === 'web' ? false : 'above-anchor',
+                blockOutsidePointerEvents: Platform.OS === 'web' ? false : (props.outsidePointerEventsMode === 'full' ? true : 'above-anchor'),
             }}
             containerStyle={{ paddingHorizontal: 0 }}
             keyboardBottomInset={popoverLayout.keyboardBottomInset}

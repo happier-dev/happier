@@ -191,6 +191,7 @@ describe('mapCodexRateLimitSnapshotToQuotaSnapshot', () => {
         },
         secondary: {
           used_percent: 40,
+          window_minutes: 10080,
           resetsInSeconds: 86_400,
         },
       },
@@ -199,6 +200,7 @@ describe('mapCodexRateLimitSnapshotToQuotaSnapshot', () => {
     expect(snapshot.meters).toMatchObject([
       {
         meterId: 'primary',
+        label: '5 hour',
         utilizationPct: 100,
         windowDurationMs: 300 * 60_000,
         resetAtMs: fetchedAt + 1_800_000,
@@ -206,6 +208,7 @@ describe('mapCodexRateLimitSnapshotToQuotaSnapshot', () => {
       },
       {
         meterId: 'secondary',
+        label: 'Weekly',
         utilizationPct: 40,
         resetAtMs: fetchedAt + 86_400_000,
         resetsAt: fetchedAt + 86_400_000,

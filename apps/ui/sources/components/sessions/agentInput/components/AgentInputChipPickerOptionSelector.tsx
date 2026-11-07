@@ -173,6 +173,8 @@ function AgentInputChipPickerOptionButton(
       (props.option.disabled || props.option.muted) ? props.transientStyles.optionRowDisabled : null,
     ];
   };
+  // A disabled row can still take focus when it opts in; applying it stays blocked by `disabled`.
+  const focusBlocked = props.option.disabled === true && props.option.focusableWhileDisabled !== true;
   const activateFromWebEvent = (event?: unknown) => {
     const maybeEvent = event as {
       stopPropagation?: () => void;
@@ -180,7 +182,7 @@ function AgentInputChipPickerOptionButton(
     } | undefined;
     try { maybeEvent?.stopPropagation?.(); } catch {}
     try { maybeEvent?.nativeEvent?.stopPropagation?.(); } catch {}
-    if (props.option.disabled === true) return;
+    if (focusBlocked) return;
     props.onPress();
   };
 
@@ -188,6 +190,7 @@ function AgentInputChipPickerOptionButton(
     <>
       <View style={styles.optionLeft}>
         {props.option.icon ? normalizeAgentInputChipPickerOptionIcon(props.option.icon) : null}
+        {props.option.leadingMark ? normalizeNodeForView(props.option.leadingMark) : null}
         <View style={styles.optionTextBlock}>
           <Text style={[styles.optionLabel, props.focused ? styles.optionLabelFocused : null]}>{props.option.label}</Text>
           {shouldShowSubtitle ? (
@@ -259,7 +262,7 @@ function AgentInputChipPickerOptionButton(
         }}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
-        tabIndex={props.option.disabled === true ? -1 : 0}
+        tabIndex={focusBlocked ? -1 : 0}
         style={buildOptionRowStyle({ pressed: false })}
       >
         {content}
@@ -277,9 +280,9 @@ function AgentInputChipPickerOptionButton(
         disabled: props.option.disabled === true,
         selected: props.selected,
       }}
-      disabled={props.option.disabled === true}
+      disabled={focusBlocked}
       onPress={() => {
-        if (props.option.disabled === true) return;
+        if (focusBlocked) return;
         props.onPress();
       }}
       onHoverIn={() => setHovered(true)}

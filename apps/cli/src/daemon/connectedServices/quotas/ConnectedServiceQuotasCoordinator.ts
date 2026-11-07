@@ -2427,6 +2427,7 @@ export class ConnectedServiceQuotasCoordinator {
     persistDurably?: boolean;
     refreshError?: ProviderAccountUsageDiagnosticV1;
     onPersistenceAccepted?: () => void;
+    forceFreshness?: boolean;
   }>): Promise<ProviderAccountUsageSnapshotV1 | null> {
     return await recordFetchedQuotaSnapshotAsAccountUsage({
       accountUsageStore: this.accountUsageStore,
@@ -4602,6 +4603,7 @@ export class ConnectedServiceQuotasCoordinator {
             snapshot,
             now,
             accountMode: credential.storageMode,
+            forceFreshness: forcedRefresh,
             sourceProviderAccountId: readCredentialAccountIdentity(record)?.providerAccountId ?? null,
             groupContexts,
             groupTargets: directGroupTargets,
@@ -4685,6 +4687,68 @@ export class ConnectedServiceQuotasCoordinator {
         now,
         targets: pendingSoftSwitchTargets,
       });
+    }
+    await this.refreshRequestedNativeUsage(accountMode, now);
+  }
+
+  /** Native observations have no connected credential profile to enumerate in the loop above. */
+  private async refreshRequestedNativeUsage(accountMode: ResolvedQuotaStorageMode, now: number): Promise<void> {
+    if (!this.accountUsagePersistence) return;
+    const pending = await this.api.listProviderAccountUsageRefreshRequests?.().catch(() => null);
+    const recordIds = pending ?? this.accountUsageStore?.listSnapshots?.().map((snapshot) => snapshot.recordId) ?? [];
+    for (const recordId of recordIds) {
+      const key = `native\u0000${recordId}`;
+      if (now < (this.failureStateByBindingKey.get(key)?.nextAllowedAt ?? 0)) continue;
+      let fetcher: ConnectedServiceQuotaFetcher | undefined;
+      try {
+        const stored = accountMode === 'plain'
+          ? await this.api.getProviderAccountUsageSnapshotPlain?.({ recordId })
+          : await this.api.getProviderAccountUsageSnapshotSealed?.({ recordId });
+        const requestedAt = stored?.metadata.refreshRequestedAt ?? 0;
+        if (!stored || requestedAt <= stored.metadata.fetchedAt) continue;
+        // The connected-profile owner may already have queried this account and queued its write this tick.
+        if ((this.accountUsageStore?.resolveRecordId(recordId)?.fetchedAtMs ?? 0) >= requestedAt) continue;
+        let local: ProviderAccountUsageSnapshotV1 | null;
+        if ('content' in stored) local = stored.content.v;
+        else {
+          requireEncryptionCredentials(this.credentials);
+          local = openSealedProviderAccountUsageSnapshot({
+            material: this.credentials.encryption.type === 'legacy'
+              ? { type: 'legacy', secret: this.credentials.encryption.secret }
+              : { type: 'dataKey', machineKey: this.credentials.encryption.machineKey },
+            sealed: stored.sealed,
+          });
+        }
+        if (!local || local.recordId !== recordId) continue;
+        fetcher = [...this.quotaFetchersByServiceId.values()].find((candidate) => (
+          candidate.nativeUsageProviderId === local.providerId && candidate.readNativeCredentialForUsage
+        ));
+        if (!fetcher?.readNativeCredentialForUsage) continue;
+        const native = await fetcher.readNativeCredentialForUsage({
+          snapshot: local, now, signal: AbortSignal.timeout(this.fetchTimeoutMs),
+        });
+        if (!native) continue;
+        const result = await this.fetchQuotaSnapshot({
+          fetcher, serviceId: fetcher.serviceId, profileId: native.record.profileId, record: native.record,
+          credentialRevision: null, force: true,
+        });
+        if (result.type !== 'result' || !result.snapshot || isQuotaUnknownFallbackSnapshot(result.snapshot)) continue;
+        const identity = readCredentialAccountIdentity(native.record);
+        const snapshot = buildProviderAccountUsageSnapshotFromConnectedServiceQuotaObservation({ snapshot: {
+          ...result.snapshot, providerId: native.providerId,
+          ...(identity ? { activeAccountId: identity.providerAccountId } : {}), source: 'provider_api', confidence: 'exact',
+        } });
+        // A different proved account or organization must never overwrite the requested record.
+        if (snapshot.recordId !== local.recordId || snapshot.fetchedAtMs < requestedAt) continue;
+        this.accountUsageStore?.recordSnapshot(local);
+        this.accountUsageStore?.recordSnapshot(snapshot);
+        await this.accountUsagePersistence.recordInBandSnapshot(this.accountUsageStore?.resolveRecordId(recordId) ?? snapshot, { forceFreshness: true });
+        this.failureStateByBindingKey.delete(key);
+      } catch (error) {
+        this.applyFailureBackoff({ now, key, retryAfterMs: readQuotaRetryAfterMs(error),
+          retryAfterBackoffMinMs: fetcher?.pollPolicy?.retryAfterBackoffMinMs });
+        logger.infoFile('[ConnectedServices] Native usage refresh unavailable', { recordId });
+      }
     }
   }
 }

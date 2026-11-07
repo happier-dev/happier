@@ -141,6 +141,41 @@ describe('createAttachmentActionChip', () => {
         }
     });
 
+    it('on Android the chooser offers taking a photo with the camera once the popover has dismissed', async () => {
+        const { createAttachmentActionChip } = await import('./createAttachmentActionChip');
+        const originalOs = Platform.OS;
+        (Platform as any).OS = 'android';
+
+        try {
+            const onPickImage = vi.fn();
+            const onTakePhoto = vi.fn();
+            const chip = createAttachmentActionChip({
+                onPickFile: vi.fn(),
+                onPickImage,
+                onTakePhoto,
+            });
+
+            const renderContent = chip.collapsedContentPopover?.renderContent;
+            if (typeof renderContent !== 'function') {
+                throw new Error('Expected collapsedContentPopover.renderContent to be a function');
+            }
+            const requestClose = vi.fn();
+            const contentScreen = await renderScreen(
+                <React.Fragment>
+                    {renderContent({ requestClose, maxHeight: 420 }) as React.ReactNode}
+                </React.Fragment>,
+            );
+
+            await contentScreen.pressByTestIdAsync('attachments-action-take-photo');
+            expect(requestClose).toHaveBeenCalledTimes(1);
+            expect(onTakePhoto).not.toHaveBeenCalled();
+            await vi.waitFor(() => expect(onTakePhoto).toHaveBeenCalledTimes(1), { timeout: 5_000 });
+            expect(onPickImage).not.toHaveBeenCalled();
+        } finally {
+            (Platform as any).OS = originalOs;
+        }
+    });
+
     // NOTE: a "JS-thread starvation fallback" case used to live here. It mocked
     // `InteractionManager.runAfterInteractions` to never invoke its task, which RN 0.81's
     // `InteractionManagerStub` cannot do (it always resolves on a microtask), and it asserted a

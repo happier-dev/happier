@@ -1,3 +1,4 @@
+import { AppLockHeaderButton } from '@/components/appLock/AppLockHeaderButton';
 import * as React from 'react';
 import { View, Pressable } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -13,7 +14,6 @@ import { HiddenInactiveSessionsEmptyState } from '@/components/sessions/guidance
 import { SessionsListContent } from '@/components/sessions/shell/SessionsList';
 import { readSessionIdFromPathname } from '@/components/sessions/shell/readSessionIdFromPathname';
 import { useSessionListStorageKind } from '@/components/sessions/model/useSessionListStorageKind';
-import { SessionsListStorageChrome } from '@/components/sessions/shell/SessionsListStorageChrome';
 import {
     resolveSessionListSurfaceOwnership,
     resolveSidebarSessionListSurfaceInteractive,
@@ -23,6 +23,8 @@ import { FABWide } from '@/components/ui/buttons/FABWide';
 import { InboxView } from '@/components/navigation/shell/InboxView';
 import { FriendsView } from '@/components/navigation/shell/FriendsView';
 import { SessionsListWrapper } from '@/components/sessions/shell/SessionsListWrapper';
+import { DirectSessionsBrowseButton } from '@/components/sessions/directSessions/browse/DirectSessionsBrowseButton';
+import { ProviderUsageStrip } from '@/components/sessions/usage/ProviderUsageStrip';
 import { useScreenSafeAreaBackdrop } from '@/components/navigation/safeArea/HorizontalSafeArea';
 import { Header } from '@/components/navigation/Header';
 import { HeaderLogo } from '@/components/ui/navigation/HeaderLogo';
@@ -77,6 +79,8 @@ const styles = StyleSheet.create((theme) => ({
         flex: 1,
         flexBasis: 0,
         flexGrow: 1,
+        // Gap between the sidebar header and the search bar now that the Browse block is gone.
+        paddingTop: 8,
     },
     loadingContainerWrapper: {
         flex: 1,
@@ -129,9 +133,11 @@ const styles = StyleSheet.create((theme) => ({
         ...Typography.default(),
     },
     titleContainer: {
-        flex: 1,
+        flexShrink: 1,
+        minWidth: 0,
         alignItems: 'flex-start',
         marginLeft: -4,
+        marginRight: 8,
     },
     titleText: {
         fontSize: 16,
@@ -223,6 +229,12 @@ const HeaderRight = React.memo(({ activeTab }: { activeTab: ActiveTabType }) => 
         return (
             <View style={styles.headerButtonsRow}>
                 <ActionOperationActivityButton testID="main-header-action-operations" />
+                <AppLockHeaderButton testID="main-header-app-lock" style={styles.headerButton} />
+                <DirectSessionsBrowseButton
+                    testID="main-header-direct-sessions-browse"
+                    buttonSize={32}
+                    iconSize={20}
+                />
                 {showAutomations ? (
                     <Pressable
                         onPress={() => router.push('/automations')}
@@ -287,7 +299,7 @@ const SidebarMainViewContent = React.memo(function SidebarMainViewContent({
     pathname: string;
 }>) {
     const { theme } = useUnistyles();
-    const { directSessionsEnabled, storageKind, setStorageKind } = useSessionListStorageKind();
+    const { storageKind } = useSessionListStorageKind();
     const router = useRouter();
     const resolveNewSessionOrdinaryEntryRoute = useResolveNewSessionOrdinaryEntryRoute();
     const activeSessionId = React.useMemo(() => readSessionIdFromPathname(pathname), [pathname]);
@@ -316,19 +328,11 @@ const SidebarMainViewContent = React.memo(function SidebarMainViewContent({
         router.push({ pathname: '/new', params: { draftId, draftOrigin } });
     }, [resolveNewSessionOrdinaryEntryRoute, router]);
 
-    const storageChrome = (
-        <SessionsListStorageChrome
-            directSessionsEnabled={directSessionsEnabled}
-            storageKind={storageKind}
-            onSelectStorageKind={setStorageKind}
-        />
-    );
-
+    // The provider usage rings live beside the header logo on both sidebar and phone panes.
     let content: React.ReactNode;
     if (sessionListViewData === null) {
         content = (
             <View style={styles.sidebarContainer}>
-                {storageChrome}
                 <View style={styles.sidebarContentContainer}>
                     <View style={styles.tabletLoadingContainer}>
                         <ActivitySpinner size={HERO_SPINNER_SIZE} color={theme.colors.text.secondary} />
@@ -340,7 +344,6 @@ const SidebarMainViewContent = React.memo(function SidebarMainViewContent({
         const suppressSidebarGuidance = isTablet && pathname === '/';
         content = (
             <View style={styles.sidebarContainer}>
-                {storageChrome}
                 <View style={styles.sidebarContentContainer}>
                     <View style={styles.emptyStateContainer}>
                         {hasHiddenInactiveSessions ? (
@@ -360,7 +363,6 @@ const SidebarMainViewContent = React.memo(function SidebarMainViewContent({
     } else {
         content = (
             <View style={styles.sidebarContainer}>
-                {storageChrome}
                 <View style={styles.sidebarContentContainer}>
                     <SessionsListContent
                         storageKind={storageKind}
@@ -462,7 +464,12 @@ const PhoneTabbedMainViewContent = React.memo(function PhoneTabbedMainViewConten
         <View style={styles.phoneContainer}>
             <View style={{ backgroundColor: theme.colors.background.canvas }}>
                 <Header
-                    title={<HeaderTitle activeTab={headerTab} />}
+                    title={(
+                        <>
+                            <HeaderTitle activeTab={headerTab} />
+                            {headerTab === 'sessions' ? <ProviderUsageStrip /> : null}
+                        </>
+                    )}
                     headerRight={() => <HeaderRight activeTab={headerTab} />}
                     headerLeft={() => <HeaderLogo />}
                     headerContentStyle={styles.phoneHeaderContent}

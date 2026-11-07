@@ -20,11 +20,6 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('@/components/sessions/shell/SessionListStorageTabsBar', () => ({
-    SessionListStorageTabsBar: (props: Record<string, unknown>) =>
-        React.createElement('SessionListStorageTabsBar', props),
-}));
-
 vi.mock('@/components/ui/lists/Item', () => ({
     Item: (props: Record<string, unknown>) => React.createElement('Item', props),
 }));
@@ -43,14 +38,29 @@ function flattenStyle(style: unknown): Record<string, unknown> {
 }
 
 describe('SessionsListStorageChrome sidebar surface', () => {
+    it('offers browse without separating sessions into storage tabs', async () => {
+        const { SessionsListStorageChrome } = await import('./SessionsListStorageChrome');
+        const screen = await renderScreen(<SessionsListStorageChrome directSessionsEnabled />);
+
+        expect(screen.findByTestId('sessions-list-storage-tab:direct')).toBeNull();
+        expect(screen.findByTestId('sessions-list-storage-tab:persisted')).toBeNull();
+        await screen.pressByTestIdAsync('direct-sessions-browse-button');
+        expect(routerState.push).toHaveBeenCalledWith('/direct/browse');
+    });
+
+    it('hides browse when direct sessions are disabled', async () => {
+        const { SessionsListStorageChrome } = await import('./SessionsListStorageChrome');
+        const screen = await renderScreen(<SessionsListStorageChrome directSessionsEnabled={false} />);
+
+        expect(screen.findByTestId('direct-sessions-browse-button')).toBeNull();
+    });
+
     it('renders the direct browse action without main-content ItemGroup constraints', async () => {
         const { SessionsListStorageChrome } = await import('./SessionsListStorageChrome');
 
         const screen = await renderScreen(
             <SessionsListStorageChrome
                 directSessionsEnabled
-                storageKind="direct"
-                onSelectStorageKind={() => {}}
             />,
         );
 

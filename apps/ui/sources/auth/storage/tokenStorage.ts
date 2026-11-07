@@ -13,6 +13,8 @@ import {
     removeNativeSecureStoreString,
     writeNativeSecureStoreString,
 } from './nativeSecureStoreWithDevFallback';
+import { isSealedAppLockCredential, openAppLockCredential, sealAppLockCredential } from '@/auth/appLock/appLockCrypto';
+import { readAppLockCredentialSealing } from '@/auth/appLock/appLockRuntime';
 
 const AUTH_KEY = 'auth_credentials';
 const PENDING_EXTERNAL_AUTH_KEY = 'pending_external_auth';
@@ -559,10 +561,33 @@ function parseRecoveryKeyReminderDismissedRaw(raw: string | null): boolean {
     return value === '1' || value === 'true' || value === 'yes' || value === 'on';
 }
 
+/**
+ * App-lock boundary for stored credentials. While the device lock is on, credentials are stored
+ * sealed with the lock's data key; without the key in memory (before the first unlock) they read
+ * as absent and cannot be written. Plain values written before the lock was turned on stay readable.
+ */
+async function openStoredCredential(stored: string | null): Promise<string | null> {
+    if (!stored || !isSealedAppLockCredential(stored)) return stored;
+    const sealing = readAppLockCredentialSealing();
+    const dataKey = sealing.enabled ? sealing.dataKey : null;
+    if (!dataKey) return null;
+    return await openAppLockCredential(dataKey, stored);
+}
+
+async function sealCredentialForStorage(raw: string): Promise<string | null> {
+    const sealing = readAppLockCredentialSealing();
+    if (!sealing.enabled) return raw;
+    if (!sealing.dataKey) {
+        console.error('Refusing to store credentials while the app lock is locked');
+        return null;
+    }
+    return await sealAppLockCredential(sealing.dataKey, raw);
+}
+
 async function readCredentialRawByKey(key: string): Promise<string | null> {
     if (Platform.OS === 'web') {
         try {
-            return localStorage.getItem(key);
+            return await openStoredCredential(localStorage.getItem(key));
         } catch (error) {
             console.error('Error getting credentials:', error);
             return null;
@@ -570,12 +595,12 @@ async function readCredentialRawByKey(key: string): Promise<string | null> {
     }
 
     const cached = credentialsCacheByKey.get(key);
-    if (cached) return cached;
+    if (cached) return await openStoredCredential(cached);
 
     try {
         const stored = await readNativeSecureStoreString(key);
         if (stored) credentialsCacheByKey.set(key, stored);
-        return stored;
+        return await openStoredCredential(stored);
     } catch (error) {
         console.error('Error getting credentials:', error);
         return null;
@@ -583,9 +608,11 @@ async function readCredentialRawByKey(key: string): Promise<string | null> {
 }
 
 async function writeCredentialRawByKey(key: string, raw: string): Promise<boolean> {
+    const stored = await sealCredentialForStorage(raw);
+    if (stored === null) return false;
     if (Platform.OS === 'web') {
         try {
-            localStorage.setItem(key, raw);
+            localStorage.setItem(key, stored);
             return true;
         } catch (error) {
             console.error('Error setting credentials:', error);
@@ -594,8 +621,8 @@ async function writeCredentialRawByKey(key: string, raw: string): Promise<boolea
     }
 
     try {
-        await writeNativeSecureStoreString(key, raw);
-        credentialsCacheByKey.set(key, raw);
+        await writeNativeSecureStoreString(key, stored);
+        credentialsCacheByKey.set(key, stored);
         return true;
     } catch (error) {
         console.error('Error setting credentials:', error);
@@ -699,6 +726,21 @@ function listWebScopedCredentialKeysForCleanup(): string[] {
         return [];
     }
     return keys;
+}
+
+/** Every storage key that may hold credentials on this device (all known servers and legacy scopes). */
+async function listAllCredentialStorageKeys(): Promise<string[]> {
+    const keys = new Set<string>();
+    for (const target of listKnownServerCleanupTargets()) {
+        const scoped = await getAuthKeys(
+            target.serverUrl,
+            target.serverId ? { serverId: target.serverId } : {},
+        );
+        keys.add(scoped.primary);
+        for (const legacyKey of scoped.legacy) keys.add(legacyKey);
+    }
+    for (const key of listWebScopedCredentialKeysForCleanup()) keys.add(key);
+    return [...keys];
 }
 
 export const TokenStorage = {
@@ -851,29 +893,30 @@ export const TokenStorage = {
         // Reset any suppression so subsequent auth flows can run normally.
         await TokenStorage.setAuthAutoRedirectSuppressedUntil(0);
         let allRemoved = true;
-        const knownServerTargets = listKnownServerCleanupTargets();
-        for (const target of knownServerTargets) {
-            const keys = await getAuthKeys(
-                target.serverUrl,
-                target.serverId ? { serverId: target.serverId } : {},
-            );
-            const primaryRemoved = await removeCredentialByKey(keys.primary);
-            allRemoved = allRemoved && primaryRemoved;
-            for (const legacyKey of keys.legacy) {
-                const legacyRemoved = await removeCredentialByKey(legacyKey);
-                allRemoved = allRemoved && legacyRemoved;
-            }
+        for (const key of await listAllCredentialStorageKeys()) {
+            const removed = await removeCredentialByKey(key);
+            allRemoved = allRemoved && removed;
         }
-
-        if (Platform.OS === 'web') {
-            const webScopedKeys = listWebScopedCredentialKeysForCleanup();
-            for (const key of webScopedKeys) {
-                const removed = await removeCredentialByKey(key);
-                allRemoved = allRemoved && removed;
-            }
-        }
-
         return allRemoved;
+    },
+
+    /**
+     * Re-stores every readable credential across an app-lock transition: values are read in the
+     * current sealing mode, `applyTransition` switches the mode (lock on or off), and the values are
+     * written back in the new mode.
+     */
+    async transitionCredentialStorage(applyTransition: () => Promise<void>): Promise<void> {
+        const plainByKey = new Map<string, string>();
+        for (const key of await listAllCredentialStorageKeys()) {
+            const plain = await readCredentialRawByKey(key);
+            if (plain) plainByKey.set(key, plain);
+        }
+        await applyTransition();
+        for (const [key, plain] of plainByKey) {
+            if (!(await writeCredentialRawByKey(key, plain))) {
+                throw new Error('Failed to re-store credentials for the app lock change');
+            }
+        }
     },
 
     async removeCredentialsForServerUrl(

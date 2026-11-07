@@ -23,6 +23,7 @@ import {
 import { isGenericSubAgentToolName } from '@happier-dev/protocol/tools/v2';
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
 import { Icon } from '@/components/ui/icons/Icon';
+import { PromptCardLayout } from '@/components/tools/shell/presentation/PromptCardLayout';
 
 const PROMPT_CARD_HORIZONTAL_PADDING = 12;
 const PROMPT_CARD_ICON_SIZE = 18;
@@ -38,6 +39,7 @@ export const PermissionPromptCard = React.memo(function PermissionPromptCard(pro
     canApprovePermissions: boolean;
     disabledReason?: 'public' | 'readOnly' | 'notGranted' | 'inactive';
     chrome?: 'card' | 'inline';
+    maxHeightPx?: number;
 }) {
     const { theme } = useUnistyles();
     const router = useRouter();
@@ -126,6 +128,31 @@ export const PermissionPromptCard = React.memo(function PermissionPromptCard(pro
 
     return (
         <View testID="permission-prompt-card" style={[styles.container, chrome === 'inline' ? styles.containerInline : null]}>
+            <PromptCardLayout
+                maxHeightPx={props.maxHeightPx}
+                bodyTestID="permission-prompt-scroll-body"
+                footer={showRuntimeModeContext ? null : (
+                    <View style={styles.actions}>
+                        <PermissionFooter
+                            embedded={true}
+                            alignFirstButtonToStart={true}
+                            permission={{
+                                id: props.request.id,
+                                status: 'pending',
+                                ...(typeof props.request.permissionSuggestions !== 'undefined'
+                                    ? { suggestions: props.request.permissionSuggestions }
+                                    : {}),
+                            }}
+                            sessionId={props.sessionId}
+                            toolName={props.request.tool}
+                            toolInput={props.request.arguments}
+                            metadata={props.metadata || null}
+                            canApprovePermissions={props.canApprovePermissions}
+                            disabledReason={props.disabledReason}
+                        />
+                    </View>
+                )}
+            >
             <View style={styles.header}>
                 <View style={styles.icon}>
                     <Icon name="lock" size={16} color={theme.colors.state.neutral.foreground} />
@@ -183,27 +210,7 @@ export const PermissionPromptCard = React.memo(function PermissionPromptCard(pro
                 </View>
             ) : null}
 
-            {showRuntimeModeContext ? null : (
-                <View style={styles.actions}>
-                    <PermissionFooter
-                        embedded={true}
-                        alignFirstButtonToStart={true}
-                        permission={{
-                            id: props.request.id,
-                            status: 'pending',
-                            ...(typeof props.request.permissionSuggestions !== 'undefined'
-                                ? { suggestions: props.request.permissionSuggestions }
-                                : {}),
-                        }}
-                        sessionId={props.sessionId}
-                        toolName={props.request.tool}
-                        toolInput={props.request.arguments}
-                        metadata={props.metadata || null}
-                        canApprovePermissions={props.canApprovePermissions}
-                        disabledReason={props.disabledReason}
-                    />
-                </View>
-            )}
+            </PromptCardLayout>
         </View>
     );
 });

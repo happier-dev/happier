@@ -4,7 +4,6 @@ import { Platform } from 'react-native';
 import { storage, useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { createServerAccountScope, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import {
-    deleteSessionDraft,
     getExistingSessionDraftProjection,
     subscribeSessionDraft,
     type ExistingSessionDraftProjection,
@@ -49,6 +48,7 @@ const EMPTY_SESSION_LIST_ROW_STORE_STATE: SessionListRowStoreState = Object.free
 type SessionListRowMoveActionHandlers = Readonly<{
     onMoveDown?: () => void;
     onMoveToFolder?: () => void;
+    onMoveToProject?: () => void;
     onMoveToWorkspaceRoot?: () => void;
     onMoveUp?: () => void;
 }>;
@@ -200,7 +200,10 @@ export const SessionListRowModelBoundary = React.memo(function SessionListRowMod
     // and the list is blank; wait first and it is populated but scrolled to the top.
     const frozenRowStoreStateRef = React.useRef<SessionListRowStoreState | null>(null);
     const frozenDraftProjectionRef = React.useRef<ExistingSessionDraftProjection | null>(null);
-    if (props.dataActive) {
+    // A newly inserted row may precede the list's viewability/subscription update.
+    // It needs the same initial read as an inactive first mount, without a listener.
+    const hasLiveRowState = props.dataActive && props.rowStoreSubscriptionEnabled;
+    if (hasLiveRowState) {
         frozenRowStoreStateRef.current = liveRowStoreState;
         frozenDraftProjectionRef.current = liveDraftProjection;
     } else if (frozenRowStoreStateRef.current === null) {
@@ -214,10 +217,10 @@ export const SessionListRowModelBoundary = React.memo(function SessionListRowMod
             ? getExistingSessionDraftProjection(draftScope, props.item.session.id)
             : null;
     }
-    const rowStoreState = props.dataActive
+    const rowStoreState = hasLiveRowState
         ? liveRowStoreState
         : frozenRowStoreStateRef.current ?? EMPTY_SESSION_LIST_ROW_STORE_STATE;
-    const draftProjection = props.dataActive
+    const draftProjection = hasLiveRowState
         ? liveDraftProjection
         : frozenDraftProjectionRef.current;
 
@@ -225,7 +228,6 @@ export const SessionListRowModelBoundary = React.memo(function SessionListRowMod
         <SessionListRowModelBoundaryContent
             {...props}
             draftProjection={draftProjection}
-            draftScope={draftScope}
             rowStoreState={rowStoreState}
         />
     );
@@ -233,7 +235,6 @@ export const SessionListRowModelBoundary = React.memo(function SessionListRowMod
 
 type SessionListRowModelBoundaryContentProps = SessionListRowModelBoundaryProps & Readonly<{
     draftProjection: ExistingSessionDraftProjection | null;
-    draftScope: ServerAccountScope | null;
     rowStoreState: SessionListRowStoreState;
 }>;
 
@@ -297,16 +298,6 @@ const SessionListRowModelBoundaryContent = React.memo(function SessionListRowMod
         sourceRowId: rowModel.treeRowId,
         sourceLabel: props.item.session.id,
     });
-    const onDeleteDraft = React.useMemo(() => {
-        const scope = props.draftScope;
-        if (!scope || !props.draftProjection) return null;
-        return async () => {
-            await deleteSessionDraft({
-                scope,
-                address: { kind: 'session', sessionId: props.item.session.id },
-            });
-        };
-    }, [props.draftProjection, props.draftScope, props.item.session.id]);
 
     return (
         <SessionListRow
@@ -334,7 +325,6 @@ const SessionListRowModelBoundaryContent = React.memo(function SessionListRowMod
             showServerBadge={rowModel.showServerBadge}
             pinned={rowModel.isPinned}
             onTogglePinned={onTogglePinned}
-            onDeleteDraft={onDeleteDraft}
             tags={rowModel.tags}
             allKnownTags={rowModel.allKnownTags}
             onSetTags={onSetTags}
@@ -348,6 +338,7 @@ const SessionListRowModelBoundaryContent = React.memo(function SessionListRowMod
             activityTimeMode={rowModel.activity.mode === 'updatedAt' ? 'updatedAt' : undefined}
             folderDepth={rowModel.folder.depth}
             forkActionContext={props.forkActionContext}
+            onMoveToProject={moveActionHandlers.onMoveToProject}
             onMoveToFolder={props.folderActionsEnabled ? moveActionHandlers.onMoveToFolder : undefined}
             onMoveToWorkspaceRoot={props.folderActionsEnabled ? moveActionHandlers.onMoveToWorkspaceRoot : undefined}
             onMoveUp={props.folderViewEnabled ? moveActionHandlers.onMoveUp : undefined}

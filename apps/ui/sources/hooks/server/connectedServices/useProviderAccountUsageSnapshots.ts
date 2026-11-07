@@ -3,15 +3,13 @@ import * as React from 'react';
 import { useAuth } from '@/auth/context/AuthContext';
 import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-import { getProviderAccountUsageSnapshotSealed } from '@/sync/api/account/apiProviderAccountUsageV2';
-import { getProviderAccountUsageSnapshotPlain } from '@/sync/api/account/apiProviderAccountUsageV3';
 import {
   readProviderAccountUsageSnapshotCacheVersion,
   readProviderAccountUsageSnapshotFromCache,
   subscribeProviderAccountUsageSnapshotCache,
   writeProviderAccountUsageSnapshotToCache,
 } from '@/sync/domains/connectedServices/accountUsage/cache';
-import { openProviderAccountUsageSnapshot } from '@/sync/domains/connectedServices/accountUsage/openProviderAccountUsageSnapshot';
+import { fetchProviderAccountUsageSnapshot } from '@/sync/domains/connectedServices/accountUsage/refreshProviderAccountUsage';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import {
@@ -186,15 +184,12 @@ export function useProviderAccountUsageSnapshots(
         if (controller.signal.aborted || activeCredentialScopeRef.current !== requestCredentialScope) return;
         await Promise.all(toFetch.map(async (recordId) => {
           try {
-            let opened: ProviderAccountUsageSnapshotV1 | null = null;
-            if (mode === 'plain') {
-              opened = await getProviderAccountUsageSnapshotPlain(credentials, { recordId }, { signal: controller.signal });
-            }
-            if (controller.signal.aborted || activeCredentialScopeRef.current !== requestCredentialScope) return;
-            if (!opened) {
-              const sealed = await getProviderAccountUsageSnapshotSealed(credentials, { recordId }, { signal: controller.signal });
-              opened = sealed ? openProviderAccountUsageSnapshot(credentials, sealed.sealed) : null;
-            }
+            let opened: ProviderAccountUsageSnapshotV1 | null = await fetchProviderAccountUsageSnapshot({
+              credentials,
+              recordId,
+              mode,
+              signal: controller.signal,
+            });
             if (controller.signal.aborted || activeCredentialScopeRef.current !== requestCredentialScope) return;
             if (opened && opened.recordId !== recordId) {
               opened = null;

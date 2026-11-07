@@ -14,6 +14,8 @@ export type AgentInputChipPickerSurfaceProps = Readonly<{
     selectedOptionId?: string | null;
     onSelect: (id: string) => void;
     onRequestClose: () => void;
+    /** Detailed pickers show this as Done in the detail pane's header line. */
+    onDone?: () => void;
     applyLabel?: string;
     railWidth?: number;
     railMaxWidth?: number | `${number}%`;
@@ -31,6 +33,7 @@ export function AgentInputChipPickerSurface(props: AgentInputChipPickerSurfacePr
             selectedOptionId={props.selectedOptionId}
             onSelect={props.onSelect}
             onRequestClose={props.onRequestClose}
+            onDone={props.onDone}
             applyLabel={props.applyLabel}
             railWidth={props.railWidth}
             railMaxWidth={props.railMaxWidth}

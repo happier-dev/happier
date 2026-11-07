@@ -27,6 +27,7 @@ import {
     listConnectedServiceUsageSourcesForProviderAccountUsageRecord,
     readProviderAccountUsageRecord,
     requestProviderAccountUsageRefresh,
+    listProviderAccountUsageRefreshRequests,
     toConnectedServiceUsageSourceV1,
     writeProviderAccountUsageRecordAndLinkConnectedServiceUsageSource,
 } from "./providerAccountUsage";
@@ -54,6 +55,13 @@ function sendProviderAccountUsageInvalidParams(
 }
 
 export function registerProviderAccountUsageRoutesV2(app: Fastify): void {
+    // Request IDs are account-scoped metadata; encrypted usage remains on its existing sealed read route.
+    app.get("/v2/connect/provider-account-usage/refresh-requests", {
+        config: { rateLimit: resolveApiHotEndpointRateLimit(process.env, "connectedServices.quotas.read") },
+        preHandler: app.authenticate,
+        schema: { response: { 200: z.object({ recordIds: z.array(ProviderAccountUsageRecordIdSchema) }).strict() } },
+    }, async (request, reply) => reply.send({ recordIds: await listProviderAccountUsageRefreshRequests(request.userId) }));
+
     app.post("/v2/connect/provider-account-usage/:recordId", {
         config: { rateLimit: resolveApiHotEndpointRateLimit(process.env, "connectedServices.quotas.write") },
         preHandler: app.authenticate,

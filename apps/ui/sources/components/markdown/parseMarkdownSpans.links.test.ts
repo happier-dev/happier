@@ -7,6 +7,10 @@ function plainSpanTexts(res: ReturnType<typeof parseMarkdownSpans>) {
 }
 
 describe('parseMarkdownSpans (explicit links)', () => {
+  it('keeps escaped session title punctuation inside the link label', () => {
+    expect(plainSpanTexts(parseMarkdownSpans('[Release \\[prep\\]](/session/actual)', false)))
+      .toEqual([{ text: 'Release [prep]', url: '/session/actual', styles: [] }]);
+  });
   it('renders javascript: links as plain text (not clickable)', () => {
     const spans = plainSpanTexts(parseMarkdownSpans('[x](javascript:alert(1))', false));
     expect(spans).toEqual([

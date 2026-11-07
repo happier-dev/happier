@@ -150,3 +150,72 @@ fn every_registered_app_command_is_granted_by_a_capability() {
         );
     }
 }
+
+fn read_capability(name: &str) -> Value {
+    read_json_file(manifest_dir().join("capabilities").join(format!("{name}.json")))
+}
+
+fn string_permissions(capability: &Value) -> Vec<String> {
+    capability["permissions"]
+        .as_array()
+        .expect("capability permissions should be an array")
+        .iter()
+        .filter_map(|permission| permission.as_str())
+        .map(str::to_string)
+        .collect()
+}
+
+#[test]
+fn main_window_can_open_file_windows_and_local_files() {
+    let permissions = string_permissions(&read_default_capability());
+    for required_permission in [
+        "allow-desktop-open-file-window",
+        "allow-desktop-open-path-with-default-app",
+        "allow-desktop-reveal-path-in-file-manager",
+    ] {
+        assert!(
+            permissions.contains(&required_permission.to_string()),
+            "default capability should include {required_permission}",
+        );
+    }
+}
+
+#[test]
+fn file_windows_have_their_own_capability_in_every_shipped_config() {
+    let capability = read_capability("file_window");
+    assert_eq!(capability["windows"], serde_json::json!(["file-window-*"]));
+    let permissions = string_permissions(&capability);
+    for required_permission in [
+        "core:default",
+        "core:window:allow-set-background-color",
+        "allow-desktop-open-path-with-default-app",
+        "allow-desktop-reveal-path-in-file-manager",
+    ] {
+        assert!(
+            permissions.contains(&required_permission.to_string()),
+            "file_window capability should include {required_permission}",
+        );
+    }
+    // A file window must not be able to open further windows, update the app or drive the tray.
+    for forbidden_permission in [
+        "allow-desktop-open-file-window",
+        "allow-desktop-install-update",
+        "allow-desktop-set-tray-state",
+    ] {
+        assert!(
+            !permissions.contains(&forbidden_permission.to_string()),
+            "file_window capability must not include {forbidden_permission}",
+        );
+    }
+
+    for config_name in ["tauri.conf.json", "tauri.publicdev.conf.json"] {
+        let config = read_tauri_config(config_name);
+        let capabilities = config["app"]["security"]["capabilities"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{config_name} should declare app.security.capabilities"));
+        assert!(
+            capabilities.contains(&Value::String("file_window".to_string())),
+            "{config_name} should register the file_window capability",
+        );
+    }
+}

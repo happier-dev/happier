@@ -1,10 +1,9 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { syncLogout, syncSwitchServer } from '@/sync/sync';
-import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
-import { clearPersistence, loadLocalSettings, saveLocalSettings } from '@/sync/domains/state/persistence';
+import { loadLocalSettings } from '@/sync/domains/state/persistence';
 import { useApplyLocalSettings } from '@/sync/store/settingsWriters';
-import { trackLogout } from '@/track';
+import { clearDeviceAccountData } from '@/auth/flows/clearDeviceAccountData';
 import { subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
 import { switchConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
 import { startConcurrentSessionCacheSync, stopConcurrentSessionCacheSync } from '@/sync/runtime/orchestration/concurrentSessionCache';
@@ -77,22 +76,7 @@ export function AuthProvider({ children, initialCredentials }: { children: React
     );
 
     const logout = React.useCallback(async () => {
-        trackLogout();
-        storage.setState({ sessionArchiveOperations: {} });
-        // Preserve device-local flags across logout — the user is signing out of
-        // an account but the device itself has still seen the brand hero and
-        // still has prior auth experience. Clearing these would force returning
-        // users back into the first-time welcome copy after every logout.
-        const { brandHeroSeenAt, hasCompletedAuthOnce } = loadLocalSettings();
-        await clearPersistence();
-        if (brandHeroSeenAt != null || hasCompletedAuthOnce) {
-            saveLocalSettings({
-                ...localSettingsDefaults,
-                brandHeroSeenAt,
-                hasCompletedAuthOnce,
-            });
-        }
-        await TokenStorage.removeCredentials();
+        await clearDeviceAccountData();
         // Stopped first: a refresh landing after the retirement would write the old Account's rows back.
         stopConcurrentSessionCacheSync();
         await syncLogout();

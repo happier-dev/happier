@@ -10,6 +10,7 @@ import type {
 } from '@happier-dev/protocol';
 
 export interface ServerToDaemonEvents {
+  ephemeral: (data: unknown) => void;
   update: (data: Update) => void;
   [SOCKET_RPC_EVENTS.REQUEST]: (data: SocketRpcRequestPayload, callback: (response: unknown) => void) => void;
   [SOCKET_RPC_EVENTS.CANCEL]: (data: { requestId: string }) => void;

@@ -83,6 +83,19 @@ function buildTree() {
 }
 
 describe('buildSessionListKeyboardMoveResult', () => {
+    it('moves a pinned session from a folder among the visible pinned sessions', () => {
+        const tree = buildSessionListTreeRows({ items: [
+            { type: 'header', title: 'Pinned', headerKind: 'pinned', groupKey: 'pinned-v1' },
+            { ...sessionItem({ id: 'first', groupKey: 'pinned-v1', folderId: null, depth: 0 }), groupKind: 'pinned', pinned: true },
+            { ...sessionItem({ id: 'second', groupKey: 'pinned-v1', folderId: 'folder-a', depth: 1 }), groupKind: 'pinned', pinned: true },
+        ] });
+        const source = buildSessionListDragSource({ tree, sourceRowId: treeRowId.session('server-a', 'second') });
+        expect(buildSessionListKeyboardMoveResult({ tree, source, direction: 'up' }).instruction).toMatchObject({
+            kind: 'reorder-before', targetId: treeRowId.session('server-a', 'first'),
+            containerId: 'pinned-v1', parentId: null,
+        });
+    });
+
     it('moves a session up by resolving a reorder-before instruction for its previous sibling', () => {
         const tree = buildTree();
         const source = buildSessionListDragSource({

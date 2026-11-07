@@ -61,6 +61,7 @@ const RESULT_NONE_DEFERRED_ACTION_IDS = [
   'prompt_asset.export',
   'prompt_registry.install',
   'session.title.set',
+  'session.aliases.recover',
   'session.permission_mode.set',
   'session.model.set',
   'session.goal.set',

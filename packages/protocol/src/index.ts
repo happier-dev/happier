@@ -2013,6 +2013,12 @@ export {
   type ProviderSessionInfoV1,
   createProviderSessionInfoV1Schema,
 } from './sessionMetadata/providerSessionInfoV1.js';
+export {
+  NativeSessionAliasAssignmentV1Schema,
+  NativeSessionAliasesV1Schema,
+  type NativeSessionAliasAssignmentV1,
+  type NativeSessionAliasesV1,
+} from './sessionMetadata/nativeSessionAliasesV1.js';
 
 export { hasSessionTitleInMetadata } from './sessionMetadata/sessionTitle.js';
 
@@ -3407,6 +3413,7 @@ export {
   type SessionMessagesCapabilities,
 } from './features.js';
 export * from './pets/index.js';
+export * from './appLock/recovery.js';
 export {
   FEATURE_CATALOG,
   FEATURE_IDS,

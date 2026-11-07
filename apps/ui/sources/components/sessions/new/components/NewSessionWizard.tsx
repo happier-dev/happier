@@ -4,6 +4,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import Color from 'color';
 import { Typography } from '@/constants/Typography';
 import { AgentInput } from '@/components/sessions/agentInput';
+import { useAgentProviderUsageRefresh } from '@/components/sessions/usage/useAgentProviderUsageRefresh';
 import { AttachmentFilePicker } from '@/components/sessions/attachments/AttachmentFilePicker';
 import { PopoverBoundaryProvider } from '@/components/ui/popover';
 import { Item } from '@/components/ui/lists/Item';
@@ -114,6 +115,7 @@ export interface NewSessionWizardAgentProps {
     setAgentType: (agent: AgentId) => void;
     agentPickerTitle?: React.ComponentProps<typeof AgentInput>['agentPickerTitle'];
     agentPickerOptions?: React.ComponentProps<typeof AgentInput>['agentPickerOptions'];
+    agentPickerUsageGaugesByOptionId?: React.ComponentProps<typeof AgentInput>['agentPickerUsageGaugesByOptionId'];
     agentPickerSelectedOptionId?: React.ComponentProps<typeof AgentInput>['agentPickerSelectedOptionId'];
     onAgentPickerSelect?: React.ComponentProps<typeof AgentInput>['onAgentPickerSelect'];
     agentPickerProbe?: React.ComponentProps<typeof AgentInput>['agentPickerProbe'];
@@ -170,6 +172,7 @@ export interface NewSessionWizardFooterProps {
     emptyAutocompleteKinds: React.ComponentProps<typeof AgentInput>['autocompleteKinds'];
     emptyAutocompleteSuggestions: React.ComponentProps<typeof AgentInput>['autocompleteSuggestions'];
     connectionStatus?: React.ComponentProps<typeof AgentInput>['connectionStatus'];
+    providerUsageGauge?: React.ComponentProps<typeof AgentInput>['providerUsageGauge'];
     machinePopover?: React.ComponentProps<typeof AgentInput>['machinePopover'];
     pathPopover?: React.ComponentProps<typeof AgentInput>['pathPopover'];
     resumeSessionId?: string | null;
@@ -412,6 +415,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
         emptyAutocompleteKinds,
         emptyAutocompleteSuggestions,
         connectionStatus,
+        providerUsageGauge,
         resumeSessionId,
         resumeIsChecking,
         inputMaxHeight,
@@ -590,6 +594,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                         onAgentClick={props.agent.agentPickerOptions ? undefined : handleAgentInputAgentClick}
                                         agentPickerOptions={props.agent.agentPickerOptions}
                                         agentPickerSelectedOptionId={props.agent.agentPickerSelectedOptionId}
+                                        agentPickerUsageGaugesByOptionId={props.agent.agentPickerUsageGaugesByOptionId}
                                         onAgentPickerSelect={props.agent.onAgentPickerSelect}
                                         agentPickerProbe={props.agent.agentPickerProbe}
                                         permissionMode={permissionMode}
@@ -612,6 +617,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                         acpConfigOptionOverridesOverride={props.agent.acpConfigOptionOverrides ?? null}
                                         onSessionConfigOptionChange={props.agent.setSessionConfigOptionOverride}
                                         connectionStatus={connectionStatus}
+                                        providerUsageGauge={providerUsageGauge}
                                         statusBadges={props.statusBadges}
                                         statusTrailingActions={props.statusTrailingActions}
                                         showStatusPermissionMode={false}
@@ -1114,6 +1120,7 @@ function NewSessionWizardComposerInput(props: NewSessionWizardComposerInputProps
         onAttachmentsPicked,
         ...agentInputProps
     } = props;
+    const refreshProviderUsage = useAgentProviderUsageRefresh(agentInputProps.agentType);
     const availablePanelHeight = useComposerAvailablePanelHeight();
     const { height: windowHeight } = useWindowDimensions();
     const maxPanelHeight = computeNewSessionComposerPanelMaxHeight({
@@ -1127,6 +1134,7 @@ function NewSessionWizardComposerInput(props: NewSessionWizardComposerInputProps
         <>
             <AgentInput
                 {...agentInputProps}
+                onProviderUsageRefresh={agentInputProps.onProviderUsageRefresh ?? refreshProviderUsage}
                 maxPanelHeight={maxPanelHeight}
                 panelMaxHeightMode="host-constrained"
             />

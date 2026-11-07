@@ -19,7 +19,7 @@ import type {
   SessionUsageLimitRecoveryControlAdapter as GenericSessionUsageLimitRecoveryControlAdapter,
   SessionUsageLimitRecoveryControlAdapterParams,
 } from '@/session/usageLimitRecoveryControls/sessionUsageLimitRecoveryControlTypes';
-import { deriveUsageLimitRecoveryTiming } from '@/session/usageLimitRecoveryControls/deriveUsageLimitRecoveryTiming';
+import { deriveUsageLimitRecoveryTiming, USAGE_LIMIT_RECOVERY_RESET_MARGIN_MS } from '@/session/usageLimitRecoveryControls/deriveUsageLimitRecoveryTiming';
 import { resolveUsageLimitRecoveryMaxAttemptsExhaustion } from '@/session/usageLimitRecoveryControls/resolveUsageLimitRecoveryMaxAttemptsExhaustion';
 import { resolveUsageLimitRecoverySelectedAuthFromIssue } from '@/session/usageLimitRecoveryControls/usageLimitRecoverySelectedAuth';
 import type { CodexAppServerControlClientResult } from '../control/withCodexAppServerControlClient';
@@ -28,7 +28,7 @@ import { readCodexRateLimitsSnapshot } from '../readCodexRateLimitsSnapshot';
 import type { CodexAppServerClient } from '../client/createCodexAppServerClient';
 import {
   isCodexRateLimitSnapshotExhausted,
-  readEarliestCodexRateLimitResetAtMs,
+  readCodexRateLimitRecoveryResetAtMs,
 } from '../rateLimitSnapshot';
 import { readCodexEnvironmentAuthTokens } from '../../cli/auth/readCodexEnvironmentAuthState';
 import { mapCodexRateLimitResetCreditsToQuotaRecoveryCredits } from '../../quota/codexQuotaRecoveryCredits';
@@ -114,6 +114,7 @@ function buildRecoveryIntentFromLatestUsageLimitIssue(
     occurredAtMs: issueParsed.data.occurredAt,
     resetAtMs: issueParsed.data.usageLimit.resetAtMs,
     retryAfterMs: issueParsed.data.usageLimit.retryAfterMs,
+    windows: issueParsed.data.usageLimit.allWindows,
   });
 
   return {
@@ -170,7 +171,8 @@ function buildNextIntent(params: Readonly<{
     status: 'waiting',
     attemptCount,
     resetAtMs: params.resetAtMs ?? params.intent.resetAtMs,
-    nextCheckAtMs: params.resetAtMs ?? params.intent.nextCheckAtMs ?? params.intent.resetAtMs,
+    nextCheckAtMs: params.resetAtMs !== null ? params.resetAtMs + USAGE_LIMIT_RECOVERY_RESET_MARGIN_MS
+      : params.intent.nextCheckAtMs ?? params.intent.resetAtMs,
     lastProbeError: null,
     ...(params.recoveryCredits ? { recoveryCredits: params.recoveryCredits } : {}),
   };
@@ -296,7 +298,7 @@ export function createCodexAppServerUsageLimitRecoveryControlAdapter(deps: Reado
     const nextIntent = buildNextIntent({
       intent,
       exhausted,
-      resetAtMs: readEarliestCodexRateLimitResetAtMs(controlResult.value),
+      resetAtMs: readCodexRateLimitRecoveryResetAtMs(controlResult.value),
       recoveryCredits,
     });
     return {

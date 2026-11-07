@@ -14,6 +14,7 @@ import { isRecord, normalizeNonEmptyString, resolveConnectedServiceQuotaAccountL
 import { parseRetryAfterHeader } from '@/daemon/connectedServices/quotas/normalization';
 import { createOpenAiCodexSubscriptionFetcher } from './subscriptionFetcher';
 import { mapCodexRateLimitPayloadToQuotaMeters } from './mapCodexRateLimitSnapshot';
+import { createCodexNativeQuotaCredentialReader } from './readNativeQuotaCredential';
 
 function resolveAccountLabel(record: ConnectedServiceCredentialRecordV1): string | null {
   return resolveConnectedServiceQuotaAccountLabel(record);
@@ -67,6 +68,7 @@ export const openAiCodexQuotaFetcherDescriptor: ConnectedServiceQuotaFetcherDesc
     disablePrivateEndpoint: parseDisableQuotaEndpointEnv(env.HAPPIER_CONNECTED_SERVICES_DISABLE_CODEX_SUBSCRIPTION_ENDPOINT),
   }),
   loadQuota: ({ env, staleAfterMs }) => createOpenAiCodexQuotaFetcher({
+    env,
     usageUrl: parseNonEmptyStringEnv(env.HAPPIER_CONNECTED_SERVICES_OPENAI_CODEX_USAGE_URL),
     resetCreditsUrl: parseNonEmptyStringEnv(env.HAPPIER_CONNECTED_SERVICES_OPENAI_CODEX_RESET_CREDITS_URL),
     staleAfterMs,
@@ -78,6 +80,7 @@ export const openAiCodexQuotaFetcherDescriptor: ConnectedServiceQuotaFetcherDesc
 };
 
 export function createOpenAiCodexQuotaFetcher(params?: Readonly<{
+  env?: NodeJS.ProcessEnv;
   usageUrl?: string;
   resetCreditsUrl?: string | null;
   staleAfterMs?: number;
@@ -105,6 +108,8 @@ export function createOpenAiCodexQuotaFetcher(params?: Readonly<{
 
   return {
     serviceId: 'openai-codex',
+    nativeUsageProviderId: 'codex',
+    readNativeCredentialForUsage: disablePrivateEndpoint ? undefined : createCodexNativeQuotaCredentialReader(params?.env ?? process.env),
     pollPolicy: {
       minPollIntervalMs: 5 * 60_000,
     },

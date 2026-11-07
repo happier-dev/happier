@@ -2,6 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Machine, Session } from '@/sync/domains/state/storageTypes';
 import { applySessionFoldersToSessionListViewData, buildSessionListViewData, type SessionListViewItem } from './sessionListViewData';
 import { buildSessionListRenderableFromSession } from './sessionListRenderable';
+import { applySessionProjectAssignments } from './applySessionProjectAssignments';
+import { resolveSessionListFolderMoveTargets } from '@/components/sessions/shell/view-state/resolveSessionListFolderMoveTargets';
+import { resolveSessionProjectMoveTargets } from '@/components/sessions/shell/view-state/resolveSessionProjectMoveTargets';
 
 function makeSession(partial: Partial<Session> & Pick<Session, 'id'>): Session {
     const active = partial.active ?? false;
@@ -51,6 +54,53 @@ function makeMachine(partial: Partial<Machine> & Pick<Machine, 'id'>): Machine {
 }
 
 describe('buildSessionListViewData', () => {
+    it('offers natural and assigned projects from date views, scoped to the selected server', () => {
+        const session = makeSession({ id: 'moving', metadata: { machineId: 'machine', path: '/original', host: 'host', version: '1' } });
+        const items = ['home', 'other'].flatMap((serverId) => buildSessionListViewData({ moving: session }, {}, {
+            groupInactiveSessionsByProject: false, inactiveGroupingV1: 'date', serverScope: { serverId },
+        }));
+        const targets = resolveSessionProjectMoveTargets({
+            items, serverId: 'home', labels: {},
+            assignments: { 'home:moving': { machineId: 'machine', rootPath: '/MAXICAM' }, 'other:moving': { machineId: 'machine', rootPath: '/excluded' } },
+            currentWorkspace: { t: 'workspaceScope', serverId: 'home', machineId: 'machine', rootPath: '/MAXICAM' },
+        });
+        expect(targets.map((target) => target.rootPath).sort()).toEqual(['/MAXICAM', '/original']);
+        expect(targets.find((target) => target.rootPath === '/MAXICAM')?.disabled).toBe(true);
+        expect(targets.find((target) => target.rootPath === '/original')?.disabled).toBe(false);
+    });
+    it('visually assigns a project without changing the session or its execution metadata', () => {
+        const session = makeSession({ id: 'moving', metadata: { machineId: 'original', path: '/original', host: 'host', version: '1', flavor: 'claude' } });
+        const options = {
+            groupInactiveSessionsByProject: true,
+            serverScope: { serverId: 'home' },
+            projectAssignmentsBySessionKey: { 'home:moving': { machineId: 'target', rootPath: '/MAXICAM' } },
+        };
+        const data = buildSessionListViewData({ moving: session }, {}, options);
+        const row = data.find((item) => item.type === 'session');
+        expect(row?.workspace).toEqual({ t: 'workspaceScope', serverId: 'home', machineId: 'target', rootPath: '/MAXICAM' });
+        expect(row?.type === 'session' && row.session).toBe(session);
+        expect(session.metadata?.path).toBe('/original');
+        expect(data.find((item) => item.type === 'header' && item.headerKind === 'project')).toMatchObject({ title: 'MAXICAM', seedSessionId: null });
+        const otherHome = buildSessionListViewData({ moving: session }, {}, { ...options, serverScope: { serverId: 'other' } });
+        expect(otherHome.find((item) => item.type === 'session')?.workspace).toMatchObject({ machineId: 'original', rootPath: '/original' });
+    });
+    it('projects the stored list into destination folders and restores the original list by clearing the assignment', () => {
+        const moving = makeSession({ id: 'moving', active: true, metadata: { machineId: 'machine', path: '/source', host: 'host', version: '1' } });
+        const destination = makeSession({ id: 'destination', active: false, metadata: { machineId: 'machine', path: '/target', host: 'host', version: '1' } });
+        const options = { groupInactiveSessionsByProject: true, serverScope: { serverId: 'home' } };
+        const source = buildSessionListViewData({ moving, destination }, {}, options);
+        const projected = applySessionProjectAssignments(source, { 'home:moving': { machineId: 'machine', rootPath: '/target' } }, options)!;
+        const row = projected.find((item) => item.type === 'session' && item.session.id === 'moving');
+        expect(row).toMatchObject({ section: 'active', workspace: { rootPath: '/target' } });
+        expect(row?.type === 'session' && row.session).toBe(moving);
+        const targets = resolveSessionListFolderMoveTargets({
+            items: projected, sessionKeys: new Set(['home:moving']), assignmentsBySessionKey: {}, workspaceRootTitle: 'Root',
+            folders: { v: 1, folders: [{ id: 'target-folder', name: 'Planning', parentId: null, createdAt: 1, updatedAt: 1, workspace: { t: 'workspaceScope', serverId: 'home', machineId: 'machine', rootPath: '/target' } }] },
+        });
+        expect(targets.some((target) => target.folderId === 'target-folder' && !target.disabled)).toBe(true);
+        expect(applySessionProjectAssignments(source, {}, options)).toBe(source);
+        expect(source.find((item) => item.type === 'session' && item.session.id === 'moving')?.workspace).toMatchObject({ rootPath: '/source' });
+    });
     it.each(['date', 'project'] as const)('projects producer-scoped workspaces for %s rows with folder view off', (grouping) => {
         const rows = ['server-a', 'server-b'].flatMap((serverId) => {
             const machineId = `${serverId}-machine`;
@@ -224,6 +274,26 @@ describe('buildSessionListViewData', () => {
         ]);
     });
 
+    it('keeps a project header for sessions without a path so a stored workspace label can name it', () => {
+        const machine = makeMachine({ id: 'm1', metadata: { host: 'm1', platform: 'darwin', happyCliVersion: '0.0.0', happyHomeDir: '/h', homeDir: '/home/u' } });
+        const sessions: Record<string, Session> = {
+            pathless: makeSession({
+                id: 'pathless',
+                active: true,
+                metadata: { machineId: 'm1', path: '', homeDir: '/home/u', host: 'm1', version: '0.0.0', flavor: 'claude' },
+            }),
+        };
+
+        const data = buildSessionListViewData(sessions, { [machine.id]: machine }, {
+            groupInactiveSessionsByProject: true,
+            activeGroupingV1: 'project',
+        });
+
+        const projectHeaders = data.filter((item) => item.type === 'header' && item.headerKind === 'project');
+        expect(projectHeaders).toHaveLength(1);
+        expect(projectHeaders[0]).toMatchObject({ workspaceKey: expect.stringMatching(/^wl_/) });
+    });
+
     it('uses section-agnostic project group keys for split activity sections', () => {
         const machine = makeMachine({ id: 'm1', metadata: { host: 'm1', platform: 'darwin', happyCliVersion: '0.0.0', happyHomeDir: '/h', homeDir: '/home/u' } });
 
@@ -258,6 +328,29 @@ describe('buildSessionListViewData', () => {
         expect(projectGroupKeys[0]).toMatch(/^server:server-a:project:/);
         expect(projectGroupKeys[0]).not.toContain(':active:');
         expect(projectGroupKeys[0]).not.toContain(':inactive:');
+    });
+
+    it('tells the split-section headers of one project apart so list rows do not share an identity', () => {
+        const machine = makeMachine({ id: 'm1', metadata: { host: 'm1', platform: 'darwin', happyCliVersion: '0.0.0', happyHomeDir: '/h', homeDir: '/home/u' } });
+        const metadata = { machineId: 'm1', path: '/home/u/repoA', homeDir: '/home/u', host: 'm1', version: '0.0.0', flavor: 'claude' } as const;
+        const sessions: Record<string, Session> = {
+            active: makeSession({ id: 'active', active: true, createdAt: 2, metadata }),
+            inactive: makeSession({ id: 'inactive', active: false, createdAt: 1, metadata }),
+        };
+
+        const data = buildSessionListViewData(sessions, { [machine.id]: machine }, {
+            groupInactiveSessionsByProject: true,
+            serverScope: { serverId: 'server-a', serverName: 'Server A' },
+        });
+
+        const rowIdentities = data
+            .filter((item): item is Extract<typeof item, { type: 'header' }> =>
+                item.type === 'header' && item.headerKind === 'project'
+            )
+            .map((item) => `${item.groupKey}|${item.section ?? ''}`);
+
+        expect(rowIdentities).toHaveLength(2);
+        expect(new Set(rowIdentities).size).toBe(2);
     });
 
     it('builds folder headers and assigned session rows from durable workspace refs', () => {

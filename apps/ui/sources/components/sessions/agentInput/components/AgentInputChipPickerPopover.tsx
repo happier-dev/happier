@@ -1,5 +1,5 @@
 import React from 'react';
-
+import type { PopoverOutsidePointerEventsMode } from '@/components/ui/popover';
 import { AgentInputSelectionPopover } from '@/components/sessions/agentInput/selection/AgentInputSelectionPopover';
 
 import { AgentInputChipPickerSurface } from './AgentInputChipPickerSurface';
@@ -21,6 +21,7 @@ export type AgentInputChipPickerPopoverProps = Readonly<{
     detailPaneHeaderAccessory?: React.ReactNode;
     maxHeightCap?: number;
     maxWidthCap?: number;
+    outsidePointerEventsMode?: PopoverOutsidePointerEventsMode;
 }>;
 
 export function AgentInputChipPickerPopover(props: AgentInputChipPickerPopoverProps) {
@@ -31,6 +32,7 @@ export function AgentInputChipPickerPopover(props: AgentInputChipPickerPopoverPr
             boundaryRef={props.boundaryRef}
             maxHeightCap={props.maxHeightCap ?? 420}
             maxWidthCap={props.maxWidthCap ?? 720}
+            outsidePointerEventsMode={props.outsidePointerEventsMode}
             onRequestClose={props.onRequestClose}
         >
             {({ maxHeight }) => (
@@ -39,12 +41,14 @@ export function AgentInputChipPickerPopover(props: AgentInputChipPickerPopoverPr
                     // Agent-input popovers shouldn't render their own header chrome; the model section
                     // already provides the relevant header (e.g. MODEL) and refresh affordance.
                     title=""
-                    // Align with other AgentInput popovers (close by outside press / selecting options).
+                    // Outside press / selecting options still close the popover; detailed pickers
+                    // also have a Done action in their detail pane's header line, left of refresh.
                     showCloseButton={props.showCloseButton ?? false}
                     options={props.options}
                     selectedOptionId={props.selectedOptionId}
                     onSelect={props.onSelect}
                     onRequestClose={props.onRequestClose}
+                    onDone={props.onRequestClose}
                     applyLabel={props.applyLabel}
                     railWidth={props.railWidth}
                     railMaxWidth={props.railMaxWidth}

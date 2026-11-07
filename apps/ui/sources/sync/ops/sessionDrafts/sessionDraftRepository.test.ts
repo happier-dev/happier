@@ -143,6 +143,7 @@ describe('sessionDraftRepository', () => {
         await vi.waitFor(() => expect(repository.getSessionDraftSnapshot(scope, sessionAddress)?.status).toBe('error'));
         expect(repository.getExistingSessionDraftProjection(scope, 'session-a')?.status).toBe('error');
         expect(notifications).toContain('error');
+        expect(repository.getSessionDraftErrorReason(scope, sessionAddress)).toBe('storage');
         expect(remote.transport.mutate).not.toHaveBeenCalled();
         await expect(repository.flushSessionDraft({ scope, address: sessionAddress })).rejects.toThrow('disk unavailable');
         expect(repository.getSessionDraftSnapshot(scope, sessionAddress)?.document.composer.text.value).toBe('preserve across failed autosave');
@@ -151,6 +152,7 @@ describe('sessionDraftRepository', () => {
         await vi.waitFor(() => expect(repository.getSessionDraftSnapshot(scope, sessionAddress)?.status).toBe(syncEnabled ? 'pending' : 'clean'));
         expect(repository.getExistingSessionDraftProjection(scope, 'session-a')?.status).toBe(syncEnabled ? 'pending' : 'clean');
         expect(repository.getSessionDraftSnapshot(scope, sessionAddress)?.document.composer.text.value).toBe('retry this edit');
+        expect(repository.getSessionDraftErrorReason(scope, sessionAddress)).toBeNull();
     });
     it('does not reserialize unrelated large replicas when one draft changes', () => {
         const storage = createMemoryStorage();
@@ -1094,6 +1096,7 @@ describe('sessionDraftRepository', () => {
 
         expect(await repository.flushSessionDraft({ scope, address: sessionAddress })).toEqual({ status: 'error' });
         expect(repository.getSessionDraftSnapshot(scope, sessionAddress)?.status).toBe('error');
+        expect(repository.getSessionDraftErrorReason(scope, sessionAddress)).toBe('encryption');
         expect(transport.mutate).not.toHaveBeenCalled();
     });
 

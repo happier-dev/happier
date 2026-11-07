@@ -17,7 +17,7 @@
 //! `ExitRequested`; `crate::shutdown` documents that as leaving the daemon exactly where it was.
 
 #[cfg(desktop)]
-use tauri::{menu::MenuEvent, AppHandle};
+use tauri::{menu::MenuEvent, AppHandle, Emitter};
 
 #[cfg(target_os = "macos")]
 use tauri::{
@@ -42,6 +42,9 @@ pub const OPEN_UPDATES_REQUESTED_EVENT: &str = "desktop_open_updates_requested";
 /// Tells the main webview to navigate to Settings.
 #[cfg(desktop)]
 pub const OPEN_SETTINGS_REQUESTED_EVENT: &str = "desktop_open_settings_requested";
+/// Tells the main webview to lock this window through the app-lock runtime.
+#[cfg(desktop)]
+pub const LOCK_NOW_REQUESTED_EVENT: &str = "desktop_lock_now_requested";
 
 #[cfg(desktop)]
 pub fn handle_menu_event(app: &AppHandle, event: MenuEvent) {
@@ -60,6 +63,9 @@ pub fn handle_menu_event(app: &AppHandle, event: MenuEvent) {
             app,
             crate::menu_bar::MainWindowDestination::Settings,
         ),
+        DesktopMenuAction::LockNow => {
+            let _ = app.emit(LOCK_NOW_REQUESTED_EVENT, ());
+        }
         // Held once by `crate::shutdown` so the webview can honour the background-service
         // preference before the app goes.
         DesktopMenuAction::QuitApp => crate::menu_bar::quit(app),

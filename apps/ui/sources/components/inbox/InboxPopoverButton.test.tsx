@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { DeferredAnchoredTooltip } from '@/components/ui/overlays/DeferredAnchoredTooltip';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -84,7 +85,15 @@ describe('InboxPopoverButton', () => {
 
         expect(capture.contentModelMounts).toBe(0);
         expect(capture.activeContentModels).toBe(0);
-        expect(screen.findByTestId('test-inbox-trigger')?.props.accessibilityState).toEqual({ expanded: false });
+        expect(screen.findByTestId('test-inbox-trigger')?.props.accessibilityState).toMatchObject({ expanded: false });
+        const trigger = screen.findByTestId('test-inbox-trigger')!;
+        await act(async () => { trigger.props.onHoverIn?.(); });
+        const tooltips = screen.findAllByType(DeferredAnchoredTooltip);
+        expect(tooltips).toHaveLength(1);
+        expect(tooltips[0]!.props.label).toBe(trigger.props.accessibilityLabel);
+        await act(async () => { trigger.props.onHoverOut?.(); });
+        expect(screen.findAllByType(DeferredAnchoredTooltip)).toHaveLength(0);
+        expect(capture.contentModelMounts).toBe(0);
         await act(async () => {
             await screen.findByTestId('test-inbox-trigger')?.props.onPress({
                 currentTarget: {
@@ -93,7 +102,7 @@ describe('InboxPopoverButton', () => {
             });
         });
 
-        expect(screen.findByTestId('test-inbox-trigger')?.props.accessibilityState).toEqual({ expanded: true });
+        expect(screen.findByTestId('test-inbox-trigger')?.props.accessibilityState).toMatchObject({ expanded: true });
         expect(capture.contentModelMounts).toBeGreaterThan(0);
         expect(capture.activeContentModels).toBe(1);
         expect(capture.popoverProps).toMatchObject({
@@ -112,7 +121,7 @@ describe('InboxPopoverButton', () => {
         expect(openInbox).toHaveBeenCalledTimes(1);
         expect(screen.findAllByType('Popover' as never)).toHaveLength(0);
         expect(capture.activeContentModels).toBe(0);
-        expect(screen.findByTestId('test-inbox-trigger')?.props.accessibilityState).toEqual({ expanded: false });
+        expect(screen.findByTestId('test-inbox-trigger')?.props.accessibilityState).toMatchObject({ expanded: false });
     });
 
     it('lets Inbox item navigation dismiss the popover without changing the model owner', async () => {

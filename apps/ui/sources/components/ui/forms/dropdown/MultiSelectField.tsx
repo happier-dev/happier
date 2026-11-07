@@ -24,7 +24,7 @@ export type MultiSelectFieldProps = Readonly<{
     icon: React.ReactNode;
     disabled?: boolean;
     minimumSelected?: number;
-    exclusiveId?: string;
+    exclusiveId?: string | readonly string[];
     testID?: string;
 }>;
 
@@ -85,8 +85,9 @@ export const MultiSelectField = React.memo(function MultiSelectField(props: Mult
             items={items}
             onSelect={(id) => setDraft((current) => {
                 const next = new Set(current ?? props.selectedIds);
-                if (props.exclusiveId && id === props.exclusiveId) return new Set([id]);
-                if (props.exclusiveId) next.delete(props.exclusiveId);
+                const exclusiveIds = typeof props.exclusiveId === 'string' ? [props.exclusiveId] : props.exclusiveId ?? [];
+                if (exclusiveIds.includes(id)) return new Set([id]);
+                for (const exclusiveId of exclusiveIds) next.delete(exclusiveId);
                 if (next.has(id)) {
                     if (next.size <= (props.minimumSelected ?? 0)) return next;
                     next.delete(id);

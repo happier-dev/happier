@@ -101,10 +101,6 @@ export function AgentInputEngineDetail(props: AgentInputEngineDetailProps) {
     (props.modelOptions?.length ?? 0) > 0 || props.canEnterCustomModel === true;
   const hasConfigSection = (props.configControls?.length ?? 0) > 0;
 
-  if (!hasModelSection && !hasConfigSection) {
-    return null;
-  }
-
   const resolvedModelOptions = React.useMemo(() => {
     const options = props.modelOptions ?? [];
     const shouldShowDescriptions = options.some(
@@ -145,6 +141,18 @@ export function AgentInputEngineDetail(props: AgentInputEngineDetailProps) {
     props.onToggleFavoriteModel,
   ]);
 
+  // This probe merges agent detection with the model, mode and config probes, so its refresh
+  // control is named for everything it rescans rather than models alone.
+  const modelProbe = React.useMemo<OptionPickerProbeState | undefined>(() => (
+    props.modelProbe && !props.modelProbe.refreshAccessibilityLabel
+      ? { ...props.modelProbe, refreshAccessibilityLabel: t("modelPickerOverlay.refreshEngineA11y") }
+      : props.modelProbe
+  ), [props.modelProbe]);
+
+  if (!hasModelSection && !hasConfigSection) {
+    return null;
+  }
+
   const sections: Record<"model" | "config", React.ReactNode | null> =
     {
       model: hasModelSection
@@ -165,7 +173,7 @@ export function AgentInputEngineDetail(props: AgentInputEngineDetailProps) {
               customDescription={t("agentInput.model.customDescription")}
               favoriteOptions={favoriteOptions}
               headerAccessory={props.modelHeaderAccessory}
-              probe={props.modelProbe}
+              probe={modelProbe}
               selectedOptionControls={props.selectedModelOptionControls ?? undefined}
               onSelectOptionControlValue={props.onSelectModelOptionValue}
               onSelect={props.onSelectModel ?? (() => {})}

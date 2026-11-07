@@ -18,8 +18,8 @@ clear answer about whether a feature is available, it treats it as unavailable.
 That is why a feature can seem to vanish when a server is unreachable, and why
 a misconfigured self-hosted server hides features rather than half-enabling them.
 
-There are 79 features in the catalog. 22 of them have a switch you can
-reach; the other 57 are decided before you get there.
+There are 80 features in the catalog. 22 of them have a switch you can
+reach; the other 58 are decided before you get there.
 
 ## Features you can turn on yourself
 
@@ -75,6 +75,7 @@ behaviour but still needs the server to advertise the capability.
 | `app.ui.releaseNotes` | Curated release-notes story-deck modal (Notelet-style cards). Shares renderer with onboarding showcase. | client | — |
 | `app.ui.sessionGettingStartedGuidance` | Session getting-started guidance UI (includes CLI install instructions). | client | — |
 | `app.ui.storeReviewPrompts` | In-app store review prompts (native App Store / Play Store review sheet). | client | — |
+| `appLock.emailRecovery` | App-lock password reset: recovery keys escrowed with the relay and reset codes emailed through the account SMTP settings. | server | — |
 | `auth.login.keyChallenge` | Key-challenge login route availability (POST /v1/auth). | server | — |
 | `auth.mtls` | mTLS client certificate authentication support. | server | — |
 | `auth.pairing.desktopQrMobileScan` | Pairing session support for desktop/web QR → logged-out mobile scan sign-in. | server | — |

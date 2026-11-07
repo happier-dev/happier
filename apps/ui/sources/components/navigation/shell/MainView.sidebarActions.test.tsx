@@ -3,6 +3,8 @@ import renderer from 'react-test-renderer';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { installNavigationShellCommonModuleMocks } from './navigationShellTestHelpers';
+import { installAgentAssetLoader } from '@/dev/testkit/mocks/agentAssets';
+import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -94,6 +96,8 @@ installNavigationShellCommonModuleMocks({
         });
     },
 });
+
+vi.mock('@/auth/context/AuthContext', () => ({ useAuth: () => ({ credentials: null }) }));
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -331,6 +335,71 @@ describe('MainView sidebar actions', () => {
         expect(tree!.findAllByType('TabBar')).toHaveLength(0);
     });
 
+    it('keeps exhausted provider usage accessible with the phone header title', () => withPopoverWebGlobals(async () => {
+        await installAgentAssetLoader();
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        const { createSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+        platformState.isTablet = false;
+        const previous = storage.getState();
+        const session = createSessionFixture({
+            id: 'exhausted-claude', metadata: { path: '/repo', host: 'test', flavor: 'claude' },
+            lastRuntimeIssue: {
+                v: 1, scope: 'primary_session', status: 'failed', code: 'usage_limit', source: 'usage_limit',
+                provider: 'claude', occurredAt: Date.now(),
+                usageLimit: { v: 1, resetAtMs: Date.now() + 3_600_000, retryAfterMs: null,
+                    quotaScope: 'account', recoverability: 'wait', limitCategory: 'usage_limit' },
+            },
+        });
+        const newerClaude = createSessionFixture({ id: 'unmetered-claude',
+            metadata: { path: '/repo', host: 'test', flavor: 'claude' }, updatedAt: session.updatedAt + 1 });
+        const openCode = createSessionFixture({ id: 'opencode',
+            metadata: { path: '/repo', host: 'test', flavor: 'opencode' } });
+        storage.setState({ sessions: { [session.id]: session, [newerClaude.id]: newerClaude, [openCode.id]: openCode }, isDataReady: true });
+        const screen = await renderScreen(<MainView variant="phone" />);
+        const header = screen.tree.findByType('Header');
+        const headerLeft = await renderScreen(<>{header.props.headerLeft()}{header.props.title}</>);
+        try {
+            expect(headerLeft.findByTestId('sessions-provider-usage-item:claude')).toBeTruthy();
+            expect(headerLeft.findByTestId('sessions-provider-usage-item:codex')).toBeNull();
+            expect(headerLeft.findByTestId('sessions-provider-usage-item:opencode')).toBeTruthy();
+            expect(headerLeft.findAllByType('HeaderLogo')).toHaveLength(1);
+            expect(headerLeft.getTextContent()).toContain('0');
+            const ring = headerLeft.findAll((node) => node.props?.testID === 'sessions-provider-usage:claude'
+                && node.props.label != null)[0];
+            expect(ring?.props.remainingPct).toBe(0);
+            expect(ring?.props.tone).toBe('critical');
+            await headerLeft.pressByTestIdAsync('sessions-provider-usage-strip');
+            expect(headerLeft.findByTestId('sessions-provider-usage-section:claude')).toBeTruthy();
+        } finally {
+            await headerLeft.unmount();
+            await screen.unmount();
+            storage.setState({ sessions: previous.sessions, isDataReady: previous.isDataReady });
+        }
+    }));
+
+    it('opens provider-session browsing from a folder icon immediately left of phone Automations', async () => {
+        platformState.isTablet = false;
+        directSessionsFeatureState.enabled = true;
+        const screen = await renderScreen(<MainView variant="phone" />);
+        const header = screen.tree.findByType('Header');
+        const actions = await renderScreen(header.props.headerRight());
+        const buttons = actions.findAll((node) => typeof node.type === 'string' && typeof node.props.onPress === 'function');
+        const browseIndex = buttons.findIndex((node) => node.props.testID === 'main-header-direct-sessions-browse');
+
+        expect(browseIndex).toBeGreaterThanOrEqual(0);
+        expect(buttons[browseIndex + 1]!.findAllByProps({ name: 'timer' }).length).toBeGreaterThan(0);
+        await actions.pressByTestIdAsync('main-header-direct-sessions-browse');
+        expect(routerPushSpy).toHaveBeenCalledWith('/direct/browse');
+    });
+
+    it('hides the phone browse icon when provider-session browsing is disabled', async () => {
+        platformState.isTablet = false;
+        const screen = await renderScreen(<MainView variant="phone" />);
+        const actions = await renderScreen(screen.tree.findByType('Header').props.headerRight());
+
+        expect(actions.findHostByTestId('main-header-direct-sessions-browse')).toBeNull();
+    });
+
     it('does not subscribe to sidebar session-list derivations in phone mode', async () => {
         platformState.isTablet = false;
         sessionListState.data = [{
@@ -486,24 +555,25 @@ describe('MainView sidebar actions', () => {
         expect(() => renderedHeaderRight.findByProps({ testID: 'main-header-start-new-session' })).not.toThrow();
     });
 
-    it('renders direct session storage tabs in the sidebar empty state when direct sessions are enabled', async () => {
+    it('does not separate the sidebar into Happier and Direct tabs', async () => {
         directSessionsFeatureState.enabled = true;
         localSettingsState.sessionsListStorageTab = 'direct';
 
         let tree: renderer.ReactTestRenderer | null = null;
         tree = (await renderScreen(<MainView variant="sidebar" />)).tree;
 
-        expect(() => tree!.findByProps({ testID: 'sessions-list-storage-tab:direct' })).not.toThrow();
+        expect(tree!.root.findAllByProps({ testID: 'sessions-list-storage-tab:direct' })).toHaveLength(0);
+        expect(tree!.root.findAllByProps({ testID: 'sessions-list-storage-tab:persisted' })).toHaveLength(0);
     });
 
-    it('renders the browse direct sessions action in the sidebar empty state when the direct tab is active', async () => {
+    it('leaves provider-session browsing to the sidebar header icon instead of a block above the list', async () => {
         directSessionsFeatureState.enabled = true;
-        localSettingsState.sessionsListStorageTab = 'direct';
+        localSettingsState.sessionsListStorageTab = 'persisted';
 
         let tree: renderer.ReactTestRenderer | null = null;
         tree = (await renderScreen(<MainView variant="sidebar" />)).tree;
 
-        expect(() => tree!.findByProps({ testID: 'direct-sessions-browse-button' })).not.toThrow();
+        expect(tree!.root.findAllByProps({ testID: 'direct-sessions-browse-button' })).toHaveLength(0);
     });
 
     it('shows the hidden inactive sessions notice when hide inactive sessions empties the sidebar', async () => {

@@ -4,6 +4,7 @@ import type { SessionListRenderableSession } from './sessionListRenderable';
 import type { SessionListAttentionPromotionReason } from './attentionPromotion/sessionListAttentionPromotionTypes';
 import type { SessionListWorkingPlacementReason } from './placement/sessionListPlacementProjection';
 import { t } from '@/text';
+import type { SessionProjectAssignments } from '../organization/projectAssignment';
 import {
     resolveDisplayIdentityForSessionFromState,
     type SessionMachineTargetState,
@@ -27,6 +28,8 @@ export type SessionListViewItem =
         title: string;
         headerKind?: 'date' | 'server' | 'active' | 'inactive' | 'sessions' | 'project' | 'pinned' | 'attention' | 'working' | 'shared' | 'folder';
         groupKey?: string;
+        /** Section a project header was emitted for: the group key is shared across split sections, so row identity needs both. */
+        section?: SessionListSectionScope;
         workspaceKey?: string;
         appearanceColor?: SessionAppearanceColor | null;
         workspaceLabel?: string | null;
@@ -61,6 +64,7 @@ export type SessionListViewItem =
     };
 
 export interface BuildSessionListViewDataOptions {
+    projectAssignmentsBySessionKey?: SessionProjectAssignments;
     groupInactiveSessionsByProject: boolean;
     activeGroupingV1?: 'project' | 'date';
     inactiveGroupingV1?: 'project' | 'date';
@@ -196,6 +200,8 @@ function resolveWorkspaceForSession(
         machines: Record<string, MachineDisplayRenderable>;
         sessionTargetState?: SessionMachineTargetState;
         workspacePathDisplayModeV1?: WorkspacePathDisplayModeV1 | null;
+        projectAssignmentsBySessionKey?: SessionProjectAssignments;
+        serverId?: string;
     }>,
 ) {
     const target = params.sessionTargetState
@@ -205,15 +211,18 @@ function resolveWorkspaceForSession(
             metadata: session.metadata ?? null,
         })
         : null;
+    const project = params.serverId ? params.projectAssignmentsBySessionKey?.[`${params.serverId}:${session.id}`] : null;
     return resolveSessionWorkspacePresentation({
         metadata: session.metadata ?? null,
         machines: params.machines,
-        target,
+        target: project ? { machineId: project.machineId, basePath: project.rootPath } : target,
         workspacePathDisplayModeV1: params.workspacePathDisplayModeV1,
     });
 }
 
 function groupSessionsByProject(params: Readonly<{
+    projectAssignmentsBySessionKey?: SessionProjectAssignments;
+    serverId?: string;
     sessions: ReadonlyArray<SessionListRenderableSession>;
     machines: Record<string, MachineDisplayRenderable>;
     sessionTargetState?: SessionMachineTargetState;
@@ -263,6 +272,7 @@ function groupSessionsByProject(params: Readonly<{
 }
 
 function pushProjectGroupsToList(params: Readonly<{
+    projectAssignmentsBySessionKey?: SessionProjectAssignments;
     listData: SessionListViewItem[];
     groups: ReadonlyArray<ProjectGroup>;
     section: SessionListSectionScope;
@@ -278,6 +288,7 @@ function pushProjectGroupsToList(params: Readonly<{
             title: group.displayTitle,
             headerKind: 'project',
             groupKey,
+            section: params.section,
             workspaceKey: group.workspaceKey,
             workspaceScopeHint: params.serverScopeMeta.serverId && group.workspaceMachineId && group.workspaceRootPath
                 ? {
@@ -286,7 +297,8 @@ function pushProjectGroupsToList(params: Readonly<{
                     rootPath: group.workspaceRootPath,
                 }
                 : null,
-            seedSessionId: group.sessions[0]?.id ?? null,
+            // A visually assigned session still executes elsewhere and must not seed this project's launch directory.
+            seedSessionId: group.sessions.find((session) => !params.projectAssignmentsBySessionKey?.[`${params.serverScopeMeta.serverId}:${session.id}`])?.id ?? null,
             machine: group.machine,
             subtitle: group.machine.metadata?.displayName || group.machine.metadata?.host || group.machine.id,
             ...params.serverScopeMeta,
@@ -294,9 +306,9 @@ function pushProjectGroupsToList(params: Readonly<{
 
         const workspace = resolveDurableWorkspaceRefForSessionListHeader(projectHeader);
 
-        if (hasGroupHeader) {
-            params.listData.push(projectHeader);
-        }
+        // Path-less groups keep their header too: a stored workspace label is applied to it afterwards,
+        // and the renderer hides the header while it still has neither a label nor a title.
+        params.listData.push(projectHeader);
 
         const variant: 'default' | 'no-path' = hasGroupHeader ? 'no-path' : 'default';
         const folderOptions = params.sessionFolders?.enabled === true && hasGroupHeader ? params.sessionFolders : null;
@@ -620,6 +632,7 @@ function pushSharedSessionsToList(params: Readonly<{
 }
 
 function pushOwnedSessionsToList(params: Readonly<{
+    projectAssignmentsBySessionKey?: SessionProjectAssignments;
     listData: SessionListViewItem[];
     sessions: ReadonlyArray<SessionListRenderableSession>;
     section: SessionListSectionScope;
@@ -635,8 +648,11 @@ function pushOwnedSessionsToList(params: Readonly<{
 
     if (params.grouping === 'project') {
         pushProjectGroupsToList({
+            projectAssignmentsBySessionKey: params.projectAssignmentsBySessionKey,
             listData: params.listData,
             groups: groupSessionsByProject({
+                projectAssignmentsBySessionKey: params.projectAssignmentsBySessionKey,
+                serverId: params.serverScopeMeta.serverId,
                 sessions: params.sessions,
                 machines: params.machines,
                 sessionTargetState: params.sessionTargetState,
@@ -705,8 +721,10 @@ export function buildSessionListViewData(
         for (const item of listData) {
             if (item.type !== 'session' || item.workspace || !item.serverId) continue;
             const presentation = resolveWorkspaceForSession(item.session, {
+                serverId: item.serverId,
                 machines,
                 sessionTargetState: options.sessionTargetState,
+                projectAssignmentsBySessionKey: options.projectAssignmentsBySessionKey,
                 workspacePathDisplayModeV1: options.workspacePathDisplayModeV1,
             });
             item.workspace = normalizeSessionFolderWorkspaceRef({
@@ -747,6 +765,7 @@ export function buildSessionListViewData(
                 serverKey,
                 serverScopeMeta,
                 sessionTargetState: options.sessionTargetState,
+                projectAssignmentsBySessionKey: options.projectAssignmentsBySessionKey,
                 workspacePathDisplayModeV1: options.workspacePathDisplayModeV1,
                 sessionFolders: options.sessionFolders,
             });
@@ -773,6 +792,7 @@ export function buildSessionListViewData(
             serverKey,
             serverScopeMeta,
             sessionTargetState: options.sessionTargetState,
+            projectAssignmentsBySessionKey: options.projectAssignmentsBySessionKey,
             workspacePathDisplayModeV1: options.workspacePathDisplayModeV1,
             sessionFolders: options.sessionFolders,
         });
@@ -797,6 +817,7 @@ export function buildSessionListViewData(
             serverKey,
             serverScopeMeta,
             sessionTargetState: options.sessionTargetState,
+            projectAssignmentsBySessionKey: options.projectAssignmentsBySessionKey,
             workspacePathDisplayModeV1: options.workspacePathDisplayModeV1,
             sessionFolders: options.sessionFolders,
         });

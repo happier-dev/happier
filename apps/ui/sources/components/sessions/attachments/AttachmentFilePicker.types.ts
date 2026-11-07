@@ -8,6 +8,8 @@ export type AttachmentFilePickerHandle = Readonly<{
     open: () => void;
     openFiles: () => void;
     openImages: () => void;
+    /** Captures a photo with the device camera; native-only (the web picker does not implement it). */
+    takePhoto?: () => void;
 }>;
 
 export type PickedAttachment = AttachmentsUploadFileSource;

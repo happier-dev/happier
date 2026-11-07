@@ -19,7 +19,7 @@ The window accepts the same duration strings the defaults use (`1 minute`,
 per signed-in account, so one busy user cannot exhaust another's budget.
 `IP address` limits apply before Happier knows who is calling — they protect
 unauthenticated routes, and behind a reverse proxy they are only as accurate as
-the forwarded client address your proxy sets. 27 of the 33 limits are
+the forwarded client address your proxy sets. 28 of the 35 limits are
 per-account.
 
 Two clusters are worth knowing about before a rollout, because they throttle
@@ -31,6 +31,8 @@ account from a headless machine.
 | --- | --- | --- | --- |
 | `account.profile` | 300 / 1 minute | Account | `HAPPIER_ACCOUNT_PROFILE_RATE_LIMIT_MAX`<br />`HAPPIER_ACCOUNT_PROFILE_RATE_LIMIT_WINDOW` |
 | `account.settings` | 300 / 1 minute | Account | `HAPPIER_ACCOUNT_SETTINGS_RATE_LIMIT_MAX`<br />`HAPPIER_ACCOUNT_SETTINGS_RATE_LIMIT_WINDOW` |
+| `appLock.recovery.manage` | 20 / 1 minute | Account | `HAPPIER_APP_LOCK_RECOVERY_MANAGE_RATE_LIMIT_MAX`<br />`HAPPIER_APP_LOCK_RECOVERY_MANAGE_RATE_LIMIT_WINDOW` |
+| `appLock.recovery.public` | 10 / 1 minute | IP address | `HAPPIER_APP_LOCK_RECOVERY_PUBLIC_RATE_LIMIT_MAX`<br />`HAPPIER_APP_LOCK_RECOVERY_PUBLIC_RATE_LIMIT_WINDOW` |
 | `artifacts` | 300 / 1 minute | Account | `HAPPIER_ARTIFACTS_RATE_LIMIT_MAX`<br />`HAPPIER_ARTIFACTS_RATE_LIMIT_WINDOW` |
 | `auth.pairing.consume` | 60 / 1 minute | Account | `HAPPIER_AUTH_PAIRING_CONSUME_RATE_LIMIT_MAX`<br />`HAPPIER_AUTH_PAIRING_CONSUME_RATE_LIMIT_WINDOW` |
 | `auth.pairing.request` | 30 / 1 minute | IP address | `HAPPIER_AUTH_PAIRING_REQUEST_RATE_LIMIT_MAX`<br />`HAPPIER_AUTH_PAIRING_REQUEST_RATE_LIMIT_WINDOW` |

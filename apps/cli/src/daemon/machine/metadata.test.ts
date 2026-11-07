@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import packageJson from '../../../package.json';
 
 import { initialMachineMetadata, refreshMachineMetadataForCurrentDaemon } from './metadata';
 
 describe('initialMachineMetadata', () => {
   it('advertises daemon-owned runtime control capabilities', () => {
+    expect(initialMachineMetadata.happyCliVersion).toBe(packageJson.version);
     expect(initialMachineMetadata.daemonTerminalSessionAttachSupported).toBe(true);
     expect(initialMachineMetadata.daemonSessionGoalControlsSupported).toBe(true);
   });

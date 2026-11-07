@@ -27,6 +27,8 @@ import {
     type SessionConnectedServiceAuthApplyGenerationResponseV1,
 } from '@happier-dev/protocol';
 import { resolveConfiguredClaudeConfigDir } from './utils/resolveConfiguredClaudeConfigDir';
+import { readClaudeNativeSessionAliases } from './utils/nativeSessionAliases';
+import { mergeNativeSessionAliases } from '@/session/metadata/nativeSessionAliases';
 import type { TerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFlags';
 import { resolveSessionCriticalMetadataDrainTimeoutMs } from '@/session/transport/shared/sessionTimeouts';
 import { canPublishSessionResumeIdentity } from '@/session/metadata/sessionIdentityPublication';
@@ -660,6 +662,20 @@ export class Session {
         this.criticalMetadataWrites.add(tracked);
     }
 
+    private async publishNativeSessionAliases(sessionId: string): Promise<void> {
+        const snapshot = this.client.getMetadataSnapshot();
+        if (this.sessionId !== sessionId || snapshot?.claudeSessionId !== sessionId) return;
+        const observations = await readClaudeNativeSessionAliases({
+            configDir: resolveConfiguredClaudeConfigDir({ env: process.env }),
+            sessionId,
+            observedAt: Date.now(),
+        });
+        if (this.sessionId !== sessionId || mergeNativeSessionAliases(snapshot, observations) === snapshot) return;
+        await this.client.updateMetadata(metadata => metadata.claudeSessionId === sessionId
+            ? mergeNativeSessionAliases(metadata, observations)
+            : metadata);
+    }
+
     async drainCriticalMetadataWrites(opts: Readonly<{ timeoutMs?: number }> = {}): Promise<void> {
         const pending = [...this.criticalMetadataWrites];
         if (pending.length === 0) return;
@@ -971,6 +987,7 @@ export class Session {
                     });
                 }
                 logger.debug(`[Session] Claude Code session ID ${sessionId} added to metadata`);
+                await this.publishNativeSessionAliases(sessionId);
             },
             'claude_session_found',
         );
@@ -999,6 +1016,12 @@ export class Session {
         }
         if (isSidechainSessionHook(data)) return;
         const event = data.hook_event_name ?? data.hookEventName;
+        if (event === 'SessionStart' || event === 'Stop' || event === 'SessionEnd' || event === 'UserPromptSubmit') {
+            const sessionId = data.session_id ?? data.sessionId;
+            if (typeof sessionId === 'string') {
+                this.trackCriticalMetadataWrite(() => this.publishNativeSessionAliases(sessionId), 'claude_native_session_aliases');
+            }
+        }
         if (event === 'PostToolUse' || event === 'PostToolUseFailure') {
             const id = data.tool_use_id ?? data.toolUseId;
             if (typeof id === 'string') this.claudeToolHookCorrelation.delete(id);

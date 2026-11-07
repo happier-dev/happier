@@ -76,9 +76,16 @@ export type AgentInputChipPickerOption = Readonly<{
      * means what — the composer's applied-runtime marker owner does.
      */
     statusMarker?: React.ReactNode;
+    /** Drawn between the row's icon and label, such as a usage ring. */
+    leadingMark?: React.ReactNode;
     railAction?: AgentInputChipPickerOptionRailAction;
     onApply?: () => void;
     disabled?: boolean;
+    /**
+     * A disabled row still takes focus, so its detail (and the reason it cannot be applied) can be
+     * previewed. Applying stays blocked by `disabled`.
+     */
+    focusableWhileDisabled?: boolean;
 }>;
 
 export type AgentInputChipPickerPanelProps = Readonly<{
@@ -87,6 +94,11 @@ export type AgentInputChipPickerPanelProps = Readonly<{
     selectedOptionId?: string | null;
     onSelect: (id: string) => void;
     onRequestClose: () => void;
+    /**
+     * Done action for detailed pickers. The detail pane's header hosts it left of its refresh
+     * control; without such a header the panel shows it in its own pane-header slot.
+     */
+    onDone?: () => void;
     applyLabel?: string;
     showCloseButton?: boolean;
     railWidth?: number;

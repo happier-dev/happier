@@ -55,6 +55,8 @@ export function buildCoreAgentInputControlNodes(params: Readonly<{
     engineLabel: string;
     onAgentPress: () => void;
     onAgentIntent?: () => void;
+    /** Provider/context usage rings, drawn to the right of the model chip so usage is visible while choosing. */
+    usageGaugesNode?: React.ReactNode;
     machineChipAnchorRef: React.RefObject<View | null>;
     onMachinePress?: () => void;
     machineName?: string | null;
@@ -202,7 +204,10 @@ export function buildCoreAgentInputControlNodes(params: Readonly<{
     return {
         permission: permissionChip ? [permissionChip] : [],
         actionMenu: actionMenuChip ? [actionMenuChip] : [],
-        engine: agentChip ? [agentChip] : [],
+        engine: [
+            ...(agentChip ? [agentChip] : []),
+            ...(params.usageGaugesNode ? [<React.Fragment key="usage-gauges">{params.usageGaugesNode}</React.Fragment>] : []),
+        ],
         mode: modeChip ? [modeChip] : [],
         profile: profileChip ? [profileChip] : [],
         env: envVarsChip ? [envVarsChip] : [],

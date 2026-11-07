@@ -71,6 +71,7 @@ function buildRecoveryIntentFromLatestUsageLimitIssue(
     occurredAtMs: issueParsed.data.occurredAt,
     resetAtMs: issueParsed.data.usageLimit.resetAtMs,
     retryAfterMs: issueParsed.data.usageLimit.retryAfterMs,
+    windows: issueParsed.data.usageLimit.allWindows,
   });
 
   return {

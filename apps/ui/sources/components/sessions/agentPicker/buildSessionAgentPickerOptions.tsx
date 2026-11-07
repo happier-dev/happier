@@ -26,6 +26,8 @@ export type SessionAgentPickerOptionPresentation = Readonly<{
     accessibilityLabel?: string;
     disabled: boolean;
     muted: boolean;
+    /** Keep a `disabled` row focusable so its detail can be previewed; applying stays blocked. */
+    focusable?: boolean;
 }>;
 
 export type SessionAgentPickerOptionBehavior = Pick<
@@ -108,6 +110,7 @@ export function buildSessionAgentPickerOptions(
             accessibilityLabel: presentation.accessibilityLabel,
             disabled: presentation.disabled,
             muted: presentation.muted,
+            focusableWhileDisabled: presentation.focusable,
             railAction: params.resolveRailAction?.(context),
             ...params.resolveBehavior(context),
         };

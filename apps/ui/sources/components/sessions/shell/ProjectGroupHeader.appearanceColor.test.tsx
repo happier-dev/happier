@@ -95,7 +95,7 @@ describe('ProjectGroupHeader colour', () => {
         expect(swatches.filter((entry) => entry.swatch.checked)).toHaveLength(1);
 
         const purple = swatches[swatches.length - 1];
-        const remove = submenu.find((entry) => entry.swatch?.empty);
+        const remove = submenu.find((entry) => entry.id === `${colorItem.id}:remove`);
         await act(async () => {
             await menu.props.onSelect(purple.id);
             await menu.props.onSelect(remove.id);

@@ -224,6 +224,7 @@ class Configuration {
   public readonly filesTransferChunkBytes: number
   public readonly filesTransferSessionTtlMs: number
   public readonly filesUploadMaxFileBytes: number
+  public readonly filesImageReadMaxBytes: number
   public readonly filesDownloadMaxFileBytes: number
   public readonly filesZipMaxTotalBytes: number
   public readonly filesZipMaxEntryCount: number
@@ -499,14 +500,22 @@ class Configuration {
       min: 1000, max: 60 * 60_000, default: 10 * 60_000,
     });
 
-    // Default: 50MB. Defensive minimum: 1 byte.
+    // Fork default: 1GiB. Bulk uploads are streamed to disk chunk by chunk, so this does not bound RAM.
+    // Defensive minimum: 1 byte.
     this.filesUploadMaxFileBytes = resolveIntEnvWithBounds('HAPPIER_FILES_UPLOAD_MAX_FILE_BYTES', {
+      min: 1, default: 1024 * 1024 * 1024,
+    });
+
+    // Whole-file in-memory reads of uploaded images (hash verification, prompt projection).
+    // This bounds RAM, so it is deliberately independent of the upload cap. Default: 50MB.
+    this.filesImageReadMaxBytes = resolveIntEnvWithBounds('HAPPIER_FILES_IMAGE_READ_MAX_BYTES', {
       min: 1, default: 50 * 1024 * 1024,
     });
 
-    // Default: 50MB. Defensive minimum: 1 byte.
+    // Fork: downloads are unlimited by default (editor/preview/inline-read caps are separate).
+    // Set HAPPIER_FILES_DOWNLOAD_MAX_FILE_BYTES to a positive byte count to impose a cap; 0/unset = unlimited.
     this.filesDownloadMaxFileBytes = resolveIntEnvWithBounds('HAPPIER_FILES_DOWNLOAD_MAX_FILE_BYTES', {
-      min: 1, default: 50 * 1024 * 1024,
+      min: 1, default: Number.MAX_SAFE_INTEGER,
     });
 
     // Default: 100MB. Defensive minimum: 1 byte.

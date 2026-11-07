@@ -19,6 +19,7 @@ export function useSessionAgentInputExtraActionChips(params: Readonly<{
     onPickAttachmentFile: () => void;
     onPickAttachmentImage: () => void;
     onPasteAttachmentImage?: () => void;
+    onTakeAttachmentPhoto?: () => void;
     onAppendLinkedPath: (path: string) => void;
     reviewCommentsEnabled: boolean;
     reviewScope: WorkspaceScopeBase | null;
@@ -39,6 +40,7 @@ export function useSessionAgentInputExtraActionChips(params: Readonly<{
                 onPickFile: params.onPickAttachmentFile,
                 onPickImage: params.onPickAttachmentImage,
                 onPasteImage: params.onPasteAttachmentImage,
+                onTakePhoto: params.onTakeAttachmentPhoto,
                 disabled: params.isUploadingAttachments,
             }));
         }
@@ -109,6 +111,7 @@ export function useSessionAgentInputExtraActionChips(params: Readonly<{
         params.onPickAttachmentFile,
         params.onPickAttachmentImage,
         params.onPasteAttachmentImage,
+        params.onTakeAttachmentPhoto,
         params.reviewCommentDrafts,
         params.reviewCommentsEnabled,
         params.reviewScope,

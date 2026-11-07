@@ -1,10 +1,12 @@
 import { act } from 'react-test-renderer';
-import { renderHook } from '@/dev/testkit';
+import { flushHookEffects, renderHook } from '@/dev/testkit';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import type { ConnectedServicesDefaultAuthByAgentIdV1 } from '@happier-dev/protocol';
 import * as React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { installNewSessionModulesCommonModuleMocks } from './newSessionModulesTestHelpers';
+import { __resetConnectedServiceQuotaSnapshotStore } from '@/sync/domains/connectedServices/connectedServiceQuotaSnapshotStore';
+import { useNewSessionConnectedServices } from './useNewSessionConnectedServices';
 
 (
     globalThis as typeof globalThis & {
@@ -91,8 +93,38 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: (...args: any[]) => useFeatureEnabledMock(...args),
 }));
 
-vi.mock('@/sync/store/hooks', () => ({
-    useProfile: () => profileState.current,
+vi.mock('@/sync/store/hooks', async (importOriginal) => {
+    const { createUseSettingMock } = await import('@/dev/testkit/mocks/storage');
+    const { settingsDefaults } = await import('@/sync/domains/settings/settings');
+    return {
+        ...await importOriginal<typeof import('@/sync/store/hooks')>(),
+        useProfile: () => profileState.current,
+        useSetting: createUseSettingMock({ fallback: (key) => settingsDefaults[key] }),
+    };
+});
+
+// Network boundaries behind the provider usage gauge: the account encryption mode and the
+// connected-service quota snapshot endpoints. Everything between them and the hook stays real.
+const quotaApiState = vi.hoisted(() => ({
+    plainSnapshot: null as unknown,
+    // Stable like the real auth context: credentials-dependent queries re-run when the identity changes.
+    auth: { credentials: { token: 't', secret: Buffer.from(new Uint8Array(32).fill(3)).toString('base64url') } },
+}));
+
+vi.mock('@/auth/context/AuthContext', () => ({
+    useAuth: () => quotaApiState.auth,
+}));
+
+vi.mock('@/sync/api/account/apiAccountEncryptionMode', () => ({
+    fetchAccountEncryptionMode: async () => ({ mode: 'plain', updatedAt: 0 }),
+}));
+
+vi.mock('@/sync/api/account/apiConnectedServicesQuotasV2', () => ({
+    getConnectedServiceQuotaSnapshotSealed: async () => null,
+}));
+
+vi.mock('@/sync/api/account/apiConnectedServicesQuotasV3', () => ({
+    getConnectedServiceQuotaSnapshotPlain: async () => quotaApiState.plainSnapshot,
 }));
 
 function requireCollapsedContentPopover(chip: AgentInputExtraActionChip | null) {
@@ -104,7 +136,8 @@ function requireCollapsedContentPopover(chip: AgentInputExtraActionChip | null) 
 }
 
 describe('useNewSessionConnectedServices', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
+        __resetConnectedServiceQuotaSnapshotStore();
         modalShowMock.mockReset();
         useFeatureEnabledMock.mockReset();
         useFeatureEnabledMock.mockReturnValue(true);
@@ -295,6 +328,137 @@ describe('useNewSessionConnectedServices', () => {
         });
 
         await hook.unmount();
+    });
+
+    it('uses the latest native login usage before the new session exists', async () => {
+        profileState.current = { connectedServicesV2: [] };
+        const { buildProviderAccountUsageRecordId, ProviderAccountUsageSnapshotV1Schema } = await import('@happier-dev/protocol');
+        const { writeProviderAccountUsageSnapshotToCache } = await import('@/sync/domains/connectedServices/accountUsage/cache');
+        const { resolveAuthCredentialsScopeKey } = await import('@/auth/storage/resolveAuthCredentialsScopeKey');
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        const { createSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+        const previousSessions = storage.getState().sessions;
+        const previousReady = storage.getState().isDataReady;
+        const recordKey = { providerId: 'codex', accountSubjectId: 'native-work', subjectKind: 'account', quotaScope: 'account' } as const;
+        const recordId = buildProviderAccountUsageRecordId(recordKey);
+        const snapshot = ProviderAccountUsageSnapshotV1Schema.parse({
+            v: 1, recordId, recordKey, providerId: 'codex',
+            accountSubject: { kind: 'providerSubject', id: 'native-work' },
+            observedAtMs: Date.now(), fetchedAtMs: Date.now(), staleAfterMs: 60_000,
+            source: 'runtimeSignal', confidence: 'confirmed', state: 'loaded_data',
+            meters: [{ meterId: 'weekly', label: 'Weekly', used: 40, limit: 100,
+                unit: 'count', utilizationPct: null, resetsAt: null, status: 'ok', details: {} }],
+        });
+        writeProviderAccountUsageSnapshotToCache({
+            credentialScope: resolveAuthCredentialsScopeKey(quotaApiState.auth.credentials), snapshot,
+        });
+        const claudeRecordKey = { ...recordKey, providerId: 'claude' } as const;
+        const claudeRecordId = buildProviderAccountUsageRecordId(claudeRecordKey);
+        writeProviderAccountUsageSnapshotToCache({
+            credentialScope: resolveAuthCredentialsScopeKey(quotaApiState.auth.credentials),
+            snapshot: ProviderAccountUsageSnapshotV1Schema.parse({
+                ...snapshot, recordId: claudeRecordId, recordKey: claudeRecordKey, providerId: 'claude',
+                meters: [{ ...snapshot.meters[0], used: 60 }],
+            }),
+        });
+        const session = createSessionFixture({ metadata: {
+            path: '/repo', host: 'test', flavor: 'codex',
+            // Usage references survive a provider switch; snapshot identity, not current flavor, owns them.
+            providerAccountUsageRefsV1: { v: 1, recordIds: [recordId, claudeRecordId], updatedAtMs: Date.now() },
+        } });
+        const exhaustedClaude = createSessionFixture({
+            id: 'exhausted-claude', metadata: { path: '/repo', host: 'test', flavor: 'claude' },
+            lastRuntimeIssue: {
+                v: 1, scope: 'primary_session', status: 'failed', code: 'usage_limit', source: 'usage_limit',
+                provider: 'claude', occurredAt: Date.now(),
+                usageLimit: { v: 1, resetAtMs: Date.now() + 3_600_000, retryAfterMs: null,
+                    quotaScope: 'account', recoverability: 'wait', limitCategory: 'usage_limit' },
+            },
+        });
+        storage.setState({ sessions: { [session.id]: session, [exhaustedClaude.id]: exhaustedClaude }, isDataReady: true });
+        const { useNewSessionConnectedServices } = await import('./useNewSessionConnectedServices');
+        const hook = await renderHook(() => useNewSessionConnectedServices({
+            agentCore: { id: 'codex', connectedServices: { supportedServiceIds: ['openai-codex'] } },
+            usageAgentIds: ['claude', 'codex'],
+            agentOptionState: null,
+            settings: { connectedServicesProfileLabelByKey: {}, connectedServicesDefaultProfileByServiceId: {} },
+            targetServerId: null, router: { push: vi.fn() }, setAgentOptionStateForCurrentAgent: vi.fn(),
+        }));
+        try {
+            await flushHookEffects({ cycles: 5, turns: 5 });
+            expect(hook.getCurrent().providerUsageGauge?.remainingPct).toBe(60);
+            // The picker must include every provider, including a native account with only limit-hit evidence.
+            expect(hook.getCurrent().providerUsageGaugesByAgentId?.get('codex')?.remainingPct).toBe(60);
+            expect(hook.getCurrent().providerUsageGaugesByAgentId?.get('claude')?.remainingPct).toBe(0);
+            expect(hook.getCurrent().providerUsageGaugesByAgentId?.get('claude')?.tone).toBe('critical');
+            // The shared details header must identify the provider even for native limit-only evidence.
+            expect(hook.getCurrent().providerUsageGaugesByAgentId?.get('codex')?.providerDisplayName).toBe('agentInput.agent.codex');
+            expect(hook.getCurrent().providerUsageGaugesByAgentId?.get('claude')?.providerDisplayName).toBe('agentInput.agent.claude');
+            await act(async () => storage.setState({ sessions: {
+                [session.id]: session, [exhaustedClaude.id]: { ...exhaustedClaude, lastRuntimeIssue: undefined },
+            } }));
+            expect(hook.getCurrent().providerUsageGaugesByAgentId?.get('claude')?.remainingPct).toBe(40);
+        } finally {
+            await hook.unmount();
+            storage.setState({ sessions: previousSessions, isDataReady: previousReady });
+        }
+    });
+
+    it('meters the selected connected account quota for the new-session composer', async () => {
+        const { ConnectedServiceQuotaSnapshotV1Schema } = await import('@happier-dev/protocol');
+        quotaApiState.plainSnapshot = ConnectedServiceQuotaSnapshotV1Schema.parse({
+            v: 1,
+            serviceId: 'anthropic',
+            profileId: 'work',
+            fetchedAt: Date.now(),
+            staleAfterMs: 60_000,
+            planLabel: 'Pro',
+            accountLabel: null,
+            meters: [{
+                meterId: 'weekly',
+                label: 'Weekly',
+                used: 40,
+                limit: 100,
+                unit: 'count',
+                utilizationPct: null,
+                resetsAt: null,
+                status: 'ok',
+                confidence: 'exact',
+                details: { limitCategory: 'quota' },
+            }],
+        });
+        const { useNewSessionConnectedServices } = await import('./useNewSessionConnectedServices');
+
+        const hook = await renderHook(() =>
+            useNewSessionConnectedServices({
+                agentCore: {
+                    connectedServices: {
+                        supportedServiceIds: ['anthropic'],
+                        supportedKindsByServiceId: { anthropic: ['token'] },
+                    },
+                },
+                agentOptionState: {
+                    connectedServicesBindingsByServiceId: {
+                        anthropic: { source: 'connected', selection: 'profile', profileId: 'work' },
+                    },
+                },
+                modelId: null,
+                settings: {
+                    connectedServicesProfileLabelByKey: {},
+                    connectedServicesDefaultProfileByServiceId: {},
+                    connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
+                },
+                targetServerId: null,
+                router: { push: vi.fn() },
+                setAgentOptionStateForCurrentAgent: vi.fn(),
+            }),
+        );
+        await flushHookEffects({ cycles: 5, turns: 5 });
+
+        expect(hook.getCurrent().providerUsageGauge?.remainingPct).toBe(60);
+
+        await hook.unmount();
+        quotaApiState.plainSnapshot = null;
     });
 
     it('uses spawn-scoped feature gating so the chip stays available for the selected target server', async () => {

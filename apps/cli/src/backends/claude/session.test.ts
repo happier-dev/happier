@@ -46,6 +46,62 @@ vi.mock('node:fs', async importOriginal => {
 
 type SessionFoundHookData = NonNullable<Parameters<Session['onSessionFound']>[1]>;
 
+it('preserves exact native alias assignment history from registration metadata across hooks', async () => {
+  const configDir = mkdtempSync(join(tmpdir(), 'claude-native-alias-'));
+  const registrationsDir = join(configDir, 'sessions');
+  mkdirSync(registrationsDir);
+  vi.stubEnv('CLAUDE_CONFIG_DIR', configDir);
+  const assignedAt = Date.now() - 1000;
+  const now = vi.spyOn(Date, 'now').mockReturnValue(assignedAt + 1000);
+  let metadata = createMetadataStub({ claudeSessionId: 'native-session' });
+  const updateMetadata = vi.fn(async (updater: (value: Metadata) => Metadata) => { metadata = updater(metadata); });
+  const client = createSessionClientStub({ getMetadataSnapshot: () => metadata, updateMetadata });
+  const session = createSession(client);
+  session.sessionId = 'native-session';
+  const observe = async () => {
+    session.onClaudeSessionHook({ hook_event_name: 'Stop', session_id: 'native-session' });
+    await session.drainCriticalMetadataWrites();
+  };
+  try {
+    writeFileSync(join(registrationsDir, '123.json'), JSON.stringify({ name: 'happier-6e', sessionId: 'native-session', nameSince: assignedAt, startedAt: assignedAt - 100 }));
+    // Neither a name match nor a credential-adjacent filename establishes identity.
+    writeFileSync(join(registrationsDir, '124.json'), JSON.stringify({ name: 'happier-90', sessionId: 'another-session', nameSince: assignedAt }));
+    writeFileSync(join(registrationsDir, '123.key'), JSON.stringify({ name: 'happier-key', sessionId: 'native-session', nameSince: assignedAt }));
+    await observe();
+    expect(metadata).toMatchObject({ nativeSessionAliasesV1: { v: 1, assignments: [
+      { providerId: 'claude', providerSessionId: 'native-session', alias: 'happier-6e', assignedAt, observedAt: expect.any(Number) },
+    ] } });
+    const first = structuredClone(metadata);
+    await observe();
+    expect(updateMetadata).toHaveBeenCalledTimes(1);
+    expect(metadata).toEqual(first);
+    now.mockReturnValue(assignedAt + 2000);
+    await observe();
+    expect(metadata).toMatchObject({ nativeSessionAliasesV1: { assignments: [{ observedAt: assignedAt + 2000 }] } });
+    writeFileSync(join(registrationsDir, '123.json'), JSON.stringify({ name: 'happier-90', sessionId: 'native-session', nameSince: assignedAt + 100 }));
+    await observe();
+    expect(metadata).toMatchObject({ nativeSessionAliasesV1: { v: 1, assignments: [
+      { alias: 'happier-6e', assignedAt }, { alias: 'happier-90', assignedAt: assignedAt + 100 },
+    ] } });
+    for (const evidence of [
+      { startedAt: assignedAt },
+      { nameSince: new Date(assignedAt).toISOString() },
+      { nameSince: assignedAt + 10_000 },
+      { nameSince: assignedAt + 0.5 },
+      { nameSince: assignedAt, startedAt: assignedAt + 100 },
+    ]) {
+      writeFileSync(join(registrationsDir, '123.json'), JSON.stringify({ name: 'happier-eb', sessionId: 'native-session', ...evidence }));
+      await observe();
+    }
+    expect(updateMetadata).toHaveBeenCalledTimes(3);
+  } finally {
+    session.cleanup();
+    now.mockRestore();
+    vi.unstubAllEnvs();
+    rmSync(configDir, { recursive: true, force: true });
+  }
+});
+
 it('preserves primary tool identity for consumers registered after the native broker until Session retires it', async () => {
   const session = createSession(createSessionClientStub());
   const broker = new ClaudeUnifiedDialogChoiceBroker(session);

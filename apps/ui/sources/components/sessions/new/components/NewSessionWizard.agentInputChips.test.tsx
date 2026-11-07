@@ -49,6 +49,8 @@ installNewSessionComponentsCommonModuleMocks({
     },
 });
 
+vi.mock('@/auth/context/AuthContext', () => ({ useAuth: () => ({ credentials: null }) }));
+
 vi.mock('expo-linear-gradient', () => ({
     LinearGradient: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
         React.createElement('LinearGradient', props, props.children),

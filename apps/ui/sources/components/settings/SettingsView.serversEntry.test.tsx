@@ -7,6 +7,7 @@ import {
     standardCleanup,
 } from '@/dev/testkit';
 import { installSettingsViewCommonModuleMocks } from './settingsViewTestHelpers';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -20,6 +21,7 @@ const shared = vi.hoisted(() => ({
     linkingOpenURLSpy: vi.fn(async () => {}),
     requestReviewSpy: vi.fn(),
     canRequestReviewSpy: vi.fn(async () => true),
+    copySpy: vi.fn(async (_value: string) => true),
 }));
 
 const settingsViewWebDimensions = { width: 1600, height: 900, scale: 2, fontScale: 1 };
@@ -29,12 +31,18 @@ function createPassthroughNode(name: string) {
 }
 
 function createPropPassthroughNode(name: string) {
-    return (props: any) => React.createElement(name, props);
+    return (props: any) => React.createElement(name, props, props.children, props.subtitleAccessory);
 }
 
 function createSettingsViewStorageOverrides() {
     return {
         useEntitlement: () => false,
+        useSettings: () => ({
+            connectedDeviceV1_desktop: { name: 'Test laptop', platform: 'desktop', appVersion: '1.2.3', lastSeen: Date.now() - 1000 },
+            connectedDeviceV1_phone: { name: 'Phone', platform: 'android', appVersion: '1.2.2', lastSeen: Date.now() - 2000 },
+            connectedDeviceV1_web: { name: null, platform: 'web', appVersion: '1.2.4', lastSeen: Date.now() - 3000 },
+            connectedDeviceV1_old: { name: 'Expired device', platform: 'android', appVersion: 'old', lastSeen: Date.now() - 15 * 86400000 },
+        }) as any,
         // Boundary mock: this suite only reads a boolean local setting toggle.
         useLocalSettingMutable: (() => [false, vi.fn()]) as any,
         useSetting: (key: string) => {
@@ -47,7 +55,10 @@ function createSettingsViewStorageOverrides() {
             if (key === 'sessionUseTmux') return false;
             return null;
         },
-        useAllMachines: () => [],
+        useAllMachines: () => [
+            createMachineFixture({ metadata: { host: 'workstation', platform: 'linux', homeDir: '/tmp', happyHomeDir: '/tmp/happier', happyCliVersion: '2.3.4' } }),
+            createMachineFixture({ id: 'legacy-host', metadata: { host: 'legacy-host', platform: 'linux', homeDir: '/tmp', happyHomeDir: '/tmp/happier', happyCliVersion: '0.2.17' } }),
+        ],
         useMachineListByServerId: () => ({}),
         useMachineListStatusByServerId: () => ({}),
         // Boundary mock: SettingsView only consumes these profile fields in this suite.
@@ -110,6 +121,13 @@ vi.mock('@react-navigation/native', () => ({
 vi.mock('expo-constants', () => ({
     default: { expoConfig: { version: '0.0.0-test' } },
 }));
+
+vi.mock('@/sync/runtime/readCurrentAppRuntimeInfo', () => ({
+    readCurrentAppRuntimeInfo: () => ({ appVersion: '0.0.0-test', nativeApplicationVersion: '1.2.3', nativeBuildVersion: '42', runtimeVersion: 'runtime-1' }),
+}));
+
+vi.mock('@/utils/ui/clipboard', () => ({ setClipboardStringSafe: shared.copySpy }));
+vi.mock('@/utils/system/runtimeFetch', () => ({ runtimeFetch: async () => ({ ok: true, json: async () => ({ ok: true, version: '3.4.5', source_sha: 'abcdef0123456789' }) }) }));
 
 vi.mock('@/constants/Typography', () => ({
     Typography: {
@@ -229,10 +247,7 @@ vi.mock('@/hooks/server/useFeatureDecision', () => ({
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
     getActiveServerSnapshot: () => ({ serverId: 'server-1', serverUrl: 'https://local.example.test', generation: 0 }),
     listServerProfiles: () => [],
-    subscribeActiveServer: (listener: any) => {
-        listener({ serverId: 'server-1', serverUrl: 'https://local.example.test', generation: 0 });
-        return () => {};
-    },
+    subscribeActiveServer: () => () => {},
 }));
 
 vi.mock('@/utils/system/requestReview', () => ({
@@ -270,6 +285,28 @@ describe('SettingsView', () => {
         }
         return screen;
     }
+
+    it('displays and copies app, server, and connected machine versions', async () => {
+        const screen = await renderSettingsViewUnderTest();
+        const row = screen.findRowByTitle('common.version');
+        expect(row?.props.subtitle).toContain('0.0.0-test');
+        expect(row?.props.subtitle).toContain('1.2.3');
+        expect(row?.props.subtitle).toContain('42');
+        expect(row?.props.subtitle).toContain('3.4.5');
+        expect(row?.props.subtitle).toContain('abcdef0123456789');
+        expect(row?.props.subtitle).toContain('workstation');
+        expect(row?.props.subtitle).toContain('2.3.4');
+        expect(row?.props.subtitle).toContain('legacy-host): 0.2.17');
+        expect(row?.props.subtitle).not.toContain('legacy-host): 0.2.17 (0.0.0-test)');
+        expect(row?.props.subtitle).toContain('Test laptop');
+        expect(row?.props.subtitle).toContain('1.2.3');
+        expect(row?.props.subtitle).toContain('Phone | android | 1.2.2');
+        expect(row?.props.subtitle).toContain('web | 1.2.4');
+        expect(row?.props.subtitle).not.toContain('Expired device');
+        await act(async () => { await screen.pressRowByTitle('common.version'); });
+        expect(shared.copySpy).toHaveBeenCalledWith(row?.props.subtitle);
+        expect(screen.findByTestId('settings-version-copied-toast')?.props.accessibilityLabel).toBe('common.copied!');
+    });
 
     it('includes a first-class Relays entry that routes to /server', async () => {
         const screen = await renderSettingsViewUnderTest();

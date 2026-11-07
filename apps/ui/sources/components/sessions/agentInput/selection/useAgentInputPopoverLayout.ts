@@ -22,7 +22,7 @@ export const AGENT_INPUT_POPOVER_EDGE_PADDING = { horizontal: 16 } as const;
 export type AgentInputPopoverLayout = Readonly<{
     maxHeightCap?: number;
     keyboardBottomInset: number;
-    placement: 'top';
+    placement: 'top' | 'bottom';
     gap: number;
     edgePadding: Readonly<{ horizontal: number }>;
 }>;
@@ -30,6 +30,8 @@ export type AgentInputPopoverLayout = Readonly<{
 export function useAgentInputPopoverLayout(input: Readonly<{
     open: boolean;
     maxHeightCap?: number;
+    /** Hosts above the anchor's free space (composer chips) keep the default; top-of-pane hosts ask for 'bottom'. */
+    placement?: 'top' | 'bottom';
 }>): AgentInputPopoverLayout {
     const keyboardHeight = useKeyboardHeight();
     const composerKeyboardLayout = useComposerKeyboardLayout();
@@ -102,7 +104,7 @@ export function useAgentInputPopoverLayout(input: Readonly<{
     return {
         maxHeightCap,
         keyboardBottomInset: Platform.OS === 'web' ? 0 : effectiveKeyboardHeight,
-        placement: 'top',
+        placement: input.placement ?? 'top',
         // The popover now anchors correctly on every platform (Popover resolves the portal-relative
         // anchor via window-deltas on Android — see `resolvePortalRelativeAnchorRect`), so the gap is
         // the same snug value everywhere. Previously Android over-padded (32) to mask an anchor that

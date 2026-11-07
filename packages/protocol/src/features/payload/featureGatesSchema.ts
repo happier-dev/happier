@@ -12,6 +12,12 @@ const VoiceGateSchema = lazySchema(() => z.object({
 }));
 
 export const FeatureGatesSchema = lazySchema(() => z.object({
+  appLock: z
+    .object({
+      emailRecovery: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+    })
+    .optional()
+    .default({ emailRecovery: DEFAULT_GATE_DISABLED }),
   bugReports: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
   e2ee: z
     .object({

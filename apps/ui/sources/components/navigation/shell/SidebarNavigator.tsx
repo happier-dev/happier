@@ -28,6 +28,7 @@ import { resolvePaneFocusModeRouteScopeId } from '@/components/appShell/panes/fo
 import { isTauriDesktop } from '@/utils/platform/tauri';
 import { DesktopMainContentDragSurface } from '@/components/navigation/desktopWindowChrome/DesktopMainContentDragSurface';
 import { isDesktopPetOverlayWindowContext } from '@/components/pets/desktop/runtime/isDesktopPetOverlayWindowContext';
+import { isSessionFileWindowContext } from '@/components/sessions/files/window/sessionFileWindowRoute';
 import { useInboxAvailable } from '@/hooks/inbox/useInboxAvailable';
 import { InboxSummaryProvider, useInboxSummary } from '@/hooks/inbox/useInboxSummary';
 
@@ -111,7 +112,8 @@ export const SidebarNavigator = React.memo(() => {
     const pathname = usePathname();
     const isDesktopPetOverlayWindow = isDesktopPetOverlayWindowContext();
     const bypassSidebar = Platform.OS === 'web' && isTerminalConnectWebPathname(pathname);
-    const showSidebar = auth.isAuthenticated && isTablet && !isDesktopPetOverlayWindow && !bypassSidebar;
+    const isSessionFileWindow = isSessionFileWindowContext();
+    const showSidebar = auth.isAuthenticated && isTablet && !isDesktopPetOverlayWindow && !isSessionFileWindow && !bypassSidebar;
     const inboxSummary = useInboxSummary();
     const inboxEnabled = useInboxAvailable();
     const routeScopeId = React.useMemo(() => resolvePaneFocusModeRouteScopeId(pathname), [pathname]);

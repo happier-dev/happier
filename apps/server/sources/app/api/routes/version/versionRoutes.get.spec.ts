@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
 import { versionRoutes } from "./versionRoutes";
+import packageJson from "../../../../../package.json";
 
 describe("versionRoutes GET /v1/version", () => {
     it("responds with ok=true for server validation probes", async () => {
@@ -13,7 +14,7 @@ describe("versionRoutes GET /v1/version", () => {
             },
         });
         const { response } = await route.invoke();
-        expect(response).toEqual({ ok: true });
+        expect(response).toEqual({ ok: true, version: packageJson.version });
     });
 
     it("reports an exact deployed source revision when the release environment provides one", async () => {
@@ -28,7 +29,7 @@ describe("versionRoutes GET /v1/version", () => {
                 },
             });
             const { response } = await route.invoke();
-            expect(response).toEqual({ ok: true, source_sha: "a".repeat(40) });
+            expect(response).toEqual({ ok: true, version: packageJson.version, source_sha: "a".repeat(40) });
         } finally {
             if (prior === undefined) delete process.env.HAPPIER_RELEASE_SOURCE_SHA;
             else process.env.HAPPIER_RELEASE_SOURCE_SHA = prior;

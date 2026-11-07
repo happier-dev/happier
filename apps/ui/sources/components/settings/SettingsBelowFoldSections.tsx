@@ -1,4 +1,4 @@
-import { View, Platform, Linking } from 'react-native';
+import { View, Platform, Linking, Animated } from 'react-native';
 import * as React from 'react';
 import { useRouter } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
@@ -8,6 +8,15 @@ import { t } from '@/text';
 import { trackWhatsNewClicked } from '@/track';
 import { requestReview } from '@/utils/system/requestReview';
 import { ICON_SIZE, Icon } from '@/components/ui/icons/Icon';
+import { useAllMachines, useSettings } from '@/sync/domains/state/storage';
+import { listConnectedDevices } from '@/sync/domains/settings/connectedDevices';
+import { readCurrentAppRuntimeInfo } from '@/sync/runtime/readCurrentAppRuntimeInfo';
+import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
+import { runtimeFetch } from '@/utils/system/runtimeFetch';
+import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { Modal } from '@/modal';
+import { invokeTauri, isTauriDesktop } from '@/utils/platform/tauri';
+import { CopiedPill } from '@/components/ui/copy/CopiedPill';
 
 type SettingsBelowFoldSectionsRouter = ReturnType<typeof useRouter>;
 type SettingsBelowFoldSectionsTheme = ReturnType<typeof useUnistyles>['theme'];
@@ -379,6 +388,85 @@ const SettingsAboutSection = React.memo(function SettingsAboutSection({
     showRateUs,
     theme,
 }: SettingsAboutSectionProps) {
+    const machines = useAllMachines();
+    const settings = useSettings();
+    const [serverVersion, setServerVersion] = React.useState<string | null>(null);
+    const [desktopVersion, setDesktopVersion] = React.useState<string | null>(null);
+    const [showVersionCopiedToast, setShowVersionCopiedToast] = React.useState(false);
+    const versionCopiedToastOpacity = React.useRef(new Animated.Value(0)).current;
+    const versionCopiedToastAnimation = React.useRef<Animated.CompositeAnimation | null>(null);
+    const versionCopiedToastPause = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    const showCopiedToast = React.useCallback(() => {
+        versionCopiedToastAnimation.current?.stop();
+        if (versionCopiedToastPause.current) clearTimeout(versionCopiedToastPause.current);
+        versionCopiedToastPause.current = null;
+        versionCopiedToastOpacity.setValue(0);
+        setShowVersionCopiedToast(true);
+        const fadeIn = Animated.timing(versionCopiedToastOpacity, { toValue: 1, duration: 120, useNativeDriver: false });
+        versionCopiedToastAnimation.current = fadeIn;
+        fadeIn.start(({ finished }) => {
+            if (!finished) return;
+            versionCopiedToastPause.current = setTimeout(() => {
+                versionCopiedToastPause.current = null;
+                const fadeOut = Animated.timing(versionCopiedToastOpacity, { toValue: 0, duration: 180, useNativeDriver: false });
+                versionCopiedToastAnimation.current = fadeOut;
+                fadeOut.start(({ finished: fadeOutFinished }) => {
+                    if (fadeOutFinished) setShowVersionCopiedToast(false);
+                });
+            }, 900);
+        });
+    }, [versionCopiedToastOpacity]);
+
+    React.useEffect(() => () => {
+        versionCopiedToastAnimation.current?.stop();
+        if (versionCopiedToastPause.current) clearTimeout(versionCopiedToastPause.current);
+    }, []);
+    const runtime = React.useMemo(() => readCurrentAppRuntimeInfo(), []);
+
+    React.useEffect(() => {
+        if (!isTauriDesktop()) return;
+        let cancelled = false;
+        void invokeTauri<{ version: string }>('desktop_client_identity').then((identity) => {
+            if (!cancelled) setDesktopVersion(identity.version || null);
+        }).catch(() => {});
+        return () => { cancelled = true; };
+    }, []);
+
+    React.useEffect(() => {
+        let cancelled = false;
+        const load = (snapshot: ReturnType<typeof getActiveServerSnapshot>) => {
+            setServerVersion(null);
+            const url = snapshot.serverUrl.replace(/\/$/, '');
+            if (!url) return;
+            void runtimeFetch(`${url}/v1/version`).then(async (response) => {
+                if (!response.ok) return;
+                const data: unknown = await response.json();
+                if (!cancelled && getActiveServerSnapshot().generation === snapshot.generation && data && typeof data === 'object' && 'version' in data && typeof data.version === 'string') {
+                    const source = 'source_sha' in data && typeof data.source_sha === 'string' ? data.source_sha : null;
+                    setServerVersion([data.version, source].filter(Boolean).join(' / '));
+                }
+            }).catch(() => {});
+        };
+        const unsubscribe = subscribeActiveServer(load);
+        load(getActiveServerSnapshot());
+        return () => { cancelled = true; unsubscribe(); };
+    }, []);
+
+    const versionDetails = [
+        `${t('systemStatus.application.appVersion')}: ${runtime.appVersion ?? appVersion}`,
+        ...(desktopVersion ? [`${t('systemStatus.application.nativeVersion')}: ${desktopVersion}`] : []),
+        ...(runtime.nativeApplicationVersion ? [`${t('systemStatus.application.nativeVersion')}: ${runtime.nativeApplicationVersion}`] : []),
+        ...(runtime.nativeBuildVersion ? [`${t('systemStatus.application.buildNumber')}: ${runtime.nativeBuildVersion}`] : []),
+        ...(runtime.runtimeVersion ? [`${t('systemStatus.application.runtimeVersion')}: ${runtime.runtimeVersion}`] : []),
+        `${t('settings.servers')}: ${serverVersion ?? t('status.unknown')}`,
+        ...machines.filter((machine) => machine.metadata?.happyCliVersion).map((machine) =>
+            `${t('settings.machines')} (${machine.metadata?.displayName || machine.metadata?.host || machine.id}): ${machine.metadata?.happyCliVersion}`),
+        `${t('settings.connectedDevicesLast14Days')}:`,
+        ...listConnectedDevices(settings, Date.now()).map((device) =>
+            `${device.name ?? t('status.unknown')} | ${device.platform} | ${device.appVersion ?? t('status.unknown')} | ${new Date(device.lastSeen).toISOString()}`),
+    ].join('\n');
+
     return (
         <ItemGroup title={t('settings.about')} footer={t('settings.aboutFooter')}>
             {showChangelog ? (
@@ -450,9 +538,27 @@ const SettingsAboutSection = React.memo(function SettingsAboutSection({
             )}
             <Item
                 title={t('common.version')}
-                detail={appVersion}
+                subtitle={versionDetails}
+                subtitleAccessory={showVersionCopiedToast ? (
+                    <Animated.View style={{ opacity: versionCopiedToastOpacity }}>
+                        <CopiedPill
+                            visible
+                            label={`${t('common.copied')}!`}
+                            testID="settings-version-copied-toast"
+                        />
+                    </Animated.View>
+                ) : null}
                 icon={<Icon name="info" size={29} color={theme.colors.text.secondary} />}
-                onPress={handleVersionClick}
+                onPress={() => {
+                    handleVersionClick();
+                    void setClipboardStringSafe(versionDetails).then((copied) => {
+                        if (!copied) {
+                            Modal.alert(t('common.error'), t('items.failedToCopyToClipboard'));
+                            return;
+                        }
+                        showCopiedToast();
+                    });
+                }}
                 showChevron={false}
             />
         </ItemGroup>

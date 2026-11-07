@@ -3,6 +3,7 @@ import React from 'react';
 type MoveKeyboardDirection = 'up' | 'down';
 
 type SessionRowMoveActionDependencies = Readonly<{
+    openProjectMoveSheetForTreeRow?: (sourceRowId: string, sourceLabel: string) => Promise<void>;
     openMoveSheetForTreeRow: (sourceRowId: string, sourceLabel: string) => Promise<void>;
     moveTreeRowToWorkspaceRoot: (sourceRowId: string, sourceLabel: string) => void;
     moveTreeRowByKeyboard: (sourceRowId: string, sourceLabel: string, direction: MoveKeyboardDirection) => void;
@@ -12,6 +13,7 @@ type SessionRowMoveActionEntry = {
     sourceRowId: string;
     sourceLabel: string;
     onMoveToFolder: () => void;
+    onMoveToProject: () => void;
     onMoveToWorkspaceRoot: () => void;
     onMoveUp: () => void;
     onMoveDown: () => void;
@@ -24,6 +26,7 @@ type SessionRowMoveActionRequest = Readonly<{
 
 export type SessionRowMoveActionHandlers = Readonly<{
     onMoveToFolder: () => void;
+    onMoveToProject: () => void;
     onMoveToWorkspaceRoot: () => void;
     onMoveUp: () => void;
     onMoveDown: () => void;
@@ -42,6 +45,10 @@ export function useSessionListRowMoveActionHandlers(dependencies: SessionRowMove
             entry = {
                 sourceRowId: rowId,
                 sourceLabel: request.sourceLabel,
+                onMoveToProject: () => {
+                    const current = handlersByRowIdRef.current.get(rowId);
+                    if (current) void dependenciesRef.current.openProjectMoveSheetForTreeRow?.(current.sourceRowId, current.sourceLabel);
+                },
                 onMoveToFolder: () => {
                     const current = handlersByRowIdRef.current.get(rowId);
                     if (!current) return;
@@ -70,6 +77,7 @@ export function useSessionListRowMoveActionHandlers(dependencies: SessionRowMove
 
         return {
             onMoveToFolder: entry.onMoveToFolder,
+            onMoveToProject: entry.onMoveToProject,
             onMoveToWorkspaceRoot: entry.onMoveToWorkspaceRoot,
             onMoveUp: entry.onMoveUp,
             onMoveDown: entry.onMoveDown,

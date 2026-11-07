@@ -82,8 +82,9 @@ function createNativeSourceRecovery(profileId: string, overrides: Partial<Sessio
 
 describe('claudeUsageLimitRecoveryControlAdapter', () => {
   it.each([
-    [1_700_000_059_999, 'waiting', 'waiting', 1_700_000_060_000],
-    [1_700_000_060_000, 'ready', 'paused', null],
+    [1_700_000_059_999, 'waiting', 'waiting', 1_700_000_065_000],
+    [1_700_000_060_000, 'waiting', 'waiting', 1_700_000_065_000],
+    [1_700_000_065_000, 'ready', 'paused', null],
   ] as const)('checks retry-after timing at %s and preserves connected group authority', async (now, status, recoveryStatus, nextCheckAtMs) => {
     const adapter = createClaudeUsageLimitRecoveryControlAdapter({ nowMs: () => now });
     await expect(adapter.checkNow?.(createParams({
@@ -111,7 +112,7 @@ describe('claudeUsageLimitRecoveryControlAdapter', () => {
       };
       const selectedAuth = scenario === 'waiting connected' || scenario === 'daemon-owned'
         ? intent?.selectedAuth : { kind: 'native', serviceId: 'claude-subscription' };
-      const adapter = createClaudeUsageLimitRecoveryControlAdapter({ nowMs: () => 1_700_000_060_000 });
+      const adapter = createClaudeUsageLimitRecoveryControlAdapter({ nowMs: () => 1_700_000_065_000 });
       await expect(adapter.checkNow?.(createParams(metadata, { latestTurnStatus: 'failed',
         lastRuntimeIssue: { ...issue, usageLimit: { ...issue.usageLimit,
           connectedService: { serviceId: 'claude-subscription', profileId: sourceId, groupId: null } } },

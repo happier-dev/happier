@@ -14,6 +14,14 @@ installDropdownCommonModuleMocks({
             Platform: {
                 OS: 'web',
             },
+            View: React.forwardRef(({ children, ...props }: { children?: React.ReactNode; testID?: string }, ref) => {
+                React.useImperativeHandle(ref, () => ({
+                    getBoundingClientRect: () => props.testID?.endsWith(':scroll-frame')
+                        ? { left: 700, top: 200, width: 280, height: 36 }
+                        : { left: 976, top: 200, width: 4, height: 36 },
+                }));
+                return React.createElement('View', props, children);
+            }),
         });
     },
 });
@@ -154,33 +162,23 @@ describe('SelectableMenuResults', () => {
         expect(registerItemLayout).toHaveBeenCalledWith('0');
     });
 
-    it('reports every hovered row to the menu with the whole row as the submenu anchor', async () => {
-        const onHoverItem = vi.fn();
-        const onOpenSubmenu = vi.fn();
+    it('anchors a hovered submenu to the whole row so flipping left clears its parent', async () => {
         const { SelectableMenuResults } = await import('./SelectableMenuResults');
-
+        const onOpenSubmenu = vi.fn();
+        const registry = new Map<string, React.RefObject<unknown>>();
         const screen = await renderScreen(<SelectableMenuResults
-            categories={[
-                { id: 'c1', title: '', items: [{ id: 'move', title: 'Move', hasSubmenu: true }, { id: 'rename', title: 'Rename' }] },
-            ]}
+            categories={[{ id: 'c1', title: '', items: [{ id: 'color', title: 'Set color', hasSubmenu: true }] }]}
             selectedIndex={0}
             onSelectionChange={() => {}}
             onPressItem={() => {}}
-            onHoverItem={onHoverItem}
             onOpenSubmenu={onOpenSubmenu}
+            submenuAnchorRegistry={registry}
             rowVariant="slim"
         />);
-
-        // No narrow edge strip: a submenu anchored to the row flips left without covering its parent.
-        expect(screen.findByTestId('dropdown-option-move:submenu-anchor')).toBeNull();
-        const rows = screen.findAllByType('SelectableRow');
-        await act(async () => {
-            rows[0]!.props.onHover();
-            rows[1]!.props.onHover();
-            rows[0]!.props.onPress();
-        });
-        expect(onHoverItem.mock.calls.map(([item]) => item.id)).toEqual(['move', 'rename']);
-        expect(onOpenSubmenu).toHaveBeenCalledWith('move', onHoverItem.mock.calls[0]![1]);
+        act(() => screen.findByType('SelectableRow').props.onHover());
+        const anchor = onOpenSubmenu.mock.calls[0]?.[1] as React.RefObject<{ getBoundingClientRect: () => { left: number; width: number } }>;
+        expect(anchor.current?.getBoundingClientRect()).toMatchObject({ left: 700, width: 280 });
+        expect(registry.get('color')).toBe(anchor);
     });
 
     it('renders swatch items as pressable colour choices that report the chosen one', async () => {

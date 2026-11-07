@@ -12,7 +12,11 @@ import { resolveSessionRowAttentionIndicatorColor } from './sessionRowAttentionC
 
 /** Fills the indicator's 16 px slot, so the working mark reads at the scale of the row's agent icons. */
 const DEFAULT_WORKING_SPINNER_SIZE = 16;
-const UNREAD_CENTER_SIZE = 3;
+// Sized so an unseen-update or attention mark stays obvious on high-DPI screens (#732), while still
+// fitting the 16 px slot beside the row's agent icons.
+const STATUS_DOT_SIZE = 8;
+const ATTENTION_STATUS_DOT_SIZE = 9;
+const UNREAD_CENTER_SIZE = 5;
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -91,7 +95,7 @@ export const SessionRowAttentionIndicator = React.memo(function SessionRowAttent
                         testID={`session-row-attention-indicator-dot-${props.sessionId}`}
                         color={color}
                         isPulsing={shouldPulse}
-                        size={props.indicator === 'permission' || props.indicator === 'action' || props.indicator === 'failed' ? 7 : 6}
+                        size={props.indicator === 'permission' || props.indicator === 'action' || props.indicator === 'failed' ? ATTENTION_STATUS_DOT_SIZE : STATUS_DOT_SIZE}
                         animationEnabled={props.animationEnabled !== false}
                     />
                 )}

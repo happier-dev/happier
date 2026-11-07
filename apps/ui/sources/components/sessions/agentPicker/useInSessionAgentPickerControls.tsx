@@ -10,7 +10,7 @@ import {
     type SessionAgentTransitionSelectionV1,
 } from '@happier-dev/protocol';
 
-import { getAgentCore } from '@/agents/catalog/catalog';
+import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { resolveNewSessionConnectedServicesBindingsForAgent } from '@/components/sessions/new/modules/connectedServicesNewSessionBindings';
 import {
@@ -136,6 +136,7 @@ type UseInSessionAgentPickerControlsParams = Readonly<{
      */
     currentAgentSessionActive?: boolean | null;
     entries: readonly ResolvedBackendCatalogEntry[];
+    cliAvailabilityByAgentId?: Readonly<Partial<Record<AgentId, boolean | null>>>;
     favoriteBackendTargetKeys?: ReadonlyArray<string>;
     /**
      * The `sessions.agentSwitching` decision for this Session's server, resolved
@@ -377,6 +378,7 @@ export function useInSessionAgentPickerControls(
     params: UseInSessionAgentPickerControlsParams,
 ): InSessionAgentPickerControls {
     const { accountScope, currentAgentId, currentAgentLabel, entries, sessionId, source } = params;
+    const cliAvailabilityByAgentId = params.cliAvailabilityByAgentId;
     const featureEnabled = params.featureDecision?.state === 'enabled';
     const featureDefinitelyDisabled = params.featureDecision?.state === 'disabled';
     const accountScopeKey = accountScope ? serverAccountScopeKeySuffix(accountScope) : 'local';
@@ -485,9 +487,10 @@ export function useInSessionAgentPickerControls(
                 entry,
                 source,
                 inspection: readInspection(buildTargetSelection(entry, readTargetSelection(entry.targetKey))),
+                cliAvailable: entry.builtInAgentId ? cliAvailabilityByAgentId?.[entry.builtInAgentId] : null,
             }),
         }))
-    ), [readInspection, readTargetSelection, source, targetEntries]);
+    ), [cliAvailabilityByAgentId, readInspection, readTargetSelection, source, targetEntries]);
 
     // The rail exists to offer a choice, and a question still in flight is not a
     // choice. Only a target the machine has actually cleared sustains the rail:
@@ -495,6 +498,9 @@ export function useInSessionAgentPickerControls(
     // questions the machine then refused, and take itself away half a second
     // later with the reader already looking at it.
     const hasSwitchableTarget = targetRows.some((row) => row.eligibility.status === 'eligible');
+    // Known missing installations remain visible for inspection, even if no other target can be armed.
+    const hasMissingInstallation = sessionReason === null && source.machinePresence !== 'offline'
+        && targetRows.some(({ entry }) => entry.builtInAgentId && cliAvailabilityByAgentId?.[entry.builtInAgentId] === false);
     // Every target has been decided — answered by the machine, or refused by the
     // local rules before the machine was ever asked.
     const railDecisionSettled = targetRows.every((row) => row.eligibility.status !== 'checking');
@@ -505,7 +511,8 @@ export function useInSessionAgentPickerControls(
     // A closed gate produces no rail — not a rail of rows stuck on "checking"
     // because nothing was ever asked, and not a rail of disabled rows repeating
     // one fact about the deployment down a list of Agents. Nor does a Session
-    // with no other Agent, or one whose every target has been refused.
+    // with no other Agent, or one whose every target has been refused for continuation.
+    // Known missing installations are the exception: their grey rows remain inspectable.
     //
     // It stays one value, because two things depend on it and they must not
     // disagree: the rows the composer is given, and whether an armed choice is
@@ -513,7 +520,7 @@ export function useInSessionAgentPickerControls(
     const railOffersRowsNow = featureEnabled
         && currentAgentId !== null
         && targetRows.length > 0
-        && hasSwitchableTarget;
+        && (hasSwitchableTarget || hasMissingInstallation);
 
     // One open popover keeps one shape.
     //
@@ -775,6 +782,7 @@ export function useInSessionAgentPickerControls(
             entry,
             source,
             inspection: readInspection(buildTargetSelection(entry, selection)),
+            cliAvailable: entry.builtInAgentId ? cliAvailabilityByAgentId?.[entry.builtInAgentId] : null,
         });
         if (eligibility.status === 'eligible') {
             pendingArmRef.current = null;
@@ -788,7 +796,7 @@ export function useInSessionAgentPickerControls(
         pendingArmRef.current = eligibility.status === 'checking'
             ? { targetKey: entry.targetKey, sourceAgentId, sourceBackendTargetKey: source.currentBackendTargetKey, selection }
             : null;
-    }, [persistArmedContinuation, readInspection, source]);
+    }, [cliAvailabilityByAgentId, persistArmedContinuation, readInspection, source]);
 
     React.useEffect(() => {
         const pending = pendingArmRef.current;
@@ -806,13 +814,14 @@ export function useInSessionAgentPickerControls(
             entry,
             source,
             inspection: readInspection(buildTargetSelection(entry, pending.selection)),
+            cliAvailable: entry.builtInAgentId ? cliAvailabilityByAgentId?.[entry.builtInAgentId] : null,
         });
         if (eligibility.status === 'checking') return;
         pendingArmRef.current = null;
         if (eligibility.status === 'eligible') {
             persistArmedContinuation(buildArmedContinuation(entry, pending.sourceAgentId, pending.selection, pending.sourceBackendTargetKey));
         }
-    }, [currentAgentId, featureEnabled, persistArmedContinuation, readInspection, readTargetSelection, source, targetEntries]);
+    }, [cliAvailabilityByAgentId, currentAgentId, featureEnabled, persistArmedContinuation, readInspection, readTargetSelection, source, targetEntries]);
 
     const targetOptions = React.useMemo(() => {
         // A retained submitted snapshot is already in custody reconciliation. It
@@ -840,13 +849,14 @@ export function useInSessionAgentPickerControls(
                         subtitle: t('session.agentContinuation.checking'),
                         disabled: true,
                         muted: true,
+                        focusable: true,
                     };
                 }
                 // A blocked row is plainly disabled and says nothing in the rail.
                 // Its reason is stated once, in the detail pane, for whoever asks
                 // — never twice on the same screen.
                 if (eligibility.status === 'unavailable') {
-                    return { disabled: true, muted: true };
+                    return { disabled: true, muted: true, focusable: true };
                 }
                 // No subtitle for the armed row either: a second line wraps in the
                 // rail and breaks its rhythm, which is exactly why the running row
@@ -952,13 +962,20 @@ export function useInSessionAgentPickerControls(
         preferredOptionId: armedTargetKey,
     });
 
+    const currentEntry = entries.find((entry) => entry.targetKey === source.currentBackendTargetKey);
+    const currentCliMissing = Boolean(currentEntry?.builtInAgentId
+        && cliAvailabilityByAgentId?.[currentEntry.builtInAgentId] === false);
+
     const composeAgentPickerOptions = React.useCallback((
         currentAgentOptions: ReadonlyArray<AgentInputChipPickerOption>,
     ): ReadonlyArray<AgentInputChipPickerOption> => {
-        if (targetOptions.length === 0) return currentAgentOptions;
+        if (targetOptions.length === 0) return currentCliMissing
+            ? currentAgentOptions.map((option) => ({ ...option, muted: true }))
+            : currentAgentOptions;
         return [
             ...currentAgentOptions.map((option) => ({
                 ...option,
+                ...(currentCliMissing ? { muted: true } : {}),
                 // One checkmark, on the selection — the same shape every sibling model
                 // picker uses. Once the selection MOVES, though, the running Agent is
                 // left with nothing at all, and "which Agent is running right now" is a
@@ -997,7 +1014,7 @@ export function useInSessionAgentPickerControls(
             })),
             ...targetOptions,
         ];
-    }, [armedTargetKey, clearArmedContinuation, currentAgentAppliedStatus, currentAgentLabel, targetOptions]);
+    }, [armedTargetKey, clearArmedContinuation, currentAgentAppliedStatus, currentAgentLabel, currentCliMissing, targetOptions]);
 
     return {
         composeAgentPickerOptions,

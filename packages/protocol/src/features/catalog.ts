@@ -363,6 +363,12 @@ const FEATURE_CATALOG_DEFINITION = {
     dependencies: [],
     representation: 'client',
   },
+  'appLock.emailRecovery': {
+    description: 'App-lock password reset: recovery keys escrowed with the relay and reset codes emailed through the account SMTP settings.',
+    defaultFailMode: 'fail_closed',
+    dependencies: [],
+    representation: 'server',
+  },
   bugReports: {
     description: 'Bug report submission and diagnostics capability.',
     defaultFailMode: 'fail_closed',

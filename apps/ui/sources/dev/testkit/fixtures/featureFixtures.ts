@@ -56,6 +56,7 @@ type RootLayoutFeaturesOverrides = Omit<Partial<RootLayoutFeatures>, 'features' 
 
 const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
     features: {
+        appLock: { emailRecovery: { enabled: false } },
         bugReports: { enabled: true },
         e2ee: {
             keylessAccounts: { enabled: false },

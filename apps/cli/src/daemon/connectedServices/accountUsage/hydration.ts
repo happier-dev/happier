@@ -198,7 +198,7 @@ export async function hydrateProviderAccountUsageStoreFromCurrentSources(input: 
 
     let hydrated = snapshotsByRecordId.get(parsedRecordId.data);
     if (hydrated === undefined) {
-      hydrated = await openProviderAccountUsageSnapshotForHydration({
+      hydrated = await readStoredProviderAccountUsageSnapshot({
         api: input.api,
         credentials: input.credentials,
         recordId: parsedRecordId.data,
@@ -261,7 +261,7 @@ export async function hydrateProviderAccountUsageStoreFromCurrentSources(input: 
   };
 }
 
-async function openProviderAccountUsageSnapshotForHydration(input: Readonly<{
+export async function readStoredProviderAccountUsageSnapshot(input: Readonly<{
   api: ProviderAccountUsageHydrationApi;
   credentials: Credentials;
   recordId: ProviderAccountUsageRecordId;

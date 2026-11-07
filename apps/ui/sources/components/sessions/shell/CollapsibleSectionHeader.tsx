@@ -54,12 +54,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     webHoverVisibleChevron: {
         opacity: 1,
     },
-    groupHeaderTrailingActions: {
-        flexDirection: 'row' as const,
-        alignItems: 'center' as const,
-        gap: 4,
-        flexShrink: 0,
-    },
 }));
 
 export const CollapsibleSectionHeader = React.memo(function CollapsibleSectionHeader(props: Readonly<{
@@ -68,7 +62,6 @@ export const CollapsibleSectionHeader = React.memo(function CollapsibleSectionHe
     collapsed: boolean;
     onPress: () => void;
     headerTestId: string;
-    rightElement?: React.ReactNode;
 }>) {
     const styles = stylesheet;
     const { theme } = useUnistyles();
@@ -101,11 +94,6 @@ export const CollapsibleSectionHeader = React.memo(function CollapsibleSectionHe
                         />
                     </View>
                 </View>
-                {props.rightElement ? (
-                    <View style={styles.groupHeaderTrailingActions}>
-                        {props.rightElement}
-                    </View>
-                ) : null}
             </View>
         </Pressable>
     );

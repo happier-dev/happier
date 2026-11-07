@@ -1,4 +1,5 @@
 import React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
@@ -53,6 +54,23 @@ vi.mock('@/text', async () => {
         }
         if (key === 'connectedServices.account.resets.appliesTo') {
             return en.connectedServices.account.resets.appliesTo({ limits: String(params?.limits) });
+        }
+        if (key === 'connectedServices.quota.remainingWithReset') {
+            return en.connectedServices.quota.remainingWithReset({ percent: String(params?.percent), reset: String(params?.reset) });
+        }
+        if (key === 'connectedServices.quota.duration.hoursMinutes') {
+            return en.connectedServices.quota.duration.hoursMinutes({ hours: Number(params?.hours), minutes: Number(params?.minutes) });
+        }
+        if (key === 'connectedServices.quota.duration.minutes') {
+            return en.connectedServices.quota.duration.minutes({ minutes: Number(params?.minutes) });
+        }
+        if (key === 'connectedServices.quota.duration.hoursMinutesSeconds') {
+            return en.connectedServices.quota.duration.hoursMinutesSeconds({
+                hours: Number(params?.hours), minutes: Number(params?.minutes), seconds: Number(params?.seconds),
+            });
+        }
+        if (key === 'connectedServices.quota.duration.minutesSeconds') {
+            return en.connectedServices.quota.duration.minutesSeconds({ minutes: Number(params?.minutes), seconds: Number(params?.seconds) });
         }
         if (key === 'connectedServices.account.resets.fiveHourLimit') return en.connectedServices.account.resets.fiveHourLimit;
         if (key === 'connectedServices.account.resets.weeklyLimit') return en.connectedServices.account.resets.weeklyLimit;
@@ -200,6 +218,35 @@ async function renderAccountBlock(props: Partial<React.ComponentProps<typeof imp
 }
 
 describe('AccountBlock', () => {
+    it('counts a usage meter reset down live, one second per tick, on the account view', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(NOW_MS);
+        try {
+            const { AccountBlockView } = await import('./AccountBlockView');
+            const screen = await renderScreen(<AccountBlockView
+                serviceId="anthropic" profileId="work" title="Work" status="connected" testID="live-acct"
+                quota={{
+                    loading: false, hasSnapshot: true, nowMs: NOW_MS, isStale: false,
+                    canRefresh: true, isRefreshing: false, error: null, refresh: async () => {},
+                    planLabel: null, capacityPct: null, capacityRings: [],
+                    usageRows: [{
+                        meterId: 'weekly', label: 'Weekly', tone: 'danger', remaining: 0,
+                        remainingPct: 0, resetAtMs: NOW_MS + 2 * 60 * 60 * 1000,
+                    }],
+                    resetRows: [], resetAvailableCount: 0, pinnedMeterIds: [], togglePinnedMeter: () => {},
+                    consumeRecoveryCredit: async () => {}, consumeRecoveryCreditPending: false,
+                    consumeRecoveryCreditPendingTarget: null, canConsume: false, subscription: null,
+                }}
+            />);
+            expect(screen.getTextContent()).toContain('resets in 2h 0m 0s');
+
+            act(() => { vi.advanceTimersByTime(1_000); });
+            expect(screen.getTextContent()).toContain('resets in 1h 59m 59s');
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it('shows localized structured grant facts while keeping a saved grant action inert', async () => {
         const { AccountBlockView } = await import('./AccountBlockView');
         const details = { saved: {

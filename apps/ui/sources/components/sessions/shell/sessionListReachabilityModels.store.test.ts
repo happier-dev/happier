@@ -107,7 +107,7 @@ describe('session reachability display invalidation', () => {
 
         const moved = { ...session, metadata: { ...session.metadata!, path: '/Users/tester/moved' } };
         storage.setState({ sessions: { [moved.id]: moved } });
-        expect(build([predecessor, replacement], [{ ...items[0], type: 'session', session: moved }])
+        expect(build([predecessor, replacement], [{ type: 'session', serverId: 'server-a', session: moved }])
             .reachableSessionDisplayByKey.get('server-a:session-1')?.workspaceSubtitle).toBe('moved');
     });
 });

@@ -6,6 +6,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { TransferSessionStore } from '../core/transferSessionStore';
 import { resolveWorkspaceFileDownloadSource } from '../targets/resolveWorkspaceFileDownloadSource';
 import { registerDownloadTransferLifecycleHandlers } from './registerDownloadTransferLifecycleHandlers';
+import { resolveFileDownloadUrl } from '@/integrations/tailscale/resolveFileDownloadUrl';
 
 type BulkTransferDownloadInitRequest = Readonly<{
   t: 'session_file_download_v1';
@@ -28,6 +29,26 @@ export function registerBulkTransferDownloadRpcHandlers(
     sessionRpcTransferMaxBytes?: number | null;
   }>,
 ): void {
+  rpcHandlerManager.registerHandler<Readonly<{ path: string; asZip?: boolean }>,
+    Readonly<{ success: true; url: string | null; name?: string }> | Readonly<{ success: false; error: string }>>(
+    RPC_METHODS.DAEMON_BULK_TRANSFER_DOWNLOAD_URL,
+    async (request) => {
+      if (request?.asZip === true) return { success: true, url: null };
+      try {
+        const source = await resolveWorkspaceFileDownloadSource({
+          workingDirectory: deps.workingDirectory,
+          accessPolicy: deps.accessPolicy,
+          path: request?.path,
+          asZip: false,
+          additionalAllowedReadDirs: deps.getAdditionalAllowedReadDirs?.(),
+        });
+        if (!source.success) return source;
+        return { success: true, url: await resolveFileDownloadUrl(source.source.filePath), name: source.source.name };
+      } catch {
+        return { success: false, error: 'Unable to resolve direct file download' };
+      }
+    },
+  );
   registerDownloadTransferLifecycleHandlers<BulkTransferDownloadInitResponse>({
     rpcHandlerManager,
     store: deps.store,

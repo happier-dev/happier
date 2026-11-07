@@ -11,7 +11,8 @@ import type {
   SessionUsageLimitRecoveryControlAdapter,
   SessionUsageLimitRecoveryControlAdapterParams,
 } from './sessionUsageLimitRecoveryControlTypes';
-import { deriveUsageLimitRecoveryTiming } from './deriveUsageLimitRecoveryTiming';
+import { deriveUsageLimitRecoveryTiming, USAGE_LIMIT_RECOVERY_RESET_MARGIN_MS, type UsageLimitRecoveryTimingInput } from './deriveUsageLimitRecoveryTiming';
+import { readCachedUsageLimitRecoveryWindows } from './readCachedUsageLimitRecoveryWindows';
 import { readLatestUsageLimitFailureIssue } from './readLatestUsageLimitFailureIssue';
 import { resolveUsageLimitRecoverySelectedAuthFromIssue } from './usageLimitRecoverySelectedAuth';
 import { isPendingUsageLimitRecoveryStatus } from './mergeUsageLimitRecoveryIntent';
@@ -97,27 +98,29 @@ function resolveFallbackNextCheckAtMs(params: Readonly<{
   return anchorMs + params.fallbackBackoffMs;
 }
 
-function resolveIntentNextCheckAtMs(params: Readonly<{
+function resolveIntentTiming(params: Readonly<{
   intent: SessionUsageLimitRecoveryV1;
   issue: SessionRuntimeIssueV1 | null;
   fallbackBackoffMs: number;
   nowMs: number;
-}>): number {
-  if (typeof params.intent.nextCheckAtMs === 'number' && Number.isFinite(params.intent.nextCheckAtMs)) {
-    return params.intent.nextCheckAtMs;
-  }
-
+  cachedWindows?: UsageLimitRecoveryTimingInput['windows'];
+}>): Readonly<{ resetAtMs: number | null; nextCheckAtMs: number; canResume: boolean }> {
   const usageLimit = params.issue?.usageLimit;
-  if (usageLimit) {
-    const timing = deriveUsageLimitRecoveryTiming({
-      occurredAtMs: params.issue.occurredAt,
-      resetAtMs: usageLimit.resetAtMs,
-      retryAfterMs: usageLimit.retryAfterMs,
-    });
-    if (timing.nextCheckAtMs !== null) return timing.nextCheckAtMs;
-  }
-
-  return resolveFallbackNextCheckAtMs(params);
+  const timing = deriveUsageLimitRecoveryTiming({
+    occurredAtMs: params.issue?.occurredAt,
+    resetAtMs: Math.max(params.intent.resetAtMs ?? 0, usageLimit?.resetAtMs ?? 0) || null,
+    retryAfterMs: usageLimit?.retryAfterMs,
+    windows: [...(usageLimit?.allWindows ?? []), ...(params.cachedWindows ?? [])
+      .filter((window) => window.resetAtMs == null
+        || window.resetAtMs > (params.issue?.occurredAt ?? params.intent.armedAtMs))],
+  });
+  const resumeAtMs = timing.nextCheckAtMs === null ? null : timing.nextCheckAtMs + USAGE_LIMIT_RECOVERY_RESET_MARGIN_MS;
+  const persistedCheck = params.intent.nextCheckAtMs;
+  let nextCheckAtMs = resumeAtMs ?? (typeof persistedCheck === 'number' && Number.isFinite(persistedCheck)
+    ? persistedCheck : resolveFallbackNextCheckAtMs(params));
+  // A fallback wake is only an opportunity to look for timing. It is not evidence that quota recovered.
+  if (resumeAtMs === null && nextCheckAtMs <= params.nowMs) nextCheckAtMs = params.nowMs + params.fallbackBackoffMs;
+  return { resetAtMs: timing.resetAtMs, nextCheckAtMs, canResume: resumeAtMs !== null && params.nowMs >= nextCheckAtMs };
 }
 
 function buildRecoveryIntentFromLatestUsageLimitIssue(params: Readonly<{
@@ -136,6 +139,7 @@ function buildRecoveryIntentFromLatestUsageLimitIssue(params: Readonly<{
       occurredAtMs: params.issue.occurredAt,
       resetAtMs: usageLimit.resetAtMs,
       retryAfterMs: usageLimit.retryAfterMs,
+      windows: usageLimit.allWindows,
     })
     : { resetAtMs: null, nextCheckAtMs: null };
   const intent: SessionUsageLimitRecoveryV1 = {
@@ -172,14 +176,16 @@ function buildNextIntent(params: Readonly<{
   issue: SessionRuntimeIssueV1 | null;
   fallbackBackoffMs: number;
   nowMs: number;
+  cachedWindows?: UsageLimitRecoveryTimingInput['windows'];
 }>): Readonly<{
   adapterStatus: 'ready' | 'waiting';
   intent: SessionUsageLimitRecoveryV1;
 }> {
-  const nextCheckAtMs = resolveIntentNextCheckAtMs(params);
+  const timing = resolveIntentTiming(params);
   const baseIntent: SessionUsageLimitRecoveryV1 = {
     ...params.intent,
-    nextCheckAtMs,
+    resetAtMs: timing.resetAtMs,
+    nextCheckAtMs: timing.nextCheckAtMs,
   };
 
   if (baseIntent.maxAttempts > 0 && baseIntent.attemptCount >= baseIntent.maxAttempts) {
@@ -193,7 +199,7 @@ function buildNextIntent(params: Readonly<{
     };
   }
 
-  if (params.nowMs >= nextCheckAtMs) {
+  if (timing.canResume) {
     return {
       adapterStatus: 'ready',
       intent: {
@@ -284,11 +290,13 @@ export function createBackoffSessionUsageLimitRecoveryControlAdapter(options: Re
         return stableError('session_usage_limit_recovery_control_inactive');
       }
 
+      const cachedWindows = await readCachedUsageLimitRecoveryWindows(params, options.providerId).catch(() => []);
       const next = buildNextIntent({
         intent,
         issue: latestIssue,
         fallbackBackoffMs,
         nowMs: now,
+        cachedWindows,
       });
 
       return {

@@ -44,6 +44,7 @@ import {
 export { derivePendingRequestFlagsFromAgentState } from '@/sync/domains/session/pending/listPendingSessionRequests';
 
 export interface SessionListRenderableMetadata {
+    nativeSessionAliasesV1?: Metadata['nativeSessionAliasesV1'];
     name?: string;
     summaryText?: string | null;
     path: string;
@@ -274,6 +275,7 @@ export function buildSessionListRenderableMetadata(metadata: Metadata | null | u
     })();
     return {
         name: typeof metadata.name === 'string' ? metadata.name : undefined,
+        nativeSessionAliasesV1: metadata.nativeSessionAliasesV1,
         summaryText: typeof metadata.summary?.text === 'string' ? metadata.summary.text : null,
         path: typeof metadata.path === 'string' ? metadata.path : '',
         homeDir: typeof metadata.homeDir === 'string' ? metadata.homeDir : null,

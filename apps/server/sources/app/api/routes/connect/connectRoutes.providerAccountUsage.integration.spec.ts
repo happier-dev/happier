@@ -1,4 +1,6 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import type { Socket } from "socket.io";
+import { eventRouter, type ClientConnection } from "@/app/events/eventRouter";
 
 import { db } from "@/storage/db";
 import { connectRoutes } from "./connectRoutes";
@@ -14,6 +16,7 @@ import { writeProviderAccountUsageRecord } from "./providerAccountUsage";
 
 describe("connectRoutes (provider account usage canonical routes)", () => {
     let harness: LightSqliteHarness;
+    const connections: ClientConnection[] = [];
 
     beforeAll(async () => {
         harness = await createLightSqliteHarness({
@@ -28,11 +31,47 @@ describe("connectRoutes (provider account usage canonical routes)", () => {
     });
 
     afterEach(async () => {
+        for (const connection of connections.splice(0)) eventRouter.removeConnection(connection.userId, connection);
         await closeProviderAccountUsageTrackedApps();
         harness.resetEnv();
         await db.connectedServiceUsageSource.deleteMany().catch(() => {});
         await db.providerAccountUsageRecord.deleteMany().catch(() => {});
         await db.account.deleteMany().catch(() => {});
+    });
+
+    it("lists pending refresh requests only for the authenticated account and clears fulfilled requests", async () => {
+        harness.resetEnv({ HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: "true",
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional", HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: "plain" });
+        const user = await db.account.create({ data: { publicKey: null, encryptionMode: "plain" }, select: { id: true } });
+        const other = await db.account.create({ data: { publicKey: null, encryptionMode: "plain" }, select: { id: true } });
+        const snapshot = createUsageSnapshot({ fetchedAt: Date.now() - 10_000 });
+        const app = createProviderAccountUsageTestApp();
+        connectRoutes(app as Parameters<typeof connectRoutes>[0]);
+        await app.ready();
+        // Socket.IO emission is the transport boundary; exercise the real account recipient filter.
+        const ownEmit = vi.fn();
+        const otherEmit = vi.fn();
+        for (const [userId, emit] of [[user.id, ownEmit], [other.id, otherEmit]] as const) {
+            const connection: ClientConnection = { connectionType: "machine-scoped", userId, machineId: `machine-${userId}`,
+                socket: { emit } as unknown as Socket };
+            connections.push(connection);
+            eventRouter.addConnection(userId, connection);
+        }
+        const headers = { "x-test-user-id": user.id };
+        expect((await app.inject({ method: "POST", url: `/v3/connect/provider-account-usage/${snapshot.recordId}`, headers,
+            payload: createV3ProviderAccountUsagePayload({ snapshot }) })).statusCode).toBe(200);
+        expect((await app.inject({ method: "POST", url: `/v3/connect/provider-account-usage/${snapshot.recordId}/refresh`, headers })).statusCode).toBe(200);
+        expect(ownEmit.mock.calls).toContainEqual(["ephemeral", { type: "provider-account-usage-refresh-requested" }]);
+        expect(otherEmit).not.toHaveBeenCalled();
+        const list = () => app.inject({ method: "GET", url: "/v2/connect/provider-account-usage/refresh-requests", headers });
+        const pending = await list();
+        expect(pending.statusCode).toBe(200);
+        expect(pending.json()).toEqual({ recordIds: [snapshot.recordId] });
+        expect((await app.inject({ method: "GET", url: "/v2/connect/provider-account-usage/refresh-requests", headers: { "x-test-user-id": other.id } })).json()).toEqual({ recordIds: [] });
+        const fresh = createUsageSnapshot({ fetchedAt: Date.now() + 1 });
+        expect((await app.inject({ method: "POST", url: `/v3/connect/provider-account-usage/${snapshot.recordId}`, headers,
+            payload: createV3ProviderAccountUsagePayload({ snapshot: fresh }) })).statusCode).toBe(200);
+        expect((await list()).json()).toEqual({ recordIds: [] });
     });
 
     it("stores and returns a plaintext provider-account usage envelope for plaintext accounts", async () => {

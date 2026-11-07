@@ -64,6 +64,9 @@ function record(overrides: Partial<SessionBackgroundTaskRecordV1> = {}): Session
 async function render(props: Readonly<{
     record: SessionBackgroundTaskRecordV1;
     onOpenLaunchingCommand?: () => void;
+    acknowledged?: boolean;
+    onDismiss?: () => void;
+    onUndoDismiss?: () => void;
 }>) {
     const { BackgroundTaskDetail } = await import('./BackgroundTaskDetail');
     let tree: renderer.ReactTestRenderer | undefined;
@@ -75,6 +78,9 @@ async function render(props: Readonly<{
                 {...(props.onOpenLaunchingCommand
                     ? { onOpenLaunchingCommand: props.onOpenLaunchingCommand }
                     : null)}
+                {...(props.acknowledged ? { acknowledged: true } : null)}
+                {...(props.onDismiss ? { onDismiss: props.onDismiss } : null)}
+                {...(props.onUndoDismiss ? { onUndoDismiss: props.onUndoDismiss } : null)}
             />,
         );
     });
@@ -164,5 +170,35 @@ describe('BackgroundTaskDetail', () => {
         act(() => link!.props.onPress());
         expect(onOpen).toHaveBeenCalledTimes(1);
         act(() => withLaunch.unmount());
+    });
+
+    it('offers to dismiss a stale report and says that this does not stop the command', async () => {
+        const onDismiss = vi.fn();
+        const tree = await render({ record: record(), onDismiss });
+
+        const button = queryTestId(tree, 'bg:dismiss');
+        expect(button).not.toBeNull();
+        expect(collectText(queryTestId(tree, 'bg:dismiss-hint')?.props.children)).toBe('dismissStaleHint');
+        act(() => button!.props.onPress());
+        expect(onDismiss).toHaveBeenCalledTimes(1);
+        act(() => tree.unmount());
+    });
+
+    it('offers no dismissal unless the host says the report is eligible', async () => {
+        const tree = await render({ record: record() });
+
+        expect(queryTestId(tree, 'bg:dismiss')).toBeNull();
+        act(() => tree.unmount());
+    });
+
+    it('says a dismissed report has an unknown outcome and lets the user undo it', async () => {
+        const onUndoDismiss = vi.fn();
+        const tree = await render({ record: record(), acknowledged: true, onUndoDismiss });
+
+        expect(collectText(queryTestId(tree, 'bg:dismissed-note')?.props.children)).toBe('dismissedNote');
+        expect(queryTestId(tree, 'bg:dismiss')).toBeNull();
+        act(() => queryTestId(tree, 'bg:undo-dismiss')!.props.onPress());
+        expect(onUndoDismiss).toHaveBeenCalledTimes(1);
+        act(() => tree.unmount());
     });
 });

@@ -2,10 +2,11 @@ export {
     deleteProviderAccountUsageRecord,
     deleteProviderAccountUsageRecordsForAccount,
     readProviderAccountUsageRecord,
-    requestProviderAccountUsageRefresh,
+    listProviderAccountUsageRefreshRequests,
     upsertProviderAccountUsageRecord,
     writeProviderAccountUsageRecord,
 } from "./recordStorage";
+export { requestProviderAccountUsageRefresh } from "./providerAccountUsageRequestRefresh";
 export {
     deleteConnectedServiceUsageSourcesForAccount,
     deleteConnectedServiceUsageSourcesForGroup,

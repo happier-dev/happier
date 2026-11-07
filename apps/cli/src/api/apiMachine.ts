@@ -28,6 +28,7 @@ import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
     sealAccountScopedBlobCiphertext,
+    EphemeralUpdateSchema,
     type ActionOperationSnapshotV1,
     type DirectSessionTranscriptDeltaEphemeral,
     type MachineTransferReceiveEnvelope,
@@ -184,6 +185,7 @@ export class ApiMachineClient {
     private readonly connectedServicesProjectionRetry = createConnectedServicesProjectionRetryScheduler();
     private projectionSchedulingClosed = false;
     private updateListeners = new Set<(update: Update) => boolean | void>();
+    private providerAccountUsageRefreshListeners = new Set<() => void>();
     private accountSettingsVersionHintListeners = new Set<(hint: AccountSettingsVersionHintNotification) => void | Promise<void>>();
     private pendingSessionActivationHintListeners = new Set<(
         hint: PendingSessionActivationHintNotification,
@@ -473,6 +475,11 @@ export class ApiMachineClient {
         return () => {
             this.updateListeners.delete(listener);
         };
+    }
+
+    onProviderAccountUsageRefreshRequested(listener: () => void): () => void {
+        this.providerAccountUsageRefreshListeners.add(listener);
+        return () => { this.providerAccountUsageRefreshListeners.delete(listener); };
     }
 
     onAccountSettingsVersionHint(listener: (hint: AccountSettingsVersionHintNotification) => void | Promise<void>): () => void {
@@ -948,6 +955,13 @@ export class ApiMachineClient {
             }
         });
 
+        socket.on('ephemeral', (data: unknown) => {
+            if (this.projectionSchedulingClosed || !this.isActiveTransportGeneration(transportGeneration) || socket !== this.socket) return;
+            const parsed = EphemeralUpdateSchema.safeParse(data);
+            if (parsed.success && parsed.data.type === 'provider-account-usage-refresh-requested') {
+                for (const listener of this.providerAccountUsageRefreshListeners) listener();
+            }
+        });
         socket.on('update', (data: Update) => {
             if (this.projectionSchedulingClosed || !this.isActiveTransportGeneration(transportGeneration) || socket !== this.socket) {
                 return;

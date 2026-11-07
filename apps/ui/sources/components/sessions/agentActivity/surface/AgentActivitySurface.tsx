@@ -10,7 +10,7 @@ import { buildWorkflowAgentRows } from '@/components/sessions/workState/sessionW
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
 
 import type { AgentActivityRowActionId } from '../agentActivityRowEntry';
-import { BackgroundTaskDetail } from '../background/BackgroundTaskDetail';
+import { BackgroundTaskDetailHost } from '../background/BackgroundTaskDetailHost';
 import { resolveAgentActivityOpenEntryFromWorkflowAgent } from '../entry/fromWorkflowAgent';
 import { AgentActivityList } from '../list/AgentActivityList';
 import type { ListMotionQuiet } from '../list/listMotionQuiet';
@@ -300,7 +300,8 @@ export const AgentActivitySurface = React.memo((props: AgentActivitySurfaceProps
             }
             : undefined;
         return (
-            <BackgroundTaskDetail
+            <BackgroundTaskDetailHost
+                sessionId={sessionId}
                 record={backgroundTask.record}
                 testID={`${testID}:background-task:${backgroundTask.record.taskId}`}
                 {...(openLaunchingCommand ? { onOpenLaunchingCommand: openLaunchingCommand } : null)}

@@ -90,4 +90,21 @@ describe('JumpToBottomButton compact layout', () => {
 
         expect(screen.findByTestId('jump')?.props.accessibilityLabel).toBe('settingsSession.transcript.jumpToBottomButtonLabel');
     });
+
+    it('renders the top direction with its own label and a busy indicator that keeps it pressable', async () => {
+        const onPress = vi.fn();
+        const { JumpToBottomButton } = await import('./JumpToBottomButton');
+        const idle = await renderScreen(
+            <JumpToBottomButton count={5} direction="top" onPress={onPress} testID="jump-top" />,
+        );
+
+        expect(idle.getTextContent()).toContain('settingsSession.transcript.jumpToTopButtonLabel');
+        expect(idle.getTextContent()).not.toContain('5');
+
+        const busy = await renderScreen(
+            <JumpToBottomButton count={0} busy direction="top" onPress={onPress} testID="jump-top" />,
+        );
+        expect(busy.findByTestId('jump-top')?.props.accessibilityLabel).toBe('settingsSession.transcript.jumpToTopButtonLoadingLabel');
+        expect(busy.findByTestId('jump-top')?.props.disabled).not.toBe(true);
+    });
 });

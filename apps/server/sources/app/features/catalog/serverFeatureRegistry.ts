@@ -1,5 +1,6 @@
 import type { FeaturesPayloadDelta } from '../types';
 
+import { resolveAppLockFeature } from '../appLockFeature';
 import { resolveAutomationsFeature } from '../automationsFeature';
 import { resolveBugReportsFeature } from '../bugReportsFeature';
 import { resolveSharingFeature } from '../sharingFeature';
@@ -33,6 +34,7 @@ const serverFeatureResolvers = [
     () => resolveSessionProtocolCapabilitiesFeature(),
     (env) => resolveBugReportsFeature(env),
     (env) => resolveAutomationsFeature(env),
+    (env) => resolveAppLockFeature(env),
     (env) => resolveSharingFeature(env),
     (env) => resolveVoiceFeature(env),
     (env) => resolveConnectedServicesFeature(env),

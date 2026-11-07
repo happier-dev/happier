@@ -142,7 +142,7 @@ function mixRgbColor(from: RgbColor, to: RgbColor, amount: number): RgbColor {
     };
 }
 
-function mixColor(from: string, to: string, amount: number): string {
+export function mixColor(from: string, to: string, amount: number): string {
     const parsedFrom = parseColor(from);
     const parsedTo = parseColor(to);
     if (!parsedFrom || !parsedTo) return from;

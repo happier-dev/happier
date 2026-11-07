@@ -1723,6 +1723,12 @@ export function createCliActionDeps(params: Readonly<{
       });
     },
 
+    sessionAliasesRecover: async (input) => {
+      if (!params.credentials) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
+      const { recoverNativeSessionAliases } = await import('@/session/services/recoverNativeSessionAliases');
+      return await recoverNativeSessionAliases({ ...input, credentials: params.credentials });
+    },
+
     sessionTitleSet: async ({ sessionId, title }) => {
       if (!params.credentials) {
         return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };

@@ -4,7 +4,8 @@ import { t } from '@/text';
 
 import { openLocalUploadSourceReader } from '@/sync/runtime/files/localUploadSourceReader';
 import { resolveKeepBothTargetPath } from '@/sync/domains/files/resolveKeepBothTargetPath';
-import { downloadDaemonSessionFileToDestination, uploadDaemonSessionFileFromReader } from '@/sync/domains/transfers/runtime/bulkTransferPipeline';
+import { downloadDaemonSessionFileToDestination, resolveDaemonSessionFileDownloadUrl, uploadDaemonSessionFileFromReader } from '@/sync/domains/transfers/runtime/bulkTransferPipeline';
+import { openExternalUrl } from '@/utils/url/openExternalUrl';
 import { sessionStatFile } from '@/sync/ops';
 import { isSafeWorkspaceRelativePath } from '@/utils/path/isSafeWorkspaceRelativePath';
 import { resolveLocalUploadSourceSizeBytes } from '@/sync/runtime/files/localUploadSourceReader';
@@ -369,6 +370,7 @@ export function useWorkspaceFileTransfers(params: Readonly<{
         };
 
         const nativeSinkRef: { current: NativeCacheFileSink | null } = { current: null };
+        const action = input.action ?? 'save';
         let keepNativeSink = false;
         let failureMessage: string | null = null;
         const downloadedChunks: Uint8Array[] = [];
@@ -384,6 +386,20 @@ export function useWorkspaceFileTransfers(params: Readonly<{
         let cleanupOverride: TransferResult | null = null;
         const download = (async (): Promise<TransferResult> => {
             try {
+                if (action === 'save' && !input.asZip) {
+                    setDownloadState({ status: 'downloading', name: input.path, downloadedBytes: 0, totalBytes: 0, cancelable: true });
+                    const direct = await resolveDaemonSessionFileDownloadUrl({ sessionId, path: input.path });
+                    if (!direct.success) throw new Error(direct.error);
+                    if (direct.url) {
+                        if (!beginNativeHandoff()) return { ok: false, canceled: true, error: 'Download canceled' };
+                        // Same-window web downloads avoid popup blocking after the link RPC. Tauri/native
+                        // still use the existing OS browser opener. Do not claim the OS download completed.
+                        if (!await openExternalUrl(direct.url, { webTarget: '_self' })) throw new Error(t('errors.operationFailed'));
+                        setDownloadState({ status: 'idle' });
+                        return { ok: true };
+                    }
+                    if (controller.signal.aborted) return { ok: false, canceled: true, error: 'Download canceled' };
+                }
                 const res = await downloadDaemonSessionFileToDestination({
                     sessionId,
                     request: { path: input.path, asZip: input.asZip },

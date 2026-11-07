@@ -4,11 +4,17 @@
 import * as React from 'react';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { ModalPortalTargetProvider, useModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
 
 import { installPopoverCommonModuleMocks } from './popoverTestHelpers';
+
+const route = vi.hoisted(() => ({ pathname: '/first' }));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock({ pathname: () => route.pathname }).module;
+});
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -58,6 +64,94 @@ installPopoverCommonModuleMocks({
 });
 
 describe('Popover nested modal portal target', () => {
+    it('keeps clicks inside a portaled popover from activating its React ancestors', async () => {
+        const { Popover } = await import('./Popover');
+        const anchor = document.createElement('button');
+        const container = document.createElement('div');
+        const onUnderlyingRowClick = vi.fn();
+        document.body.append(anchor, container);
+        const root = createRoot(container);
+        try {
+            await act(async () => {
+                root.render(
+                    <div onClick={onUnderlyingRowClick}>
+                        <Popover
+                            open
+                            anchorRef={{ current: anchor }}
+                            backdrop={false}
+                            portal={{ web: true, native: false }}
+                        >
+                            {() => <button data-testid="popover-action">Edit tag</button>}
+                        </Popover>
+                    </div>,
+                );
+            });
+
+            const action = document.querySelector('[data-testid="popover-action"]');
+            expect(action).not.toBeNull();
+            await act(async () => {
+                action!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+            });
+
+            expect(onUnderlyingRowClick).not.toHaveBeenCalled();
+        } finally {
+            await act(async () => { root.unmount(); });
+            anchor.remove();
+            container.remove();
+        }
+    });
+
+    it('dismisses when navigation changes the screen', async () => {
+        const { Popover } = await import('./Popover');
+        const anchor = document.createElement('button');
+        const container = document.createElement('div');
+        document.body.append(anchor, container);
+        const close = vi.fn();
+        const root = createRoot(container);
+        const render = () => root.render(<Popover open anchorRef={{ current: anchor }} onRequestClose={close}>
+            {() => <div />}
+        </Popover>);
+        try {
+            route.pathname = '/first';
+            await act(async () => { render(); });
+            route.pathname = '/second';
+            await act(async () => { render(); });
+            expect(close).toHaveBeenCalledOnce();
+        } finally {
+            await act(async () => { root.unmount(); });
+            anchor.remove();
+            container.remove();
+        }
+    });
+
+    it('dismisses on outside scroll while allowing scrolling inside the popover', async () => {
+        const { Popover } = await import('./Popover');
+        const anchor = document.createElement('button');
+        const outside = document.createElement('div');
+        const container = document.createElement('div');
+        document.body.append(anchor, outside, container);
+        const close = vi.fn();
+        const root = createRoot(container);
+        try {
+            await act(async () => {
+                root.render(<Popover open anchorRef={{ current: anchor }} onRequestClose={close}>
+                    {() => <div data-testid="scrollable-content" />}
+                </Popover>);
+            });
+            const content = document.querySelector('[data-testid="scrollable-content"]');
+            expect(content).not.toBeNull();
+            await act(async () => { content!.dispatchEvent(new Event('scroll')); });
+            expect(close).not.toHaveBeenCalled();
+            await act(async () => { outside.dispatchEvent(new Event('scroll')); });
+            expect(close).toHaveBeenCalledOnce();
+        } finally {
+            await act(async () => { root.unmount(); });
+            anchor.remove();
+            outside.remove();
+            container.remove();
+        }
+    });
+
     it('provides a popover-local modal portal target to portaled popover content', async () => {
         const { Popover } = await import('./Popover');
         const parentModalTarget = document.createElement('div');

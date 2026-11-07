@@ -9,6 +9,9 @@ import { installNavigationShellCommonModuleMocks } from './navigationShellTestHe
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+// The sidebar header contains account usage; keep the auth/network boundary signed out.
+vi.mock('@/auth/context/AuthContext', () => ({ useAuth: () => ({ credentials: null }) }));
+
 const routerPushSpy = vi.hoisted(() => vi.fn());
 
 const automationsSupportState = vi.hoisted(() => ({

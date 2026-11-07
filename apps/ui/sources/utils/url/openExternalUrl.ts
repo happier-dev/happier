@@ -5,7 +5,7 @@ const SAFE_EXTERNAL_URL_SCHEME_PATTERN = /^(https?:\/\/|mailto:)/i;
 
 export async function openExternalUrl(
   url: string,
-  opts?: Readonly<{ platformOS?: string }>,
+  opts?: Readonly<{ platformOS?: string; webTarget?: '_blank' | '_self' }>,
 ): Promise<boolean> {
   const normalized = String(url ?? '').trim();
   if (!SAFE_EXTERNAL_URL_SCHEME_PATTERN.test(normalized)) return false;
@@ -26,7 +26,7 @@ export async function openExternalUrl(
       if (typeof openFn === 'function') {
         (openFn as (url: string, target?: string, features?: string) => unknown)(
           normalized,
-          '_blank',
+          opts?.webTarget ?? '_blank',
           'noopener,noreferrer',
         );
         return true;

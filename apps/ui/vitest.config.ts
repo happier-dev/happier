@@ -204,6 +204,8 @@ export default defineConfig({
             { find: 'expo-speech-recognition', replacement: resolve('./sources/dev/expoSpeechRecognitionStub.ts') },
             // `expo-clipboard` expects native modules in node/Vitest.
             { find: 'expo-clipboard', replacement: resolve('./sources/dev/expoClipboardStub.ts') },
+            // `expo-share-intent` is native and ships JSX in its build output.
+            { find: 'expo-share-intent', replacement: resolve('./sources/dev/expoShareIntentStub.ts') },
             // `expo-linear-gradient` ships JSX in its build output; stub it in node/Vitest.
             { find: 'expo-linear-gradient', replacement: resolve('./sources/dev/expoLinearGradientStub.ts') },
             // `react-native-device-info` is native and pulls in RN internals.

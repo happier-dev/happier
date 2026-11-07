@@ -9,6 +9,7 @@ import { createHash } from 'node:crypto';
 import { resolveClaudeCodeUserAgent } from '@/backends/claude/utils/claudeCodeUserAgent';
 import { claudeResetRequestId, parseClaudeQuotaResets } from './quotaResets';
 import { logger } from '@/ui/logger';
+import { createClaudeNativeQuotaCredentialReader } from './readNativeQuotaCredential';
 
 import {
   fetchClaudeSubscriptionProfileContext,
@@ -37,6 +38,7 @@ function parseDisableQuotaEndpointEnv(raw: string | undefined): boolean {
 
 export const claudeSubscriptionQuotaFetcherDescriptor: ConnectedServiceQuotaFetcherDescriptor = {
   loadQuota: ({ env, staleAfterMs }) => createClaudeSubscriptionQuotaFetcher({
+    env,
     usageUrl: parseNonEmptyStringEnv(
       env.HAPPIER_CONNECTED_SERVICES_CLAUDE_SUBSCRIPTION_USAGE_URL
         ?? env.HAPPIER_CONNECTED_SERVICES_ANTHROPIC_USAGE_URL,
@@ -615,6 +617,7 @@ function collectUsageWindowMeterEntries(
 }
 
 export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
+  env?: NodeJS.ProcessEnv;
   usageUrl?: string;
   betaHeaderValue?: string;
   staleAfterMs?: number;
@@ -730,6 +733,8 @@ export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
 
   return {
     serviceId: 'claude-subscription',
+    nativeUsageProviderId: 'claude',
+    readNativeCredentialForUsage: disablePrivateEndpoint ? undefined : createClaudeNativeQuotaCredentialReader(params?.env ?? process.env, fetchProfileContext),
     pollPolicy: {
       minPollIntervalMs: 30 * 60_000,
       retryAfterBackoffMinMs: 15 * 60_000,

@@ -15,3 +15,11 @@ export function resolveQuotaGaugeWindowModes(
     if (modes.includes('most_constrained')) return ['most_constrained'];
     return [...new Set(modes)];
 }
+
+/** Unset preferences show every available limit; explicit window choices remain authoritative. */
+export function isAutomaticQuotaGaugeWindowSelection(
+    modes: readonly ConnectedServiceQuotaGaugeWindowMode[] | null | undefined,
+    legacyMode: ConnectedServiceQuotaGaugeWindowMode = 'most_constrained',
+): boolean {
+    return !modes?.length && legacyMode === 'most_constrained';
+}

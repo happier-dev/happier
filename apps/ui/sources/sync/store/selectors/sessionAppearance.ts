@@ -5,6 +5,7 @@ import { resolveSessionWorkspacePresentation, type SessionWorkspacePresentationM
 import { buildSessionOrganizationServerKey } from '@/sync/domains/session/organization/keys';
 import { readSessionAppearanceColorFromDisplay, resolveEffectiveSessionAppearanceColor, type SessionAppearanceColor } from '@/sync/domains/session/organization/appearanceColor';
 import { resolveServerWorkspaceDisplay } from '@/sync/domains/session/organization/workspaceDisplay';
+import { readSessionProjectAssignmentFromDisplay } from '@/sync/domains/session/organization/projectAssignment';
 
 export type SessionAppearanceSelectorState = Readonly<{
     machines?: Readonly<Record<string, Machine>>;
@@ -48,7 +49,12 @@ export function selectEffectiveSessionAppearanceColor(state: SessionAppearanceSe
         projectPath: project?.key?.path,
         machines: state.machines ?? EMPTY_MACHINES,
     });
-    const workspace = resolveSessionWorkspacePresentation({ metadata: params.metadata, target, machines: state.machines ?? EMPTY_MACHINES });
+    const assignedProject = readSessionProjectAssignmentFromDisplay(
+        state.sessionOrganizationAppearancesBySessionKey?.[buildSessionOrganizationServerKey(params.serverId, params.sessionId)]?.display,
+    );
+    const workspace = resolveSessionWorkspacePresentation({ metadata: params.metadata,
+        target: assignedProject ? { machineId: assignedProject.machineId, basePath: assignedProject.rootPath } : target,
+        machines: state.machines ?? EMPTY_MACHINES });
     const display = resolveServerWorkspaceDisplay(state.sessionOrganizationLabelsByLabelKey, params.serverId, workspace.workspaceKey);
     return resolveEffectiveSessionAppearanceColor({
         sessionColor: selectSessionAppearanceColor(state, params),

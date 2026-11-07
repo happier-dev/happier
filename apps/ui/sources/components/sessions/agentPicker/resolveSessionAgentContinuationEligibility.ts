@@ -168,6 +168,8 @@ export function resolveSessionAgentContinuationEligibility(params: Readonly<{
     source: SessionAgentContinuationSourceState;
     /** This exact target's live inspection state on the Session's machine. */
     inspection: SessionAgentContinuationInspectionState;
+    /** Known installation result on the session's machine; unknown is not a missing CLI. */
+    cliAvailable?: boolean | null;
 }>): SessionAgentContinuationEligibility {
     const { entry, inspection, source } = params;
 
@@ -178,6 +180,9 @@ export function resolveSessionAgentContinuationEligibility(params: Readonly<{
     const sessionReason = resolveSessionAgentContinuationSessionReason(source);
     if (sessionReason !== null) {
         return { status: 'unavailable', kind: 'local', reason: sessionReason };
+    }
+    if (entry.builtInAgentId && params.cliAvailable === false) {
+        return { status: 'unavailable', kind: 'continuation', presentation: 'target_unavailable' };
     }
     if (inspection.status === 'checking') {
         return { status: 'checking' };

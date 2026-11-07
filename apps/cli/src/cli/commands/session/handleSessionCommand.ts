@@ -3,6 +3,7 @@ import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/boot
 import { argvBeforeOptionTerminator, hasFlag } from '@/cli/commands/shared/argvFlags';
 
 import { cmdSessionList } from './list';
+import { cmdSessionRecoverAliases, SESSION_RECOVER_ALIASES_USAGE } from './recoverAliases';
 import { cmdSessionHistory } from './history';
 import { cmdSessionStatus } from './status';
 import { cmdSessionCreate } from './create';
@@ -40,6 +41,7 @@ function inferSessionKind(argv: readonly string[]): string {
   const sub = String(argv[0] ?? '').trim();
   if (!sub) return 'session_unknown';
   if (sub === 'list') return 'session_list';
+  if (sub === 'recover-aliases') return 'session_aliases_recover';
   if (sub === 'status') return 'session_status';
   if (sub === 'create') return 'session_create';
   if (sub === 'set-title') return 'session_set_title';
@@ -80,6 +82,7 @@ function inferSessionKind(argv: readonly string[]): string {
 }
 
 const SESSION_HELP_BY_COMMAND = {
+  'recover-aliases': SESSION_RECOVER_ALIASES_USAGE,
   list: 'happier session list [--active] [--archived] [--limit N] [--cursor C] [--include-system] [--resumable] [--plain] [--json]',
   status: 'happier session status <session-id-or-prefix-or-tag> [--live] [--json]',
   create: SESSION_CREATE_USAGE,
@@ -198,6 +201,9 @@ export async function handleSessionCommand(
     };
 
     switch (subcommand) {
+      case 'recover-aliases':
+        await cmdSessionRecoverAliases(argv, { readCredentialsFn });
+        return;
       case 'list':
         await cmdSessionList(argv, { readCredentialsFn });
         return;

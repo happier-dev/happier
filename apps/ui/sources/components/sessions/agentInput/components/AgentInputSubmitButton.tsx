@@ -297,7 +297,7 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
                         />
                     )
                 ) : showStopWhenEmpty ? (
-                    <Icon name="stop" size={16} weight="fill" color={theme.colors.button.primary.tint} />
+                    <Icon name="stop" size={16} weight="fill" color={theme.colors.button.primary.tint} style={{ marginTop: Platform.OS === 'web' ? 2 : 0 }} />
                 ) : (
                     <Icon
                         name="arrow-up"

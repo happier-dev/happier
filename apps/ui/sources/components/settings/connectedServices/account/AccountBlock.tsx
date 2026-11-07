@@ -8,10 +8,7 @@ import {
 import type { ComposedGesture, GestureType } from 'react-native-gesture-handler';
 
 import { buildQuotaResetRows } from '@/sync/domains/connectedServices/buildQuotaResetRows';
-import {
-    buildConnectedServiceQuotaGaugeMeterRows,
-    type ConnectedServiceQuotaGaugeLabelFormatter,
-} from '@/sync/domains/connectedServices/connectedServiceQuotaGauge';
+import { buildConnectedServiceQuotaGaugeMeterRows } from '@/sync/domains/connectedServices/connectedServiceQuotaGauge';
 import { type ResetCountdownDaysFormatter } from '@/sync/domains/connectedServices/formatResetCountdown';
 import { shouldHideQuotaForCredentialStatus } from '@/sync/domains/connectedServices/shouldHideQuotaForCredentialStatus';
 import { projectConnectedServiceQuotaSnapshotForLimitSelection } from '@/sync/domains/connectedServices/projectConnectedServiceQuotaSnapshotForLimitSelection';
@@ -23,7 +20,7 @@ import {
 } from '@happier-dev/protocol';
 import { t } from '@/text';
 
-import { resolveAccountCapacityView, resolveAccountUsageRows } from './accountBlockModel';
+import { GAUGE_LABEL_FORMATTER, resolveAccountCapacityView, resolveAccountUsageRows } from './accountBlockModel';
 import {
     AccountBlockView,
     defaultAccountBlockTestID,
@@ -81,30 +78,6 @@ export interface AccountBlockProps {
     /** Pool-owned allowance policy. Omitted on direct account surfaces. */
     quotaLimitSelection?: ConnectedServiceAuthGroupQuotaLimitSelectionV1;
 }
-
-/**
- * Real `t()`-backed gauge formatter so the USAGE rows carry localized
- * remaining/used/reset labels. Mirrors the canonical formatter in
- * `ConnectedServiceQuotaMeterRow` (single duration vocabulary).
- */
-const GAUGE_LABEL_FORMATTER: ConnectedServiceQuotaGaugeLabelFormatter = {
-    unavailable: () => t('common.unavailable'),
-    remaining: ({ percent }) => t('connectedServices.quota.remaining', { percent }),
-    remainingWithReset: ({ percent, reset }) =>
-        t('connectedServices.quota.remainingWithReset', { percent, reset }),
-    used: ({ used, limit }) => t('connectedServices.account.usedDetail', { used, limit }),
-    durationNow: () => t('connectedServices.quota.duration.now'),
-    durationOutdated: () => t('connectedServices.quota.duration.outdated'),
-    durationDaysHours: ({ days, hours }) => t('connectedServices.quota.duration.daysHours', { days, hours }),
-    durationHoursMinutes: ({ hours, minutes }) =>
-        t('connectedServices.quota.duration.hoursMinutes', { hours, minutes }),
-    durationHours: ({ hours }) => t('connectedServices.quota.duration.hours', { hours }),
-    durationMinutes: ({ minutes }) => t('connectedServices.quota.duration.minutes', { minutes }),
-    subscriptionEnds: ({ date }) => t('connectedServices.subscription.ends', { date }),
-    subscriptionEndsInDays: ({ days }) => t('connectedServices.subscription.endsInDays', { days }),
-    subscriptionRenews: ({ date }) => t('connectedServices.subscription.renews', { date }),
-    subscriptionRenewsInDays: ({ days }) => t('connectedServices.subscription.renewsInDays', { days }),
-};
 
 const RESET_COUNTDOWN_DAYS_FORMATTER: ResetCountdownDaysFormatter = {
     now: () => t('connectedServices.account.resets.now'),

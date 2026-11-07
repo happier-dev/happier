@@ -435,6 +435,7 @@ describe('SessionItem context menu press suppression', () => {
         expect(Clipboard.setStringAsync).toHaveBeenLastCalledWith('claude-session-1');
 
         expect(Clipboard.setStringAsync).toHaveBeenCalledWith([
+            'Session name: Session',
             'Happier session ID: sess_debug_full',
             'agentInput.agent.claude session ID: claude-session-1',
             'Happier logs: /tmp/happier/session.log',

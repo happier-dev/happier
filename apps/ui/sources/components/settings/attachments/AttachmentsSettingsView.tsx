@@ -188,7 +188,7 @@ export const AttachmentsSettingsView = React.memo(function AttachmentsSettingsVi
                         const raw = await Modal.prompt(
                             t('settingsAttachments.limits.maxAttachmentSize.promptTitle'),
                             t('settingsAttachments.limits.maxAttachmentSize.promptMessage'),
-                            { placeholder: typeof maxFileBytes === 'number' ? String(maxFileBytes) : '26214400' },
+                            { placeholder: typeof maxFileBytes === 'number' ? String(maxFileBytes) : '1073741824' },
                         );
                         if (raw === null) return;
                         const parsed = parsePositiveInt(raw, { min: 1024, max: 1024 * 1024 * 1024 });

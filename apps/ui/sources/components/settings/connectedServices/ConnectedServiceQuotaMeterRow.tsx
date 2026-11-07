@@ -21,8 +21,9 @@ const RESET_COUNTDOWN_FORMATTER: ResetCountdownFormatter = {
   durationOutdated: () => t('connectedServices.quota.duration.outdated'),
   durationDaysHours: ({ days, hours }) => t('connectedServices.quota.duration.daysHours', { days, hours }),
   durationHoursMinutes: ({ hours, minutes }) => t('connectedServices.quota.duration.hoursMinutes', { hours, minutes }),
-  durationHours: ({ hours }) => t('connectedServices.quota.duration.hours', { hours }),
   durationMinutes: ({ minutes }) => t('connectedServices.quota.duration.minutes', { minutes }),
+  durationHoursMinutesSeconds: ({ hours, minutes, seconds }) => t('connectedServices.quota.duration.hoursMinutesSeconds', { hours, minutes, seconds }),
+  durationMinutesSeconds: ({ minutes, seconds }) => t('connectedServices.quota.duration.minutesSeconds', { minutes, seconds }),
 };
 
 const stylesheet = StyleSheet.create((theme) => ({

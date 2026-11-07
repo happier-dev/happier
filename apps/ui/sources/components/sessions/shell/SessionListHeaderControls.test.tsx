@@ -27,6 +27,27 @@ afterEach(() => {
 });
 
 describe('SessionListHeaderControls', () => {
+    it('shows the search field without an open step and no clear button while empty', async () => {
+        const { SessionListHeaderControls } = await import('./SessionListHeaderControls');
+        const screen = await renderScreen(
+            <SessionListHeaderControls
+                allKnownTags={[]}
+                selectedTags={[]}
+                searchQuery=""
+                onSelectedTagsChange={vi.fn()}
+                onSearchQueryChange={vi.fn()}
+                searchTrailingAccessory={null}
+                viewMenu={null}
+            />,
+        );
+
+        const input = screen.findByTestId('session-list-search-input');
+        expect(input).toBeTruthy();
+        expect(input?.props.autoFocus).not.toBe(true);
+        expect(screen.findAllByTestId('session-list-search-trigger')).toHaveLength(0);
+        expect(screen.findByTestId('session-list-search-clear')).toBeNull();
+    });
+
     it('keeps typed search text visible while the parent search prop catches up', async () => {
         const { SessionListHeaderControls } = await import('./SessionListHeaderControls');
         const onSearchQueryChange = vi.fn();
@@ -35,9 +56,7 @@ describe('SessionListHeaderControls', () => {
                 allKnownTags={[]}
                 selectedTags={[]}
                 searchQuery=""
-                searchOpen={true}
                 onSelectedTagsChange={vi.fn()}
-                onSearchOpenChange={vi.fn()}
                 onSearchQueryChange={onSearchQueryChange}
                 searchTrailingAccessory={null}
                 viewMenu={null}
@@ -56,7 +75,7 @@ describe('SessionListHeaderControls', () => {
         expect(screen.findByTestId('session-list-search-input')?.props.value).toBe('sta');
     });
 
-    it('shows a clear button for a non-empty search when the trailing accessory is idle', async () => {
+    it('clears the search from the clear button and keeps the field mounted', async () => {
         const { SessionListHeaderControls } = await import('./SessionListHeaderControls');
         const onSearchQueryChange = vi.fn();
         const screen = await renderScreen(
@@ -64,47 +83,48 @@ describe('SessionListHeaderControls', () => {
                 allKnownTags={[]}
                 selectedTags={[]}
                 searchQuery="memory"
-                searchOpen={true}
                 onSelectedTagsChange={vi.fn()}
-                onSearchOpenChange={vi.fn()}
                 onSearchQueryChange={onSearchQueryChange}
                 searchTrailingAccessory={null}
                 viewMenu={null}
             />,
         );
 
-        expect(screen.findByTestId('session-list-search-clear')).toBeTruthy();
+        const clear = screen.findByTestId('session-list-search-clear');
+        expect(clear?.props.accessibilityRole).toBe('button');
 
         await act(async () => {
-            invokeTestInstanceHandler(
-                screen.findByTestId('session-list-search-clear'),
-                'onPress',
-                { stopPropagation: vi.fn() },
-            );
+            invokeTestInstanceHandler(clear, 'onPress', { stopPropagation: vi.fn() });
         });
 
         expect(onSearchQueryChange).toHaveBeenCalledWith('');
+        expect(screen.findByTestId('session-list-search-input')?.props.value).toBe('');
     });
 
-    it('does not keep the expanded search shell as a button around the clear button', async () => {
+    it('clears the search on Escape', async () => {
         const { SessionListHeaderControls } = await import('./SessionListHeaderControls');
+        const onSearchQueryChange = vi.fn();
         const screen = await renderScreen(
             <SessionListHeaderControls
                 allKnownTags={[]}
                 selectedTags={[]}
                 searchQuery="memory"
-                searchOpen={true}
                 onSelectedTagsChange={vi.fn()}
-                onSearchOpenChange={vi.fn()}
-                onSearchQueryChange={vi.fn()}
+                onSearchQueryChange={onSearchQueryChange}
                 searchTrailingAccessory={null}
                 viewMenu={null}
             />,
         );
 
-        expect(screen.findByTestId('session-list-search-trigger')?.props.accessibilityRole).toBeUndefined();
-        expect(screen.findByTestId('session-list-search-trigger')?.props.onPress).toBeUndefined();
-        expect(screen.findByTestId('session-list-search-clear')?.props.accessibilityRole).toBe('button');
+        await act(async () => {
+            invokeTestInstanceHandler(
+                screen.findByTestId('session-list-search-input'),
+                'onKeyPress',
+                { nativeEvent: { key: 'Escape' } },
+            );
+        });
+
+        expect(onSearchQueryChange).toHaveBeenCalledWith('');
     });
 
     it('keeps the clear button hidden while a search trailing accessory is active', async () => {
@@ -114,9 +134,7 @@ describe('SessionListHeaderControls', () => {
                 allKnownTags={[]}
                 selectedTags={[]}
                 searchQuery="memory"
-                searchOpen={true}
                 onSelectedTagsChange={vi.fn()}
-                onSearchOpenChange={vi.fn()}
                 onSearchQueryChange={vi.fn()}
                 searchTrailingAccessory={<IoniconsTestNode />}
                 viewMenu={null}
@@ -133,8 +151,6 @@ describe('SessionListHeaderControls', () => {
             allKnownTags: [],
             selectedTags: [],
             searchQuery: 'vector',
-            searchOpen: true,
-            onSearchOpenChange: vi.fn(),
             onSelectedTagsChange: vi.fn(),
             onSearchQueryChange: vi.fn(),
             viewMenu: null,

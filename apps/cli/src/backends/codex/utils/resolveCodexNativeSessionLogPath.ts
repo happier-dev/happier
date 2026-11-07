@@ -1,4 +1,4 @@
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 import {
   findCodexRolloutFileById,
@@ -32,11 +32,14 @@ import { resolveConfiguredCodexHome } from '@/backends/codex/utils/resolveConfig
  */
 export async function resolveCodexNativeSessionLogPath(input: Readonly<{
   vendorResumeId: string;
+  codexHome?: string | null;
   env?: NodeJS.ProcessEnv;
 }>): Promise<string | null> {
   const vendorResumeId = normalizeCodexVendorResumeId(input.vendorResumeId);
   if (!vendorResumeId) return null;
-  const codexHome = resolveConfiguredCodexHome(input.env ?? process.env);
+  const codexHome = typeof input.codexHome === 'string' && input.codexHome.trim()
+    ? resolve(input.codexHome.trim())
+    : resolveConfiguredCodexHome(input.env ?? process.env);
   for (const sessionsRoot of [
     join(codexHome, 'sessions'),
     join(codexHome, 'archived_sessions'),

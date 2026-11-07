@@ -268,7 +268,7 @@ describe('codexAppServerUsageLimitRecoveryControlAdapter', () => {
         sessionUsageLimitRecoveryV1: {
           status: 'waiting',
           attemptCount: 0,
-          nextCheckAtMs: Date.parse('2026-05-18T10:00:00.000Z'),
+          nextCheckAtMs: Date.parse('2026-05-18T10:00:00.000Z') + 5_000,
         },
       },
     });

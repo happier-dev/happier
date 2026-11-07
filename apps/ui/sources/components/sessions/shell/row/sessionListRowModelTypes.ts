@@ -40,6 +40,7 @@ export type SessionListRowPresentationSettings = Readonly<{
     identityDisplay: 'avatar' | 'agentLogo' | 'none';
     activeColorMode: 'activityAndAttention' | 'attentionOnly' | 'allActive';
     workingIndicatorMode: 'spinner' | 'pulse';
+    updatedSessionAnimation?: 'none' | 'fade' | 'glow' | 'sweep';
     workingTextMode: 'animated' | 'static';
     backgroundWorkAttentionMode?: SessionListBackgroundWorkAttentionMode;
     statusColors: Readonly<{
@@ -156,6 +157,7 @@ export type SessionListRowModel = Readonly<{
     identityDisplay: 'avatar' | 'agentLogo' | 'none';
     activeColorMode: 'activityAndAttention' | 'attentionOnly' | 'allActive';
     workingIndicatorMode: 'spinner' | 'pulse';
+    updatedSessionAnimation: 'none' | 'fade' | 'glow' | 'sweep';
     /** Retained working placement: show the working indicator without animation. */
     workingIndicatorPaused: boolean;
     hideInactiveSessions: boolean;

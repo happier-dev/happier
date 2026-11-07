@@ -21,6 +21,7 @@ import { t } from '@/text';
 import { isTauriDesktop, listenTauriEvent } from '@/utils/platform/tauri';
 import { useSharedUpdatesSummary } from '@/updates/useUpdatesSummary';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { lockAppLock, useAppLockSnapshot } from '@/auth/appLock/appLockRuntime';
 
 import { applyTauriTrayState, type DesktopTrayDestination } from './applyTauriTrayState';
 import { buildDesktopTrayState } from './buildDesktopTrayState';
@@ -28,6 +29,7 @@ import { buildDesktopTrayState } from './buildDesktopTrayState';
 /** Emitted by the native tray router (`menu.rs`). */
 const DESKTOP_OPEN_UPDATES_REQUESTED_EVENT = 'desktop_open_updates_requested';
 const DESKTOP_OPEN_SETTINGS_REQUESTED_EVENT = 'desktop_open_settings_requested';
+const DESKTOP_LOCK_NOW_REQUESTED_EVENT = 'desktop_lock_now_requested';
 /** Emitted by `menu_bar.rs` after a tray action changed this computer's services. */
 const DESKTOP_BACKGROUND_SERVICES_CHANGED_EVENT = 'desktop_background_services_changed';
 /** Emitted by the native tray when it is pointed at or opened while this window exists (A12-03). */
@@ -78,6 +80,7 @@ function useTauriEvent(event: string, onEvent: (payload: unknown) => void): void
 
 function TauriDesktopTrayRuntime(): React.ReactElement | null {
     const connectionHealth = useConnectionHealth();
+    const appLockEnabled = useAppLockSnapshot().record !== null;
     // The summary projection only: the tray is always mounted, so it must not hold the repair's
     // setup task or prompt handling (`apps/ui/AGENTS.md`).
     const thisComputer = useRelayDriftSummary();
@@ -116,12 +119,14 @@ function TauriDesktopTrayRuntime(): React.ReactElement | null {
         },
         thisComputerSentence: thisComputer?.description ?? null,
         updatesItem: updatesLabel ? { label: updatesLabel, enabled: updatesEnabled } : null,
+        appLockEnabled,
         services,
         appRelaySessionCount,
         serviceAutostart,
         taskParams,
         t,
     }), [
+        appLockEnabled,
         appRelaySessionCount,
         updatesEnabled,
         updatesLabel,
@@ -170,6 +175,8 @@ function TauriDesktopTrayRuntime(): React.ReactElement | null {
     const openSettings = React.useCallback(() => router.push(SETTINGS_ROUTE), [router]);
     useTauriEvent(DESKTOP_OPEN_UPDATES_REQUESTED_EVENT, openUpdates);
     useTauriEvent(DESKTOP_OPEN_SETTINGS_REQUESTED_EVENT, openSettings);
+    const lockNow = React.useCallback(() => lockAppLock(), []);
+    useTauriEvent(DESKTOP_LOCK_NOW_REQUESTED_EVENT, lockNow);
     // A tray Start / Restart / Stop / "Start at login" changed the services: every reader re-reads.
     useTauriEvent(DESKTOP_BACKGROUND_SERVICES_CHANGED_EVENT, refresh);
     // The menu is about to show these rows: the one inspection owner re-reads (bounded there).

@@ -687,6 +687,7 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
       search={false}
       matchTriggerWidth={false}
       maxWidthCap={320}
+      maxHeightCap={640}
     />
   );
 }

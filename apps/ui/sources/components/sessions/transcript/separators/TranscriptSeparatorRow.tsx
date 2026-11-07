@@ -23,6 +23,7 @@ export function TranscriptSeparatorRow(props: Readonly<{
   titleTestID?: string;
   subtitle?: string | null;
   rightAccessory?: React.ReactNode;
+  trailingAccessory?: React.ReactNode;
   onPress?: () => void;
   chipTestID?: string;
   accessibilityLabel?: string;
@@ -96,6 +97,7 @@ export function TranscriptSeparatorRow(props: Readonly<{
             {chipContent}
           </View>
         )}
+        {props.trailingAccessory ? <View style={styles.trailingAccessory}>{props.trailingAccessory}</View> : null}
         <View style={[styles.line, { backgroundColor: theme.colors.border.default }]} />
       </View>
     </View>
@@ -165,5 +167,9 @@ const styles = StyleSheet.create((_theme) => ({
   },
   rightAccessory: {
     marginLeft: 6,
+  },
+  trailingAccessory: {
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 }));

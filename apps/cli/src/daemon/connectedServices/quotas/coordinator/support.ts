@@ -20,6 +20,7 @@ import {
 } from '@happier-dev/protocol';
 
 import type { Credentials } from '@/persistence';
+import type { ApiClient } from '@/api/api';
 import { readConnectedServiceCredentialOrganizationId } from '../../descriptors/connectedAccountDescriptors';
 import {
   invalidateConnectedServiceAccountMode,
@@ -125,7 +126,7 @@ export type ConnectedServicesBindingsV1Like = Readonly<{
   bindingsByServiceId?: Record<string, unknown>;
 }>;
 
-export type QuotaApi = Readonly<{
+export type QuotaApi = Partial<Pick<ApiClient, 'listProviderAccountUsageRefreshRequests' | 'getProviderAccountUsageSnapshotPlain' | 'getProviderAccountUsageSnapshotSealed'>> & Readonly<{
   getAccountEncryptionMode?: () => Promise<ConnectedServiceAccountMode>;
   getAccountEncryptionModeUncached?: (options?: Readonly<{ signal?: AbortSignal }>) => Promise<ConnectedServiceAccountMode>;
   getConnectedServiceQuotaSnapshotSealed: (args: Readonly<{ serviceId: ConnectedServiceId; profileId: string; signal?: AbortSignal }>) => Promise<
@@ -601,7 +602,7 @@ export type RefreshConnectedServiceCredentialForQuota = (input: Readonly<{
 export type AccountUsageStoreForQuotaPolicy = Pick<
   ProviderAccountUsageStore,
   'recordSnapshot' | 'resolveRecordId' | 'retainSourcesForProfile'
-> & AccountUsageStoreForAuthGroupSwitchState;
+> & Partial<Pick<ProviderAccountUsageStore, 'listSnapshots'>> & AccountUsageStoreForAuthGroupSwitchState;
 
 export const QUOTA_AUTH_FAILURE_REAUTH_CONSECUTIVE_FAILURES = 5;
 /**

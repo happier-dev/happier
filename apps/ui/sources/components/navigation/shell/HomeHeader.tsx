@@ -14,6 +14,8 @@ import { useConnectionHealth } from '@/components/navigation/connectionStatus/us
 import { UpdatesPopoverButton } from '@/components/updates/UpdatesPopoverButton';
 import { useSharedUpdatesSummary } from '@/updates/useUpdatesSummary';
 import { Icon } from '@/components/ui/icons/Icon';
+import { AppLockHeaderButton } from '@/components/appLock/AppLockHeaderButton';
+import { ProviderUsageStrip } from '@/components/sessions/usage/ProviderUsageStrip';
 import {
     shouldForceFreshNewSessionEntryFromPressEvent,
     useResolveNewSessionOrdinaryEntryRoute,
@@ -40,7 +42,9 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         tintColor: theme.colors.chrome.header.foreground,
     },
     titleContainer: {
-        flex: 1,
+        flexShrink: 1,
+        minWidth: 0,
+        marginRight: 8,
         alignItems: 'center',
     },
     titleText: {
@@ -82,7 +86,12 @@ export const HomeHeader = React.memo(() => {
     return (
         <View style={{ backgroundColor: theme.colors.background.canvas }}>
             <Header
-                title={<HeaderTitleWithSubtitle />}
+                title={(
+                    <>
+                        <HeaderTitleWithSubtitle />
+                        <ProviderUsageStrip />
+                    </>
+                )}
                 headerRight={() => <HeaderRight />}
                 headerLeft={() => <HeaderLeft showAutomations={showAutomations} />}
                 headerShadowVisible={false}
@@ -170,6 +179,7 @@ function HeaderLeft(props: { showAutomations: boolean }) {
             {updates.visible ? (
                 <UpdatesPopoverButton summary={updates} variant="header" testID="home-header-updates-pill" />
             ) : logo}
+            <AppLockHeaderButton testID="home-header-app-lock" style={styles.headerButton} />
             {props.showAutomations ? (
                 <Pressable
                     onPress={() => router.push('/automations')}

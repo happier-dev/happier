@@ -31,6 +31,17 @@ describe('FeatureGatesSchema', () => {
     expect(readServerEnabledBit(parsed, 'pets.sync')).toBe(true);
   });
 
+  it('preserves the app lock email recovery gate and fails closed when absent', () => {
+    const parsed = FeaturesResponseSchema.parse({
+      features: { appLock: { emailRecovery: { enabled: true } } },
+      capabilities: {},
+    });
+    expect(readServerEnabledBit(parsed, 'appLock.emailRecovery')).toBe(true);
+
+    const oldServer = FeaturesResponseSchema.parse({ features: {}, capabilities: {} });
+    expect(readServerEnabledBit(oldServer, 'appLock.emailRecovery')).toBe(false);
+  });
+
   it('preserves channel bridge gates', () => {
     const parsed = FeaturesResponseSchema.parse({
       features: {

@@ -47,6 +47,7 @@ function canReuseHeader(
     return sourceHeader.title === item.title
         && areNullableValuesEqual(sourceHeader.headerKind, item.headerKind)
         && areNullableValuesEqual(sourceHeader.groupKey, item.groupKey)
+        && areNullableValuesEqual(sourceHeader.section, item.section)
         && areNullableValuesEqual(sourceHeader.workspaceKey, item.workspaceKey)
         && areNullableValuesEqual(sourceHeader.workspace, item.workspace)
         && areNullableValuesEqual(sourceHeader.folderId, item.folderId)
@@ -72,6 +73,7 @@ function rehydrateHeader(
         title: item.title,
         headerKind: item.headerKind,
         groupKey: item.groupKey,
+        section: item.section,
         workspaceKey: item.workspaceKey,
         workspace: item.workspace,
         folderId: item.folderId,
@@ -166,6 +168,7 @@ function areHeaderRowsEquivalent(
     return previous.title === next.title
         && areNullableValuesEqual(previous.headerKind, next.headerKind)
         && areNullableValuesEqual(previous.groupKey, next.groupKey)
+        && areNullableValuesEqual(previous.section, next.section)
         && areNullableValuesEqual(previous.workspaceKey, next.workspaceKey)
         && areNullableValuesEqual(previous.workspace, next.workspace)
         && areNullableValuesEqual(previous.renderWorkspaceKey, next.renderWorkspaceKey)

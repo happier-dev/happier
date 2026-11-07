@@ -1858,6 +1858,21 @@ export class ApiClient {
     }
   }
 
+  /** Pending account-scoped requests survive daemon restarts; no usage or credential payload is listed. */
+  async listProviderAccountUsageRefreshRequests(): Promise<ProviderAccountUsageRecordId[] | null> {
+    try {
+      const response = await axios.get(`${resolveServerHttpBaseUrl()}/v2/connect/provider-account-usage/refresh-requests`, {
+        headers: { Authorization: `Bearer ${this.credential.token}` },
+        timeout: resolveConnectedServicesServerApiTimeoutMs(),
+      });
+      return z.object({ recordIds: z.array(ProviderAccountUsageRecordIdSchema) }).strict().parse(response.data).recordIds;
+    } catch (error) {
+      // Released servers lack this read route; retain refresh of locally observed records there.
+      if (axios.isAxiosError(error) && error.response?.status === 404) return null;
+      throw error;
+    }
+  }
+
   async getProviderAccountUsageSnapshotPlain(params: {
     recordId: ProviderAccountUsageRecordId;
   }): Promise<{

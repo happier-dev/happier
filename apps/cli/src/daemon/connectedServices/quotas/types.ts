@@ -4,6 +4,7 @@ import type {
   ConnectedServiceQuotaRecoveryCreditConsumeReceiptStatusV1,
   ConnectedServiceQuotaSnapshotV1,
   ProviderAccountSubscriptionV1,
+  ProviderAccountUsageSnapshotV1,
 } from '@happier-dev/protocol';
 
 export type ConnectedServiceSubscriptionFetcher = Readonly<{
@@ -23,6 +24,13 @@ export type ConnectedServiceQuotaRecoveryCreditConsumeOutcome = Exclude<
 
 export type ConnectedServiceQuotaFetcher = Readonly<{
   serviceId: ConnectedServiceId;
+  nativeUsageProviderId?: string;
+  /** Read-only access to the matching native login; never imports, rotates or materializes it. */
+  readNativeCredentialForUsage?: (params: Readonly<{
+    snapshot: ProviderAccountUsageSnapshotV1;
+    now: number;
+    signal: AbortSignal;
+  }>) => Promise<Readonly<{ providerId: string; record: ConnectedServiceCredentialRecordV1 }> | null>;
   pollPolicy?: Readonly<{
     minPollIntervalMs?: number;
     retryAfterBackoffMinMs?: number;

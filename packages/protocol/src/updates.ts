@@ -391,6 +391,7 @@ export const DirectSessionTranscriptDeltaEphemeralSchema = lazySchema(() => z.ob
 }));
 
 export const EphemeralUpdateSchema = lazySchema(() => z.discriminatedUnion('type', [
+  z.object({ type: z.literal('provider-account-usage-refresh-requested') }).strict(),
   ActionOperationRevisionEphemeralV1Schema,
   // Hottest live event first: delta ticks stream at the live cadence (~25Hz per active segment).
   z.object({

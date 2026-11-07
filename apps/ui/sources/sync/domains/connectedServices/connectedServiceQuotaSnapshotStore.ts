@@ -8,6 +8,8 @@ import {
     connectedServiceUsageRequiresOrganizationId,
     ConnectedServiceCredentialRecordV1Schema,
     isProviderAccountUsageOrganizationContextMatch,
+    compareConnectedServiceQuotaObservationRecency,
+    mergeProviderAccountSubscription,
     openConnectedServiceCredentialCiphertext,
     type ProviderAccountUsageOrganizationContext,
     type ConnectedServiceCredentialRecordV1,
@@ -366,6 +368,19 @@ async function runLoad(key: string, ctx: QuotaSnapshotLoadContext): Promise<Conn
             if (!isCurrentEntry()) return null;
             if (requiresOrganization && opened && !isProviderAccountUsageOrganizationContextMatch(opened, organizationContext)) {
                 opened = null;
+            }
+            const previous = entry.snapshot;
+            if (opened && previous
+                && (opened.activeAccountId ?? null) === (previous.activeAccountId ?? null)
+                && (opened.providerOrganizationId ?? null) === (previous.providerOrganizationId ?? null)
+                && compareConnectedServiceQuotaObservationRecency({
+                    existingObservedAtMs: previous.fetchedAtMs ?? previous.fetchedAt,
+                    incomingObservedAtMs: opened.fetchedAtMs ?? opened.fetchedAt,
+                    nowMs: Date.now(),
+                }) === 'incoming_older') {
+                // Late responses cannot rewind usage. Billing observations have their own clock.
+                const subscription = mergeProviderAccountSubscription(previous.subscription, opened.subscription);
+                opened = subscription === previous.subscription ? previous : { ...previous, subscription };
             }
             entry.snapshot = opened ?? (entry.refreshing ? entry.snapshot : null);
             if (opened && readMetadata?.status === 'error' && readMetadata.refreshRequestedAt === undefined) {

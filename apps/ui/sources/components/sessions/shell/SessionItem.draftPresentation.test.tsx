@@ -7,17 +7,11 @@ import { createSessionItemTestRowModel, installSessionShellCommonModuleMocks } f
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const confirmDeleteDraft = vi.hoisted(() => vi.fn(async () => true));
-
 vi.mock('react-native-reanimated', () => ({}));
 installSessionShellCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({ Platform: { OS: 'web' } });
-    },
-    modal: async () => {
-        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-        return createModalModuleMock({ spies: { confirm: confirmDeleteDraft } }).module;
     },
     text: async () => {
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -26,10 +20,6 @@ installSessionShellCommonModuleMocks({
                 if (key === 'sessionDrafts.badge') return 'Draft';
                 if (key === 'sessionDrafts.continueEditing') return 'Continue editing';
                 if (key === 'sessionDrafts.delete.action') return 'Delete draft';
-                if (key === 'sessionDrafts.delete.confirmTitle') return 'Delete draft?';
-                if (key === 'sessionDrafts.delete.confirmDescription') return 'This draft will be removed from your devices.';
-                if (key === 'common.cancel') return 'Cancel';
-                if (key === 'common.delete') return 'Delete';
                 return key;
             },
         });
@@ -112,10 +102,7 @@ function createSession() {
     } as any;
 }
 
-async function renderDraftRow(
-    density: 'default' | 'compact' | 'minimal',
-    onDeleteDraft: (() => void | Promise<void>) | null = null,
-) {
+async function renderDraftRow(density: 'default' | 'compact' | 'minimal') {
     const { SessionItem } = await import('./SessionItem');
     const session = createSession();
     const compact = density !== 'default';
@@ -138,7 +125,6 @@ async function renderDraftRow(
                 ...rowModel,
                 draft: { preview: PREVIEW },
             } as typeof rowModel}
-            onDeleteDraft={onDeleteDraft}
         />,
     );
 }
@@ -146,7 +132,6 @@ async function renderDraftRow(
 describe('SessionItem existing-session draft presentation', () => {
     afterEach(() => {
         standardCleanup();
-        confirmDeleteDraft.mockClear();
     });
 
     it('shows a localized badge and one-line preview at default density', async () => {
@@ -170,27 +155,15 @@ describe('SessionItem existing-session draft presentation', () => {
         },
     );
 
-    it('offers an accessible destructive action that removes only the draft after confirmation', async () => {
-        const onDeleteDraft = vi.fn(async () => undefined);
-        const screen = await renderDraftRow('default', onDeleteDraft);
+    it('does not offer draft deletion from an existing-session row', async () => {
+        const screen = await renderDraftRow('default');
         const hoverContainer = screen.root.findAll((node) => typeof node.props.onPointerEnter === 'function')[0];
         await act(async () => hoverContainer?.props.onPointerEnter());
         const menu = screen.findByType('DropdownMenu' as React.ElementType);
-        const deleteItem = menu?.props.items.find((item: { id: string }) => item.id === 'session-draft.delete');
 
-        expect(deleteItem?.title).toBe('Delete draft');
-        await menu?.props.onSelect('session-draft.delete');
-
-        expect(confirmDeleteDraft).toHaveBeenCalledWith(
-            'Delete draft?',
-            'This draft will be removed from your devices.',
-            { cancelText: 'Cancel', confirmText: 'Delete', destructive: true },
-        );
-        expect(onDeleteDraft).toHaveBeenCalledTimes(1);
-        expect(screen.findAllByTestId(`session-list-item-${SESSION_ID}`)).toHaveLength(1);
-
+        expect(menu?.props.items.map((item: { title: string }) => item.title)).not.toContain('Delete draft');
         const row = screen.findByTestId(`session-list-item-${SESSION_ID}`);
-        expect(row?.props.accessibilityActions).toContainEqual({ name: 'deleteDraft', label: 'Delete draft' });
+        expect(row?.props.accessibilityActions ?? []).not.toContainEqual({ name: 'deleteDraft', label: 'Delete draft' });
     });
 
     it('keeps a compact clock visible in a narrow row without replacing its subtitle', async () => {

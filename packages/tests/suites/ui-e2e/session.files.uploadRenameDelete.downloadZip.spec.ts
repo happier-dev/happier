@@ -1,5 +1,5 @@
 import { test, expect, type Locator, type Page } from '@playwright/test';
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 import { createRunDirs } from '../../src/testkit/runDir';
@@ -403,6 +403,42 @@ test.describe('ui e2e: Files upload + rename/delete + download (+ zip)', () => {
       await expect(page.getByTestId('web-modal-confirm')).toHaveCount(1, { timeout: 60_000 });
       await page.getByTestId('web-modal-confirm').click();
       await expect(rightPane.getByTestId(`repository-tree-row-${toTestIdSafeValue(renamedPath)}`)).toHaveCount(0, { timeout: 120_000 });
+
+      // A second expanded directory must refresh too, without switching sessions.
+      await repositoryTreeRowLocator(rightPane, 'download-me').click();
+      await repositoryTreeRowLocator(rightPane, 'download-me/nested').click();
+      const nestedPath = 'download-me/nested/hello.txt';
+      const nestedRenamedPath = 'download-me/nested/renamed.txt';
+      await expect(repositoryTreeRowLocator(rightPane, nestedPath)).toHaveCount(1);
+      await repositoryTreeRowMenuLocator(rightPane, nestedPath).click();
+      await clickDropdownOptionByItemId(page, 'repository-tree-menuitem-rename');
+      await page.getByPlaceholder(nestedPath).fill(nestedRenamedPath);
+      await expect(page.getByTestId('web-prompt-confirm')).toBeEnabled();
+      await page.getByTestId('web-prompt-confirm').click();
+      await expect(repositoryTreeRowLocator(rightPane, nestedPath)).toHaveCount(0);
+      await expect(repositoryTreeRowLocator(rightPane, nestedRenamedPath)).toHaveCount(1);
+
+      // The toolbar refresh must also pick up a subsequent rename made on disk.
+      const refreshedPath = 'download-me/nested/refreshed.txt';
+      await rename(resolve(workspaceDir, nestedRenamedPath), resolve(workspaceDir, refreshedPath));
+      const refreshButton = rightPane.getByTestId('repository-tree-refresh');
+      if (await refreshButton.isVisible()) {
+        await refreshButton.click();
+      } else {
+        await rightPane.getByTestId('repository-tree-toolbar-overflow').click();
+        await clickDropdownOptionByItemId(page, 'repository-tree-refresh');
+      }
+      await expect(repositoryTreeRowLocator(rightPane, nestedRenamedPath)).toHaveCount(0);
+      await expect(repositoryTreeRowLocator(rightPane, refreshedPath)).toHaveCount(1);
+      await repositoryTreeRowMenuLocator(rightPane, refreshedPath).click();
+      const [nestedDownload] = await Promise.all([
+        page.waitForEvent('download', { timeout: 60_000 }),
+        clickDropdownOptionByItemId(page, 'repository-tree-menuitem-download'),
+      ]);
+      expect(nestedDownload.suggestedFilename()).toBe('refreshed.txt');
+      const nestedDownloadPath = await nestedDownload.path();
+      expect(nestedDownloadPath).not.toBeNull();
+      if (nestedDownloadPath) expect(await readFile(nestedDownloadPath, 'utf8')).toBe('hello zip\n');
 
       // Upload a conflicting file and keep both versions.
       const conflictPath = 'upload-conflict.txt';

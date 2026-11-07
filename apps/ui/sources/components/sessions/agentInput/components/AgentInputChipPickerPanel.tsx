@@ -19,6 +19,7 @@ import {
   type AgentInputChipPickerPanelProps,
 } from "./AgentInputChipPickerTypes";
 import { deferAgentInputPopoverClose } from "@/components/sessions/agentInput/selection/deferAgentInputPopoverClose";
+import { PickerDoneButton, PickerDoneHostProvider, usePickerDoneHost } from "@/components/sessions/pickers/PickerDoneAction";
 
 export {
   type AgentInputChipPickerOption,
@@ -44,6 +45,8 @@ export function AgentInputChipPickerPanel(
     [props.options],
   );
   const showDetailedSelector = detailed && props.options.length > 1;
+  const doneHost = usePickerDoneHost(detailed ? props.onDone : undefined);
+  const showFallbackDone = doneHost.value !== null && !doneHost.hosted;
   const selectedOptionId = props.selectedOptionId ?? null;
   const fallbackFocusedOptionId = selectedOptionId ?? props.options[0]?.id ?? null;
   const [focusState, setFocusState] = React.useState<AgentInputChipPickerFocusState>(() => ({
@@ -137,8 +140,11 @@ export function AgentInputChipPickerPanel(
 
   const detailPane = focusedOption ? (
     <View style={styles.detailPane}>
-      {props.detailPaneHeaderAccessory ? (
+      {props.detailPaneHeaderAccessory || showFallbackDone ? (
         <View style={styles.detailPaneHeaderAccessoryRow}>
+          {showFallbackDone && doneHost.value ? (
+            <PickerDoneButton onPress={doneHost.value.onDone} />
+          ) : null}
           {props.detailPaneHeaderAccessory}
         </View>
       ) : null}
@@ -211,6 +217,7 @@ export function AgentInputChipPickerPanel(
           </ItemListStatic>
         </View>
       ) : (
+        <PickerDoneHostProvider value={doneHost.value}>
         <View style={styles.bodyDetailedShell}>
           {headerRow ? <View style={styles.headerDetailed}>{headerRow}</View> : null}
           <View
@@ -260,6 +267,7 @@ export function AgentInputChipPickerPanel(
             ) : null}
           </View>
         </View>
+        </PickerDoneHostProvider>
       )}
     </View>
   );
@@ -348,6 +356,9 @@ const stylesheet = StyleSheet.create((theme) => ({
     top: 12,
     right: 12,
     zIndex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
   },
   detailPaneSplit: {
     paddingHorizontal: 0,

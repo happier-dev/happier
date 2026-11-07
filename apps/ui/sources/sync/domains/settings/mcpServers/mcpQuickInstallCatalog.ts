@@ -1,3 +1,6 @@
+import type { McpServersSettingsV1 } from '@happier-dev/protocol';
+
+import { normalizeMcpServerNameCandidate } from './mcpCatalogNaming';
 import type { ImportedMcpInputDefinitionV1, ImportedMcpServerDraftV1 } from './parseImportedMcpServerJson';
 
 export type McpQuickInstallPresetId =
@@ -111,8 +114,24 @@ const PRESETS: readonly QuickInstallDraft[] = [
     },
 ] as const;
 
-export function listMcpQuickInstallPresets(): readonly McpQuickInstallPreset[] {
-    return PRESETS.map((preset) => preset.preset);
+function isPresetConfigured(preset: QuickInstallDraft, settings: McpServersSettingsV1): boolean {
+    const presetName = normalizeMcpServerNameCandidate(preset.server.name);
+    const presetStdio = preset.server.stdio;
+    return settings.servers.some((server) => {
+        if (server.name === presetName) return true;
+        if (!presetStdio || server.transport !== 'stdio' || !server.stdio) return false;
+        return server.stdio.command === presetStdio.command
+            && server.stdio.args.length === presetStdio.args.length
+            && server.stdio.args.every((arg, index) => arg === presetStdio.args[index]);
+    });
+}
+
+/**
+ * Presets the user can still quick-install: a preset counts as installed when a configured server
+ * already uses its name or its exact stdio launch command (so renamed installs are recognised too).
+ */
+export function listAvailableMcpQuickInstallPresets(settings: McpServersSettingsV1): readonly McpQuickInstallPreset[] {
+    return PRESETS.filter((preset) => !isPresetConfigured(preset, settings)).map((preset) => preset.preset);
 }
 
 export function buildQuickInstallMcpDraft(id: McpQuickInstallPresetId): QuickInstallDraft {

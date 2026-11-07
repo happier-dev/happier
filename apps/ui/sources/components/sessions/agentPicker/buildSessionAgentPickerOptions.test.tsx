@@ -127,4 +127,19 @@ describe('buildSessionAgentPickerOptions', () => {
         expect(option?.id).toBe('configuredAcpBackend:ultracode');
         expect(React.isValidElement(option?.icon)).toBe(true);
     });
+
+    it('lets a blocked row stay focusable only when its presentation asks for it', () => {
+        const options = buildSessionAgentPickerOptions({
+            entries: [entry('claude'), entry('codex')],
+            resolvePresentation: (candidate) => (
+                candidate.providerAgentId === 'claude'
+                    ? { disabled: true, muted: true, focusable: true }
+                    : { disabled: true, muted: true }
+            ),
+            resolveBehavior: () => ({}),
+        });
+        const byId = new Map(options.map((option) => [option.id, option]));
+        expect(byId.get('builtInAgent:claude')?.focusableWhileDisabled).toBe(true);
+        expect(byId.get('builtInAgent:codex')?.focusableWhileDisabled).toBeFalsy();
+    });
 });

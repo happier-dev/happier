@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
+import { PressableSurface } from '@/components/ui/interaction/PressableSurface';
 import { useUnistyles } from 'react-native-unistyles';
 import { ConnectionStatusControl } from '@/components/navigation/ConnectionStatusControl';
 import { useDesktopWindowDragMouseProps } from '@/components/navigation/desktopWindowChrome/DesktopWindowDragRegion';
@@ -19,8 +20,10 @@ import { SidebarLogoButton } from '../SidebarLogoButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { ActionOperationActivityButton } from '@/components/inbox/actionOperations/ActionOperationActivityButton';
 import { InboxPopoverButton } from '@/components/inbox/InboxPopoverButton';
+import { DirectSessionsBrowseButton } from '@/components/sessions/directSessions/browse/DirectSessionsBrowseButton';
 import { UpdatesEntry } from '@/components/updates/UpdatesPopoverButton';
 import type { InboxSummary } from '@/hooks/inbox/useInboxSummary';
+import { ProviderUsageStrip } from '@/components/sessions/usage/ProviderUsageStrip';
 
 type DesktopSidebarChromeProps = Readonly<{
     sidebarWidthPx?: number | null;
@@ -49,6 +52,9 @@ export const DesktopSidebarChrome = React.memo((props: DesktopSidebarChromeProps
     const canNavigateBack = props.canNavigateBack ?? true;
     const canNavigateForward = props.canNavigateForward ?? true;
     const topUtilityActions = props.topUtilityActions ?? [];
+    const backLabel = t('common.previous');
+    const forwardLabel = t('common.next');
+    const collapseLabel = t('common.collapse');
     const topUtilityActionIds = React.useMemo(
         () => new Set(topUtilityActions.map((action) => action.id)),
         [topUtilityActions],
@@ -74,17 +80,18 @@ export const DesktopSidebarChrome = React.memo((props: DesktopSidebarChromeProps
             : action.icon;
 
         return (
-            <Pressable
+            <PressableSurface
                 key={action.id}
                 testID={action.inlineTestID}
                 onPress={action.onPress}
                 hitSlop={8}
                 accessibilityRole="button"
                 accessibilityLabel={action.title}
+                webTooltip={action.title}
                 style={isSettingsAction ? styles.topSettingsIconButton : styles.topIconButton}
             >
                 {icon}
-            </Pressable>
+            </PressableSurface>
         );
     }, [styles.topIconButton, styles.topSettingsIconButton, theme.colors.chrome.header.foreground]);
 
@@ -109,6 +116,12 @@ export const DesktopSidebarChrome = React.memo((props: DesktopSidebarChromeProps
                                 testID="desktop-sidebar-updates-button"
                             />
                         )}
+                        {/* Opens provider-session browsing; it replaced the large Browse block above the session list. */}
+                        <DirectSessionsBrowseButton
+                            testID="sidebar-direct-browse-button"
+                            buttonSize={32}
+                            iconSize={DESKTOP_SIDEBAR_CHROME_ICON_GLYPH_SIZE_PX}
+                        />
                         {props.inboxEnabled && props.inboxSummary ? (
                             <InboxPopoverButton
                                 summary={props.inboxSummary}
@@ -129,22 +142,24 @@ export const DesktopSidebarChrome = React.memo((props: DesktopSidebarChromeProps
                 popoverBoundaryRef={props.popoverBoundaryRef}
                 gap={4}
                 renderOverflowTrigger={({ open, toggle, testID, accessibilityLabel, accessibilityHint }) => (
-                    <Pressable
+                    <PressableSurface
                         testID={testID}
                         hitSlop={15}
                         style={open ? { opacity: 0 } : undefined}
                         pointerEvents={open ? 'none' : 'auto'}
+                        disabled={open}
                         onPress={open ? undefined : toggle}
                         focusable={!open}
                         accessibilityRole="button"
                         accessibilityLabel={accessibilityLabel}
+                        webTooltip={open ? undefined : accessibilityLabel}
                         accessibilityHint={accessibilityHint}
                         accessibilityState={{ expanded: open, disabled: open }}
                         accessibilityElementsHidden={open}
                         importantForAccessibility={open ? 'no-hide-descendants' : 'auto'}
                     >
                         {props.renderHeaderOverflowVisual()}
-                    </Pressable>
+                    </PressableSurface>
                 )}
             />
         </View>
@@ -165,13 +180,14 @@ export const DesktopSidebarChrome = React.memo((props: DesktopSidebarChromeProps
                         {/* The desktop top rail holds window-level utilities; inbox and activity stay
                             in the sidebar's icon row. Back/forward lead; Updates follows them. */}
                         {props.onPressBack ? (
-                            <Pressable
+                            <PressableSurface
                                 testID="sidebar-back-button"
                                 onPress={props.onPressBack}
                                 disabled={!canNavigateBack}
                                 hitSlop={10}
                                 accessibilityRole="button"
-                                accessibilityLabel={t('common.previous')}
+                                accessibilityLabel={backLabel}
+                                webTooltip={backLabel}
                                 accessibilityState={{ disabled: !canNavigateBack }}
                                 style={[styles.topIconButton, !canNavigateBack ? styles.topIconButtonDisabled : null]}
                             >
@@ -180,16 +196,17 @@ export const DesktopSidebarChrome = React.memo((props: DesktopSidebarChromeProps
                                     size={DESKTOP_SIDEBAR_CHROME_ICON_GLYPH_SIZE_PX}
                                     color={theme.colors.chrome.header.foreground}
                                 />
-                            </Pressable>
+                            </PressableSurface>
                         ) : null}
                         {props.onPressForward ? (
-                            <Pressable
+                            <PressableSurface
                                 testID="sidebar-forward-button"
                                 onPress={props.onPressForward}
                                 disabled={!canNavigateForward}
                                 hitSlop={10}
                                 accessibilityRole="button"
-                                accessibilityLabel={t('common.next')}
+                                accessibilityLabel={forwardLabel}
+                                webTooltip={forwardLabel}
                                 accessibilityState={{ disabled: !canNavigateForward }}
                                 style={[styles.topIconButton, !canNavigateForward ? styles.topIconButtonDisabled : null]}
                             >
@@ -198,7 +215,7 @@ export const DesktopSidebarChrome = React.memo((props: DesktopSidebarChromeProps
                                     size={DESKTOP_SIDEBAR_CHROME_ICON_GLYPH_SIZE_PX}
                                     color={theme.colors.chrome.header.foreground}
                                 />
-                            </Pressable>
+                            </PressableSurface>
                         ) : null}
                         <UpdatesEntry
                             variant="icon"
@@ -208,19 +225,20 @@ export const DesktopSidebarChrome = React.memo((props: DesktopSidebarChromeProps
                         />
                         {topUtilityActions.map(renderTopUtilityAction)}
                         {props.onPressCollapse ? (
-                            <Pressable
+                            <PressableSurface
                                 testID="sidebar-collapse-button"
                                 onPress={props.onPressCollapse}
                                 hitSlop={10}
                                 accessibilityRole="button"
-                                accessibilityLabel={t('common.collapse')}
+                                accessibilityLabel={collapseLabel}
+                                webTooltip={collapseLabel}
                                 style={styles.topIconButton}
                             >
                                 <SidebarCollapseIcon
                                     size={DESKTOP_SIDEBAR_CHROME_ICON_GLYPH_SIZE_PX}
                                     color={theme.colors.chrome.header.foreground}
                                 />
-                            </Pressable>
+                            </PressableSurface>
                         ) : null}
                     </View>
                 </View>
@@ -257,6 +275,7 @@ export const DesktopSidebarChrome = React.memo((props: DesktopSidebarChromeProps
                             />
                         </View>
                     </View>
+                    <ProviderUsageStrip />
                 </View>
 
                 {actionsRow}

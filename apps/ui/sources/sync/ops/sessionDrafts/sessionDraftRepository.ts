@@ -28,6 +28,11 @@ import { parseSerializedSessionDraftScope, serializeSessionDraftReplica, session
 
 export type SessionDraftRepositoryScope = ServerAccountScope;
 export type SessionDraftStatus = 'clean' | 'pending' | 'offline' | 'conflict' | 'error';
+/**
+ * Why a draft projects `error`: `storage` when this device could not persist the scope's drafts,
+ * `encryption` when the draft could not be sealed for sync or the synced copy could not be opened.
+ */
+export type SessionDraftErrorReason = 'storage' | 'encryption';
 export type SessionDraftMaterializationIntent = 'passiveHydration' | 'userEdit' | 'seeded' | 'launchInterrupted';
 
 type DraftFieldMutationV1 = Readonly<{
@@ -571,6 +576,11 @@ export class SessionDraftRepository {
 
     private projectedStatus(scope: SessionDraftRepositoryScope, replica: PersistedReplica): SessionDraftStatus {
         return this.getScopeState(scope).persistenceError ? 'error' : replica.status;
+    }
+
+    getSessionDraftErrorReason(scope: SessionDraftRepositoryScope, address: SessionDraftAddressV1): SessionDraftErrorReason | null {
+        if (this.getScopeState(scope).persistenceError) return 'storage';
+        return this.readReplica(scope, address)?.status === 'error' ? 'encryption' : null;
     }
 
     private notify(scope: SessionDraftRepositoryScope, address: SessionDraftAddressV1): void {
@@ -1592,6 +1602,7 @@ export function configureSessionDraftRepository(options: Readonly<{
 }
 
 export const getSessionDraftSnapshot = singleton.getSessionDraftSnapshot.bind(singleton);
+export const getSessionDraftErrorReason = singleton.getSessionDraftErrorReason.bind(singleton);
 export const readOrdinaryEntryDraftId = singleton.readOrdinaryEntryDraftId.bind(singleton);
 export const setOrdinaryEntryDraftId = singleton.setOrdinaryEntryDraftId.bind(singleton);
 export const clearOrdinaryEntryDraftIdExact = singleton.clearOrdinaryEntryDraftIdExact.bind(singleton);

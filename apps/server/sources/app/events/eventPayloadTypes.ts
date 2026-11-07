@@ -310,6 +310,8 @@ export type UpdateEvent = {
 // === EPHEMERAL EVENT TYPES (Transient) ===
 
 export type EphemeralEvent = {
+    type: 'provider-account-usage-refresh-requested';
+} | {
     type: 'activity';
     id: string;
     active: boolean;

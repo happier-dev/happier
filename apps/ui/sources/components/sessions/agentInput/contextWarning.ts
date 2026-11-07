@@ -33,6 +33,14 @@ export function formatContextTokenCount(value: number): string {
     return formatTokenUsageCount(value);
 }
 
+export function formatContextUsageDetail(state: ContextUsageState): string {
+    const remaining = Math.round(Math.max(0, Math.min(100, 100 - state.usedPercentage)));
+    return `${t('agentInput.context.remaining', { percent: remaining })} • ${t('connectedServices.account.usedDetail', {
+        used: formatContextTokenCount(state.usedTokens),
+        limit: formatContextTokenCount(state.contextWindowTokens),
+    })}`;
+}
+
 export function getContextUsageState(
     contextSize: number | null | undefined,
     alwaysShow: boolean = false,

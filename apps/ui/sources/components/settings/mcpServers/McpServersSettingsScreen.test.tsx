@@ -221,19 +221,21 @@ describe('McpServersSettingsScreen', () => {
         expect(configuredRowActions.props.actions.map((action: { id: string }) => action.id)).toEqual(['edit', 'delete']);
 
         const addServerRow = screen.findRow('settings.mcpServers.addServer');
-        const quickInstallPlaywright = screen.findRow('settings.mcpServers.quickInstall.playwright');
+        // Playwright is already configured, so Quick Install only offers presets not yet installed.
+        expect(screen.findRow('settings.mcpServers.quickInstall.playwright')).toBeFalsy();
+        const quickInstallContext7 = screen.findRow('settings.mcpServers.quickInstall.context7');
         expect(addServerRow).toBeTruthy();
-        expect(quickInstallPlaywright).toBeTruthy();
+        expect(quickInstallContext7).toBeTruthy();
 
         const allRows = screen.listRows('');
         const configuredIndex = allRows.indexOf(configuredRow!);
         const addServerIndex = allRows.indexOf(addServerRow!);
-        const quickInstallIndex = allRows.indexOf(quickInstallPlaywright!);
+        const quickInstallIndex = allRows.indexOf(quickInstallContext7!);
         expect(addServerIndex).toBeGreaterThan(configuredIndex);
         expect(addServerIndex).toBeLessThan(quickInstallIndex);
 
-        await screen.pressRow('settings.mcpServers.quickInstall.playwright');
-        expect(routerPushSpy).toHaveBeenCalledWith('/settings/mcp-server?addMode=quick-install&presetId=playwright');
+        await screen.pressRow('settings.mcpServers.quickInstall.context7');
+        expect(routerPushSpy).toHaveBeenCalledWith('/settings/mcp-server?addMode=quick-install&presetId=context7');
 
         await selectHeaderTab(screen, 'detected');
         expect(screen.findRow('settings.mcpServers.detect.refresh')).toBeTruthy();

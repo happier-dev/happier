@@ -67,16 +67,15 @@ import {
 } from './layout/actionBarLogic';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import {
-    clampNumber,
     computeAgentInputDefaultMaxHeight,
+    computeAgentInputAttentionMaxHeight,
     computeAgentInputKeyboardOpenVariableSectionMaxHeight,
     computeMeasuredPanelInputMaxHeight,
     resolveAgentInputHostPanelMaxHeight,
     type AgentInputPanelMaxHeightMode,
 } from './inputMaxHeight';
 import {
-    formatContextTokenCount,
-    formatContextUsagePercent,
+    formatContextUsageDetail,
     getContextUsageState,
     type ContextUsageState,
 } from './contextWarning';
@@ -87,6 +86,7 @@ import { AgentInputEngineDetail } from './components/AgentInputEngineDetail';
 import { AgentInputModelDiscoveryDetail, type AgentInputModelDetailState, type SessionModelDiscoveryContext } from './components/AgentInputModelDiscoveryDetail';
 import { AgentInputContextUsageBadge } from './components/AgentInputContextUsageBadge';
 import { AgentInputProviderUsageBadge } from './components/AgentInputProviderUsageBadge';
+import { AgentInputProviderUsageMark } from './components/AgentInputProviderUsageMark';
 import { mergeOptionPickerProbes } from '@/components/sessions/pickers/mergeOptionPickerProbes';
 import { AgentInputAttachmentsRow } from './components/AgentInputAttachmentsRow';
 import { AgentInputOverlayLayer } from './components/AgentInputOverlayLayer';
@@ -194,6 +194,7 @@ const INPUT_EXPANSION_TOGGLE_HIDE_OFFSET_PX = 12;
 const INPUT_EXPANSION_TOGGLE_INPUT_PADDING_RIGHT = 32;
 const AGENT_INPUT_CONTAINER_VERTICAL_PADDING = 4;
 const AGENT_INPUT_CONTAINER_VERTICAL_CHROME_HEIGHT = AGENT_INPUT_CONTAINER_VERTICAL_PADDING * 2;
+const AGENT_INPUT_CONTAINER_MIN_HEIGHT = 40;
 const AGENT_INPUT_PANEL_PADDING_TOP = 2;
 const AGENT_INPUT_PANEL_PADDING_BOTTOM = 8;
 // Composer panel corner radius. Shared by the panel surface, its cast-shadow wrapper so the drop
@@ -331,6 +332,8 @@ interface AgentInputProps {
         contextWindowTokens?: number;
     };
     providerUsageGauge?: ConnectedServiceQuotaGaugeViewModel | null;
+    /** Asks the provider for fresh usage figures; runs when the usage rings are pressed. */
+    onProviderUsageRefresh?: () => void;
     onProviderUsageRecoveryCreditPress?: () => void;
     providerUsageRecoveryCreditPending?: boolean;
     alwaysShowContextSize?: boolean;
@@ -349,6 +352,11 @@ interface AgentInputProps {
     composeAgentPickerOptions?: (
         currentAgentOptions: ReadonlyArray<AgentInputChipPickerOption>,
     ) => ReadonlyArray<AgentInputChipPickerOption>;
+    /**
+     * Usage gauge per picker row id. When provided, every row shows a usage ring: coloured for a row
+     * with a gauge, an empty grey ring for one without.
+     */
+    agentPickerUsageGaugesByOptionId?: ReadonlyMap<string, ConnectedServiceQuotaGaugeViewModel>;
     /** One descriptor-level signal shared by direct and overflow picker entry points. */
     onAgentPickerIntent?: () => void;
     onAgentPickerVisibilityChange?: (visible: boolean) => void;
@@ -508,6 +516,7 @@ function AgentInputAttentionRequestsWithLocations(
 
 type AgentInputHiddenUsageOverflowProps = Readonly<{
     contextUsageState?: ContextUsageState | null;
+    onRefresh?: () => void;
     providerUsageGauge?: ConnectedServiceQuotaGaugeViewModel | null;
     onProviderUsageRecoveryCreditPress?: () => void;
     providerUsageRecoveryCreditPending?: boolean;
@@ -520,22 +529,7 @@ function AgentInputHiddenUsageOverflow(props: AgentInputHiddenUsageOverflowProps
     const anchorRef = React.useRef<any>(null);
     const [open, setOpen] = React.useState(false);
     const contextUsageState = props.contextUsageState ?? null;
-    const usedPercentageLabel = contextUsageState
-        ? formatContextUsagePercent(contextUsageState.usedPercentage)
-        : null;
-    const usedTokensLabel = contextUsageState
-        ? formatContextTokenCount(contextUsageState.usedTokens)
-        : null;
-    const contextWindowTokensLabel = contextUsageState
-        ? formatContextTokenCount(contextUsageState.contextWindowTokens)
-        : null;
-    const contextDetail = contextUsageState && usedPercentageLabel && usedTokensLabel && contextWindowTokensLabel
-        ? t('agentInput.context.usedDetail', {
-            percent: usedPercentageLabel,
-            used: usedTokensLabel,
-            total: contextWindowTokensLabel,
-        })
-        : null;
+    const contextDetail = contextUsageState ? formatContextUsageDetail(contextUsageState) : null;
     const providerUsageGauge = props.providerUsageGauge ?? null;
     const providerRecoveryCreditSummary = providerUsageGauge?.recoveryCreditSummary ?? null;
 
@@ -548,7 +542,10 @@ function AgentInputHiddenUsageOverflow(props: AgentInputHiddenUsageOverflowProps
                 testID="agent-input-hidden-usage-overflow"
                 accessibilityRole="button"
                 accessibilityLabel={t('agentInput.usageOverflow.accessibilityLabel')}
-                onPress={() => setOpen((value) => !value)}
+                onPress={() => {
+                    props.onRefresh?.();
+                    setOpen((value) => !value);
+                }}
                 style={({ pressed }) => [
                     styles.hiddenUsageOverflow,
                     { marginLeft: props.marginLeft ?? 0 },
@@ -687,7 +684,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         paddingLeft: 8,
         paddingRight: 8,
         paddingVertical: AGENT_INPUT_CONTAINER_VERTICAL_PADDING,
-        minHeight: 40,
+        minHeight: AGENT_INPUT_CONTAINER_MIN_HEIGHT,
     },
     nativeKeyboardPanelContent: {
         minHeight: 0,
@@ -822,6 +819,11 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         flexDirection: 'row',
         alignItems: 'center',
         marginLeft: 12,
+    },
+    usageGaugesInline: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginLeft: 4,
     },
     inputExpansionToggle: {
         position: 'absolute',
@@ -1322,18 +1324,26 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                 return 'user-circle';
             }, []);
 
+    // Once another Agent is armed, the context ring measures the same conversation against that
+    // Agent's window; the running model's live window and metadata no longer apply.
+    const contextBadgeAgentId = armedAgentId ?? agentId;
     const contextUsageBadge = React.useMemo(
-        () => getAgentBehavior(agentId).sessionUsage?.contextUsageBadge ?? 'derived',
-        [agentId],
+        () => getAgentBehavior(contextBadgeAgentId).sessionUsage?.contextUsageBadge ?? 'derived',
+        [contextBadgeAgentId],
     );
 
     const contextWindowTokens = React.useMemo(
-        () => (
-            contextUsageBadge !== 'hidden'
-                ? resolveContextWindowTokens({ agentId, metadata: props.metadata ?? null, usageData: props.usageData })
-                : null
-        ),
-        [agentId, props.metadata, props.usageData, contextUsageBadge],
+        () => {
+            if (contextUsageBadge === 'hidden') return null;
+            return armedAgentId
+                ? resolveContextWindowTokens({
+                    agentId: armedAgentId,
+                    metadata: null,
+                    usageData: { contextSize: props.usageData?.contextSize },
+                })
+                : resolveContextWindowTokens({ agentId, metadata: props.metadata ?? null, usageData: props.usageData });
+        },
+        [agentId, armedAgentId, props.metadata, props.usageData, contextUsageBadge],
     );
 
     // See `AgentUiBehavior.sessionUsage.contextUsageBadge`: a derived badge follows any usage record
@@ -1875,10 +1885,22 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         edgeThreshold: 2,
     });
     const permissionRequestsMaxHeightPx = React.useMemo(() => {
-        const available = Math.max(1, props.maxPanelHeight ?? screenHeight);
-        const desired = Math.round(available * 0.34);
-        return clampNumber(desired, 160, Math.min(320, available));
-    }, [props.maxPanelHeight, screenHeight]);
+        // Attention can use the remaining host space, while preserving the measured
+        // composer input/actions instead of imposing a separate viewport ratio.
+        return computeAgentInputAttentionMaxHeight({
+            availablePanelHeight: props.maxPanelHeight ?? screenHeight,
+            nonPanelChromeHeight: rootHeightPx != null && panelHeightPx != null
+                ? Math.max(0, rootHeightPx - panelHeightPx)
+                : 0,
+            inputContainerHeight: Math.max(
+                props.minHeight || AGENT_INPUT_CONTAINER_MIN_HEIGHT,
+                Math.min(inputContentHeightPx ?? 0, fallbackInputMaxHeight) + AGENT_INPUT_CONTAINER_VERTICAL_CHROME_HEIGHT,
+            ),
+            actionFooterHeight: actionFooterHeightPx,
+            variableContentHeight: variableContentBeforeInputHeightPx,
+            panelChromeHeight: AGENT_INPUT_PANEL_VERTICAL_CHROME_HEIGHT + AGENT_INPUT_VARIABLE_SECTION_CONTENT_PADDING_BOTTOM,
+        });
+    }, [props.maxPanelHeight, props.minHeight, screenHeight, rootHeightPx, panelHeightPx, inputContentHeightPx, fallbackInputMaxHeight, actionFooterHeightPx, variableContentBeforeInputHeightPx]);
 
             const permissionModeOptions = React.useMemo(() => {
                 return getPermissionModeOptionsForSession(engineChipAgentId, permissionMetadata);
@@ -2232,21 +2254,27 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         && (props.onModelModeChange || hasSettingsAcpConfigSection),
     );
 
+    // The picker retains the running provider's row while the outbound chip follows the armed one.
+    const currentAgentMarkAgentId = props.sessionId && !sessionAgentId
+        ? null : sessionAgentId ?? props.agentType ?? null;
+    const currentAgentPickerLabel = armedComposerTarget
+        ? currentAgentMarkAgentId ? t(getAgentCore(currentAgentMarkAgentId).displayNameKey) : t('status.unknown')
+        : displayedAgentLabel ?? (props.agentType ? t(getAgentCore(props.agentType).displayNameKey) : t('status.unknown'));
     const currentAgentPickerRow = React.useMemo<AgentInputChipPickerOption | null>(() => (
         props.agentType
             ? {
                 id: `engine:${props.agentType}`,
-                label: displayedAgentLabel ?? t(getAgentCore(props.agentType).displayNameKey),
+                label: currentAgentPickerLabel,
                 icon: (
                     <AgentIcon
-                        agentId={engineChipMarkAgentId}
+                        agentId={currentAgentMarkAgentId}
                         size={12}
-                        style={{ transform: [{ scale: engineChipMarkAgentId ? getAgentPickerIconScale(engineChipMarkAgentId) : 1 }] }}
+                        style={{ transform: [{ scale: currentAgentMarkAgentId ? getAgentPickerIconScale(currentAgentMarkAgentId) : 1 }] }}
                     />
                 ),
             }
             : null
-    ), [displayedAgentLabel, engineChipMarkAgentId, props.agentType]);
+    ), [currentAgentMarkAgentId, currentAgentPickerLabel, props.agentType]);
 
     const internalAgentPickerOptions = React.useMemo<ReadonlyArray<AgentInputChipPickerOption>>(() => {
         if (!hasInternalAgentPickerOptions || !props.agentType || !currentAgentPickerRow) return [];
@@ -2278,7 +2306,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         renderResolvedEngineDetail,
     ]);
 
-    const agentPickerOptions = React.useMemo<ReadonlyArray<AgentInputChipPickerOption>>(() => {
+    const unmarkedAgentPickerOptions = React.useMemo<ReadonlyArray<AgentInputChipPickerOption>>(() => {
         if ((props.agentPickerOptions?.length ?? 0) > 0) {
             return props.agentPickerOptions ?? [];
         }
@@ -2304,6 +2332,20 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         props.agentPickerOptions,
         props.composeAgentPickerOptions,
     ]);
+    const usageGaugesByOptionId = props.agentPickerUsageGaugesByOptionId;
+    const agentPickerOptions = React.useMemo<ReadonlyArray<AgentInputChipPickerOption>>(() => {
+        if (!usageGaugesByOptionId) return unmarkedAgentPickerOptions;
+        return unmarkedAgentPickerOptions.map((option) => ({
+            ...option,
+            leadingMark: (
+                <AgentInputProviderUsageMark
+                    option={option}
+                    gaugesByOptionId={usageGaugesByOptionId}
+                    onRefresh={props.onProviderUsageRefresh}
+                />
+            ),
+        }));
+    }, [unmarkedAgentPickerOptions, usageGaugesByOptionId, props.onProviderUsageRefresh]);
 
     const effectiveAgentPickerSelectedOptionId = React.useMemo(() => {
         if (typeof props.agentPickerSelectedOptionId === 'string' && props.agentPickerSelectedOptionId.length > 0) {
@@ -2676,12 +2718,61 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         hasEnvVars,
         hasAgent,
     });
+    // Usage rings sit beside the model chip (not in the status row) so remaining
+    // quota is visible at the moment the model/agent is being chosen.
+    const usageGaugesNode = React.useMemo(() => {
+        if (!contextUsageState && !props.providerUsageGauge) return null;
+        const showOnlyOneGauge = screenWidth < 375 && Boolean(contextUsageState && props.providerUsageGauge);
+        const providerIsMoreUrgent = props.providerUsageGauge?.tone === 'critical'
+            || (props.providerUsageGauge?.tone === 'warning' && contextUsageState?.severity !== 'critical');
+        const showProviderGauge = Boolean(props.providerUsageGauge) && (!showOnlyOneGauge || providerIsMoreUrgent);
+        const showContextGauge = Boolean(contextUsageState) && (!showOnlyOneGauge || !providerIsMoreUrgent);
+        const hiddenContextUsageState = showOnlyOneGauge && !showContextGauge ? contextUsageState : null;
+        const hiddenProviderUsageGauge = showOnlyOneGauge && !showProviderGauge ? props.providerUsageGauge : null;
+        const showHiddenGaugeOverflow = Boolean(hiddenContextUsageState || hiddenProviderUsageGauge);
+        return (
+            <View testID="agent-input-usage-gauges" style={styles.usageGaugesInline}>
+                {showContextGauge && contextUsageState ? (
+                    <AgentInputContextUsageBadge showLabels={showUsageGaugeLabels} state={contextUsageState} onRefresh={props.onProviderUsageRefresh} />
+                ) : null}
+                {showProviderGauge && props.providerUsageGauge ? (
+                    <AgentInputProviderUsageBadge
+                        showLabels={showUsageGaugeLabels}
+                        viewModel={props.providerUsageGauge}
+                        marginLeft={showContextGauge ? 8 : 0}
+                        onRecoveryCreditPress={props.onProviderUsageRecoveryCreditPress}
+                        recoveryCreditActionPending={props.providerUsageRecoveryCreditPending}
+                        onRefresh={props.onProviderUsageRefresh}
+                    />
+                ) : null}
+                {showHiddenGaugeOverflow ? (
+                    <AgentInputHiddenUsageOverflow
+                        onRefresh={props.onProviderUsageRefresh}
+                        contextUsageState={hiddenContextUsageState}
+                        providerUsageGauge={hiddenProviderUsageGauge}
+                        onProviderUsageRecoveryCreditPress={props.onProviderUsageRecoveryCreditPress}
+                        providerUsageRecoveryCreditPending={props.providerUsageRecoveryCreditPending}
+                        marginLeft={(showContextGauge || showProviderGauge) ? 8 : 0}
+                    />
+                ) : null}
+            </View>
+        );
+    }, [
+        contextUsageState,
+        props.onProviderUsageRecoveryCreditPress,
+        props.onProviderUsageRefresh,
+        props.providerUsageGauge,
+        props.providerUsageRecoveryCreditPending,
+        screenWidth,
+        showUsageGaugeLabels,
+    ]);
     const {
         controlNodes: renderedActionControlNodes,
         secondaryLeadingControls: secondaryLeadingControlsForWrap,
         extraChipAnchorRefsByKey,
     } = useRenderedAgentInputControlRows({
         layout: effectiveActionBarLayout,
+        usageGaugesNode,
         chips: props.extraActionChips,
         overlayAnchorRef,
         onToggleExtraChipCollapsedPopover: handleToggleExtraChipCollapsedPopover,
@@ -3295,7 +3386,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                     testID="agent-input-command-menu"
                 />
                 {/* Connection status, context usage, and permission mode */}
-                {(props.connectionStatus || contextUsageState || props.providerUsageGauge || props.statusTrailingActions || (props.statusBadges && props.statusBadges.length > 0)) && (
+                {(props.connectionStatus || props.statusTrailingActions || (props.statusBadges && props.statusBadges.length > 0)) && (
                     <View style={styles.statusContainer}>
                         <View style={styles.statusRow}>
                             {props.connectionStatus && (
@@ -3334,7 +3425,6 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                             {props.showStatusPermissionMode !== false ? (
                                 <View style={[
                                     styles.permissionModeContainer,
-                                    (contextUsageState || props.providerUsageGauge) ? { marginRight: 8 } : null,
                                 ]}>
                                     {shouldRenderPermissionChip(permissionChipLabel) ? (
                                     <Text
@@ -3356,41 +3446,6 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                     ) : null}
                                 </View>
                             ) : null}
-                            {(() => {
-                                const showOnlyOneGauge = screenWidth < 375 && Boolean(contextUsageState && props.providerUsageGauge);
-                                const providerIsMoreUrgent = props.providerUsageGauge?.tone === 'critical'
-                                    || (props.providerUsageGauge?.tone === 'warning' && contextUsageState?.severity !== 'critical');
-                                const showProviderGauge = Boolean(props.providerUsageGauge) && (!showOnlyOneGauge || providerIsMoreUrgent);
-                                const showContextGauge = Boolean(contextUsageState) && (!showOnlyOneGauge || !providerIsMoreUrgent);
-                                const hiddenContextUsageState = showOnlyOneGauge && !showContextGauge ? contextUsageState : null;
-                                const hiddenProviderUsageGauge = showOnlyOneGauge && !showProviderGauge ? props.providerUsageGauge : null;
-                                const showHiddenGaugeOverflow = Boolean(hiddenContextUsageState || hiddenProviderUsageGauge);
-                                return (
-                                    <>
-                                        {showContextGauge && contextUsageState ? (
-                                            <AgentInputContextUsageBadge showLabels={showUsageGaugeLabels} state={contextUsageState} />
-                                        ) : null}
-                                        {showProviderGauge && props.providerUsageGauge ? (
-                                            <AgentInputProviderUsageBadge
-                                                showLabels={showUsageGaugeLabels}
-                                                viewModel={props.providerUsageGauge}
-                                                marginLeft={showContextGauge ? 8 : 0}
-                                                onRecoveryCreditPress={props.onProviderUsageRecoveryCreditPress}
-                                                recoveryCreditActionPending={props.providerUsageRecoveryCreditPending}
-                                            />
-                                        ) : null}
-                                        {showHiddenGaugeOverflow ? (
-                                            <AgentInputHiddenUsageOverflow
-                                                contextUsageState={hiddenContextUsageState}
-                                                providerUsageGauge={hiddenProviderUsageGauge}
-                                                onProviderUsageRecoveryCreditPress={props.onProviderUsageRecoveryCreditPress}
-                                                providerUsageRecoveryCreditPending={props.providerUsageRecoveryCreditPending}
-                                                marginLeft={(showContextGauge || showProviderGauge) ? 8 : 0}
-                                            />
-                                        ) : null}
-                                    </>
-                                );
-                            })()}
                         </View>
                     </View>
                 )}

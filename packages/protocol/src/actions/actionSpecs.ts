@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { NativeSessionAliasAssignmentV1Schema } from '../sessionMetadata/nativeSessionAliasesV1.js';
 
 import { ActionIdSchema, type ActionId } from './actionIds.js';
 import { ActionUiPlacementSchema, type ActionUiPlacement } from './actionUiPlacements.js';
@@ -2367,6 +2368,26 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       ],
     },
     inputSchema: SessionTitleSetInputSchema,
+  },
+  {
+    id: 'session.aliases.recover',
+    title: 'Recover native session aliases',
+    description: 'Recover assignment-time alias evidence for existing sessions by exact provider session identity. Preview with dryRun before writing encrypted metadata.',
+    safety: 'safe',
+    approval: APPROVAL_RESULT_NONE,
+    placements: [],
+    bindings: { mcpToolName: 'session_aliases_recover' },
+    surfaces: { ui_button: false, ui_slash_command: false, voice_tool: false, voice_action_block: false, session_agent: true, mcp: true, cli: true },
+    inputHints: { title: 'Recover native aliases', fields: [
+      { path: 'assignments', title: 'Assignment evidence (json)', widget: 'textarea', required: true },
+      { path: 'machineId', title: 'Machine id', widget: 'text' },
+      { path: 'dryRun', title: 'Preview without writing', widget: 'toggle' },
+    ] },
+    inputSchema: lazySchema(() => z.object({
+      assignments: z.array(NativeSessionAliasAssignmentV1Schema),
+      machineId: z.string().trim().min(1).optional(),
+      dryRun: z.boolean().optional(),
+    })),
   },
   {
     id: 'session.permission_mode.set',

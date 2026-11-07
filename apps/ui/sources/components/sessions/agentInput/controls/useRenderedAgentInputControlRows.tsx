@@ -62,6 +62,7 @@ export function useRenderedAgentInputControlRows(params: Readonly<{
     engineLabel: string;
     onAgentPress: () => void;
     onAgentIntent?: () => void;
+    usageGaugesNode?: React.ReactNode;
     machineChipAnchorRef: React.RefObject<View | null>;
     onMachinePress?: () => void;
     machineName?: string | null;
@@ -143,6 +144,7 @@ export function useRenderedAgentInputControlRows(params: Readonly<{
             engineLabel: params.engineLabel,
             onAgentPress: params.onAgentPress,
             onAgentIntent: params.onAgentIntent,
+            usageGaugesNode: params.usageGaugesNode,
             machineChipAnchorRef: params.machineChipAnchorRef,
             onMachinePress: params.onMachinePress,
             machineName: params.machineName,
@@ -215,6 +217,7 @@ export function useRenderedAgentInputControlRows(params: Readonly<{
         params.onActionMenuPress,
         params.onAgentPress,
         params.onAgentIntent,
+        params.usageGaugesNode,
         params.onEnvVarsPress,
         params.onFileViewerPress,
         params.onMachinePress,

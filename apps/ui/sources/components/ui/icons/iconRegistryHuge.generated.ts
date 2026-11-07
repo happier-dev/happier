@@ -129,7 +129,6 @@ import { LeftToRightListBulletIcon } from '@hugeicons/core-free-icons';
 import { LeftToRightListNumberIcon } from '@hugeicons/core-free-icons';
 import { LifebuoyIcon } from '@hugeicons/core-free-icons';
 import { Link01Icon } from '@hugeicons/core-free-icons';
-import { LockIcon } from '@hugeicons/core-free-icons';
 import { Login01Icon } from '@hugeicons/core-free-icons';
 import { Logout01Icon } from '@hugeicons/core-free-icons';
 import { MagicWand01Icon } from '@hugeicons/core-free-icons';
@@ -200,6 +199,7 @@ import { SmileIcon } from '@hugeicons/core-free-icons';
 import { SourceCodeIcon } from '@hugeicons/core-free-icons';
 import { SparklesIcon } from '@hugeicons/core-free-icons';
 import { SquareIcon } from '@hugeicons/core-free-icons';
+import { SquareLock02Icon } from '@hugeicons/core-free-icons';
 import { StarIcon } from '@hugeicons/core-free-icons';
 import { StopCircleIcon } from '@hugeicons/core-free-icons';
 import { StopIcon } from '@hugeicons/core-free-icons';
@@ -369,7 +369,7 @@ export const HUGE_ICON_REGISTRY = {
     'list-bullets': LeftToRightListBulletIcon,
     'list-checks': CheckListIcon,
     'list-numbers': LeftToRightListNumberIcon,
-    'lock': LockIcon,
+    'lock': SquareLock02Icon,
     'magic-wand': MagicWand01Icon,
     'magnifying-glass': Search01Icon,
     'mailbox': InboxIcon,

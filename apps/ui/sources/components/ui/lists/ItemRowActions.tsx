@@ -9,6 +9,7 @@ import { ActionListSection, type ActionListItem } from '@/components/ui/lists/Ac
 import { t } from '@/text';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { Icon } from '@/components/ui/icons/Icon';
+import { PressableSurface } from '@/components/ui/interaction/PressableSurface';
 
 export interface ItemRowActionsProps {
     title: string;
@@ -157,7 +158,7 @@ export function ItemRowActions(props: ItemRowActionsProps) {
                 : action.icon;
 
         return (
-            <Pressable
+            <PressableSurface
                 key={action.id}
                 testID={action.inlineTestID}
                 disabled={action.disabled || !action.onPress}
@@ -169,11 +170,12 @@ export function ItemRowActions(props: ItemRowActionsProps) {
                 }}
                 accessibilityRole="button"
                 accessibilityLabel={action.title}
+                webTooltip={action.title}
             >
                 {normalizeNodeForView(
                     iconNode,
                 )}
-            </Pressable>
+            </PressableSurface>
         );
     }, [iconSize, props, theme.colors.button.secondary.tint, theme.colors.state.danger.foreground]);
 

@@ -25,7 +25,9 @@ const fetchArchivedSessionsSpy = vi.hoisted(() => vi.fn(async () => {}));
 const fetchMoreArchivedSessionsSpy = vi.hoisted(() => vi.fn(async () => {}));
 const fetchMoreSessionsSpy = vi.hoisted(() => vi.fn(async () => {}));
 
-vi.mock('@/text', () => createTextModuleMock({ translate: (key: string) => key }));
+vi.mock('@/text', () => createTextModuleMock({
+    translate: (key, params) => params?.date ? `${key}: ${params.date}` : key,
+}));
 vi.mock('@react-navigation/native', async () => {
     const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
     return createReactNavigationNativeMock();
@@ -209,6 +211,26 @@ describe('Archived sessions route', () => {
         );
         expect(content).not.toContain('settingsFeatures.hiddenInactiveSessionsSectionSubtitle');
         expect(content).toContain('Inactive Session');
+    });
+
+    it('displays archive timestamps rather than activity dates, and omits them for hidden inactive sessions', async () => {
+        mockSessions.hideInactiveSessions = true;
+        const archivedAt = new Date('2026-10-27T14:32:00Z').getTime();
+        const updatedAt = new Date('2026-10-20T09:15:00Z').getTime();
+        mockSessions.all = [
+            { id: 'archived-1', active: false, archivedAt, updatedAt,
+                metadata: { name: 'Archived Session', path: '/tmp/archived' } },
+            { id: 'inactive-1', active: false, archivedAt: null, updatedAt,
+                metadata: { name: 'Inactive Session', path: '/tmp/inactive' } },
+        ];
+
+        const Screen = (await import('@/app/(app)/session/archived')).default;
+        const screen = await renderScreen(<Screen />);
+        const content = screen.getTextContent();
+
+        expect(content).toContain(new Date(archivedAt).toLocaleString());
+        expect(content).not.toContain(new Date(updatedAt).toLocaleString());
+        expect(content.split('sessionInfo.archivedAt').length - 1).toBe(1);
     });
 
     it('filters hidden inactive sessions using server-backed organization pins instead of legacy pinned settings', async () => {

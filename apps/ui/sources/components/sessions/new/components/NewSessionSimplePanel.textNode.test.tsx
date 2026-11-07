@@ -85,6 +85,8 @@ afterEach(() => {
     agentInputPropsRef.current = null;
 });
 
+vi.mock('@/auth/context/AuthContext', () => ({ useAuth: () => ({ credentials: null }) }));
+
 vi.mock('expo-image', () => ({
     Image: (props: Record<string, unknown>) => React.createElement('Image', props, null),
 }));

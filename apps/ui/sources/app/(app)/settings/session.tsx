@@ -43,6 +43,7 @@ export default React.memo(function SessionSettingsScreen() {
     const [defaultCheckoutMode, setDefaultCheckoutMode] = useSettingMutable('newSessionDefaultCheckoutModeV1');
 
     const [sessionTagsEnabled, setSessionTagsEnabled] = useSettingMutable('sessionTagsEnabled');
+    const [sessionListDirectDeleteEnabled, setSessionListDirectDeleteEnabled] = useSettingMutable('sessionListDirectDeleteEnabled');
     const [sessionListWorkingStatusAnimatedTextEnabled, setSessionListWorkingStatusAnimatedTextEnabled] = useSettingMutable('sessionListWorkingStatusAnimatedTextEnabled');
     const [sessionListAgentActivityCountEnabled, setSessionListAgentActivityCountEnabled] = useSettingMutable('sessionListAgentActivityCountEnabled');
     const [sessionListNarrowWorkingIndicatorStyle, setSessionListNarrowWorkingIndicatorStyle] = useSettingMutable('sessionListNarrowWorkingIndicatorStyle');
@@ -700,6 +701,14 @@ export default React.memo(function SessionSettingsScreen() {
                     rightElement={<Switch value={Boolean(sessionTagsEnabled)} onValueChange={setSessionTagsEnabled} />}
                     showChevron={false}
                     onPress={() => setSessionTagsEnabled(!sessionTagsEnabled)}
+                />
+                <Item
+                    title={t('settingsSession.sessionList.directDeleteTitle')}
+                    subtitle={t('settingsSession.sessionList.directDeleteSubtitle')}
+                    icon={<Icon name="trash" size={29} color={theme.colors.accent.blue} />}
+                    rightElement={<Switch value={sessionListDirectDeleteEnabled} onValueChange={setSessionListDirectDeleteEnabled} />}
+                    showChevron={false}
+                    onPress={() => setSessionListDirectDeleteEnabled(!sessionListDirectDeleteEnabled)}
                 />
                 <DropdownMenu
                     open={openSessionListIdentityDisplayMenu}

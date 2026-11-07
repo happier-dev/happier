@@ -12,6 +12,7 @@ installSessionFilesHookCommonModuleMocks();
 
 vi.mock('@/sync/domains/transfers/runtime/bulkTransferPipeline/daemonSessionFiles', () => ({
     downloadDaemonSessionFileToDestination: (...args: unknown[]) => downloadDaemonSessionFileToDestinationMock(...args),
+    resolveDaemonSessionFileDownloadUrl: async () => ({ success: true, url: null }),
 }));
 
 vi.mock('@/sync/ops', () => ({

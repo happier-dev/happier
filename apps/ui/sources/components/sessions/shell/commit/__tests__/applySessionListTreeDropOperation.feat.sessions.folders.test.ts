@@ -10,6 +10,7 @@ import { buildSessionListTreeRows } from '../../drop-resolution/buildSessionList
 import { resolveSessionListInstruction } from '../../drop-resolution/resolveSessionListInstruction';
 import { buildSessionListDragSource } from '../../drop-resolution/buildSessionListDragSource';
 import { treeRowId } from '../../drop-resolution/treeRowId';
+import { buildSessionListKeyboardMoveResult } from '../../move-sheet/buildSessionListKeyboardMoveResult';
 
 const workspaceA: SessionFolderWorkspaceRefV1 = {
     t: 'workspaceScope',
@@ -250,6 +251,27 @@ function resolveDrop(params: Readonly<{ sourceRowId: string; y: number; folderSo
 }
 
 describe('applySessionListTreeDropOperation', () => {
+    it('reorders pinned sessions without changing their folder assignment', async () => {
+        const tree = buildSessionListTreeRows({ items: [
+            { type: 'header', title: 'Pinned', headerKind: 'pinned', groupKey: PINNED_GROUP_KEY_V1 },
+            sessionItem({ id: 'first', groupKey: PINNED_GROUP_KEY_V1, folderId: null, depth: 0, groupKind: 'pinned' }),
+            sessionItem({ id: 'second', groupKey: PINNED_GROUP_KEY_V1, folderId: 'folder-a', depth: 1, groupKind: 'pinned' }),
+        ] });
+        const source = buildSessionListDragSource({ tree, sourceRowId: treeRowId.session('server-a', 'second') });
+        const result = buildSessionListKeyboardMoveResult({ tree, source, direction: 'up' });
+        const setSessionFolderAssignment = vi.fn(async () => undefined);
+        const setSessionListGroupOrderV1 = vi.fn();
+        const applied = await applySessionListTreeDropOperation({ tree, source, result, context: {
+            sessionFoldersV1: folders(), sessionListGroupOrderV1: {}, now: () => 100,
+            setSessionFoldersV1: vi.fn(), setSessionListGroupOrderV1, setSessionFolderAssignment,
+        } });
+        expect(applied.ok).toBe(true);
+        expect(setSessionFolderAssignment).not.toHaveBeenCalled();
+        expect(setSessionListGroupOrderV1).toHaveBeenCalledWith({
+            [PINNED_GROUP_KEY_V1]: ['server-a:second', 'server-a:first'],
+        });
+    });
+
     it('commits same-container session sibling reorder in custom mode', async () => {
         const { tree, source, result } = resolveRootSessionSiblingDrop();
         const setSessionFolderAssignment = vi.fn(async () => undefined);

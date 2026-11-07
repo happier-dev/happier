@@ -28,6 +28,7 @@ export const RPC_METHODS = {
   DAEMON_BULK_TRANSFER_UPLOAD_FINALIZE: 'daemon.bulkTransfer.upload.finalize',
   DAEMON_BULK_TRANSFER_UPLOAD_ABORT: 'daemon.bulkTransfer.upload.abort',
   DAEMON_BULK_TRANSFER_DOWNLOAD_INIT: 'daemon.bulkTransfer.download.init',
+  DAEMON_BULK_TRANSFER_DOWNLOAD_URL: 'daemon.bulkTransfer.download.url',
   DAEMON_BULK_TRANSFER_DOWNLOAD_CHUNK: 'daemon.bulkTransfer.download.chunk',
   DAEMON_BULK_TRANSFER_DOWNLOAD_FINALIZE: 'daemon.bulkTransfer.download.finalize',
   DAEMON_BULK_TRANSFER_DOWNLOAD_ABORT: 'daemon.bulkTransfer.download.abort',

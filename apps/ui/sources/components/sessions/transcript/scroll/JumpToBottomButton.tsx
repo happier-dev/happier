@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { ActivityIndicator, Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { GlassPanel } from '@/components/ui/glass/GlassPanel';
@@ -7,15 +7,22 @@ import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { Icon } from '@/components/ui/icons/Icon';
 
+// Serves both ends of the transcript: `direction="top"` is the "Jump to top" pill, whose `busy`
+// state shows while older history is paged in. Pressing it while busy cancels the load.
 export const JumpToBottomButton = React.memo(function JumpToBottomButton(props: {
     count: number;
     onPress: () => void;
+    busy?: boolean;
+    direction?: 'top' | 'bottom';
     presentation?: 'standard' | 'activity';
     testID?: string;
 }) {
     const { theme, rt } = useUnistyles();
-    const label = t('settingsSession.transcript.jumpToBottomButtonLabel');
-    const accessibilityLabel = props.count > 0
+    const isTop = props.direction === 'top';
+    const label = isTop
+        ? t(props.busy ? 'settingsSession.transcript.jumpToTopButtonLoadingLabel' : 'settingsSession.transcript.jumpToTopButtonLabel')
+        : t('settingsSession.transcript.jumpToBottomButtonLabel');
+    const accessibilityLabel = !isTop && props.count > 0
         ? t('settingsSession.transcript.jumpToBottomButtonNewActivityLabel', { count: props.count })
         : label;
     const compact = props.presentation === 'activity' || rt.breakpoint === 'xs' || rt.breakpoint === 'sm' || rt.breakpoint === 'md';
@@ -34,7 +41,7 @@ export const JumpToBottomButton = React.memo(function JumpToBottomButton(props: 
                 accessibilityLabel={accessibilityLabel}
                 style={({ pressed }) => [styles.row, compact && styles.compactRow, pressed && { opacity: 0.92 }]}
             >
-                {props.count > 0 ? (
+                {!isTop && props.count > 0 ? (
                     <View style={styles.badge}>
                         <Text style={styles.badgeText}>{String(props.count)}</Text>
                     </View>
@@ -44,7 +51,11 @@ export const JumpToBottomButton = React.memo(function JumpToBottomButton(props: 
                         {label}
                     </Text>
                 ) : null}
-                <Icon name="caret-down" size={16} color={theme.colors.text.primary} />
+                {props.busy ? (
+                    <ActivityIndicator size="small" color={theme.colors.text.primary} />
+                ) : (
+                    <Icon name={isTop ? 'caret-up' : 'caret-down'} size={16} color={theme.colors.text.primary} />
+                )}
             </Pressable>
         </GlassPanel>
     );

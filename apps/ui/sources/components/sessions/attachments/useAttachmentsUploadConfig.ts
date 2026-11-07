@@ -24,7 +24,7 @@ export function useAttachmentsUploadConfig(): AttachmentsUploadConfig {
         const maxFileBytes =
             typeof attachmentsUploadsMaxFileBytes === 'number' && Number.isFinite(attachmentsUploadsMaxFileBytes)
                 ? Math.max(1024, Math.floor(attachmentsUploadsMaxFileBytes))
-                : 25 * 1024 * 1024;
+                : 1024 * 1024 * 1024;
 
         return {
             uploadLocation,

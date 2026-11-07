@@ -26,7 +26,7 @@ import type {
   ResolveSessionUsageLimitRecoveryControlAdapter,
   SessionUsageLimitRecoveryControlAdapterParams,
 } from './sessionUsageLimitRecoveryControlTypes';
-import { deriveUsageLimitRecoveryTiming } from './deriveUsageLimitRecoveryTiming';
+import { deriveUsageLimitRecoveryTiming, USAGE_LIMIT_RECOVERY_RESET_MARGIN_MS } from './deriveUsageLimitRecoveryTiming';
 import {
   resolveRoutedUsageLimitRecoveryResumePromptMode,
   type RoutedUsageLimitRecoveryResumePromptTierSources,
@@ -294,6 +294,7 @@ export function buildRecoveryIntentFromUsageLimitIssue(params: Readonly<{
     occurredAtMs: issue.occurredAt,
     resetAtMs: issue.usageLimit.resetAtMs,
     retryAfterMs: issue.usageLimit.retryAfterMs,
+    windows: issue.usageLimit.allWindows,
   });
 
   return {
@@ -302,7 +303,8 @@ export function buildRecoveryIntentFromUsageLimitIssue(params: Readonly<{
     issueFingerprint: params.issueFingerprint ?? buildUsageLimitIssueFingerprint(issue),
     armedAtMs: issue.occurredAt,
     resetAtMs: timing.resetAtMs,
-    nextCheckAtMs: timing.nextCheckAtMs ?? issue.occurredAt + DEFAULT_USAGE_LIMIT_RECOVERY_BACKOFF_MS,
+    nextCheckAtMs: timing.nextCheckAtMs !== null ? timing.nextCheckAtMs + USAGE_LIMIT_RECOVERY_RESET_MARGIN_MS
+      : issue.occurredAt + DEFAULT_USAGE_LIMIT_RECOVERY_BACKOFF_MS,
     attemptCount: 0,
     maxAttempts: 3,
     lastProbeError: null,
@@ -563,10 +565,17 @@ export async function routeSessionUsageLimitRecoveryCheckNow(
   const adapter = await resolveAdapter(adapterAgentId);
   const recovery = parseRecoveryIntent(context.metadata, params.rawSession);
   const dueAtMs = recovery?.nextCheckAtMs ?? recovery?.resetAtMs;
+  const latestIssue = readLatestUsageLimitFailureIssue(params.rawSession);
+  const knownTiming = deriveUsageLimitRecoveryTiming({
+    occurredAtMs: latestIssue?.occurredAt,
+    resetAtMs: recovery?.resetAtMs ?? latestIssue?.usageLimit?.resetAtMs,
+    retryAfterMs: latestIssue?.usageLimit?.retryAfterMs,
+    windows: latestIssue?.usageLimit?.allWindows,
+  });
   // A known reset authorizes the ordinary continuation even when this provider has
   // no quota-read API. Provider probes can prove earlier readiness, but do not own time.
   const useTimedRecovery = operation === 'checkNow' && (
-    !adapter?.checkNow || (typeof dueAtMs === 'number' && dueAtMs <= Date.now())
+    !adapter?.checkNow || (knownTiming.nextCheckAtMs !== null && typeof dueAtMs === 'number' && dueAtMs <= Date.now())
   );
   const timedAdapter = useTimedRecovery ? createBackoffSessionUsageLimitRecoveryControlAdapter({
     providerId: adapterAgentId ?? readLatestUsageLimitFailureIssue(params.rawSession)?.provider ?? 'unknown',

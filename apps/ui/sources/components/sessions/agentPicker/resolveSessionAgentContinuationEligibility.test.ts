@@ -73,6 +73,16 @@ describe('resolveSessionAgentContinuationEligibility', () => {
         })).toEqual({ status: 'eligible' });
     });
 
+    it('blocks a known missing CLI even when continuation is supported, without treating unknown installation as missing', () => {
+        for (const cliAvailable of [false, true, null] as const) {
+            expect(resolveSessionAgentContinuationEligibility({
+                entry: builtInEntry('codex'), source: eligibleSource, inspection: SUPPORTED, cliAvailable,
+            })).toEqual(cliAvailable === false
+                ? { status: 'unavailable', kind: 'continuation', presentation: 'target_unavailable' }
+                : { status: 'eligible' });
+        }
+    });
+
     it('asks where this Session keeps its transcript, not whether its Agent could keep one', () => {
         // The regression this pins: the row used to read the AGENT-level
         // `sessionStorage.direct` capability, which Claude Code and Codex both

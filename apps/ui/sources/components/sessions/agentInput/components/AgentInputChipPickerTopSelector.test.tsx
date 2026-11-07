@@ -131,4 +131,54 @@ describe('AgentInputChipPickerTopSelector', () => {
         await screen.pressByTestIdAsync('agent-input-chip-picker.top-selector-option:claude');
         expect(onFocusOption).toHaveBeenCalledWith('claude');
     });
+
+    it('draws an option\'s usage mark under its icon and lets the button grow to hold it', async () => {
+        const { AgentInputChipPickerTopSelector } = await import('./AgentInputChipPickerTopSelector');
+
+        const screen = await renderScreen(<AgentInputChipPickerTopSelector
+            sections={[{
+                id: 'providers',
+                options: [{
+                    id: 'codex',
+                    label: 'Codex',
+                    icon: React.createElement('EngineIcon', { testID: 'codex-icon', size: 24 }),
+                    leadingMark: React.createElement('UsageMark', { testID: 'codex-usage' }),
+                }],
+            }]}
+            focusedOptionId={null}
+            selectedOptionId={null}
+            onFocusOption={vi.fn()}
+        />);
+
+        expect(screen.findByTestId('codex-usage')).toBeTruthy();
+        const button = screen.findByTestId('agent-input-chip-picker.top-selector-option:codex');
+        expect(flattenStyle(button?.props.style({ pressed: false })).height).toBeUndefined();
+    });
+
+    it('moves focus onto a disabled option only when it is focusable while disabled', async () => {
+        const { AgentInputChipPickerTopSelector } = await import('./AgentInputChipPickerTopSelector');
+        const onFocusOption = vi.fn();
+
+        const screen = await renderScreen(<AgentInputChipPickerTopSelector
+            sections={[{
+                id: 'providers',
+                options: [
+                    { id: 'checking', label: 'Checking', disabled: true, focusableWhileDisabled: true },
+                    { id: 'blocked', label: 'Blocked', disabled: true },
+                ],
+            }]}
+            focusedOptionId={null}
+            selectedOptionId={null}
+            onFocusOption={onFocusOption}
+        />);
+
+        const checking = screen.findByTestId('agent-input-chip-picker.top-selector-option:checking');
+        const blocked = screen.findByTestId('agent-input-chip-picker.top-selector-option:blocked');
+        expect(checking?.props.disabled).toBe(false);
+        expect(blocked?.props.disabled).toBe(true);
+        checking?.props.onPress();
+        blocked?.props.onPress();
+        expect(onFocusOption).toHaveBeenCalledTimes(1);
+        expect(onFocusOption).toHaveBeenCalledWith('checking');
+    });
 });

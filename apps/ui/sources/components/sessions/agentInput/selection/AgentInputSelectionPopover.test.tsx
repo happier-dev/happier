@@ -117,4 +117,20 @@ describe('AgentInputSelectionPopover', () => {
         expect(seenTargets.length).toBeGreaterThan(0);
         expect(seenTargets[seenTargets.length - 1]).toBe(externalTarget);
     });
+
+    it('opens below its anchor when the host asks for bottom placement', async () => {
+        const { AgentInputSelectionPopover } = await import('./AgentInputSelectionPopover');
+        const anchorRef = { current: { nodeType: 'View' } } as any;
+
+        await renderScreen(<AgentInputSelectionPopover
+                    open
+                    anchorRef={anchorRef}
+                    placement="bottom"
+                    onRequestClose={vi.fn()}
+                >
+                    {() => React.createElement('View')}
+                </AgentInputSelectionPopover>);
+
+        expect(capturedPopoverProps.current?.placement).toBe('bottom');
+    });
 });

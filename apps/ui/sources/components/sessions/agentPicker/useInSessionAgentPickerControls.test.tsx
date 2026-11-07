@@ -121,6 +121,7 @@ type HookProps = Readonly<{
     machine?: SessionAgentContinuationMachineTarget;
     featureDecision?: SessionAgentContinuationFeatureDecision;
     sessionActive?: boolean | null;
+    cliAvailabilityByAgentId?: Readonly<Partial<Record<'claude' | 'codex', boolean | null>>>;
 }>;
 
 async function renderControls(props: HookProps = {}) {
@@ -131,6 +132,7 @@ async function renderControls(props: HookProps = {}) {
         currentAgentLabel: 'Claude Code',
         currentAgentSessionActive: hookProps.sessionActive ?? true,
         entries: hookProps.entries ?? [entry('claude'), entry('codex')],
+        cliAvailabilityByAgentId: hookProps.cliAvailabilityByAgentId,
         featureDecision: hookProps.featureDecision === undefined ? { state: 'enabled' } : hookProps.featureDecision,
         source: hookProps.source ?? supportedSource,
         machine: hookProps.machine ?? onlineMachine,
@@ -184,6 +186,19 @@ describe('useInSessionAgentPickerControls', () => {
         expect(optionsOf(hook.getCurrent())[0]?.subtitle).toBeUndefined();
         expect(optionsOf(hook.getCurrent())[0]?.accessibilityLabel)
             .toBe(t('session.agentContinuation.currentAgentAccessibilityLabel', { agent: 'Claude Code' }));
+    });
+
+    it('greys out an uninstalled target and makes it selectable after installation is detected', async () => {
+        const hook = await renderControls({ cliAvailabilityByAgentId: { claude: false, codex: false } });
+        await openPicker(hook);
+        expect(optionsOf(hook.getCurrent())[0]?.muted).toBe(true);
+        expect(optionsOf(hook.getCurrent()).find((option) => option.id === 'builtInAgent:codex'))
+            .toMatchObject({ muted: true, disabled: true, focusableWhileDisabled: true });
+        expect(hook.getCurrent().armedContinuation).toBeNull();
+        await hook.rerender({ cliAvailabilityByAgentId: { claude: true, codex: true } });
+        expect(optionsOf(hook.getCurrent())[0]?.muted).not.toBe(true);
+        expect(optionsOf(hook.getCurrent()).find((option) => option.id === 'builtInAgent:codex'))
+            .toMatchObject({ muted: false, disabled: false });
     });
 
     it('leaves the composer untouched when this Session has no other Agent to offer', async () => {

@@ -100,6 +100,17 @@ function hasPendingDeliveryResolutionState(visualState: PendingMessageVisualStat
         || visualState.kind === 'delivery_uncertain';
 }
 
+function canRemovePendingMessage(message: PendingMessage, visualState: PendingMessageVisualState): boolean {
+    const hasDurableOutboxOperation = message.pendingOutboxOperation === 'enqueue' || message.pendingOutboxOperation === 'cancel';
+    if (visualState.kind === 'cancelling' || visualState.kind === 'cancel_failed' || visualState.kind === 'send_failed' || hasDurableOutboxOperation) {
+        return true;
+    }
+    if (hasPendingDeliveryResolutionState(visualState)) {
+        return !isPendingMessageProviderEffectPossible(message);
+    }
+    return !isAcceptedLocalPendingProjection(message);
+}
+
 export type PendingMessageEditRequest = Readonly<{
     id: string;
     text: string;
@@ -446,6 +457,22 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         });
     }, [props.sessionId, runPendingDeliveryAction]);
 
+    const topPendingMessage = props.pendingMessages[0] ?? null;
+    const topPendingVisualState = pendingDeliveryVisualStates[0] ?? null;
+    const canRemoveTopPendingMessage = Boolean(
+        topPendingMessage
+        && topPendingVisualState
+        && canRemovePendingMessage(topPendingMessage, topPendingVisualState)
+    );
+    const handleRemoveTopPendingMessage = React.useCallback(() => {
+        if (!topPendingMessage || !topPendingVisualState || !canRemoveTopPendingMessage) return;
+        if (hasPendingDeliveryResolutionState(topPendingVisualState)) {
+            void handleRemoveDelivery(topPendingMessage);
+            return;
+        }
+        void handleRemove(topPendingMessage.id);
+    }, [canRemoveTopPendingMessage, handleRemove, handleRemoveDelivery, topPendingMessage, topPendingVisualState]);
+
     const handleRetrySend = React.useCallback(async (message: PendingMessage) => {
         await runPendingDeliveryAction(message, async () => {
             try {
@@ -593,11 +620,10 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         });
         const deliveryActionBusy = materializingLocalIds.has(getPendingMaterializingKey(message));
         const usesDeliveryResolutionActions = hasPendingDeliveryResolutionState(deliveryVisualState);
-        const providerEffectPossible = isPendingMessageProviderEffectPossible(message);
         const isUncertainDelivery = deliveryVisualState.kind === 'delivery_uncertain';
         const isServerDeliveryInProgress = message.pendingDeliveryStatus === 'server_delivering'
             || deliveryVisualState.kind === 'delivering';
-        const canRemoveDelivery = usesDeliveryResolutionActions && !providerEffectPossible;
+        const canRemoveDelivery = usesDeliveryResolutionActions && canRemovePendingMessage(message, deliveryVisualState);
         const isSendFailed = deliveryVisualState.kind === 'send_failed';
         // F-P2: the ONE in-flow notice this row paints. Selected from the visual-state owner's own
         // descriptor rather than from three inline kind checks, because
@@ -1310,6 +1336,21 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                         color={theme.colors.text.secondary}
                                     />
                                 ) : null}
+                                trailingAccessory={canRemoveTopPendingMessage ? (
+                                    <Pressable
+                                        testID="pendingMessages.deleteNext"
+                                        onPress={handleRemoveTopPendingMessage}
+                                        accessibilityRole="button"
+                                        accessibilityLabel={t('session.pendingMessages.removeConfirm.actionLabel')}
+                                        hitSlop={10}
+                                        style={({ pressed }) => [
+                                            styles.headerDeleteAction,
+                                            { opacity: pressed ? 0.7 : 1 },
+                                        ]}
+                                    >
+                                        <Icon name="trash" size={16} color={theme.colors.text.secondary} />
+                                    </Pressable>
+                                ) : null}
                                 padding="none"
                                 chipChrome="minimal"
                             />
@@ -1539,6 +1580,12 @@ const styles = StyleSheet.create(() => ({
     },
     sectionHeader: {
         marginTop: 0,
+    },
+    headerDeleteAction: {
+        minWidth: 32,
+        minHeight: 32,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     pendingAffordanceRow: {
         flexDirection: 'row',

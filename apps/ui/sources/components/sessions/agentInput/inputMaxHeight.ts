@@ -10,6 +10,24 @@ export function computeAvailableHeight(screenHeight: number, keyboardHeight: num
     return Math.max(0, safeScreen - safeKeyboard - safeReserved);
 }
 
+export function computeAgentInputAttentionMaxHeight(params: {
+    availablePanelHeight: number;
+    nonPanelChromeHeight?: number;
+    inputContainerHeight?: number | null;
+    actionFooterHeight?: number;
+    variableContentHeight?: number;
+    panelChromeHeight?: number;
+}): number {
+    const reservedHeight = [
+        params.nonPanelChromeHeight,
+        params.inputContainerHeight,
+        params.actionFooterHeight,
+        params.variableContentHeight,
+        params.panelChromeHeight,
+    ].reduce<number>((total, height) => total + (typeof height === 'number' && Number.isFinite(height) ? Math.max(0, height) : 0), 0);
+    return computeAvailableHeight(params.availablePanelHeight, 0, reservedHeight);
+}
+
 export type AgentInputPanelMaxHeightMode = 'native-floating' | 'host-constrained';
 
 export function resolveAgentInputHostPanelMaxHeight(params: {

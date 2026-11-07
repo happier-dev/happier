@@ -34,6 +34,13 @@ import { reportConnectedServiceRuntimeAuthFailureToDaemon } from '@/daemon/conne
 import { readRuntimeAuthFailureReportOutboxItems } from '@/daemon/connectedServices/runtimeAuth/reportOutbox/runtimeAuthFailureReportOutbox';
 import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
 
+const testOs = vi.hoisted(() => ({ homedir: '' }));
+// Isolate the real native startup lock in a temporary OS-home boundary.
+vi.mock('node:os', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:os')>();
+  return { ...actual, userInfo: () => ({ ...actual.userInfo(), homedir: testOs.homedir }) };
+});
+
 const network = vi.hoisted(() => ({ fetchSessionById: vi.fn(), enqueue: vi.fn(), rpc: vi.fn(), socket: vi.fn(), machineRpc: vi.fn() }));
 // Only the relay network is replaced; routing, metadata convergence, timing, and Pending admission are real.
 vi.mock('@/session/transport/http/sessionsHttp', () => ({ fetchSessionById: network.fetchSessionById }));
@@ -101,7 +108,7 @@ function createLiveFixture(options: Readonly<{
     readRecovery: () => SessionUsageLimitRecoveryV1Schema.parse(metadata.sessionUsageLimitRecoveryV1) };
 }
 
-async function createQuotaProbeServer(root: string, usedPercent: number, resetAtMs: number) {
+async function createQuotaProbeServer(root: string, usedPercent: number, resetAtMs: number | null) {
   const requestLog = join(root, 'requests.jsonl');
   const script = await writeFakeCodexAppServerScript({ dir: root,
     importLines: ['import { appendFile } from "node:fs/promises";'],
@@ -112,7 +119,7 @@ async function createQuotaProbeServer(root: string, usedPercent: number, resetAt
       `  if (msg.method) await appendFile(${JSON.stringify(requestLog)}, JSON.stringify(msg) + "\\n");`,
       '  if (msg.id === undefined) continue;',
       '  const result = msg.method === "initialize" ? { serverInfo: { name: "fake-codex", version: "0.0.0" } }',
-      `    : msg.method === "account/rateLimits/read" ? { rateLimits: { primary: { usedPercent: ${usedPercent}, resetsAt: ${resetAtMs / 1_000} } } } : {};`,
+      `    : msg.method === "account/rateLimits/read" ? { rateLimits: { primary: { usedPercent: ${usedPercent}, resetsAt: ${resetAtMs === null ? null : resetAtMs / 1_000} } } } : {};`,
       '  process.stdout.write(JSON.stringify({ id: msg.id, result }) + "\\n");',
       '}',
     ],
@@ -121,7 +128,8 @@ async function createQuotaProbeServer(root: string, usedPercent: number, resetAt
 }
 
 describe('generic usage-limit continuation through the session control boundary', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    testOs.homedir = await createTempDir('usage-limit-runtime-home-');
     vi.resetAllMocks();
     network.enqueue.mockResolvedValue({ didWrite: true, terminal: false });
     network.rpc.mockResolvedValue({ ok: true });
@@ -129,7 +137,8 @@ describe('generic usage-limit continuation through the session control boundary'
       usageLimitRecovery: { enabled: true } } }, capabilities: {} });
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(features), { status: 200 })));
   });
-  afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); vi.unstubAllGlobals(); resetServerFeaturesClientForTests(); });
+  afterEach(async () => { vi.restoreAllMocks(); vi.useRealTimers(); vi.unstubAllGlobals(); resetServerFeaturesClientForTests();
+    await removeTempDir(testOs.homedir); });
 
   it('keeps native-login Codex quota recovery Session-owned after daemon intake', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
@@ -173,7 +182,7 @@ describe('generic usage-limit continuation through the session control boundary'
         serviceId, profileId: null, groupId: null }))).toBeNull();
       expect(await readRuntimeAuthFailureReportOutboxItems({ outboxDir: root })).toHaveLength(0);
       expect(fixture.readRecovery().runtimeAuthRecoveryAttemptId).toBeUndefined();
-      vi.setSystemTime(10_001);
+      vi.setSystemTime(15_001);
       expect(await fixture.runtime.controls.checkUsageLimitRecoveryNow({ sessionId: fixture.sessionId }))
         .toMatchObject({ ok: true, status: 'resumed' });
       expect(fixture.readRecovery().status).toBe('cancelled');
@@ -214,6 +223,7 @@ describe('generic usage-limit continuation through the session control boundary'
       await fixture.runtime.observeFailure(nativeIssue);
       expect(fixture.readRecovery()).toMatchObject({ status: 'waiting', selectedAuth: { kind: 'native' } });
       expect(fixture.readRecovery().runtimeAuthRecoveryAttemptId).toBeUndefined();
+      vi.setSystemTime(5_201);
       expect(await fixture.runtime.controls.checkUsageLimitRecoveryNow({ sessionId: fixture.sessionId }))
         .toMatchObject({ ok: true, status: 'resumed' });
       expect(network.enqueue).toHaveBeenCalledOnce();
@@ -258,7 +268,7 @@ describe('generic usage-limit continuation through the session control boundary'
 
   it('uses the shared live runtime to continue native work without a provider thread-resume operation', async () => {
     vi.useFakeTimers();
-    vi.setSystemTime(300);
+    vi.setSystemTime(5_300);
     const liveSessionId = 'c223456789012345678901234';
     let metadata = createTestMetadata({ path: '/project', machineId: 'machine-local', flavor: 'gemini' });
     const rawSession = createRawSession(metadata, { id: liveSessionId });
@@ -284,7 +294,7 @@ describe('generic usage-limit continuation through the session control boundary'
 
   it('continues through the real registered session RPC controls with no provider-owned handler', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(300);
+    vi.setSystemTime(5_300);
     const fixture = createLiveFixture();
     const rpc = new RpcHandlerManager({ scopePrefix: fixture.sessionId, encryptionKey: null,
       encryptionVariant: 'plain', encryptionMode: 'plain', logger: () => {} });
@@ -382,7 +392,7 @@ describe('generic usage-limit continuation through the session control boundary'
 
   it.each(['off', 'custom'] as const)('uses the shared auto-wait owner with the account %s prompt preference', async (resumePromptMode) => {
     vi.useFakeTimers();
-    vi.setSystemTime(300);
+    vi.setSystemTime(5_300);
     const fixture = createLiveFixture({ settings: accountSettingsParse({ usageLimitRecoverySettingsV1: {
       v: 1, mode: 'auto_wait', resumePromptMode, customResumePrompt: 'Resume the interrupted task',
     } }) });
@@ -417,13 +427,13 @@ describe('generic usage-limit continuation through the session control boundary'
     }) });
     try {
       await fixture.runtime.observeFailure(futureIssue);
-      expect(fixture.readRecovery()).toMatchObject({ status: 'waiting', nextCheckAtMs: 2_000 });
+      expect(fixture.readRecovery()).toMatchObject({ status: 'waiting', nextCheckAtMs: 7_000 });
       featureEnabled = false;
       resetServerFeaturesClientForTests();
-      await vi.advanceTimersByTimeAsync(1_700);
+      await vi.advanceTimersByTimeAsync(6_700);
       expect(network.enqueue).not.toHaveBeenCalled();
       expect(fixture.readRecovery()).toMatchObject({ status: 'waiting', lastProbeError: 'feature_disabled',
-        nextCheckAtMs: 2_000 + DEFAULT_USAGE_LIMIT_RECOVERY_BACKOFF_MS });
+        nextCheckAtMs: 7_000 + DEFAULT_USAGE_LIMIT_RECOVERY_BACKOFF_MS });
       featureEnabled = true;
       resetServerFeaturesClientForTests();
       await vi.advanceTimersByTimeAsync(DEFAULT_USAGE_LIMIT_RECOVERY_BACKOFF_MS);
@@ -453,16 +463,18 @@ describe('generic usage-limit continuation through the session control boundary'
       vi.setSystemTime(500);
       await fixture.runtime.observeFailure(nextIssue);
       expect(fixture.readRecovery()).toMatchObject({ issueFingerprint: buildUsageLimitIssueFingerprint(nextIssue),
-        armedAtMs: 500, nextCheckAtMs: 20_000 });
+        armedAtMs: 500, nextCheckAtMs: 25_000 });
       expect(fixture.readRecovery().runtimeAuthRecoveryAttemptId).toBeUndefined();
       await vi.advanceTimersByTimeAsync(9_500);
       expect(network.enqueue).not.toHaveBeenCalled();
       await vi.advanceTimersByTimeAsync(10_000);
+      expect(network.enqueue).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(5_000);
       expect(network.enqueue).toHaveBeenCalledOnce();
     } finally { fixture.runtime.dispose(); }
   });
 
-  it('restores null timing through the established fallback anchored to the recovery lifecycle', async () => {
+  it('restores unknown timing without claiming that a fallback timeout lifted the limit', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(300);
     const untimedIssue: SessionRuntimeIssueV1 = { ...issue, usageLimit: { ...issue.usageLimit!, resetAtMs: null } };
@@ -477,7 +489,8 @@ describe('generic usage-limit continuation through the session control boundary'
       await vi.advanceTimersByTimeAsync(599_799);
       expect(network.enqueue).not.toHaveBeenCalled();
       await vi.advanceTimersByTimeAsync(1);
-      expect(network.enqueue).toHaveBeenCalledOnce();
+      expect(network.enqueue).not.toHaveBeenCalled();
+      expect(fixture.readRecovery()).toMatchObject({ status: 'waiting', nextCheckAtMs: 1_200_100 });
     } finally { fixture.runtime.dispose(); }
   });
 
@@ -496,8 +509,11 @@ describe('generic usage-limit continuation through the session control boundary'
       await vi.advanceTimersByTimeAsync(nextCheckAtMs - Date.now() - 1);
       expect(network.enqueue).not.toHaveBeenCalled();
       await vi.advanceTimersByTimeAsync(1);
-      expect(network.enqueue).toHaveBeenCalledOnce();
-      await vi.waitFor(() => expect(fixture.readRecovery().status).toBe('cancelled'));
+      expect(network.enqueue).not.toHaveBeenCalled();
+      expect(fixture.readRecovery().status).toBe('waiting');
+      expect(fixture.readRecovery().nextCheckAtMs).toBeGreaterThan(Date.now());
+      await vi.advanceTimersByTimeAsync(DEFAULT_USAGE_LIMIT_RECOVERY_BACKOFF_MS);
+      expect(network.enqueue).not.toHaveBeenCalled();
     } finally { fixture.runtime.dispose(); }
   });
 
@@ -535,15 +551,40 @@ describe('generic usage-limit continuation through the session control boundary'
       const requests = (await readFile(requestLog, 'utf8')).trim().split('\n')
         .map((line) => JSON.parse(line) as { method: string });
       expect(requests.filter((request) => request.method === 'account/rateLimits/read')).toHaveLength(1);
-      expect(fixture.readRecovery()).toMatchObject({ status: 'waiting', resetAtMs, nextCheckAtMs: resetAtMs,
+      expect(fixture.readRecovery()).toMatchObject({ status: 'waiting', resetAtMs, nextCheckAtMs: resetAtMs + 5_000,
         issueFingerprint: buildUsageLimitIssueFingerprint(untimedIssue), attemptCount: 0, lastProbeError: null });
       expect(network.enqueue).not.toHaveBeenCalled();
-      vi.setSystemTime(resetAtMs);
+      vi.setSystemTime(resetAtMs + 5_000);
       expect(await fixture.runtime.controls.checkUsageLimitRecoveryNow({ sessionId: fixture.sessionId }))
         .toMatchObject({ ok: true, status: 'resumed' });
       expect(fixture.rawSession.lastRuntimeIssue?.usageLimit?.resetAtMs).toBeNull();
       expect(network.enqueue).toHaveBeenCalledOnce();
       expect(fixture.readRecovery().status).toBe('cancelled');
+    } finally { fixture.runtime.dispose(); scope.restore(); await removeTempDir(root); }
+  });
+
+  it('rechecks the native quota source after an untimed fallback without sending a continuation', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const startedAtMs = 1_700_000_000_000;
+    vi.setSystemTime(startedAtMs);
+    const root = await createTempDir('usage-limit-untimed-native-');
+    const scope = createCodexAppServerTestEnvScope();
+    const { script } = await createQuotaProbeServer(root, 100, null);
+    scope.patch(createCodexAppServerProcessEnv(script));
+    const untimedIssue: SessionRuntimeIssueV1 = { ...issue, provider: 'codex', occurredAt: startedAtMs,
+      usageLimit: { ...issue.usageLimit!, resetAtMs: null } };
+    const fixture = createLiveFixture({ issue: untimedIssue, metadata: { path: root, flavor: 'codex',
+      agentRuntimeDescriptorV1: { v: 1, providerId: 'codex', provider: { backendMode: 'appServer' } },
+    } });
+    try {
+      await fixture.runtime.controls.enableUsageLimitWaitResume({ sessionId: fixture.sessionId });
+      vi.setSystemTime(startedAtMs + DEFAULT_USAGE_LIMIT_RECOVERY_BACKOFF_MS);
+      const resetAtMs = Date.now() + 60_000;
+      await createQuotaProbeServer(root, 100, resetAtMs);
+      expect(await fixture.runtime.controls.checkUsageLimitRecoveryNow({ sessionId: fixture.sessionId }))
+        .toMatchObject({ ok: true, status: 'waiting' });
+      expect(fixture.readRecovery()).toMatchObject({ resetAtMs, nextCheckAtMs: resetAtMs + 5_000 });
+      expect(network.enqueue).not.toHaveBeenCalled();
     } finally { fixture.runtime.dispose(); scope.restore(); await removeTempDir(root); }
   });
 
@@ -564,7 +605,7 @@ describe('generic usage-limit continuation through the session control boundary'
     try {
       expect(await fixture.runtime.controls.enableUsageLimitWaitResume({ sessionId: fixture.sessionId }))
         .toMatchObject({ ok: true });
-      expect(fixture.readRecovery()).toMatchObject({ status: 'waiting', nextCheckAtMs: resetAtMs });
+      expect(fixture.readRecovery()).toMatchObject({ status: 'waiting', nextCheckAtMs: resetAtMs + 5_000 });
       const result = await fixture.runtime.controls.checkUsageLimitRecoveryNow({ sessionId: fixture.sessionId });
       const requests = (await readFile(requestLog, 'utf8')).trim().split('\n')
         .map((line) => JSON.parse(line) as { method: string });
@@ -678,7 +719,7 @@ describe('generic usage-limit continuation through the session control boundary'
 
   it('uses a connected profile selection through the same live continuation owner', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(300);
+    vi.setSystemTime(5_300);
     const connectedIssue: SessionRuntimeIssueV1 = { ...issue, usageLimit: { ...issue.usageLimit!,
       connectedService: { serviceId: 'gemini', profileId: 'account-1', groupId: null } } };
     const fixture = createLiveFixture({ issue: connectedIssue, metadata: { connectedServices: { v: 1,
@@ -718,7 +759,7 @@ describe('generic usage-limit continuation through the session control boundary'
   it('delivers auto-wait continuation through Pending into the next real provider turn', async () => {
     const root = await createTempDir('usage-limit-next-provider-turn-');
     const requestLog = join(root, 'requests.jsonl');
-    const resetAt = new Date(Date.now() - 1_000).toISOString();
+    const resetAt = new Date(Date.now() - 10_000).toISOString();
     const script = await writeFakeCodexAppServerScript({ dir: root,
       importLines: ['import { appendFile } from "node:fs/promises";'],
       setupLines: [`const requestLog = ${JSON.stringify(requestLog)};`, 'let turns = 0;'],

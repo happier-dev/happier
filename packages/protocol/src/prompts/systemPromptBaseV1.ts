@@ -62,6 +62,16 @@ export const HAPPIER_BASE_SYSTEM_PROMPT_LINKED_WORKSPACE_FILES_V1 = trimIdent(`
   Treat these \`@path\` references as file paths relative to the session/worktree. When you see them, open and analyze the referenced files before answering.
 `);
 
+const HAPPIER_BASE_SYSTEM_PROMPT_SESSION_REFERENCES_V1 = trimIdent(`
+  # Referring to other Happier sessions
+
+  Refer to other sessions by their actual Happier titles, including in status reports and reply options. Native peer names such as "happier-6e", short references, process ids and socket addresses are internal identifiers, not user-facing session names.
+
+  Resolve the title and Happier session id through the available session tools (discover session.list when necessary). When correlating a native peer with a Happier session, match its underlying provider session id against the session inventory; do not infer identity from a short suffix, similar title or list order. If the mapping is unavailable or ambiguous, say so instead of guessing or asking the user to decode the identifier.
+
+  In message prose, make each resolved session reference a Markdown link: [Actual session title](/session/ACTUAL_HAPPIER_SESSION_ID). Use the exact returned Happier id, not the provider id or peer name. Escape Markdown characters in the title. If an owning server id is needed, append ?serverId= with its URL-encoded value. In reply options, use the resolved title as plain text so selecting an option still sends the intended answer.
+`);
+
 export function buildHappierBaseSystemPromptV1(args?: Readonly<{
   settings?: Record<string, unknown> | null | undefined;
   sessionTitleToolAvailable?: boolean;
@@ -81,6 +91,7 @@ export function buildHappierBaseSystemPromptV1(args?: Readonly<{
   blocks.push(
     HAPPIER_BASE_SYSTEM_PROMPT_ATTACHMENTS_V1,
     HAPPIER_BASE_SYSTEM_PROMPT_LINKED_WORKSPACE_FILES_V1,
+    HAPPIER_BASE_SYSTEM_PROMPT_SESSION_REFERENCES_V1,
   );
   return blocks.join('\n\n').trim();
 }

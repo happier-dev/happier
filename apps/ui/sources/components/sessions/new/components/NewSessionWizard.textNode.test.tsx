@@ -33,6 +33,8 @@ installNewSessionComponentsCommonModuleMocks({
     },
 });
 
+vi.mock('@/auth/context/AuthContext', () => ({ useAuth: () => ({ credentials: null }) }));
+
 vi.mock('react-native-keyboard-controller', () => ({
     useKeyboardHandler: (...args: any[]) => useKeyboardHandlerMock(...args),
     useReanimatedKeyboardAnimation: () => ({

@@ -8,6 +8,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import Constants from 'expo-constants';
 import { Typography } from "@/constants/Typography";
 import { Item } from '@/components/ui/lists/Item';
+import { useAppLockSnapshot } from '@/auth/appLock/appLockRuntime';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { useConnectTerminal } from '@/hooks/session/useConnectTerminal';
@@ -40,6 +41,7 @@ import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
 import { deferOnWeb } from '@/utils/platform/deferOnWeb';
 import { isTauriDesktop } from '@/utils/platform/tauri';
 import { DesktopSettingsSection } from '@/components/settings/desktop/DesktopSettingsSection';
+import { DesktopPathMappingsSettings } from '@/components/settings/desktop/DesktopPathMappingsSettings';
 import { SettingsBelowFoldSections } from '@/components/settings/SettingsBelowFoldSections';
 import { runAfterInteractionsWithFallback } from '@/utils/timing/runAfterInteractionsWithFallback';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -52,6 +54,7 @@ const DEFER_BELOW_FOLD_SETTINGS_STAGE_DELAY_MS = 16;
 export const SettingsView = React.memo(function SettingsView() {
     const { theme } = useUnistyles();
     const router = useRouter();
+    const appLockStatus = useAppLockSnapshot().status;
     const { width, height } = useWindowDimensions();
     const appVersion = Constants.expoConfig?.version || '1.0.0';
     const auth = useAuth();
@@ -223,6 +226,13 @@ export const SettingsView = React.memo(function SettingsView() {
                 icon={<Icon name="user-circle" size={29} color={theme.colors.accent.blue} />}
                 onPress={() => router.push('/settings/account')}
             />
+            <Item
+                testID="settings-app-lock"
+                title={t('appLock.settingsTitle')}
+                subtitle={appLockStatus === 'disabled' ? t('appLock.settingsSubtitleOff') : t('appLock.settingsSubtitleOn')}
+                icon={<Icon name="lock" size={29} color={theme.colors.accent.indigo} />}
+                onPress={() => router.push('/settings/app-lock')}
+            />
             {useProfiles && (
                 <Item
                     title={t('settings.secrets')}
@@ -246,9 +256,11 @@ export const SettingsView = React.memo(function SettingsView() {
             />
         </ItemGroup>
     ), [
+        appLockStatus,
         pushRoute,
         router,
         theme.colors.accent.blue,
+        theme.colors.accent.indigo,
         theme.colors.accent.orange,
         theme.colors.accent.purple,
         usageReportingEnabled,
@@ -357,6 +369,7 @@ export const SettingsView = React.memo(function SettingsView() {
             ) : null}
 
             {showDesktopSettings ? <DesktopSettingsSection /> : null}
+            {showDesktopSettings ? <DesktopPathMappingsSettings /> : null}
 
             {/* Connect Terminal */}
             {!isRunningOnMac() && (Platform.OS !== 'web' || isPhoneSizedWeb) && (

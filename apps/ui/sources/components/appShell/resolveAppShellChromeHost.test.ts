@@ -78,3 +78,14 @@ describe('resolveAppShellChromeHost', () => {
         })).toBe('none');
     });
 });
+
+it('keeps native file windows free of fallback app chrome when narrow', () => {
+    expect(resolveAppShellChromeHost({
+        isAuthenticated: true,
+        isDesktopPetOverlayWindow: false,
+        isSessionFileWindow: true,
+        isTauriDesktop: true,
+        isTablet: false,
+        isTerminalConnectRoute: false,
+    })).toBe('none');
+});

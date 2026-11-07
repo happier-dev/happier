@@ -2,8 +2,8 @@ import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 
 import type { ImportedMcpInputResolutionV1 } from '@/sync/domains/settings/mcpServers/materializeImportedMcpServerDrafts';
-import type { McpQuickInstallPresetId } from '@/sync/domains/settings/mcpServers/mcpQuickInstallCatalog';
-import { buildQuickInstallMcpDraft, listMcpQuickInstallPresets } from '@/sync/domains/settings/mcpServers/mcpQuickInstallCatalog';
+import type { McpQuickInstallPreset, McpQuickInstallPresetId } from '@/sync/domains/settings/mcpServers/mcpQuickInstallCatalog';
+import { buildQuickInstallMcpDraft } from '@/sync/domains/settings/mcpServers/mcpQuickInstallCatalog';
 
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Item } from '@/components/ui/lists/Item';
@@ -20,6 +20,7 @@ export const McpServerQuickInstallTab = React.memo(function McpServerQuickInstal
     onSelectMachine: (machineId: string) => void;
     machineMenuOpen: boolean;
     onMachineMenuOpenChange: (open: boolean) => void;
+    presets: readonly McpQuickInstallPreset[];
     selectedPresetIds: readonly McpQuickInstallPresetId[];
     onTogglePresetId: (presetId: McpQuickInstallPresetId) => void;
     inputMappingsByPreset: Partial<Record<McpQuickInstallPresetId, Record<string, ImportedMcpInputResolutionV1>>>;
@@ -29,7 +30,6 @@ export const McpServerQuickInstallTab = React.memo(function McpServerQuickInstal
     onInstall: () => void;
 }>) {
     const { theme } = useUnistyles();
-    const presets = React.useMemo(() => listMcpQuickInstallPresets(), []);
     const selectedPresetIdSet = React.useMemo(() => new Set(props.selectedPresetIds), [props.selectedPresetIds]);
     const selectedDrafts = React.useMemo(
         () => props.selectedPresetIds.map((presetId) => buildQuickInstallMcpDraft(presetId)),
@@ -59,7 +59,7 @@ export const McpServerQuickInstallTab = React.memo(function McpServerQuickInstal
                     variant="default"
                 />
 
-                {presets.map((preset) => {
+                {props.presets.map((preset) => {
                     const selected = selectedPresetIdSet.has(preset.id);
                     return (
                         <Item

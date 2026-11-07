@@ -2,7 +2,7 @@ import { ConnectedServiceUsageSourceV1Schema, projectProviderAccountUsageToConne
 
 import { readProviderAccountUsageRecord } from "./recordStorage";
 import { readConnectedServiceUsageSource } from "./sourceStorage";
-import { requestProviderAccountUsageRefresh } from "./recordStorage";
+import { requestProviderAccountUsageRefresh } from "./providerAccountUsageRequestRefresh";
 import type { ConnectedServiceQuotaView, ProviderAccountUsageStatus } from "./types";
 
 function normalizeResponseStatus(status: ProviderAccountUsageStatus): Exclude<ProviderAccountUsageStatus, "refresh_requested"> {

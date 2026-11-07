@@ -13,6 +13,44 @@ installActivityNotificationRuntimeCommonModuleMocks({
 });
 
 describe('buildActivityLocalNotificationContent', () => {
+    it('hides session content and quick actions while the device app lock is on', async () => {
+        const { buildActivityLocalNotificationContent } = await import('./buildActivityLocalNotificationContent');
+        const session = { id: 'session-9', metadata: { summary: { text: 'Secret project' } } } as any;
+
+        const request = buildActivityLocalNotificationContent({
+            event: {
+                kind: 'agent-request',
+                sessionId: 'session-9',
+                requestId: 'req-9',
+                requestKind: 'permission',
+                toolName: 'Bash',
+                toolArgs: { command: 'cat secrets.txt' },
+            },
+            session,
+            serverUrl: 'https://stack.example.test',
+            includeRequestMessageText: true,
+            redactSessionContent: true,
+        });
+        expect(request.title).not.toContain('Secret project');
+        expect(request.body).not.toContain('secrets.txt');
+        // No Approve/Deny buttons: answering must require unlocking the app.
+        expect(request.expo.categoryIdentifier).toBeUndefined();
+
+        const ready = buildActivityLocalNotificationContent({
+            event: {
+                kind: 'ready',
+                sessionId: 'session-9',
+                messages: [{ kind: 'agent-text', id: 'm', createdAt: 1, text: 'Password is hunter2' }] as any,
+            },
+            session,
+            serverUrl: 'https://stack.example.test',
+            includeReadyMessageText: true,
+            redactSessionContent: true,
+        });
+        expect(ready.title).not.toContain('Secret project');
+        expect(ready.body).not.toContain('hunter2');
+    });
+
     it('uses the latest assistant text for ready notifications when available', async () => {
         const { buildActivityLocalNotificationContent } = await import('./buildActivityLocalNotificationContent');
 

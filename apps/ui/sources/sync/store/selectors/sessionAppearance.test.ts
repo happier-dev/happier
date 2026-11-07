@@ -5,6 +5,25 @@ import { createCustomSessionAppearanceColorsSelector, selectEffectiveSessionAppe
 import { createSessionListRowStoreStateSelector, selectSessionListRowStateSnapshot } from '../sessionListRowStateSnapshot';
 
 describe('appearance selectors', () => {
+    it('inherits the assigned project immediately without hydrating or opening the session', () => {
+        const metadata = { machineId: 'machine-a', path: '/original' };
+        const project = { machineId: 'machine-b', rootPath: '/destination' };
+        const workspaceKey = resolveSessionWorkspacePresentation({ metadata, machines: {}, target: { machineId: project.machineId, basePath: project.rootPath } }).workspaceKey;
+        const label = { labelKind: 'workspace', scopeKey: workspaceKey, display: { t: 'plain', v: { color: { kind: 'accent', key: 'green' } } }, archivedAt: null, createdAt: 1, updatedAt: 1 } as const;
+        const state: SessionAppearanceSelectorState = {
+            sessionOrganizationLabelsByLabelKey: { [`server-a:workspace:${workspaceKey}`]: label },
+        };
+        const params = { serverId: 'server-a', sessionId: 'new-session', metadata };
+        const selector = createSessionListRowStoreStateSelector([params], 'server-a');
+        const before = selector(state);
+        const moved = { ...state, sessionOrganizationAppearancesBySessionKey: {
+            'server-a:new-session': { sessionId: 'new-session', display: { t: 'plain', v: { project } }, updatedAt: 1 } as const,
+        } };
+        const after = selector(moved);
+        expect(after).not.toBe(before);
+        expect(selectSessionListRowStateSnapshot(after, params).appearanceColor).toEqual({ kind: 'accent', key: 'green' });
+        expect(selectSessionListRowStateSnapshot(selector(state), params).appearanceColor).toBeNull();
+    });
     it('inherits only the foreign row own workspace, not an active-Home project sharing its session id', () => {
         const metadata = { machineId: 'machine-a', path: '/foreign' };
         const workspaceKey = resolveSessionWorkspacePresentation({ metadata, machines: {} }).workspaceKey;

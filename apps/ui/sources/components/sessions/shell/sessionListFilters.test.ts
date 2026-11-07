@@ -7,7 +7,7 @@ import { filterSessionListItemsForHeaderControls } from './sessionListFilters';
 function sessionItem(
     id: string,
     metadata: NonNullable<Extract<SessionListViewItem, { type: 'session' }>['session']['metadata']>,
-    overrides: Partial<Pick<Extract<SessionListViewItem, { type: 'session' }>, 'groupKey' | 'groupKind' | 'section'>> = {},
+    overrides: Partial<Pick<Extract<SessionListViewItem, { type: 'session' }>, 'groupKey' | 'groupKind' | 'section' | 'folderId' | 'folderDepth'>> = {},
 ): Extract<SessionListViewItem, { type: 'session' }> {
     return {
         type: 'session',
@@ -15,6 +15,8 @@ function sessionItem(
         groupKey: overrides.groupKey ?? 'active',
         groupKind: overrides.groupKind ?? 'active',
         section: overrides.section ?? 'active',
+        ...(overrides.folderId !== undefined ? { folderId: overrides.folderId } : {}),
+        ...(overrides.folderDepth !== undefined ? { folderDepth: overrides.folderDepth } : {}),
         session: {
             id,
             seq: 1,
@@ -74,6 +76,24 @@ describe('filterSessionListItemsForHeaderControls', () => {
         expect(result.map((item) => item.type === 'session' ? item.session.id : item.title)).toEqual([
             'Active',
             'alpha',
+        ]);
+    });
+
+    it('finds a session by its pasted session id', () => {
+        const result = filterSessionListItemsForHeaderControls([
+            activeHeader,
+            sessionItem('cmabc123XYZ', { name: 'Deploy fix', summaryText: null, path: '/repo/api', host: 'api-host' }),
+            sessionItem('cmdef456', { name: 'Draft docs', summaryText: null, path: '/repo/docs', host: 'docs-host' }),
+        ], {
+            searchQuery: '  cmABC123xyz ',
+            selectedTags: [],
+            sessionTags: {},
+            searchableTextBySessionKey: {},
+        });
+
+        expect(result.map((item) => item.type === 'session' ? item.session.id : item.title)).toEqual([
+            'Active',
+            'cmabc123XYZ',
         ]);
     });
 
@@ -221,7 +241,7 @@ describe('filterSessionListItemsForHeaderControls', () => {
         ]);
     });
 
-    it('filters across groups while preserving the first primary header as the controls anchor', () => {
+    it('filters across groups while keeping every main section heading', () => {
         const result = filterSessionListItemsForHeaderControls([
             activeHeader,
             sessionItem('alpha', {
@@ -257,7 +277,7 @@ describe('filterSessionListItemsForHeaderControls', () => {
         ]);
     });
 
-    it('preserves the active controls anchor header instead of the first primary header', () => {
+    it('keeps main section headings that have no matches while searching', () => {
         const pinnedHeader: Extract<SessionListViewItem, { type: 'header' }> = {
             type: 'header',
             title: 'Pinned',
@@ -283,16 +303,150 @@ describe('filterSessionListItemsForHeaderControls', () => {
                 path: '/repo/active',
                 host: 'active-host',
             }),
+            inactiveHeader,
+            sessionItem('gamma', {
+                name: 'Old task',
+                summaryText: null,
+                path: '/repo/old',
+                host: 'old-host',
+            }, {
+                groupKey: 'inactive',
+                section: 'inactive',
+            }),
+        ], {
+            searchQuery: 'active task',
+            selectedTags: [],
+            sessionTags: {},
+            searchableTextBySessionKey: {},
+        });
+
+        expect(result.map((item) => item.type === 'session' ? item.session.id : item.title)).toEqual([
+            'Pinned',
+            'Active',
+            'beta',
+            'Inactive',
+        ]);
+    });
+
+    it('keeps server headings while searching so repeated main sections stay attributable', () => {
+        const serverHeader: Extract<SessionListViewItem, { type: 'header' }> = {
+            type: 'header',
+            title: 'Server A',
+            headerKind: 'server',
+            serverId: 'server-a',
+        };
+        const result = filterSessionListItemsForHeaderControls([
+            serverHeader,
+            activeHeader,
+            sessionItem('alpha', {
+                name: 'Deploy fix',
+                summaryText: null,
+                path: '/repo/api',
+                host: 'api-host',
+            }),
         ], {
             searchQuery: 'nothing matches',
             selectedTags: [],
             sessionTags: {},
             searchableTextBySessionKey: {},
-            controlsAnchorKey: 'active',
         });
 
         expect(result.map((item) => item.type === 'session' ? item.session.id : item.title)).toEqual([
+            'Server A',
             'Active',
         ]);
     });
+
+    it('drops a project heading without matches when a later project in the same section matches', () => {
+        const result = filterSessionListItemsForHeaderControls([
+            inactiveHeader,
+            projectHeader('Concierge'),
+            sessionItem('alpha', {
+                name: 'Claude stations',
+                summaryText: null,
+                path: '/repo/sample-project',
+                host: 'host',
+            }, { groupKey: 'project:Concierge', groupKind: 'project', section: 'inactive' }),
+            projectHeader('Reaper'),
+            sessionItem('beta', {
+                name: 'MCU platform',
+                summaryText: null,
+                path: '/repo/reaper',
+                host: 'host',
+            }, { groupKey: 'project:Reaper', groupKind: 'project', section: 'inactive' }),
+        ], {
+            searchQuery: 'mcu',
+            selectedTags: [],
+            sessionTags: {},
+            searchableTextBySessionKey: {},
+        });
+
+        expect(result.map((item) => item.type === 'session' ? item.session.id : item.title)).toEqual([
+            'Inactive',
+            'Reaper',
+            'beta',
+        ]);
+    });
+
+    it('shows only the folder headings on the path to a matching session', () => {
+        // Folder children are listed before the parent folder's own sessions.
+        const result = filterSessionListItemsForHeaderControls([
+            inactiveHeader,
+            projectHeader('Concierge'),
+            folderHeader('Docs', 0),
+            folderHeader('Drafts', 1),
+            sessionItem('draft', {
+                name: 'Draft notes',
+                summaryText: null,
+                path: '/repo/sample-project',
+                host: 'host',
+            }, { groupKey: 'folder:Drafts', groupKind: 'folder', section: 'inactive', folderId: 'Drafts', folderDepth: 2 }),
+            sessionItem('guide', {
+                name: 'Install guide',
+                summaryText: null,
+                path: '/repo/sample-project',
+                host: 'host',
+            }, { groupKey: 'folder:Docs', groupKind: 'folder', section: 'inactive', folderId: 'Docs', folderDepth: 1 }),
+            sessionItem('root', {
+                name: 'Root task',
+                summaryText: null,
+                path: '/repo/sample-project',
+                host: 'host',
+            }, { groupKey: 'project:Concierge', groupKind: 'project', section: 'inactive', folderId: null, folderDepth: 0 }),
+        ], {
+            searchQuery: 'guide',
+            selectedTags: [],
+            sessionTags: {},
+            searchableTextBySessionKey: {},
+        });
+
+        expect(result.map((item) => item.type === 'session' ? item.session.id : item.title)).toEqual([
+            'Inactive',
+            'Concierge',
+            'Docs',
+            'guide',
+        ]);
+    });
 });
+
+function projectHeader(title: string): Extract<SessionListViewItem, { type: 'header' }> {
+    return {
+        type: 'header',
+        title,
+        headerKind: 'project',
+        groupKey: `project:${title}`,
+        serverId: 'server-a',
+    };
+}
+
+function folderHeader(title: string, depth: number): Extract<SessionListViewItem, { type: 'header' }> {
+    return {
+        type: 'header',
+        title,
+        headerKind: 'folder',
+        groupKey: `folder:${title}`,
+        folderId: title,
+        depth,
+        serverId: 'server-a',
+    };
+}

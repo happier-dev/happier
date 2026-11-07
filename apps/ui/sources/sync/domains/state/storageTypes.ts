@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { PermissionMode, ModelMode } from "@/sync/domains/permissions/permissionTypes";
 import { 
     CliUpdateFactsSchema,
+    NativeSessionAliasesV1Schema,
     createAgentRuntimeDescriptorV1Schema,
     createAcpConfigOptionOverridesV1Schema,
     createAcpSessionModeOverrideV1Schema,
@@ -58,6 +59,7 @@ const MetadataObjectSchema = z.object({
         targetWorkspaceRootPath: z.string().optional(),
     }).optional(),
     claudeSessionId: z.string().optional(), // Claude Code session ID
+    nativeSessionAliasesV1: NativeSessionAliasesV1Schema.optional().catch(undefined),
     codexSessionId: z.string().optional(), // Codex session/conversation ID (uuid)
     codexBackendMode: z.enum(['mcp', 'acp', 'appServer']).optional(),
     agentRuntimeDescriptorV1: createAgentRuntimeDescriptorV1Schema(z).optional(),
@@ -587,6 +589,7 @@ export const MachineMetadataSchema = z.object({
     host: z.string(),
     platform: z.string(),
     happyCliVersion: z.string(),
+    happyForkVersion: z.string().optional(),
     happyHomeDir: z.string(), // Directory for Happier auth, settings, logs (usually .happy/ or .happy-dev/)
     homeDir: z.string(), // User's home directory (matches CLI field name)
     // Optional fields that may be added in future versions

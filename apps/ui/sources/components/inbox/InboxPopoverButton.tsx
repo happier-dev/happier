@@ -3,6 +3,7 @@ import { Platform, Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Icon } from '@/components/ui/icons/Icon';
+import { PressableSurface } from '@/components/ui/interaction/PressableSurface';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { Popover } from '@/components/ui/popover';
 import { Text } from '@/components/ui/text/Text';
@@ -56,13 +57,16 @@ export const InboxPopoverButton = React.memo(function InboxPopoverButton(props: 
         height: number;
     }> | null>(null);
     const close = React.useCallback(() => setOpen(false), []);
+    const accessibilityLabel = t('tabs.inbox');
 
     return (
         <View ref={anchorRef} collapsable={false} style={styles.anchor}>
-            <Pressable
+            <PressableSurface
                 testID={props.testID ?? 'sidebar-inbox-button'}
                 accessibilityRole="button"
-                accessibilityLabel={t('tabs.inbox')}
+                accessibilityLabel={accessibilityLabel}
+                webTooltip={accessibilityLabel}
+                focusRingRadius={props.buttonSize / 2}
                 accessibilityState={{ expanded: open }}
                 hitSlop={8}
                 onPress={(event) => {
@@ -75,14 +79,13 @@ export const InboxPopoverButton = React.memo(function InboxPopoverButton(props: 
                     }
                     setOpen((current) => !current);
                 }}
-                style={({ pressed }) => [
+                style={[
                     styles.button,
                     {
                         width: props.buttonSize,
                         height: props.buttonSize,
                         borderRadius: props.buttonSize / 2,
                     },
-                    pressed ? styles.buttonPressed : null,
                 ]}
             >
                 <View style={styles.glyph}>
@@ -93,7 +96,7 @@ export const InboxPopoverButton = React.memo(function InboxPopoverButton(props: 
                     />
                     {props.summary.hasContent ? <View testID="sidebar-inbox-attention-dot" style={styles.attentionDot} /> : null}
                 </View>
-            </Pressable>
+            </PressableSurface>
 
             {open ? (
                 <Popover
@@ -137,10 +140,6 @@ const styles = StyleSheet.create((theme) => ({
     button: {
         alignItems: 'center',
         justifyContent: 'center',
-    },
-    buttonPressed: {
-        opacity: 0.68,
-        transform: [{ scale: 0.96 }],
     },
     glyph: {
         position: 'relative',

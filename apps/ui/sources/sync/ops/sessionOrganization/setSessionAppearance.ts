@@ -4,6 +4,7 @@ import { parseSessionAppearanceColor, type SessionAppearanceColor } from '@/sync
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { openSessionOrganizationDisplayEnvelope, prepareSessionOrganizationDisplayEnvelopeForWrite } from './sessionOrganizationDisplayEnvelope';
 import { resolveSessionOrganizationMutationScope } from '@/sync/domains/session/organization/mutationScope';
+import { readSessionProjectAssignmentFromDisplay, type SessionProjectAssignment } from '@/sync/domains/session/organization/projectAssignment';
 
 /** Set/clear a session override. Errors reject after rollback and follow the organization mutation error path. */
 export async function setSessionAppearance(params: Readonly<{
@@ -11,11 +12,25 @@ export async function setSessionAppearance(params: Readonly<{
     serverId: string;
     serverUrl?: string;
     sessionId: string;
-    color: SessionAppearanceColor | null;
+    color?: SessionAppearanceColor | null;
+    project?: SessionProjectAssignment | null;
 }>): Promise<void> {
-    const color = parseSessionAppearanceColor(params.color);
-    if (params.color !== null && !color) throw new Error('invalid-session-appearance');
-    const appearance = color ? { sessionId: params.sessionId, display: { t: 'plain' as const, v: { color } }, updatedAt: Date.now() } : null;
+    const current = getStorage().getState().sessionOrganizationAppearancesBySessionKey[`${params.serverId}:${params.sessionId}`]?.display;
+    if (current?.t === 'encrypted') throw new Error('Session appearance must be opened before editing');
+    const value: Record<string, unknown> = current?.t === 'plain' && current.v && typeof current.v === 'object' && !Array.isArray(current.v) ? { ...current.v } : {};
+    if (params.color !== undefined) {
+        const color = parseSessionAppearanceColor(params.color);
+        if (params.color !== null && !color) throw new Error('invalid-session-appearance');
+        if (color) value.color = color;
+        else delete value.color;
+    }
+    if (params.project !== undefined) {
+        const project = readSessionProjectAssignmentFromDisplay({ t: 'plain', v: { project: params.project } });
+        if (params.project !== null && !project) throw new Error('invalid-session-project');
+        if (project) value.project = project;
+        else delete value.project;
+    }
+    const appearance = Object.keys(value).length ? { sessionId: params.sessionId, display: { t: 'plain' as const, v: value }, updatedAt: Date.now() } : null;
     const recordId = getStorage().getState().setSessionAppearanceOptimistic(params.serverId, params.sessionId, appearance);
     try {
         const display = await prepareSessionOrganizationDisplayEnvelopeForWrite({ credentials: params.credentials, serverUrl: params.serverUrl, envelope: appearance?.display });

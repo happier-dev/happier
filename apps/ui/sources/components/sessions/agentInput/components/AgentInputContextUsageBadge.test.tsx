@@ -34,6 +34,21 @@ function contextUsageState(overrides: Partial<ContextUsageState> = {}): ContextU
 }
 
 describe('AgentInputContextUsageBadge', () => {
+    it('shows and fills the ring with remaining context', async () => {
+        tokenUsageRingRenderSpy.mockClear();
+        const screen = await renderScreen(<AgentInputContextUsageBadge state={contextUsageState()} />);
+        expect(screen.findByTestId('agent-input-context-usage-value')?.props.children).toBe('18');
+        expect(tokenUsageRingRenderSpy).toHaveBeenCalledWith(expect.objectContaining({ used: 18_000, limit: 100_000 }));
+    });
+    it('refreshes providers on every press while keeping the context details reachable', async () => {
+        const refresh = vi.fn();
+        const screen = await renderScreen(<AgentInputContextUsageBadge state={contextUsageState()} onRefresh={refresh} />);
+        act(() => { screen.findByTestId('agent-input-context-usage-badge')?.props.onPress(); });
+        expect(refresh).toHaveBeenCalledTimes(1);
+        expect(screen.findByTestId('agent-input-context-usage-popover')).toBeTruthy();
+        act(() => { screen.findByTestId('agent-input-context-usage-badge')?.props.onPress(); });
+        expect(refresh).toHaveBeenCalledTimes(2);
+    });
     it('does not rerender the ring when parent rerenders with the same usage display data', async () => {
         tokenUsageRingRenderSpy.mockClear();
         const screen = await renderScreen(

@@ -122,6 +122,10 @@ const ALLOW_SAME_STRING_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<stri
         'ca',
         'pt',
     ]),
+    // Italian: "Password" is the Italian word as well.
+    'appLock.passwordLabel': new Set(['it']),
+    // "Port" is the correct word in these locales as well.
+    'appLock.mailPort': new Set(['de', 'fr', 'ca', 'pl']),
     // Italian/Portuguese: Windows "Console" label is correct and matches English.
     'windowsRemoteSessionLaunchMode.console': new Set(['it', 'pt']),
     'windowsRemoteSessionLaunchMode.shortConsole': new Set(['it', 'pt']),

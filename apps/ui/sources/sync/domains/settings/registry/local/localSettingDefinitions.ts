@@ -15,6 +15,7 @@ import {
 } from '@/theme/profiles/themeProfilePersistence';
 import { SessionListFocusedFolderV1Schema } from '@/sync/domains/session/folders';
 import { AccountPetDesktopOverlayVisibilityModeSchema } from '../account/accountPetSettingDefinitions';
+import { DesktopPathMappingsSchema } from '@/sync/domains/files/localFilePath';
 import {
     DEFAULT_LOADING_INDICATOR_PAUSE_ID,
     DEFAULT_LOADING_INDICATOR_SPEED_ID,
@@ -187,6 +188,13 @@ export const LOCAL_SETTING_DEFINITIONS = defineSettingDefinitions({
         schema: z.boolean(),
         default: true,
         description: 'Enable backdrop blur effects behind modals and overlay menus',
+        storageScope: 'local',
+    },
+    hideGuardianReviewSessions: {
+        // A malformed/newer value must not reset every other device preference.
+        schema: z.boolean().catch(true),
+        default: true,
+        description: 'Hide Codex Guardian approval-review sessions from session lists on this device',
         storageScope: 'local',
     },
     hapticsEnabled: {
@@ -424,6 +432,12 @@ export const LOCAL_SETTING_DEFINITIONS = defineSettingDefinitions({
         description: 'Device-local dismissed pet companion activity bubble keys',
         storageScope: 'local',
     },
+    backgroundTaskAcknowledgedReports: {
+        schema: z.record(z.string().min(1), z.number().int().nonnegative()).catch({}),
+        default: {},
+        description: 'Device-local stale background command reports the user dismissed, as the report updatedAt keyed by session and task',
+        storageScope: 'local',
+    },
     petsCompanionSizeScale: {
         schema: PetCompanionSizeScaleSchema,
         default: PET_COMPANION_SIZE_SCALE_DEFAULT,
@@ -607,6 +621,12 @@ export const LOCAL_SETTING_DEFINITIONS = defineSettingDefinitions({
             identityScope: 'device_user',
             serializeCurrent: objectKeyCount,
         },
+    },
+    desktopPathMappingsV1: {
+        schema: DesktopPathMappingsSchema,
+        default: [],
+        description: 'Device-local folders on session machines and where this computer reaches them, for opening session files with local programs',
+        storageScope: 'local',
     },
 });
 

@@ -80,7 +80,7 @@ describe('readTrustedSessionAttachmentLocalImages', () => {
   it('fails with a stable code before reading an upload beyond the configured file-upload limit', async () => {
     const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
     const uploadPath = '.happier/uploads/messages/message-1/screen.png';
-    vi.stubEnv('HAPPIER_FILES_UPLOAD_MAX_FILE_BYTES', String(bytes.byteLength - 1));
+    vi.stubEnv('HAPPIER_FILES_IMAGE_READ_MAX_BYTES', String(bytes.byteLength - 1));
     reloadConfiguration();
     const opened = mockOpenedFile(bytes);
 
@@ -120,7 +120,7 @@ describe('readTrustedSessionAttachmentLocalImages', () => {
   it('bounds the open-handle read when a verified upload grows after stat', async () => {
     const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
     const uploadPath = '.happier/uploads/messages/message-1/screen.png';
-    vi.stubEnv('HAPPIER_FILES_UPLOAD_MAX_FILE_BYTES', String(bytes.byteLength - 1));
+    vi.stubEnv('HAPPIER_FILES_IMAGE_READ_MAX_BYTES', String(bytes.byteLength - 1));
     reloadConfiguration();
     const opened = mockOpenedFile(bytes, bytes.byteLength - 1);
 

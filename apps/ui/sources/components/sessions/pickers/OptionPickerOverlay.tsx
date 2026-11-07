@@ -20,6 +20,8 @@ import { t } from '@/text';
 import { readNonBlankSessionControlIdentifier } from '@/sync/domains/sessionControl/opaqueIdentifiers';
 import { Typography } from '@/constants/Typography';
 import { Icon } from '@/components/ui/icons/Icon';
+import { PressableSurface } from '@/components/ui/interaction/PressableSurface';
+import { PickerDoneButton, usePickerHostedDone } from '@/components/sessions/pickers/PickerDoneAction';
 
 type WebHoverablePressableState = Readonly<{
     pressed: boolean;
@@ -85,7 +87,6 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
         optionCardSelected: { backgroundColor: theme.colors.surface.selected },
         optionCardHovered: { backgroundColor: theme.colors.surface.pressed },
         optionCardPressed: { opacity: 0.86 },
-        refreshIconButtonPressed: { backgroundColor: theme.colors.surface.pressed },
         refreshIconButtonDisabled: { opacity: 0.6 },
     }), [
         theme.colors.surface.pressed,
@@ -98,6 +99,8 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
 
     const probe = props.probe;
     const shouldRenderProbeControl = probe ? typeof probe.onRefresh === 'function' || probe.phase !== 'idle' : false;
+    const refreshLabel = probe?.refreshAccessibilityLabel ?? t('modelPickerOverlay.refreshModelsA11y');
+    const hostedDone = usePickerHostedDone();
     const showSearch = props.options.length >= 10;
     const normalizedQuery = query.trim().toLowerCase();
     const notes = props.notes ?? [];
@@ -359,25 +362,25 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
                         </View>
                     ) : null}
                 </View>
-                {props.headerAccessory || shouldRenderProbeControl ? (
+                {props.headerAccessory || hostedDone || shouldRenderProbeControl ? (
                     <View style={styles.titleRowActions}>
                         {props.headerAccessory ? (
                             <View style={styles.headerAccessory}>
                                 {props.headerAccessory}
                             </View>
                         ) : null}
+                        {hostedDone ? <PickerDoneButton onPress={hostedDone} /> : null}
                         {shouldRenderProbeControl && probe ? (
                             typeof probe.onRefresh === 'function' ? (
-                                <Pressable
+                                <PressableSurface
                                     testID={refreshTestID}
                                     onPress={probe.phase === 'idle' ? probe.onRefresh : undefined}
-                                    style={({ pressed }) => [
-                                        styles.refreshIconButton,
-                                        pressed && probe.phase === 'idle' ? transientStyles.refreshIconButtonPressed : null,
-                                        probe.phase !== 'idle' ? transientStyles.refreshIconButtonDisabled : null,
-                                    ]}
+                                    style={styles.refreshIconButton}
+                                    styleOverride={probe.phase !== 'idle' ? transientStyles.refreshIconButtonDisabled : undefined}
+                                    focusRingRadius={9}
                                     accessibilityRole="button"
-                                    accessibilityLabel={probe.refreshAccessibilityLabel ?? t('modelPickerOverlay.refreshModelsA11y')}
+                                    accessibilityLabel={refreshLabel}
+                                    webTooltip={refreshLabel}
                                     hitSlop={6}
                                 >
                                     {probe.phase === 'idle' ? (
@@ -391,7 +394,7 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
                                                 : (probe.refreshingAccessibilityLabel ?? t('modelPickerOverlay.refreshingModelsA11y'))}
                                             />
                                     )}
-                                </Pressable>
+                                </PressableSurface>
                             ) : probe.phase !== 'idle' ? (
                                 <View style={styles.refreshIconButton}>
                                     <ActivitySpinner

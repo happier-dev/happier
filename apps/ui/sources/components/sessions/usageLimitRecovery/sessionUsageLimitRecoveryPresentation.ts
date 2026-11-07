@@ -67,6 +67,7 @@ export type SessionUsageLimitRecoveryActionPresentation = Readonly<{
 
 export type SessionUsageLimitRecoveryBannerPresentation = Readonly<{
     temporaryThrottle?: Readonly<{ nextCheckAtMs: number | null; attemptCount: number }>;
+    resetCountdown?: Readonly<{ deadlineMs: number; timeLabel: string }>;
     actionsDisabled?: boolean;
     testID: string;
     title: string;
@@ -525,13 +526,14 @@ export function buildSessionUsageLimitRecoveryPresentation(
         operationStatus: params.operationStatus,
         operationRetryAtMs: params.operationRetryAtMs,
     });
+    const waitTimeLabel = ready || waitUntilMs === null ? null : params.formatTime(waitUntilMs);
     const body = stopped
         ? params.translate('session.usageLimitRecovery.stoppedBody')
         : ready
         ? params.translate('session.usageLimitRecovery.readyBody')
         : waitUntilMs !== null
         ? params.translate('session.usageLimitRecovery.resetBody', {
-            time: params.formatTime(waitUntilMs),
+            time: waitTimeLabel ?? '',
         })
         : params.translate('session.usageLimitRecovery.genericBody');
     const bodyWithRecoveryCredits = appendRecoveryCreditSummaryBody({
@@ -553,6 +555,9 @@ export function buildSessionUsageLimitRecoveryPresentation(
                 ? params.translate('session.usageLimitRecovery.readyTitle')
                 : params.translate('session.usageLimitRecovery.title'),
             body: bodyWithRecoveryCredits,
+            ...(!ready && waitUntilMs !== null && waitTimeLabel !== null
+                ? { resetCountdown: { deadlineMs: waitUntilMs, timeLabel: waitTimeLabel } }
+                : {}),
             primaryAction,
             secondaryActions: [
                 ...(!ready && recoveryCreditSummary && checkNowSupported ? [

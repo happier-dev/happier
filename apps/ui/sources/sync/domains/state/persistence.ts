@@ -47,6 +47,7 @@ import {
 } from '../scope/serverAccountScope';
 import type { LocalPetSourceMetadata } from '../pets/localPetSourceMetadata';
 import { readNonBlankSessionControlIdentifier } from '@/sync/domains/sessionControl/opaqueIdentifiers';
+import { CONNECTED_DEVICE_KEY_PREFIX, ConnectedDeviceSchema } from '../settings/connectedDevices';
 var persistedStorage: MMKV | null = null;
 
 const pendingSettingsSchemaByKey: Readonly<Record<string, z.ZodTypeAny>> = Object.freeze({
@@ -408,7 +409,8 @@ export function parsePendingSettings(raw: unknown): Partial<Settings> {
             continue;
         }
 
-        const schema = pendingSettingsSchemaByKey[key];
+        const schema = pendingSettingsSchemaByKey[key]
+            ?? (key.startsWith(CONNECTED_DEVICE_KEY_PREFIX) ? ConnectedDeviceSchema : undefined);
         if (!schema) continue;
 
         const parsed = schema.safeParse(rawValue);

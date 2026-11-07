@@ -82,6 +82,8 @@ model Account {
     SessionPin             SessionPin[]
     SessionAttentionStanding SessionAttentionStanding[]
     SessionAppearance      SessionAppearance[]
+    AppLockRecovery        AppLockRecovery[]
+    AppLockMailSettings    AppLockMailSettings?
     SessionOrganizationFolder SessionOrganizationFolder[]
     SessionOrganizationTag SessionOrganizationTag[]
     SessionTagAssignment   SessionTagAssignment[]
@@ -557,6 +559,48 @@ model SessionAppearance {
 
     @@unique([accountId, sessionId])
     @@index([sessionId])
+}
+
+//
+// App lock email recovery
+//
+
+/// Recovery escrow for one device's local app lock. `id` is the device-generated lock id.
+/// `recoveryKey` only unwraps that device's local data key; the server never sees the password
+/// or the device credentials. Codes are stored as SHA-256 hashes and are single-use.
+model AppLockRecovery {
+    id              String    @id
+    accountId       String
+    email           String
+    recoveryKey     String
+    codeHash        String?
+    codePurpose     String?
+    codeExpiresAt   DateTime?
+    codeSentAt      DateTime?
+    codeAttempts    Int       @default(0)
+    createdAt       DateTime  @default(now())
+    updatedAt       DateTime  @updatedAt
+
+    account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+    @@index([accountId])
+}
+
+/// The account's own SMTP server for app-lock reset emails, entered in the app. The password is
+/// encrypted with the server key tree and never returned to clients.
+model AppLockMailSettings {
+    accountId         String   @id
+    recoveryEmail     String?
+    host              String
+    port              Int
+    security          String
+    username          String
+    passwordEncrypted Bytes?
+    fromAddress       String
+    createdAt         DateTime @default(now())
+    updatedAt         DateTime @updatedAt
+
+    account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
 }
 
 model SessionOrganizationFolder {

@@ -164,6 +164,7 @@ export function buildSessionListGroupOrderAfterTreeDrop(params: Readonly<{
             orderKeyFilter: params.orderKeyFilter,
         }),
         scopeKey: container.groupKey,
+        sourceScopeKey: moved.containerGroupKey,
         movedKey,
         directKeys: directChildKeys,
         beforeKey: anchors.beforeKey,

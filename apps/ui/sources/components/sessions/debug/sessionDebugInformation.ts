@@ -1,6 +1,7 @@
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { DEFAULT_AGENT_ID, getAgentCore } from '@/agents/catalog/catalog';
 import { t } from '@/text';
+import { getSessionName, type SessionNameSource } from '@/utils/sessions/sessionUtils';
 
 type SessionDebugMetadata = unknown;
 
@@ -64,6 +65,7 @@ export function resolveProviderSessionIdForDebug(params: Readonly<{
 export function resolveProviderSessionArtifactPath(metadata: SessionDebugMetadata): string | null {
     const record = asRecord(metadata);
     return normalizeString(record?.claudeTranscriptPath)
+        ?? normalizeString(record?.codexSessionLogPath)
         ?? normalizeString(record?.piSessionFile)
         ?? readRuntimeDescriptorPiSessionFile(metadata);
 }
@@ -78,7 +80,13 @@ export function buildSessionDebugInformation(params: Readonly<{
     const metadata = asRecord(params.session.metadata);
     const happierSessionLogPath = normalizeString(metadata?.sessionLogPath);
     const providerSessionArtifactPath = resolveProviderSessionArtifactPath(params.session.metadata);
-    const lines = [`Happier session ID: ${params.session.id}`];
+    const lines = [
+        `Session name: ${getSessionName({
+            id: params.session.id,
+            metadata: metadata as SessionNameSource['metadata'],
+        })}`,
+        `Happier session ID: ${params.session.id}`,
+    ];
 
     if (providerDisplayName && providerSessionId) {
         lines.push(`${providerDisplayName} session ID: ${providerSessionId}`);

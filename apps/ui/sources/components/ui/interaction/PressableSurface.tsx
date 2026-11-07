@@ -28,6 +28,11 @@ export type PressableSurfaceProps = Readonly<{
     children?: React.ReactNode;
     onPress?: (event: GestureResponderEvent) => void;
     onLongPress?: (event: GestureResponderEvent) => void;
+    onPressIn?: PressableProps['onPressIn'];
+    focusable?: PressableProps['focusable'];
+    pointerEvents?: PressableProps['pointerEvents'];
+    accessibilityElementsHidden?: PressableProps['accessibilityElementsHidden'];
+    importantForAccessibility?: PressableProps['importantForAccessibility'];
     disabled?: boolean;
     /** Renders the resting fill as if hovered — a control that is toggled on. */
     active?: boolean;
@@ -138,6 +143,11 @@ export const PressableSurface = React.memo((props: PressableSurfaceProps) => {
             testID={props.testID}
             onPress={disabled ? undefined : props.onPress}
             onLongPress={disabled ? undefined : props.onLongPress}
+            onPressIn={disabled ? undefined : props.onPressIn}
+            focusable={props.focusable}
+            pointerEvents={props.pointerEvents}
+            accessibilityElementsHidden={props.accessibilityElementsHidden}
+            importantForAccessibility={props.importantForAccessibility}
             onFocus={handleFocus}
             onBlur={handleBlur}
             onHoverIn={props.webTooltip ? handleHoverIn : undefined}

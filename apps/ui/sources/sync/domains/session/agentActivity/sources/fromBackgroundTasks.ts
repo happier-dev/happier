@@ -1,4 +1,4 @@
-import type { SessionBackgroundTaskRecordV1 } from '@happier-dev/protocol';
+import { isTerminalAgentActivityStatus, type SessionBackgroundTaskRecordV1 } from '@happier-dev/protocol';
 
 import type { AgentActivityLocalEntry } from '../types';
 
@@ -31,6 +31,23 @@ export function readBackgroundTaskEntryTaskId(entryId: string): string | null {
     return taskId.length > 0 ? taskId : null;
 }
 
+/**
+ * Whether the user has dismissed exactly this report.
+ *
+ * **An acknowledgement is presentation, not an outcome.** It is keyed on the record's `updatedAt`,
+ * the instant of the newest evidence the user was looking at, so any later progress or terminal
+ * report no longer matches and the row speaks for itself again. The provider record is never
+ * written: the CLI publisher owns outcomes, and a dismissal says nothing about whether the command
+ * is still running.
+ */
+function isReportAcknowledged(
+    record: SessionBackgroundTaskRecordV1,
+    acknowledgedUpdatedAtByTaskId: Readonly<Record<string, number>> | undefined,
+): boolean {
+    if (isTerminalAgentActivityStatus(record.status)) return false;
+    return acknowledgedUpdatedAtByTaskId?.[record.taskId] === record.updatedAt;
+}
+
 function readInstant(value: number | undefined): number | null {
     return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.trunc(value) : null;
 }
@@ -47,6 +64,8 @@ export function toBackgroundTaskLocalEntry(params: Readonly<{
     record: SessionBackgroundTaskRecordV1;
     /** Translated name for a record whose redacted label is absent. */
     fallbackTitle: string;
+    /** Per task, the `updatedAt` of the report the user dismissed. */
+    acknowledgedUpdatedAtByTaskId?: Readonly<Record<string, number>>;
 }>): AgentActivityLocalEntry {
     const { fallbackTitle, record } = params;
     return {
@@ -54,7 +73,9 @@ export function toBackgroundTaskLocalEntry(params: Readonly<{
         kind: 'background_task',
         // Never joined to a headline: no CLI publishes background tasks into one.
         handle: null,
-        status: record.status,
+        // A dismissed, still-nonterminal report keeps no claim of ongoing work and no invented
+        // outcome: `unknown` is the vocabulary's existing "we cannot say" (never live, never terminal).
+        status: isReportAcknowledged(record, params.acknowledgedUpdatedAtByTaskId) ? 'unknown' : record.status,
         title: record.label ?? fallbackTitle,
         // The provider's own progress or terminal sentence, which is the only prose this row has.
         metaDetail: record.summary ?? null,
@@ -67,9 +88,14 @@ export function toBackgroundTaskLocalEntry(params: Readonly<{
 export function deriveBackgroundTaskActivityEntries(params: Readonly<{
     records: readonly SessionBackgroundTaskRecordV1[];
     fallbackTitle: string;
+    acknowledgedUpdatedAtByTaskId?: Readonly<Record<string, number>>;
 }>): readonly AgentActivityLocalEntry[] {
     if (params.records.length === 0) return [];
-    return params.records.map(
-        (record) => toBackgroundTaskLocalEntry({ record, fallbackTitle: params.fallbackTitle }),
-    );
+    return params.records.map((record) => toBackgroundTaskLocalEntry({
+        record,
+        fallbackTitle: params.fallbackTitle,
+        ...(params.acknowledgedUpdatedAtByTaskId
+            ? { acknowledgedUpdatedAtByTaskId: params.acknowledgedUpdatedAtByTaskId }
+            : {}),
+    }));
 }

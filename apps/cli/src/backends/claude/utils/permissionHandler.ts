@@ -91,6 +91,12 @@ export class PermissionHandler {
     private exitedPlanModeFallbackUntilMs: number = 0;
     private metadataWatcherAbort: AbortController | null = null;
     private permissionModeUpdatedAt = 0;
+    /**
+     * True once a strictly newer intent (metadata) landed after the current message's mode was
+     * admitted. The message mode stays attached to every tool call of its turn, so without this a
+     * mid-turn switch (e.g. Auto to YOLO) would keep judging new requests by the older mode.
+     */
+    private permissionModeSupersedesMessageMode = false;
 
     constructor(session: Session) {
         this.session = session;
@@ -491,6 +497,12 @@ export class PermissionHandler {
         if (!hasUpdatedAt && mode === 'default' && this.permissionMode !== 'default' && this.permissionModeUpdatedAt > 0) {
             return;
         }
+        if (!hasUpdatedAt) {
+            // A message admission (or explicit decision) re-bases the message mode.
+            this.permissionModeSupersedesMessageMode = false;
+        } else if (updatedAt > this.permissionModeUpdatedAt && mode !== this.permissionMode) {
+            this.permissionModeSupersedesMessageMode = true;
+        }
         this.permissionMode = mode;
         if (hasUpdatedAt) {
             this.permissionModeUpdatedAt = updatedAt;
@@ -501,6 +513,7 @@ export class PermissionHandler {
     }
 
     private resolveEffectivePermissionModeForToolCall(mode: EnhancedMode): PermissionMode {
+        if (this.permissionModeSupersedesMessageMode) return this.permissionMode;
         const requestedMode = mode?.permissionMode ?? this.permissionMode;
         if (requestedMode === 'default' && this.permissionMode !== 'default' && this.permissionModeUpdatedAt > 0) {
             return this.permissionMode;

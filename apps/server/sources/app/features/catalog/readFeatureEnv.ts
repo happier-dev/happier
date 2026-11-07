@@ -9,6 +9,10 @@ import {
 import { FEATURE_ENV_KEYS } from './featureEnvSchema';
 import { resolveEffectiveWebappBaseUrl } from '../../serverUrls/effectiveServerUrls';
 
+export type AppLockFeatureEnv = Readonly<{
+  emailRecoveryEnabled: boolean;
+}>;
+
 export type AutomationsFeatureEnv = Readonly<{
   enabled: boolean;
 }>;
@@ -213,6 +217,12 @@ function parseIssuerAllowlist(raw: string | undefined): string[] {
   // Otherwise treat as a standard CSV/whitespace list of CN values.
   // CN strings commonly include spaces; split on comma/newline only.
   return parseCommaList(trimmed);
+}
+
+export function readAppLockFeatureEnv(env: NodeJS.ProcessEnv): AppLockFeatureEnv {
+  return {
+    emailRecoveryEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.appLockEmailRecoveryEnabled], false),
+  };
 }
 
 export function readAutomationsFeatureEnv(env: NodeJS.ProcessEnv): AutomationsFeatureEnv {

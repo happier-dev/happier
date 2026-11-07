@@ -17,6 +17,7 @@ import {
 import type { InboxActionOperationEntry } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import { actionOperationReentry } from '@/sync/domains/actionOperations/actionOperationReentry';
+import { readDisplayPathForSession } from '@/sync/ops/sessionMachineTarget';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 import {
     getSessionDisplayTitle,
@@ -24,7 +25,10 @@ import {
     type SessionNameSource,
 } from '@/utils/sessions/sessionUtils';
 
-import type { ActionOperationObservationPresentation } from './actionOperationPresentation';
+import {
+    resolveActionOperationDetailContent,
+    type ActionOperationObservationPresentation,
+} from './actionOperationPresentation';
 
 export type ActionOperationActivityModel = Readonly<{
     operations: readonly ActionOperationSnapshotV1[];
@@ -57,6 +61,38 @@ export function resolveActionOperationSessionNameById(
     return resolved;
 }
 
+/**
+ * Row context: the scoped session's name, or for an operation that produced a session
+ * (e.g. Create session) the new session's name, project folder and the machine it runs on.
+ */
+export function resolveActionOperationContext(
+    operation: ActionOperationSnapshotV1,
+    sessionNameById: ReadonlyMap<string, string>,
+    sessionFolderById: ReadonlyMap<string, string>,
+    machineName: string | null,
+): string | null {
+    if (operation.scope.sessionId) {
+        return sessionNameById.get(operation.scope.sessionId) ?? null;
+    }
+    const createdSessionId = resolveActionOperationDetailContent(operation).openSessionId;
+    const sessionName = createdSessionId ? sessionNameById.get(createdSessionId) : undefined;
+    const folder = createdSessionId ? sessionFolderById.get(createdSessionId) : undefined;
+    return [sessionName, folder !== sessionName ? folder : undefined, machineName].filter(Boolean).join(' · ') || null;
+}
+
+export function resolveActionOperationSessionFolderById(
+    sessions: readonly SessionNameSource[],
+): ReadonlyMap<string, string> {
+    const resolved = new Map<string, string>();
+    for (const session of sessions) {
+        if (!session.metadata) continue;
+        const folder = readDisplayPathForSession({ sessionId: session.id, metadata: session.metadata })
+            .split('/').filter(Boolean).pop();
+        if (folder) resolved.set(session.id, folder);
+    }
+    return resolved;
+}
+
 export function useActionOperationActivityModel(): ActionOperationActivityModel {
     const accountId = useActiveServerAccountScope()?.accountId ?? '';
     const operations = useAllActionOperations(accountId);
@@ -74,6 +110,10 @@ export function useActionOperationActivityModel(): ActionOperationActivityModel 
     const machines = useAllMachines();
     const sessionNameById = React.useMemo(
         () => resolveActionOperationSessionNameById(sessions, sessionListRenderables),
+        [sessionListRenderables, sessions],
+    );
+    const sessionFolderById = React.useMemo(
+        () => resolveActionOperationSessionFolderById([...sessionListRenderables, ...sessions]),
         [sessionListRenderables, sessions],
     );
     const machineById = React.useMemo(
@@ -108,12 +148,14 @@ export function useActionOperationActivityModel(): ActionOperationActivityModel 
         [observations, unavailableOperationIds],
     );
     const contextForOperation = React.useCallback((operation: ActionOperationSnapshotV1): string | null => {
-        if (operation.scope.sessionId) {
-            return sessionNameById.get(operation.scope.sessionId) ?? null;
-        }
         const machine = machineById.get(operation.scope.machineId);
-        return machine ? getMachineDisplayName(machine) : null;
-    }, [machineById, sessionNameById]);
+        return resolveActionOperationContext(
+            operation,
+            sessionNameById,
+            sessionFolderById,
+            machine ? getMachineDisplayName(machine) : null,
+        );
+    }, [machineById, sessionFolderById, sessionNameById]);
     const clearRecent = React.useCallback(() => {
         if (!accountId) return;
         const preserveOperationIds = new Set(

@@ -161,6 +161,8 @@ describe('Native notification permission entry points', () => {
         })));
     });
     afterEach(async () => {
+        const { deactivateAppLock } = await import('@/auth/appLock/appLockRuntime');
+        await deactivateAppLock();
         setServerReachabilityNetworkAllowed(true);
         await serverScopedRpcSocketPool.stopAll();
         serverScopedRpcSocketPool.resetForTests();
@@ -168,6 +170,47 @@ describe('Native notification permission entry points', () => {
         vi.unstubAllGlobals();
         vi.unstubAllEnvs();
         vi.restoreAllMocks();
+    });
+
+    it('refuses a live notification decision after this app is re-locked with credentials still in memory', async () => {
+        const runtime = await import('@/auth/appLock/appLockRuntime');
+        vi.stubGlobal('BroadcastChannel', undefined);
+        await runtime.loadAppLock();
+        await runtime.activateAppLock({
+            v: 1, lockId: 'lock_0123456789abcdefghijkl', email: 'owner@example.test', serverUrl,
+            wrapped: { kdf: { alg: 'scrypt', N: 1024, r: 8, p: 1, salt: 'c2FsdA==' },
+                passwordWrappedKey: 'x', recoveryWrappedKey: 'y' },
+            autoLockMinutes: 5, biometric: false,
+        }, new Uint8Array(32));
+        runtime.lockAppLock();
+        expect(runtime.readAppLockCredentialSealing()).toMatchObject({ enabled: true, dataKey: expect.any(Uint8Array) });
+        await expect(handleNotificationBackgroundTask({ data: response() })).resolves.toMatchObject({ status: 'not_sent' });
+        expect(boundary.rpc).not.toHaveBeenCalled();
+    });
+
+    it('does not issue after the app re-locks during asynchronous notification target loading', async () => {
+        const runtime = await import('@/auth/appLock/appLockRuntime');
+        vi.stubGlobal('BroadcastChannel', undefined);
+        await runtime.loadAppLock();
+        await runtime.activateAppLock({
+            v: 1, lockId: 'lock_0123456789abcdefghijkl', email: 'owner@example.test', serverUrl,
+            wrapped: { kdf: { alg: 'scrypt', N: 1024, r: 8, p: 1, salt: 'c2FsdA==' },
+                passwordWrappedKey: 'x', recoveryWrappedKey: 'y' },
+            autoLockMinutes: 5, biometric: false,
+        }, new Uint8Array(32));
+        const target = await import('./resolveNotificationPermissionTarget');
+        let release!: () => void;
+        const stalledTarget = new Promise<typeof target>((resolve) => { release = () => resolve(target); });
+        let reached!: () => void;
+        const started = new Promise<void>((resolve) => { reached = resolve; });
+        const pending = executeNotificationPermissionAction(parsed(), {
+            importTarget: () => { reached(); return stalledTarget; },
+        });
+        await started;
+        runtime.lockAppLock();
+        release();
+        await expect(pending).resolves.toMatchObject({ status: 'not_sent' });
+        expect(boundary.rpc).not.toHaveBeenCalled();
     });
 
     it('executes a foreground press even with task registration and coalesces the task race', async () => {

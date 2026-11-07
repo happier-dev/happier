@@ -46,4 +46,34 @@ describe('Claude PermissionHandler - metadata updates while waiting for permissi
     expect(client.agentState.requests['toolu_metadata_change_1']).toBeUndefined();
     expect(client.agentState.completedRequests['toolu_metadata_change_1']).toBeTruthy();
   });
+  it('applies a yolo flip that arrived mid-turn to later tool calls that still carry the older per-message mode', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('metadata-update-yolo-later-tool-call');
+    const { PermissionHandler } = await import('./permissionHandler');
+    const handler = new PermissionHandler(session);
+
+    // The turn started in Auto (safe-yolo): its message mode stays attached to every tool call of the turn.
+    const mode: EnhancedMode = { permissionMode: 'safe-yolo' };
+    handler.handleModeChange(mode.permissionMode);
+
+    client.updateMetadata((current) => ({
+      ...current,
+      permissionMode: 'yolo',
+      permissionModeUpdatedAt: Date.now() + 1_000,
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const signal = new AbortController();
+    const result = await withTimeout(
+      handler.handleToolCall(
+        'Write',
+        { file_path: '/tmp/metadata-update-later-tool-call.txt', content: 'x' },
+        mode,
+        { signal: signal.signal, toolUseId: 'toolu_metadata_later_1' },
+      ),
+      1_500,
+    );
+
+    expect(result).toMatchObject({ behavior: 'allow' });
+    expect(client.agentState.requests['toolu_metadata_later_1']).toBeUndefined();
+  });
 });

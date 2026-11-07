@@ -46,6 +46,7 @@ import {
     type SessionBackgroundTaskActivity,
     type SessionBackgroundTaskRow,
 } from './useSessionBackgroundTaskActivity';
+import { useBackgroundTaskAcknowledgements } from './useBackgroundTaskAcknowledgements';
 import { useSessionSubagents } from './useSessionSubagents';
 
 /**
@@ -209,6 +210,9 @@ function useMergedSessionAgentActivity(params: Readonly<{
     backgroundTasks: SessionBackgroundTaskActivity;
 }>): SessionAgentActivityState {
     const { backgroundTasks, enrichment, messages, metadata, sessionId, subagents } = params;
+    // The one place a dismissed stale report is applied, so the roster, the header chip and the
+    // tab badge (which all read this merge) agree about it.
+    const { acknowledgedUpdatedAtByTaskId } = useBackgroundTaskAcknowledgements(sessionId);
 
     const headline = React.useMemo<SessionAgentActivityHeadlineV1 | null>(
         () => readSessionAgentActivityHeadlineFromMetadata(metadata),
@@ -242,6 +246,7 @@ function useMergedSessionAgentActivity(params: Readonly<{
             // thing on it, and the section model re-orders by status anyway.
             local: [...local, ...deriveBackgroundTaskActivityEntries({
                 records: backgroundTasks.records,
+                acknowledgedUpdatedAtByTaskId,
                 // A command with no redacted label must not borrow the roster's "Unnamed agent":
                 // it is a headless process, and calling it an agent is the one claim this kind
                 // exists to stop making.
@@ -249,6 +254,7 @@ function useMergedSessionAgentActivity(params: Readonly<{
             })],
         });
     }, [
+        acknowledgedUpdatedAtByTaskId,
         backgroundTasks.records,
         enrichment.activityPreviewById,
         enrichment.lastActivityAtMsById,

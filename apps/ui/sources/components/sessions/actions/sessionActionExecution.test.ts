@@ -33,7 +33,7 @@ import {
     SESSION_ACTION_STOP_ID,
     SESSION_ACTION_UNARCHIVE_ID,
 } from './sessionActionIds';
-import { executeSessionAction } from './sessionActionExecution';
+import { executeSessionAction, executeDirectSessionDelete } from './sessionActionExecution';
 import { executeSessionBulkAction, SESSION_BULK_ACTION_IDS } from './sessionBulkActionExecution';
 import { isSessionArchivePending, stopSessionAndMaybeArchive } from '../sessionStopArchiveFlow';
 import { createDeferred } from '@/dev/testkit';
@@ -77,7 +77,7 @@ describe('delete eligibility at execution', () => {
         vi.restoreAllMocks();
     });
 
-    it('stops a running session once and waits for inactivity before deleting it', async () => {
+    it.each([false, true])('stops once and waits for inactivity before deleting through the row entry=%s', async (rowEntry) => {
         const serverId = upsertServerProfile({ serverUrl: 'https://stop-delete.example' }).id;
         setActiveServerId(serverId);
         vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: 'header.eyJzdWIiOiJtZSJ9.signature' });
@@ -86,8 +86,10 @@ describe('delete eligibility at execution', () => {
         // Session RPC and HTTP are transport boundaries; the strategy, flow and store stay real.
         const stop = vi.spyOn(apiSocket, 'sessionRPC').mockResolvedValue({ status: 'requested' });
         const request = vi.spyOn(runtimeFetch, 'runtimeFetch').mockImplementation(async () => Response.json({ success: true }));
-        const result = executeSessionAction({ actionId: SESSION_ACTION_DELETE_ID,
-            target: createSessionActionTarget({ session, serverId, isConnected: true }) });
+        const target = createSessionActionTarget({ session, serverId, isConnected: true });
+        const result = rowEntry
+            ? executeDirectSessionDelete({ target, sessionName: 'Example' })
+            : executeSessionAction({ actionId: SESSION_ACTION_DELETE_ID, target });
         const outcome = result.then(() => null, (error: unknown) => error);
         await vi.waitFor(() => expect(stop).toHaveBeenCalled());
         expect(request.mock.calls.filter(([, init]) => init?.method === 'DELETE')).toHaveLength(0);

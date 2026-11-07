@@ -48,7 +48,10 @@ export const MarkdownSpansView = React.memo((props: MarkdownSpansViewProps) => {
                             <Text
                                 key={index}
                                 accessibilityRole="link"
-                                onPress={() => props.onLinkPress?.(span.url!)}
+                                onPress={(event) => {
+                                    event?.stopPropagation();
+                                    props.onLinkPress?.(span.url!);
+                                }}
                                 selectable={inlineTextSelectable}
                                 style={linkStyle}
                             >

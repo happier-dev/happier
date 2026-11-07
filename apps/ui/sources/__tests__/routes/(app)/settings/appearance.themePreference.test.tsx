@@ -4,7 +4,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderSettingsView, standardCleanup } from '@/dev/testkit';
 import { BUILT_IN_THEME_PROFILES } from '@/theme/profiles/builtInThemeProfiles';
-import type { ThemeProfilesLocalStateV1 } from '@/theme/profiles/themeProfileTypes';
 import { installSessionSettingsEntryModuleMocks, resetSessionSettingsEntryState, sessionSettingsEntryState } from './sessionSettingsEntryTestHelpers';
 
 const testGlobal = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean };
@@ -76,21 +75,10 @@ installSessionSettingsEntryModuleMocks({
     storageModule: async (importOriginal) => {
         const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
         const mutableSetting = createMutableSettingHook(shared.settingsState);
-        const { resolveAccountThemeProfileView } = await import('@/sync/domains/settings/themeProfiles');
-        const resolveView = (state: ThemeProfilesLocalStateV1) => resolveAccountThemeProfileView({
-            profiles: [], legacy: state, selection: null, legacyScope: null, scope: null,
-        });
         return createStorageModuleMock({
             importOriginal,
             overrides: {
                 useSettingMutable: mutableSetting as typeof import('@/sync/domains/state/storage')['useSettingMutable'],
-                useThemeProfilesMutable: () => {
-                    const before = resolveView(shared.settingsState.themeProfiles as ThemeProfilesLocalStateV1);
-                    return [before.state, next => {
-                        shared.settingsState.themeProfiles = next;
-                        return resolveView(next);
-                    }, before];
-                },
                 useLocalSettingMutable: mutableSetting as typeof import('@/sync/domains/state/storage')['useLocalSettingMutable'],
             },
         });
@@ -142,6 +130,46 @@ afterEach(() => {
 });
 
 describe('Appearance settings theme preference', () => {
+    it('steps through current themes in dropdown order and stops at the ends', async () => {
+        const mod = await import('@/app/(app)/settings/appearance');
+        const screen = await renderSettingsView(React.createElement(mod.default), { flushOptions: { cycles: 0 } });
+
+        await act(async () => { screen.pressByTestId('settings-theme-selector-next'); });
+        expect(shared.settingsState.themePreference).toBe('dark');
+        // This storage boundary records writes without emitting subscription updates.
+        await screen.update(React.createElement(mod.default, { key: 'dark' }));
+        await act(async () => { screen.pressByTestId('settings-theme-selector-previous'); });
+        expect(shared.settingsState.themePreference).toBe('light');
+        await screen.update(React.createElement(mod.default, { key: 'light' }));
+        await act(async () => { screen.pressByTestId('settings-theme-selector-previous'); });
+        expect(shared.settingsState.themePreference).toBe('adaptive');
+        await screen.update(React.createElement(mod.default, { key: 'adaptive' }));
+        expect(screen.findByTestId('settings-theme-selector-previous')?.props.disabled).toBe(true);
+
+        shared.settingsState.themePreference = 'dark';
+        shared.settingsState.themeProfiles = {
+            activeProfileIds: { light: null, dark: 'custom-last' },
+            profiles: [{ schemaVersion: 1, id: 'custom-last', name: 'Last', createdAt: '', updatedAt: '',
+                base: { light: 'light', dark: 'dark' }, overrides: { light: {}, dark: { 'text.primary': '#ffffff' } } }],
+        };
+        await screen.update(React.createElement(mod.default, { key: 'custom' }));
+        expect(screen.findByTestId('settings-theme-selector-next')?.props.disabled).toBe(true);
+    });
+
+    it('steps adaptive slots through matching themes without leaving adaptive mode', async () => {
+        shared.settingsState.themePreference = 'adaptive';
+        const mod = await import('@/app/(app)/settings/appearance');
+        const screen = await renderSettingsView(React.createElement(mod.default), { flushOptions: { cycles: 0 } });
+        expect(screen.findByTestId('settings-theme-dark-selector-previous')?.props.disabled).toBe(true);
+        await act(async () => { screen.pressByTestId('settings-theme-dark-selector-next'); });
+        const firstDark = BUILT_IN_THEME_PROFILES.find((definition) => definition.preferredMode === 'dark')!;
+        expect(shared.settingsState.themePreference).toBe('adaptive');
+        expect((shared.settingsState.themeProfiles as { activeProfileIds: { dark: string | null } }).activeProfileIds.dark).toBe(firstDark.profile.id);
+        await screen.update(React.createElement(mod.default, { key: 'selected-slot' }));
+        await act(async () => { screen.pressByTestId('settings-theme-dark-selector-previous'); });
+        expect((shared.settingsState.themeProfiles as { activeProfileIds: { dark: string | null } }).activeProfileIds.dark).toBeNull();
+    });
+
     const findDropdownByTriggerTestId = (
         screen: Awaited<ReturnType<typeof renderSettingsView>>,
         testID: string,

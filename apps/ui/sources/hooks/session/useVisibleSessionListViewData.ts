@@ -18,6 +18,8 @@ import {
 } from '@/sync/domains/session/listing/sessionListIndex';
 import { buildSessionListViewDataFromIndex } from '@/sync/domains/session/listing/sessionListViewDataFromIndex';
 import { applySessionFoldersToSessionListViewData } from '@/sync/domains/session/listing/sessionListViewData';
+import { applySessionProjectAssignments } from '@/sync/domains/session/listing/applySessionProjectAssignments';
+import { readSessionProjectAssignments } from '@/sync/domains/session/organization/projectAssignment';
 import {
     areSessionListGroupOrderMapsEqual,
     normalizeSessionListGroupOrderV1ForSource,
@@ -790,6 +792,13 @@ function useSessionListDataState(
     options: Pick<VisibleSessionListViewDataOptions, 'sessionListSurfaceDataActive'> = {},
 ): SessionListDataState {
     const sessionListSurfaceDataActive = options.sessionListSurfaceDataActive !== false;
+    const appearances = storage((state) => state.sessionOrganizationAppearancesBySessionKey);
+    const projectAssignments = React.useMemo(() => readSessionProjectAssignments(appearances), [appearances]);
+    const groupInactiveSessionsByProject = useSetting('groupInactiveSessionsByProject');
+    const activeGroupingV1 = useSetting('sessionListActiveGroupingV1');
+    const inactiveGroupingV1 = useSetting('sessionListInactiveGroupingV1');
+    const sectionModeV1 = useSetting('sessionListSectionModeV1');
+    const workspacePathDisplayModeV1 = useSetting('workspacePathDisplayModeV1');
     const activeData = useSessionListViewData();
     const openApprovalSessionIdList = useOpenApprovalSessionIds();
     const hideInactiveSessions = useSetting('hideInactiveSessions') === true;
@@ -843,9 +852,13 @@ function useSessionListDataState(
         selection.enabled,
     ]);
 
+    const projectSource = React.useMemo(() => applySessionProjectAssignments(source, projectAssignments, {
+        groupInactiveSessionsByProject: groupInactiveSessionsByProject === true,
+        activeGroupingV1, inactiveGroupingV1, sectionModeV1, workspacePathDisplayModeV1,
+    }), [source, projectAssignments, groupInactiveSessionsByProject, activeGroupingV1, inactiveGroupingV1, sectionModeV1, workspacePathDisplayModeV1]);
     const storageFilteredSource = React.useMemo(
-        () => applySessionListStorageFilter(source, storageFilter),
-        [source, storageFilter],
+        () => applySessionListStorageFilter(projectSource, storageFilter),
+        [projectSource, storageFilter],
     );
 
     const normalizedSessionFolders = React.useMemo(

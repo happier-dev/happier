@@ -9,7 +9,7 @@ import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { Switch } from '@/components/ui/forms/Switch';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
-import { listMcpQuickInstallPresets, type McpQuickInstallPresetId } from '@/sync/domains/settings/mcpServers/mcpQuickInstallCatalog';
+import { listAvailableMcpQuickInstallPresets, type McpQuickInstallPresetId } from '@/sync/domains/settings/mcpServers/mcpQuickInstallCatalog';
 
 import { McpServerBadgePills } from './McpServerBadgePills';
 import { describeConfiguredServerEndpoint, resolveBindingBadgeLabels, resolveTransportIconName } from './mcpServerUi';
@@ -26,7 +26,7 @@ export const McpConfiguredServersTab = React.memo(function McpConfiguredServersT
     onOpenQuickInstall: (presetId: McpQuickInstallPresetId) => void;
 }>) {
     const { theme } = useUnistyles();
-    const quickInstallPresets = React.useMemo(() => listMcpQuickInstallPresets(), []);
+    const quickInstallPresets = React.useMemo(() => listAvailableMcpQuickInstallPresets(props.settings), [props.settings]);
 
     return (
         <>
@@ -95,18 +95,20 @@ export const McpConfiguredServersTab = React.memo(function McpConfiguredServersT
                 />
             </ItemGroup>
 
-            <ItemGroup title={t('settings.mcpServersQuickInstallTitle')} footer={t('settings.mcpServersQuickInstallSubtitle')}>
-                {quickInstallPresets.map((preset) => (
-                    <Item
-                        key={preset.id}
-                        testID={`settings.mcpServers.quickInstall.${preset.id}`}
-                        title={preset.title}
-                        subtitle={preset.description}
-                        icon={<Icon name="lightning" size={29} color={theme.colors.state.success.foreground} />}
-                        onPress={() => props.onOpenQuickInstall(preset.id)}
-                    />
-                ))}
-            </ItemGroup>
+            {quickInstallPresets.length > 0 ? (
+                <ItemGroup title={t('settings.mcpServersQuickInstallTitle')} footer={t('settings.mcpServersQuickInstallSubtitle')}>
+                    {quickInstallPresets.map((preset) => (
+                        <Item
+                            key={preset.id}
+                            testID={`settings.mcpServers.quickInstall.${preset.id}`}
+                            title={preset.title}
+                            subtitle={preset.description}
+                            icon={<Icon name="lightning" size={29} color={theme.colors.state.success.foreground} />}
+                            onPress={() => props.onOpenQuickInstall(preset.id)}
+                        />
+                    ))}
+                </ItemGroup>
+            ) : null}
 
             <ItemGroup title={t('settings.mcpServersAdvancedTitle')} footer={t('settings.mcpServersAdvancedSubtitle')}>
                 <Item

@@ -315,9 +315,10 @@ function flattenStyle(style: unknown): Record<string, unknown> {
     return flattened;
 }
 
+const { AgentInput } = await import('./AgentInput');
+
 describe('AgentInput (permission requests)', () => {
     it('renders PermissionFooter when pending permission requests are provided', async () => {
-        const { AgentInput } = await import('./AgentInput');
 
         const screen = await renderScreen(React.createElement(AgentInput as any, {
             value: '',
@@ -336,7 +337,6 @@ describe('AgentInput (permission requests)', () => {
     });
 
     it('renders permission requests inside a clamped scroll container', async () => {
-        const { AgentInput } = await import('./AgentInput');
 
         const screen = await renderScreen(React.createElement(AgentInput as any, {
             value: '',
@@ -356,7 +356,6 @@ describe('AgentInput (permission requests)', () => {
     });
 
     it('does not reserve the maximum permission height before content is measured', async () => {
-        const { AgentInput } = await import('./AgentInput');
 
         const screen = await renderScreen(React.createElement(AgentInput as any, {
             value: '',
@@ -379,7 +378,6 @@ describe('AgentInput (permission requests)', () => {
     });
 
     it('does not clamp permission requests above the host panel height', async () => {
-        const { AgentInput } = await import('./AgentInput');
 
         const screen = await renderScreen(React.createElement(AgentInput as any, {
             value: '',

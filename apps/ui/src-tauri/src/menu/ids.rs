@@ -15,6 +15,8 @@ pub const STOP_SERVICES_AND_QUIT_MENU_ID: &str = "stop-services-and-quit";
 pub const OPEN_UPDATES_MENU_ID: &str = "open-updates";
 /// Reveals the main window at Settings.
 pub const OPEN_SETTINGS_MENU_ID: &str = "open-settings";
+/// Locks the current app window through the app-lock runtime.
+pub const LOCK_NOW_MENU_ID: &str = "lock-now";
 /// The tray's "Start at login" check item — the one login-start setting (R16 b).
 pub const TOGGLE_START_AT_LOGIN_MENU_ID: &str = "toggle-start-at-login";
 
@@ -60,6 +62,7 @@ pub enum DesktopMenuAction {
     ShowMainWindow,
     OpenUpdates,
     OpenSettings,
+    LockNow,
     QuitApp,
     StopServicesAndQuit,
     ToggleStartAtLogin,
@@ -76,6 +79,7 @@ pub fn resolve_desktop_menu_action(menu_item_id: &str) -> Option<DesktopMenuActi
         SHOW_MAIN_WINDOW_MENU_ID => Some(DesktopMenuAction::ShowMainWindow),
         OPEN_UPDATES_MENU_ID => Some(DesktopMenuAction::OpenUpdates),
         OPEN_SETTINGS_MENU_ID => Some(DesktopMenuAction::OpenSettings),
+        LOCK_NOW_MENU_ID => Some(DesktopMenuAction::LockNow),
         QUIT_APP_MENU_ID => Some(DesktopMenuAction::QuitApp),
         STOP_SERVICES_AND_QUIT_MENU_ID => Some(DesktopMenuAction::StopServicesAndQuit),
         TOGGLE_START_AT_LOGIN_MENU_ID => Some(DesktopMenuAction::ToggleStartAtLogin),

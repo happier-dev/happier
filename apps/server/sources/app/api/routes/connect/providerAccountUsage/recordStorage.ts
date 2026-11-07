@@ -330,6 +330,17 @@ export async function requestProviderAccountUsageRefresh(params: Readonly<{
     return updated.count > 0 ? "written" : "not_found";
 }
 
+/** Lists only outstanding requests owned by this account, including records a restarted daemon has not seen. */
+export async function listProviderAccountUsageRefreshRequests(accountId: string): Promise<string[]> {
+    const rows = await db.providerAccountUsageRecord.findMany({
+        where: { accountId, refreshRequestedAt: { not: null } },
+        select: { recordId: true, fetchedAt: true, refreshRequestedAt: true },
+        orderBy: { recordId: "asc" },
+    });
+    return rows.filter((row) => row.refreshRequestedAt !== null
+        && (row.fetchedAt === null || row.refreshRequestedAt > row.fetchedAt)).map((row) => row.recordId);
+}
+
 export async function deleteProviderAccountUsageRecord(params: Readonly<{
     accountId: string;
     recordId: string;

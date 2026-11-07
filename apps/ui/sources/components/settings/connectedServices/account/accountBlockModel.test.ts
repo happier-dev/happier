@@ -21,6 +21,7 @@ function meterRow(overrides: Partial<ConnectedServiceQuotaGaugeMeterRow>): Conne
         detailRightLabel: '60% left',
         usedLimitSemantics: null,
         usedLimitLabel: null,
+        resetAtMs: null,
         resetLabel: null,
         tone: 'neutral',
         ...overrides,
@@ -33,7 +34,8 @@ describe('accountBlockModel', () => {
             unavailable: () => '',
             remaining: () => '', remainingWithReset: () => '', used: () => '',
             durationNow: () => '', durationOutdated: () => '', durationDaysHours: () => '',
-            durationHoursMinutes: () => '', durationHours: () => '', durationMinutes: () => '',
+            durationHoursMinutes: () => '', durationMinutes: () => '',
+            durationHoursMinutesSeconds: () => '', durationMinutesSeconds: () => '',
             subscriptionEnds: () => '', subscriptionEndsInDays: () => '',
             subscriptionRenews: () => '', subscriptionRenewsInDays: () => '',
         };
@@ -62,14 +64,16 @@ describe('accountBlockModel', () => {
                     label: 'Weekly',
                     tone: 'success',
                     remaining: 0.6,
-                    detailLabel: '60% left',
+                    remainingPct: 60,
+                    resetAtMs: null,
                 },
                 {
                     meterId: 'daily',
                     label: 'Daily',
                     tone: 'danger',
                     remaining: 0.08,
-                    detailLabel: '8% left',
+                    remainingPct: 8,
+                    resetAtMs: null,
                 },
             ]);
         });

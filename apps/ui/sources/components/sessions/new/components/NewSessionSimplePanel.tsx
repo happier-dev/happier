@@ -22,6 +22,7 @@ import {
 } from '@/components/sessions/new/components/NewSessionComposerCloseButton';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { AgentInput } from '@/components/sessions/agentInput';
+import { useAgentProviderUsageRefresh } from '@/components/sessions/usage/useAgentProviderUsageRefresh';
 import { AttachmentFilePicker } from '@/components/sessions/attachments/AttachmentFilePicker';
 import { PopoverBoundaryProvider } from '@/components/ui/popover';
 import { t } from '@/text';
@@ -132,6 +133,8 @@ export type NewSessionSimplePanelProps = Readonly<{
     acpConfigOptionOverrides?: AcpConfigOptionOverridesV1 | null;
     setSessionConfigOptionOverride?: (configId: string, value: string) => void;
     connectionStatus: React.ComponentProps<typeof AgentInput>['connectionStatus'];
+    providerUsageGauge?: React.ComponentProps<typeof AgentInput>['providerUsageGauge'];
+    agentPickerUsageGaugesByOptionId?: React.ComponentProps<typeof AgentInput>['agentPickerUsageGaugesByOptionId'];
     machineName: string | undefined;
     machinePopover?: React.ComponentProps<typeof AgentInput>['machinePopover'];
     selectedMachineId?: string | null;
@@ -473,6 +476,7 @@ function NewSessionSimplePanelComposer({
     // The composer scaffold computes the available panel height synchronously at mount
     // (seeded from the viewport + safe-area insets), so the bottom-anchored panel can
     // size from the settled value on its first frame.
+    const refreshProviderUsage = useAgentProviderUsageRefresh(props.agentType);
     const availablePanelHeight = useComposerAvailablePanelHeight();
     const isFloatingComposer = isNewSessionFloatingComposerPresentation({
         variant: 'simple',
@@ -521,6 +525,7 @@ function NewSessionSimplePanelComposer({
                         panelMaxHeightMode="host-constrained"
                         submitAccessibilityLabel={props.submitAccessibilityLabel}
                         agentType={props.agentType}
+                        onProviderUsageRefresh={refreshProviderUsage}
                         agentLabel={props.agentLabel}
                         onAgentClick={props.handleAgentClick}
                         agentPickerOptions={props.agentPickerOptions}
@@ -550,6 +555,8 @@ function NewSessionSimplePanelComposer({
                         acpConfigOptionOverridesOverride={props.acpConfigOptionOverrides ?? null}
                         onSessionConfigOptionChange={props.setSessionConfigOptionOverride}
                         connectionStatus={props.connectionStatus}
+                        providerUsageGauge={props.providerUsageGauge}
+                        agentPickerUsageGaugesByOptionId={props.agentPickerUsageGaugesByOptionId}
                         statusBadges={props.statusBadges}
                         statusTrailingActions={props.statusTrailingActions}
                         showStatusPermissionMode={false}

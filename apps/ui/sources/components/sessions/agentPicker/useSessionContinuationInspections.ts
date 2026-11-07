@@ -5,6 +5,7 @@ import type {
     SessionContinuationMachinePresenceV1,
 } from '@happier-dev/protocol';
 
+import { log } from '@/log';
 import { inspectSessionContinuationsOnMachine } from '@/sync/ops/sessionContinuationInspection';
 
 import type {
@@ -119,6 +120,7 @@ export function useSessionContinuationInspections(
         // No cancellation on cleanup: closing the picker mid-flight must still
         // record the answers, or the claims above would strand the rows on
         // "checking" for the rest of the connection.
+        const startedAtMs = Date.now();
         void inspectSessionContinuationsOnMachine({
                 machineId,
                 serverId,
@@ -127,6 +129,8 @@ export function useSessionContinuationInspections(
             })
                 .catch(() => pending.map(() => INDETERMINATE))
                 .then((results) => {
+                    // Rows read "checking" (and can't be applied) until this answers, so its latency is worth seeing.
+                    log.log(`[agentPicker] session.continuation.inspect answered in ${Date.now() - startedAtMs}ms for ${pending.length} target(s)`);
                     // An answer read over a connection or machine state that no
                     // longer applies is discarded rather than shown.
                     if (scopeRef.current !== scope) return;

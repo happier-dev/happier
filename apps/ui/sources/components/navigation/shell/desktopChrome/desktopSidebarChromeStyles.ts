@@ -109,9 +109,9 @@ export const desktopSidebarChromeStyles = StyleSheet.create((theme) => ({
         borderRadius: DESKTOP_WINDOW_CONTROLS_SLOT_MIN_HEIGHT_PX / 2,
     },
     titleContainerLeft: {
-        flexGrow: 1,
+        flexGrow: 0,
         flexShrink: 1,
-        flexBasis: 0,
+        flexBasis: 'auto',
         minWidth: 0,
         flexDirection: 'column',
         alignItems: 'flex-start',

@@ -2,7 +2,7 @@ import type { MarkdownSpan } from "./parseMarkdown";
 import { normalizeMarkdownLinkUrl } from './enriched/enrichedMarkdownLinkHandling';
 
 // Updated pattern to handle nested markdown and asterisks
-const pattern = /(\*\*(.*?)(?:\*\*|$))|(\*(.*?)(?:\*|$))|(\[([^\]]+)\](?:\(([^)]+)\))?)|(`(.*?)(?:`|$))/g;
+const pattern = /(\*\*(.*?)(?:\*\*|$))|(\*(.*?)(?:\*|$))|(\[((?:\\.|[^\]\\])+)\](?:\(([^)]+)\))?)|(`(.*?)(?:`|$))/g;
 
 const autoLinkPattern = /\b((?:https?:\/\/|www\.)[^\s<]+)/g;
 const trailingPunctuationPattern = /[.,)\]}]+$/;
@@ -72,7 +72,7 @@ export function parseMarkdownSpans(markdown: string, header: boolean) {
         } else if (match[5]) {
             // Link - handle incomplete links (no URL part)
             if (match[7]) {
-                spans.push({ styles: [], text: match[6], url: normalizeMarkdownLinkUrl(match[7]) });
+                spans.push({ styles: [], text: match[6].replace(/\\([\\`*_[\]{}()<>!|])/g, '$1'), url: normalizeMarkdownLinkUrl(match[7]) });
             } else {
                 // If no URL part, treat as plain text with brackets
                 spans.push({ styles: [], text: `[${match[6]}]`, url: null });

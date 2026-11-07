@@ -30,6 +30,7 @@ import { featuresRoutes } from "./routes/features/featuresRoutes";
 import { sessionPendingRoutes } from "./routes/session/pendingRoutes";
 import { bugReportDiagnosticsRoutes } from "./routes/diagnostics/bugReportDiagnosticsRoutes";
 import { automationRoutes } from "./routes/automations/automationRoutes";
+import { appLockRecoveryRoutes } from "./routes/appLock/appLockRecoveryRoutes";
 import { V2_SESSION_LIST_SERVER_TIMING_REQUEST_HEADER } from "./routes/session/v2SessionListServerTiming";
 import { resolveApiRateLimitPluginOptions, resolveApiTrustProxy } from "./utils/apiRateLimitPolicy";
 import { enableApiCompression } from "./utils/enableApiCompression";
@@ -146,6 +147,7 @@ export async function startApi() {
     shareRoutes(typed);
     publicShareRoutes(typed);
     automationRoutes(typed);
+    appLockRecoveryRoutes(typed);
 
     // Start HTTP 
     const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3005;

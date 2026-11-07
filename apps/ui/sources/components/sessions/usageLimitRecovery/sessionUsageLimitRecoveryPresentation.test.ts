@@ -648,6 +648,7 @@ describe('sessionUsageLimitRecoveryPresentation', () => {
         });
 
         expect(presentation?.banner.body).toBe(`session.usageLimitRecovery.resetBody:time:${resetAtMs}`);
+        expect(presentation?.banner.resetCountdown).toEqual({ deadlineMs: resetAtMs, timeLabel: `time:${resetAtMs}` });
         expect(presentation?.banner.primaryAction.kind).toBe('cancel');
         expect(badge?.label).toBe(`session.usageLimitRecovery.statusWaitingResetUntil:time:${resetAtMs}`);
     });

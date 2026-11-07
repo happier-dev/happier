@@ -875,7 +875,7 @@ describe('socket update handling: plaintext update-session', () => {
         }
     });
 
-    it('defers hidden encrypted metadata while applying only public session-list projections', async () => {
+    it('hydrates hidden encrypted metadata title while deferring agentState and applying public session-list projections', async () => {
         storage.getState().applySessions([{
             ...buildSession('s1'),
             encryptionMode: 'e2ee',
@@ -927,7 +927,7 @@ describe('socket update handling: plaintext update-session', () => {
             },
         });
 
-        expect(decryptMetadata).not.toHaveBeenCalled();
+        expect(decryptMetadata).toHaveBeenCalledTimes(1);
         expect(decryptAgentState).not.toHaveBeenCalled();
         expect(markSessionStateHydrationDeferred).toHaveBeenCalledWith('s1');
         const applySessionsSpy = params.applySessions as unknown as ReturnType<typeof vi.fn>;
@@ -940,8 +940,8 @@ describe('socket update handling: plaintext update-session', () => {
             latestTurnStatus: 'completed',
             latestTurnStatusObservedAt: 1_950,
             meaningfulActivityAt: 1_950,
-            metadata: expect.objectContaining({ path: '/tmp', host: 'localhost' }),
-            metadataVersion: 1,
+            metadata: expect.objectContaining({ path: '/work', host: 'devbox', name: 'Renamed session' }),
+            metadataVersion: 2,
             agentStateVersion: 2,
         }));
         expect(storage.getState().sessions.s1).toEqual(expect.objectContaining({
@@ -3295,7 +3295,7 @@ describe('socket update handling: plaintext update-session', () => {
         expect((params.applySessions as unknown as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
     });
 
-    it('defers cache-only encrypted metadata and agent state while applying public projections', async () => {
+    it('hydrates cache-only encrypted metadata title and defers agent state while applying public projections', async () => {
         storage.getState().replaceSessionListRenderables([
             {
                 id: 's_cached_encrypted_metadata',
@@ -3346,13 +3346,13 @@ describe('socket update handling: plaintext update-session', () => {
             },
         });
 
-        expect(decryptMetadata).not.toHaveBeenCalled();
+        expect(decryptMetadata).toHaveBeenCalledTimes(1);
         expect(decryptAgentState).not.toHaveBeenCalled();
         expect(markSessionStateHydrationDeferred).toHaveBeenCalledWith('s_cached_encrypted_metadata');
         expect(storage.getState().sessionListRenderables['s_cached_encrypted_metadata']).toEqual(
             expect.objectContaining({
-                metadata: expect.objectContaining({ path: '/tmp', host: 'localhost' }),
-                metadataVersion: 1,
+                metadata: expect.objectContaining({ path: '/work', host: 'devbox', name: 'Renamed' }),
+                metadataVersion: 2,
                 agentStateVersion: 1,
                 latestTurnStatus: 'completed',
                 latestTurnStatusObservedAt: 1239,

@@ -13,8 +13,9 @@ const formatter: ResetCountdownFormatter = {
     durationOutdated: () => 'outdated',
     durationDaysHours: ({ days, hours }) => `${days}d ${hours}h`,
     durationHoursMinutes: ({ hours, minutes }) => `${hours}h ${minutes}m`,
-    durationHours: ({ hours }) => `${hours}h`,
     durationMinutes: ({ minutes }) => `${minutes}m`,
+    durationHoursMinutesSeconds: ({ hours, minutes, seconds }) => `${hours}h ${minutes}m ${seconds}s`,
+    durationMinutesSeconds: ({ minutes, seconds }) => `${minutes}m ${seconds}s`,
 };
 
 const daysFormatter: ResetCountdownDaysFormatter = {
@@ -31,11 +32,20 @@ describe('formatResetCountdown', () => {
         expect(formatResetCountdown(0, null, formatter)).toBeNull();
     });
 
-    it('formats a future reset with day, hour, and minute granularity', () => {
+    it('formats a future reset with day granularity from one day up', () => {
         expect(formatResetCountdown(0, 2 * DAY + 3 * HOUR, formatter)).toBe('2d 3h');
-        expect(formatResetCountdown(0, 3 * HOUR + 12 * MINUTE, formatter)).toBe('3h 12m');
-        expect(formatResetCountdown(0, 3 * HOUR, formatter)).toBe('3h');
-        expect(formatResetCountdown(0, 45 * MINUTE, formatter)).toBe('45m');
+    });
+
+    it('formats a sub-day reset as hours, minutes and seconds, flooring the seconds', () => {
+        expect(formatResetCountdown(0, 3 * HOUR + 12 * MINUTE + 5_900, formatter)).toBe('3h 12m 5s');
+        expect(formatResetCountdown(0, 3 * HOUR, formatter)).toBe('3h 0m 0s');
+        expect(formatResetCountdown(0, 45 * MINUTE + 7_000, formatter)).toBe('45m 7s');
+        expect(formatResetCountdown(0, 59_000, formatter)).toBe('0m 59s');
+    });
+
+    it('counts down second by second as the clock advances', () => {
+        expect(formatResetCountdown(0, 3 * HOUR, formatter)).toBe('3h 0m 0s');
+        expect(formatResetCountdown(1_000, 3 * HOUR, formatter)).toBe('2h 59m 59s');
     });
 
     it('formats a current reset as "now"', () => {

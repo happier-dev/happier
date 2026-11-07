@@ -130,16 +130,32 @@ export function resolveConnectedServiceQuotaProfileRefForSession(params: Readonl
         readObjectRecord(agentOptionStateByAgentId?.[targetKey])
         ?? readObjectRecord(agentOptionStateByAgentId?.[params.agentId])
         ?? null;
-    const optionStateBindings = parseConnectedServicesBindingsByServiceIdFromAgentOptionState({
+    return resolveConnectedServiceQuotaProfileRefFromBindings({
+        supportedServiceIds,
         agentOptionState,
+        connectedServicesPayload: readObjectRecord(agentOptionState?.connectedServices) ?? metadata.connectedServices,
+        accountProfileConnectedServicesV2: params.accountProfileConnectedServicesV2,
     });
-    const connectedServicesPayload =
-        readObjectRecord(agentOptionState?.connectedServices)
-        ?? readObjectRecord(metadata.connectedServices)
-        ?? null;
+}
+
+/**
+ * Resolves the quota profile from connected-service bindings. Sessions read them from their
+ * metadata; the new-session composer passes the bindings payload it will spawn with, so both
+ * resolve the same account for the same selection.
+ */
+export function resolveConnectedServiceQuotaProfileRefFromBindings(params: Readonly<{
+    supportedServiceIds: ReadonlyArray<string>;
+    agentOptionState: Record<string, unknown> | null;
+    connectedServicesPayload: unknown;
+    accountProfileConnectedServicesV2: ReadonlyArray<AccountProfileConnectedService>;
+}>): ConnectedServiceQuotaProfileRefForSession | null {
+    const optionStateBindings = parseConnectedServicesBindingsByServiceIdFromAgentOptionState({
+        agentOptionState: params.agentOptionState,
+    });
+    const connectedServicesPayload = readObjectRecord(params.connectedServicesPayload);
     const payloadBindings = readObjectRecord(connectedServicesPayload?.bindingsByServiceId);
 
-    for (const serviceId of supportedServiceIds) {
+    for (const serviceId of params.supportedServiceIds) {
         const optionBinding = optionStateBindings[serviceId];
         const payloadBinding = readObjectRecord(payloadBindings?.[serviceId]);
         const source = optionBinding?.source ?? (payloadBinding?.source === 'connected' ? 'connected' : payloadBinding?.source === 'native' ? 'native' : null);

@@ -971,6 +971,26 @@ describe('app/_layout init resilience', () => {
         expect(syncRestoreMock).toHaveBeenCalledWith({ token: 'token', secret: 'secret' });
     });
 
+    it('keeps file windows free of main-window setup and fallback chrome', async () => {
+        bootCredentialsState.value = { token: 'token', secret: 'secret' };
+        shellChromeState.isTauriDesktop = true;
+        shellChromeState.isTablet = false;
+        mockedPathname = '/file-window';
+        vi.stubGlobal('window', {
+            location: { href: 'http://localhost/file-window?sessionId=s1&path=note.md' },
+            addEventListener: vi.fn(),
+            removeEventListener: vi.fn(),
+        });
+
+        const screen = await renderSettledRootLayout();
+
+        expect(desktopSetupInspectMock).not.toHaveBeenCalled();
+        expect(screen.tree.findAllByType('DesktopLocalSetupRuntime' as any)).toHaveLength(0);
+        expect(screen.findAllByTestId('desktop-fallback-shell-chrome')).toHaveLength(0);
+        expect(screen.findByTestId('desktop-main-content-drag-surface')?.props.enabled).toBe(false);
+        expect(syncRestoreMock).toHaveBeenCalledWith({ token: 'token', secret: 'secret' });
+    });
+
     it('warms the local readiness inspection as soon as the desktop app opens, before anyone signs in (R5/INV4)', async () => {
         // The whole point of R5: acquisition and the read-only inspection are local Tauri IPC, so
         // they must not wait for authentication. Before this mount existed the only caller sat

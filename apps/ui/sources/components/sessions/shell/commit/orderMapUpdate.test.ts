@@ -3,6 +3,29 @@ import { describe, expect, it } from 'vitest';
 import { buildOrderMapAfterMove } from './orderMapUpdate';
 
 describe('buildOrderMapAfterMove', () => {
+    it('preserves the same session in independent groups when reordering pins', () => {
+        const result = buildOrderMapAfterMove({
+            currentMap: { 'pinned-v1': ['s:a', 's:b'], project: ['s:a', 's:b'] },
+            scopeKey: 'pinned-v1', movedKey: 's:b', directKeys: ['s:a', 's:b'], beforeKey: 's:a', maxKeys: 100,
+        });
+        expect(result).toEqual({ 'pinned-v1': ['s:b', 's:a'], project: ['s:a', 's:b'] });
+    });
+
+    it('removes a moved session from its source group while preserving its pin order', () => {
+        const result = buildOrderMapAfterMove({
+            currentMap: { 'pinned-v1': ['s:b', 's:a'], from: ['s:a', 's:b'], to: ['s:c'] },
+            scopeKey: 'to', sourceScopeKey: 'from', movedKey: 's:b', directKeys: ['s:c'], afterKey: 's:c', maxKeys: 100,
+        });
+        expect(result).toEqual({ 'pinned-v1': ['s:b', 's:a'], from: ['s:a'], to: ['s:c', 's:b'] });
+    });
+
+    it('emits an empty source group when its last session moves away', () => {
+        expect(buildOrderMapAfterMove({
+            currentMap: { from: ['s:b'], to: ['s:c'] }, scopeKey: 'to', sourceScopeKey: 'from',
+            movedKey: 's:b', directKeys: ['s:c'], afterKey: 's:c', maxKeys: 100,
+        })).toEqual({ from: [], to: ['s:c', 's:b'] });
+    });
+
     it('keeps the latest current-map order as the baseline and appends newly visible keys after it', () => {
         // Contract per plan sections 1.5/3.5: the latest current map carries the
         // user's most recent intent (including background reorders) and is the

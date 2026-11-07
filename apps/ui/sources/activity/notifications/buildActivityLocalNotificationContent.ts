@@ -66,8 +66,16 @@ export function buildActivityLocalNotificationContent(params: Readonly<{
     accountId?: string;
     includeReadyMessageText?: boolean;
     includeRequestMessageText?: boolean;
+    /**
+     * The device app lock is on: show no session title, message text or request details, and no
+     * quick-action buttons, so nothing is readable or answerable without unlocking the app.
+     */
+    redactSessionContent?: boolean;
 }>): ActivityLocalNotificationContent {
-    const title = resolveSessionNotificationTitle(params.session);
+    const redact = params.redactSessionContent === true;
+    const title = redact ? t('notifications.activity.defaultSessionTitle') : resolveSessionNotificationTitle(params.session);
+    const includeReadyMessageText = redact ? false : params.includeReadyMessageText;
+    const includeRequestMessageText = redact ? false : params.includeRequestMessageText;
     const baseData = {
         sessionId: params.event.sessionId,
         serverUrl: params.serverUrl,
@@ -80,7 +88,7 @@ export function buildActivityLocalNotificationContent(params: Readonly<{
             defaultTitle: t('notifications.activity.defaultSessionTitle'),
             waitingForCommandLabel: title,
             fallbackBody: t('notifications.activity.readyFallbackBody'),
-            includeMessageText: params.includeReadyMessageText,
+            includeMessageText: includeReadyMessageText,
             messageText: summarizeReadyPreviewText(params.event.messages),
         });
 
@@ -95,11 +103,11 @@ export function buildActivityLocalNotificationContent(params: Readonly<{
     }
 
     const question = params.event.requestKind === 'user_action' && params.event.occurrenceId && params.accountId
-        && params.includeRequestMessageText !== false
+        && includeRequestMessageText !== false
         ? projectNotificationQuestion(params.event.toolName, params.event.toolArgs) : null;
     return {
         title,
-        body: question?.body ?? summarizeAgentRequestBody(params.event.requestKind, params.event.toolName, params.event.toolArgs, params.includeRequestMessageText !== false),
+        body: question?.body ?? summarizeAgentRequestBody(params.event.requestKind, params.event.toolName, params.event.toolArgs, includeRequestMessageText !== false),
         data: {
             ...baseData,
             requestId: params.event.requestId,
@@ -112,10 +120,12 @@ export function buildActivityLocalNotificationContent(params: Readonly<{
                 params.event.requestKind === 'permission'
                     ? PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.permissionRequestsV1
                     : PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.userActionRequestsV1,
-            categoryIdentifier:
-                params.event.requestKind === 'permission'
-                    ? PUSH_NOTIFICATION_CATEGORY_IDS.permissionRequestV1
-                    : question?.categoryId ?? PUSH_NOTIFICATION_CATEGORY_IDS.userActionRequestV1,
+            ...(redact ? {} : {
+                categoryIdentifier:
+                    params.event.requestKind === 'permission'
+                        ? PUSH_NOTIFICATION_CATEGORY_IDS.permissionRequestV1
+                        : question?.categoryId ?? PUSH_NOTIFICATION_CATEGORY_IDS.userActionRequestV1,
+            }),
         },
     };
 }

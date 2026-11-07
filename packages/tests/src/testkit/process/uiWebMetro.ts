@@ -31,7 +31,10 @@ export function resolveUiWebMetroOwnershipLeasesDir(rootDir: string = repoRootDi
 }
 
 export function resolveUiWebBaseUrlTimeoutMs(env: NodeJS.ProcessEnv): number {
-  return readPositiveEnvInt(env.HAPPIER_E2E_UI_WEB_BASE_URL_TIMEOUT_MS, 180_000);
+  // Metro can listen on /status while its cold filesystem crawl still blocks
+  // HTML. The RC3 worktree took four minutes to scan its dependency trees;
+  // allow that work to finish before declaring entry-page startup failed.
+  return readPositiveEnvInt(env.HAPPIER_E2E_UI_WEB_BASE_URL_TIMEOUT_MS, 600_000);
 }
 
 export function resolveUiWebMetroStatusTimeoutMs(env: NodeJS.ProcessEnv): number {

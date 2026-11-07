@@ -1190,6 +1190,18 @@ describe('startUiWeb baseUrl resolution', () => {
     ).toBeGreaterThan(420_000);
   });
 
+  it('allows the observed cold Metro crawl before abandoning entry-page readiness', async () => {
+    const { resolveUiWebBaseUrlTimeoutMs, resolveUiWebBeforeAllTimeoutMs } = await import('./uiWeb');
+    // The RC3 worktree's cold Node crawl took four minutes for 435,261 file
+    // checks before Metro could serve HTML. Its /status endpoint was already up.
+    const observedColdCrawlMs = 4 * 60_000;
+    const entryBudget = resolveUiWebBaseUrlTimeoutMs({});
+    expect(entryBudget).toBeGreaterThan(observedColdCrawlMs);
+    expect(resolveUiWebBeforeAllTimeoutMs({ HAPPIER_E2E_UI_WEB_MODE: 'metro' }))
+      .toBeGreaterThan(entryBudget + 120_000 + 420_000);
+    expect(resolveUiWebBaseUrlTimeoutMs({ HAPPIER_E2E_UI_WEB_BASE_URL_TIMEOUT_MS: '1000' })).toBe(1000);
+  });
+
   it('lets a cold export use its whole before-all budget instead of a shorter competing cutoff', async () => {
     const { resolveUiWebExportBuildTimeoutMs, resolveUiWebExportBeforeAllTimeoutMs } = await import('./uiWebExport');
 

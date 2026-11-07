@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { usePathname } from 'expo-router';
 import { Keyboard, Platform, View, type StyleProp, type ViewProps, type ViewStyle, useWindowDimensions } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { usePopoverBoundaryRef } from './PopoverBoundary';
@@ -157,6 +158,8 @@ type PopoverCommonProps = Readonly<{
     placement?: PopoverPlacement;
     gap?: number;
     maxHeightCap?: number;
+    /** Preferred room for choosing a side, independent of the maximum content height. */
+    placementMinSpace?: number;
     maxWidthCap?: number;
     portal?: PopoverPortalOptions;
     /**
@@ -200,6 +203,17 @@ type PopoverWithoutBackdrop = PopoverCommonProps & Readonly<{
     onRequestClose?: () => void;
 }>;
 
+function PopoverRouteDismissal({ onRequestClose }: Readonly<{ onRequestClose: () => void }>) {
+    const pathname = usePathname();
+    const previousPathname = React.useRef(pathname);
+    React.useEffect(() => {
+        const changed = previousPathname.current !== pathname;
+        previousPathname.current = pathname;
+        if (changed) onRequestClose();
+    }, [pathname, onRequestClose]);
+    return null;
+}
+
 export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
     const {
         open,
@@ -211,6 +225,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
         placement = 'auto',
         gap = 8,
         maxHeightCap = 400,
+        placementMinSpace,
         maxWidthCap = 520,
         onRequestClose,
         edgePadding = 0,
@@ -774,7 +789,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
 
             const resolvedPlacement = resolvePlacement({
                 placement,
-                preferredMinAvailable: placement === 'auto-horizontal' ? maxWidthCap : maxHeightCap,
+                preferredMinAvailable: placementMinSpace ?? (placement === 'auto-horizontal' ? maxWidthCap : maxHeightCap),
                 available: {
                     top: availableTop,
                     bottom: availableBottom,
@@ -856,7 +871,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
         // nothing to wait for. The retry ladder above still yields a frame BETWEEN attempts, which
         // is what actually handles the "layout settles late" case this used to cover.
         void measureWithRetries(0);
-    }, [anchorRef, anchorRectFromProp, boundaryRef, edgeInsets.horizontal, edgeInsets.vertical, gap, keyboardBottomInsetProp, maxHeightCap, maxWidthCap, open, placement, resolvedAnchorMode, shouldPortalNative, shouldPortalWeb, windowHeight, windowWidth, portalTarget]);
+    }, [anchorRef, anchorRectFromProp, boundaryRef, edgeInsets.horizontal, edgeInsets.vertical, gap, keyboardBottomInsetProp, maxHeightCap, maxWidthCap, open, placement, placementMinSpace, resolvedAnchorMode, shouldPortalNative, shouldPortalWeb, windowHeight, windowWidth, portalTarget]);
 
     React.useLayoutEffect(() => {
         if (!open) return;
@@ -1243,6 +1258,13 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
         if (!shouldPortalWeb) return;
         if (typeof event?.stopPropagation === 'function') event.stopPropagation();
     }, [shouldPortalWeb]);
+    const stopClickPropagationOnWeb = React.useCallback((event: any) => {
+        // React portal events bubble through the component tree that created the popover. Keep a
+        // click inside portaled content from activating an ancestor Pressable such as a session row.
+        if (Platform.OS !== 'web') return;
+        if (!shouldPortalWeb) return;
+        if (typeof event?.stopPropagation === 'function') event.stopPropagation();
+    }, [shouldPortalWeb]);
 
     // IMPORTANT: hooks must not be conditional. This must run even when `open === false`
     // to avoid changing hook order between renders.
@@ -1321,6 +1343,12 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
         if (typeof document === 'undefined') return;
 
         const shouldAttachPointerDownCapture = !(backdropEnabled && backdropBlocksOutsidePointerEvents);
+        const handleOutsideScroll = (event: Event) => {
+            const target = event.target;
+            const contentEl = getContentDomElement();
+            if (!contentEl || !(target instanceof Node) || contentEl.contains(target)) return;
+            onRequestClose();
+        };
         const handlePointerDownCapture = (event: Event) => {
             const target = event.target as Node | null;
             if (!target) return;
@@ -1354,10 +1382,12 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
         if (shouldAttachPointerDownCapture) {
             document.addEventListener('pointerdown', handlePointerDownCapture, true);
         }
+        document.addEventListener('scroll', handleOutsideScroll, true);
         return () => {
             if (shouldAttachPointerDownCapture) {
                 document.removeEventListener('pointerdown', handlePointerDownCapture, true);
             }
+            document.removeEventListener('scroll', handleOutsideScroll, true);
         };
     }, [
         anchorRef,
@@ -1371,6 +1401,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
 
     const content = shouldRender ? (
         <>
+            {open && onRequestClose ? <PopoverRouteDismissal onRequestClose={onRequestClose} /> : null}
             <PopoverBackdrop
                 backdrop={backdropEnabled ? backdrop : false}
                 backdropBlocksOutsidePointerEvents={backdropBlocksOutsidePointerEvents}
@@ -1400,7 +1431,11 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
             <ViewWithWheel
                 ref={contentContainerRef}
                 {...(shouldPortalWeb
-                    ? ({ onWheel: stopScrollEventPropagationOnWeb, onTouchMove: stopScrollEventPropagationOnWeb } as any)
+                    ? ({
+                        onWheel: stopScrollEventPropagationOnWeb,
+                        onTouchMove: stopScrollEventPropagationOnWeb,
+                        onClick: stopClickPropagationOnWeb,
+                    } as any)
                     : {})}
                 {...(Platform.OS === 'web' && shouldPortalWeb
                     ? ({ nativeID: portalIdRef.current, testID: portalIdRef.current } as any)

@@ -270,6 +270,60 @@ describe('session-list snapshot metadata decryption', () => {
         expect(sessions.find((session) => session.id === encrypted.id)?.metadata ?? null).toBeNull();
     });
 
+    it('titles every never-decrypted row on first load, not only the eager and active ones', async () => {
+        // Production tuning (`sync/runtime/syncTuning.ts`): 4 eager rows, no background hydration.
+        // Inactive rows the desktop has never decrypted have no warm-cache entry, so without a
+        // decrypt they keep path-only metadata and the list shows the project folder name.
+        const store = createStoreHarness();
+        const titleOf = (sessionId: string) => `Title ${sessionId}`;
+        const sessionIds = Array.from({ length: 9 }, (_, index) => `session_never_opened_${index}`);
+        const rows = sessionIds.map((id, index) => ({
+            ...buildEncryptedRow(FIRST),
+            id,
+            seq: 100 - index,
+            updatedAt: FIRST.updatedAt - index,
+            active: false,
+            activeAt: 0,
+        }) as V2SessionRecord);
+        const encryption: SessionListEncryption = {
+            decryptEncryptionKeys: vi.fn(async (values: readonly string[]) => values.map(() => null)),
+            initializeSessions: vi.fn(async () => {}),
+            removeSessionEncryption: vi.fn(),
+            getSessionEncryption: vi.fn((sessionId: string) => ({
+                decryptMetadata: async () => ({ path: '/repo', host: 'host', name: titleOf(sessionId) }),
+                decryptAgentState: async () => ({}),
+                decryptSessionSnapshotState: async () => ({
+                    metadata: { path: '/repo', host: 'host', name: titleOf(sessionId) },
+                    agentState: {},
+                }),
+            })),
+        };
+
+        await fetchAndApplySessions({
+            serverId: 'test',
+            credentials: { token: 't', secret: 's' } as AuthCredentials,
+            encryption,
+            sessionDataKeys: new Map(sessionIds.map((id) => [id, new Uint8Array(32)])),
+            request: async () => jsonResponse({ sessions: rows, nextCursor: null, hasNext: false }),
+            getExistingSession: (sessionId) => store.sessions.get(sessionId) ?? null,
+            getCurrentSessionListRenderable: (sessionId) => store.renderables.get(sessionId) ?? null,
+            applySessionListRenderables: store.applySessionListRenderables,
+            applySessionListRenderablePatches: store.applySessionListRenderablePatches,
+            applySessions: store.applySessions,
+            sessionListEagerHydrationCount: 4,
+            sessionListBackgroundHydrationMaxRows: 0,
+            sessionListBackgroundHydrationApplyFlushDelayMs: 0,
+            sessionListBackgroundHydrationYieldDelayMs: 0,
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        });
+        await vi.waitFor(() => {
+            expect(sessionIds.map((id) => store.renderables.get(id)?.metadata?.name ?? null)).toEqual(
+                sessionIds.map(titleOf),
+            );
+        });
+    });
+
     it('does not re-decrypt unchanged metadata when a streaming tick moves seq and runtime activity', async () => {
         const harness = createSnapshotHarness({ withStoredSessions: true });
 

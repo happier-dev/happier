@@ -42,12 +42,14 @@ function insertOrderKey(params: Readonly<{
     return [params.movedKey, ...withoutMoved];
 }
 
-function copyOrderMapWithoutMovedKey(currentMap: OrderMap, movedKey: string): Record<string, string[]> {
+function copyOrderMapWithoutMovedKey(currentMap: OrderMap, movedKey: string, sourceScopeKey: string, destinationScopeKey: string): Record<string, string[]> {
     const out: Record<string, string[]> = {};
     for (const [scopeKey, keys] of Object.entries(currentMap)) {
         if (!Array.isArray(keys)) continue;
-        const nextKeys = keys.filter((key) => key !== movedKey);
-        if (nextKeys.length > 0) out[scopeKey] = nextKeys;
+        const nextKeys = scopeKey === sourceScopeKey || scopeKey === destinationScopeKey
+            ? keys.filter((key) => key !== movedKey)
+            : [...keys];
+        out[scopeKey] = nextKeys;
     }
     return out;
 }
@@ -69,13 +71,14 @@ function copyOrderMapWithoutMovedKey(currentMap: OrderMap, movedKey: string): Re
 export function buildOrderMapAfterMove(params: Readonly<{
     currentMap: OrderMap;
     scopeKey: string;
+    sourceScopeKey?: string;
     movedKey: string;
     directKeys: ReadonlyArray<string>;
     beforeKey?: string | null;
     afterKey?: string | null;
     maxKeys: number;
 }>): Record<string, string[]> {
-    const currentMap = copyOrderMapWithoutMovedKey(params.currentMap, params.movedKey);
+    const currentMap = copyOrderMapWithoutMovedKey(params.currentMap, params.movedKey, params.sourceScopeKey ?? params.scopeKey, params.scopeKey);
     const existingKeys = currentMap[params.scopeKey] ?? [];
     const existingKeySet = new Set(dedupeOrderKeys(existingKeys));
     const newlyVisibleKeys = dedupeOrderKeys(params.directKeys)

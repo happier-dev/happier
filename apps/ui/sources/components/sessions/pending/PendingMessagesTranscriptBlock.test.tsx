@@ -1260,6 +1260,7 @@ describe('PendingMessagesTranscriptBlock', () => {
 
         await hoverPendingMessageRow(screen, 'p1');
         expect(screen.findByTestId('pendingMessages.remove:p1')).toBeNull();
+        expect(screen.findByTestId('pendingMessages.deleteNext')).toBeNull();
         expect(screen.findByTestId('pendingMessages.discardDelivery:p1')).toBeNull();
         expect(deletePendingMessage).not.toHaveBeenCalled();
         expect(discardPendingMessage).not.toHaveBeenCalled();
@@ -2310,6 +2311,52 @@ describe('PendingMessagesTranscriptBlock', () => {
         ];
     }
 
+    it('deletes only the top-most pending message from the header after confirmation', async () => {
+        modalConfirm.mockResolvedValueOnce(true);
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+        const queue = queuedPendingMessages();
+        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
+            sessionId: 's1',
+            pendingMessages: queue,
+            discardedMessages: [],
+        }));
+
+        expect(screen.findByTestId('pendingMessages.deleteNext')).toBeTruthy();
+        await screen.pressByTestIdAsync('pendingMessages.deleteNext');
+
+        expect(modalConfirm).toHaveBeenCalledWith(
+            'Are you sure you want to delete this pending message?',
+            t('session.pendingMessages.removeConfirm.body'),
+            { confirmText: t('common.remove'), destructive: true },
+        );
+        expect(deletePendingMessage).toHaveBeenCalledWith('s1', 'p1');
+        expect(deletePendingMessage).not.toHaveBeenCalledWith('s1', 'p2');
+
+        modalConfirm.mockResolvedValueOnce(true);
+        await screen.update(React.createElement(PendingMessagesTranscriptBlock, {
+            sessionId: 's1',
+            pendingMessages: queue.slice(1),
+            discardedMessages: [],
+        }));
+        await screen.pressByTestIdAsync('pendingMessages.deleteNext');
+
+        expect(deletePendingMessage).toHaveBeenCalledWith('s1', 'p2');
+    });
+
+    it('keeps the pending queue unchanged when header deletion is cancelled', async () => {
+        modalConfirm.mockResolvedValueOnce(false);
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
+            sessionId: 's1',
+            pendingMessages: queuedPendingMessages(),
+            discardedMessages: [],
+        }));
+
+        await screen.pressByTestIdAsync('pendingMessages.deleteNext');
+
+        expect(deletePendingMessage).not.toHaveBeenCalled();
+    });
+
     it('bounds a queue at the head cap plus the compact backlog strip', async () => {
         const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
@@ -2746,6 +2793,7 @@ describe('PendingMessagesTranscriptBlock', () => {
             }));
 
         expect(screen.findByTestId('pendingMessages.discarded.reason:d1')?.props.children).toBe('switch_to_local');
+        expect(screen.findByTestId('pendingMessages.deleteNext')).toBeNull();
 
         await hoverDiscardedMessageRow(screen, 'd1');
 

@@ -20,8 +20,8 @@ vi.mock('@/text', async () => {
             if (key === 'connectedServices.quota.usageCount') {
                 return `${String(params?.used)}/${String(params?.limit)} used`;
             }
-            if (key === 'connectedServices.quota.duration.hours') {
-                return `translated-${String(params?.hours)}h`;
+            if (key === 'connectedServices.quota.duration.hoursMinutesSeconds') {
+                return `translated-${String(params?.hours)}h ${String(params?.minutes)}m ${String(params?.seconds)}s`;
             }
             return key;
         },
@@ -51,7 +51,7 @@ describe('ConnectedServiceQuotaMeterRow', () => {
             />,
         );
 
-        expect(screen.getTextContent()).toContain('18% left · resets in translated-2h');
+        expect(screen.getTextContent()).toContain('18% left · resets in translated-2h 0m 0s');
         expect(screen.getTextContent()).toContain('82/100 used');
 
         const bar = screen.findByTestId('connected-service-quota-meter-row:remaining-bar:fill');

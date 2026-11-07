@@ -1,0 +1,22 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "file_window",
+  "description": "windows that show one session file (Open in new window)",
+  "windows": [
+    "file-window-*"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-set-background-color",
+    "allow-desktop-open-path-with-default-app",
+    "allow-desktop-reveal-path-in-file-manager",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        { "url": "https://*" },
+        { "url": "http://*" },
+        { "url": "mailto:*" }
+      ]
+    }
+  ]
+}

@@ -26,7 +26,11 @@ import {
     type ImportedMcpInputResolutionV1,
 } from '@/sync/domains/settings/mcpServers/materializeImportedMcpServerDrafts';
 import { getImportedMcpInputResolutionIssues } from '@/sync/domains/settings/mcpServers/importedMcpInputResolutionValidation';
-import { buildQuickInstallMcpDraft, type McpQuickInstallPresetId } from '@/sync/domains/settings/mcpServers/mcpQuickInstallCatalog';
+import {
+    buildQuickInstallMcpDraft,
+    listAvailableMcpQuickInstallPresets,
+    type McpQuickInstallPresetId,
+} from '@/sync/domains/settings/mcpServers/mcpQuickInstallCatalog';
 import { normalizeMcpServersSettingsV1 } from '@/sync/domains/settings/mcpServers/normalizeMcpServersSettingsV1';
 import { parseImportedMcpServerJson } from '@/sync/domains/settings/mcpServers/parseImportedMcpServerJson';
 import { t } from '@/text';
@@ -127,6 +131,7 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
     const [mcpSettings, setMcpSettings] = useSettingMutable('mcpServersSettingsV1');
     const normalizedSettings = React.useMemo(() => normalizeMcpServersSettingsV1(mcpSettings), [mcpSettings]);
     const existingNames = React.useMemo(() => new Set(normalizedSettings.servers.map((server) => server.name)), [normalizedSettings.servers]);
+    const availableQuickInstallPresets = React.useMemo(() => listAvailableMcpQuickInstallPresets(normalizedSettings), [normalizedSettings]);
 
     const existingServer: McpServerCatalogEntryV1 | null = React.useMemo(() => {
         if (!serverId) return null;
@@ -508,6 +513,7 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
                     onSelectMachine={setSelectedMachineId}
                     machineMenuOpen={machineMenuOpen}
                     onMachineMenuOpenChange={setMachineMenuOpen}
+                    presets={availableQuickInstallPresets}
                     selectedPresetIds={quickInstallPresetIds}
                     onTogglePresetId={(presetId) => {
                         setQuickInstallPresetIds((current) => (

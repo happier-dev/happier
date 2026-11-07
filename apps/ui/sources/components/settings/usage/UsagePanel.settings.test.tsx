@@ -1,9 +1,13 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { flattenTestStyle, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { setPreferredLanguageFromSettings } from '@/text/i18n';
+
+let restorePopoverGlobals: (() => void) | null = null;
 
 type AuthState = {
     credentials: { token: string } | null;
@@ -33,6 +37,12 @@ const usageApiState: UsageApiState = {
 };
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+// Exercise the real settings/menu interaction through the canonical web SDK boundary.
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
 
 vi.mock('expo-localization', () => ({
     getLocales: () => localizationState.locales,
@@ -109,7 +119,48 @@ describe('UsagePanel settings behavior', () => {
 
     afterEach(() => {
         standardCleanup();
+        restorePopoverGlobals?.();
+        restorePopoverGlobals = null;
+        vi.unstubAllGlobals();
+        vi.useRealTimers();
         setPreferredLanguageFromSettings(null);
+    });
+
+    it('lets the Usage screen select both short and weekly provider rings', async () => {
+        const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
+        const { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        resetServerFeaturesClientForTests();
+        // Serve the real feature resolver through its HTTP boundary, with quotas supported by the relay.
+        vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(createRootLayoutFeaturesResponse()), {
+            status: 200, headers: { 'content-type': 'application/json' },
+        })));
+        expect((await getServerFeaturesSnapshot({ force: true })).status).toBe('ready');
+        getStorage().setState((state) => ({ settings: {
+            ...state.settings, experiments: true, featureToggles: { connectedServices: true, 'connectedServices.quotas': true },
+            sessionProviderUsageGaugeWindowMode: 'most_constrained', sessionProviderUsageGaugeWindowModes: null,
+        } }));
+        const { default: UsageSettingsScreen } = await import('@/app/(app)/settings/usage');
+        vi.useFakeTimers();
+        restorePopoverGlobals = withPopoverWebGlobals();
+        const screen = await renderScreen(<UsageSettingsScreen />);
+        const pressWindow = async (id: string) => {
+            act(() => screen.pressByTestId(id));
+            await flushHookEffects({ runOnlyPendingTimers: true });
+        };
+        await pressWindow('settings-session-providerUsageGauge-window-trigger');
+        const { Icon } = await import('@/components/ui/icons/Icon');
+        const checked = (id: string) => screen.findByTestId(`settings-session-providerUsageGauge-window:${id}`)
+            ?.findAllByType(Icon).some((icon) => icon.props.name === 'check-square');
+        expect(checked('automatic')).toBe(true);
+        await pressWindow('settings-session-providerUsageGauge-window:session');
+        await pressWindow('settings-session-providerUsageGauge-window:weekly');
+        expect(checked('automatic')).toBe(false);
+        expect(checked('session')).toBe(true);
+        expect(checked('weekly')).toBe(true);
+        await pressWindow('settings-session-providerUsageGauge-window:most_constrained');
+        expect(checked('most_constrained')).toBe(true);
+        expect(checked('session')).toBe(false);
+        expect(checked('weekly')).toBe(false);
     });
 
     it('shows a translated unauthenticated error', async () => {

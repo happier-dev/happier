@@ -25,6 +25,13 @@ describe('deriveUsageLimitRecoveryTiming', () => {
     });
   });
 
+  it('does not infer recovery while another exhausted window has no reset time', () => {
+    expect(deriveUsageLimitRecoveryTiming({
+      occurredAtMs: 1_000, resetAtMs: 5_000, retryAfterMs: null,
+      windows: [{ remainingPct: 0, resetAtMs: 5_000 }, { remainingPct: 0, resetAtMs: null }],
+    })).toEqual({ resetAtMs: null, nextCheckAtMs: null });
+  });
+
   it('keeps the next check time null when no timing is available', () => {
     expect(deriveUsageLimitRecoveryTiming({
       occurredAtMs: 1_000,

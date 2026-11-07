@@ -8,8 +8,7 @@ import { Text } from '@/components/ui/text/Text';
 import { TokenUsageRing, type TokenUsageTone } from '@/components/sessions/usage';
 
 import {
-    formatContextTokenCount,
-    formatContextUsagePercent,
+    formatContextUsageDetail,
     type ContextUsageState,
 } from '../contextWarning';
 import { AgentInputContentPopover } from './AgentInputContentPopover';
@@ -23,6 +22,7 @@ type AgentInputContextUsageBadgeProps = Readonly<{
     state: ContextUsageState;
     marginLeft?: number;
     showLabels?: boolean;
+    onRefresh?: () => void;
 }>;
 
 function areContextUsageBadgePropsEqual(
@@ -30,6 +30,7 @@ function areContextUsageBadgePropsEqual(
     right: AgentInputContextUsageBadgeProps,
 ): boolean {
     return left.showLabels === right.showLabels
+        && left.onRefresh === right.onRefresh
         && left.marginLeft === right.marginLeft
         && left.state.severity === right.state.severity
         && left.state.usedTokens === right.state.usedTokens
@@ -45,29 +46,14 @@ export const AgentInputContextUsageBadge = React.memo(function AgentInputContext
     const [isPinnedOpen, setIsPinnedOpen] = React.useState(false);
     const [isHovered, setIsHovered] = React.useState(false);
     const tone: TokenUsageTone = props.state.severity;
+    const remainingPercentage = Math.max(0, Math.min(100, 100 - props.state.usedPercentage));
     const badgeValueLabel = React.useMemo(
-        () => String(Math.max(0, Math.round(props.state.usedPercentage))),
-        [props.state.usedPercentage],
-    );
-    const usedPercentageLabel = React.useMemo(
-        () => formatContextUsagePercent(props.state.usedPercentage),
-        [props.state.usedPercentage],
-    );
-    const usedTokensLabel = React.useMemo(
-        () => formatContextTokenCount(props.state.usedTokens),
-        [props.state.usedTokens],
-    );
-    const contextWindowTokensLabel = React.useMemo(
-        () => formatContextTokenCount(props.state.contextWindowTokens),
-        [props.state.contextWindowTokens],
+        () => String(Math.round(remainingPercentage)),
+        [remainingPercentage],
     );
     const popoverDetail = React.useMemo(
-        () => t('agentInput.context.usedDetail', {
-            percent: usedPercentageLabel,
-            used: usedTokensLabel,
-            total: contextWindowTokensLabel,
-        }),
-        [contextWindowTokensLabel, usedPercentageLabel, usedTokensLabel],
+        () => formatContextUsageDetail(props.state),
+        [props.state],
     );
     const open = isPinnedOpen || isHovered;
 
@@ -79,6 +65,7 @@ export const AgentInputContextUsageBadge = React.memo(function AgentInputContext
                 accessibilityRole="button"
                 accessibilityLabel={popoverDetail}
                 onPress={() => {
+                    props.onRefresh?.();
                     setIsPinnedOpen((previous) => !previous);
                 }}
                 onHoverIn={Platform.OS === 'web' ? () => setIsHovered(true) : undefined}
@@ -98,11 +85,12 @@ export const AgentInputContextUsageBadge = React.memo(function AgentInputContext
                     {t('agentInput.context.badgeLabel')}
                 </Text> : null}
                 <TokenUsageRing
-                    used={props.state.usedTokens}
+                    used={Math.max(0, props.state.contextWindowTokens - props.state.usedTokens)}
                     limit={props.state.contextWindowTokens}
                     label={popoverDetail}
                     value={badgeValueLabel}
                     tone={tone}
+                    remainingPct={100 - props.state.usedPercentage}
                     ringTestID="agent-input-context-usage-ring"
                     valueTestID="agent-input-context-usage-value"
                 />

@@ -1,8 +1,17 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { buildProviderAccountUsageRecordId, ProviderAccountUsageSnapshotV1Schema, sealProviderAccountUsageSnapshot } from '@happier-dev/protocol';
 
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 
 import { createBackoffSessionUsageLimitRecoveryControlAdapter } from './createBackoffSessionUsageLimitRecoveryControlAdapter';
+
+// Stored account usage is read through the server API boundary; parsing and timing remain real.
+const storedApi = vi.hoisted(() => ({
+  getAccountEncryptionMode: vi.fn(),
+  getProviderAccountUsageSnapshotPlain: vi.fn(),
+  getProviderAccountUsageSnapshotSealed: vi.fn(),
+}));
+vi.mock('@/api/api', () => ({ ApiClient: { create: async () => storedApi } }));
 
 function createRawSession(overrides: Partial<RawSessionRecord> = {}): RawSessionRecord {
   return {
@@ -88,6 +97,81 @@ function createAdapter() {
 }
 
 describe('createBackoffSessionUsageLimitRecoveryControlAdapter', () => {
+  it.each([false, true])('uses the cached account windows when the failure omits its reset (encrypted=%s)', async (encrypted) => {
+    const start = 1_700_000_000_000;
+    let now = start + 600_000;
+    const reset = start + 7 * 24 * 3_600_000;
+    const key = { providerId: 'codex', accountSubjectId: 'acct-work', subjectKind: 'account', quotaScope: 'account' } as const;
+    const snapshot = ProviderAccountUsageSnapshotV1Schema.parse({
+      v: 1, recordKey: key, recordId: buildProviderAccountUsageRecordId(key), providerId: 'codex',
+      accountSubject: { kind: 'providerSubject', id: key.accountSubjectId },
+      fetchedAtMs: start, observedAtMs: start, staleAfterMs: 60_000,
+      source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data',
+      meters: [
+        { meterId: 'weekly', label: 'Weekly', used: null, limit: null, unit: 'unknown',
+          remainingPct: 0, utilizationPct: 100, resetsAt: reset, status: 'ok', details: {} },
+      ],
+    });
+    const credentials = { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) } };
+    storedApi.getAccountEncryptionMode.mockResolvedValue(encrypted ? 'e2ee' : 'plain');
+    storedApi.getProviderAccountUsageSnapshotPlain.mockResolvedValue({ content: { t: 'plain', v: snapshot } });
+    storedApi.getProviderAccountUsageSnapshotSealed.mockResolvedValue({ sealed: sealProviderAccountUsageSnapshot({
+      snapshot, material: credentials.encryption, randomBytes: (length) => new Uint8Array(length).fill(9),
+    }) });
+    const params = createParams();
+    params.rawSession.lastRuntimeIssue!.usageLimit!.resetAtMs = null;
+    const input = { ...params, credentials, metadata: {
+      providerAccountUsageRefsV1: { v: 1, recordIds: [snapshot.recordId], updatedAtMs: start },
+    } };
+    const adapter = createBackoffSessionUsageLimitRecoveryControlAdapter({ providerId: 'codex', nowMs: () => now, processEnv: {} });
+    expect(await adapter.checkNow?.(input)).toMatchObject({ status: 'waiting', metadata: {
+      sessionUsageLimitRecoveryV1: { resetAtMs: reset, nextCheckAtMs: reset + 5_000 },
+    } });
+    now = reset;
+    expect(await adapter.checkNow?.(input)).toMatchObject({ status: 'waiting' });
+    now = reset + 5_000;
+    expect(await adapter.checkNow?.(input)).toMatchObject({ status: 'ready' });
+    // If a new failure happens after that cached boundary, the old record cannot prove recovery.
+    now = reset + 60_000;
+    params.rawSession.lastRuntimeIssue = { ...params.rawSession.lastRuntimeIssue!, occurredAt: now };
+    expect(await adapter.checkNow?.(input)).toMatchObject({ status: 'waiting', metadata: {
+      sessionUsageLimitRecoveryV1: { nextCheckAtMs: now + 600_000 },
+    } });
+  });
+  it('waits until after every exhausted usage window even when a ten-minute check was persisted', async () => {
+    const now = 1_700_000_000_000;
+    const params = createParams();
+    params.rawSession.lastRuntimeIssue = { ...params.rawSession.lastRuntimeIssue!, usageLimit: {
+      ...params.rawSession.lastRuntimeIssue!.usageLimit!, resetAtMs: null, retryAfterMs: null,
+      allWindows: [
+        { meterId: 'five_hour', remainingPct: 0, resetAtMs: now + 5 * 3_600_000 },
+        { meterId: 'weekly', remainingPct: 0, resetAtMs: now + 7 * 24 * 3_600_000 },
+        { meterId: 'other', remainingPct: 50, resetAtMs: now + 30 * 24 * 3_600_000 },
+      ],
+    } };
+    const adapter = createBackoffSessionUsageLimitRecoveryControlAdapter({
+      providerId: 'codex', nowMs: () => now + 600_000, processEnv: {},
+    });
+    const result = await adapter.checkNow?.({ ...params, metadata: {
+      sessionUsageLimitRecoveryV1: { ...createWaitingIntent(), resetAtMs: null, nextCheckAtMs: now + 600_000 },
+    } });
+    expect(result).toMatchObject({ status: 'waiting', metadata: { sessionUsageLimitRecoveryV1: {
+      resetAtMs: now + 7 * 24 * 3_600_000,
+      nextCheckAtMs: now + 7 * 24 * 3_600_000 + 5_000,
+    } } });
+  });
+
+  it('does not declare unknown limits lifted merely because the fallback delay elapsed', async () => {
+    const params = createParams();
+    params.rawSession.lastRuntimeIssue!.usageLimit!.resetAtMs = null;
+    const now = 1_700_000_600_000;
+    const adapter = createBackoffSessionUsageLimitRecoveryControlAdapter({
+      providerId: 'codex', nowMs: () => now, processEnv: {},
+    });
+    expect(await adapter.checkNow?.(params)).toMatchObject({ status: 'waiting', metadata: {
+      sessionUsageLimitRecoveryV1: { nextCheckAtMs: now + 600_000 },
+    } });
+  });
   it('preserves the continuation budget across repeated checks before the reset', async () => {
     let nowMs = 1_700_000_000_000;
     const adapter = createBackoffSessionUsageLimitRecoveryControlAdapter({
@@ -109,6 +193,8 @@ describe('createBackoffSessionUsageLimitRecoveryControlAdapter', () => {
       }
     }
     nowMs = 1_700_000_060_000;
+    expect(await adapter.checkNow?.({ ...createParams(), metadata })).toMatchObject({ status: 'waiting' });
+    nowMs += 5_000;
     expect(await adapter.checkNow?.({ ...createParams(), metadata })).toMatchObject({
       ok: true, status: 'ready', metadata: {
         sessionUsageLimitRecoveryV1: { status: 'paused', attemptCount: 0 },

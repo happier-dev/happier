@@ -5,11 +5,11 @@ import { t } from '@/text';
 import { useHappyAction } from '@/hooks/ui/useHappyAction';
 import { HappyError } from '@/utils/errors/errors';
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { confirmSessionStop, executeSessionAction } from '@/components/sessions/actions/sessionActionExecution';
+import { confirmSessionStop, executeDirectSessionDelete, executeSessionAction } from '@/components/sessions/actions/sessionActionExecution';
 import {
     SESSION_ACTION_ARCHIVE_ID,
-    SESSION_ACTION_DELETE_ID,
     SESSION_ACTION_CLEAR_ATTENTION_STANDING_ID,
+    SESSION_ACTION_DELETE_ID,
     SESSION_ACTION_EDIT_TAGS_ID,
     SESSION_ACTION_MARK_READ_ID,
     SESSION_ACTION_MARK_UNREAD_ID,
@@ -27,7 +27,7 @@ import { createSessionActionDropdownItem } from '@/components/sessions/actions/s
 import type { SessionActionTarget } from '@/components/sessions/actions/sessionActionTypes';
 import type { SessionReminderPresentation } from '@/sync/domains/session/organization/attentionStanding';
 
-import { buildSessionRowMoreMenuItems } from './buildSessionRowActionMenuItems';
+import { buildSessionRowMoreMenuItems, SESSION_PROJECT_MOVE_MENU_ID } from './buildSessionRowActionMenuItems';
 import type { SessionRowActionMenuState } from './sessionRowActionMenuTypes';
 import { Icon } from '@/components/ui/icons/Icon';
 import {
@@ -38,7 +38,7 @@ import {
     resolveSessionAttentionReminderSelection,
     SESSION_ATTENTION_REMINDER_MENU_ID,
 } from './sessionAttentionReminderAction';
-import { useSettingMutable } from '@/sync/domains/state/storage';
+import { useSetting, useSettingMutable } from '@/sync/domains/state/storage';
 import {
     resolveSessionReminderPresetRule,
     sessionReminderPresetRuleKey,
@@ -112,6 +112,7 @@ export function useSessionRowActionMenu(params: Readonly<{
     onSetTags?: ((newTags: string[]) => void) | null;
     onTogglePinned?: (() => void) | null;
     onMoveToFolder?: () => void;
+    onMoveToProject?: () => void;
     leadingMenuItems?: readonly DropdownMenuItem[];
     trailingMenuItems?: readonly DropdownMenuItem[];
     onSelectCustomMenuItem?: (itemId: string) => void | Promise<void>;
@@ -132,6 +133,7 @@ export function useSessionRowActionMenu(params: Readonly<{
     closeMenus?: () => void;
 }>): SessionRowActionMenuState {
     const target = params.target;
+    const directDeleteEnabled = useSetting('sessionListDirectDeleteEnabled');
     const [customColorPickerLoading, setCustomColorPickerLoading] = React.useState(false);
     const appearanceMenu = React.useMemo(
         () => (params.appearance ? { ...params.appearance, customPickerLoading: customColorPickerLoading } : null),
@@ -191,6 +193,10 @@ export function useSessionRowActionMenu(params: Readonly<{
                 hideInactiveSessions: params.hideInactiveSessions,
             },
         });
+    });
+
+    const [deletingSession, performDeleteMutation] = useHappyAction(async () => {
+        await executeDirectSessionDelete({ target, sessionName: params.sessionName });
     });
 
     const confirmStopSession = React.useCallback(async () => {
@@ -256,6 +262,8 @@ export function useSessionRowActionMenu(params: Readonly<{
             leadingItems: params.leadingMenuItems,
             trailingItems: params.trailingMenuItems,
             canMoveToFolder: typeof params.onMoveToFolder === 'function',
+            canMoveToProject: typeof params.onMoveToProject === 'function',
+            directDeleteEnabled,
             reminderPresets,
             reminder: params.reminder,
             reminderNowMs: Date.now(),
@@ -279,12 +287,14 @@ export function useSessionRowActionMenu(params: Readonly<{
         return items;
     }, [
         appearanceMenu,
+        directDeleteEnabled,
         params.iconColor,
         params.isNativeMobile,
         params.leadingMenuItems,
         params.trailingMenuItems,
         params.onEnterSelectionMode,
         params.onMoveToFolder,
+        params.onMoveToProject,
         params.selectionModeActive,
         params.selectionModeAvailable,
         reminderPresets,
@@ -298,6 +308,10 @@ export function useSessionRowActionMenu(params: Readonly<{
     );
 
     const handleMoreMenuSelect = React.useCallback(async (itemId: string) => {
+        if (itemId === SESSION_PROJECT_MOVE_MENU_ID) {
+            params.onMoveToProject?.();
+            return;
+        }
         if (itemId === 'selection.select') {
             params.onEnterSelectionMode?.();
             return;
@@ -384,11 +398,7 @@ export function useSessionRowActionMenu(params: Readonly<{
                 await confirmArchiveSession();
                 break;
             case SESSION_ACTION_DELETE_ID:
-                try {
-                    await executeSessionAction({ actionId: SESSION_ACTION_DELETE_ID, target });
-                } catch (error) {
-                    showActionError(error);
-                }
+                await performDeleteMutation();
                 break;
         }
     }, [
@@ -398,11 +408,14 @@ export function useSessionRowActionMenu(params: Readonly<{
         handleReadStateAction,
         handleRenameSession,
         customMenuItems,
+        performDeleteMutation,
         target,
         params.appearance,
         params.onEnterSelectionMode,
         params.onMoveToFolder,
+        params.onMoveToProject,
         params.onSelectCustomMenuItem,
+        params.sessionName,
         reminderPresets,
         setReminderPresets,
     ]);
@@ -448,6 +461,10 @@ export function useSessionRowActionMenu(params: Readonly<{
     ]);
 
     const handleContextMenuSelect = React.useCallback((itemId: string) => {
+        if (itemId === SESSION_PROJECT_MOVE_MENU_ID) {
+            params.onMoveToProject?.();
+            return;
+        }
         if (itemId === 'selection.select') {
             params.setContextMenuOpen(false);
             params.onEnterSelectionMode?.();
@@ -484,6 +501,6 @@ export function useSessionRowActionMenu(params: Readonly<{
         handleMoreMenuSelect,
         contextMenuItems,
         handleContextMenuSelect,
-        mutatingSession: stoppingSession || archivingSession || params.archiving === true,
+        mutatingSession: stoppingSession || archivingSession || deletingSession || params.archiving === true,
     };
 }

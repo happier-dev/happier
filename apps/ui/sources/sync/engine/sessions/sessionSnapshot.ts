@@ -1532,6 +1532,9 @@ export async function fetchAndApplySessions(params: {
     };
 
     params.onSnapshotFetched?.(sessions.map((session) => session.id));
+    // Rows whose renderable has no metadata (never decrypted, no warm-cache entry) would otherwise
+    // show only the project folder name, so they are hydrated ahead of the skipped background rows.
+    const titlelessRowIds = new Set<string>();
     if (shouldApplyRenderables) {
         const renderables = syncPerformanceTelemetry.measure(
             'sync.sessions.snapshot.renderableBuild',
@@ -1549,6 +1552,9 @@ export async function fetchAndApplySessions(params: {
             )),
         );
         appliedRenderableCount = renderables.length;
+        for (const renderable of renderables) {
+            if (renderable.metadata == null) titlelessRowIds.add(renderable.id);
+        }
         const staleMetadataPreservedRows = countStaleMetadataPreservedRows(
             renderables,
             params.getCurrentSessionListRenderable,
@@ -1634,7 +1640,7 @@ export async function fetchAndApplySessions(params: {
             ...normalizeSessionListHydrationSessionIds(params.priorityHydrationSessionIds),
         ]);
         for (const row of sessions) {
-            if (isSessionListRowAttentionHydrationPriority(row)) {
+            if (isSessionListRowAttentionHydrationPriority(row) || titlelessRowIds.has(row.id)) {
                 priorityHydrationSessionIds.add(row.id);
             }
         }

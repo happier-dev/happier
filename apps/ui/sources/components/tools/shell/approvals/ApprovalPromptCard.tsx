@@ -13,6 +13,7 @@ import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
 import { ApprovalDecisionFooter } from './ApprovalDecisionFooter';
 import { useApprovalDecisionHandler } from './useApprovalDecisionHandler';
 import { Icon } from '@/components/ui/icons/Icon';
+import { PromptCardLayout } from '@/components/tools/shell/presentation/PromptCardLayout';
 
 const PROMPT_CARD_HORIZONTAL_PADDING = 12;
 const PROMPT_CARD_ICON_SIZE = 18;
@@ -45,6 +46,7 @@ export const ApprovalPromptCard = React.memo(function ApprovalPromptCard(props: 
     canApprove: boolean;
     disabledReason?: 'public' | 'readOnly' | 'notGranted' | 'inactive';
     chrome?: 'card' | 'inline';
+    maxHeightPx?: number;
 }>) {
     const { theme } = useUnistyles();
     const router = useRouter();
@@ -70,6 +72,21 @@ export const ApprovalPromptCard = React.memo(function ApprovalPromptCard(props: 
 
     return (
         <View testID="approval-prompt-card" style={[styles.container, chrome === 'inline' ? styles.containerInline : null]}>
+            <PromptCardLayout
+                maxHeightPx={props.maxHeightPx}
+                bodyTestID="approval-prompt-scroll-body"
+                footer={(
+                    <View style={styles.actions}>
+                        <ApprovalDecisionFooter
+                            disabled={!props.canApprove}
+                            disabledReason={props.disabledReason}
+                            isDeciding={isDeciding}
+                            onApprove={() => { void decide('approve'); }}
+                            onReject={() => { void decide('reject'); }}
+                        />
+                    </View>
+                )}
+            >
             <View style={styles.header}>
                 <View style={styles.icon}>
                     <Icon name="shield-check" size={16} color={theme.colors.state.neutral.foreground} />
@@ -97,15 +114,7 @@ export const ApprovalPromptCard = React.memo(function ApprovalPromptCard(props: 
                 </View>
             ) : null}
 
-            <View style={styles.actions}>
-                <ApprovalDecisionFooter
-                    disabled={!props.canApprove}
-                    disabledReason={props.disabledReason}
-                    isDeciding={isDeciding}
-                    onApprove={() => { void decide('approve'); }}
-                    onReject={() => { void decide('reject'); }}
-                />
-            </View>
+            </PromptCardLayout>
         </View>
     );
 });

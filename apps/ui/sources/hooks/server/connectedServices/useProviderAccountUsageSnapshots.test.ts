@@ -201,12 +201,15 @@ describe('useProviderAccountUsageSnapshots', () => {
     await hook.unmount();
   });
 
-  it('rerenders mounted consumers when the shared account usage cache is written externally', async () => {
+  it('updates both session consumers of an account without changing another account', async () => {
     const snapshot = makeUsageSnapshot();
+    const other = makeUsageSnapshot('another-provider-account');
     const credentialScope = resolveAuthCredentialsScopeKey(stableCredentials);
 
     const { useProviderAccountUsageSnapshots } = await import('./useProviderAccountUsageSnapshots');
     const hook = await renderHook(() => useProviderAccountUsageSnapshots([snapshot.recordId]));
+    const secondSession = await renderHook(() => useProviderAccountUsageSnapshots([snapshot.recordId]));
+    const otherAccount = await renderHook(() => useProviderAccountUsageSnapshots([other.recordId]));
 
     expect(hook.getCurrent()[snapshot.recordId]).toBeNull();
 
@@ -217,7 +220,11 @@ describe('useProviderAccountUsageSnapshots', () => {
     await flushHookEffects({ cycles: 3, turns: 3 });
 
     expect(hook.getCurrent()[snapshot.recordId]).toBe(snapshot);
+    expect(secondSession.getCurrent()[snapshot.recordId]).toBe(snapshot);
+    expect(otherAccount.getCurrent()[other.recordId]).toBeNull();
     await hook.unmount();
+    await secondSession.unmount();
+    await otherAccount.unmount();
   });
 
   it('opens sealed provider account usage snapshots with account-scoped credentials', async () => {

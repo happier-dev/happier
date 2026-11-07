@@ -1,6 +1,6 @@
 import React from 'react';
 import { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { computeConnectedServiceQuotaGaugeViewModel } from '@/sync/domains/connectedServices/connectedServiceQuotaGauge';
 
@@ -8,6 +8,21 @@ import type { ConnectedServiceQuotaGaugeLabelFormatter, ConnectedServiceQuotaGau
 import { renderScreen } from '@/dev/testkit';
 
 import { AgentInputProviderUsageBadge } from './AgentInputProviderUsageBadge';
+
+// These presentation tests have no signed-in account or refresh in progress.
+vi.mock('@/auth/context/AuthContext', () => ({ useAuth: () => ({ credentials: null }) }));
+
+const FIXTURE_NOW_MS = Date.parse('2026-05-12T00:00:00.000Z');
+
+// Pin the clock so the live reset countdown renders the same text in every test.
+beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(FIXTURE_NOW_MS);
+});
+
+afterEach(() => {
+    vi.useRealTimers();
+});
 
 // SVG is a native rendering boundary; the usage and capacity rings remain real.
 vi.mock('react-native-svg', () => ({
@@ -24,8 +39,9 @@ const fixtureFormatter: ConnectedServiceQuotaGaugeLabelFormatter = {
     durationOutdated: () => 'outdated',
     durationDaysHours: ({ days, hours }) => `${days}d ${hours}h`,
     durationHoursMinutes: ({ hours, minutes }) => `${hours}h ${minutes}m`,
-    durationHours: ({ hours }) => `${hours}h`,
     durationMinutes: ({ minutes }) => `${minutes}m`,
+    durationHoursMinutesSeconds: ({ hours, minutes, seconds }) => `${hours}h ${minutes}m ${seconds}s`,
+    durationMinutesSeconds: ({ minutes, seconds }) => `${minutes}m ${seconds}s`,
     subscriptionEnds: ({ date }) => `Ends ${date}`,
     subscriptionEndsInDays: ({ days }) => `Ends in ${days} day${days === 1 ? '' : 's'}`,
     subscriptionRenews: ({ date }) => `Renews ${date}`,
@@ -44,9 +60,9 @@ function viewModel(): ConnectedServiceQuotaGaugeViewModel {
         badgeLabel: '18% left',
         scopePrefix: null,
         primaryValueSemantics: 'remaining',
-        detailRightLabel: '18% left · resets in 2h',
+        detailRightLabel: '18% left · resets in 2h 0m',
         usedLimitLabel: '82/100 used',
-        resetLabel: '2h',
+        resetLabel: '2h 0m 0s',
         tone: 'warning',
         isStale: false,
         recoveryCreditSummary: {
@@ -71,10 +87,11 @@ function viewModel(): ConnectedServiceQuotaGaugeViewModel {
             remainingPct: 18,
             usedPct: 82,
             detailRightSemantics: 'remaining',
-            detailRightLabel: '18% left · resets in 2h',
+            detailRightLabel: '18% left · resets in 2h 0m 0s',
             usedLimitSemantics: 'used',
             usedLimitLabel: '82/100 used',
-            resetLabel: '2h',
+            resetAtMs: FIXTURE_NOW_MS + 2 * 60 * 60 * 1000,
+            resetLabel: '2h 0m 0s',
             tone: 'warning',
         }],
         usageRings: [],
@@ -97,7 +114,7 @@ describe('AgentInputProviderUsageBadge', () => {
         expect(screen.findByTestId('agent-input-provider-usage-meter:reached')).toBeTruthy();
         expect(screen.findByTestId('agent-input-provider-usage-meter-bar:reached')).toBeNull();
     });
-    it('renders each selected global window with its own remaining-first ring and accessible name', async () => {
+    it('nests selected global windows in one remaining-first gauge with both accessible names', async () => {
         const vm = computeConnectedServiceQuotaGaugeViewModel({
             snapshot: {
                 v: 1, serviceId: 'openai-codex', profileId: 'work', fetchedAt: 1_000, staleAfterMs: 60_000,
@@ -115,15 +132,21 @@ describe('AgentInputProviderUsageBadge', () => {
         const screen = await renderScreen(<AgentInputProviderUsageBadge viewModel={vm} />);
 
         expect(screen.findByTestId('agent-input-provider-usage-value')?.props.children).toBe('18');
-        expect(screen.findByTestId('agent-input-provider-usage-value:daily')?.props.children).toBe('70');
+        const progress = screen.findByTestId('agent-input-provider-usage-ring')?.findAll((node) => String(node.type) === 'Circle' && typeof node.props.strokeDashoffset === 'number') ?? [];
+        expect(progress).toHaveLength(2);
+        expect(progress[0].props.r).toBeGreaterThan(progress[1].props.r);
+        expect(progress[0].props.cx).toBe(progress[1].props.cx);
+        expect(progress[0].props.cy).toBe(progress[1].props.cy);
+        expect(progress[0].props.strokeDashoffset / (2 * Math.PI * progress[0].props.r)).toBeCloseTo(0.82);
+        expect(progress[1].props.strokeDashoffset / (2 * Math.PI * progress[1].props.r)).toBeCloseTo(0.30);
         const imageLabels = screen.findAll((node) => typeof node.type === 'string' && node.props.accessibilityRole === 'image')
             .map((node) => node.props.accessibilityLabel);
-        expect(imageLabels).toEqual(['Weekly 18% left', 'Daily 70% left']);
+        expect(imageLabels).toHaveLength(1);
+        expect(imageLabels[0]).toContain('Weekly 18% left');
+        expect(imageLabels[0]).toContain('Daily 70% left');
         const aggregate = String(screen.findByTestId('agent-input-provider-usage-badge')?.props.accessibilityLabel);
         expect(aggregate).toContain('Weekly 18% left');
         expect(aggregate).toContain('Daily 70% left');
-        expect(screen.findByTestId('agent-input-provider-usage-meter-label')?.props.children).toBe('Weekly');
-        expect(screen.findByTestId('agent-input-provider-usage-meter-label:daily')?.props.children).toBe('Daily');
         act(() => { screen.findByTestId('agent-input-provider-usage-badge')?.props.onPress?.(); });
         expect(screen.findByTestId('agent-input-provider-usage-meter:daily')).toBeTruthy();
     });
@@ -171,6 +194,21 @@ describe('AgentInputProviderUsageBadge', () => {
         expect(screen.findByTestId('agent-input-provider-usage-subscription:renewal')?.props.children).toContain('Off');
         await screen.update(<AgentInputProviderUsageBadge viewModel={viewModel()} />);
         expect(screen.findByTestId('agent-input-provider-usage-subscription')).toBeNull();
+    });
+
+    it('counts an open meter reset down live, one second per tick, without a parent re-render', async () => {
+        const vm = viewModel();
+        const screen = await renderScreen(<AgentInputProviderUsageBadge viewModel={vm} />);
+        act(() => screen.findByTestId('agent-input-provider-usage-badge')?.props.onPress?.());
+        expect(screen.getTextContent()).toContain('resets in 2h 0m');
+        expect(screen.getTextContent()).not.toContain('resets in 2h 0m 0s');
+        await screen.update(<AgentInputProviderUsageBadge viewModel={{
+            ...vm, allMeterRows: vm.allMeterRows.map((row) => ({ ...row, remainingPct: 0 })),
+        }} />);
+        expect(screen.getTextContent()).toContain('resets in 2h 0m 0s');
+
+        act(() => { vi.advanceTimersByTime(1_000); });
+        expect(screen.getTextContent()).toContain('resets in 1h 59m 59s');
     });
 
     it('removes the duplicated top quota summary and keeps consistent group spacing', async () => {

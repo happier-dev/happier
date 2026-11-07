@@ -626,9 +626,6 @@ describe('SessionsList web virtualization', () => {
             ? { ...item, headerKind: 'active' }
             : item);
         const screen = await renderSessionsList();
-        await act(async () => {
-            screen.findByTestId('session-list-search-trigger')?.props.onPress?.({ stopPropagation: vi.fn() });
-        });
         const input = screen.findByTestId('session-list-search-input');
         expect(input).toBeTruthy();
         await act(async () => { input?.props.onChangeText?.('no-matching-session'); });

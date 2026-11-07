@@ -18,6 +18,7 @@ export type DesktopTrayLabels = Readonly<{
     open: string;
     openInHappier: string;
     settings: string;
+    lockNow: string;
     startAtLogin: string;
     /** The plain Quit while the login-start setting is unknown. */
     quit: string;
@@ -77,6 +78,7 @@ export type DesktopTrayState = Readonly<{
     label: string;
     detail: string;
     labels: DesktopTrayLabels;
+    appLockEnabled: boolean;
     /**
      * R13 (e) — the one optional "Updates available (3)…" item, localized here; absent when there
      * is nothing to act on.
@@ -103,6 +105,7 @@ export function buildDesktopTrayLabels(t: Translate): DesktopTrayLabels {
         open: t('settingsDesktop.trayOpen'),
         openInHappier: t('settingsDesktop.trayOpenInHappier'),
         settings: t('settingsDesktop.traySettings'),
+        lockNow: t('appLock.lockNow'),
         startAtLogin: t('settingsDesktop.trayStartAtLogin'),
         quit: t('settingsDesktop.trayQuit'),
         quitKeepServices: t('settingsDesktop.trayQuitKeepServices'),
@@ -168,6 +171,7 @@ export function buildDesktopTrayState(params: Readonly<{
     thisComputerSentence?: string | null;
     /** The Updates summary's tray item (`describeUpdatesTrayItem`); `null` = no item. */
     updatesItem?: Readonly<{ label: string; enabled: boolean }> | null;
+    appLockEnabled?: boolean;
     services: ThisComputerRelayRows;
     /** Agent sessions the app can see on its relay's service here (`null`: it cannot see them). */
     appRelaySessionCount?: number | null;
@@ -177,6 +181,7 @@ export function buildDesktopTrayState(params: Readonly<{
 }>): DesktopTrayState {
     const common = {
         labels: buildDesktopTrayLabels(params.t),
+        appLockEnabled: params.appLockEnabled ?? false,
         ...(params.updatesItem ? { updatesLabel: params.updatesItem.label, updatesEnabled: params.updatesItem.enabled } : null),
         services: toTrayServices(params.services, params.appRelaySessionCount ?? null),
         serviceAutostart: params.serviceAutostart,

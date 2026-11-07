@@ -8516,6 +8516,9 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                   error: serializeAxiosErrorForLog(error),
                 });
               });
+              connectedApiMachine.onProviderAccountUsageRefreshRequested(() => {
+                connectedServiceQuotasLoopHandle?.wake();
+              });
               connectedApiMachine.onConnectedServicesProjectionChange((notification) => {
                 const reconciliation = connectedServiceGenerationReconciliationTail.then(async () => {
                   notification.signal.throwIfAborted();

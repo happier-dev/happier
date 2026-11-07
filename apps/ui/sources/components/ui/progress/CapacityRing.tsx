@@ -2,6 +2,7 @@ import * as React from 'react';
 import { View, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Svg, Circle } from 'react-native-svg';
+import Color from 'color';
 
 /**
  * Canonical circular progress ring (gauge). Renders one or more CONCENTRIC arcs
@@ -18,7 +19,7 @@ export type CapacityRingProps = Readonly<{
     /** Single-arc resolved color (used when `rings` is not provided). */
     color?: string;
     /** Concentric arcs, OUTERMOST first. Overrides `ratio`/`color` when non-empty. */
-    rings?: ReadonlyArray<{ ratio: number; color: string }>;
+    rings?: ReadonlyArray<{ ratio: number; color: string; trackColor?: string }>;
     /** Outer diameter in px. */
     size?: number;
     strokeWidth?: number;
@@ -35,8 +36,8 @@ export type CapacityRingProps = Readonly<{
     accessibilityLabel?: string;
 }>;
 
-/** Radial gap between adjacent concentric arcs. */
-const RING_GAP = 2.5;
+/** Radial gap between adjacent concentric arcs: one transparent pixel separates the limits. */
+const RING_GAP = 1;
 
 function clamp01(value: number): number {
     if (!Number.isFinite(value)) return 0;
@@ -48,11 +49,11 @@ function clamp01(value: number): number {
 export function CapacityRing(props: CapacityRingProps) {
     const { theme } = useUnistyles();
     const size = props.size ?? 40;
-    const strokeWidth = props.strokeWidth ?? 3;
+    const strokeWidth = (props.strokeWidth ?? 3) * 1.25;
     const trackColor = props.trackColor ?? theme.colors.border.default;
     const outerRadius = (size - strokeWidth) / 2;
 
-    const arcs = props.rings && props.rings.length > 0
+    const arcs: NonNullable<CapacityRingProps['rings']> = props.rings && props.rings.length > 0
         ? props.rings
         : [{ ratio: props.ratio ?? 0, color: props.color ?? trackColor }];
 
@@ -72,6 +73,9 @@ export function CapacityRing(props: CapacityRingProps) {
                 style={styles.ring}
             >
                 {arcs.map((arc, index) => {
+                    // Boost the current theme's saturation, preserving hue, lightness and alpha.
+                    const themeColor = Color(arc.color).hsl();
+                    const color = themeColor.saturationl(Math.min(100, themeColor.saturationl() * 1.25)).rgb().string();
                     const radius = outerRadius - index * (strokeWidth + RING_GAP);
                     if (radius < strokeWidth) return null;
                     const circumference = 2 * Math.PI * radius;
@@ -83,7 +87,7 @@ export function CapacityRing(props: CapacityRingProps) {
                                 cy={size / 2}
                                 r={radius}
                                 fill="none"
-                                stroke={trackColor}
+                                stroke={arc.trackColor === arc.color ? color : arc.trackColor ?? trackColor}
                                 strokeWidth={strokeWidth}
                             />
                             <Circle
@@ -92,7 +96,7 @@ export function CapacityRing(props: CapacityRingProps) {
                                 cy={size / 2}
                                 r={radius}
                                 fill="none"
-                                stroke={arc.color}
+                                stroke={color}
                                 strokeWidth={strokeWidth}
                                 strokeLinecap="round"
                                 strokeDasharray={`${circumference} ${circumference}`}

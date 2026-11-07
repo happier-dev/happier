@@ -43,6 +43,14 @@ export type BackgroundTaskDetailProps = Readonly<{
      * callback, no link, rather than a control that leads nowhere (A9).
      */
     onOpenLaunchingCommand?: () => void;
+    /**
+     * The user dismissed this report. It is presentation only: the command was not stopped and no
+     * outcome was learned, so the note says exactly that.
+     */
+    acknowledged?: boolean;
+    /** Present only when the host has judged the report eligible (stale and not yet dismissed). */
+    onDismiss?: () => void;
+    onUndoDismiss?: () => void;
     testID?: string;
 }>;
 
@@ -103,6 +111,46 @@ export const BackgroundTaskDetail = React.memo<BackgroundTaskDetailProps>((props
                     </Text>
                 </Pressable>
             ) : null}
+            {props.onDismiss ? (
+                <View style={styles.dismissGroup}>
+                    <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={t('session.agentActivity.backgroundTask.dismissStale')}
+                        onPress={props.onDismiss}
+                        hitSlop={8}
+                        style={styles.link}
+                        testID={testID ? `${testID}:dismiss` : undefined}
+                    >
+                        <Text style={styles.linkText}>
+                            {t('session.agentActivity.backgroundTask.dismissStale')}
+                        </Text>
+                    </Pressable>
+                    <Text style={styles.meta} testID={testID ? `${testID}:dismiss-hint` : undefined}>
+                        {t('session.agentActivity.backgroundTask.dismissStaleHint')}
+                    </Text>
+                </View>
+            ) : null}
+            {props.acknowledged ? (
+                <View style={styles.dismissGroup}>
+                    <Text style={styles.meta} testID={testID ? `${testID}:dismissed-note` : undefined}>
+                        {t('session.agentActivity.backgroundTask.dismissedNote')}
+                    </Text>
+                    {props.onUndoDismiss ? (
+                        <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel={t('session.agentActivity.backgroundTask.undoDismiss')}
+                            onPress={props.onUndoDismiss}
+                            hitSlop={8}
+                            style={styles.link}
+                            testID={testID ? `${testID}:undo-dismiss` : undefined}
+                        >
+                            <Text style={styles.linkText}>
+                                {t('session.agentActivity.backgroundTask.undoDismiss')}
+                            </Text>
+                        </Pressable>
+                    ) : null}
+                </View>
+            ) : null}
         </View>
     );
 });
@@ -131,6 +179,9 @@ const styles = StyleSheet.create((theme) => ({
         fontSize: 12,
         lineHeight: 17,
         color: theme.colors.text.secondary,
+    },
+    dismissGroup: {
+        gap: 4,
     },
     link: {
         flexDirection: 'row',

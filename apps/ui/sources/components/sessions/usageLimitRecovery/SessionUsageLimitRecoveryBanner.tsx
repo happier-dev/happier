@@ -12,13 +12,14 @@ function useViewed() { return React.useSyncExternalStore(subscribeToRuntimeActiv
 
 type Props = React.ComponentProps<typeof SessionWarningActionBanner> & Readonly<{
     temporaryThrottle?: Readonly<{ nextCheckAtMs: number | null; attemptCount: number }>;
+    resetCountdown?: Readonly<{ deadlineMs: number; timeLabel: string }>;
     surfaceFocused: boolean;
 }>;
 
 // The clock subscription belongs to this leaf; a tick never rerenders SessionView or its transcript.
-export function SessionUsageLimitRecoveryBanner({ temporaryThrottle, surfaceFocused, ...props }: Props) {
+export function SessionUsageLimitRecoveryBanner({ temporaryThrottle, resetCountdown, surfaceFocused, ...props }: Props) {
     const viewed = useViewed();
-    const deadline = temporaryThrottle?.nextCheckAtMs ?? null;
+    const deadline = temporaryThrottle?.nextCheckAtMs ?? resetCountdown?.deadlineMs ?? null;
     const enabled = viewed && surfaceFocused && deadline !== null;
     const readSeconds = React.useCallback(() => deadline === null ? 0 : Math.max(0, Math.ceil((deadline - nowServerMs()) / 1_000)), [deadline]);
     const subscribe = React.useCallback((notify: () => void) => {
@@ -31,13 +32,20 @@ export function SessionUsageLimitRecoveryBanner({ temporaryThrottle, surfaceFocu
     }, [enabled, readSeconds]);
     const seconds = React.useSyncExternalStore(subscribe, readSeconds, readSeconds);
     const attempt = (temporaryThrottle?.attemptCount ?? 0) + (deadline !== null ? 1 : 0);
+    const body = resetCountdown && seconds > 0 && resetCountdown.timeLabel
+        ? props.body?.replace(resetCountdown.timeLabel, `${resetCountdown.timeLabel} (${t('agentInput.providerUsage.duration.hoursMinutesSeconds', {
+            hours: Math.floor(seconds / 3_600),
+            minutes: Math.floor((seconds % 3_600) / 60),
+            seconds: seconds % 60,
+        })})`)
+        : props.body;
     return <SessionWarningActionBanner
         {...props}
-        title={deadline !== null && seconds > 0
+        title={temporaryThrottle && deadline !== null && seconds > 0
             ? t('session.usageLimitRecovery.overloadCountdown', { seconds, attempt })
             : props.title}
         body={temporaryThrottle && (deadline === null || seconds === 0) && attempt > 0
-            ? `${props.body ?? ''} · ${t('session.usageLimitRecovery.overloadAttempt', { attempt })}`
-            : props.body}
+            ? `${body ?? ''} · ${t('session.usageLimitRecovery.overloadAttempt', { attempt })}`
+            : body}
     />;
 }

@@ -1,4 +1,5 @@
 import { isDesktopPetOverlayWindowContext } from '@/components/pets/desktop/runtime/isDesktopPetOverlayWindowContext';
+import { isSessionFileWindowContext } from '@/components/sessions/files/window/sessionFileWindowRoute';
 import { invokeTauri, isTauriDesktop, listenTauriEvent } from '@/utils/platform/tauri';
 import { isLatestVersionCheckDue } from '@/updates/latestVersionCheckFreshness';
 
@@ -93,9 +94,9 @@ function parseOptionalBoolean(raw: string | undefined): boolean | null {
 
 function resolveUpdateChecksEnabled(): boolean {
     if (!isTauriDesktop()) return false;
-    // The pet overlay is a second webview of the same app; a check from it would replace the one
-    // pending update the Rust adapter holds for the main window.
-    if (isDesktopPetOverlayWindowContext()) return false;
+    // The pet overlay and file windows are second webviews of the same app; a check from one would
+    // replace the one pending update the Rust adapter holds for the main window.
+    if (isDesktopPetOverlayWindowContext() || isSessionFileWindowContext()) return false;
     const override = parseOptionalBoolean(process.env[UPDATE_CHECKS_ENABLED_ENV]);
     if (override !== null) return override;
     return (globalThis as { __DEV__?: unknown }).__DEV__ !== true;

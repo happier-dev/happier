@@ -933,7 +933,23 @@ describe('SessionsList (native virtualization)', () => {
         expect(readTargets().get('server_a:sess_a').tags).toEqual(['updated-while-closed']);
     });
 
-    it('keeps explicitly opened search mounted on blur until it is dismissed', async () => {
+    it('shows one search field and one view menu above the list however many sections there are', async () => {
+        mockVisibleSessionListViewData = [
+            { type: 'header', title: 'Needs Attention', headerKind: 'attention', groupKey: 'attention', serverId: 'server_a', serverName: 'Server A' },
+            { type: 'session', session: sessionA, groupKey: 'attention', groupKind: 'attention', serverId: 'server_a', serverName: 'Server A' },
+            { type: 'header', title: 'Pinned', headerKind: 'pinned', groupKey: 'pinned', serverId: 'server_a', serverName: 'Server A' },
+            { type: 'header', title: 'Active', headerKind: 'active', groupKey: 'active', serverId: 'server_a', serverName: 'Server A' },
+            { type: 'session', session: sessionB, groupKey: 'active', groupKind: 'active', serverId: 'server_a', serverName: 'Server A' },
+        ];
+
+        const screen = await renderSessionsList();
+
+        expect(screen.findAllHostsByTestId('session-list-search-input')).toHaveLength(1);
+        expect(screen.findAllByTestId('session-list-search-trigger')).toHaveLength(0);
+        expect(screen.findAllByTestId('session-list-ordering-menu-trigger')).toHaveLength(1);
+    });
+
+    it('keeps the search field mounted through blur and clear', async () => {
         mockVisibleSessionListViewData = [
             {
                 type: 'header',
@@ -954,97 +970,25 @@ describe('SessionsList (native virtualization)', () => {
         ];
 
         const screen = await renderSessionsList();
-        expect(screen.findAllByTestId('session-list-search-input')).toHaveLength(0);
-
-        const trigger = expectPresent(
-            screen.findByTestId('session-list-search-trigger'),
-            'expected collapsed search trigger',
-        );
-        const stopPropagation = vi.fn(function (this: { nativeEvent?: unknown }) {
-            expect(this.nativeEvent).toEqual({ type: 'press' });
-        });
-        await act(async () => {
-            trigger.props.onPress?.({ nativeEvent: { type: 'press' }, stopPropagation });
-        });
-        expect(stopPropagation).toHaveBeenCalledTimes(1);
-
         const input = expectPresent(
             screen.findByTestId('session-list-search-input'),
-            'expected expanded search input',
+            'expected search input',
         );
-        expect(input.props.autoFocus).toBe(true);
 
         await act(async () => {
+            input.props.onChangeText?.('stale');
             input.props.onBlur?.();
         });
-
-        await act(async () => {
-            await new Promise((resolve) => setTimeout(resolve, 60));
-        });
-
         expect(screen.findByTestId('session-list-search-input')).toBe(input);
+
         await act(async () => {
             screen.findByTestId('session-list-search-clear')?.props.onPress?.({ stopPropagation: vi.fn() });
         });
-        expect(screen.findAllByTestId('session-list-search-input')).toHaveLength(0);
+        expect(screen.findByTestId('session-list-search-input')).toBe(input);
+        expect(screen.findByTestId('session-list-search-input')?.props.value).toBe('');
     });
 
-    it('shows the header controls on the pinned group when it is the first visible section', async () => {
-        mockVisibleSessionListViewData = [
-            {
-                type: 'header',
-                title: 'Pinned',
-                headerKind: 'pinned',
-                groupKey: 'pinned',
-                serverId: 'server_a',
-                serverName: 'Server A',
-            },
-            {
-                type: 'session',
-                session: sessionA,
-                groupKey: 'pinned',
-                groupKind: 'pinned',
-                serverId: 'server_a',
-                serverName: 'Server A',
-            },
-        ];
-
-        const screen = await renderSessionsList();
-
-        expect(screen.findAllByTestId('session-list-search-trigger')).toHaveLength(1);
-        expect(screen.findAllByTestId('session-list-ordering-menu-trigger')).toHaveLength(1);
-    });
-
-    it.each([
-        { headerKind: 'attention' as const, groupKind: 'attention' as const, title: 'Needs Attention' },
-        { headerKind: 'working' as const, groupKind: 'working' as const, title: 'Working' },
-    ])('shows the header controls on the $headerKind placement group when it is the first visible section', async ({ headerKind, groupKind, title }) => {
-        mockVisibleSessionListViewData = [
-            {
-                type: 'header',
-                title,
-                headerKind,
-                groupKey: headerKind,
-                serverId: 'server_a',
-                serverName: 'Server A',
-            },
-            {
-                type: 'session',
-                session: sessionA,
-                groupKey: headerKind,
-                groupKind,
-                serverId: 'server_a',
-                serverName: 'Server A',
-            },
-        ];
-
-        const screen = await renderSessionsList();
-
-        expect(screen.findAllByTestId('session-list-search-trigger')).toHaveLength(1);
-        expect(screen.findAllByTestId('session-list-ordering-menu-trigger')).toHaveLength(1);
-    });
-
-    it('keeps the header search control anchored to the section that opened it', async () => {
+    it('keeps every main section heading while the search filters rows', async () => {
         mockVisibleSessionListViewData = [
             {
                 type: 'header',
@@ -1081,30 +1025,20 @@ describe('SessionsList (native virtualization)', () => {
         ];
 
         const screen = await renderSessionsList();
-        const searchTriggers = screen.findAllByTestId('session-list-search-trigger');
-        expect(searchTriggers).toHaveLength(2);
-
-        await act(async () => {
-            expectPresent(
-                searchTriggers[1],
-                'expected active header search trigger',
-            ).props.onPress?.({ stopPropagation: vi.fn() });
-        });
-
         const input = expectPresent(
             screen.findByTestId('session-list-search-input'),
-            'expected expanded top header search input',
+            'expected search input',
         );
         await act(async () => {
             input.props.onChangeText?.('other-repo');
         });
 
-        expect(screen.findAllByTestId('session-list-search-input').length).toBeGreaterThan(0);
+        expect(screen.findAllByTestId('session-list-header:pinned')).toHaveLength(1);
         expect(screen.findAllByTestId('session-list-session:sess_a')).toHaveLength(0);
         expect(screen.findAllByTestId('session-list-header:active')).toHaveLength(1);
         expect(screen.findAllByTestId('session-list-session:sess_b')).toHaveLength(1);
 
-        // A live session update can remove the section that originally owned search.
+        // A live session update can move sessions between sections while a search is active.
         mockVisibleSessionListViewData = mockVisibleSessionListViewData.map((item) => item.groupKey === 'active'
             ? item.type === 'header'
                 ? { ...item, title: 'Inactive', headerKind: 'inactive', groupKey: 'inactive' }
@@ -1112,15 +1046,17 @@ describe('SessionsList (native virtualization)', () => {
             : item);
         const { SessionsList } = await import('./SessionsList');
         await screen.update(<SessionsList />);
+        expect(screen.findByTestId('session-list-search-input')).toBe(input);
         expect(screen.findByTestId('session-list-search-input')?.props.value).toBe('other-repo');
+        expect(screen.findAllByTestId('session-list-header:inactive')).toHaveLength(1);
         await act(async () => {
             screen.findByTestId('session-list-search-clear')?.props.onPress?.({ stopPropagation: vi.fn() });
         });
-        expect(screen.findAllByTestId('session-list-search-input')).toHaveLength(0);
-        expect(screen.findAllByTestId('session-list-search-trigger').length).toBeGreaterThan(0);
+        expect(screen.findByTestId('session-list-search-input')?.props.value).toBe('');
+        expect(screen.findAllByTestId('session-list-session:sess_a')).toHaveLength(1);
     });
 
-    it('keeps focused search open when clearing the last character after no results', async () => {
+    it('keeps the main section headings and the search field when nothing matches, then restores rows', async () => {
         mockVisibleSessionListViewData = [
             {
                 type: 'header',
@@ -1157,23 +1093,15 @@ describe('SessionsList (native virtualization)', () => {
         ];
 
         const screen = await renderSessionsList();
-        const searchTriggers = screen.findAllByTestId('session-list-search-trigger');
-        expect(searchTriggers).toHaveLength(2);
-
-        await act(async () => {
-            expectPresent(
-                searchTriggers[1],
-                'expected active header search trigger',
-            ).props.onPress?.({ stopPropagation: vi.fn() });
-        });
 
         await act(async () => {
             expectPresent(
                 screen.findByTestId('session-list-search-input'),
-                'expected expanded active header search input',
+                'expected search input',
             ).props.onChangeText?.('z');
         });
 
+        expect(screen.findAllByTestId('session-list-header:pinned')).toHaveLength(1);
         expect(screen.findAllByTestId('session-list-header:active')).toHaveLength(1);
         expect(screen.findAllByTestId('session-list-session:sess_a')).toHaveLength(0);
         expect(screen.findAllByTestId('session-list-session:sess_b')).toHaveLength(0);
@@ -1189,14 +1117,14 @@ describe('SessionsList (native virtualization)', () => {
 
         const inputAfterClear = expectPresent(
             screen.findByTestId('session-list-search-input'),
-            'expected focused search input to stay mounted after clearing',
+            'expected search input to stay mounted after clearing',
         );
         expect(inputAfterClear.props.value).toBe('');
         expect(screen.findAllByTestId('session-list-session:sess_a')).toHaveLength(1);
         expect(screen.findAllByTestId('session-list-session:sess_b')).toHaveLength(1);
     });
 
-    it('keeps the header search input open with text and filters visible sessions', async () => {
+    it('filters visible sessions from the top search field and keeps it mounted after blur', async () => {
         mockVisibleSessionListViewData = [
             {
                 type: 'header',
@@ -1225,16 +1153,10 @@ describe('SessionsList (native virtualization)', () => {
         ];
 
         const screen = await renderSessionsList();
-        await act(async () => {
-            expectPresent(
-                screen.findByTestId('session-list-search-trigger'),
-                'expected collapsed search trigger',
-            ).props.onPress?.({ stopPropagation: vi.fn() });
-        });
 
         const input = expectPresent(
             screen.findByTestId('session-list-search-input'),
-            'expected expanded search input',
+            'expected search input',
         );
         await act(async () => {
             input.props.onChangeText?.('other-repo');
@@ -1246,7 +1168,7 @@ describe('SessionsList (native virtualization)', () => {
         expect(screen.findAllByTestId('session-list-session:sess_b')).toHaveLength(1);
     });
 
-    it('retains active header search filters across a route-level sessions-list remount', async () => {
+    it('retains active search filters across a route-level sessions-list remount', async () => {
         mockVisibleSessionListViewData = [
             {
                 type: 'header',
@@ -1277,14 +1199,8 @@ describe('SessionsList (native virtualization)', () => {
         const screen = await renderSessionsList();
         await act(async () => {
             expectPresent(
-                screen.findByTestId('session-list-search-trigger'),
-                'expected collapsed search trigger',
-            ).props.onPress?.({ stopPropagation: vi.fn() });
-        });
-        await act(async () => {
-            expectPresent(
                 screen.findByTestId('session-list-search-input'),
-                'expected expanded search input',
+                'expected search input',
             ).props.onChangeText?.('other-repo');
         });
 
@@ -1322,7 +1238,7 @@ describe('SessionsList (native virtualization)', () => {
         });
     });
 
-    it('shows matching sessions from collapsed groups while header filters are active', async () => {
+    it('shows matching sessions from collapsed groups while search filters are active', async () => {
         collapsedGroupKeysV1 = { [groupKey]: true };
         mockVisibleSessionListViewData = [
             {
@@ -1354,16 +1270,9 @@ describe('SessionsList (native virtualization)', () => {
         const screen = await renderSessionsList();
         expect(screen.findAllByTestId('session-list-session:sess_a')).toHaveLength(0);
 
-        await act(async () => {
-            expectPresent(
-                screen.findByTestId('session-list-search-trigger'),
-                'expected collapsed search trigger',
-            ).props.onPress?.({ stopPropagation: vi.fn() });
-        });
-
         const input = expectPresent(
             screen.findByTestId('session-list-search-input'),
-            'expected expanded search input',
+            'expected search input',
         );
         await act(async () => {
             input.props.onChangeText?.('stale-repo');
@@ -1372,7 +1281,7 @@ describe('SessionsList (native virtualization)', () => {
         expect(screen.findAllByTestId('session-list-session:sess_a')).toHaveLength(1);
     });
 
-    it('shows the header tag filter only when known tags exist and filters by any selected tag', async () => {
+    it('shows the top-bar tag filter only when known tags exist and filters by any selected tag', async () => {
         sessionTagsV1 = { 'server_a:sess_a': ['important'], 'server_a:sess_b': ['later'] };
         mockVisibleSessionListViewData = [
             {

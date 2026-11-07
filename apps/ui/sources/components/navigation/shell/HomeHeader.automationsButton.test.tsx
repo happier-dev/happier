@@ -7,6 +7,9 @@ import { installNavigationShellCommonModuleMocks } from './navigationShellTestHe
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+// The authenticated header contains usage; no remote account is needed for these controls.
+vi.mock('@/auth/context/AuthContext', () => ({ useAuth: () => ({ credentials: null }) }));
+
 const routerPushSpy = vi.hoisted(() => vi.fn());
 
 const automationsSupportState = vi.hoisted(() => ({
@@ -69,6 +72,19 @@ vi.mock('@/components/navigation/Header', () => ({
         ),
 }));
 
+// The app-lock record lives in SecureStore/localStorage; keep it in memory for this header test.
+const appLockRecordStore = vi.hoisted(() => ({ value: null as unknown }));
+vi.mock('@/auth/appLock/appLockRecord', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/auth/appLock/appLockRecord')>()),
+    readAppLockRecord: async () => appLockRecordStore.value,
+    writeAppLockRecord: async (record: unknown) => {
+        appLockRecordStore.value = record;
+    },
+    removeAppLockRecord: async () => {
+        appLockRecordStore.value = null;
+    },
+}));
+
 vi.mock('@/hooks/server/useAutomationsSupport', () => ({
     useAutomationsSupport: () => ({ enabled: automationsSupportState.enabled }),
 }));
@@ -120,6 +136,39 @@ describe('HomeHeader automations button', () => {
                 draftOrigin: 'ordinary',
             },
         });
+    });
+
+    it('shows a lock button left of automations only while the app lock is on, and locks the app', async () => {
+        const runtime = await import('@/auth/appLock/appLockRuntime');
+        const { HomeHeader } = await import('./HomeHeader');
+
+        const before = (await renderScreen(<HomeHeader />)).tree;
+        expect(before.findAll((node) => node.props?.testID === 'home-header-app-lock' && typeof node.props?.onPress === 'function')).toHaveLength(0);
+
+        await runtime.loadAppLock();
+        await runtime.activateAppLock({
+            v: 1,
+            lockId: 'lock_0123456789abcdefghijkl',
+            email: 'owner@example.com',
+            serverUrl: 'https://relay.example.test',
+            wrapped: { kdf: { alg: 'scrypt', N: 1024, r: 8, p: 1, salt: 'c2FsdA==' }, passwordWrappedKey: 'x', recoveryWrappedKey: 'y' },
+            autoLockMinutes: 5,
+            biometric: false,
+        }, new Uint8Array(32));
+
+        const tree = (await renderScreen(<HomeHeader />)).tree;
+        const pressables = tree.findAll((node) =>
+            typeof node.props?.onPress === 'function'
+            && (node.props?.testID === 'home-header-app-lock' || node.props?.accessibilityLabel === 'Open automations'));
+        const lockIndex = pressables.findIndex((node) => node.props?.testID === 'home-header-app-lock');
+        const automationsIndex = pressables.findIndex((node) => node.props?.accessibilityLabel === 'Open automations');
+        expect(lockIndex).toBeGreaterThanOrEqual(0);
+        expect(lockIndex).toBeLessThan(automationsIndex);
+
+        await act(async () => {
+            await pressTestInstanceAsync(pressables[lockIndex]!);
+        });
+        expect(runtime.getAppLockSnapshot().status).toBe('locked');
     });
 
     it('keeps the logo in the header slot while nothing needs updating (no Updates entry at zero)', async () => {

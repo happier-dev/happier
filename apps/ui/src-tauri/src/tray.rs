@@ -399,6 +399,9 @@ pub struct DesktopTrayStatePayload {
     /// `false` while the item only reports ("Updating…"). Absent = enabled.
     #[serde(default)]
     pub updates_enabled: Option<bool>,
+    /// Whether the per-device app lock is enabled on this computer.
+    #[serde(default)]
+    pub app_lock_enabled: Option<bool>,
     #[serde(default)]
     pub services: Option<DesktopTrayServices>,
     /// The login-start setting as the web UI read it; absent/null = unknown.
@@ -430,6 +433,7 @@ fn apply_web_state(app: &AppHandle, payload: DesktopTrayStatePayload) {
         return;
     };
     let labels = payload.labels.map(TrayLabels::with_fallbacks);
+    let app_lock_enabled = payload.app_lock_enabled.unwrap_or(false);
     let updates = payload
         .updates_label
         .as_deref()
@@ -483,6 +487,7 @@ fn apply_web_state(app: &AppHandle, payload: DesktopTrayStatePayload) {
         }
         model.status_line = Some(status_line);
         model.updates = updates;
+        model.app_lock_enabled = app_lock_enabled;
         if let Some(services) = services {
             model.services = services;
         }

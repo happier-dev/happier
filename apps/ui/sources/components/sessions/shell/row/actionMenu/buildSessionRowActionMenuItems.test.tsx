@@ -4,7 +4,6 @@ import type { SessionListRenderableSession } from '@/sync/domains/session/listin
 import { createSessionActionTarget } from '@/components/sessions/actions/sessionActionContext';
 import {
     SESSION_ACTION_ARCHIVE_ID,
-    SESSION_ACTION_DELETE_ID,
     SESSION_ACTION_SET_ATTENTION_STANDING_ID,
     SESSION_ACTION_MARK_UNREAD_ID,
     SESSION_ACTION_MOVE_TO_FOLDER_ID,
@@ -25,6 +24,10 @@ describe('buildSessionRowMoreMenuItems', () => {
         const move = buildSessionRowMoreMenuItems({ target, iconColor: '#999', canMoveToFolder: true })
             .find((item) => item.id === SESSION_ACTION_MOVE_TO_FOLDER_ID);
         expect(move).toMatchObject({ disabled: false });
+        const projectItems = buildSessionRowMoreMenuItems({ target, iconColor: '#999', canMoveToProject: true });
+        expect(projectItems.find((item) => item.id === 'session.moveToProject')).toBeDefined();
+        expect(buildSessionRowMoreMenuItems({ target, iconColor: '#999' })
+            .find((item) => item.id === 'session.moveToProject')).toBeUndefined();
     });
 
     it('composes shared session actions with the row move-to-folder action', () => {
@@ -66,7 +69,6 @@ describe('buildSessionRowMoreMenuItems', () => {
             SESSION_ACTION_MARK_UNREAD_ID,
             SESSION_ACTION_STOP_ID,
             SESSION_ACTION_ARCHIVE_ID,
-            SESSION_ACTION_DELETE_ID,
             SESSION_ACTION_MOVE_TO_FOLDER_ID,
         ]);
         expect(items.at(-1)?.disabled).toBe(false);
@@ -114,7 +116,6 @@ describe('buildSessionRowMoreMenuItems', () => {
             SESSION_ACTION_MARK_UNREAD_ID,
             'session.copyDebugInformation',
             SESSION_ACTION_ARCHIVE_ID,
-            SESSION_ACTION_DELETE_ID,
         ]);
     });
 
@@ -165,7 +166,6 @@ describe('buildSessionRowMoreMenuItems', () => {
             'session.fork',
             SESSION_ACTION_STOP_ID,
             SESSION_ACTION_ARCHIVE_ID,
-            SESSION_ACTION_DELETE_ID,
         ]);
         const reminder = items.find((item) => item.id === 'attention-reminder');
         expect(reminder?.subtitle).toBeUndefined();

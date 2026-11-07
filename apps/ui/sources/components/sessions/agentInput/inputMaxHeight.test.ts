@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
     computeAgentInputDefaultMaxHeight,
+    computeAgentInputAttentionMaxHeight,
     computeExistingSessionComposerPanelMaxHeight,
     computeExistingSessionComposerInputMaxHeight,
     computeAgentInputKeyboardOpenPanelMaxHeight,
@@ -11,6 +12,33 @@ import {
 } from './inputMaxHeight';
 
 describe('inputMaxHeight', () => {
+    it('lets attention requests use remaining host space while reserving the measured composer', () => {
+        expect(computeAgentInputAttentionMaxHeight({
+            availablePanelHeight: 1000,
+            nonPanelChromeHeight: 40,
+            inputContainerHeight: 80,
+            actionFooterHeight: 60,
+            variableContentHeight: 30,
+            panelChromeHeight: 10,
+        })).toBe(780);
+    });
+
+    it('reduces attention space with the host viewport without taking space reserved for the composer', () => {
+        expect(computeAgentInputAttentionMaxHeight({
+            availablePanelHeight: 300,
+            nonPanelChromeHeight: 40,
+            inputContainerHeight: 80,
+            actionFooterHeight: 60,
+            variableContentHeight: 30,
+            panelChromeHeight: 10,
+        })).toBe(80);
+        expect(computeAgentInputAttentionMaxHeight({
+            availablePanelHeight: 120,
+            inputContainerHeight: 80,
+            actionFooterHeight: 60,
+        })).toBe(0);
+    });
+
     it('reduces default max height when keyboard is open (native)', () => {
         const closed = computeAgentInputDefaultMaxHeight({ platform: 'ios', screenHeight: 800, keyboardHeight: 0 });
         const open = computeAgentInputDefaultMaxHeight({ platform: 'ios', screenHeight: 800, keyboardHeight: 300 });

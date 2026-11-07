@@ -7,7 +7,7 @@ import {
     type SessionListIndexItem,
 } from './sessionListIndex';
 import type { SessionListRenderableSession } from './sessionListRenderable';
-import type { SessionListViewItem } from './sessionListViewData';
+import { buildSessionListViewData, type SessionListViewItem } from './sessionListViewData';
 import { buildSessionListViewDataFromIndex } from './sessionListViewDataFromIndex';
 
 function makeRenderable(id: string): SessionListRenderableSession {
@@ -59,6 +59,39 @@ function makeSource(): SessionListViewItem[] {
 }
 
 describe('buildSessionListViewDataFromIndex', () => {
+    it('preserves both APP headings through projection with 29 active sessions and an inactive group', () => {
+        const sessions = [
+            ...Array.from({ length: 29 }, (_, index) => ({ id: `active-${index}`, active: true, folder: 'APP' })),
+            { id: 'inactive', active: false, folder: 'APP' },
+            { id: 'dmux', active: true, folder: 'dmux' },
+            { id: 'bitwarden-1', active: true, folder: 'Bitwarden' },
+            { id: 'bitwarden-2', active: true, folder: 'Bitwarden' },
+        ].map(({ id, active, folder }, index) => ({
+            ...makeRenderable(id),
+            active,
+            createdAt: index,
+            metadata: { machineId: 'machine-a', path: `/srv/projects/TEAM/${folder}`, host: 'host-a', version: '0.0.0' },
+        }));
+        const source = buildSessionListViewData(Object.fromEntries(sessions.map((session) => [session.id, session])), {}, {
+            groupInactiveSessionsByProject: true,
+            serverScope: { serverId: 'server-a' },
+        });
+        const sourceIndex = buildSessionListIndexFromViewData(source)!;
+        // A computed index (e.g. after pinning/ordering) takes the rehydration path.
+        const index = sourceIndex.map((item) => ({ ...item }));
+        const result = buildSessionListViewDataFromIndex({ index, source, sourceIndex });
+        const headers = (result ?? []).filter((item): item is Extract<SessionListViewItem, { type: 'header' }> =>
+            item.type === 'header' && item.headerKind === 'project'
+        );
+
+        expect(headers.filter((item) => item.title === 'APP').map((item) => item.section)).toEqual(['active', 'inactive']);
+        expect(headers.map((item) => item.title)).toEqual(['Bitwarden', 'dmux', 'APP', 'APP']);
+        expect(result?.filter((item) => item.type === 'session' && item.section === 'active' && item.session.metadata?.path?.endsWith('/APP'))).toHaveLength(29);
+        // The same lookup is used on subsequent store pushes; unchanged rows must keep their own section.
+        const next = buildSessionListViewDataFromIndex({ index, source, sourceIndex, previous: result });
+        expect(next).toBe(result);
+    });
+
     it('preserves the source view-data reference when the computed index is unchanged', () => {
         const source = makeSource();
         const sourceIndex = buildSessionListIndexFromViewData(source);

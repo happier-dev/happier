@@ -108,7 +108,7 @@ export function buildOpenCodePromptParts(params: Readonly<{
     const trustedImages = await readTrustedSessionAttachmentLocalImages({
       cwd: params.cwd,
       metadata,
-      maxBytes: configuration.filesUploadMaxFileBytes,
+      maxBytes: configuration.filesImageReadMaxBytes,
     });
     const emittedPaths = new Set<string>();
     for (const image of imageInputs) {

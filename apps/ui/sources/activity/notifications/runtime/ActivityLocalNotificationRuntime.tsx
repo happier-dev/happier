@@ -1,3 +1,4 @@
+import { isAppLockEnabled } from '@/auth/appLock/appLockRuntime';
 import * as React from 'react';
 
 import { Platform } from 'react-native';
@@ -106,6 +107,7 @@ export function ActivityLocalNotificationRuntime(): React.ReactElement | null {
                 accountId: getActiveServerAccountScope()?.accountId,
                 includeReadyMessageText: localSettings.localNotificationsShowReadyMessageText !== false,
                 includeRequestMessageText: localSettings.localNotificationsShowRequestMessageText !== false,
+                redactSessionContent: isAppLockEnabled(),
             });
 
             if (isTauriDesktop()) {

@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { join, resolve } from 'node:path';
+import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 
 import type { Metadata } from '@/api/types';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
@@ -16,7 +18,59 @@ const TEST_CODEX_HOME_ENV: NodeJS.ProcessEnv = {
 };
 const DEFAULT_CODEX_HOME_PATH = resolveConfiguredCodexHome(TEST_CODEX_HOME_ENV);
 
+it('publishes native Codex nicknames only from the exact owning rollout creation metadata', async () => {
+  const codexHome = await mkdtemp(join(tmpdir(), 'codex-alias-assignment-'));
+  const threadId = '019a2ed6-0fa0-7000-8000-000000000001';
+  const startedAt = '2026-10-28T10:00:00.123Z';
+  let metadata = createTestMetadata({ path: '/project', machineId: 'machine' });
+  const session = {
+    getMetadataSnapshot: () => metadata,
+    updateMetadata: async (updater: (value: Metadata) => Metadata) => { metadata = updater(metadata); },
+  };
+  try {
+    await mkdir(join(codexHome, 'sessions'));
+    const filePath = join(codexHome, 'sessions', `rollout-2026-10-28T10-00-00-${threadId}.jsonl`);
+    await writeFile(filePath, `${JSON.stringify({ type: 'session_meta', payload: {
+      id: threadId, timestamp: startedAt, agent_nickname: 'Lovelace',
+      source: { subagent: { thread_spawn: { parent_thread_id: 'parent-native', depth: 1 } } },
+    } })}\n`);
+    const publish = () => publishCodexSessionIdMetadata({ session, getCodexThreadId: () => threadId,
+      codexHome, backendMode: 'appServer', lastPublished: { value: null }, processEnv: TEST_CODEX_HOME_ENV });
+    await publish();
+    expect(metadata.codexSessionLogPath).toBe(filePath);
+    expect(metadata.nativeSessionAliasesV1).toMatchObject({ v: 1, assignments: [{
+      providerId: 'codex', providerSessionId: threadId, alias: 'Lovelace', assignedAt: Date.parse(startedAt), observedAt: expect.any(Number),
+    }] });
+    const evidence = metadata.nativeSessionAliasesV1;
+    // A filename alone, a title, and a child nickname never identify this Happier session.
+    await writeFile(filePath, `${JSON.stringify({ type: 'session_meta', payload: {
+      id: 'different-native-thread', timestamp: startedAt, agent_nickname: 'Wrong', title: 'Lovelace',
+    } })}\n`);
+    await publish();
+    expect(metadata.nativeSessionAliasesV1).toEqual(evidence);
+  } finally {
+    await rm(codexHome, { recursive: true, force: true });
+  }
+});
+
 describe('maybeUpdateCodexSessionIdMetadata', () => {
+  it('publishes synchronously without waiting for native log discovery', () => {
+    let metadata = createTestMetadata({ path: '/tmp' });
+
+    maybeUpdateCodexSessionIdMetadata({
+      getCodexThreadId: () => 'thread-sync-publication',
+      codexHome: TEST_HOME_PATH,
+      processEnv: TEST_CODEX_HOME_ENV,
+      updateHappySessionMetadata: (updater) => {
+        metadata = updater(metadata);
+      },
+      lastPublished: { value: null },
+    });
+
+    expect(metadata.codexSessionId).toBe('thread-sync-publication');
+    expect(metadata.codexSessionLogPath).toBeUndefined();
+  });
+
   it('no-ops when thread id is missing', () => {
     const lastPublished = { value: null as string | null };
     let called = 0;

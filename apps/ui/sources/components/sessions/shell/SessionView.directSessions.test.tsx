@@ -397,8 +397,12 @@ vi.mock('@/auth/context/AuthContext', () => ({
 }));
 
 vi.mock('@/hooks/server/connectedServices/useConnectedServiceQuotaSnapshots', () => ({
-  useConnectedServiceQuotaSnapshots: (profiles: ReadonlyArray<Readonly<{ serviceId: string; profileId: string }>>) => {
-    quotaSnapshotsState.requestedProfiles = profiles;
+  useConnectedServiceQuotaSnapshots: (
+    profiles: ReadonlyArray<Readonly<{ serviceId: string; profileId: string }>>,
+    options?: Readonly<{ fetchPolicy?: string }>,
+  ) => {
+    // The Agent picker rail reads the other Agents' cached quota; that is not the session's own request.
+    if (options?.fetchPolicy !== 'cache_only') quotaSnapshotsState.requestedProfiles = profiles;
     return {
       snapshotsByKey: quotaSnapshotsState.current,
       loadingByKey: {},

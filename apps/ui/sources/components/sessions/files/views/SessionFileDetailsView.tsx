@@ -65,7 +65,7 @@ export type SessionFileDetailsViewProps = Readonly<{
     scopeId: string;
     filePath: string;
     deepLinkAnchor?: SessionFileDeepLinkAnchor | null;
-    presentation?: 'screen' | 'panel';
+    presentation?: 'screen' | 'panel' | 'window';
     isActive?: boolean;
     /**
      * Optional hook for outer shells (like DetailsPanel) to preserve editor-like semantics.
@@ -87,7 +87,7 @@ export function SessionFileDetailsView(props: SessionFileDetailsViewProps) {
     const filePath = props.filePath;
     const deepLinkAnchor = props.deepLinkAnchor ?? null;
     const tabKey = React.useMemo(() => `file:${filePath}`, [filePath]);
-    const isActive = props.isActive ?? presentation === 'screen';
+    const isActive = props.isActive ?? presentation !== 'panel';
     const persistedDraft = pane.scopeState?.details?.tabState?.[tabKey] as any as
         | Readonly<{ isEditingFile: boolean; editorOriginalText: string; editorOriginalHash?: string | null; editorText: string }>
         | null
@@ -486,12 +486,16 @@ export function SessionFileDetailsView(props: SessionFileDetailsViewProps) {
     const fileHeaderRightElement =
         (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 20 }}>
+                {presentation !== 'window' ? (
+                    <>
                 <FileBrowserToolbarIconButton testID="file-header-reveal" accessibilityRole="button" accessibilityLabel={t('files.revealInFiles')} onPress={() => openTarget({ kind: 'fileBrowser', revealPath: filePath })}>
                     <Icon name="folder" size={16} color={theme.colors.text.secondary} />
                 </FileBrowserToolbarIconButton>
                 <FileBrowserToolbarIconButton testID="file-header-open-changes" accessibilityRole="button" accessibilityLabel={t('files.openChanges')} onPress={() => openTarget({ kind: 'sourceControl' })}>
                     <Icon name="git-branch" size={16} color={theme.colors.text.secondary} />
                 </FileBrowserToolbarIconButton>
+                    </>
+                ) : null}
                 {showDownloadAction ? (
                     <FileDownloadButton
                         testID="file-header-download"

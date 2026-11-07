@@ -301,6 +301,7 @@ export default React.memo(function FeaturesSettingsScreen() {
                 <Item
                     title={t('settingsFeatures.environmentBadge')}
                     subtitle={t('settingsFeatures.environmentBadgeSubtitle')}
+                    subtitleLines={0}
                     icon={<Icon name="tag" size={29} color={theme.colors.accent.indigo} />}
                     rightElement={<Switch value={showEnvironmentBadge} onValueChange={setShowEnvironmentBadge} />}
                     showChevron={false}
@@ -308,6 +309,7 @@ export default React.memo(function FeaturesSettingsScreen() {
                 <Item
                     title={t('settingsFeatures.machinePickerSearch')}
                     subtitle={t('settingsFeatures.machinePickerSearchSubtitle')}
+                    subtitleLines={0}
                     icon={<Icon name="magnifying-glass" size={29} color={theme.colors.accent.blue} />}
                     rightElement={<Switch value={useMachinePickerSearch} onValueChange={setUseMachinePickerSearch} />}
                     showChevron={false}
@@ -315,6 +317,7 @@ export default React.memo(function FeaturesSettingsScreen() {
                 <Item
                     title={t('settingsFeatures.pathPickerSearch')}
                     subtitle={t('settingsFeatures.pathPickerSearchSubtitle')}
+                    subtitleLines={0}
                     icon={<Icon name="folder" size={29} color={theme.colors.accent.blue} />}
                     rightElement={<Switch value={usePathPickerSearch} onValueChange={setUsePathPickerSearch} />}
                     showChevron={false}
@@ -324,6 +327,7 @@ export default React.memo(function FeaturesSettingsScreen() {
                     subtitle={useProfiles
                         ? t('settingsFeatures.profilesEnabled')
                         : t('settingsFeatures.profilesDisabled')}
+                    subtitleLines={0}
                     icon={<Icon name="person" size={29} color={theme.colors.accent.purple} />}
                     rightElement={<Switch value={useProfiles} onValueChange={setUseProfiles} />}
                     showChevron={false}
@@ -339,6 +343,7 @@ export default React.memo(function FeaturesSettingsScreen() {
                     <Item
                         title={t('settingsFeatures.commandPalette')}
                         subtitle={commandPaletteEnabled ? t('settingsFeatures.commandPaletteEnabled') : t('settingsFeatures.commandPaletteDisabled')}
+                        subtitleLines={0}
                         icon={<Icon name="squares-four" size={29} color={theme.colors.accent.blue} />}
                         rightElement={<Switch value={commandPaletteEnabled} onValueChange={setCommandPaletteEnabled} />}
                         showChevron={false}
@@ -354,6 +359,7 @@ export default React.memo(function FeaturesSettingsScreen() {
                 <Item
                     title={t('settingsFeatures.experimentalFeatures')}
                     subtitle={experiments ? t('settingsFeatures.experimentalFeaturesEnabled') : t('settingsFeatures.experimentalFeaturesDisabled')}
+                    subtitleLines={0}
                     icon={<Icon name="flask" size={29} color={theme.colors.accent.indigo} />}
                     rightElement={
                         <Switch
@@ -386,6 +392,7 @@ export default React.memo(function FeaturesSettingsScreen() {
                                 key={d.featureId}
                                 title={t(d.titleKey)}
                                 subtitle={t(d.subtitleKey)}
+                                subtitleLines={0}
                                 icon={<Icon name={d.icon.ioniconName as IconName} size={29} color={resolveLegacyIconColor(d.icon.color)} />}
                                 rightElement={
                                     <Switch
@@ -446,6 +453,7 @@ export default React.memo(function FeaturesSettingsScreen() {
                                 key={d.featureId}
                                 title={t(d.titleKey)}
                                 subtitle={t(d.subtitleKey)}
+                                subtitleLines={0}
                                 icon={<Icon name={d.icon.ioniconName as IconName} size={29} color={resolveLegacyIconColor(d.icon.color)} />}
                                 rightElement={
                                     <Switch

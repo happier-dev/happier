@@ -60,6 +60,7 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
 
     return {
         features: {
+            appLock: { emailRecovery: { enabled: false } },
             bugReports: { enabled: true },
             e2ee: {
                 keylessAccounts: { enabled: false },

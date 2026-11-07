@@ -110,7 +110,7 @@ const ActionOperationRow = React.memo(function ActionOperationRow(props: Readonl
     const { theme } = useUnistyles();
     const presentation = resolveActionOperationPresentation(props.operation, props.observation, props.nowMs);
     const status = statusLabel(presentation.status);
-    const progress = [presentation.progressLabel, presentation.progressValue].filter(Boolean).join('  ');
+    const progress = [presentation.progressLabel, presentation.progressValue, presentation.failureReason].filter(Boolean).join('  ');
     const subtitle = props.presentationMode === 'inbox'
         ? [[status, props.context].filter(Boolean).join(' · '), progress].filter(Boolean).join('\n')
         : [props.context, progress].filter(Boolean).join('\n');

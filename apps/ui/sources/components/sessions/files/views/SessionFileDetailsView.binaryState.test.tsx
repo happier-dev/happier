@@ -287,3 +287,14 @@ describe('SessionFileDetailsView (binary)', () => {
   });
 
 });
+
+it('keeps file windows focused on the file without unreachable session pane navigation', async () => {
+  const { SessionFileDetailsView } = await import('./SessionFileDetailsView');
+  const { tree } = await renderScreen(
+    <SessionFileDetailsView sessionId="s1" scopeId="session:s1" filePath="bin.zip" presentation="window" isActive={true} />,
+  );
+  await act(async () => {});
+  expect(tree.findAllByProps({ testID: 'file-header-reveal', accessibilityRole: 'button' })).toHaveLength(0);
+  expect(tree.findAllByProps({ testID: 'file-header-open-changes', accessibilityRole: 'button' })).toHaveLength(0);
+  expect(tree.findAllByProps({ testID: 'file-header-download', accessibilityRole: 'button' }).length).toBeGreaterThan(0);
+});

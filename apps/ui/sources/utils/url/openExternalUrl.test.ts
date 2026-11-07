@@ -87,4 +87,16 @@ describe('openExternalUrl', () => {
     await expect(openExternalUrl('javascript:alert(1)')).resolves.toBe(false);
     expect(openUrlSpy).not.toHaveBeenCalled();
   });
+
+  it('opens download handoffs in the current browser context without requiring a popup', async () => {
+    const { openExternalUrl } = await import('./openExternalUrl');
+    const open = vi.fn();
+    vi.stubGlobal('open', open);
+    try {
+      await expect(openExternalUrl('https://files.example.ts.net/file', { platformOS: 'web', webTarget: '_self' })).resolves.toBe(true);
+      expect(open).toHaveBeenCalledWith('https://files.example.ts.net/file', '_self', 'noopener,noreferrer');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });

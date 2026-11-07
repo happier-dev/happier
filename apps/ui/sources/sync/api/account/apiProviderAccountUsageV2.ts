@@ -81,3 +81,40 @@ export async function getProviderAccountUsageSnapshotSealed(
     return parsed.data;
   });
 }
+
+export async function requestProviderAccountUsageRefreshSealed(
+  credentials: AuthCredentials,
+  params: Readonly<{ recordId: ProviderAccountUsageRecordId | string }>,
+): Promise<boolean> {
+  const recordId = ProviderAccountUsageRecordIdSchema.parse(params.recordId);
+  return await backoff(async () => {
+    const response = await serverFetch(
+      `/v2/connect/provider-account-usage/${encodeURIComponent(recordId)}/refresh`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${credentials.token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({}),
+      },
+      { includeAuth: false },
+    );
+
+    if (response.status === 404) return false;
+    if (!response.ok) {
+      if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
+        let message = 'Failed to request provider account usage refresh';
+        try {
+          const json = await response.json();
+          message = extractErrorCode(json) ?? message;
+        } catch {
+          // ignore
+        }
+        throw new HappyError(message, false, { status: response.status, kind: 'server' });
+      }
+      throw new Error(`Failed to request provider account usage refresh: ${response.status}`);
+    }
+    return true;
+  });
+}

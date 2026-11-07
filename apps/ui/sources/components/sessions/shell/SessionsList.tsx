@@ -56,6 +56,7 @@ import { SessionFolderScopeBreadcrumb } from './sessionFolderScopeBreadcrumb';
 import { DraggableSessionFolderHeaderFrame } from './DraggableSessionFolderHeaderFrame';
 import { ProjectGroupHeader } from './ProjectGroupHeader';
 import { SessionListHeaderFrame } from './SessionListHeaderFrame';
+import { normalizeUpdatedSessionAnimation } from './row/updatedSessionAnimation';
 import { resolveSessionListRowModelAdjacency } from './row/buildSessionListRowModels';
 import { SessionListRowModelBoundary } from './row/SessionListRowModelBoundary';
 import { useSessionListIdentityDisplay } from './SessionListIdentity';
@@ -104,6 +105,11 @@ import { useSessionListViewState } from './view-state/useSessionListViewState';
 import { useSessionListRowInteractions } from './view-state/useSessionListRowInteractions';
 import { readSessionIdFromPathname } from './readSessionIdFromPathname';
 import { useSessionListMoveSheet } from './move-sheet/useSessionListMoveSheet';
+import { useSessionProjectMoveSheet } from './move-sheet/useSessionProjectMoveSheet';
+import { resolveSessionProjectMoveTargets } from './view-state/resolveSessionProjectMoveTargets';
+import { readSessionProjectAssignmentFromDisplay, readSessionProjectAssignments } from '@/sync/domains/session/organization/projectAssignment';
+import { setSessionProjectAssignmentForServer } from '@/sync/ops/sessionOrganization/setSessionProjectAssignment';
+import { getSessionStorageKind } from '@/sync/domains/session/sessionStorageKind';
 import type { SessionListMoveSheetTarget } from './move-sheet/buildSessionListMoveSheetTargets';
 import { useSessionListA11yAnnouncements } from './accessibility/useSessionListA11yAnnouncements';
 import { useFrozenSessionListItemsDuringDrag } from './drag/useFrozenSessionListItemsDuringDrag';
@@ -112,11 +118,6 @@ import { SessionListHeaderControls } from './SessionListHeaderControls';
 import { useSessionListSearchTextByKey } from './useSessionListSearchTextByKey';
 import { useSessionListMemorySearchAugmentation } from './search/useSessionListMemorySearchAugmentation';
 import { useSessionListHeaderFilterRetention } from './search/useSessionListHeaderFilterRetention';
-import { isSessionListPrimaryHeaderKind } from './sessionListPrimaryHeader';
-import {
-    getSessionListHeaderControlsAnchorKey,
-    hasActiveSessionListHeaderFilters,
-} from './sessionListFilters';
 import { useSessionListScrollRetention } from './scroll/useSessionListScrollRetention';
 import { buildSessionListRetentionKey } from './scroll/sessionListRetentionKey';
 import {
@@ -178,10 +179,14 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'stretch',
         backgroundColor: theme.colors.background.canvas,
     },
+    // Holds the top search bar above the list viewport.
+    column: {
+        flex: 1,
+        maxWidth: layout.maxWidth,
+    },
     contentContainer: {
         position: 'relative',
         flex: 1,
-        maxWidth: layout.maxWidth,
     },
     footerContainer: {
         marginTop: -4,
@@ -523,6 +528,7 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
     const navigateToSession = useNavigateToSession();
     const focusReturnFallbackRef = useFocusReturnFallbackRef<React.ElementRef<typeof View> | null>();
     const { openMoveSheet } = useSessionListMoveSheet();
+    const { openProjectMoveSheet } = useSessionProjectMoveSheet();
     const sessionListA11y = useSessionListA11yAnnouncements();
     const retentionKey = React.useMemo(
         () => buildSessionListRetentionKey(props.storageKind),
@@ -534,7 +540,6 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
         selectedHeaderTags,
         setSelectedHeaderTags,
     } = useSessionListHeaderFilterRetention(retentionKey);
-    const [activeSearchHeaderControlsAnchorKey, setActiveSearchHeaderControlsAnchorKey] = React.useState<string | null>(null);
     const [refreshingSessions, setRefreshingSessions] = React.useState(false);
     const refreshingSessionsRef = React.useRef(false);
     const getSessionListMemoryCandidateKeys = React.useCallback(
@@ -562,12 +567,7 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
         selectedTags: selectedHeaderTags,
         searchableTextBySessionKey,
         memoryMatchedSessionKeys: activeMemoryMatchedSessionKeys,
-        controlsAnchorKey: activeSearchHeaderControlsAnchorKey,
-    }), [activeMemoryMatchedSessionKeys, activeSearchHeaderControlsAnchorKey, searchQuery, searchableTextBySessionKey, selectedHeaderTags]);
-
-    const handleHeaderSearchOpenChange = React.useCallback((anchorKey: string, open: boolean) => {
-        setActiveSearchHeaderControlsAnchorKey((current) => open ? anchorKey : current === anchorKey ? null : current);
-    }, []);
+    }), [activeMemoryMatchedSessionKeys, searchQuery, searchableTextBySessionKey, selectedHeaderTags]);
 
     const stopScrollEventPropagationOnWeb = React.useCallback((event: any) => {
         // Expo Router (Vaul/Radix) modals on web often install document-level scroll-lock listeners
@@ -640,6 +640,7 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
         sessionListSurfaceDataActive: surfaceOwnership.dataActive,
     });
     const sessionListWorkingIndicatorStyle = useSetting('sessionListNarrowWorkingIndicatorStyle');
+    const sessionListUpdatedSessionAnimation = useSetting('sessionListUpdatedSessionAnimation');
     const backgroundWorkAttentionMode = normalizeSessionListBackgroundWorkAttentionMode(useSetting('sessionListBackgroundWorkAttentionModeV1'));
     const sessionListAgentActivityCountEnabled = useSetting('sessionListAgentActivityCountEnabled');
     const sessionListIdentityDisplay = useSessionListIdentityDisplay();
@@ -937,6 +938,7 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
             identityDisplay: sessionListIdentityDisplay,
             activeColorMode: normalizeActiveColorMode(sessionListActiveColorMode),
             workingIndicatorMode: normalizeWorkingIndicatorMode(sessionListWorkingIndicatorStyle),
+            updatedSessionAnimation: normalizeUpdatedSessionAnimation(sessionListUpdatedSessionAnimation),
             workingTextMode: 'static',
             backgroundWorkAttentionMode,
             statusColors: theme.colors.status,
@@ -975,6 +977,7 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
         sessionListActiveColorMode,
         sessionListIdentityDisplay,
         sessionListWorkingIndicatorStyle,
+        sessionListUpdatedSessionAnimation,
         backgroundWorkAttentionMode,
         sessionTagsEnabled,
         sessionTagsV1,
@@ -1494,7 +1497,32 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
         return resolveDropResultRef.current(event);
     }, []);
 
+    const openProjectMoveSheetForTreeRow = React.useCallback(async (sourceRowId: string, _sourceLabel: string) => {
+        const item = findSessionMoveItem(sourceRowId);
+        if (!item?.serverId || item.session.owner || getSessionStorageKind(item.session) !== 'persisted') return;
+        try {
+            const state = storage.getState();
+            if (state.sessionOrganizationSessionAppearancesSupportedByServerId[item.serverId] !== true) {
+                Modal.alert(t('sessionsList.moveToProject'), t('sessionsList.moveSheetDisabledUnavailable'));
+                return;
+            }
+            const appearances = state.sessionOrganizationAppearancesBySessionKey;
+            const current = readSessionProjectAssignmentFromDisplay(appearances[`${item.serverId}:${item.session.id}`]?.display);
+            const source = state.sessionListViewDataByServerId[item.serverId]
+                ?? (item.serverId === selection.activeServerId ? state.sessionListViewData : null);
+            const targets = resolveSessionProjectMoveTargets({ items: source ?? [], serverId: item.serverId,
+                assignments: readSessionProjectAssignments(appearances), labels: state.sessionOrganizationLabelsByLabelKey,
+                currentWorkspace: item.workspace,
+            });
+            const project = await openProjectMoveSheet({ targets, canRestore: current !== null });
+            if (project !== undefined) await setSessionProjectAssignmentForServer({ serverId: item.serverId, sessionId: item.session.id, project });
+        } catch (error) {
+            showMoveError(error);
+        }
+    }, [findSessionMoveItem, openProjectMoveSheet, selection.activeServerId, showMoveError]);
+
     const getRowMoveActionHandlers = useSessionListRowMoveActionHandlers({
+        openProjectMoveSheetForTreeRow,
         openMoveSheetForTreeRow,
         moveTreeRowToWorkspaceRoot,
         moveTreeRowByKeyboard,
@@ -1795,7 +1823,7 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
             const gk = String(item.groupKey ?? '').trim();
             const kind = String(item.headerKind ?? '').trim();
             const sid = String(item.serverId ?? '').trim();
-            if (gk) return `header:${gk}`;
+            if (gk) return item.section ? `header:${gk}:${item.section}` : `header:${gk}`;
             if (kind === 'server' && (sid || item.title)) return `server:${sid || item.title}`;
             return `header:${kind}:${sid}:${item.title}:${index}`;
         }
@@ -1804,23 +1832,6 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
         if (sid && id) return `session:${sid}:${id}`;
         return `session:${index}`;
     }, []);
-
-    const headerControlsAnchorKey = React.useMemo(() => {
-        if (activeSearchHeaderControlsAnchorKey === null && !hasActiveSessionListHeaderFilters(headerFilters)) return null;
-        let fallback: string | null = null;
-        for (const item of listItems) {
-            if (item.type !== 'header' || !isSessionListPrimaryHeaderKind(item.headerKind)) continue;
-            const key = getSessionListHeaderControlsAnchorKey(item);
-            fallback ??= key;
-            if (key === activeSearchHeaderControlsAnchorKey) return key;
-        }
-        return fallback;
-    }, [activeSearchHeaderControlsAnchorKey, headerFilters, listItems]);
-    React.useEffect(() => {
-        if (activeSearchHeaderControlsAnchorKey !== null && activeSearchHeaderControlsAnchorKey !== headerControlsAnchorKey) {
-            setActiveSearchHeaderControlsAnchorKey(headerControlsAnchorKey);
-        }
-    }, [activeSearchHeaderControlsAnchorKey, headerControlsAnchorKey]);
 
     const collapsedKeys = collapsedGroupKeysV1 ?? EMPTY_COLLAPSED_GROUP_KEYS;
     const searchTrailingAccessory = React.useMemo(() => (
@@ -1834,7 +1845,8 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
             />
         ) : null
     ), [memorySearch.isSearchingMemory, theme.colors.text.secondary]);
-    const renderHeaderControls = React.useCallback((anchorKey: string) => {
+    // One top bar for the whole list; it sits outside the virtualized list so it stays mounted and in place while filtering.
+    const headerControls = React.useMemo(() => {
         const menu = (
             <SessionListViewMenuButton
                 folderViewMode={sessionFolderViewMode}
@@ -1853,19 +1865,14 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
                 allKnownTags={sessionTagsEnabled === true ? allKnownTags : EMPTY_SESSION_KEYS}
                 selectedTags={selectedHeaderTags}
                 searchQuery={searchQuery}
-                searchOpen={activeSearchHeaderControlsAnchorKey !== null && headerControlsAnchorKey === anchorKey}
                 onSelectedTagsChange={setSelectedHeaderTags}
                 onSearchQueryChange={setSearchQuery}
-                onSearchOpenChange={(open) => handleHeaderSearchOpenChange(anchorKey, open)}
                 searchTrailingAccessory={searchTrailingAccessory}
                 viewMenu={menu}
             />
         );
     }, [
         allKnownTags,
-        headerControlsAnchorKey,
-        activeSearchHeaderControlsAnchorKey,
-        handleHeaderSearchOpenChange,
         selectedHeaderTags,
         searchQuery,
         searchTrailingAccessory,
@@ -1879,7 +1886,8 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
         setSessionListFolderSortModeV1,
         setHideInactiveSessions,
         setSessionFolderViewModeV1,
-        setActiveSearchHeaderControlsAnchorKey,
+        setSearchQuery,
+        setSelectedHeaderTags,
     ]);
     const renderHeaderItem = React.useCallback((item: Extract<SessionListViewItem, { type: 'header' }>, index: number) => {
         const headerTestId = item.headerKind === 'project'
@@ -1926,7 +1934,7 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
                 </DraggableSessionFolderHeaderFrame>
             );
         }
-        if (item.title && item.headerKind === 'project') {
+        if ((item.workspaceLabel || item.title) && item.headerKind === 'project') {
             const collapseKey = item.groupKey ?? '';
             const treeRow = treeRowId.workspaceRoot(item.groupKey ?? item.title);
             const moveActionHandlers = getRowMoveActionHandlers({ sourceRowId: treeRow, sourceLabel: item.title });
@@ -1977,9 +1985,6 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
             item.headerKind === 'server'
                 ? t('sessionsList.serverHeader', { server: item.title })
                 : item.title;
-        const controlsAnchorKey = getSessionListHeaderControlsAnchorKey(item);
-        const shouldRenderHeaderControls = isSessionListPrimaryHeaderKind(item.headerKind)
-            && (headerControlsAnchorKey === null || controlsAnchorKey === headerControlsAnchorKey);
 
         return (
             <SessionListHeaderFrame
@@ -1993,7 +1998,6 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
                     collapsed={isCollapsed}
                     onPress={() => handleToggleCollapse(collapseKey)}
                     headerTestId={headerTestId}
-                    rightElement={shouldRenderHeaderControls ? renderHeaderControls(controlsAnchorKey) : null}
                 />
             </SessionListHeaderFrame>
         );
@@ -2015,11 +2019,9 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
         handleResetWorkspaceName,
         setWorkspaceColor,
         handleToggleCollapse,
-        headerControlsAnchorKey,
         hasMultipleMachines,
         getRowMoveActionHandlers,
         registerTreeRowBounds,
-        renderHeaderControls,
         resolveDropResult,
         unregisterTreeRowBounds,
         workspaceLabelsV1,
@@ -2055,13 +2057,7 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
         () => buildReachableDisplaySignature(reachableSessionDisplayByKey),
         [reachableSessionDisplayByKey],
     );
-    const selectedHeaderTagsSignature = buildStringListSignature(selectedHeaderTags);
     const virtualizedRowExtraData = React.useMemo(() => ({
-        headerControlsAnchorKey,
-        activeSearchHeaderControlsAnchorKey,
-        headerSearchQuery: searchQuery,
-        headerSelectedTagsSignature: selectedHeaderTagsSignature,
-        headerSearchLoading: memorySearch.isSearchingMemory,
         // Stable renderItem refs do not update mounted engine cells. Viewport membership
         // must reach the row boundary before its local store subscription can activate.
         rowStoreSubscriptionKeys,
@@ -2101,11 +2097,6 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
         workspaceLabelsSignature,
         workspaceMachineSubtitlesEnabled,
     }), [
-        headerControlsAnchorKey,
-        activeSearchHeaderControlsAnchorKey,
-        searchQuery,
-        selectedHeaderTagsSignature,
-        memorySearch.isSearchingMemory,
         rowStoreSubscriptionKeys,
         selection.activeServerId,
         allKnownTagsSignature,
@@ -2355,30 +2346,33 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
     return (
         <SessionListSelectionStoreProvider store={sessionListSelectionStore}>
             <View ref={focusReturnFallbackRef} style={styles.container} {...keyboardZoneProps}>
-                <View
-                    ref={listViewportRef}
-                    style={styles.contentContainer}
-                    onLayout={() => handleTreeViewportMeasure(listViewportRef.current)}
-                >
-                    <SyncPerformanceReactProfiler id="sessions.list.virtualized">
-                        {virtualizedListContent}
-                    </SyncPerformanceReactProfiler>
-                    {/*
-                     * The single list-level drop indicator. It is a viewport-level,
-                     * non-interactive sibling of the scroll container: its geometry
-                     * flows through numeric shared values, so a pointer move never
-                     * reconciles the list rows.
-                     */}
-                    <SessionListDropOverlay
-                        shared={dropOverlayShared}
-                        testID="session-list-drop-overlay"
-                    />
-                    <SessionListSelectionActionBarHost
-                        targetsByKey={sessionListSelectionTargetsByKey}
-                        bulkActionContext={sessionListBulkActionContext}
-                        tagsEnabled={sessionTagsEnabled === true}
-                        onRequestMoveToFolder={folderActionsEnabled ? handleRequestBulkMoveToFolder : undefined}
-                    />
+                <View style={styles.column}>
+                    {headerControls}
+                    <View
+                        ref={listViewportRef}
+                        style={styles.contentContainer}
+                        onLayout={() => handleTreeViewportMeasure(listViewportRef.current)}
+                    >
+                        <SyncPerformanceReactProfiler id="sessions.list.virtualized">
+                            {virtualizedListContent}
+                        </SyncPerformanceReactProfiler>
+                        {/*
+                         * The single list-level drop indicator. It is a viewport-level,
+                         * non-interactive sibling of the scroll container: its geometry
+                         * flows through numeric shared values, so a pointer move never
+                         * reconciles the list rows.
+                         */}
+                        <SessionListDropOverlay
+                            shared={dropOverlayShared}
+                            testID="session-list-drop-overlay"
+                        />
+                        <SessionListSelectionActionBarHost
+                            targetsByKey={sessionListSelectionTargetsByKey}
+                            bulkActionContext={sessionListBulkActionContext}
+                            tagsEnabled={sessionTagsEnabled === true}
+                            onRequestMoveToFolder={folderActionsEnabled ? handleRequestBulkMoveToFolder : undefined}
+                        />
+                    </View>
                 </View>
             </View>
         </SessionListSelectionStoreProvider>

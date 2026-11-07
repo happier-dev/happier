@@ -15,6 +15,7 @@ import {
     type StreamingTextRevealPreset,
 } from '../streaming/streamingTextRevealConfig';
 import { useWebRevealStyleInsertion } from '../streaming/useWebRevealStyleInsertion';
+import { MarkdownTextReferencesContext, linkifyMarkdownTextReferences } from '../MarkdownTextReferences';
 
 const ENRICHED_REVEAL_STYLE_ID = 'happier-streaming-enriched-markdown-reveal-style';
 const ENRICHED_REVEAL_DURATION_VAR = '--happier-streaming-enriched-markdown-duration';
@@ -90,6 +91,7 @@ type EnrichedMarkdownTextAdapterProps = Readonly<{
 }>;
 
 export const EnrichedMarkdownTextAdapter = React.memo((props: EnrichedMarkdownTextAdapterProps) => {
+    const textReferences = React.useContext(MarkdownTextReferencesContext);
     const runtimeStatus = useEnrichedMarkdownRuntimeStatus();
     const selectable = useNativeTextSelectable(props.selectable);
     const styleBundle = useEnrichedMarkdownStyle({
@@ -97,8 +99,8 @@ export const EnrichedMarkdownTextAdapter = React.memo((props: EnrichedMarkdownTe
         textStyle: props.textStyle,
     });
     const sanitizedMarkdown = React.useMemo(
-        () => sanitizeEnrichedMarkdownLinkTargets(props.markdown),
-        [props.markdown],
+        () => sanitizeEnrichedMarkdownLinkTargets(linkifyMarkdownTextReferences(props.markdown, textReferences)),
+        [props.markdown, textReferences],
     );
     const md4cFlags = resolveEnrichedMarkdownMd4cFlags(props.agentTexMath);
 

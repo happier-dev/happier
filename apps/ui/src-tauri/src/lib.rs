@@ -20,6 +20,9 @@ mod tray;
 mod pet_overlay;
 
 #[cfg(desktop)]
+mod file_window;
+
+#[cfg(desktop)]
 mod system_tasks;
 
 #[cfg(desktop)]
@@ -33,6 +36,28 @@ mod shutdown;
 
 #[cfg(target_os = "linux")]
 mod linux_webkit_env;
+
+#[cfg(desktop)]
+#[derive(serde::Serialize)]
+struct DesktopClientIdentity {
+    name: Option<String>,
+    version: String,
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+fn desktop_client_identity(app: tauri::AppHandle) -> DesktopClientIdentity {
+    let name = std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .ok()
+        .or_else(|| std::fs::read_to_string("/etc/hostname").ok())
+        .map(|name| name.trim().to_owned())
+        .filter(|name| !name.is_empty());
+    DesktopClientIdentity {
+        name,
+        version: app.package_info().version.to_string(),
+    }
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 // The main-thread native test harness reuses these modules with its own isolated setup.
@@ -85,6 +110,7 @@ pub fn run() {
             .manage(shutdown::DesktopShutdownState::default())
             .manage(menu_bar::MenuBarState::default())
             .invoke_handler(tauri::generate_handler![
+                desktop_client_identity,
                 app_updates::desktop_fetch_update,
                 app_updates::desktop_download_update,
                 app_updates::desktop_install_update,
@@ -115,7 +141,10 @@ pub fn run() {
                 window_chrome::desktop_close_window,
                 window_chrome::desktop_show_main_window,
                 window_chrome::desktop_start_window_dragging,
-                shutdown::desktop_finish_shutdown
+                shutdown::desktop_finish_shutdown,
+                file_window::desktop_open_file_window,
+                file_window::desktop_open_path_with_default_app,
+                file_window::desktop_reveal_path_in_file_manager
             ]);
     }
 
