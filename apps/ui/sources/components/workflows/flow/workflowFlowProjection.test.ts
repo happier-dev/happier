@@ -61,6 +61,15 @@ describe('definition flow projection', () => {
     expect(sentence).toContain(t('workflows.condition.operatorEq'));
     expect(sentence).toContain(t('common.no'));
   });
+  it('reads an unset condition as Always on a Run map and leaves the editor map unchanged (N6)', () => {
+    const unset = { kind: 'exists' as const, value: { kind: 'literal' as const, value: true } };
+    const blocks = definition([{ kind: 'if', id: 'gate', when: unset, then: [step('ship')], otherwise: [] }]);
+    const authoring = projectWorkflowFlow(blocks).nodesById.get('gate')?.labelDetail;
+    expect(projectWorkflowFlow(blocks, {}, {}, { presentation: 'run' }).nodesById.get('gate')?.labelDetail)
+      .toBe(t('workflows.condition.always'));
+    expect(authoring).not.toBe(t('workflows.condition.always'));
+    expect(projectWorkflowFlow(blocks, {}, {}, { presentation: 'authoring' }).nodesById.get('gate')?.labelDetail).toBe(authoring);
+  });
   it('keeps the If in a named condition so the map reads as a condition, like the editor (lab run-A)', () => {
     const condition = { kind: 'compare' as const, operator: 'eq' as const,
       left: { kind: 'result' as const, producer: { blockId: 'check', scope: { kind: 'current' as const } }, path: ['approved'] },

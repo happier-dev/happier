@@ -9,7 +9,7 @@ import type { WorkflowInvocationLifecycleV1, WorkflowProgressEnvelopeV1 } from '
 import type { SessionWorkflowAgentStatusV1, SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowRunSnapshotV1';
 import { listWorkflowBlockOrdinalsV1 } from '@happier-dev/protocol/workflows/workflowStepLabel';
 import { t } from '@/text';
-import { formatWorkflowConditionSentence } from '@/components/workflows/presentation/workflowConditionPresentation';
+import { formatWorkflowConditionSentence, resolveWorkflowConditionHeadline } from '@/components/workflows/presentation/workflowConditionPresentation';
 import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
 import { buildHappierWorkMap, type HappierWorkMap, type HappierWorkMapPlaced } from '@happier-dev/plugin-ui/presentation';
 
@@ -153,6 +153,11 @@ export function projectWorkflowFlow(
   frozenChildren: Readonly<Record<string, WorkflowDefinitionV1>> = {},
   /** Catalog-authored presentation; never inferred from prompt text or persisted in the definition. */
   blockLabels: Readonly<Record<string, string>> = {},
+  /**
+   * `run`: the map of a Run reads a condition as the Run's Steps do (an unset one is "Always"), through the
+   * one headline owner. Omitted, the editor's authoring sentence.
+   */
+  options: Readonly<{ presentation?: 'authoring' | 'run' }> = {},
 ): WorkflowFlowProjection {
   const declarations: WorkflowFlowNodeDeclaration[] = [];
   const pushNode = (node: WorkflowFlowNodeInput): void => {
@@ -292,6 +297,9 @@ export function projectWorkflowFlow(
           break;
         }
         case 'if': {
+          const condition = options.presentation === 'run'
+            ? resolveWorkflowConditionHeadline(referenceContext, block.when, 'run').sentence
+            : formatWorkflowConditionSentence(referenceContext, block.when);
           pushNode({
             nodeId,
             blockId: block.id,
@@ -300,9 +308,7 @@ export function projectWorkflowFlow(
             label: workflowBlockReferenceLabel(block),
             // Unnamed, the kind's own word leads ("**If** · … is No"); a named condition keeps its If so
             // the map reads as a condition, as the editor's heading does (lab run-A).
-            labelDetail: block.name?.trim()
-              ? t('workflows.page.inspector.ifSentence', { condition: formatWorkflowConditionSentence(referenceContext, block.when) })
-              : formatWorkflowConditionSentence(referenceContext, block.when),
+            labelDetail: block.name?.trim() ? t('workflows.page.inspector.ifSentence', { condition }) : condition,
             parentNodeId,
             observed: false,
           });
