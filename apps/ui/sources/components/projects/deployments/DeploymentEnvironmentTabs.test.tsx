@@ -1034,7 +1034,7 @@ describe('Environment → Settings: checks, backups, previews', () => {
     } finally { await screen.unmount(); controller.retire(); }
   });
 
-  it('uses one data card for a template database and opens the existing Variables and Store flows', async () => {
+  it('uses one data card for a template database and opens Variables and the in-place Add sheet', async () => {
     await homes.reset();
     const serverId = await homes.addHome({ name: 'Data', serverUrl: 'https://data-card.test',
       accountId: 'account-owner', currentAccount: true });
@@ -1057,8 +1057,12 @@ describe('Environment → Settings: checks, backups, previews', () => {
       await screen.pressByTestIdAsync('project-deployments.environment.data.variables');
       expect(await navigation).toEqual({ tab: 'variables', section: null });
       routerMock.spies.push.mockClear();
+      const { Modal } = await import('@/modal');
+      vi.mocked(Modal.show).mockClear();
       await screen.pressByTestIdAsync('project-deployments.environment.data.add');
-      expect(String(routerMock.spies.push.mock.calls[0]?.[0])).toContain('kind=app');
+      // P10: Add opens its sheet over the Environment, in place; it never leaves for Store.
+      expect(routerMock.spies.push).not.toHaveBeenCalled();
+      expect(vi.mocked(Modal.show).mock.calls.map(([config]) => config.chrome?.testID)).toEqual(['project-deployments.add.modal']);
       expect(screen.getTextContent()).toContain('Variables');
     } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
   });
