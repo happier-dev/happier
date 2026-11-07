@@ -1,11 +1,14 @@
 import type { PluginContributionIdentity } from '@happier-dev/plugin-sdk/manifest';
 
 import { triageFacetScopeKeyV1, triageScopeFilterKeyV1, triageSourceFilterKeyV1,
+  TRIAGE_STATE_FILTER_VALUES_V1, TRIAGE_ATTENTION_FILTER_VALUES_V1,
   type CorpusScopeFilterValueV1, type CorpusSourceFilterValueV1,
   type SurfaceFilterSelectionV1, type TriageListFacetCensusV1 } from '../../projection/listWindow.js';
 import type { TriageListWindowSnapshotV1 } from '../../projection/listWindowStore.js';
 import { sameTriageFilterValueV1, type TriageFilterFacetValueV1 } from '../state/surface.js';
 import type { TriageTextResolverV1 } from '../shell/windowState.js';
+import { TRIAGE_PR_VIEW_INVENTORY_V1, type TriageListViewInventoryV1 } from '../list/viewInventory.js';
+import { INTERNAL_TASK_SOURCE_V1 } from '../../internalTasks/identity.js';
 
 /**
  * What the filter rail may offer, discovered from facts this mount already has.
@@ -15,8 +18,8 @@ import type { TriageTextResolverV1 } from '../shell/windowState.js';
  * from a global census or a provider branch. Two of those five facets are
  * closed source-neutral vocabularies and need no discovery at all; the Source
  * facet is enumerated from the configured set the window snapshot already
- * carries, which is the same unfiltered fact the health strip names connections
- * from.
+ * carries, restricted by the Collection's view inventory. The health strip
+ * still names the whole scan's connections.
  *
  * Type comes from the window owner's pre-filter census. Scope combines the
  * source-owned configured selection with that census. The shell never rediscovers them from filtered
@@ -48,21 +51,24 @@ export type TriageFilterFacetPlanV1 = Readonly<{
 }>;
 
 const ENGLISH_TEXT: TriageTextResolverV1 = (_key, fallback = '') => fallback;
+type ReadSourceNameV1 = (source: PluginContributionIdentity) => string | undefined;
 
 /** The four canonical lifecycle facts a reader can filter by. */
-const STATE_COPY: readonly (readonly [SurfaceFilterSelectionV1['states'][number], string, string])[] = [
-  ['open', 'plugins.triage.surface.filters.state.open', 'Open'],
-  ['done', 'plugins.triage.surface.filters.state.done', 'Done'],
-  ['absent', 'plugins.triage.surface.filters.state.absent', 'No longer at the source'],
-  ['unresolved', 'plugins.triage.surface.filters.state.unresolved', 'Could not be read'],
-];
+const STATE_LABELS = {
+  open: ['plugins.triage.surface.filters.state.open', 'Open'],
+  done: ['plugins.triage.surface.filters.state.done', 'Done'],
+  absent: ['plugins.triage.surface.filters.state.absent', 'No longer at the source'],
+  unresolved: ['plugins.triage.surface.filters.state.unresolved', 'Could not be read'],
+} satisfies Record<SurfaceFilterSelectionV1['states'][number], readonly [string, string]>;
+const STATE_COPY = TRIAGE_STATE_FILTER_VALUES_V1.map(value => [value, ...STATE_LABELS[value]] as const);
 
 /** The one displayed-attention result, as its three canonical levels. */
-const ATTENTION_COPY: readonly (readonly [SurfaceFilterSelectionV1['attention'][number], string, string])[] = [
-  ['required', 'plugins.triage.surface.filters.attention.required', 'Needs you'],
-  ['suggested', 'plugins.triage.surface.filters.attention.suggested', 'Might need you'],
-  ['none', 'plugins.triage.surface.filters.attention.none', 'Nothing for you'],
-];
+const ATTENTION_LABELS = {
+  required: ['plugins.triage.surface.filters.attention.required', 'Needs you'],
+  suggested: ['plugins.triage.surface.filters.attention.suggested', 'Might need you'],
+  none: ['plugins.triage.surface.filters.attention.none', 'Nothing for you'],
+} satisfies Record<SurfaceFilterSelectionV1['attention'][number], readonly [string, string]>;
+const ATTENTION_COPY = TRIAGE_ATTENTION_FILTER_VALUES_V1.map(value => [value, ...ATTENTION_LABELS[value]] as const);
 
 function sameSource(left: PluginContributionIdentity, right: PluginContributionIdentity): boolean {
   return left.pluginId === right.pluginId && left.localId === right.localId;
@@ -77,7 +83,10 @@ function sourceOptionKey(value: CorpusSourceFilterValueV1): string {
 function sourceLabel(
   source: PluginContributionIdentity,
   configuredSources: TriageListWindowSnapshotV1['configuredSources'],
+  readSourceName?: ReadSourceNameV1,
 ): string {
+  const declaredName = readSourceName?.(source);
+  if (declaredName) return declaredName;
   const labels = new Set(configuredSources
     .filter((summary) => sameSource(summary.source, source))
     .map((summary) => summary.displayLabel)
@@ -86,8 +95,9 @@ function sourceLabel(
   return only ?? `${source.pluginId}/${source.localId}`;
 }
 
-function instanceLabel(value: CorpusSourceFilterValueV1, configuredSources: TriageListWindowSnapshotV1['configuredSources']): string {
-  if (value.sourceInstanceId === undefined) return sourceLabel(value.source, configuredSources);
+function instanceLabel(value: CorpusSourceFilterValueV1, configuredSources: TriageListWindowSnapshotV1['configuredSources'],
+  readSourceName?: ReadSourceNameV1): string {
+  if (value.sourceInstanceId === undefined) return sourceLabel(value.source, configuredSources, readSourceName);
   const summary = configuredSources.find((summary) => summary.sourceInstanceId === value.sourceInstanceId
     && sameSource(summary.source, value.source));
   const label = summary?.displayLabel || `${value.source.pluginId}/${value.source.localId}`;
@@ -110,12 +120,15 @@ function selectedIn(
 function planSourceFacet(
   input: Readonly<{
     configuredSources: TriageListWindowSnapshotV1['configuredSources'];
+    readSourceName?: ReadSourceNameV1;
     filters: SurfaceFilterSelectionV1;
+    inventory: TriageListViewInventoryV1;
   }>,
   text: TriageTextResolverV1,
 ): TriageFilterFacetPlanV1 {
   const sources: CorpusSourceFilterValueV1[] = [];
   for (const summary of input.configuredSources) {
+    if (!input.inventory.includesSource(summary.source)) continue;
     const value = { source: summary.source, sourceInstanceId: summary.sourceInstanceId };
     if (sources.some((seen) => triageSourceFilterKeyV1(seen) === triageSourceFilterKeyV1(value))) continue;
     sources.push(value);
@@ -135,7 +148,7 @@ function planSourceFacet(
       const selection = { facet: 'sources', value } as const;
       return Object.freeze({
         key: sourceOptionKey(value),
-        label: instanceLabel(value, input.configuredSources),
+        label: instanceLabel(value, input.configuredSources, input.readSourceName),
         selected: selectedIn(input.filters, selection),
         selection,
       });
@@ -146,16 +159,24 @@ function planSourceFacet(
 /** Configuration is available before rows; seen facts widen All without another directory read. */
 function planScopeFacet(input: Readonly<{
   configuredSources: TriageListWindowSnapshotV1['configuredSources'];
+  readSourceName?: ReadSourceNameV1;
   facetCensus?: TriageListFacetCensusV1;
   filters: SurfaceFilterSelectionV1;
+  inventory: TriageListViewInventoryV1;
 }>, text: TriageTextResolverV1): TriageFilterFacetPlanV1 {
   const values = new Map<string, Readonly<{ value: CorpusScopeFilterValueV1; label: string }>>();
   const notices: string[] = [];
   const add = (value: CorpusScopeFilterValueV1, label: string) => {
     const key = triageScopeFilterKeyV1(value);
-    if (!values.has(key)) values.set(key, { value, label });
+    // Task ownership is projected by the source, independently of assignment or edit access.
+    const taskLabel = sameSource(value.source, INTERNAL_TASK_SOURCE_V1)
+      ? value.unitId === 'shared' ? text('plugins.triage.internal.sharedWithYou', 'Shared with you')
+        : value.unitId === 'mine' ? text('plugins.triage.internal.ownedByYou', 'Owned by you') : undefined
+      : undefined;
+    if (!values.has(key)) values.set(key, { value, label: taskLabel ?? label });
   };
   for (const summary of input.configuredSources) {
+    if (!input.inventory.includesSource(summary.source)) continue;
     const projection = summary.scope?.projection;
     const base = { source: summary.source, sourceInstanceId: summary.sourceInstanceId };
     if (projection?.kind === 'failed') {
@@ -197,8 +218,11 @@ function planScopeFacet(input: Readonly<{
     ...(notices.length === 0 ? {} : { notices: Object.freeze(notices) }),
     options: Object.freeze([...values.entries()].map(([key, { value, label }]) => {
       const selection = { facet: 'scopes', value } as const;
+      const connection = instanceLabel(value, input.configuredSources);
+      const qualifier = value.sourceInstanceId === undefined
+        ? sourceLabel(value.source, input.configuredSources, input.readSourceName) : connection;
       return Object.freeze({ key: `scopes:${key}`,
-        label: qualify ? `${label} — ${instanceLabel(value, input.configuredSources)}` : label,
+        label: qualify && label !== connection && label !== qualifier ? `${label} — ${qualifier}` : label,
         selected: selectedIn(input.filters, selection), selection });
     })),
   });
@@ -226,6 +250,7 @@ function planCensusFacet<TFacet extends 'types' | 'scopes'>(
   readValueLabel: (value: SurfaceFilterSelectionV1[TFacet][number]) => string,
   input: Readonly<{
     configuredSources: TriageListWindowSnapshotV1['configuredSources'];
+    readSourceName?: ReadSourceNameV1;
     facetCensus?: TriageListFacetCensusV1;
     filters: SurfaceFilterSelectionV1;
   }>,
@@ -256,7 +281,7 @@ function planCensusFacet<TFacet extends 'types' | 'scopes'>(
       const label = readValueLabel(value);
       return Object.freeze({
         key: `${facet}:${JSON.stringify([value.source.pluginId, value.source.localId, readValueName(value)])}`,
-        label: qualify ? `${label} — ${sourceLabel(value.source, input.configuredSources)}` : label,
+        label: qualify ? `${label} — ${sourceLabel(value.source, input.configuredSources, input.readSourceName)}` : label,
         selected: selectedIn(input.filters, { facet, value } as TriageFilterFacetValueV1),
         selection: { facet, value } as TriageFilterFacetValueV1,
       });
@@ -292,23 +317,36 @@ export function planTriageFilterFacetsV1(
     configuredSources: TriageListWindowSnapshotV1['configuredSources'];
     facetCensus?: TriageListFacetCensusV1;
     filters: SurfaceFilterSelectionV1;
+    /** Source descriptor already held by the mounted list; never a directory read. */
+    readSourceName?: ReadSourceNameV1;
     /** A kind's declared display name, from its source's descriptor; the kind id when the source declares none. */
     readKindName?: (source: PluginContributionIdentity, kindId: string) => string | undefined;
+    /** The Collection's view inventory, not the rows left after a facet or audience narrows it. */
+    inventory?: TriageListViewInventoryV1;
   }>,
   text: TriageTextResolverV1 = ENGLISH_TEXT,
 ): readonly TriageFilterFacetPlanV1[] {
+  const inventory = input.inventory ?? TRIAGE_PR_VIEW_INVENTORY_V1;
+  const discovered = { ...input, inventory,
+    ...(input.facetCensus === undefined ? {} : { facetCensus: { ...input.facetCensus,
+      types: input.facetCensus.types.filter(inventory.includesKind),
+      scopes: input.facetCensus.scopes.filter(scope => inventory.includesSource(scope.source)),
+    } }),
+  };
+  // Selected constraints remain removable even when outside this view or no longer configured.
+  // Discovery is view-scoped; the existing facet owners retain only those explicit active values.
   return Object.freeze([
-    planSourceFacet(input, text),
+    planSourceFacet(discovered, text),
     planCensusFacet(
       'types',
       'plugins.triage.surface.filters.type',
       'Type',
       (value) => value.kindId,
       (value) => input.readKindName?.(value.source, value.kindId) ?? value.kindId,
-      input,
+      discovered,
       text,
     ),
-    planScopeFacet(input, text),
+    planScopeFacet(discovered, text),
     planClosedFacet(
       'states',
       'plugins.triage.surface.filters.state',
@@ -326,4 +364,9 @@ export function planTriageFilterFacetsV1(
       text,
     ),
   ]);
+}
+
+/** How many values are in force: the funnel's name says it, and the token line under the field says each one. */
+export function readTriageRefineCountV1(facets: readonly TriageFilterFacetPlanV1[]): number {
+  return facets.reduce((count, facet) => count + facet.options.filter((option) => option.selected).length, 0);
 }

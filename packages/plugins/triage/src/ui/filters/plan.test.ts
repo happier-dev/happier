@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import { TRIAGE_LIST_NO_FILTERS_V1, triageFacetScopeKeyV1 } from '../../projection/listWindow.js';
 import type { TriageListWindowSnapshotV1 } from '../../projection/listWindowStore.js';
-import { planTriageFilterFacetsV1 } from './plan.js';
+import { planTriageFilterFacetsV1, readTriageRefineCountV1 } from './plan.js';
+import { INTERNAL_TASK_SOURCE_V1 } from '../../internalTasks/identity.js';
+import { planTriageTaskViewInventoryV1 } from '../list/viewInventory.js';
+import { TriageSourceDescriptorV1Schema } from '@happier-dev/triage-protocol/v1';
 
 const GITHUB = { pluginId: 'happier.scm-github', localId: 'github' } as const;
 const SENTRY = { pluginId: 'happier.sentry', localId: 'sentry' } as const;
@@ -30,6 +33,77 @@ function facetOf(
 }
 
 describe('the filter rail facet plan', () => {
+  it('names retained task ownership scopes without relabeling another source unit', () => {
+    const scopes = [
+      { source: INTERNAL_TASK_SOURCE_V1, sourceInstanceId: 'tasks', unitId: 'shared' },
+      { source: INTERNAL_TASK_SOURCE_V1, sourceInstanceId: 'tasks', unitId: 'mine' },
+      { source: GITHUB, sourceInstanceId: 'github', unitId: 'shared' },
+    ];
+    const plan = planTriageFilterFacetsV1({
+      configuredSources: [configured(INTERNAL_TASK_SOURCE_V1, 'tasks', 'Happier tasks'), configured(GITHUB, 'github', 'GitHub')],
+      filters: { ...TRIAGE_LIST_NO_FILTERS_V1, scopes },
+    });
+    expect(facetOf(plan, 'scopes').options.map(option => [option.label, option.selected]))
+      .toEqual([['Shared with you — Happier tasks', true], ['Owned by you — Happier tasks', true],
+        ['shared — GitHub', true]]);
+  });
+  it('uses source names for ambiguous types and avoids repeating a scope name as its connection', () => {
+    const sourceName = (source: Readonly<{ pluginId: string; localId: string }>) => source.pluginId === GITHUB.pluginId ? 'GitHub' : 'Sentry';
+    const plan = planTriageFilterFacetsV1({
+      configuredSources: [configured(GITHUB, 'github', 'leeroybrun'), configured(SENTRY, 'sentry', 'Happier errors')],
+      facetCensus: { types: [{ source: GITHUB, kindId: 'issue' }, { source: SENTRY, kindId: 'issue' }],
+        scopes: [{ source: GITHUB, collisionScope: 'repo' }, { source: SENTRY, collisionScope: 'project' }],
+        scopeNames: { [triageFacetScopeKeyV1(GITHUB, 'repo')]: 'acme/widgets',
+          [triageFacetScopeKeyV1(SENTRY, 'project')]: 'Happier errors' }, coverage: 'complete' },
+      filters: TRIAGE_LIST_NO_FILTERS_V1,
+      readSourceName: sourceName,
+      readKindName: () => 'Issue',
+    });
+    expect(facetOf(plan, 'types').options.map(option => option.label)).toEqual(['Issue — GitHub', 'Issue — Sentry']);
+    expect(facetOf(plan, 'scopes').options.map(option => option.label))
+      .toEqual(['acme/widgets — GitHub', 'Happier errors']);
+  });
+
+  it('offers only the PR view inventory, while retaining selected personal constraints for removal', () => {
+    const personalType = { source: INTERNAL_TASK_SOURCE_V1, kindId: 'task' };
+    const personalScope = { source: INTERNAL_TASK_SOURCE_V1, collisionScope: 'personal' };
+    const input = {
+      configuredSources: [configured(GITHUB, 'github', 'GitHub'),
+        configured(INTERNAL_TASK_SOURCE_V1, 'personal', 'Happier tasks')],
+      facetCensus: { types: [{ source: GITHUB, kindId: 'issue' }, personalType],
+        scopes: [{ source: GITHUB, collisionScope: 'repo' }, personalScope], scopeNames: {}, coverage: 'partial' as const },
+      filters: TRIAGE_LIST_NO_FILTERS_V1,
+    };
+    const plan = planTriageFilterFacetsV1(input);
+    expect(facetOf(plan, 'sources').options.map(option => option.selection.value))
+      .toEqual([{ source: GITHUB, sourceInstanceId: 'github' }]);
+    expect(facetOf(plan, 'types').options.map(option => option.selection.value))
+      .toEqual([{ source: GITHUB, kindId: 'issue' }]);
+    expect(facetOf(plan, 'scopes').options.map(option => option.selection.value))
+      .toEqual([{ source: GITHUB, collisionScope: 'repo' }]);
+    const constrained = planTriageFilterFacetsV1({ ...input, filters: { ...input.filters,
+      sources: [{ source: INTERNAL_TASK_SOURCE_V1, sourceInstanceId: 'personal' }],
+      types: [personalType], scopes: [personalScope] } });
+    for (const facet of ['sources', 'types', 'scopes']) {
+      expect(facetOf(constrained, facet).options.filter(option => option.selected)).toHaveLength(1);
+    }
+    expect(facetOf(constrained, 'sources').options.find(option => option.selected)?.label).toBe('Happier tasks');
+    const kinds = TriageSourceDescriptorV1Schema.parse({ v: 1, purpose: 'tracker', displayName: 'Tracker', kinds: [
+      { id: 'issue', displayName: 'Issue', pluralDisplayName: 'Issues', workflowSubject: 'issue', task: true },
+      { id: 'pull-request', displayName: 'Pull request', pluralDisplayName: 'Pull requests', workflowSubject: 'pullRequest' },
+    ] }).kinds;
+    const personalKinds = TriageSourceDescriptorV1Schema.parse({ v: 1, purpose: 'tasks', displayName: 'Personal', kinds: [
+      { id: 'task', displayName: 'Task', pluralDisplayName: 'Tasks', workflowSubject: 'issue', task: true },
+    ] }).kinds;
+    const taskPlan = planTriageFilterFacetsV1({ ...input,
+      inventory: planTriageTaskViewInventoryV1(source => source.pluginId === GITHUB.pluginId ? kinds : personalKinds),
+      facetCensus: { ...input.facetCensus, types: [...input.facetCensus.types, { source: GITHUB, kindId: 'pull-request' }] },
+    });
+    expect(facetOf(taskPlan, 'sources').options.map(option => option.selection.value))
+      .toEqual(input.configuredSources.map(summary => ({ source: summary.source, sourceInstanceId: summary.sourceInstanceId })));
+    expect(facetOf(taskPlan, 'types').options.map(option => option.selection.value))
+      .toEqual([{ source: GITHUB, kindId: 'issue' }, personalType]);
+  });
   it('retains seen alternatives and discloses failed configured scope projection', () => {
     const plan = planTriageFilterFacetsV1({
       configuredSources: [{ ...configured(GITHUB, 'instance-1', 'Work account'), scope: {
@@ -272,5 +346,21 @@ describe('the filter rail facet plan', () => {
     expect(facetOf(plan, 'states').label).toBe('translated:plugins.triage.surface.filters.state');
     expect(facetOf(plan, 'states').options[0]?.label)
       .toBe('translated:plugins.triage.surface.filters.state.open');
+  });
+});
+
+describe('readTriageRefineCountV1', () => {
+  const option = (facet: 'attention' | 'states' | 'types', key: string, label: string, selected = false) => ({
+    key, label, selected, selection: { facet, value: key } as never,
+  });
+
+  it('counts every value in force, the same set the token line says (no chip holds any back)', () => {
+    const facets = [
+      { facet: 'types' as const, label: 'Type', options: [option('types', 't1', 'Pull requests'), option('types', 't3', 'Tasks', true)] },
+      { facet: 'states' as const, label: 'State', options: [option('states', 'open', 'Open', true)] },
+      { facet: 'attention' as const, label: 'Attention', options: [option('attention', 'required', 'Needs you', true), option('attention', 'none', 'Nothing for you')] },
+    ];
+    expect(readTriageRefineCountV1(facets)).toBe(3);
+    expect(readTriageRefineCountV1([{ ...facets[0]!, options: [option('types', 't1', 'Pull requests')] }])).toBe(0);
   });
 });
