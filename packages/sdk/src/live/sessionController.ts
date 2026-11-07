@@ -1,12 +1,12 @@
 import {
   AgentStateSchema, MetadataSchema, advanceSessionReceivedMessageCurrentness, applyReducedMessages,
   createRawMessageNormalizationSequenceState, createReducer, createTranscriptStreamSegmentAssembler,
-  interpretTranscriptStreamSegment, isSessionMessageRowCurrent, listPendingRequests,
+  interpretTranscriptStreamSegment, isSessionMessageRevisionHeld, isSessionMessageRowCurrent, listPendingRequests,
   normalizeRawMessageInSequence, rawRecordSchema, reducer,
   type NormalizedMessage, type OrderedTranscript, type PendingRequestFacts,
 } from '@happier-dev/session-core';
 import { readSharedMetadataActionConfirmationState, readSharedMetadataPresentationCompletedRequests } from '@happier-dev/session-core/pending';
-import { ChangesResponseSchema, CurrentCursorResponseSchema, readSessionUpdatedMessageChangeHintV1 } from '@happier-dev/protocol/changes';
+import { buildChangesReadRequest, ChangesResponseSchema, CurrentCursorResponseSchema, readSessionUpdatedMessageChangeHintV1 } from '@happier-dev/protocol/changes';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { SESSION_METADATA_LAYOUT_VERSION_V1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { SessionEffectiveAccessV1Schema } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
@@ -142,6 +142,11 @@ export async function createSessionController(params: LiveParams): Promise<Happi
       if (message) normalized.push(authoritative ? { ...message, isAuthoritativeUpdate: true } : message);
       if (row.opened.status === 'locked') publish({ lockedReason: 'session_content_locked' });
       advanceSessionReceivedMessageCurrentness(received, params.sessionId, row.id, updatedAt);
+      if (row.localId) {
+        const parsed = row.opened.status === 'ready' ? rawRecordSchema.safeParse(row.opened.value) : null;
+        assembler.noteTranscriptStreamSegmentDurableRevision({ sessionId: params.sessionId, localId: row.localId,
+          messageId: row.id, updatedAt, record: parsed?.success ? parsed.data : null });
+      }
       firstSeq = firstSeq === undefined ? row.seq : Math.min(firstSeq, row.seq);
       if (!authoritative) lastSeq = Math.max(lastSeq, row.seq);
     }
@@ -241,10 +246,16 @@ export async function createSessionController(params: LiveParams): Promise<Happi
       const targets: { messageId: string; seq: number }[] = [];
       let changed = false;
       for (;;) {
-        const page = ChangesResponseSchema.parse(await params.read(`/v2/changes?after=${cursor}&sessionId=${encodeURIComponent(params.sessionId)}`, captured));
+        const read = buildChangesReadRequest({ after: cursor, sessionId: params.sessionId });
+        const page = ChangesResponseSchema.parse(await params.read(read.path, captured));
         assertCurrent(captured);
         changed ||= page.changes.some((change) => (change.kind === 'session' || change.kind === 'share') && change.entityId === params.sessionId);
-        targets.push(...page.changes.flatMap((change) => { const hint = readSessionUpdatedMessageChangeHintV1(change); return hint ? [hint] : []; }));
+        // A revision already applied (usually from its live frame) needs no repair read.
+        targets.push(...page.changes.flatMap((change) => {
+          const hint = readSessionUpdatedMessageChangeHintV1(change);
+          return hint && !isSessionMessageRevisionHeld(received, params.sessionId, hint.messageId, hint.updatedAt)
+            ? [{ messageId: hint.messageId, seq: hint.seq }] : [];
+        }));
         // A compatible server may advance through an empty visible page, so
         // only a non-progressing cursor proves this drain reached its tail.
         if (page.nextCursor <= cursor) return { targets, cursor, reset: false, changed };
@@ -497,10 +508,12 @@ export async function createSessionController(params: LiveParams): Promise<Happi
     },
     respondToPermission: async (response, options) => {
       assertCurrent();
-      if (selected === 'socket') await call(RPC_METHODS.SESSION_PERMISSION_RESPOND, response, options?.signal);
+      const turnId = response.turnId ?? snapshot.pendingRequests.find((request) => request.id === response.id)?.turnId;
+      const boundResponse = turnId === undefined ? response : { ...response, turnId };
+      if (selected === 'socket') await call(RPC_METHODS.SESSION_PERMISSION_RESPOND, boundResponse, options?.signal);
       else { const captured = actionOptions(options?.signal).signal;
         assertCurrent(captured);
-        const result = await params.execute('session.permission.respond', { ...response, sessionId: params.sessionId,
+        const result = await params.execute('session.permission.respond', { ...boundResponse, sessionId: params.sessionId,
           requestId: response.id, decision: response.decision ?? (response.approved ? 'approved' : 'denied') }, { signal: captured });
         assertCurrent(captured); if (record(result)?.ok === false) throw new HappierActionError('permission_response_rejected', 'Permission response rejected.'); }
     },

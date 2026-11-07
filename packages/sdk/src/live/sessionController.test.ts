@@ -10,6 +10,7 @@ import { CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION, CURRENT_ACCOU
   SessionSharedMetadataV1Schema, type SessionSharedMetadataV1 } from '@happier-dev/protocol';
 import { ActionIdSchema, ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema, getActionSpec } from '@happier-dev/protocol/actions';
 import { SessionMessageV1Schema } from '@happier-dev/protocol';
+import { projectSessionSummaryV1 } from '@happier-dev/protocol/sessions/control/contract';
 
 import { connect } from '../index.js';
 import type { HappierSessionController } from './types.js';
@@ -26,6 +27,12 @@ function row(seq: number, text: string, updatedAt = seq) {
   const content = { t: 'plain' as const, v: rawRecordSchema.parse({ role: 'user', content: { type: 'text', text } }) };
   return { ...SessionMessageV1Schema.parse({ id: `row-${seq}`, seq, localId: null, sidechainId: null, messageRole: 'user',
     createdAt: seq, updatedAt, content }), content };
+}
+
+function streamRecord(text: string, tick: number) {
+  return rawRecordSchema.parse({ role: 'agent', content: { type: 'acp', agentId: 'codex', data: { type: 'message', message: text } },
+    meta: { happierStreamSegmentV1: { v: 1, segmentKind: 'assistant', segmentLocalId: 'segment', segmentState: 'streaming',
+      startedAtMs: 1_000, updatedAtMs: 1_000 + tick } } });
 }
 
 // Rendered IDs belong to session-core; pending permissions also materialize
@@ -60,6 +67,7 @@ async function fixture(encryptionMode: 'plain' | 'e2ee' = 'plain', contentCreden
   let sharedMetadataVersion = 1;
   const heldHistory: (() => void)[] = [];
   const rpc: unknown[] = [];
+  const openedRpc: unknown[] = [];
   const actions: Readonly<{ actionId: string; input: Record<string, unknown> }>[] = [];
   const followReads: { cursor: number; leaseId: string | null; ids: string[]; nextCursor: string; at: number }[] = [];
   const sessions: Socket[] = [];
@@ -172,7 +180,8 @@ async function fixture(encryptionMode: 'plain' | 'e2ee' = 'plain', contentCreden
       } else if (actionId === 'transcript.unfollow') {
         result = { ok: true, released: true };
       } else if (actionId === 'session.status.get') {
-        result = { session: { active } };
+        result = { session: projectSessionSummaryV1({ row: { id: 'session-1', active, createdAt: 1, updatedAt: 1, activeAt: 1 },
+          metadata: null, encryption: null }) };
       }
       response.end(JSON.stringify(ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId,
         ...(body.requestId ? { requestId: body.requestId } : {}), execution: { ok: true, result } })));
@@ -194,6 +203,7 @@ async function fixture(encryptionMode: 'plain' | 'e2ee' = 'plain', contentCreden
       const content: SocketRpcContent = contentCredential
         ? { mode: 'e2ee', cipher: createSessionContentEncryption(dataKey) } : { mode: 'plain' };
       const request = await socketRpcCodec.decodeRequestParams(content, value.params, value.method);
+      openedRpc.push(request.params);
       ack(rejectRpc ? { ok: false, error: 'permission_denied', errorCode: 'PERMISSION_DENIED' }
         : { ok: true, result: await socketRpcCodec.encodeResponse(content, { ok: true }, request.callId) });
     });
@@ -207,15 +217,24 @@ async function fixture(encryptionMode: 'plain' | 'e2ee' = 'plain', contentCreden
     for (const wake of waitingActions) wake();
     io.emit('update', { id: 'update', seq: 1, createdAt: 1, body });
   };
-  return { client, sessions, rpc, actions, requests, followReads, update,
+  return { client, sessions, rpc, openedRpc, actions, requests, followReads, update,
+    setPermissionTurn(turnId: string) {
+      state = { ...state, requests: { ...state.requests, permission: { ...state.requests!.permission!, turnId } } };
+      stateVersion++;
+    },
     setSharedMetadata(value: SessionSharedMetadataV1) {
       sharedMetadata = SessionSharedMetadataV1Schema.parse(value); sharedMetadataVersion++; revision++; changeHint = {};
       update({ t: 'update-session', id: 'session-1', metadata: { value: 'opaque-ciphertext', version: sharedMetadataVersion } });
     },
     requireCurrentCompatibility() { requireCompatibility = true; },
+    async persistStream(text: string, tick: number) {
+      const entry = { ...row(1, '', 1_000 + tick), localId: 'segment', messageRole: 'agent' as const, createdAt: 1_000,
+        content: { t: 'plain' as const, v: streamRecord(text, tick) } };
+      rows[0] = entry; revision++;
+      update({ t: 'message-updated', delivery: 'full' as const, sid: 'session-1', message: await wireRow(entry) });
+    },
     async stream(text: string, tick: number, baseLength?: number) {
-      const payload = { role: 'agent', content: { type: 'acp', agentId: 'codex', data: { type: 'message', message: text } },
-        meta: { happierStreamSegmentV1: { v: 1, segmentKind: 'assistant', segmentLocalId: 'segment', segmentState: 'streaming', startedAtMs: 1_000, updatedAtMs: 1_000 + tick } } };
+      const payload = streamRecord(text, tick);
       io.emit('ephemeral', { type: baseLength === undefined ? 'transcript-stream-segment' : 'transcript-stream-segment-delta', sessionId: 'session-1',
         message: { localId: 'segment', createdAt: 1_000, updatedAt: 1_000 + tick, tick,
           ...(baseLength === undefined ? {} : { baseLength }),
@@ -234,6 +253,7 @@ async function fixture(encryptionMode: 'plain' | 'e2ee' = 'plain', contentCreden
     releaseHistory() { holdHistory = false; for (const send of heldHistory.splice(0)) send(); },
     append(text: string) { const entry = row(rows.length + 1, text); rows.push(entry); revision++; void wireRow(entry).then((message) => update({ t: 'new-message', delivery: 'full' as const, sid: 'session-1', message })); },
     revise(text: string) { rows[0] = row(1, text, 100); revision++; changeHint = { updatedMessageId: 'row-1', updatedMessageSeq: 1 }; update({ t: 'message-updated', delivery: 'full' as const, sid: 'session-1', message: rows[0] }); },
+    reviseLive(text: string, updatedAt: number) { rows[0] = row(1, text, updatedAt); revision++; changeHint = { updatedMessageId: 'row-1', updatedMessageSeq: 1, updatedMessageUpdatedAt: updatedAt }; update({ t: 'message-updated', delivery: 'full' as const, sid: 'session-1', message: rows[0] }); },
     reviseAfterUnrelatedAccountPage(text: string) { rows[0] = row(1, text, 100); unrelatedChangePage = true; revision = 201; changeHint = { updatedMessageId: 'row-1', updatedMessageSeq: 1 }; },
     removeFirst() { rows = rows.slice(1); cursorGone = true; },
     rejectPermission() { rejectRpc = true; },
@@ -249,6 +269,56 @@ async function fixture(encryptionMode: 'plain' | 'e2ee' = 'plain', contentCreden
 }
 
 describe('SDK live Session over real HTTP and Socket.IO', () => {
+  it.each(['plain', 'e2ee'] as const)('rejoins a gapped live chain from a durable revision and consumes buffered deltas (%s)', async (mode) => {
+    const server = await fixture(mode, mode === 'e2ee');
+    await server.persistStream('Hello', 1);
+    const controller = await server.client.sessions.get('session-1').live();
+    const hasText = (text: string) => Object.values(controller.getSnapshot().transcript.messagesById)
+      .some((message) => 'text' in message && message.text === text);
+    await expect.poll(() => durableIds(controller)).toEqual(['row-1']);
+    await server.stream('Hello', 1);
+    await expect.poll(() => hasText('Hello')).toBe(true);
+    // Tick 2 (" world") was dropped; later ticks wait for its durable prefix.
+    await server.stream('!', 3, 11);
+    await server.stream(' Again', 4, 12);
+    await server.persistStream('Hello world', 2);
+    await expect.poll(() => Object.values(controller.getSnapshot().transcript.messagesById)
+      .some((message) => 'text' in message && message.text.startsWith('Hello world'))).toBe(true);
+    const messageReads = server.requests.filter((path) => path.includes('/messages')).length;
+    await server.stream(' live', 5, 18);
+    await expect.poll(() => hasText('Hello world! Again live')).toBe(true);
+    expect(server.requests.filter((path) => path.includes('/messages'))).toHaveLength(messageReads);
+  });
+
+  it.each(['plain', 'e2ee'] as const)('joins live deltas from durable history without an opening snapshot (%s)', async (mode) => {
+    const server = await fixture(mode, mode === 'e2ee');
+    await server.persistStream('Hello', 1);
+    const controller = await server.client.sessions.get('session-1').live();
+    const hasText = (text: string) => Object.values(controller.getSnapshot().transcript.messagesById)
+      .some((message) => 'text' in message && message.text === text);
+    await expect.poll(() => hasText('Hello')).toBe(true);
+    await server.stream(' world', 2, 5);
+    await expect.poll(() => hasText('Hello world')).toBe(true);
+  });
+
+  it.each(['plain', 'e2ee'] as const)('binds an omitted permission turn from the projected request without replacing explicit custody (%s)', async (mode) => {
+    const server = await fixture(mode);
+    server.setPermissionTurn('request-turn');
+    const controller = await server.client.sessions.get('session-1').live();
+    await expect.poll(() => controller.getSnapshot().pendingRequests.find((request) => request.id === 'permission')?.turnId)
+      .toBe('request-turn');
+    const responseAtBoundary = () => mode === 'plain' ? server.openedRpc.at(-1)
+      : server.actions.filter((action) => action.actionId === 'session.permission.respond').at(-1)?.input;
+
+    await controller.respondToPermission({ id: 'permission', approved: true });
+    expect(responseAtBoundary()).toMatchObject({ turnId: 'request-turn' });
+    await controller.respondToPermission({ id: 'permission', approved: false, turnId: 'explicit-older-turn' });
+    expect(responseAtBoundary()).toMatchObject({ turnId: 'explicit-older-turn' });
+    await controller.respondToPermission({ id: 'unknown-request', approved: false });
+    expect(responseAtBoundary()).not.toHaveProperty('turnId');
+    await controller.close();
+  });
+
   it('recovers from a failed pushed Action read even when the viewer socket stays connected', async () => {
     const server = await fixture('e2ee');
     const controller = await server.client.sessions.get('session-1').live();
@@ -638,6 +708,22 @@ describe('SDK live Session over real HTTP and Socket.IO', () => {
     await server.client.close();
     expect(controller.getSnapshot().connection).toBe('closed');
     await expect(controller.send('late')).rejects.toMatchObject({ name: 'HappierClientClosedError' });
+  }, 20_000);
+
+  it('does not re-read a revision it already applied live when the change feed names it on reconnect', async () => {
+    const server = await fixture();
+    const controller = await server.client.sessions.get('session-1').live();
+    await expect.poll(() => controller.getSnapshot().connection).toBe('online');
+    server.reviseLive('revised live', 100);
+    await expect.poll(() => durableRows(controller).some((message) => 'text' in message && message.text === 'revised live')).toBe(true);
+    const start = server.requests.length;
+    const reconnectedSessions = server.sessions.length;
+    server.sessions.at(-1)!.conn.close();
+    await expect.poll(() => server.sessions.length, { timeout: 10_000 }).toBeGreaterThan(reconnectedSessions);
+    await expect.poll(() => server.requests.slice(start).some((path) => path.startsWith('/v2/changes'))).toBe(true);
+    await expect.poll(() => controller.getSnapshot().connection, { timeout: 10_000 }).toBe('online');
+    const repairReads = () => server.requests.slice(start).filter((path) => path.startsWith('/v1/sessions/session-1/messages') && path.includes('afterSeq=0'));
+    expect(repairReads(), JSON.stringify(server.requests.slice(start))).toEqual([]);
   }, 20_000);
 
   it('repairs a disconnected revision beyond an empty Session-filtered Account changes page', async () => {

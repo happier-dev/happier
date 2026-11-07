@@ -1,6 +1,7 @@
 import { createServer } from 'node:http';
 import { performance } from 'node:perf_hooks';
 import { describe, expect, it } from 'vitest';
+import { projectSessionSummaryV1 } from '@happier-dev/protocol/sessions/control/contract';
 
 import { connect } from './index.js';
 
@@ -34,7 +35,9 @@ describe('public transcript following at a daemon-local Action endpoint', () => 
       }
       const result = actionId === 'transcript.follow'
         ? { items: [{ id: '1', seq: 1, text: 'daemon transcript' }], nextCursor: '1', truncated: false }
-        : actionId === 'session.status.get' ? { session: { active: true } } : { ok: true, released: true };
+        : actionId === 'session.status.get' ? { session: projectSessionSummaryV1({
+          row: { id: 'session-1', active: true, createdAt: 1, updatedAt: 1, activeAt: 1 }, metadata: null, encryption: null,
+        }) } : { ok: true, released: true };
       response.end(JSON.stringify({ v: 1, actionId, execution: { ok: true, result } }));
     });
     server.on('upgrade', (_request, socket) => socket.end('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n'));
