@@ -102,7 +102,7 @@ import {
   resolveHappierDisclosureFrameStyle,
 } from '../presentation/collection/Disclosure.js';
 import { HAPPIER_INSTANT_DISCLOSURE_MOTION } from '../presentation/collection/collectionMotion.js';
-import { useOptionalPluginUiPresentationHost } from '../presentationHost/context.js';
+import { useOptionalPluginUiPresentationHost, type PluginUiMenuSelection } from '../presentationHost/context.js';
 import { useHappierUiAccessibility } from '../environment/context.js';
 import {
   CollectionVirtualizerContext,
@@ -113,7 +113,8 @@ import {
 import { NATIVE_COLLECTION_VIRTUALIZER } from '../presentation/collection/nativeCollectionVirtualizer.js';
 import { PageCollectionVirtualizer } from '../presentation/collection/pageCollectionVirtualizer.js';
 import { useOptionalPluginUiScrollActivityTracker } from '../presentationHost/scrollActivity.js';
-import { HappierListRowOpenContext } from '../presentation/collection/CollectionList.js';
+import { HappierListRowOpenContext, type HappierCollectionRowRole } from '../presentation/collection/CollectionList.js';
+import { CatalogDirectory } from '../presentation/collection/CatalogDirectory.js';
 
 const LIST_MORE_ACTIONS_TRANSLATION_KEY = 'happier.plugin-ui.list.moreActions';
 
@@ -123,7 +124,8 @@ type ListBaseProps = Readonly<{
   accessibilityLabelKey?: string;
   testID?: string;
   style?: HappierStyleProp;
-  density?: 'compact' | 'regular';
+  /** Space between rows: `flush` for rows that read as one continuous text (a terminal log), whose lines touch. */
+  density?: 'flush' | 'compact' | 'regular';
 }>;
 
 /** A selectable virtualized List becomes an RNW listbox and must be named. */
@@ -504,7 +506,7 @@ type ItemSecondaryActionsProps =
   | Readonly<{
       secondaryActions: readonly ItemSecondaryAction[];
       secondaryActionAccessibilityLabel?: string;
-      onSecondaryAction: (id: string) => void;
+      onSecondaryAction: (id: string, selection?: PluginUiMenuSelection) => void;
     }>
   | Readonly<{
       secondaryActions?: undefined;
@@ -518,6 +520,8 @@ type ItemSecondaryActionsProps =
  * independently interactive accessory outside the primary row Pressable.
  */
 export type ItemProps = Readonly<{
+  /** Uses the shared catalog, single-line item, or menu presentation without changing activation semantics. */
+  rowRole?: HappierCollectionRowRole;
   /**
    * The row's content. Alone it owns the whole row; beside `title`/`subtitle`
    * it is the row body and renders after them. Either way it is rendered.
@@ -864,10 +868,11 @@ function VirtualizedList<Item>(
   // component surface.
   // Rows on a framed page sheet sit flush and divided, like the sheet's own rows; the density gap
   // separates rows only where nothing else does.
-  const onSheet = useHappierPageSection()?.framed === true;
+  const pageSection = useHappierPageSection();
+  const onSheet = pageSection?.framed === true;
   const densityStyle: HappierPortableStyle = onSheet
     ? { gap: 0 }
-    : props.density === 'compact' ? { gap: 4 } : { gap: 8 };
+    : props.density === 'flush' ? { gap: 0 } : props.density === 'compact' ? { gap: 4 } : { gap: 8 };
   const { query, control: searchControl } = useListCollectionSearch(
     props.search,
     listRootRef,
@@ -1724,10 +1729,19 @@ function VirtualizedList<Item>(
     (visibleSections !== undefined && accessibilityPattern !== 'grid')
       ? undefined
       : { rowCount: collectionRowCount, columnCount: 1 };
+  // A band no collection styles stands on the page row inset (a page sheet's own, else the shared page row
+  // inset a table band uses), so a group label lines up with its rows' marks and the pane's title, never the edge.
+  // Above it, the pause a group edge makes, so the label reads as the start of its rows rather than a tail of
+  // whatever sits over it.
+  const sectionHeaderInsetPx = pageSection?.rowInsetPx ?? HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx;
+  const defaultSectionHeaderStyle = useMemo(
+    () => ({ paddingHorizontal: sectionHeaderInsetPx, paddingTop: HAPPIER_PAGE_METRICS.groupSeparatorGapPx }),
+    [sectionHeaderInsetPx],
+  );
   // The shared section owner, told which collection element the virtualizer
   // makes this header a direct child of. The rows are its siblings there, so
   // the header has to be a child that collection role actually permits.
-  const sectionHeaderStyle = collectionControl?.sectionHeaderStyle;
+  const sectionHeaderStyle = collectionControl?.sectionHeaderStyle ?? defaultSectionHeaderStyle;
   const wrapSectionHeader = collectionControl?.wrapSectionHeader;
   const sectionHeaderAction = collectionControl?.sectionHeaderAction;
   // Page rows use the existing physical page; positioned page mode windows them without another scroller.
@@ -1735,8 +1749,10 @@ function VirtualizedList<Item>(
   const pageTracker = useOptionalPluginUiScrollActivityTracker();
   const pageGeometry = collectionControl?.pageVirtualization;
   const pageSheet = pageScroll ? collectionControl?.pageSheet : undefined;
+  const catalogDirectory = pageScroll ? collectionControl?.catalogDirectory : undefined;
   // Rows exist to sit on it: an empty or still-reading list keeps its own empty state on the page.
   const flatPageSheet = pageSheet !== undefined && visibleSections === undefined && (visibleItems?.length ?? 0) > 0;
+  const oneSheetSections = pageSheet?.oneSheet === true && visibleSections !== undefined && visibleSections.some((section) => section.data.length > 0);
   const previousPageGeometryRef = useRef(pageGeometry);
   useLayoutEffect(() => {
     const previous = previousPageGeometryRef.current;
@@ -1751,7 +1767,8 @@ function VirtualizedList<Item>(
     if (
       previous.width === pageGeometry.width &&
       previous.headerHeight === pageGeometry.headerHeight &&
-      previous.defaultRowHeight === pageGeometry.defaultRowHeight
+      previous.defaultRowHeight === pageGeometry.defaultRowHeight &&
+      previous.directory?.columns === pageGeometry.directory?.columns
     )
       return;
     // Logical focus also remembers navigation after blur. Only a still-focused web row may reposition
@@ -1945,8 +1962,28 @@ function VirtualizedList<Item>(
         testID={props.testID}
         style={[props.style, densityStyle, props.contentContainerStyle]}
       >
-        {virtualizedSections !== undefined && visibleSections !== undefined
-          ? pageSheetParts(virtualizedSections, pageSheet !== undefined).map((part, partIndex) => {
+        {oneSheetSections && pageSheet !== undefined && virtualizedSections !== undefined ? (
+          // One table's groups: its bar, each group's band and rows, then its totals, on one sheet.
+          <HappierPageSheet colors={pageSheet.colors} rowDividers={false}
+            surface={pageSheet.flatSheet === false ? 'none' : 'sheet'}
+            {...(pageSheet.flatSheet === false ? {} : { style: flatPageSheetStyle })}>
+            <View>
+              {pageSheet.header}
+              {virtualizedSections.map((section) => (
+                <Fragment key={section.key}>
+                  {renderSectionHeader({ section })}
+                  {section.data.map((item, index) => (
+                    <Fragment key={encodeHappierSectionRowCellKey(keyForItem(item, index))}>
+                      {renderSectionRow({ item, index, section })}
+                    </Fragment>
+                  ))}
+                </Fragment>
+              ))}
+              {props.footer}
+            </View>
+          </HappierPageSheet>
+        ) : virtualizedSections !== undefined && visibleSections !== undefined
+          ? pageSheetParts(virtualizedSections, pageSheet !== undefined && catalogDirectory === undefined).map((part, partIndex) => {
               // The sheet bar (a Collection's column titles) heads the first sheet only; later sheets keep its columns.
               const sheetHeader = partIndex === 0 ? pageSheet?.header ?? null : null;
               const rowsOf = (section: VirtualizedListSectionData<Item>) => section.data.map((item, index) => (
@@ -1992,7 +2029,10 @@ function VirtualizedList<Item>(
               return (
                 <Fragment key={section.key}>
                   {renderSectionHeader({ section })}
-                  {pageSheet === undefined ? (
+                  {catalogDirectory !== undefined ? (
+                    // A catalog directory's rows stand on the page, row-major in its columns.
+                    <CatalogDirectory rows={sectionRows} {...catalogDirectory} />
+                  ) : pageSheet === undefined ? (
                     sectionRows
                   ) : (
                     // The rows' own hairlines divide them; the sheet only draws its ground and edge. One plain
@@ -2027,6 +2067,16 @@ function VirtualizedList<Item>(
                 </View>
               </HappierPageSheet>
             )
+          : catalogDirectory !== undefined ? (
+              // An ungrouped directory is one page section without a title: the same columns, a section's air above.
+              <View style={flatPageSheetStyle}>
+                <CatalogDirectory rows={(visibleItems ?? []).map((item, index) => (
+                  <Fragment key={keyForItem(item, index)}>
+                    {renderFlatRow({ item, index })}
+                  </Fragment>
+                ))} {...catalogDirectory} />
+              </View>
+            )
           : (visibleItems ?? []).map((item, index) => (
               <Fragment key={keyForItem(item, index)}>
                 {renderFlatRow({ item, index })}
@@ -2059,7 +2109,7 @@ function VirtualizedList<Item>(
           emptyContent
         )}
         {scrollsEndContent ? null : props.endContent}
-        {flatPageSheet ? null : props.footer}
+        {flatPageSheet || oneSheetSections ? null : props.footer}
       </View>
     </ListMultiSelectionProvider>
   );
@@ -2122,7 +2172,7 @@ function ListRoot<Item>(props: ListProps<Item>): ReactElement {
   }
   const densityStyle: HappierPortableStyle = onSheet
     ? { gap: 0 }
-    : props.density === 'compact' ? { gap: 4 } : { gap: 8 };
+    : props.density === 'flush' ? { gap: 0 } : props.density === 'compact' ? { gap: 4 } : { gap: 8 };
   return (
     <HappierList
       accessibilityLabel={resolvedAccessibilityLabel}
@@ -2340,10 +2390,10 @@ function ListItemRow(props: ListItemProps): ReactElement {
   const rowProps = operationActions.length === 0 ? props : {
     ...props,
     secondaryActions: [...(props.secondaryActions ?? []), ...operationActions],
-    onSecondaryAction: (id: string) => {
+    onSecondaryAction: (id: string, selection?: PluginUiMenuSelection) => {
       const selected = operations.find(operation => operation.id === id);
       if (selected) selected.onSelect();
-      else props.onSecondaryAction?.(id);
+      else props.onSecondaryAction?.(id, selection);
     },
   };
   const resolvedProps = {
@@ -2375,8 +2425,8 @@ function ListItemRow(props: ListItemProps): ReactElement {
                     : translate('happier.plugin-ui.list.selectItems', 'Select'),
                 },
               ],
-          onSecondaryAction: (id: string) => {
-            if (id !== selectActionId) rowProps.onSecondaryAction?.(id);
+          onSecondaryAction: (id: string, selectionContext?: PluginUiMenuSelection) => {
+            if (id !== selectActionId) rowProps.onSecondaryAction?.(id, selectionContext);
             else if (selectionRow.isSelectionMode) multiStore?.toggle(selection.itemKey);
             else multiStore?.replaceWith(selection.itemKey);
           },

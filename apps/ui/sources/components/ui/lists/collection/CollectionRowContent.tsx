@@ -24,27 +24,21 @@ export type { HappierCollectionRowDensity as CollectionRowDensity };
  * Runs, scheduled work and the Settings previews draw their rows through it.
  */
 export function CollectionRowContent(
-  props: Omit<HappierCollectionRowContentProps, 'fills' | 'separator'> &
-    Readonly<{
-      /** A hairline under the row, for a row embedded in a card that separates its rows. */
-      separator?: boolean;
-    }>,
+  props: Omit<HappierCollectionRowContentProps, 'fills' | 'separator'>,
 ): React.ReactElement {
   const { theme } = useUnistyles();
-  const { separator, ...rest } = props;
   // The column's own row fills: the plane's selected chip and `Item`'s hover, as every navigation row draws them.
   const fills = React.useMemo(
     () => ({
       selected: theme.colors.surface.elevated,
-      hover: theme.colors.surface.pressed,
+      hover: theme.colors.surface.hover,
     }),
-    [theme.colors.surface.elevated, theme.colors.surface.pressed],
+    [theme.colors.surface.elevated, theme.colors.surface.hover],
   );
   return (
     <HappierCollectionRowContent
-      {...rest}
+      {...props}
       fills={fills}
-      separator={separator ? { color: theme.colors.border.default } : null}
     />
   );
 }
@@ -186,18 +180,13 @@ const badgeStyles = StyleSheet.create((theme) => ({
 export function CollectionRowFooter(
   props: Readonly<{
     children: React.ReactNode;
-    /** The row's divider moves below its footer, so the pair reads as one row. */
-    separator?: boolean;
     testID?: string;
   }>,
 ) {
   return (
     <View
       testID={props.testID}
-      style={[
-        footerStyles.footer,
-        props.separator ? footerStyles.separator : null,
-      ]}
+      style={footerStyles.footer}
     >
       {props.children}
     </View>
@@ -215,9 +204,5 @@ const footerStyles = StyleSheet.create((theme) => ({
     // Tucks under the row's own last line instead of starting a new row's rhythm.
     marginTop: -theme.space.s8,
     paddingBottom: theme.space.s10,
-  },
-  separator: {
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border.default,
   },
 }));

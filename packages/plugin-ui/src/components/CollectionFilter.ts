@@ -23,7 +23,14 @@ export {
     type EntityFilterFactValueV1,
     type EntityListFilterResultV1,
 } from '@happier-dev/plugin-sdk/ui';
-export type { UpdatedSelectionV1, ExtensionSelectionV1 } from '@happier-dev/plugin-sdk/ui';
+import type {
+    UpdatedSelectionV1 as SdkUpdatedSelectionV1,
+    ExtensionSelectionV1 as SdkExtensionSelectionV1,
+} from '@happier-dev/plugin-sdk/ui';
+// Keep inferred portable declarations anchored to the SDK: direct re-exports
+// let TypeScript name these unions through this native UI package instead.
+export type UpdatedSelectionV1 = SdkUpdatedSelectionV1;
+export type ExtensionSelectionV1 = SdkExtensionSelectionV1;
 export {
     defineEntityFilterFieldV1,
     getUnsupportedEntityFilterFieldsV1,

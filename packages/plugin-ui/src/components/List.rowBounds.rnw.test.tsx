@@ -160,11 +160,14 @@ describe('plugin-ui List row accessory wrapping', () => {
     );
     const accessory = [...mount.container.querySelectorAll<HTMLElement>('[role="button"]')]
       .find((element) => element.textContent === 'Attach');
-    const outerContent = accessory?.parentElement;
+    // The accessory sits in an inset cell so that, once wrapped, it starts on the title's leading edge.
+    const accessoryCell = accessory?.parentElement;
+    const outerContent = accessoryCell?.parentElement;
     const primaryContent = outerContent?.firstElementChild as HTMLElement | null;
 
     expect(outerContent?.style.flexWrap).toBe('wrap');
     expect(primaryContent?.style.minWidth).toBe('50%');
+    expect(accessoryCell?.style.paddingInlineStart || accessoryCell?.style.paddingLeft).not.toBe('');
     mount.unmount();
   });
 });

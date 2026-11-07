@@ -39,7 +39,7 @@ export type CollectionVirtualizerRequest<Item> = CollectionVirtualizerBase<Item>
   | Readonly<{
       kind: 'sections';
       sections: readonly Readonly<{ key: string; title?: string; data: readonly Item[] }>[];
-      /** Section headers share the rows' scroller and remain sticky. */
+      /** Section headers share the rows' scroller and stay pinned where they can paint their ground (not inside a translucent material). */
       renderSectionHeader(sectionIndex: number): ReactNode;
     }>
 );

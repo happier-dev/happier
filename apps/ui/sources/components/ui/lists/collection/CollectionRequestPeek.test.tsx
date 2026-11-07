@@ -4,10 +4,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 
-// The primary pointer is a browser boundary read once: a phone browser reports touch points and no hover,
-// stubbed before any module of the slot loads.
-vi.hoisted(() => { Object.defineProperty(globalThis, 'navigator', { value: { maxTouchPoints: 1 }, configurable: true }); });
-
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
@@ -24,6 +20,7 @@ const request = { kind: 'permission', serverId: 'home-unknown', sessionId: 'sess
 
 describe('CollectionRequestPeek', () => {
     it('keeps a phone request slot at the glyph and reaches the touch target with the shared hit frame', async () => {
+        vi.stubGlobal('navigator', { maxTouchPoints: 1 });
         const screen = await renderScreen(<CollectionRequestPeek request={request} testID="touch-slot"><View /></CollectionRequestPeek>);
         const button = screen.findHostByTestId('touch-slot')!;
         const raw = typeof button.props.style === 'function'

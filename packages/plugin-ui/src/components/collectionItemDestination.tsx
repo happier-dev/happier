@@ -10,8 +10,8 @@ export function renderCollectionItemDestination<Item>(host: PluginUiPresentation
     ...destination, children: row,
     renderWithSecondaryActions: additional => cloneElement(row, {
       secondaryActions: [...(row.props.secondaryActions ?? []), ...additional.secondaryActions],
-      onSecondaryAction: id => additional.secondaryActions.some(action => action.id === id)
-        ? additional.onSecondaryAction(id) : row.props.onSecondaryAction?.(id),
+      onSecondaryAction: (id, selection) => additional.secondaryActions.some(action => action.id === id)
+        ? additional.onSecondaryAction(id, selection) : row.props.onSecondaryAction?.(id, selection),
     }),
   }) : row;
   return anatomy.wrapItem ? anatomy.wrapItem(item, decorated) : decorated;

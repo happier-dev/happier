@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { neighbourHappierCollectionSpaceId } from '@happier-dev/plugin-ui/presentation';
 import { View } from 'react-native';
 import type { CollectionConditionBindings } from '@happier-dev/plugin-ui/components';
 import type {
@@ -18,12 +19,12 @@ import {
 
 import { useViewportClass } from '@/utils/platform/useViewportClass';
 import { t } from '@/text';
+import { accountSettingsScopeKeySuffix, type AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { useSessionListSpaceKeyboardCommands } from '@/keyboard/sessionListSpaces';
 import { useCollectionFilterSettingsCommand } from '@/components/settings/session/useCollectionFilterSettingsCommand';
 import { collectionSpaceSettingRefs } from '@/components/settings/session/collectionSpaceSettings';
 import { SettingAnchor } from '@/components/settings/shell/SettingRow';
 import { useDestinationInstanceKey } from '@/components/appShell/workspace/destinationInstanceContext';
-import { accountSettingsScopeKeySuffix, type AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 
 import {
   collectionConditionValueWords,
@@ -32,7 +33,6 @@ import {
 import { CollectionSpacesStrip } from './CollectionSpacesStrip';
 import { CollectionSpaceSwipeTitle, CollectionSpaceSwipeZone, useCollectionSpaceSwipeTrack } from './CollectionSpaceSwipeZone';
 import { CollectionSpaceTitle } from './CollectionSpaceTitle';
-import { neighbourCollectionSpaceId } from './collectionSpaceSwipe';
 import { useCollectionSpaceEditing } from './useCollectionSpaceEditing';
 import { useSetCollectionSpacesEnabled } from './useSetCollectionSpacesEnabled';
 
@@ -117,7 +117,7 @@ export function useCollectionSpaceHeader<
   const editing = useCollectionSpaceEditing({
     entityKind: input.entityKind,
     testIDPrefix,
-    serverId: view.spaceSettingsScope?.serverId ?? null,
+    scope: view.spaceSettingsScope,
     spaces: view.spaces,
     selectedSpace: view.activeSpace,
     currentFilter: view.filters,
@@ -148,6 +148,11 @@ export function useCollectionSpaceHeader<
     },
     [savedFilter, selectSpace, setFilters, view.selectedSpaceId, view.spacesEnabled],
   );
+  /** A strip tab's Edit: the form edits the selected space, so another tab is chosen first. */
+  const editSpace = React.useCallback((spaceId: string) => {
+    if (spaceId !== view.selectedSpaceId) select(spaceId);
+    openEdit();
+  }, [openEdit, select, view.selectedSpaceId]);
   const selectOrdinal = React.useCallback((ordinal: number) => {
     if (!view.spacesEnabled || !view.spacesReady) return false;
     const space = view.spaces[ordinal - 1];
@@ -171,7 +176,7 @@ export function useCollectionSpaceHeader<
   // Phone title/strip swipe (lab `clspaces:swipe`): pages through this entity's spaces in their order.
   const swipeTarget = (direction: -1 | 1) =>
     view.spacesEnabled
-      ? neighbourCollectionSpaceId(view.spaces, view.selectedSpaceId, direction)
+      ? neighbourHappierCollectionSpaceId(view.spaces, view.selectedSpaceId, direction)
       : null;
   const onSwipeCommit = (direction: -1 | 1) => {
     const spaceId = swipeTarget(direction);
@@ -246,10 +251,10 @@ export function useCollectionSpaceHeader<
           addLabel={t('sessionsList.spacesNew')}
           onAdd={openSaveAs}
           reorder={stripReorder}
+          onEditSpace={editSpace}
         />
         </CollectionSpaceSwipeZone>
       ) : null}
-      {conditions.tokenRow}
     </View>
   );
   const overlays = (
@@ -261,6 +266,8 @@ export function useCollectionSpaceHeader<
   return {
     titleControl,
     strip,
+    /** The tokens take a whole line of their own, only while something is on: a control beside the strip must not narrow them. */
+    conditionRow: conditions.tokenRow,
     filterButton: <SettingAnchor setting={collectionSpaceSettingRefs(input.entityKind).filters}>{conditions.filterButton}</SettingAnchor>,
     overlays,
     reorder: editing.reorder,

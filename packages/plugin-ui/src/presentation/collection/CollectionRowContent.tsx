@@ -1,12 +1,18 @@
 import type { ReactElement, ReactNode } from 'react';
 import {
   View,
-  type LayoutChangeEvent,
-  type ViewProps,
   type ViewStyle,
 } from 'react-native';
 
-import type { HappierStyleProp } from '../portableTypes.js';
+import type {
+  HappierAccessibilityRole,
+  HappierAccessibilityState,
+  HappierGestureResponderEvent,
+  HappierLayoutChangeEvent,
+  HappierPortableStyle,
+  HappierStyleProp,
+  HappierTextHostProps,
+} from '../portableTypes.js';
 import {
   resolveHappierTypeScale,
   type HappierTypeRole,
@@ -175,15 +181,24 @@ export type HappierCollectionRowContentProps = Readonly<{
   children?: ReactNode;
   /** The status slot and any independent controls at the row's end; never a child of the press target. */
   trailing?: ReactNode;
-  trailingProps?: Omit<ViewProps, 'style' | 'children'>;
+  trailingProps?: Pick<HappierTextHostProps,
+    | 'accessible' | 'accessibilityLabel' | 'accessibilityHint'
+    | 'accessibilityElementsHidden' | 'accessibilityLiveRegion'
+    | 'importantForAccessibility' | 'nativeID' | 'onLayout' | 'testID'
+  > & Readonly<{
+    accessibilityRole?: HappierAccessibilityRole;
+    accessibilityState?: HappierAccessibilityState;
+    onPointerEnter?(event: HappierGestureResponderEvent): void;
+    onPointerLeave?(event: HappierGestureResponderEvent): void;
+  }>;
   /**
    * The row's owner supplies its press target around the identity and text (a Pressable, a link); static
    * previews omit it. The trailing slot stays its sibling: on the web a button renders a `<button>`, and the
    * trailing controls are buttons of their own.
    */
-  renderContainer?: (content: ReactNode, style: ViewStyle) => ReactElement;
+  renderContainer?: (content: ReactNode, style: typeof pressTarget) => ReactElement;
   /** Measures the whole row, the trailing slot included. */
-  onLayout?: (event: LayoutChangeEvent) => void;
+  onLayout?(event: HappierLayoutChangeEvent): void;
   style?: HappierStyleProp;
 }>;
 
@@ -219,13 +234,13 @@ const trailingBase: ViewStyle = {
   minWidth: 0,
   maxWidth: `${M.trailingMaxShare * 100}%`,
 };
-const pressTarget: ViewStyle = {
+const pressTarget = {
   flex: 1,
   minWidth: 0,
   alignSelf: 'stretch',
   flexDirection: 'row',
   alignItems: 'center',
-};
+} satisfies HappierPortableStyle;
 
 export type HappierCollectionRowMainProps = Readonly<{
   density: HappierCollectionRowDensity;

@@ -1,5 +1,5 @@
-import { HappierBodyEdgeContext } from '../layout/columnEdge.js';
 import { createContext, useCallback, useContext, useId, useMemo, useState, type ReactElement, type ReactNode } from 'react';
+import { HappierBodyEdgeContext } from '../layout/columnEdge.js';
 import { useHappierPrecisePointer } from '../interaction/precisePointer.js';
 import { Platform, View, type TextStyle, type ViewStyle } from 'react-native';
 
@@ -55,6 +55,7 @@ import {
 } from './CollectionList.js';
 import { resolveHappierTextStepStyle } from '../layout/pageText.js';
 import { useHappierMaterialColorResolver } from '../layout/Surface.js';
+import { ListGridRow } from './ListGridRow.js';
 
 /**
  * The portable list semantics shared by Happier core, executable Plugin UI and
@@ -81,7 +82,7 @@ export type HappierListSectionProps = Readonly<{
   title: string;
   /** Decorated glyphs; the immutable string remains the semantic group name. */
   titleContent?: ReactNode;
-  /** A quiet, tabular count beside the title. */
+  /** A quiet, tabular count beside the title, or a section's quiet fact ("3 environments"). */
   count?: number | string;
   /** What the group's rows share, quiet at the header's end. */
   description?: string;
@@ -129,6 +130,13 @@ export type HappierListSectionProps = Readonly<{
  * inherits `none` down the tree, so a control opts back in with `auto`; native skips a `none` subtree entirely, so
  * there the content is `box-none` and its leaves that are not controls are `none` (the Collection's cells).
  */
+/** An item row's drawn floor per density; a row's hit area is the whole row, never a taller drawn row. */
+export const HAPPIER_ITEM_DENSITY_ROW_HEIGHT = Object.freeze({
+  comfortable: 44,
+  cozy: 42,
+  compact: 38,
+  tight: 36,
+} satisfies Record<HappierItemDensity, number>);
 export const HAPPIER_ROW_CONTENT_POINTER_EVENTS = Platform.OS === 'web' ? 'none' : 'box-none';
 /** A layered row's control: its own press target over the row's. */
 export const HAPPIER_ROW_CONTROL_POINTER_EVENTS = 'auto';
@@ -312,6 +320,9 @@ const sectionHeadingTitleBesideActionStyle: HappierPortableStyle = { flexShrink:
 // What the group's rows share follows its count (lab `rp` L: "Left behind 3 · their sessions ended…"); its one action ends the band.
 const sectionHeadingDescriptionStyle: HappierPortableStyle = { flexShrink: 1 };
 const sectionHeadingActionStyle: HappierPortableStyle = { marginLeft: 'auto' };
+const sectionHeadingStackStyle: ViewStyle = { minWidth: 0 };
+// The page section description's step below its title (PageSection's default text).
+const sectionDescriptionBelowStyle: HappierPortableStyle = { marginTop: 2 };
 const sectionHeadingTrailingStyle: HappierPortableStyle = { marginLeft: 'auto', textAlign: 'right' };
 
 const itemStyle: ViewStyle = {
@@ -372,6 +383,15 @@ const COLLECTION_ROW_FILL_TRANSITION = {
   transitionTimingFunction: HAPPIER_MOTION_V1.standardEasingCss,
 } as ViewStyle;
 
+/** A catalog row beside a detail: its fill inset from the list's edges, at the catalog row radius (lab m:mcp). */
+const CATALOG_INSET_FILL_STYLE: ViewStyle = {
+  // The row gives up its full-bleed width so both ends sit rowInset in.
+  width: 'auto',
+  alignSelf: 'stretch',
+  marginHorizontal: HAPPIER_COLLECTION_LIST_METRICS.rowInset,
+  borderRadius: HAPPIER_COLLECTION_LIST_METRICS.catalogRow.radius,
+};
+
 function collectionPalette(theme: HappierUiTheme, palette: ReturnType<typeof useOptionalHappierUiPalette>) {
   return palette ?? resolveHappierUiPalette(theme);
 }
@@ -417,6 +437,11 @@ export function HappierListSection({
   // A dense band's end holds its one trailing fact: its action when it has one ("Left behind 3 · …" then "Clean
   // up"), otherwise what its rows share ("Needs you 5 … You act next", lab `.grp`).
   const trailingDescription = (titleRole === 'micro' || titleRole === 'group') && !hasAction;
+  // A page section's description is its own line under the title, as every page section's is (PageSection).
+  const descriptionBelow = titleRole === 'section' && description !== undefined;
+  const pageDescriptionStyle = theme && descriptionBelow
+    ? [resolveHappierPageTextStyle('sectionDescription', hostTypography), sectionDescriptionBelowStyle, { color: theme.colors.secondaryText }]
+    : undefined;
   // A middle ellipsis on the web is two runs (the web draws only a tail one); native uses the platform's mode.
   const titleMiddleRequested = titleEllipsizeMode === 'middle' && titleContent === undefined;
   const titleMiddle = titleMiddleRequested && Platform.OS === 'web' ? splitForWebMiddleEllipsis(title) : null;
@@ -433,7 +458,18 @@ export function HappierListSection({
       )}
     </HappierText>
   );
-  const heading = count === undefined && description === undefined && !hasAction && titleEllipsizeMode === undefined
+  const heading = descriptionBelow ? (
+    <View style={sectionHeadingStackStyle}>
+      <View style={sectionHeadingStyle}>
+        {headingTitle}
+        {count === undefined ? null : (
+          <HappierText accessible={false} tabularNumbers style={quietStyle}>{String(count)}</HappierText>
+        )}
+        {hasAction ? <View style={sectionHeadingActionStyle}>{action}</View> : null}
+      </View>
+      <HappierText accessible={false} style={pageDescriptionStyle}>{description}</HappierText>
+    </View>
+  ) : count === undefined && description === undefined && !hasAction && titleEllipsizeMode === undefined
     ? <HappierText accessible={false} style={titleStyle}>{titleContent ?? title}</HappierText>
     : (
       <View style={sectionHeadingStyle}>
@@ -517,7 +553,9 @@ export function HappierListSection({
  * A field in a narrow row takes the space its row leaves beside the label, on a phone as on a pane;
  * it stacks beneath only when that space is below the field's narrowest trigger. The label keeps the
  * smaller of the shared column and what it really needs: the measured natural width of a short name,
- * plus its title accessory (a marker) and that accessory's gap. A short-named row is not held to 200px.
+ * plus its title accessory (a marker) and that accessory's gap. A short-named row is not held to 200px,
+ * unless a description sits under the name: the description shares the label's column, so the shared
+ * column holds and the field moves beneath before it would squeeze the description.
  *
  * Every row adapter (core `Item`, the public plugin `Item`) supplies the same measured facts; the label
  * column is decided only here.
@@ -527,6 +565,8 @@ export function resolveHappierPageRowFieldMaxWidth(input: Readonly<{
   rowInsetPx?: number;
   /** The name's measured natural width; null while unmeasured or when the title is not plain text. */
   titleNaturalWidthPx?: number | null;
+  /** A description sits under the name, in the label's column. */
+  described?: boolean;
   /** A title accessory beside the name: its measured width, null while unmeasured. Omit when there is none. */
   titleAccessoryWidthPx?: number | null;
   /** The gap between the name and its title accessory. */
@@ -546,7 +586,7 @@ export function resolveHappierPageRowFieldMaxWidth(input: Readonly<{
     : input.titleNaturalWidthPx + (input.titleAccessoryWidthPx === undefined
       ? 0
       : (input.titleAccessoryGapPx ?? 0) + input.titleAccessoryWidthPx);
-  const labelColumnPx = naturalLabelPx === null
+  const labelColumnPx = naturalLabelPx === null || input.described === true
     ? HAPPIER_PAGE_METRICS.sectionTextMinWidthPx
     : Math.min(HAPPIER_PAGE_METRICS.sectionTextMinWidthPx, naturalLabelPx);
   const available = width - 2 * (input.rowInsetPx ?? HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx)
@@ -632,11 +672,17 @@ export function HappierListItem({
   // Inside a page section's sheet a row takes the page row anatomy: the page
   // row insets and height, the page title/description steps, and a full-width
   // hairline to the next row.
-  const pageSection = useHappierPageSection();
+  const pageSectionContext = useHappierPageSection();
+  const catalogRow = rowRole === 'catalogRow';
+  const pageSection = catalogRow || rowRole === 'menu' ? null : pageSectionContext;
   // Inside a navigation column (a `HappierCollectionList`) a row takes the navigation anatomy: flat
   // on the plane, inset by the shared gutter, the plane's selected chip and a heavier open title.
   const navigationRow = useHappierCollectionListRow() && pageSection === null;
-  // A list row in a widget body stands on the body's edge: the frame's inset is the only one.
+  // A catalog row keeps the catalog geometry (mark box, floor, air) on a page; in a column it is a described
+  // navigation row on the column's glyph column, so the column's marks share one axis and its titles one edge.
+  const pageCatalogRow = catalogRow && !navigationRow;
+  // A list row in a widget body stands on the body's edge: the frame's inset is the only one, so its glyph sits
+  // under the frame's mark (the host's `Item` follows the same context).
   const bodyEdgeRow = useContext(HappierBodyEdgeContext) && rowRole !== 'menu';
   const navigationPalette = useOptionalHappierUiPalette(theme ?? environmentTheme);
   // Inside a Collection's table or list a row takes the dense collection anatomy (full bleed, hairline,
@@ -664,6 +710,7 @@ export function HappierListItem({
   const pageRowDividerInset = pageSection === null ? null : happierPageRowDividerInset({
     rowInsetPx: pageSection.rowInsetPx,
     leadingPx: icon ? (leadingWidthPx ?? HAPPIER_PAGE_METRICS.rowLeadingColumnPx) + HAPPIER_PAGE_METRICS.rowLeadingGapPx : 0,
+    framed: pageSection.framed,
   });
   const measuresDetail = pageSection !== null && Boolean(detail) && isHappierPageRowNarrow(pageRowWidthPx);
   // A field beside a short name needs only that name's room (see `resolveHappierPageRowFieldMaxWidth`).
@@ -674,15 +721,18 @@ export function HappierListItem({
   const handleFieldSaturated = useCallback((maxWidthPx: number) => {
     setFieldSaturatedAtPx((current) => (current !== null && current >= maxWidthPx ? current : maxWidthPx));
   }, []);
+  // A description under the name shares the label's column (see `resolveHappierPageRowFieldMaxWidth`).
+  const described = Boolean(subtitle) || subtitleContent != null;
   const fieldMaxWidthPx = useMemo(() => (pageRowInsetPx !== undefined && fieldAccessory === true
     ? resolveHappierPageRowFieldMaxWidth({
       rowWidthPx: pageRowWidthPx,
       rowInsetPx: pageRowInsetPx,
       titleNaturalWidthPx: measuresFieldLabel ? titleNaturalWidthPx : null,
+      described,
       ...(fieldAccessorySiblingPx === undefined ? {} : { siblingPx: fieldAccessorySiblingPx }),
       fieldSaturatedAtPx,
     })
-    : null), [fieldAccessory, fieldAccessorySiblingPx, fieldSaturatedAtPx, measuresFieldLabel, pageRowInsetPx, pageRowWidthPx, titleNaturalWidthPx]);
+    : null), [fieldAccessory, fieldAccessorySiblingPx, fieldSaturatedAtPx, measuresFieldLabel, pageRowInsetPx, pageRowWidthPx, described, titleNaturalWidthPx]);
   // A page row's trailing value summary reads at the row title's size in the regular face, as core page rows draw it.
   const pageDetailTextStyle = { ...resolveHappierTextStepStyle({ ...HAPPIER_PAGE_TEXT.rowTitle, weight: 'regular' }, hostTypography), ...pageRowMetrics?.title };
   const handleDetailLayout = useCallback((event: Readonly<{ nativeEvent: Readonly<{ layout: Readonly<{ width: number }> }> }>) => {
@@ -790,19 +840,15 @@ export function HappierListItem({
     hasSecondaryActions,
     hasAccessory: accessory !== undefined && accessory !== null,
     accessoryOutsidePressable,
-    showDivider,
+    showDivider: catalogRow ? false : showDivider,
   });
   const isInteractive = behavior.interactive;
-  const requestedRowHeight = minimumTouchTarget ?? ({
-    comfortable: 44,
-    cozy: 42,
-    compact: 38,
-    tight: 36,
-  } satisfies Record<HappierItemDensity, number>)[behavior.density];
+  const requestedRowHeight = minimumTouchTarget ?? HAPPIER_ITEM_DENSITY_ROW_HEIGHT[behavior.density];
   // A row draws at its design height under every pointer. A full-width row is its own hit area and rows
   // stack flush, so a finger's target never grows the row or reaches into its neighbours (DESIGN.md →
   // touch targets are hit areas, not drawn sizes).
-  const rowHeight = navigationRow ? HAPPIER_COLLECTION_LIST_METRICS.rowMinHeight
+  const rowHeight = pageCatalogRow ? HAPPIER_COLLECTION_LIST_METRICS.catalogRow.minHeight
+    : navigationRow ? (catalogRow ? HAPPIER_COLLECTION_LIST_METRICS.describedRowMinHeight : HAPPIER_COLLECTION_LIST_METRICS.rowMinHeight)
     : pageSection && pageRowMetrics ? pageRowMetrics.minHeightPx : requestedRowHeight;
 
   const renderSemanticContent = (isBusy: boolean, includeAccessory: boolean) => {
@@ -828,15 +874,17 @@ export function HappierListItem({
     const pageCompact = behavior.density === 'compact' || behavior.density === 'tight';
     return (
       <View
-        style={navigationRow ? {
+        style={navigationRow || catalogRow ? {
           flexDirection: 'row',
           alignItems: 'center',
-          columnGap: HAPPIER_COLLECTION_LIST_METRICS.rowGlyphGap,
+          columnGap: pageCatalogRow ? HAPPIER_COLLECTION_LIST_METRICS.catalogRow.markGap : HAPPIER_COLLECTION_LIST_METRICS.rowGlyphGap,
           // The row's design height; a wrapped title grows it, never the glyph.
           minHeight: rowHeight - 2 * NAVIGATION_ROW_FOCUS_RING_WIDTH,
           paddingLeft: resolveHappierCollectionListRowPadding(0).paddingLeft - NAVIGATION_ROW_FOCUS_RING_WIDTH,
           paddingRight: resolveHappierCollectionListRowPadding(0).paddingRight - NAVIGATION_ROW_FOCUS_RING_WIDTH,
-          paddingVertical: NAVIGATION_ROW_TEXT_FLOOR_PX,
+          paddingVertical: pageCatalogRow
+            ? HAPPIER_COLLECTION_LIST_METRICS.catalogRow.paddingVertical - NAVIGATION_ROW_FOCUS_RING_WIDTH
+            : NAVIGATION_ROW_TEXT_FLOOR_PX,
         } : pageSection ? {
           // A stacked control moves beneath the row's text. With a leading glyph the glyph and the text stay
           // together on the first line and the control wraps to its own, so the glyph is never alone above them.
@@ -869,8 +917,12 @@ export function HappierListItem({
             accessible={false}
             accessibilityElementsHidden
             importantForAccessibility="no-hide-descendants"
-            style={navigationRow
-              ? { width: HAPPIER_COLLECTION_LIST_METRICS.rowGlyphBox, alignItems: 'center', justifyContent: 'center' }
+            style={navigationRow || catalogRow
+              ? pageCatalogRow
+                ? { width: HAPPIER_COLLECTION_LIST_METRICS.catalogRow.markBox, alignItems: 'center', justifyContent: 'center' }
+                // A column's catalog row fits its mark from the text edge (an avatar widens it); glyphs keep the box.
+                : catalogRow ? { minWidth: HAPPIER_COLLECTION_LIST_METRICS.rowGlyphBox, alignItems: 'center', justifyContent: 'center' }
+                : { width: HAPPIER_COLLECTION_LIST_METRICS.rowGlyphBox, alignItems: 'center', justifyContent: 'center' }
               : pageSection
               ? { minWidth: HAPPIER_PAGE_METRICS.rowLeadingColumnPx, alignItems: 'center', justifyContent: 'center' }
               : { alignItems: 'center', justifyContent: 'center' }}
@@ -1054,7 +1106,7 @@ export function HappierListItem({
         minWidth: 0,
         minHeight: rowHeight,
         marginHorizontal: HAPPIER_COLLECTION_LIST_METRICS.rowInset,
-        borderRadius: HAPPIER_COLLECTION_LIST_METRICS.rowRadius,
+        borderRadius: catalogRow ? HAPPIER_COLLECTION_LIST_METRICS.catalogRow.radius : HAPPIER_COLLECTION_LIST_METRICS.rowRadius,
         // The transparent border is the inset ring's band; the content padding subtracts its
         // width, so the glyph still lands on the shared text edge.
         borderWidth: NAVIGATION_ROW_FOCUS_RING_WIDTH,
@@ -1065,7 +1117,7 @@ export function HappierListItem({
           ? paintColor(navigationPalette?.navigationSelected ?? resolvedTheme.colors.elevatedSurface)
           : state.hovered && !state.disabled ? paintColor(navigationPalette?.navigationHover ?? 'transparent') : 'transparent',
         opacity: state.disabled && !state.busy
-          ? 0.5
+          ? catalogRow ? HAPPIER_COLLECTION_LIST_METRICS.dimmedOpacity : 0.5
           : state.pressed ? HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle : 1,
         ...happierPressTransitionStyle(state.pressed, ['opacity']),
       }) : collectionRow ? ({
@@ -1078,7 +1130,7 @@ export function HappierListItem({
         borderColor: 'transparent',
         ...happierFocusRingStyle({ visible: state.focused, color: resolvedTheme.colors.focus, placement: 'inset' }),
         opacity: state.disabled && !state.busy
-          ? 0.5
+          ? catalogRow ? HAPPIER_COLLECTION_LIST_METRICS.dimmedOpacity : 0.5
           : state.pressed ? HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle : 1,
         ...happierPressTransitionStyle(state.pressed, ['opacity']),
       }) : ({
@@ -1089,7 +1141,7 @@ export function HappierListItem({
         borderColor: 'transparent',
         // Inset: the row spans its list, which clips anything drawn outside it.
         ...happierFocusRingStyle({ visible: state.focused, color: resolvedTheme.colors.focus, placement: 'inset' }),
-        borderRadius: resolvedTheme.radii.control,
+        borderRadius: catalogRow ? HAPPIER_COLLECTION_LIST_METRICS.catalogRow.radius : resolvedTheme.radii.control,
         // Selection paints a soft control fill (never an accent bar); focus
         // paints only the ring above. They are separate axes, so a focused row
         // is never mistaken for the open one and the open one stays visible on
@@ -1097,7 +1149,7 @@ export function HappierListItem({
         backgroundColor: selected === true && !cardRing ? paintColor(resolvedTheme.colors.control) : 'transparent',
         // Rows are high-frequency and text-led: the gentle dip, never a scale.
         opacity: state.disabled && !state.busy
-          ? 0.5
+          ? catalogRow ? HAPPIER_COLLECTION_LIST_METRICS.dimmedOpacity : 0.5
           : state.pressed ? HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle : 1,
         ...happierPressTransitionStyle(state.pressed, ['opacity']),
       }))}
@@ -1130,29 +1182,26 @@ export function HappierListItem({
     </View>
   ) : null;
   const rowAccessory = overlaidRowActions ?? accessory;
-  const rowContent = isGridRow && cardCornerAccessory !== null ? (
-    <>
-      {/* @ts-expect-error React Native's role union omits RNW's standard gridcell role. */}
-      <View role="gridcell" style={{ flex: 1, minWidth: 0, alignSelf: 'stretch' }}>{row}</View>
-      {/* @ts-expect-error React Native's role union omits RNW's standard gridcell role. */}
-      <View role="gridcell" style={[{
-        position: 'absolute', top: cardCornerAccessory.top, end: cardCornerAccessory.end, height: cardCornerAccessory.height,
-        justifyContent: 'center', opacity: cardActionsVisible ? 1 : 0,
-      }, reducedMotion ? null : CARD_ACTIONS_REVEAL_TRANSITION]}>{accessory}</View>
-    </>
-  ) : isGridRow ? (
-    behavior.accessoryPlacement === 'outside' ? (
-      <>
-        {/* @ts-expect-error React Native's role union omits RNW's standard gridcell role. */}
-        <View role="gridcell" style={stackPageAccessory ? { width: '100%', minWidth: 0 } : { flex: 1, minWidth: accessoryWraps ? '50%' : 0 }}>{row}</View>
-        {/* The control keeps the row's trailing inset, as its text keeps the leading one (and a selected row's fill shows it). */}
-        {/* @ts-expect-error React Native's role union omits RNW's standard gridcell role. */}
-        {overlaidRowActions ?? (accessory ? <View role="gridcell" style={stackPageAccessory ? null : { paddingEnd: resolvedTheme?.spacing.medium ?? 0 }}>{accessory}</View> : null)}
-      </>
-    ) : (
-      // @ts-expect-error React Native's role union omits RNW's standard gridcell role.
-      <View role="gridcell" style={{ flex: 1, minWidth: 0 }}>{row}</View>
-    )
+  const outsideAccessory = behavior.accessoryPlacement === 'outside';
+  const rowContent = isGridRow ? (
+    <ListGridRow
+      primaryStyle={cardCornerAccessory !== null ? { flex: 1, minWidth: 0, alignSelf: 'stretch' }
+        : outsideAccessory && stackPageAccessory ? { width: '100%', minWidth: 0 }
+        : { flex: 1, minWidth: outsideAccessory && accessoryWraps ? '50%' : 0 }}
+      accessory={cardCornerAccessory !== null ? (
+        // @ts-expect-error React Native's role union omits RNW's standard gridcell role.
+        <View role="gridcell" style={[{
+          position: 'absolute', top: cardCornerAccessory.top, end: cardCornerAccessory.end, height: cardCornerAccessory.height,
+          justifyContent: 'center', opacity: cardActionsVisible ? 1 : 0,
+        }, reducedMotion ? null : CARD_ACTIONS_REVEAL_TRANSITION]}>{accessory}</View>
+      ) : outsideAccessory ? overlaidRowActions ?? (accessory ? (
+        // The control keeps the row's trailing inset, as its text keeps the leading one.
+        // @ts-expect-error React Native's role union omits RNW's standard gridcell role.
+        <View role="gridcell" style={stackPageAccessory ? null : { paddingEnd: resolvedTheme?.spacing.medium ?? 0 }}>{accessory}</View>
+      ) : null) : null}
+    >
+      {row}
+    </ListGridRow>
   ) : behavior.accessoryPlacement === 'outside' && pageSection ? (
     // A page row keeps its control on the row's inset: beside the label with
     // the trailing inset, or — on a narrow row with a wide control — beneath
@@ -1192,7 +1241,10 @@ export function HappierListItem({
       ...(accessory && !overlayRowActions && !stackPageAccessory ? { paddingEnd: resolvedTheme?.spacing.medium ?? 0 } : {}),
     }}>
       <View style={includeAccessory || stackPageAccessory ? null : { flex: 1, minWidth: accessoryWraps ? '50%' : 0 }}>{row}</View>
-      {includeAccessory ? null : rowAccessory}
+      {includeAccessory ? null : accessoryWraps && accessory && overlaidRowActions === null ? (
+        // A wrapped control starts on the text's leading inset, under the title rather than left of it.
+        <View style={{ paddingStart: resolvedTheme?.spacing.medium ?? 0 }}>{rowAccessory}</View>
+      ) : rowAccessory}
     </View>
   ) : row;
 
@@ -1254,6 +1306,7 @@ export function HappierListItem({
       } : undefined, collectionRow && resolvedTheme ? {
         // The pointer's fill eases in at the fast step (web); selection lands at once.
         ...(reducedMotion ? {} : COLLECTION_ROW_FILL_TRANSITION),
+        ...(collectionItem?.insetFill === true ? CATALOG_INSET_FILL_STYLE : null),
         backgroundColor: selected === true || openRow
           ? paintColor(collectionPalette(resolvedTheme, navigationPalette).navigationSelected)
           : collectionRowHovered && isInteractive && disabled !== true
@@ -1265,7 +1318,7 @@ export function HappierListItem({
       {collectionRow && resolvedTheme ? (
         <>
           {/* Overlays, never layout: the row keeps the exact height its Collection planned. */}
-          {collectionItem?.hairline === false ? null : (
+          {collectionItem?.hairline === false || collectionItem?.insetFill === true ? null : (
             <View
               pointerEvents="none"
               style={{

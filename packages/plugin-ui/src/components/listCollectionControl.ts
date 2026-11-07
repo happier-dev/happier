@@ -51,6 +51,8 @@ export type ListCollectionControl = Readonly<{
     headerHeight: number;
     width: number | null;
     defaultRowHeight: number;
+    /** A catalog directory's row-major columns: the windowed rows are laid out in lines of these. */
+    directory?: Readonly<{ columns: number; columnGapPx: number; lineTestID?: string }>;
   }>;
   /**
    * A page-scrolling list's groups are page sections: each group's rows sit on one page sheet under its header
@@ -65,7 +67,14 @@ export type ListCollectionControl = Readonly<{
     header?: ReactNode;
     /** `false` inside a sheet that already encloses the collection (a page section's sheet): no second sheet. */
     flatSheet?: boolean;
+    /** A grouped list that is one table (it has totals): the bar, every group's band and rows, then the footer on one sheet. */
+    oneSheet?: boolean;
   }>;
+  /**
+   * A page's catalog directory (S10: the Store, Installed): its groups are page sections of catalog rows standing on
+   * the page with no sheet or hairlines, laid out row-major in `columns` so reading and keyboard order agree.
+   */
+  catalogDirectory?: Readonly<{ columns: number; columnGapPx: number; lineTestID?: string }>;
 }>;
 
 export const ListCollectionControlContext = createContext<ListCollectionControl | null>(null);

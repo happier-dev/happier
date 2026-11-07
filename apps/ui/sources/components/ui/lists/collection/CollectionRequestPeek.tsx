@@ -152,6 +152,7 @@ export function CollectionRequestPeek(
             native: true,
             matchAnchorWidth: false,
             anchorAlign: 'start',
+            anchorAlignVertical: 'start',
           }}
           maxWidthCap={PEEK_WIDTH_PX}
           maxHeightCap={PEEK_MAX_HEIGHT_PX}

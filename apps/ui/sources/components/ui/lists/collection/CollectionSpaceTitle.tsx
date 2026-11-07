@@ -11,6 +11,8 @@ import {
   type DropdownMenuItem,
 } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
+import { Text } from '@/components/ui/text/Text';
+import { Typography } from '@/constants/Typography';
 import type { SelectionListFilter } from '@/components/ui/selectionList';
 import { KeyboardShortcutLabelsContext } from '@/keyboard/shortcutLabels';
 import { t } from '@/text';
@@ -78,6 +80,8 @@ export const CollectionSpaceTitle = React.memo(function CollectionSpaceTitle(
   const router = useRouter();
   const shortcutLabels = React.useContext(KeyboardShortcutLabelsContext);
   const iconColor = theme.colors.text.secondary;
+  // A saved view that now differs from its space (P6 §7.1); Save changes / Save as follow in the menu.
+  const filtered = props.spacesEnabled === true && props.modified;
   const items = React.useMemo<readonly DropdownMenuItem[]>(
     () => [
       ...selection.items.map((item, index): DropdownMenuItem => {
@@ -208,8 +212,14 @@ export const CollectionSpaceTitle = React.memo(function CollectionSpaceTitle(
           testID={`${props.testIDPrefix}-title`}
           label={props.label}
           accessibilityLabel={t('sessionsList.spacesTitleMenu', {
-            name: props.label,
+            name: filtered ? `${props.label}, ${t('sessionsList.spacesFiltered')}` : props.label,
           })}
+          {...(filtered ? { trailing: (
+            <Text testID={`${props.testIDPrefix}-title-filtered`} numberOfLines={1}
+              style={{ ...Typography.variant('meta'), color: theme.colors.text.tertiary, marginLeft: theme.space.s6 }}>
+              {t('sessionsList.spacesFiltered')}
+            </Text>
+          ) } : {})}
           expanded={selection.open}
           hasPopup="menu"
           onPress={toggle}

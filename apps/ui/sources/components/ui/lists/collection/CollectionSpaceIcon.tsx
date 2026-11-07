@@ -1,10 +1,9 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { HappierCollectionSpaceIcon } from '@happier-dev/plugin-ui/presentation';
 import type { CollectionSpaceIconV1 } from '@happier-dev/protocol/collections/spaces/collectionSpacesV1';
 import type { QualifiedProjectKeyV1, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
 import { resolvePluginUiIconName } from '@/components/plugins/surfaces/iconToken/resolvePluginUiIconToken';
-import { SessionListProjectMark } from '@/components/sessions/shell/SessionListProjectMark';
 import { useWorkspaceFavicon } from '@/components/sessions/shell/useWorkspaceFavicon';
 import { Icon } from '@/components/ui/icons/Icon';
 import { useSetting } from '@/sync/domains/state/storage';
@@ -36,14 +35,9 @@ export const CollectionSpaceIcon = React.memo(function CollectionSpaceIcon(
       />
     );
   }
-  return (
-    <Icon
-      testID={props.testID}
-      name={resolvePluginUiIconName(props.icon.name)}
-      size={props.size}
-      color={props.color}
-    />
-  );
+  return <HappierCollectionSpaceIcon size={props.size} testID={props.testID} mark={{ kind: 'icon', glyph: (
+    <Icon testID={props.testID} name={resolvePluginUiIconName(props.icon.name)} size={props.size} color={props.color} />
+  ) }} />;
 });
 
 /**
@@ -78,20 +72,6 @@ function ProjectSpaceIcon(
     workspacePath: baseline?.rootPath ?? null,
     demand: false,
   });
-  if (favicon)
-    return (
-      <SessionListProjectMark
-        favicon={favicon}
-        size={props.size}
-        badge={null}
-        testID={props.testID}
-      />
-    );
-  return (
-    <View
-      testID={props.testID ? `${props.testID}-project-fallback` : undefined}
-    >
-      <Icon name="folder" size={props.size} color={props.color} />
-    </View>
-  );
+  return <HappierCollectionSpaceIcon size={props.size} testID={props.testID}
+    mark={{ kind: 'project', favicon, fallback: <Icon name="folder" size={props.size} color={props.color} /> }} />;
 }

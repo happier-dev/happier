@@ -60,6 +60,8 @@ export type HappierCollectionTitleButtonProps = Readonly<{
   styles: HappierCollectionTitleStyles;
   Text: React.ComponentType<Readonly<{ children: React.ReactNode; numberOfLines: number; style: HappierStyleProp }>>;
   chevron: React.ReactNode;
+  /** A quiet state after the chevron (a saved view that now differs: "Filtered"); the caller names it in the label. */
+  trailing?: React.ReactNode;
 }>;
 
 /** One title control and one inaccessible measuring copy, for core and plugin collections. */
@@ -78,12 +80,14 @@ export const HappierCollectionTitleButton = React.memo(function HappierCollectio
     {hitArea.frame}
     <Text numberOfLines={1} style={labelStyle}>{props.label}</Text>
     {props.chevron}
+    {props.trailing ?? null}
     {reportNaturalWidth ? <View style={styles.naturalClip} pointerEvents="none" aria-hidden
       accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
       <View style={styles.naturalRow}>
         <View testID={`${props.testID}-natural`} onLayout={handleNaturalLayout} style={[styles.trigger, styles.naturalTrigger]}>
           <Text numberOfLines={1} style={labelStyle}>{props.label}</Text>
           {props.chevron}
+          {props.trailing ?? null}
         </View>
       </View>
     </View> : null}

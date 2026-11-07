@@ -24,13 +24,4 @@ export function resolveCollectionSpaceSwipeCommit(input: Readonly<{
   return input.translationX !== 0 && allowed && (far || flick) ? (towardPrevious ? -1 : 1) : null;
 }
 
-/** The space a swipe or relative command moves to, in the entity's own order; null at either end. */
-export function neighbourCollectionSpaceId(
-  spaces: readonly Readonly<{ id: string }>[],
-  selectedId: string,
-  direction: -1 | 1,
-): string | null {
-  const index = spaces.findIndex((space) => space.id === selectedId);
-  return index < 0 ? null : (spaces[index + direction]?.id ?? null);
-}
 

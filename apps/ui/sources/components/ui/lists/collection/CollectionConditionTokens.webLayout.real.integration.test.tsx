@@ -29,6 +29,7 @@ const TOKENS = [
 ] as const;
 
 async function measureLine(width: number) {
+  const removed: string[] = [];
   const host = document.createElement('div');
   document.body.appendChild(host);
   const root = createRoot(host);
@@ -38,7 +39,7 @@ async function measureLine(width: number) {
         <CollectionConditionTokens
           testIDPrefix="line"
           tokens={TOKENS}
-          onRemove={() => {}}
+          onRemove={(id) => removed.push(id)}
           onSave={() => {}}
         />
       </View>,
@@ -52,6 +53,7 @@ async function measureLine(width: number) {
   });
   return {
     layout,
+    removed,
     dispose: async () => {
       await act(async () => root.unmount());
       host.remove();
@@ -61,7 +63,7 @@ async function measureLine(width: number) {
 
 it('keeps every condition in sight in a narrow sidebar column: tokens wrap and Save shrinks to its icon', async () => {
   // A 272 px sidebar column leaves 236 px for the line (Coordination visual acceptance 11-07: "Failed" scrolled away).
-  const { layout, dispose } = await measureLine(236);
+  const { layout, removed, dispose } = await measureLine(236);
   try {
     const row = layout.rect('line-chips');
     const save = layout.rect('line-tokens-save');
@@ -79,6 +81,8 @@ it('keeps every condition in sight in a narrow sidebar column: tokens wrap and S
     const saveNode = document.querySelector('[data-testid="line-tokens-save"]');
     expect(saveNode?.textContent).toBe('');
     expect(saveNode?.getAttribute('aria-label')).toBe('Save as space…');
+    await act(() => (document.querySelector('[data-testid="line-token:statuses"]') as HTMLElement).click());
+    expect(removed).toEqual(['statuses']);
   } finally {
     await dispose();
   }

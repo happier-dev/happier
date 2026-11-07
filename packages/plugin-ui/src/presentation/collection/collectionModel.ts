@@ -103,6 +103,12 @@ export type HappierCollectionGroup = Readonly<{
   /** Work groups may announce attention with the same semantic tone as their rows. */
   tone?: HappierWorkStatusTone;
   /**
+   * What the group says when it has no rows ("Nothing needs you right now."), in a list or table: the group keeps its
+   * band, counted 0, over this one quiet line instead of disappearing. The caller sets it only while the claim is
+   * true (the read is complete and nothing narrows it). Board columns keep their empty lanes through `retainEmpty`.
+   */
+  emptyStatement?: string;
+  /**
    * The page section this group is one part of, when groups nest one level ("Deployed by Happier · 3 environments"
    * › "shop · Production"). In a page list, consecutive groups naming one section share its heading and one sheet,
    * each group under its own sub-heading; other presentations draw the groups as usual.
@@ -117,7 +123,6 @@ export type HappierCollectionGroupSection = Readonly<{
   detail?: string;
 }>;
 
-
 /**
  * What the loaded rows cover. The model never computes "N of M": a partial window names its own
  * continuations, and "no matches" at `partial` means "no matches in what's loaded".
@@ -126,8 +131,12 @@ export type HappierCollectionWindow =
   | Readonly<{ kind: 'complete' }>
   | Readonly<{
       kind: 'partial';
-      /** Each way to read more; `busy` while the read it asked for runs. */
-      continuations: readonly Readonly<{ key: string; label: string; load: () => void; busy?: boolean }>[];
+      /**
+       * Each way to read more; `busy` while the read it asked for runs. `whenVisible` also reads
+       * the next window when its control reaches the viewport at the end of page-scrolled rows,
+       * and again only after rows were appended (never as a retry of a failed read).
+       */
+      continuations: readonly Readonly<{ key: string; label: string; load: () => void; busy?: boolean; whenVisible?: boolean }>[];
     }>
   | Readonly<{ kind: 'unavailable'; reason: string }>;
 
@@ -353,11 +362,14 @@ function deriveFlatSections<Item>(
   }
   const sections = input.groups.axis.map((group): HappierCollectionSection<Item> => ({ group, items: arrange(byGroup.get(group.key) ?? []) }));
   if (input.groups.retainEmpty) return sections;
-  return narrowHappierCollectionGroups(
+  const narrowed = narrowHappierCollectionGroups(
     sections,
     (section) => section.items,
     (section, items) => ({ ...section, items }),
   );
+  // An empty group with something to say keeps its place in the axis order.
+  if (narrowed.length === sections.length || !input.groups.axis.some((group) => group.emptyStatement !== undefined)) return narrowed;
+  return sections.filter((section) => section.items.length > 0 || section.group?.emptyStatement !== undefined);
 }
 
 /**

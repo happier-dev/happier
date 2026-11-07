@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
 
 import { renderScreen } from '@/dev/testkit';
 import { readHitFrameReach } from '@/dev/testkit/harness/hitFrameReach';
@@ -12,6 +13,10 @@ vi.mock('react-native', async () => {
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
     return createUnistylesMock();
+});
+vi.mock('@/components/ui/popover', async (importOriginal) => {
+    const { createInlinePopoverModuleMock } = await import('@/dev/testkit/mocks/popover');
+    return createInlinePopoverModuleMock(importOriginal);
 });
 
 import { CollectionSpacesStrip } from './CollectionSpacesStrip';
@@ -37,5 +42,34 @@ describe('CollectionSpacesStrip', () => {
         expect(reach?.top).toBe(0);
         expect(reach?.left).toBe(1);
         expect(reach?.bottom).toBe(0);
+    });
+
+    // P6 §7.1: a strip tab's context menu / long-press exposes Edit; selecting stays the press.
+    it('opens Edit for the long-pressed space without selecting it', async () => {
+        const onSelect = vi.fn();
+        const onEditSpace = vi.fn();
+        const screen = await renderScreen(
+            <HappierUiPlatformProvider platform={{ platform: 'ios', colorScheme: 'light' }}>
+                <CollectionSpacesStrip
+                    testIDPrefix="spaces"
+                    accessibilityLabel="Spaces"
+                    items={[
+                        { id: 'a', name: 'Mine', icon: { kind: 'icon', name: 'list' } },
+                        { id: 'b', name: 'Release', icon: { kind: 'icon', name: 'list' } },
+                    ]}
+                    selectedId="a"
+                    onSelect={onSelect}
+                    addLabel="New space"
+                    onEditSpace={onEditSpace}
+                />
+            </HappierUiPlatformProvider>,
+        );
+        expect(screen.findByTestId('spaces-menu-edit')).toBeNull();
+        await act(async () => { screen.findHostByTestId('spaces:b')!.props.onLongPress(); });
+        await screen.pressByTestIdAsync('spaces-menu-edit');
+        // The menu runs its choice a frame after it closes.
+        await vi.waitFor(() => expect(onEditSpace).toHaveBeenCalledWith('b'));
+        expect(onSelect).not.toHaveBeenCalled();
+        expect(screen.findByTestId('spaces-menu-edit')).toBeNull();
     });
 });

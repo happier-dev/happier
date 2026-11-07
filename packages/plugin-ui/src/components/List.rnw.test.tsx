@@ -610,7 +610,11 @@ describe('plugin-ui List item presentation', () => {
     const enabledAction = mount.container.querySelector<HTMLElement>('[role="menuitem"]');
     expect(enabledAction).not.toBeNull();
     await act(async () => { enabledAction?.click(); });
-    expect(onSecondaryAction).toHaveBeenCalledWith('inspect');
+    expect(onSecondaryAction).toHaveBeenCalledWith('inspect', expect.objectContaining({
+      anchorRef: expect.objectContaining({ current: expect.anything() }),
+    }));
+    const selection = onSecondaryAction.mock.calls[0]?.[1];
+    expect(selection.anchorRef.current.contains(trigger())).toBe(true);
 
     for (const [stateName, state] of [
       ['disabled', { disabled: true }],

@@ -83,6 +83,7 @@ import { List } from './List.js';
 import { PluginUiProvider } from './PluginUiProvider.js';
 import { createListMultiSelectionStore, type ListMultiSelectionStore } from './ListMultiSelection.js';
 import { ContextMenu } from './Overlay.js';
+import { Text } from 'react-native';
 
 type Entry = Readonly<{ id: string; label: string }>;
 
@@ -158,6 +159,33 @@ function gridRowFrames(): readonly Record<string, unknown>[] {
 }
 
 describe('plugin-ui selectable List collection semantics on native', () => {
+  it('retains mounted grid row bodies when independent accessories arrive and leave', () => {
+    const context = createSurfaceContext();
+    let mounts = 0;
+    let unmounts = 0;
+    function Body(props: Readonly<{ label: string }>) {
+      React.useEffect(() => { mounts += 1; return () => { unmounts += 1; }; }, []);
+      return <Text>{props.label}</Text>;
+    }
+    const tree = (withAccessory: boolean, label: string) => (
+      <PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
+        <List accessibilityLabel="Repositories" accessibilityPattern="grid" items={entries}
+          keyForItem={item => item.id} selection={{ selectedKey: 'a', onSelectedKeyChange: () => undefined }}
+          renderItem={item => <List.Item title={item.label}
+            accessory={withAccessory ? <Text>Review</Text> : undefined}>
+            <Body label={label} />
+          </List.Item>} />
+      </PluginUiProvider>
+    );
+    act(() => { renderer = create(tree(false, 'Retained draft')); });
+    expect(mounts).toBe(entries.length);
+    act(() => { renderer!.update(tree(true, 'Updated draft')); });
+    act(() => { renderer!.update(tree(false, 'Updated draft')); });
+    expect(mounts).toBe(entries.length);
+    expect(unmounts).toBe(0);
+    expect(renderer!.root.findAllByType(Body).map(node => node.props.label)).toEqual(entries.map(() => 'Updated draft'));
+  });
+
   it('gives the collection its native row count', () => {
     renderSelectableList();
 

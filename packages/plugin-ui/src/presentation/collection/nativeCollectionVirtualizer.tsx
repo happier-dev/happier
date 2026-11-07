@@ -1,6 +1,7 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, type RefObject } from 'react';
 import { FlatList, Platform, SectionList, type FlatListProps, type ListRenderItemInfo, type NativeScrollEvent, type NativeSyntheticEvent, type SectionListRenderItemInfo } from 'react-native';
 
+import { useContainingHappierMaterialRole } from '../layout/Surface.js';
 import { useOptionalPluginUiPresentationHost } from '../../presentationHost/context.js';
 import { PluginUiScrollActivityProvider, useOptionalPluginUiScrollActivityTracker } from '../../presentationHost/scrollActivity.js';
 import type { CollectionVirtualizer, CollectionVirtualizerHandle, CollectionVirtualizerRequest } from './collectionVirtualizer.js';
@@ -68,6 +69,9 @@ function NativeCollectionVirtualizer<Item>({ request }: Readonly<{ request: Coll
   const renderGroupedItem = useCallback(({ item, index, section }: SectionListRenderItemInfo<Item, Readonly<{ key: string }>>) => (
     <>{renderItem(item, index, sectionIndices.get(section) ?? 0)}</>
   ), [renderItem, sectionIndices]);
+  // A heading stays pinned only where it can paint its ground: a translucent material (a glass dialog) owns its
+  // plane, so there the heading scrolls with its rows rather than letting them print through it.
+  const stickyHeaders = useContainingHappierMaterialRole() === undefined;
   const renderHeader = request.kind === 'sections' ? request.renderSectionHeader : undefined;
   const renderSectionHeader = useCallback(({ section }: Readonly<{ section: Readonly<{ key: string; data: readonly Item[] }> }>) => (
     <>{renderHeader?.(sectionIndices.get(section) ?? 0)}</>
@@ -83,6 +87,9 @@ function NativeCollectionVirtualizer<Item>({ request }: Readonly<{ request: Coll
     contentContainerStyle: request.contentContainerStyle,
     keyboardShouldPersistTaps: 'handled' as const,
     extraData: request.extraData,
+    // Keep overscan below the platform default; mounted work is characterized
+    // against collection size, including the platform's retained initial batch.
+    windowSize: 3,
     ListFooterComponent: request.endContent === undefined ? undefined : <>{request.endContent}</>,
     maintainVisibleContentPosition: request.preserveVisibleContentPositionOnPrepend && Platform.OS !== 'web'
       ? { minIndexForVisible: 0 } : undefined,
@@ -110,7 +117,7 @@ function NativeCollectionVirtualizer<Item>({ request }: Readonly<{ request: Coll
       role={request.role}
       ref={grouped}
       sections={request.sections}
-      stickySectionHeadersEnabled
+      stickySectionHeadersEnabled={stickyHeaders}
       renderItem={renderGroupedItem}
       renderSectionHeader={renderSectionHeader}
     />

@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { useUnistyles } from 'react-native-unistyles';
+import { View } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierCollectionListMark } from '@happier-dev/plugin-ui/presentation';
 
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
@@ -25,7 +26,7 @@ export const CollectionIndexRow = React.memo(function CollectionIndexRow(props: 
     | { icon: IconName; title: string }
 )>) {
     const { theme } = useUnistyles();
-    return (
+    const row = (
         <Item
             testID={props.testID}
             title={props.icon ? props.title : t('settings.overview')}
@@ -42,4 +43,14 @@ export const CollectionIndexRow = React.memo(function CollectionIndexRow(props: 
             onPress={props.onPress}
         />
     );
+    // The index closes the column's header block: it stands as far below the search field as the first group's
+    // label stands below it, so the head reads in one even rhythm (owner 11-01). A pinned destination after it
+    // (its own `icon`) continues the block at the row pitch.
+    return props.icon ? row : <View style={styles.index}>{row}</View>;
 });
+
+const styles = StyleSheet.create((theme) => ({
+    index: {
+        marginTop: theme.space.s6,
+    },
+}));

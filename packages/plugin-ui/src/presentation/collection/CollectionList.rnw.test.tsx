@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { mountThroughReactNativeWeb } from '../../rnwMount.testSupport.js';
 import { HappierUiPlatformProvider } from '../../environment/context.js';
 import { createHappierCollectionDraftTitleStore } from './collectionModel.js';
+import { readHitAreaReach } from '../interaction/hitArea.testSupport.js';
 import {
   HappierCollectionList,
   HappierCollectionListGroupLabel,
@@ -213,9 +214,28 @@ describe('HappierCollectionList (list presentation)', () => {
     mount.unmount();
   });
 
-  // The fold chevron abuts the lead it folds (no gap between the two targets): a finger's hit area on the
-  // chevron must not reach back into the lead, or one tap near their seam is ambiguous.
-  it('keeps the separate fold control\'s hit area off the lead it sits against', () => {
+  // The fold chevron abuts the lead it folds (no gap between the two targets): its hit area never reaches back
+  // into the lead, and still reaches the WCAG floor by taking the share the lead's side cannot give from the
+  // spacer after it.
+  it("keeps the separate fold control's hit area off the lead and on the pointer floor", () => {
+    const glyphHost: HappierCollectionListHost = { ...host, useGroupGlyphColor: () => '#000' };
+    const mount = mountThroughReactNativeWeb(
+      <HappierCollectionListGroupLabel host={glyphHost} testID="group" title="Needs you" count={4}
+        disclosure={{ expanded: true, onToggle: () => {}, onOpen: () => {} }} />,
+    );
+    try {
+      const fold = mount.container.querySelector<HTMLElement>('[data-testid="group:fold"]')!;
+      const reach = readHitAreaReach(fold);
+      expect(reach).not.toBeNull();
+      expect(reach!.left).toBeCloseTo(0);
+      expect(reach!.top).toBeGreaterThan(0);
+      expect(16 + reach!.left + reach!.right).toBeGreaterThanOrEqual(24);
+    } finally {
+      mount.unmount();
+    }
+  });
+
+  it("keeps a finger's fold hit area off the lead", () => {
     const glyphHost: HappierCollectionListHost = { ...host, useGroupGlyphColor: () => '#000' };
     const mount = mountThroughReactNativeWeb(
       <HappierUiPlatformProvider platform={{ platform: 'ios', colorScheme: 'light' }}>

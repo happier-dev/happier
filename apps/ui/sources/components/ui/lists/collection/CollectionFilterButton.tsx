@@ -32,6 +32,9 @@ export const CollectionFilterButton = React.memo(function CollectionFilterButton
       expanded={props.open}
       hasPopup="dialog"
       onPress={props.onPress}
+      // The funnel ends its header row (or sits in a search row); what follows below paints over any reach past
+      // the row, so it keeps to its own box underneath and takes the room it has above.
+      hitReach={{ bottom: 0 }}
       style={(state) => [
         {
           width: 30,

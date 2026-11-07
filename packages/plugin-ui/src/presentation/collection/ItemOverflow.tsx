@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, type ReactElement, type ReactNode, type RefObject } from 'react';
+import type { PluginUiMenuSelection } from '../../presentationHost/context.js';
 
 export type HappierItemOverflowAction = Readonly<{
   id: string;
@@ -21,7 +22,7 @@ export type HappierItemOverflowRenderInput = Readonly<{
   triggerTabIndex?: -1 | 0;
   focusReturnRef?: RefObject<unknown>;
   actions: readonly HappierItemOverflowAction[];
-  onSelect(id: string): void;
+  onSelect(id: string, selection?: PluginUiMenuSelection): void;
 }>;
 
 export type HappierItemOverflowProps = Readonly<{
@@ -29,7 +30,7 @@ export type HappierItemOverflowProps = Readonly<{
   /** Canonical row-behavior admission; omitted for non-row consumers. */
   secondaryActionsEnabled?: boolean;
   accessibilityLabel: string;
-  onSelect(id: string): void;
+  onSelect(id: string, selection?: PluginUiMenuSelection): void;
   /** Composite rows control this state so their own keyboard target can open it. */
   open?: boolean;
   onOpenChange?(open: boolean): void;
@@ -65,9 +66,9 @@ export function HappierItemOverflow(props: HappierItemOverflowProps): ReactEleme
   const enabledIds = props.actions.filter((action) => !action.disabled).map((action) => action.id);
   const enabled = props.secondaryActionsEnabled !== false && enabledIds.length > 0;
   const { open, setOpen } = useHappierItemOverflowState(props, enabled);
-  const onSelect = useCallback((id: string) => {
+  const onSelect = useCallback((id: string, selection?: PluginUiMenuSelection) => {
     if (!enabled || !enabledIds.includes(id)) return;
-    props.onSelect(id);
+    props.onSelect(id, selection);
     setOpen(false);
   }, [enabled, enabledIds, props]);
   const onOpenChange = useCallback((nextOpen: boolean) => {

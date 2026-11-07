@@ -25,21 +25,33 @@ vi.mock('@/components/ui/popover', async (importOriginal) => {
 import { CollectionSpaceTitle } from './CollectionSpaceTitle';
 
 const base = createDefaultCollectionSpaceV1('sessionWork');
-function Host({ scope, spacesEnabled = true, onSetSpacesEnabled }: Readonly<{
-    scope: string; spacesEnabled?: boolean | null; onSetSpacesEnabled?: (next: boolean) => void;
+function Host({ scope, spacesEnabled = true, onSetSpacesEnabled, modified = false }: Readonly<{
+    scope: string; spacesEnabled?: boolean | null; onSetSpacesEnabled?: (next: boolean) => void; modified?: boolean;
 }>) {
     const [selected, setSelected] = React.useState('a');
     return <HappierUiPlatformProvider platform={{ platform: 'ios', colorScheme: 'light' }}>
         <CollectionSpaceTitle scope={scope} testIDPrefix="space" entityKind="sessionWork" label="Sessions"
             spaces={spacesEnabled ? [{ ...base, id: scope === 'account-a' ? 'a' : 'b', name: scope }] : []}
             spacesEnabled={spacesEnabled} onSetSpacesEnabled={onSetSpacesEnabled ?? (() => {})}
-            selectedSpaceId={selected} modified={false} onSelectSpace={setSelected}
+            selectedSpaceId={selected} modified={modified} onSelectSpace={setSelected}
             onOpenFilter={() => {}} onSaveAs={() => {}} onSaveChanges={() => {}} onEdit={() => {}} />
     </HappierUiPlatformProvider>;
 }
 const menuIds = (screen: Awaited<ReturnType<typeof renderScreen>>) => screen.tree
     .findAll(node => typeof node.props.testID === 'string' && node.props.testID.startsWith('space-menu') && typeof node.type === 'string')
     .map(node => node.props.testID as string).filter((id, index, all) => !id.endsWith(':scroll-frame') && all.indexOf(id) === index);
+
+describe('a modified saved view', () => {
+    // P6 §7.1: a modified saved view shows a quiet Filtered state beside its name; Save changes / Save as stay in the menu.
+    it('says Filtered beside the title only while the view differs from its space', async () => {
+        const modified = await renderScreen(<Host scope="account-a" modified />);
+        expect(modified.findByTestId('space-title-filtered')).not.toBeNull();
+        await modified.pressByTestIdAsync('space-title');
+        await vi.waitFor(() => expect(modified.findByTestId('space-menu-save-changes')).not.toBeNull());
+        const unchanged = await renderScreen(<Host scope="account-a" />);
+        expect(unchanged.findByTestId('space-title-filtered')).toBeNull();
+    });
+});
 
 describe('spaces switch in the title menu', () => {
     it('shows spaces with their switch on, and turning it off writes this list\'s switch', async () => {

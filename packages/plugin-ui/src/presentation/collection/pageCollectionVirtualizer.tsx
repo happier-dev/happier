@@ -4,11 +4,21 @@ import { View } from 'react-native';
 import type { CollectionVirtualizerHandle, CollectionVirtualizerRequest } from './collectionVirtualizer.js';
 import type { PluginUiScrollActivityTracker } from '../../presentationHost/scrollActivity.js';
 import type { HappierLayoutChangeEvent } from '../portableTypes.js';
+import { CatalogDirectory } from './CatalogDirectory.js';
 
-type PageGeometry = Readonly<{ rowHeight(key: string): number; headerHeight: number; width: number | null; defaultRowHeight: number }>;
+/**
+ * `directory` is a catalog directory's row-major columns: rows window by line (a line is one cell of up to `columns` rows),
+ * and a section with a single row spans its line, exactly as `CatalogDirectory` draws them without windowing.
+ */
+type PageGeometry = Readonly<{
+  rowHeight(key: string): number; headerHeight: number; width: number | null; defaultRowHeight: number;
+  directory?: Readonly<{ columns: number; columnGapPx: number; lineTestID?: string }>;
+}>;
+type Cell<Item> = Readonly<{ key: string; offset: number; height: number; index: number; count: number; columns: number; sectionIndex: number | null; header: boolean; items: readonly Item[]; keys: readonly string[] }>;
 const NO_MEASUREMENTS: ReadonlyMap<string, number> = new Map();
 function sameMeasuredGeometry(left: PageGeometry, right: PageGeometry) {
-  return left.width === right.width && left.headerHeight === right.headerHeight && left.defaultRowHeight === right.defaultRowHeight;
+  return left.width === right.width && left.headerHeight === right.headerHeight && left.defaultRowHeight === right.defaultRowHeight
+    && left.directory?.columns === right.directory?.columns;
 }
 
 /** List's positioning adapter for rows inside an already-owned physical page, never another scroller. */
@@ -35,25 +45,29 @@ export function PageCollectionVirtualizer<Item>({ request, geometry, tracker, ta
   }, [tracker]);
   useLayoutEffect(() => { void measure(); }, [measure, revision]);
   const cells = useMemo(() => {
-    const result: Array<Readonly<{ key: string; offset: number; height: number; index: number; sectionIndex: number | null; header: boolean; item?: Item }>> = [];
+    const result: Cell<Item>[] = [];
     let offset = 0;
-    const append = (key: string, height: number, index: number, sectionIndex: number | null, header: boolean, item?: Item) => {
+    const append = (key: string, height: number, index: number, count: number, columns: number, sectionIndex: number | null, header: boolean,
+      items: readonly Item[] = [], keys: readonly string[] = []) => {
       const measured = measuredHeights.get(key) ?? height;
-      result.push({ key, offset, height: measured, index, sectionIndex, header, item });
+      result.push({ key, offset, height: measured, index, count, columns, sectionIndex, header, items, keys });
       offset += measured;
     };
+    // A section's rows, one cell each, or one cell per line of the directory's columns.
+    const appendRows = (data: readonly Item[], sectionIndex: number | null, qualify: (key: string) => string) => {
+      const lineSize = geometry.directory === undefined || data.length < 2 ? 1 : Math.max(1, geometry.directory.columns);
+      for (let start = 0; start < data.length; start += lineSize) {
+        const items = data.slice(start, start + lineSize);
+        const keys = items.map((item, offsetInLine) => request.keyForItem(item, start + offsetInLine));
+        append(qualify(keys[0]!), Math.max(...keys.map(key => geometry.rowHeight(key))), start, items.length, lineSize, sectionIndex, false, items, keys);
+      }
+    };
     if (request.kind === 'flat') {
-      request.items.forEach((item, index) => {
-        const key = request.keyForItem(item, index);
-        append(key, geometry.rowHeight(key), index, null, false, item);
-      });
+      appendRows(request.items, null, key => key);
     } else {
       request.sections.forEach((section, sectionIndex) => {
-        append(`header:${section.key}`, section.title === '' ? 0 : geometry.headerHeight, -1, sectionIndex, true);
-        section.data.forEach((item, index) => {
-          const key = request.keyForItem(item, index);
-          append(`${section.key}:${key}`, geometry.rowHeight(key), index, sectionIndex, false, item);
-        });
+        append(`header:${section.key}`, section.title === '' ? 0 : geometry.headerHeight, -1, 0, 1, sectionIndex, true);
+        appendRows(section.data, sectionIndex, key => `${section.key}:${key}`);
       });
     }
     return result;
@@ -64,7 +78,7 @@ export function PageCollectionVirtualizer<Item>({ request, geometry, tracker, ta
   }, [span, tracker]);
   const handle = useMemo<CollectionVirtualizerHandle>(() => ({
     reveal: location => {
-      const cell = cells.find(cell => !cell.header && cell.index === location.index
+      const cell = cells.find(cell => !cell.header && location.index >= cell.index && location.index < cell.index + cell.count
         && cell.sectionIndex === (location.sectionIndex ?? null));
       if (cell !== undefined) position(cell.offset);
     },
@@ -79,7 +93,7 @@ export function PageCollectionVirtualizer<Item>({ request, geometry, tracker, ta
   const content: ReactNode[] = [];
   let renderedEnd = 0;
   for (const cell of cells) {
-    const pinned = !cell.header && cell.item !== undefined && request.keyForItem(cell.item, cell.index) === tabStopKey;
+    const pinned = !cell.header && tabStopKey !== null && cell.keys.includes(tabStopKey);
     const inWindow = span !== null && window !== null
       && span.top + cell.offset + cell.height >= window.top && span.top + cell.offset <= window.bottom;
     if (!pinned && !inWindow) continue;
@@ -95,7 +109,11 @@ export function PageCollectionVirtualizer<Item>({ request, geometry, tracker, ta
           }));
         }}>
           {cell.header && request.kind === 'sections' ? request.renderSectionHeader(cell.sectionIndex!)
-            : cell.item === undefined ? null : request.renderItem(cell.item, cell.index, cell.sectionIndex)}
+            : geometry.directory === undefined ? (cell.items[0] === undefined ? null : request.renderItem(cell.items[0], cell.index, cell.sectionIndex))
+            : <CatalogDirectory columns={cell.columns}
+                columnGapPx={geometry.directory.columnGapPx} spanLoneRow={false}
+                {...(geometry.directory.lineTestID === undefined ? {} : { lineTestID: geometry.directory.lineTestID })}
+                rows={cell.items.map((item, at) => <Fragment key={cell.keys[at]}>{request.renderItem(item, cell.index + at, cell.sectionIndex)}</Fragment>)} />}
         </View>
       </Fragment>,
     );

@@ -2,11 +2,12 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
-import type { CollectionSpaceIconV1 } from '@happier-dev/protocol/collections/spaces/collectionSpacesV1';
+import type { CollectionSpaceIconV1, SessionSpaceMembershipV1 } from '@happier-dev/protocol/collections/spaces/collectionSpacesV1';
 
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Switch } from '@/components/ui/forms/Switch';
+import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { ICON_SIZE } from '@/components/ui/icons/Icon';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { Text } from '@/components/ui/text/Text';
@@ -18,11 +19,12 @@ import { CollectionSpaceIcon } from './CollectionSpaceIcon';
 
 /** Glyphs a space can wear, from the shared icon vocabulary (lab `clfilter:save`). */
 
-
 export type CollectionSpaceFormValue = Readonly<{
   name: string;
   icon: CollectionSpaceIconV1;
   includeNeedsYouEverywhere: boolean;
+  /** Present only for Session spaces; the catalog owner retains the qualified tag associations. */
+  membershipMode?: SessionSpaceMembershipV1['mode'];
 }>;
 
 export type CollectionSpaceFormProps = Readonly<{
@@ -38,6 +40,8 @@ export type CollectionSpaceFormProps = Readonly<{
   summary: readonly string[];
   busy?: boolean;
   error?: string | null;
+  /** Why nothing can be saved here (no Account to hold the space); the form stays readable and submits nothing. */
+  disabledReason?: string | null;
   /** The default space can be reset but never deleted. */
   deletion?: 'delete' | 'reset';
   onSubmit: (value: CollectionSpaceFormValue) => void;
@@ -154,6 +158,7 @@ export const CollectionSpaceForm = React.memo(function CollectionSpaceForm(
   const [everywhere, setEverywhere] = React.useState(
     props.initial.includeNeedsYouEverywhere,
   );
+  const [membershipMode, setMembershipMode] = React.useState(props.initial.membershipMode);
   const icons = React.useMemo(() => {
     const seen = new Set<string>();
     return [
@@ -171,14 +176,16 @@ export const CollectionSpaceForm = React.memo(function CollectionSpaceForm(
     });
   }, [props.initial.icon, props.suggestedIcons]);
   const trimmed = name.trim();
+  const blocked = trimmed.length === 0 || props.busy === true || Boolean(props.disabledReason);
   const submit = React.useCallback(() => {
-    if (trimmed.length === 0 || props.busy) return;
+    if (blocked) return;
     props.onSubmit({
       name: trimmed,
       icon,
       includeNeedsYouEverywhere: everywhere,
+      ...(membershipMode ? { membershipMode } : {}),
     });
-  }, [everywhere, icon, props, trimmed]);
+  }, [blocked, everywhere, icon, membershipMode, props, trimmed]);
   const selectedKey = iconKey(icon);
   return (
     <View testID={`${props.testIDPrefix}-form`} style={styles.root}>
@@ -244,7 +251,29 @@ export const CollectionSpaceForm = React.memo(function CollectionSpaceForm(
           );
         })}
       </View>
-      {props.summary.length > 0 ? (
+      {membershipMode ? (
+        <View style={styles.switchText}>
+          <Text style={styles.switchTitle}>{t('sessionsList.spacesMembershipTitle')}</Text>
+          <SegmentedTabBar
+            role="radiogroup"
+            accessibilityLabel={t('sessionsList.spacesMembershipTitle')}
+            testIDPrefix={`${props.testIDPrefix}-membership`}
+            activeTabId={membershipMode}
+            onSelectTab={setMembershipMode}
+            disabled={props.busy}
+            tabs={[
+              { id: 'filter_or_manual', label: t('sessionsList.spacesMembershipSmart') },
+              { id: 'manual_only', label: t('sessionsList.spacesMembershipManual') },
+            ]}
+          />
+          <Text style={styles.switchDescription}>
+            {membershipMode === 'manual_only'
+              ? t('sessionsList.spacesMembershipManualDescription')
+              : t('sessionsList.spacesMembershipSmartDescription')}
+          </Text>
+        </View>
+      ) : null}
+      {membershipMode !== 'manual_only' && props.summary.length > 0 ? (
         <View style={styles.summary}>
           {props.summary.map((phrase, index) => (
             <View key={`${index}:${phrase}`} style={styles.summaryChip}>
@@ -273,7 +302,11 @@ export const CollectionSpaceForm = React.memo(function CollectionSpaceForm(
           />
         </View>
       ) : null}
-      {props.error ? (
+      {props.disabledReason ? (
+        <Text testID={`${props.testIDPrefix}-disabled-reason`} style={styles.switchDescription}>
+          {props.disabledReason}
+        </Text>
+      ) : props.error ? (
         <Text style={styles.error} accessibilityLiveRegion="polite">
           {props.error}
         </Text>
@@ -300,12 +333,15 @@ export const CollectionSpaceForm = React.memo(function CollectionSpaceForm(
         <ToolbarButton
           testID={`${props.testIDPrefix}-submit`}
           label={
-            props.mode === 'create'
-              ? t('sessionsList.spacesAdd')
-              : t('sessionsList.spacesSaveChanges')
+            // A refused save keeps the form and its values; the same press tries again (P6 §7.2 Offline).
+            props.error
+              ? t('common.retry')
+              : props.mode === 'create'
+                ? t('sessionsList.spacesAdd')
+                : t('sessionsList.spacesSaveChanges')
           }
           tone="primary"
-          disabled={trimmed.length === 0 || props.busy === true}
+          disabled={blocked}
           onPress={submit}
         />
       </View>

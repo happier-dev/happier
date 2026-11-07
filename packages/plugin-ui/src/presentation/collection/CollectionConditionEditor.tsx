@@ -256,6 +256,12 @@ const styles = Object.freeze({
     paddingHorizontal: 8,
     flexDirection: 'row',
     alignItems: 'center',
+  } satisfies HappierPortableStyle,
+  valueContent: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 4,
     overflow: 'hidden',
   } satisfies HappierPortableStyle,
@@ -653,23 +659,26 @@ export const HappierCollectionConditionEditor = memo(
                   hitReach={rowControlHitReach(M.valueMinHeight)}
                   style={(state) => press(state, styles.value, colors.fill)}
                 >
-                  {shown.map((value, index) => (
-                    <View
-                      key={`${index}:${value}`}
-                      style={{
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        gap: 4,
-                        flexShrink: 1,
-                        minWidth: 0,
-                      }}
-                    >
-                      {index > 0 ? <Text role="join">{labels.or}</Text> : null}
-                      <Text role="value" numberOfLines={1}>
-                        {value}
-                      </Text>
-                    </View>
-                  ))}
+                  {/* The chip's long values clip inside it; the chip itself never clips, so its hit area reaches the row. */}
+                  <View style={styles.valueContent}>
+                    {shown.map((value, index) => (
+                      <View
+                        key={`${index}:${value}`}
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          gap: 4,
+                          flexShrink: 1,
+                          minWidth: 0,
+                        }}
+                      >
+                        {index > 0 ? <Text role="join">{labels.or}</Text> : null}
+                        <Text role="value" numberOfLines={1}>
+                          {value}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
                 </HappierPressable>
                 <View style={styles.removeSlot}>
                   {locked ? null : (
