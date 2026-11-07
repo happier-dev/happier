@@ -2219,7 +2219,12 @@ Project/plugin/core-page area layouts (`widget-area-layout.v1`) reuse the existi
 mode-aware Account Artifact transport and CAS admission. WorkBoard widget
 placements reuse `work-board.v1` rather than a parallel Artifact. Shared Session
 instances and inert snapshots use the Session Board writer below; direct
-Companion instances remain device-local presentation preferences. Layout
+Companion instances remain device-local presentation preferences. Companion
+edge, density and selected items remain authored Local Settings; per-Session
+visibility and collapse state use realm-qualified keyed device UI persistence.
+The first use imports a readable legacy interaction value without a startup
+backfill. Current interactions never update the retained legacy Settings fields.
+Layout
 identity is separate from a definition reference and the instance's input
 bindings. Persisted Account mode, not key presence, governs every Account
 Artifact read/write.

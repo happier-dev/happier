@@ -13,6 +13,9 @@ import {
 import { storage } from '@/sync/domains/state/storageStore';
 import { applyLocalSettings } from '@/sync/domains/settings/localSettings';
 import { settingsParse } from '@/sync/domains/settings/settings';
+import { getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
+import { resetPersistentUiStateForTest } from '@/dev/testkit/cleanup/persistentUiState';
+import { readSessionCompanionPreferenceSlotFromState, useSessionCompanionPreferenceSlot } from './hooks';
 
 const activeServerRuntimeState = vi.hoisted(() => ({
     listener: null as null | ((snapshot: { serverId: string; serverUrl: string; generation: number }) => void),
@@ -29,9 +32,10 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
     },
 }));
 
-afterEach(() => {
+afterEach(async () => {
     activeServerRuntimeState.listener = null;
     standardCleanup();
+    await resetPersistentUiStateForTest();
 });
 
 const COMPANION_KEY_ACCOUNT_A = 'session-companion:v1:session:13:active-server9:account-a:9:session-1';
@@ -67,6 +71,72 @@ async function renderController(options: Readonly<{
 }
 
 describe('useSessionCompanionController', () => {
+    it('persists an interaction on the implicit Companion without creating authored Settings', async () => {
+        const previousState = storage.getState();
+        const hook = await renderController();
+        const settings = storage.getState().localSettings;
+        const writes = vi.spyOn(getPersistenceStorage(), 'set');
+        try {
+            await act(async () => { hook.getCurrent().setCollapsed(true); });
+            expect(hook.getCurrent().preference).toMatchObject({ visible: false, collapsed: true, items: [] });
+            expect(storage.getState().localSettings).toBe(settings);
+            expect(readCompanionSettings()).toEqual({});
+            expect(writes).toHaveBeenCalledTimes(1);
+        } finally {
+            writes.mockRestore();
+            await hook.unmount();
+            storage.setState(previousState);
+        }
+    });
+
+    it('persists collapse and visibility per realm without Settings writes and restores them on reopen', async () => {
+        const previousState = storage.getState();
+        const legacy = { v: 1, visible: true, collapsed: false, edge: 'trailing', density: 'compact', items: [SESSION_SUMMARY_COMPANION_ITEM] };
+        const hook = await renderController({ seed: { [COMPANION_KEY_ACCOUNT_A]: legacy } });
+        const settings = storage.getState().localSettings;
+        const otherRenders = vi.fn();
+        const otherSession = await renderHook(() => {
+            otherRenders();
+            return useSessionCompanionPreferenceSlot('session-2', 'active-server');
+        });
+        const initialOtherRenders = otherRenders.mock.calls.length;
+        const writes = vi.spyOn(getPersistenceStorage(), 'set');
+        const settingsPublications = vi.fn();
+        const stop = storage.subscribe((next, previous) => {
+            if (next.localSettings !== previous.localSettings) settingsPublications();
+        });
+        try {
+            await act(async () => { hook.getCurrent().setCollapsed(true); });
+            expect(hook.getCurrent().preference.collapsed).toBe(true);
+            expect(storage.getState().localSettings).toBe(settings);
+            expect(writes).toHaveBeenCalledTimes(1);
+            await act(async () => { hook.getCurrent().setCollapsed(true); });
+            expect(writes).toHaveBeenCalledTimes(1);
+            await act(async () => { hook.getCurrent().hide(); });
+            expect(hook.getCurrent().preference.visible).toBe(false);
+            expect(writes).toHaveBeenCalledTimes(2);
+            expect(settingsPublications).toHaveBeenCalledTimes(0);
+            expect(otherRenders).toHaveBeenCalledTimes(initialOtherRenders);
+            expect(readSessionCompanionPreferenceSlotFromState(storage.getState(), 'session-1', 'active-server', 'active-server').stored)
+                .toMatchObject({ visible: false, collapsed: true });
+            expect(readCompanionSettings()[COMPANION_KEY_ACCOUNT_A]).toEqual(legacy);
+            await otherSession.unmount();
+            await hook.unmount();
+            const reopened = await renderController({ seed: { [COMPANION_KEY_ACCOUNT_A]: legacy } });
+            expect(reopened.getCurrent().preference).toMatchObject({ visible: false, collapsed: true });
+            await reopened.unmount();
+            const otherAccount = await renderController({ accountId: 'account-b', seed: { [COMPANION_KEY_ACCOUNT_A]: legacy } });
+            expect(otherAccount.getCurrent().preference).toMatchObject({ visible: false, collapsed: false });
+            await otherAccount.unmount();
+        } finally {
+            stop();
+            writes.mockRestore();
+            await otherSession.unmount();
+            await hook.unmount();
+            storage.setState(previousState);
+        }
+    });
+
     it('reads the current Account realm entry and never a bare or foreign-realm key', async () => {
         const previousState = storage.getState();
         try {
@@ -143,9 +213,10 @@ describe('useSessionCompanionController', () => {
 
             expect(Object.keys(readCompanionSettings())).toEqual([COMPANION_KEY_ACCOUNT_A]);
             expect(readCompanionSettings()[COMPANION_KEY_ACCOUNT_A]).toEqual({
-                v: 1, visible: true, collapsed: false, edge: 'trailing', density: 'compact',
+                v: 1, visible: false, collapsed: false, edge: 'trailing', density: 'compact',
                 items: [SESSION_SUMMARY_COMPANION_ITEM],
             });
+            expect(hook.getCurrent().preference.visible).toBe(true);
             await hook.unmount();
         } finally {
             storage.setState(previousState);

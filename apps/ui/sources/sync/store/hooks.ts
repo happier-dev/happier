@@ -78,8 +78,6 @@ import {
     resolveSessionMobileSurfacePersistenceKeys,
     type SessionMobileSurfacePersistenceKeys,
 } from '../domains/settings/mobileSurfacePersistence';
-import { buildRealmQualifiedSessionCompanionPreferenceKey } from '@/components/sessions/companion/state/sessionCompanionPreferenceKey';
-import { resolveSessionLocalPreferenceRealm } from '../domains/settings/sessionLocalPreferenceKey';
 import type { AgentTextMessage, Message } from "@happier-dev/session-core/messages";
 import { messageAttentionImpact } from "@happier-dev/session-core/messages";
 import { projectSidechainMessages } from "@happier-dev/session-core/reducer";
@@ -1468,32 +1466,6 @@ function readSessionLastMobileSurfaceFromMap(
   predecessorSurface: LocalSettings['sessionLastMobileSurfaceBySessionId'][string] | null;
 }> {
   return readSessionMobileSurfaceWithPredecessor(persistedBySessionId, persistenceKeys);
-}
-
-function resolveSessionCompanionPreferenceStorageKeyFromState(
-  state: Pick<StorageState, 'profileScope' | 'sessions' | 'sessionListIndexByServerId' | 'sessionListRowsByServerId' | 'ordinarySessionListMembershipByServerId' | 'concurrentSessionListCacheByServerId'>,
-  sessionId: string,
-  activeServerId: string | null | undefined,
-  explicitServerId?: string | null,
-): string | null {
-  const normalizedSessionId = normalizeSessionId(sessionId);
-  if (!normalizedSessionId) return null;
-  const resolvedServerId = normalizeTrimmedString(explicitServerId)
-    || (resolveSessionListLookupSessionServerScopeFromState({
-      sessions: state.sessions as Record<string, { serverId?: unknown } | null>,
-      sessionListIndexByServerId: state.sessionListIndexByServerId,
-      sessionListRowsByServerId: state.sessionListRowsByServerId,
-      ordinarySessionListMembershipByServerId: state.ordinarySessionListMembershipByServerId,
-      concurrentSessionListCacheByServerId: state.concurrentSessionListCacheByServerId,
-    }, normalizedSessionId)?.serverId ?? null);
-  const scope = resolveSessionLocalPreferenceRealm({
-    activeScope: state.profileScope,
-    activeServerId,
-    targetServerId: resolvedServerId,
-  });
-  return scope
-    ? buildRealmQualifiedSessionCompanionPreferenceKey(scope, normalizedSessionId)
-    : null;
 }
 
 function resolveProjectLastMobileSurfaceStorageKeyFromState(
@@ -3291,74 +3263,8 @@ export function usePersistSessionLastMobileSurface(): (
   }, [activeServer.serverId]);
 }
 
-export type SessionCompanionPreferenceEntry = LocalSettings['sessionCompanionPreferencesBySessionV1'][string];
-
-export type SessionCompanionPreferenceSlot = Readonly<{
-  /** `null` when the current Account/Home cannot prove this Session's realm. */
-  storageKey: string | null;
-  /** The raw stored entry, left unparsed so a newer client's value is never rewritten on read. */
-  stored: SessionCompanionPreferenceEntry | undefined;
-}>;
-
-/** Hook and admitted Actions borrow the same exact realm-qualified read owner. */
-export function readSessionCompanionPreferenceSlotFromState(
-  state: Pick<StorageState, 'profileScope' | 'sessions' | 'sessionListIndexByServerId' | 'sessionListRowsByServerId' | 'ordinarySessionListMembershipByServerId' | 'concurrentSessionListCacheByServerId' | 'localSettings'>,
-  sessionId: string | null,
-  activeServerId: string | null | undefined,
-  serverId?: string | null,
-): SessionCompanionPreferenceSlot {
-  if (!sessionId) return { storageKey: null, stored: undefined };
-  const storageKey = resolveSessionCompanionPreferenceStorageKeyFromState(state, sessionId, activeServerId, serverId);
-  return { storageKey, stored: storageKey ? state.localSettings.sessionCompanionPreferencesBySessionV1?.[storageKey] : undefined };
-}
-
-/**
- * Reads one Session's Companion preference slot. The subscription is one map
- * lookup, so a Companion change in another Session does not rerender this one,
- * and reading never writes a default.
- */
-export function useSessionCompanionPreferenceSlot(
-  sessionId: string | null,
-  serverId?: string | null,
-): SessionCompanionPreferenceSlot {
-  const activeServer = useActiveServerSnapshot();
-  return getStorage()(useShallow((state) => readSessionCompanionPreferenceSlotFromState(state, sessionId, activeServer.serverId, serverId)));
-}
-
-/**
- * Applies one exact realm key. The updater receives the latest stored entry read
- * inside the mutation, so a stale hook closure can neither resurrect an old value
- * nor drop another Session's concurrent change. Returning `null` writes nothing.
- *
- * There is no CAS, revision or conflict state: this is one device-local preference.
- */
-export function useMutateSessionCompanionPreference(): (
-  sessionId: string,
-  updater: (stored: SessionCompanionPreferenceEntry | undefined) => SessionCompanionPreferenceEntry | null,
-  serverId?: string | null,
-) => boolean {
-  const activeServer = useActiveServerSnapshot();
-  return React.useCallback((sessionId, updater, serverId) => {
-    const state = getStorage().getState();
-    const storageKey = resolveSessionCompanionPreferenceStorageKeyFromState(
-      state,
-      sessionId,
-      activeServer.serverId,
-      serverId,
-    );
-    if (!storageKey) return false;
-    const current = state.localSettings.sessionCompanionPreferencesBySessionV1 ?? {};
-    const next = updater(current[storageKey]);
-    if (next === null) return false;
-    state.applyLocalSettings({
-      sessionCompanionPreferencesBySessionV1: {
-        ...current,
-        [storageKey]: next,
-      },
-    }, { source: 'ui' });
-    return true;
-  }, [activeServer.serverId]);
-}
+export { readSessionCompanionPreferenceSlotFromState, useSessionCompanionPreferenceSlot, useMutateSessionCompanionPreference } from './sessionCompanion';
+export type { SessionCompanionPreferenceEntry, SessionCompanionPreferenceSlot } from './sessionCompanion';
 
 export function useProjectLastMobileSurface(workspaceRefId: string | null, explicitServerId?: string | null): LocalSettings['projectLastMobileSurfaceByWorkspaceRefId'][string] | null {
   const activeServer = useActiveServerSnapshot();
