@@ -5,6 +5,9 @@ import { describe, expect, it, vi } from 'vitest';
 
 const scrollCapture = vi.hoisted(() => ({
   offsets: [] as number[],
+  reveals: [] as Array<Readonly<{ sectionIndex: number; itemIndex: number }>>,
+  failNextReveal: false,
+  contentSizeChange: null as null | ((width: number, height: number) => void),
   observe: null as
     | null
     | ((event: { nativeEvent: { contentOffset: { y: number } } }) => void),
@@ -39,13 +42,26 @@ vi.mock('react-native', async () => {
         onScroll?: (event: {
           nativeEvent: { contentOffset: { y: number } };
         }) => void;
+        onContentSizeChange?: (width: number, height: number) => void;
+        onScrollToIndexFailed?: (info: Readonly<{ averageItemLength: number; index: number }>) => void;
       }>,
     ) {
       scrollCapture.observe = props.onScroll ?? null;
+      scrollCapture.contentSizeChange = props.onContentSizeChange ?? null;
       React.useImperativeHandle(
         props.ref,
         () => ({
-          scrollToLocation() {},
+          scrollToLocation(input: Readonly<{ sectionIndex: number; itemIndex: number }>) {
+            // Native cannot resolve an offscreen index before its first cell measurement.
+            if (scrollCapture.failNextReveal) {
+              scrollCapture.failNextReveal = false;
+              const precedingCells = props.sections.slice(0, input.sectionIndex)
+                .reduce((count, section) => count + section.data.length + 2, 0);
+              props.onScrollToIndexFailed?.({ averageItemLength: 0, index: precedingCells + input.itemIndex });
+              return;
+            }
+            scrollCapture.reveals.push({ sectionIndex: input.sectionIndex, itemIndex: input.itemIndex });
+          },
           getScrollResponder: () => ({
             scrollTo: (input: Readonly<{ y: number }>) => {
               scrollCapture.offsets.push(input.y);
@@ -616,6 +632,63 @@ function resolvedPointerEvents(element: HTMLElement): string {
 }
 
 describe('Collection table', () => {
+  it('fulfills a route reveal after native content measurement when the first location is unmeasured', async () => {
+    scrollCapture.reveals.length = 0;
+    scrollCapture.failNextReveal = true;
+    const outside = document.createElement('button');
+    document.body.append(outside);
+    act(() => { outside.focus(); });
+    const view = mount({ items: entries, openKey: 'c', presentation: 'list', detail: 'none', reducedMotion: true });
+    try {
+      view.measure(1200);
+      expect(scrollCapture.reveals).toEqual([]);
+      act(() => { scrollCapture.contentSizeChange?.(1200, 900); });
+      expect(scrollCapture.reveals).toEqual([{ sectionIndex: 1, itemIndex: 0 }]);
+      expect(document.activeElement).toBe(outside);
+      act(() => { scrollCapture.contentSizeChange?.(1200, 950); });
+      expect(scrollCapture.reveals).toHaveLength(1);
+      expect(view.openChanges).toEqual([]);
+    } finally {
+      scrollCapture.failNextReveal = false;
+      outside.remove();
+      view.unmount();
+    }
+  });
+
+  it('reveals the route-open row on arrival without moving focus or the keyboard cursor', async () => {
+    scrollCapture.reveals.length = 0;
+    const view = mount({ items: entries.slice(0, 2), openKey: 'b', presentation: 'list', detail: 'none', reducedMotion: true });
+    const outside = document.createElement('button');
+    document.body.append(outside);
+    try {
+      act(() => { outside.focus(); });
+      view.measure(1200);
+      await act(async () => {});
+      expect(scrollCapture.reveals).toEqual([{ sectionIndex: 0, itemIndex: 1 }]);
+      expect(document.activeElement).toBe(outside);
+      act(() => { view.query('row:a')!.focus(); });
+      act(() => { outside.focus(); });
+      const rowA = view.query('row:a')!;
+      expect(rowA.tabIndex).toBe(0);
+      await view.setOpen('c');
+      expect(scrollCapture.reveals).toHaveLength(1);
+      await view.update({ items: entries });
+      await act(async () => {});
+      expect(scrollCapture.reveals).toEqual([
+        { sectionIndex: 0, itemIndex: 1 },
+        { sectionIndex: 1, itemIndex: 0 },
+      ]);
+      expect(document.activeElement).toBe(outside);
+      expect(view.query('row:a')!.tabIndex).toBe(0);
+      expect(view.query('row:c')!.tabIndex).toBe(-1);
+      await view.update({ items: [...entries] });
+      expect(scrollCapture.reveals).toHaveLength(2);
+      expect(view.openChanges).toEqual([]);
+    } finally {
+      outside.remove();
+      view.unmount();
+    }
+  });
   it("on a phone places Select beside the search's round buttons, never squeezed between the lens and the view switch", () => {
     const store = createListMultiSelectionStore({ scopeKey: 'entries', visibleOrderedKeys: [] });
     const view = mount({ search, header: toolbarHeader([]), renderPopover: openPopover, selection: { multiple: { store } } });

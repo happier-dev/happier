@@ -22,13 +22,22 @@ function NativeCollectionVirtualizer<Item>({ request }: Readonly<{ request: Coll
   const observesScroll = request.onScroll !== undefined;
   const tracker = useMemo(() => Platform.OS === 'web' || !observesScroll ? null : createTracker?.(scrollRef, false) ?? null,
     [createTracker, observesScroll, scrollRef]);
+  const pendingReveal = useRef<{
+    location: Parameters<CollectionVirtualizerHandle['reveal']>[0];
+    failed: boolean;
+  } | null>(null);
   const handle = useMemo<CollectionVirtualizerHandle>(() => ({
-    reveal: ({ index, sectionIndex }) => {
+    reveal: (location) => {
+      const attempt = { location, failed: false };
+      pendingReveal.current = attempt;
+      const { index, sectionIndex } = location;
       if (sectioned) {
         grouped.current?.scrollToLocation({ sectionIndex: sectionIndex ?? 0, itemIndex: index, animated: false, viewPosition: 0.5 });
       } else {
         flat.current?.scrollToIndex({ index, animated: false, viewPosition: 0.5 });
       }
+      // Both native virtualizers report an unmeasured index synchronously.
+      if (!attempt.failed) pendingReveal.current = null;
     },
     scrollToOffset: (offset) => {
       if (sectioned) grouped.current?.getScrollResponder()?.scrollTo({ y: offset, animated: false });
@@ -49,7 +58,9 @@ function NativeCollectionVirtualizer<Item>({ request }: Readonly<{ request: Coll
   const onContentSizeChange = useCallback((width: number, height: number) => {
     tracker?.onContentSizeChange(width, height);
     request.onContentSizeChange?.(width, height);
-  }, [request.onContentSizeChange, tracker]);
+    const pending = pendingReveal.current;
+    if (pending?.failed) handle.reveal(pending.location);
+  }, [handle, request.onContentSizeChange, tracker]);
   const renderItem = request.renderItem;
   const renderFlatItem = useCallback(({ item, index }: ListRenderItemInfo<Item>) => (
     <>{renderItem(item, index, null)}</>
@@ -78,10 +89,12 @@ function NativeCollectionVirtualizer<Item>({ request }: Readonly<{ request: Coll
     onScroll: request.onScroll === undefined ? undefined : onScroll,
     scrollEventThrottle: request.onScroll === undefined ? undefined : SCROLL_EVENT_THROTTLE_MS,
     onLayout: tracker?.onLayout,
-    onContentSizeChange: tracker || request.onContentSizeChange ? onContentSizeChange : undefined,
-    // Approach an unmeasured cell using the platform's measured average. List
-    // retains its focus request until that row publishes its physical target.
+    onContentSizeChange,
+    // Approach an unmeasured cell using the platform's measured average. The
+    // initial average can be zero, so content measurement finishes the reveal.
+    // List still owns physical focus until that row publishes its target.
     onScrollToIndexFailed: (info: Readonly<{ averageItemLength: number; index: number }>) => {
+      if (pendingReveal.current !== null) pendingReveal.current.failed = true;
       handle.scrollToOffset(info.averageItemLength * info.index);
     },
     keyExtractor: request.keyForItem,

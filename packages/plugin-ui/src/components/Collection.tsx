@@ -1639,6 +1639,7 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
     gap: 0,
   });
   const openKey = model.openKey;
+  const openRowReveal = useMemo(() => openKey === null ? undefined : { key: openKey }, [openKey]);
   // Choose the container on open and retain it across resizing. A fresh phone open pushes in-page;
   // an already-open app pane fills the viewport without reparenting the detail's local owners.
   const paneHost = useDetailsPaneHostInstalled() && detail === 'auto' && props.renderDetail !== undefined;
@@ -2507,6 +2508,7 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
                     keyForItem={readCellKey}
                     renderItem={renderCollectionCell as (cell: CollectionCell<Item>) => ReactElement}
                     selection={listSelection}
+                    revealRequest={openRowReveal}
                     header={columnHeader}
                     empty={loadingFirstWindow ? (
                       <CollectionSkeletonRows
