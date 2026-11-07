@@ -1,8 +1,5 @@
-import type { MachineProvisionersService } from '../services/machineProvisioners.js';
-import type { HttpService } from '../services/io.js';
-import type { MachineConnectorSecretsService, SecretsService } from '../secrets.js';
-import type { ConnectedAccountsService } from '../connectedAccounts.js';
 import type { CurrentUiContextSnapshotV1, PluginUiTargetedContributionsV1 } from '@happier-dev/protocol/plugins/ui';
+import type { ActionResolvedSessionTargetsV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
 
 import type {
     JsonValue,
@@ -17,11 +14,17 @@ import type { PluginActionContributionV2 } from './actionTypeMap.generated.js';
 import type { ActionsService } from './service.js';
 import type { PluginAccountStorageScope } from '../storage.js';
 import type { TargetedContributionsService } from '../services/targetedContributions.js';
+import type { Disposable } from '../lifecycle.js';
+import type { ScopedSettingsService } from '../services/core.js';
+import type { HttpService } from '../services/io.js';
+import type { MachineConnectorSecretsService, SecretsService } from '../secrets.js';
+import type { ConnectedAccountsService } from '../connectedAccounts.js';
+import type { MachineProvisionersService } from '../services/machineProvisioners.js';
+
 import type { PluginActionReadObserver as RegistrationActionReadObserver } from '@happier-dev/cli-common/plugins/registration/contracts';
 export type { PluginActionReadInvalidation } from '@happier-dev/cli-common/plugins/registration/contracts';
 
 export type PluginActionReadObserver<I extends JsonValue = JsonValue, TContext = PluginInvocationContext> = RegistrationActionReadObserver<I, TContext>;
-import type { ScopedSettingsService } from '../services/core.js';
 
 /**
  * A contributed Action's qualified runtime identity plus declaration-only
@@ -58,6 +61,8 @@ export type PluginClientActionUi = Readonly<{
     openAutomationEvent: PluginUiHostApi['openAutomationEvent'];
     readSession: PluginUiHostApi['readSession'];
     revealSessionInput: PluginUiHostApi['revealSessionInput'];
+    readComposer: PluginUiHostApi['readComposer'];
+    applyComposer: PluginUiHostApi['applyComposer'];
 }>;
 
 /**
@@ -75,6 +80,8 @@ export type PluginClientActionContext = Readonly<{
     currentUiContext?: CurrentUiContextSnapshotV1;
     /** Same bounded host-resolved snapshot as daemon Actions; absent outside a message menu. */
     messageAction?: PluginInvocationContext['messageAction'];
+    /** Exact declared Session operands admitted by the host Action executor. */
+    sessionTargetsV1?: ActionResolvedSessionTargetsV1;
 }>;
 
 /** Portable invocation capabilities; no Machine or native process capability is implied. @realm any */
@@ -83,16 +90,21 @@ export type PluginAccountActionContext = Readonly<{
     contribution: PluginInvocationContributionIdentity;
     surface: PluginInvocationContext['surface'];
     invokedAtMs: number;
+    /** Host Action request identity for diagnostics; absent on other portable callbacks. Grants no authority. */
+    invocationId?: PluginInvocationContext['invocationId'];
     caller?: PluginInvocationContext['caller'];
     signal: AbortSignal;
     /** Authenticated invoking Account, never derived from Action input. */
     accountScope?: Awaited<ReturnType<PluginClientActionUi['context']>>['accountScope'];
+    /** Exact declared Session operands admitted by the host Action executor. */
+    sessionTargetsV1?: ActionResolvedSessionTargetsV1;
     /** Present only when this invocation has ordinary client authoring capability. */
     ui?: PluginClientActionUi;
     services: Readonly<{
+        /** Invocation-bound connector sink; the host captures the controller, receiver and operation. @realm cli */
+        machineConnectorSecrets?: MachineConnectorSecretsService;
         /** Privately admitted managed-resource byte custody; native file APIs may be unavailable. */
         machineProvisioners: MachineProvisionersService;
-        machineConnectorSecrets?: MachineConnectorSecretsService;
         /** Host HTTP with credential-scoped redirects and invocation cancellation. */
         http: HttpService;
         /** Selected Account Saved Secret custody; native-only material remains unavailable. */

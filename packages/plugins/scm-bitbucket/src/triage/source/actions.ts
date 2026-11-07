@@ -1,4 +1,5 @@
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import {
   TriageGetInputV1Schema,
   TriageListInstancesInputV1Schema,
@@ -28,7 +29,7 @@ import type { BitbucketSourceRuntime } from './authorization.js';
 export { BITBUCKET_TRIAGE_ACTION_IDS } from './descriptor.js';
 
 function toRuntime(
-  context: PluginInvocationContext,
+  context: Readonly<{ signal: PluginAccountActionContext['signal']; invocationId?: PluginAccountActionContext['invocationId']; services: Pick<PluginAccountActionContext['services'], 'connectedAccounts' | 'http'> }>,
   signal: AbortSignal | undefined = context.signal,
 ): BitbucketSourceRuntime {
   return {
@@ -54,7 +55,7 @@ const INVALID_INPUT = createBitbucketFailure('unsupportedContract', 'operation-i
  */
 export async function listBitbucketInstancesAction(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<TriageListInstancesResultV1> {
   const parsed = TriageListInstancesInputV1Schema.safeParse(input);
   if (!parsed.success) return { kind: 'failed', failure: toTriageSourceFailure(INVALID_INPUT) };
@@ -63,7 +64,7 @@ export async function listBitbucketInstancesAction(
 
 export async function scanBitbucketSourceAction(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<TriageScanResultV1> {
   const parsed = TriageScanInputV1Schema.safeParse(input);
   if (!parsed.success) return { kind: 'failed', failure: toTriageSourceFailure(INVALID_INPUT) };
@@ -72,7 +73,7 @@ export async function scanBitbucketSourceAction(
 
 export async function getBitbucketSourceEntryAction(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<TriageGetResultV1> {
   const parsed = TriageGetInputV1Schema.safeParse(input);
   if (!parsed.success) {

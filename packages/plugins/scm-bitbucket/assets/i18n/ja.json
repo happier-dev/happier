@@ -197,7 +197,6 @@
   "plugins.bitbucket.ui.showMoreBuilds": "ビルドをさらに表示",
   "plugins.bitbucket.ui.rereadBuilds": "Bitbucket からビルドを再読み込み",
   "plugins.bitbucket.ui.showMoreComments": "コメントをさらに 30 件表示",
-  "plugins.bitbucket.ui.rereadComments": "Bitbucket からコメントを再読み込み",
   "plugins.bitbucket.ui.someone": "誰か",
   "plugins.bitbucket.ui.edited": "編集済み",
   "plugins.bitbucket.ui.reply": "返信",

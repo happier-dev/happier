@@ -21,7 +21,7 @@ import {
 
 /** Everything one bounded source invocation needs from the host, and nothing more. */
 export type BitbucketSourceRuntime = Readonly<{
-  connectedAccounts: ConnectedAccountsService;
+  connectedAccounts: Pick<ConnectedAccountsService, 'listAccounts' | 'getBinding' | 'materializeListedAccount'>;
   http: HttpService;
   now: () => number;
   invocationId?: string;

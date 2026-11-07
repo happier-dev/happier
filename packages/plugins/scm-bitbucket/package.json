@@ -16,6 +16,10 @@
       "types": "./dist/manifest.d.ts",
       "default": "./dist/manifest.js"
     },
+    "./happier-plugin-ui/bitbucket-account-runtime": {
+      "happier-source": "./src/accountRuntime.ts",
+      "default": "./dist/accountRuntime.js"
+    },
     "./happier-plugin-ui/bitbucket-detail-native": "./src/ui/renderSurface.tsx",
     "./happier-plugin-ui/bitbucket-triage-sources-native": "./src/ui/settings/renderSettingsSurface.tsx"
   },

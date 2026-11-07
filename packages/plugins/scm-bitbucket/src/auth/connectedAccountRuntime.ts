@@ -1,3 +1,4 @@
+import type { ConnectedAccountPortableRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
 /**
  * The `bitbucket-account` Connected Account runtime.
  *
@@ -273,7 +274,7 @@ function isAllowedBitbucketOrigin(origin: string): boolean {
   }
 }
 
-const bitbucketConnectedAccountRuntimeDefinition: PluginConnectedAccountRuntime = {
+export const bitbucketPortableAuthentication = Object.freeze({
   authentication: {
     modes: {
       manual: {
@@ -281,17 +282,6 @@ const bitbucketConnectedAccountRuntimeDefinition: PluginConnectedAccountRuntime 
         complete: completeManualConnection,
       },
     },
-  },
-  async refresh(context, options) {
-    // A pasted API token has no refresh exchange. Reporting current health is the honest answer
-    // rather than a rotation it never has.
-    return readHealth(context, options);
-  },
-  async revoke() {
-    return { status: 'remoteUnsupported' as const };
-  },
-  async status(context, options) {
-    return readHealth(context, options);
   },
   async materialize(request, context, options) {
     if (request.kind !== 'httpHeaders') {
@@ -311,7 +301,22 @@ const bitbucketConnectedAccountRuntimeDefinition: PluginConnectedAccountRuntime 
       kind: 'httpHeaders' as const,
       headers: { Authorization: encodeBitbucketBasicAuthorization(stored) },
     };
+  }
+} satisfies ConnectedAccountPortableRuntime);
+
+const bitbucketConnectedAccountRuntimeDefinition: PluginConnectedAccountRuntime = {
+  ...bitbucketPortableAuthentication,
+  async refresh(context, options) {
+    // A pasted API token has no refresh exchange. Reporting current health is the honest answer
+    // rather than a rotation it never has.
+    return readHealth(context, options);
   },
+  async revoke() {
+    return { status: 'remoteUnsupported' as const };
+  },
+  async status(context, options) {
+    return readHealth(context, options);
+  }
 };
 
 export const bitbucketConnectedAccountRuntime = Object.freeze(

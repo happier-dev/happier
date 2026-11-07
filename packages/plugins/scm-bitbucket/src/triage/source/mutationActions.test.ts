@@ -1,3 +1,7 @@
+import type { JsonValue } from '@happier-dev/plugin-sdk';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { BITBUCKET_PLUGIN } from '../../manifest.js';
+import { activate as activateAccount } from '../../accountRuntime.js';
 import type { TriageConfiguredSourceInstanceV1 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it } from 'vitest';
 
@@ -812,4 +816,30 @@ describe('Bitbucket pull-request write declarations', () => {
     // and a verb granted for symmetry is authority the user approved for nothing.
     expect(network?.scope).toMatchObject({ methods: ['GET', 'POST', 'DELETE'] });
   });
+});
+
+it.each(['effect', 'wrong-account', 'cancelled'] as const)('runs the registered Account decline effect (%s) without a Machine', async scenario => {
+  const boundary = harness({ reads: [pullRequest('OPEN'), pullRequest('DECLINED')],
+    write: url => url === DECLINE_URL ? { status: 200, body: pullRequest('DECLINED') } : undefined });
+  const kit = await createPluginTestkit({ manifest: BITBUCKET_PLUGIN.manifest,
+    module: { activate: BITBUCKET_PLUGIN.activate, activateAccount }, services: boundary.context.services });
+  const controller = new AbortController();
+  if (scenario === 'cancelled') controller.abort(new DOMException('cancelled', 'AbortError'));
+  const input = declineInput();
+  const request = scenario === 'wrong-account' ? { ...input, instance: { ...input.instance, binding: {
+    purpose: BITBUCKET_CONNECTED_ACCOUNT_PURPOSE, account: accountRef('other'),
+  } } } : input;
+  try {
+    // The fixture crosses the public JSON input boundary; the original handler validates it.
+    const result = await kit.invokeAction(BITBUCKET_TRIAGE_MUTATION_ACTION_IDS.decline, request as JsonValue, { signal: controller.signal }).catch((error: unknown) => error);
+    if (scenario === 'effect') {
+      expect(result).toMatchObject({ kind: 'applied' });
+      expect(writesTo(boundary.requests, DECLINE_URL)).toBe(1);
+      expect(boundary.requests).toHaveLength(5);
+      expect(boundary.requests.filter(request => request.url.endsWith('/2.0/user'))).toHaveLength(2);
+    } else {
+      expect(result).not.toMatchObject({ kind: 'applied' });
+      expect(boundary.requests).toHaveLength(0);
+    }
+  } finally { await kit.dispose(); }
 });

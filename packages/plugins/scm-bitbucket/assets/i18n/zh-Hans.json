@@ -197,7 +197,6 @@
   "plugins.bitbucket.ui.showMoreBuilds": "显示更多构建",
   "plugins.bitbucket.ui.rereadBuilds": "从 Bitbucket 重新读取构建",
   "plugins.bitbucket.ui.showMoreComments": "再显示 30 条评论",
-  "plugins.bitbucket.ui.rereadComments": "从 Bitbucket 重新读取评论",
   "plugins.bitbucket.ui.someone": "某人",
   "plugins.bitbucket.ui.edited": "已编辑",
   "plugins.bitbucket.ui.reply": "回复",

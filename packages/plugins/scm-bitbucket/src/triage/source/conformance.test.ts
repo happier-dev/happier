@@ -92,6 +92,8 @@ describe('Bitbucket Triage source contribution conformance', () => {
     expect(action, 'workspace preparation Action must be declared').toBeDefined();
     expect(action?.surfaces).toEqual(declaration.surfaces);
     expect(action?.dangerLevel).toBe('writesLocal');
+    // The person's own press is consent for the checkout they asked for; agents keep Ask.
+    expect(action?.confirmationWhen).toEqual({ presentUserUi: false });
     expect(action?.inputSchema).toEqual(TriageSourceConnectedAccountInputsV1.prepareReviewWorkspace.jsonSchema);
     expect(action?.resultSchema).toEqual(declaration.resultSchema.jsonSchema);
     expect(action?.hostAccess).toEqual(['bitbucket-api', 'bitbucket-connected-account']);

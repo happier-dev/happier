@@ -2,7 +2,6 @@ import {
   MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
   MAX_TRIAGE_LOCATION_UTF8_BYTES_V1,
   MAX_TRIAGE_ROUTING_TOKEN_UTF8_BYTES_V1,
-  MAX_TRIAGE_ROW_FACTS_V1,
   MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1,
   MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
   type TriageEntryLocatorV1,
@@ -167,8 +166,7 @@ function reviewersFact(entry: BitbucketPullRequestEntry): FactDraft {
 }
 
 /**
- * The Bitbucket row facts, in the order a triage reader needs them and bounded to the published
- * fact count.
+ * The Bitbucket row facts, in the order a triage reader needs them.
  *
  * Absent features are absent rows: Bitbucket pull requests have no labels and no assignees, and
  * neither is emitted as an empty value. Build statuses and mergeability are separate provider reads
@@ -230,10 +228,9 @@ function buildRowFacts(
   ];
 
   const present = drafts.filter((draft): draft is FactDraft => draft !== null);
-  const kept = present.slice(0, MAX_TRIAGE_ROW_FACTS_V1);
   return {
-    facts: kept.map((draft) => draft.fact),
-    truncated: present.length > kept.length || kept.some((draft) => draft.truncated),
+    facts: present.map((draft) => draft.fact),
+    truncated: present.some((draft) => draft.truncated),
   };
 }
 

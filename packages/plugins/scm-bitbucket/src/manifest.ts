@@ -1,3 +1,6 @@
+import { bitbucketPortableAuthentication } from './auth/connectedAccountRuntime.js';
+import { BITBUCKET_ACCOUNT_ACTIONS, BITBUCKET_NETWORK_HOST_ACCESS_ID, sources, READ_HOST_ACCESS, INSTANCE_ACCOUNT_BINDINGS } from './accountActions.js';
+export { BITBUCKET_NETWORK_HOST_ACCESS_ID } from './accountActions.js';
 /**
  * The sole Bitbucket plugin manifest and registration spine.
  *
@@ -15,15 +18,10 @@
 
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
-import { withTriageSourceSettingsTranslationsV1 } from '@happier-dev/triage-sources/translations';
-import { BITBUCKET_RENDER_UI_TRANSLATIONS } from './ui/renderTranslations.js';
-import { BITBUCKET_ADDITIONAL_UI_TRANSLATIONS } from './ui/additionalTranslations.js';
-import {
-  TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
-  TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
-  TriageSourcesContributionProtocolV1,
-  TriageSourceConnectedAccountInputsV1,
-} from '@happier-dev/triage-protocol/v1';
+
+
+
+import { TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, TriageSourceConnectedAccountInputsV1 } from '@happier-dev/triage-protocol/v1';
 
 import { bitbucketConnectedAccountRuntime } from './auth/connectedAccountRuntime.js';
 import {
@@ -42,68 +40,24 @@ import {
   BITBUCKET_TRIAGE_SETTINGS_PAGE_ID,
   BITBUCKET_TRIAGE_SETTINGS_RENDERER_ID,
 } from './triage/source/descriptor.js';
-import {
-  BITBUCKET_TRIAGE_ACTION_IDS,
-  getBitbucketSourceEntryAction,
-  listBitbucketInstancesAction,
-  prepareBitbucketReviewWorkspaceAction,
-  scanBitbucketSourceAction,
-  verifyBitbucketReviewWorkspaceAction,
-} from './triage/source/actions.js';
-import {
-  BITBUCKET_TRIAGE_DETAIL_ACTION_IDS,
-  listBitbucketActivity,
-  listBitbucketBuilds,
-  listBitbucketComments,
-  readBitbucketDiff,
-  readBitbucketOverview,
-} from './triage/source/detailActions.js';
-import {
-  BitbucketActivityInputV1Schema,
-  BitbucketActivityResultV1Schema,
-  BitbucketBuildsInputV1Schema,
-  BitbucketBuildsResultV1Schema,
-  BitbucketCommentsInputV1Schema,
-  BitbucketCommentsResultV1Schema,
-  BitbucketDiffInputV1Schema,
-  BitbucketDiffResultV1Schema,
-  BitbucketOverviewInputV1Schema,
-  BitbucketOverviewResultV1Schema,
-} from './triage/source/detailContracts.js';
-import {
-  BITBUCKET_TRIAGE_MUTATION_ACTION_IDS,
-  createBitbucketPullRequestReviewCommentAction,
-  declineBitbucketPullRequestAction,
-  mergeBitbucketPullRequestAction,
-  resolveBitbucketCommentAction,
-  publishBitbucketPullRequestReviewAction,
-  replyToBitbucketPullRequestReviewCommentAction,
-  unresolveBitbucketCommentAction,
-} from './triage/source/mutationActions.js';
-import {
-  BitbucketCommentResolutionInputV1Schema,
-  BitbucketCommentResolutionResultV1Schema,
-  BitbucketDeclineInputV1Schema,
-  BitbucketMergeInputV1Schema,
-  BitbucketMutationResultV1Schema,
-  BitbucketReviewPublicationInputV1Schema,
-  BitbucketReviewPublicationResultV1Schema,
-  BitbucketReviewCommentCreateInputV1Schema,
-  BitbucketReviewCommentReplyInputV1Schema,
-} from './triage/source/mutationContracts.js';
+import { BITBUCKET_TRIAGE_ACTION_IDS, prepareBitbucketReviewWorkspaceAction, verifyBitbucketReviewWorkspaceAction } from './triage/source/actions.js';
+
+
+
+
 
 /** The local id of this plugin's one Triage source contribution. */
 export const BITBUCKET_TRIAGE_CONTRIBUTION_ID = 'bitbucket-forge';
 
 /** The network host-access request that owns this plugin's Bitbucket origins. */
-export const BITBUCKET_NETWORK_HOST_ACCESS_ID = 'bitbucket-api';
+
 
 export {
   BITBUCKET_TRIAGE_DETAIL_ARTIFACT_ID,
   BITBUCKET_TRIAGE_DETAIL_RENDERER_ID,
 };
 
-const sources = TriageSourcesContributionProtocolV1;
+
 
 /**
  * Every source Action that reaches the provider uses the exact account, so both grants are declared
@@ -118,11 +72,8 @@ const sources = TriageSourcesContributionProtocolV1;
  * `listInstances` carries no account at all, because producing account references is what it does,
  * so it has no path to bind.
  */
-const READ_HOST_ACCESS = [BITBUCKET_NETWORK_HOST_ACCESS_ID, BITBUCKET_CONNECTED_ACCOUNT_PURPOSE];
-const INSTANCE_ACCOUNT_BINDINGS = [{
-  path: 'instance.binding.account',
-  purpose: BITBUCKET_CONNECTED_ACCOUNT_PURPOSE,
-}];
+
+
 
 export const BITBUCKET_PLUGIN = definePlugin({
   id: BITBUCKET_PLUGIN_ID,
@@ -132,9 +83,19 @@ export const BITBUCKET_PLUGIN = definePlugin({
   brand: { iconResourceId: 'brand-icon', monochrome: true },
   resources: {
     'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' },
+    "i18n-en": { kind: 'asset', path: "assets/i18n/en.json", contentType: 'application/json' },
+    "i18n-ru": { kind: 'asset', path: "assets/i18n/ru.json", contentType: 'application/json' },
+    "i18n-pl": { kind: 'asset', path: "assets/i18n/pl.json", contentType: 'application/json' },
+    "i18n-es": { kind: 'asset', path: "assets/i18n/es.json", contentType: 'application/json' },
+    "i18n-fr": { kind: 'asset', path: "assets/i18n/fr.json", contentType: 'application/json' },
+    "i18n-it": { kind: 'asset', path: "assets/i18n/it.json", contentType: 'application/json' },
+    "i18n-pt": { kind: 'asset', path: "assets/i18n/pt.json", contentType: 'application/json' },
+    "i18n-de": { kind: 'asset', path: "assets/i18n/de.json", contentType: 'application/json' },
+    "i18n-ca": { kind: 'asset', path: "assets/i18n/ca.json", contentType: 'application/json' },
+    "i18n-zh-hans": { kind: 'asset', path: "assets/i18n/zh-Hans.json", contentType: 'application/json' },
+    "i18n-zh-hant": { kind: 'asset', path: "assets/i18n/zh-Hant.json", contentType: 'application/json' },
+    "i18n-ja": { kind: 'asset', path: "assets/i18n/ja.json", contentType: 'application/json' },
   },
-  engines: { happier: '^0.0.0' },
-  runtime: { apiVersion: 1 },
   entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: {
     required: [{
@@ -204,69 +165,31 @@ export const BITBUCKET_PLUGIN = definePlugin({
       defaultRank: 10,
       renderer: BITBUCKET_TRIAGE_SETTINGS_RENDERER_ID,
     }],
-    translations: withTriageSourceSettingsTranslationsV1([
-      { locale: 'en', messages: { ...BITBUCKET_RENDER_UI_TRANSLATIONS["en"], ...BITBUCKET_ADDITIONAL_UI_TRANSLATIONS["en"], 'plugins.bitbucket.settings.group': 'Bitbucket Cloud', 'plugins.bitbucket.settings.sources': 'PRs & Issues', 'plugins.bitbucket.settings.sources.subtitle': 'Choose which Bitbucket Cloud accounts and workspaces appear in PRs & Issues.' } },
-      { locale: 'ru', messages: { ...BITBUCKET_RENDER_UI_TRANSLATIONS["ru"], ...BITBUCKET_ADDITIONAL_UI_TRANSLATIONS["ru"], 'plugins.bitbucket.settings.group': 'Bitbucket Cloud', 'plugins.bitbucket.settings.sources': 'PR и задачи', 'plugins.bitbucket.settings.sources.subtitle': 'Выберите учетные записи и рабочие пространства Bitbucket Cloud, которые будут отображаться в разделе PR и задач.' } },
-      { locale: 'pl', messages: { ...BITBUCKET_RENDER_UI_TRANSLATIONS["pl"], ...BITBUCKET_ADDITIONAL_UI_TRANSLATIONS["pl"], 'plugins.bitbucket.settings.group': 'Bitbucket Cloud', 'plugins.bitbucket.settings.sources': 'PR-y i zgłoszenia', 'plugins.bitbucket.settings.sources.subtitle': 'Wybierz konta i obszary robocze Bitbucket Cloud wyświetlane w sekcji PR-ów i zgłoszeń.' } },
-      { locale: 'es', messages: { ...BITBUCKET_RENDER_UI_TRANSLATIONS["es"], ...BITBUCKET_ADDITIONAL_UI_TRANSLATIONS["es"], 'plugins.bitbucket.settings.group': 'Bitbucket Cloud', 'plugins.bitbucket.settings.sources': 'PR e incidencias', 'plugins.bitbucket.settings.sources.subtitle': 'Elige qué cuentas y espacios de trabajo de Bitbucket Cloud aparecen en PR e incidencias.' } },
-      { locale: 'fr', messages: { ...BITBUCKET_RENDER_UI_TRANSLATIONS["fr"], ...BITBUCKET_ADDITIONAL_UI_TRANSLATIONS["fr"], 'plugins.bitbucket.settings.group': 'Bitbucket Cloud', 'plugins.bitbucket.settings.sources': 'PR et tickets', 'plugins.bitbucket.settings.sources.subtitle': 'Choisis les comptes et espaces de travail Bitbucket Cloud affichés dans PR et tickets.' } },
-      { locale: 'it', messages: { ...BITBUCKET_RENDER_UI_TRANSLATIONS["it"], ...BITBUCKET_ADDITIONAL_UI_TRANSLATIONS["it"], 'plugins.bitbucket.settings.group': 'Bitbucket Cloud', 'plugins.bitbucket.settings.sources': 'PR e segnalazioni', 'plugins.bitbucket.settings.sources.subtitle': 'Scegli gli account e gli spazi di lavoro Bitbucket Cloud da mostrare in PR e segnalazioni.' } },
-      { locale: 'pt', messages: { ...BITBUCKET_RENDER_UI_TRANSLATIONS["pt"], ...BITBUCKET_ADDITIONAL_UI_TRANSLATIONS["pt"], 'plugins.bitbucket.settings.group': 'Bitbucket Cloud', 'plugins.bitbucket.settings.sources': 'PRs e problemas', 'plugins.bitbucket.settings.sources.subtitle': 'Escolha as contas e os espaços de trabalho Bitbucket Cloud apresentados em PRs e problemas.' } },
-      { locale: 'de', messages: { ...BITBUCKET_RENDER_UI_TRANSLATIONS["de"], ...BITBUCKET_ADDITIONAL_UI_TRANSLATIONS["de"], 'plugins.bitbucket.settings.group': 'Bitbucket Cloud', 'plugins.bitbucket.settings.sources': 'PRs & Tickets', 'plugins.bitbucket.settings.sources.subtitle': 'Wähle aus, welche Bitbucket-Cloud-Konten und -Workspaces unter PRs & Tickets angezeigt werden.' } },
-      { locale: 'ca', messages: { ...BITBUCKET_RENDER_UI_TRANSLATIONS["ca"], ...BITBUCKET_ADDITIONAL_UI_TRANSLATIONS["ca"], 'plugins.bitbucket.settings.group': 'Bitbucket Cloud', 'plugins.bitbucket.settings.sources': 'PR i incidències', 'plugins.bitbucket.settings.sources.subtitle': 'Tria els comptes i espais de treball de Bitbucket Cloud que es mostren a PR i incidències.' } },
-      { locale: 'zh-Hans', messages: { ...BITBUCKET_RENDER_UI_TRANSLATIONS["zh-Hans"], ...BITBUCKET_ADDITIONAL_UI_TRANSLATIONS["zh-Hans"], 'plugins.bitbucket.settings.group': 'Bitbucket Cloud', 'plugins.bitbucket.settings.sources': 'PR 和问题', 'plugins.bitbucket.settings.sources.subtitle': '选择要在 PR 和问题中显示的 Bitbucket Cloud 帐户和工作区。' } },
-      { locale: 'zh-Hant', messages: { ...BITBUCKET_RENDER_UI_TRANSLATIONS["zh-Hant"], ...BITBUCKET_ADDITIONAL_UI_TRANSLATIONS["zh-Hant"], 'plugins.bitbucket.settings.group': 'Bitbucket Cloud', 'plugins.bitbucket.settings.sources': 'PR 與問題', 'plugins.bitbucket.settings.sources.subtitle': '選擇要在 PR 與問題中顯示的 Bitbucket Cloud 帳戶和工作區。' } },
-      { locale: 'ja', messages: { ...BITBUCKET_RENDER_UI_TRANSLATIONS["ja"], ...BITBUCKET_ADDITIONAL_UI_TRANSLATIONS["ja"], 'plugins.bitbucket.settings.group': 'Bitbucket Cloud', 'plugins.bitbucket.settings.sources': 'PR と課題', 'plugins.bitbucket.settings.sources.subtitle': 'PR と課題に表示する Bitbucket Cloud アカウントとワークスペースを選択します。' } },
-    ]),
+    translations: [
+      { locale: "en", resourceId: "i18n-en" },
+      { locale: "ru", resourceId: "i18n-ru" },
+      { locale: "pl", resourceId: "i18n-pl" },
+      { locale: "es", resourceId: "i18n-es" },
+      { locale: "fr", resourceId: "i18n-fr" },
+      { locale: "it", resourceId: "i18n-it" },
+      { locale: "pt", resourceId: "i18n-pt" },
+      { locale: "de", resourceId: "i18n-de" },
+      { locale: "ca", resourceId: "i18n-ca" },
+      { locale: "zh-Hans", resourceId: "i18n-zh-hans" },
+      { locale: "zh-Hant", resourceId: "i18n-zh-hant" },
+      { locale: "ja", resourceId: "i18n-ja" },
+    ],
   },
   actions: {
-    [BITBUCKET_TRIAGE_ACTION_IDS.listInstances]: {
-      title: 'Discover Bitbucket Cloud workspaces',
-      description: 'Enumerates the workspaces reachable by each authorized Bitbucket Cloud account.',
-      surfaces: sources.operations.listInstances.declaration.surfaces,
-      // Mounted-only placement. `plugin` stays because the Triage daemon
-      // consumes it and `ui` because this source's own mounted surfaces hold
-      // present-user authority; the explicit empty list only withdraws the
-      // Action from global placement discovery — it disables no invocation.
-      placementBindings: [],
-      dangerLevel: sources.operations.listInstances.declaration.dangerLevel,
-      inputSchema: sources.operations.listInstances.declaration.input.schema.jsonSchema,
-      resultSchema: sources.operations.listInstances.declaration.resultSchema.jsonSchema,
-      hostAccess: READ_HOST_ACCESS,
-      run: listBitbucketInstancesAction,
-    },
-    [BITBUCKET_TRIAGE_ACTION_IDS.scan]: {
-      title: 'Scan Bitbucket Cloud pull requests',
-      description: 'Reads one bounded page of pull requests for one configured Bitbucket Cloud workspace.',
-      surfaces: sources.operations.scan.declaration.surfaces,
-      dangerLevel: sources.operations.scan.declaration.dangerLevel,
-      inputSchema: TriageSourceConnectedAccountInputsV1.scan.jsonSchema,
-      resultSchema: sources.operations.scan.declaration.resultSchema.jsonSchema,
-      hostAccess: READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-      run: scanBitbucketSourceAction,
-    },
-    [BITBUCKET_TRIAGE_ACTION_IDS.get]: {
-      title: 'Read one Bitbucket Cloud pull request',
-      description: 'Reads one pull request authoritatively through one exact configured Bitbucket Cloud instance.',
-      surfaces: sources.operations.get.declaration.surfaces,
-      // Mounted-only placement. `plugin` stays because the Triage daemon
-      // consumes it and `ui` because this source's own mounted surfaces hold
-      // present-user authority; the explicit empty list only withdraws the
-      // Action from global placement discovery — it disables no invocation.
-      placementBindings: [],
-      dangerLevel: sources.operations.get.declaration.dangerLevel,
-      inputSchema: TriageSourceConnectedAccountInputsV1.get.jsonSchema,
-      resultSchema: sources.operations.get.declaration.resultSchema.jsonSchema,
-      hostAccess: READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-      run: getBitbucketSourceEntryAction,
-    },
+    ...BITBUCKET_ACCOUNT_ACTIONS,
     [BITBUCKET_TRIAGE_ACTION_IDS.prepareReviewWorkspace]: {
       title: 'Prepare a Bitbucket Cloud pull-request review workspace',
       description: 'Reauthorizes and rereads one Bitbucket Cloud pull request before preparing its selected local workspace.',
       surfaces: sources.operations.prepareReviewWorkspace.declaration.surfaces,
       dangerLevel: sources.operations.prepareReviewWorkspace.declaration.dangerLevel,
+      // The person's own press is the consent for the checkout they asked for;
+      // agents, MCP and a saved Ask keep the writes-local default.
+      confirmationWhen: { presentUserUi: false },
       inputSchema: TriageSourceConnectedAccountInputsV1.prepareReviewWorkspace.jsonSchema,
       resultSchema: sources.operations.prepareReviewWorkspace.declaration.resultSchema.jsonSchema,
       hostAccess: READ_HOST_ACCESS,
@@ -283,259 +206,7 @@ export const BITBUCKET_PLUGIN = definePlugin({
       hostAccess: READ_HOST_ACCESS,
       connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
       run: verifyBitbucketReviewWorkspaceAction,
-    },
-    // The source-native detail planes. Only this plugin's own mounted
-    // detail artifact invokes them, through the mounted Plugin UI host —
-    // present-user authority — so they declare `ui` and nothing else.
-    [BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.listActivity]: {
-      title: 'Read a Bitbucket activity page',
-      description: 'Reads one bounded page of the combined approval, update and comment activity'
-        + ' of one pull request.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
-      placementBindings: [],
-      inputSchema: BitbucketActivityInputV1Schema.jsonSchema,
-      resultSchema: BitbucketActivityResultV1Schema.jsonSchema,
-      hostAccess: READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-      run: listBitbucketActivity,
-    },
-    [BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.readOverview]: {
-      title: 'Refresh a Bitbucket pull-request overview',
-      description: 'Reads the pull request authoritatively from Bitbucket for the mounted Overview.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
-      placementBindings: [],
-      inputSchema: BitbucketOverviewInputV1Schema.jsonSchema,
-      resultSchema: BitbucketOverviewResultV1Schema.jsonSchema,
-      hostAccess: READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-      run: readBitbucketOverview,
-    },
-    [BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.readDiff]: {
-      title: 'Read a Bitbucket pull-request diff',
-      description: 'Reads the raw diff and its bounded diffstat projection without dropping the pull request.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
-      placementBindings: [],
-      inputSchema: BitbucketDiffInputV1Schema.jsonSchema,
-      resultSchema: BitbucketDiffResultV1Schema.jsonSchema,
-      hostAccess: READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-      run: readBitbucketDiff,
-    },
-    [BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.listBuilds]: {
-      title: 'Read a Bitbucket build-status page',
-      description: 'Reads one bounded page of the build statuses reported against one pull'
-        + ' request, with a rollup only when that page is the whole collection.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
-      placementBindings: [],
-      inputSchema: BitbucketBuildsInputV1Schema.jsonSchema,
-      resultSchema: BitbucketBuildsResultV1Schema.jsonSchema,
-      hostAccess: READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-      run: listBitbucketBuilds,
-    },
-    [BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.listComments]: {
-      title: 'Read a Bitbucket comment page',
-      description: 'Reads one bounded page of the comments on one pull request, in provider'
-        + ' order, with their real resolution tri-state.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
-      placementBindings: [],
-      inputSchema: BitbucketCommentsInputV1Schema.jsonSchema,
-      resultSchema: BitbucketCommentsResultV1Schema.jsonSchema,
-      hostAccess: READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-      run: listBitbucketComments,
-    },
-    // The enabled Bitbucket pull-request writes.
-    //
-    // UI, agent, MCP and CLI share these native handlers and the host approval
-    // policy. Non-safe danger levels and confirmations require approval by
-    // default; exact configured-account admission and provider preconditions
-    // remain with the source.
-    //
-    // Every one reaches the provider and the exact configured account, and every one binds the
-    // account path its configured instance carries, exactly as `scan` and `get` do. A write Action
-    // declaring neither grant would be a manifest defect rather than a runtime one.
-    [BITBUCKET_TRIAGE_MUTATION_ACTION_IDS.merge]: {
-      title: 'Merge a Bitbucket pull request',
-      description: 'Merges one pull request with the exact strategy and source-branch decision the'
-        + ' user chose, only while its head is still the commit they saw.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
-      placementBindings: ['detailsPanel'],
-      // Irreversible on the forge, and it may delete the source branch.
-      dangerLevel: 'destructive',
-      // The host-owned confirmation a `destructive` UI Action must declare. The body names the two
-      // consequences a user cannot take back — the merge itself, and the branch decision they made
-      // — rather than asking "are you sure" about an unnamed effect.
-      confirmation: {
-        title: {
-          key: 'plugins.bitbucket.ui.mutations.merge.button',
-          fallback: 'Merge this pull request?',
-        },
-        body: {
-          key: 'plugins.bitbucket.ui.mutations.merge.strategyRequired',
-          fallback: 'Merging permanently writes the selected strategy into this repository.'
-            + ' If new commits arrive first, nothing is merged.',
-        },
-        confirmLabel: {
-          key: 'plugins.bitbucket.ui.mutations.merge.button',
-          fallback: 'Merge',
-        },
-      },
-      inputSchema: BitbucketMergeInputV1Schema.jsonSchema,
-      resultSchema: BitbucketMutationResultV1Schema.jsonSchema,
-      hostAccess: READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-      run: mergeBitbucketPullRequestAction,
-    },
-    [BITBUCKET_TRIAGE_MUTATION_ACTION_IDS.decline]: {
-      title: 'Decline a Bitbucket pull request',
-      description: 'Declines one open pull request. Bitbucket has no reopen, so this cannot be'
-        + ' undone through its API.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
-      placementBindings: ['detailsPanel'],
-      dangerLevel: 'writesRemote',
-      // Bitbucket has no reopen: the state enum is OPEN | MERGED | DECLINED | SUPERSEDED and no
-      // `/reopen` path exists. The confirmation says exactly that, because a user who expects the
-      // GitHub or GitLab affordance would otherwise assume they can undo this.
-      confirmation: {
-        title: {
-          key: 'plugins.bitbucket.ui.mutations.decline.button',
-          fallback: 'Decline this pull request?',
-        },
-        body: {
-          key: 'plugins.bitbucket.ui.mutations.decline.description',
-          fallback: 'Bitbucket cannot reopen a declined pull request through its API.',
-        },
-        confirmLabel: {
-          key: 'plugins.bitbucket.ui.mutations.decline.button',
-          fallback: 'Decline',
-        },
-      },
-      inputSchema: BitbucketDeclineInputV1Schema.jsonSchema,
-      resultSchema: BitbucketMutationResultV1Schema.jsonSchema,
-      hostAccess: READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-      run: declineBitbucketPullRequestAction,
-    },
-    [BITBUCKET_TRIAGE_MUTATION_ACTION_IDS.resolveComment]: {
-      title: 'Resolve a Bitbucket comment thread',
-      description: 'Marks one comment thread on this pull request resolved, and confirms it from'
-        + ' the comment itself.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
-      placementBindings: ['detailsPanel'],
-      dangerLevel: 'writesRemote',
-      confirmation: {
-        title: {
-          key: 'plugins.bitbucket.ui.mutations.comment.resolve',
-          fallback: 'Resolve this comment thread?',
-        },
-        body: {
-          key: 'plugins.bitbucket.ui.mutations.comment.resolveConfirmation',
-          fallback: 'Everyone on the pull request will see this thread as resolved. It can be reopened.',
-        },
-        confirmLabel: {
-          key: 'plugins.bitbucket.ui.mutations.comment.resolve',
-          fallback: 'Resolve',
-        },
-      },
-      // One input for both directions: the entry, and the comment. What separates resolve from
-      // reopen is the verb the handler sends, which is not a value a caller supplies.
-      inputSchema: BitbucketCommentResolutionInputV1Schema.jsonSchema,
-      // A comment write settles into the comment's own vocabulary, not the pull request's: what it
-      // changed is the thread, and returning an entry observation would answer a question the
-      // caller did not ask.
-      resultSchema: BitbucketCommentResolutionResultV1Schema.jsonSchema,
-      hostAccess: READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-      run: resolveBitbucketCommentAction,
-    },
-    [BITBUCKET_TRIAGE_MUTATION_ACTION_IDS.unresolveComment]: {
-      title: 'Reopen a Bitbucket comment thread',
-      description: 'Reopens one resolved comment thread on this pull request, and confirms it from'
-        + ' the comment itself.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
-      placementBindings: ['detailsPanel'],
-      dangerLevel: 'writesRemote',
-      confirmation: {
-        title: {
-          key: 'plugins.bitbucket.ui.mutations.comment.reopen',
-          fallback: 'Reopen this comment thread?',
-        },
-        body: {
-          key: 'plugins.bitbucket.ui.mutations.comment.reopenConfirmation',
-          fallback: 'Everyone on the pull request will see this thread as open again. It can be resolved again.',
-        },
-        confirmLabel: {
-          key: 'plugins.bitbucket.ui.mutations.comment.reopen',
-          fallback: 'Reopen',
-        },
-      },
-      inputSchema: BitbucketCommentResolutionInputV1Schema.jsonSchema,
-      resultSchema: BitbucketCommentResolutionResultV1Schema.jsonSchema,
-      hostAccess: READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-      run: unresolveBitbucketCommentAction,
-    },
-    [BITBUCKET_TRIAGE_MUTATION_ACTION_IDS.submitReview]: {
-      title: 'Submit this Bitbucket pull-request review',
-      description: 'Publishes the selected canonical Happier review comments in order, then applies the requested Bitbucket verdict against the exact base and head revisions shown.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
-      placementBindings: ['detailsPanel'],
-      dangerLevel: 'externalSideEffect',
-      confirmation: {
-        title: {
-          key: 'plugins.bitbucket.ui.mutations.review.confirmation.title',
-          fallback: 'Submit this review?',
-        },
-        body: {
-          key: 'plugins.bitbucket.ui.mutations.review.confirmation.body',
-          fallback: 'This publishes the selected comments and then your verdict on Bitbucket. If the pull request comparison moved, nothing is written.',
-        },
-        confirmLabel: {
-          key: 'plugins.bitbucket.ui.mutations.review.submit',
-          fallback: 'Submit review',
-        },
-      },
-      inputSchema: BitbucketReviewPublicationInputV1Schema.jsonSchema,
-      resultSchema: BitbucketReviewPublicationResultV1Schema.jsonSchema,
-      hostAccess: READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-      run: publishBitbucketPullRequestReviewAction,
-    },
-    [BITBUCKET_TRIAGE_MUTATION_ACTION_IDS.createReviewComment]: {
-      title: 'Publish this Bitbucket review comment',
-      description: 'Publishes one canonical Happier proposal at its exact pinned Bitbucket diff anchor.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
-      placementBindings: ['detailsPanel'],
-      dangerLevel: 'externalSideEffect',
-      confirmation: {
-        title: { key: 'plugins.bitbucket.ui.mutations.reviewComment.confirmation.title', fallback: 'Publish this review comment?' },
-        body: { key: 'plugins.bitbucket.ui.mutations.reviewComment.confirmation.body', fallback: 'This posts the selected comment on Bitbucket at the exact pull request comparison you reviewed.' },
-        confirmLabel: { key: 'plugins.bitbucket.ui.mutations.reviewComment.publish', fallback: 'Publish comment' },
-      },
-      inputSchema: BitbucketReviewCommentCreateInputV1Schema.jsonSchema,
-      resultSchema: BitbucketReviewPublicationResultV1Schema.jsonSchema,
-      hostAccess: READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-      run: createBitbucketPullRequestReviewCommentAction,
-    },
-    [BITBUCKET_TRIAGE_MUTATION_ACTION_IDS.replyToReviewComment]: {
-      title: 'Reply to this Bitbucket review comment',
-      description: 'Publishes one canonical Happier proposal beneath one exact Bitbucket pull-request comment.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
-      placementBindings: ['detailsPanel'],
-      dangerLevel: 'writesRemote',
-      confirmation: {
-        title: { key: 'plugins.bitbucket.ui.mutations.reviewReply.confirmation.title', fallback: 'Post this reply?' },
-        body: { key: 'plugins.bitbucket.ui.mutations.reviewReply.confirmation.body', fallback: 'This reply becomes visible beneath the selected Bitbucket pull-request comment.' },
-        confirmLabel: { key: 'plugins.bitbucket.ui.mutations.reviewReply.publish', fallback: 'Post reply' },
-      },
-      inputSchema: BitbucketReviewCommentReplyInputV1Schema.jsonSchema,
-      resultSchema: BitbucketReviewPublicationResultV1Schema.jsonSchema,
-      hostAccess: READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-      run: replyToBitbucketPullRequestReviewCommentAction,
-    },
+    }
   },
   scmHostingProviders: {
     [BITBUCKET_SCM_HOSTING_PROVIDER_LOCAL_ID]: {
@@ -562,10 +233,17 @@ export const BITBUCKET_PLUGIN = definePlugin({
         title: 'Bitbucket account',
         description: 'Bitbucket account used for repository and pull-request operations.',
         authentication: {
+          account: { artifactId: 'bitbucket-account-runtime', exportName: 'activate' },
           defaultModeId: 'manual',
           modes: [{
             id: 'manual',
             kind: 'manual',
+            setup: {
+              url: 'https://id.atlassian.com/manage-profile/security/api-tokens',
+              checklist: ['Create an API token with scopes in your Atlassian account and select Bitbucket as the app.', 'Grant the repository, pull request, and issue permissions needed for the actions you want to use.', 'Copy the token and enter the email address of the Atlassian account that created it.'],
+              createKeyTitle: 'Open Atlassian API tokens',
+            },
+            credentialOrigin: 'authentication',
             directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 },
             outcomeReconciliation: 'none',
             fields: [
@@ -597,6 +275,7 @@ export const BITBUCKET_PLUGIN = definePlugin({
         capabilities: ['scmHostingBasicAuth'],
       },
       runtime: bitbucketConnectedAccountRuntime,
+      accountRuntime: bitbucketPortableAuthentication,
     },
   },
   contributesTo: {

@@ -1,3 +1,4 @@
+import { bitbucketDetailTabDeclaration } from '../../ui/detail/tabDeclarations.js';
 import type { TriageSourceDescriptorV1 } from '@happier-dev/triage-protocol/v1';
 
 import { BITBUCKET_MIN_PAGE_LENGTH } from '../pagination.js';
@@ -76,10 +77,10 @@ export const BITBUCKET_TRIAGE_DESCRIPTOR: TriageSourceDescriptorV1 = Object.free
       // r0.42: the Triage detail frame draws these tabs and asks this source
       // for each as a panel; the writes render as the header `actions` panel.
       detailTabs: Object.freeze([
-        Object.freeze({ kind: 'shared', id: 'overview' }),
-        Object.freeze({ kind: 'shared', id: 'activity' }),
-        Object.freeze({ kind: 'shared', id: 'files' }),
-        Object.freeze({ kind: 'shared', id: 'checks' }),
+        Object.freeze({ kind: 'shared', id: 'overview', scrollOwner: bitbucketDetailTabDeclaration('overview').scrollOwner }),
+        Object.freeze({ kind: 'shared', id: 'activity', scrollOwner: bitbucketDetailTabDeclaration('activity').scrollOwner }),
+        Object.freeze({ kind: 'shared', id: 'files', scrollOwner: bitbucketDetailTabDeclaration('diff').scrollOwner }),
+        Object.freeze({ kind: 'shared', id: 'checks', scrollOwner: bitbucketDetailTabDeclaration('builds').scrollOwner }),
       ]),
       detailActions: true,
     }),

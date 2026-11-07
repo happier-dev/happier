@@ -1,4 +1,4 @@
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import type {
   TriageConfiguredSourceInstanceV1,
   TriageEntryLocatorV1,
@@ -77,7 +77,7 @@ const ENTRY_ID_INVALID = createBitbucketFailure('unsupportedContract', 'entry-id
 
 /** The host services one bounded invocation reaches, bound to the signal that owns its lifetime. */
 export function toBitbucketRuntime(
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
   signal: AbortSignal | undefined,
 ): BitbucketSourceRuntime {
   return {

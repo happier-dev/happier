@@ -197,7 +197,6 @@
   "plugins.bitbucket.ui.showMoreBuilds": "Mostrar más compilaciones",
   "plugins.bitbucket.ui.rereadBuilds": "Volver a leer las compilaciones desde Bitbucket",
   "plugins.bitbucket.ui.showMoreComments": "Mostrar 30 comentarios más",
-  "plugins.bitbucket.ui.rereadComments": "Volver a leer los comentarios desde Bitbucket",
   "plugins.bitbucket.ui.someone": "Alguien",
   "plugins.bitbucket.ui.edited": "editado",
   "plugins.bitbucket.ui.reply": "respuesta",

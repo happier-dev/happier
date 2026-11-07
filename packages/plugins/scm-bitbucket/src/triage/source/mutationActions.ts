@@ -1,4 +1,4 @@
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import {
   createReviewCommentPublicationSettlementRequestV1,
   parseReviewCommentPublicationPlanV1,
@@ -142,7 +142,7 @@ async function admitMutation(
     localRef: TriageSourceEntryLocalRefV1;
     lastKnownLocator: Parameters<typeof admitBitbucketEntryInvocation>[0]['lastKnownLocator'];
   }>,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<
   | Readonly<{ ok: true; context: MutationContext; dispose(): void }>
   | Readonly<{ ok: false; result: BitbucketMutationResultV1 }>
@@ -210,7 +210,7 @@ function shapeUnsettledWrite(
 /** Publishes one frozen canonical Reviews plan through Bitbucket's ordered write sequence. */
 export async function publishBitbucketPullRequestReviewAction(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<BitbucketReviewPublicationResultV1> {
   const parsed = BitbucketReviewPublicationInputV1Schema.safeParse(input);
   if (!parsed.success) {
@@ -314,7 +314,7 @@ async function publishBitbucketSingleReviewComment(
   }>,
   publicationPlan: ReturnType<typeof parseReviewCommentPublicationPlanV1>,
   mode: Readonly<{ kind: 'create' } | { kind: 'reply'; parentCommentId: string }>,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<BitbucketReviewPublicationResultV1> {
   const admitted = await admitMutation(
     {
@@ -363,7 +363,7 @@ async function publishBitbucketSingleReviewComment(
 /** Publishes one canonical proposal at one exact pinned Bitbucket diff anchor. */
 export async function createBitbucketPullRequestReviewCommentAction(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<BitbucketReviewPublicationResultV1> {
   const parsed = BitbucketReviewCommentCreateInputV1Schema.safeParse(input);
   if (!parsed.success) return { kind: 'rejected', reason: 'invalid_input', failure: toTriageSourceFailure(INVALID_INPUT) };
@@ -386,7 +386,7 @@ export async function createBitbucketPullRequestReviewCommentAction(
 /** Publishes one canonical proposal beneath one exact existing Bitbucket comment. */
 export async function replyToBitbucketPullRequestReviewCommentAction(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<BitbucketReviewPublicationResultV1> {
   const parsed = BitbucketReviewCommentReplyInputV1Schema.safeParse(input);
   if (!parsed.success) return { kind: 'rejected', reason: 'invalid_input', failure: toTriageSourceFailure(INVALID_INPUT) };
@@ -429,7 +429,7 @@ export async function replyToBitbucketPullRequestReviewCommentAction(
  */
 export async function mergeBitbucketPullRequestAction(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<BitbucketMutationResultV1> {
   const parsed = BitbucketMergeInputV1Schema.safeParse(input);
   if (!parsed.success) return unavailable(toTriageSourceFailure(INVALID_INPUT));
@@ -580,7 +580,7 @@ export async function mergeBitbucketPullRequestAction(
  */
 export async function declineBitbucketPullRequestAction(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<BitbucketMutationResultV1> {
   const parsed = BitbucketDeclineInputV1Schema.safeParse(input);
   if (!parsed.success) return unavailable(toTriageSourceFailure(INVALID_INPUT));
@@ -694,7 +694,7 @@ export async function declineBitbucketPullRequestAction(
  */
 async function runBitbucketCommentResolution(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
   target: 'resolved' | 'unresolved',
 ): Promise<BitbucketCommentResolutionResultV1> {
   const parsed = BitbucketCommentResolutionInputV1Schema.safeParse(input);
@@ -838,7 +838,7 @@ function commentUnavailable(failure: TriageSourceFailureV1): BitbucketCommentRes
 /** `bitbucket/pull-request/comment-resolution` — Bitbucket's resolve. */
 export async function resolveBitbucketCommentAction(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<BitbucketCommentResolutionResultV1> {
   return runBitbucketCommentResolution(input, context, 'resolved');
 }
@@ -846,7 +846,7 @@ export async function resolveBitbucketCommentAction(
 /** `bitbucket/pull-request/comment-unresolution` — Bitbucket's reopen, on the same path. */
 export async function unresolveBitbucketCommentAction(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<BitbucketCommentResolutionResultV1> {
   return runBitbucketCommentResolution(input, context, 'unresolved');
 }

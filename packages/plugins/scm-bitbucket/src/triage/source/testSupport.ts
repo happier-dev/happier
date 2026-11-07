@@ -133,7 +133,8 @@ export function createConnectedAccountsStub(
       const account = input.accounts.find(
         (candidate) => candidate.accountId === request.account.accountId,
       );
-      if (account?.materializationError !== undefined) throw account.materializationError;
+      if (account === undefined) throw new Error('fixture_account_not_listed');
+      if (account.materializationError !== undefined) throw account.materializationError;
       materializations.push(request.account.accountId);
       return {
         kind: 'httpHeaders' as const,

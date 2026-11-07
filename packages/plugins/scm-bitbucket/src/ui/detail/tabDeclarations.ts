@@ -1,3 +1,4 @@
+import type { TriageDetailPanelScrollOwnerV1 } from '@happier-dev/triage-protocol/v1';
 /**
  * The Bitbucket Cloud detail body's tab declarations.
  *
@@ -51,7 +52,7 @@ export type BitbucketDetailTabDeclarationV1 = Readonly<{
   retainedState: string;
   readPlane: BitbucketDetailTabReadPlaneV1;
   /** The single component that owns this panel's vertical scrolling. */
-  scrollOwner: 'scrollArea' | 'list';
+  scrollOwner: TriageDetailPanelScrollOwnerV1;
 }>;
 
 export const BITBUCKET_DETAIL_TABS_V1: readonly BitbucketDetailTabDeclarationV1[] = Object.freeze([
@@ -81,7 +82,7 @@ export const BITBUCKET_DETAIL_TABS_V1: readonly BitbucketDetailTabDeclarationV1[
     retention: 'retain' as const,
     retainedState: 'the bounded raw prefix, diffstat rows and reader scroll anchor',
     readPlane: 'diff' as const,
-    scrollOwner: 'scrollArea' as const,
+    scrollOwner: 'list' as const,
   }),
   Object.freeze({
     id: 'builds' as const,
@@ -96,3 +97,8 @@ export const BITBUCKET_DETAIL_TABS_V1: readonly BitbucketDetailTabDeclarationV1[
 
 /** The tab a body opens on. */
 export const BITBUCKET_DEFAULT_DETAIL_TAB_V1: BitbucketDetailTabIdV1 = 'overview';
+
+/** Read the one source declaration for this panel. */
+export function bitbucketDetailTabDeclaration(id: BitbucketDetailTabIdV1): BitbucketDetailTabDeclarationV1 {
+  return BITBUCKET_DETAIL_TABS_V1.find((tab) => tab.id === id)!;
+}

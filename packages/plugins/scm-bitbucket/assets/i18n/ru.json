@@ -197,7 +197,6 @@
   "plugins.bitbucket.ui.showMoreBuilds": "Показать ещё сборки",
   "plugins.bitbucket.ui.rereadBuilds": "Повторно прочитать сборки из Bitbucket",
   "plugins.bitbucket.ui.showMoreComments": "Показать ещё 30 комментариев",
-  "plugins.bitbucket.ui.rereadComments": "Повторно прочитать комментарии из Bitbucket",
   "plugins.bitbucket.ui.someone": "Кто-то",
   "plugins.bitbucket.ui.edited": "изменено",
   "plugins.bitbucket.ui.reply": "ответ",
