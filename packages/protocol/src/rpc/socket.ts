@@ -1,5 +1,3 @@
-import { deploymentChildEffectActionIdForRootV1 } from '../deployments/deploymentActionIdsV1.js';
-import { isMachineSetupPlanRpcChildV1 } from '../machines/managed/actionIdsV1.js';
 import * as zMini from 'zod/mini';
 import { AuthTokenAuthenticationEvidenceSnapshotV1Schema } from '../auth/authToken.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
@@ -18,6 +16,7 @@ import {
 } from './methods.js';
 
 import { z } from 'zod/mini';
+import { deploymentChildEffectActionIdForRootV1 } from '../deployments/deploymentActionIdsV1.js';
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import { ActionRequiredAuthoritySchema, type ActionRequiredAuthority } from '../actions/metadata.js';
 import { CallerInputConstraintsV1Schema, type CallerInputConstraintsV1 } from '../auth/callerInputConstraintsV1.js';
@@ -28,6 +27,8 @@ import { AgentStartSessionCallerV1Schema } from '../account/settings/admitAgentS
 import { AgentPermissionIntentV1Schema } from '../runtime/permissionIntentV1.js';
 import { SessionInputCausalPermissionAuthorityV1Schema } from '../sessions/messages/sessionInputAdmission.js';
 import { isRoleActionIdV1 } from '../prompts/roles/roleActionIdsV1.js';
+import { isSessionStopChildV1 } from '../actions/sessionSectionArchive.js';
+import { isMachineSetupPlanRpcChildV1 } from '../machines/managed/actionIdsV1.js';
 
 import type { ExternalActionMachineRpcExecutionV1, ExternalActionExecutionAuthorizationV1, ExternalActionRequestEnvelope } from '../actions/externalActionApi.js';
 import { ExternalActionMachineRpcExecutionV1Schema, ExternalActionRequestEnvelopeSchema } from '../actions/externalActionApi.js';
@@ -174,12 +175,12 @@ export const WorkspaceSyncSourceExecutionV1Schema = lazyZodSchema(() => z.strict
   originalActionEnvelope: z.optional(z.lazy(() => ExternalActionRequestEnvelopeSchema)),
 }).check(z.refine(value => !value.originalActionEnvelope
   || value.externalActionExecution.authorization.binding.actionId === 'projects.service.relocate'
+  || isMachineSetupPlanRpcChildV1({ rootActionId: value.externalActionExecution.authorization.binding.actionId,
+    effectActionId: value.externalActionExecution.effectActionId, method: value.method.slice(value.method.indexOf(':') + 1) })
   || value.externalActionExecution.authorization.binding.actionId === 'discussion.second_opinion.start'
     && value.externalActionExecution.effectActionId === 'session.spawn_new'
     && (value.method.endsWith(`:${RPC_METHODS.SESSION_SPAWN_NEW}`)
       || value.method.endsWith(`:${RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT}`))
-  || isMachineSetupPlanRpcChildV1({ rootActionId: value.externalActionExecution.authorization.binding.actionId,
-    effectActionId: value.externalActionExecution.effectActionId, method: value.method.slice(value.method.indexOf(':') + 1) })
   || value.externalActionExecution.authorization.binding.actionId === 'deployments.prepare'
     && value.externalActionExecution.effectActionId === 'session.spawn_new'
     && value.method.endsWith(`:${RPC_METHODS.SESSION_SPAWN_NEW}`)
@@ -187,7 +188,16 @@ export const WorkspaceSyncSourceExecutionV1Schema = lazyZodSchema(() => z.strict
     && value.method === `${value.externalActionExecution.deploymentChildRouting.machineId}:${RPC_METHODS.DAEMON_DEPLOYMENT_CHILD}`
     && value.externalActionExecution.effectActionId === value.externalActionExecution.deploymentChildRouting.actionId
     && deploymentChildEffectActionIdForRootV1(value.externalActionExecution.authorization.binding.actionId,
-      value.externalActionExecution.authorization.binding.deploymentPreparationAdmission) === value.externalActionExecution.deploymentChildRouting.actionId)));
+      value.externalActionExecution.authorization.binding.deploymentPreparationAdmission,
+      value.externalActionExecution.effectActionId) === value.externalActionExecution.deploymentChildRouting.actionId
+  || isSessionStopChildV1({
+    rootActionId: value.externalActionExecution.authorization.binding.actionId,
+    effectActionId: value.externalActionExecution.effectActionId,
+    method: value.method.slice(value.method.indexOf(':') + 1),
+    target: value.externalActionExecution.target,
+    params: value.params,
+    ...(value.originalActionEnvelope?.v === 1 ? { rootInput: value.originalActionEnvelope.input } : {}),
+  }))));
 export type WorkspaceSyncSourceExecutionV1 = Readonly<z.infer<typeof WorkspaceSyncSourceExecutionV1Schema>>;
 
 /** Target custody has its own phase binding; the moved Session need not live on this child. */
@@ -270,6 +280,8 @@ export type SocketRpcRequestPayload = Readonly<{
   authorization?: SocketRpcAuthorizationContext;
   /** Current Home admission for the exact Machine receiver, distinct from Session authority. */
   machineAdmission?: SocketRpcMachineAdmissionContextV1;
+  /** Home-admitted physical receiver; routed child authority remains in machineAdmission. */
+  receivingMachineAdmission?: SocketRpcMachineAdmissionContextV1;
   externalActionExecution?: ExternalActionMachineRpcExecutionV1;
   /** Omission uses the relay default; null delegates expiry to caller lifecycle. */
   timeoutMs?: number | null;
@@ -306,6 +318,7 @@ export const SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS = {
   MACHINE_ACCESS_LOSS_SERVER_ORIGIN: 'machine.accessLoss.serverOrigin',
   LOCAL_SERVICES_PREVIEW_ADMISSION_SERVER_ORIGIN: 'localServices.preview.admission.serverOrigin',
   MACHINE_READ_SERVER_ORIGIN: 'machine.read.serverOrigin',
+  MANAGED_INSTALLATION_SERVER_ORIGIN: 'machine.managedInstallation.serverOrigin',
   CURRENT_SESSION_PRESENTATION_ORIGIN: 'session.presentation.origin',
 } as const;
 
@@ -439,6 +452,7 @@ export type SocketRpcSessionAuthorizationContext =
   | SocketRpcSessionPermissionRespondAuthorizationContext;
 
 export type SocketRpcAuthorizationContext =
+  | import('../machines/managed/managedInstallationV1.js').ManagedInstallationServerOriginV1
   | SocketRpcSessionAuthorizationContext
   | SessionFollowSourceKeyPrepareAuthorizationV1
   | SocketRpcAutomationReplyHandoffServerOriginAuthorizationContext
@@ -484,12 +498,18 @@ export type SocketRpcSessionWriteClassificationV1 = Readonly<{
  * consume this map; unclassified Session namespaces are unavailable rather than
  * inheriting authority from a prefix or daemon handler.
  */
+type RpcMethodValue = (typeof RPC_METHODS)[keyof typeof RPC_METHODS]
+  | Extract<(typeof import('./methods.js'))[keyof typeof import('./methods.js')], string>;
 type DeclaredSessionRpcMethod = (typeof SESSION_RPC_METHODS)[keyof typeof SESSION_RPC_METHODS];
+type DeclaredSessionRpcAuthority = SocketRpcSessionWriteAuthorityV1 | (
+  Pick<SocketRpcSessionWriteClassificationV1, 'authority' | 'actionId' | 'machineScope' | 'serverMintedContext' | 'sessionIdParam'>
+  & Partial<Pick<SocketRpcSessionWriteClassificationV1, 'routeToSessionOwnerDaemon' | 'optionalSessionScope'>>
+) | null;
 
 /**
- * Every declared Session RPC chooses its authority here. The exhaustive Record
- * is intentional: extending SESSION_RPC_METHODS without classifying the new
- * method is a compile error, rather than silently granting submitAgentInput.
+ * Every declared Session RPC and session.* method chooses its authority here.
+ * Adding a Session method without classifying it is a compile error, rather
+ * than silently granting submitAgentInput.
  */
 const SESSION_RPC_DECLARED_AUTHORITIES = Object.freeze({
   [SESSION_RPC_METHODS.SESSION_COMPACT]: { authority: 'submitAgentInput', actionId: 'session.compact' },
@@ -500,6 +520,7 @@ const SESSION_RPC_DECLARED_AUTHORITIES = Object.freeze({
   [SESSION_RPC_METHODS.SESSION_MESSAGE_REPLY]: { authority: 'sessionOwner', actionId: 'session.message.reply' },
   [SESSION_RPC_METHODS.SESSION_MESSAGE_REPLY_OBSERVE_V1]: 'sessionOwner',
   [SESSION_RPC_METHODS.SESSION_PLUGIN_CATALOG_INVALIDATE_V1]: 'sessionOwner',
+  [SESSION_RPC_METHODS.SESSION_AGENT_START_SELECTION_READ_V1]: 'sessionOwner',
   [SESSION_RPC_METHODS.SESSION_PENDING_MESSAGE_COMPOSER_ADMISSION_PREPARE_V1]: 'submitAgentInput',
   [SESSION_RPC_METHODS.SESSION_PENDING_MESSAGE_COMPOSER_ADMISSION_ACCEPTED_V1]: 'submitAgentInput',
   [SESSION_RPC_METHODS.SESSION_PENDING_MESSAGE_COMPOSER_ADMISSION_ABANDONED_V1]: 'submitAgentInput',
@@ -566,14 +587,39 @@ const SESSION_RPC_DECLARED_AUTHORITIES = Object.freeze({
   [SESSION_RPC_METHODS.SESSION_MANAGED_SERVICE_ENDPOINT_READ_OPEN_V1]: 'readTranscript',
   [SESSION_RPC_METHODS.SESSION_MANAGED_SERVICE_ENDPOINT_READ_NEXT_V1]: 'readTranscript',
   [SESSION_RPC_METHODS.SESSION_MANAGED_SERVICE_ENDPOINT_READ_CANCEL_V1]: 'readTranscript',
-} as const satisfies Record<DeclaredSessionRpcMethod, SocketRpcSessionWriteAuthorityV1 | Pick<SocketRpcSessionWriteClassificationV1, 'authority' | 'actionId' | 'machineScope' | 'serverMintedContext'>>);
+  [RPC_METHODS.SESSION_LOG_TAIL]: { authority: 'readTranscript', routeToSessionOwnerDaemon: true },
+  [CURRENT_SESSION_PRESENTATION_BIND_RPC_METHOD]: { authority: 'sessionOwner', routeToSessionOwnerDaemon: true, serverMintedContext: 'session.presentation.origin' },
+  [CURRENT_SESSION_PRESENTATION_ACK_RPC_METHOD]: { authority: 'sessionOwner', routeToSessionOwnerDaemon: true, serverMintedContext: 'session.presentation.origin' },
+  [CURRENT_SESSION_PRESENTATION_UNBIND_RPC_METHOD]: { authority: 'sessionOwner', routeToSessionOwnerDaemon: true, serverMintedContext: 'session.presentation.origin' },
+  [CURRENT_SESSION_PRESENTATION_APPLY_RPC_METHOD]: { authority: 'sessionOwner', routeToSessionOwnerDaemon: true, serverMintedContext: 'session.presentation.origin' },
+  ['session.permission_mode.set']: { authority: 'submitAgentInput', routeToSessionOwnerDaemon: true },
+  [RPC_METHODS.SESSION_PERMISSION_RESPOND]: { authority: 'approveRuntimePermissions', actionId: 'session.permission.respond', routeToSessionOwnerDaemon: true, serverMintedContext: 'session.permission.respond' },
+  // Mediator attribution comes from trusted code on the Session owner's Account,
+  // never a collaborator's broader message/permission capabilities.
+  ['session.permission.remote.pending.list']: { authority: 'sessionOwner', actionId: 'session.permission.remote.pending.list', routeToSessionOwnerDaemon: true },
+  ['session.permission.remote.respond']: { authority: 'sessionOwner', actionId: 'session.permission.remote.respond', routeToSessionOwnerDaemon: true },
+  ['session.user_action.remote.answer']: { authority: 'sessionOwner', actionId: 'session.user_action.remote.answer', routeToSessionOwnerDaemon: true },
+  ['session.permission.remote.grants.list']: { authority: 'submitAgentInput', actionId: 'session.permission.remote.grants.list', routeToSessionOwnerDaemon: true },
+  ['session.permission.remote.grants.revoke']: { authority: 'submitAgentInput', actionId: 'session.permission.remote.grants.revoke', routeToSessionOwnerDaemon: true },
+  ['session.user_action.answer']: { authority: 'submitAgentInput', actionId: 'session.user_action.answer', routeToSessionOwnerDaemon: true, serverMintedContext: 'session.permission.respond' },
+  ['session.update.post']: { authority: 'submitAgentInput', actionId: 'session.update.post', routeToSessionOwnerDaemon: true },
+  [RPC_METHODS.SESSION_FORK]: { authority: 'sessionOwner', routeToSessionOwnerDaemon: false },
+  [RPC_METHODS.SESSION_FORK_PROVIDER_SAFE]: { authority: 'sessionOwner', routeToSessionOwnerDaemon: false },
+  [RPC_METHODS.SESSION_CONTINUE_WITH_REPLAY]: { authority: 'sessionOwner', routeToSessionOwnerDaemon: false },
+  [RPC_METHODS.SESSION_AGENT_TRANSITION]: { authority: 'submitAgentInput', routeToSessionOwnerDaemon: false },
+  [RPC_METHODS.SESSION_CONTINUATION_INSPECT]: { authority: 'readTranscript', serverMintedContext: 'session.read', sessionIdParam: 'sourceSessionId', routeToSessionOwnerDaemon: false },
+  [RPC_METHODS.SESSION_CONTINUATION_INSPECT_BATCH]: { authority: 'readTranscript', serverMintedContext: 'session.read', sessionIdParam: 'sourceSessionId', routeToSessionOwnerDaemon: false },
+  [RPC_METHODS.SESSION_AGENT_TRANSITION_BRIEF_PREVIEW]: { authority: 'readTranscript', serverMintedContext: 'session.read', routeToSessionOwnerDaemon: false },
+  // New Session creation has Machine/Action admission and no existing Session proof.
+  [RPC_METHODS.SESSION_SPAWN_NEW]: null,
+} as const) satisfies Record<DeclaredSessionRpcMethod | Extract<RpcMethodValue, `session.${string}`>, DeclaredSessionRpcAuthority>;
 
 const SESSION_RPC_AUTHORIZATION_ROWS: readonly SocketRpcSessionWriteClassificationV1[] =
-  Object.entries(SESSION_RPC_DECLARED_AUTHORITIES).map(([method, declaration]) => Object.freeze({
+  Object.entries(SESSION_RPC_DECLARED_AUTHORITIES).flatMap(([method, declaration]) => declaration === null ? [] : [Object.freeze({
     method,
-    ...(typeof declaration === 'string' ? { authority: declaration } : declaration),
     routeToSessionOwnerDaemon: true,
-  }));
+    ...(typeof declaration === 'string' ? { authority: declaration } : declaration),
+  })]);
 
 const ADDITIONAL_SESSION_RPC_AUTHORIZATION_ROWS = [
   ...[
@@ -586,28 +632,17 @@ const ADDITIONAL_SESSION_RPC_AUTHORIZATION_ROWS = [
     RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_FINALIZE,
     RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_ABORT,
   ].map((method) => ({ method, authority: 'submitAgentInput' as const, actionId: 'session.message.send' as const, routeToSessionOwnerDaemon: true })),
-  { method: RPC_METHODS.SESSION_LOG_TAIL, authority: 'readTranscript', routeToSessionOwnerDaemon: true },
   { method: RPC_METHODS.TRANSCRIPT_PAGE, authority: 'readTranscript', actionId: 'transcript.page', routeToSessionOwnerDaemon: true },
   { method: RPC_METHODS.TRANSCRIPT_READ_AFTER, authority: 'readTranscript', actionId: 'transcript.readAfter', routeToSessionOwnerDaemon: true },
   { method: RPC_METHODS.TRANSCRIPT_FOLLOW, authority: 'readTranscript', actionId: 'session.transcript.get', routeToSessionOwnerDaemon: true },
   { method: RPC_METHODS.TRANSCRIPT_UNFOLLOW, authority: 'readTranscript', actionId: 'transcript.unfollow', routeToSessionOwnerDaemon: true },
   { method: RPC_METHODS.TRANSCRIPT_SEARCH, authority: 'readTranscript', routeToSessionOwnerDaemon: true },
   { method: RPC_METHODS.TRANSCRIPT_IMPORT, authority: 'submitAgentInput', routeToSessionOwnerDaemon: true },
-  { method: CURRENT_SESSION_PRESENTATION_BIND_RPC_METHOD, authority: 'sessionOwner', routeToSessionOwnerDaemon: true, serverMintedContext: 'session.presentation.origin' },
-  { method: CURRENT_SESSION_PRESENTATION_ACK_RPC_METHOD, authority: 'sessionOwner', routeToSessionOwnerDaemon: true, serverMintedContext: 'session.presentation.origin' },
-  { method: CURRENT_SESSION_PRESENTATION_UNBIND_RPC_METHOD, authority: 'sessionOwner', routeToSessionOwnerDaemon: true, serverMintedContext: 'session.presentation.origin' },
-  { method: CURRENT_SESSION_PRESENTATION_APPLY_RPC_METHOD, authority: 'sessionOwner', routeToSessionOwnerDaemon: true, serverMintedContext: 'session.presentation.origin' },
-  { method: 'session.permission_mode.set', authority: 'submitAgentInput', routeToSessionOwnerDaemon: true },
-  { method: RPC_METHODS.SESSION_PERMISSION_RESPOND, authority: 'approveRuntimePermissions', actionId: 'session.permission.respond', routeToSessionOwnerDaemon: true, serverMintedContext: 'session.permission.respond' },
   { method: 'permission', authority: 'approveRuntimePermissions', actionId: 'session.permission.respond', routeToSessionOwnerDaemon: true, serverMintedContext: 'session.permission.respond' },
   { method: RPC_METHODS.APPROVAL_REQUEST_DECIDE, authority: 'submitAgentInput', actionId: 'approval.request.decide', machineScope: true, routeToSessionOwnerDaemon: true, serverMintedContext: 'session.permission.respond' },
-  { method: 'session.permission.remote.grants.list', authority: 'submitAgentInput', actionId: 'session.permission.remote.grants.list', routeToSessionOwnerDaemon: true },
-  { method: 'session.permission.remote.grants.revoke', authority: 'submitAgentInput', actionId: 'session.permission.remote.grants.revoke', routeToSessionOwnerDaemon: true },
-  { method: 'session.user_action.answer', authority: 'submitAgentInput', actionId: 'session.user_action.answer', routeToSessionOwnerDaemon: true, serverMintedContext: 'session.permission.respond' },
   { method: 'abort', authority: 'submitAgentInput', actionId: 'session.turn.cancel', routeToSessionOwnerDaemon: true },
   { method: 'switch', authority: 'submitAgentInput', actionId: 'session.control.switch', routeToSessionOwnerDaemon: true },
   { method: 'skills.read', authority: 'readTranscript', actionId: 'skills.read', routeToSessionOwnerDaemon: true },
-  { method: 'session.update.post', authority: 'submitAgentInput', actionId: 'session.update.post', routeToSessionOwnerDaemon: true },
 ] as const satisfies readonly SocketRpcSessionWriteClassificationV1[];
 
 export const API_TOKEN_SOCKET_EVENT_ACTIONS = Object.freeze({ message: 'session.message.send' } as const);
@@ -638,6 +673,7 @@ const SOCKET_RPC_SESSION_WRITE_AUTHORIZATION: ReadonlyMap<string, SocketRpcSessi
     ].map((method) => ({ method, authority: 'readTranscript' as const, optionalSessionScope: true as const, routeToSessionOwnerDaemon: false })),
     ...[
       RPC_METHODS.SCM_CHANGE_DISCARD,
+      'scm.suggestion.apply',
       RPC_METHODS.SCM_DIFF_SUMMARY_GENERATE,
       RPC_METHODS.SCM_DIFF_SUMMARY_DRAFT_PULL_REQUEST,
       RPC_METHODS.SCM_DIFF_SUMMARY_REFINE,
@@ -645,16 +681,9 @@ const SOCKET_RPC_SESSION_WRITE_AUTHORIZATION: ReadonlyMap<string, SocketRpcSessi
       RPC_METHODS.SCM_DIFF_SUMMARY_ADD_OUTPUTS,
     ].map((method) => ({ method, authority: 'submitAgentInput' as const, optionalSessionScope: true as const, routeToSessionOwnerDaemon: false })),
     { method: RPC_METHODS.STOP_SESSION, authority: 'sessionOwner', routeToSessionOwnerDaemon: false },
-    { method: RPC_METHODS.SESSION_FORK, authority: 'sessionOwner', routeToSessionOwnerDaemon: false },
-    { method: RPC_METHODS.SESSION_FORK_PROVIDER_SAFE, authority: 'sessionOwner', routeToSessionOwnerDaemon: false },
-    { method: RPC_METHODS.SESSION_CONTINUE_WITH_REPLAY, authority: 'sessionOwner', routeToSessionOwnerDaemon: false },
     { method: RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART, authority: 'submitAgentInput', routeToSessionOwnerDaemon: false },
     { method: RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART_CONFIRMED_BACKGROUND, authority: 'submitAgentInput', routeToSessionOwnerDaemon: false },
     { method: RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART_V2, authority: 'submitAgentInput', routeToSessionOwnerDaemon: false },
-    { method: RPC_METHODS.SESSION_AGENT_TRANSITION, authority: 'submitAgentInput', routeToSessionOwnerDaemon: false },
-    { method: RPC_METHODS.SESSION_CONTINUATION_INSPECT, authority: 'readTranscript', serverMintedContext: 'session.read', sessionIdParam: 'sourceSessionId', routeToSessionOwnerDaemon: false },
-    { method: RPC_METHODS.SESSION_CONTINUATION_INSPECT_BATCH, authority: 'readTranscript', serverMintedContext: 'session.read', sessionIdParam: 'sourceSessionId', routeToSessionOwnerDaemon: false },
-    { method: RPC_METHODS.SESSION_AGENT_TRANSITION_BRIEF_PREVIEW, authority: 'readTranscript', serverMintedContext: 'session.read', routeToSessionOwnerDaemon: false },
   ] as const satisfies readonly SocketRpcSessionWriteClassificationV1[])
     .map((row) => [row.method, Object.freeze(row)] as const),
 );

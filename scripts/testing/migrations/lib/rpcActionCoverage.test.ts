@@ -118,7 +118,6 @@ test('validateRpcActionCoverage rejects direct route policies for unknown method
         scope: {
           accountRequired: true,
           machineRequired: true,
-          sessionRequired: false,
           serverRequired: false,
         },
       },

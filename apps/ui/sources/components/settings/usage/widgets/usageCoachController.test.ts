@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
-import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { ActionsSettingsV1Schema, isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import {
   getUsageQueryKey,
@@ -73,7 +73,7 @@ function lifetimeHarness() {
  * The Home's usage read and the Account settings store are the substituted boundaries; the Action
  * front door, Coach orchestration and approval policy below the controller are the real owners.
  */
-function harness(options: Readonly<{ approve?: boolean }> = {}) {
+function harness(options: Readonly<{ approve?: boolean; agentDigestDisabled?: boolean }> = {}) {
   const scope = lifetimeHarness();
   const store = new Map<string, unknown>([
     [ANCHOR, false],
@@ -83,6 +83,7 @@ function harness(options: Readonly<{ approve?: boolean }> = {}) {
   let version = 5;
   const settings = ActionsSettingsV1Schema.parse({
     v: 1,
+    ...(options.agentDigestDisabled ? { actions: { 'workflow.trigger.add': { disabledSurfaces: ['agent'] } } } : {}),
     ...(options.approve === false ? { actions: {
       'usage.coach.apply': { approvalRequiredSurfaces: ['ui'] },
       'usage.coach.undo': { approvalRequiredSurfaces: ['ui'] },
@@ -92,7 +93,7 @@ function harness(options: Readonly<{ approve?: boolean }> = {}) {
   });
   const deps = {
     usageActions: {
-      coachSuppressions: () => createUsageCoachSuppressionPort({ readLegacy: async () => [], transport: {
+      coachSuppressions: () => createUsageCoachSuppressionPort({ transport: {
         read: async () => ({ value: store.get(COACH_STATE), version }),
         compareAndSet: async (value, expected) => {
           if (expected !== version) return { success: false as const, value: store.get(COACH_STATE), version };
@@ -170,6 +171,7 @@ function harness(options: Readonly<{ approve?: boolean }> = {}) {
           : {}),
       };
     },
+    isActionEnabled: (id, context) => isActionEnabledByActionsSettings(id, settings, context),
     isActionApprovalRequired: (id, context) =>
       isApprovalRequiredByActionsSettings(id, settings, context),
   } satisfies Partial<ActionExecutorDeps>;
@@ -208,6 +210,17 @@ describe('Usage Coach widget controller', () => {
       expect(rows(untilMs + 5000).visible).toEqual([]);
       store.set(COACH_STATE, { v: 1, suppressions: [] });
       expect(rows(untilMs + 5001).visible.map(row => row.evidenceKey)).toEqual([finding.evidenceKey]);
+    } finally { controller.dispose(); }
+  });
+  it('retains the agent surface when creating a suggested digest', async () => {
+    const { controller } = harness({ agentDigestDisabled: true });
+    const suggestion = resolveUsagePageAggregation({ queries: [query] }).results[0]!.coach!.digestSuggestion!;
+    const schedule = { kind: 'schedule' as const, enabled: true,
+      schedule: { kind: 'interval' as const, everyMs: 60_000, scheduleExpr: null, timezone: null } };
+    try {
+      expect(await controller.createDigest(suggestion, { machineId: 'machine', directory: '/repo' }, schedule,
+        { surface: 'agent' })).toMatchObject({ ok: false, errorCode: 'action_disabled' });
+      expect(controller.getSnapshot().digest).toBeNull();
     } finally { controller.dispose(); }
   });
   it('keeps digest opt-in within the captured Account and refuses an invalid Automation destination', async () => {

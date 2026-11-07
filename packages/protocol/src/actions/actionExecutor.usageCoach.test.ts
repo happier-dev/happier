@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 import { getActionSpec } from './actionSpecs.js';
 import { normalizeUsageQuery } from '../inputs/usageQuery.js';
@@ -8,14 +8,165 @@ import { UsageCoachPreferencesV1Schema } from '../account/settings/usageCoachPre
 import { buildUsageCoachRemedies } from '../usage/coach/buildUsageCoachRemedies.js';
 import { applyUsageCoachPreferences, evaluateUsageCoach } from '../usage/coach/evaluateUsageCoach.js';
 import { UsageMcpBindingUsageSchema } from '../usage/coach/usageMcpBindingUsage.js';
-import { UsageCoachApplyResultSchema } from '../usage/coach/coachActions.js';
+import { UsageCoachApplyResultSchema, createUsageCoachSuppressionPort, UsageCoachSuppressionStateV1Schema } from '../usage/coach/coachActions.js';
 import { createMcpServerActionExecuteV1 } from '../mcp/servers/serverActionsV1.js';
 import { commitMcpServerCatalogMutationV1, loadMcpServerCatalogV1 } from '../mcp/servers/serverCatalogV1.js';
 import type { McpServerCatalogV1 } from '../mcp/servers/serverRowsV1.js';
 
 const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 } });
 
+// Substitute only persistence; Action admission, edit and projection stay real.
+function coachKv(read: () => ReturnType<typeof UsageCoachPreferencesV1Schema.parse>,
+    write: (value: ReturnType<typeof UsageCoachPreferencesV1Schema.parse>) => void) {
+    let version = 0;
+    return createUsageCoachSuppressionPort({ transport: {
+        read: async () => ({ value: { v: 1, suppressions: read().suppressions }, version }),
+        compareAndSet: async (value, expected) => {
+            if (version !== expected) return { success: false, value: { v: 1, suppressions: read().suppressions }, version };
+            write({ ...read(), ...UsageCoachSuppressionStateV1Schema.parse(value) });
+            return { success: true, version: ++version };
+        },
+    } });
+}
+
 describe('evidence-bound Coach Action admission', () => {
+    it('replaces deliberate Coach preferences without requiring suppression storage', async () => {
+        let preferences: unknown = { v: 1, suppressions: [{ kind: 'dismissed', evidenceKey: 'old' }] };
+        const executor = createActionExecutor({
+            settingsDeclarationAction: async request => {
+                preferences = 'value' in request.input ? request.input.value : undefined;
+                return { anchor: 'usage.coachPreferences', value: preferences, settingsVersion: 2 };
+            },
+        } as ActionExecutorDeps);
+        const edited = { v: 1, disabledChecks: ['approval_friction'], modelSuggestion: 'off' };
+        expect(await executor.execute('settings.set', { anchor: 'usage.coachPreferences', value: edited },
+            { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } })).toMatchObject({ ok: true });
+        expect(preferences).toEqual(edited);
+    });
+    it('dismisses and restores without writing Account settings', async () => {
+        let preferences = UsageCoachPreferencesV1Schema.parse({});
+        let kv = UsageCoachPreferencesV1Schema.parse({});
+        const owner = coachKv(() => kv, value => { kv = value; });
+        const settingsWrites: unknown[] = [];
+        const executor = createActionExecutor({
+            usageActions: { query: async () => resolveUsagePageAggregation({ queries: [query] }), coachSuppressions: () => owner },
+            settingsDeclarationAction: async request => {
+                if (request.actionId === 'settings.set') {
+                    settingsWrites.push(request.input);
+                    preferences = UsageCoachPreferencesV1Schema.parse('value' in request.input ? request.input.value : undefined);
+                }
+                return { anchor: 'usage.coachPreferences', value: preferences, settingsVersion: 1 };
+            },
+        } as ActionExecutorDeps);
+        const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
+        expect(await executor.execute('usage.coach.dismiss', { query, evidenceKey: 'historical', dismissed: true }, context)).toMatchObject({ ok: true });
+        expect(settingsWrites).toEqual([]);
+        expect((await owner.read()).suppressions).toEqual([{ kind: 'dismissed', evidenceKey: 'historical' }]);
+        expect(await executor.execute('usage.coach.dismiss', { query, evidenceKey: 'historical', dismissed: false }, context)).toMatchObject({ ok: true });
+        expect(settingsWrites).toEqual([]);
+        expect((await owner.read()).suppressions).toEqual([]);
+    });
+    it('deduplicates exact evidence without suppressing another finding from the same check', async () => {
+        let preferences = UsageCoachPreferencesV1Schema.parse({});
+        let settingsVersion = 1;
+        const read = (selected: typeof query, coachPreferences = preferences) => {
+            const startMs = 'startMs' in selected.period ? selected.period.startMs! : 100;
+            return resolveUsagePageAggregation({ queries: [selected], coachPreferences, howYouWork: [{ query: selected, asOfMs: startMs + 100,
+                detail: { status: 'partial', permissions: [{ requestId: `permission-${startMs}`, workId: 'work',
+                    requestedAtMs: startMs + 20, decidedAtMs: startMs + 60, toolId: null, answeringClientCategory: null }] } }] });
+        };
+        let batch = read(query);
+        let analyticsReads = 0;
+        const executor = createActionExecutor({
+            usageActions: { query: async () => { analyticsReads += 1; return batch; },
+                coachSuppressions: () => coachKv(() => preferences, value => { preferences = value; }) },
+            settingsDeclarationAction: async request => {
+                if (request.actionId === 'settings.get') return { anchor: 'usage.coachPreferences', value: preferences, settingsVersion };
+                preferences = UsageCoachPreferencesV1Schema.parse('value' in request.input ? request.input.value : undefined);
+                return { anchor: 'usage.coachPreferences', value: preferences, settingsVersion: ++settingsVersion };
+            },
+        } as ActionExecutorDeps);
+        const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
+        const originalKey = batch.results[0]!.coach!.findings[0]!.evidenceKey;
+        for (let repeat = 0; repeat < 2; repeat++) {
+            batch = read(query);
+            expect(await executor.execute('usage.coach.dismiss', { query, evidenceKey: originalKey, dismissed: true }, context))
+                .toMatchObject({ ok: true });
+        }
+        expect(preferences.suppressions).toHaveLength(1);
+        const original = applyUsageCoachPreferences(read(query).results[0]!.coach!, preferences, Date.now());
+        expect(original.findings[0]!.state.dismissed).toBe(true);
+        const nextQuery = normalizeUsageQuery({ period: { startMs: 200, endMs: 300 } });
+        batch = read(nextQuery);
+        const next = applyUsageCoachPreferences(batch.results[0]!.coach!, preferences, Date.now());
+        expect(next.findings[0]!.detectorId).toBe(original.findings[0]!.detectorId);
+        expect(next.findings[0]!.evidenceKey).not.toBe(originalKey);
+        expect(next.findings[0]!.state.dismissed).toBe(false);
+        expect(await executor.execute('usage.coach.dismiss', { query: nextQuery,
+            evidenceKey: next.findings[0]!.evidenceKey, dismissed: true }, context)).toMatchObject({ ok: true });
+        expect(preferences.suppressions).toHaveLength(2);
+        // Reopening an old absolute window reproduces its exact evidence key and preference.
+        const reopened = applyUsageCoachPreferences(read(query).results[0]!.coach!, preferences, Date.now());
+        expect(reopened.findings[0]!.evidenceKey).toBe(originalKey);
+        expect(reopened.findings[0]!.state.dismissed).toBe(true);
+        const disabled = read(nextQuery, { ...preferences, disabledChecks: ['approval_friction'] }).results[0]!.coach!;
+        expect(disabled.evaluations.find(row => row.detectorId === 'approval_friction')?.status).toBe('disabled');
+        expect(disabled.findings).toEqual([]);
+        expect(analyticsReads).toBe(0);
+        expect(await executor.execute('usage.coach.apply', { query: nextQuery, evidenceKey: originalKey }, context))
+            .toMatchObject({ ok: false, errorCode: 'coach_evidence_not_current' });
+        analyticsReads = 0;
+        const untilMs = Date.now() + 60_000;
+        for (let repeat = 0; repeat < 2; repeat++) {
+            batch = read(query);
+            expect(await executor.execute('usage.coach.snooze', { query, evidenceKey: originalKey, untilMs }, context)).toMatchObject({ ok: true });
+        }
+        expect(preferences.suppressions).toHaveLength(2);
+        expect(applyUsageCoachPreferences(read(query).results[0]!.coach!, preferences, Date.now()).findings[0]!.state.snoozedUntilMs).toBe(untilMs);
+        expect(applyUsageCoachPreferences(read(nextQuery).results[0]!.coach!, preferences, Date.now()).findings[0]!.state.snoozedUntilMs).toBeNull();
+        // Restoring the historical key does not require it to be in the latest analytics.
+        batch = read(nextQuery);
+        expect(await executor.execute('usage.coach.dismiss', { query, evidenceKey: originalKey,
+            dismissed: false }, context)).toMatchObject({ ok: true });
+        expect(preferences.suppressions).toEqual([{ kind: 'dismissed', evidenceKey: next.findings[0]!.evidenceKey }]);
+        batch = read(nextQuery);
+        expect(await executor.execute('usage.coach.dismiss', { query: nextQuery, evidenceKey: next.findings[0]!.evidenceKey,
+            dismissed: false }, context)).toMatchObject({ ok: true });
+        expect(preferences.suppressions).toEqual([]);
+        expect(analyticsReads).toBe(0);
+    });
+    it('retains historical snoozes while projecting expired snoozes as inactive', async () => {
+        const clock = vi.spyOn(Date, 'now').mockReturnValue(250);
+        try {
+            const detail = { status: 'partial' as const, permissions: [{ requestId: 'permission', workId: 'work',
+                requestedAtMs: 120, decidedAtMs: 160, toolId: null, answeringClientCategory: null }] };
+            const batch = resolveUsagePageAggregation({ queries: [query], howYouWork: [{ query, detail, asOfMs: 200 }] });
+            const evaluation = batch.results[0]!.coach!;
+            const finding = evaluation.findings[0]!;
+            const retained = [{ kind: 'dismissed' as const, evidenceKey: 'historical-unrelated' },
+                { kind: 'snoozed' as const, evidenceKey: 'expired-unrelated', untilMs: 250 },
+                { kind: 'snoozed' as const, evidenceKey: 'live-unrelated', untilMs: 251 }];
+            let preferences = UsageCoachPreferencesV1Schema.parse({ suppressions: [
+                { kind: 'dismissed', evidenceKey: finding.evidenceKey }, ...retained] });
+            expect(applyUsageCoachPreferences(evaluation, preferences, 250).findings[0]!.state.dismissed).toBe(true);
+            const executor = createActionExecutor({ usageActions: { query: async () => batch,
+                coachSuppressions: () => coachKv(() => preferences, value => { preferences = value; }) },
+            } as ActionExecutorDeps);
+            const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
+            expect(await executor.execute('usage.coach.dismiss', { query, evidenceKey: finding.evidenceKey, dismissed: true }, context))
+                .toMatchObject({ ok: true });
+            expect(preferences.suppressions).toHaveLength(4);
+            expect(preferences.suppressions).toEqual(expect.arrayContaining(retained));
+            expect(preferences.suppressions.some(row => row.evidenceKey === finding.evidenceKey)).toBe(true);
+            expect(applyUsageCoachPreferences(evaluation, preferences, 250).findings[0]!.state.dismissed).toBe(true);
+            expect(await executor.execute('usage.coach.snooze', { query, evidenceKey: finding.evidenceKey, untilMs: 250 }, context))
+                .toMatchObject({ ok: true });
+            expect(preferences.suppressions).toEqual([...retained,
+                { kind: 'snoozed', evidenceKey: finding.evidenceKey, untilMs: 250 }]);
+            expect(applyUsageCoachPreferences(evaluation, preferences, 250).findings[0]!.state)
+                .toMatchObject({ dismissed: false, snoozedUntilMs: null });
+        } finally { clock.mockRestore(); }
+    });
     it('composes witnessed MCP remedies with exact Undo and refuses intervening catalog edits', async () => {
         let catalog: McpServerCatalogV1 = { v: 1, servers: [{ id: 'server', name: 'docs', transport: 'stdio',
             stdio: { command: 'docs', args: [] }, env: {}, createdAt: 1, updatedAt: 10 },
@@ -29,6 +180,8 @@ describe('evidence-bound Coach Action admission', () => {
         const snapshot = () => loadMcpServerCatalogV1({ mode: 'plain', material: null,
             readRow: async () => ({ status: 'present', revision, content: { t: 'plain', v: catalog } }) });
         let raceAfterQuery = false;
+        let analyticsAvailable = true;
+        let analyticsReads = 0;
         let nextRuleId = 0;
         let preferences = UsageCoachPreferencesV1Schema.parse({});
         let settingsVersion = 1;
@@ -53,7 +206,9 @@ describe('evidence-bound Coach Action admission', () => {
                 preferences = UsageCoachPreferencesV1Schema.parse('value' in request.input ? request.input.value : undefined);
                 return { anchor: 'usage.coachPreferences', value: preferences, settingsVersion: ++settingsVersion };
             },
-            usageActions: { query: async () => {
+            usageActions: { coachSuppressions: () => coachKv(() => preferences, value => { preferences = value; }), query: async () => {
+                analyticsReads += 1;
+                if (!analyticsAvailable) throw new Error('Analytics transport unavailable');
                 const finding = evaluateUsageCoach({ queryKey: 'query', period: { startMs: 100, endMs: 200 }, asOfMs: 200,
                     currentness: 'current', detail: { coverage: 'partial', mcpUsage: [usage] } }).findings;
                 const admittedRemedies = buildUsageCoachRemedies({ findings: finding, composition: [], mcpUsage: [usage], serverId: 'home',
@@ -70,24 +225,29 @@ describe('evidence-bound Coach Action admission', () => {
         const evaluation = resolveUsagePageAggregation({ queries: [query], howYouWork: [{ query, asOfMs: 200,
             detail: { status: 'partial', coach: { detail: { coverage: 'partial', mcpUsage: [usage] } } } }] });
         const evidenceKey = evaluation.results[0]!.coach!.findings.find(row => row.detectorId === 'mcp_overhead')!.evidenceKey;
-        const snooze = await executor.execute('usage.coach.snooze', { query, evidenceKey, untilMs: 250 }, context);
-        expect(snooze).toMatchObject({ ok: true, result: { kind: 'preference_updated' } });
-        expect(applyUsageCoachPreferences(evaluation.results[0]!.coach!, preferences, 249).findings[0]!.state.snoozedUntilMs).toBe(250);
-        expect(applyUsageCoachPreferences(evaluation.results[0]!.coach!, preferences, 250).findings[0]!.state.snoozedUntilMs).toBeNull();
-        expect(await executor.execute('usage.coach.dismiss', { query, evidenceKey, dismissed: true }, context)).toMatchObject({ ok: true });
-        expect(applyUsageCoachPreferences(evaluation.results[0]!.coach!, preferences, 250).findings[0]!.state.dismissed).toBe(true);
-        expect(await executor.execute('usage.coach.dismiss', { query, evidenceKey, dismissed: false }, context)).toMatchObject({ ok: true });
-        expect(applyUsageCoachPreferences(evaluation.results[0]!.coach!, preferences, 250).findings[0]!.state.dismissed).toBe(false);
         const apply = await executor.execute('usage.coach.apply', { query, evidenceKey }, context);
         expect(apply, JSON.stringify(apply)).toMatchObject({ ok: true, result: { kind: 'applied', reversal: { kind: 'mcp_binding' } } });
         if (!apply.ok) throw Error('Apply failed');
         const receipt = UsageCoachApplyResultSchema.parse(apply.result);
         expect(catalog.bindings.find(rule => rule.id === 'rule')!.enabled).toBe(false);
+        analyticsAvailable = false;
+        analyticsReads = 0;
         const undo = await executor.execute('usage.coach.undo', { query, evidenceKey, reversal: receipt.reversal }, context);
         expect(undo, JSON.stringify(undo)).toMatchObject({ ok: true, result: { kind: 'undone' } });
         const configuration = (rules: McpServerCatalogV1['bindings']) => rules.map(({ updatedAt: _clock, ...rule }) => rule)
             .sort((a, b) => a.id.localeCompare(b.id));
         expect(configuration(catalog.bindings)).toEqual(configuration(original));
+        const untilMs = Date.now() + 60_000;
+        const snooze = await executor.execute('usage.coach.snooze', { query, evidenceKey, untilMs }, context);
+        expect(snooze).toMatchObject({ ok: true, result: { kind: 'preference_updated' } });
+        expect(applyUsageCoachPreferences(evaluation.results[0]!.coach!, preferences, untilMs - 1).findings[0]!.state.snoozedUntilMs).toBe(untilMs);
+        expect(applyUsageCoachPreferences(evaluation.results[0]!.coach!, preferences, untilMs).findings[0]!.state.snoozedUntilMs).toBeNull();
+        expect(await executor.execute('usage.coach.dismiss', { query, evidenceKey, dismissed: true }, context)).toMatchObject({ ok: true });
+        expect(applyUsageCoachPreferences(evaluation.results[0]!.coach!, preferences, 250).findings[0]!.state.dismissed).toBe(true);
+        expect(await executor.execute('usage.coach.dismiss', { query, evidenceKey, dismissed: false }, context)).toMatchObject({ ok: true });
+        expect(applyUsageCoachPreferences(evaluation.results[0]!.coach!, preferences, 250).findings[0]!.state.dismissed).toBe(false);
+        expect(analyticsReads).toBe(0);
+        analyticsAvailable = true;
         // New native observation sees the restored configuration and its real row revision.
         usage.bindings[0]!.catalogRevision = revision;
         usage.bindings[0]!.bindingRevision = catalog.bindings.find(rule => rule.id === 'rule')!.updatedAt;
@@ -99,13 +259,18 @@ describe('evidence-bound Coach Action admission', () => {
             kind: 'write', write: { place: { t: 'machine', machineId: 'other-machine' }, state: 'on' },
         } }, context });
         const intervening = catalog;
+        analyticsAvailable = false;
+        analyticsReads = 0;
         expect(await executor.execute('usage.coach.undo', { query, evidenceKey, reversal: nextReceipt.reversal }, context))
-            .toMatchObject({ ok: false, errorCode: 'coach_owner_refused' });
+            .toMatchObject({ ok: false, errorCode: 'coach_owner_refused', details: { ok: false, code: 'conflict' } });
         expect(catalog).toBe(intervening);
+        expect(analyticsReads).toBe(0);
+        analyticsAvailable = true;
         // Apply must also refuse a row changed between the authorized query and effect.
         catalog = { ...catalog, bindings: original }; usage.bindings[0]!.catalogRevision = revision;
         usage.bindings[0]!.bindingRevision = originalBinding.updatedAt; raceAfterQuery = true;
-        expect(await executor.execute('usage.coach.apply', { query, evidenceKey }, context)).toMatchObject({ ok: false });
+        expect(await executor.execute('usage.coach.apply', { query, evidenceKey }, context))
+            .toMatchObject({ ok: false, errorCode: 'coach_owner_refused', details: { ok: false, code: 'conflict' } });
         expect(catalog.bindings).toBe(original);
         // Changing the actual server or rule voids the old witness before mutation.
         catalog = { ...catalog, servers: catalog.servers.map(server => server.id === 'server' ? { ...server, updatedAt: 301 } : server) };
@@ -144,7 +309,8 @@ describe('evidence-bound Coach Action admission', () => {
         const finding = batch.results[0]!.coach!.findings.find(row => row.detectorId === 'approval_friction')!;
         let preferences = UsageCoachPreferencesV1Schema.parse({ v: 1, suppressions: [] });
         const client = createActionExecutor({ isActionApprovalRequired: () => false,
-            usageActions: { query: async () => batch },
+            usageActions: { query: async () => batch,
+                coachSuppressions: () => coachKv(() => preferences, value => { preferences = value; }) },
             settingsDeclarationAction: async request => {
                 if (request.actionId === 'settings.get') return { anchor: 'usage.coachPreferences', value: preferences, settingsVersion: 1 };
                 preferences = UsageCoachPreferencesV1Schema.parse('value' in request.input ? request.input.value : undefined);
@@ -154,7 +320,8 @@ describe('evidence-bound Coach Action admission', () => {
         const headless = createActionExecutor({ isActionApprovalRequired: () => false,
             // This transport reaches the existing client Action executor; no private finding crosses in input.
             clientActionExecute: async request => client.execute(request.actionId, request.input, { ...request.context, surface: 'ui' }),
-            usageActions: { query: async input => resolveUsagePageAggregation({ queries: input.queries }) },
+            usageActions: { query: async input => resolveUsagePageAggregation({ queries: input.queries }),
+                coachSuppressions: () => coachKv(() => preferences, value => { preferences = value; }) },
         } as ActionExecutorDeps);
         const input = { query, evidenceKey: finding.evidenceKey, dismissed: true };
         for (const surface of ['cli', 'agent', 'mcp', 'api'] as const) {

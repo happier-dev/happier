@@ -12,33 +12,24 @@ export const UsageCoachSuppressionStateV1Schema = lazyZodSchema(() => z.strictOb
     v: z.literal(1), suppressions: z.array(UsageCoachSuppressionV1Schema),
 }));
 export type UsageCoachSuppressionStateV1 = z.infer<typeof UsageCoachSuppressionStateV1Schema>;
-/** Extract retained dismissal data independently of obsolete preference fields. */
-export function readLegacyUsageCoachSuppressions(value: unknown): UsageCoachSuppressionStateV1['suppressions'] {
-    const suppressions = value !== null && typeof value === 'object' && 'suppressions' in value ? value.suppressions : undefined;
-    return suppressions === undefined ? [] : UsageCoachSuppressionStateV1Schema.parse({ v: 1, suppressions }).suppressions;
-}
 export type UsageCoachSuppressionEdit = Readonly<{ evidenceKey: string } & ({ dismissed: boolean } | { untilMs: number | null })>;
 export type UsageCoachSuppressionPort = Readonly<{
     read(): Promise<UsageCoachSuppressionStateV1>;
-    convertLegacy(): Promise<void>;
     edit(request: UsageCoachSuppressionEdit): Promise<void>;
 }>;
 
-/** Reuse Account JSON KV's mode-aware CAS transport; the Coach owns conversion and edits. */
+/** Reuse Account JSON KV's mode-aware CAS transport; the Coach owns suppression edits. */
 export function createUsageCoachSuppressionPort(input: Readonly<{
     transport: {
         read(): Promise<Readonly<{ value: unknown | null; version: number }>>;
         compareAndSet(value: unknown, version: number): Promise<Readonly<{ success: true; version: number }>
             | Readonly<{ success: false; value: unknown | null; version: number }>>;
     };
-    readLegacy(): Promise<readonly z.infer<typeof UsageCoachSuppressionV1Schema>[]>;
 }>): UsageCoachSuppressionPort {
     const read = async () => {
         const row = await input.transport.read();
-        // An explicit empty current record is authoritative after Restore.
-        return { version: row.version, state: row.value === null
-            ? { v: 1 as const, suppressions: [...await input.readLegacy()] }
-            : UsageCoachSuppressionStateV1Schema.parse(row.value), legacy: row.value === null };
+        return { version: row.version,
+            state: UsageCoachSuppressionStateV1Schema.parse(row.value ?? { v: 1, suppressions: [] }) };
     };
     const write = async (state: UsageCoachSuppressionStateV1, version: number) => {
         const result = await input.transport.compareAndSet(state, version);
@@ -48,11 +39,6 @@ export function createUsageCoachSuppressionPort(input: Readonly<{
         async read() {
             const row = await read();
             return row.state;
-        },
-        async convertLegacy() {
-            const row = await read();
-            // A deliberate preference edit may replace the legacy container.
-            if (row.legacy && row.state.suppressions.length) await write(row.state, row.version);
         },
         async edit(request) {
             const row = await read();

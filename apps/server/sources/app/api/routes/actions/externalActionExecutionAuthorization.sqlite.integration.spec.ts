@@ -1860,7 +1860,7 @@ describe("external Action execution authorization", () => {
         };
     }
 
-    it.each(['account', 'team'] as const)('scopes app-update roots to the requester exact Environment revision and its current private Artifact via %s access', async access => {
+    it.each(['account', 'team'] as const)('admits app-update Environment revisions once and keeps reads within their current Artifacts via %s access', async access => {
         const { setArtifactAccessGrantInTx } = await import('@/app/artifacts/artifactAccessService');
         const fixture = await createFixture({ qualifiedPat: false });
         const custodian = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
@@ -1924,8 +1924,9 @@ describe("external Action execution authorization", () => {
                 { serverId: 'other-home', environmentId: selected.environmentId })).toBeNull();
             expect(await verify('/v1/artifacts', undefined, undefined, 'POST', {})).toBeNull();
             await db.deploymentEnvironment.update({ where: { id: selected.environmentId }, data: { revision: { increment: 1 }, contentArtifactId: unrelated } });
-            expect(await verify(selectedPath, 'deployments.environments.get', { serverId: homeId, environmentId: selected.environmentId })).toBeNull();
+            expect(await verify(selectedPath, 'deployments.environments.get', { serverId: homeId, environmentId: selected.environmentId })).not.toBeNull();
             expect(await verify(`/v1/artifacts/${selected.contentArtifactId}`, undefined, { id: selected.contentArtifactId })).toBeNull();
+            expect(await verify(`/v1/artifacts/${unrelated}`, undefined, { id: unrelated })).not.toBeNull();
         } finally { await app.close(); }
     });
 

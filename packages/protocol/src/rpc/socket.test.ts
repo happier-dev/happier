@@ -3,6 +3,14 @@ import * as socketProtocol from './socket.js';
 import { RPC_METHODS, SESSION_RPC_METHODS } from './methods.js';
 import { resolveMachineRpcRoutePolicy } from '../machines/peer/mediation/rpc/routePolicyV1.js';
 
+it('keeps the native applied-selection read on the exact Session owner', () => {
+  expect(socketProtocol.resolveSocketRpcSessionAuthorization('session.agentStart.selection.read.v1'))
+    .toMatchObject({ authority: 'sessionOwner', routeToSessionOwnerDaemon: true });
+  expect(resolveMachineRpcRoutePolicy(SESSION_RPC_METHODS.SESSION_AGENT_START_SELECTION_READ_V1))
+    .toMatchObject({ routeClass: 'server_required', sharedMachineAccess: 'custodian_only', rpcClassification: 'internal_only',
+      scope: { accountRequired: true, machineRequired: true, serverRequired: true } });
+});
+
 it('keeps Home Machine-read authority closed and outside generic client authorization', () => {
   const authority = socketProtocol.SocketRpcMachineReadServerOriginAuthorizationContextV1Schema.parse({
     kind: 'machine.read.serverOrigin', accountId: 'alice', machineId: 'machine-a',
@@ -20,9 +28,10 @@ it('classifies detached execution reads without weakening Session authority or t
     expect(socketProtocol.resolveSocketRpcSessionAuthorization(method)).toMatchObject({
       authority: 'readTranscript', routeToSessionOwnerDaemon: true, machineScope: true,
     });
-    expect(resolveMachineRpcRoutePolicy(method)).toMatchObject({ routeClass: 'server_required', sharedMachineAccess: 'custodian_only',
-      scope: { sessionRequired: false } });
+    expect(resolveMachineRpcRoutePolicy(method)).toMatchObject({ routeClass: 'server_required', sharedMachineAccess: 'use' });
   }
+  expect(resolveMachineRpcRoutePolicy(SESSION_RPC_METHODS.EXECUTION_RUN_FOLLOW_FRONTIER))
+    .toMatchObject({ routeClass: 'server_required', sharedMachineAccess: 'custodian_only' });
   expect(socketProtocol.resolveSocketRpcSessionAuthorization(SESSION_RPC_METHODS.EXECUTION_RUN_BROKER_AUTHORITY_RESOLVE_V1))
     .toMatchObject({ authority: 'sessionOwner', routeToSessionOwnerDaemon: true });
   expect(socketProtocol.resolveSocketRpcSessionAuthorization(SESSION_RPC_METHODS.EXECUTION_RUN_BROKER_AUTHORITY_RESOLVE_V1)?.machineScope).toBeUndefined();
@@ -42,7 +51,6 @@ it('keeps explicit replies on the exact publisher Session with Action authority 
   expect(socketProtocol.isSessionActionRpcMethodV1(`session-a:${method}`)).toBe(true);
   expect(resolveMachineRpcRoutePolicy(method)).toMatchObject({
     routeClass: 'server_required', sharedMachineAccess: 'custodian_only',
-    scope: { sessionRequired: true },
   });
 });
 

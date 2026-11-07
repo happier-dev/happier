@@ -10,11 +10,11 @@ describe('plugin transport authority', () => {
     const { resolveMachineRpcRoutePolicy, resolveMachineRpcExternalActionEffectV1 } = await import('./routePolicyV1.js');
     expect(resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_PLUGIN_UI_CAPTURE_SOURCE_READ)).toMatchObject({
       routeClass: 'direct_ephemeral', rpcClassification: 'internal_only', commandReceiptRequired: false,
-      scope: { accountRequired: true, machineRequired: true, sessionRequired: false, serverRequired: false },
+      scope: { accountRequired: true, machineRequired: true, serverRequired: false },
     });
     expect(resolveMachineRpcRoutePolicy(RPC_METHODS.UI_CONTRIBUTED_ACTION_EXECUTE)).toMatchObject({
       routeClass: 'server_required', serverRequiredReason: 'auth', rpcClassification: 'internal_only',
-      scope: { accountRequired: true, machineRequired: true, sessionRequired: false, serverRequired: true },
+      scope: { accountRequired: true, machineRequired: true, serverRequired: true },
     });
     expect(resolveMachineRpcExternalActionEffectV1(RPC_METHODS.DAEMON_PLUGIN_UI_CAPTURE_SOURCE_READ)).toBeNull();
     expect(resolveMachineRpcExternalActionEffectV1(RPC_METHODS.UI_CONTRIBUTED_ACTION_EXECUTE)).toBeNull();
@@ -27,7 +27,7 @@ describe('plugin transport authority', () => {
       const { resolveMachineRpcRoutePolicy, resolveMachineRpcExternalActionEffectV1 } = await import('./routePolicyV1.js');
       expect(resolveMachineRpcRoutePolicy(method)).toMatchObject({
         routeClass: 'server_required', serverRequiredReason: 'auth', rpcClassification: 'internal_only',
-        scope: { accountRequired: true, machineRequired: true, sessionRequired: true, serverRequired: true },
+        scope: { accountRequired: true, machineRequired: true, serverRequired: true },
       });
       expect(resolveMachineRpcExternalActionEffectV1(method)).toBeNull();
     }

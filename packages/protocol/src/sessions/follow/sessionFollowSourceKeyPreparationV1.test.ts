@@ -153,7 +153,7 @@ describe('Session Follow source-key preparation V1', () => {
       serverRequiredReason: 'sharing',
       rpcClassification: 'internal_only',
       commandReceiptRequired: false,
-      scope: { accountRequired: true, machineRequired: true, sessionRequired: true, serverRequired: true },
+      scope: { accountRequired: true, machineRequired: true, serverRequired: true },
     });
   });
 });

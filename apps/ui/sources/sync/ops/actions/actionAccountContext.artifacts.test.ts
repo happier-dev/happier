@@ -1,10 +1,16 @@
-import { projectBotTemplateArtifactHeaderV1, type BotTemplateDraftV1, type BotTemplateArtifactV1, projectBotTemplateReleaseV1 } from '@happier-dev/protocol/bots/templates/botTemplateV1';
-import { createUiBotTemplateAction } from './botTemplateActionDeps';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ARTIFACT_PLAIN_DATA_KEY_MARKER, CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
-    createActionExecutor, ArtifactActionOutputSchemasV1, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent, withArtifactExcerptV1,
-    ActionsSettingsV1Schema, isApprovalRequiredByActionsSettings, normalizeActionsSettingsV1, type ActionExecutorContext } from '@happier-dev/protocol';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent} from '@happier-dev/protocol/storage/artifactStoredContent';
+import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION} from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
+import {
+    createActionExecutor} from '@happier-dev/protocol/actions/actionExecutor';
+import { ArtifactActionOutputSchemasV1} from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import { withArtifactExcerptV1} from '@happier-dev/protocol/artifacts/artifactExcerptV1';
+import {
+    ActionsSettingsV1Schema, normalizeActionsSettingsV1} from '@happier-dev/protocol/actions/actionSettings';
+import { isApprovalRequiredByActionsSettings} from '@happier-dev/protocol/actions/actionApprovalPolicy';
+import { type ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { createUsageQueryBatchHttpBoundary } from '@/dev/testkit/harness/usageQueryBatchHttpBoundary';
 import * as credentialStorage from '@/auth/storage/tokenStorage';
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
@@ -15,6 +21,8 @@ import { ARTIFACT_UPLOAD_PATH_V1, decodeArtifactUploadMetadataV1 } from '@happie
 import { createWorkBoardArtifactPortV1 } from '@happier-dev/protocol/boards/workBoardArtifactV1';
 import { captureLazyActionAccountContext } from './actionAccountContext';
 import { createUiArtifactAction } from './artifactActionDeps';
+import { createUiBotTemplateAction } from './botTemplateActionDeps';
+import { projectBotTemplateArtifactHeaderV1, type BotTemplateDraftV1, type BotTemplateArtifactV1, projectBotTemplateReleaseV1 } from '@happier-dev/protocol/bots/templates/botTemplateV1';
 import { createFrontDoorActionExecute } from './frontDoorRuntimeActionExecutor';
 import { storage } from '@/sync/domains/state/storage';
 import { createSessionAccessFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
@@ -25,10 +33,11 @@ import { readSettingsPageGate } from '@/components/settings/catalog/pageCatalog'
 import { SettingsDeclarationActionOutputSchemasV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
-import { UsageCoachReversalSchema } from '@happier-dev/protocol/usage/coach/coachActions';
-import { UsageCoachPreferencesV1Schema } from '@happier-dev/protocol/account/settings/usageCoachPreferencesV1';
+import { UsageCoachReversalSchema, USAGE_COACH_SUPPRESSIONS_KV_KEY } from '@happier-dev/protocol/usage/coach/coachActions';
+import { createAccountKvHttpFixture } from '@/dev/testkit/fixtures/accountKvHttpFixture';
+import { createUiCoachSuppressionPort } from '@/sync/api/account/usageCoachSuppressions';
 import { createUiUsageActionPorts } from './usageActionDeps';
-import { UsageQueryBatchResultSchema } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import { UsageQueryBatchResultSchema, type UsageQueryBatchResult } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { createUiMcpServerActionExecuteV1 } from './mcpServerActionDeps';
 import { MCP_SERVER_CATALOG_ROWS_ROUTE_V1, McpServerCatalogRowMutationV1Schema, McpServerCatalogV1Schema } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 import { UsageCoachApplyResultSchema } from '@happier-dev/protocol/usage/coach/coachActions';
@@ -45,9 +54,9 @@ import { sealSessionStoredContent } from '@happier-dev/sync-client';
 import { executeDiscussionActionInAccountContext } from '@/sync/api/discussions/discussionActions';
 import { createArtifactActionsClient } from '@/components/artifacts/artifactActionsClient';
 import { createSessionReadBatchHttpBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
-import { createDeferred } from '@/dev/testkit';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { createArtifactListHttpResponse, createArtifactReadBatchHttpResponse, createPlainArtifactHttpFixture, projectArtifactStoredKind } from '@/dev/testkit/harness/artifactStoreBoundary';
-import { decodeArtifactKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 
 // HTTP, device credential storage and the native theme runtime are substituted boundaries.
 const runtimeFetch = vi.hoisted(() => vi.fn());
@@ -62,16 +71,21 @@ vi.mock('@/text', async () => {
 });
 await loadSyncSingletonForTests();
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
-function artifactKindProjection(storedKind: unknown) {
-    const { kind, kindHint, classified } = decodeArtifactKindV1(storedKind);
-    return { kind, ...(classified ? { kindHint } : {}) };
+function expectCompactUsageActionSnapshot(delivered: UsageQueryBatchResult, resource: UsageQueryBatchResult) {
+    // The Resource retains the catalog for repricing/exports; the Action delivers
+    // the same admitted facts and evidence without repeating that public catalog.
+    expect(delivered).toEqual({ ...resource, results: resource.results.map(slice => {
+        expect(slice.accounting?.priceCatalog).toBeDefined();
+        const { priceCatalog: _catalog, ...accounting } = slice.accounting!;
+        return { ...slice, accounting };
+    }) });
 }
-// Adapt the existing HTTP facts through the canonical Session batch fixture;
-// Coach now reads exact Session snapshots, turns and messages on this transport.
+// Adapt external accounting and Session facts through their canonical batch fixtures.
 function installSessionBatchHttpFixture(accountId: string, route: (url: unknown, init?: RequestInit) => Promise<Response>) {
-    const boundary = createSessionReadBatchHttpBoundary(request => request.path === '/v2/sessions/read-batch' ? undefined
+    const usage = createUsageQueryBatchHttpBoundary(request => request.path === '/v2/usage/query-batch' ? undefined
         : route(request.url, { method: request.method, headers: request.headers, signal: request.signal,
-            ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) }));
+            ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) }), []);
+    const boundary = createSessionReadBatchHttpBoundary(request => request.path === '/v2/sessions/read-batch' ? undefined : usage(request));
     runtimeFetch.mockImplementation(async (input: unknown, init?: RequestInit) => {
         const url = new URL(String(input));
         return boundary.handle({ url, path: url.pathname, home: url.origin, accountId,
@@ -159,6 +173,60 @@ describe('scoped Account workflow Artifact operations', () => {
             expect(batches).toEqual([{ artifactIds: demanded, projection: 'headers' }]);
         } finally { account.dispose(); }
     });
+
+    it('finds a retained legacy notice beyond 500 headers with selected bodies and no read-side writes', async () => {
+        const home = await upsertAndActivateServer({ serverUrl: 'https://notice-partial-coverage.test', scope: 'tab' });
+        const token = `header.${encodeBase64(new TextEncoder().encode(JSON.stringify({ sub: 'artifact-account' })), 'base64url')}.signature`;
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token });
+        const rows: Artifact[] = Array.from({ length: 702 }, (_, index) => ({ id: `legacy-${index}`, kind: null,
+            ownerAccountId: index === 701 ? 'shared-owner' : 'artifact-account', access: index === 701 ? 'view' : 'owner', encryptionMode: 'plain', publicAudience: 'none',
+            header: encodePlainArtifactStoredContent({ kind: index >= 700 ? 'account_notice.v1' : 'document.v1', title: 'Legacy' }),
+            body: encodePlainArtifactStoredContent({ body: 'private content' }), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+            headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1000 - index }));
+        const opened: string[] = [];
+        const writes: string[] = [];
+        const queries: URL[] = [];
+        runtimeFetch.mockImplementation(async (input: unknown, init?: RequestInit) => {
+            const target = new URL(String(input));
+            if (target.pathname === '/health' || target.pathname === '/v1/auth/ping') return json({});
+            if (target.pathname === '/v1/features') return json({ features: {}, capabilities: { accountStoredContentCompatibility: {
+                v: 1, minimumProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
+                currentProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION, declarationTransport: 'http-header-and-socket-auth-v1',
+            } } });
+            if (target.pathname === '/v1/account/encryption') return json({ mode: 'plain', updatedAt: 0 });
+            if (target.pathname === '/v1/artifacts') {
+                queries.push(target);
+                expect(target.searchParams.has('includeBody')).toBe(false);
+                return createArtifactListHttpResponse(target, rows);
+            }
+            if (target.pathname === '/v1/artifacts/read') return createArtifactReadBatchHttpResponse(JSON.parse(String(init?.body)), artifactId => {
+                opened.push(artifactId);
+                return { artifactId, ok: true, artifact: rows.find(row => row.id === artifactId), recipientCensus: null };
+            });
+            if (target.pathname.startsWith('/v1/artifacts/legacy-') && init?.method !== 'POST') {
+                const id = target.pathname.slice('/v1/artifacts/'.length);
+                opened.push(id);
+                return json(rows.find(row => row.id === id));
+            }
+            if (init?.method && init.method !== 'GET') writes.push(target.pathname);
+            return json({ error: 'unexpected_route' }, 404);
+        });
+        const account = await captureLazyActionAccountContext(home.id);
+        try {
+            for (let index = 0; index < 2; index++) {
+                const result = await account.workflowArtifacts.list({ kinds: ['account_notice.v1'], includeBody: true });
+                expect(result.kindCoverage).toEqual({ status: 'partial', unclassifiedCount: rows.length,
+                    reason: 'unclassified_legacy_rows' });
+                expect(result).toMatchObject({ coverage: 'complete', kindCoverage: { status: 'partial',
+                    unclassifiedCount: rows.length, reason: 'unclassified_legacy_rows' }, items: [
+                    { artifactId: 'legacy-700', body: 'private content' }, { artifactId: 'legacy-701', body: 'private content' }] });
+            }
+            expect(opened).toEqual(['legacy-700', 'legacy-701', 'legacy-700', 'legacy-701']);
+            expect(writes).toEqual([]);
+            expect(queries.filter(query => query.searchParams.get('unclassified') === 'true')).toHaveLength(4);
+        } finally { account.dispose(); }
+    });
+
     it('shares neutral Artifact acquisition across captured invocations without borrowing caller cancellation', async () => {
         const home = await upsertAndActivateServer({ serverUrl: 'https://artifact-shared-captured-read.test', scope: 'tab' });
         const token = `header.${encodeBase64(new TextEncoder().encode(JSON.stringify({ sub: 'artifact-account' })), 'base64url')}.signature`;
@@ -465,7 +533,7 @@ describe('scoped Account workflow Artifact operations', () => {
                 await entry.refresh();
                 const result = await executor.execute('usage.query', { queries: [query] }, context);
                 const batch = UsageQueryBatchResultSchema.parse(result.ok ? result.result : undefined);
-                expect(batch).toEqual(decodeUsageQueryResource(entry.getSnapshot().value!));
+                expectCompactUsageActionSnapshot(batch, UsageQueryBatchResultSchema.parse(decodeUsageQueryResource(entry.getSnapshot().value!)));
                 expect(entry.getSnapshot().subscription).toBe('live');
                 return batch.results[0]!.coach!.findings.find(row => row.detectorId === 'mcp_overhead');
             };
@@ -526,7 +594,7 @@ describe('scoped Account workflow Artifact operations', () => {
     it.each([
         { scenario: 'owner', name: 'captures a setting at the committed CAS winner and restores its historical unset state, refusing intervening edits' },
         { scenario: 'coach', name: 'public Coach Undo re-queries actual Account HTTP and restores a real setting receipt, refusing intervening edits' },
-        { scenario: 'coachPreferences', name: 'public Coach dismiss and snooze use retained Session composition HTTP and conditional Account preferences' },
+        { scenario: 'coachPreferences', name: 'public Coach dismiss and snooze preserve preferences and current suppression state through Account KV CAS' },
         { scenario: 'scope', name: 'refuses a retained setting receipt in another Home and Account with the same settings version' },
         { scenario: 'history', name: 'restores exact captured unset state when Account settings history is disabled' },
         { scenario: 'preferences', name: 'updates declared Coach preferences with exact Account revision CAS' },
@@ -546,9 +614,18 @@ describe('scoped Account workflow Artifact operations', () => {
         let version = 4;
         let race = true;
         let retainHistory = true;
+        const kv = createAccountKvHttpFixture();
+        let kvRace = false;
         const history = new Map<number, Record<string, unknown>>();
         installSessionBatchHttpFixture('settings-account', async (url: unknown, init?: RequestInit) => {
             const path = new URL(String(url)).pathname;
+            if (path === '/v1/kv' && init?.method === 'POST' && kvRace) {
+                kvRace = false;
+                const current = kv.read(USAGE_COACH_SUPPRESSIONS_KV_KEY)!;
+                await kv.handleFetch(String(url), { method: 'POST', body: JSON.stringify({ mutations: [current] }) });
+            }
+            const kvResponse = await kv.handleFetch(String(url), init);
+            if (kvResponse) return kvResponse;
             if (path === '/health' || path === '/v1/auth/ping') return json({});
             if (path === '/v1/features') return json({ features: {}, capabilities: { accountStoredContentCompatibility: {
                 v: 1, minimumProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
@@ -632,14 +709,13 @@ describe('scoped Account workflow Artifact operations', () => {
             if (scenario === 'preferences') {
                 expect(await action({ actionId: 'settings.get', input: { anchor: 'usage.coachPreferences', includeVersion: true } }))
                     .toEqual({ anchor: 'usage.coachPreferences', value: { v: 1, suppressions: [], disabledChecks: [], modelSuggestion: 'suggest_with_estimates' }, settingsVersion: 4 });
-                const value = { v: 1, suppressions: [{ kind: 'dismissed', evidenceKey: 'finding' }],
-                    disabledChecks: ['mcp_overhead'], modelSuggestion: 'complete_only' };
+                const value = { v: 1, disabledChecks: ['mcp_overhead'], modelSuggestion: 'complete_only' };
                 race = false;
                 expect(await action({ actionId: 'settings.set', input: { anchor: 'usage.coachPreferences', value, expectedSettingsVersion: 4 } }))
-                    .toEqual({ anchor: 'usage.coachPreferences', value, settingsVersion: 5 });
+                    .toEqual({ anchor: 'usage.coachPreferences', value: { ...value, suppressions: [] }, settingsVersion: 5 });
                 expect(raw).toEqual({ futureSibling: { retained: true }, usageCoachPreferencesV1: value });
                 expect(await action({ actionId: 'settings.set', input: { anchor: 'usage.coachPreferences',
-                    value: { ...value, suppressions: [] }, expectedSettingsVersion: 4 } }))
+                    value: { ...value, disabledChecks: [] }, expectedSettingsVersion: 4 } }))
                     .toMatchObject({ ok: false, errorCode: 'account_settings_mutation_conflict' });
                 expect(raw.usageCoachPreferencesV1).toEqual(value);
                 return;
@@ -748,38 +824,55 @@ describe('scoped Account workflow Artifact operations', () => {
                 await entry.refresh();
                 const queried = await executor.execute('usage.query', { queries: [query] }, context);
                 const batch = UsageQueryBatchResultSchema.parse(queried.ok ? queried.result : undefined);
-                expect(batch).toEqual(decodeUsageQueryResource(entry.getSnapshot().value!));
+                expectCompactUsageActionSnapshot(batch, UsageQueryBatchResultSchema.parse(decodeUsageQueryResource(entry.getSnapshot().value!)));
                 expect(entry.getSnapshot().subscription).toBe('live');
                 const finding = batch.results[0]?.coach?.findings.find(row => row.detectorId === 'duplicated_instructions');
                 expect(finding).toMatchObject({ remedy: { kind: 'prepared_session' } });
                 if (!finding) throw new Error('Expected actual retained-composition finding');
                 const evidenceKey = finding.evidenceKey;
-                const preferences = () => UsageCoachPreferencesV1Schema.parse(raw.usageCoachPreferencesV1);
+                const suppressions = createUiCoachSuppressionPort(account);
                 const otherSuppression = { kind: 'dismissed', evidenceKey: 'another-finding' };
+                await suppressions.edit({ evidenceKey: otherSuppression.evidenceKey, dismissed: true });
+                // Suppression state belongs to KV, independently of the Settings projection.
+                storage.setState({ settings: { ...storage.getState().settings, usageCoachPreferencesV1: {
+                    ...storage.getState().settings.usageCoachPreferencesV1, suppressions: [],
+                } } });
+                const updated = await executor.execute('settings.set', { anchor: 'usage.coachPreferences',
+                    value: { v: 1, disabledChecks: [], modelSuggestion: 'off' } }, context);
+                expect(updated, JSON.stringify(updated)).toMatchObject({ ok: true });
+                expect(kv.read(USAGE_COACH_SUPPRESSIONS_KV_KEY)).toBeDefined();
+                expect((await suppressions.read()).suppressions).toEqual([otherSuppression]);
+                const preferencesBefore = structuredClone(raw.usageCoachPreferencesV1);
+                const settingsVersionBefore = version;
                 expect(await executor.execute('usage.coach.dismiss', { query, evidenceKey, dismissed: true }, context))
                     .toMatchObject({ ok: true, result: { kind: 'preference_updated', evidenceKey, dismissed: true } });
-                expect(preferences()).toEqual({ v: 1, suppressions: [otherSuppression, { kind: 'dismissed', evidenceKey }],
-                    disabledChecks: [], modelSuggestion: 'suggest_with_estimates' });
+                expect(await suppressions.read()).toEqual({ v: 1, suppressions: [otherSuppression, { kind: 'dismissed', evidenceKey }] });
                 await entry.refresh();
                 const untilMs = Date.now() + 60_000;
                 expect(await executor.execute('usage.coach.snooze', { query, evidenceKey, untilMs }, context))
                     .toMatchObject({ ok: true, result: { kind: 'preference_updated', evidenceKey, untilMs } });
-                expect(preferences().suppressions).toEqual([otherSuppression, { kind: 'snoozed', evidenceKey, untilMs }]);
+                expect((await suppressions.read()).suppressions).toEqual([otherSuppression, { kind: 'snoozed', evidenceKey, untilMs }]);
                 await entry.refresh();
                 expect(await executor.execute('usage.coach.snooze', { query, evidenceKey, untilMs: null }, context))
                     .toMatchObject({ ok: true, result: { kind: 'preference_updated', evidenceKey, untilMs: null } });
-                expect(preferences().suppressions).toEqual([otherSuppression]);
+                expect((await suppressions.read()).suppressions).toEqual([otherSuppression]);
                 await entry.refresh();
                 await executor.execute('usage.coach.dismiss', { query, evidenceKey, dismissed: true }, context);
                 await entry.refresh();
-                race = true;
+                kvRace = true;
                 expect(await executor.execute('usage.coach.dismiss', { query, evidenceKey, dismissed: false }, context))
-                    .toMatchObject({ ok: false, errorCode: 'account_settings_mutation_conflict' });
-                expect(preferences().suppressions).toEqual([otherSuppression, { kind: 'dismissed', evidenceKey }]);
+                    .toMatchObject({ ok: false, errorCode: 'version_mismatch' });
+                expect((await suppressions.read()).suppressions).toEqual([otherSuppression, { kind: 'dismissed', evidenceKey }]);
                 await entry.refresh();
                 expect(await executor.execute('usage.coach.dismiss', { query, evidenceKey, dismissed: false }, context))
                     .toMatchObject({ ok: true, result: { kind: 'preference_updated', evidenceKey, dismissed: false } });
-                expect(preferences()).toEqual({ v: 1, suppressions: [otherSuppression], disabledChecks: [], modelSuggestion: 'suggest_with_estimates' });
+                expect((await suppressions.read()).suppressions).toEqual([otherSuppression]);
+                expect(raw.usageCoachPreferencesV1).toEqual(preferencesBefore);
+                expect(version).toBe(settingsVersionBefore);
+                expect(await executor.execute('settings.set', { anchor: 'usage.coachPreferences',
+                    value: { v: 1, disabledChecks: ['outside_usage'], modelSuggestion: 'off' } }, context)).toMatchObject({ ok: true });
+                expect(raw.usageCoachPreferencesV1).toEqual({ v: 1, disabledChecks: ['outside_usage'], modelSuggestion: 'off' });
+                expect((await suppressions.read()).suppressions).toEqual([otherSuppression]);
                 return;
             }
             const capture = async () => {
@@ -907,9 +1000,8 @@ describe('scoped Account workflow Artifact operations', () => {
         const home = await upsertAndActivateServer({ serverUrl: `https://artifact-retired-${operation}.test`, scope: 'tab' });
         const token = `header.${encodeBase64(new TextEncoder().encode(JSON.stringify({ sub: 'artifact-account' })), 'base64url')}.signature`;
         vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token });
-        let retire: Parameters<typeof credentialStorage.subscribeHomeCredentialMutations>[0] | undefined;
-        // Device credential subscription is the retirement boundary; codecs and Account fencing remain real.
-        vi.spyOn(credentialStorage, 'subscribeHomeCredentialMutations').mockImplementation(listener => { retire = listener; return () => {}; });
+        // The device credential notice is the retirement boundary; the fan-out, codecs and Account fencing remain real.
+        const retire = (event: Parameters<typeof credentialStorage.replayHomeCredentialMutation>[0]) => credentialStorage.replayHomeCredentialMutation(event);
         const artifactId = '11111111-1111-4111-8111-111111111111';
         const caller = new AbortController();
         const header = { title: 'Acknowledged', kind: 'home-hub-layout.v1', v: 1 };
@@ -928,7 +1020,7 @@ describe('scoped Account workflow Artifact operations', () => {
             if (path === '/v1/account/encryption') return json({ mode: 'plain', updatedAt: 0 });
             if (path === `/v1/artifacts/${artifactId}` && init?.method !== 'POST') return json(before);
             if (init?.method === 'POST' && (path === '/v1/artifacts' || path === `/v1/artifacts/${artifactId}`)) {
-                if (retirement === 'credential') retire?.({ kind: 'credentials_removed', serverId: home.id, serverUrl: home.serverUrl });
+                if (retirement === 'credential') retire({ kind: 'credentials_removed', serverId: home.id, serverUrl: home.serverUrl });
                 else caller.abort();
                 if (operation === 'create') return json({ ...before, header: encodePlainArtifactStoredContent(header),
                     body: encodePlainArtifactStoredContent({ body }), headerVersion: 2, bodyVersion: 2 });
@@ -1082,7 +1174,8 @@ describe('scoped Account workflow Artifact operations', () => {
             header: encodePlainArtifactStoredContent({ title, kind }), body: encodePlainArtifactStoredContent({ body: 'retained body' }),
             dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt, updatedAt,
         });
-        const rows = [...Array.from({ length: 500 }, (_, index) => row(`other-${index}`, 'Other', 'other.v1', 1000 - index)),
+        const internal = Array.from({ length: 495 * 3 }, (_, index) => row(`approval-${index}`, 'Internal', 'approval_request.v1', 3000 - index));
+        const rows = [...internal, ...Array.from({ length: 500 }, (_, index) => row(`other-${index}`, 'Other', 'other.v1', 1000 - index)),
             row('zebra', 'Private zebra', 'published.v1', 2, 6000), row('alpha', 'Private alpha', 'published.v1', 1, 5000)];
         const urls: URL[] = [];
         runtimeFetch.mockImplementation(async (url: unknown) => {
@@ -1114,9 +1207,11 @@ describe('scoped Account workflow Artifact operations', () => {
             const created = await execute('artifact.list', { search: 'PRIVATE', kind: 'published.v1', sort: 'created_desc' }, caller);
             if (!created.ok) throw new Error(created.error);
             expect(ArtifactActionOutputSchemasV1['artifact.list'].parse(created.result).items.map(item => item.artifactId)).toEqual(['zebra', 'alpha']);
+            const beforePublicList = urls.length;
             const complete = await execute('artifact.list', {}, caller);
             if (!complete.ok) throw new Error(complete.error);
-            expect(ArtifactActionOutputSchemasV1['artifact.list'].parse(complete.result).items).toHaveLength(rows.length);
+            expect(ArtifactActionOutputSchemasV1['artifact.list'].parse(complete.result).items).toHaveLength(rows.length - internal.length);
+            expect(urls.length - beforePublicList).toBe(2);
             const structural = await account.workflowArtifacts.list({ limit: 500, includeBody: true });
             expect(structural.items).toHaveLength(500);
             expect(structural.items[0]).toMatchObject({ body: 'retained body' });
@@ -1195,12 +1290,14 @@ describe('scoped Account workflow Artifact operations', () => {
             if (target.pathname === '/v1/account/encryption') return json({ mode, updatedAt: 0 });
             if (target.pathname === '/v2/account/settings') return json({ content: null, version: 0 });
             if (target.pathname === ARTIFACT_UPLOAD_PATH_V1 && init?.method === 'POST') {
-                if (!(init.body instanceof ArrayBuffer)) throw new Error('Expected canonical binary upload');
-                const frame = new Uint8Array(init.body);
+                const body = init.body;
+                const frame = body && typeof body === 'object' && 'uri' in body && typeof body.uri === 'string'
+                    ? await new (await import('expo-file-system')).File(body.uri).bytes()
+                    : new Uint8Array(await new Response(body).arrayBuffer());
                 const metadata = decodeArtifactUploadMetadataV1(frame.subarray(0, frame.indexOf(10)));
                 if (metadata.kind !== 'create') throw new Error('Expected publication create');
                 stored = { id: metadata.artifactId, header: metadata.header, body: metadata.body, dataEncryptionKey: metadata.dataEncryptionKey,
-                    ...artifactKindProjection(metadata.artifactKind),
+                    ...projectArtifactStoredKind(metadata.artifactKind),
                     provenance: metadata.provenance, provenanceDataEncryptionKey: metadata.provenanceDataEncryptionKey,
                     ownerAccountId: 'artifact-account', access: 'owner', encryptionMode: mode, publicAudience: 'none',
                     seq: 1, headerVersion: 1, bodyVersion: 1, createdAt: 1, updatedAt: 1 };
@@ -1208,11 +1305,11 @@ describe('scoped Account workflow Artifact operations', () => {
             }
             if (target.pathname === '/v1/artifacts' && init?.method === 'POST') {
                 const write = JSON.parse(String(init.body)) as ArtifactCreateRequest;
-                stored = { ...write, ...artifactKindProjection(write.kind), ownerAccountId: 'artifact-account', access: 'owner', encryptionMode: mode, publicAudience: 'none',
+                stored = { ...write, ...projectArtifactStoredKind(write.kind), ownerAccountId: 'artifact-account', access: 'owner', encryptionMode: mode, publicAudience: 'none',
                     seq: 1, headerVersion: 1, bodyVersion: 1, createdAt: 1, updatedAt: 1 };
                 return json(stored);
             }
-            if (target.pathname === '/v1/artifacts') return json(stored ? [stored] : []);
+            if (target.pathname === '/v1/artifacts') return createArtifactListHttpResponse(target, stored ? [stored] : []);
             if (target.pathname === '/v1/artifacts/read') return createArtifactReadBatchHttpResponse(JSON.parse(String(init?.body)),
                 id => stored?.id === id ? { artifactId: id, ok: true, artifact: stored, recipientCensus: mode === 'plain' ? null : recipientCensus() }
                     : { artifactId: id, ok: false, error: 'artifact_not_found', status: 404, retryable: false });
@@ -1226,7 +1323,7 @@ describe('scoped Account workflow Artifact operations', () => {
             if (init?.method !== 'POST') return json(stored);
             const write = JSON.parse(String(init.body)) as ArtifactUpdateRequest;
             if (write.expectedHeaderVersion !== stored.headerVersion || write.expectedBodyVersion !== stored.bodyVersion) return json({ success: false, error: 'version-mismatch' });
-            stored = { ...stored, header: write.header!, body: write.body!, ...(write.kind === undefined ? {} : artifactKindProjection(write.kind)),
+            stored = { ...stored, header: write.header!, body: write.body!, ...(write.kind === undefined ? {} : projectArtifactStoredKind(write.kind)),
                 provenance: write.provenance === undefined ? stored.provenance : write.provenance,
                 provenanceDataEncryptionKey: write.provenanceDataEncryptionKey === undefined ? stored.provenanceDataEncryptionKey : write.provenanceDataEncryptionKey,
                 headerVersion: 2, bodyVersion: 2 };
@@ -1374,11 +1471,15 @@ describe('scoped Account workflow Artifact operations', () => {
             expect(await openedProvenance()).toEqual({ savedBy: { kind: 'person', accountId: 'artifact-account' }, source: binarySource });
         } finally { context.dispose(); }
     });
-    it('cancels an operation-scoped async Settings transform before its durable write', async () => {
-        const home = await upsertAndActivateServer({ serverUrl: 'https://profile-mutation-cancellation.test', scope: 'tab' });
+    it.each(['transform', 'account-mode'] as const)('cancels running %s acquisition and queued Settings transforms without losing the following captured-context write', async (phase) => {
+        const home = await upsertAndActivateServer({ serverUrl: `https://profile-mutation-cancellation-${phase}.test`, scope: 'tab' });
         const token = `header.${encodeBase64(new TextEncoder().encode(JSON.stringify({ sub: 'profile-account' })), 'base64url')}.signature`;
         vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token });
         let raw: Record<string, unknown> = { futureSibling: { retained: true } };
+        const started = createDeferred<void>();
+        const held = createDeferred<void>();
+        let modeSignal: AbortSignal | null | undefined;
+        let holdMode = phase === 'account-mode';
         runtimeFetch.mockImplementation(async (url: unknown, init?: RequestInit) => {
             const path = new URL(String(url)).pathname;
             if (path === '/health' || path === '/v1/auth/ping') return json({});
@@ -1387,7 +1488,16 @@ describe('scoped Account workflow Artifact operations', () => {
                 currentProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
                 declarationTransport: 'http-header-and-socket-auth-v1',
             } } });
-            if (path === '/v1/account/encryption') return json({ mode: 'plain', updatedAt: 0 });
+            if (path === '/v1/account/encryption') {
+                if (holdMode) {
+                    holdMode = false;
+                    modeSignal = init?.signal;
+                    started.resolve();
+                    await held.promise;
+                }
+                return json({ mode: 'plain', updatedAt: 0 });
+            }
+            if (path === '/v1/account/encryption/currentness') return json(createPlainAccountEncryptionCurrentnessFixture());
             if (path === '/v2/account/settings') {
                 if (init?.method === 'POST') {
                     const write = JSON.parse(String(init.body)) as { content: { v: Record<string, unknown> } };
@@ -1399,25 +1509,94 @@ describe('scoped Account workflow Artifact operations', () => {
             return json({ error: 'unexpected' }, 404);
         });
         const context = await captureLazyActionAccountContext(home.id);
+        const followingContext = await captureLazyActionAccountContext(home.id);
         const controller = new AbortController();
-        let began!: () => void;
-        let release!: () => void;
-        const started = new Promise<void>(resolve => { began = resolve; });
-        const held = new Promise<void>(resolve => { release = resolve; });
+        const queuedController = new AbortController();
         try {
             const mutation = context.mutateRawSettings(async current => {
-                began();
-                await held;
+                if (phase === 'transform') {
+                    started.resolve();
+                    await held.promise;
+                }
                 return { ...current, showLineNumbers: false };
             }, { signal: controller.signal });
             const rejected = expect(mutation).rejects.toMatchObject({ name: 'AbortError' });
-            await started;
+            await started.promise;
+            const cancelled = followingContext.mutateRawSettings(current => ({ ...current, crashReportsOptOut: true }), { signal: queuedController.signal });
+            const queuedRejection = expect(cancelled).rejects.toMatchObject({ name: 'AbortError' });
+            // Reuse the cancelled acquisition's context too: a rejected pending
+            // mode read must not poison its next operation.
+            const following = (phase === 'account-mode' ? context : followingContext)
+                .mutateRawSettings(current => ({ ...current, analyticsOptOut: true }));
+            queuedController.abort();
             controller.abort();
-            release();
+            // A plain tail checks cancellation at entry; release the predecessor's
+            // external preparation before observing queued settlement.
+            held.resolve();
             await rejected;
-            expect(raw).toEqual({ futureSibling: { retained: true } });
+            await queuedRejection;
+            await expect(following).resolves.toMatchObject({ status: 'applied', settingsVersion: 5 });
+            if (phase === 'account-mode') expect(modeSignal?.aborted).toBe(true);
+            expect(raw).toEqual({ futureSibling: { retained: true }, analyticsOptOut: true });
             expect(await context.readRawSettings()).toEqual(raw);
-        } finally { release(); context.dispose(); }
+        } finally { held.resolve(); context.dispose(); followingContext.dispose(); }
+    });
+
+    it('retains an issued Settings receipt before skipping cancelled queued work', async () => {
+        const home = await upsertAndActivateServer({ serverUrl: 'https://settings-issued-cancellation.test', scope: 'tab' });
+        const token = `header.${encodeBase64(new TextEncoder().encode(JSON.stringify({ sub: 'profile-account' })), 'base64url')}.signature`;
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token });
+        let raw: Record<string, unknown> = { futureSibling: { retained: true } };
+        let version = 4;
+        const issued = createDeferred<void>();
+        const acknowledgement = createDeferred<void>();
+        const writes: Record<string, unknown>[] = [];
+        runtimeFetch.mockImplementation(async (url: unknown, init?: RequestInit) => {
+            const path = new URL(String(url)).pathname;
+            if (path === '/health' || path === '/v1/auth/ping') return json({});
+            if (path === '/v1/features') return json({ features: {}, capabilities: { accountStoredContentCompatibility: {
+                v: 1, minimumProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
+                currentProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
+                declarationTransport: 'http-header-and-socket-auth-v1',
+            } } });
+            if (path === '/v1/account/encryption') return json({ mode: 'plain', updatedAt: 0 });
+            if (path === '/v1/account/encryption/currentness') return json(createPlainAccountEncryptionCurrentnessFixture());
+            if (path === '/v2/account/settings') {
+                if (init?.method !== 'POST') return json({ content: { t: 'plain', v: raw }, version });
+                const write = JSON.parse(String(init.body)) as { content: { v: Record<string, unknown> }; expectedVersion: number };
+                expect(write.expectedVersion).toBe(version);
+                writes.push(write.content.v);
+                if (writes.length === 1) {
+                    issued.resolve();
+                    await acknowledgement.promise;
+                }
+                raw = write.content.v;
+                return json({ success: true, version: ++version });
+            }
+            return json({ error: 'unexpected' }, 404);
+        });
+        const context = await captureLazyActionAccountContext(home.id);
+        const followingContext = await captureLazyActionAccountContext(home.id);
+        const operation = new AbortController();
+        const queued = new AbortController();
+        try {
+            let settled = false;
+            const first = context.mutateRawSettings(current => ({ ...current, showLineNumbers: false }), { signal: operation.signal });
+            const receipt = first.then(result => { settled = true; return result; });
+            await issued.promise;
+            const cancelled = followingContext.mutateRawSettings(current => ({ ...current, crashReportsOptOut: true }), { signal: queued.signal });
+            const rejection = expect(cancelled).rejects.toMatchObject({ name: 'AbortError' });
+            const following = followingContext.mutateRawSettings(current => ({ ...current, analyticsOptOut: true }));
+            operation.abort();
+            queued.abort();
+            expect(settled).toBe(false);
+            expect(writes).toHaveLength(1);
+            acknowledgement.resolve();
+            await expect(receipt).resolves.toMatchObject({ status: 'applied', settingsVersion: 5 });
+            await rejection;
+            await expect(following).resolves.toMatchObject({ status: 'applied', settingsVersion: 6 });
+            expect(raw).toEqual({ futureSibling: { retained: true }, showLineNumbers: false, analyticsOptOut: true });
+        } finally { acknowledgement.resolve(); context.dispose(); followingContext.dispose(); }
     });
 
     it.each(['operation', 'invocation', 'account'] as const)('preserves an acknowledged Settings effect after %s retirement without publishing into a replacement Account', async (retirement) => {
@@ -1438,6 +1617,7 @@ describe('scoped Account workflow Artifact operations', () => {
                 declarationTransport: 'http-header-and-socket-auth-v1',
             } } });
             if (path === '/v1/account/encryption') return json({ mode: 'plain', updatedAt: 0 });
+            if (path === '/v1/account/encryption/currentness') return json(createPlainAccountEncryptionCurrentnessFixture());
             if (path === '/v2/account/settings') {
                 if (init?.method !== 'POST') return json({ content: { t: 'plain', v: raw }, version: 4 });
                 const write = JSON.parse(String(init.body)) as { content: { v: Record<string, unknown> } };
@@ -1523,7 +1703,7 @@ describe('scoped Account workflow Artifact operations', () => {
             if (target.pathname === '/v1/account/encryption') return json({ mode, updatedAt: 0 });
             if (target.pathname === '/v1/artifacts' && init?.method === 'POST') {
                 const body = JSON.parse(String(init.body)) as ArtifactCreateRequest;
-                stored = { ...body, ...artifactKindProjection(body.kind), ownerAccountId: 'artifact-account', access: 'owner', encryptionMode: mode, publicAudience: 'none', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 9 };
+                stored = { ...body, ...projectArtifactStoredKind(body.kind), ownerAccountId: 'artifact-account', access: 'owner', encryptionMode: mode, publicAudience: 'none', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 9 };
                 return json(stored);
             }
             if (target.pathname === '/v1/artifacts') return json(stored ? [stored] : []);
@@ -1542,7 +1722,7 @@ describe('scoped Account workflow Artifact operations', () => {
             const update = JSON.parse(String(init.body)) as ArtifactUpdateRequest;
             if (update.expectedHeaderVersion !== stored.headerVersion || update.expectedBodyVersion !== stored.bodyVersion) return json({ success: false, error: 'version-mismatch' });
             stored = { ...stored, header: update.header!, body: update.body!, provenance: update.provenance,
-                ...(update.kind === undefined ? {} : artifactKindProjection(update.kind)),
+                ...(update.kind === undefined ? {} : projectArtifactStoredKind(update.kind)),
                 ...(update.provenanceDataEncryptionKey === undefined ? {} : { provenanceDataEncryptionKey: update.provenanceDataEncryptionKey }),
                 headerVersion: 2, bodyVersion: 2 };
             return json({ success: true, headerVersion: 2, bodyVersion: 2 });
