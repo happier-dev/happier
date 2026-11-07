@@ -1,13 +1,12 @@
-import { buildBackendTargetKey } from '@happier-dev/protocol/backends/targets/backendTargetRef';
-import { convertBackendTargetRefV2ToV1, readBackendTargetRefV2, type BackendTargetRefV2Input } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { BackendTargetRefV2Input } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 
 import type { SessionComposerSendResolution } from './resolveSessionComposerSend';
-import { storage } from '@/sync/domains/state/storage';
+import type { ExecutionRunLauncherDraftSeed } from '@/components/sessions/runs/launcher/prepareExecutionRunLauncherDraft';
+
 import { buildExecutionRunActionDraftInputForUi } from '@/sync/domains/actions/buildExecutionRunActionDraftInputForUi';
-import { resolveExecutionRunActionDefaultPermissionMode } from '@/sync/domains/actions/resolveExecutionRunActionDefaultPermissionMode';
 import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { resolveSessionGoalFailurePresentation } from '@/sync/ops/sessionGoalOperationFailure';
 import { t } from '@/text';
@@ -113,6 +112,7 @@ export async function executeSessionComposerResolution(args: Readonly<{
   restoreComposerSnapshot?: (snapshot: SessionComposerTextSnapshot) => void;
   trackMessageSent: () => void;
   navigateToRuns: () => void;
+  openExecutionRunDraft?: (seed: ExecutionRunLauncherDraftSeed) => void;
   openGoalControls?: () => void;
   setSessionGoal?: SetSessionGoal;
   clearSessionGoal?: ClearSessionGoal;
@@ -211,6 +211,21 @@ export async function executeSessionComposerResolution(args: Readonly<{
   const actionId = args.resolved.actionId;
   const rest = args.resolved.rest;
 
+  if (actionId === 'session.fork') {
+    args.setMessage('');
+    args.clearDraft();
+    const result = await args.actionExecutor.execute('session.fork', { sessionId: args.sessionId }, ctx);
+    const error = resolveActionExecutionFailureMessage(result, t('common.error'));
+    if (error) {
+      restorePreviousComposerSnapshot(args);
+      args.modalAlert(t('common.error'), error);
+      return true;
+    }
+    args.clearSemanticDraftValues?.();
+    args.clearTransientInputState?.();
+    return true;
+  }
+
   if (actionId === 'ui.voice_global.reset') {
     const previousMessage = args.previousMessage ?? null;
     args.setMessage('');
@@ -244,13 +259,9 @@ export async function executeSessionComposerResolution(args: Readonly<{
   if (actionId === 'review.start') {
     const instructions = rest.trim();
     if (instructions.length === 0) {
-      if (!accountScope || !isAccountCurrent()) return false;
+      if (!accountScope || !isAccountCurrent() || !args.openExecutionRunDraft) return false;
       clearAcceptedComposer(args);
-      // Insert a local-only draft card instead of sending a transcript message.
-      storage.getState().createSessionActionDraft(accountScope, {
-        serverId: accountScope.serverId,
-        sessionId: args.sessionId,
-      }, {
+      args.openExecutionRunDraft?.({ scope: accountScope, sessionId: args.sessionId,
         actionId: 'review.start',
         input: buildExecutionRunActionDraftInputForUi({
           actionId: 'review.start' as any,
@@ -296,17 +307,13 @@ export async function executeSessionComposerResolution(args: Readonly<{
   }
 
   if (actionId === 'subagents.plan.start' || actionId === 'subagents.delegate.start' || actionId === 'voice_agent.start') {
-    const permissionMode = resolveExecutionRunActionDefaultPermissionMode(actionId) ?? 'read_only';
     const instructions = rest.trim();
     // The Run form has plan/delegate intents only; a bare /h.voice reaches the Action, whose
     // admission names the missing instructions.
     if (instructions.length === 0 && actionId !== 'voice_agent.start') {
-      if (!accountScope || !isAccountCurrent()) return false;
+      if (!accountScope || !isAccountCurrent() || !args.openExecutionRunDraft) return false;
       clearAcceptedComposer(args);
-      storage.getState().createSessionActionDraft(accountScope, {
-        serverId: accountScope.serverId,
-        sessionId: args.sessionId,
-      }, {
+      args.openExecutionRunDraft?.({ scope: accountScope, sessionId: args.sessionId,
         actionId,
         input: buildExecutionRunActionDraftInputForUi({
           actionId: actionId as any,
@@ -325,16 +332,13 @@ export async function executeSessionComposerResolution(args: Readonly<{
 
     const started = await args.actionExecutor.execute(
       actionId,
-      {
+      buildExecutionRunActionDraftInputForUi({
+        actionId,
         sessionId: args.sessionId,
-        backendTargetKeys: [buildBackendTargetKey(
-          convertBackendTargetRefV2ToV1(
-            readBackendTargetRefV2(args.backendTarget ?? { kind: 'backend', backendId: args.agentId }),
-          ),
-        )],
+        defaultBackendTarget: args.backendTarget ?? null,
+        defaultBackendId: args.agentId,
         instructions,
-        permissionMode,
-      },
+      }),
       ctx,
     );
 
