@@ -1,21 +1,23 @@
+import { createManagedCpuOptionsFixture, createManagedControllerMachineFixture as createMachineFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Dimensions } from 'react-native';
 import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
-import { renderScreen, standardCleanup, flushHookEffects, pressTestInstanceAsync, reportPopoverContentLayout, withPopoverWebGlobals } from '@/dev/testkit';
+import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { renderScreen, renderHook, standardCleanup, flushHookEffects, pressTestInstanceAsync, reportPopoverContentLayout, withPopoverWebGlobals, createDeferred } from '@/dev/testkit';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { MachineProvisionersListResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
-import { PluginProjectedActionV2Schema, QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol';
+import { PluginProjectedActionV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import { DaemonContributionRegistryProjectionDescribeResponseSchema, buildDeferredDaemonProjectionSections } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE } from '@/dev/testkit/fixtures/pluginProviderDaemonProjection';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
-const route = vi.hoisted(() => ({ replace: vi.fn() }));
+const route = vi.hoisted(() => ({ params: {} as Record<string, string | undefined>, replace: vi.fn(), push: vi.fn(), back: vi.fn(), dismissTo: vi.fn() }));
 const nativeBoundary = vi.hoisted(() => ({ rpc: vi.fn() }));
 let projectionReply: ReturnType<typeof DaemonContributionRegistryProjectionDescribeResponseSchema.parse>;
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
@@ -24,7 +26,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', a
 });
 installApprovalCommonModuleMocks({ text: async () => vi.importActual<typeof import('@/text')>('@/text'),
     modal: async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ renderCustomModals: true }).module,
-    router: async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ router: route }).module });
+    router: async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ router: route, params: () => route.params }).module });
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
 const { resetScopedHomeActionExecutorsForTests } = await import('@/sync/ops/actions/scopedHomeActionExecutor');
@@ -35,6 +37,7 @@ const { resetMachineProjectionReadsForTests } = await import('@/sync/ops/machine
 await loadSyncSingletonForTests();
 let restoreViewport: (() => void) | undefined;
 let restorePopover: (() => void) | undefined;
+let restoreCredentialRefresh: (() => Promise<unknown>) | undefined;
 const controller = { machineId: 'host', installationId: 'installation' };
 const otherController = { machineId: 'other-host', installationId: 'other-installation' };
 const contribution = { pluginId: 'custom.compute', localId: 'vm' };
@@ -58,7 +61,7 @@ const provisioner = MachineProvisionersListResultV1Schema.parse({ controller, pr
 
 beforeEach(async () => {
     restorePopover = withPopoverWebGlobals();
-    await harness.reset(); resetScopedHomeActionExecutorsForTests(); route.replace.mockReset(); nativeBoundary.rpc.mockReset();
+    await harness.reset(); resetScopedHomeActionExecutorsForTests(); route.params = {}; route.replace.mockReset(); route.push.mockReset(); route.back.mockReset(); route.dismissTo.mockReset(); nativeBoundary.rpc.mockReset();
     clearDaemonMergedProjectionCacheForTests(); resetMachineProjectionReadsForTests();
     // An explicit controller choice is persisted through the sync singleton's settings writer.
     await loadSyncSingletonForTests();
@@ -87,8 +90,12 @@ beforeEach(async () => {
             inputSchema: { type: 'object', properties: { cpu: { type: 'integer', minimum: 1 } }, additionalProperties: false } } : { ok: false, code: 'unsupported' });
 });
 afterEach(async () => {
+    // The mocked presentation host retains its module inventory across provider unmounts.
+    const { Modal } = await import('@/modal');
+    await act(async () => { Modal.hideAll(); });
     await standardCleanup(); restoreViewport?.(); restoreViewport = undefined;
     restorePopover?.(); restorePopover = undefined;
+    await restoreCredentialRefresh?.(); restoreCredentialRefresh = undefined;
 });
 
 async function setupHome() {
@@ -115,6 +122,13 @@ async function setupHome() {
         ref, status: 'connected', kind: 'token', authenticationModeId: 'token', revisionSemantics: 'revisioned',
         credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa', configurationReady: true, configurationRevision: null, scopes: [],
     })) } });
+    harness.answer(serverId, '/v1/account/entity-rows/connected-metadata/presentation', { body: {
+        status: 'present', revision: 0, content: { t: 'plain', v: { v: 1, entries: [
+            { v: 1, subject: { kind: 'account', account: cloud }, label: 'Cloud work' },
+            { v: 1, subject: { kind: 'account', account: otherCloud }, label: 'Cloud personal' },
+            { v: 1, subject: { kind: 'account', account: cua }, label: 'Computer access' },
+        ] } },
+    } });
     harness.answer(serverId, '/v1/machines', { body: [controller, otherController].map(target => ({ id: target.machineId, kind: 'persistent',
         installationId: target.installationId, active: true, revokedAt: null, replacedByMachineId: null, dataEncryptionKey: null,
         access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } })) });
@@ -124,7 +138,7 @@ async function setupHome() {
     for (const [actionId, result] of [
         ['machines.provisioners.list', { controller, provisioners: [provisioner] }],
         ['machines.provisioners.check', { available: true }],
-        ['machines.provisioners.options', { choices: [{ id: 'native', title: 'Native compute', launch: { cpu: 2 } }] }],
+        ['machines.provisioners.options', createManagedCpuOptionsFixture([{ id: 'native', title: 'Native compute', cpu: 2 }])],
         ['machines.managed.acquire', { managedId: 'created' }],
     ] as const) harness.answer(serverId, `/v1/actions/${actionId}`, { select: value => {
         const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
@@ -139,14 +153,17 @@ function credentialField(screen: Screen, purpose: string) {
     return field;
 }
 function credentialControl(screen: Screen, purpose: string) {
-    // Select paints a radiogroup, not the text/toggle controlTestID host.
-    return credentialField(screen, purpose).findAll(node => typeof node.type === 'string' && node.props.role === 'radiogroup')[0];
+    // Select uses a dropdown for choices with secondary identity descriptions.
+    return credentialField(screen, purpose).findAll(node => typeof node.type === 'string'
+        && ((node.props.role ?? node.props.accessibilityRole) === 'radiogroup'
+            || (node.props.role ?? node.props.accessibilityRole) === 'button'
+                && (typeof node.props['aria-expanded'] === 'boolean' || typeof node.props.accessibilityState?.expanded === 'boolean')))[0];
 }
 async function pressCredentialOption(screen: Screen, purpose: string, label: string) {
     const findOption = () => screen.findAll(node => typeof node.type === 'string'
         && (node.props.role ?? node.props.accessibilityRole) === 'radio'
         && ((node.props['aria-label'] ?? node.props.accessibilityLabel) === label
-            || String(node.props['aria-label'] ?? node.props.accessibilityLabel).startsWith(`${label}: `)))[0];
+            || node.findAll(child => typeof child.type === 'string').some(child => child.children.includes(label))))[0];
     if (!findOption()) {
         // One or long-labelled choices use the field's dropdown instead of inline segments.
         const trigger = credentialField(screen, purpose).findAll(node => typeof node.type === 'string'
@@ -167,8 +184,8 @@ async function selectCredentials(screen: Screen) {
     expect(credentialControl(screen, 'cloud-account')).toBeDefined();
     await pressCredentialOption(screen, 'cloud-account', 'Cloud work');
     await pressCredentialOption(screen, 'computer-access', 'Computer access');
-    await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.choice:native')).not.toBeNull());
-    await act(async () => screen.pressByTestId('managed-config.choice:native'));
+    await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.sizes:native')).not.toBeNull());
+    await act(async () => screen.pressByTestId('managed-config.sizes:native'));
 }
 function actionInputs(actionId: string) {
     return harness.requestsFor(`/v1/actions/${actionId}`).map(request => ExternalActionRequestEnvelopeV1Schema.parse(request.input).input);
@@ -181,37 +198,254 @@ async function renderAccountScreen(content: React.ReactElement) {
     return renderScreen(<InjectedAuthProvider credentials={credentials}><ModalProvider>{content}</ModalProvider></InjectedAuthProvider>);
 }
 
+async function dismissConnectSheet() {
+    const { Modal } = await import('@/modal');
+    const dismiss = vi.mocked(Modal.show).mock.calls.at(-1)?.[0].onRequestClose;
+    expect(dismiss).toBeTypeOf('function');
+    await act(async () => { dismiss?.(); });
+}
+
 describe('managed provisioner credential purposes', () => {
+    it('presents Agent-default names before native options settle on cold mount and remount without admitting a launch', async () => {
+        const serverId = await setupHome();
+        const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
+        const account = { service, accountId: 'agent-work' };
+        const { storage } = await import('@/sync/domains/state/storage');
+        storage.setState({ profile: { ...storage.getState().profile, connectedAccountsV4: [
+            ...storage.getState().profile.connectedAccountsV4,
+            QualifiedConnectedAccountProfileV4Schema.parse({ ref: account, status: 'connected', kind: 'token', authenticationModeId: 'token',
+                revisionSemantics: 'revisioned', credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa', configurationReady: true, configurationRevision: null, scopes: [] }),
+        ] } });
+        harness.answer(serverId, '/v1/account/entity-rows/connected-accounts/purposes', { body: { status: 'present', revision: 1,
+            content: { t: 'plain', v: { key: 'purposes', value: { v: 1, bindings: [{
+                purpose: { consumer: { pluginId: 'happier.agent.codex', localId: 'codex' }, purpose: 'primary' },
+                target: { kind: 'account', account },
+            }] } } } } });
+        harness.answer(serverId, '/v1/account/entity-rows/connected-metadata/presentation', { body: { status: 'present', revision: 1,
+            content: { t: 'plain', v: { v: 1, entries: [
+                { v: 1, subject: { kind: 'account', account: cloud }, label: 'Cloud work' },
+                { v: 1, subject: { kind: 'account', account: otherCloud }, label: 'Cloud personal' },
+                { v: 1, subject: { kind: 'account', account: cua }, label: 'Computer access' },
+                { v: 1, subject: { kind: 'account', account }, label: 'Agent work' },
+            ] } } } });
+        const options = createDeferred<void>();
+        harness.answer(serverId, '/v1/actions/machines.provisioners.options', { select: value => {
+            const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+            return { respondAfter: options.promise, body: { v: 1, actionId: request.actionId, requestId: request.requestId,
+                execution: { ok: true, result: createManagedCpuOptionsFixture([{ id: 'native', title: 'Native compute', cpu: 2 }]) } } };
+        } });
+        const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+        const onUse = vi.fn();
+        try {
+            for (const mount of ['cold', 'remount']) {
+                const screen = await renderAccountScreen(<ManagedMachineConfigurationView serverId={serverId}
+                    provisioner={buildQualifiedPluginContributionKey(contribution)} initialController={controller} onUse={onUse} />);
+                try {
+                    const agentName = () => {
+                        const receipt = screen.tree.findAll(node => node.props.testID === 'managed-config' && node.props.receipt)[0]?.props.receipt;
+                        return receipt?.facts.find((fact: { id: string }) => fact.id === 'agents')?.value;
+                    };
+                    // Account-default names do not depend on choosing native launch credentials.
+                    await waitForHomeGovernance(() => expect(agentName(), mount).toBe('Agent work'));
+                    await waitForHomeGovernance(() => expect(credentialControl(screen, 'cloud-account')).toBeDefined());
+                    await pressCredentialOption(screen, 'cloud-account', 'Cloud work');
+                    await pressCredentialOption(screen, 'computer-access', 'Computer access');
+                    await waitForHomeGovernance(() => expect(actionInputs('machines.provisioners.options').length).toBeGreaterThan(0));
+                    // Zero completed native options must still permit independent Account-name display.
+                    expect(agentName(), mount).toBe('Agent work');
+                    expect(screen.findByTestId('managed-config.use')?.props.disabled).toBe(true);
+                    await act(async () => screen.pressByTestId('managed-config.use'));
+                    expect(onUse).not.toHaveBeenCalled();
+                    expect(actionInputs('machines.managed.acquire')).toHaveLength(0);
+                } finally { await screen.unmount(); }
+            }
+        } finally { options.resolve(); }
+    });
+
+    it.each([
+        { serviceTitle: 'Boat', service: { pluginId: 'happier.machine.boat', localId: 'boat-account' } },
+        { serviceTitle: 'Hetzner', service: { pluginId: 'happier.machine.hetzner', localId: 'hetzner-account' } },
+    ])('shows distinct personal names for two $serviceTitle accounts in the credential selector', async ({ serviceTitle, service }) => {
+        const serverId = await setupHome();
+        const names = ['Work', 'Personal'].map(name => `${serviceTitle} ${name}`);
+        const accounts = names.map((_, index) => ({ service, accountId: `routing-account-${index}` }));
+        const namedProvisioner = { ...provisioner, credentialPurposes: [
+            { purpose: cloudPurpose, options: accounts.map(value => ({ value, label: serviceTitle })) },
+            provisioner.credentialPurposes![1]!,
+        ] };
+        const families = projectionReply.projection.familiesById;
+        const serviceDefinition = families.connectedAccounts.entriesById[buildQualifiedPluginContributionKey(cloud.service)]!;
+        const machineDefinition = families.machineProvisioners.entriesById[buildQualifiedPluginContributionKey(contribution)]!;
+        projectionReply = DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ ...projectionReply, projection: {
+            ...projectionReply.projection, familiesById: { ...families,
+                connectedAccounts: { ...families.connectedAccounts, entriesById: { ...families.connectedAccounts.entriesById,
+                    [buildQualifiedPluginContributionKey(service)]: { ...serviceDefinition, pluginId: service.pluginId,
+                        id: service.localId, serviceId: service.localId, title: serviceTitle } } },
+                machineProvisioners: { ...families.machineProvisioners, entriesById: { ...families.machineProvisioners.entriesById,
+                    [buildQualifiedPluginContributionKey(contribution)]: { ...machineDefinition, connectedAccountPurposes: [
+                        { purpose: cloudPurpose.purpose, serviceRefs: [service] },
+                        { purpose: cuaPurpose.purpose, serviceRefs: [cua.service] },
+                    ] } } },
+            },
+        } });
+        nativeBoundary.rpc.mockImplementation(async (request: { method: string }) => request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE
+            ? projectionReply : { ok: false, code: 'unsupported' });
+        harness.answer(serverId, '/v1/actions/machines.provisioners.list', { select: value => {
+            const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+            return { body: { v: 1, actionId: 'machines.provisioners.list', requestId: request.requestId,
+                execution: { ok: true, result: { controller, provisioners: [namedProvisioner] } } } };
+        } });
+        const { storage } = await import('@/sync/domains/state/storage');
+        storage.setState({ profile: { ...storage.getState().profile, connectedAccountsV4: accounts.map(ref =>
+            QualifiedConnectedAccountProfileV4Schema.parse({ ref, displayName: serviceTitle, status: 'connected', kind: 'token',
+                authenticationModeId: 'token', revisionSemantics: 'revisioned', credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
+                configurationReady: true, configurationRevision: null, scopes: [] })) } });
+        harness.answer(serverId, '/v1/account/entity-rows/connected-metadata/presentation', { body: {
+            status: 'present', revision: 0, content: { t: 'plain', v: { v: 1, entries: accounts.map((account, index) =>
+                ({ v: 1, subject: { kind: 'account', account }, label: names[index] })) } },
+        } });
+        const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+        const screen = await renderAccountScreen(<ManagedMachineConfigurationView serverId={serverId}
+            provisioner={buildQualifiedPluginContributionKey(contribution)} initialController={controller} />);
+        await waitForHomeGovernance(() => expect(credentialField(screen, cloudPurpose.purpose)).toBeDefined());
+        const trigger = credentialField(screen, cloudPurpose.purpose).findAll(node => typeof node.type === 'string'
+            && (node.props.role ?? node.props.accessibilityRole) === 'button'
+            && (node.props['aria-expanded'] === false || node.props.accessibilityState?.expanded === false))[0];
+        if (trigger) {
+            await pressTestInstanceAsync(trigger);
+            await act(async () => { reportPopoverContentLayout(screen.tree, { width: 320, height: 200 }); });
+        }
+        await waitForHomeGovernance(() => {
+            const radios = screen.findAll(node => typeof node.type === 'string' && (node.props.role ?? node.props.accessibilityRole) === 'radio');
+            for (const name of names) {
+                const radio = radios.find(node => String(node.props['aria-label'] ?? node.props.accessibilityLabel).includes(name));
+                expect(radio, `Missing accessible account name ${name}`).toBeDefined();
+                const visibleText = radio!.findAll(node => typeof node.type === 'string').flatMap(node => node.children.filter(child => typeof child === 'string')).join(' ');
+                expect(visibleText).toContain(name);
+            }
+        });
+        expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(0);
+        await screen.unmount();
+    });
+    it.each(['plain', 'reconnect', 'dismiss'] as const)('translates legacy %s Connect ingress over Credentials through the shared sheet', async ingress => {
+        await setupHome();
+        route.params = { service: buildQualifiedPluginContributionKey(cloud.service),
+            ...(ingress === 'reconnect' ? { accountId: cloud.accountId } : {}) };
+        const { ConnectedServiceConnectRoute } = await import('../../connectedServices/setup/ConnectedServiceConnectRoute');
+        const { ConnectedServicesSettingsView } = await import('../../connectedServices/ConnectedServicesSettingsView');
+        const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const { Modal } = await import('@/modal');
+        const credentials = await TokenStorage.getCredentialsForServerUrl('https://credential-purposes.example');
+        const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}><ConnectedServiceConnectRoute /></InjectedAuthProvider>);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('connect-sheet:account')).not.toBeNull());
+        expect(screen.findAllByType(ConnectedServicesSettingsView)).toHaveLength(1);
+        const modal = vi.mocked(Modal.show).mock.calls.findLast(([config]) => config.chrome?.testID === 'connect-sheet')![0];
+        expect(modal.props?.request).toMatchObject({ service: cloud.service,
+            ...(ingress === 'reconnect' ? { account: cloud, intent: 'reconnect' } : {}) });
+        await act(async () => {
+            if (ingress === 'dismiss') modal.onRequestClose?.();
+            else modal.props?.onResult({ kind: 'connected', account: cloud });
+        });
+        if (ingress === 'dismiss') {
+            expect(route.back).toHaveBeenCalledTimes(1);
+            expect(route.dismissTo).not.toHaveBeenCalled();
+        } else expect(route.dismissTo).toHaveBeenCalledWith({ pathname: '/(app)/settings/connected-services',
+            params: { connectedService: buildQualifiedPluginContributionKey(cloud.service), connectedAccount: cloud.accountId } });
+        expect(route.push).not.toHaveBeenCalled();
+        await screen.unmount();
+    });
+
+    it('keeps Machine demand absent until the setup controller reports it and retires it when the target changes', async () => {
+        await setupHome();
+        const { useConnectAccountSheetModel } = await import('@/components/settings/connectedServices/setup/useConnectAccountSheetModel');
+        const hook = await renderHook(() => useConnectAccountSheetModel({ service: cloud.service }, () => undefined));
+        expect(hook.getCurrent().machineRequired).toBe(false);
+        await act(async () => hook.getCurrent().onMachineRequirementChange(true));
+        expect(hook.getCurrent().machineRequired).toBe(true);
+        await act(async () => hook.getCurrent().setTarget({ kind: 'catalog' }));
+        expect(hook.getCurrent().machineRequired).toBe(false);
+        await hook.unmount();
+    });
+
+    it('restricts saved accounts to the service selected from the generic Connect catalog', async () => {
+        await setupHome();
+        const { useConnectAccountSheetModel } = await import('@/components/settings/connectedServices/setup/useConnectAccountSheetModel');
+        const hook = await renderHook(() => useConnectAccountSheetModel({}, () => undefined));
+        expect(hook.getCurrent().target.kind).toBe('catalog');
+        await act(async () => hook.getCurrent().setTarget({ kind: 'service', serviceKey: buildQualifiedPluginContributionKey(cloud.service) }));
+        expect(hook.getCurrent().savedAccounts.map(profile => profile.ref)).toEqual([cloud, otherCloud]);
+        await act(async () => hook.getCurrent().setTarget({ kind: 'service', serviceKey: buildQualifiedPluginContributionKey(cua.service) }));
+        expect(hook.getCurrent().savedAccounts.map(profile => profile.ref)).toEqual([cua]);
+        expect(hook.getCurrent().preselected).toEqual(cua);
+        await hook.unmount();
+        const explicit = await renderHook(() => useConnectAccountSheetModel({ service: cloud.service, account: cloud }, () => undefined));
+        await act(async () => explicit.getCurrent().setTarget({ kind: 'catalog' }));
+        await act(async () => explicit.getCurrent().setTarget({ kind: 'service', serviceKey: buildQualifiedPluginContributionKey(cua.service) }));
+        expect(explicit.getCurrent().savedAccounts.map(profile => profile.ref)).toEqual([cua]);
+        expect(explicit.getCurrent().initialMode).toBe('saved');
+        expect(explicit.getCurrent().preselected).toEqual(cua);
+        await explicit.unmount();
+    });
+
+    it('offers the matched Saved purpose choice when Connect opens without an explicit service', async () => {
+        const serverId = await setupHome();
+        const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+        const { presentConnectSheet } = await import('@/components/settings/connectedServices/setup/ConnectedServiceSetupModal');
+        const screen = await renderAccountScreen(<></>);
+        let result: ReturnType<typeof presentConnectSheet> | undefined;
+        await act(async () => {
+            result = presentConnectSheet({ purpose: cloudPurpose, purposeRequest: {
+                scope: { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'owner' },
+                machineId: controller.machineId, purpose: cloudPurpose,
+            } });
+        });
+        await waitForHomeGovernance(() => expect(screen.findByTestId('connect-sheet:purpose')).not.toBeNull());
+        expect(screen.findByTestId(`connected-account-purpose:${buildQualifiedPluginContributionKey(cloud.service)}`)).not.toBeNull();
+        await dismissConnectSheet();
+        await expect(result).resolves.toEqual({ kind: 'dismissed' });
+        expect(harness.requestsFor('/v1/actions/connectedServices.purposes.default.set')).toHaveLength(0);
+        await screen.unmount();
+    });
+
     it.each(['setup', 'configurator'] as const)('settles a cold Connect handoff through %s without unrelated projection sections', async surface => {
         const serverId = await setupHome();
         // The real daemon framing producer keeps unrequested families absent. Legacy full
         // projection fixtures concealed this failure behind the configurator's warm read.
         const framed = buildDeferredDaemonProjectionSections({ ...projectionReply, projectionDigest: 'a'.repeat(64) });
         const sectionReads: string[] = [];
+        const selections: string[] = [];
         nativeBoundary.rpc.mockImplementation(async (request: { method: string; payload: unknown }) => {
             if (request.method !== RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) return { ok: false, code: 'unsupported' };
             const payload = (await import('@happier-dev/protocol/daemon/contributionRegistryProjection'))
                 .DaemonContributionRegistryProjectionDescribeRequestSchema.parse(request.payload);
+            if (payload.selection) {
+                selections.push(payload.selection);
+                return projectionReply;
+            }
             if (!('sectionRead' in payload) || !payload.sectionRead) return framed.manifest;
-            const { sectionRead, sectionFrameVersion } = payload;
-            sectionReads.push(sectionRead.digest);
-            return framed.read(sectionRead.digest, sectionRead.offset, sectionRead.includeDigests, sectionFrameVersion);
+            const { sectionRead } = payload;
+            const response = framed.read(sectionRead.digest, sectionRead.offset, sectionRead.includeDigests);
+            // The transport batches requested sibling bodies in the primary reply.
+            sectionReads.push(sectionRead.digest, ...(response && 'bodies' in response ? response.bodies.map(body => body.digest) : []));
+            return response;
         });
-        const { ConnectedServiceSetupPage } = await import('../../connectedServices/setup/ConnectedServiceSetupPage');
+        const { presentConnectSheet } = await import('../../connectedServices/setup/ConnectedServiceSetupModal');
         const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
         const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
-        const page = surface === 'setup' ? <ConnectedServiceSetupPage purposeRequest={{ scope: { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'owner' },
-            machineId: controller.machineId, purpose: cloudPurpose }} onSelected={() => {}} onClose={() => {}} />
+        const page = surface === 'setup' ? <></>
             : <ManagedMachineConfigurationView serverId={serverId} provisioner={buildQualifiedPluginContributionKey(contribution)}
                 initialController={controller} initialConnectPurpose={cloudPurpose.purpose} />;
         const screen = await renderAccountScreen(page);
+        if (surface === 'setup') await act(async () => { void presentConnectSheet({ purposeRequest: {
+            scope: { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'owner' },
+            machineId: controller.machineId, purpose: cloudPurpose }, purpose: cloudPurpose }); });
         const chooser = `connected-account-purpose:${buildQualifiedPluginContributionKey(cloud.service)}`;
-        await waitForHomeGovernance(() => expect(sectionReads).toContain(framed.manifest.sections.resourcesById));
+        await waitForHomeGovernance(() => expect(screen.findByTestId(chooser)).not.toBeNull());
         await flushHookEffects();
-        expect(screen.findByTestId(chooser)).not.toBeNull();
+        expect(selections).toContain('connectedAccountAdmission');
         expect(screen.findByTestId('connected-account-purpose-unavailable')).toBeNull();
-        expect(sectionReads.filter(digest => digest === framed.manifest.sections['familiesById.machineProvisioners'])).toHaveLength(1);
-        expect(sectionReads).not.toContain(framed.manifest.sections.toolsById);
+        if (surface === 'setup') expect(sectionReads).toEqual([]);
         expect(sectionReads).not.toContain(framed.manifest.sections.agentsById);
         const settledReads = nativeBoundary.rpc.mock.calls.length;
         const { storage } = await import('@/sync/domains/state/storage');
@@ -221,7 +455,7 @@ describe('managed provisioner credential purposes', () => {
         expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(0);
         await screen.unmount();
     });
-    it('connects a declared provisioner purpose through setup and returns the explicit selection to the same draft', async () => {
+    it.each([false, true])('connects a declared provisioner purpose to the same draft (credential refresh: %s)', async refreshCredential => {
         const serverId = await setupHome();
         let catalogReads = 0;
         harness.answer(serverId, '/v1/actions/machines.provisioners.list', { select: value => {
@@ -236,19 +470,41 @@ describe('managed provisioner credential purposes', () => {
             provisioner={buildQualifiedPluginContributionKey(contribution)} initialController={controller} initialOptionsSelectors={{ cpu: 2 }} />);
         await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.connect:cloud-account')).not.toBeNull());
         expect(screen.findByTestId('managed-config.connect:cloud-account')).not.toBeNull();
-        await screen.pressByTestIdAsync('managed-config.connect:cloud-account');
-        const { ConnectedServiceSetupPage } = await import('../../connectedServices/setup/ConnectedServiceSetupPage');
-        const setup = screen.tree.findByType(ConnectedServiceSetupPage);
+        const { ManagedMachineConfigurator } = await import('./ManagedMachineConfigurator');
+        const configurator = screen.tree.findByType(ManagedMachineConfigurator);
+        const trigger = { getBoundingClientRect: () => ({ left: 160, top: 240, width: 320, height: 48 }) };
+        await act(async () => screen.findHostByTestId('managed-config.connect:cloud-account')!.props.onPress({ currentTarget: trigger }));
+        // Connecting stays over the configurator; its draft and mounted fields remain in place.
+        expect(screen.findByTestId('managed-config')).not.toBeNull();
+        expect(screen.tree.findByType(ManagedMachineConfigurator)).toBe(configurator);
+        const { Modal } = await import('@/modal');
+        const setup = vi.mocked(Modal.show).mock.calls.at(-1)?.[0];
         const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
-        expect(setup.props.purposeRequest).toMatchObject({ scope: { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'owner' },
-            machineId: controller.machineId, purpose: cloudPurpose });
+        expect(setup?.props?.request).toMatchObject({ service: cloud.service, purpose: cloudPurpose,
+            anchor: { kind: 'view', ref: { current: trigger } },
+            purposeRequest: { scope: { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'owner' },
+                machineId: controller.machineId, purpose: cloudPurpose } });
+        if (refreshCredential) {
+            const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+            const current = await TokenStorage.getCredentialsForServerUrl('https://credential-purposes.example');
+            expect(current).not.toBeNull();
+            await act(async () => {
+                // A refresh changes the bearer, not its canonical decoded Account claims.
+                const refreshed = await TokenStorage.setCredentialsForServerUrlWithRollback('https://credential-purposes.example',
+                    { serverId }, { token: `${current!.token}-refreshed` });
+                expect(refreshed).not.toBeNull();
+                restoreCredentialRefresh = () => refreshed!.rollback();
+            });
+            await flushHookEffects();
+            expect(screen.findByTestId('connect-sheet:account')).not.toBeNull();
+        }
         await waitForHomeGovernance(() => expect(screen.findByTestId('connected-account-purpose-unavailable')).toBeNull());
         await screen.pressByTestIdAsync(`connected-account-purpose:${buildQualifiedPluginContributionKey(cloud.service)}`);
         const { connectedAccountPurposeTargetChoiceId } = await import('@/sync/domains/connectedServices/connectedAccountPurposeTargetChoices');
         await screen.pressByTestIdAsync(`connected-account-purpose:${buildQualifiedPluginContributionKey(cloud.service)}:choice:${connectedAccountPurposeTargetChoiceId({ kind: 'account', account: cloud }, null)}`);
-        const { Modal } = await import('@/modal');
         expect(vi.mocked(Modal.alert).mock.calls).toEqual([]);
-        expect(screen.tree.findAllByType(ConnectedServiceSetupPage)).toHaveLength(0);
+        expect(screen.findByTestId('connect-sheet:account')).toBeNull();
+        expect(screen.tree.findByType(ManagedMachineConfigurator)).toBe(configurator);
         await waitForHomeGovernance(() => expect(credentialControl(screen, 'cloud-account')).toBeDefined());
         await pressCredentialOption(screen, 'computer-access', 'Computer access');
         await waitForHomeGovernance(() => expect(actionInputs('machines.provisioners.options')).toContainEqual(expect.objectContaining({
@@ -256,6 +512,60 @@ describe('managed provisioner credential purposes', () => {
         })));
         expect(harness.requestsFor('/v1/actions/connectedServices.purposes.default.set')).toHaveLength(0);
         expect(actionInputs('machines.managed.acquire')).toHaveLength(0);
+        expect(route.push).not.toHaveBeenCalled();
+        expect(route.replace).not.toHaveBeenCalled();
+        await screen.unmount();
+    });
+    it('refuses a late Connected-account return after its setup was canceled without changing the draft', async () => {
+        const serverId = await setupHome();
+        const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+        const { Modal } = await import('@/modal');
+        const screen = await renderAccountScreen(<ManagedMachineConfigurationView serverId={serverId}
+            provisioner={buildQualifiedPluginContributionKey(contribution)} initialController={controller} initialOptionsSelectors={{ cpu: 2 }} />);
+        await waitForHomeGovernance(() => expect(credentialControl(screen, 'cloud-account')).toBeDefined());
+        await pressCredentialOption(screen, 'computer-access', 'Computer access');
+        await screen.pressByTestIdAsync('managed-config.connect:cloud-account');
+        const returned = vi.mocked(Modal.show).mock.calls.at(-1)?.[0].props?.onResult;
+        expect(returned).toBeTypeOf('function');
+        await dismissConnectSheet();
+        await act(async () => {
+            if (typeof returned === 'function') returned({ kind: 'selected', account: cloud });
+        });
+        await flushHookEffects();
+        expect(credentialField(screen, 'cloud-account').props.value).toBeUndefined();
+        expect(credentialField(screen, 'computer-access').props.value).toEqual(cua);
+        expect(actionInputs('machines.provisioners.options')).toHaveLength(0);
+        expect(actionInputs('machines.managed.acquire')).toHaveLength(0);
+        expect(harness.requestsFor('/v1/machines/presets/create')).toHaveLength(0);
+        expect(harness.requestsFor('/v1/actions/connectedServices.purposes.default.set')).toHaveLength(0);
+        await screen.unmount();
+    });
+    it('presents the existing safe purpose refusal when a connected account disappears before selection', async () => {
+        const serverId = await setupHome();
+        const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+        const { ConnectedAccountPurposeTargetChooser } = await import('../../connectedServices/account/ConnectedAccountPurposeTargetChooser');
+        const { Modal } = await import('@/modal');
+        const { t } = await import('@/text');
+        const { storage } = await import('@/sync/domains/state/storage');
+        const screen = await renderAccountScreen(<ManagedMachineConfigurationView serverId={serverId}
+            provisioner={buildQualifiedPluginContributionKey(contribution)} initialController={controller} initialOptionsSelectors={{ cpu: 2 }} />);
+        await waitForHomeGovernance(() => expect(credentialControl(screen, 'cloud-account')).toBeDefined());
+        await screen.pressByTestIdAsync('managed-config.connect:cloud-account');
+        const chooser = await waitForHomeGovernance(() => {
+            const current = screen.tree.findAllByType(ConnectedAccountPurposeTargetChooser)
+                .find(node => node.props.declaration.purpose === cloudPurpose.purpose);
+            expect(current).toBeDefined();
+            return current!;
+        });
+        const choose = chooser.props.onChange;
+        await act(async () => storage.setState({ profile: { ...storage.getState().profile,
+            connectedAccountsV4: storage.getState().profile.connectedAccountsV4.filter(account => account.ref.accountId !== cloud.accountId
+                || account.ref.service.pluginId !== cloud.service.pluginId) } }));
+        await act(async () => choose({ kind: 'account', account: cloud }));
+        await waitForHomeGovernance(() => expect(vi.mocked(Modal.alert)).toHaveBeenCalledWith(
+            t('common.error'), t('connectedServices.errors.accountServiceUnavailable')));
+        expect(actionInputs('machines.managed.acquire')).toHaveLength(0);
+        expect(harness.requestsFor('/v1/actions/connectedServices.purposes.default.set')).toHaveLength(0);
         await screen.unmount();
     });
     it('leads a purpose with no connected account with one Connect row named for its service, not a field or an error', async () => {
@@ -291,6 +601,22 @@ describe('managed provisioner credential purposes', () => {
         expect(screen.findByTestId('managed-config.field:cpu')).toBeNull();
         await screen.unmount();
     });
+    it('offers the account chooser only when the service has an account to choose', async () => {
+        const serverId = await setupHome();
+        const { storage } = await import('@/sync/domains/state/storage');
+        // Nothing of the cloud service is connected yet: a brand-new account has nothing to choose from.
+        storage.setState({ profile: { ...storage.getState().profile, connectedAccountsV4: storage.getState().profile.connectedAccountsV4.filter(account =>
+            account.ref.service.pluginId !== cloud.service.pluginId) } });
+        const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+        const screen = await renderAccountScreen(<ManagedMachineConfigurationView serverId={serverId}
+            provisioner={buildQualifiedPluginContributionKey(contribution)} initialController={controller} initialOptionsSelectors={{ cpu: 2 }} />);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.connect:cloud-account')).not.toBeNull());
+        await screen.pressByTestIdAsync('managed-config.connect:cloud-account');
+        const { PageHeader } = await import('@/components/ui/layout/PageHeader');
+        await waitForHomeGovernance(() => expect(screen.tree.findAllByType(PageHeader)).toHaveLength(1));
+        expect(screen.findByTestId(`connected-account-purpose:${buildQualifiedPluginContributionKey(cloud.service)}`)).toBeNull();
+        await screen.unmount();
+    });
     it('returns from Cancel unchanged and offers the exact revoked account for Reconnect without selecting it', async () => {
         const serverId = await setupHome();
         const { storage } = await import('@/sync/domains/state/storage');
@@ -310,10 +636,39 @@ describe('managed provisioner credential purposes', () => {
         expect(screen.tree.findByType(ConnectedServiceSetupPanel).props).toMatchObject({ target: {
             kind: 'reconnect', serviceKey: buildQualifiedPluginContributionKey(cloud.service), accountId: cloud.accountId,
         }, targetLocked: true, targetSelection: { selectedTarget: { machineId: controller.machineId } } });
-        await screen.pressByTestIdAsync('connected-service-setup:close');
+        await dismissConnectSheet();
         await waitForHomeGovernance(() => expect(credentialField(screen, 'computer-access').props.value).toEqual(cua));
         expect(credentialField(screen, 'cloud-account').props.value).toBeUndefined();
         expect(actionInputs('machines.provisioners.options')).toHaveLength(0);
+        expect(actionInputs('machines.managed.acquire')).toHaveLength(0);
+        await screen.unmount();
+    });
+    it('preselects the current draft account in Connect and preserves it on dismissal', async () => {
+        const serverId = await setupHome();
+        const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+        const { Modal } = await import('@/modal');
+        const screen = await renderAccountScreen(<ManagedMachineConfigurationView serverId={serverId}
+            provisioner={buildQualifiedPluginContributionKey(contribution)} initialController={controller} initialOptionsSelectors={{ cpu: 2 }} />);
+        await waitForHomeGovernance(() => expect(credentialControl(screen, 'cloud-account')).toBeDefined());
+        await pressCredentialOption(screen, 'cloud-account', 'Cloud work');
+        await pressCredentialOption(screen, 'computer-access', 'Computer access');
+        await screen.pressByTestIdAsync('managed-config.connect:cloud-account');
+        const setup = vi.mocked(Modal.show).mock.calls.at(-1)?.[0];
+        expect(setup?.props?.request).toMatchObject({ account: cloud, purpose: cloudPurpose });
+        expect(credentialField(screen, 'cloud-account').props.value).toEqual(cloud);
+        await screen.pressByTestIdAsync(`connected-account-purpose:${buildQualifiedPluginContributionKey(cloud.service)}`);
+        const picker = vi.mocked(Modal.show).mock.calls.at(-1)?.[0];
+        const pickerId = vi.mocked(Modal.show).mock.results.at(-1)?.value;
+        expect(pickerId).toBeTypeOf('string');
+        await act(async () => {
+            picker?.onRequestClose?.();
+            if (typeof pickerId === 'string') Modal.hide(pickerId);
+        });
+        await act(async () => { setup?.onRequestClose?.(); });
+        await flushHookEffects();
+        expect(credentialField(screen, 'cloud-account').props.value).toEqual(cloud);
+        expect(credentialField(screen, 'computer-access').props.value).toEqual(cua);
+        expect(route.push).not.toHaveBeenCalled();
         expect(actionInputs('machines.managed.acquire')).toHaveLength(0);
         await screen.unmount();
     });
@@ -327,8 +682,8 @@ describe('managed provisioner credential purposes', () => {
             return { body: { v: 1, actionId: 'machines.provisioners.list', requestId: request.requestId, execution: { ok: true,
                 result: { controller, provisioners: [local] } } } };
         } });
-        const saved = { id: 'saved-local', homeId: 'srv_credentials', revision: 1, name: 'Local recipe', owner: { kind: 'account', accountId: 'owner' }, controller,
-            recipe: { provider: contribution, schemaVersion: 1, name: 'Local recipe', choices: { cpu: 2 } } };
+        const saved = { id: 'saved-local', homeId: 'srv_credentials', revision: 1, name: 'Local launch', owner: { kind: 'account', accountId: 'owner' }, controller,
+            launch: { provider: contribution, schemaVersion: 1, name: 'Local launch', choices: { cpu: 2 } } };
         harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: saved } });
         const onUse = vi.fn();
         const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
@@ -340,7 +695,7 @@ describe('managed provisioner credential purposes', () => {
         expect(actionInputs('machines.provisioners.options').every(input => !input || typeof input !== 'object' || !('credentials' in input))).toBe(true);
         await act(async () => screen.pressByTestId('managed-config.use'));
         expect(onUse).toHaveBeenCalledWith(expect.objectContaining({ selection: expect.objectContaining({ kind: 'preset', id: saved.id }),
-            receipt: expect.objectContaining({ launch: saved.recipe }) }));
+            receipt: expect.objectContaining({ launch: saved.launch }) }));
         await screen.unmount();
     });
     it('keeps omitted controller-authorized purposes unavailable instead of assuming credentialless access', async () => {
@@ -365,7 +720,7 @@ describe('managed provisioner credential purposes', () => {
     it('preserves a preset credential receipt when purpose authorization is unavailable without admitting new reads or mutations', async () => {
         const serverId = await setupHome();
         const saved = { id: 'saved', homeId: 'srv_credentials', revision: 1, name: 'Saved machine', owner: { kind: 'account', accountId: 'owner' }, controller,
-            recipe: { provider: contribution, schemaVersion: 1, name: 'Saved machine', choices: { cpu: 2 }, credentials } };
+            launch: { provider: contribution, schemaVersion: 1, name: 'Saved machine', choices: { cpu: 2 }, credentials } };
         harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: saved } });
         harness.answer(serverId, '/v1/actions/machines.provisioners.list', { select: value => {
             const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
@@ -375,7 +730,7 @@ describe('managed provisioner credential purposes', () => {
         const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
         const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId} provisioner={buildQualifiedPluginContributionKey(contribution)}
             presetId={saved.id} presetOnly initialController={controller} />);
-        await waitForHomeGovernance(() => expect(screen.tree.findAll(node => node.props.testID === 'managed-config' && node.props.receipt?.name === saved.recipe.name).length).toBeGreaterThan(0));
+        await waitForHomeGovernance(() => expect(screen.tree.findAll(node => node.props.testID === 'managed-config' && node.props.receipt?.name === saved.launch.name).length).toBeGreaterThan(0));
         await flushHookEffects();
         const receipt = screen.tree.findAll(node => node.props.testID === 'managed-config' && node.props.receipt)[0]?.props.receipt;
         expect(receipt.facts.filter((fact: { id: string }) => fact.id.startsWith('credential:'))).toHaveLength(2);
@@ -396,7 +751,10 @@ describe('managed provisioner credential purposes', () => {
         await flushHookEffects();
         expect(credentialControl(screen, 'cloud-account')).toBeDefined();
         expect(screen.tree.findAll(node => node.props.controlTestID === 'managed-config.credential:computer-access' && typeof node.props.onChange === 'function')).toHaveLength(1);
-        expect(credentialField(screen, 'cloud-account').props.options).toEqual(expect.arrayContaining([{ value: cloud, label: 'Cloud work' }, { value: otherCloud, label: 'Cloud personal' }]));
+        expect(credentialField(screen, 'cloud-account').props.options).toEqual(expect.arrayContaining([
+            expect.objectContaining({ value: cloud, label: 'Cloud work' }),
+            expect.objectContaining({ value: otherCloud, label: 'Cloud personal' }),
+        ]));
         expect(screen.findByTestId(`managed-config.${mode}`)?.props.disabled).toBe(true);
         await selectCredentials(screen);
         await waitForHomeGovernance(() => expect(screen.findByTestId(`managed-config.${mode}`)?.props.disabled).toBe(false));
@@ -406,10 +764,10 @@ describe('managed provisioner credential purposes', () => {
         expect(receipt.facts.filter((fact: { id: string }) => fact.id.startsWith('credential:'))).toHaveLength(2);
         expect(JSON.stringify(receipt.facts)).not.toContain('same-account');
         harness.answer(serverId, '/v1/machines/presets/create', { body: { kind: 'saved', preset: { id: 'saved', homeId: 'srv_credentials', revision: 1, name: 'Virtual machine',
-            owner: { kind: 'account', accountId: 'owner' }, controller, recipe: { provider: contribution, schemaVersion: 1, name: 'Virtual machine', choices: { cpu: 2 }, credentials } } } });
+            owner: { kind: 'account', accountId: 'owner' }, controller, launch: { provider: contribution, schemaVersion: 1, name: 'Virtual machine', choices: { cpu: 2 }, credentials } } } });
         await act(async () => screen.pressByTestId('managed-config.save-preset'));
         await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/presets/create')).toHaveLength(1));
-        expect(harness.requestsFor('/v1/machines/presets/create')[0]?.input).toMatchObject({ recipe: { credentials } });
+        expect(harness.requestsFor('/v1/machines/presets/create')[0]?.input).toMatchObject({ launch: { credentials } });
         expect(actionInputs('machines.managed.acquire')).toHaveLength(0);
         await act(async () => screen.pressByTestId(`managed-config.${mode}`));
         if (mode === 'use') {
@@ -425,12 +783,12 @@ describe('managed provisioner credential purposes', () => {
     it('edits preset purposes and retires unsupported refs on controller catalog change without choosing a default', async () => {
         const serverId = await setupHome();
         const saved = { id: 'saved', homeId: 'srv_credentials', revision: 1, name: 'Saved machine', owner: { kind: 'account', accountId: 'owner' }, controller,
-            recipe: { provider: contribution, schemaVersion: 1, name: 'Saved machine', choices: { cpu: 2 }, credentials } };
+            launch: { provider: contribution, schemaVersion: 1, name: 'Saved machine', choices: { cpu: 2 }, credentials } };
         harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: saved } });
         const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
         const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId} provisioner={buildQualifiedPluginContributionKey(contribution)}
             presetId={saved.id} presetOnly initialController={controller} />);
-        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.choice:native')).not.toBeNull());
+        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.sizes:native')).not.toBeNull());
         expect(credentialControl(screen, 'cloud-account')).toBeDefined();
         await pressCredentialOption(screen, 'cloud-account', 'Cloud personal');
         await waitForHomeGovernance(() => expect(actionInputs('machines.provisioners.options')).toContainEqual(expect.objectContaining({ credentials: [
@@ -438,10 +796,10 @@ describe('managed provisioner credential purposes', () => {
         ] })));
         await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(false));
         harness.answer(serverId, '/v1/machines/presets/update', { body: { kind: 'saved', preset: { ...saved, revision: 2,
-            recipe: { ...saved.recipe, credentials: [{ purpose: cloudPurpose, account: otherCloud }, { purpose: cuaPurpose, account: cua }] } } } });
+            launch: { ...saved.launch, credentials: [{ purpose: cloudPurpose, account: otherCloud }, { purpose: cuaPurpose, account: cua }] } } } });
         await act(async () => screen.pressByTestId('managed-config.create'));
         await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/presets/update')).toHaveLength(1));
-        expect(harness.requestsFor('/v1/machines/presets/update')[0]?.input).toMatchObject({ patch: { recipe: { credentials: [
+        expect(harness.requestsFor('/v1/machines/presets/update')[0]?.input).toMatchObject({ patch: { launch: { credentials: [
             { purpose: cloudPurpose, account: otherCloud }, { purpose: cuaPurpose, account: cua },
         ] } } });
         harness.answer(serverId, '/v1/actions/machines.provisioners.list', { select: value => {
@@ -486,7 +844,7 @@ describe('managed provisioner credential purposes', () => {
             const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
             const older = JSON.stringify(request.input).includes('other-account');
             return { ...(older ? { respondAfter: olderAnswer } : {}), body: { v: 1, actionId: 'machines.provisioners.options', requestId: request.requestId,
-                execution: { ok: true, result: { choices: [{ id: 'native', title: 'Native compute', launch: { cpu: older ? 4 : 2 } }] } } } };
+                execution: { ok: true, result: createManagedCpuOptionsFixture([{ id: 'native', title: 'Native compute', cpu: older ? 4 : 2 }]) } } };
         } });
         await pressCredentialOption(screen, 'cloud-account', 'Cloud personal');
         expect(screen.findByTestId('managed-config.use')?.props.disabled).toBe(true);

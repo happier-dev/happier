@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import type { ManagedCreationSelectionV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
-import type { ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { hasManagedMachinePresetCreationV1, type ManagedMachinePresetCreationV1, type ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 
 import type { ManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import type { Machine } from '@/sync/domains/state/storageTypes';
@@ -15,7 +15,11 @@ export {
     type ManagedMachineSelectionDraft,
 } from '@/sync/domains/state/newSessionManagedMachineDraft';
 
-/** Recipe offers are presentation, never enrolled Machines or published Runner artifacts. */
+/** A reviewed receipt may continue through the composer's ordinary Send owner. */
+export type ManagedMachineUseOptions = Readonly<{ send?: boolean }>;
+export type ManagedMachineUse = (draft: ManagedMachineSelectionDraft, options?: ManagedMachineUseOptions) => void;
+
+/** Preset offers are presentation, never enrolled Machines or published Runner artifacts. */
 export type ManagedMachineSelectionOffer = Readonly<{
     id: string;
     homeId: string;
@@ -38,7 +42,7 @@ export type ManagedMachineDestinationProjection = Readonly<{
     rowCount: number;
 }>;
 
-/** Live controller admission, never stored with a recipe or paid acquisition. */
+/** Live controller admission, never stored with a launch snapshot or paid acquisition. */
 export type ManagedMachineArchiveChoiceAvailability = Readonly<{
     controllerMachineId?: string;
     controllerName?: string;
@@ -83,17 +87,18 @@ export function managedMachineSelectionOptionId(selection: ManagedCreationSelect
         : `managed-machine:${selection.homeId}:one-off`;
 }
 
-/** Current-Home recipes open the shared review; no offer admits native effects. */
+/** Current-Home presets open the shared review; no offer admits native effects. */
 export function buildManagedMachineSelectionOffers(params: Readonly<{
     homeId: string;
     presets: readonly ManagedMachinePresetV1[];
     oneOffTitle: string;
     oneOffSubtitle?: string;
-    describeController?: (preset: ManagedMachinePresetV1) => string | undefined;
-    markFor?: (preset: ManagedMachinePresetV1) => ReactNode;
-    onConfigure: (preset: ManagedMachinePresetV1 | null) => void;
+    describeController?: (preset: ManagedMachinePresetV1 & ManagedMachinePresetCreationV1) => string | undefined;
+    markFor?: (preset: ManagedMachinePresetV1 & ManagedMachinePresetCreationV1) => ReactNode;
+    onConfigure: (preset: (ManagedMachinePresetV1 & ManagedMachinePresetCreationV1) | null) => void;
 }>): readonly ManagedMachineSelectionOffer[] {
-    return [...params.presets.filter(preset => preset.homeId === params.homeId && preset.archivedAt === undefined).map(preset => ({
+    return [...params.presets.filter((preset): preset is ManagedMachinePresetV1 & ManagedMachinePresetCreationV1 =>
+        preset.homeId === params.homeId && preset.archivedAt === undefined && hasManagedMachinePresetCreationV1(preset)).map(preset => ({
         id: managedMachineSelectionOptionId({ kind: 'preset', homeId: preset.homeId, id: preset.id, revision: preset.revision }),
         homeId: preset.homeId,
         kind: 'preset' as const,
