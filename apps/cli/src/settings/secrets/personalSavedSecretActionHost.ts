@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { createPersonalSavedSecretActionExecuteV1, createSavedSecretVaultLinkDraftV1, type PersonalSavedSecretActionPortV1, type SavedSecretVaultQueryV1, type SavedSecretVaultTargetV1 } from '@happier-dev/protocol/account/settings/personalSavedSecretActionsV1';
+import { personalSavedSecretResourceMutationActionIdV1 } from '@happier-dev/protocol/account/settings/personalSavedSecretActionIdsV1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { prepareSavedSecretResourceUpdateContentV1, sealSavedSecretResourceStoredContentV1, type SavedSecretExternalSourceV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { SharedSavedSecretMutationOutputV1Schema, SharedSavedSecretDeleteOutputV1Schema, SharedSavedSecretUpdateInputV1Schema, SharedSavedSecretPromoteOutputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
@@ -193,9 +194,11 @@ export function createCliPersonalSavedSecretActionExecute(params: CliOwnedSavedS
             return { captured, references };
         };
         let nativeRuntime: Awaited<ReturnType<NonNullable<typeof params.resolveNativeSecretSourceRuntime>>> | undefined;
-        const mutate = async (id: 'secrets.shared.create' | 'secrets.shared.update' | 'secrets.shared.delete' | 'secrets.shared.promote', value: unknown) => {
+        const mutate = async (value: unknown) => {
             await assertCurrent();
-            const result = await params.home({ actionId: id, input: value, context, signal: context.signal });
+            const mutationActionId = personalSavedSecretResourceMutationActionIdV1(actionId);
+            if (!mutationActionId) refusal('unsupported_action');
+            const result = await params.home({ actionId: mutationActionId, input: value, context, signal: context.signal });
             return assertMutationSucceeded(result);
         };
         const nativeSources = async (target: SavedSecretVaultQueryV1) => {
@@ -267,7 +270,7 @@ export function createCliPersonalSavedSecretActionExecute(params: CliOwnedSavedS
                 const resources = drafts.map(draft => prepareSavedSecretResourceCreateForOperation({ credentials: params.credentials, accountId,
                     accountMode: storage.mode, resourceId: randomUUID(), displayName: draft.name, kind: draft.kind, source: draft.source }));
                 const [first, ...additionalSavedSecretResources] = resources;
-                SharedSavedSecretPromoteOutputV1Schema.parse(await mutate('secrets.shared.promote', { ...first,
+                SharedSavedSecretPromoteOutputV1Schema.parse(await mutate({ ...first,
                     additionalSavedSecretResources, nextSettings: null, profileMutations: [],
                     referenceCensus: { scope: 'catalogs', accountMode: storage.mode, catalogs: {} } }));
                 return { secrets: resources.map(resource => ({ secretId: resource.resourceId, secretRef: formatSharedSavedSecretRefV1(resource.resourceId) })) };
@@ -289,7 +292,7 @@ export function createCliPersonalSavedSecretActionExecute(params: CliOwnedSavedS
                         const nextSource = await store(args.target, opened.content.name, opened.content.value);
                         const receipt = await updateOwnedSavedSecretResource(owner, { ...params, resourceId: resource.resourceId,
                             expectedRevision: resource.revision, nextSource, signal: context.signal,
-                            executeMutation: value => mutate('secrets.shared.update', value) });
+                            executeMutation: mutate });
                         results.push({ ...identity, status: 'exported', updatedAt: receipt.revision });
                     } catch (error) {
                         if (error instanceof Error && error.name === 'AbortError') throw error;
@@ -314,18 +317,18 @@ export function createCliPersonalSavedSecretActionExecute(params: CliOwnedSavedS
                 const request = prepareSavedSecretResourceCreateForOperation({ credentials: params.credentials, accountId,
                     accountMode: storage.mode, resourceId: secretId, displayName: args.name,
                     kind: source?.kind === 'passkey' ? 'other' : args.kind ?? 'apiKey', value: source ? undefined : args.value, source });
-                SharedSavedSecretMutationOutputV1Schema.parse(await mutate('secrets.shared.create', request));
+                SharedSavedSecretMutationOutputV1Schema.parse(await mutate(request));
                 return { secretId, secretRef: formatSharedSavedSecretRefV1(secretId) };
             },
             update: async args => updateOwnedSavedSecretResource(owner, { ...params, resourceId: args.secretId,
                 expectedRevision: args.expectedUpdatedAt, nextName: args.name, nextValue: args.value, nextSource: args.source, signal: context.signal,
-                executeMutation: value => params.home({ actionId: 'secrets.shared.update', input: value, context, signal: context.signal }),
+                executeMutation: mutate,
             }),
             delete: async args => {
                 await findOwned(args.secretId, args.expectedUpdatedAt);
                 const { captured, references } = await captureReferences(args.secretId);
                 if (references.length) refusal('in_use', { references });
-                SharedSavedSecretDeleteOutputV1Schema.parse(await mutate('secrets.shared.delete', { resourceId: args.secretId,
+                SharedSavedSecretDeleteOutputV1Schema.parse(await mutate({ resourceId: args.secretId,
                     expectedRevision: args.expectedUpdatedAt, expectedSettingsVersion: captured.expectedSettingsVersion, referenceCensus: captured.referenceCensus }));
             },
         });

@@ -126,6 +126,18 @@ import { defineContributionProtocol } from '@happier-dev/plugin-sdk/contribution
 import { defineProtocolLiteral, defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
 import { DaemonPluginUiTargetedContributionsReadResponseSchema, DaemonPluginTargetedSourceDeclarationV1Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { DaemonPluginStructuredMessageActionExecuteRequestSchema } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
+import { ApprovalRequestV2Schema, type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
+import { signExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { createConfidentialActionInputsExecutor } from '@/daemon/surfaces/confidentialSecretFill';
+import { createCliPersonalSavedSecretActionExecute } from '@/settings/secrets/personalSavedSecretActionHost';
+import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
+import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { SharedSavedSecretCreateInputV1Schema, SHARED_SAVED_SECRET_ACTION_PATHS_V1 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
+import { openSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
+import { requirePresentUser } from '../../../../server/sources/app/api/utils/requirePresentUser';
+import { createDaemonApprovalExecutionOriginCurrentness, createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
+import { verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
 
 const processIdentity = vi.hoisted(() => vi.fn());
 vi.mock('@/daemon/processIdentity', () => ({ readProcessIdentityByPid: processIdentity }));
@@ -519,6 +531,127 @@ async function fixture(metadataLayout: 0 | 1 = 1, observeSubtreeQuery?: () => Pr
     omitCallerWorkspace: () => { callerWorkspaceMissing = true; },
     close: async () => { restore(); await app.close(); } };
 }
+
+it('stores a privately approved agent secret through the original Home authority without disclosing its value', async () => {
+  const f = await fixture();
+  const input = { name: 'Replay3 disposable secret' };
+  const material = 'SECRET-AUTH-synthetic-private-value';
+  const history: unknown[] = [];
+  const staleReasons: string[] = [];
+  const deliveredMessages: string[] = [];
+  let approval: ApprovalRequest | undefined;
+  let saved: ReturnType<typeof SharedSavedSecretCreateInputV1Schema.parse> | undefined;
+  let requester: Awaited<ReturnType<typeof f.prepare>>;
+  // Storage is the boundary; Home authentication and the person-class guard are real.
+  f.app.get('/v1/account/encryption', { preHandler: f.app.authenticate }, async () => ({ mode: 'plain', updatedAt: 1 }));
+  f.app.post(SHARED_SAVED_SECRET_ACTION_PATHS_V1['secrets.shared.create'], {
+    preHandler: [f.app.authenticate, requirePresentUser],
+  }, async request => {
+    saved = SharedSavedSecretCreateInputV1Schema.parse(request.body);
+    return { resourceId: saved.resourceId, revision: 1 };
+  });
+  for (const id of ['secrets.shared.update', 'secrets.shared.delete', 'secrets.shared.grants.set'] as const) {
+    f.app.post(SHARED_SAVED_SECRET_ACTION_PATHS_V1[id], { preHandler: [f.app.authenticate, requirePresentUser] },
+      async () => { throw new Error('An unrelated Saved Secret mutation reached storage'); });
+  }
+  const scopeKey = runWithServerHttpBaseUrl(serverHttpBaseUrl, () => resolveAccountSettingsScopeKey(f.credentials));
+  const snapshot = getActiveAccountSettingsSnapshot()!;
+  const accountPorts = createAccountServerActionDeps({ token: f.credentials.token, credentials: f.credentials,
+    serverId, serverIdentityId: storage.state.homeId, serverHttpBaseUrl,
+    externalActionMachineRequestPrivateKey: installation.secretKey,
+    externalActionMachineInstallationId: storage.state.installationId });
+  const originCurrent = createDaemonApprovalExecutionOriginCurrentness({
+    accountId: storage.account.id, machineId: storage.state.machineId, serverId,
+    // Installed identity and the tracked Session/permission snapshot are host boundaries.
+    resolveCurrentMachineExecutionOriginContext: async () => ({ machineId: storage.state.machineId, serverIdentityId: storage.state.homeId }),
+    resolveTarget: createDaemonExternalActionTargetResolver({ credentials: f.credentials, serverApiUrl: serverHttpBaseUrl }),
+    isAccountCurrent: async () => storage.account.status === 'active', listAccountApiTokens: async () => ({ tokens: [] }),
+    isSessionCallerCurrent: async () => storage.state.bound,
+    resolveCurrentPermissionMode: async () => 'default',
+    resolveCurrentSessionAgentSpawnPolicyV1: async () => getActiveAccountSettingsSnapshot()?.settings.sessionAgentSpawnPolicyV1 ?? null,
+    externalActionMachinePublicKey: installation.publicKey,
+    verifyExternalExecutionAuthorization: args => verifyExternalActionExecutionAuthorizationCurrent({ ...args,
+      serverHttpBaseUrl, installationId: storage.state.installationId, privateKey: installation.secretKey }),
+  });
+  const executor = createActionExecutor({
+    // The originating Session's message delivery is the transport boundary.
+    sessionSendMessage: async ({ sessionId: targetSessionId, message, localId }) => {
+      expect(targetSessionId).toBe(sessionId); deliveredMessages.push(message);
+      return { status: 'accepted', localId };
+    },
+    approvalsCreate: async ({ request }) => { approval = ApprovalRequestV2Schema.parse(request); history.push(structuredClone(approval)); return { artifactId: 'private-secret' }; },
+    approvalsGet: async () => structuredClone(approval),
+    approvalsUpdate: async ({ request, expectedStatus }) => {
+      if (!approval) throw new Error('Missing approval');
+      const next = ApprovalRequestV2Schema.parse(request);
+      const transition = decideApprovalRequestTransition(approval, next, { expectedStatus });
+      if (!transition.ok) return transition;
+      approval = next; history.push(structuredClone(next)); return { ok: true };
+    },
+    isApprovalExecutionOriginCurrent: args => originCurrent({ ...args, reportStale: reason => {
+      staleReasons.push(reason); args.reportStale?.(reason);
+    } }),
+    confidentialActionInputs: createConfidentialActionInputsExecutor({ expectedScopeKey: scopeKey!,
+      expectedAccountId: storage.account.id, serverId, machineId: storage.state.machineId, readAccountMode: async () => 'plain' }),
+    personalSavedSecretActionExecute: createCliPersonalSavedSecretActionExecute({ credentials: f.credentials,
+      operationContext: createInvocationSavedSecretOperationContextV1({ credentials: f.credentials, snapshot,
+        serverHttpBaseUrl, isCurrent: async () => storage.state.bound }), home: accountPorts.homeDomainAction! }),
+  });
+  const execute = createDaemonSessionAccountActionExecutor({ serverId, serverHttpBaseUrl,
+    token: f.credentials.token, credentials: f.credentials, machineId: storage.state.machineId,
+    prepareExternalActionAuthorization: async ({ operation, sessionActionOrigin }) => {
+      requester = await f.prepare(operation, sessionActionOrigin);
+      return requester;
+    },
+    createExecutor: () => ({ execute: (id, args, context) => executor.execute(id, args, { ...context,
+      serverIdentityId: storage.state.homeId, runtimeAccountId: storage.account.id,
+      signExternalActionApprovalInput: request => signExternalActionApprovalInputV1({ ...request,
+        authorizationToken: request.authorization.token, privateKey: installation.secretKey }),
+    }) }),
+  });
+  try {
+    const requested = await execute(f.operation('secrets.create', input), { sessionId, isCurrent: async () => true });
+    expect(requested).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    expect(approval).toMatchObject({ actionArgs: input, preview: { confidentialInputs: { paths: ['value'] } } });
+    const result = await executor.continueConfidentialApprovalRequest({ v: 1, kind: 'action_inputs', artifactId: 'private-secret',
+      requestId: 'signed-observation', actionId: 'secrets.create', request: input, serverId,
+      machineId: storage.state.machineId, accountEncryptionMode: 'plain',
+      choices: [{ path: 'value', choice: { kind: 'once', value: material } }],
+    }, { surface: 'ui', authority: 'present_user', serverId, serverIdentityId: storage.state.homeId, runtimeAccountId: storage.account.id });
+    expect(result.ok, JSON.stringify({ failure: result.ok ? undefined : result, status: approval?.status,
+      execution: approval?.execution, staleReasons, http: f.observations })).toBe(true);
+    expect(f.observations.filter(row => row.path === SHARED_SAVED_SECRET_ACTION_PATHS_V1['secrets.shared.create']))
+      .toMatchObject([{ status: 200, signed: true, bearer: false }]);
+    expect(result).toMatchObject({ ok: true, result: { secretId: expect.any(String) } });
+    expect(saved).toBeDefined();
+    expect(openSavedSecretResourceStoredContentV1({ resourceId: saved!.resourceId, mode: 'plain', storedContent: saved!.storedContent }))
+      .toMatchObject({ name: input.name, value: material });
+    expect(approval).toMatchObject({ status: 'executed' });
+    expect(JSON.stringify({ requested, result, history, deliveredMessages })).not.toContain(material);
+    expect(deliveredMessages.length).toBeGreaterThan(0);
+    if (!requester || !saved) throw new Error('Missing admitted requester or stored resource');
+    const admitted = requester;
+    const sign = (actionId: keyof typeof SHARED_SAVED_SECRET_ACTION_PATHS_V1, body: unknown) => createExternalActionAuthorizedRequestHeaders({
+      authorization: admitted.authorization, effectActionId: actionId, target: admitted.target,
+      installationId: storage.state.installationId, method: 'POST', path: SHARED_SAVED_SECRET_ACTION_PATHS_V1[actionId],
+      body, privateKey: installation.secretKey,
+    });
+    const siblingMutations = [
+      ['secrets.shared.update', { resourceId: saved.resourceId, expectedRevision: 1,
+        displayName: saved.displayName, kind: saved.kind, storedContent: saved.storedContent }],
+      ['secrets.shared.delete', { resourceId: saved.resourceId, expectedRevision: 1, expectedSettingsVersion: 0,
+        referenceCensus: { accountMode: 'plain', profiles: { referenceGuardRevision: 0, rows: [] } } }],
+      ['secrets.shared.grants.set', { resourceId: saved.resourceId, expectedRevision: 1,
+        accountGrants: [], teamGrants: [], groupGrants: [] }],
+    ] as const;
+    for (const [id, body] of siblingMutations) {
+      expect((await f.app.inject({ method: 'POST', url: SHARED_SAVED_SECRET_ACTION_PATHS_V1[id],
+        payload: body, headers: sign(id, body) })).statusCode).toBe(401);
+    }
+    expect((await f.app.inject({ method: 'POST', url: SHARED_SAVED_SECRET_ACTION_PATHS_V1['secrets.shared.create'],
+      payload: { ...saved, displayName: 'Changed after signing' }, headers: sign('secrets.shared.create', saved) })).statusCode).toBe(401);
+  } finally { await f.close(); }
+});
 
 it('preserves the incumbent refusal of an unsupported asynchronous Session browser child after its mounted command returns', async () => {
   let mountedRequest: ReturnType<typeof UiActionDispatchRequestV1Schema.parse> | undefined;

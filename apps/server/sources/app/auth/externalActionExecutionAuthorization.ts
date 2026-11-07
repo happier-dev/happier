@@ -1,4 +1,5 @@
 import { isSessionStopChildRootV1, isSessionStopChildEffectV1 } from '@happier-dev/protocol/actions/sessionSections';
+import { personalSavedSecretResourceMutationActionIdV1 } from '@happier-dev/protocol/account/settings/personalSavedSecretActionIdsV1';
 import { isMachineSetupCombinedRunHttpPurpose } from '@/app/auth/externalActionMachineSetupWorkflowPurpose';
 import { isExternalActionConnectedAccountInventoryHttpPurpose } from './externalActionConnectedAccountInventoryPurpose';
 import { isExternalActionConnectedSubscriptionPriceHttpPurpose } from './externalActionConnectedMetadataPurpose';
@@ -1253,6 +1254,7 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
         workflowDiscussion: isWorkflowDiscussionPreparationEffect(binding.actionId, effectActionId),
         memory: isMemoryExposureReadEffect(binding.actionId, effectActionId),
         personalUsage: isPersonalUsageReadEffect(binding.actionId, effectActionId),
+        personalSavedSecret: personalSavedSecretResourceMutationActionIdV1(binding.actionId) === effectActionId,
         publicProfile: isPublicProfilePreparationEffect(binding.actionId, effectActionId),
         teamUsage: isTeamCredentialUsageExportReadEffect(binding.actionId, effectActionId),
         archiveStop: isSessionArchiveStopEffect(binding.actionId, effectActionId),
@@ -1270,7 +1272,7 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
                 || Object.values(sibling).some(Boolean) || crossesEffectFamily || templateDeployEffect));
     const usesRootCredential = sibling.docDecision || templateDeployEffect || sibling.deploymentRead
         || linkReviewedSetupRead || sibling.registryRead || sibling.secondOpinion || sibling.memory
-        || sibling.personalUsage || sibling.publicProfile;
+        || sibling.personalUsage || sibling.personalSavedSecret || sibling.publicProfile;
     const usesPublicRootCredential = sibling.teamUsage || sibling.docDiscussion || sibling.docRead;
     return { effectFamilyAdmitted, usesRootCredential, usesPublicRootCredential,
         createPreparationEffect, targetRetentionPurpose, reviewedMachineSetupChild, reviewedSessionAgentReadinessChild,
