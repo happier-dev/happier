@@ -1018,10 +1018,10 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
         onClose={props.onClose} lastKnown />
       {actionRegion}
       <EmptyState
-        titleKey="plugins.triage.surface.entryGone.heading"
-        title="This entry is no longer in the list"
-        descriptionKey="plugins.triage.surface.entryGone.description"
-        description="The current window no longer holds this entry, so there is nothing to open it with. It may return on the next refresh."
+        titleKey="plugins.triage.surface.entryNotLoaded.heading"
+        title="These details are not loaded"
+        descriptionKey="plugins.triage.surface.entryNotLoaded.lastKnown"
+        description="These are the last details this page loaded. The entry's current state has not been confirmed."
       />
     </Stack>
   ) : (
