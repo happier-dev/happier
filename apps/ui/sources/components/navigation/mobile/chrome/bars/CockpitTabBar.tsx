@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, View, type LayoutChangeEvent } from 'react-native';
+import { Platform, View, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 import { HappierPressable, HAPPIER_FOCUS_RING_DELEGATED_STYLE } from '@happier-dev/plugin-ui/presentation';
 import { ScrollView } from 'react-native-gesture-handler';
 import Animated from 'react-native-reanimated';
@@ -18,6 +18,7 @@ import { resolveHorizontalScrollEdgeMaskRamps, resolveHorizontalScrollEdgeMaskSt
 import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { usePublishCockpitBarScrolls } from './cockpitBarScrollState';
+import { resolveCockpitTrackRevealX } from './cockpitTrackReveal';
 
 
 const styles = StyleSheet.create((theme) => ({
@@ -211,8 +212,10 @@ export function CockpitTabBarView<TSurface extends string>(props: CockpitTabBarP
                     <>
                         {props.tabs[0] ? renderTab(props.tabs[0]) : null}
                         <View style={styles.trackDivider} />
-                        <CockpitTabBarTrack>
-                            {props.tabs.slice(1).map(renderTab)}
+                        <CockpitTabBarTrack activeId={props.activeSurface}>
+                            {props.tabs.slice(1).map(tab => (
+                                <CockpitTabBarTrackItem key={tab.id} id={tab.id}>{renderTab(tab)}</CockpitTabBarTrackItem>
+                            ))}
                             {props.trailing}
                         </CockpitTabBarTrack>
                     </>
@@ -237,8 +240,41 @@ const TRACK_EDGE_FADE = { fadeSize: 16 } as const;
  * the track's own pixels (CSS mask on web, `HorizontalScrollEdgeMask` natively): a painted fade has no
  * colour to paint over the bar's glass, and the last item read as hidden under the "+" beside it.
  */
-function CockpitTabBarTrack(props: Readonly<{ children: React.ReactNode }>) {
+const TrackRevealContext = React.createContext<((id: string, x: number, width: number) => void) | null>(null);
+
+/** Reports where a tab sits in the track, so the track can bring the selected one into view. */
+function CockpitTabBarTrackItem(props: Readonly<{ id: string; children: React.ReactNode }>) {
+    const report = React.useContext(TrackRevealContext);
+    return (
+        <View onLayout={report ? (event) => report(props.id, event.nativeEvent.layout.x, event.nativeEvent.layout.width) : undefined}>
+            {props.children}
+        </View>
+    );
+}
+
+function CockpitTabBarTrack(props: Readonly<{ children: React.ReactNode; activeId?: string }>) {
     const fades = useScrollEdgeFades({ enabledEdges: { left: true, right: true }, overflowThreshold: 4, edgeThreshold: 2 });
+    // The selected tab is scrolled into view (Plan 30 §457) when it, or the track's width, changes; a person's own
+    // scroll is left alone until then.
+    const scrollRef = React.useRef<React.ComponentRef<typeof ScrollView> | null>(null);
+    const offset = React.useRef(0);
+    const viewport = React.useRef(0);
+    const layouts = React.useRef(new Map<string, Readonly<{ x: number; width: number }>>());
+    const reveal = React.useCallback(() => {
+        const active = props.activeId === undefined ? undefined : layouts.current.get(props.activeId);
+        if (!active || viewport.current <= 0) return;
+        const x = resolveCockpitTrackRevealX({ ...active, offset: offset.current, viewport: viewport.current, fade: TRACK_EDGE_FADE.fadeSize });
+        if (x !== null) scrollRef.current?.scrollTo({ x, animated: false });
+    }, [props.activeId]);
+    React.useEffect(reveal, [reveal]);
+    const report = React.useCallback((id: string, x: number, width: number) => {
+        layouts.current.set(id, { x, width });
+        if (id === props.activeId) reveal();
+    }, [props.activeId, reveal]);
+    const onScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+        offset.current = event.nativeEvent.contentOffset.x;
+        fades.onScroll(event);
+    };
     const [nativeWidth, setNativeWidth] = React.useState(0);
     const edges = React.useMemo(() => ({ top: false, bottom: false, left: fades.visibility.left, right: fades.visibility.right }),
         [fades.visibility.left, fades.visibility.right]);
@@ -246,19 +282,22 @@ function CockpitTabBarTrack(props: Readonly<{ children: React.ReactNode }>) {
     const nativeRamps = React.useMemo(() => Platform.OS === 'web' ? null : resolveHorizontalScrollEdgeMaskRamps(edges, TRACK_EDGE_FADE), [edges]);
     const onViewportLayout = (event: LayoutChangeEvent) => {
         fades.onViewportLayout(event);
+        viewport.current = event.nativeEvent.layout.width;
+        reveal();
         if (Platform.OS !== 'web') setNativeWidth(event.nativeEvent.layout.width);
     };
     const track = (
         <ScrollView
+            ref={scrollRef}
             horizontal
             showsHorizontalScrollIndicator={false}
             style={webMask ?? undefined}
             contentContainerStyle={styles.trackContent}
             onContentSizeChange={fades.onContentSizeChange}
-            onScroll={fades.onScroll}
+            onScroll={onScroll}
             scrollEventThrottle={32}
         >
-            {props.children}
+            <TrackRevealContext.Provider value={report}>{props.children}</TrackRevealContext.Provider>
         </ScrollView>
     );
     return (

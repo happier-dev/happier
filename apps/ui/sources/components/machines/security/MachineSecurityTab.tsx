@@ -4,9 +4,9 @@ import { View } from 'react-native';
 import { useMachinePageState } from '@/components/machines/page/machinePageContext';
 import type { MachinePageTabBodyProps } from '@/components/machines/page/machinePageTabQuery';
 import { MachineTabSubHead } from '@/components/machines/page/MachineTabSubHead';
-import { describeMachineSharingSummary } from '@/components/machines/page/machineThisMachineSummaries';
+import { describeMachineSetupRowSummary, describeMachineSharingSummary } from '@/components/machines/page/machineThisMachineSummaries';
 import { MachineNetworkSection } from '@/components/machines/security/network/MachineNetworkSection';
-import { useMachineNetworkLead } from '@/components/machines/security/network/useMachineNetworkLead';
+import { describeNetworkRowSummary, useMachineNetworkHeadline, useMachineNetworkLead } from '@/components/machines/security/network/useMachineNetworkLead';
 import { MachineSecuritySection } from '@/components/machines/security/MachineSecuritySection';
 import { MachineSharingSection } from '@/components/sharing/machines/MachineSharingSection';
 import { MachineWorkSummaryReader } from '@/components/sharing/machines/MachineWorkSummaryReader';
@@ -15,7 +15,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import type { Machine } from '@/sync/domains/state/storageTypes';
-import { useActiveServerAccountScope } from '@/sync/store/hooks';
+import { useActiveServerAccountScope, useMachineField } from '@/sync/store/hooks';
 import { t } from '@/text';
 
 type SecurityPage = 'network' | 'sharing';
@@ -35,6 +35,7 @@ export function MachineSecurityTab(props: MachinePageTabBodyProps) {
     (next: SecurityPage) => setParams({ id: 'security', page: next }),
     [setParams],
   );
+  const openSetup = React.useCallback(() => setParams({ id: 'setup' }), [setParams]);
   const back = React.useMemo(
     () => ({
       label: t('machineDetailPage.subPages.security'),
@@ -92,30 +93,47 @@ export function MachineSecurityTab(props: MachinePageTabBodyProps) {
         metadataReadable={machine.metadata != null}
         canManage={!needsManage}
         shared={machine.isShared === true}
+        reach={
+          <MachineSecurityReach serverId={target.serverId} machine={machine} machineName={machineName}
+            needsManage={needsManage} onOpen={open} />
+        }
       />
-      <ItemGroup
-        title={t('machineDetailPage.security.accessTitle')}
-        description={t('machineDetailPage.security.accessDescription', {
-          machine: machineName,
-        })}
-      >
-        <Item
-          testID="machine-security-row-network"
-          title={t('machineDetailPage.subPages.network')}
-          icon={<Icon name="tree-structure" />}
-          showChevron
-          onPress={() => open('network')}
-        />
-        <Item
-          testID="machine-security-row-sharing"
-          title={t('machineDetailPage.subPages.sharing')}
-          subtitle={describeMachineSharingSummary(machine)}
-          icon={<Icon name="users" />}
-          showChevron
-          onPress={() => open('sharing')}
-        />
-      </ItemGroup>
+      <MachineSecuritySetupRow serverId={target.serverId} machineId={machine.id} onOpen={openSetup} />
     </View>
+  );
+}
+
+/**
+ * Who can reach the Machine (P-M2, after administrator power): Network says what is open, from the facts its page
+ * reads; Sharing says who shares it when the Machine record holds that.
+ */
+function MachineSecurityReach(props: Readonly<{
+  serverId: string; machine: Machine; machineName: string; needsManage: boolean; onOpen: (page: SecurityPage) => void;
+}>) {
+  const headline = useMachineNetworkHeadline({ serverId: props.serverId, machineId: props.machine.id,
+    machineName: props.machineName, enabled: true, needsManage: props.needsManage });
+  return (
+    <ItemGroup title={t('machineDetailPage.security.accessTitle')}
+      description={t('machineDetailPage.security.accessDescription', { machine: props.machineName })}>
+      <Item testID="machine-security-row-network" title={t('machineDetailPage.subPages.network')}
+        subtitle={describeNetworkRowSummary(headline)}
+        icon={<Icon name="tree-structure" />} showChevron onPress={() => props.onOpen('network')} />
+      <Item testID="machine-security-row-sharing" title={t('machineDetailPage.subPages.sharing')}
+        subtitle={describeMachineSharingSummary(props.machine)}
+        icon={<Icon name="users" />} showChevron onPress={() => props.onOpen('sharing')} />
+    </ItemGroup>
+  );
+}
+
+/** What the Machine is set up with, from its published observation; it opens the Setup tab (recipes left Security, D1). */
+function MachineSecuritySetupRow(props: Readonly<{ serverId: string; machineId: string; onOpen: () => void }>) {
+  const observation = useMachineField(props.machineId, 'daemonState', 'setup', { serverId: props.serverId });
+  const summary = describeMachineSetupRowSummary(observation);
+  return (
+    <ItemGroup title={t('machineDetailPage.tabs.setup')}>
+      <Item testID="machine-security-row-setup" title={summary.title} subtitle={summary.subtitle}
+        icon={<Icon name="file-text" />} showChevron onPress={props.onOpen} />
+    </ItemGroup>
   );
 }
 

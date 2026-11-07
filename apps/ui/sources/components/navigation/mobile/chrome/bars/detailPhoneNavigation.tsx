@@ -62,7 +62,7 @@ export function useDetailPhoneBarPresentation<T extends PhoneMenuItem>(input: Re
     const metrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'));
     const slotCount = input.native ? null : resolveFloatingTabBarSlotCount({ windowWidth: width, maxWidth: layout.maxWidth, tabMinWidth: metrics.tabMinWidth });
     // More also opens Customize, so it occupies one measured slot even before any item overflows.
-    const fit = resolveDetailPhoneBarFit(input.placement, slotCount, input.overflowBehavior);
+    const fit = resolveDetailPhoneBarFit(input.placement, slotCount, input.overflowBehavior, { selectedLabelSlots: metrics.showLabels ? 0 : 1 });
     const { behindMore } = fit;
     const activeBehindMore = behindMore.find(item => item.id === input.activeId)
         ?? input.items.find(item => item.id === input.activeId && item.phonePlacement === 'none');

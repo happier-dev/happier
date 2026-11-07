@@ -68,4 +68,15 @@ describe('machine resource suggestions', () => {
         expect(deriveMachineResourceSuggestions({ ...calm, online: false, hasLastReport: false })
             .map(suggestion => suggestion.kind)).toEqual(['notifyWhenBack']);
     });
+
+    it('asks about the tab’s own subject on Setup and Security, never about resources there', () => {
+        const pressed = { ...calm, calm: false, memoryPressure: 'critical' as const, guardEnabled: false, happierStorageBytes: 10_000_000_000 };
+        const setup = deriveMachineResourceSuggestions({ ...pressed, subject: 'setup' });
+        expect(setup.map(suggestion => suggestion.kind)).toEqual(['setupDocker', 'setupReview', 'setupHarden']);
+        const security = deriveMachineResourceSuggestions({ ...pressed, subject: 'security' });
+        expect(security.map(suggestion => suggestion.kind)).toEqual(['securityAccess', 'securityNetwork', 'securityUpdates']);
+        expect([...setup, ...security].every(suggestion => suggestion.fill.placement?.machineId === machine.machineId)).toBe(true);
+        // Resource tabs keep resource prompts.
+        expect(deriveMachineResourceSuggestions({ ...pressed, subject: 'resources' })[0]!.kind).toBe('memory');
+    });
 });

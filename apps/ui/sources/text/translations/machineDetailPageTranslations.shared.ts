@@ -56,6 +56,7 @@ export const english = {
             setupRowNone: "Nothing set up beyond Happier",
             setupRowDrifted: "Changed since it was applied. Review it in Setup.",
             setupRowChecking: "Checking…",
+            setupRowUnknown: "Recipes, presets and tools",
             description: ({ machine }: { machine: string }) => `Who can do what on ${machine}, what's waiting to update, and whether it needs a restart.`,
             updatesTitle: `Updates`,
             updatesDescription: `Install now if you'd rather not wait. A restart is always its own step.`,

@@ -24,7 +24,8 @@ import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { Modal, type CustomModalInjectedProps } from '@/modal';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { canAttemptMachineSpawn, resolveMachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
-import { describeMachineStartUnavailable } from './machineStartAvailability';
+import { describeMachineStartUnavailable, machineStartSessionDisplay } from './machineStartAvailability';
+import type { MachinePageTabId } from './machinePageTabQuery';
 import { useMachineListForServer, useMachineListForServerSelection } from '@/sync/domains/state/storage';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { useActiveServerAccountScope } from '@/sync/store/hooks';
@@ -176,6 +177,8 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
     /** A new name is being saved. */
     renaming: boolean;
     onRename(): void;
+    /** The open tab: Start session leads only the Overview (one primary per view). */
+    tab?: MachinePageTabId;
 }>) {
     const language = usePreferredLanguage();
     const { theme } = useUnistyles();
@@ -317,7 +320,7 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
                     <RoundButton
                         testID="machine-detail-start-session"
                         // An offline machine keeps the action's place but not its weight: a disabled filled button would be the page's loudest thing.
-                        display={needsYouAction || !target.online ? 'secondary' : undefined}
+                        display={machineStartSessionDisplay({ tab: props.tab ?? 'overview', online: target.online === true, needsYou: needsYouAction !== null }) === 'secondary' ? 'secondary' : undefined}
                         title={t('machineDetailPage.startAction')}
                         disabled={!machineCanSpawn}
                         disabledReason={startUnavailableReason}

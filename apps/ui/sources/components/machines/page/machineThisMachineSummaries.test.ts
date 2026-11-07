@@ -33,4 +33,17 @@ describe('Sharing row summary', () => {
         expect(describeMachineDetailsSummary({ host: 'lima-happier-5bi1h6q00rlp5zjoh5njd664', platform: 'Linux', managed: true })).toBe('Linux');
         expect(describeMachineDetailsSummary({ host: undefined, platform: undefined, managed: false })).toBeUndefined();
     });
+
+    it('summarises Setup on the Security tab from the daemon’s published observation, without reading a plan', async () => {
+        const { describeMachineSetupRowSummary } = await import('./machineThisMachineSummaries');
+        const recipe = (status: 'satisfied' | 'drifted' | 'checking') => ({ ref: { kind: 'builtin', id: 'docker' }, status, steps: [] });
+        // Before the Machine publishes an observation the row still leads to Setup, saying what is there.
+        expect(describeMachineSetupRowSummary(null)).toEqual({ title: expect.stringContaining('setupRowUnknown'), subtitle: undefined });
+        expect(describeMachineSetupRowSummary({ status: 'satisfied', recipes: [] })?.title).toContain('setupRowNone');
+        expect(describeMachineSetupRowSummary({ status: 'satisfied', recipes: [recipe('satisfied'), recipe('satisfied')] }))
+            .toEqual({ title: expect.stringContaining('setupRowRecipes(count=2)'), subtitle: undefined });
+        expect(describeMachineSetupRowSummary({ status: 'drifted', recipes: [recipe('drifted')] })?.subtitle).toContain('setupRowDrifted');
+        expect(describeMachineSetupRowSummary({ status: 'checking', recipes: [recipe('checking')] })?.subtitle).toContain('setupRowChecking');
+    });
 });
+

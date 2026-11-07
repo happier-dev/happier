@@ -24,9 +24,15 @@ export function resolveDetailPhonePlacement<T extends PhonePlacementItem>(
 export function resolveDetailPhoneBarFit<T extends PhonePlacementItem>(
     placement: ReturnType<typeof resolveDetailPhonePlacement<T>>, slotCount: number | null,
     overflowBehavior: 'more' | 'scroll' = 'more',
+    /**
+     * Slots the selected tab's name takes beyond its icon: with labels off it still names itself (owner 11-06), so a
+     * bar that fits only as icons scrolls instead of clipping that name.
+     */
+    options?: Readonly<{ selectedLabelSlots?: number }>,
 ) {
+    const availableSize = slotCount === null ? null : Math.max(0, slotCount - (options?.selectedLabelSlots ?? 0));
     const fit = resolveNavigationOverflow(placement.bottom, placement.placements.overflow,
-        { availableSize: slotCount, itemSize: 1, reserveOverflowSlot: true });
+        { availableSize, itemSize: 1, reserveOverflowSlot: true });
     const held = placement.bottom.slice(fit.shown.length);
     const scroll = overflowBehavior === 'scroll' && held.length > 0;
     const overflow = scroll ? placement.placements.overflow : fit.overflow;

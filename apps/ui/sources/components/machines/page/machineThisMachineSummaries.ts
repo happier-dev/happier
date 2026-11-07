@@ -55,3 +55,17 @@ export function describeMachineComputerUse(settings: ComputerUseSettingsV1): str
 export function describeMachineDetailsSummary(input: Readonly<{ host: string | undefined; platform: string | undefined; managed: boolean }>): string | undefined {
     return [input.managed ? undefined : input.host, input.platform].filter(Boolean).join(' · ') || undefined;
 }
+
+/**
+ * The Security tab's Setup row, from the daemon's published setup observation (MR7: a row fact read when the tab opens,
+ * never a plan). Before the Machine publishes one, the row names what Setup holds.
+ */
+export function describeMachineSetupRowSummary(observation: Readonly<{ status: string; recipes: readonly unknown[] }> | null | undefined):
+    Readonly<{ title: string; subtitle: string | undefined }> {
+    if (!observation) return { title: t('machineDetailPage.security.setupRowUnknown'), subtitle: undefined };
+    const count = observation.recipes.length;
+    const title = count === 0 ? t('machineDetailPage.security.setupRowNone') : t('machineDetailPage.security.setupRowRecipes', { count });
+    const subtitle = observation.status === 'drifted' ? t('machineDetailPage.security.setupRowDrifted')
+        : observation.status === 'checking' ? t('machineDetailPage.security.setupRowChecking') : undefined;
+    return { title, subtitle };
+}

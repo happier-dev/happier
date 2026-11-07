@@ -28,7 +28,7 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
 
-import { deriveMachineResourceSuggestions } from './machineResourceSuggestions';
+import { deriveMachineResourceSuggestions, type MachineResourceSuggestionSubject } from './machineResourceSuggestions';
 
 /**
  * "Ask an agent" (plan 60 AGW-11, lab `ra` A1/A1b/A1p): the last block of a Resources tab. The real
@@ -42,6 +42,8 @@ export const MachineResourcesAskBlock = React.memo(
       serverId: string;
       machineId: string;
       machineName: string;
+      /** The open tab's subject (Setup, Security); the resource tabs when absent. */
+      subject?: MachineResourceSuggestionSubject;
     }>,
   ) {
     const router = useRouter();
@@ -104,9 +106,11 @@ export const MachineResourcesAskBlock = React.memo(
           happierStorageBytes,
           leftBehindCount,
           automationsEnabled: automations.enabled,
+          subject: props.subject,
         }, previousSuggestions.current),
       [
         language,
+        props.subject,
         automations.enabled,
         calm,
         guardEnabled,

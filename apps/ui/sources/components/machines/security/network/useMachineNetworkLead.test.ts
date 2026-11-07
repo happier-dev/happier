@@ -6,7 +6,7 @@ vi.mock('@/text', async () => {
 });
 
 import { resolveMachineNetworkProviderTitle } from './networkSurface';
-import { describeNetworkHeadline } from './useMachineNetworkLead';
+import { describeNetworkHeadline, describeNetworkRowSummary } from './useMachineNetworkLead';
 
 describe('Network lead provider names', () => {
   it('does not describe unanswered service exposure as SSH only', () => {
@@ -20,3 +20,15 @@ describe('Network lead provider names', () => {
     expect(describeNetworkHeadline({ kind: 'open', ports: [443], ssh: false, services: null }, 'shop-prod').detail).toBeNull();
   });
 });
+
+describe('Network row summary on the Security tab', () => {
+  it('states what is open without naming the Machine again, with how its services are reached', () => {
+    const caddy = resolveMachineNetworkProviderTitle({ kind: 'builtin', id: 'caddy' });
+    expect(describeNetworkRowSummary({ kind: 'open', ports: [22], ssh: true, services: caddy }))
+      .toBe('machineDetailPage.network.rowOpenOn(ports=22) · machineDetailPage.network.headlineSshAndServices(provider=Caddy)');
+    expect(describeNetworkRowSummary({ kind: 'open', ports: null, ssh: false, services: null })).toBe('machineDetailPage.network.rowOpen');
+    expect(describeNetworkRowSummary({ kind: 'closed', services: null })).toBe('machineDetailPage.network.rowClosed');
+    expect(describeNetworkRowSummary(null)).toBeUndefined();
+  });
+});
+
