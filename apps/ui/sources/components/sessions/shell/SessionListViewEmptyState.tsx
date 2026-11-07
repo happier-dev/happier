@@ -10,6 +10,7 @@ import type { SessionListQueryPresentation } from '@/sync/domains/session/listin
 import type { SessionListViewContext, SessionListViewFilters } from './search/sessionListViewFilters';
 import {
     resolveSessionListViewEmptyState,
+    sessionListSubjectCopyKey,
     type SessionListViewEmptyStateAction,
 } from './sessionListViewEmptyStateModel';
 import { SessionListSkeletonRows } from './SessionListSkeletonRows';
@@ -29,6 +30,7 @@ type SessionListViewEmptyStateProps = Readonly<{
     viewContext: SessionListViewContext;
     includeInactive: boolean;
     hasHiddenInactiveSessions: boolean;
+    emptySpaceName?: string | null;
     onRetry: () => void;
     onLoadMore: () => void;
     onClearFilters: () => void;
@@ -41,10 +43,10 @@ function resolveAction(
     props: SessionListViewEmptyStateProps,
 ): Readonly<{ titleKey: TranslationKey; onPress: () => void }> | null {
     if (action === 'retry') return { titleKey: 'common.retry', onPress: props.onRetry };
-    if (action === 'load_more') return { titleKey: 'sessionsList.querySearchOlder', onPress: props.onLoadMore };
+    if (action === 'load_more') return { titleKey: sessionListSubjectCopyKey('sessionsList.querySearchOlder', props.filters.show), onPress: props.onLoadMore };
     if (action === 'clear_filters') return { titleKey: 'sessionsList.filtersClear', onPress: props.onClearFilters };
     if (action === 'browse_all_accessible') {
-        return { titleKey: 'sessionsList.queryBrowseAllAccessible', onPress: props.onBrowseAllAccessible };
+        return { titleKey: sessionListSubjectCopyKey('sessionsList.queryBrowseAllAccessible', props.filters.show), onPress: props.onBrowseAllAccessible };
     }
     if (action === 'show_inactive') return { titleKey: 'sessionsList.filtersInactiveShow', onPress: props.onShowInactive };
     return null;
@@ -79,7 +81,7 @@ export const SessionListViewEmptyState = React.memo((props: SessionListViewEmpty
             <EmptyState
                 layout="line"
                 titleTestID="session-list-query-empty-title"
-                title={t(model.titleKey)}
+                title={'titleParams' in model ? t(model.titleKey, model.titleParams) : t(model.titleKey)}
                 primaryAction={action && label ? {
                     label,
                     onPress: action.onPress,

@@ -13843,7 +13843,7 @@ const french: TeamsTranslationRoot = {
                 brokerUnavailable: 'La machine courtier de cet identifiant est injoignable pour l’instant. Réessaie quand elle sera de retour.',
                 sourceOwnerRequired: 'Seule la personne qui possède cette source peut effectuer ce changement.',
                 nativeDeliveryUnavailable: 'La transmission native des identifiants est indisponible ou n’a pas pu être vérifiée sur cette machine. Choisissez une autre machine ou un autre identifiant partagé.',
-                sourceMissing: 'Cet identifiant ne désigne plus une source existante. Son propriétaire doit choisir la source à nouveau.',
+                sourceMissing: 'Cet identifiant ne désigne plus une source existante.',
                 invalidAudience: 'Ces personnes ou groupes ne peuvent pas recevoir cet identifiant.',
                 subjectNotInTeam: 'Cette personne ou ce groupe ne fait plus partie de cette équipe.',
                 costUnavailable: 'Un plafond de coût exige un tarif pour chaque modèle autorisé, et certains n’en ont pas. Limite plutôt les requêtes ou les jetons.',
@@ -13895,6 +13895,8 @@ const french: TeamsTranslationRoot = {
             },
             usage: {
                 title: 'Consommation',
+                homeAdminRequired: "Seuls les administrateurs du Home peuvent voir l’utilisation du Home",
+                teamCredentialManagerRequired: "Seules les personnes qui gèrent les identifiants de ce Team peuvent voir son utilisation",
                 empty: 'Rien d’enregistré sur cette période.',
                 rangeLabel: 'Période',
                 brokeredRequests: 'Requêtes relayées',

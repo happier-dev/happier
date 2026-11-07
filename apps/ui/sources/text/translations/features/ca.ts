@@ -13818,7 +13818,7 @@ const catalan: TeamsTranslationRoot = {
                 brokerUnavailable: 'La màquina intermediària d’aquesta credencial no és accessible ara mateix. Torna-ho a provar quan torni.',
                 sourceOwnerRequired: 'Només qui posseeix aquesta font pot fer aquest canvi.',
                 nativeDeliveryUnavailable: 'El lliurament natiu de credencials no està disponible o no s’ha pogut verificar en aquesta màquina. Tria una altra màquina o credencial compartida.',
-                sourceMissing: 'Aquesta credencial ja no apunta a cap font existent. Qui la posseeix ha de tornar a triar-la.',
+                sourceMissing: 'Aquesta credencial ja no apunta a cap font existent.',
                 invalidAudience: 'Aquestes persones o grups no poden rebre aquesta credencial.',
                 subjectNotInTeam: 'Aquesta persona o grup ja no és en aquest equip.',
                 costUnavailable: 'Un límit de cost necessita un preu per a cada model permès, i a alguns els en falta. Limita sol·licituds o tokens.',
@@ -13870,6 +13870,8 @@ const catalan: TeamsTranslationRoot = {
             },
             usage: {
                 title: 'Consum',
+                homeAdminRequired: "Només els administradors del Home poden veure l’ús del Home",
+                teamCredentialManagerRequired: "Només les persones que gestionen les credencials d’aquest Team poden veure l’ús del Team",
                 empty: 'No hi ha res registrat en aquest període.',
                 rangeLabel: 'Període',
                 brokeredRequests: 'Sol·licituds intermediades',

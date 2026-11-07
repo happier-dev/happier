@@ -13776,7 +13776,7 @@ const traditionalChinese: TeamsTranslationRoot = {
                 brokerUnavailable: '此憑證的中介機器目前無法連線。等它恢復後再試。',
                 sourceOwnerRequired: '只有擁有該來源的人才能做這項變更。',
                 nativeDeliveryUnavailable: '此機器上的原生憑證傳遞無法使用或無法驗證。請選擇其他機器或共用憑證。',
-                sourceMissing: '此憑證指向的來源已不存在。需要由其擁有者重新選擇來源。',
+                sourceMissing: '此憑證指向的來源已不存在。',
                 invalidAudience: '這些成員或群組無法取得此憑證。',
                 subjectNotInTeam: '該成員或群組已不在此團隊中。',
                 costUnavailable: '費用上限需要每個允許的模型都有價格，但有些缺少價格。請改以請求數或權杖數設限。',
@@ -13828,6 +13828,8 @@ const traditionalChinese: TeamsTranslationRoot = {
             },
             usage: {
                 title: '用量',
+                homeAdminRequired: "只有 Home 管理員才能查看 Home 用量",
+                teamCredentialManagerRequired: "只有管理此 Team 憑證的人才能查看 Team 用量",
                 empty: '這段期間沒有任何記錄。',
                 rangeLabel: '週期',
                 brokeredRequests: '經代理的請求',

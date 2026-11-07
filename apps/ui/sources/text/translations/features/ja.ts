@@ -13781,7 +13781,7 @@ const japanese: TeamsTranslationRoot = {
                 brokerUnavailable: 'この資格情報の仲介マシンにいま接続できません。復帰してから再試行してください。',
                 sourceOwnerRequired: 'この変更ができるのは、ソースを所有している人だけです。',
                 nativeDeliveryUnavailable: 'このマシンではネイティブな認証情報配信を利用できないか、確認できませんでした。別のマシンまたは共有認証情報を選んでください。',
-                sourceMissing: 'この資格情報が指すソースはもう存在しません。所有者がソースを選び直す必要があります。',
+                sourceMissing: 'この資格情報が指すソースはもう存在しません。',
                 invalidAudience: 'その人やグループはこの資格情報を受け取れません。',
                 subjectNotInTeam: 'その人やグループはこのチームにもういません。',
                 costUnavailable: 'コスト上限には許可されたすべてのモデルの価格が必要ですが、一部にありません。代わりにリクエストかトークンで制限してください。',
@@ -13833,6 +13833,8 @@ const japanese: TeamsTranslationRoot = {
             },
             usage: {
                 title: '使用状況',
+                homeAdminRequired: "Home の使用状況を確認できるのは Home 管理者のみです",
+                teamCredentialManagerRequired: "この Team の認証情報を管理する人のみが Team の使用状況を確認できます",
                 empty: 'この期間に記録はありません。',
                 rangeLabel: '期間',
                 brokeredRequests: '仲介経由のリクエスト',

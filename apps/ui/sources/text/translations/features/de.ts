@@ -13605,7 +13605,7 @@ const german: TeamsTranslationRoot = {
                 brokerUnavailable: 'Der Broker-Rechner dieser Zugangsdaten ist gerade nicht erreichbar. Versuche es erneut, sobald er zurück ist.',
                 sourceOwnerRequired: 'Nur wer diese Quelle besitzt, kann diese Änderung vornehmen.',
                 nativeDeliveryUnavailable: 'Die native Bereitstellung von Zugangsdaten ist auf diesem Rechner nicht verfügbar oder konnte nicht geprüft werden. Wähle einen anderen Rechner oder geteilte Zugangsdaten.',
-                sourceMissing: 'Diese Zugangsdaten zeigen auf keine vorhandene Quelle mehr. Ihre Eigentümerin muss die Quelle erneut wählen.',
+                sourceMissing: 'Diese Zugangsdaten zeigen auf keine vorhandene Quelle mehr.',
                 invalidAudience: 'Diese Personen oder Gruppen können diese Zugangsdaten nicht erhalten.',
                 subjectNotInTeam: 'Diese Person oder Gruppe gehört nicht mehr zu diesem Team.',
                 costUnavailable: 'Eine Kostenobergrenze braucht einen Preis für jedes erlaubte Modell, und einigen fehlt er. Begrenze stattdessen Anfragen oder Tokens.',
@@ -13657,6 +13657,8 @@ const german: TeamsTranslationRoot = {
             },
             usage: {
                 title: 'Verbrauch',
+                homeAdminRequired: "Nur Home-Admins können die Nutzung des Home sehen",
+                teamCredentialManagerRequired: "Nur Personen, die die Zugangsdaten dieses Teams verwalten, können die Team-Nutzung sehen",
                 empty: 'In diesem Zeitraum wurde nichts erfasst.',
                 rangeLabel: 'Zeitraum',
                 brokeredRequests: 'Vermittelte Anfragen',

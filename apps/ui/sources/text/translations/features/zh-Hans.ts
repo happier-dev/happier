@@ -13776,7 +13776,7 @@ const simplifiedChinese: TeamsTranslationRoot = {
                 brokerUnavailable: '此凭据的中转机器当前无法连接。等它恢复后重试。',
                 sourceOwnerRequired: '只有拥有该来源的人才能做这项更改。',
                 nativeDeliveryUnavailable: '此机器上的原生凭据传递不可用或无法验证。请选择其他机器或共享凭据。',
-                sourceMissing: '此凭据指向的来源已不存在。需要由其所有者重新选择来源。',
+                sourceMissing: '此凭据指向的来源已不存在。',
                 invalidAudience: '这些成员或群组无法获得此凭据。',
                 subjectNotInTeam: '该成员或群组已不在此团队中。',
                 costUnavailable: '费用上限需要每个允许模型都有价格，但有些缺少价格。请改为限制请求数或令牌数。',
@@ -13828,6 +13828,8 @@ const simplifiedChinese: TeamsTranslationRoot = {
             },
             usage: {
                 title: '用量',
+                homeAdminRequired: "只有 Home 管理员才能查看 Home 用量",
+                teamCredentialManagerRequired: "只有管理此 Team 凭据的人才能查看 Team 用量",
                 empty: '此期间没有任何记录。',
                 rangeLabel: '周期',
                 brokeredRequests: '经代理的请求',

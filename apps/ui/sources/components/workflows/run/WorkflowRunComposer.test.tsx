@@ -7,14 +7,17 @@ import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import type { WorkflowInputDefinition } from '@happier-dev/protocol/workflows/workflowV1';
 import { createWorkflowDefinitionFixture, createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
-import { resolveRoleSelectionV1 } from '@happier-dev/protocol';
+import { resolveRoleSelectionV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
 import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { teamSummaryFixture, teamPolicyFixture, teamCapabilitiesFixture } from '@/dev/testkit/fixtures/teamFixtures';
 import { resetTeamsSnapshotsForTests } from '@/sync/store/teams/teamsSnapshots';
 import { publishAppliedActiveServerRuntimeAvailability } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { ArtifactAccessGrantsListResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { PromptLibraryRowsListResponseV1Schema, sealPromptLibraryContentV1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
-import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, WorkflowRunRecipientCensusResponseV1Schema, materializeWorkflowAcceptedSnapshotV1, sealWorkflowAcceptedSnapshotStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent} from '@happier-dev/protocol/storage/artifactStoredContent';
+import { WorkflowRunRecipientCensusResponseV1Schema} from '@happier-dev/protocol/workflows/workflowRunKeyV1';
+import { materializeWorkflowAcceptedSnapshotV1} from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
+import { sealWorkflowAcceptedSnapshotStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -81,6 +84,44 @@ async function mount(initial: React.ComponentProps<typeof WorkflowRunComposer>['
 }
 
 describe('workflow composer admission', () => {
+    it('reviews the workflow agent and execution placement before Start', async () => {
+        const screen = await renderScreen(<WorkflowRunComposer inputs={[]} values={{}}
+            definition={createWorkflowDefinitionFixture({ defaults: STARTABLE_DEFAULTS })}
+            machineId="release-machine" directory="/work/release"
+            authoringControls={{ machineName: 'Release Mac' }}
+            onChangeValues={() => {}} onRun={() => {}} onCancel={() => {}} />);
+        expect(screen.findByTestId('workflow-run-inputs-review-where')).not.toBeNull();
+        expect(screen.findByTestId('workflow-run-inputs-review-agent')).not.toBeNull();
+        expect(screen.findByTestId('workflow-run-inputs-review-target')).not.toBeNull();
+        const text = screen.getTextContent();
+        expect(text).toContain('Release Mac');
+        expect(text).toContain(t('agentInput.agent.claude'));
+        expect(text).toContain('workflows.page.sections.aSession');
+        await screen.unmount();
+    });
+    it('reviews a human-only workflow without implying an Agent will run', async () => {
+        const screen = await renderScreen(<WorkflowRunComposer inputs={[]} values={{}}
+            definition={createWorkflowDefinitionFixture({ defaults: STARTABLE_DEFAULTS,
+                blocks: [{ kind: 'wait', id: 'review', document: { text: 'Review', references: [], attachments: [] } }] })}
+            onChangeValues={() => {}} onRun={() => {}} onCancel={() => {}} />);
+        expect(screen.findByTestId('workflow-run-inputs-review-agent')).toBeNull();
+        expect(screen.findByTestId('workflow-run-inputs-review-where')).not.toBeNull();
+        expect(screen.getTextContent()).not.toContain(t('agentInput.agent.claude'));
+        await screen.unmount();
+    });
+    it('identifies the chosen workflow and its inputs above the New composer, with its execution location', async () => {
+        const screen = await renderScreen(<WorkflowRunComposer inputs={inputs} values={{}}
+            definition={createWorkflowDefinitionFixture({ defaults: STARTABLE_DEFAULTS })}
+            workflowName="Prepare the release" sourceArtifactId="release-workflow"
+            machineId="release-machine" directory="/work/release"
+            authoringControls={{ machineName: 'Release Mac' }}
+            onChangeValues={() => {}} onRun={() => {}} onCancel={() => {}} />);
+        expect(screen.findByTestId('workflow-start-lead')).not.toBeNull();
+        expect(screen.getTextContent()).toContain('Prepare the release');
+        expect(screen.getTextContent()).toContain('workflows.start.asksFor');
+        expect(screen.findByTestId('workflow-run-inputs-review-where')).not.toBeNull();
+        await screen.unmount();
+    });
     let restorePopoverGlobals: (() => void) | undefined;
     let disposeLoader: (() => void) | undefined;
     let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
@@ -212,9 +253,18 @@ describe('workflow composer admission', () => {
                         createdByAccountId: 'account-a', createdAt: 1, display: { name: 'Friend' } },
                 ] }) });
         const onRun = vi.fn();
-        const screen = await renderScreen(<WorkflowRunComposer sourceArtifactId="saved-workflow"
-            definition={createWorkflowDefinitionFixture({ inputs: [], defaults: STARTABLE_DEFAULTS })} inputs={[]} values={{}}
-            onChangeValues={() => {}} onRun={onRun} onCancel={() => {}} />);
+        const { useWorkflowComposerStart } = await import('./useWorkflowComposerStart');
+        const definition = createWorkflowDefinitionFixture({ inputs: [], defaults: STARTABLE_DEFAULTS });
+        function SavedStart() {
+            const start = useWorkflowComposerStart({ intentKey: 'saved-team-review',
+                project: { machineId: 'machine-1', directory: '/repo' }, onStarted: onRun });
+            const startRef = React.useRef(start.start);
+            startRef.current = start.start;
+            React.useEffect(() => { startRef.current({ id: 'saved-workflow', name: 'Saved workflow', description: '', definition,
+                source: { kind: 'saved', definitionId: 'saved-workflow', revision: { headerVersion: 1, bodyVersion: 1 } } }); }, []);
+            return start.composerProps ? <WorkflowRunComposer {...start.composerProps} onRun={onRun} /> : null;
+        }
+        let screen = await renderScreen(<SavedStart />);
         await waitForHomeGovernance(() => expect(screen.findByTestId('workflow-run-inputs-visibility-chip')).not.toBeNull());
         expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(teamIds.length > 1);
         if (teamIds.length > 1) {
@@ -225,6 +275,9 @@ describe('workflow composer admission', () => {
             const { act } = await import('react-test-renderer');
             await act(async () => select.props.onSelect('team-b'));
         }
+        await screen.unmount();
+        screen = await renderScreen(<SavedStart />);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false));
         await screen.pressByTestIdAsync('workflow-run-inputs-run');
         expect(onRun).toHaveBeenCalledWith(undefined, [], teamIds.at(-1));
     });
@@ -305,6 +358,24 @@ describe('workflow composer admission', () => {
         await screen.pressByTestIdAsync('workflow-run-inputs-run');
         expect(onRun).toHaveBeenCalledWith(undefined, []);
     });
+    it('reviews explicit step targets from a fresh definition before its first Start', async () => {
+        const fixture = createWorkflowDefinitionFixture({ defaults: STARTABLE_DEFAULTS });
+        const step = fixture.blocks[0]!;
+        if (step.kind !== 'step') throw new Error('invalid_step_fixture');
+        const definition = createWorkflowDefinitionFixture({ ...fixture, blocks: [step,
+            { ...step, id: 'background', execution: { executionTarget: { kind: 'detached_run' } } },
+            { kind: 'if', id: 'conditional', when: { kind: 'exists', value: { kind: 'literal', value: true } },
+                then: [{ kind: 'wait', id: 'review', document: { text: 'Review', references: [], attachments: [] },
+                    execution: { executionTarget: { kind: 'session' } } }], otherwise: [] }] });
+        const screen = await renderScreen(<WorkflowRunComposer inputs={[]} values={{}} definition={definition}
+            onChangeValues={() => {}} onRun={() => {}} onCancel={() => {}} />);
+        const targets = screen.findByTestId('workflow-run-inputs-targets-chip');
+        expect(targets).not.toBeNull();
+        expect(targets?.props.accessibilityLabel)
+            .toContain(t('workflows.start.targetsBackground'));
+        expect(targets?.props.accessibilityLabel)
+            .toContain(t('workflows.start.targetsSessions'));
+    });
     it('submits an accepted repeat with frozen root roles and nested step targets', async () => {
         const role = resolveRoleSelectionV1({ roleId: 'builder', runOverrides: [{ roleId: 'builder', workspaceWrites: 'deny' }] });
         if (!role.ok) throw new Error('invalid_role_fixture');
@@ -323,7 +394,7 @@ describe('workflow composer admission', () => {
         await screen.pressByTestIdAsync('workflow-run-inputs-run');
         expect(onRun).toHaveBeenCalledWith(undefined, []);
     });
-    it('prefills only the starter’s newest accepted run of the saved workflow', async () => {
+    it.each([false, true])('prefills only the starter’s newest accepted run of the saved workflow (contextual=%s)', async contextual => {
         const roleOverrides = [{ roleId: 'builder', workspaceWrites: 'deny' as const }];
         const definition = createWorkflowDefinitionFixture({ defaults: { engine: { role: 'builder' } } });
         const materialized = await materializeWorkflowAcceptedSnapshotV1({ definition, roleOverrides,
@@ -355,7 +426,17 @@ describe('workflow composer admission', () => {
             throw new Error(`unexpected_storage_request:${String(input.operation)}`);
         } });
         const onRun = vi.fn();
-        const screen = await renderScreen(<WorkflowRunComposer definition={definition} sourceArtifactId="saved-workflow"
+        const { useWorkflowComposerStart } = await import('./useWorkflowComposerStart');
+        function ContextualStart() {
+            const start = useWorkflowComposerStart({ intentKey: 'saved-role-prefill',
+                project: { machineId: 'machine-1', directory: '/repo' }, onStarted: vi.fn() });
+            const startRef = React.useRef(start.start);
+            startRef.current = start.start;
+            React.useEffect(() => { startRef.current({ id: 'saved-workflow', name: 'Saved workflow', description: '', definition,
+                source: { kind: 'saved', definitionId: 'saved-workflow', revision: { headerVersion: 1, bodyVersion: 1 } } }); }, []);
+            return start.composerProps ? <WorkflowRunComposer {...start.composerProps} onRun={onRun} /> : null;
+        }
+        const screen = await renderScreen(contextual ? <ContextualStart /> : <WorkflowRunComposer definition={definition} sourceArtifactId="saved-workflow"
             inputs={[]} values={{}} onChangeValues={() => {}} onRun={onRun} onCancel={() => {}} />);
         await waitForHomeGovernance(() => expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false));
         await screen.pressByTestIdAsync('workflow-run-inputs-run');
@@ -364,6 +445,20 @@ describe('workflow composer admission', () => {
             && 'operation' in request.input && request.input.operation === 'get').map(request => request.input)).toEqual([
             { operation: 'get', runId: 'own-run' },
         ]);
+        if (contextual) {
+            const { WorkflowRunRoles } = await import('./WorkflowRunRoles');
+            await screen.pressByTestIdAsync('workflow-run-inputs-roles-chip');
+            const edited = [{ roleId: 'builder', workspaceWrites: 'allow' as const }];
+            const { act } = await import('react-test-renderer');
+            await act(async () => screen.findByType(WorkflowRunRoles).props.onChange(edited));
+            await screen.unmount();
+            const reopened = await renderScreen(<ContextualStart />);
+            await waitForHomeGovernance(() => expect(reopened.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false));
+            await reopened.pressByTestIdAsync('workflow-run-inputs-run');
+            expect(onRun).toHaveBeenLastCalledWith(undefined, edited);
+            expect(home.requestsFor(route).filter(request => request.input && typeof request.input === 'object'
+                && 'operation' in request.input && request.input.operation === 'get')).toHaveLength(1);
+        }
     });
     it('shows accepted step targets read-only and repeats the accepted role overrides', async () => {
         const definition = createWorkflowDefinitionFixture();

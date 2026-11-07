@@ -11,7 +11,7 @@ import {
   type WorkflowValidationResult,
   workflowInputToFieldHint,
 } from '@happier-dev/protocol/workflows/workflowV1';
-import type { JsonValue } from '@happier-dev/protocol';
+import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { WorkflowDefinitionMetadataV1 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 import type { ActionSessionAddressV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
 import { resolveWorkflowContextInputDefaultsV1 } from '@happier-dev/protocol/workflows';
@@ -49,6 +49,18 @@ export function buildWorkflowDefinitionCandidate(draft: WorkflowEditorDraft): un
 }
 
 export type WorkflowDraftValidation = WorkflowValidationResult;
+
+/** Shared page/review projection: the workflow Agent is meaningful only while an Agent step uses it. */
+export function readWorkflowBlockShape(definition: Pick<WorkflowDefinitionV1, 'blocks' | 'defaults'>): Readonly<{
+  blockIds: readonly string[];
+  showsWorkflowAgent: boolean;
+}> {
+  const blocks = walkWorkflowBlocks(definition.blocks);
+  const steps = blocks.filter((block) => block.kind === 'step');
+  const defaultSet = definition.defaults.agentTarget !== undefined || definition.defaults.engine !== undefined;
+  const inherits = steps.some((step) => step.execution?.agentTarget === undefined && step.execution?.engine === undefined);
+  return { blockIds: blocks.map((block) => block.id), showsWorkflowAgent: steps.length > 0 && (defaultSet || inherits) };
+}
 
 /** Explicit editor repair only: the caller selects the step and saves through the existing definition Action. */
 export function repairWorkflowPullRequestInput(params: Readonly<{
@@ -227,13 +239,14 @@ export type WorkflowProducerOption = Readonly<{
   scope: WorkflowReferenceScope;
   /** True when the producer is a parallel branch rather than an ordinary block. */
   isBranch: boolean;
+  unavailableReason?: 'runs_later' | 'another_lane' | 'another_scope';
 }>;
 
 /**
  * The producers a consumer may reference in its own scope, in authored order.
  *
- * The picker offers only valid enclosing/current/prior scopes; it never lists a
- * forward or out-of-scope block and then relies on the validator to reject it.
+ * Selectable candidates are valid enclosing/current/prior scopes. A prompt's
+ * discovery menu may also explain unavailable producers as disabled rows.
  */
 type ConsumerScopeLevel = Readonly<{
   blocks: readonly WorkflowBlock[];
@@ -345,6 +358,7 @@ export function listWorkflowProducerOptions(
   draft: WorkflowEditorDraft,
   consumerBlockId: string,
   consumer?: WorkflowReferenceConsumer,
+  presentation?: Readonly<{ includeUnavailable?: boolean }>,
 ): readonly WorkflowProducerOption[] {
   type Level = ConsumerScopeLevel;
 
@@ -380,6 +394,30 @@ export function listWorkflowProducerOptions(
       );
     }
   }
+  if (presentation?.includeUnavailable === true) {
+    const represented = new Set(options.map(option => option.blockId));
+    const enclosing = new Set(levels.flatMap(level => {
+      const block = level.blocks[level.position];
+      return block === undefined ? [] : [block.id];
+    }));
+    const later = new Set(levels.flatMap(level =>
+      walkWorkflowBlocks(level.blocks.slice(level.position + 1)).map(block => block.id)));
+    const siblingLanes = new Set(levels.flatMap((level, index) => {
+      const block = level.blocks[level.position];
+      return block?.kind === 'parallel'
+        ? block.branches.flatMap(branch => branch.blocks === levels[index + 1]?.blocks
+          ? [] : walkWorkflowBlocks(branch.blocks).map(candidate => candidate.id))
+        : [];
+    }));
+    for (const block of walkWorkflowBlocks(draft.blocks)) {
+      if (represented.has(block.id) || enclosing.has(block.id) || block.id === consumerBlockId) continue;
+      options.push({
+        blockId: block.id, label: workflowBlockReferenceLabel(block),
+        scope: { kind: 'current' }, isBranch: false,
+        unavailableReason: later.has(block.id) ? 'runs_later' : siblingLanes.has(block.id) ? 'another_lane' : 'another_scope',
+      });
+    }
+  }
   return options;
 }
 
@@ -394,6 +432,10 @@ export type WorkflowExistingSessionOption = Readonly<{
   sessionId: string;
   machineId: string;
   label: string;
+  /** The Session's Agent, for its mark; absent when it records none. */
+  agentId?: string | null;
+  /** "Agent · Machine": what tells two Sessions with the same title apart. */
+  contextLabel?: string | null;
 }>;
 
 /** Root-level producers, which are the only eligible final-output selections. */

@@ -9,6 +9,41 @@ import {
     type SessionListViewFilters,
 } from './search/sessionListViewFilters';
 
+const RUN_SUBJECT_COPY = {
+    'sessionsList.queryInitialLoadingTitle': 'sessionsList.runsQuery.loading',
+    'sessionsList.queryUpdatingTitle': 'sessionsList.runsQuery.updating',
+    'sessionsList.queryRefreshFailedRetainedDescription': 'sessionsList.runsQuery.retained',
+    'sessionsList.queryRefreshFailedEmptyDescription': 'sessionsList.runsQuery.loadFailed',
+    'sessionsList.queryNoMatchesLoadedTitle': 'sessionsList.runsQuery.noMatchesLoaded',
+    'sessionsList.queryNoMatchesLoadedDescription': 'sessionsList.runsQuery.olderMatches',
+    'sessionsList.querySearchOlder': 'sessionsList.runsQuery.searchOlder',
+    'sessionsList.queryMoreAvailableTitle': 'sessionsList.runsQuery.more',
+    'sessionsList.queryMoreAvailableDescription': 'sessionsList.runsQuery.moreDescription',
+    'sessionsList.queryNoMatchesTitle': 'sessionsList.runsQuery.noMatches',
+    'sessionsList.queryTeamEmptyTitle': 'sessionsList.runsQuery.teamEmpty',
+    'sessionsList.queryTeamEmptyDescription': 'sessionsList.runsQuery.teamDescription',
+    'sessionsList.queryBrowseAllAccessible': 'sessionsList.runsQuery.browseAll',
+    'sessionsList.queryAssignedEmptyTitle': 'sessionsList.runsQuery.assigned',
+    'sessionsList.queryFollowingEmptyTitle': 'sessionsList.runsQuery.following',
+    'sessionsList.queryInvolvingEmptyTitle': 'sessionsList.runsQuery.involving',
+    'sessionsList.queryAttentionEmptyTitle': 'sessionsList.runsQuery.attention',
+    'sessionsList.queryReachableEmptyTitle': 'sessionsList.runsQuery.empty',
+    'sessionsList.queryReachableEmptyDescription': 'sessionsList.runsQuery.emptyDescription',
+    'sessionsList.queryHistoricalSharesWithheldTitle': 'sessionsList.runsQuery.sharesHidden',
+    'sessionsList.queryHistoricalSharesWithheldDescription': 'sessionsList.runsQuery.sharesDescription',
+    'sessionsList.querySpaceEmptyDescription': 'sessionsList.runsQuery.spaceDescription',
+    'sessionsList.searchSessions': 'sessionsList.runsQuery.search',
+    'sessionsList.searchSessionsPlaceholder': 'sessionsList.runsQuery.searchPlaceholder',
+} as const;
+
+type RunSubjectCopyKey = typeof RUN_SUBJECT_COPY[keyof typeof RUN_SUBJECT_COPY];
+
+/** The query/list owner supplies the subject; search chrome and state lines use its vocabulary. */
+export function sessionListSubjectCopyKey<Key extends string>(key: Key, show: SessionListViewFilters['show'] | undefined): Key | RunSubjectCopyKey {
+    if (show !== 'runs' || !Object.hasOwn(RUN_SUBJECT_COPY, key)) return key;
+    return RUN_SUBJECT_COPY[key as keyof typeof RUN_SUBJECT_COPY];
+}
+
 export type SessionListViewEmptyStateAction =
     | 'retry'
     | 'load_more'
@@ -18,6 +53,13 @@ export type SessionListViewEmptyStateAction =
 
 export type SessionListViewEmptyStateModel =
     | Readonly<{ mode: 'none' }>
+    | Readonly<{
+        mode: 'empty';
+        titleKey: 'sessionsList.querySpaceEmptyTitle';
+        titleParams: Readonly<{ name: string }>;
+        descriptionKey: 'sessionsList.querySpaceEmptyDescription' | RunSubjectCopyKey;
+        action: null;
+    }>
     | Readonly<{
         mode: 'empty' | 'status';
         titleKey:
@@ -35,7 +77,8 @@ export type SessionListViewEmptyStateModel =
             | 'sessionsList.queryFollowingEmptyTitle'
             | 'sessionsList.queryInvolvingEmptyTitle'
             | 'sessionsList.queryReachableEmptyTitle'
-            | 'sessionsList.queryHistoricalSharesWithheldTitle';
+            | 'sessionsList.queryHistoricalSharesWithheldTitle'
+            | RunSubjectCopyKey;
         descriptionKey:
             | 'sessionsList.querySomeHomesUnavailableDescription'
             | 'sessionsList.queryRefreshFailedRetainedDescription'
@@ -47,6 +90,7 @@ export type SessionListViewEmptyStateModel =
             | 'sessionsList.queryTeamEmptyDescription'
             | 'sessionsList.queryReachableEmptyDescription'
             | 'sessionsList.queryHistoricalSharesWithheldDescription'
+            | RunSubjectCopyKey
             | null;
         action: SessionListViewEmptyStateAction | null;
     }>;
@@ -82,7 +126,7 @@ function hasChangedStructuralFacet(filters: SessionListViewFilters, defaults: Se
         );
 }
 
-export function resolveSessionListViewEmptyState(input: Readonly<{
+function resolveSessionListViewEmptyStateForSessions(input: Readonly<{
     presentation: SessionListQueryPresentation;
     visibleSessionCount: number;
     filters: SessionListViewFilters;
@@ -90,6 +134,8 @@ export function resolveSessionListViewEmptyState(input: Readonly<{
     viewContext: SessionListViewContext;
     includeInactive: boolean;
     hasHiddenInactiveSessions: boolean;
+    /** The selected non-default Space: its saved filter is the baseline, so an empty list is that Space being empty. */
+    emptySpaceName?: string | null;
 }>): SessionListViewEmptyStateModel {
     const hasRows = input.visibleSessionCount > 0;
     const hasSearch = input.filters.searchQuery.trim().length > 0;
@@ -194,6 +240,15 @@ export function resolveSessionListViewEmptyState(input: Readonly<{
             action: null,
         };
     }
+    if (input.emptySpaceName) {
+        return {
+            mode: 'empty',
+            titleKey: 'sessionsList.querySpaceEmptyTitle',
+            titleParams: { name: input.emptySpaceName },
+            descriptionKey: 'sessionsList.querySpaceEmptyDescription',
+            action: null,
+        };
+    }
     const scopeTitleKey = input.filters.scope === 'my_work'
         ? 'sessionsList.queryMyWorkEmptyTitle' as const
         : input.filters.scope === 'assigned_to_me'
@@ -216,5 +271,16 @@ export function resolveSessionListViewEmptyState(input: Readonly<{
         titleKey: 'sessionsList.queryReachableEmptyTitle',
         descriptionKey: 'sessionsList.queryReachableEmptyDescription',
         action: null,
+    };
+}
+
+export function resolveSessionListViewEmptyState(input: Parameters<typeof resolveSessionListViewEmptyStateForSessions>[0]): SessionListViewEmptyStateModel {
+    const model = resolveSessionListViewEmptyStateForSessions(input);
+    if (model.mode === 'none') return model;
+    if ('titleParams' in model) return { ...model, descriptionKey: sessionListSubjectCopyKey(model.descriptionKey, input.filters.show) };
+    return {
+        ...model,
+        titleKey: sessionListSubjectCopyKey(model.titleKey, input.filters.show),
+        descriptionKey: model.descriptionKey === null ? null : sessionListSubjectCopyKey(model.descriptionKey, input.filters.show),
     };
 }

@@ -46,6 +46,11 @@ import { PluginContextualResourceStoreProvider } from '@/components/plugins/surf
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { PhoneDetailsStartContext } from '@/components/appShell/panes/details/PhoneDetailsStartSheet';
 import { FieldItem } from '@/components/ui/forms/FieldItem';
+import { Item } from '@/components/ui/lists/Item';
+import { formatSessionAuthoringEngineLabel } from '@/components/sessions/authoring/controls/SessionAuthoringControls';
+import { useRoleEnginePresentation } from '@/components/roles/catalog/useRoleEnginePresentation';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { useServerScopedMachineLabel } from '@/sync/domains/state/storage';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
@@ -59,6 +64,7 @@ import { t } from '@/text';
 import {
   buildWorkflowRunStartInputs,
   projectWorkflowRunInputFields,
+  readWorkflowBlockShape,
   type WorkflowRunInputFieldState,
 } from '@/sync/domains/workflows/workflowAuthoring';
 import {
@@ -87,8 +93,11 @@ import {
 } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { useWorkflowAccountLifetime } from '../workflowAccountScope';
 import { useWorkflowRequesterDisclosure, WorkflowRequesterDisclosureView } from '../presentation/WorkflowRequesterDisclosure';
-import type { WorkflowRunNowRetainedRequest } from './useWorkflowRunNowController';
+import type { WorkflowRunNowRequest, WorkflowRunNowRetainedRequest } from './useWorkflowRunNowController';
+import { resolveWorkflowStepSelectionV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
+import { formatWorkflowWhereSummary } from '../editor/WorkflowProjectTargetControl';
 import { resolveAgentInputColumn } from '@/components/sessions/agentInput/layout/agentInputColumn';
+import { WorkflowStartDetailsLead } from './WorkflowStartDetailsLead';
 import {
   getWorkflowStartVisibilityChipPlacement,
   getWorkflowStepTargetsChipPlacement,
@@ -235,11 +244,16 @@ export type WorkflowRunComposerProps = Readonly<{
   triggerNamesShortcut?: boolean;
   testIDPrefix?: string;
   workflowName?: string;
+  /** Host-owned placement facts beneath the shared workflow identity. */
+  leadContent?: React.ReactNode;
   preview?: string;
   includesUnsavedEdits?: boolean;
   notice?: string;
   machineId?: string | null;
   directory?: string | null;
+  machineName?: string | null;
+  machineHomeDir?: string | null;
+  executionTarget?: WorkflowRunNowRequest['executionTarget'];
   serverId?: string | null;
   /** Exact invoking Session, used by the shared declared context-default owner. */
   originSession?: ActionSessionAddressV1;
@@ -281,6 +295,22 @@ export type WorkflowRunInputPresentation = Readonly<
   >
 >;
 
+function WorkflowRunAgentSummary(props: Readonly<{
+  definition: WorkflowDefinitionV1; testID: string; serverId?: string | null;
+}>) {
+  const values = React.useMemo(() => resolveWorkflowStepSelectionV1({
+    defaults: props.definition.defaults, purpose: 'authoring',
+  }).selection, [props.definition.defaults]);
+  const presentEngine = useRoleEnginePresentation(props.serverId);
+  const engine = values.agentTarget ? presentEngine({ agentTargetKey: buildBackendTargetKeyV2(values.agentTarget),
+    ...(values.modelSelection?.ref.modelId ? { modelId: values.modelSelection.ref.modelId } : {}) }) : null;
+  const summary = formatSessionAuthoringEngineLabel({ values,
+    engine: props.definition.defaults.engine, workflowRoles: props.definition.roles,
+    agentLabel: engine?.label ?? t('workflows.input.unavailable') });
+  return <Item testID={props.testID} title={t('workflows.page.sections.agentTitle')}
+    subtitle={summary} showChevron={false} subtitleLines={0} />;
+}
+
 /** One start presentation; FIN owns defaults, validation and the admitted input map. */
 export function WorkflowRunComposer(
   props: WorkflowRunComposerProps,
@@ -316,6 +346,18 @@ export function WorkflowRunComposer(
   );
   // While an earlier request is unsettled, the review is that request: its inputs, Roles and Team.
   const retained = props.retainedRequest ?? null;
+  const reviewedDefinition = retained?.reviewedDefinition ?? props.definition;
+  const showsWorkflowAgent = React.useMemo(() => reviewedDefinition
+    ? readWorkflowBlockShape(reviewedDefinition).showsWorkflowAgent : false, [reviewedDefinition]);
+  const reviewedMachineId = retained?.project?.machineId ?? props.machineId;
+  const suppliedMachineName = props.machineName ?? props.authoringControls?.machineName;
+  const scopedMachineName = useServerScopedMachineLabel(props.serverId, suppliedMachineName ? null : reviewedMachineId);
+  const reviewedProject = retained?.project ?? (reviewedMachineId && props.directory
+    ? { machineId: reviewedMachineId, directory: props.directory } : null);
+  const whereSummary = formatWorkflowWhereSummary({ target: reviewedProject,
+    machineName: suppliedMachineName ?? scopedMachineName, machineHomeDir: props.machineHomeDir })
+    ?? t('workflows.page.inspector.whereMissing');
+  const reviewedExecutionTarget = retained ? retained.input.executionTarget : props.executionTarget;
   const { width: screenWidth } = useWindowDimensions();
   const column = resolveAgentInputColumn({
     screenWidth,
@@ -836,7 +878,26 @@ export function WorkflowRunComposer(
       <View testID={`${prefix}-${main === null ? 'preview' : 'main'}`}>
         <View style={columnStyle}>
           <View style={columnInnerStyle}>
-            {main === null ? (
+            {props.definition && props.workflowName ? <WorkflowStartDetailsLead
+              name={props.workflowName} description={props.preview} summary={summary}
+              source={props.sourceArtifactId ? t('workflows.start.library')
+                : props.optionsConsumer?.workflow ? (props.optionsConsumer.workflow.startsWith('builtin:')
+                  ? t('workflows.start.builtin') : t('workflows.plugins.fromPlugins')) : undefined}
+              inputs={personFields.map(field => inputTitle(field.definition))}>
+              {props.leadContent}
+            </WorkflowStartDetailsLead> : null}
+            {reviewedDefinition ? <>
+              <Item testID={`${prefix}-review-where`} title={t('workflows.page.sections.whereTitle')}
+                subtitle={whereSummary} showChevron={false} subtitleLines={0} />
+              {!acceptedRepeat && showsWorkflowAgent
+                ? <WorkflowRunAgentSummary definition={reviewedDefinition} serverId={props.serverId}
+                    testID={`${prefix}-review-agent`} /> : null}
+              <Item testID={`${prefix}-review-target`} title={t('workflows.page.sections.eachStepRunsIn')}
+                subtitle={reviewedExecutionTarget?.kind === 'detached_run'
+                  ? t('workflows.page.sections.aBackgroundRun') : t('workflows.page.sections.aSession')}
+                showChevron={false} subtitleLines={0} />
+            </> : null}
+            {main === null ? (props.definition && props.workflowName ? null : (
               <Text
                 testID={`${prefix}-summary`}
                 selectable
@@ -845,7 +906,7 @@ export function WorkflowRunComposer(
               >
                 {summary}
               </Text>
-            ) : (
+            )) : (
               <Text style={styles.mainLabel}>
                 {inputTitle(main.definition)}
               </Text>

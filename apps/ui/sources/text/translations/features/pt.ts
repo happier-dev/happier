@@ -13796,7 +13796,7 @@ const portuguese: TeamsTranslationRoot = {
                 brokerUnavailable: 'A máquina intermediária desta credencial não está acessível agora. Tente de novo quando ela voltar.',
                 sourceOwnerRequired: 'Só quem detém esta fonte pode fazer esta alteração.',
                 nativeDeliveryUnavailable: 'A entrega nativa de credenciais não está disponível ou não pôde ser verificada nesta máquina. Escolha outra máquina ou credencial partilhada.',
-                sourceMissing: 'Esta credencial já não aponta para uma fonte existente. Quem a detém tem de escolher a fonte outra vez.',
+                sourceMissing: 'Esta credencial já não aponta para uma fonte existente.',
                 invalidAudience: 'Essas pessoas ou grupos não podem receber esta credencial.',
                 subjectNotInTeam: 'Essa pessoa ou grupo já não está nesta equipa.',
                 costUnavailable: 'Um limite de custo precisa de um preço para cada modelo permitido, e a alguns falta. Limite pedidos ou tokens em vez disso.',
@@ -13848,6 +13848,8 @@ const portuguese: TeamsTranslationRoot = {
             },
             usage: {
                 title: 'Consumo',
+                homeAdminRequired: "Só os administradores do Home podem ver o uso do Home",
+                teamCredentialManagerRequired: "Só quem gere as credenciais deste Team pode ver o uso do Team",
                 empty: 'Nada registado neste período.',
                 rangeLabel: 'Período',
                 brokeredRequests: 'Pedidos intermediados',

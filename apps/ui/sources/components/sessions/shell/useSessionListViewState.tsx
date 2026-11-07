@@ -31,7 +31,14 @@ import { resolveSessionSectionDraftAnchor, useSessionSectionDraft, type SessionS
 import { normalizeSessionListIdentityDisplay } from './SessionListIdentity';
 import { SessionItem } from './SessionItem';
 import type { WorkflowRunItemProps } from './row/WorkflowRunItemBody';
-import { useSessionListRowViewport, useSessionListRowViewportFact, type SessionListRowViewport } from './sessionListRowViewport';
+import {
+    useSessionListRowViewport,
+    useSessionListRowViewportFact,
+    useSessionListRowViewportSelection,
+    useSessionListRowViewportSubscriptions,
+    type SessionListRowViewport,
+    type SessionListRowViewportOwner,
+} from './sessionListRowViewport';
 import { resolveSessionListRowViewModelAdjacency, resolveSessionListUnscopedSelectionIsUnique } from './sessionListRowViewModels';
 import { useSessionListRenderModels } from './useSessionListRenderModels';
 import { useSessionListSearchTextByKey } from './useSessionListSearchTextByKey';
@@ -116,16 +123,16 @@ import {
     requireSessionOrganizationMutationScope,
     writeSessionOrganizationFolderAssignment,
     writeSessionOrganizationTagLabels,
+    writeSessionOrganizationAppearance,
+    writeSessionOrganizationWorkspaceDisplay,
     writeSessionSectionDefinition,
     type SessionOrganizationMutationScope,
 } from '@/sync/ops/sessionOrganization';
 import { randomUUID } from '@/platform/randomUUID';
 import { confirmSessionSectionRemoval, presentSessionSectionArchiveOutcome, requestSessionSectionName } from '@/components/sessions/organization/sessionSectionEditing';
 import { useSessionListFoldCommands, writeSessionListGroupCollapsed } from './useSessionListFoldCommands';
-import { writeNewSessionDraftToRepository } from '@/components/sessions/composer/newSessionDraftRepositoryAdapter';
-import { buildNewSessionConfigurationDraft } from '@/components/sessions/authoring/draft/sessionConfigurationSeed';
 import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
-import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useNewSessionEntryRouter as useRouter } from '@/components/sessions/new/navigation/newSessionEntry';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { buildSessionSectionGroupKey } from '@/sync/domains/session/organization/sections';
@@ -161,6 +168,7 @@ import { resolveWorkspaceRootTreeRowId, treeRowId } from './drop-resolution/tree
 import { hasActiveSessionListHeaderFilters } from './sessionListFilters';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { HappyError } from '@/utils/errors/errors';
+import type { SessionAppearanceColor } from '@/sync/domains/session/organization/appearanceColor';
 import {
     useActiveServerAccountScope,
     useOrdinarySessionListMembershipByServerId,
@@ -572,7 +580,6 @@ export function useSessionListViewStateFromPaneState(
     surfaceOwnership.dataActive);
     const workspacePathDisplayModeV1 = 'name' as const;
     const workspaceFaviconsEnabled = useSetting('workspaceFaviconsEnabled') !== false;
-    const workspaceMachineSubtitlesEnabled = useSetting('workspaceMachineSubtitlesEnabled') !== false;
     const collapseContextKey = options.collapseContextKey ?? buildSessionListCollapseContextKey(filterController, sessionListLayoutChoice);
     const storedCollapsedGroupKeysV1 = useCollapsedGroupKeys(buildSessionListCollapseKey(collapseContextKey, ''));
     const collapsedGroupKeysV1 = React.useMemo(() => readSessionListCollapsedGroups(storedCollapsedGroupKeysV1, collapseContextKey),
@@ -789,6 +796,20 @@ export function useSessionListViewStateFromPaneState(
             tags,
         });
     }, [getAvailableOrganizationMutationScope]);
+    const setWorkspaceColor = React.useCallback((workspaceKey: string, color: SessionAppearanceColor | null,
+        opts?: Readonly<{ serverId?: string | null }>) => {
+        runOrganizationMutation(async () => {
+            const scope = await getAvailableOrganizationMutationScope(opts?.serverId);
+            await writeSessionOrganizationWorkspaceDisplay({ scope, workspaceKey, patch: { color } });
+        });
+    }, [getAvailableOrganizationMutationScope, runOrganizationMutation]);
+    const setSessionAppearance = React.useCallback((sessionId: string, color: SessionAppearanceColor | null,
+        opts?: Readonly<{ serverId?: string | null }>) => {
+        runOrganizationMutation(async () => {
+            const scope = await getAvailableOrganizationMutationScope(opts?.serverId);
+            await writeSessionOrganizationAppearance({ scope, sessionId, color });
+        });
+    }, [getAvailableOrganizationMutationScope, runOrganizationMutation]);
     // Structural admission for every contextual search result. The per-Home paging
     // owner's applied addresses (or the canonical ordinary membership when no paging
     // owner is mounted) decide what belongs to the current corpus; the row cache only
@@ -1076,18 +1097,12 @@ export function useSessionListViewStateFromPaneState(
         pathname: effectivePathname,
         focusedSessionId,
     }), [effectivePathname, focusedSessionId]);
-    const [viewableSessionRowKeys, setViewableSessionRowKeys] = React.useState<ReadonlySet<string> | null>(null);
+    // The list publishes viewability into this owner, not into this pane's state: only the rows and the
+    // demand leaf read it, so a scroll step does not re-render the list owner.
+    const rowViewportOwner = useSessionListRowViewport();
+    const rowViewport = rowViewportOwner.viewport;
     const surfaceDataActiveRef = React.useRef(surfaceOwnership.dataActive);
     surfaceDataActiveRef.current = surfaceOwnership.dataActive;
-    const visibilityResetVersion = React.useSyncExternalStore(
-        subscribeSessionSurfaceVisibilityReset,
-        getSessionSurfaceVisibilityResetVersion,
-        getSessionSurfaceVisibilityResetVersion,
-    );
-    const viewableSessionRowKeysRef = React.useRef<ReadonlySet<string> | null>(null);
-    React.useEffect(() => {
-        viewableSessionRowKeysRef.current = viewableSessionRowKeys;
-    }, [viewableSessionRowKeys]);
     const indexPrioritySessionRowKeysRaw = React.useMemo(() => buildSessionListRowStorePriorityKeys(
         renderPaneState.visibleSessionListIndex ?? [],
         { selectedSessionId, selectedSessionServerId },
@@ -1101,39 +1116,13 @@ export function useSessionListViewStateFromPaneState(
         runtimePrioritySessionRowKeysRaw,
     ), [indexPrioritySessionRowKeysRaw, runtimePrioritySessionRowKeysRaw]);
     const prioritySessionRowKeys = useStableSessionListRowStoreKeySet(prioritySessionRowKeysRaw);
-    const rowSubscriptionKeysRaw = React.useMemo(() => (
-        surfaceOwnership.dataActive
-            ? resolveSessionListRowStoreSubscriptionKeysForViewport({
-                nativeAllRenderedMaxRows: NATIVE_LIST_ALL_RENDERED_ROW_STORE_MAX_ITEMS,
-                platformOS: Platform.OS,
-                priorityRowKeys: prioritySessionRowKeys,
-                renderedSessionRows: renderPaneState.summary.sessionCount,
-                visibleRowKeys: viewableSessionRowKeys,
-            })
-            : EMPTY_VIEWABLE_SESSION_ROW_KEYS
-    ), [prioritySessionRowKeys, renderPaneState.summary.sessionCount, surfaceOwnership.dataActive, viewableSessionRowKeys]);
-    const rowSubscriptionKeys = useStableNullableSessionListRowStoreKeySet(rowSubscriptionKeysRaw);
-    // Rows read their own viewport membership; neither set is a shared cell input (extraData).
-    const rowViewport = useSessionListRowViewport(rowSubscriptionKeys, viewableSessionRowKeys);
-    React.useEffect(() => {
-        if (!syncPerformanceTelemetry.isEnabled()) return;
-        syncPerformanceTelemetry.count('ui.sessionsList.rowStoreSubscriptions', buildSessionListRowStoreSubscriptionTelemetryFields({
-            dataActive: surfaceOwnership.dataActive,
-            platformOS: Platform.OS,
-            priorityRowKeys: prioritySessionRowKeys,
-            rowSubscriptionKeys,
-            totalRows: renderPaneState.summary.sessionCount,
-            visibleRowKeys: viewableSessionRowKeys,
-        }));
-    }, [
-        prioritySessionRowKeys,
-        renderPaneState.summary.sessionCount,
-        rowSubscriptionKeys,
-        surfaceOwnership.dataActive,
-        viewableSessionRowKeys,
-    ]);
+    // Deferred rows read their own content and viewport membership. The pane-level reachability read
+    // covers every listed row while the surface is data-active (rows without a cached renderable were
+    // always included, and deferred rows never fill that cache), so it does not follow the viewport.
+    const paneRowSubscriptionKeys = surfaceOwnership.dataActive ? null : EMPTY_VIEWABLE_SESSION_ROW_KEYS;
 
     const renderModels = useSessionListRenderModels({
+        workspaceColorsByServerId: organizationListViewState.workspaceColorsByServerId,
         projectOrganizations,
         paneState: renderPaneState,
         collapsedGroupKeys: normalizedShellState.collapsedGroupKeys,
@@ -1159,7 +1148,7 @@ export function useSessionListViewStateFromPaneState(
             ? sessionListActiveColorMode
             : 'activityAndAttention',
         hideInactiveSessions: hideInactiveSessions === true,
-        rowSubscriptionKeys,
+        rowSubscriptionKeys: paneRowSubscriptionKeys,
         clocksActive: surfaceOwnership.dataActive,
         rowViewModelMode: 'deferred',
     });
@@ -1216,6 +1205,7 @@ export function useSessionListViewStateFromPaneState(
     ]);
     const searchChrome = React.useMemo(() => ({
         filterControl,
+        subject: filterController.filters.show,
         spacesStrip: spaceChrome.strip,
         spaceSwipe: spaceChrome.spaceSwipe,
         filterTokens: spaceChrome.filterTokens,
@@ -1243,6 +1233,7 @@ export function useSessionListViewStateFromPaneState(
         filterControl,
         spaceChrome,
         filterController.fixedShow,
+        filterController.filters.show,
         filterController.viewContext.kind,
         handleOpenUniversalSearch,
         searchQuery,
@@ -1561,49 +1552,24 @@ export function useSessionListViewStateFromPaneState(
         }
         return map;
     }, [renderedListItems]);
-    const visibleSessionListAddressesRef = React.useRef<readonly SessionAddress[]>([]);
-    const visibleSessionListAddresses = React.useMemo(() => {
-        const addresses: SessionAddress[] = [];
-        for (const key of viewableSessionRowKeys ?? []) {
-            const item = sessionListItemBySelectionKey.get(key);
-            const address = item ? normalizeSessionAddress(item.serverId, item.sessionId) : null;
-            if (address) addresses.push(address);
-        }
-        addresses.sort((a, b) => a.serverId.localeCompare(b.serverId) || a.sessionId.localeCompare(b.sessionId));
-        const previous = visibleSessionListAddressesRef.current;
-        if (previous.length === addresses.length && addresses.every((address, index) => (
-            address.serverId === previous[index].serverId && address.sessionId === previous[index].sessionId
-        ))) return previous;
-        visibleSessionListAddressesRef.current = addresses;
-        return addresses;
-    }, [sessionListItemBySelectionKey, viewableSessionRowKeys]);
-    useSessionContentDemand(visibleSessionListAddresses, {
-        tag: 'sessionsList.hydrateVisibleRows',
-        hydrate: 'viewport',
-        active: surfaceOwnership.dataActive,
-        resetVersion: visibilityResetVersion,
-    });
-    const statusDemandSubscriptionItems = React.useMemo(() => {
-        if (viewableSessionRowKeys !== null) {
-            const visibleItems: Array<Extract<SessionListIndexItem, { type: 'session' }>> = [];
-            for (const rowKey of viewableSessionRowKeys) {
-                const item = sessionListItemBySelectionKey.get(rowKey) ?? null;
-                if (!item) continue;
-                visibleItems.push(item);
-                if (visibleItems.length >= EXTERNAL_SESSION_STATUS_DEMAND_MAX_ENTRIES_V1) break;
-            }
-            return visibleItems;
-        }
-
-        return [];
-    }, [sessionListItemBySelectionKey, viewableSessionRowKeys]);
-    // The rows' content is read by the demand publisher leaf (`SessionListExternalStatusDemandPublisher`),
-    // not here: subscribing the list to every listed row re-rendered the whole list on each session write.
-    const externalStatusDemand = React.useMemo(() => ({
-        items: statusDemandSubscriptionItems,
+    // Visible-row demand (content hydration, external status, subscription telemetry) is derived by the
+    // `SessionListViewportDemandPublisher` leaf, which reads the viewport and the visible rows' content;
+    // deriving it here re-rendered the whole list on every scroll step and every session write.
+    const viewportDemand = React.useMemo(() => ({
+        viewportOwner: rowViewportOwner,
         viewportId: statusDemandViewportId,
-        visibleRowKeys: viewableSessionRowKeys,
-    }), [statusDemandSubscriptionItems, statusDemandViewportId, viewableSessionRowKeys]);
+        itemsBySelectionKey: sessionListItemBySelectionKey,
+        dataActive: surfaceOwnership.dataActive,
+        priorityRowKeys: prioritySessionRowKeys,
+        totalRows: renderPaneState.summary.sessionCount,
+    }), [
+        prioritySessionRowKeys,
+        renderPaneState.summary.sessionCount,
+        rowViewportOwner,
+        sessionListItemBySelectionKey,
+        statusDemandViewportId,
+        surfaceOwnership.dataActive,
+    ]);
     const selectedSessionListItems = React.useMemo(() => {
         if (!sessionListSelectionSnapshot.isSelectionMode || sessionListSelectionSnapshot.selectedKeys.size === 0) {
             return [] as Array<Extract<SessionListIndexItem, { type: 'session' }>>;
@@ -1940,15 +1906,12 @@ export function useSessionListViewStateFromPaneState(
 
     const router = useRouter();
     const handleCreateSessionInSection = React.useCallback((item: Extract<SessionListIndexItem, { type: 'header' }>) => {
-        const lifetime = captureActiveServerAccountScopeLifetime();
-        if (!lifetime || !item.folderId) return;
-        // New session here preselects only the section; Machine, Agent and directory keep their own choices.
-        const draftId = randomUUID();
-        writeNewSessionDraftToRepository({
-            scope: lifetime.scope, draftId, materializationIntent: 'seeded',
-            draft: buildNewSessionConfigurationDraft({ organizationPlacement: { folderId: item.folderId, tagIds: [] } }),
-        });
-        router.push({ pathname: '/new', params: buildNewSessionLaunchRouteParams({ draftId, targetServerId: item.serverId }) } as never);
+        if (!captureActiveServerAccountScopeLifetime() || !item.folderId) return;
+        // New session here preselects only the section, as entry context: nothing is stored until the
+        // person writes. Machine, Agent and directory keep their own choices.
+        router.push({ pathname: '/new', params: buildNewSessionLaunchRouteParams({
+            draftId: randomUUID(), targetServerId: item.serverId, sectionId: item.folderId,
+        }) } as never);
     }, [router]);
 
     const handleRenameSection = React.useCallback(async (item: Extract<SessionListIndexItem, { type: 'header' }>) => {
@@ -2114,12 +2077,12 @@ export function useSessionListViewStateFromPaneState(
             first={first}
             collapsedKeys={collapsedKeys}
             projectHeaderViewModelByGroupKey={projectHeaderViewModelByGroupKey}
-            hasMultipleMachines={renderModels.hasMultipleMachines}
 
             onOpenProject={handleOpenProject}
             onCreateSessionFromWorkspaceScope={handleCreateSessionFromWorkspaceScope}
             onAddFolderToWorkspace={handleAddFolderToWorkspace}
             onRenameWorkspace={handleRenameWorkspace}
+            onSetWorkspaceColor={setWorkspaceColor}
             onResetWorkspaceName={handleResetWorkspaceName}
             onToggleCollapse={handleToggleCollapse}
             getRowMoveActionHandlers={getRowMoveActionHandlers}
@@ -2130,7 +2093,6 @@ export function useSessionListViewStateFromPaneState(
             onRemoveSection={handleRemoveSection}
             onArchiveSection={handleArchiveSection}
             workspaceFaviconsEnabled={workspaceFaviconsEnabled}
-            workspaceMachineSubtitlesEnabled={workspaceMachineSubtitlesEnabled}
             newSessionEnabled={newSessionEnabled}
             overlayShared={rowInteractions.dropOverlayShared}
             onRegisterTreeRowBounds={rowInteractions.registerTreeRowBounds}
@@ -2153,10 +2115,10 @@ export function useSessionListViewStateFromPaneState(
         handleChangeSectionIcon,
         sectionFactsByGroupKey,
         handleRenameWorkspace,
+        setWorkspaceColor,
         handleResetWorkspaceName,
         handleToggleCollapse,
         projectHeaderViewModelByGroupKey,
-        renderModels.hasMultipleMachines,
         renderModels.audience,
         rowInteractions.dropOverlayShared,
         rowInteractions.handleFolderHeaderTreeDropResult,
@@ -2167,7 +2129,6 @@ export function useSessionListViewStateFromPaneState(
         rowInteractions.unregisterTreeRowBounds,
         newSessionEnabled,
         workspaceFaviconsEnabled,
-        workspaceMachineSubtitlesEnabled,
     ]);
 
     const renderSessionItem = React.useCallback((
@@ -2251,6 +2212,7 @@ export function useSessionListViewStateFromPaneState(
                 onMoveToFolder={canUseSessionFolders ? moveActionHandlers.onMoveToFolder : undefined}
                 sectionMove={canUseSessionFolders ? moveActionHandlers.sectionMove : undefined}
                 spaceMembership={moveActionHandlers.spaceMembership}
+                onSetSessionAppearance={setSessionAppearance}
                 onMoveToWorkspaceRoot={canUseSessionFolders ? moveActionHandlers.onMoveToWorkspaceRoot : undefined}
                 onMoveUp={canUseSessionFolders && rowDragPolicy.canReorderSiblings ? moveActionHandlers.onMoveUp : undefined}
                 onMoveDown={canUseSessionFolders && rowDragPolicy.canReorderSiblings ? moveActionHandlers.onMoveDown : undefined}
@@ -2259,6 +2221,7 @@ export function useSessionListViewStateFromPaneState(
         );
     }, [
         handleSetReportsCollapsed,
+        setSessionAppearance,
         allKnownTags,
         attentionStanding.actionEnabled,
         attentionStanding.policy,
@@ -2399,7 +2362,7 @@ export function useSessionListViewStateFromPaneState(
             if (item.type === 'workflow_run') { nextKeys.add(buildSessionListIndexNodeId(item)); continue; }
             nextKeys.add(resolveSessionListRowStoreScopeKey(item));
         }
-        const previousKeys = viewableSessionRowKeysRef.current;
+        const previousKeys = rowViewport.getViewableKeys();
         if (stringSetsEqual(previousKeys, nextKeys)) return;
         if (syncPerformanceTelemetry.isEnabled()) {
             syncPerformanceTelemetry.count('ui.sessionsList.viewableRows.changed', {
@@ -2409,11 +2372,7 @@ export function useSessionListViewStateFromPaneState(
                 previousVisibleRows: previousKeys?.size ?? 0,
             });
         }
-        viewableSessionRowKeysRef.current = nextKeys;
-        setViewableSessionRowKeys((current) => {
-            if (stringSetsEqual(current, nextKeys)) return current;
-            return nextKeys;
-        });
+        rowViewportOwner.publishViewableKeys(nextKeys);
     });
     const listItemsRef = React.useRef(renderedListItems);
     listItemsRef.current = renderedListItems;
@@ -2581,7 +2540,9 @@ export function useSessionListViewStateFromPaneState(
     }), [openNewSection, requestNewSection, sectionDraft.cancel, sectionDraft.draft, sectionDraft.submit, sectionDraftAnchor]);
 
     return {
-        externalStatusDemand,
+        viewportDemand,
+        setWorkspaceColor,
+        setSessionAppearance,
         sectionDraftController,
         nodes: virtualizedNodes,
         nodeIds,
@@ -2620,28 +2581,96 @@ export function useSessionListViewStateFromPaneState(
     };
 }
 
+const selectViewableKeys = (viewableKeys: ReadonlySet<string> | null) => viewableKeys;
+
 /**
- * Publishes which visible external Sessions need live status. It is the only reader of those rows'
- * content in the list, so a session write re-renders this leaf (which renders nothing) and not the list.
+ * Publishes what the visible rows demand: the rows' own row-store subscriptions, content hydration,
+ * live status for visible external Sessions, and the subscription telemetry. It is the list's only
+ * reader of the viewport's viewable set and of those rows' content, so a scroll step or a session
+ * write re-renders this leaf (which renders nothing) and not the list.
  */
-export const SessionListExternalStatusDemandPublisher = React.memo(function SessionListExternalStatusDemandPublisher(props: Readonly<{
-    items: ReadonlyArray<Extract<SessionListIndexItem, { type: 'session' }>>;
+export const SessionListViewportDemandPublisher = React.memo(function SessionListViewportDemandPublisher(props: Readonly<{
+    viewportOwner: SessionListRowViewportOwner;
     viewportId: string;
-    visibleRowKeys: ReadonlySet<string> | null;
+    itemsBySelectionKey: ReadonlyMap<string, Extract<SessionListIndexItem, { type: 'session' }>>;
+    dataActive: boolean;
+    priorityRowKeys: ReadonlySet<string>;
+    totalRows: number;
 }>) {
-    const rowRenderableByKey = useSessionListRowRenderablesForItems(props.items);
+    const visibleRowKeys = useSessionListRowViewportSelection(props.viewportOwner.viewport, selectViewableKeys);
+    const rowSubscriptionKeys = useStableNullableSessionListRowStoreKeySet(React.useMemo(() => (
+        props.dataActive
+            ? resolveSessionListRowStoreSubscriptionKeysForViewport({
+                nativeAllRenderedMaxRows: NATIVE_LIST_ALL_RENDERED_ROW_STORE_MAX_ITEMS,
+                platformOS: Platform.OS,
+                priorityRowKeys: props.priorityRowKeys,
+                renderedSessionRows: props.totalRows,
+                visibleRowKeys,
+            })
+            : EMPTY_VIEWABLE_SESSION_ROW_KEYS
+    ), [props.dataActive, props.priorityRowKeys, props.totalRows, visibleRowKeys]));
+    useSessionListRowViewportSubscriptions(props.viewportOwner, rowSubscriptionKeys);
+    const visibilityResetVersion = React.useSyncExternalStore(
+        subscribeSessionSurfaceVisibilityReset,
+        getSessionSurfaceVisibilityResetVersion,
+        getSessionSurfaceVisibilityResetVersion,
+    );
+    const visibleAddressesRef = React.useRef<readonly SessionAddress[]>([]);
+    const visibleAddresses = React.useMemo(() => {
+        const addresses: SessionAddress[] = [];
+        for (const key of visibleRowKeys ?? []) {
+            const item = props.itemsBySelectionKey.get(key);
+            const address = item ? normalizeSessionAddress(item.serverId, item.sessionId) : null;
+            if (address) addresses.push(address);
+        }
+        addresses.sort((a, b) => a.serverId.localeCompare(b.serverId) || a.sessionId.localeCompare(b.sessionId));
+        const previous = visibleAddressesRef.current;
+        if (previous.length === addresses.length && addresses.every((address, index) => (
+            address.serverId === previous[index].serverId && address.sessionId === previous[index].sessionId
+        ))) return previous;
+        visibleAddressesRef.current = addresses;
+        return addresses;
+    }, [props.itemsBySelectionKey, visibleRowKeys]);
+    useSessionContentDemand(visibleAddresses, {
+        tag: 'sessionsList.hydrateVisibleRows',
+        hydrate: 'viewport',
+        active: props.dataActive,
+        resetVersion: visibilityResetVersion,
+    });
+    const statusDemandItems = React.useMemo(() => {
+        const visibleItems: Array<Extract<SessionListIndexItem, { type: 'session' }>> = [];
+        for (const rowKey of visibleRowKeys ?? []) {
+            const item = props.itemsBySelectionKey.get(rowKey) ?? null;
+            if (!item) continue;
+            visibleItems.push(item);
+            if (visibleItems.length >= EXTERNAL_SESSION_STATUS_DEMAND_MAX_ENTRIES_V1) break;
+        }
+        return visibleItems;
+    }, [props.itemsBySelectionKey, visibleRowKeys]);
+    const rowRenderableByKey = useSessionListRowRenderablesForItems(statusDemandItems);
     React.useEffect(() => {
         const entries = collectExternalSessionStatusDemandViewportEntries({
             activeServerId: getActiveServerSnapshot().serverId,
-            renderedListItems: props.items,
+            renderedListItems: statusDemandItems,
             resolveRowRenderable: (rowKey) => rowRenderableByKey.get(rowKey) ?? null,
-            visibleRowKeys: props.visibleRowKeys,
+            visibleRowKeys,
         });
         replaceExternalSessionStatusDemandViewport(props.viewportId, entries);
-    }, [props.items, props.viewportId, props.visibleRowKeys, rowRenderableByKey]);
+    }, [statusDemandItems, props.viewportId, visibleRowKeys, rowRenderableByKey]);
     React.useEffect(() => () => {
         replaceExternalSessionStatusDemandViewport(props.viewportId, []);
     }, [props.viewportId]);
+    React.useEffect(() => {
+        if (!syncPerformanceTelemetry.isEnabled()) return;
+        syncPerformanceTelemetry.count('ui.sessionsList.rowStoreSubscriptions', buildSessionListRowStoreSubscriptionTelemetryFields({
+            dataActive: props.dataActive,
+            platformOS: Platform.OS,
+            priorityRowKeys: props.priorityRowKeys,
+            rowSubscriptionKeys,
+            totalRows: props.totalRows,
+            visibleRowKeys,
+        }));
+    }, [props.dataActive, props.priorityRowKeys, rowSubscriptionKeys, props.totalRows, visibleRowKeys]);
     return null;
 });
 

@@ -13816,7 +13816,7 @@ const polish: TeamsTranslationRoot = {
                 brokerUnavailable: 'Maszyna pośrednicząca tych poświadczeń jest teraz nieosiągalna. Spróbuj ponownie, gdy wróci.',
                 sourceOwnerRequired: 'Tylko osoba, która jest właścicielem tego źródła, może wprowadzić tę zmianę.',
                 nativeDeliveryUnavailable: 'Natywne dostarczanie poświadczeń jest niedostępne lub nie zostało zweryfikowane na tej maszynie. Wybierz inną maszynę lub współdzielone poświadczenie.',
-                sourceMissing: 'Te poświadczenia nie wskazują już istniejącego źródła. Właściciel musi wybrać źródło ponownie.',
+                sourceMissing: 'Te poświadczenia nie wskazują już istniejącego źródła.',
                 invalidAudience: 'Te osoby lub grupy nie mogą otrzymać tych poświadczeń.',
                 subjectNotInTeam: 'Ta osoba lub grupa nie należy już do tego zespołu.',
                 costUnavailable: 'Limit kosztu wymaga ceny dla każdego dozwolonego modelu, a części brakuje. Ogranicz zamiast tego żądania albo tokeny.',
@@ -13868,6 +13868,8 @@ const polish: TeamsTranslationRoot = {
             },
             usage: {
                 title: 'Zużycie',
+                homeAdminRequired: "Tylko administratorzy Home mogą przeglądać użycie Home",
+                teamCredentialManagerRequired: "Tylko osoby zarządzające danymi uwierzytelniającymi tego Team mogą przeglądać użycie Team",
                 empty: 'W tym okresie nic nie zapisano.',
                 rangeLabel: 'Okres',
                 brokeredRequests: 'Żądania przez pośrednika',
