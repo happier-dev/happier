@@ -1,9 +1,10 @@
 import type { TriageDataActionContext, TriageDataActionHandler } from './dataContext.js';
-import type { LoggerService, PluginCancellationOptions } from '@happier-dev/plugin-sdk';
+import { isPluginError, type LoggerService, type PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import type { AdmittedTargetedOperationExecutionHandle } from '@happier-dev/plugin-sdk/actions';
 import {
     admitTriageSourceDescriptorV1,
     TriageListScopeUnitsResultV1Schema,
+    TriageSourceFailureV1Schema,
     type TriageListScopeUnitsInputV1,
     type TriageListScopeUnitsResultV1,
     type TriageScanInputV1,
@@ -254,7 +255,11 @@ export async function assembleTriageListPass(
                 failure: { class: 'unsupportedContract', code: 'scope_projection_invalid' } };
         } catch (error) {
             if (deps.signal?.aborted) throw error;
-            projection = { kind: 'failed', failure: { class: 'unknown', code: 'scope_projection_unavailable' } };
+            const failure = isPluginError(error)
+                ? TriageSourceFailureV1Schema.safeParse({ class: 'unknown', code: error.code })
+                : undefined;
+            projection = { kind: 'failed', failure: failure?.success ? failure.data
+                : { class: 'unknown', code: 'scope_projection_unavailable' } };
         }
         configuredScopes.set(sourceInstanceId, { unit, projection });
     }));

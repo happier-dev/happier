@@ -391,6 +391,10 @@ describe('the aggregate list coverage claim', () => {
             'plugin_action_caller_unavailable'],
         ['unknown', new PluginError({ code: 'plugin_action_outcome_unknown', retryable: false }),
             'plugin_action_outcome_unknown'],
+        ['native Machine absent', new PluginError({ code: 'plugin_action_machine_required', retryable: false }),
+            'plugin_action_machine_required'],
+        ['J3 admission refused', new PluginError({ code: 'plugin_action_form_connected_account_options_unavailable', retryable: false }),
+            'plugin_action_form_connected_account_options_unavailable'],
         ['unclassified', new Error('private invocation outcome'), 'triage/scanInvocationRejected'],
     ] as const)('keeps %s source outcomes distinct from a successful empty walk', async (_kind, refusal, code) => {
         const { collections, control } = createTestkitCorpusCollections();
@@ -448,7 +452,7 @@ describe('the aggregate list coverage claim', () => {
         expect(limits).toEqual([0, MAX_TRIAGE_LIST_WINDOW_ROWS_V1]);
         expect({ scopeReads, scans }).toEqual({ scopeReads: 2, scans: 1 });
         expect(snapshot.configuredSources[0]?.scope?.projection).toEqual({
-            kind: 'failed', failure: { class: 'unknown', code: 'scope_projection_unavailable' },
+            kind: 'failed', failure: { class: 'unknown', code: refusal instanceof PluginError ? code : 'scope_projection_unavailable' },
         });
         expect(snapshot.window?.rows).toEqual([]);
         expect(snapshot.window?.coverage).toBe('partial');
