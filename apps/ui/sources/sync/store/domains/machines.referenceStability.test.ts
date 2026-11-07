@@ -4,6 +4,7 @@ import { useStore } from 'zustand';
 import { act } from 'react';
 import { renderHook } from '@/dev/testkit';
 import { createSessionFixture, createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { selectActiveTestHomeForTests } from '@/dev/testkit/fixtures/persistedHomeProfiles';
 
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
@@ -11,7 +12,6 @@ import { buildMachineDisplayRenderableFromMachine } from '@/sync/domains/machine
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { StorageState } from '@/sync/store/types';
 import { createMachinesDomain, subscribeMachineUpdates, type MachinesDomain } from './machines';
-import { selectActiveTestHomeForTests } from '@/dev/testkit/fixtures/persistedHomeProfiles';
 import { readMachineActivity, subscribeMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { hasCurrentMachineContent } from '@/sync/domains/machines/resolveServerScopedMachines';
 import { buildUpdatedMachineFromSocketUpdate } from '@/sync/engine/machines/syncMachines';
@@ -439,21 +439,30 @@ describe('machine inventory reference stability through the real store', () => {
             expect(after.machinePresenceByServerId[serverId]?.['fleet-0']).toEqual(after.machinePresenceById['fleet-0']);
         } finally { await changed.unmount(); await unaffected.unmount(); }
     });
-    it('uses the same display publication policy for list snapshots and Machine updates', () => {
+    it.each(['display', 'row'] as const)('keeps decoded capability replays off root state through %s ingress', ingress => {
         const store = createTestStore();
-        const initial = buildMachineDisplayRenderableFromMachine(machine('display', { availability: { kind: 'available' } }));
-        store.getState().replaceMachineDisplays([initial]);
+        const initial = machine('display', { availability: { kind: 'available' },
+            operationProtocolCapabilities: { connectedAccountAuthentication: { protocolVersions: [1] } },
+            operationProtocolCapabilitiesRevision: 1 });
+        const apply = (row: Machine) => ingress === 'row'
+            ? store.getState().applyMachines([row])
+            : store.getState().replaceMachineDisplays([buildMachineDisplayRenderableFromMachine(row)]);
+        apply(initial);
         const previous = store.getState();
         const notify = vi.fn();
         const off = store.subscribe(notify);
         try {
-            store.getState().replaceMachineDisplays([{ ...structuredClone(initial), updatedAt: 2, activeAt: 2 }]);
+            for (let index = 2; index <= 21; index++) {
+                apply({ ...structuredClone(initial), updatedAt: index, activeAt: index });
+            }
             expect(store.getState()).toBe(previous);
             expect(previous.machineDisplayById.display.activeAt).toBe(1);
             expect(notify).toHaveBeenCalledTimes(0);
-            expect(readMachineActivity(store.getState().machineDisplayById.display).activeAt).toBe(2);
-            store.getState().replaceMachineDisplays([{ ...structuredClone(initial), metadataVersion: 2 }]);
-            expect(store.getState().machineDisplayById.display.metadata).toBe(initial.metadata);
+            expect(readMachineActivity(store.getState().machineDisplayById.display).activeAt).toBe(21);
+            apply({ ...structuredClone(initial), operationProtocolCapabilities: {}, operationProtocolCapabilitiesRevision: 2 });
+            expect(store.getState().machineDisplayById.display.operationProtocolCapabilities).toEqual({});
+            expect(store.getState().machineDisplayById.display.operationProtocolCapabilitiesRevision).toBe(2);
+            expect(store.getState().machineDisplayById.display.metadata).toBe(previous.machineDisplayById.display.metadata);
             expect(store.getState().machineDisplayById.display.availability).toBe(initial.availability);
             expect(notify).toHaveBeenCalledTimes(1);
         } finally { off(); }

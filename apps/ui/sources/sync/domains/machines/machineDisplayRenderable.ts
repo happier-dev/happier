@@ -1,5 +1,7 @@
 import type { Machine, MachineAvailability, MachineMetadata } from '@/sync/domains/state/storageTypes';
+import { readMachinePresenceProtocolV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
 import { linkMachineActivity } from './machineActivity';
+import { areSnapshotProjectionsEquivalent } from '@/sync/domains/state/structuralSharing';
 
 export interface MachineDisplayMetadata {
     displayName?: string | null;
@@ -16,6 +18,8 @@ export interface MachineDisplayRenderable {
     /** An identity-only choice has no Machine record; its inert fields are not presence facts. */
     presence?: null;
     isShared?: Machine['isShared'];
+    /** Names only: a managed Machine is told apart by its short id, never its generated host. */
+    managedMachineRef?: Machine['managedMachineRef'];
     access?: Machine['access'];
     kind?: Machine['kind'];
     updatedAt: number;
@@ -47,39 +51,20 @@ export function buildMachineDisplayMetadata(metadata: MachineMetadata | null | u
     };
 }
 
-// Machine content is replaced at publication. Heartbeat receipt fields may be
-// updated in place, so identity alone cannot retain the projected display row.
-const machineDisplays = new WeakMap<Machine, Readonly<{
-    metadata: Machine['metadata'];
-    updatedAt: number;
-    activeAt: number;
-    display: MachineDisplayRenderable;
-}>>();
+// Published Machine records, including their presence fields, are immutable.
+const machineDisplays = new WeakMap<Machine, MachineDisplayRenderable>();
 
-export function buildMachineDisplayRenderableFromMachine(machine: Machine): MachineDisplayRenderable {
+export function buildMachineDisplayRenderableFromMachine(machine: Machine, lastKnown?: MachineDisplayRenderable): MachineDisplayRenderable {
     const previous = machineDisplays.get(machine);
-    const display = previous?.display;
-    if (previous && display && previous.metadata === machine.metadata
-        && display.id === machine.id
-        && display.isShared === machine.isShared
-        && display.access === machine.access
-        && display.kind === machine.kind
-        && previous.updatedAt === machine.updatedAt
-        && display.updatedAt === machine.updatedAt
-        && display.active === machine.active
-        && previous.activeAt === machine.activeAt
-        && display.activeAt === machine.activeAt
-        && display.revokedAt === (machine.revokedAt ?? null)
-        && display.replacedByMachineId === (machine.replacedByMachineId ?? null)
-        && display.replacedAt === (machine.replacedAt ?? null)
-        && display.replacementReason === (machine.replacementReason ?? null)
-        && display.replacementSource === (machine.replacementSource ?? null)
-        && display.replacementActorUserId === (machine.replacementActorUserId ?? null)
-        && display.availability === machine.availability
-        && display.metadataVersion === machine.metadataVersion) return display;
+    if (previous && machine.metadata !== null) return previous;
+    // Retained labels are presentation, never opened Machine content or launch authority.
+    const retainedMetadata = machine.metadata === null && machine.availability === undefined
+        && lastKnown?.id === machine.id && lastKnown.availability?.kind !== 'locked'
+        ? lastKnown.metadata : null;
     const next = {
         id: machine.id,
         ...(machine.isShared !== undefined ? { isShared: machine.isShared } : {}),
+        ...(machine.managedMachineRef ? { managedMachineRef: machine.managedMachineRef } : {}),
         ...(machine.access ? { access: machine.access } : {}),
         kind: machine.kind,
         updatedAt: machine.updatedAt,
@@ -97,11 +82,10 @@ export function buildMachineDisplayRenderableFromMachine(machine: Machine): Mach
         replacementActorUserId: machine.replacementActorUserId ?? null,
         ...(machine.availability ? { availability: machine.availability } : {}),
         metadataVersion: machine.metadataVersion,
-        metadata: previous && previous.metadata === machine.metadata
-            ? previous.display.metadata : buildMachineDisplayMetadata(machine.metadata),
+        metadata: buildMachineDisplayMetadata(machine.metadata) ?? retainedMetadata,
     };
-    machineDisplays.set(machine, { metadata: machine.metadata,
-        updatedAt: machine.updatedAt, activeAt: machine.activeAt, display: next });
+    if (previous && areMachineDisplayRenderablesEqual(previous, next)) return previous;
+    machineDisplays.set(machine, next);
     linkMachineActivity(machine, next);
     return next;
 }
@@ -130,16 +114,18 @@ function areMachineDisplayValuesEqual(
     if (!previous || !next) return previous === next;
     return previous.id === next.id
         && previous.isShared === next.isShared
+        && (previous.managedMachineRef?.managedId ?? null) === (next.managedMachineRef?.managedId ?? null)
         && previous.access?.custodian.accountId === next.access?.custodian.accountId
         && previous.access?.custodian.displayName === next.access?.custodian.displayName
         && previous.access?.role === next.access?.role
         && previous.access?.resourceMode === next.access?.resourceMode
         && previous.access?.accessState === next.access?.accessState
+        && previous.access?.reason === next.access?.reason
         && previous.kind === next.kind
         && (!includeHeartbeatTimestamps || previous.updatedAt === next.updatedAt)
         && previous.active === next.active
-        && previous.presenceProtocolVersion === next.presenceProtocolVersion
-        && previous.operationProtocolCapabilities === next.operationProtocolCapabilities
+        && readMachinePresenceProtocolV1(previous) === readMachinePresenceProtocolV1(next)
+        && areSnapshotProjectionsEquivalent(previous.operationProtocolCapabilities ?? null, next.operationProtocolCapabilities ?? null)
         && previous.operationProtocolCapabilitiesRevision === next.operationProtocolCapabilitiesRevision
         && (!includeHeartbeatTimestamps || previous.activeAt === next.activeAt)
         && (previous.revokedAt ?? null) === (next.revokedAt ?? null)
