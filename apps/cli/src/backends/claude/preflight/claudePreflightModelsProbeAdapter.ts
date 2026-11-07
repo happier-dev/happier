@@ -41,9 +41,14 @@ export const claudePreflightModelsProbeAdapter: PreflightSessionControlsProbeAda
   probeCatalogsRaw: probeClaudeCatalogs,
   modelProbeCachePolicy: 'provider-owned',
   failureCacheStrategy: 'cooldown',
-  probeModelsRaw: async ({ cwd, timeoutMs, connectedServices, credentials, accountSettings, profileId, processEnv, bypassCache }) => {
+  probeModelsRaw: async ({ cwd, timeoutMs, deadlineAt, signal, onNativeCleanup, connectedServices, credentials, accountSettings, profileId, processEnv, bypassCache }) => {
+    const containingDeadlineAt = deadlineAt ?? Date.now() + timeoutMs;
     const resolution = await resolveClaudeModelCatalogResolution({
+      cwd,
       timeoutMs,
+      deadlineAt: containingDeadlineAt,
+      signal,
+      onNativeCleanup,
       bypassCache,
       connectedServices,
       credentials,
@@ -54,7 +59,12 @@ export const claudePreflightModelsProbeAdapter: PreflightSessionControlsProbeAda
     if (resolution.source === 'static') {
       return { availableModels: resolution.models, source: 'static', refreshError: resolution.refreshError };
     }
-    const installedCapabilities = await probeClaudeInstalledRuntimeCapabilities({ cwd, timeoutMs, processEnv });
+    const installedCapabilities = await probeClaudeInstalledRuntimeCapabilities({
+      cwd, timeoutMs, processEnv,
+      deadlineAt: containingDeadlineAt,
+      ...(signal === undefined ? {} : { signal }),
+      ...(onNativeCleanup === undefined ? {} : { onNativeCleanup }),
+    });
     return {
       availableModels: resolution.models.map((model) => toProbeRawModel(model, installedCapabilities)),
       source: resolution.source,

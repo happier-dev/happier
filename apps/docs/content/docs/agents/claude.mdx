@@ -248,6 +248,15 @@ The one exception is **Experimental: local permission bridge**, which affects **
 | **Strict MCP server config** | Off | Fails the remote start if any MCP server config is invalid (instead of trying to continue). |
 | **Advanced options (JSON)** | Empty | Power-user overrides for a limited allowlist of Agent SDK query options (remote Agent SDK only). Invalid JSON is ignored with a user-visible warning. |
 
+In development source, Happier executes Claude Code's user-scoped `apiKeyHelper` shell command
+during model discovery. It reads the selected Claude configuration directory, passes the session
+environment and selected project directory to the helper, and preserves a gateway's `ANTHROPIC_BASE_URL` path prefix.
+**Setting sources** must include user settings; discovery does not execute project helpers.
+If the configured helper fails without caller cancellation, Happier shows its built-in Claude
+model catalog and does not select a saved account. Malformed JSON, non-object user settings
+roots and non-string helper settings are skipped, as in Claude Code's non-interactive mode. Turning off **Discover available
+models** also prevents helper execution. This behavior is not yet available in a released build.
+
 For the full user-facing MCP guide in Happier, see:
 
 - [MCP servers](/extending/mcp-servers)

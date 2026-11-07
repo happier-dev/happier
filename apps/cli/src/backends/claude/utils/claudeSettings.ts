@@ -2,8 +2,8 @@
  * Claude-related settings helpers.
  *
  * IMPORTANT:
- * Happier does NOT read Claude Code's `settings.json` (or any of its setting-source files).
- * Claude reads and merges those settings internally.
+ * Claude reads and merges its session settings internally. Model discovery separately reads the
+ * user-scoped `apiKeyHelper` through the model probe target owner.
  *
  * For Happier-owned behavior (like whether we append co-authored-by credits),
  * we rely solely on Happier settings propagated into env vars.

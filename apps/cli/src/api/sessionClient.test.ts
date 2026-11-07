@@ -2724,7 +2724,7 @@ describe('ApiSessionClient connection handling', () => {
         ).resolves.toBe(true);
     });
 
-    it('updateMetadata syncs a snapshot first when metadataVersion is unknown', async () => {
+    it('updateMetadata syncs an unknown snapshot without republishing unchanged metadata', async () => {
                 const serverMetadata = {
                     ...mockSession.metadata,
                     tools: ['tool-1'],
@@ -2771,10 +2771,8 @@ describe('ApiSessionClient connection handling', () => {
                     return metadata;
                 });
 
-                expect(sessionSocket.emitWithAck).toHaveBeenCalledWith(
-                    'update-metadata',
-                    expect.objectContaining({ expectedVersion: 5 }),
-                );
+                expect(client.getMetadataSnapshot()).toEqual(serverMetadata);
+                expect(sessionSocket.emitWithAck.mock.calls.filter(([event]: readonly unknown[]) => event === 'update-metadata')).toEqual([]);
     });
 
 });

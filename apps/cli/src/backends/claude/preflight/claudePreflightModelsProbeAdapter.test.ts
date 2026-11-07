@@ -1,3 +1,7 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { z } from 'zod';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ConnectedServiceCredentialRecordV1 } from '@happier-dev/protocol';
@@ -48,6 +52,7 @@ import { claudePreflightModelsProbeAdapter } from './claudePreflightModelsProbeA
 import { resetClaudeModelCatalogCacheForTests } from '@/backends/claude/models/resolveClaudeModelCatalog';
 
 const envKeys = [
+  'CLAUDE_CONFIG_DIR',
   'ANTHROPIC_API_KEY',
   'ANTHROPIC_AUTH_TOKEN',
   'ANTHROPIC_OAUTH_TOKEN',
@@ -55,6 +60,7 @@ const envKeys = [
   'ANTHROPIC_BASE_URL',
 ] as const;
 let envScope = createEnvKeyScope(envKeys);
+let claudeConfigDir: string;
 const probeCredentials: Credentials = {
   token: 'account-token',
   encryption: { type: 'legacy', secret: new Uint8Array(32).fill(5) },
@@ -145,7 +151,7 @@ async function runProbe() {
   }).parse(raw);
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   resetClaudeModelCatalogCacheForTests();
   fetchAnthropicModelsMock.mockReset();
   getConnectedServiceCredentialPlainMock.mockReset();
@@ -164,9 +170,12 @@ beforeEach(() => {
   probeClaudeInstalledRuntimeCapabilitiesMock.mockResolvedValue({ supportsEffort: true, supportsUltracode: true });
   envScope.restore();
   envScope = createEnvKeyScope(envKeys);
+  claudeConfigDir = await mkdtemp(join(tmpdir(), 'happier-claude-preflight-'));
+  process.env.CLAUDE_CONFIG_DIR = claudeConfigDir;
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await rm(claudeConfigDir, { recursive: true, force: true });
   envScope.restore();
   envScope = createEnvKeyScope(envKeys);
 });
@@ -197,6 +206,7 @@ describe('claudePreflightModelsProbeAdapter', () => {
     expect(probeClaudeInstalledRuntimeCapabilitiesMock).toHaveBeenCalledWith({
       cwd: '/tmp',
       timeoutMs: 1_500,
+      deadlineAt: expect.any(Number),
       processEnv,
     });
   });
