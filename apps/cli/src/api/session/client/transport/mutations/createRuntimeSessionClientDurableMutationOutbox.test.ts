@@ -1,9 +1,10 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rename, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import axios from '@/api/client/credentialAxios';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { createSessionProviderInputConsumer } from '@/agent/runtime/session/input/sessionProviderInputConsumer';
 import { prepareSessionEventMessageViaPort } from '../../transcript/sendMessages';
@@ -625,62 +626,235 @@ describe('runtime session client durable mutation outbox', () => {
         await outbox.close();
     });
 
-    it('delivers runtime-activity terminal state despite an earlier retryable session-turn failure', async () => {
-        const deliveredActivityStates: string[] = [];
-        const outbox = createRuntimeSessionClientDurableMutationOutbox({
-            token: 'token',
-            sessionId: 'runtime-activity-turn-order',
-            getSocket: () => null,
-            requestReconnect: () => undefined,
-            initialRegisteredSessionStateFieldMutations: [createRegisteredSessionStateFieldMutation({
-                sessionId: 'runtime-activity-turn-order',
-                fieldId: 'runtime.activity',
-                deliveryClass: 'durable_best_effort',
-                source: 'runtime',
-                observedAt: 1,
-                op: { kind: 'set', value: { state: 'active', activeCount: 1 } },
-            })],
-            deliverRegisteredSessionStateFieldMutation: async (mutation) => {
-                if (mutation.fieldId === 'runtime.activity' && mutation.op.kind === 'set') {
-                    const value = mutation.op.value as { state: string };
+    it.each(['failure', 'backoff'] as const)(
+        'delivers runtime-activity terminal state past a turn %s while retaining ordered successors',
+        async (blockedBy) => {
+            const sessionId = `runtime-activity-turn-${blockedBy}`;
+            const deliveredActivityStates: string[] = [];
+            const post = vi.spyOn(axios, 'post').mockRejectedValue({ response: { status: 503 } });
+            let revision = 0;
+            const outbox = createRuntimeSessionClientDurableMutationOutbox({
+                token: 'token',
+                sessionId,
+                getSocket: () => null,
+                requestReconnect: () => undefined,
+                initialRegisteredSessionStateFieldMutations: [createRegisteredSessionStateFieldMutation({
+                    sessionId,
+                    fieldId: 'runtime.activity',
+                    deliveryClass: 'durable_best_effort',
+                    source: 'runtime',
+                    observedAt: 1,
+                    op: { kind: 'set', value: { state: 'active', activeCount: 1 } },
+                })],
+                deliverRegisteredSessionStateFieldMutation: async (mutation) => {
+                    if (mutation.fieldId !== 'runtime.activity' || mutation.op.kind !== 'set') return false;
+                    const value = mutation.op.value as { state: 'active' | 'idle'; activeCount: number };
                     deliveredActivityStates.push(value.state);
+                    revision += 1;
                     return {
                         delivered: true,
                         settlement: {
                             status: 'applied',
-                            committedProjection: mutation.op.value,
-                            committedRevision: deliveredActivityStates.length,
+                            committedProjection: { ...value, observedAt: mutation.observedAt, revision },
+                            committedRevision: revision,
                         },
                     };
+                },
+            });
+            const paths = resolveSessionClientDurableMutationJournalPaths({
+                activeServerDir: configurationMock.activeServerDir, custody: 'runtime', sessionId,
+            });
+            try {
+                await outbox.setSessionSyncPendingInputServerContract(serverContract('session_sync_v2_pending_input_v1'));
+                expect(deliveredActivityStates).toEqual(['active']);
+                await expect(readFile(paths.queuePath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+                deliveredActivityStates.length = 0;
+                outbox.deactivateDelivery();
+                for (const mutationId of ['blocked-turn', 'ordered-tail']) {
+                    await outbox.enqueueSessionTurnMutation({
+                        v: 1, sessionId, mutationId, action: 'begin', turnId: mutationId, observedAt: 2,
+                    });
                 }
-                return false;
-            },
-        });
-        await outbox.setSessionSyncPendingInputServerContract(serverContract('session_sync_v2_pending_input_v1'));
-        expect(deliveredActivityStates.length).toBeGreaterThan(0);
-        deliveredActivityStates.length = 0;
-        outbox.deactivateDelivery();
-        await outbox.enqueueSessionTurnMutation({
-            v: 1,
-            sessionId: 'runtime-activity-turn-order',
-            mutationId: 'blocked-turn',
-            action: 'begin',
-            turnId: 'blocked-turn',
-            observedAt: 2,
-        });
-        await outbox.enqueueRegisteredSessionStateFieldMutation(createRegisteredSessionStateFieldMutation({
-            sessionId: 'runtime-activity-turn-order',
-            fieldId: 'runtime.activity',
+                await outbox.flush('enqueue');
+                if (blockedBy === 'backoff') await outbox.activateDelivery();
+                await outbox.enqueueRegisteredSessionStateFieldMutation(createRegisteredSessionStateFieldMutation({
+                    sessionId,
+                    fieldId: 'runtime.activity',
+                    deliveryClass: 'durable_best_effort',
+                    source: 'runtime',
+                    observedAt: 3,
+                    op: { kind: 'set', value: { state: 'idle', activeCount: 0 } },
+                }));
+                await outbox.flush('enqueue');
+                if (blockedBy === 'failure') await outbox.activateDelivery();
+
+                expect(deliveredActivityStates).toEqual(['idle']);
+                const retained = JSON.parse(await readFile(paths.queuePath, 'utf8')) as {
+                    mutations: Array<{ mutationId: string; attempts: number }>;
+                };
+                expect(retained.mutations).toEqual([
+                    expect.objectContaining({ mutationId: 'blocked-turn', attempts: expect.any(Number) }),
+                    expect.objectContaining({ mutationId: 'ordered-tail', attempts: 0 }),
+                ]);
+                expect(retained.mutations[0].attempts).toBeGreaterThanOrEqual(1);
+            } finally {
+                await outbox.close();
+                post.mockRestore();
+            }
+        },
+    );
+
+    it('delivers runtime-activity terminal state past a backed-off turn on its earlier timer', async () => {
+        vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+        const now = Date.now();
+        const sessionId = 'runtime-activity-earlier-timer';
+        const activity = createRegisteredSessionStateFieldMutation({
+            sessionId, fieldId: 'runtime.activity', source: 'runtime', observedAt: now,
             deliveryClass: 'durable_best_effort',
-            source: 'runtime',
-            observedAt: 3,
             op: { kind: 'set', value: { state: 'idle', activeCount: 0 } },
-        }));
+        });
+        const persistenceContext = createSessionClientDurableMutationPersistenceContext({
+            activeServerDir: configurationMock.activeServerDir, custody: 'runtime', sessionId,
+            parseQueuedMutation: parseRuntimeSessionClientDurableMutation,
+        });
+        const post = vi.spyOn(axios, 'post').mockRejectedValue({ response: { status: 503 } });
+        let outbox: ReturnType<typeof createRuntimeSessionClientDurableMutationOutbox> | undefined;
+        const deliveredActivityStates: string[] = [];
+        let activityAttempts = 0;
+        try {
+            await saveSessionClientDurableMutationOutbox(sessionId, [
+                {
+                    kind: 'session_turn_mutation', mutationId: 'backed-off-head',
+                    payload: { v: 1, sessionId, mutationId: 'backed-off-head', action: 'begin', turnId: 'head', observedAt: now },
+                    createdAt: now, attempts: 6, nextAttemptAt: now + 60_000,
+                },
+                {
+                    kind: 'session_turn_mutation', mutationId: 'ordered-tail',
+                    payload: { v: 1, sessionId, mutationId: 'ordered-tail', action: 'begin', turnId: 'tail', observedAt: now },
+                    createdAt: now, attempts: 0, nextAttemptAt: 0,
+                },
+                {
+                    kind: 'registered_session_state_field', mutationId: activity.mutationId,
+                    payload: activity, admissionOrder: 1, createdAt: now, attempts: 0, nextAttemptAt: 0,
+                },
+            ], persistenceContext);
+            outbox = createRuntimeSessionClientDurableMutationOutbox({
+                token: 'token', sessionId, flushOnReady: false,
+                getSocket: () => null, requestReconnect: () => undefined,
+                deliverRegisteredSessionStateFieldMutation: async (mutation) => {
+                    activityAttempts += 1;
+                    if (activityAttempts === 1) return false;
+                    deliveredActivityStates.push(mutation.fieldId);
+                    return {
+                        delivered: true,
+                        settlement: {
+                            status: 'applied',
+                            committedProjection: { state: 'idle', activeCount: 0, observedAt: mutation.observedAt, revision: 1 },
+                            committedRevision: 1,
+                        },
+                    };
+                },
+            });
+            await outbox.awaitReady();
+            await outbox.setSessionSyncPendingInputServerContract(
+                serverContract('session_sync_v2_pending_input_v1'),
+            );
+            expect(deliveredActivityStates).toEqual([]);
+            const beforeTimer = JSON.parse(await readFile(persistenceContext.paths.queuePath, 'utf8')) as {
+                mutations: Array<{ mutationId: string; attempts: number; nextAttemptAt: number }>;
+            };
+            const [head, tail, pendingActivity] = beforeTimer.mutations;
+            expect(head).toMatchObject({ mutationId: 'backed-off-head', attempts: 7 });
+            expect(tail).toMatchObject({ mutationId: 'ordered-tail', attempts: 0 });
+            expect(pendingActivity).toMatchObject({ kind: 'registered_session_state_field', attempts: 1 });
+            expect(pendingActivity.nextAttemptAt).toBeLessThan(head.nextAttemptAt);
+            await vi.advanceTimersByTimeAsync(pendingActivity.nextAttemptAt - Date.now());
+            await vi.waitFor(async () => {
+                expect(deliveredActivityStates).toEqual(['runtime.activity']);
+                const retained = JSON.parse(await readFile(persistenceContext.paths.queuePath, 'utf8')) as {
+                    mutations: Array<{ mutationId: string; attempts: number }>;
+                };
+                expect(retained.mutations).toEqual([
+                    expect.objectContaining({ mutationId: 'backed-off-head', attempts: 7 }),
+                    expect.objectContaining({ mutationId: 'ordered-tail', attempts: 0 }),
+                ]);
+            });
+            expect(post).toHaveBeenCalledTimes(1);
+        } finally {
+            await outbox?.close();
+            post.mockRestore();
+            vi.useRealTimers();
+        }
+    });
 
-        await outbox.activateDelivery();
-
-        expect(deliveredActivityStates).toContain('idle');
-        await outbox.close();
+    it('repairs a failed Activity retirement while its only sibling remains parked', async () => {
+        vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+        const sessionId = 'runtime-activity-retirement-repair';
+        const now = Date.now();
+        const activity = createRegisteredSessionStateFieldMutation({
+            sessionId, fieldId: 'runtime.activity', source: 'runtime', observedAt: now,
+            deliveryClass: 'durable_best_effort',
+            op: { kind: 'set', value: { state: 'idle', activeCount: 0 } },
+        });
+        const context = createSessionClientDurableMutationPersistenceContext({
+            activeServerDir: configurationMock.activeServerDir, custody: 'runtime', sessionId,
+            parseQueuedMutation: parseRuntimeSessionClientDurableMutation,
+        });
+        await saveSessionClientDurableMutationOutbox(sessionId, [
+            {
+                kind: 'session_turn_mutation', mutationId: 'parked-turn',
+                payload: { v: 1, sessionId, mutationId: 'parked-turn', action: 'begin', turnId: 'head', observedAt: now },
+                createdAt: now, attempts: 0, nextAttemptAt: 0,
+            },
+            {
+                kind: 'registered_session_state_field', mutationId: activity.mutationId,
+                payload: activity, admissionOrder: 1, createdAt: now, attempts: 0, nextAttemptAt: 0,
+            },
+        ], context);
+        const deliver = vi.fn();
+        const outbox = createRuntimeSessionClientDurableMutationOutbox({
+            token: 'token', sessionId, flushOnReady: false, initiallyActive: false,
+            getSocket: () => null, requestReconnect: () => undefined,
+            deliverRegisteredSessionStateFieldMutation: deliver,
+        });
+        await outbox.setSessionSyncPendingInputServerContract(serverContract('released_server_v0_2_1'));
+        let waiterSettled = false;
+        const waiter = outbox.enqueueRegisteredSessionStateFieldMutationAndWaitForDelivery(activity).then(result => {
+            waiterSettled = true;
+            return result;
+        });
+        try {
+            await outbox.flush('enqueue');
+            const backupPath = `${context.paths.queuePath}.retirement-backup`;
+            await rename(context.paths.queuePath, backupPath);
+            await mkdir(context.paths.queuePath);
+            try {
+                // A directory at the publication path makes the real atomic rename fail.
+                await expect(outbox.activateDelivery()).rejects.toMatchObject({ code: expect.any(String) });
+            } finally {
+                await rm(context.paths.queuePath, { recursive: true });
+                await rename(backupPath, context.paths.queuePath);
+            }
+            expect(waiterSettled).toBe(false);
+            expect(outbox.readRuntimeActivitySnapshotTail()).toMatchObject({
+                custody: { value: { state: 'idle', activeCount: 0 } }, settlement: null,
+            });
+            await vi.advanceTimersByTimeAsync(0);
+            await vi.waitFor(async () => {
+                const retained = JSON.parse(await readFile(context.paths.queuePath, 'utf8')) as {
+                    mutations: Array<{ mutationId: string; attempts: number }>;
+                };
+                expect(retained.mutations).toEqual([
+                    expect.objectContaining({ mutationId: 'parked-turn', attempts: 0 }),
+                ]);
+            });
+            await expect(waiter).resolves.toEqual({ status: 'failed' });
+            expect(outbox.readRuntimeActivitySnapshotTail()).toMatchObject({ custody: null, settlement: null });
+            expect(deliver).not.toHaveBeenCalled();
+        } finally {
+            await outbox.close();
+            vi.useRealTimers();
+        }
     });
 
     it('keeps an inactive replacement from stealing delivery until explicit activation', async () => {

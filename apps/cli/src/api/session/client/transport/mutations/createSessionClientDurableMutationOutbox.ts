@@ -337,6 +337,12 @@ function isTranscriptDeliveryMutation(mutation: QueuedSessionClientDurableMutati
     return mutation.kind === 'transcript_message_append' || mutation.kind === 'voice_agent_transcript_turn';
 }
 
+function isRuntimeActivityMutation(
+    mutation: QueuedSessionClientDurableMutation,
+): mutation is Extract<QueuedSessionClientDurableMutation, { kind: 'registered_session_state_field' }> {
+    return mutation.kind === 'registered_session_state_field' && mutation.payload.fieldId === 'runtime.activity';
+}
+
 function assertVoiceAgentTranscriptTurnCompatible(
     mutation: QueuedSessionClientDurableMutation,
     queued: readonly QueuedSessionClientDurableMutation[],
@@ -1853,23 +1859,39 @@ function createGenericSessionClientDurableMutationOutboxInstance(
         retryTimer = null;
     }
 
-    function resolveNextRetryAt(now: number): number {
+    function resolveNextRetryAt(now: number): number | null {
         let transcriptNextAttemptAt = Number.POSITIVE_INFINITY;
+        let orderedHeadAttemptAt: number | null = null;
+        let activityNextAttemptAt = Number.POSITIVE_INFINITY;
         for (const mutation of mutations) {
+            if (isSessionTurnMutationParkedForReleasedServer(
+                mutation,
+                sessionSyncPendingInputServerContractResult?.mode
+                    ?? params.getSessionTurnServerContractMode?.()
+                    ?? null,
+            )) continue;
             const nextAttemptAt = mutation.nextAttemptAt || now;
+            if (isRuntimeActivityMutation(mutation)) {
+                if (params.runtimeActivitySupportControlled
+                    && !supportsRuntimeActivityV2(sessionSyncPendingInputServerContractResult)) continue;
+                activityNextAttemptAt = Math.min(activityNextAttemptAt, nextAttemptAt);
+                continue;
+            }
+            if (orderedHeadAttemptAt !== null) continue;
             if (isTranscriptDeliveryMutation(mutation)) {
                 transcriptNextAttemptAt = Math.min(transcriptNextAttemptAt, nextAttemptAt);
                 continue;
             }
-            return nextAttemptAt;
+            orderedHeadAttemptAt = nextAttemptAt;
         }
-        return Number.isFinite(transcriptNextAttemptAt) ? transcriptNextAttemptAt : now;
+        const nextAttemptAt = Math.min(orderedHeadAttemptAt ?? transcriptNextAttemptAt, activityNextAttemptAt);
+        return Number.isFinite(nextAttemptAt) ? nextAttemptAt : null;
     }
 
     function scheduleRetry(): void {
         if (closed || retryTimer || mutations.length === 0) return;
         const now = Date.now();
-        const nextAttemptAt = resolveNextRetryAt(now);
+        const nextAttemptAt = resolveNextRetryAt(now) ?? now;
         const delayMs = Math.max(0, nextAttemptAt - now);
         retryTimer = setTimeout(() => {
             retryTimer = null;
@@ -2116,6 +2138,7 @@ function createGenericSessionClientDurableMutationOutboxInstance(
             const registeredFieldSettlementsPendingDurableCut: PendingRegisteredFieldSettlement[] = [];
             let runtimeActivitySettlementPendingDurableCut: RuntimeActivitySnapshotTail['settlement'] = null;
             let runtimeActivityRetirementPendingDurableCut: number | null = null;
+            let earlierOrderedMutationBlocked = false;
             const transcriptFlushBatchLimit = reason === 'flush'
                 ? Number.POSITIVE_INFINITY
                 : resolveSessionClientDurableMutationTranscriptFlushBatchLimit();
@@ -2148,6 +2171,11 @@ function createGenericSessionClientDurableMutationOutboxInstance(
             };
             for (let index = 0; index < batch.length; index += 1) {
                 let mutation = batch[index];
+                // Activity is independent; every other successor retains the blocked head's ordering.
+                if (earlierOrderedMutationBlocked && !isRuntimeActivityMutation(mutation)) {
+                    remaining.push(mutation);
+                    continue;
+                }
                 const dependencyCycleMutationIds = dependencyCyclesByMutationId.get(mutation.mutationId);
                 if (dependencyCycleMutationIds) {
                     deadLetteredMutationsPendingDurableCut.push(mutation);
@@ -2173,7 +2201,7 @@ function createGenericSessionClientDurableMutationOutboxInstance(
                     refreshInFlightMutations(index + 1);
                     continue;
                 }
-                if (mutation.kind === 'registered_session_state_field' && mutation.payload.fieldId === 'runtime.activity') {
+                if (isRuntimeActivityMutation(mutation)) {
                     const contract = sessionSyncPendingInputServerContractResult;
                     if (
                         params.runtimeActivitySupportControlled
@@ -2274,18 +2302,15 @@ function createGenericSessionClientDurableMutationOutboxInstance(
                     && reason !== 'connection_contract'
                     && mutation.nextAttemptAt > now
                 ) {
-                    if (isTranscriptDeliveryMutation(mutation) || (
-                        mutation.kind === 'registered_session_state_field'
-                        && mutation.payload.fieldId === 'runtime.activity'
-                    )) {
+                    if (isTranscriptDeliveryMutation(mutation) || isRuntimeActivityMutation(mutation)) {
                         remaining.push(mutation);
                         refreshInFlightMutations(index + 1);
                         continue;
                     }
                     remaining.push(mutation);
-                    remaining.push(...batch.slice(index + 1));
-                    inFlightMutations = [];
-                    break;
+                    earlierOrderedMutationBlocked = true;
+                    refreshInFlightMutations(index + 1);
+                    continue;
                 }
                 if (
                     reason !== 'flush'
@@ -2407,7 +2432,7 @@ function createGenericSessionClientDurableMutationOutboxInstance(
                     continue;
                 }
 
-                if (mutation.kind === 'registered_session_state_field' && mutation.payload.fieldId === 'runtime.activity') {
+                if (isRuntimeActivityMutation(mutation)) {
                     remaining.push(recordFailedSessionClientDurableMutationAttempt(
                         mutation,
                         attemptFailureReason,
@@ -2441,11 +2466,11 @@ function createGenericSessionClientDurableMutationOutboxInstance(
                 }
                 reportPersistentlyBlockingMutation(failedMutation, batch.slice(index + 1));
                 remaining.push(failedMutation);
-                remaining.push(...batch.slice(index + 1));
-                inFlightMutations = [];
+                earlierOrderedMutationBlocked = true;
+                refreshInFlightMutations(index + 1);
                 didChange = true;
                 shouldRequestReconnect = true;
-                break;
+                continue;
             }
             for (const failed of deadLetteredMutationsPendingDurableCut) {
                 notifyAwaitedDelivery(failed.mutationId, new Error(
@@ -2545,25 +2570,7 @@ function createGenericSessionClientDurableMutationOutboxInstance(
                     });
                 }
             }
-            const hasDeliverableMutation = mutations.some((mutation) => (
-                !isSessionTurnMutationParkedForReleasedServer(
-                    mutation,
-                    sessionSyncPendingInputServerContractResult?.mode
-                        ?? params.getSessionTurnServerContractMode?.()
-                        ?? null,
-                )
-                && !(
-                    mutation.kind === 'registered_session_state_field'
-                    && mutation.payload.fieldId === 'runtime.activity'
-                    && params.runtimeActivitySupportControlled
-                    && (
-                        sessionSyncPendingInputServerContractResult === null
-                        || !supportsRuntimeActivityV2(
-                            sessionSyncPendingInputServerContractResult,
-                        )
-                    )
-                )
-            ));
+            const hasDeliverableMutation = resolveNextRetryAt(Date.now()) !== null;
             if (!closed && hasDeliverableMutation) {
                 if (shouldRequestReconnect) {
                     params.requestReconnect(reason);
