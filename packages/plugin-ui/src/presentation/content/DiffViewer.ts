@@ -1,3 +1,5 @@
+import type { ReactNode } from 'react';
+
 /**
  * The portable, read-only request understood by Happier's one diff renderer.
  * Review drafts, line selection, parser policy, and virtualization are
@@ -12,6 +14,13 @@ export type HappierDiffViewerRequest =
     unifiedDiff: string;
     filePath?: string;
     testID?: string;
+    /**
+     * The diff is its panel's one vertical scroller: it fills the space it is given and is a list,
+     * never a capped box inside another scroller. `leadingContent` reads above the first line and
+     * scrolls with it.
+     */
+    fill?: true;
+    leadingContent?: ReactNode;
   }>
   | Readonly<{
     before: string;
@@ -38,5 +47,7 @@ export function resolveHappierDiffViewerRequest(
     unifiedDiff: input.unifiedDiff,
     ...(input.filePath === undefined ? {} : { filePath: input.filePath }),
     ...(input.testID === undefined ? {} : { testID: input.testID }),
+    ...(input.fill === true ? { fill: true as const } : {}),
+    ...(input.leadingContent === undefined ? {} : { leadingContent: input.leadingContent }),
   });
 }

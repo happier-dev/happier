@@ -4,6 +4,7 @@ import { ProseDiffViewer } from '@/components/ui/code/diff/prose/ProseDiffViewer
 
 import { createPluginUiPrivatePresentationHost } from './pluginUiPrivatePresentationHost';
 import { act, renderHook, renderScreen } from '@/dev/testkit';
+import { DiffViewer as AppDiffViewer } from '@/components/ui/code/diff/DiffViewer';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { loadLocalSettings } from '@/sync/domains/state/settingsPersistence';
 
@@ -81,6 +82,23 @@ describe('createPluginUiPrivatePresentationHost focus transfer', () => {
             filePath: 'src/provider.ts',
             testID: 'provider-diff',
         });
+    });
+
+    it('lets a filling diff be its panel\u2019s one scroller: virtualized, uncapped, its leading content inside it', async () => {
+        const host = createPluginUiPrivatePresentationHost(undefined);
+        const leading = <></>;
+        const screen = await renderScreen(<>{host.renderDiffViewer({
+            unifiedDiff: '@@ -1 +1 @@\n-old\n+new', fill: true, leadingContent: leading, testID: 'panel-diff',
+        })}</>);
+        try {
+            await act(async () => { await vi.dynamicImportSettled(); });
+            const viewer = screen.findByType(AppDiffViewer);
+            expect(viewer.props).toMatchObject({ virtualized: true, leadingContent: leading });
+            // No fixed-height viewport of its own: the panel gives it the height it fills.
+            const frame = viewer.parent?.props.style as Readonly<Record<string, unknown>> | undefined;
+            expect(frame).toMatchObject({ flex: 1, minHeight: 0 });
+            expect(frame).not.toHaveProperty('maxHeight');
+        } finally { await screen.unmount(); }
     });
 
     it('draws a prose before/after with the same prose diff viewer core uses for its own proposals', async () => {

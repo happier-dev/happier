@@ -111,6 +111,8 @@ type _AuthorDiffViewerKeysStayReadOnlyAndCurated = Assert<IsEqual<keyof DiffView
   | 'filePath'
   | 'label'
   | 'testID'
+  | 'fill'
+  | 'leadingContent'
 >>;
 
 type _AuthorButtonFocusTarget = Assert<IsEqual<ButtonProps['focusTarget'], PluginUiFocusTarget | undefined>>;

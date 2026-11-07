@@ -1,4 +1,4 @@
-import type { ReactElement } from 'react';
+import type { ReactElement, ReactNode } from 'react';
 import { Platform } from 'react-native';
 
 import { usePluginHostApi } from '../hostApi/context.js';
@@ -71,6 +71,9 @@ export function QRCode({ data, size = 200, testID }: QRCodeProps): ReactElement 
   return content === undefined || content === null ? null : <>{content}</>;
 }
 
+/** A filling diff takes the panel's remaining height and may shrink below its content. */
+const FILL_STYLE = Object.freeze({ flex: 1, minHeight: 0 });
+
 export type DiffViewerProps = Readonly<{
   /** A standard unified diff. Happier's mounted renderer owns parsing and presentation. */
   unifiedDiff: string;
@@ -79,6 +82,13 @@ export type DiffViewerProps = Readonly<{
   /** A short visible description that also orients screen-reader users. */
   label: string;
   testID?: string;
+  /**
+   * The diff is the panel's one vertical scroller (a Files tab): it fills the space it is given, so the panel
+   * must not wrap it in a ScrollArea. What reads above it goes in `leadingContent` and scrolls with it.
+   */
+  fill?: boolean;
+  /** With `fill`: content above the diff (its changed files, a notice) that scrolls with the diff. */
+  leadingContent?: ReactNode;
 }>;
 
 /**
@@ -94,8 +104,29 @@ export function DiffViewer({
   filePath,
   label,
   testID,
+  fill = false,
+  leadingContent,
 }: DiffViewerProps): ReactElement {
   const host = useOptionalPluginUiPresentationHost();
+  if (fill) {
+    // One scroller: the label and whatever reads above it travel inside the diff's own list.
+    const leading = <HappierStack gap={8}>{leadingContent}<HappierText variant="micro">{label}</HappierText></HappierStack>;
+    const hosted = host?.renderDiffViewer?.(resolveHappierDiffViewerRequest({
+      unifiedDiff, fill: true, leadingContent: leading,
+      ...(filePath === undefined ? {} : { filePath }),
+      ...(testID === undefined ? {} : { testID }),
+    }));
+    return (
+      <HappierStack grow style={FILL_STYLE}>
+        {hosted ?? (
+          <HappierScrollArea testID={testID}>
+            {leading}
+            <HappierText selectable variant="code">{unifiedDiff}</HappierText>
+          </HappierScrollArea>
+        )}
+      </HappierStack>
+    );
+  }
   const request = resolveHappierDiffViewerRequest({
     unifiedDiff,
     ...(filePath === undefined ? {} : { filePath }),

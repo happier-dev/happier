@@ -194,4 +194,29 @@ describe('read-only DiffViewer presentation', () => {
     expect(mount.container.querySelector('[data-testid="host-diff"]')).not.toBeNull();
     mount.unmount();
   });
+
+  it('hands the host a filling diff that is the panel\u2019s one scroller, with what reads above it', () => {
+    const renderDiffViewer = vi.fn(() => <span data-testid="host-diff">rendered diff</span>);
+    const host = {
+      renderMarkdown: () => null,
+      renderCodeBlock: () => null,
+      renderDiffViewer,
+      renderPopover: () => null,
+      renderIcon: () => null,
+    } as unknown as PluginUiPresentationHost;
+    const context = createSurfaceContext();
+    const mount = mountThroughReactNativeWeb(
+      <PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
+        <PluginUiPresentationHostProviderInternal host={host}>
+          <DiffViewer fill unifiedDiff={unifiedDiff} label="Diff" testID="panel-diff"
+            leadingContent={<span data-testid="changed-files">Changed files</span>} />
+        </PluginUiPresentationHostProviderInternal>
+      </PluginUiProvider>,
+    );
+
+    expect(renderDiffViewer).toHaveBeenCalledWith(expect.objectContaining({
+      unifiedDiff, fill: true, testID: 'panel-diff', leadingContent: expect.anything(),
+    }));
+    mount.unmount();
+  });
 });
