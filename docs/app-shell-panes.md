@@ -106,6 +106,13 @@ The Action and nested resource remain closed. New readers accept old href/file
 inputs; older strict development readers reject `resource`, so Protocol and UI
 reload together. No route, persisted shape, wire epoch or capability gate changes.
 
+A popover or phone sheet belongs to the page it was opened from: when that page
+stops being presented (an Open inside the Session PR glance sheet shows the
+detail in place, a retained tab hides), `Popover` asks its owner to close it, and
+it does not return with the page. `PaneColumnsHost` sizes overlays: a phone
+overlay takes its region's width and draws no resize handle; a desktop details
+overlay keeps its handle, and dragging it back under its dock budget docks it.
+
 ## Destination windows (0.3 development)
 
 Native `app_window.rs` owns Session window creation, readiness, reuse, teardown

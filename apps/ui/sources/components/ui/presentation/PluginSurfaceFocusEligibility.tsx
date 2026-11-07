@@ -12,6 +12,33 @@ type PluginSurfaceFocusEligibility = Readonly<{
 // fail closed when no owner supplied any fact at all.
 const PluginSurfaceFocusEligibilityContext = React.createContext<PluginSurfaceFocusEligibility | null>(null);
 
+/**
+ * The same presentation fact as a stable subscription, for work that only starts or stops with it (a
+ * listener, a watch) and draws nothing from it: reading it never renders the reader when a retained
+ * surface hides or shows. Each provider publishes its own `presentationEffective` here after commit.
+ */
+export type LayoutPresentationSignal = Readonly<{ get: () => boolean; subscribe: (listener: () => void) => () => void }>;
+const ALWAYS_PRESENTED: LayoutPresentationSignal = Object.freeze({ get: () => true, subscribe: () => () => {} });
+const LayoutPresentationSignalContext = React.createContext<LayoutPresentationSignal>(ALWAYS_PRESENTED);
+
+function useProvidedPresentationSignal(presented: boolean): LayoutPresentationSignal {
+    const [signal] = React.useState(() => {
+        let current = presented;
+        const listeners = new Set<() => void>();
+        return {
+            get: () => current,
+            subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+            set: (next: boolean) => {
+                if (next === current) return;
+                current = next;
+                for (const listener of [...listeners]) listener();
+            },
+        };
+    });
+    React.useLayoutEffect(() => signal.set(presented), [presented, signal]);
+    return signal;
+}
+
 function RetainedFocusEligibility(props: Readonly<{
     captured: PluginSurfaceFocusEligibility | null;
     children: React.ReactNode;
@@ -23,7 +50,10 @@ function RetainedFocusEligibility(props: Readonly<{
         presentationEffective: props.captured.presentationEffective && presented,
         currentUiContextEffective: props.captured.currentUiContextEffective && presented,
     }) : slot, [presented, props.captured, slot]);
-    return <PluginSurfaceFocusEligibilityContext.Provider value={value}>{props.children}</PluginSurfaceFocusEligibilityContext.Provider>;
+    const signal = useProvidedPresentationSignal(value?.presentationEffective ?? true);
+    return <PluginSurfaceFocusEligibilityContext.Provider value={value}>
+        <LayoutPresentationSignalContext.Provider value={signal}>{props.children}</LayoutPresentationSignalContext.Provider>
+    </PluginSurfaceFocusEligibilityContext.Provider>;
 }
 
 /** Transfer the existing layout's facts into its portal; parking can only withdraw them. */
@@ -62,9 +92,10 @@ export function PluginSurfaceFocusEligibilityProvider(props: Readonly<{
         return Object.freeze({ effective, currentUiContextEffective, presentationEffective });
     }, [parent, props.active, props.currentUiContextActive, props.presentationActive]);
 
+    const signal = useProvidedPresentationSignal(value.presentationEffective);
     return (
         <PluginSurfaceFocusEligibilityContext.Provider value={value}>
-            {props.children}
+            <LayoutPresentationSignalContext.Provider value={signal}>{props.children}</LayoutPresentationSignalContext.Provider>
         </PluginSurfaceFocusEligibilityContext.Provider>
     );
 }
@@ -90,6 +121,11 @@ export function usePluginSurfaceCurrentUiContextEligibility(): boolean {
  */
 export function useLayoutPresentationActive(): boolean {
     return React.useContext(PluginSurfaceFocusEligibilityContext)?.presentationEffective ?? true;
+}
+
+/** {@link useLayoutPresentationActive} as a subscription: a hide or show does not render the reader. */
+export function useLayoutPresentationSignal(): LayoutPresentationSignal {
+    return React.useContext(LayoutPresentationSignalContext);
 }
 
 /**

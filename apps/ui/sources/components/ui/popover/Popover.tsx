@@ -22,6 +22,8 @@ import { resolveOverlayPointerEvents } from '@/components/ui/overlays/resolveOve
 import { useNativeBackLayerDescendant } from '@/components/ui/overlays/NativeBackLayerBoundary';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { useGlassBlurSetting } from '@/components/ui/glass/useGlassBlurSetting';
+import { useLayoutPresentationSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import type {
     PopoverAnchor,
     PopoverBackdropEffect,
@@ -354,8 +356,22 @@ function resolvePopoverAnchorEdge(
     return startRoom >= endRoom ? 'start' : 'end';
 }
 
+/**
+ * A popover belongs to the page it was opened from. When that page stops being presented (an Open inside a
+ * sheet shows the detail in place, a retained tab hides), the popover closes instead of staying over what
+ * replaced it, and it does not come back when the page returns.
+ */
+function useCloseWhenPageWithdrawn(open: boolean, onRequestClose: (() => void) | undefined): void {
+    const presentation = useLayoutPresentationSignal();
+    const closeIfOpen = useEventCallback(() => {
+        if (open && !presentation.get()) onRequestClose?.();
+    });
+    React.useEffect(() => presentation.subscribe(closeIfOpen), [closeIfOpen, presentation]);
+}
+
 export function Popover(props: PopoverProps) {
     const deviceType = useDeviceType();
+    useCloseWhenPageWithdrawn(props.open, props.onRequestClose);
     // A sheet-presented popover opened from inside a phone sheet pushes into that sheet (with a Back)
     // instead of opening a second sheet over it.
     const pushStack = React.useContext(PhoneSheetPushContext);

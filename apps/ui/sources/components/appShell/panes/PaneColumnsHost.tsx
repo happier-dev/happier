@@ -343,9 +343,10 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
             - (resolvedLayout.details === 'docked' && Boolean(detailsPane) ? dockSizing.detailsWidthPx : 0),
     );
 
+    // On a phone an overlay fills its region whatever width it asks for, so it has no edge to drag.
+    const prefersFullScreenOverlay = deviceType === 'phone';
     const baseSizing = React.useMemo(() => {
         const overlayRegionWidthPx = mirrored ? dockSizing.detailsWidthPx : mainRegionWidthPx;
-        const prefersFullScreenOverlay = deviceType === 'phone';
         const clampOverlayWidth = (value: number, minPx: number) => {
             if (destinationDetailOnly) return containerWidthPx;
             if (prefersFullScreenOverlay) return Math.max(minPx, overlayRegionWidthPx);
@@ -374,7 +375,7 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
                 : details.maxPx;
         return { rightWidthPx, detailsWidthPx, rightMaxWidthPx, detailsMaxWidthPx };
     }, [
-        deviceType,
+        prefersFullScreenOverlay,
         mirrored,
         destinationDetailOnly,
         containerWidthPx,
@@ -404,7 +405,8 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
         // A docked pane never grows past its budget, even mid-drag: widening it past that point is
         // the overlay decision (see `onDragDetailsDockWidthPx`), never a wider docked column that
         // would crowd the columns around this host. An overlay can be resized up to the available
-        // main-region width.
+        // main-region width (a details overlay dragged back under its budget docks again), except a
+        // phone overlay, whose width is the region's.
         const overlayMainRegionWidthPx = Math.max(
             0,
             containerWidthPx
@@ -412,10 +414,16 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
                 - (resolvedLayout.details === 'docked' ? detailsWidthPx : 0),
         );
         if (resolvedLayout.details === 'overlay') {
-            detailsMaxWidthPx = Math.max(detailsMaxWidthPx, overlayMainRegionWidthPx);
+            if (prefersFullScreenOverlay) {
+                detailsMinWidthPx = detailsWidthPx;
+                detailsMaxWidthPx = detailsWidthPx;
+            } else detailsMaxWidthPx = Math.max(detailsMaxWidthPx, overlayMainRegionWidthPx);
         }
         if (resolvedLayout.right === 'overlay') {
-            rightMaxWidthPx = Math.max(rightMaxWidthPx, overlayMainRegionWidthPx);
+            if (prefersFullScreenOverlay) {
+                rightMinWidthPx = rightWidthPx;
+                rightMaxWidthPx = rightWidthPx;
+            } else rightMaxWidthPx = Math.max(rightMaxWidthPx, overlayMainRegionWidthPx);
         }
 
         if (mainHidden && !mirrored) {
@@ -453,6 +461,7 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
         destinationDetailOnly,
         mainHidden,
         mirrored,
+        prefersFullScreenOverlay,
         resolvedLayout.details,
         resolvedLayout.right,
         right.minPx,

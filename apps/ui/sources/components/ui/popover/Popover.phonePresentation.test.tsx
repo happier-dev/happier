@@ -164,6 +164,39 @@ describe('Popover phone presentation', () => {
         expect(modalSheets(screen)).toHaveLength(0);
     });
 
+    it('closes a sheet when the page it was opened from stops being presented, and does not reopen on return', async () => {
+        // An Open inside a composer sheet shows the opened detail in place: the composer's page is retained
+        // but no longer presented, and the sheet must not stay over the detail.
+        const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+        const closes = vi.fn();
+        function Composer() {
+            const [open, setOpen] = React.useState(true);
+            return <Popover open={open} phonePresentation="sheet" accessibilityLabel="Pull request"
+                onRequestClose={() => { closes(); setOpen(false); }}>
+                {() => <Text>glance</Text>}
+            </Popover>;
+        }
+        let present: (presented: boolean) => void = () => {};
+        function Page() {
+            const [presented, setPresented] = React.useState(true);
+            present = setPresented;
+            return <PluginSurfaceFocusEligibilityProvider active={presented} presentationActive={presented}>
+                <Composer />
+            </PluginSurfaceFocusEligibilityProvider>;
+        }
+        const modalSheets = (screen: Awaited<ReturnType<typeof renderScreen>>) =>
+            screen.findAll((node) => node.props.role === 'dialog' && node.props.accessibilityViewIsModal === true);
+        const screen = await renderScreen(<Page />);
+        expect(modalSheets(screen).length).toBeGreaterThan(0);
+
+        await act(async () => { present(false); });
+        expect(closes).toHaveBeenCalledOnce();
+        expect(modalSheets(screen)).toHaveLength(0);
+
+        await act(async () => { present(true); });
+        expect(modalSheets(screen)).toHaveLength(0);
+    });
+
     it('keeps the anchored presentation on a wide viewport when phone sheets are requested', async () => {
         viewport.width = 1200;
         viewport.height = 900;
