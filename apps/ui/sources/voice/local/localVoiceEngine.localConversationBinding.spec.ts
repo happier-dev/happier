@@ -232,7 +232,7 @@ describe('local voice engine local conversation binding', () => {
         await lifecycle.dispose();
     }, 60_000);
 
-    it('retains explicit UI approval custody as a typed Start refusal instead of parsing it as a spawned Session', async () => {
+    it('uses the person\'s own UI Start admission despite Account Ask without creating an approval Artifact', async () => {
         await configureAgentMode();
         const storage = await getStorage();
         storage.__setState({ settings: { ...storage.getState().settings,
@@ -250,12 +250,16 @@ describe('local voice engine local conversation binding', () => {
         const lifecycle = createVoiceSessionLifecycleController();
         lifecycle.setConfiguredProviderId('local_conversation');
         try {
-            await expect(lifecycle.toggle(null)).rejects.toMatchObject({ code: 'approval_request_created' });
+            // Own UI admission is consumed by the Action owner (2fd4807035f);
+            // Account Ask still governs automation and other-person callers.
+            await lifecycle.toggle(null);
             expect(lifecycle.getSnapshot()).toMatchObject({
-                status: 'disconnected', errorMessage: 'approval_request_created', canStop: false,
+                status: 'connected', mode: 'listening', canStop: true,
             });
-            expect(artifacts.list()).toHaveLength(1);
-            expect(machineRpcWithServerScope.mock.calls.filter(([request]) => request.method === RPC_METHODS.SESSION_SPAWN_NEW)).toEqual([]);
+            expect(lifecycle.getSnapshot().errorCode).toBeUndefined();
+            expect(artifacts.list()).toEqual([]);
+            expect(machineRpcWithServerScope.mock.calls.filter(([request]) => request.method === RPC_METHODS.SESSION_SPAWN_NEW))
+                .toEqual([[expect.objectContaining({ machineId: 'machine-1', serverId: localVoiceHomeId })]]);
         } finally {
             await lifecycle.dispose();
         }
@@ -471,21 +475,20 @@ describe('local voice engine local conversation binding', () => {
         );
         interceptVoiceSpawn(async () => { throw preparationFailure; });
 
-        // The real Session creation Action sanitizes a transport exception to
-        // its public action_failed code; it does not forward a private backend
-        // code injected below the strict daemon response boundary.
-        await expect(localVoiceEngine.toggleLocalVoiceTurn('')).rejects.toMatchObject({ code: 'action_failed' });
+        // Producer-declared Action codes survive failure projection (2b34aa788d7);
+        // the Voice boundary keeps that typed cause without private error prose.
+        await expect(localVoiceEngine.toggleLocalVoiceTurn('')).rejects.toMatchObject({ code: preparationFailure.code });
 
         expect(await getLocalConversationSnapshot()).toMatchObject({
             adapterId: 'local_conversation',
             sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
             status: 'disconnected',
             errorCode: 'provider_error',
-            errorMessage: 'action_failed',
+            errorMessage: preparationFailure.code,
             errorRecoveryAction: 'retry',
         });
         const { getVoiceConversationRuntimeSnapshot } = await import('@/voice/runtime/machine/voiceConversationRuntimeStore');
-        expect(getVoiceConversationRuntimeSnapshot().error).toHaveProperty('cause.code', 'action_failed');
+        expect(getVoiceConversationRuntimeSnapshot().error).toHaveProperty('cause.code', preparationFailure.code);
         expect(JSON.stringify(getVoiceConversationRuntimeSnapshot().error)).not.toContain(preparationFailure.message);
     }, 60_000);
 
