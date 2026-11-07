@@ -1,4 +1,4 @@
-import { PluginError, type JsonValue, type PluginCancellationOptions } from '@happier-dev/plugin-sdk';
+import { PluginError, type JsonValue, type PluginCancellationOptions, type PluginEphemeralSharedScope } from '@happier-dev/plugin-sdk';
 
 import type { CorpusQualifiedObservationV1 } from '../../corpus/fold/qualify.js';
 import {
@@ -10,6 +10,7 @@ import {
   TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1,
   TriageReobserveEntryResultV1Schema,
 } from '../../actions/reobserveEntryProtocol.js';
+import { deriveTriageDetailMountInstanceKey } from './mountKey.js';
 
 type TriagePostMutationHostV1 = Readonly<{
   executeAction(
@@ -35,12 +36,13 @@ export async function reobserveTriagePostMutationRow(
   lanes: readonly TriageListLaneV1[],
   sourceInstanceId: string,
   options: PluginCancellationOptions & Readonly<{
+    sharedScope?: PluginEphemeralSharedScope | null;
     keepViewerFacts?: boolean;
     onReadFailure?: (error: unknown) => void;
     publishObservation?: (observation: CorpusQualifiedObservationV1, keepViewerFacts?: boolean) => TriageListRowV1 | null;
   }>,
 ): Promise<TriageListRowV1 | null> {
-  const { keepViewerFacts, onReadFailure, publishObservation, ...cancellation } = options;
+  const { keepViewerFacts, onReadFailure, publishObservation, sharedScope, ...cancellation } = options;
   const previous = 'observations' in row ? row : null;
   const prior = previous?.observations.find(
     (observation) => observation.sourceInstanceId === sourceInstanceId,
@@ -50,7 +52,7 @@ export async function reobserveTriagePostMutationRow(
     : undefined;
   let result: ReturnType<typeof TriageReobserveEntryResultV1Schema.parse>;
   try {
-    result = TriageReobserveEntryResultV1Schema.parse(await host.executeAction(
+    const read = async (options: PluginCancellationOptions) => TriageReobserveEntryResultV1Schema.parse(await host.executeAction(
       TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1,
       {
         v: 1,
@@ -58,8 +60,33 @@ export async function reobserveTriagePostMutationRow(
         sourceInstanceId,
         ...(lastKnownLocator === undefined ? {} : { lastKnownLocator }),
       },
-      cancellation,
+      options,
     ));
+    if (sharedScope == null) {
+      result = await read(cancellation);
+    } else {
+      cancellation.signal?.throwIfAborted();
+      // Detail and companion artifacts share the pending exact read, never a
+      // settled result. The existing host scope supplies Account and plugin
+      // generation identity; the mount key supplies the exact entry
+      // and configured connection. The last borrower cancels the source read.
+      const lease = sharedScope.acquire(
+        `triage.entry-read.v1:${deriveTriageDetailMountInstanceKey(row.entryRef, sourceInstanceId)}`,
+        () => {
+          const controller = new AbortController();
+          return { value: read({ signal: controller.signal }), dispose: () => controller.abort() };
+        },
+      );
+      if (lease == null) throw new PluginError({ code: 'unavailable' });
+      const release = () => lease.release();
+      cancellation.signal?.addEventListener('abort', release, { once: true });
+      try {
+        result = await lease.value;
+      } finally {
+        cancellation.signal?.removeEventListener('abort', release);
+        release();
+      }
+    }
   } catch (error) {
     onReadFailure?.(error);
     return null;

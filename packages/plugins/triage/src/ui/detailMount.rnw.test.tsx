@@ -13,6 +13,7 @@ import { Button, Text, defineUiSurface } from '@happier-dev/plugin-ui';
 import type { PluginUiDataClient, PluginUiAccountCollectionForDefinition } from '@happier-dev/plugin-ui/data';
 import type { PluginAccountCollectionDefinition } from '@happier-dev/plugin-sdk/collections';
 import { useTriageEntryDetail, type TriageEntryDetailInputSourceV1 } from './detail/useTriageEntryDetail.js';
+import { pressToolbarMenuItem } from './shell/toolbarMenus.test-support.js';
 import { useTriageFixPullRequests } from './detail/useTriageFixPullRequests.js';
 import { useTriageActions } from './actions/useTriageActions.js';
 import { useTriageSavedViews } from './views/useTriageSavedViews.js';
@@ -518,6 +519,8 @@ function createHarness(options: Readonly<{
     nativeRoutingToken?: string;
     secondInstance?: boolean;
     secondInstanceObservesEntry?: boolean;
+    /** The second connection's reads fail (a transient provider error), so it is the one Manage sources flags. */
+    secondInstanceFails?: boolean;
     otherSourceEntry?: boolean;
     deferLinkedEntry?: boolean;
     taskEdit?: boolean;
@@ -579,6 +582,9 @@ function createHarness(options: Readonly<{
     } as unknown as TriageAdmittedSourceV1] : [])];
 
     const executeScan: TriageAdmittedOperationExecutorV1 = async (operation, input) => {
+        if (options.secondInstanceFails === true && input.instance.instance.sourceInstanceId === SECOND_INSTANCE) {
+            return { kind: 'failed', failure: { class: 'transient', code: 'provider-busy' } } satisfies TriageScanResultV1;
+        }
         if (input.page.kind !== 'initial') continuedScanPages.push(input.page.kind);
         if (deferLinkedEntry.current && input.page.kind === 'initial') {
             return {
@@ -898,6 +904,9 @@ async function mountShell(
     revokedEntryIds?: readonly string[];
         secondInstance?: boolean;
         secondInstanceObservesEntry?: boolean;
+        secondInstanceFails?: boolean;
+        /** Read configured sources from the harness's Account Collections, as a live Account-backed mount does. */
+        accountData?: boolean;
         pinnedEntryIds?: readonly string[];
         noScannedEntries?: boolean;
         noActiveSource?: boolean;
@@ -942,6 +951,7 @@ async function mountShell(
         ...(options.securityAlert ? { securityAlert: true, nativeRoutingToken: 'example/repository' } : {}),
         ...(options.sourceOverviewProbe ? { nativeRoutingToken: 'example/repository' } : {}),
         ...(options.secondInstance === undefined ? {} : { secondInstance: options.secondInstance }),
+        ...(options.secondInstanceFails === undefined ? {} : { secondInstanceFails: options.secondInstanceFails }),
         ...(options.secondInstanceObservesEntry === undefined
             ? {}
             : { secondInstanceObservesEntry: options.secondInstanceObservesEntry }),
@@ -989,11 +999,17 @@ async function mountShell(
             ...(options.launchInput === undefined ? {} : { launchInput: options.launchInput }),
             // The semantic host's RenderContext omits its activity snapshot;
             // supply this genuine host boundary fact for mounted-action cases.
-            surface: (context) => (options.resource ? resourceSurface : options.taskEdit ? renderTasksSurface : renderShellSurface)(
-                { ...context,
-                    ...(options.deliveredLaunch === undefined ? {} : { launchInput: options.deliveredLaunch.current }),
-                    ...(pageLaunch === undefined ? {} : { launch: pageLaunch }),
-                    activity: { active: options.activeSurface === true } }),
+            surface: (context) => {
+                const entry = (options.resource ? resourceSurface : options.taskEdit ? renderTasksSurface : renderShellSurface)(
+                    { ...context,
+                        ...(options.deliveredLaunch === undefined ? {} : { launchInput: options.deliveredLaunch.current }),
+                        ...(pageLaunch === undefined ? {} : { launch: pageLaunch }),
+                        activity: { active: options.activeSurface === true } });
+                return options.accountData === true
+                    ? React.cloneElement(entry as unknown as React.ReactElement<{ dataClient?: PluginUiDataClient }>,
+                        { dataClient: harnessDataClient(harness) })
+                    : entry;
+            },
             surfaceContext: options.hostTarget?.ready === false
                 ? { ...accountSurface, machineConnectionPending: options.hostTarget.pending ?? true,
                     ...(options.hostTarget.executionReady === undefined ? {} : { machineExecutionReady: options.hostTarget.executionReady }) }
@@ -1186,6 +1202,21 @@ async function openTheRow(shell: PluginUiTestkit): Promise<void> {
  * The detail Session item's companion, mounted the way the host opens it: an App side view beside the
  * page, joining the same Account-shared window and Action seam, told only what the opening page holds.
  */
+/** The Account Collections a host-cloned surface entry reads its configured sources and links through. */
+function harnessDataClient(harness: NonNullable<typeof currentHarness>): PluginUiDataClient {
+    return {
+        collection<TDefinition extends PluginAccountCollectionDefinition>(definition: TDefinition) {
+            const collection = definition.id === 'source-instances' ? harness.collections.sourceInstances
+                : definition.id === 'session-links' ? harness.collections.sessionLinks
+                : definition.id === 'user-marks' ? harness.collections.userMarks : null;
+            if (collection === null) throw new Error(`Undeclared test Collection: ${definition.id}`);
+            return collection as unknown as PluginUiAccountCollectionForDefinition<TDefinition>;
+        },
+        accountKv: createTestkitAccountKv().kv,
+        openCollectionQuery: async () => { throw new Error('This mount opens no UI query'); },
+    };
+}
+
 async function mountEntrySessionCompanion(openedFrom: Readonly<{ subPath: string | null }> | undefined,
     options: Readonly<{ ownScope?: boolean; paneHeader?: boolean }> = {}): Promise<PluginUiTestkit> {
     const harness = currentHarness;
@@ -1198,19 +1229,9 @@ async function mountEntrySessionCompanion(openedFrom: Readonly<{ subPath: string
             // The side pane is an Account-backed plugin mount, as live: its configured sources come from the
             // Account Collection through the host-cloned surface entry's Data client.
             surface: renderContext => {
-                const dataClient: PluginUiDataClient = {
-                    collection<TDefinition extends PluginAccountCollectionDefinition>(definition: TDefinition) {
-                        const collection = definition.id === 'source-instances' ? harness.collections.sourceInstances
-                            : definition.id === 'session-links' ? harness.collections.sessionLinks
-                            : definition.id === 'user-marks' ? harness.collections.userMarks : null;
-                        if (collection === null) throw new Error(`Undeclared test Collection: ${definition.id}`);
-                        return collection as unknown as PluginUiAccountCollectionForDefinition<TDefinition>;
-                    },
-                    accountKv: createTestkitAccountKv().kv,
-                    openCollectionQuery: async () => { throw new Error('The companion opens no UI query'); },
-                };
                 const entry = renderEntrySessionCompanion(renderContext);
-                return React.cloneElement(entry as unknown as React.ReactElement<{ dataClient?: PluginUiDataClient }>, { dataClient });
+                return React.cloneElement(entry as unknown as React.ReactElement<{ dataClient?: PluginUiDataClient }>,
+                    { dataClient: harnessDataClient(harness) });
             },
             surfaceContext: createSurfaceContextFixture({
                 mount: { kind: 'destination', destination: { pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, localId: 'entry-linked-session' },
@@ -2255,18 +2276,30 @@ describe('opening a row into the source detail', () => {
 
     it('offers Retry beside an Account aggregate refusal and reacquires through the mounted window', async () => {
         const hostTarget = { ready: false, pending: false };
-        const shell = await mountShell({ hostTarget });
+        const shell = await mountShell({ hostTarget, accountData: true });
         await expect(shell.getByText('The list could not be read')).resolves.toBeDefined();
-        await expect(shell.getByRole('button', { name: 'Try again' })).resolves.toBeDefined();
+        await expect(shell.getByRole('button', { name: 'Retry' })).resolves.toBeDefined();
         hostTarget.ready = true;
         await act(async () => { await shell.updateSurface(surfaceContext()); });
         await expect(shell.getByText('The list could not be read')).resolves.toBeDefined();
-        await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Try again' })); });
+        await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Retry' })); });
         await vi.waitFor(async () => {
             await expect(shell.getByRole('button', { name: 'Replace the duplicated normalizer' })).resolves.toBeDefined();
         });
         await expect(shell.queryByText('The list could not be read')).resolves.toBeUndefined();
     });
+    it('says each connection’s own health on its Manage sources row, with its fix at the row’s end', async () => {
+        // UI4 D16: a failing connection must not look healthy beside a detached failure line, and no bare Details
+        // control leads the panel; the healthy connection stays quiet.
+        const shell = await mountShell({ secondInstance: true, secondInstanceFails: true, accountData: true });
+        await vi.waitFor(() => expect(document.body.textContent).toContain('could not be read'));
+        await pressToolbarMenuItem(shell, 'More', 'menuitem', 'Manage sources');
+        await vi.waitFor(async () => expect(await shell.getByRole('button', { name: 'Retry Second account' })).toBeDefined());
+        await expect(shell.queryByRole('button', { name: 'Retry Example account' })).resolves.toBeUndefined();
+        await expect(shell.queryByRole('button', { name: 'Details' })).resolves.toBeUndefined();
+        expect(document.body.textContent).toContain('Not read');
+    });
+
     it('shows the detail refusal code and request ID without offering Retry for a permanent refusal', async () => {
         const shell = await mountShell({ detailFailure: new PluginError({ code: 'machine_not_found', retryable: false,
             details: { requestId: 'detail-request-51' }, diagnostics: [{ code: 'target_machine_required', severity: 'error' }] }) });
@@ -2339,13 +2372,13 @@ describe('opening a row into the source detail', () => {
     });
 
     it('shows a fix-PR relationship read failure and retries within the selected detail', async () => {
-        const shell = await mountShell({ fixPullRequestState: 'unreachable' });
+        const shell = await mountShell({ fixPullRequestState: 'unreachable', activeSurface: true });
         await openTheRow(shell);
         await expect(shell.getByText('Fix pull request links could not be read.')).resolves.toBeDefined();
         await expect(shell.getByText(DETAIL_BODY_TEXT)).resolves.toBeDefined();
         await act(async () => { await shell.press(await shell.findByRole('button', { name: 'Retry: Fix pull request' })); });
         // The retried read lands as the fix step, named after the pull request.
-        expect(document.querySelector('[data-testid="triage-story-fix-pr"]')?.textContent).toContain('Unprojected fix');
+        await vi.waitFor(() => expect(document.querySelector('[data-testid="triage-story-fix-pr"]')?.textContent).toContain('Unprojected fix'));
     });
     it('lets an agent switch the mounted Collection to Board through the UI owner', async () => {
         let published: PluginUiContextEnrichmentV1 | null = null;

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { isPluginError, type PluginError } from '@happier-dev/plugin-sdk';
-import { usePluginHostApi } from '@happier-dev/plugin-ui';
+import { usePluginHostApi, usePluginUiEphemeralSharedScope } from '@happier-dev/plugin-ui';
 
 import type { TriageListLaneV1, TriageListRowV1 } from '../../projection/listWindow.js';
 import { readTriageSelectedObservationV1 } from '../window/selectedObservation.js';
@@ -20,6 +20,7 @@ export function useTriagePostMutationRow(
   publication?: TriageListWindowStoreV1 | null,
 ) {
   const hostApi = usePluginHostApi();
+  const sharedScope = usePluginUiEphemeralSharedScope();
   const selectedFromWindow = React.useMemo(
     () => windowRow === null ? null : readTriageSelectedObservationV1(windowRow),
     [windowRow],
@@ -55,6 +56,9 @@ export function useTriagePostMutationRow(
     let failure: PluginError | undefined;
     const next = await reobserveTriagePostMutationRow(hostApi, candidate ?? { entryRef }, lanes, sourceInstanceId, {
       signal: controller.signal,
+      // Mounts share their opening read; an explicit refresh or completed write
+      // must observe after that action, even while another mount is still opening.
+      ...(keepViewerFacts ? { sharedScope } : {}),
       keepViewerFacts,
       ...(publication == null ? {} : { publishObservation: (observation: CorpusQualifiedObservationV1, preserveViewerFacts?: boolean) =>
         publication.publishObservation(observation, preserveViewerFacts) }),
@@ -70,7 +74,7 @@ export function useTriagePostMutationRow(
         : { ...current, ...(next === null || publishedInWindow ? {} : { row: next }), readFailed: next === null, failure });
     }
     if (reobservation.current === controller) reobservation.current = null;
-  }, [entryRef, hostApi, lanes, ownerKey, publication, sourceInstanceId, state.generation, windowRow]);
+  }, [entryRef, hostApi, lanes, ownerKey, publication, sharedScope, sourceInstanceId, state.generation, windowRow]);
   const completePostMutation = React.useCallback(() => reobserveRow(row === null ? row
     : publication?.getRow(triageEntryRowKey(row.entryRef)) ?? row), [publication, reobserveRow, row]);
   const reobserveSelection = React.useEffectEvent(() => reobserveRow(windowRow, true));
