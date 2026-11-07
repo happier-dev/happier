@@ -6,6 +6,7 @@ import { useMachinePresenceSummaries } from '@/sync/domains/machines/reachabilit
 import { resolveMachineDaemonReadServerId } from '@/sync/domains/machines/useMachineDaemonReadTarget';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { storage } from '@/sync/domains/state/storage';
+import { retainDeep } from '@/sync/domains/state/structuralSharing';
 import { useIsMachineListSettled } from '@/sync/store/hooks';
 import { resolveVisibleMachinesForActiveServerFromState } from '@/sync/store/domains/machines/resolveMachinesForActiveServerFromState';
 import { getLocalServiceInventoryState, subscribeLocalServiceInventoryStore } from '@/sync/domains/local/services/inventory/sharedStore';
@@ -45,42 +46,7 @@ export function useAppLocalServicesGlance(inputServerId: string): AppLocalServic
     const keys = React.useMemo<readonly LocalServiceLauncherStoreKeyInput[]>(() => binding
         ? (JSON.parse(onlineIdsKey) as string[]).map(machineId => ({ machineId, serverId, scope: 'machine',
             accountId: binding.accountId, credentialKey: binding.credentialKey })) : [], [binding, onlineIdsKey, serverId]);
-    // React requires a stable snapshot identity. These are references to the canonical states,
-    // never another retained Services cache or a reader of daemon data.
-    const snapshot = React.useRef<readonly MachineFeed[]>([]);
-    const getSnapshot = React.useCallback(() => {
-        const next = binding?.isCurrent() ? keys.map(key => ({ machineId: key.machineId,
-            inventory: getLocalServiceInventoryState(key), launcher: getLocalServiceLauncherState(key) })) : [];
-        if (next.length !== snapshot.current.length || next.some((feed, index) => {
-            const previous = snapshot.current[index];
-            return !previous || feed.machineId !== previous.machineId || feed.inventory !== previous.inventory || feed.launcher !== previous.launcher;
-        })) snapshot.current = next;
-        return snapshot.current;
-    }, [binding, keys]);
-    const subscribe = React.useCallback((notify: () => void) => {
-        if (!presented || !binding?.isCurrent()) return () => {};
-        const releases = keys.map(key => {
-            let releaseLauncher: (() => void) | undefined;
-            const changed = () => {
-                const inventory = getLocalServiceInventoryState(key);
-                // Home needs one Machine answer after the initial scan observation, including
-                // failure. Starting earlier makes that observation invalidate a redundant read.
-                if (!releaseLauncher && inventory.refreshState !== 'refreshing'
-                    && (inventory.generatedAt !== null || inventory.refreshState === 'error')) {
-                    releaseLauncher = subscribeLocalServiceLauncherStore(key, notify);
-                }
-                notify();
-            };
-            const releaseInventory = subscribeLocalServiceInventoryStore(key, changed);
-            changed();
-            return () => { releaseInventory(); releaseLauncher?.(); };
-        });
-        const release = () => { for (const dispose of releases) dispose(); };
-        const retirement = binding.onRetire(() => { release(); notify(); });
-        return () => { retirement.dispose(); release(); };
-    }, [binding, keys, presented]);
-    const feeds = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
-    return React.useMemo<AppLocalServicesGlanceState>(() => {
+    const project = React.useCallback((feeds: readonly MachineFeed[]): AppLocalServicesGlanceState => {
         const rows: AppLocalServicesGlanceState['rows'][number][] = [];
         const degraded: AppLocalServicesDegradedFact[] = [];
         let pending = !settled;
@@ -120,5 +86,47 @@ export function useAppLocalServicesGlance(inputServerId: string): AppLocalServic
                 || feed.launcher.updatedAt === null && feed.launcher.refreshStatus !== 'error') pending = true;
         }
         return { kind: pending && rows.length === 0 ? 'loading' : 'ready', scope: 'app', rows, runningCount, degraded, listedMachineCount };
-    }, [binding, feeds, machineIds, presence, resolution.kind, settled]);
+    }, [binding, machineIds, presence, resolution.kind, settled]);
+    // Retain the view before React observes it; inventory cursors and unrelated listeners
+    // remain available in the canonical stores without scheduling an equal Home view.
+    const snapshot = React.useRef<Readonly<{
+        feeds: readonly MachineFeed[];
+        project: typeof project;
+        state: AppLocalServicesGlanceState;
+    }> | null>(null);
+    const getSnapshot = React.useCallback(() => {
+        const feeds = binding?.isCurrent() ? keys.map(key => ({ machineId: key.machineId,
+            inventory: getLocalServiceInventoryState(key), launcher: getLocalServiceLauncherState(key) })) : [];
+        const previous = snapshot.current;
+        if (previous?.project === project && feeds.length === previous.feeds.length && feeds.every((feed, index) => {
+            const old = previous.feeds[index];
+            return old && feed.machineId === old.machineId && feed.inventory === old.inventory && feed.launcher === old.launcher;
+        })) return previous.state;
+        const state = retainDeep(previous?.state, project(feeds));
+        snapshot.current = { feeds, project, state };
+        return state;
+    }, [binding, keys, project]);
+    const subscribe = React.useCallback((notify: () => void) => {
+        if (!presented || !binding?.isCurrent()) return () => {};
+        const releases = keys.map(key => {
+            let releaseLauncher: (() => void) | undefined;
+            const changed = () => {
+                const inventory = getLocalServiceInventoryState(key);
+                // Home needs one Machine answer after the initial scan observation, including
+                // failure. Starting earlier makes that observation invalidate a redundant read.
+                if (!releaseLauncher && inventory.refreshState !== 'refreshing'
+                    && (inventory.generatedAt !== null || inventory.refreshState === 'error')) {
+                    releaseLauncher = subscribeLocalServiceLauncherStore(key, notify);
+                }
+                notify();
+            };
+            const releaseInventory = subscribeLocalServiceInventoryStore(key, changed);
+            changed();
+            return () => { releaseInventory(); releaseLauncher?.(); };
+        });
+        const release = () => { for (const dispose of releases) dispose(); };
+        const retirement = binding.onRetire(() => { release(); notify(); });
+        return () => { retirement.dispose(); release(); };
+    }, [binding, keys, presented]);
+    return React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
