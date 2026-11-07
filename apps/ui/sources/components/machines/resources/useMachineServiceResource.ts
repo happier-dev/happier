@@ -11,7 +11,8 @@ type MachineReference = Extract<PluginUiHostReadReferenceV1, { hostRead: 'machin
 type Projection<T> = Readonly<{ decode(content: Readonly<{ bytes: Uint8Array }>, previous: T | undefined): T }>;
 type Snapshot<T> = Readonly<Omit<ReturnType<PluginUiResourceEntry['getSnapshot']>, 'value'> & { value?: T }>;
 type Input<T> = Readonly<{ accountLifetime: ServerAccountScopeLifetime | null; reference: MachineReference | null;
-    active: boolean; follow: boolean; projection: Projection<T> }>;
+    /** Credential lookup is pending; the current Account's admitted selection stays readable. */
+    resolving?: boolean; active: boolean; follow: boolean; projection: Projection<T> }>;
 type Read<T> = Snapshot<T> & Readonly<{ refresh(): Promise<void> }>;
 const noSubscribe = () => () => {};
 const noSnapshot = () => null;
@@ -54,11 +55,16 @@ export function useMachineServiceResource<T>(input: Input<T> & Readonly<{
 export function useMachineServiceResource<T>(input: Input<T>): Read<T> | null;
 export function useMachineServiceResource<T>(input: Input<T>): Read<T> | null {
     const key = input.reference ? pluginUiResourceReferenceKey(input.reference, null) : null;
+    const retainedLifetime = React.useRef<Readonly<{ key: string | null; lifetime: ServerAccountScopeLifetime }> | null>(null);
+    const lifetime = input.accountLifetime ? readServerAccountScopeOwnerLifetime(input.accountLifetime)
+        : input.resolving && retainedLifetime.current?.key === key && retainedLifetime.current.lifetime.isCurrent()
+            ? retainedLifetime.current.lifetime : null;
+    retainedLifetime.current = lifetime ? { key, lifetime } : null;
     const owner = React.useMemo(() => {
-        const reference = input.reference, lifetime = input.accountLifetime;
+        const reference = input.reference;
         if (!reference || !lifetime) return null;
         return createMachineServiceResourceBinding({ reference, accountLifetime: lifetime, projection: input.projection });
-    }, [input.accountLifetime, key, input.projection]);
+    }, [lifetime, key, input.projection]);
     const subscribe = React.useCallback((listener: () => void) => input.active && owner
         ? owner.selection.subscribe(listener, input.follow) : noSubscribe(), [owner, input.active, input.follow]);
     const snapshot = React.useSyncExternalStore(subscribe, owner?.selection.getSnapshot ?? noSnapshot,

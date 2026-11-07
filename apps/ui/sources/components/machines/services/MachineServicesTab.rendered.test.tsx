@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { createHash } from 'node:crypto';
+import sodium from 'libsodium-wrappers';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { router } from 'expo-router';
@@ -7,13 +8,17 @@ import { MachineServiceRowV1Schema, MachineServicesListResultV1Schema, ManagedSe
 import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol/v1';
 
-import { createDeferred, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createDeferred, createMachineFixture, flushHookEffects, renderHook, renderScreen, standardCleanup, reportPopoverContentLayout, withPopoverWebGlobals } from '@/dev/testkit';
+import { Modal } from '@/modal';
+import type { ServiceCommandSheetProps } from './command/ServiceCommandSheet';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, type HomeDomainAnswer } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { initializeRealAppRuntimeForTests } from '@/dev/testkit/harness/realAppRuntimeHarness';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { measureMountedCollections } from '@/dev/testkit/render/renderInCollectionLayout';
 import type { MachinePageTabParams } from '@/components/machines/page/machinePageTabQuery';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
@@ -22,12 +27,14 @@ import { t } from '@/text';
 // Only Home HTTP, Machine RPC and Socket boundaries are substituted. The tab, Actions,
 // credential admission, Resource lifecycle, collection and detail hooks stay real.
 const machineTransport = vi.hoisted(() => ({ rpc: vi.fn() }));
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
     const { createServerScopedMachineRpcBoundaryMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
     return createServerScopedMachineRpcBoundaryMock(machineTransport.rpc);
 });
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
+const { storage } = await import('@/sync/domains/state/storageStore');
 const { MachineServicesTab } = await import('./MachineServicesTab');
 
 let serverId: string;
@@ -35,6 +42,7 @@ const accountId = 'account';
 const machineId = 'machine';
 const machineName = 'Development machine';
 const serverIdentityId = 'srv_services_rendered';
+let custodianAccountId = accountId;
 type Envelope = ReturnType<typeof ExternalActionRequestEnvelopeV1Schema.parse>;
 type Request = Parameters<NonNullable<HomeDomainAnswer['select']>>[1];
 
@@ -54,7 +62,7 @@ function answerAction(actionId: string, read: (envelope: Envelope, request: Requ
         return { body: { v: 1, token: 'services-rendered-admission', binding: {
             serverIdentityId, accountId, authentication: { kind: 'account', tokenEpoch: 0 }, actionId,
             requestId: envelope.requestId, target: { kind: 'machine', machineId }, machineId,
-            installationId: 'installation', custodianAccountId: accountId, accountEncryptionMode: 'plain',
+            installationId: 'installation', custodianAccountId, accountEncryptionMode: 'plain',
             requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
         } } };
     } });
@@ -113,6 +121,35 @@ function answerResource<T>(initial: T, actionId: 'machines.services.list' | 'mac
     };
 }
 
+it('retains settled Services during credential resolution, publishes changes once and retires another Account\'s rows', async () => {
+    const row = service('Continuity');
+    const stableRow = service('Unchanged');
+    const resource = answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [row, stableRow] }));
+    const { useMachineServicesList } = await import('./useMachineServicesList');
+    const publications: unknown[] = [];
+    const hook = await renderHook(() => {
+        const list = useMachineServicesList({ serverId, machineId, active: true });
+        React.useEffect(() => { publications.push(list.rows); }, [list.rows]);
+        return list;
+    });
+    try {
+        await vi.waitFor(async () => { await flushHookEffects(); expect(hook.getCurrent().rows).toHaveLength(2); });
+        const settled = hook.getCurrent().rows;
+        publications.length = 0;
+        await act(async () => { await homes.switchAccount(serverId, accountId, { currentAccount: true }); });
+        await vi.waitFor(async () => { await flushHookEffects(); expect(hook.getCurrent().pending).toBe(false); });
+        expect(publications).toHaveLength(0);
+        expect(hook.getCurrent().rows).toBe(settled);
+        await resource.publish(MachineServicesListResultV1Schema.parse({ kind: 'snapshot',
+            services: [{ ...row, name: 'Changed continuity' }, stableRow] }));
+        await vi.waitFor(async () => { await flushHookEffects(); expect(hook.getCurrent().rows?.[0]?.name).toBe('Changed continuity'); });
+        expect(publications).toHaveLength(1);
+        expect(hook.getCurrent().rows?.[1]).toBe(settled?.[1]);
+        await act(async () => { await homes.switchAccount(serverId, 'another-account', { currentAccount: true }); });
+        expect(hook.getCurrent().rows).toBeNull();
+    } finally { await hook.unmount(); }
+});
+
 /** The words a rendered node draws, joined. */
 function textOf(node: { children: readonly unknown[] }): string {
     return node.children.map(child => typeof child === 'string' ? child : textOf(child as { children: readonly unknown[] })).join('');
@@ -138,11 +175,13 @@ async function mount(options: Readonly<{ online?: boolean; params?: MachinePageT
 beforeEach(async () => {
     await homes.reset();
     machineTransport.rpc.mockReset();
+    custodianAccountId = accountId;
     await initializeRealAppRuntimeForTests();
     installHomeGovernanceBoundaries(homes);
     serverId = await homes.addHome({ name: 'Services rendered', serverUrl: 'https://services-rendered.test',
         serverIdentityId, accountId, currentAccount: true, active: true });
-    const row = { ...createPlainMachineRowFixture({ id: machineId, accountId }), installationId: 'installation' };
+    const machine = createMachineFixture({ id: machineId, activeAt: Date.now(), isShared: false });
+    const row = { ...createPlainMachineRowFixture({ id: machineId, accountId, machine }), installationId: 'installation' };
     homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async input => ({ body:
         await createMachineReadBatchResponseFixture(input, () => row).json() }) });
     const { TokenStorage } = await import('@/auth/storage/tokenStorage');
@@ -150,11 +189,245 @@ beforeEach(async () => {
     const credentials = await TokenStorage.getCredentialsForServerUrl('https://services-rendered.test', { serverId });
     if (!credentials) throw new Error('Services Home credentials unavailable');
     await restoreConnectionToActiveServer(credentials);
+    await act(async () => { await publishMachineInventoryForTest({ serverId, accountId }, [machine]); });
     vi.mocked(router.push).mockClear();
 });
 afterEach(async () => { standardCleanup(); await homes.reset(); });
 
 describe('MachineServicesTab rendered production wiring', () => {
+    it('retains settled Services detail and its guided automation step during credential resolution', () => withPopoverWebGlobals(async () => {
+        const row = service('Continuity', { capabilities: { start: true, stop: true, restart: true, logs: false, accounting: false } });
+        answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [row] }));
+        machineTransport.rpc.mockResolvedValue({ kind: 'service', service: row });
+        const { screen } = await mount({ params: { id: 'services', page: 'service', service: row.serviceId } });
+        try {
+            await vi.waitFor(() => expect(screen.findHostByTestId('subject-triggers-set-up')).not.toBeNull());
+            await screen.pressByTestIdAsync('subject-triggers-set-up');
+            await act(async () => reportPopoverContentLayout(screen.tree, { width: 500, height: 600 }));
+            await vi.waitFor(() => expect(screen.findHostByTestId('guided-automation-next')).not.toBeNull());
+            await screen.pressByTestIdAsync('guided-automation-next');
+            expect(screen.findByTestId('guided-automation-lookAt')).not.toBeNull();
+            const loadingPublications: unknown[] = [];
+            const stepReplacements: unknown[] = [];
+            const unsubscribe = screen.tree.subscribe(() => {
+                if (screen.findHostByTestId('machine-service-loading')) loadingPublications.push(true);
+                if (!screen.findByTestId('guided-automation-lookAt')) stepReplacements.push(true);
+            });
+            try {
+                await act(async () => { await homes.switchAccount(serverId, accountId, { currentAccount: true }); });
+                await vi.waitFor(async () => { await flushHookEffects(); expect(screen.findHostByTestId('subject-triggers-set-up')).not.toBeNull(); });
+                expect(loadingPublications).toHaveLength(0);
+                expect(stepReplacements).toHaveLength(0);
+                expect(screen.findByTestId('guided-automation-lookAt')).not.toBeNull();
+            } finally { unsubscribe(); }
+        } finally { await screen.unmount(); }
+    }));
+
+    it('keeps the exact unavailable Stop refusal typed with a recovery step', async () => {
+        const row = service('Web', { generation: 'b1c428a4-7926-46de-b6cd-71a59d6ebc3c', state: 'healthy' });
+        answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [row] }));
+        machineTransport.rpc.mockImplementation(async ({ method }: { method: string }) => {
+            if (method === RPC_METHODS.MACHINES_SERVICE_DETAIL) return { kind: 'service', service: row };
+            if (method === RPC_METHODS.MACHINES_SERVICE_CONTROL) return {
+                ok: false, errorCode: 'service_operation_unavailable', error: 'service_operation_unavailable',
+            };
+            throw new Error(`Unexpected Machine method: ${method}`);
+        });
+        const { screen } = await mount({ params: { id: 'services', page: 'service', service: row.serviceId } });
+        await vi.waitFor(() => expect(machineTransport.rpc.mock.calls.some(([call]) => call.method === RPC_METHODS.MACHINES_SERVICE_DETAIL)).toBe(true));
+        await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-more')).not.toBeNull());
+        await screen.pressByTestIdAsync('machine-service-more');
+        await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-stop')).not.toBeNull());
+        await screen.pressByTestIdAsync('machine-service-stop');
+        await vi.waitFor(() => expect(machineTransport.rpc.mock.calls.filter(([call]) => call.method === RPC_METHODS.MACHINES_SERVICE_CONTROL)).toHaveLength(1));
+        await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-control-outcome-diagnostic-service_operation_unavailable')).not.toBeNull());
+        expect(screen.getTextContent()).toContain(t('machineServices.control.unavailableRemedy'));
+        expect(screen.getTextContent()).not.toContain(t('machineServices.control.failed', { service: row.name }));
+        expect(machineTransport.rpc.mock.calls.filter(([call]) => call.method === RPC_METHODS.MACHINES_SERVICE_CONTROL)).toHaveLength(1);
+    });
+
+    async function shareWith(role: 'manage' | 'use') {
+        await sodium.ready;
+        custodianAccountId = 'owner';
+        const machine = createMachineFixture({ id: machineId, activeAt: Date.now(), isShared: true,
+            access: { role, resourceMode: 'plain', accessState: 'ready', custodian: { accountId: 'owner', displayName: 'Owner' } } });
+        const installationKey = sodium.crypto_sign_seed_keypair(new Uint8Array(32).fill(23));
+        const row = { ...createPlainMachineRowFixture({ id: machineId, accountId: 'owner', machine }),
+            installationId: 'installation', installationPublicKey: encodeBase64(installationKey.publicKey, 'base64') };
+        homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async input => ({ body:
+            await createMachineReadBatchResponseFixture(input, () => row).json() }) });
+        await act(async () => storage.getState().applyMachines([machine], true, { sourceServerId: serverId }));
+        await act(async () => { await publishMachineInventoryForTest({ serverId, accountId }, [machine]); });
+    }
+
+    it.each([
+        ['manage', 'deployment'], ['use', 'deployment'], ['manage', 'watched'], ['use', 'watched'],
+    ] as const)('offers bound Service entries only to Manage (%s, %s)', async (role, target) => {
+        await shareWith(role);
+        const row = service('Web', target === 'deployment' ? { authority: 'project', lifecyclePurpose: 'deployment',
+            environmentId: 'environment-staging', watchId: undefined, watchRevision: undefined } : {});
+        answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [row] }));
+        machineTransport.rpc.mockResolvedValue({ kind: 'service', service: row });
+        const { screen } = await mount({ params: { id: 'services', page: 'service', service: row.serviceId } });
+        await vi.waitFor(() => expect({ text: screen.getTextContent(), page: screen.findHostByTestId('machine-service-state') !== null })
+            .toMatchObject({ page: true }));
+        await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-more')).not.toBeNull());
+        await screen.pressByTestIdAsync('machine-service-more');
+        await vi.waitFor(() => expect(machineTransport.rpc.mock.calls.some(([call]) => call.method === RPC_METHODS.MACHINES_SERVICE_DETAIL)).toBe(true));
+        await vi.waitFor(() => {
+            for (const id of ['machine-service-command', 'machine-service-shell', 'machine-service-unwatch']) {
+                const supportedTarget = id === 'machine-service-unwatch' ? target === 'watched' : target === 'deployment';
+                if (role === 'manage' && supportedTarget) expect(screen.findHostByTestId(id), id).not.toBeNull();
+                else expect(screen.findHostByTestId(id), id).toBeNull();
+            }
+        });
+        // Merely opening the menu never executes a command or opens a terminal.
+        expect(machineTransport.rpc.mock.calls.some(([call]) =>
+            call.method === RPC_METHODS.MACHINES_SERVICE_EXEC || call.method === RPC_METHODS.DAEMON_TERMINAL_ENSURE)).toBe(false);
+        expect(homes.requests.some(request => request.path === '/v1/actions/machines.services.exec'
+            || request.path === '/v1/actions/machines.terminal.open' || request.path === '/v1/actions/machines.services.unwatch')).toBe(false);
+    });
+
+    it.each(['offline', 'missing-generation', 'not-watched'] as const)('keeps Service entries bound to the available operands (%s)', async condition => {
+        await shareWith('manage');
+        const row = service('Web', condition === 'missing-generation' ? { generation: null }
+            : condition === 'not-watched' ? { authority: 'project', environmentId: 'environment-staging',
+                watchId: undefined, watchRevision: undefined } : {});
+        answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [row] }));
+        machineTransport.rpc.mockResolvedValue({ kind: 'service', service: row });
+        const { screen } = await mount({ online: condition !== 'offline',
+            params: { id: 'services', page: 'service', service: row.serviceId } });
+        await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-state')).not.toBeNull());
+        if (condition === 'offline') {
+            expect(screen.findHostByTestId('machine-service-more')).toBeNull();
+            return;
+        }
+        await screen.pressByTestIdAsync('machine-service-more');
+        await vi.waitFor(() => {
+            expect(screen.findHostByTestId('machine-service-command') !== null).toBe(condition === 'not-watched');
+            expect(screen.findHostByTestId('machine-service-shell') !== null).toBe(condition === 'not-watched');
+            expect(screen.findHostByTestId('machine-service-unwatch') !== null).toBe(condition !== 'not-watched');
+        });
+    });
+
+    it('submits literal command arguments once through the real Action', async () => {
+        await shareWith('manage');
+        const row = service('Web', { authority: 'project', lifecyclePurpose: 'deployment', environmentId: 'environment-staging',
+            watchId: undefined, watchRevision: undefined });
+        answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [row] }));
+        const commands: unknown[] = [];
+        answerAction('machines.services.exec', envelope => {
+            commands.push(envelope.input);
+            return { kind: 'outcome_unknown' };
+        });
+        machineTransport.rpc.mockImplementation(async ({ method, payload }) => {
+            if (method === RPC_METHODS.MACHINES_SERVICE_EXEC) {
+                commands.push(payload);
+                return { kind: 'outcome_unknown' };
+            }
+            return { kind: 'service', service: row };
+        });
+        const { screen } = await mount({ params: { id: 'services', page: 'service', service: row.serviceId } });
+        await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-more')).not.toBeNull());
+        await screen.pressByTestIdAsync('machine-service-more');
+        await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-command')).not.toBeNull());
+        await screen.pressByTestIdAsync('machine-service-command');
+        await vi.waitFor(() => expect(vi.mocked(Modal.show).mock.calls.at(-1)?.[0]?.props).toMatchObject({
+            serverId, machineId, target: { kind: 'current', serviceId: row.serviceId, expectedGeneration: row.generation },
+        }));
+        const config = vi.mocked(Modal.show).mock.calls.at(-1)?.[0];
+        // The modal is the platform presentation boundary; render its captured real sheet and bound operands.
+        const sheetProps = config?.props as ServiceCommandSheetProps;
+        expect(sheetProps).toMatchObject({ serverId, machineId,
+            target: { kind: 'current', serviceId: row.serviceId, expectedGeneration: row.generation } });
+        const { ServiceCommandSheet } = await import('./command/ServiceCommandSheet');
+        const commandScreen = await renderScreen(<ServiceCommandSheet {...sheetProps} />);
+        try {
+            commandScreen.changeTextByTestId('service-command.input', "printf '%s' 'literal; $(not-a-shell)'");
+            await vi.waitFor(() => expect(commandScreen.findHostByTestId('service-command.run')?.props.accessibilityState?.disabled).toBe(false));
+            await commandScreen.pressByTestIdAsync('service-command.run');
+            await vi.waitFor(() => expect(commands).toEqual([{ serverId, machineId,
+                target: { kind: 'current', serviceId: row.serviceId, expectedGeneration: row.generation },
+                mode: 'exec', argv: ['printf', '%s', 'literal; $(not-a-shell)'] }]));
+            await vi.waitFor(() => expect(commandScreen.findHostByTestId('service-command.unknown')).not.toBeNull());
+        } finally { await commandScreen.unmount(); }
+        // Unknown dispatch remains explicit and closing the sheet never replays it.
+        expect(commands).toHaveLength(1);
+    });
+
+    it('unwatches the exact revision through the real Action', async () => {
+        await shareWith('manage');
+        const row = service('Web');
+        answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [row] }));
+        const unwatches: unknown[] = [];
+        answerAction('machines.services.unwatch', envelope => {
+            unwatches.push(envelope.input);
+            return { kind: 'applied', revision: 'revision-b' };
+        });
+        machineTransport.rpc.mockImplementation(async ({ method, payload }) => {
+            if (method === RPC_METHODS.MACHINES_SERVICE_UNWATCH) {
+                unwatches.push(payload);
+                return { kind: 'applied', revision: 'revision-b' };
+            }
+            return { kind: 'service', service: row };
+        });
+        const { screen } = await mount({ params: { id: 'services', page: 'service', service: row.serviceId } });
+        await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-more')).not.toBeNull());
+        await screen.pressByTestIdAsync('machine-service-more');
+        await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-unwatch')).not.toBeNull());
+        await screen.pressByTestIdAsync('machine-service-unwatch');
+        await vi.waitFor(() => expect(unwatches).toEqual([{ serverId: serverIdentityId, machineId,
+            watchId: row.watchId, expectedRevision: row.watchRevision }]));
+    });
+
+    it('opens the existing terminal sheet with the exact typed service-shell launch', async () => {
+        await shareWith('manage');
+        const row = service('Web', { authority: 'project', lifecyclePurpose: 'deployment', environmentId: 'environment-staging',
+            watchId: undefined, watchRevision: undefined });
+        answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [row] }));
+        machineTransport.rpc.mockResolvedValue({ kind: 'service', service: row });
+        const { screen } = await mount({ params: { id: 'services', page: 'service', service: row.serviceId } });
+        await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-more')).not.toBeNull());
+        await screen.pressByTestIdAsync('machine-service-more');
+        await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-shell')).not.toBeNull());
+        await screen.pressByTestIdAsync('machine-service-shell');
+        await vi.waitFor(() => expect(vi.mocked(Modal.show).mock.calls.at(-1)?.[0]?.chrome?.testID).toBe('machine-terminal-modal'));
+        const config = vi.mocked(Modal.show).mock.calls.at(-1)?.[0];
+        expect(config?.chrome?.testID).toBe('machine-terminal-modal');
+        expect(config?.props).toMatchObject({ serverId, machineId,
+            launch: { kind: 'service_shell', serviceId: row.serviceId, expectedGeneration: row.generation } });
+        expect(config?.props).not.toHaveProperty('machineShell');
+    });
+
+    it('stops an Environment service through the existing Action and follows its pushed stopped state', async () => {
+        const row = service('Web', { authority: 'project', environmentId: 'environment-staging',
+            capabilities: { start: true, stop: true, restart: true, logs: false, accounting: false } });
+        const list = answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [row] }));
+        const controls: unknown[] = [];
+        machineTransport.rpc.mockImplementation(async ({ method, payload: input }) => {
+            if (method !== RPC_METHODS.MACHINES_SERVICE_CONTROL) throw new Error(`Unexpected Machine method: ${String(method)}`);
+            controls.push(input);
+            return { kind: 'observed', serviceId: row.serviceId, generation: row.generation,
+                state: 'stopped', operation: { operationId: 'stop-operation' } };
+        });
+        const { screen } = await mount({ params: { id: 'services', page: 'service', service: row.serviceId } });
+        await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-more')).not.toBeNull());
+        await vi.dynamicImportSettled();
+        await screen.pressByTestIdAsync('machine-service-more');
+        await screen.pressByTestIdAsync('machine-service-stop');
+        await vi.dynamicImportSettled();
+        await vi.waitFor(() => {
+            const outcome = screen.findByTestId('machine-service-control-outcome');
+            expect({ controls, outcome: outcome ? textOf(outcome) : null }).toEqual({
+                controls: [{ serverId: serverIdentityId, machineId, serviceId: row.serviceId, expectedGeneration: row.generation, operation: 'stop' }],
+                outcome: null,
+            });
+        });
+        await list.publish(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [{ ...row, state: 'stopped' }] }));
+        await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-start')).not.toBeNull());
+        expect(screen.findHostByTestId('machine-service-stop')).toBeNull();
+    });
+
     it('retains the current Services list across remounts and still receives a real change', async () => {
         const list = answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [service('Web')] }));
         let mounted = await mount();
@@ -202,6 +475,22 @@ describe('MachineServicesTab rendered production wiring', () => {
         expect(screen.findHostByTestId('machine-service-postgres')).not.toBeNull();
     });
 
+    it('offers Deploy an app here, opening New app with this Machine chosen, on the empty and the listed page', async () => {
+        const { buildPluginsHomeRoute } = await import('@/components/settings/plugins/model/pluginsSurfaceRoutes');
+        const expected = buildPluginsHomeRoute('app', { view: 'kind', kind: 'app', machine: { serverId, machineId } });
+        const list = answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [] }));
+        const { screen } = await mount();
+        await vi.waitFor(() => expect(screen.findHostByTestId('machine-services-empty')).not.toBeNull());
+        await screen.pressByTestIdAsync('machine-services-deploy-here');
+        await vi.waitFor(() => expect(router.push).toHaveBeenLastCalledWith(expected));
+        vi.mocked(router.push).mockClear();
+        await list.publish(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [service('Web')] }));
+        await measureMountedCollections(screen);
+        await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-web')).not.toBeNull());
+        await screen.pressByTestIdAsync('machine-services-deploy-here');
+        await vi.waitFor(() => expect(router.push).toHaveBeenLastCalledWith(expected));
+    });
+
     it('offers Open on a listening service page through the shared port owner, reading Local services only there', async () => {
         const row = service('Web', { port: 3000 });
         answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [row] }));
@@ -247,7 +536,7 @@ describe('MachineServicesTab rendered production wiring', () => {
         expect(router.push).not.toHaveBeenCalled();
     });
 
-    it('names readable Environment groups using the exact admitted Source and Environment', async () => {
+    it('names readable Environment groups and opens the exact admitted Source and Environment route', async () => {
         // Deployment records carry the Home's advertised identity; the local profile handle only addresses HTTP.
         const environment = createDeploymentEnvironmentHeaderV1({ serverId: serverIdentityId,
             id: 'production-environment', projectSourceId: 'shop-source' });
@@ -265,6 +554,13 @@ describe('MachineServicesTab rendered production wiring', () => {
         })] }));
         const { screen } = await mount();
         await vi.waitFor(() => expect(screen.getTextContent()).toContain('Storefront · Production'));
+        const linkId = `machine-services-table:group:environment:${environment.id}:action`;
+        expect(screen.findHostByTestId(linkId)?.props.accessibilityLabel)
+            .toBe(`${t('machineServices.groups.openEnvironment')}, Storefront · Production`);
+        await screen.pressByTestIdAsync(linkId);
+        expect(router.push).toHaveBeenCalledWith({ pathname: '/deployments/[projectSourceId]', params: {
+            serverId, projectSourceId: 'shop-source', deploymentEnvironment: environment.id,
+        } });
         const request = homes.requests.find(item => item.path.split('?')[0] === '/v1/deployments/environments');
         expect(new URLSearchParams(request?.path.split('?')[1]).getAll('environmentIds')).toEqual([environment.id]);
     });
@@ -296,6 +592,10 @@ describe('MachineServicesTab rendered production wiring', () => {
         expect(text).toContain(t('machineServices.roles.role.controller'));
         expect(text).toContain(t('machineServices.roles.role.edge'));
         expect(text).not.toContain(t('machineServices.roles.role.build'));
+        await screen.pressByTestIdAsync(rowId);
+        expect(router.push).toHaveBeenCalledWith({ pathname: '/deployments/[projectSourceId]', params: {
+            serverId, projectSourceId: 'shop-source', deploymentEnvironment: environment.id,
+        } });
     });
 
     it('says when the role census can’t be read and reads it again on Retry', async () => {

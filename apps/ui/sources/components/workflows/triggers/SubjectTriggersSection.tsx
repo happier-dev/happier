@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import type { DeploymentEnvironmentRefV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentRefV1';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -47,6 +48,9 @@ export const SubjectTriggersSection = React.memo(
       subject: TriggerSubject;
       /** The page's own name for its subject, used in the agent's prompt and the read-back. */
       subjectName: string;
+      deploymentEnvironment?: DeploymentEnvironmentRefV1;
+      deploymentSourceName?: string;
+      controllerMachineId?: string;
     }>,
   ) {
     const read = useWorkflowTriggerSets(ACCOUNT_TRIGGER_QUERY);
@@ -67,10 +71,9 @@ export const SubjectTriggersSection = React.memo(
       () => ({ machineId: props.subject.machineId, directory: '~' }),
       [props.subject.machineId],
     );
-    if (rows.length === 0 && status !== 'ready') return null;
     const empty = rows.length === 0;
     const close = () => setOpening(null);
-    return (
+    const section = rows.length === 0 && status !== 'ready' ? null : (
       <ItemGroup
         testID="subject-triggers"
         title={t('workflows.triggers.section.title')}
@@ -132,6 +135,12 @@ export const SubjectTriggersSection = React.memo(
             }}
           />
         ) : null}
+      </ItemGroup>
+    );
+    // An open editor owns its draft independently of the row read's availability.
+    return (
+      <>
+        {section}
         {editor.popover}
         {opening?.kind === 'custom' ? (
           <NewAccountTriggerPopover
@@ -147,9 +156,12 @@ export const SubjectTriggersSection = React.memo(
             subjectName={props.subjectName}
             initialProject={project}
             starter={opening.starter}
+            deploymentEnvironment={props.deploymentEnvironment}
+            deploymentSourceName={props.deploymentSourceName}
+            controllerMachineId={props.controllerMachineId}
           />
         ) : null}
-      </ItemGroup>
+      </>
     );
   },
 );

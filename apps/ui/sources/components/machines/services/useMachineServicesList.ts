@@ -15,7 +15,7 @@ export function useMachineServicesList(input: Readonly<{ serverId: string; machi
     const reference = React.useMemo<ListReference>(() => ({ hostRead: 'machines.services.list',
         input: { serverId: input.serverId, machineId: input.machineId } }), [input.serverId, input.machineId]);
     const resource = useMachineServiceResource({ accountLifetime: lifetime, reference,
-        active: input.active, follow: true, projection: machineServicesListProjection });
+        resolving, active: input.active, follow: true, projection: machineServicesListProjection });
     const value = resource?.value;
     const readAt = React.useMemo(() => value ? Date.now() : null, [value]);
     return {
