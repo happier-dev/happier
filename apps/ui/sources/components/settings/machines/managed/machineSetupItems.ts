@@ -1,4 +1,5 @@
 import type { MachinePresetItemV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 
 type Items = readonly MachinePresetItemV1[];
 export type MachineSetupItemKind = MachinePresetItemV1['kind'];
@@ -65,4 +66,22 @@ export function renameMachineSetupApp<T extends Items>(
       ? { ...item, definition: { ...item.definition, name: trimmed } }
       : entry,
   );
+}
+
+/** The declared recipes the app already holds, keyed by qualified contribution key (the projection's own shape). */
+export type MachineSetupRecipeTitles = Readonly<Record<string, Readonly<{ pluginId: string; definition: Readonly<{ title: unknown }> }>>>;
+
+/**
+ * An item's display name: an App's Environment name, a recipe's declared title (localized through its plugin).
+ * A recipe the app holds no declaration for keeps its recipe id; inert titles for those are S60-U2a.
+ */
+export function machineSetupItemTitle(
+  item: MachinePresetItemV1,
+  recipes: MachineSetupRecipeTitles | undefined,
+  localize: (pluginId: string, value: unknown) => string,
+): string {
+  if (item.kind === 'app') return item.definition.name;
+  const ref = item.selection.ref;
+  const declared = recipes?.[buildQualifiedPluginContributionKey({ pluginId: ref.pluginId, localId: ref.recipeId })];
+  return declared ? localize(ref.pluginId, declared.definition.title) : ref.recipeId;
 }

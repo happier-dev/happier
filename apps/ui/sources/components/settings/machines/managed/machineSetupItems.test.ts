@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { MachinePresetItemV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import {
   groupMachineSetupItems,
+  machineSetupItemTitle,
   moveMachineSetupItem,
   removeMachineSetupItem,
   renameMachineSetupApp,
@@ -103,5 +104,26 @@ describe('one ordered preset item list', () => {
     expect(next[5]).toMatchObject({ authoredKey: 'Analytics' });
     expect(renameMachineSetupApp(items, 5, '   ')).toBe(items);
     expect(renameMachineSetupApp(items, 0, 'x')).toBe(items);
+  });
+});
+
+describe('machineSetupItemTitle', () => {
+  const localize = (pluginId: string, value: unknown) => `${pluginId}:${String(value)}`;
+  const recipes = {
+    'happier.machine.recipes/google-chrome': {
+      pluginId: 'happier.machine.recipes',
+      definition: { id: 'google-chrome', revision: '1', title: 'Google Chrome' },
+    },
+  };
+
+  it('names a recipe by its declared title from the app catalog, localized through its plugin', () => {
+    expect(machineSetupItemTitle(recipe('softwareRecipe', 'google-chrome'), recipes, localize))
+      .toBe('happier.machine.recipes:Google Chrome');
+  });
+
+  it('falls back to the recipe id when no declaration is held, and names an App by its Environment name', () => {
+    expect(machineSetupItemTitle(recipe('setupRecipe', 'fonts'), recipes, localize)).toBe('fonts');
+    expect(machineSetupItemTitle(recipe('softwareRecipe', 'google-chrome'), undefined, localize)).toBe('google-chrome');
+    expect(machineSetupItemTitle(app('Analytics'), recipes, localize)).toBe('Analytics');
   });
 });

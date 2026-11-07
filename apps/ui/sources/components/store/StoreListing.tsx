@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { StoreListingPaneTitleContext, useStoreListingPaneTitleOverride } from './storeListingPaneTitle';
 import { Platform, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { StoreListingReference } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
@@ -105,7 +106,8 @@ export function StoreListingPaneHost(
   } = usePluginsOpenItem(continuationId);
   const key = storeOpenItem ? referenceKey(storeOpenItem) : null;
   const identity = useStoreRegistryIdentity(storeOpenItem?.type === 'storeKind' ? null : storeOpenItem);
-  const listingTitle = identity?.title ?? (storeOpenItem?.type === 'registryItem' ? storeOpenItem.itemId : props.title);
+  const paneTitle = useStoreListingPaneTitleOverride(key);
+  const listingTitle = paneTitle.title ?? identity?.title ?? (storeOpenItem?.type === 'registryItem' ? storeOpenItem.itemId : props.title);
   const besidePage = useDetailsPaneAvailable();
   // A selection that arrives where no pane fits (a phone opening a pane link, a window narrowed past the pane) is shown
   // the phone's way: the listing pushed as its own page with Back, never the desktop pane drawn over the whole screen.
@@ -145,12 +147,14 @@ export function StoreListingPaneHost(
             immediate={immediate}
             style={styles.fill}
           >
-            <StoreListingBody
-              reference={storeOpenItem}
-              presentation="pane"
-              continuationId={continuationId}
-              onClose={closeStore}
-            />
+            <StoreListingPaneTitleContext.Provider value={paneTitle.set}>
+              <StoreListingBody
+                reference={storeOpenItem}
+                presentation="pane"
+                continuationId={continuationId}
+                onClose={closeStore}
+              />
+            </StoreListingPaneTitleContext.Provider>
           </WordCrossFade>
         ) : (
           <ListingState
@@ -171,6 +175,7 @@ export function StoreListingPaneHost(
     props.testID,
     props.title,
     listingTitle,
+    paneTitle.set,
     continuationId,
     storeSelectionUnavailable,
   ]);
@@ -208,17 +213,20 @@ export function StoreListingPage(
     kind === null || kind === 'app'
       ? t('capabilities.store.listingLabel')
       : t(`capabilities.store.kindWord.${kind}`);
+  const pageTitle = useStoreListingPaneTitleOverride(referenceKey(props.reference));
   return (
     <StoreListingPageFrame>
-      {/* The listing names the item under its mark; the bar above names only what it is. */}
-      <Stack.Screen options={{ headerTitle: kindWord }} />
+      {/* The listing names the item under its mark; the bar above names only what it is (or the surface it handed to). */}
+      <Stack.Screen options={{ headerTitle: pageTitle.title ?? kindWord }} />
       <View style={[styles.pageColumn, maxWidth]}>
-        <StoreListingBody
-          reference={props.reference}
-          presentation="page"
-          continuationId={typeof params.continuation === 'string' ? params.continuation : undefined}
-          onClose={close}
-        />
+        <StoreListingPaneTitleContext.Provider value={pageTitle.set}>
+          <StoreListingBody
+            reference={props.reference}
+            presentation="page"
+            continuationId={typeof params.continuation === 'string' ? params.continuation : undefined}
+            onClose={close}
+          />
+        </StoreListingPaneTitleContext.Provider>
       </View>
     </StoreListingPageFrame>
   );

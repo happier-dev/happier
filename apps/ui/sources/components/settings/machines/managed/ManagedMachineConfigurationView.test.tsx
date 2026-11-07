@@ -862,6 +862,26 @@ describe('mounted managed configurator', () => {
     await screen.unmount();
   });
 
+  it('returns from a setup-only preset continuation on Cancel without writing anything', async () => {
+    const initial = await mountAddRoute('setup-only-continuation-cancel');
+    const serverId = route.params.serverId!;
+    await initial.unmount();
+    const setupOnly = { id: 'research', homeId: 'srv_add_server', revision: 2, name: 'Research bot',
+      owner: { kind: 'account', accountId: 'owner' }, setup: { scripts: [{ body: 'echo one', affects: 'none' }] } };
+    harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: setupOnly } });
+    const onReturn = vi.fn();
+    const continuation = { item: softwareItem, draft: { name: setupOnly.name, setup: setupOnly.setup },
+      preset: { id: setupOnly.id, revision: setupOnly.revision }, onReturn };
+    const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+    const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId} provisioner=""
+      presetId={setupOnly.id} presetOnly presetContinuation={continuation} />);
+    await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.continuation-cancel')).toBeTruthy());
+    await act(async () => screen.pressByTestId('managed-config.continuation-cancel'));
+    expect(onReturn).toHaveBeenCalledTimes(1);
+    expect(presetWrites()).toEqual([]);
+    await screen.unmount();
+  });
+
   it('returns from an Add-to-Preset continuation on Cancel without writing anything', async () => {
     const { screen, onReturn } = await mountContinuation('continuation-cancel', softwareItem);
     await act(async () => screen.pressByTestId('managed-config.continuation-cancel'));

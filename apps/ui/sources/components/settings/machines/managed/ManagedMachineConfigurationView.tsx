@@ -358,7 +358,9 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     React.useEffect(() => {
         if (!presetQuery.sameScope || !catalogPlacementAvailable || props.presetId || !provisioner || accountHostPending || accountHostUnreadable) return;
         const initial = catalogController;
-        setDraft(current => current ?? createManagedConfiguratorDraft({ provisioner, controller: initial, name: continuation?.draft.name ?? title,
+        setDraft(current => current ?? createManagedConfiguratorDraft({ provisioner, controller: initial,
+            // A new preset started from a Store door has no name yet: it takes the provider's, as Add does.
+            name: continuation?.draft.name || title,
             optionsSelectors: props.initialOptionsSelectors, enrollmentIdentity: props.initialEnrollmentIdentity,
             ...(continuation ? { setup: continuationSeed } : {}) }));
         if (continuation && !continuationEntered.current) {
@@ -680,6 +682,9 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         ? knownControllerName ? t('managedMachines.receipt.localFootnote', { provider: title, computer: knownControllerName }) : null
         : billing?.location === 'cloud' && billedAccount
             ? t('managedMachines.receipt.cloudFootnote', { provider: title, account: billedAccount }) : null;
+    // A hand-off into the editor goes back the way it came; leaving writes nothing.
+    const continuationCancel: ManagedReceiptModel['secondary'] = continuation ? [{ label: t('common.cancel'), onPress: continuation.onReturn,
+        disabled: busy, testID: 'managed-config.continuation-cancel', tone: 'text' }] : undefined;
     const receipt: ManagedReceiptModel = {
         ...(receiptFacts ? buildManagedConfigurationReceipt({ launch: receiptFacts.launch, reviewedFacts: receiptFacts, providerTitle: title, controllerName: knownControllerName, homeName, mark: receiptMark, localized,
             ...(acquireTarget === 'account' && !receiptController ? { managedBy: 'account' as const } : {}), agentSignIn,
@@ -726,7 +731,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             ...(!props.presetOnly && (creationUnavailableReason ?? billingFootnote)
                 ? { footnote: creationUnavailableReason ?? billingFootnote! } : {}) },
         secondary: !props.presetOnly ? [{ label: t('managedMachines.receipt.saveAsPreset'), onPress: () => { void save(); }, disabled: !maySave, testID: 'managed-config.save-preset', tone: 'text' }]
-            : continuation ? [{ label: t('common.cancel'), onPress: continuation.onReturn, disabled: busy, testID: 'managed-config.continuation-cancel', tone: 'text' }] : undefined,
+            : continuationCancel,
         secondaryNote: !props.presetOnly && presetRetention?.kind === 'deadline' ? t('machinePresets.deadlineOmitted') : undefined,
     };
 
@@ -773,7 +778,8 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
                 spec: '', facts: [], cost: null, ...(setupOnlyDraft?.setup ? { setup: setupOnlyDraft.setup } : {}),
                 ...(setupOnlyDraft ? { onRename: () => { void renameSetupOnly(); } } : {}),
                 primary: { label: t('common.save'), testID: 'managed-config.create', loading: busy, disabled: !maySaveSetupOnly,
-                    onPress: () => { if (setupOnlyDraft && maySaveSetupOnly) void submitDraft(setupOnlyDraft); } } }}>
+                    onPress: () => { if (setupOnlyDraft && maySaveSetupOnly) void submitDraft(setupOnlyDraft); } },
+                secondary: continuationCancel }}>
             {approval.approvalId ? <AttentionBanner testID="managed-config.approval" title={t('approvals.title')} description={t('approvals.status.open')}
                 action={{ label: t('approvals.details'), onPress: () => router.push(`/inbox/approvals/${encodeURIComponent(approval.approvalId!)}?serverId=${encodeURIComponent(props.serverId)}` as never) }} /> : null}
             {errorNotice}
@@ -891,7 +897,9 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             ? (awaitsRequiredInput ? null : <SurfaceStateCard kind="empty" size="line" title={t('managedMachines.options.empty', { provider: title })} />)
         : null;
     const kindTitle = presentation.kindTitle;
-    const pageTitle = props.presetOnly || !kindTitle ? title : t('managedMachines.config.newKind', { provider: title, kind: kindTitle });
+    // A preset's editor is titled with the preset's own name (lab p/editor); its mark still says which provider.
+    const pageTitle = props.presetOnly ? draft?.name || title
+        : !kindTitle ? title : t('managedMachines.config.newKind', { provider: title, kind: kindTitle });
     // Unpriced, the bar's value stays short; the sentence belongs to the receipt. No price yet is no value, not a placeholder.
     const summaryCost = receipt.cost && receipt.cost.kind !== 'unpriced' ? presentManagedCost(receipt.cost) : null;
     const summaryValue = summaryCost?.value ?? '';

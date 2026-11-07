@@ -6,6 +6,10 @@ import {
 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 
 import { ManagedMachineConfigurationView } from '@/components/settings/machines/managed/ManagedMachineConfigurationView';
+import {
+  MachineProvisionerPicker,
+  type ManagedProvisionerSelection,
+} from '@/components/settings/machines/managed/MachineProvisionerPicker';
 import { describeMachineSetup } from '@/components/settings/machines/managed/MachineSetupSection';
 import {
   ManagedPresetMark,
@@ -18,7 +22,8 @@ import {
   type DropdownMenuItem,
 } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
-import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { PageHeader } from '@/components/ui/layout/PageHeader';
+import { ItemList } from '@/components/ui/lists/ItemList';
 import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 
@@ -27,6 +32,7 @@ import {
   type StorePresetDoorItem,
 } from './storePresetDoor';
 import { useStorePresets } from './useStorePresets';
+import { useStoreListingPaneTitle } from '../storeListingPaneTitle';
 
 const NO_SERVERS: readonly string[] = [];
 const NEW_PRESET = 'store.preset.new';
@@ -40,9 +46,10 @@ export function describeStorePreset(preset: ManagedMachinePresetV1): string {
     .join(' · ');
 }
 
+/** A saved preset to add the item to, or `null` for a new preset that starts with it. */
 export type StorePresetChoice = Readonly<{
   serverId: string;
-  preset: ManagedMachinePresetV1;
+  preset: ManagedMachinePresetV1 | null;
 }>;
 
 /**
@@ -60,7 +67,6 @@ export function StoreAddToPresetButton(
   }>,
 ) {
   const { theme } = useUnistyles();
-  const router = useRouter();
   const [open, setOpen] = React.useState(false);
   // Demand is sticky once opened, so reopening the menu shows the held list instead of a fresh wait.
   const [demanded, setDemanded] = React.useState(false);
@@ -133,10 +139,7 @@ export function StoreAddToPresetButton(
       onSelect={(id) => {
         setOpen(false);
         if (id === NEW_PRESET) {
-          if (props.serverId)
-            router.push(
-              `/settings/machines/presets/new?serverId=${encodeURIComponent(props.serverId)}` as never,
-            );
+          if (props.serverId) props.onChoose({ serverId: props.serverId, preset: null });
           return;
         }
         const choice = choices.find((entry) => entry.preset.id === id);
@@ -172,7 +175,21 @@ export function StorePresetEditorHandoff(
   }>,
 ) {
   const { preset, serverId } = props.choice;
-  const onReturn = props.onReturn;
+  if (!preset)
+    return <StoreNewPresetHandoff serverId={serverId} item={props.item} onReturn={props.onReturn} />;
+  return <StoreSavedPresetHandoff serverId={serverId} preset={preset} item={props.item} onReturn={props.onReturn} />;
+}
+
+function StoreSavedPresetHandoff(
+  props: Readonly<{
+    serverId: string;
+    preset: ManagedMachinePresetV1;
+    item: StorePresetDoorItem;
+    onReturn: () => void;
+  }>,
+) {
+  const { preset, serverId, onReturn } = props;
+  useStoreListingPaneTitle(preset.name);
   const continuation = React.useMemo(
     (): MachinePresetEditContinuation => ({
       item: props.item,
@@ -193,6 +210,60 @@ export function StorePresetEditorHandoff(
       serverId={serverId}
       provisioner={provisioner}
       presetId={preset.id}
+      presetOnly
+      presetContinuation={continuation}
+    />
+  );
+}
+
+/**
+ * "New preset" from the door: the provider picker the Presets page uses, kept in place so the item travels into the
+ * new preset's editor already added. Its name is left for the editor to give (the provider's, as Add does).
+ */
+function StoreNewPresetHandoff(
+  props: Readonly<{
+    serverId: string;
+    item: StorePresetDoorItem;
+    onReturn: () => void;
+  }>,
+) {
+  const { item, onReturn } = props;
+  useStoreListingPaneTitle(t('capabilities.store.softwarePage.presetsNew'));
+  const [selection, setSelection] =
+    React.useState<ManagedProvisionerSelection | null>(null);
+  const continuation = React.useMemo(
+    (): MachinePresetEditContinuation => ({ item, draft: { name: '' }, onReturn }),
+    [item, onReturn],
+  );
+  if (!selection)
+    return (
+      <ItemList>
+        <PageHeader
+          title={t('capabilities.store.softwarePage.presetsNew')}
+          description={t('machinePresets.empty')}
+          actions={
+            <RoundButton
+              testID="store.preset.new.cancel"
+              size="normal"
+              display="secondary"
+              title={t('common.cancel')}
+              onPress={onReturn}
+            />
+          }
+        />
+        <MachineProvisionerPicker
+          serverId={props.serverId}
+          presetOnly
+          onSelectProvisioner={setSelection}
+        />
+      </ItemList>
+    );
+  return (
+    <ManagedMachineConfigurationView
+      serverId={selection.serverId}
+      provisioner={selection.provisioner}
+      {...(selection.controller ? { initialController: selection.controller } : {})}
+      {...(selection.connectPurpose ? { initialConnectPurpose: selection.connectPurpose } : {})}
       presetOnly
       presetContinuation={continuation}
     />

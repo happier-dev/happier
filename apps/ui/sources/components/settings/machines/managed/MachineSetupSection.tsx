@@ -13,7 +13,6 @@ import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dropdown/renderDropdownItemTriggerRightElement';
 import { resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
-import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
@@ -27,8 +26,11 @@ import type { AccountSettingsScope } from '@/sync/domains/settings/scope/account
 import { t } from '@/text';
 import type { ManagedReceiptFact } from './managedMachineDisplay';
 import { normalizeMachineSetup } from './normalizeMachineSetup';
-import { groupMachineSetupItems, moveMachineSetupItem, removeMachineSetupItem, renameMachineSetupApp,
+import { groupMachineSetupItems, machineSetupItemTitle, moveMachineSetupItem, removeMachineSetupItem, renameMachineSetupApp,
   type MachineSetupItemKind } from './machineSetupItems';
+import { useAppShellPluginUiDeclarationProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { StoreItemMark } from '@/components/store/catalog/StoreItemMark';
+import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 export { normalizeMachineSetup } from './normalizeMachineSetup';
 
 /**
@@ -157,6 +159,9 @@ export const MachineSetupSection = React.memo(
     };
     const items = setup.items ?? [];
     const groups = groupMachineSetupItems(items);
+    // Recipe titles and marks come from the declarations the app already holds, as the Store's Software page names them.
+    const projection = useAppShellPluginUiDeclarationProjection();
+    const localize = usePluginLocalizedTextResolver({ projection });
     const renameApp = async (index: number) => {
       const item = items[index];
       if (item?.kind !== 'app') return;
@@ -171,7 +176,7 @@ export const MachineSetupSection = React.memo(
           title={t(ITEM_GROUP_TITLE[group.kind])}
           {...(groupIndex === 0 ? { description: t('machinePresets.setup.itemsOrder') } : {})}>
           {group.rows.map(({ item, index }, at) => {
-            const title = item.kind === 'app' ? item.definition.name : item.selection.ref.recipeId;
+            const title = machineSetupItemTitle(item, projection?.machineRecipesById, localize);
             const actions: ItemAction[] = props.editable ? [
               ...(item.kind === 'app' ? [{ id: 'rename', title: t('machinePresets.setup.renameApp'), icon: 'pencil' as const,
                 onPress: () => { void renameApp(index); } }] : []),
@@ -186,7 +191,8 @@ export const MachineSetupSection = React.memo(
               <Item
                 key={`${item.kind}:${index}:${title}`}
                 testID={`${props.testID}.item.${index}`}
-                icon={<Icon name={ITEM_ICON[item.kind]} size={20} color={theme.colors.text.secondary} />}
+                icon={<StoreItemMark size={20} facts={item.kind === 'app' ? { kind: 'app', title }
+                  : { kind: 'software', title, bundledPluginId: item.selection.ref.pluginId }} />}
                 title={title}
                 subtitle={item.kind === 'app'
                   ? item.definition.project.kind === 'create' ? t('machinePresets.setup.appNewProject') : t('machinePresets.setup.appExistingProject')
@@ -421,7 +427,6 @@ const ITEM_GROUP_TITLE = {
   softwareRecipe: 'machinePresets.setup.itemsGroupSoftware',
   app: 'machinePresets.setup.itemsGroupApps',
 } as const satisfies Record<MachineSetupItemKind, string>;
-const ITEM_ICON = { setupRecipe: 'wrench', softwareRecipe: 'download', app: 'cube' } as const satisfies Record<MachineSetupItemKind, string>;
 
 /** The receipt's read-only environment lines: what each new machine is set up with. */
 export function describeMachineSetup(
