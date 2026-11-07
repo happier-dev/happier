@@ -125,7 +125,8 @@ export function projectTriageUnreadableSourceHealth(
 export function readTriageLaneFailure(
     lane: TriageListLaneV1 | undefined,
 ): TriageSourceFailureV1 | null {
-    return lane?.health.kind === 'failed' ? lane.health.failure : null;
+    return lane?.health.kind === 'failed' || lane?.health.kind === 'partial'
+        ? lane.health.failure ?? null : null;
 }
 
 export function projectTriageFailedSourceHealth(

@@ -36,12 +36,13 @@ import { TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1, mutateTriageAction } from '../setting
 import { TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1 } from '../settings/savedViews.js';
 import { readTriageEntryDetail, createTriageReadEntryDetailActionHandler } from '../actions/readEntryDetail.js';
 import { TriageReadEntryDetailInputV1Schema } from '../actions/entryDetailProtocol.js';
+import { TriageUnlinkEntryFromSessionActionInputV1Schema } from '../actions/entrySessionProtocol.js';
+import { createTriageUnlinkEntryFromSessionActionHandler } from '../actions/entrySession.js';
 import type { TriageDataActionContext } from '../actions/dataContext.js';
 import { createTestkitSourceSessionRelations, testkitReadOnlySourceSnapshot } from '../sessions/testkit/entrySessionTestkit.test-support.js';
 import { linkEntryToSession } from '../sessions/entrySessionLinks.js';
 import {
     createActionTriageUnlinkTransport,
-    createDirectTriageUnlinkTransport,
 } from '../sessions/cockpit/unlinkLinkedEntry.js';
 import type { TriageListDisplayRowV1 } from './marks/pinnedRows.js';
 import { triageResetActionsInputV1 } from './actions/actionsCommand.js';
@@ -186,12 +187,7 @@ const durableProbeSurface = defineUiSurface(() => {
     // The exact selection the cockpit row makes, over the exact factories it
     // uses: a probe that called the writer itself would prove the writer and
     // nothing about how a mount reaches it.
-    const unlinkTransport = React.useMemo(
-        () => durable.collections
-            ? createDirectTriageUnlinkTransport(durable.collections, host)
-            : createActionTriageUnlinkTransport(host),
-        [durable.collections, host],
-    );
+    const unlinkTransport = React.useMemo(() => createActionTriageUnlinkTransport(host), [host]);
 
     return (
         <>
@@ -217,8 +213,10 @@ const durableProbeSurface = defineUiSurface(() => {
             <Button title="probe-restore-actions" onPress={() => {
                 if (actions.revision !== null) void actions.administer(triageResetActionsInputV1(actions.revision));
             }} />
-            <Button title="probe-clear-view-selection" onPress={() => {
-                if (views.revision !== null) void views.administer({ v: 1, kind: 'select', viewId: null, expectedRevision: views.revision });
+            <Button title="probe-create-view" onPress={() => {
+                if (views.revision !== null) void views.administer({ v: 1, kind: 'create', label: 'Boundary probe',
+                    query: '', filters: { sources: [], types: [], scopes: [], states: [], attention: [] }, order: 'newest',
+                    smartPolicy: { v: 1, precedence: ['attention', 'activity'] }, expectedRevision: views.revision });
             }} />
             <Text value={actionResolution} />
             <Button title="probe-resolve-action" onPress={async () => {
@@ -246,7 +244,7 @@ const durableProbeSurface = defineUiSurface(() => {
             <Button
                 title="probe-remove-source"
                 onPress={() => {
-                    const source = sources.sources[0];
+                    const source = sources.sources.find((candidate) => candidate.removable);
                     if (source !== undefined) void sources.remove(source.sourceInstanceId);
                 }}
             />
@@ -326,7 +324,7 @@ async function mountProbe(harness: DurableHarness, surfaceContext = createSurfac
                 // Account Actions remain reachable without a Machine. Their
                 // real handlers run over the persistence boundary testkit.
                 executeAction: async ({ action, input }) => {
-                    if (harness.client !== null && String(action) === 'entries/read-detail-v1') {
+                    if (harness.client !== null && ['entries/read-detail-v1', 'sessions/unlink-entry-v1'].includes(String(action))) {
                         (harness.accountActionCalls as string[]).push(String(action));
                         if (harness.admissionDenied) throw new PluginError({ code: 'denied' });
                         // The invocation test boundary supplies only the services these handlers consume.
@@ -336,7 +334,10 @@ async function mountProbe(harness: DurableHarness, surfaceContext = createSurfac
                                 actions: { executeAdmittedTargetedOperation: async () => { throw new Error('No source role was declared'); } },
                             },
                         } as unknown as TriageDataActionContext;
-                        return await createTriageReadEntryDetailActionHandler()(TriageReadEntryDetailInputV1Schema.parse(input), context) as never;
+                        if (String(action) === 'entries/read-detail-v1') {
+                            return await createTriageReadEntryDetailActionHandler()(TriageReadEntryDetailInputV1Schema.parse(input), context) as never;
+                        }
+                        return await createTriageUnlinkEntryFromSessionActionHandler()(TriageUnlinkEntryFromSessionActionInputV1Schema.parse(input), context) as never;
                     }
                     calls.push(String(action));
                     throw new Error('No daemon is reachable from this mount.');
@@ -456,8 +457,8 @@ describe('durable Account state with no daemon reachable', () => {
             .resolves.toEqual({ content: 'pins:[Replace the duplicated normalizer]' });
         await expect(fixture.getByText('views:parsed:[Needs me]'))
             .resolves.toEqual({ content: 'views:parsed:[Needs me]' });
-        await expect(fixture.getByText('actions:loaded:[Discuss,Ask,Fix,Review,Explain this PR in chat]'))
-            .resolves.toEqual({ content: 'actions:loaded:[Discuss,Ask,Fix,Review,Explain this PR in chat]' });
+        await expect(fixture.getByText('actions:loaded:[Discuss,Ask,Fix,Review,Explain this PR in chat,Investigate]'))
+            .resolves.toEqual({ content: 'actions:loaded:[Discuss,Ask,Fix,Review,Explain this PR in chat,Investigate]' });
         // The whole point: not one of those reads went near a daemon.
         expect(harness.actionCalls).toEqual([]);
     });
@@ -505,8 +506,8 @@ describe('durable Account state with no daemon reachable', () => {
 
         expect(harness.accountKv.read(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1)).toEqual(catalog);
         await expect(fixture.getByText('actions-read:parsed')).resolves.toEqual({ content: 'actions-read:parsed' });
-        await expect(fixture.getByText('actions:loaded:[Discuss,Ask,Fix,Review,Explain this PR in chat]'))
-            .resolves.toEqual({ content: 'actions:loaded:[Discuss,Ask,Fix,Review,Explain this PR in chat]' });
+        await expect(fixture.getByText('actions:loaded:[Discuss,Ask,Fix,Review,Explain this PR in chat,Investigate]'))
+            .resolves.toEqual({ content: 'actions:loaded:[Discuss,Ask,Fix,Review,Explain this PR in chat,Investigate]' });
         expect(harness.actionCalls).toEqual([]);
     });
 
@@ -518,16 +519,16 @@ describe('durable Account state with no daemon reachable', () => {
         const beforeMark = harness.corpus.control.userMarks.inspect(markTag);
         const fixture = await mountProbe(harness);
 
-        for (const name of ['probe-unpin', 'probe-clear-view-selection', 'probe-remove-source']) {
+        for (const name of ['probe-unpin', 'probe-create-view', 'probe-remove-source']) {
             await act(async () => { await fixture.press(await fixture.getByRole('button', { name })); });
             for (let settle = 0; settle < 4; settle += 1) await act(async () => { await Promise.resolve(); });
         }
 
         expect(harness.corpus.control.userMarks.inspect(markTag)).toEqual(beforeMark);
         expect(harness.accountKv.read(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1)).toBeUndefined();
-        expect((await readActiveConfiguredSourceRows(harness.corpus.collections.sourceInstances)).rows).toHaveLength(1);
+        expect((await readActiveConfiguredSourceRows(harness.corpus.collections.sourceInstances)).rows).toHaveLength(2);
         await expect(fixture.getByText('pins:[Keep this pin]')).resolves.toEqual({ content: 'pins:[Keep this pin]' });
-        await expect(fixture.getByText('sources-count:1')).resolves.toEqual({ content: 'sources-count:1' });
+        await expect(fixture.getByText('sources-count:2')).resolves.toEqual({ content: 'sources-count:2' });
         expect(document.body.textContent).not.toContain('sources:unavailable');
         expect(document.body.textContent).not.toContain('views:unavailable');
         expect(harness.actionCalls).toEqual([]);
@@ -593,15 +594,16 @@ describe('durable Account state with no daemon reachable', () => {
             await act(async () => { await Promise.resolve(); });
         }
         await expect(fixture.getByText('unlink:unlinked')).resolves.toEqual({ content: 'unlink:unlinked' });
-        await expect(fixture.getByText('sources:[Example repository]'))
-            .resolves.toEqual({ content: 'sources:[Example repository]' });
+        expect(harness.accountActionCalls).toContain('sessions/unlink-entry-v1');
+        await expect(fixture.getByText('sources:[Happier tasks,Example repository]'))
+            .resolves.toEqual({ content: 'sources:[Happier tasks,Example repository]' });
         await act(async () => {
             await fixture.press(await fixture.getByRole('button', { name: 'probe-remove-source' }));
         });
         for (let settle = 0; settle < 4; settle += 1) {
             await act(async () => { await Promise.resolve(); });
         }
-        await expect(fixture.getByText('sources:[]')).resolves.toEqual({ content: 'sources:[]' });
+        await expect(fixture.getByText('sources:[Happier tasks]')).resolves.toEqual({ content: 'sources:[Happier tasks]' });
         expect(harness.actionCalls).toEqual([]);
     });
 
@@ -611,8 +613,8 @@ describe('durable Account state with no daemon reachable', () => {
 
         const fixture = await mountProbe(harness);
 
-        await expect(fixture.getByText('sources-count:34')).resolves
-            .toEqual({ content: 'sources-count:34' });
+        await expect(fixture.getByText('sources-count:35')).resolves
+            .toEqual({ content: 'sources-count:35' });
     });
 
     it('re-reads and publishes a typed notice when configured-source removal conflicts', async () => {
@@ -629,8 +631,8 @@ describe('durable Account state with no daemon reachable', () => {
 
         await expect(fixture.getByText('sources-notice:conflict')).resolves
             .toEqual({ content: 'sources-notice:conflict' });
-        await expect(fixture.getByText('sources:[Example repository]')).resolves
-            .toEqual({ content: 'sources:[Example repository]' });
+        await expect(fixture.getByText('sources:[Happier tasks,Example repository]')).resolves
+            .toEqual({ content: 'sources:[Happier tasks,Example repository]' });
     });
 
     it('says the Account is unavailable, and queues nothing, when neither the Account nor a daemon can be reached', async () => {

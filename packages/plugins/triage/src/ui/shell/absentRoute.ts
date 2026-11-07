@@ -7,12 +7,11 @@ import { sameTriageEntryRefV1 } from '../state/surface.js';
  * What a settled page says about a location naming an entry nothing it can
  * read holds (`core/SURFACE.md` §3.1).
  *
- * An identity-only location carries no connection, so the page can only adopt
- * it from a row some window lists. While the walk can still continue, the
- * acquisition owner keeps going and there is nothing to say. Once it cannot —
- * every connection finished its walk, or the result is incomplete with no
- * frontier to resume from — the location is a request the page cannot serve,
- * and the list alone would read as if the link did nothing.
+ * An identity-only location carries no connection. The settled-location owner
+ * admits its exact read through configured-source admission; when no source
+ * can qualify it, this coverage notice remains honest about unread pages. The
+ * route never spends continuation to search the inventory; the list's visible
+ * Load more control owns that demand.
  *
  * The answer is a presentation fact only: it keeps the requested ref and
  * names whether the result was complete. It never selects the entry, never
@@ -23,7 +22,7 @@ import { sameTriageEntryRefV1 } from '../state/surface.js';
  */
 export type TriageAbsentRouteV1 = Readonly<{
   entryRef: TriageEntryRefV1;
-  /** The window was complete (`exhausted`) or only the part it could read (`unresumable`). */
+  /** The window was complete, or more entries remain unread. */
   coverage: 'complete' | 'incomplete';
 }>;
 
@@ -40,7 +39,7 @@ export function readTriageAbsentRouteV1(input: Readonly<{
 }>): TriageAbsentRouteV1 | null {
   if (!input.windowSettled || input.selected || input.pending !== 'idle') return null;
   const kind = input.loadMore?.kind;
-  if (kind !== 'exhausted' && kind !== 'unresumable') return null;
+  if (kind !== 'exhausted' && kind !== 'unresumable' && kind !== 'available') return null;
   const located = parseTriageRouteSubPathV1(input.subPath).selection;
   if (located === null) return null;
   for (const hit of input.rowsByKey.values()) {

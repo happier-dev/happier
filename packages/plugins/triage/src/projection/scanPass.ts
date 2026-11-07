@@ -1,4 +1,3 @@
-import { raceWithTimeout, type RaceWithTimeoutResult } from '@happier-dev/plugin-sdk/async';
 import { isPluginError, type LoggerService, type PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import type { PluginContributionIdentity } from '@happier-dev/plugin-sdk/manifest';
 import {
@@ -44,14 +43,8 @@ import { TriageListInvocationErrorV1Schema } from '../actions/listEntriesProtoco
  * adopted — so the consumer keeps its last-known-good rather than a silently
  * partial view of a broken source.
  *
- * A page that does not answer before an explicitly supplied whole-lane
- * deadline is not a contract violation. Reaching that real caller-owned bound
- * settles the lane as a classified `transient` failure and stops waiting for
- * the provider work. Without such a duration, the pass follows only the
- * canonical caller signal. It keeps every page the lane already gave, because
- * an unanswered page says nothing about the ones that answered. The pass
- * schedules no wake and retries nothing: a later view or manual trigger asks
- * again after the shared pacing backoff.
+ * Every page follows the canonical caller signal through body completion.
+ * The pass schedules no wake, imposes no local deadline and retries nothing.
  */
 
 /** One configured source instance, bound to the exact admitted `scan` it is read through. */
@@ -64,6 +57,7 @@ export type TriageScanLaneV1 = Readonly<{
     /** Optional lens selection. Validate all declared kinds before charging selected rows. */
     selectedKindIds?: readonly string[];
     completed?: TriageScanInputV1['completed'];
+    query?: string;
     /** The exact configured value, passed unchanged to every invocation. */
     configured: TriageConfiguredSourceInstanceV1;
     /**
@@ -100,7 +94,7 @@ export type TriageScanPassResultV1 = Readonly<{
      * would continue from.
      *
      * An unvisited initial lane or a HEALTHY unfinished lane appears: a lane that exhausted has nothing
-     * to continue, and a lane that failed, timed out or violated the page
+     * to continue, and a lane that failed or violated the page
      * contract has nothing worth continuing — its next read starts over, which
      * is what the failure classes already drive. Reporting it is what lets a
      * caller append the next bounded window instead of re-walking from page one.
@@ -114,24 +108,7 @@ type LaneState = {
     continuation: TriageScanContinuationV1 | null;
     health: TriageListLaneHealthV1;
     exhausted: boolean;
-    /** One absolute budget and signal for this lane's whole walk. */
-    deadlineStartedAtMs: number | null;
-    deadline: AbortController;
-    signal: AbortSignal;
 };
-
-/**
- * Optional owner-test/external absolute bound for one source lane's whole walk.
- *
- * A source answering every page instantly while never converging still needs
- * the structural non-progress exits beside the continuation arm below, because
- * that shape can stay entirely inside one millisecond and starve the event loop
- * rather than hanging one Action.
- *
- * When a real caller supplies `passDeadlineMs`, it is one absolute deadline per
- * lane, not one deadline per page. Production otherwise follows the canonical
- * caller signal instead of inventing a latency policy in this provider layer.
- */
 
 /**
  * Every way one returned page can fail the V1 page contract: the per-observation
@@ -163,35 +140,16 @@ function contractFailure(reason: TriageScanPageViolationV1): TriageListLaneHealt
 }
 
 /**
- * The lane health an unanswered page produces.
- *
- * `transient` is the class the shared pacing policy reads as a provider that is
- * busy rather than as a user-actionable refusal, so a later view or manual
- * Refresh retries after a bounded backoff instead of being parked behind a
- * connection the user cannot fix.
- */
-const SCAN_PASS_DEADLINE_FAILURE_V1: TriageListLaneHealthV1 = Object.freeze({
-    kind: 'failed',
-    failure: Object.freeze({
-        class: 'transient',
-        code: 'triage/scanPassDeadline',
-        detail: 'The source did not answer before the aggregate pass deadline.',
-    }),
-});
-
-/**
  * The lane health an exact zero-progress continuation produces.
  *
- * It is the same shape as the lane deadline above, and for the same reason:
- * both are aggregate settlement rather than invariants the source broke.
+ * It is aggregate settlement rather than an invariant the source broke.
  * A page that stays inside every published bound and asks to be called again is
  * a legal page — an omission-only continuation page, which the contract admits
  * precisely so a source can decode tolerantly, is the ordinary shape of it — so
  * classifying it `unsupportedContract` accused a conforming plugin and, worse,
  * discarded every valid page the same lane had already given.
  *
- * `transient` is what the shared pacing policy reads as "ask again later", which
- * is exactly right: the walk is unfinished, not broken. The lane keeps its pages
+ * The walk is unfinished, not broken. The lane keeps its pages
  * and keeps `exhausted: false`, so the window reports a truthful partial.
  */
 function stalledWalkFailure(): TriageListLaneHealthV1 {
@@ -220,7 +178,10 @@ function chargedAgainstLimit(result: Extract<TriageScanResultV1, { kind: 'page' 
 }
 
 function scanInputFor(state: LaneState): TriageScanInputV1 {
-    const completed = state.lane.completed === undefined ? {} : { completed: state.lane.completed };
+    const completed = {
+        ...(state.lane.completed === undefined ? {} : { completed: state.lane.completed }),
+        ...(state.lane.query === undefined ? {} : { query: state.lane.query }),
+    };
     return state.continuation === null
         ? { v: 1, instance: state.lane.configured, ...completed, page: { kind: 'initial', limit: state.pageLimit } }
         : { v: 1, instance: state.lane.configured, ...completed, page: { kind: 'continuation', continuation: state.continuation } };
@@ -230,18 +191,14 @@ export async function runTriageScanPass(input: Readonly<{
     lanes: readonly TriageScanLaneV1[];
     /** Positive per-page request chosen for this aggregate invocation. */
     pageLimit: number;
-    /** The pass stops rotating once this many observations have been qualified. */
+    /** Requested capacity, promoted when the first lane requires a larger atomic page. */
     observationBudget: number;
     nowMs: () => number;
     logger?: Pick<LoggerService, 'warn'>;
     signal?: AbortSignal;
-    /** Optional caller/test-supplied absolute duration for one lane's whole pass. */
-    passDeadlineMs?: number;
 }>): Promise<TriageScanPassResultV1> {
     const pageLimit = Math.max(1, Math.trunc(input.pageLimit));
-    const passDeadlineMs = input.passDeadlineMs;
     const states: LaneState[] = input.lanes.map((lane) => {
-        const deadline = new AbortController();
         return {
             lane,
             pageLimit: Math.max(1, Math.trunc(lane.pageLimit
@@ -250,11 +207,6 @@ export async function runTriageScanPass(input: Readonly<{
             // A lane that never ran is not evidence that the walk finished.
             health: { kind: 'unavailable' },
             exhausted: false,
-            deadlineStartedAtMs: null,
-            deadline,
-            signal: input.signal
-                ? AbortSignal.any([input.signal, deadline.signal])
-                : deadline.signal,
         };
     });
     // A fair share can be smaller than one native page. Admit that first page
@@ -270,9 +222,12 @@ export async function runTriageScanPass(input: Readonly<{
     const contractFailed = new Set<string>();
     const aborted = (): boolean => input.signal?.aborted ?? false;
     let ready = states.slice();
+    // Text search spends one source page per query. Further pages remain explicit
+    // Load More demand instead of silently draining a sparse remote result set.
+    const searched: LaneState[] = [];
     const pending = new Map<LaneState, Promise<Readonly<{
         state: LaneState;
-        settled: RaceWithTimeoutResult<TriageScanResultV1>;
+        settled: PromiseSettledResult<TriageScanResultV1>;
     }>>>();
     let reserved = 0;
 
@@ -291,35 +246,15 @@ export async function runTriageScanPass(input: Readonly<{
                 continue;
             }
 
-            // One controller per LANE, not per page. A provider cannot spend a
-            // fresh deadline on every continuation, while another lane keeps
-            // an independent budget so one unanswered source never consumes
-            // every other source's chance to answer.
-            const nowMs = performance.now();
-            state.deadlineStartedAtMs ??= nowMs;
-            const remainingMs = passDeadlineMs === undefined
-                ? null
-                : Math.max(0, passDeadlineMs - (nowMs - state.deadlineStartedAtMs));
-            if (remainingMs === 0) {
-                // Do not start another provider page after this lane has spent
-                // its absolute budget. An already-resolved page can otherwise
-                // win `Promise.race` against a zero-delay timer forever.
-                state.deadline.abort();
-                state.health = SCAN_PASS_DEADLINE_FAILURE_V1;
-                continue;
-            }
-            const options: PluginCancellationOptions = { signal: state.signal };
+            const options: PluginCancellationOptions = input.signal ? { signal: input.signal } : {};
             reserved += state.pageLimit;
             pending.set(state, (async () => {
-                let settled: RaceWithTimeoutResult<TriageScanResultV1>;
+                let settled: PromiseSettledResult<TriageScanResultV1>;
                 try {
-                    const page = state.lane.scan(scanInputFor(state), options);
-                    settled = remainingMs === null
-                        ? { type: 'resolved', value: await page }
-                        : await raceWithTimeout(page, remainingMs);
+                    settled = { status: 'fulfilled', value: await state.lane.scan(scanInputFor(state), options) };
                 } catch (error) {
                     // A synchronous throw is the same defect as a rejection.
-                    settled = { type: 'rejected', error };
+                    settled = { status: 'rejected', reason: error };
                 }
                 return { state, settled };
             })());
@@ -330,23 +265,13 @@ export async function runTriageScanPass(input: Readonly<{
         const { state, settled } = await Promise.race(pending.values());
         pending.delete(state);
         reserved -= state.pageLimit;
-
-        if (settled.type === 'timeout') {
-            // We are done with this lane, so stop the provider work we
-            // stopped waiting for. Every page received the same signal.
-            state.deadline.abort();
-            // Neither an answer nor a failure. The lane leaves the rotation
-            // as a classified transient failure, and every page it already
-            // gave stays: an unanswered page is not evidence against the
-            // ones that answered.
-            state.health = SCAN_PASS_DEADLINE_FAILURE_V1;
-            continue;
-        }
-        if (settled.type === 'rejected') {
+        // Cancellation remains effective until the provider body has settled.
+        if (aborted()) break;
+        if (settled.status === 'rejected') {
             // A rejected invocation is not provider evidence about the source.
-            const parsed = isPluginError(settled.error)
+            const parsed = isPluginError(settled.reason)
                 ? TriageListInvocationErrorV1Schema.safeParse({
-                    code: settled.error.code, retryable: settled.error.retryable,
+                    code: settled.reason.code, retryable: settled.reason.retryable,
                 })
                 : null;
             const error = parsed?.success
@@ -451,7 +376,7 @@ export async function runTriageScanPass(input: Readonly<{
         // advance independently of whether the page delivered rows or
         // reported omitted observations. An advancing cursor may
         // legitimately traverse any number of empty provider containers;
-        // an unchanged one can only replay this page until the deadline.
+        // an unchanged one can only replay this page.
         if (
             state.continuation !== null
             && state.continuation.token === result.continuation.token
@@ -461,18 +386,9 @@ export async function runTriageScanPass(input: Readonly<{
             continue;
         }
         state.continuation = result.continuation;
-        // A trusted source can answer synchronously. Yielding between prompt
-        // advancing pages lets the lane's one absolute deadline and caller
-        // cancellation run instead of allowing an infinite microtask chain
-        // to starve the daemon. Time remains the bound; this adds no count.
-        await new Promise<void>((resolve) => { setTimeout(resolve, 0); });
-        ready.push(state);
+        if (state.lane.query) searched.push(state);
+        else ready.push(state);
     }
-
-    // Retire every lane signal after its last possible consumer. Resolved
-    // providers have already answered; unresolved providers were aborted at
-    // their timeout above. This also releases caller-signal composition.
-    for (const state of states) state.deadline.abort();
 
     return Object.freeze({
         observationBudget,
@@ -485,11 +401,11 @@ export async function runTriageScanPass(input: Readonly<{
             health: state.health,
             exhausted: state.exhausted,
         }))),
-        // Only the ready queue has more work: failed and finished lanes left
-        // it when they settled. Preserve its rotation order so an unvisited
+        // Ready and query-parked lanes have more work; failed and finished lanes
+        // left those queues when they settled. Preserve rotation so an unvisited
         // lane runs before an earlier lane's next page. An initial frontier
         // needs no fabricated native cursor.
-        stopped: Object.freeze(aborted() ? [] : ready.map((state) => Object.freeze({
+        stopped: Object.freeze(aborted() ? [] : [...ready, ...searched].map((state) => Object.freeze({
             sourceInstanceId: state.lane.sourceInstanceId,
             pageLimit: state.pageLimit,
             ...(state.continuation === null ? {} : { continuation: state.continuation }),

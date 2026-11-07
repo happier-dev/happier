@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useTriageListWindowViewDemand } from './useTriageListWindowViewDemand.js';
 import type { PluginUiHostReadiness } from '@happier-dev/plugin-ui';
 import type { TriageListEntriesResultV1 } from '../../actions/listEntriesProtocol.js';
-import { TRIAGE_VIEW_REFRESH_MIN_INTERVAL_MS, type TriageRefreshTriggerV1 } from '../../refresh/refreshEligibility.js';
+import type { TriageRefreshTriggerV1 } from '../../refresh/refreshEligibility.js';
 import { acquireTriageListWindow, readTriageListWindowReadOwner, refreshTriageListWindow,
   type TriageListWindowHostV1 } from './mountedWindow.js';
 import { createTriageEphemeralSharedScopeFixture } from './ephemeralSharedScope.test-support.js';
@@ -166,9 +166,8 @@ describe('the mounted Triage list view-demand producer', () => {
       nextLease = acquireTriageListWindow(nextHost, nextScope, readiness);
       const acquired = readTriageListWindowReadOwner(nextHost, nextScope);
       expect(acquired === firstOwner).toBe(sameScope);
-      // Exceed the real view pacing boundary so it cannot conceal a spurious
-      // demand. Passing time alone is not a named materialization producer.
-      nowMs += TRIAGE_VIEW_REFRESH_MIN_INTERVAL_MS + 1;
+      // Passing time alone is not a named materialization producer.
+      nowMs += 1;
       await harness.update({ active: true, demand: nextDemand, readiness, readOwner: acquired });
       await nextRead;
       expect(nextRequests).toHaveLength(sameScope ? 0 : 1);

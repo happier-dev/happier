@@ -156,6 +156,41 @@ describe('one materialization pass', () => {
             continuation: { v: 1, token: 'native-next' } }]);
     });
 
+    it('spends one source page for text search and keeps its continuation as partial', async () => {
+        const calls: string[] = [];
+        const source = { ...answeringLane({ sourceInstanceId: INSTANCE_ID, declaredKindIds: ['issue'], scan: async input => {
+            calls.push('query' in input && typeof input.query === 'string' ? input.query : '');
+            return { kind: 'page', observations: [presentObservation('issue', 'match')],
+                evidence: { kind: 'partial', reason: 'more-pages' }, continuation: { v: 1, token: `next-${calls.length}` } };
+        } }), query: 'needle' };
+        const result = await runTriageScanPass({ lanes: [source], pageLimit: 8, observationBudget: 8, nowMs: () => 1_000 });
+        expect(calls).toEqual(['needle']);
+        expect(result.lanes[0]).toMatchObject({ exhausted: false, health: { kind: 'partial' } });
+        expect(result.stopped).toMatchObject([{ sourceInstanceId: INSTANCE_ID, continuation: { token: 'next-1' } }]);
+        expect(result.observations).toHaveLength(1);
+    });
+
+    it('walks advancing pages without scheduling an aggregate yield timer', async () => {
+        const timer = vi.spyOn(globalThis, 'setTimeout');
+        try {
+            const pass = await runTriageScanPass({
+                lanes: [lane({ sourceInstanceId: INSTANCE_ID, declaredKindIds: ['issue'], pages: [
+                    { kind: 'page', evidence: { kind: 'partial', reason: 'pageLimit' },
+                        observations: [presentObservation('issue', 'one')], continuation: { v: 1, token: 'two' } },
+                    { kind: 'page', evidence: { kind: 'partial', reason: 'pageLimit' },
+                        observations: [presentObservation('issue', 'two')], continuation: { v: 1, token: 'three' } },
+                    { kind: 'complete', evidence: WALK_FINISHED, observations: [presentObservation('issue', 'three')] },
+                ] })],
+                pageLimit: 1, observationBudget: 3, nowMs: () => 1000,
+            });
+            expect(pass.observations.map(item => item.entryRef.entryId)).toEqual(['one', 'two', 'three']);
+            expect(pass.lanes[0]?.exhausted).toBe(true);
+            expect(timer).not.toHaveBeenCalled();
+        } finally {
+            timer.mockRestore();
+        }
+    });
+
     it('walks past non-selected kinds before spending the result row budget', async () => {
         const mixed = positionalLane({
             sourceInstanceId: INSTANCE_ID,
@@ -282,39 +317,6 @@ describe('one materialization pass', () => {
         expect(pass.lanes[0]?.exhausted).toBe(true);
     });
 
-    it('lets the absolute deadline settle an infinite prompt advancing walk', async () => {
-        let calls = 0;
-        const pass = await runTriageScanPass({
-            lanes: [answeringLane({
-                sourceInstanceId: INSTANCE_ID,
-                declaredKindIds: ['pull-request'],
-                scan: async () => {
-                    calls += 1;
-                    return {
-                        kind: 'page',
-                        evidence: { kind: 'partial', reason: 'undecodable-items', omittedItemCount: 4 },
-                        observations: [],
-                        continuation: { v: 1, token: `next-${calls}` },
-                    } as unknown as TriageScanResultV1;
-                },
-            })],
-            pageLimit: 16,
-            observationBudget: 64,
-            nowMs: () => 1_000,
-            passDeadlineMs: 10,
-        });
-
-        expect(pass.observations).toEqual([]);
-        expect(pass.lanes[0]?.health).toEqual({
-            kind: 'failed',
-            failure: {
-                class: 'transient',
-                code: 'triage/scanPassDeadline',
-                detail: expect.any(String),
-            },
-        });
-        expect(pass.lanes[0]?.exhausted).toBe(false);
-    });
 
     it('drops every earlier page of the lane that later broke the contract', async () => {
         const pass = await runTriageScanPass({
@@ -549,6 +551,67 @@ describe('one materialization pass', () => {
         expect(pass.stopped).toEqual([]);
     });
 
+    it('keeps caller cancellation through body completion and adopts no late page', async () => {
+        const controller = new AbortController();
+        let completeBody!: (page: TriageScanResultV1) => void;
+        let providerSignal: AbortSignal | undefined;
+        const pending = runTriageScanPass({
+            lanes: [answeringLane({
+                sourceInstanceId: INSTANCE_ID,
+                declaredKindIds: ['pull-request'],
+                // The transport already has headers; cancellation happens while
+                // its body is held, and the body may still settle afterwards.
+                scan: (_input, options) => {
+                    providerSignal = options?.signal;
+                    return new Promise((resolve) => { completeBody = resolve; });
+                },
+            })],
+            signal: controller.signal,
+            pageLimit: 1, observationBudget: 4, nowMs: () => 1_000,
+        });
+        expect(providerSignal?.aborted).toBe(false);
+        controller.abort();
+        expect(providerSignal?.aborted).toBe(true);
+        completeBody(completedPage('late-body'));
+        const pass = await pending;
+        expect(pass.observations).toEqual([]);
+        expect(pass.lanes[0]?.exhausted).toBe(false);
+        expect(pass.stopped).toEqual([]);
+    });
+
+    it('retains admitted pages when caller cancellation stops an unanswered continuation', async () => {
+        const controller = new AbortController();
+        let continuationStarted!: () => void;
+        const started = new Promise<void>((resolve) => { continuationStarted = resolve; });
+        let calls = 0;
+        const pending = runTriageScanPass({
+            lanes: [answeringLane({
+                sourceInstanceId: INSTANCE_ID, declaredKindIds: ['pull-request'],
+                scan: async (_input, options) => {
+                    calls += 1;
+                    if (calls === 1) return {
+                        kind: 'page', evidence: { kind: 'partial', reason: 'pageLimit' },
+                        observations: [presentObservation('pull-request', 'retained')],
+                        continuation: { v: 1, token: 'next' },
+                    };
+                    return new Promise<TriageScanResultV1>((_resolve, reject) => {
+                        options?.signal?.addEventListener('abort', () => reject(new Error('cancelled')), { once: true });
+                        continuationStarted();
+                    });
+                },
+            })],
+            signal: controller.signal,
+            pageLimit: 1, observationBudget: 4, nowMs: () => 1_000,
+        });
+        await started;
+        controller.abort();
+        const pass = await pending;
+        expect(calls).toBe(2);
+        expect(pass.observations.map((observation) => observation.entryRef.entryId)).toEqual(['retained']);
+        expect(pass.lanes[0]?.exhausted).toBe(false);
+        expect(pass.stopped).toEqual([]);
+    });
+
     it('ends the rotation rather than the lane when the observation budget runs out', async () => {
         const pass = await runTriageScanPass({
             lanes: [lane({
@@ -569,20 +632,11 @@ describe('one materialization pass', () => {
     });
 
     /**
-     * The budget is a rotation stop, and a caller may not read it as a ceiling
-     * on how many observations come back.
-     *
-     * It is checked before a lane is asked for a page and never while a page is
-     * adopted, because a page is adopted whole or not at all. A source that
-     * answers short — the ordinary shape when a lane spends its native page on
-     * a scope that holds fewer rows — is therefore asked again while the pass
-     * is one observation under budget, and returns a whole page more. The
-     * ceiling is `observationBudget - 1 + pageLimit`.
-     *
-     * The mounted store's neutral read (`listWindowStore.ts#scanInputFor`)
-     * depends on exactly this: it is why the aggregate fold really does cut the
-     * pass's rows, and why the `order` that read names decides which of them
-     * the mount retains.
+     * Capacity is reserved before asking for a whole page, never while the
+     * answer is adopted. A short page releases unused capacity, but that does
+     * not authorize fetching a later atomic page whose limit cannot fit.
+     * Its frontier remains explicit Load More demand, so no provider cursor
+     * advances past rows the aggregate result cannot carry.
      */
     it('leaves a page behind its frontier when the remaining budget cannot carry it whole', async () => {
         const shortPage = (page: number): TriageScanResultV1 => ({
@@ -650,168 +704,6 @@ describe('one materialization pass', () => {
         expect(pass.observations.map((observation) => observation.entryRef.entryId)).toEqual(['21', '22']);
         expect(pass.lanes.map((entry) => entry.health.kind)).toEqual(['failed', 'walkFinished']);
     });
-    /**
-     * `CONTRACT.md` §5.2 and `PLAN.md` `REQ-13`. A source that neither answers
-     * nor fails is the one outcome the classification never covered: without an
-     * owner-local deadline the pass simply never settles, so the list Action
-     * behind it never returns and every other connection's rows are held
-     * hostage by one unanswered page.
-     */
-    it('settles an unanswered page as a classified transient failure and keeps the rows it already had', async () => {
-        const signals: AbortSignal[] = [];
-        let asked = 0;
-        const pass = await runTriageScanPass({
-            lanes: [
-                answeringLane({
-                    sourceInstanceId: INSTANCE_ID,
-                    declaredKindIds: ['pull-request'],
-                    scan: async (_scanInput, options) => {
-                        if (options?.signal) signals.push(options.signal);
-                        asked += 1;
-                        if (asked === 1) {
-                            return {
-                                kind: 'page',
-                                evidence: { kind: 'partial', reason: 'pageLimit' },
-                                observations: [presentObservation('pull-request', '17')],
-                                continuation: { v: 1, token: 'next' },
-                            } as unknown as TriageScanResultV1;
-                        }
-                        // The provider never answers this one.
-                        return await new Promise<TriageScanResultV1>(() => {});
-                    },
-                }),
-                lane({
-                    sourceInstanceId: OTHER_INSTANCE_ID,
-                    declaredKindIds: ['pull-request'],
-                    pages: [completedPage('21')],
-                }),
-            ],
-            pageLimit: 4,
-            observationBudget: 64,
-            nowMs: () => 1_000,
-            passDeadlineMs: 5,
-        });
-
-        expect(pass.lanes[0]?.health).toEqual({
-            kind: 'failed',
-            failure: {
-                // `transient` is what the shared pacing policy treats as a
-                // provider that is busy rather than a user-actionable refusal,
-                // so a later view or manual Refresh retries after a bounded
-                // backoff instead of being parked.
-                class: 'transient',
-                code: 'triage/scanPassDeadline',
-                detail: expect.any(String),
-            },
-        });
-        // An unanswered lane never claims a settled end of its walk.
-        expect(pass.lanes[0]?.exhausted).toBe(false);
-        // A deadline is not a contract violation: the page this lane already
-        // gave stays, and so does every other lane's.
-        expect(pass.observations.map((observation) => observation.entryRef.entryId))
-            .toEqual(['17', '21']);
-        // We stopped waiting, so the provider work stops too — otherwise the
-        // pass that replaces this one starts a second walk beside a first that
-        // is still running.
-        expect(signals.at(-1)?.aborted).toBe(true);
-    });
-
-    it('applies nothing a timed-out page returns while the pass is still running', async () => {
-        let settleLate: ((result: TriageScanResultV1) => void) | undefined;
-        let slowSignal: AbortSignal | undefined;
-        const pass = await runTriageScanPass({
-            lanes: [
-                answeringLane({
-                    sourceInstanceId: INSTANCE_ID,
-                    declaredKindIds: ['pull-request'],
-                    // Never answers before the deadline.
-                    scan: async (_input, options) => await new Promise<TriageScanResultV1>((resolve) => {
-                        slowSignal = options?.signal;
-                        settleLate = resolve;
-                    }),
-                }),
-                answeringLane({
-                    sourceInstanceId: OTHER_INSTANCE_ID,
-                    declaredKindIds: ['pull-request'],
-                    scan: async () => {
-                        // Lanes now start independently. Release the abandoned
-                        // answer only after its real deadline signal fires.
-                        await new Promise<void>((resolve) => {
-                            if (slowSignal?.aborted) resolve();
-                            else slowSignal?.addEventListener('abort', () => resolve(), { once: true });
-                        });
-                        // The abandoned lane answers now, while the pass is
-                        // still walking this one.
-                        settleLate?.(completedPage('late'));
-                        return completedPage('21');
-                    },
-                }),
-            ],
-            pageLimit: 4,
-            observationBudget: 64,
-            nowMs: () => 1_000,
-            passDeadlineMs: 5,
-        });
-
-        expect(pass.observations.map((observation) => observation.entryRef.entryId)).toEqual(['21']);
-        expect(pass.lanes[0]?.health).toMatchObject({ kind: 'failed', failure: { class: 'transient' } });
-        expect(pass.lanes[0]?.exhausted).toBe(false);
-    });
-
-    it('spends one absolute deadline across the whole pass instead of restarting it for each page', async () => {
-        vi.useFakeTimers();
-        try {
-            let call = 0;
-            const signals: AbortSignal[] = [];
-            const startedAt = performance.now();
-            const pending = runTriageScanPass({
-                lanes: [answeringLane({
-                    sourceInstanceId: INSTANCE_ID,
-                    declaredKindIds: ['pull-request'],
-                    scan: async (_scanInput, options) => {
-                        if (options?.signal) signals.push(options.signal);
-                        call += 1;
-                        if (call === 1) {
-                            await new Promise<void>((resolve) => setTimeout(resolve, 8));
-                            return {
-                                kind: 'page',
-                                evidence: { kind: 'partial', reason: 'pageLimit' },
-                                observations: [presentObservation('pull-request', '17')],
-                                continuation: { v: 1, token: 'next' },
-                            } as unknown as TriageScanResultV1;
-                        }
-                        return await new Promise<TriageScanResultV1>(() => {});
-                    },
-                })],
-                pageLimit: 4,
-                observationBudget: 64,
-                nowMs: () => 1_000,
-                passDeadlineMs: 12,
-            });
-
-            // Page one spends eight of the lane's twelve milliseconds. The
-            // unanswered continuation receives only the four that remain.
-            await vi.advanceTimersByTimeAsync(8);
-            // Run the deliberate between-pages macrotask without also advancing
-            // the second page's remaining four-millisecond deadline.
-            await vi.advanceTimersToNextTimerAsync();
-            expect(call).toBe(2);
-            const elapsedBeforeSecondPage = performance.now() - startedAt;
-            await vi.advanceTimersByTimeAsync(12 - elapsedBeforeSecondPage);
-            const pass = await pending;
-
-            expect(performance.now() - startedAt).toBe(12);
-            expect(pass.observations.map((observation) => observation.entryRef.entryId)).toEqual(['17']);
-            expect(pass.lanes[0]?.health).toMatchObject({
-                kind: 'failed',
-                failure: { class: 'transient', code: 'triage/scanPassDeadline' },
-            });
-            expect(new Set(signals).size).toBe(1);
-            expect(signals[0]?.aborted).toBe(true);
-        } finally {
-            vi.useRealTimers();
-        }
-    }, 1_000);
 
     /**
      * `CONTRACT.md` §5.1. The published schema can only enforce the global
@@ -1066,10 +958,6 @@ describe('one materialization pass', () => {
             pageLimit: 16,
             observationBudget: 64,
             nowMs: () => 1_000,
-            // The wrong implementation eventually exits only by spending this
-            // wall-clock deadline; the continuation comparison must settle it
-            // structurally on the first repeated page.
-            passDeadlineMs: 20,
         });
 
         expect(pass.lanes[0]?.health).toMatchObject({

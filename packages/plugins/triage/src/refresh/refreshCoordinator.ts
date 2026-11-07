@@ -2,9 +2,6 @@ import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
 
 import {
     evaluateRefreshEligibility,
-    recordRefreshFailure,
-    TRIAGE_REFRESH_BACKOFF_IDLE_V1,
-    type TriageRefreshBackoffStateV1,
     type TriageRefreshPacingBlockV1,
     type TriageRefreshTriggerV1,
 } from './refreshEligibility.js';
@@ -15,8 +12,7 @@ import {
  * Provider-derived Triage data is not an Account-persisted corpus: rich detail
  * and mutations always require a live source materialization. So the only thing
  * that needs coordinating is *provider work* — each configured source instance
- * paced independently, so an interaction burst cannot multiply into provider
- * calls and a failing source cannot be hammered.
+ * honoring each configured source instance's own retry deadline.
  *
  * This owner is deliberately thin. Pacing is `refreshEligibility`. Presentation
  * continuity — last-known-good retention, stale-while-revalidate, and a refresh
@@ -48,16 +44,15 @@ import {
 /** What one pass is given. Deliberately not a checkpoint, cursor, or resume token. */
 export type TriageRefreshPassInputV1 = Readonly<{
     sourceInstanceIds: readonly string[];
-    /** Canonical cancellation for retirement, reconfiguration, or shutdown. */
+    /** Canonical caller cancellation when the store is disposed or shuts down. */
     signal: AbortSignal;
 }>;
 
 /**
  * How one pass ended.
  *
- * `interrupted` is the honest third arm: an aborted, deadline-stopped, or
- * currentness-rejected walk is neither a completed walk (which would clear
- * backoff) nor provider evidence about the source (which would create one).
+ * `interrupted` is the honest third arm: an aborted walk is neither a completed
+ * walk (which clears the retry deadline) nor new provider failure evidence.
  */
 export type TriageRefreshPassOutcomeV1 =
     | Readonly<{ kind: 'completed' }>
@@ -114,16 +109,15 @@ export type TriageRefreshCoordinatorV1 = Readonly<{
     }>): TriageRefreshPacingBlockV1 | null;
     /** Retirement, reconfiguration, or contribution loss for one instance. */
     retire(sourceInstanceId: string): void;
+    /** Superseded acquisition: abort active reads, preserving provider pacing. */
+    cancel(): void;
     dispose(): void;
 }>;
 
 /** Process-local pacing state for one configured source instance. */
 type RefreshSlot = {
     readonly sourceInstanceId: string;
-    /** Non-null exactly while a provider pass is running, so retirement can cancel it. */
-    abortController: AbortController | null;
-    lastReadStartedAtMs: number | null;
-    backoff: TriageRefreshBackoffStateV1;
+    retryNotBeforeMs: number | null;
     retired: boolean;
 };
 
@@ -138,26 +132,19 @@ export function createTriageRefreshCoordinator(deps: Readonly<{
         outcome: TriageRefreshPassOutcomeV1;
     }>[] >;
     nowMs: () => number;
-    random?: () => number;
     /**
      * A rejected pass is a defect in the pass runner, not provider evidence.
      * It is reported here and then treated exactly like an interruption.
      */
     onUnexpectedError?: (error: unknown) => void;
 }>): TriageRefreshCoordinatorV1 {
-    const random = deps.random ?? Math.random;
     const slots = new Map<string, RefreshSlot>();
+    const activePasses = new Set<AbortController>();
     let disposed = false;
 
     async function executePass(activeSlots: readonly RefreshSlot[]): Promise<void> {
         const controller = new AbortController();
-        const startedAtMs = deps.nowMs();
-        for (const slot of activeSlots) {
-            slot.abortController = controller;
-            // Measured from the read start, so a slow pass cannot turn the minimum
-            // interval into "one pass duration plus one interval".
-            slot.lastReadStartedAtMs = startedAtMs;
-        }
+        activePasses.add(controller);
         let outcomes: readonly Readonly<{
             sourceInstanceId: string;
             outcome: TriageRefreshPassOutcomeV1;
@@ -171,10 +158,9 @@ export function createTriageRefreshCoordinator(deps: Readonly<{
             deps.onUnexpectedError?.(error);
             outcomes = [];
         } finally {
-            for (const slot of activeSlots) {
-                if (slot.abortController === controller) slot.abortController = null;
-            }
+            activePasses.delete(controller);
         }
+        if (controller.signal.aborted) return;
         const bySource = new Map(outcomes.map((entry) => [entry.sourceInstanceId, entry.outcome]));
         for (const slot of activeSlots) {
             // A retired instance's late result cannot write pacing state for an
@@ -182,16 +168,11 @@ export function createTriageRefreshCoordinator(deps: Readonly<{
             if (slot.retired) continue;
             const outcome = bySource.get(slot.sourceInstanceId) ?? { kind: 'interrupted' as const };
             if (outcome.kind === 'completed') {
-                slot.backoff = TRIAGE_REFRESH_BACKOFF_IDLE_V1;
+                slot.retryNotBeforeMs = null;
                 continue;
             }
             if (outcome.kind === 'failed') {
-                slot.backoff = recordRefreshFailure({
-                    backoff: slot.backoff,
-                    failure: outcome.failure,
-                    nowMs: deps.nowMs(),
-                    random,
-                });
+                slot.retryNotBeforeMs = outcome.failure.retryNotBeforeMs ?? null;
             }
         }
     }
@@ -201,9 +182,7 @@ export function createTriageRefreshCoordinator(deps: Readonly<{
         if (existing) return existing;
         const slot: RefreshSlot = {
             sourceInstanceId,
-            abortController: null,
-            lastReadStartedAtMs: null,
-            backoff: TRIAGE_REFRESH_BACKOFF_IDLE_V1,
+            retryNotBeforeMs: null,
             retired: false,
         };
         slots.set(sourceInstanceId, slot);
@@ -212,8 +191,6 @@ export function createTriageRefreshCoordinator(deps: Readonly<{
 
     function closeSlot(slot: RefreshSlot): void {
         slot.retired = true;
-        slot.abortController?.abort();
-        slot.abortController = null;
         slots.delete(slot.sourceInstanceId);
     }
 
@@ -238,10 +215,8 @@ export function createTriageRefreshCoordinator(deps: Readonly<{
             for (const sourceInstanceId of input.sourceInstanceIds) {
                 const existing = slots.get(sourceInstanceId);
                 const eligibility = evaluateRefreshEligibility({
-                    trigger: input.trigger,
                     nowMs: deps.nowMs(),
-                    lastReadStartedAtMs: existing?.lastReadStartedAtMs ?? null,
-                    backoff: existing?.backoff ?? TRIAGE_REFRESH_BACKOFF_IDLE_V1,
+                    retryNotBeforeMs: existing?.retryNotBeforeMs ?? null,
                 });
                 if (eligibility.kind === 'blocked') {
                     blocked.push({
@@ -268,10 +243,8 @@ export function createTriageRefreshCoordinator(deps: Readonly<{
             const slot = slots.get(input.sourceInstanceId);
             if (slot?.retired) return null;
             const eligibility = evaluateRefreshEligibility({
-                trigger: input.trigger,
                 nowMs: deps.nowMs(),
-                lastReadStartedAtMs: slot?.lastReadStartedAtMs ?? null,
-                backoff: slot?.backoff ?? TRIAGE_REFRESH_BACKOFF_IDLE_V1,
+                retryNotBeforeMs: slot?.retryNotBeforeMs ?? null,
             });
             return eligibility.kind === 'blocked'
                 ? { reason: eligibility.reason, nextEligibleAtMs: eligibility.nextEligibleAtMs }
@@ -281,9 +254,13 @@ export function createTriageRefreshCoordinator(deps: Readonly<{
             const slot = slots.get(sourceInstanceId);
             if (slot) closeSlot(slot);
         },
+        cancel(): void {
+            for (const controller of activePasses) controller.abort();
+        },
         dispose(): void {
             if (disposed) return;
             disposed = true;
+            for (const controller of activePasses) controller.abort();
             for (const slot of [...slots.values()]) closeSlot(slot);
         },
     } satisfies TriageRefreshCoordinatorV1);
