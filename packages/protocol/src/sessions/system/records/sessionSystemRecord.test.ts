@@ -139,6 +139,18 @@ it('requires explicit closed V1 stored envelopes while retaining predecessor hos
 });
 
 describe('session system record protocol schemas', () => {
+  it('registers compact Usage facts and rejects malformed or newer opened payloads', () => {
+    const schema = protocolSchema('SessionSystemRecordStoredUpsertRequestSchema');
+    const payloadSchema = protocol.getSessionSystemRecordPayloadSchema('usage', 'work_facts.v1');
+    const request = { address: { owner: 'host', namespace: 'usage', kind: 'work_facts.v1', localId: 'how_you_work' },
+      content: { t: 'plain', v: { v: 1, seq: 7, evidence: { status: 'partial', activityAtMs: [100] } } }, expectedRevision: null };
+    expect(schema.safeParse(request).success).toBe(true);
+    expect(payloadSchema?.safeParse(request.content.v).success).toBe(true);
+    for (const payload of [{ v: 2, seq: 7, evidence: { status: 'partial' } },
+      { v: 1, seq: 7, evidence: { status: 'partial', phaseEvents: [{ content: 'private body' }] } }]) {
+      expect(payloadSchema?.safeParse(payload).success).toBe(false);
+    }
+  });
   it('registers owner-private Permission mediation records while leaving generic record CRUD unavailable', () => {
     expect(protocol.SESSION_SYSTEM_RECORD_CATALOG).toMatchObject({
       permission: {

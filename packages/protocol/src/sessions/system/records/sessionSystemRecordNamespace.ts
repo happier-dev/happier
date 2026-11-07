@@ -1,3 +1,4 @@
+import { USAGE_SESSION_WORK_FACTS_SYSTEM_RECORD_ADDRESS } from '../../../usage/usageTimingV1.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
@@ -7,6 +8,7 @@ import { SESSION_PERMISSION_SYSTEM_RECORD_NAMESPACE } from '../../permissions/pe
 
 export const SESSION_SYSTEM_RECORD_NAMESPACES = [
   SESSION_SYSTEM_RECORD_MEMORY_NAMESPACE,
+  USAGE_SESSION_WORK_FACTS_SYSTEM_RECORD_ADDRESS.namespace,
   'surface',
   SESSION_SYSTEM_RECORD_ACTIVITY_NAMESPACE,
   SESSION_PERMISSION_SYSTEM_RECORD_NAMESPACE,

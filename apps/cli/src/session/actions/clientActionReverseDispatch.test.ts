@@ -1,4 +1,3 @@
-import { WidgetInstanceActionInputSchemasV1 } from '@happier-dev/protocol/widgets/actionsV1';
 import { describe, expect, it } from 'vitest';
 import { createActionExecutor, getActionSpec, RPC_METHODS, RPC_ERROR_CODES, UiActionDispatchRequestV1Schema, ActionIdSchema } from '@happier-dev/protocol';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
@@ -9,6 +8,8 @@ import { ApprovalRequestV2Schema, StoredApprovalRequestSchema } from '@happier-d
 import { projectApprovalExecutionFailureV2, readApprovalExecutionFailure } from '@happier-dev/protocol/approvals/approvalExecutionFailure';
 import { uiBrowserAutomationDispatchMethod, UiBrowserAutomationDispatchRequestV1Schema } from '@happier-dev/protocol/browser/automation/reverseDispatchV1';
 import { BrowserDiagnosticsEvalResultV1Schema } from '@happier-dev/protocol/browser/diagnostics/v1';
+import { WidgetInstanceActionInputSchemasV1 } from '@happier-dev/protocol/widgets/actionsV1';
+import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 
 function executor(client: ClientActionMachineRpc | null) {
   return createActionExecutor({ ...createUnavailableActionTransportDeps(),
@@ -38,6 +39,67 @@ describe('client Action reverse delivery', () => {
       context: { surface: 'agent', authority: 'account_automation', defaultSessionId: 'background-agent' } }))
       .toEqual({ ok: true, result: { status: 'applied' } });
   });
+  it('routes Usage history to the Account client while the invoking Session is backgrounded', async () => {
+    const input = { query: normalizeUsageQuery({ period: { relative: '90days' } }), operation: 'status' as const };
+    const result = { status: 'idle', progress: { selected: 0, notRead: 0, completed: 0, failed: 0 } };
+    const methods: string[] = [];
+    const dispatch = createClientActionReverseDispatcher(() => ({
+      hasConnectedClientRpcHandler: method => method === RPC_METHODS.UI_ACTION_EXECUTE,
+      callConnectedClientRpc: async (method, payload, options) => {
+        methods.push(method);
+        expect(UiActionDispatchRequestV1Schema.parse(payload)).toMatchObject({ actionId: 'usage.history.read', input });
+        options.onIssued();
+        return { ok: true, result: { v: 1, execution: { ok: true, result } } };
+      },
+    }));
+    expect(await dispatch({ actionId: 'usage.history.read', input,
+      context: { surface: 'agent', authority: 'account_automation', defaultSessionId: 'background-agent' } }))
+      .toEqual({ ok: true, result });
+    expect(methods).toEqual([RPC_METHODS.UI_ACTION_EXECUTE]);
+  });
+  it('changes Space membership through the answering Account client while the invoking Session is backgrounded', async () => {
+    const input = { sessionId: 'target-session', operation: 'add' as const, spaceId: 'space',
+      spaceSettingsTarget: { serverId: 'catalog-home', accountId: 'catalog-account' } };
+    const result = getActionSpec('session.space_membership.set').outputSchema!.parse({
+      sessionId: input.sessionId, operation: input.operation, spaceId: input.spaceId,
+      tagIds: ['membership-tag'], smartMatchMayRemain: false,
+    });
+    const methods: string[] = [];
+    const dispatch = createClientActionReverseDispatcher(() => ({
+      hasConnectedClientRpcHandler: method => method === RPC_METHODS.UI_ACTION_EXECUTE,
+      callConnectedClientRpc: async (method, payload, options) => {
+        methods.push(method);
+        expect(UiActionDispatchRequestV1Schema.parse(payload)).toMatchObject({ actionId: 'session.space_membership.set', input });
+        options.onIssued();
+        return { ok: true, result: { v: 1, execution: { ok: true, result } } };
+      },
+    }));
+    expect(await dispatch({ actionId: 'session.space_membership.set', input,
+      context: { surface: 'agent', authority: 'account_automation', defaultSessionId: 'background-agent' } }))
+      .toEqual({ ok: true, result });
+    expect(methods).toEqual([RPC_METHODS.UI_ACTION_EXECUTE]);
+  });
+  it.each(['agent', 'mcp', 'cli'] as const)('opens a workspace tab from %s on the exact answering client with the caller Session backgrounded', async surface => {
+    const input = { href: '/settings/notifications', mode: 'newTab', reuseExisting: false, clientId: 'usage-app' };
+    const result = getActionSpec('workspace.tabs.open').outputSchema!.parse({ ok: true });
+    const effects: string[] = [];
+    const caller = executor({
+      hasConnectedClientRpcHandler: method => method === RPC_METHODS.UI_ACTION_EXECUTE,
+      callConnectedClientRpc: async (method, payload, options) => {
+        if (method !== RPC_METHODS.UI_ACTION_EXECUTE) return { ok: false, errorCode: RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE };
+        expect(options.answeringClient).toEqual({ clientId: input.clientId, requireSingle: true });
+        expect(UiActionDispatchRequestV1Schema.parse(payload)).toMatchObject({ actionId: 'workspace.tabs.open', input,
+          context: { defaultSessionId: 'background-agent' } });
+        options.onIssued();
+        effects.push(input.href);
+        return { ok: true, result: { v: 1, execution: { ok: true, result } } };
+      },
+    });
+    expect(await caller.execute('workspace.tabs.open', input,
+      { surface, authority: 'account_automation', defaultSessionId: 'background-agent' })).toEqual({ ok: true, result });
+    expect(effects).toEqual([input.href]);
+  });
+
   it.each(['agent', 'mcp', 'cli'] as const)('routes a named dashboard from %s to the answering App while the caller Session is in the background', async surface => {
     const input = WidgetInstanceActionInputSchemasV1['widgets.area.layout.select'].parse({ surface: {
       serverId: 'home', accountId: 'viewer', owner: { kind: 'corePage', pageId: 'usage', area: 'main', layoutId: 'costs' },
@@ -62,6 +124,54 @@ describe('client Action reverse delivery', () => {
     expect(selections).toBe(1);
   });
 
+  it.each(['sessionBoard', 'companion'] as const)('routes widget refresh to its explicit %s owner instead of the caller Session', async kind => {
+    const input = WidgetInstanceActionInputSchemasV1['widgets.item.refresh'].parse({ ref: {
+      surface: { serverId: 'home', accountId: 'viewer', owner: { kind, sessionId: 'widget-session' } }, instanceId: 'checks',
+    } });
+    const result = getActionSpec('widgets.item.refresh').outputSchema!.parse({ ...input, status: 'refreshed' });
+    const calls: string[] = [];
+    const dispatch = createClientActionReverseDispatcher(() => ({
+      hasConnectedClientRpcHandler: () => true,
+      callConnectedClientRpc: async (method, _payload, options) => {
+        calls.push(method);
+        if (method !== sessionUiActionClientRpcMethod('widget-session')) return { ok: false, errorCode: RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE };
+        options.onIssued();
+        return { ok: true, result: { v: 1, execution: { ok: true, result } } };
+      },
+    }));
+    expect(await dispatch({ actionId: 'widgets.item.refresh', input,
+      context: { surface: 'agent', authority: 'account_automation', defaultSessionId: 'background-agent' } })).toEqual({ ok: true, result });
+    expect(calls).toEqual([sessionUiActionClientRpcMethod('widget-session')]);
+  });
+
+  it.each([
+    { actionId: 'session.messages.pins', input: { op: 'read', sessionId: 'target-session' }, result: { status: 'ready', sessionId: 'target-session', pins: [] } },
+    { actionId: 'projects.sources.moveToTeam', input: { serverId: 'home', sourceId: 'source',
+      expectedRevision: 1, teamId: 'team', requestKey: 'move-1' }, result: { kind: 'held', childOperations: [] } },
+    { actionId: 'links.openExternal', input: { url: 'https://example.test/docs' }, result: { status: 'opened' } },
+    { actionId: 'file.view.preference.set', input: { mutation: { kind: 'select',
+      selector: { kind: 'extension', value: '.md' }, viewer: { kind: 'builtin' } } },
+      result: { status: 'applied', settingsVersion: 2 } },
+  ] as const)('routes $actionId from a background Agent through the Account answering client', async ({ actionId, input, result }) => {
+    const methods: string[] = [];
+    const caller = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+      isActionApprovalRequired: () => false,
+      clientActionExecute: createClientActionReverseDispatcher(() => ({
+        hasConnectedClientRpcHandler: () => true,
+        callConnectedClientRpc: async (method, payload, options) => {
+          methods.push(method);
+          expect(UiActionDispatchRequestV1Schema.parse(payload)).toMatchObject({ actionId,
+            input, context: { defaultSessionId: 'background-agent' } });
+          options.onIssued();
+          return { ok: true, result: { v: 1, execution: { ok: true, result } } };
+        },
+      })),
+    });
+    expect(await caller.execute(actionId, { ...input, clientId: 'links-client' },
+      { surface: 'agent', authority: 'account_automation', defaultSessionId: 'background-agent' }))
+      .toEqual({ ok: true, result });
+    expect(methods).toEqual([RPC_METHODS.UI_ACTION_EXECUTE]);
+  });
   it.each([
     { clientId: 'app-b', clients: ['app-a', 'app-b'], expected: 'opened' },
     { clientId: undefined, clients: ['app-b'], expected: 'opened' },
@@ -231,6 +341,9 @@ describe('client Action reverse delivery', () => {
     { actionId: 'notifications.sounds.preview', input: {}, sessionId: 'invoking-session' },
     { actionId: 'ui.find', input: { op: 'read' }, sessionId: 'invoking-session' },
     { actionId: 'ui.prompts.picker.open', input: {}, sessionId: 'invoking-session' },
+    { actionId: 'ui.prompts.picker.select', input: { composerRef: { kind: 'session', sessionId: 'target-session' }, selection: { kind: 'doc', artifactId: 'doc' } }, sessionId: 'target-session' },
+    { actionId: 'ui.prompts.picker.apply', input: { composerRef: { kind: 'session', sessionId: 'target-session' }, mode: 'send' }, sessionId: 'target-session' },
+    { actionId: 'ui.prompts.history', input: { composerRef: { kind: 'session', sessionId: 'target-session' }, op: 'page' }, sessionId: 'target-session' },
     { actionId: 'ui.prompts.picker.open', input: { composerRef: { kind: 'session', sessionId: 'target-session' } }, sessionId: 'target-session' },
     { actionId: 'composer.transaction.apply', input: { scope: { serverId: 'home', accountId: 'account' },
       ref: { kind: 'session', sessionId: 'target-session' }, transaction: { expectedRevision: 1,
@@ -343,7 +456,12 @@ describe('client Action reverse delivery', () => {
     } })).resolves.toMatchObject({ ok: true, result: { commands: [] } });
     expect(delivered).toEqual([method]);
   });
-  it('does not replace an explicit new-session composer with the invoking Session', async () => {
+  it.each([
+    { actionId: 'ui.prompts.picker.open', input: {} },
+    { actionId: 'ui.prompts.picker.select', input: { selection: { kind: 'builtIn', token: '/help' } } },
+    { actionId: 'ui.prompts.picker.apply', input: { mode: 'insert' } },
+    { actionId: 'ui.prompts.history', input: { op: 'read' } },
+  ] as const)('does not replace the explicit new-session composer for $actionId with the invoking Session', async ({ actionId, input }) => {
     const methods: string[] = [];
     const dispatch = createClientActionReverseDispatcher(() => ({
       hasConnectedClientRpcHandler: () => true,
@@ -353,7 +471,7 @@ describe('client Action reverse delivery', () => {
         return { ok: false, errorCode: 'RPC_CLIENT_AMBIGUOUS' };
       },
     }));
-    expect(await dispatch({ actionId: 'ui.prompts.picker.open', input: { composerRef: { kind: 'newSession', instanceId: 'new-composer' } },
+    expect(await dispatch({ actionId, input: { ...input, composerRef: { kind: 'newSession', instanceId: 'new-composer' } },
       context: { surface: 'agent', defaultSessionId: 'invoking-session' } }))
       .toMatchObject({ ok: false, errorCode: 'client_ambiguous' });
     expect(methods).toEqual([RPC_METHODS.UI_ACTION_EXECUTE]);
@@ -536,6 +654,11 @@ describe('client Action reverse delivery', () => {
   });
 
   it.each([
+    { actionId: 'projects.sources.moveToTeam', input: { serverId: 'home', sourceId: 'source',
+      expectedRevision: 1, teamId: 'team', requestKey: 'move-1' },
+      result: { kind: 'held', childOperations: [] },
+      absent: expect.objectContaining({ ok: false, errorCode: 'unavailable', error: 'noClient',
+        details: expect.objectContaining({ reason: 'client_unavailable', recovery: expect.objectContaining({ kind: 'connect_client' }) }) }) },
     { actionId: 'session.work.get', input: { sessionId: 'lead' }, result: {
       status: 'ready', sessionId: 'lead', summary: { outstanding: 1, needsYou: 0, stalled: 0, sessions: 1, runs: 0 },
       items: [], managedRuns: { phase: 'loaded', refreshFailed: false },
@@ -598,7 +721,7 @@ describe('client Action reverse delivery', () => {
   ] as const)('opens the exact comparison through $surface (Session caller: $sessionCaller) without resuming headlessly', async ({ surface, sessionCaller }) => {
     const input = { sessionId: 'session', serverId: 'home', destination: { kind: 'scmReview',
       comparison: { kind: 'workingTree' }, view: 'walkthrough', explain: true, comparisonId: 'a'.repeat(64) } } as const;
-    const expectedMethod = surface === 'cli' && !sessionCaller ? RPC_METHODS.UI_ACTION_EXECUTE : sessionUiActionClientRpcMethod(input.sessionId);
+    const expectedMethod = RPC_METHODS.UI_ACTION_EXECUTE;
     const deliveredMethods: string[] = [];
     const client: ClientActionMachineRpc = {
       hasConnectedClientRpcHandler: method => method === expectedMethod,
@@ -621,7 +744,7 @@ describe('client Action reverse delivery', () => {
       ok: false, errorCode: 'unavailable', error: 'noClient',
     });
   });
-  it.each(['agent', 'mcp'] as const)('delivers the secret-free SSH lifecycle to the answering App for %s', async surface => {
+  it.each(['cli', 'agent', 'mcp'] as const)('delivers the secret-free SSH lifecycle to the answering App for %s', async surface => {
     const operations = [
       { actionId: 'machines.add.ssh.start', input: { serverId: 'home', savedHostId: 'saved-box', expectedHostRevision: 4 }, result: { taskId: 'ssh-task' } },
       { actionId: 'machines.add.ssh.status', input: { taskId: 'ssh-task' }, result: { taskId: 'ssh-task', status: 'running', currentStepId: null,
@@ -649,8 +772,6 @@ describe('client Action reverse delivery', () => {
       expect(await executor(client).execute(operation.actionId, operation.input, context)).toEqual({ ok: true, result: operation.result });
       expect(await executor(disconnectedClient).execute(operation.actionId, operation.input, context)).toMatchObject({ ok: false, errorCode: 'unavailable', error: 'noClient' });
     }
-    expect(delivered).toBe(operations.length);
-    expect((await executor(client).execute('machines.add.ssh.start', operations[0].input, { ...context, surface: 'cli' })).ok).toBe(false);
     expect(delivered).toBe(operations.length);
   });
 

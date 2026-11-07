@@ -16,6 +16,7 @@ import { TriggerRunsOnRow } from '@/components/workflows/triggers/TriggerRunsOnR
 import { resolveTriggerEditorHref } from '@/components/workflows/triggers/triggerEditorDestination';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import type { UsageCoachRemedy } from '@happier-dev/protocol/usage/coach/coachRemedy';
+import { countUsageCheckedSessions } from '@happier-dev/protocol/usage/resolveUsageHowYouWork';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
@@ -33,7 +34,7 @@ import { formatTokenCount, formatUsageCost } from '@/utils/format/usageNumbers';
 import { getPreferredLanguage, t } from '@/text';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 import { UsagePlanDisclosure } from './plans/UsagePlanParts';
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 import { UsageCoachSettingsGroup } from '../UsageCoachSettingsGroup';
 import {
   UsageBodyInsufficient,
@@ -151,15 +152,19 @@ function UsageCoachFindingTrend(props: Readonly<{ finding: UsageCoachFinding; te
   const last = sample.points[sample.points.length - 1]!;
   // The headline measurement is the finding's own figure; this line is the series' latest sample, which may differ.
   // Dated, so a latest reading of 0 beside a headline of 56.3k reads as a later moment, not a contradiction.
-  const caption = t('usage.board.coach.latestSample', {
-    value: `${formatMeasurement({ ...sample, value: last.value })} · ${formatUsageObservedAt(last.observedAtMs)}`,
-  });
+  // The value and its moment take a line each: one ragged wrap through the date read as noise in this narrow column.
+  const latest = t('usage.board.coach.latestSample', { value: formatMeasurement({ ...sample, value: last.value }) });
+  const observedAt = formatUsageObservedAt(last.observedAtMs);
+  const caption = `${latest} · ${observedAt}`;
   return (
     <View style={styles.trend} testID={props.testID}>
       <StackedSeriesChart theme={chartTheme} variant="line" size="inline" viewportHeight={24} label={caption}
         series={[{ id: sample.metric, label: caption, color: theme.colors.text.secondary,
           points: sample.points.map(point => ({ id: point.evidenceId, x: point.observedAtMs, y: point.value })) }]} />
-      <Text style={[styles.quiet, { fontSize: metrics.subtitle.fontSize, lineHeight: metrics.subtitle.lineHeight }]}>{caption}</Text>
+      <View accessible accessibilityLabel={caption}>
+        <Text style={[styles.quiet, { fontSize: metrics.subtitle.fontSize, lineHeight: metrics.subtitle.lineHeight }]} numberOfLines={1}>{latest}</Text>
+        <Text style={[styles.quiet, { fontSize: metrics.subtitle.fontSize, lineHeight: metrics.subtitle.lineHeight }]} numberOfLines={1}>{observedAt}</Text>
+      </View>
     </View>
   );
 }
@@ -344,7 +349,7 @@ export function UsageCoachWidget(props: UsageBodyProps) {
   const summary = [
     { key: 'findings', label: t('usage.board.coach.summaryFindings'), value: visible.length,
       caption: t('usage.board.coach.summaryOfChecks', { count: checked }) },
-    ...(props.slice.accounting ? [{ key: 'sessions', label: t('usage.board.coach.summarySessions'), value: coach.sessionCoverage?.admitted ?? '—',
+    ...(props.slice.accounting ? [{ key: 'sessions', label: t('usage.board.coach.summarySessions'), value: countUsageCheckedSessions(coach.sessionCoverage) ?? '—',
       caption: usagePeriodPhrase(props.query) }] : []),
     { key: 'insufficient', label: t('usage.board.coach.summaryNeedEvidence'), value: insufficient.length,
       caption: clear.length ? t('usage.board.coach.summaryClearCaption', { count: clear.length }) : undefined },

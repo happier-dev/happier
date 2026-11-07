@@ -303,15 +303,19 @@ describe('Work and Coach widget bodies', () => {
     expect(screen.findHostByTestId('first-coach.empty')).not.toBeNull();
   });
   it('shows admitted Sessions checked from the canonical result and recovers after retry', async () => {
-    const project = (admitted: number) => resolveUsagePageAggregation({ queries: [query],
+    const project = (admitted: number, notRead?: number) => resolveUsagePageAggregation({ queries: [query],
       accounting: [{ query, status: 'available', value: slice.accounting!, asOfMs: 1000 }],
-      howYouWork: [{ query, asOfMs: 1000, sessionCoverage: { selected: 5, admitted },
+      howYouWork: [{ query, asOfMs: 1000, sessionCoverage: { selected: 5, admitted, ...(notRead === undefined ? {} : { notRead }) },
         detail: { status: admitted < 5 ? 'partial' : 'available', facts: [] } }], nowMs: 1000 }).results[0]!;
     const partial = project(3);
     const screen = await renderScreen(<UsageCoachWidget {...props} slice={partial} id="usage_coach" testID="coverage-coach" />);
     const metric = (key: string) => screen.findAllByType(HappierDataMetric).find(node => node.props.testID === `coverage-coach.summary.${key}`)?.props.value;
     expect(metric('sessions')).toBe(3);
     expect(metric('insufficient')).toBeGreaterThan(0);
+    await screen.update(<UsageCoachWidget {...props} slice={project(5, 5)} id="usage_coach" testID="coverage-coach" />);
+    expect(metric('sessions')).toBe(0);
+    await screen.update(<UsageCoachWidget {...props} slice={project(5, 2)} id="usage_coach" testID="coverage-coach" />);
+    expect(metric('sessions')).toBe(3);
     const recovered = project(5);
     await screen.update(<UsageCoachWidget {...props} slice={recovered} id="usage_coach" testID="coverage-coach" />);
     expect(metric('sessions')).toBe(5);

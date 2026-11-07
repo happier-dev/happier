@@ -65,6 +65,46 @@ it('invalidates retained membership when a null-turn Session leaves the admitted
 });
 
 describe('Usage shared work evidence', () => {
+    it('round-trips the compact private context through the same registered fact schema', () => {
+        const opened = { ...session, seq: 7, metadataVersion: 3, agentStateVersion: 2,
+            metadata: { ...session.metadata, privateBody: 'unconsumed private body',
+                forkV1: { parentSessionId: 'source', createdAtMs: 110 },
+                replaySeedV1: { sourceSessionId: 'source', createdAtMs: 120 },
+                handoffV1: { sourceMachineId: 'from', targetMachineId: 'to', agentId: 'codex', completedAtMs: 130 } },
+            ownerMetadata: { machineId: 'machine', path: '/repo' }, agentTarget: null };
+        const facts = workEvidence.createUsageSessionWorkFactsV1(opened, projectSessionUsageWorkEvidence(opened, []));
+        expect(workEvidence.UsageSessionWorkFactsV1Schema.parse(facts)).toEqual(facts);
+        expect(facts.session?.ownerMetadata).toEqual(opened.ownerMetadata);
+        expect(JSON.stringify(facts)).not.toContain('unconsumed private body');
+        expect(workEvidence.UsageSessionWorkFactsV1Schema.safeParse({ ...facts, session: {
+            ...facts.session, metadata: { ...facts.session?.metadata, privateBody: 'unconsumed private body' },
+        } }).success).toBe(false);
+    });
+    it('reuses encrypted Session transcript facts without reading the transcript, and withdraws stale facts', () => {
+        const opened = { ...session, seq: 7, metadataVersion: 3, agentStateVersion: 2 };
+        const messages = [tool('read', 'Read', { file_path: '/private/file' }, 300)];
+        const original = projectSessionUsageWorkEvidence(opened, messages, { messagesComplete: true });
+        const usageWorkFactsV1 = { v: 1 as const, seq: 7, metadataVersion: 3, agentStateVersion: 2, evidence: original };
+        const converted = { ...opened, usageWorkFactsV1 };
+        const restored = projectSessionUsageWorkEvidence(workEvidence.projectUsageSessionInput(converted));
+        expect(restored.phaseEvents).toEqual(original.phaseEvents);
+        expect(restored.acceptedInputs).toEqual(original.acceptedInputs);
+        expect(restored.facts).toEqual(original.facts);
+        expect(restored.permissions).toEqual(original.permissions);
+        expect(restored.coach).toEqual(original.coach);
+        expect(restored).toEqual(original);
+        expect(projectSessionUsageWorkEvidence(converted, []).phaseEvents).toEqual([]);
+        const persisted = workEvidence.createUsageSessionWorkFactsV1(opened, original);
+        expect(workEvidence.UsageSessionWorkFactsV1Schema.parse(persisted)).toEqual(persisted);
+        expect(persisted.evidence).toEqual(original);
+        expect(workEvidence.readCurrentUsageSessionWorkFactsV1(converted)).toBe(usageWorkFactsV1);
+        expect(JSON.stringify(usageWorkFactsV1)).not.toContain('/private/file');
+        expect(projectSessionUsageWorkEvidence({ ...converted, seq: 8 }).phaseEvents).toBeUndefined();
+        expect(projectSessionUsageWorkEvidence({ ...converted, metadataVersion: 4 }).phaseEvents).toBeUndefined();
+        expect(projectSessionUsageWorkEvidence({ ...converted, agentStateVersion: 3 }).phaseEvents).toBeUndefined();
+        expect(workEvidence.readCurrentUsageSessionWorkFactsV1({ ...converted, seq: undefined })).toBeNull();
+        expect(workEvidence.readCurrentUsageSessionWorkFactsV1({ ...converted, active: true })).toBeNull();
+    });
     it('retains only consumed Session facts without scaling with private document bodies', () => {
         const makeSession = (body: string) => ({ ...session, createdAt: 90,
             origin: SessionAwarenessOriginV1Schema.parse({ kind: 'execution_run' }),

@@ -1,3 +1,6 @@
+import { USAGE_SESSION_WORK_FACTS_SYSTEM_RECORD_ADDRESS } from '../../../usage/usageTimingV1.js';
+import { UsageSessionWorkFactsV1Schema } from '../../../usage/usageWorkEvidence.js';
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { createStoredReadSchema } from '../../../json/storedReadSchema.js';
 import { SessionBoardLayoutV1Schema } from '../../board/layout.js';
@@ -41,6 +44,15 @@ function defineSessionSystemRecordCatalog<const Catalog extends SessionSystemRec
 }
 
 export const SESSION_SYSTEM_RECORD_CATALOG = defineSessionSystemRecordCatalog({
+  [USAGE_SESSION_WORK_FACTS_SYSTEM_RECORD_ADDRESS.namespace]: {
+    kinds: {
+      [USAGE_SESSION_WORK_FACTS_SYSTEM_RECORD_ADDRESS.kind]: {
+        payloadSchema: lazyZodSchema(() => UsageSessionWorkFactsV1Schema),
+        policy: { accountScope: 'actor', read: 'visible', write: 'visible', delete: 'visible',
+          revision: 'opaque-row-version', cas: 'stored-envelope' },
+      },
+    },
+  },
   surface: {
     kinds: {
       'layout.v1': {

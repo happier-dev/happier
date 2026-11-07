@@ -1,5 +1,6 @@
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { UsageSessionMessageEvidence, projectSessionUsageWorkEvidence } from '@happier-dev/protocol/usage/usageWorkEvidence';
+import { USAGE_SESSION_WORK_FACTS_SYSTEM_RECORD_ADDRESS } from '@happier-dev/protocol/usage/usageTimingV1';
 import type { UsageSessionInput } from '@/sync/domains/usage/usageWorkEvidence';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
@@ -18,6 +19,11 @@ export type SessionInputEvidence = Readonly<{
     detail: ReturnType<typeof projectSessionUsageWorkEvidence>;
     messageEvidence?: UsageSessionMessageEvidence;
     completeMessageCoverage: boolean;
+    /** Compact identities without a current fact still need their private Session context. */
+    sessionContextComplete?: boolean;
+    /** Completed reads retain opened facts while their encrypted write is retried. */
+    workFactsPersisted?: boolean;
+    workFactsWriteErrorCode?: string;
 }>;
 export type SessionInputReader = (sessionId: string, readTranscript: boolean,
     load: (assertCurrent: () => void, signal: AbortSignal, retained: SessionInputEvidence | undefined,
@@ -77,10 +83,12 @@ export function createUsageQuerySessionInputs(input: Readonly<{
     }>): boolean;
     dispose(): void;
 }> {
-    const entries = new Map<string, { sessionId: string; sourceReferenceKeys: Set<string>;
+    type InputEntry = { sessionId: string; readTranscript: boolean; sourceReferenceKeys: Set<string>;
         basis: Readonly<{ storage: string; admitted?: string }>; needsAdmission: boolean;
         value?: SessionInputEvidence; failure?: SessionPartsHttpError; read: Promise<SessionInputEvidence | null>;
-        listeners: Set<(value: SessionInputEvidence) => void>; shared?: SharedRead; lastGood?: SessionInputEvidence }>();
+        listeners: Set<(value: SessionInputEvidence) => void>; shared?: SharedRead; lastGood?: SessionInputEvidence };
+    const entries = new Map<string, Map<string, InputEntry>>();
+    function* allEntries() { for (const group of entries.values()) yield* group.values(); }
     // Complete selection is part of the same admission as its private inputs.
     // Retaining IDs lets Retry acquire only failed inputs, including an empty cohort.
     // A member's own change re-admits that member's input. A changed Session
@@ -104,10 +112,9 @@ export function createUsageQuerySessionInputs(input: Readonly<{
             else for (const id of sessionIds) if (!admitted.has(id)) selection.candidates.add(id);
         }
     };
-    const entriesForSessions = (sessionIds: Iterable<string>) => {
-        const selected = new Set(sessionIds);
-        return [...entries.values()].filter(entry => selected.has(entry.sessionId));
-    };
+    function* entriesForSessions(sessionIds: Iterable<string>) {
+        for (const id of new Set(sessionIds)) yield* entries.get(id)?.values() ?? [];
+    }
     let currentness = captureAccountEncryptionCurrentness(input.lifetime.scope.serverId);
     const renewCurrentness = () => {
         if (currentness.isCurrent()) return false;
@@ -115,7 +122,7 @@ export function createUsageQuerySessionInputs(input: Readonly<{
         currentness = captureAccountEncryptionCurrentness(input.lifetime.scope.serverId);
         // Fresh admission decides whether retained derived facts remain valid.
         // An observation withdrawal alone does not change Session content.
-        for (const entry of entries.values()) entry.needsAdmission = true;
+        for (const entry of allEntries()) entry.needsAdmission = true;
         invalidateSelections();
         return true;
     };
@@ -160,18 +167,20 @@ export function createUsageQuerySessionInputs(input: Readonly<{
         // Summary admission cannot satisfy later private transcript demand,
         // and a held transcript must not hold an interval-only consumer.
         const key = JSON.stringify([sessionId, readTranscript, demandKey ?? null]);
-        const retained = entries.get(key);
-        const observe = (entry: NonNullable<ReturnType<typeof entries.get>>) => {
+        const group = entries.get(sessionId) ?? new Map<string, InputEntry>();
+        entries.set(sessionId, group);
+        const retained = group.get(key);
+        const observe = (entry: InputEntry) => {
             if (sourceReferenceKey) entry.sourceReferenceKeys.add(sourceReferenceKey);
             if (entry.shared) borrowSharedRead(entry.shared, entry.read, signal, () => {
                 // Every consumer left before this read settled. End its physical
                 // read and keep the last admitted value for the next demand.
                 entry.shared!.abort.abort();
-                if (entries.get(key) !== entry) return;
+                if (group.get(key) !== entry) return;
                 const lastGood = entry.lastGood;
-                if (lastGood) entries.set(key, { sessionId, sourceReferenceKeys: entry.sourceReferenceKeys, basis: entry.basis,
+                if (lastGood) group.set(key, { sessionId, readTranscript, sourceReferenceKeys: entry.sourceReferenceKeys, basis: entry.basis,
                     needsAdmission: true, value: lastGood, read: Promise.resolve(lastGood), listeners: new Set() });
-                else entries.delete(key);
+                else group.delete(key);
             });
             if (!onProgress) return entry.read;
             entry.listeners.add(onProgress);
@@ -180,11 +189,11 @@ export function createUsageQuerySessionInputs(input: Readonly<{
         };
         if (retained && retained.basis.storage === basis.storage && retained.basis.admitted === basis.admitted
             && !retained.needsAdmission) return observe(retained);
-        const entry: NonNullable<ReturnType<typeof entries.get>> = { sessionId,
+        const entry: InputEntry = { sessionId, readTranscript,
             sourceReferenceKeys: new Set(sourceReferenceKey ? [sourceReferenceKey] : []), basis, needsAdmission: false,
             read: Promise.resolve<SessionInputEvidence | null>(null), listeners: new Set(),
             ...(retained?.value && !retained.failure ? { lastGood: retained.value } : {}) };
-        entries.set(key, entry);
+        group.set(key, entry);
         // Streaming markers change the next admission, not this finite read.
         const started = startSharedRead(input.signal, loadSignal => load(input.assertCurrent, loadSignal, retained?.value, value => {
             input.assertCurrent();
@@ -197,14 +206,29 @@ export function createUsageQuerySessionInputs(input: Readonly<{
             // Selection can precede per-Session admission. A wake during that
             // finite read must leave its replacement requiring fresh evidence.
             entry.needsAdmission ||= readBasis(sessionId) !== basis.storage;
+            entry.needsAdmission ||= value?.workFactsPersisted === false;
             if (value) entry.value = value;
+            if (value?.workFactsPersisted && value.completeMessageCoverage && !entry.needsAdmission) {
+                // One converted Session also completes its already-admitted summaries.
+                // Keep this in the input owner: an ordinary reopen must not revive Not read.
+                const openedVersion = JSON.stringify(version(value.session));
+                for (const sibling of group.values()) {
+                    if (sibling.readTranscript || sibling.needsAdmission || sibling.failure || !sibling.value
+                        || sibling.shared && !sibling.shared.settled || sibling.basis.storage !== basis.storage
+                        || sibling.value.callerDataKeyEnvelope !== value.callerDataKeyEnvelope
+                        || JSON.stringify(version(sibling.value.session)) !== openedVersion) continue;
+                    sibling.value = value;
+                    sibling.read = Promise.resolve(value);
+                    for (const listener of sibling.listeners) listener(value);
+                }
+            }
             // Successful partial pages remain reusable; failed or wholly
             // unopened pages remain retryable at the same Session version.
             if ((!value || readTranscript && !value.messageEvidence && !value.completeMessageCoverage)
-                && entries.get(key) === entry) entries.delete(key);
+                && group.get(key) === entry) group.delete(key);
             return value;
         }).catch(error => {
-            if (entries.get(key) === entry) {
+            if (group.get(key) === entry) {
                 if (error instanceof SessionPartsHttpError) {
                     // A typed refusal settles this admission, including any
                     // summary published before a private page was refused.
@@ -214,7 +238,7 @@ export function createUsageQuerySessionInputs(input: Readonly<{
                     && input.lifetime.isCurrent() && readBasis(sessionId) === basis.storage) {
                     entry.value = retained.value;
                     entry.needsAdmission = true;
-                } else entries.delete(key);
+                } else group.delete(key);
             }
             throw error;
         });
@@ -295,15 +319,24 @@ export function createUsageQuerySessionInputs(input: Readonly<{
         read,
         readSelection,
         retryFailures(sourceReferenceKeys) {
-            for (const [key, entry] of entries) if (entry.failure
-                && [...entry.sourceReferenceKeys].some(reference => sourceReferenceKeys.has(reference))) entries.delete(key);
+            for (const group of entries.values()) for (const [key, entry] of group) if (entry.failure
+                && [...entry.sourceReferenceKeys].some(reference => sourceReferenceKeys.has(reference))) group.delete(key);
         },
         invalidateForHomeChange(event) {
+            const workFactSessionIds = event.sessionSystemRecords?.filter(record => record.address === undefined
+                || record.address.owner === USAGE_SESSION_WORK_FACTS_SYSTEM_RECORD_ADDRESS.owner
+                    && record.address.namespace === USAGE_SESSION_WORK_FACTS_SYSTEM_RECORD_ADDRESS.namespace
+                    && record.address.kind === USAGE_SESSION_WORK_FACTS_SYSTEM_RECORD_ADDRESS.kind
+                    && record.address.localId === USAGE_SESSION_WORK_FACTS_SYSTEM_RECORD_ADDRESS.localId)
+                .map(record => record.sessionId) ?? [];
+            // A record write changes private evidence, not Session membership.
+            // Unconsumed Sessions need no read; retained inputs re-admit by id.
+            for (const entry of entriesForSessions(workFactSessionIds)) entry.needsAdmission = true;
             if (event.source !== 'connected' && event.changeKinds !== undefined && !event.changeKinds.includes('session')) return;
             if (event.source === 'connected' || event.entityIds === undefined) invalidateSelections();
             else invalidateSelectionsFor(event.entityIds);
             const selected = event.source === 'connected' || event.entityIds === undefined
-                ? entries.values() : entriesForSessions(event.entityIds);
+                ? allEntries() : entriesForSessions(event.entityIds);
             for (const entry of selected) {
                 if (event.source === 'connected' || (event.entityIds === undefined
                     ? !readSessionState(entry.sessionId) && !readSessionRow(entry.sessionId)
@@ -314,7 +347,7 @@ export function createUsageQuerySessionInputs(input: Readonly<{
             let changed = renewCurrentness() || publication?.scopeChanged === true;
             if (publication?.scopeChanged) invalidateSelections();
             const contentChangedIds: string[] = [];
-            const selected = sessionIds === undefined ? entries.values() : entriesForSessions(sessionIds);
+            const selected = sessionIds === undefined ? allEntries() : entriesForSessions(sessionIds);
             for (const entry of selected) {
                 const storage = readBasis(entry.sessionId);
                 if (storage === entry.basis.storage) continue;

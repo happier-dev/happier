@@ -1,6 +1,6 @@
 import { USAGE_SESSION_EVIDENCE_PATH, UsageSessionEvidenceRequestSchema, UsageSessionEvidenceResponseSchema,
     type UsageSessionEvidenceRequest, type UsageSessionEvidenceResponse } from '@happier-dev/protocol/usage/usageSessionEvidence';
-import { USAGE_COLLABORATION_TOOL_LEAF_KEYS, projectSessionUsageWorkEvidence, usageQueryNeedsSessionCandidates,
+import { USAGE_COLLABORATION_TOOL_LEAF_KEYS, USAGE_SESSION_WORK_FACTS_SYSTEM_RECORD_ADDRESS, projectSessionUsageWorkEvidence, usageQueryNeedsSessionCandidates,
     UsageSessionPermissionRequestProjectionSchema, UsageSessionPermissionCompletedProjectionSchema,
     projectUsageSessionStateEvidenceFromRequests, type UsageSessionPermissionRequestProjection,
     type UsageSessionPermissionCompletedProjection,
@@ -12,7 +12,12 @@ import { readSessionDetails } from '@/app/api/routes/session/registerSessionList
 import { readSessionTurnsBatch } from '@/app/api/routes/session/readSessionTurns';
 import { readSessionMessagePages } from '@/app/api/routes/session/readSessionMessagePages';
 import { readSessionTranscriptRowsInTx } from '@/app/session/access/readSessionTranscriptRows';
-import { resolveSessionTranscriptPublicationCeiling } from '@/app/session/sessionTranscriptPublicationPolicy';
+import { applySessionTranscriptPublicationCeiling, hasSessionTranscriptPublicationLiveFacts,
+    resolveSessionTranscriptPublicationCeiling, resolveSessionTranscriptPublicationRecencyMs } from '@/app/session/sessionTranscriptPublicationPolicy';
+import { projectSessionEffectiveAccessV1 } from '@/app/session/access/sessionAccess';
+import { projectViewerSessionDataKey } from '@/app/session/encryption/sessionDataKeyEnvelopePersistence';
+import { readActorSessionSystemRecordsV1 } from '@/app/session/systemRecords/sessionSystemRecordService';
+import { sessionSystemRecordV1ErrorStatus } from '@/app/session/systemRecords/sessionSystemRecordSerialization';
 import { inReadSnapshot } from '@/storage/inTx';
 import { readDatabaseErrorCode } from '@/storage/transactionErrors';
 import { readSessionEvidenceCandidateIdsInTx, selectSessionEvidenceSubjectsInTx } from './selectSessionEvidenceSubjects';
@@ -50,6 +55,53 @@ export function registerSessionEvidenceRoute(app: Fastify): void {
         });
         if (reply.raw.destroyed) { reply.hijack(); return; }
         const ids = [...new Set(selected.flatMap(row => row.sessionIds))];
+        const sendEvidence = (results: UsageSessionEvidenceResponse['results']) => {
+            reply.header('Cache-Control', 'no-store');
+            if (reply.raw.destroyed) { reply.hijack(); return; }
+            if (request.headers.accept?.split(',').some(value => value.trim().split(';')[0] === 'application/x-ndjson')) {
+                // Serialize one admitted Session at a time; opaque histories can exceed one V8 string.
+                async function* lines() {
+                    yield JSON.stringify({ requests: selected }) + '\n';
+                    for (const result of results) yield JSON.stringify(result) + '\n';
+                }
+                return reply.type('application/x-ndjson').send(Readable.from(lines()));
+            }
+            return reply.send({ requests: selected, results });
+        };
+        const unavailable = (reason: unknown) => ({ status: 503 as const,
+            body: { error: readDatabaseErrorCode(reason) ?? 'session_read_unavailable' } });
+        if (request.body.readWorkFacts) {
+            const records = await readActorSessionSystemRecordsV1({ actorUserId: request.userId, authentication,
+                sessionIds: ids, address: USAGE_SESSION_WORK_FACTS_SYSTEM_RECORD_ADDRESS });
+            if (reply.raw.destroyed) { reply.hijack(); return; }
+            const evidenceIds = new Set(selected.flatMap(row => row.query.includeSessionEvidence ? row.sessionIds : []));
+            const turns = await readSessionTurnsBatch({ userId: request.userId, authentication,
+                sessionIds: ids.filter(id => records.get(id)?.ok && evidenceIds.has(id)) });
+            const results: UsageSessionEvidenceResponse['results'] = ids.map(sessionId => {
+                const record = records.get(sessionId);
+                if (!record) return { sessionId, detail: unavailable(undefined) };
+                if (!record.ok) return { sessionId, detail: { status: sessionSystemRecordV1ErrorStatus(record.code),
+                    body: { error: 'Plugin Session system record operation failed', code: record.code } } };
+                const session = record.session;
+                const turn = turns.get(sessionId);
+                return { sessionId, workFacts: { session: {
+                    id: session.id,
+                    seq: applySessionTranscriptPublicationCeiling(session.seq, session),
+                    createdAt: session.createdAt.getTime(),
+                    updatedAt: resolveSessionTranscriptPublicationRecencyMs({ createdAt: session.createdAt, liveRecencyAt: session.updatedAt }, session),
+                    active: hasSessionTranscriptPublicationLiveFacts(session) && session.active,
+                    metadataVersion: session.metadataVersion,
+                    agentStateVersion: session.agentStateVersion,
+                    metadataLayoutVersion: session.metadataLayoutVersion,
+                    encryptionMode: session.encryptionMode,
+                    dataEncryptionKey: projectViewerSessionDataKey(session),
+                    viewerRole: record.access.level === 'owner' ? 'owner' : 'recipient',
+                    access: projectSessionEffectiveAccessV1(record.access),
+                }, content: record.record?.content ?? null },
+                ...(turn ? { turns: turn.status === 'fulfilled' ? turn.value : unavailable(turn.reason) } : {}) };
+            });
+            return sendEvidence(results);
+        }
         const privateStateIds = new Set<string>();
         const details = await readSessionDetails({ userId: request.userId, authentication, sessionIds: ids,
             accessProjectionVersion: 1, storedContentCompatibility: compatibility, includePrivateRuleProjection: false,
@@ -96,8 +148,6 @@ export function registerSessionEvidenceRoute(app: Fastify): void {
             const group = messages.get(row.sessionId) ?? [];
             group.push(value); messages.set(row.sessionId, group);
         }
-        const unavailable = (reason: unknown) => ({ status: 503 as const,
-            body: { error: readDatabaseErrorCode(reason) ?? 'session_read_unavailable' } });
         const results: UsageSessionEvidenceResponse['results'] = [];
         for (const sessionId of ids) {
             const detail = details.get(sessionId);
@@ -160,18 +210,6 @@ export function registerSessionEvidenceRoute(app: Fastify): void {
             }
             results.push(result);
         }
-        reply.header('Cache-Control', 'no-store');
-        if (reply.raw.destroyed) { reply.hijack(); return; }
-        if (request.headers.accept?.split(',').some(value => value.trim().split(';')[0] === 'application/x-ndjson')) {
-            // E2EE Usage still opens whole encrypted documents at the client.
-            // Serialize one admitted Session at a time: the Account's combined
-            // ciphertext can exceed V8's single-string limit.
-            async function* lines() {
-                yield JSON.stringify({ requests: selected }) + '\n';
-                for (const result of results) yield JSON.stringify(result) + '\n';
-            }
-            return reply.type('application/x-ndjson').send(Readable.from(lines()));
-        }
-        return reply.send({ requests: selected, results });
+        return sendEvidence(results);
     });
 }

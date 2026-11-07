@@ -1,14 +1,13 @@
 import type { UsageActionPorts } from '@happier-dev/protocol/actions/executor/usageActions';
 import type { UsageQueryBatchResult } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
-import { decodeUsageQueryResource, getUsageQueryResourceStore, readUiQuota, readUiUsageModelPrices, type UsageQueryAccountContext } from '@/sync/api/account/usageQueryResource';
+import { decodeUsageQueryResource, getUsageQueryResourceStore, readUiQuota, readUiUsageModelPrices, getUiUsageHistoryState, readUiUsageHistory, cancelUiUsageHistory, type UsageQueryAccountContext } from '@/sync/api/account/usageQueryResource';
 import type { LazyActionAccountContext } from './actionAccountContext';
 import { HappyError } from '@/utils/errors/errors';
 import { PublicProfileReadResultV1Schema } from '@happier-dev/protocol/account/publicProfilePublication';
 import { mergeAbortSignals, throwIfAborted } from '@/utils/runtime/abortSignals';
 import { createScopedResolutionSingleFlight } from '@/sync/runtime/orchestration/serverScopedRpc/scopedResolutionSingleFlight';
 import { createUiCoachSuppressionPort } from '@/sync/api/account/usageCoachSuppressions';
-import { readLegacyUsageCoachSuppressions } from '@happier-dev/protocol/usage/coach/coachActions';
 
 type PublicProfileRead = Awaited<ReturnType<NonNullable<UsageActionPorts['readPublicProfile']>>>;
 const publicProfileReads = createScopedResolutionSingleFlight<PublicProfileRead>();
@@ -22,7 +21,7 @@ async function consumePublicProfile(response: Response): Promise<PublicProfileRe
 }
 
 /** Captured Home/Account reads use the same query adapter as mounted Resources. */
-export function createUiUsageActionPorts(account: UsageQueryAccountContext & Pick<LazyActionAccountContext, 'assertCurrent' | 'readRawSettingsSnapshot'>,
+export function createUiUsageActionPorts(account: UsageQueryAccountContext & Pick<LazyActionAccountContext, 'assertCurrent'>,
   renderRecap?: UsageActionPorts['renderRecap']): UsageActionPorts {
   const prices = async (refresh: boolean, context: Parameters<NonNullable<UsageActionPorts['prices']>['get']>[0]) => {
     throwIfAborted(context.signal);
@@ -40,13 +39,36 @@ export function createUiUsageActionPorts(account: UsageQueryAccountContext & Pic
     }
   };
   return {
-    coachSuppressions: context => createUiCoachSuppressionPort(account, context.signal, async () => {
-      // Conversion must carry the stored legacy entries, including changes
-      // from another client that have not reached the local projection yet.
-      const snapshot = await account.readRawSettingsSnapshot();
+    coachSuppressions: context => createUiCoachSuppressionPort(account, context.signal),
+    history: async (input, context) => {
+      throwIfAborted(context.signal);
       account.assertCurrent();
-      return readLegacyUsageCoachSuppressions(snapshot.raw.usageCoachPreferencesV1);
-    }),
+      try {
+        if (input.operation === 'status') return getUiUsageHistoryState(account, input.query);
+        if (input.operation === 'cancel') {
+          cancelUiUsageHistory(account, input.query);
+          return getUiUsageHistoryState(account, input.query);
+        }
+        const release = context.operationCancellation?.onRequest(() => cancelUiUsageHistory(account, input.query));
+        try {
+          const result = await readUiUsageHistory(account, { query: input.query }, { signal: context.signal,
+            onProgress: state => {
+              const progress = { phase: state.status, current: state.progress.completed };
+              context.operationProgress?.update(progress);
+              context.operationOwnerUpdate?.update({ ...(state.status === 'reading'
+                ? { state: 'running' as const, cancellation: 'supported' as const } : {}), progress });
+            } });
+          account.assertCurrent();
+          return result;
+        } finally { release?.(); }
+      } catch (error) {
+        account.assertCurrent();
+        if (error instanceof Error && 'code' in error && typeof error.code === 'string' && error.code) {
+          return { ok: false, errorCode: error.code, error: error.code };
+        }
+        throw error;
+      }
+    },
     readPublicProfile: async context => {
       throwIfAborted(context.signal);
       account.assertCurrent();

@@ -9,6 +9,7 @@ import type { ServerAccountScopeLifetime, ServerAccountScope } from '@/sync/doma
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { captureUiUsageQueryAccountContext, decodeUsageQueryResource, getUsageQueryResourceStore, type UsageQueryResourceEntry } from '@/sync/api/account/usageQueryResource';
+import { getUsagePeriodDefinition } from '@/sync/api/account/usagePeriods';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import type { UsageWidgetQueryPlan } from './usageWidgetQueries';
 
@@ -33,7 +34,19 @@ const EMPTY_SNAPSHOT: PluginUiResourceSnapshot = Object.freeze({ freshness: 'unk
 type UsageWidgetBodySnapshot = Readonly<Pick<PluginUiResourceSnapshot, 'freshness' | 'error'> & {
     pending: boolean; readActivity: boolean;
     current: boolean; authorityLost: boolean; slice: UsageQueryResultSlice | undefined;
+    row: UsageWidgetQueryRow | undefined;
 }>;
+type UsageWidgetQueryRow = Readonly<{ query?: UsageQuery; key?: string }>;
+const NO_QUERY_ROWS: readonly UsageWidgetQueryRow[] = Object.freeze([]);
+const acceptsEverySlice = () => true;
+
+function getPeriodAdjustedUsageQueryKey(previous: UsageQuery, query: UsageQuery): string {
+    const followsPeriodGranularity = 'relative' in previous.period && 'relative' in query.period
+        && previous.granularity === getUsagePeriodDefinition(previous.period.relative).granularity
+        && query.granularity === getUsagePeriodDefinition(query.period.relative).granularity;
+    return getUsageQueryKey({ ...previous, period: query.period,
+        ...(followsPeriodGranularity ? { granularity: query.granularity } : {}) });
+}
 
 /** One canonical batch Resource per mounted page; bodies select its already decoded slices. */
 export function useUsageWidgetResource(input: Readonly<{
@@ -70,19 +83,37 @@ export function useUsageWidgetResource(input: Readonly<{
         [entry, context, input.plan]);
 }
 export function useUsageWidgetBodyModel(resource: UsageWidgetResource, instanceId: string): UsageWidgetBodyModel {
-    const { entry, lifetime } = resource;
     const row = resource.plan.widgets.get(instanceId);
-    const query = row?.query;
-    const key = row?.key;
+    const rows = React.useMemo(() => row ? [row] : NO_QUERY_ROWS, [row]);
+    return useUsageWidgetQueryModel(resource, instanceId, rows);
+}
+
+/** Bodies and page choices share the same query identity and period continuity. */
+export function useUsageWidgetQueryModel(resource: UsageWidgetResource | null, instanceId: string,
+    rows: readonly UsageWidgetQueryRow[], acceptsSlice: (slice: UsageQueryResultSlice) => boolean = acceptsEverySlice): UsageWidgetBodyModel {
+    const entry = resource?.entry ?? null;
+    const lifetime = resource?.lifetime ?? null;
+    const prior = React.useRef<Readonly<{ instanceId: string; identity: UsageWidgetQueryIdentity;
+        slice: UsageQueryResultSlice; lifetime: ServerAccountScopeLifetime }> | null>(null);
     const subscribe = useUsageWidgetResourceSubscription(entry, true);
     const getSnapshot = React.useMemo(() => {
         let previous: UsageWidgetBodySnapshot | undefined;
         return (): UsageWidgetBodySnapshot => {
             const snapshot = entry?.getSnapshot() ?? EMPTY_SNAPSHOT;
-            const current = lifetime?.isCurrent() === true && query !== undefined && key !== undefined;
             const authorityLost = isPluginUiResourceReadAuthorityLost(snapshot);
-            const projectedSlice = current && !authorityLost && snapshot.value
-                ? decodeUsageQueryResource(snapshot.value).results.find(value => value.key === key) : undefined;
+            const slices = lifetime?.isCurrent() === true && !authorityLost && snapshot.value
+                ? decodeUsageQueryResource(snapshot.value).results : [];
+            const projectedSlice = slices.find(value => acceptsSlice(value) && rows.some(row => row.key === value.key));
+            // Available facts pick their own query. While acquiring a period, only
+            // a still-present query with the same meaning may retain its facts.
+            const priorQuery = prior.current?.instanceId === instanceId ? prior.current.identity.query : undefined;
+            const row = rows.find(candidate => candidate.key === projectedSlice?.key)
+                ?? rows.find(candidate => priorQuery && candidate.query
+                    && getPeriodAdjustedUsageQueryKey(priorQuery, candidate.query) === candidate.key)
+                ?? rows[0];
+            const query = row?.query;
+            const key = row?.key;
+            const current = lifetime?.isCurrent() === true && query !== undefined && key !== undefined;
             // Source-only progress belongs to page chrome until this body has facts.
             const slice = projectedSlice?.pending && !projectedSlice.accounting && !projectedSlice.quota?.length
                 && !projectedSlice.sources.some(source => source.asOfMs !== undefined || source.status === 'error')
@@ -108,25 +139,25 @@ export function useUsageWidgetBodyModel(resource: UsageWidgetResource, instanceI
             // renders so sibling progress cannot repeat this body's model work.
             if (previous && previous.slice === slice && previous.current === current && previous.authorityLost === authorityLost
                 && previous.pending === pending && previous.readActivity === readActivity
-                && previous.freshness === freshness && previous.error === snapshot.error) {
+                && previous.freshness === freshness && previous.error === snapshot.error && previous.row === row) {
                 return previous;
             }
-            previous = { slice, current, authorityLost, pending, readActivity, freshness, error: snapshot.error };
+            previous = { row, slice, current, authorityLost, pending, readActivity, freshness, error: snapshot.error };
             return previous;
         };
-    }, [entry, lifetime, query, key]);
+    }, [entry, lifetime, rows, acceptsSlice, instanceId]);
     const snapshot = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
     const { current, authorityLost, slice } = snapshot;
+    const query = snapshot.row?.query;
+    const key = snapshot.row?.key;
     const identity = React.useMemo<UsageWidgetQueryIdentity | null>(() => current && query && lifetime
         ? { query, authority: lifetime.scope } : null, [current, lifetime, key]);
-    const prior = React.useRef<Readonly<{ instanceId: string; identity: UsageWidgetQueryIdentity;
-        slice: UsageQueryResultSlice; lifetime: ServerAccountScopeLifetime }> | null>(null);
     const previous = prior.current;
     const periodContinuity = React.useMemo(() => {
         if (query === undefined || previous === null || previous.instanceId !== instanceId) {
             return { sameMeaning: false, changed: false };
         }
-        const sameMeaning = getUsageQueryKey({ ...previous.identity.query, period: query.period }) === key;
+        const sameMeaning = getPeriodAdjustedUsageQueryKey(previous.identity.query, query) === key;
         return { sameMeaning, changed: sameMeaning && getUsageQueryKey(previous.identity.query) !== key };
     }, [previous?.identity, previous?.instanceId, instanceId, key, query]);
     const retained = current && !authorityLost && previous !== null && previous.lifetime === lifetime

@@ -1,5 +1,6 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
-import { UsageQueryBatchInputSchema } from '../../inputs/usageQuery.js';
+import { UsageQueryBatchInputSchema, UsageHistoryReadInputSchema, UsageHistoryReadStateSchema, USAGE_HISTORY_OPERATIONS } from '../../inputs/usageQuery.js';
+import { USAGE_HISTORY_ACTION_IDS } from '../../usage/usageActionIdsV1.js';
 import { UsageQueryBatchResultSchema } from '../../usage/resolveUsagePageAggregation.js';
 import { UsageExportInputSchema, UsageFileResultSchema } from '../../usage/usageExport.js';
 import { UsageRecapPrivateComposeInputSchema, UsageRecapPublicComposeInputSchema, UsageRecapComposeResultSchema, UsageRecapExportResultSchema, UsageRecapPrivateDeliveryInputSchema, UsageRecapPublicDeliveryInputSchema, UsageRecapDeliveryResultSchema, USAGE_RECAP_STYLES, USAGE_RECAP_FORMATS } from '../../usage/usageRecap.js';
@@ -34,6 +35,12 @@ const recapDeliveryField = { path: 'intent', title: 'Delivery', widget: 'select'
 
 function createUsageActionSpecs() {
   return [
+  { ...common, id: USAGE_HISTORY_ACTION_IDS.read, approval: { result: 'none' }, title: 'Read Usage history',
+    sideEffectClass: 'write', executionPlacement: 'client',
+    description: 'Explicitly read missing Session facts for a selected Usage window, observe its progress, or cancel its admitted local read. Derived facts persist through the Session content owner.',
+    bindings: { mcpToolName: 'usage_history_read' }, inputSchema: UsageHistoryReadInputSchema, outputSchema: UsageHistoryReadStateSchema,
+    inputHints: { fields: [{ path: 'query', title: 'Usage query', widget: 'json', required: true, inputType: { hostType: 'usageQuery' } },
+      { path: 'operation', title: 'Operation', widget: 'select', options: USAGE_HISTORY_OPERATIONS.map(value => ({ value, label: value })) }] } },
   { ...common, id: 'usage.recap.deliver', approval: {result: 'none'}, title: 'Copy, save or share a usage recap',
     approvalPolicy: { uiConfirmation: 'direct' },
     safety: 'danger', sideEffectClass: 'external', executionPlacement: 'client',

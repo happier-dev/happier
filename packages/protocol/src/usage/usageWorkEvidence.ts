@@ -10,29 +10,120 @@ import { SessionPermissionAnsweringClientCategoryV1Schema } from '../sessions/pe
 import { SessionActionConfirmationsV1Schema } from '../sessions/metadata/sessionActionConfirmationsV1.js';
 import { SessionOwnerCompatibilityViewV1Schema } from '../sessions/metadata/sessionMetadataSchemasV1.js';
 import { TranscriptRawAgentEventV1Schema, TranscriptRawAgentRecordV1Schema, type TranscriptRawAgentEventV1 } from '../sessions/messages/transcriptRawRecordV1.js';
-import { UsageCoachModelRequestSchema, type UsagePromptComposition, type UsageCoachModelRequest } from '../usage/coach/usagePromptComposition.js';
+import { UsagePromptCompositionSchema, UsageCoachModelRequestSchema, type UsagePromptComposition, type UsageCoachModelRequest } from '../usage/coach/usagePromptComposition.js';
 import type { UsageCoachCompactionFact } from '../usage/coach/coachFinding.js';
-import type { UsageMcpBindingUsage } from '../usage/coach/usageMcpBindingUsage.js';
+import { UsageMcpBindingUsageSchema, type UsageMcpBindingUsage } from '../usage/coach/usageMcpBindingUsage.js';
+import type { UsageCoachRemedySession } from './coach/buildUsageCoachRemedies.js';
 import type { UsageQuery } from '../inputs/usageQuery.js';
 import type { UsageAnalyticsContribution } from '../usage/usageAnalyticsContracts.js';
 import { canonicalUsageModelPriceId } from '../usage/usageModelPriceSchemas.js';
 import { resolveToolMutationClassification } from '../tools/toolMutationClassification.js';
 import type { SessionTurnsProjectionV1 } from '../sessions/turns/sessionTurnV1.js';
 import type { SessionMessageAcceptedDeliveryFactsV1 } from '../sessions/messages/sessionMessageDeliveryResolutionV1.js';
-import type { SessionAwarenessOriginV1 } from '../sessions/awareness/projectionV1.js';
+import { SessionAwarenessOriginV1Schema, type SessionAwarenessOriginV1 } from '../sessions/awareness/projectionV1.js';
+import { SessionTurnLifecycleStatusV1Schema } from '../sessions/turns/sessionTurnLifecycleStatusV1.js';
+import { AgentExecutionTargetV1Schema } from '../agents/executionTargetV1.js';
 import { projectSessionUsageCollaboration, projectUsageCollaborationToolPayload, readUsageCollaborationMetadata,
     resolveUsageCollaborationHistoricalSource, type UsageCollaborationToolEvidence } from './usageCollaboration.js';
 export { USAGE_COLLABORATION_TOOL_LEAF_KEYS, projectUsageCollaborationToolPayload } from './usageCollaboration.js';
 import type { UsageSessionTimingV1, UsageTimingBoundsV1 } from './usageTimingV1.js';
+export { USAGE_SESSION_WORK_FACTS_SYSTEM_RECORD_ADDRESS } from './usageTimingV1.js';
 export { UsageTimingBoundsV1Schema, UsageSessionTimingV1Schema, mergeUsageTimingBoundsV1,
     type UsageTimingBoundsV1, type UsageSessionTimingV1 } from './usageTimingV1.js';
 
+const EvidenceId = lazyZodSchema(() => z.string().check(z.minLength(1)));
+const EvidenceTime = lazyZodSchema(() => z.number().check(z.int(), z.nonnegative(), z.maximum(Number.MAX_SAFE_INTEGER)));
+const NullableEvidenceId = lazyZodSchema(() => z.nullable(EvidenceId));
+
+/** Content-free message evidence; ordinary transcript content never crosses this boundary. */
+export const UsageSessionMessageEvidenceSchema = lazyZodSchema(() => z.strictObject({
+    acceptedInputs: z.optional(z.array(z.strictObject({ inputId: EvidenceId, workId: EvidenceId, acceptedAtMs: EvidenceTime,
+        deliveryKind: z.enum(['newTurn', 'followUp', 'steer']), turnId: EvidenceId }))),
+    phaseEvents: z.optional(z.array(z.strictObject({ evidenceId: EvidenceId, sessionId: EvidenceId, turnId: NullableEvidenceId,
+        observedAtMs: EvidenceTime, kind: z.enum(['read', 'change', 'execute', 'delegate', 'compaction', 'unknown']),
+        method: z.enum(['tool_classification', 'native_event']) }))),
+    collaboration: z.optional(z.array(z.strictObject({ evidenceId: EvidenceId, workId: NullableEvidenceId, sourceSessionId: NullableEvidenceId,
+        targetId: EvidenceId, nativeTargetId: z.optional(EvidenceId), sourceAgentId: NullableEvidenceId, targetAgentId: NullableEvidenceId,
+        observedAtMs: z.nullable(EvidenceTime), relation: z.enum(['spawn', 'run', 'native', 'review', 'plan', 'report', 'replay', 'handoff']) }))),
+    coach: z.optional(z.strictObject({ composition: z.optional(z.array(UsagePromptCompositionSchema)),
+        compositionCoverage: z.optional(z.enum(['complete', 'partial', 'unknown'])),
+        detail: z.optional(z.strictObject({ coverage: z.enum(['complete', 'partial', 'unknown']),
+            compactions: z.optional(z.array(z.strictObject({ evidenceId: EvidenceId, observedAtMs: EvidenceTime, sessionId: EvidenceId, turnId: NullableEvidenceId,
+                immediateRefillToLimit: z.optional(z.nullable(z.boolean())) }))),
+            mcpUsage: z.optional(z.array(UsageMcpBindingUsageSchema)),
+            modelRequests: z.optional(z.array(UsageCoachModelRequestSchema)),
+        })),
+    })),
+})) satisfies z.ZodMiniType<UsageSessionMessageEvidence>;
+
+/** Already-projected state facts; request arguments and private provider state are absent. */
+export const UsageSessionStateEvidenceSchema = lazyZodSchema(() => z.strictObject({
+    permissions: z.array(z.strictObject({ requestId: EvidenceId, workId: EvidenceId, requestedAtMs: z.nullable(EvidenceTime),
+        decidedAtMs: z.nullable(EvidenceTime), toolId: NullableEvidenceId,
+        answeringClientCategory: z.nullable(SessionPermissionAnsweringClientCategoryV1Schema) })),
+    waits: z.array(z.strictObject({ workId: EvidenceId, evidenceId: EvidenceId, agentId: NullableEvidenceId, machineId: NullableEvidenceId,
+        kind: z.enum(['permission_wait', 'user_wait']), startMs: EvidenceTime, endMs: z.nullable(EvidenceTime) })),
+})) satisfies z.ZodMiniType<UsageSessionStateEvidence>;
+
+/** All persisted work intervals share the state-evidence witness fields. */
+const UsageWorkIntervalFactSchema = lazyZodSchema(() => z.strictObject({
+    ...UsageSessionStateEvidenceSchema.shape.waits._zod.def.element.shape,
+    kind: z.enum(['busy', 'permission_wait', 'user_wait', 'child_wait']),
+    parentWorkId: z.optional(NullableEvidenceId),
+}));
+const UsageSessionWorkDetailSchema = lazyZodSchema(() => z.strictObject({
+    ...UsageSessionMessageEvidenceSchema.shape,
+    status: z.enum(['available', 'partial', 'unknown']),
+    facts: z.optional(z.array(UsageWorkIntervalFactSchema)),
+    permissions: z.optional(UsageSessionStateEvidenceSchema.shape.permissions),
+    closedTurns: z.optional(z.array(z.strictObject({ workId: EvidenceId, agentId: NullableEvidenceId,
+        status: SessionTurnLifecycleStatusV1Schema, startMs: EvidenceTime, endMs: z.nullable(EvidenceTime) }))),
+    activityAtMs: z.optional(z.array(EvidenceTime)),
+})) satisfies z.ZodMiniType<UsageHowYouWorkDetailInput>;
+
+/** Exact private context consumed by Usage and Coach; bodies and execution state are excluded. */
+const UsageSessionWorkContextSchema = lazyZodSchema(() => z.strictObject({
+    metadata: z.nullable(z.strictObject({
+        machineId: SessionOwnerCompatibilityViewV1Schema.shape.machineId,
+        forkV1: z.optional(z.pick(SessionOwnerCompatibilityViewV1Schema.shape.forkV1._zod.def.innerType,
+            { parentSessionId: true, createdAtMs: true })),
+        replaySeedV1: z.optional(z.pick(SessionOwnerCompatibilityViewV1Schema.shape.replaySeedV1._zod.def.innerType,
+            { sourceSessionId: true, createdAtMs: true })),
+        handoffV1: z.optional(z.pick(SessionOwnerCompatibilityViewV1Schema.shape.handoffV1._zod.def.innerType,
+            { sourceMachineId: true, targetMachineId: true, agentId: true, completedAtMs: true })),
+    })),
+    origin: z.optional(SessionAwarenessOriginV1Schema),
+    manager: z.optional(z.nullable(z.strictObject({ sessionId: EvidenceId }))),
+    ownerMetadata: z.optional(z.nullable(z.strictObject({
+        machineId: SessionOwnerCompatibilityViewV1Schema.shape.machineId,
+        path: z.optional(SessionOwnerCompatibilityViewV1Schema.shape.path),
+        modelSelectionIntentV1: SessionOwnerCompatibilityViewV1Schema.shape.modelSelectionIntentV1,
+        modelSelectionIntentV2: SessionOwnerCompatibilityViewV1Schema.shape.modelSelectionIntentV2,
+        mcpSelectionV1: SessionOwnerCompatibilityViewV1Schema.shape.mcpSelectionV1,
+    }))),
+    agentTarget: z.optional(z.nullable(AgentExecutionTargetV1Schema)),
+}));
+export type UsageSessionWorkContextV1 = z.infer<typeof UsageSessionWorkContextSchema>;
+
+/** Closed opened payload at the encrypted system-record boundary. */
+export const UsageSessionWorkFactsV1Schema: z.ZodMiniType<UsageSessionWorkFactsV1> = lazyZodSchema(() => z.strictObject({
+    v: z.literal(1), seq: EvidenceTime,
+    metadataVersion: z.optional(EvidenceTime), agentStateVersion: z.optional(EvidenceTime),
+    evidence: UsageSessionWorkDetailSchema,
+    session: z.optional(UsageSessionWorkContextSchema),
+}));
+
 export type OpenedUsageSession = Readonly<{
     id: string;
+    seq?: number;
+    active?: boolean;
+    metadataVersion?: number;
+    agentStateVersion?: number;
+    usageWorkFactsV1?: UsageSessionWorkFactsV1;
     createdAt?: number;
     origin?: SessionAwarenessOriginV1;
     manager?: Readonly<{ sessionId: string }> | null;
-    metadata: Readonly<{ machineId?: string; actionConfirmationsV1?: unknown;
+    metadata: Readonly<{ machineId?: string | null; actionConfirmationsV1?: unknown;
         forkV1?: Readonly<{ parentSessionId: string; createdAtMs: number }>;
         replaySeedV1?: Readonly<{ sourceSessionId: string; createdAtMs: number }>;
         handoffV1?: Readonly<{ sourceMachineId: string; targetMachineId: string; agentId: string; completedAtMs: number }>;
@@ -45,6 +136,24 @@ export type OpenedUsageSession = Readonly<{
     stateEvidence?: UsageSessionStateEvidence;
     sessionTurns?: SessionTurnsProjectionV1 | null;
 }>;
+/** The encrypted projection retains only facts already derived by the Usage owner. */
+export type UsageSessionWorkFactsV1 = Readonly<{
+    v: 1;
+    seq: number;
+    metadataVersion?: number;
+    agentStateVersion?: number;
+    evidence: UsageHowYouWorkDetailInput;
+    session?: UsageSessionWorkContextV1;
+}>;
+
+/** Content versions belong to the Session owner; every consumer uses this one admission basis. */
+export function readCurrentUsageSessionWorkFactsV1(session: Pick<OpenedUsageSession,
+    'seq' | 'active' | 'metadataVersion' | 'agentStateVersion' | 'usageWorkFactsV1'>): UsageSessionWorkFactsV1 | null {
+    const facts = session.usageWorkFactsV1;
+    return facts && session.active !== true && session.seq !== undefined && facts.seq === session.seq
+        && (facts.metadataVersion === undefined || facts.metadataVersion === session.metadataVersion)
+        && (facts.agentStateVersion === undefined || facts.agentStateVersion === session.agentStateVersion) ? facts : null;
+}
 export type OpenedUsageMessage = Readonly<{ id: string; localId?: string | null; acceptedDelivery?: SessionMessageAcceptedDeliveryFactsV1 | null;
     content?: unknown; createdAt?: number }>;
 /** Already-admitted message witnesses; native bodies are opened only at their trust boundary. */
@@ -147,6 +256,11 @@ export function projectUsageSessionInput(session: OpenedUsageSession): OpenedUsa
     const metadata = session.metadata;
     return {
         id: session.id,
+        ...(session.seq === undefined ? {} : { seq: session.seq }),
+        ...(session.active === undefined ? {} : { active: session.active }),
+        ...(session.metadataVersion === undefined ? {} : { metadataVersion: session.metadataVersion }),
+        ...(session.agentStateVersion === undefined ? {} : { agentStateVersion: session.agentStateVersion }),
+        ...(session.usageWorkFactsV1 === undefined ? {} : { usageWorkFactsV1: session.usageWorkFactsV1 }),
         ...(session.createdAt === undefined ? {} : { createdAt: session.createdAt }),
         ...(session.origin === undefined ? {} : { origin: session.origin }),
         ...(session.manager === undefined ? {} : { manager: session.manager ? { sessionId: session.manager.sessionId } : null }),
@@ -164,6 +278,25 @@ export function projectUsageSessionInput(session: OpenedUsageSession): OpenedUsa
         ...(stateEvidence === undefined ? {} : { stateEvidence }),
         ...(session.sessionTurns === undefined ? {} : { sessionTurns: session.sessionTurns }),
     };
+}
+
+/** The caller supplies the admitted Session projection and the owner's one transcript derivation. */
+export function createUsageSessionWorkFactsV1(
+    session: OpenedUsageSession & Readonly<{ seq: number }>
+        & Partial<Pick<UsageCoachRemedySession, 'ownerMetadata' | 'agentTarget'>>,
+    evidence: UsageHowYouWorkDetailInput,
+): UsageSessionWorkFactsV1 {
+    const projected = projectUsageSessionInput(session);
+    return { v: 1, seq: session.seq,
+        ...(session.metadataVersion === undefined ? {} : { metadataVersion: session.metadataVersion }),
+        ...(session.agentStateVersion === undefined ? {} : { agentStateVersion: session.agentStateVersion }),
+        evidence,
+        session: { metadata: projected.metadata,
+            ...(projected.origin === undefined ? {} : { origin: projected.origin }),
+            ...(projected.manager === undefined ? {} : { manager: projected.manager }),
+            ...(session.ownerMetadata === undefined ? {} : { ownerMetadata: session.ownerMetadata }),
+            ...(session.agentTarget === undefined ? {} : { agentTarget: session.agentTarget }),
+        } };
 }
 
 function usageTimingBounds(points: readonly (number | null)[], open = false): UsageTimingBoundsV1 | null {
@@ -433,6 +566,10 @@ export function projectSessionUsageWorkEvidence(
     coverage: Readonly<{ messagesComplete?: boolean; messageEvidence?: UsageSessionMessageEvidence;
         messageProjections?: readonly UsageSessionMessageProjection[] }> = {},
 ): UsageHowYouWorkDetailInput {
+    if (messages === undefined && coverage.messageProjections === undefined && coverage.messageEvidence === undefined) {
+        const saved = readCurrentUsageSessionWorkFactsV1(session);
+        if (saved) return saved.evidence;
+    }
     const facts: NonNullable<UsageHowYouWorkDetailInput['facts']>[number][] = [];
     const permissions: NonNullable<UsageHowYouWorkDetailInput['permissions']>[number][] = [];
     const turns = session.sessionTurns?.sessionId === session.id ? session.sessionTurns.turns : [];

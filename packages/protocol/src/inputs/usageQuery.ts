@@ -228,3 +228,29 @@ export const USAGE_QUERY_INPUT_FIELDS: readonly InputFieldHint[] = [
   ] },
   { path: 'breakdown', title: 'Group by', widget: 'select', contextMode: 'own', optionsSourceId: 'usage.query.breakdown' },
 ];
+
+/** Explicit Account-scoped history reads share one operation and one progress owner. */
+export const USAGE_HISTORY_OPERATIONS = ['read', 'status', 'cancel'] as const;
+export const UsageHistoryReadInputSchema = lazyZodSchema(() => z.strictObject({
+    query: UsageQuerySchema,
+    operation: z._default(z.enum(USAGE_HISTORY_OPERATIONS), 'read'),
+}));
+export type UsageHistoryReadInput = z.infer<typeof UsageHistoryReadInputSchema>;
+
+export const UsageHistoryReadProgressSchema = lazyZodSchema(() => z.strictObject({
+    selected: z.number().check(z.int(), z.nonnegative()),
+    notRead: z.number().check(z.int(), z.nonnegative()),
+    completed: z.number().check(z.int(), z.nonnegative()),
+    failed: z.number().check(z.int(), z.nonnegative()),
+}));
+export type UsageHistoryReadProgress = Readonly<z.infer<typeof UsageHistoryReadProgressSchema>>;
+export const UsageHistoryReadStateSchema = lazyZodSchema(() => z.strictObject({
+    status: z.enum(['idle', 'reading', 'complete', 'cancelled', 'partial']),
+    errorCode: z.optional(z.string().check(z.minLength(1))),
+    progress: UsageHistoryReadProgressSchema,
+}));
+export type UsageHistoryReadState = Readonly<{
+    status: z.infer<typeof UsageHistoryReadStateSchema>['status'];
+    errorCode?: string;
+    progress: UsageHistoryReadProgress;
+}>;

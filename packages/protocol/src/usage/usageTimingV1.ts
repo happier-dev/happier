@@ -1,6 +1,11 @@
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 
+/** One actor-private encrypted projection per admitted Session. */
+export const USAGE_SESSION_WORK_FACTS_SYSTEM_RECORD_ADDRESS = Object.freeze({
+    owner: 'host', namespace: 'usage', kind: 'work_facts.v1', localId: 'how_you_work',
+} as const);
+
 const Time = lazyZodSchema(() => z.number().check(z.int(), z.nonnegative(), z.maximum(Number.MAX_SAFE_INTEGER)));
 
 /** Inclusive conservative bounds. Both null means empty; a null maximum means an open interval. */

@@ -1,8 +1,9 @@
+import { USAGE_HISTORY_ACTION_IDS } from '@happier-dev/protocol/usage/usageActionIdsV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RPC_ERROR_CODES, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import {
-  UiActionDispatchRequestV1Schema,
+  buildUiActionDispatchRequestV1, type UiActionDispatchRequestV1,
   clientActionUnavailable,
   clientActionAmbiguous,
   currentUiContextCommandClientRpcMethod,
@@ -23,7 +24,9 @@ import { MOUNTED_BROWSER_DIAGNOSTICS_ACTION_IDS } from '@happier-dev/protocol/br
 import { createBrowserAutomationReverseDispatcher } from '@/daemon/browser/automation/reverseDispatch';
 import { isVoiceConversationActionId } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
 import { isSettingsDeclarationActionIdV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
+import { isWorkspaceActionId } from '@happier-dev/protocol/actions/workspaceActionFamily';
 import { isSessionOrganizationAppearanceActionId } from '@happier-dev/protocol/actions/actionIds';
+import { readWidgetActionSessionTargetV1, readWidgetActionSurfaceV1 } from '@happier-dev/protocol/widgets/actionsV1';
 
 export type ClientActionMachineRpc = Readonly<{
   hasConnectedClientRpcHandler(method: string): boolean;
@@ -36,7 +39,7 @@ export type ClientActionMachineRpc = Readonly<{
 export function createClientActionReverseDispatcher(
   getMachineClient: () => ClientActionMachineRpc | null | undefined,
 ): NonNullable<ActionExecutorDeps['clientActionExecute']> {
-  return async ({ actionId, input, context, executeChild }) => {
+  return async ({ actionId, input, context, executeChild, admittedHostReviewedChildren }) => {
     const requestedClientId: unknown = input && typeof input === 'object' ? Reflect.get(input, 'clientId') : undefined;
     const clientId = typeof requestedClientId === 'string' ? requestedClientId : undefined;
     const unavailable = () => clientId
@@ -46,7 +49,6 @@ export function createClientActionReverseDispatcher(
       ok: false as const, errorCode, error: errorCode,
     });
     const client = getMachineClient();
-    // Voice and Settings use the answering Account client's owners even when
     const mountedDiagnosticsActionId = MOUNTED_BROWSER_DIAGNOSTICS_ACTION_IDS.find(id => id === actionId);
     if (mountedDiagnosticsActionId) {
       // The Action has already been admitted here. Continue at its exact mounted
@@ -65,26 +67,36 @@ export function createClientActionReverseDispatcher(
         : parseClientActionDispatchResult(actionId, { v: 1, execution: { ok: true, result } })
           ?? { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
     }
+    // Voice, Settings and client-wide effects use the answering Account client's owners even when
     // the invoking Agent's Session is in the background. View-specific Actions
     // still require the App viewing their exact Session, without fallback.
     const accountClientAction = isVoiceConversationActionId(actionId) || isSettingsDeclarationActionIdV1(actionId)
       || isSessionOrganizationAppearanceActionId(actionId)
+      || isWorkspaceActionId(actionId) || actionId === USAGE_HISTORY_ACTION_IDS.read
+      || actionId === 'session.open' || actionId === 'desktop.windows.open'
+      || actionId === 'links.openExternal' || actionId === 'file.view.preference.set'
+      || actionId === 'projects.sources.moveToTeam' || actionId === 'session.messages.pins'
       || actionId === 'session.space_membership.set';
-    const composerAction = actionId === 'ui.prompts.picker.open' || actionId === 'composer.transaction.apply'
-      || actionId === 'composer.attachments.pick';
-    const composerRef = composerAction && input && typeof input === 'object'
+    const sessionPresenter = getActionSpec(actionId).clientPresenter === 'session';
+    const composerRef = sessionPresenter && input && typeof input === 'object'
       ? Reflect.get(input, 'composerRef') ?? Reflect.get(input, 'ref') : undefined;
     // Standalone CLI adapters also put the resolved destination in this field.
     // It is not a viewed caller Session; Agent/bridge and explicit Session
     // provenance retain their bound route. Explicit composer refs stay exact.
     const callerSessionId = context.surface === 'cli' && context.actionCaller?.kind !== 'session'
       ? null : context.defaultSessionId;
-    const targetSessionId = composerRef
+    // A qualified widget surface owns its destination. A Usage/Project area
+    // must not inherit the invoking Agent's unrelated viewed-Session room.
+    const widgetSurface = readWidgetActionSurfaceV1(input);
+    const targetSessionId = widgetSurface ? readWidgetActionSessionTargetV1(widgetSurface)?.sessionId ?? null : composerRef
       ? typeof composerRef === 'object' && 'sessionId' in composerRef && typeof composerRef.sessionId === 'string'
         ? composerRef.sessionId : null
       : callerSessionId ? readCliActionBoundSessionId(callerSessionId) : null;
     const originAction = PluginExecutionOriginActionIdSchema.safeParse(actionId);
     const originInput = originAction.success ? PluginExecutionOriginActionInputSchemas[originAction.data].parse(input) : null;
+    const libraryAction = actionId === 'workflow.library.view.get' || actionId === 'workflow.library.view.set'
+      || actionId === 'workflow.library.view.reset';
+    const listsAnsweringClients = actionId === 'plugins.execution_origin.list' || actionId === 'workflow.library.view.get';
     const answeringClient = { ...(clientId ? { clientId } : {}), requireSingle: true as const };
     // Project only the address from the already-admitted full Action input.
     const address = isWorkflowAuthoringActionId(actionId) && input && typeof input === 'object'
@@ -103,7 +115,7 @@ export function createClientActionReverseDispatcher(
         && typeof Reflect.get(input, 'commandId') === 'string'
         ? currentUiContextCommandClientRpcMethod(Reflect.get(input, 'commandId'))
       : address?.success ? workflowDraftClientRpcMethod(address.data)
-      : !originInput && !accountClientAction && targetSessionId ? sessionUiActionClientRpcMethod(targetSessionId)
+      : !originInput && !libraryAction && !accountClientAction && targetSessionId ? sessionUiActionClientRpcMethod(targetSessionId)
       : RPC_METHODS.UI_ACTION_EXECUTE;
     if (!client) return machineTransportUnavailable();
     // Advertisements are hints, not receiver authority: reconnect/withdrawal can
@@ -112,17 +124,13 @@ export function createClientActionReverseDispatcher(
     if (context.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
     const actionCaller = context.actionCaller ? projectApprovalExecutionOriginCaller(context.actionCaller) : undefined;
     if (context.actionCaller && !actionCaller) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
-    const request = UiActionDispatchRequestV1Schema.safeParse({ v: 1, actionId, input, context: {
-      surface: context.surface ?? 'agent', authority: context.authority ?? 'account_automation',
-      ...(context.defaultSessionId ? { defaultSessionId: context.defaultSessionId } : {}),
-      ...(context.defaultSessionMachineId ? { defaultSessionMachineId: context.defaultSessionMachineId } : {}),
-      ...(context.agentStartWorkspaceWrites ? { agentStartWorkspaceWrites: context.agentStartWorkspaceWrites } : {}),
-      ...(actionCaller ? { actionCaller } : {}),
-      ...(context.actionRequestId ? { actionRequestId: context.actionRequestId } : {}),
-      ...(context.externalActionCredential ? { externalActionCredential: context.externalActionCredential } : {}),
-      ...(context.externalActionTarget ? { externalActionTarget: context.externalActionTarget } : {}),
-    } });
-    if (!request.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+    let request: UiActionDispatchRequestV1;
+    try {
+      request = buildUiActionDispatchRequestV1({ actionId, input, ...(admittedHostReviewedChildren ? { admittedHostReviewedChildren } : {}), context: {
+        ...context, surface: context.surface ?? 'agent', authority: context.authority ?? 'account_automation',
+        ...(actionCaller ? { actionCaller } : {}),
+      } });
+    } catch { return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' }; }
     // A Session caller's parent stays admitted here while the App answers; its
     // declared Workflow children return to this caller rather than to App relay.
     const parentRequestId = context.actionRequestId?.trim();
@@ -149,7 +157,7 @@ export function createClientActionReverseDispatcher(
       };
     };
     try {
-      const response = await client.callConnectedClientRpc(method, request.data, {
+      const response = await client.callConnectedClientRpc(method, request, {
         ...(answeringClient ? { answeringClient } : {}),
         timeoutMs: null, ...(context.signal ? { signal: context.signal } : {}), onIssued: () => {
           issued = true;
@@ -173,10 +181,21 @@ export function createClientActionReverseDispatcher(
         && 'errorCode' in response.result ? response.result.errorCode : undefined;
       if (refusal === RPC_ERROR_CODES.METHOD_NOT_FOUND || refusal === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) return unavailable();
       const execution = parseClientActionDispatchResult(actionId, response.result);
-      if (actionId === 'plugins.execution_origin.list' && execution?.ok && execution.result
-        && typeof execution.result === 'object' && Reflect.get(execution.result, 'status') === 'available' && response.answeringClientId) {
-        return { ...execution, result: { ...execution.result, answeringClientId: response.answeringClientId,
-          ...(response.answeringClientIds ? { answeringClientIds: [...response.answeringClientIds] } : {}) } };
+      const answeringClients = listsAnsweringClients && response.answeringClientId ? {
+        answeringClientId: response.answeringClientId,
+        ...(response.answeringClientIds ? { answeringClientIds: [...response.answeringClientIds] } : {}),
+      } : null;
+      if (actionId === 'workflow.library.view.get' && execution && !execution.ok
+        && execution.errorCode === 'unavailable' && answeringClients) {
+        return { ...execution, details: {
+          ...(execution.details && typeof execution.details === 'object' && !Array.isArray(execution.details) ? execution.details : {}),
+          ...answeringClients,
+        } };
+      }
+      if (listsAnsweringClients && execution?.ok && execution.result
+        && typeof execution.result === 'object' && answeringClients
+        && (libraryAction || Reflect.get(execution.result, 'status') === 'available')) {
+        return { ...execution, result: { ...execution.result, ...answeringClients } };
       }
       return execution ?? failureWithCause('client_rpc_invalid_response');
     } catch (error) {

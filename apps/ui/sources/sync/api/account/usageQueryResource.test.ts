@@ -7,6 +7,8 @@ import { createAccountKvHttpFixture } from '@/dev/testkit/fixtures/accountKvHttp
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { getUsageQueryKey, normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
+import { USAGE_HISTORY_ACTION_IDS } from '@happier-dev/protocol/usage/usageActionIdsV1';
+import { UsageHistoryReadStateSchema, type UsageHistoryReadInput } from '@happier-dev/protocol/usage/usageSessionEvidence';
 import type { UsageWorkEvidence } from '@happier-dev/protocol/usage/usageOutcomeAllocation';
 import { collectUsageWorkSources } from '@happier-dev/protocol/usage/usageWorkSources';
 import { collectUsageAnalyticsBatchDelivery, projectUsageAnalyticsBatchDelivery, resolveEffectiveUsageCostUsd } from '@happier-dev/protocol/usage/usageCost';
@@ -77,6 +79,7 @@ import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionEx
 import { USAGE_COACH_DETECTOR_IDS } from '@happier-dev/protocol/usage/coach/coachFinding';
 import { CONNECTED_PRESENTATION_ACCOUNT_KV_KEY_V1, CONNECTED_PRESENTATION_ROWS_ROUTE_V1, CONNECTED_ACKNOWLEDGEMENTS_ROWS_ROUTE_V1,
   ConnectedPresentationRowReadResponseV1Schema, ConnectedAcknowledgementsRowReadResponseV1Schema } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
+import { SessionSystemRecordStoredUpsertRequestSchema } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordRoutes';
 import { createUsageQuerySessionInputs, type SessionInputEvidence } from './usageQuerySessionInputs';
 import { projectSessionUsageWorkEvidence } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import { projectUsageSessionInput } from '@/sync/domains/usage/usageWorkEvidence';
@@ -125,6 +128,12 @@ afterEach(async () => { standardCleanup(); retireActiveServerAccountScopeLifetim
 const value: UsageAnalyticsQueryResponse = { v: 1, totals: { eventCount: 1,
   tokens: { input: 10, output: 5, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 15 },
   cost: { reportedUsd: 1, estimatedUsd: 0, currency: 'USD' } } };
+function successfulUsageFactWrite(body: unknown): Response {
+  const write = SessionSystemRecordStoredUpsertRequestSchema.parse(body);
+  return Response.json({ record: { ...write, id: 'sysrec_1', revision: 'ssr1.AAAACHN5c3JlY18xAAAAAQ',
+    createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString() } });
+}
+
 const workContribution = { id: 'cost', observedAtMs: 500, sessionId: 'work-session', turnId: 'turn', agentId: null,
   modelId: null, machineId: null, projectKey: null, workspaceId: null, source: null,
   tokens: value.totals.tokens, cost: value.totals.cost };
@@ -252,11 +261,57 @@ async function context(route: Parameters<typeof serveAccountHomes>[0]['route'],
 }
 
 describe('usage query captured Resource adapter', () => {
+  it('writes compact input once per real Session change and never for an unchanged minute', async () => {
+    const id = 'compact-write-cost';
+    let seq = 1;
+    let nowMs = 1_710_000_000_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+    const captured = await context(request => {
+      if (request.method === 'PUT' && request.path === `/v2/sessions/${id}/system-records`) {
+        return successfulUsageFactWrite(request.body);
+      }
+      if (request.path === '/v2/usage/query') return Response.json(value);
+      if (request.path !== USAGE_SESSION_EVIDENCE_PATH) return undefined;
+      const input = UsageSessionEvidenceRequestSchema.parse(request.body);
+      return Response.json({ requests: input.requests.map(demand => ({ query: demand.query, sessionIds: [id] })),
+        results: [{ sessionId: id,
+          detail: { status: 200, body: { session: createPlainSessionCurrentProjectionRecordFixture({ id, seq, active: false }) } },
+          turns: { status: 200, body: { v: 1, sessionId: id, updatedAt: 900, turns: [
+            { turnId: 'turn', agentId: 'codex', status: 'completed', startedAt: 100, terminalAt: 400, updatedAt: 900 },
+          ] } }, ...(input.requests[0]!.query.includeTranscriptEvidence
+            ? { messageEvidence: { acceptedInputs: [] }, messagesComplete: true } : {}),
+        }] } satisfies UsageSessionEvidenceResponse);
+    });
+    const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 }, includeWorkEvidence: false,
+      includeQuotaHistory: false, includeComparison: false, includeTranscriptEvidence: true });
+    const writes = () => home!.requests.filter(request => request.method === 'PUT'
+      && request.path === `/v2/sessions/${id}/system-records`).length;
+    const read = () => readUiUsageQueryBatch(captured, { queries: [query] });
+    const initial = (await read()).results[0];
+    expect(home!.requests.filter(request => request.path === `/v2/sessions/${id}/system-records`).map(request => request.method),
+      'complete private evidence is saved with the server-owned PUT contract').toEqual(['PUT']);
+    expect(initial?.howYouWork?.sessionCoverage).toMatchObject({ selected: 1, admitted: 1, notRead: 0 });
+    expect(writes()).toBe(1);
+    for (let tick = 0; tick < 60; tick++) {
+      nowMs += 1000;
+      await read();
+    }
+    expect(writes(), 'sixty unchanged clock advances produce no extra compact writes').toBe(1);
+    seq++;
+    publishHomeAccountChange(captured.accountLifetime.scope.serverId, [id],
+      { changeKinds: ['session'], usageQueryAffects: true, usageAccountingAffects: false });
+    expect((await read()).results[0]?.howYouWork?.sessionCoverage).toMatchObject({ selected: 1, admitted: 1, notRead: 0 });
+    expect(writes(), 'a real Session advance persists its replacement once').toBe(2);
+    await read();
+    expect(writes()).toBe(2);
+  });
+
   it('checks only named non-member Session candidates when a live Usage window wakes', async () => {
     const initial = ['window-a', 'window-b', 'window-c'];
     const selected = new Set(initial);
     const subjects: string[][] = [];
     const captured = await context(request => {
+      if (request.method === 'PUT' && /^\/v2\/sessions\/[^/]+\/system-records$/.test(request.path)) return successfulUsageFactWrite(request.body);
       if (request.path === '/v2/usage/query') return Response.json({ ...value, contributions: undefined, sessionIds: [] });
       if (request.path !== USAGE_SESSION_EVIDENCE_PATH) return undefined;
       const input = UsageSessionEvidenceRequestSchema.parse(request.body);
@@ -264,12 +319,12 @@ describe('usage query captured Resource adapter', () => {
       const rawCandidates: unknown = Reflect.get(demand, 'candidateSessionIds');
       const candidates = Array.isArray(rawCandidates) ? rawCandidates.filter((id): id is string => typeof id === 'string') : undefined;
       const ids = demand.sessionIds ?? (candidates ?? [...selected]).filter(id => selected.has(id));
-      subjects.push(ids);
+      if (!demand.query.includeTranscriptEvidence) subjects.push(ids);
       return Response.json({ requests: [{ query: demand.query, sessionIds: ids }], results: ids.map(id => ({ sessionId: id,
         detail: { status: 200, body: { session: createPlainSessionCurrentProjectionRecordFixture({ id, seq: 1 }) } },
         turns: { status: 200, body: { v: 1, sessionId: id, updatedAt: 900, turns: [
           { turnId: 'turn', agentId: 'codex', status: 'completed', startedAt: 100, terminalAt: 400, updatedAt: 900 },
-        ] } },
+        ] } }, ...(demand.query.includeTranscriptEvidence ? { messageEvidence: { acceptedInputs: [] }, messagesComplete: true } : {}),
       })) } satisfies UsageSessionEvidenceResponse);
     });
     const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 }, includeWorkEvidence: false,
@@ -371,6 +426,11 @@ describe('usage query captured Resource adapter', () => {
     // The hydrated list also contains older accounting Sessions from other periods.
     const unrelatedIds = Array.from({ length: 3233 }, (_, index) => `older-accounting-${index}`);
     const captured = await context(request => {
+      if (request.method === 'PUT' && /^\/v2\/sessions\/[^/]+\/system-records$/.test(request.path)) {
+        const write = SessionSystemRecordStoredUpsertRequestSchema.parse(request.body);
+        return Response.json({ record: { ...write, id: 'sysrec_1', revision: 'ssr1.AAAACHN5c3JlY18xAAAAAQ',
+          createdAt: new Date(nowMs).toISOString(), updatedAt: new Date(nowMs).toISOString() } });
+      }
       if (request.path === '/v2/usage/query') return Response.json({ ...value, contributions: undefined,
         sessionIds: [historicalId, nullTurnId], sessionMembership: { turns: [
           { sessionId: historicalId, turnId: 'turn', executions: ['happier'] },
@@ -393,17 +453,36 @@ describe('usage query captured Resource adapter', () => {
       createSessionFixture({ id, seq: 1, serverId: captured.accountLifetime.scope.serverId, encryptionMode: 'plain',
         createdAt: nowMs - 400 * 86_400_000, updatedAt: nowMs - 400 * 86_400_000 })])) });
     const query = normalizeUsageQuery({ period: { relative }, includeComparison: false, includeWorkEvidence: false });
-    const result = await readUiUsageQueryBatch(captured, { queries: [query] });
+    let result = await readUiUsageQueryBatch(captured, { queries: [query] });
     const demands = home!.requests.filter(request => request.path === USAGE_SESSION_EVIDENCE_PATH)
       .flatMap(request => UsageSessionEvidenceRequestSchema.parse(request.body).requests);
     expect(demands.filter(demand => demand.sessionIds === undefined)).toHaveLength(1);
     expect(demands.filter(demand => !demand.query.includeTranscriptEvidence && demand.sessionIds !== undefined)
       .flatMap(demand => demand.sessionIds!).sort()).toEqual([historicalId, nullTurnId].sort());
-    expect(demands.filter(demand => demand.query.includeTranscriptEvidence).flatMap(demand => demand.sessionIds ?? []).sort()).toEqual([...selectedIds].sort());
+    // The shared owner auto-reads missing facts through 30D; wide windows require Read now.
+    const opensTranscripts = relative !== '90days';
+    expect(demands.filter(demand => demand.query.includeTranscriptEvidence).flatMap(demand => demand.sessionIds ?? []).sort())
+      .toEqual(opensTranscripts ? [...selectedIds].sort() : []);
     expect(demands.every(demand => demand.sessionIds?.every(id => selectedIds.includes(id)) ?? true)).toBe(true);
     expect(result.results[0]?.howYouWork?.sessionCoverage).toMatchObject({ selected: 3, admitted: 3 });
     expect(result.results[0]?.howYouWork?.intervals?.agentTimeMs).toBe(600);
-    expect(result.results[0]?.howYouWork?.inputs).toMatchObject({ acceptedCount: 2 });
+    if (opensTranscripts) expect(result.results[0]?.howYouWork?.inputs).toMatchObject({ acceptedCount: 2 });
+    else expect(result.results[0]?.howYouWork?.sessionCoverage).toMatchObject({ notRead: 3 });
+    if (relative === '90days') {
+      expect(result.results[0]?.howYouWork?.inputs).toBeNull();
+      const { readUiUsageHistory } = await import('./usageQueryResource');
+      expect(await readUiUsageHistory(captured, { query })).toMatchObject({ status: 'complete',
+        progress: { selected: 3, notRead: 0, completed: 3, failed: 0 } });
+      result = await readUiUsageQueryBatch(captured, { queries: [query] });
+      const completedDemands = home!.requests.filter(request => request.path === USAGE_SESSION_EVIDENCE_PATH)
+        .flatMap(request => UsageSessionEvidenceRequestSchema.parse(request.body).requests);
+      expect(completedDemands.filter(demand => demand.query.includeTranscriptEvidence)
+        .flatMap(demand => demand.sessionIds ?? []).sort()).toEqual([...selectedIds].sort());
+      expect(completedDemands.every(demand => demand.sessionIds?.every(id => selectedIds.includes(id)) ?? true)).toBe(true);
+      expect(result.results[0]?.howYouWork?.sessionCoverage).toMatchObject({ selected: 3, admitted: 3 });
+      expect(result.results[0]?.howYouWork?.intervals?.agentTimeMs).toBe(600);
+      expect(result.results[0]?.howYouWork?.inputs).toMatchObject({ acceptedCount: 2 });
+    }
   });
 
   it.each(['stream', 'buffered', 'truncated'] as const)('reads %s projected Usage records across UTF-8 boundaries and admits only a complete cohort', async transport => {
@@ -492,6 +571,43 @@ describe('usage query captured Resource adapter', () => {
     } finally { retireActiveServerAccountScopeLifetime(); await reading; release(); }
   });
 
+  it.each(['action', 'joined-signal'] as const)('cancels the Account history read and its held evidence stream (%s)', async cancellation => {
+    const consumed = createDeferred<void>();
+    let cancelled = false;
+    const captured = await context(request => {
+      if (request.path === '/v2/usage/query') return Response.json(value);
+      if (request.path !== USAGE_SESSION_EVIDENCE_PATH) return undefined;
+      const input = UsageSessionEvidenceRequestSchema.parse(request.body);
+      return new Response(new ReadableStream<Uint8Array>({ start(controller) {
+        controller.enqueue(new TextEncoder().encode(JSON.stringify({ requests: input.requests.map(demand => ({
+          query: demand.query, sessionIds: ['held-history'],
+        })) }) + '\n'));
+      }, pull() { consumed.resolve(); }, cancel() { cancelled = true; } }), { headers: { 'Content-Type': 'application/x-ndjson' } });
+    });
+    const { readUiUsageHistory, getUiUsageHistoryState } = await import('./usageQueryResource');
+    const query = normalizeUsageQuery({ period: { relative: '90days' }, includeWorkEvidence: false });
+    const reading = readUiUsageHistory(captured, { query });
+    await consumed.promise;
+    expect(getUiUsageHistoryState(captured, query).status).toBe('reading');
+    let joined: ReturnType<typeof readUiUsageHistory> | undefined;
+    if (cancellation === 'action') {
+      const result = await createDefaultActionExecutor().execute(USAGE_HISTORY_ACTION_IDS.read, { query, operation: 'cancel' }, {
+        surface: 'ui', actionCaller: { kind: 'host' }, serverId: captured.accountLifetime.scope.serverId,
+        expectedAccountId: captured.accountLifetime.scope.accountId, authority: 'present_user',
+      });
+      expect(result.ok).toBe(true);
+    } else {
+      const controller = new AbortController();
+      joined = readUiUsageHistory(captured, { query }, { signal: controller.signal });
+      controller.abort();
+    }
+    const state = await reading;
+    expect(state).toMatchObject({ status: 'cancelled', progress: { completed: 0, failed: 0 } });
+    if (joined) expect(await joined).toEqual(state);
+    expect(getUiUsageHistoryState(captured, query)).toEqual(state);
+    expect(cancelled, 'local cancellation closes the real pending HTTP body').toBe(true);
+  });
+
   it.each([false, true])('projects content-free permission and wait facts with no AgentState (transcript %s)', async includeTranscriptEvidence => {
     const { projectUsageSessionStateEvidenceFromRequests } = await import('@happier-dev/protocol/usage/usageWorkEvidence');
     const id = 'projected-state';
@@ -517,7 +633,93 @@ describe('usage query captured Resource adapter', () => {
     expect(batch.results[0]?.howYouWork?.permissions).toMatchObject({ decisionLatencyMs: 100 });
   });
 
-  it.each(['json', 'stream'] as const)('opens opaque Usage evidence only on the authorized E2EE client and releases transcript bodies after projection (%s)', async transport => {
+  it('isolates compact row stale context from newly admitted turns', async () => {
+    const captured = await context(() => undefined);
+    const [{ openUsageCompactInput }, { captureServerRequestAuthorityForServerAccountScope }] = await Promise.all([
+      import('./usageCompactInput'),
+      import('@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope'),
+    ]);
+    const authority = await captureServerRequestAuthorityForServerAccountScope({ scope: captured.accountLifetime.scope,
+      activeRequest: captured.request });
+    const id = 'stale-compact-context';
+    const identity = { id, seq: 2, createdAt: 0, updatedAt: 900, active: false,
+      metadataVersion: 2, agentStateVersion: 2, metadataLayoutVersion: 1,
+      encryptionMode: 'plain' as const, dataEncryptionKey: null, viewerRole: 'owner' as const,
+      access: ownerSessionAccess.effectiveAccess };
+    try {
+      for (const basis of [
+        { seq: 1, metadataVersion: 2, agentStateVersion: 2 },
+        { seq: 2, metadataVersion: 1, agentStateVersion: 2 },
+        { seq: 2, metadataVersion: 2, agentStateVersion: 1 },
+        { seq: 2, metadataVersion: 2, agentStateVersion: 2 },
+      ]) {
+        const current = Object.entries(basis).every(([key, version]) => identity[key as keyof typeof basis] === version);
+        const opened = await openUsageCompactInput({ context: captured, opening: authority.context,
+          isCurrent: captured.accountLifetime.isCurrent, row: { sessionId: id,
+            workFacts: { session: identity, content: { t: 'plain', v: projectNativeJsonValueForTransport({ v: 1, ...basis,
+              evidence: { status: 'partial' }, session: { metadata: { machineId: 'old-machine' },
+                ownerMetadata: { machineId: 'old-machine', path: '/old/private/path' } } }) } },
+            turns: { status: 200, body: { v: 1, sessionId: id, updatedAt: 900, turns: [
+              { turnId: 'new-turn', agentId: 'codex', status: 'completed', startedAt: 100, terminalAt: 400, updatedAt: 900 },
+            ] } },
+          } });
+        expect(opened.completeMessageCoverage).toBe(current);
+        expect(opened.session.metadata).toEqual(current ? { machineId: 'old-machine' } : null);
+        expect(opened.session.ownerMetadata).toEqual(current ? { machineId: 'old-machine', path: '/old/private/path' } : null);
+        if (!current) expect(opened.detail.facts).toEqual(expect.arrayContaining([
+          expect.objectContaining({ evidenceId: 'new-turn', machineId: null }),
+        ]));
+      }
+    } finally { await authority.release(); }
+  });
+
+  it('isolates compact row opening failures while retaining readable all-time siblings', async () => {
+    const ids = ['readable-compact-row', 'invalid-compact-row'];
+    const captured = await context(request => {
+      if (request.path === '/v2/usage/query') return Response.json(value);
+      if (request.path !== USAGE_SESSION_EVIDENCE_PATH) return undefined;
+      const input = UsageSessionEvidenceRequestSchema.parse(request.body);
+      return Response.json({ requests: input.requests.map(demand => ({ query: demand.query, sessionIds: ids })),
+        results: ids.map((id, index) => ({ sessionId: id,
+          workFacts: { session: { id, seq: 1, createdAt: 0, updatedAt: 900, active: false,
+            metadataVersion: 1, agentStateVersion: 1, metadataLayoutVersion: 1,
+            encryptionMode: 'plain' as const, dataEncryptionKey: null, viewerRole: 'owner' as const,
+            access: ownerSessionAccess.effectiveAccess }, content: { t: 'plain' as const,
+            v: projectNativeJsonValueForTransport(index ? { v: 999 } : { v: 1, seq: 1, evidence: { status: 'partial',
+              facts: [{ workId: JSON.stringify([id, 'turn']), evidenceId: 'turn', agentId: 'codex', machineId: null,
+                kind: 'busy', startMs: 100, endMs: 400 }] } }) } },
+          turns: { status: 200 as const, body: { v: 1 as const, sessionId: id, updatedAt: 900, turns: [
+            { turnId: 'turn', agentId: 'codex', status: 'completed' as const, startedAt: 100, terminalAt: 400, updatedAt: 900 },
+          ] } },
+        })) } satisfies UsageSessionEvidenceResponse);
+    });
+    const batch = await readUiUsageQueryBatch(captured, { queries: [normalizeUsageQuery({ period: { relative: 'all' },
+      includeWorkEvidence: false })] });
+    expect(batch.results[0]?.howYouWork?.intervals?.agentTimeMs).toBe(300);
+    expect(batch.results[0]?.sources).toEqual(expect.arrayContaining([
+      expect.objectContaining({ source: 'how_you_work:sessions', status: 'partial' }),
+    ]));
+  });
+
+  it.each([...([
+    { transport: 'json', compact: false, range: 'explicit' }, { transport: 'stream', compact: false, range: 'explicit' },
+    { transport: 'json', compact: true, range: 'explicit' }, { transport: 'stream', compact: true, range: 'explicit' },
+    { transport: 'json', compact: true, range: '7days' },
+    { transport: 'json', compact: false, range: '7days' },
+    { transport: 'json', compact: true, range: '30days' },
+    { transport: 'stream', compact: true, range: '90days' }, { transport: 'json', compact: true, range: 'all' },
+    { transport: 'json', compact: false, range: '90days' }, { transport: 'stream', compact: false, range: 'all' },
+  ] as const).map(row => ({ ...row, writeFailure: false, contextAdvance: false, active: false, includeTranscriptEvidence: true })),
+    { transport: 'json', compact: false, range: 'all', writeFailure: true, contextAdvance: false, active: false, includeTranscriptEvidence: true },
+    { transport: 'json', compact: false, range: 'all', writeFailure: true, contextAdvance: true, active: false, includeTranscriptEvidence: true },
+    { transport: 'json', compact: false, range: 'all', writeFailure: false, contextAdvance: false, active: true, includeTranscriptEvidence: true },
+    { transport: 'json', compact: false, range: '90days', writeFailure: false, contextAdvance: false, active: false, includeTranscriptEvidence: false },
+    { transport: 'json', compact: false, range: '7days', writeFailure: false, contextAdvance: false, active: false, includeTranscriptEvidence: false },
+    { transport: 'json', compact: true, range: '7days', writeFailure: false, contextAdvance: false, active: false, includeTranscriptEvidence: false },
+  ] as const)('opens E2EE evidence and reuses compact Session facts without transcript reads ($transport, compact=$compact, range=$range, writeFailure=$writeFailure, contextAdvance=$contextAdvance, active=$active, transcript=$includeTranscriptEvidence)', async ({ transport, compact, range, writeFailure, contextAdvance, active, includeTranscriptEvidence }) => {
+    const nowMs = Date.UTC(2026, 10, 6);
+    const baseMs = nowMs - 1000;
+    vi.spyOn(Date, 'now').mockReturnValue(nowMs);
     const [{ Encryption }, { encodeBase64 }, { sealEncryptedDataKeyEnvelopeV1 }, { AES256Encryption }] = await Promise.all([
       import('@/sync/encryption/encryption'), import('@/encryption/base64'), import('@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1'),
       import('@/sync/encryption/encryptor'),
@@ -530,23 +732,49 @@ describe('usage query captured Resource adapter', () => {
     const sessionEncryption = encryption.getSessionEncryption(id)!;
     const dataEncryptionKey = encodeBase64(sealEncryptedDataKeyEnvelopeV1({ dataKey: sessionKey,
       recipientPublicKey: encryption.contentDataKey, randomBytes: length => new Uint8Array(length).fill(3) }), 'base64');
-    const metadata = await sessionEncryption.encryptMetadata(createSessionFixture({ id }).metadata!);
+    const privateMetadata = { ...createSessionFixture({ id }).metadata!, machineId: 'compact-fact-machine', path: '/work/compact-facts' };
+    const metadata = await sessionEncryption.encryptMetadata(privateMetadata);
+    const factCiphertext = await sessionEncryption.encryptRaw({ v: 1, seq: 1, evidence: { status: 'partial',
+      facts: [{ workId: JSON.stringify([id, 'turn']), evidenceId: 'turn', agentId: 'codex', machineId: null,
+        kind: 'busy', startMs: baseMs + 100, endMs: baseMs + 400 }],
+      acceptedInputs: [{ inputId: 'accepted', workId: JSON.stringify([id, 'turn']), acceptedAtMs: baseMs + 200,
+        deliveryKind: 'steer', turnId: 'turn' }], phaseEvents: [], collaboration: [],
+      coach: { compositionCoverage: 'complete', composition: [{ v: 1, evidenceId: 'composition', sessionId: id,
+        turnId: 'turn', inputId: 'accepted', observedAtMs: baseMs + 200, boundary: 'host_pre_dispatch', deliveryKind: 'steer',
+        coverage: 'host_only', nativePrefix: null, contextWindowTokens: null,
+        components: ['a', 'c'].map(source => ({ sourceId: source.repeat(64), digest: 'b'.repeat(64), kind: 'instructions',
+          location: 'user', byteLength: 200, tokenCount: null, tokenizerId: null, cacheClass: 'unknown', overlap: 'none' })) }] } } });
     const body = 'private body stays on the authorized client';
     const ciphertext = await sessionEncryption.encryptRawRecord({ role: 'user', content: { type: 'text', text: body } });
-    const [delivery] = await new AES256Encryption(sessionKey).encrypt([{ v: 1, acceptedAtMs: 200,
+    const [delivery] = await new AES256Encryption(sessionKey).encrypt([{ v: 1, acceptedAtMs: baseMs + 200,
       delivery: { kind: 'steer', turnId: 'turn' } }]);
-    const { ownerMetadata: _owner, displayProjectionV1: _display, ...base } = createPlainSessionCurrentProjectionRecordFixture({ id, seq: 1 });
-    const record = { ...base, metadataLayoutVersion: 0, encryptionMode: 'e2ee' as const, dataEncryptionKey, metadata, agentState: null };
+    const { ownerMetadata: _owner, displayProjectionV1: _display, ...base } = createPlainSessionCurrentProjectionRecordFixture({
+      id, seq: 1, createdAt: baseMs, updatedAt: baseMs + 900, active });
+    let record = { ...base, metadataLayoutVersion: 0, encryptionMode: 'e2ee' as const, dataEncryptionKey, metadata, agentState: null };
     const credentials = { token: createServedHomeAccountToken('account-a'), secret: encodeBase64(secret, 'base64url') };
+    const factWrites: unknown[] = [];
     const captured = await context(request => {
       if (request.path === '/v2/usage/query') return Response.json(value);
+      if (request.path === `/v2/sessions/${id}/system-records` && request.method === 'PUT') {
+        factWrites.push(request.body);
+        if (writeFailure && factWrites.length === 1) return Response.json({ error: 'Plugin Session system record operation failed',
+          code: 'plugin_session_record_forbidden' }, { status: 403 });
+        return Response.json({ record: { ...(request.body as Record<string, unknown>), id: 'sysrec_1', revision: 'ssr1.AAAACHN5c3JlY18xAAAAAQ',
+          createdAt: new Date(nowMs).toISOString(), updatedAt: new Date(nowMs).toISOString() } });
+      }
       if (request.path !== USAGE_SESSION_EVIDENCE_PATH) return undefined;
       const input = UsageSessionEvidenceRequestSchema.parse(request.body);
       const response = { requests: input.requests.map(demand => ({ query: demand.query, sessionIds: [id] })), results: [{ sessionId: id,
-        detail: { status: 200, body: { session: record } }, turns: { status: 200, body: { v: 1, sessionId: id, updatedAt: 900,
-          turns: [{ turnId: 'turn', agentId: 'codex', status: 'completed', startedAt: 100, terminalAt: 400, updatedAt: 900 }] } },
+        ...(input.readWorkFacts ? { workFacts: { session: { id, seq: 1, createdAt: baseMs, updatedAt: baseMs + 900,
+          encryptionMode: 'e2ee' as const, dataEncryptionKey, viewerRole: 'owner' as const, active,
+          metadataVersion: record.metadataVersion, agentStateVersion: record.agentStateVersion, metadataLayoutVersion: 0,
+          access: ownerSessionAccess.effectiveAccess },
+          content: compact ? { t: 'encrypted' as const, c: factCiphertext } : null } }
+          : { detail: { status: 200, body: { session: record } } }),
+        turns: { status: 200, body: { v: 1, sessionId: id, updatedAt: baseMs + 900,
+          turns: [{ turnId: 'turn', agentId: 'codex', status: 'completed', startedAt: baseMs + 100, terminalAt: baseMs + 400, updatedAt: baseMs + 900 }] } },
         ...(input.requests[0]!.query.includeTranscriptEvidence ? { messages: { status: 200, body: { messages: [
-          { id: 'opaque', localId: 'accepted', seq: 1, createdAt: 200, updatedAt: 200, content: { t: 'encrypted', c: ciphertext },
+          { id: 'opaque', localId: 'accepted', seq: 1, createdAt: baseMs + 200, updatedAt: baseMs + 200, content: { t: 'encrypted', c: ciphertext },
             deliveryResolution: { v: 1, kind: 'provider_accepted', content: { t: 'encrypted', c: encodeBase64(delivery!, 'base64') } } },
         ], hasMore: false } } } : {}),
       }] } satisfies UsageSessionEvidenceResponse;
@@ -556,14 +784,100 @@ describe('usage query captured Resource adapter', () => {
     }, undefined, undefined, { credentials, accountMode: 'e2ee',
       encryptionCurrentness: () => createAccountEncryptionCurrentnessFixtureForCredentials(credentials) });
     const before = home!.requests.length;
+    const beforeHttp = home!.httpRequests.length;
     const batch = await readUiUsageQueryBatch(captured, { queries: [normalizeUsageQuery({ session: id,
-      period: { startMs: 0, endMs: 1000 }, includeWorkEvidence: false })] });
+      period: range === 'explicit' ? { startMs: baseMs, endMs: nowMs } : { relative: range }, includeWorkEvidence: false, includeTranscriptEvidence })] });
+    const notRead = !compact && (range === '90days' || range === 'all');
     expect(batch.results[0]?.howYouWork?.intervals?.agentTimeMs).toBe(300);
-    expect(batch.results[0]?.howYouWork?.inputs).toMatchObject({ acceptedCount: 1, steeringCount: 1 });
+    if (notRead) {
+      expect(batch.results[0]?.howYouWork?.inputs).toBeNull();
+      expect(batch.results[0]?.howYouWork?.sessionCoverage).toMatchObject({ selected: 1, admitted: 1, notRead: 1 });
+    } else expect(batch.results[0]?.howYouWork?.inputs).toMatchObject({ acceptedCount: 1, steeringCount: 1 });
+    if (compact) expect(batch.results[0]?.coach?.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ detectorId: 'duplicated_instructions' }),
+    ]));
+    if (compact && includeTranscriptEvidence) expect(batch.results[0]?.sources).toContainEqual(expect.objectContaining({
+      source: 'how_you_work:transcripts', status: 'available',
+    }));
     expect(JSON.stringify(batch)).not.toContain(body);
     expect(JSON.stringify(batch)).not.toContain(ciphertext);
+    const transcriptReads = home!.httpRequests.slice(beforeHttp).filter(request => request.path === USAGE_SESSION_EVIDENCE_PATH
+      && UsageSessionEvidenceRequestSchema.parse(request.body).requests.some(demand => demand.query.includeTranscriptEvidence));
+    expect(transcriptReads).toHaveLength(compact || notRead ? 0 : 1);
+    expect(factWrites).toHaveLength(compact || notRead ? 0 : 1);
     expect(home!.requests.slice(before).filter(request => request.path === '/v2/sessions/read-batch'
       || /^\/v[12]\/sessions\/[^/]+(?:\/|$)/.test(request.path) && request.method === 'GET')).toEqual([]);
+    if (notRead) {
+      const { readUiUsageHistory } = await import('./usageQueryResource');
+      const progress: string[] = [];
+      const query = batch.results[0]!.requestedQuery;
+      const executor = createDefaultActionExecutor();
+      const caller = { surface: 'ui' as const, actionCaller: { kind: 'host' as const },
+        serverId: captured.accountLifetime.scope.serverId, expectedAccountId: captured.accountLifetime.scope.accountId,
+        authority: 'present_user' as const,
+        operationProgress: { update: (state: Readonly<{ phase?: string }>) => { if (state.phase) progress.push(state.phase); } } };
+      const invokeHistory = async (operation: UsageHistoryReadInput['operation']) => {
+        const outcome = await executor.execute(USAGE_HISTORY_ACTION_IDS.read, { query, operation }, caller);
+        expect(outcome.ok, outcome.ok ? undefined : outcome.errorCode).toBe(true);
+        if (!outcome.ok) throw new Error(outcome.errorCode);
+        return UsageHistoryReadStateSchema.parse(outcome.result);
+      };
+      if (range === '90days') expect(await invokeHistory('status')).toMatchObject({ status: 'idle' });
+      let read = range === '90days' ? await invokeHistory('read')
+        : await readUiUsageHistory(captured, { query }, { onProgress: state => { progress.push(state.status); } });
+      if (writeFailure) {
+        expect(read).toMatchObject({ status: 'partial', errorCode: 'plugin_session_record_forbidden',
+          progress: { selected: 1, notRead: 1, completed: 0, failed: 1 } });
+        if (contextAdvance) {
+          record = { ...record, metadataVersion: record.metadataVersion + 1,
+            metadata: await sessionEncryption.encryptMetadata({ ...privateMetadata, path: '/work/refreshed-context' }) };
+          storage.setState({ profileScope: captured.accountLifetime.scope, sessions: { [id]: createSessionFixture({
+            id, seq: record.seq, updatedAt: record.updatedAt, metadataVersion: record.metadataVersion,
+            agentStateVersion: record.agentStateVersion, metadataLayoutVersion: record.metadataLayoutVersion,
+            encryptionMode: 'e2ee', serverId: captured.accountLifetime.scope.serverId,
+          }) } });
+        }
+        read = await readUiUsageHistory(captured, { query });
+      }
+      if (active) {
+        // A complete finite page is useful evidence, but the canonical fact owner
+        // excludes active Sessions from durable history conversion.
+        expect(read).toMatchObject({ status: 'partial',
+          progress: { selected: 1, notRead: 1, completed: 0, failed: 0 } });
+        const reopened = await readUiUsageQueryBatch(captured, { queries: [query] });
+        expect(reopened.results[0]?.howYouWork?.sessionCoverage).toMatchObject({ selected: 1, admitted: 1, notRead: 1 });
+        return;
+      }
+      expect(read, `History state ${JSON.stringify(read)}; fact writes ${factWrites.length}`).toMatchObject({
+        status: 'complete', progress: { selected: 1, notRead: 0, completed: 1, failed: 0 } });
+      expect(progress).toContain('reading');
+      const allTranscriptReads = home!.httpRequests.slice(beforeHttp).filter(request => request.path === USAGE_SESSION_EVIDENCE_PATH
+        && UsageSessionEvidenceRequestSchema.parse(request.body).requests.some(demand => demand.query.includeTranscriptEvidence));
+      expect(allTranscriptReads).toHaveLength(1);
+      expect(factWrites).toHaveLength(writeFailure ? 2 : 1);
+      expect(factWrites[0]).toMatchObject({ address: { owner: 'host', namespace: 'usage', kind: 'work_facts.v1', localId: 'how_you_work' },
+        content: { t: 'encrypted' } });
+      expect(JSON.stringify(factWrites)).not.toContain(body);
+      for (const [index, write] of factWrites.entries()) {
+        const stored = SessionSystemRecordStoredUpsertRequestSchema.parse(write);
+        expect(stored.content.t).toBe('encrypted');
+        if (stored.content.t !== 'encrypted') throw new Error('Expected encrypted Usage Session fact');
+        expect(await sessionEncryption.decryptRaw(stored.content.c)).toMatchObject({
+          session: { metadata: { machineId: privateMetadata.machineId },
+            ownerMetadata: { path: contextAdvance && index > 0 ? '/work/refreshed-context' : privateMetadata.path } },
+        });
+      }
+      const reopened = await readUiUsageQueryBatch(captured, { queries: [query] });
+      expect(reopened.results[0]?.howYouWork?.inputs).toMatchObject({ acceptedCount: 1, steeringCount: 1 });
+      expect(reopened.results[0]?.howYouWork?.sessionCoverage).toMatchObject({ notRead: 0 });
+      if (range === '90days') {
+        expect(await invokeHistory('status')).toMatchObject({ status: 'complete', progress: read.progress });
+        expect(await invokeHistory('cancel')).toMatchObject({ status: 'complete', progress: read.progress });
+        await invokeHistory('read');
+      } else await readUiUsageHistory(captured, { query });
+      expect(home!.httpRequests.slice(beforeHttp).filter(request => request.path === USAGE_SESSION_EVIDENCE_PATH
+        && UsageSessionEvidenceRequestSchema.parse(request.body).requests.some(demand => demand.query.includeTranscriptEvidence))).toHaveLength(1);
+    }
   });
 
   it.each([true, false])('reads each Usage window through projected evidence without acquiring complete Session transcripts (explicit %s)', async explicit => {
@@ -606,7 +920,8 @@ describe('usage query captured Resource adapter', () => {
       for (const demand of input.requests) expect(queries.map(query => query.period)).toContainEqual(demand.query.period);
     }
     expect(requests.filter(request => request.path === '/v2/sessions/read-batch'
-      || /^\/v[12]\/sessions\/[^/]+(?:\/|$)/.test(request.path))).toEqual([]);
+      || /^\/v[12]\/sessions\/[^/]+(?:\/|$)/.test(request.path)
+        && !(request.method === 'PUT' && /^\/v2\/sessions\/[^/]+\/system-records$/.test(request.path)))).toEqual([]);
     const evidenceReads = () => home!.requests.filter(request => request.path === USAGE_SESSION_EVIDENCE_PATH).length;
     const beforeReuse = evidenceReads();
     const reused = await readUiUsageQueryBatch(captured, { queries });
@@ -752,11 +1067,13 @@ describe('usage query captured Resource adapter', () => {
 
   it('withdraws collection work after the last Usage consumer and skips Session inventory on quota Refresh', async () => {
     const captured = await context(request => {
+      if (request.method === 'PUT' && /^\/v2\/sessions\/[^/]+\/system-records$/.test(request.path)) return successfulUsageFactWrite(request.body);
       if (request.path === '/v2/usage/query') return Response.json(value);
       if (request.path === '/v2/sessions/idle-evidence') return Response.json({ session: createPlainSessionCurrentProjectionRecordFixture({
         id: 'idle-evidence', createdAt: 1, updatedAt: 900, seq: 1, metadataVersion: 1, agentStateVersion: 1 }) });
       if (request.path === '/v1/sessions/idle-evidence/turns') return Response.json({ v: 1, sessionId: 'idle-evidence', updatedAt: 900,
         turns: [{ turnId: 'idle-turn', agentId: 'codex', status: 'completed', startedAt: 100, terminalAt: 400, updatedAt: 900 }] });
+      if (request.path === '/v1/sessions/idle-evidence/messages') return Response.json({ messages: [], hasMore: false });
       return undefined;
     });
     storage.getState().applySessions([createSessionFixture({ id: 'idle-evidence', serverId: captured.accountLifetime.scope.serverId,
@@ -1104,6 +1421,7 @@ describe('usage query captured Resource adapter', () => {
   it('retains accounting bytes across 47 proven Session status wakes while closed private evidence refreshes', async () => {
     let revision = 1;
     const captured = await context(request => {
+      if (request.method === 'PUT' && /^\/v2\/sessions\/[^/]+\/system-records$/.test(request.path)) return successfulUsageFactWrite(request.body);
       if (request.path === '/v2/usage/query') return Response.json({ ...value, totals: { ...value.totals, eventCount: revision } });
       if (request.path === '/v2/sessions/status-session') return Response.json({ session: createPlainSessionCurrentProjectionRecordFixture({
         id: 'status-session', createdAt: 1, updatedAt: 900 + revision, seq: 1, active: true, activeAt: 900,
@@ -1111,6 +1429,7 @@ describe('usage query captured Resource adapter', () => {
       if (request.path === '/v1/sessions/status-session/turns') return Response.json({ v: 1, sessionId: 'status-session', updatedAt: 900 + revision,
         turns: [{ turnId: 'status-turn', agentId: 'codex', status: 'completed', startedAt: 100,
           terminalAt: 100 + 300 * revision, updatedAt: 900 + revision }] });
+      if (request.path === '/v1/sessions/status-session/messages') return Response.json({ messages: [], hasMore: false });
       return undefined;
     });
     const session = createSessionFixture({ id: 'status-session', serverId: captured.accountLifetime.scope.serverId,
@@ -1958,6 +2277,7 @@ describe('usage query captured Resource adapter', () => {
     const ids = ['healthy-turns', 'retry-turns', 'empty-turns', 'unread', 'healthy-second'];
     let failedTurns = scenario === 'recovery';
     const captured = await context(request => {
+      if (request.method === 'PUT' && /^\/v2\/sessions\/[^/]+\/system-records$/.test(request.path)) return successfulUsageFactWrite(request.body);
       if (request.path === '/v2/usage/query') return Response.json(value);
       const detail = /^\/v2\/sessions\/(healthy-turns|retry-turns|empty-turns|unread|healthy-second)$/.exec(request.path);
       if (detail?.[1] === 'unread' && failedTurns) return Response.json({ error: 'unavailable' }, { status: 503 });
@@ -1973,6 +2293,7 @@ describe('usage query captured Resource adapter', () => {
               terminalAt: id === 'retry-turns' ? 700 : 400, updatedAt: 900 },
           ] });
       }
+      if (/^\/v1\/sessions\/(healthy-turns|retry-turns|empty-turns|unread|healthy-second)\/messages$/.test(request.path)) return Response.json({ messages: [], hasMore: false });
       return undefined;
     });
     storage.setState({ profileScope: captured.accountLifetime.scope, sessions: Object.fromEntries(ids.map(id => [id,
@@ -1980,6 +2301,9 @@ describe('usage query captured Resource adapter', () => {
     ])) });
     const query = normalizeUsageQuery({ period: relative ? { relative: 'all' } : { startMs: 0, endMs: 1000 },
       includeWorkEvidence: false, includeTranscriptEvidence: false });
+    const intervalReadsFor = (id: string) => home!.requests.filter(request => request.path === USAGE_SESSION_EVIDENCE_PATH)
+      .flatMap(request => UsageSessionEvidenceRequestSchema.parse(request.body).requests)
+      .filter(demand => !demand.query.includeTranscriptEvidence && (demand.sessionIds ?? ids).includes(id)).length;
     const entry = getUsageQueryResourceStore(captured)
       .getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport({ queries: [query] }) });
     const observed: ReturnType<typeof decodeUsageQueryResource>['results'][number][] = [];
@@ -1990,7 +2314,8 @@ describe('usage query captured Resource adapter', () => {
     try {
       await entry.refresh();
       expect(slice().pending).toBe(false);
-      expect(slice().howYouWork?.sessionCoverage).toEqual({ selected: 5, admitted: scenario === 'recovery' ? 3 : 5 });
+      expect(slice().howYouWork?.sessionCoverage).toEqual({ selected: 5, admitted: scenario === 'recovery' ? 3 : 5,
+        notRead: scenario === 'recovery' ? 3 : 5 });
       expect(slice().coach?.sessionCoverage).toEqual(slice().howYouWork?.sessionCoverage);
       if (scenario === 'recovery') {
         expect(slice().sources).toContainEqual({ source: 'how_you_work:sessions', status: 'partial' });
@@ -2006,21 +2331,22 @@ describe('usage query captured Resource adapter', () => {
         expect(slice().sources).toContainEqual({ source: 'how_you_work:sessions', status: 'available' });
         expect(slice().howYouWork?.intervals?.agentTimeMs).toBe(600);
       }
-      const attemptsBeforeRetry = sessionRequests().filter(request => request.path === '/v1/sessions/retry-turns/turns').length;
+      const attemptsBeforeRetry = intervalReadsFor('retry-turns');
       const postsBeforeRetry = home!.requests.filter(request => request.path === USAGE_SESSION_EVIDENCE_PATH).length;
       failedTurns = false;
       nowMs = 2000;
       // No Session/store marker changes: Retry must reacquire only failed evidence.
       await entry.refresh();
       expect(slice().howYouWork?.intervals?.agentTimeMs).toBe(scenario === 'recovery' ? 1200 : 600);
-      expect(slice().howYouWork?.sessionCoverage).toEqual({ selected: 5, admitted: 5 });
-      expect(slice().coach?.sessionCoverage).toEqual({ selected: 5, admitted: 5 });
+      expect(slice().howYouWork?.sessionCoverage).toEqual({ selected: 5, admitted: 5, notRead: 5 });
+      expect(slice().coach?.sessionCoverage).toEqual({ selected: 5, admitted: 5, notRead: 5 });
       expect(slice().sources).toContainEqual({ source: 'how_you_work:sessions', status: 'available' });
-      expect(sessionRequests().filter(request => request.path === '/v1/sessions/healthy-turns/turns')).toHaveLength(1);
-      expect(sessionRequests().filter(request => request.path === '/v1/sessions/retry-turns/turns'))
-        .toHaveLength(attemptsBeforeRetry + (scenario === 'recovery' ? 1 : 0));
+      expect(intervalReadsFor('healthy-turns')).toBe(1);
+      expect(intervalReadsFor('retry-turns'))
+        .toBe(attemptsBeforeRetry + (scenario === 'recovery' ? 1 : 0));
       const retryDemands = home!.requests.filter(request => request.path === USAGE_SESSION_EVIDENCE_PATH)
-        .slice(postsBeforeRetry).flatMap(request => UsageSessionEvidenceRequestSchema.parse(request.body).requests);
+        .slice(postsBeforeRetry).flatMap(request => UsageSessionEvidenceRequestSchema.parse(request.body).requests)
+        .filter(demand => !demand.query.includeTranscriptEvidence);
       expect(retryDemands.map(demand => demand.sessionIds?.toSorted()), 'Retry hydrates failed inputs through the retained complete cohort')
         .toEqual(scenario === 'recovery' ? [['retry-turns', 'unread']] : []);
       expect(home!.requests.filter(request => /^\/v[12]\/sessions\/(healthy-turns|retry-turns|empty-turns|unread|healthy-second)(\/|$)/.test(request.path))).toEqual([]);
@@ -2038,6 +2364,8 @@ describe('usage query captured Resource adapter', () => {
           agentState: JSON.stringify({ completedRequests: { approval: { tool: 'Bash', arguments: {},
             turnId: `${sessionId}-turn`, createdAt: 500, completedAt: 600, status: 'approved' } } }),
         } } },
+        ...(request.body && typeof request.body === 'object' && 'includeMessages' in request.body && request.body.includeMessages
+          ? { messages: { status: 200, body: { messages: [], hasMore: false } } } : {}),
         turns: { status: 200, body: { v: 1, sessionId, updatedAt: 900, turns: [
           { turnId: `${sessionId}-turn`, agentId: 'codex', status: 'completed', startedAt: 100, terminalAt: 400, updatedAt: 900 },
         ] } },
@@ -2052,7 +2380,10 @@ describe('usage query captured Resource adapter', () => {
     const batch = await readUiUsageQueryBatch(captured, { queries: [query] });
     expect(batch.results[0]?.howYouWork?.intervals?.agentTimeMs).toBe(600);
     expect(home!.requests.filter(request => /^\/v[12]\/sessions\/batch-(first|second)(\/|$)/.test(request.path))).toEqual([]);
-    expect(home!.requests.filter(request => request.path === USAGE_SESSION_EVIDENCE_PATH)).toHaveLength(1);
+    const demands = home!.requests.filter(request => request.path === USAGE_SESSION_EVIDENCE_PATH)
+      .flatMap(request => UsageSessionEvidenceRequestSchema.parse(request.body).requests);
+    expect(demands.filter(demand => !demand.query.includeTranscriptEvidence)).toHaveLength(1);
+    expect(demands.filter(demand => demand.query.includeTranscriptEvidence).map(demand => demand.sessionIds)).toEqual([ids]);
     const slice = batch.results[0]!;
     expect(slice.howYouWork?.permissions).toMatchObject({ pairedDecisionCount: 2, decisionLatencyMs: 200 });
     const [{ UsageHumanLoopWidget }, { UsageParallelWidget }, { UsageCoachWidget }, { HappierDataMetric, IntervalTimeline }] = await Promise.all([
@@ -2078,7 +2409,9 @@ describe('usage query captured Resource adapter', () => {
       const intervals: readonly Readonly<{ pattern?: string }>[] = screen.findAllByType(IntervalTimeline)[0]?.props.intervals;
       expect(intervals.filter(interval => interval.pattern !== 'hatched')).toHaveLength(2);
       expect(intervals.filter(interval => interval.pattern === 'hatched')).toHaveLength(2);
-      expect(metric('batch-coach.summary.sessions')?.value).toBe(2);
+      // Active Sessions still lack durable compact facts and remain unread history.
+      expect(slice.coach?.sessionCoverage).toMatchObject({ admitted: 2, notRead: 2 });
+      expect(metric('batch-coach.summary.sessions')?.value).toBe(0);
       for (const testID of ['batch-loop', 'batch-parallel', 'batch-coach']) {
         expect(screen.findHostByTestId(`${testID}.loading`)).toBeNull();
       }
@@ -2280,6 +2613,18 @@ describe('usage query captured Resource adapter', () => {
       expect(observed(initial).quota?.[0]?.pageFacts?.historyStatus).toBe('complete');
       const initialReads = posts();
       expect(initialReads).toBe(2);
+      const allowanceReads = () => home!.requests.filter(request =>
+        request.path === '/v4/connect/qualified/provider-account-usage/sources/resolve'
+        || request.path === '/v4/connect/qualified/provider-account-usage/record').length;
+      const settledAllowanceReads = allowanceReads();
+      for (let index = 0; index < 20; index++) {
+        publishHomeAccountChange(captured.accountLifetime.scope.serverId, [`unrelated-session-${index}`], {
+          changeKinds: ['session'], feedPageConsumed: true, usageQueryAffects: true, usageAccountingAffects: false,
+        });
+        await settle(initial);
+      }
+      expect(allowanceReads() - settledAllowanceReads,
+        'A settled allowance makes zero source resolves or record reads per unrelated Session push').toBe(0);
       releases.pop()!();
       let active = initial;
       for (const queries of [[sibling], [query, sibling], [query]] as const) {
@@ -4941,7 +5286,8 @@ describe('usage query captured Resource adapter', () => {
       expect(entry.getSnapshot().pending).toBe('idle');
       expect(slice()?.pending).toBe(false);
       expect(slice()?.howYouWork?.detailStatus).toBe('partial');
-      expect(slice()?.howYouWork?.sessionCoverage).toEqual({ selected: 2, admitted: outcome === 'unreadable-transcript' ? 2 : 1 });
+      expect(slice()?.howYouWork?.sessionCoverage).toEqual({ selected: 2, admitted: outcome === 'unreadable-transcript' ? 2 : 1,
+        notRead: outcome === 'unreadable-transcript' ? 2 : 1 });
       expect(slice()?.howYouWork?.intervals?.agentTimeMs).toBe(outcome === 'unreadable-transcript' ? 600 : 300);
       expect(slice()?.sources).toContainEqual(expect.objectContaining({ source: 'how_you_work', status: 'partial' }));
       expect(slice()?.sources).toContainEqual({ source: 'how_you_work:transcripts', status: 'partial' });
@@ -5038,6 +5384,7 @@ describe('usage query captured Resource adapter', () => {
     const releaseResponse = createDeferred<void>();
     const id = 'shared-discovery-retirement';
     const captured = await context(async request => {
+      if (request.method === 'PUT' && /^\/v2\/sessions\/[^/]+\/system-records$/.test(request.path)) return successfulUsageFactWrite(request.body);
       if (request.path === '/v2/usage/query') return Response.json(value);
       if (request.path !== USAGE_SESSION_EVIDENCE_PATH) return undefined;
       const input = UsageSessionEvidenceRequestSchema.parse(request.body);
@@ -5047,7 +5394,7 @@ describe('usage query captured Resource adapter', () => {
         detail: { status: 200, body: { session: createPlainSessionCurrentProjectionRecordFixture({ id, seq: 1 }) } },
         turns: { status: 200, body: { v: 1, sessionId: id, updatedAt: 900, turns: [
           { turnId: 'turn', agentId: 'codex', status: 'completed', startedAt: 100, terminalAt: 400, updatedAt: 900 },
-        ] } },
+        ] } }, ...(input.requests[0]!.query.includeTranscriptEvidence ? { messageEvidence: { acceptedInputs: [] }, messagesComplete: true } : {}),
       }] } satisfies UsageSessionEvidenceResponse);
     });
     const store = getUsageQueryResourceStore(captured);
@@ -5068,8 +5415,46 @@ describe('usage query captured Resource adapter', () => {
       releaseResponse.resolve();
       await expect.poll(() => second.getSnapshot().pending).toBe('idle');
       expect(decodeUsageQueryResource(second.getSnapshot().value!).results[0]?.howYouWork?.intervals?.agentTimeMs).toBe(300);
-      expect(home!.requests.filter(request => request.path === USAGE_SESSION_EVIDENCE_PATH)).toHaveLength(1);
+      const demands = home!.requests.filter(request => request.path === USAGE_SESSION_EVIDENCE_PATH)
+        .flatMap(request => UsageSessionEvidenceRequestSchema.parse(request.body).requests);
+      expect(demands.filter(demand => !demand.query.includeTranscriptEvidence)).toHaveLength(1);
+      expect(demands.filter(demand => demand.query.includeTranscriptEvidence)).toHaveLength(1);
     } finally { releaseResponse.resolve(); releaseFirst(); releaseSecond(); }
+  });
+
+  it('reads only the unconverted seven-day Session for Coach and a Session drill', async () => {
+    const nowMs = 1_710_000_000_000;
+    vi.spyOn(Date, 'now').mockReturnValue(nowMs);
+    const id = 'coach-unconverted';
+    let transcriptBytes = 0;
+    const captured = await context(request => {
+      if (request.path === '/v2/usage/query') return Response.json(value);
+      if (request.path !== USAGE_SESSION_EVIDENCE_PATH) return undefined;
+      const demand = UsageSessionEvidenceRequestSchema.parse(request.body).requests[0]!;
+      const response = { requests: [{ query: demand.query, sessionIds: [id] }], results: [{ sessionId: id,
+        detail: { status: 200, body: { session: createPlainSessionCurrentProjectionRecordFixture({ id, seq: 1 }) } },
+        turns: { status: 200, body: { v: 1, sessionId: id, updatedAt: nowMs - 100, turns: [
+          { turnId: 'turn', agentId: 'codex', status: 'completed', startedAt: nowMs - 900, terminalAt: nowMs - 600, updatedAt: nowMs - 100 },
+        ] } }, ...(demand.query.includeTranscriptEvidence ? { messageEvidence: { acceptedInputs: [{ inputId: 'input', workId: JSON.stringify([id, 'turn']),
+          acceptedAtMs: nowMs - 800, deliveryKind: 'steer', turnId: 'turn' }] }, messagesComplete: true } : {}),
+      }] } satisfies UsageSessionEvidenceResponse;
+      if (demand.query.includeTranscriptEvidence) transcriptBytes += JSON.stringify(response).length;
+      return Response.json(response);
+    });
+    storage.setState({ profileScope: captured.accountLifetime.scope, sessions: { [id]: createSessionFixture({ id, seq: 1,
+      serverId: captured.accountLifetime.scope.serverId, encryptionMode: 'plain' }) } });
+    const transcriptReads = () => home!.requests.filter(request => request.path === USAGE_SESSION_EVIDENCE_PATH
+      && UsageSessionEvidenceRequestSchema.parse(request.body).requests.some(demand => demand.query.includeTranscriptEvidence)).length;
+    // Overview and the Coach view both demand the seven-day Coach query.
+    const coach = normalizeUsageQuery({ period: { relative: '7days' }, includeComparison: false, includeWorkEvidence: false });
+    const overview = await readUiUsageQueryBatch(captured, { queries: [coach] });
+    expect(transcriptReads(), 'Coach on Overview reads only the unconverted Session').toBe(1);
+    expect(transcriptBytes).toBeGreaterThan(0);
+    expect(overview.results[0]?.howYouWork?.sessionCoverage).toMatchObject({ selected: 1, notRead: 1 });
+    expect(overview.results[0]?.howYouWork?.intervals?.agentTimeMs).toBe(300);
+    const drill = await readUiUsageQueryBatch(captured, { queries: [normalizeUsageQuery({ ...coach, session: id })] });
+    expect(transcriptReads(), 'without a persisted fact, the drill reads only its unconverted Session').toBe(2);
+    expect(drill.results[0]?.howYouWork?.inputs).toMatchObject({ acceptedCount: 1 });
   });
 
   it('ends shared discovery and transcript evidence reads once the last Usage consumer leaves', async () => {
@@ -5167,6 +5552,7 @@ describe('usage query captured Resource adapter', () => {
     vi.spyOn(Date, 'now').mockReturnValue(nowMs);
     const id = 'shared-discovery';
     const captured = await context(request => {
+      if (request.method === 'PUT' && /^\/v2\/sessions\/[^/]+\/system-records$/.test(request.path)) return successfulUsageFactWrite(request.body);
       if (request.path === '/v2/usage/query') return Response.json(value);
       if (request.path !== USAGE_SESSION_EVIDENCE_PATH) return undefined;
       const input = UsageSessionEvidenceRequestSchema.parse(request.body);
@@ -5175,7 +5561,7 @@ describe('usage query captured Resource adapter', () => {
           metadata: { path: '/repo', host: 'usage-test', machineId: 'machine-a' } }) } },
         turns: { status: 200, body: { v: 1, sessionId: id, updatedAt: nowMs - 100, turns: [
           { turnId: 'turn', agentId: 'codex', status: 'completed', startedAt: nowMs - 900, terminalAt: nowMs - 600, updatedAt: nowMs - 100 },
-        ] } },
+        ] } }, ...(input.requests[0]!.query.includeTranscriptEvidence ? { messageEvidence: { acceptedInputs: [] }, messagesComplete: true } : {}),
       }] } satisfies UsageSessionEvidenceResponse);
     });
     const summary = normalizeUsageQuery({ period: { relative: '7days' }, includeComparison: false,
@@ -5185,7 +5571,8 @@ describe('usage query captured Resource adapter', () => {
     const otherSubject = normalizeUsageQuery({ ...summary, machines: ['machine-a'] });
     const queries = [summary, detail, otherWindow, otherSubject];
     const result = await readUiUsageQueryBatch(captured, { queries });
-    const posts = home!.requests.filter(request => request.path === USAGE_SESSION_EVIDENCE_PATH);
+    const posts = home!.requests.filter(request => request.path === USAGE_SESSION_EVIDENCE_PATH
+      && !UsageSessionEvidenceRequestSchema.parse(request.body).requests.some(demand => demand.query.includeTranscriptEvidence));
     expect(posts, 'equivalent discovery is one HTTP acquisition; distinct windows and subjects remain separate').toHaveLength(3);
     const requests = posts.flatMap(request => UsageSessionEvidenceRequestSchema.parse(request.body).requests);
     expect(requests).toHaveLength(3);
@@ -5272,6 +5659,7 @@ describe('usage query captured Resource adapter', () => {
     try {
       await expect.poll(() => sessionRequests().some(request => request.path.endsWith('/messages'))).toBe(true);
       await expect.poll(() => slice(summary)?.sources.find(source => source.source === 'how_you_work')?.status).toBe('partial');
+      expect(sessionRequests().filter(request => request.path.endsWith('/messages')), 'summary and detail share one automatic conversion').toHaveLength(1);
       expect(slice(summary)?.pending, 'finished summary evidence cannot inherit a sibling transcript read').toBe(false);
       expect(slice(summary)?.howYouWork?.intervals?.agentTimeMs).toBe(300);
       expect(slice(summary)?.sources).toContainEqual({ source: 'how_you_work:transcripts', status: 'not_loaded' });
@@ -5310,19 +5698,19 @@ describe('usage query captured Resource adapter', () => {
     const summaryRead = summary.refresh();
     try {
       await expect.poll(() => slice(summary)?.pending).toBe(false);
-      await summaryRead;
       expect(slice(summary)?.pending).toBe(false);
       expect(slice(summary)?.howYouWork?.intervals?.agentTimeMs).toBe(300);
       expect(slice(summary)?.howYouWork?.inputs).toBeNull();
       expect(slice(summary)?.sources).toContainEqual({ source: 'how_you_work:transcripts', status: 'not_loaded' });
-      expect(sessionRequests().filter(request => request.path.endsWith('/messages'))).toHaveLength(0);
+      await expect.poll(() => sessionRequests().filter(request => request.path.endsWith('/messages')).length).toBe(1);
       releaseDetail = detail.subscribe(() => {}, false);
       const detailRead = detail.refresh();
       await expect.poll(() => sessionRequests().some(request => request.path.endsWith('/messages'))).toBe(true);
       expect(slice(detail)?.pending).toBe(true);
       expect(slice(summary)?.pending).toBe(false);
+      expect(sessionRequests().filter(request => request.path.endsWith('/messages')), 'later detail joins the admitted automatic conversion').toHaveLength(1);
       transcript.resolve(Response.json({ messages: [], hasMore: false }));
-      await detailRead;
+      await Promise.all([summaryRead, detailRead]);
       expect(slice(detail)?.howYouWork?.inputs?.acceptedCount).toBe(0);
       expect(slice(detail)?.sources).toContainEqual({ source: 'how_you_work:transcripts', status: 'available' });
       await summary.refresh();
@@ -5489,6 +5877,9 @@ describe('usage query captured Resource adapter', () => {
     } });
     expect(storage.getState().settings.usageCoachPreferencesV1.suppressions)
       .toContainEqual({ kind: 'dismissed', evidenceKey: finding.evidenceKey });
+    const legacyReread = await readUiUsageQueryBatch(captured, { queries: [result.results[0]!.requestedQuery] });
+    expect(legacyReread.results[0]?.coach?.findings.find(row => row.evidenceKey === finding.evidenceKey)?.state.dismissed).toBe(false);
+    await createUiCoachSuppressionPort(captured).edit({ evidenceKey: finding.evidenceKey, dismissed: true });
     const reread = await readUiUsageQueryBatch(captured, { queries: [result.results[0]!.requestedQuery] });
     expect(reread.results[0]?.coach?.findings.find(row => row.evidenceKey === finding.evidenceKey)?.state.dismissed).toBe(true);
     const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query',
@@ -5738,6 +6129,7 @@ describe('usage query captured Resource adapter', () => {
     const ids = ['terminal-one', 'terminal-two', 'terminal-three'];
     let failed = true;
     const captured = await context(request => {
+      if (request.method === 'PUT' && /^\/v2\/sessions\/[^/]+\/system-records$/.test(request.path)) return successfulUsageFactWrite(request.body);
       if (request.path === '/v2/usage/query') return Response.json(value);
       if (request.path === USAGE_SESSION_EVIDENCE_PATH && failed
         && (phase === 'summary' || UsageSessionEvidenceRequestSchema.parse(request.body).requests.some(demand => demand.query.includeTranscriptEvidence))) {
@@ -5759,7 +6151,7 @@ describe('usage query captured Resource adapter', () => {
     const entries = queries.map(query => store.getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport({ queries: [query] }) }));
     const releases: Array<() => void> = [];
     const reads = () => home!.requests.filter(request => request.path === USAGE_SESSION_EVIDENCE_PATH
-      && (phase === 'summary' || UsageSessionEvidenceRequestSchema.parse(request.body).requests.some(demand => demand.query.includeTranscriptEvidence))).length;
+      && UsageSessionEvidenceRequestSchema.parse(request.body).requests.some(demand => demand.query.includeTranscriptEvidence === (phase === 'messages'))).length;
     try {
       for (const entry of entries) {
         releases.push(entry.subscribe(() => {}, true));
@@ -5804,6 +6196,7 @@ describe('usage query captured Resource adapter', () => {
     let missingRoute = true;
     let missingSession = false;
     const captured = await context(request => {
+      if (request.method === 'PUT' && /^\/v2\/sessions\/[^/]+\/system-records$/.test(request.path)) return successfulUsageFactWrite(request.body);
       if (request.path === '/v2/usage/query') return Response.json(value);
       if (request.path === USAGE_SESSION_EVIDENCE_PATH && missingRoute) return Response.json({ error: 'not_found' }, { status: 404 });
       if (request.path === '/v2/sessions/upgrade-session') return missingSession
@@ -5811,6 +6204,7 @@ describe('usage query captured Resource adapter', () => {
         : Response.json({ session: createPlainSessionCurrentProjectionRecordFixture({ id: 'upgrade-session' }) });
       if (request.path === '/v1/sessions/upgrade-session/turns') return Response.json({ v: 1, sessionId: 'upgrade-session', updatedAt: 900,
         turns: [{ turnId: 'turn', agentId: 'codex', status: 'completed', startedAt: 100, terminalAt: 900, updatedAt: 900 }] });
+      if (request.path === '/v1/sessions/upgrade-session/messages') return Response.json({ messages: [], hasMore: false });
       return undefined;
     });
     storage.setState({ profileScope: captured.accountLifetime.scope, sessions: {
@@ -5862,7 +6256,9 @@ describe('usage query captured Resource adapter', () => {
     expect(aggregate?.howYouWork?.intervals?.agentTimeMs).toBe(800);
     expect(readable?.sources.every(source => source.updateRequired === undefined)).toBe(true);
     expect(readable?.howYouWork?.intervals?.agentTimeMs).toBe(800);
-    expect(home!.requests.some(request => /^\/v[12]\/sessions\/(failed|readable)(\/|$)/.test(request.path))).toBe(false);
+    expect(home!.requests.some(request => request.path === '/v2/sessions/read-batch'
+      || /^\/v[12]\/sessions\/(failed|readable)(\/|$)/.test(request.path)
+        && !(request.method === 'PUT' && /^\/v2\/sessions\/(failed|readable)\/system-records$/.test(request.path)))).toBe(false);
   });
 
   it('excludes loaded Session candidates while the storage projection belongs to another Account', async () => {
@@ -6147,11 +6543,13 @@ describe('usage query captured Resource adapter', () => {
     let seq = 1;
     let refused = false;
     const captured = await context(request => {
+      if (request.method === 'PUT' && /^\/v2\/sessions\/[^/]+\/system-records$/.test(request.path)) return successfulUsageFactWrite(request.body);
       if (request.path === '/v2/usage/query') return Response.json(value);
       if (request.path === '/v2/sessions/finite') return refused ? Response.json({ error: 'denied' }, { status: 403 })
         : Response.json({ session: createPlainSessionCurrentProjectionRecordFixture({ id: 'finite', seq }) });
       if (request.path === '/v1/sessions/finite/turns') return Response.json({ v: 1, sessionId: 'finite', updatedAt: seq,
         turns: [{ turnId: 'turn', agentId: 'codex', status: 'completed', startedAt: 100, terminalAt: seq === 1 ? 400 : 700, updatedAt: seq }] });
+      if (request.path === '/v1/sessions/finite/messages') return Response.json({ messages: [], hasMore: false });
       return undefined;
     });
     const sessions = () => ({ finite: createSessionFixture({ id: 'finite', seq, serverId: captured.accountLifetime.scope.serverId }) });
@@ -6160,7 +6558,8 @@ describe('usage query captured Resource adapter', () => {
       session: 'finite', period: { startMs: 0, endMs: 1000 }, includeTranscriptEvidence: false, includeWorkEvidence: false,
     })] }) });
     const interval = () => decodeUsageQueryResource(entry.getSnapshot().value!).results[0]?.howYouWork?.intervals?.agentTimeMs;
-    const reads = () => sessionRequests().filter(request => request.path === '/v2/sessions/finite').length;
+    const reads = () => home!.requests.filter(request => request.path === USAGE_SESSION_EVIDENCE_PATH
+      && UsageSessionEvidenceRequestSchema.parse(request.body).requests.some(demand => !demand.query.includeTranscriptEvidence)).length;
     await entry.refresh();
     expect(interval()).toBe(300);
     const before = reads();
@@ -6234,9 +6633,11 @@ describe('usage query captured Resource adapter', () => {
     const turns = { v: 1 as const, sessionId: 'new-candidate', updatedAt: 900,
       turns: [{ turnId: 'turn', agentId: 'codex', status: 'completed' as const, startedAt: 100, terminalAt: 400, updatedAt: 900 }] };
     const captured = await context(request => {
+      if (request.method === 'PUT' && /^\/v2\/sessions\/[^/]+\/system-records$/.test(request.path)) return successfulUsageFactWrite(request.body);
       if (request.path === '/v2/usage/query') return Response.json(value);
       if (request.path === '/v2/sessions/new-candidate') return Response.json({ session: record });
       if (request.path === '/v1/sessions/new-candidate/turns') return Response.json(turns);
+      if (request.path === '/v1/sessions/new-candidate/messages') return Response.json({ messages: [], hasMore: false });
       return undefined;
     });
     storage.setState({ profileScope: captured.accountLifetime.scope, sessions: {} });
@@ -6310,7 +6711,7 @@ describe('usage query captured Resource adapter', () => {
     const coach = (entry: typeof broad) => decodeUsageQueryResource(entry.getSnapshot().value!).results[0]!.coach!;
     await broad.refresh();
     await pinned.refresh();
-    expect(coach(broad).sessionCoverage).toEqual({ selected: 3, admitted: 3 });
+    expect(coach(broad).sessionCoverage).toEqual({ selected: 3, admitted: 3, notRead: 3 });
     const finding = coach(broad).findings.find(row => row.detectorId === 'approval_friction')!;
     expect(finding.measurements.find(row => row.metric === 'permission_requests')?.value).toBe(3);
     const observations: ReturnType<typeof decodeUsageQueryResource>['results'][number][] = [];
@@ -6325,8 +6726,8 @@ describe('usage query captured Resource adapter', () => {
         failing = true;
         if (failureSource !== 'accounting') publishHomeAccountChange(serverId);
         await broad.refresh();
-        expect.soft(coach(pinned).sessionCoverage).toEqual({ selected: 1, admitted: 1 });
-        expect.soft(coach(broad).sessionCoverage).toEqual({ selected: 3, admitted: 3 });
+        expect.soft(coach(pinned).sessionCoverage).toEqual({ selected: 1, admitted: 1, notRead: 1 });
+        expect.soft(coach(broad).sessionCoverage).toEqual({ selected: 3, admitted: 3, notRead: 3 });
         expect.soft(coach(broad).findings.find(row => row.detectorId === 'approval_friction')?.evidenceKey).toBe(finding.evidenceKey);
         const failed = decodeUsageQueryResource(broad.getSnapshot().value!);
         if (failureSource === 'accounting') expect(failed.results[0]!.sources).toContainEqual(expect.objectContaining({ source: 'accounting', status: 'error' }));
@@ -6337,21 +6738,21 @@ describe('usage query captured Resource adapter', () => {
         expect(UsageQueryBatchResultSchema.safeParse(failed).success).toBe(true);
         if (failureSource !== 'accounting') {
           await broad.refresh();
-          expect.soft(coach(broad).sessionCoverage, 'a repeated failed replacement keeps the same admitted evidence').toEqual({ selected: 3, admitted: 3 });
+          expect.soft(coach(broad).sessionCoverage, 'a repeated failed replacement keeps the same admitted evidence').toEqual({ selected: 3, admitted: 3, notRead: 3 });
           expect.soft(coach(broad).findings.find(row => row.detectorId === 'approval_friction')?.evidenceKey).toBe(finding.evidenceKey);
           const rebatched = store.getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport({
             queries: [query, normalizeUsageQuery({ ...query, agents: ['codex'] })],
           }) });
           await rebatched.refresh();
           const moved = decodeUsageQueryResource(rebatched.getSnapshot().value!).results.find(slice => slice.key === getUsageQueryKey(query))!;
-          expect.soft(moved.coach?.sessionCoverage, 'batch membership does not retire this exact query admission').toEqual({ selected: 3, admitted: 3 });
+          expect.soft(moved.coach?.sessionCoverage, 'batch membership does not retire this exact query admission').toEqual({ selected: 3, admitted: 3, notRead: 3 });
           expect.soft(moved.coach?.findings.find(row => row.detectorId === 'approval_friction')?.evidenceKey).toBe(finding.evidenceKey);
           expect.soft(moved.pending).toBe(false);
           expect(UsageQueryBatchResultSchema.safeParse(decodeUsageQueryResource(rebatched.getSnapshot().value!)).success).toBe(true);
         }
         failing = false;
         await broad.refresh();
-        expect.soft(coach(broad).sessionCoverage).toEqual({ selected: 3, admitted: 3 });
+        expect.soft(coach(broad).sessionCoverage).toEqual({ selected: 3, admitted: 3, notRead: 3 });
         expect.soft(coach(broad).findings.find(row => row.detectorId === 'approval_friction')?.evidenceKey).toBe(finding.evidenceKey);
       }
     } finally { release(); }
@@ -6361,19 +6762,21 @@ describe('usage query captured Resource adapter', () => {
     expect(observations.every(slice => slice.howYouWork?.todayInParallel?.agentTimeMs === 200)).toBe(true);
     membership = ['first'];
     await broad.refresh();
-    await expect.poll(() => coach(broad).sessionCoverage).toEqual({ selected: 1, admitted: 1 });
+    await expect.poll(() => coach(broad).sessionCoverage).toEqual({ selected: 1, admitted: 1, notRead: 1 });
     expect(coach(broad).findings.find(row => row.detectorId === 'approval_friction')?.evidenceKey).not.toBe(finding.evidenceKey);
   });
 
   it('reuses a list-only Session marker and refreshes it when that row advances', async () => {
     let seq = 1;
     const captured = await context(request => {
+      if (request.method === 'PUT' && /^\/v2\/sessions\/[^/]+\/system-records$/.test(request.path)) return successfulUsageFactWrite(request.body);
       if (request.path === '/v2/usage/query') return Response.json(value);
       if (request.path === '/v2/sessions/list-only') return Response.json({ session: createPlainSessionCurrentProjectionRecordFixture({
         id: 'list-only', createdAt: 1, updatedAt: 900, seq, active: true, activeAt: 900, metadataVersion: 1, agentStateVersion: 1,
       }) });
       if (request.path === '/v1/sessions/list-only/turns') return Response.json({ v: 1, sessionId: 'list-only', updatedAt: 900,
         turns: [{ turnId: 'turn', agentId: 'codex', status: 'completed', startedAt: 100, terminalAt: seq === 1 ? 400 : 700, updatedAt: 900 }] });
+      if (request.path === '/v1/sessions/list-only/messages') return Response.json({ messages: [], hasMore: false });
       return undefined;
     });
     const serverId = captured.accountLifetime.scope.serverId;
@@ -6383,18 +6786,20 @@ describe('usage query captured Resource adapter', () => {
       queries: [normalizeUsageQuery({ session: 'list-only', period: { startMs: 0, endMs: 1000 }, includeTranscriptEvidence: false, includeWorkEvidence: false })],
     }) });
     const release = entry.subscribe(() => {}, true);
+    const summaryReads = () => home!.requests.filter(request => request.path === USAGE_SESSION_EVIDENCE_PATH
+      && UsageSessionEvidenceRequestSchema.parse(request.body).requests.some(demand => !demand.query.includeTranscriptEvidence));
     const agentTime = () => entry.getSnapshot().value && decodeUsageQueryResource(entry.getSnapshot().value!).results[0]?.howYouWork?.intervals?.agentTimeMs;
     try {
       await expect.poll(agentTime).toBe(300);
       publishHomeAccountChange(serverId);
       await entry.refresh();
-      expect(sessionRequests().filter(request => request.path === '/v2/sessions/list-only')).toHaveLength(1);
+      expect(summaryReads()).toHaveLength(1);
       seq++;
       storage.getState().applyServerScopedSessionListRows(serverId, Object.values(rows()[serverId]!), {
         source: 'rowOnly', mode: 'append',
       });
       await expect.poll(agentTime).toBe(600);
-      expect(sessionRequests().filter(request => request.path === '/v2/sessions/list-only')).toHaveLength(2);
+      expect(summaryReads()).toHaveLength(2);
     } finally { release(); }
   });
 
@@ -6919,5 +7324,163 @@ describe('usage query Work composition', () => {
     store.dispose();
     const retired = { ...captured, accountLifetime: { ...captured.accountLifetime, isCurrent: () => false } };
     await expect(readUiUsageQueryBatch(retired, { queries: [query] })).rejects.toMatchObject({ code: 'stale_surface' });
+  });
+});
+
+
+describe('Usage compact fact publication', () => {
+  it('re-admits only named compact facts after their real Home record wake without reading transcripts', async () => {
+    const [{ createUsageSessionWorkFactsV1, USAGE_SESSION_WORK_FACTS_SYSTEM_RECORD_ADDRESS },
+      { buildSessionSystemRecordChangeV1 }] = await Promise.all([
+      import('@happier-dev/protocol/usage/usageWorkEvidence'),
+      import('@happier-dev/protocol/sessions/board/changeHint'),
+    ]);
+    const nowMs = 1_710_000_000_000;
+    vi.spyOn(Date, 'now').mockReturnValue(nowMs);
+    const id = 'published-compact-session';
+    const session = projectUsageSessionInput(createSessionFixture({ id, seq: 1, active: false,
+      encryptionMode: 'plain', createdAt: nowMs - 1000, updatedAt: nowMs - 100 }));
+    const fact = createUsageSessionWorkFactsV1(session,
+      projectSessionUsageWorkEvidence(session, [], { messagesComplete: true }));
+    let converted = false;
+    const captured = await context(request => {
+      if (request.path === '/v2/usage/query') return Response.json(value);
+      if (request.path !== USAGE_SESSION_EVIDENCE_PATH) return undefined;
+      const input = UsageSessionEvidenceRequestSchema.parse(request.body);
+      return Response.json({ requests: input.requests.map(demand => ({ query: demand.query, sessionIds: [id] })),
+        results: [{ sessionId: id, workFacts: { session: { id, seq: 1, active: false,
+          createdAt: nowMs - 1000, updatedAt: nowMs - 100,
+          metadataVersion: session.metadataVersion ?? 0, agentStateVersion: session.agentStateVersion ?? 0,
+          metadataLayoutVersion: session.metadataLayoutVersion ?? 0, encryptionMode: 'plain', dataEncryptionKey: null,
+          viewerRole: 'owner', access: ownerSessionAccess.effectiveAccess },
+          content: converted ? { t: 'plain', v: projectNativeJsonValueForTransport(fact) } : null },
+          turns: { status: 200, body: { v: 1, sessionId: id, updatedAt: nowMs - 100, turns: [] } } }],
+      } satisfies UsageSessionEvidenceResponse);
+    });
+    const requestStart = home!.requests.length;
+    const query = normalizeUsageQuery({ period: { relative: '90days' }, includeComparison: false, includeWorkEvidence: false });
+    const read = async () => (await readUiUsageQueryBatch(captured, { queries: [query] })).results[0]!.howYouWork;
+    const demands = () => home!.requests.filter(request => request.path === USAGE_SESSION_EVIDENCE_PATH)
+      .flatMap(request => UsageSessionEvidenceRequestSchema.parse(request.body).requests);
+    const publish = (sessionId: string) => {
+      const change = buildSessionSystemRecordChangeV1('published-compact-record', {
+        sessionId, address: USAGE_SESSION_WORK_FACTS_SYSTEM_RECORD_ADDRESS,
+      });
+      publishHomeAccountChangeWake(captured.accountLifetime.scope.serverId, {
+        t: 'account-change', changeKinds: [change.kind], entityIds: [change.entityId],
+        sessionSystemRecords: [change.hint.sessionRecords],
+      }, 'socket');
+    };
+    expect((await read())?.sessionCoverage).toMatchObject({ selected: 1, admitted: 1, notRead: 1 });
+    const initialReads = demands().length;
+    publish('another-compact-session');
+    expect((await read())?.sessionCoverage).toMatchObject({ notRead: 1 });
+    expect(demands()).toHaveLength(initialReads);
+    converted = true;
+    publish(id);
+    expect((await read())?.sessionCoverage).toMatchObject({ selected: 1, admitted: 1, notRead: 0 });
+    expect(demands().length).toBeGreaterThan(initialReads);
+    converted = false;
+    publish(id);
+    expect((await read())?.sessionCoverage).toMatchObject({ selected: 1, admitted: 1, notRead: 1 });
+    expect(demands().filter(demand => demand.query.includeTranscriptEvidence)).toEqual([]);
+    expect(home!.requests.slice(requestStart).filter(request => request.path === '/v2/sessions/read-batch'
+      || request.method === 'GET' && /^\/v2\/sessions\//.test(request.path))).toEqual([]);
+  });
+});
+
+
+describe('Usage projected batch settlement', () => {
+  it.each(['90days', '7days'] as const)('publishes %s conversion progress before a held sibling and keeps automatic failures non-actionable', async relative => {
+    const nowMs = Date.UTC(2026, 10, 6);
+    vi.spyOn(Date, 'now').mockReturnValue(nowMs);
+    const ids = ['progress-converted', 'progress-held'];
+    const saved = createDeferred<void>();
+    const release = createDeferred<void>();
+    const captured = await context(request => {
+      if (request.path === '/v2/usage/query') return Response.json(value);
+      if (request.method === 'PUT' && /^\/v2\/sessions\/[^/]+\/system-records$/.test(request.path)) {
+        saved.resolve();
+        return successfulUsageFactWrite(request.body);
+      }
+      if (request.path !== USAGE_SESSION_EVIDENCE_PATH) return undefined;
+      const input = UsageSessionEvidenceRequestSchema.parse(request.body);
+      const demand = input.requests[0]!;
+      const results: UsageSessionEvidenceResponse['results'] = (demand.sessionIds ?? ids).map(id => ({ sessionId: id,
+        detail: { status: 200, body: { session: createPlainSessionCurrentProjectionRecordFixture({ id, seq: 1, active: false,
+          createdAt: nowMs - 1000, updatedAt: nowMs - 100 }) } },
+        turns: { status: 200, body: { v: 1, sessionId: id, updatedAt: nowMs - 100, turns: [] } },
+        ...(demand.query.includeTranscriptEvidence ? { messageEvidence: { acceptedInputs: [] }, messagesComplete: true } : {}),
+      }));
+      const requests = [{ query: demand.query, sessionIds: demand.sessionIds ?? ids }];
+      if (!demand.query.includeTranscriptEvidence) return Response.json({ requests, results } satisfies UsageSessionEvidenceResponse);
+      return new Response(new ReadableStream<Uint8Array>({
+        start(controller) { controller.enqueue(new TextEncoder().encode([JSON.stringify({ requests }), JSON.stringify(results[0]), ''].join('\n'))); },
+        async pull(controller) { await release.promise; controller.error(new TypeError('Network request failed')); },
+      }), { headers: { 'Content-Type': 'application/x-ndjson' } });
+    });
+    const query = normalizeUsageQuery({ period: { relative }, includeWorkEvidence: false, includeComparison: false });
+    const { readUiUsageHistory, getUiUsageHistoryState } = await import('./usageQueryResource');
+    if (relative === '90days') await readUiUsageQueryBatch(captured, { queries: [query] });
+    const pending = relative === '90days' ? readUiUsageHistory(captured, { query })
+      : readUiUsageQueryBatch(captured, { queries: [query] });
+    try {
+      await saved.promise;
+      if (relative === '90days') await expect.poll(() => getUiUsageHistoryState(captured, query)).toMatchObject({
+        status: 'reading', progress: { completed: 1, notRead: 1 } });
+      else expect(getUiUsageHistoryState(captured, query).progress.notRead).toBe(0);
+    } finally { release.resolve(); await pending; }
+    expect(getUiUsageHistoryState(captured, query)).toMatchObject({ status: 'partial',
+      errorCode: 'usage_session_evidence_read_failed', progress: { completed: relative === '90days' ? 1 : 0,
+        notRead: relative === '90days' ? 1 : 0, failed: 1 } });
+  });
+
+  it('retains converted Session facts when a later sibling interrupts the projected stream', async () => {
+    const nowMs = Date.UTC(2026, 10, 6);
+    const baseMs = nowMs - 1000;
+    vi.spyOn(Date, 'now').mockReturnValue(nowMs);
+    const ids = ['converted-before-interruption', 'unfinished-after-interruption'];
+    const saved = createDeferred<void>();
+    const writes: string[] = [];
+    const captured = await context(request => {
+      if (request.path === '/v2/usage/query') return Response.json(value);
+      if (request.method === 'PUT' && /^\/v2\/sessions\/[^/]+\/system-records$/.test(request.path)) {
+        writes.push(request.path);
+        saved.resolve();
+        return successfulUsageFactWrite(request.body);
+      }
+      if (request.path !== USAGE_SESSION_EVIDENCE_PATH) return undefined;
+      const input = UsageSessionEvidenceRequestSchema.parse(request.body);
+      const demand = input.requests[0]!;
+      const results: UsageSessionEvidenceResponse['results'] = (demand.sessionIds ?? ids).map(id => ({ sessionId: id,
+        detail: { status: 200, body: { session: createPlainSessionCurrentProjectionRecordFixture({ id, seq: 1, active: false, createdAt: baseMs, updatedAt: baseMs + 900 }) } },
+        turns: { status: 200, body: { v: 1, sessionId: id, updatedAt: baseMs + 900, turns: [
+          { turnId: 'turn', agentId: 'codex', status: 'completed', startedAt: baseMs + 100, terminalAt: baseMs + 400, updatedAt: baseMs + 900 },
+        ] } }, ...(demand.query.includeTranscriptEvidence ? { messageEvidence: { acceptedInputs: [{
+          inputId: 'accepted', workId: JSON.stringify([id, 'turn']), acceptedAtMs: baseMs + 200, deliveryKind: 'steer', turnId: 'turn',
+        }] }, messagesComplete: true } : {}),
+      }));
+      const requests = [{ query: demand.query, sessionIds: demand.sessionIds ?? ids }];
+      if (!demand.query.includeTranscriptEvidence) return Response.json({ requests, results } satisfies UsageSessionEvidenceResponse);
+      return new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode([JSON.stringify({ requests }), JSON.stringify(results[0]), ''].join('\n')));
+        },
+        async pull(controller) { await saved.promise; controller.error(new TypeError('Network request failed')); },
+      }), { headers: { 'Content-Type': 'application/x-ndjson' } });
+    });
+    const query = normalizeUsageQuery({ period: { relative: '90days' }, includeWorkEvidence: false, includeComparison: false });
+    const { readUiUsageHistory } = await import('./usageQueryResource');
+    expect((await readUiUsageQueryBatch(captured, { queries: [query] })).results[0]?.howYouWork?.sessionCoverage)
+      .toMatchObject({ selected: 2, admitted: 2, notRead: 2 });
+    const result = await readUiUsageHistory(captured, { query });
+    expect(writes).toEqual([`/v2/sessions/${ids[0]}/system-records`]);
+    expect(result).toMatchObject({ status: 'partial', progress: { selected: 2, notRead: 1, completed: 1, failed: 1 } });
+    const reopened = await readUiUsageQueryBatch(captured, { queries: [query] });
+    expect(reopened.results[0]?.howYouWork?.sessionCoverage).toMatchObject({ selected: 2, admitted: 2, notRead: 1 });
+    expect(reopened.results[0]?.howYouWork?.inputs).toMatchObject({ acceptedCount: 1, steeringCount: 1 });
+    expect(home!.requests.filter(request => request.path === USAGE_SESSION_EVIDENCE_PATH)
+      .flatMap(request => UsageSessionEvidenceRequestSchema.parse(request.body).requests)
+      .filter(demand => demand.query.includeTranscriptEvidence)).toHaveLength(1);
   });
 });

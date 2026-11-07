@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveUsageHowYouWork, UsageHowYouWorkSchema } from './resolveUsageHowYouWork.js';
+import { resolveUsageHowYouWork, UsageHowYouWorkSchema, UsageSessionEvidenceCoverageSchema } from './resolveUsageHowYouWork.js';
 
 const hour = 3_600_000;
 const day = Date.parse('2026-10-09T00:00:00Z');
@@ -9,6 +9,12 @@ const fact = (workId: string, startMs: number, endMs: number) => ({
 });
 
 describe('How-you-work admitted projection', () => {
+    it('reports admitted Sessions whose private facts have not been read without counting them as observed', () => {
+        expect(UsageSessionEvidenceCoverageSchema.parse({ selected: 4, admitted: 3, notRead: 2 }))
+            .toEqual({ selected: 4, admitted: 3, notRead: 2 });
+        expect(UsageSessionEvidenceCoverageSchema.safeParse({ selected: 4, admitted: 3, notRead: 4 }).success).toBe(false);
+        expect(UsageSessionEvidenceCoverageSchema.safeParse({ selected: 4, admitted: 3 }).success).toBe(true);
+    });
     it('distributes only full closed turns, deduplicating work and keeping open, cropped and invalid observations separate', () => {
         const turn = { workId: 'closed', agentId: 'claude', status: 'completed' as const, startMs: day, endMs: day + hour };
         const result = resolveUsageHowYouWork({ period: { startMs: day, endMs: day + 4 * hour }, timeZoneOffsetMinutes: 0,

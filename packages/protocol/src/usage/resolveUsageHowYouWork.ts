@@ -45,9 +45,16 @@ const CountSchema = lazyZodSchema(() => z.number().check(z.int(), z.nonnegative(
 const DurationSchema = lazyZodSchema(() => z.number().check(z.nonnegative()));
 /** Coverage of the exact Session evidence read, including admitted empty Sessions. */
 export const UsageSessionEvidenceCoverageSchema = lazyZodSchema(() => z.strictObject({
-    selected: CountSchema, admitted: CountSchema,
-}).check(z.refine(value => value.admitted <= value.selected)));
+    selected: CountSchema, admitted: CountSchema, notRead: z.optional(CountSchema),
+}).check(z.refine(value => value.admitted <= value.selected
+    && (value.notRead === undefined || value.notRead <= value.admitted))));
 export type UsageSessionEvidenceCoverage = z.infer<typeof UsageSessionEvidenceCoverageSchema>;
+
+/** Admission permits a read; only observed private evidence counts as checked. */
+export function countUsageCheckedSessions(coverage: UsageSessionEvidenceCoverage | undefined): number | undefined {
+    return coverage === undefined ? undefined : coverage.admitted - (coverage.notRead ?? 0);
+}
+
 export const UsageHowYouWorkSchema = lazyZodSchema(() => z.strictObject({
     detailStatus: z.enum(['available', 'partial', 'unknown']),
     sessionCoverage: z.optional(UsageSessionEvidenceCoverageSchema),

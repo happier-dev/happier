@@ -18,7 +18,7 @@ import {
     writePermissionMediationRecord,
 } from "@/app/session/systemRecords/sessionSystemRecordService";
 import { isSessionSystemRecordsProtocolV1Active } from "@/app/session/systemRecords/sessionSystemRecordProtocolContract";
-import { toPublicSessionSystemRecord } from "@/app/session/systemRecords/sessionSystemRecordSerialization";
+import { sessionSystemRecordV1ErrorStatus, toPublicSessionSystemRecord } from "@/app/session/systemRecords/sessionSystemRecordSerialization";
 import { LegacyHostSessionSystemRecordLatestQuerySchema, LegacyHostSessionSystemRecordLatestResponseSchema, LegacyHostSessionSystemRecordListQuerySchema, LegacyHostSessionSystemRecordLookupQuerySchema, LegacyHostSessionSystemRecordLookupResponseSchema, LegacyHostSessionSystemRecordPageResponseSchema, LegacyHostSessionSystemRecordUpsertRequestSchema, LegacyHostSessionSystemRecordUpsertResponseSchema, SESSION_SYSTEM_RECORDS_PLUGIN_ID_HEADER, SESSION_SYSTEM_RECORDS_PROTOCOL_HTTP_HEADER, SESSION_SYSTEM_RECORDS_PROTOCOL_V1_HTTP_HEADER_VALUE, SessionSystemRecordErrorResponseSchema, SessionSystemRecordDeleteRequestSchema, SessionSystemRecordDeleteResponseSchema, SessionSystemRecordListQuerySchema, SessionSystemRecordStoredPageResponseSchema, SessionSystemRecordStoredReadResponseSchema, SessionSystemRecordStoredUpsertRequestSchema, SessionSystemRecordStoredUpsertResponseSchema, SessionPermissionMediationRecordListQuerySchema, SessionPermissionMediationRecordListResponseSchema, SessionPermissionMediationRecordReadResponseSchema, SessionPermissionMediationRecordPruneRequestSchema, SessionPermissionMediationRecordPruneResponseSchema, SessionPermissionMediationRecordWriteRequestSchema, SessionPermissionMediationRecordWriteResponseSchema } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordRoutes';
 import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
 import { SessionSystemRecordAddressSchema } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordAddress';
@@ -69,19 +69,7 @@ function sendPluginRecordError(
         code: result.code,
         ...(result.currentRevision ? { currentRevision: result.currentRevision } : {}),
     };
-    if (result.code === "plugin_session_records_unavailable") return reply.code(503).send(payload);
-    if (result.code === "plugin_session_record_feature_disabled") return reply.code(404).send(payload);
-    if (result.code === "plugin_session_record_invalid_query") return reply.code(400).send(payload);
-    if (result.code === "plugin_session_record_forbidden") return reply.code(403).send(payload);
-    if (result.code === "plugin_session_not_found") return reply.code(404).send(payload);
-    if (
-        result.code === "plugin_session_record_address_collision"
-        || result.code === "plugin_session_record_kind_conflict"
-        || result.code === "plugin_session_record_revision_conflict"
-        || result.code === "plugin_session_record_revision_exhausted"
-        || result.code === "plugin_session_record_storage_mode_mismatch"
-    ) return reply.code(409).send(payload);
-    return reply.code(500).send(payload);
+    return reply.code(sessionSystemRecordV1ErrorStatus(result.code)).send(payload);
 }
 
 function handleSystemRecordRouteError(

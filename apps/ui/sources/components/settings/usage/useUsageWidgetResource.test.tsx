@@ -823,23 +823,33 @@ describe('Usage widget shared Resource selection', () => {
         expect(hook.getCurrent().first.error).toBeTruthy();
     });
 
-    it('shows a named previous period only, drops a basis change, and ignores late completion after retirement', async () => {
+    it('shows a named previous period across its derived granularity, drops independent inputs, and ignores late completion after retirement', async () => {
         const delayed = createDeferred<Response>();
         let held = false;
         const credentials = await mountHome(request => request.path === '/v2/usage/query'
             ? held ? delayed.promise : Response.json(accounting) : undefined);
-        const hook = await renderHook(({ startMs, costBasis }: { startMs: number; costBasis: 'auto' | 'reported' }) => {
+        const hook = await renderHook(({ period, granularity, costBasis, session }: {
+            period: '7days' | 'today'; granularity: 'day' | 'hour'; costBasis: 'auto' | 'reported'; session: string | null;
+        }) => {
             const resource = useUsageWidgetResource({ credentials, enabled: true,
-                plan: plan(normalizeUsageQuery({ period: { startMs }, granularity: 'day', costBasis })) });
+                plan: plan(normalizeUsageQuery({ period: { relative: period }, granularity, costBasis, session })) });
             return useUsageWidgetBodyModel(resource, 'first');
-        }, { initialProps: { startMs: 1000, costBasis: 'auto' }, flushOptions: { cycles: 20 } });
+        }, { initialProps: { period: '7days', granularity: 'day', costBasis: 'auto', session: null }, flushOptions: { cycles: 20 } });
         expect(hook.getCurrent().slice?.accounting).toMatchObject(accounting);
         held = true;
-        await hook.rerender({ startMs: 2000, costBasis: 'auto' });
+        await hook.rerender({ period: 'today', granularity: 'hour', costBasis: 'auto', session: null });
         expect(hook.getCurrent().updatingPreviousPeriod).toBe(true);
-        expect(hook.getCurrent().shownQuery?.query.period).toEqual({ startMs: 1000 });
-        expect(hook.getCurrent().requestedQuery?.query.period).toEqual({ startMs: 2000 });
-        await hook.rerender({ startMs: 2000, costBasis: 'reported' });
+        expect(hook.getCurrent().shownQuery?.query).toMatchObject({ period: { relative: '7days' }, granularity: 'day' });
+        expect(hook.getCurrent().requestedQuery?.query).toMatchObject({ period: { relative: 'today' }, granularity: 'hour' });
+        await hook.rerender({ period: 'today', granularity: 'hour', costBasis: 'reported', session: null });
+        expect(hook.getCurrent().slice).toBeNull();
+        await hook.rerender({ period: '7days', granularity: 'day', costBasis: 'auto', session: null });
+        expect(hook.getCurrent().slice?.accounting).toMatchObject(accounting);
+        await hook.rerender({ period: '7days', granularity: 'hour', costBasis: 'auto', session: null });
+        expect(hook.getCurrent().slice, 'independently changing granularity still retires the shown facts').toBeNull();
+        await hook.rerender({ period: '7days', granularity: 'day', costBasis: 'auto', session: null });
+        expect(hook.getCurrent().slice?.accounting).toMatchObject(accounting);
+        await hook.rerender({ period: 'today', granularity: 'hour', costBasis: 'auto', session: 'session-other' });
         expect(hook.getCurrent().slice).toBeNull();
         await act(async () => { publishAppliedActiveServerRuntimeAvailability(false); delayed.resolve(Response.json(accounting)); });
         await flushHookEffects({ cycles: 20 });

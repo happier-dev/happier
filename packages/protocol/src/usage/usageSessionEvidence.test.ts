@@ -1,8 +1,25 @@
 import { describe, expect, it } from 'vitest';
 import { normalizeUsageQuery } from '../inputs/usageQuery.js';
 import * as evidence from './usageSessionEvidence.js';
+import { projectSessionAccessCapabilitiesV1 } from '../sessions/access/sessionEffectiveAccessV1.js';
 
 describe('Usage Session evidence demand', () => {
+    it('accepts compact work-fact reads without requiring a full Session document', () => {
+        const query = normalizeUsageQuery({});
+        expect(evidence.UsageSessionEvidenceRequestSchema.safeParse({ nowMs: 1000,
+            requests: [{ query }], readWorkFacts: true }).success).toBe(true);
+        expect(evidence.UsageSessionEvidenceRequestSchema.safeParse({ nowMs: 1000,
+            requests: [{ query }], readWorkFacts: false }).success).toBe(false);
+        expect(evidence.UsageSessionEvidenceResponseSchema.safeParse({ requests: [{ query, sessionIds: ['session'] }],
+            results: [{ sessionId: 'session', workFacts: { session: { id: 'session', seq: 7, createdAt: 100,
+                updatedAt: 900, active: false, metadataVersion: 3, agentStateVersion: 2, metadataLayoutVersion: 1,
+                encryptionMode: 'e2ee', dataEncryptionKey: null, viewerRole: 'owner',
+                access: { v: 1, level: 'owner', sources: [{ kind: 'owner' }],
+                    capabilities: projectSessionAccessCapabilitiesV1({ owner: true, grants: [] }) } },
+                content: { t: 'encrypted', c: 'sealed-facts' } } }] }).success).toBe(true);
+        expect(evidence.UsageSessionEvidenceResponseSchema.safeParse({ requests: [{ query, sessionIds: ['session'] }],
+            results: [{ sessionId: 'session', detail: { status: 404, body: { error: 'Session not found' } } }] }).success).toBe(true);
+    });
     it('decodes one header and individually admitted result records across fragmented lines', () => {
         const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 } });
         const requests = [{ query, sessionIds: ['session-🌍'] }];

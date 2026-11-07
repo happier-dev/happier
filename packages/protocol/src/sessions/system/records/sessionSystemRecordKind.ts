@@ -1,3 +1,4 @@
+import { USAGE_SESSION_WORK_FACTS_SYSTEM_RECORD_ADDRESS } from '../../../usage/usageTimingV1.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
@@ -7,6 +8,7 @@ import { SESSION_PERMISSION_SYSTEM_RECORD_KINDS } from '../../permissions/permis
 
 export const SESSION_SYSTEM_RECORD_KINDS = [
   ...MEMORY_SESSION_SYSTEM_RECORD_KINDS,
+  USAGE_SESSION_WORK_FACTS_SYSTEM_RECORD_ADDRESS.kind,
   'layout.v1',
   'item.v1',
   ...ACTIVITY_SESSION_SYSTEM_RECORD_KINDS,

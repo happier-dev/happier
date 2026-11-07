@@ -4,6 +4,8 @@ import { UsageExportInputSchema, buildUsageFileResult } from '../../usage/usageE
 import type { ActionExecuteFailure, ActionExecuteResult } from '../actionExecutionResult.js';
 import type { ActionExecutorContext } from './types.js';
 import type { UsageActionId } from '../specs/usage.js';
+import { USAGE_HISTORY_ACTION_IDS } from '../../usage/usageActionIdsV1.js';
+import { UsageHistoryReadInputSchema, UsageHistoryReadStateSchema, type UsageHistoryReadInput, type UsageHistoryReadState } from '../../inputs/usageQuery.js';
 import { readActionFailureEnvelope } from './actionFailureEnvelope.js';
 import { UsageRecapPrivateComposeInputSchema, UsageRecapPublicComposeInputSchema, UsageRecapExportResultSchema,
   UsageRecapPrivateDeliveryInputSchema, UsageRecapPublicDeliveryInputSchema,
@@ -21,6 +23,8 @@ import { projectUsageQueryDelivery } from '../../usage/projectUsageQueryDelivery
 import { projectUsageQueryResultIssues } from '../../usage/usageAnalyticsContracts.js';
 
 export type UsageActionPorts = Readonly<{
+  /** The Account Usage owner holds progress and its local cancellation signal. */
+  history?(input: UsageHistoryReadInput, context: ActionExecutorContext): Promise<UsageHistoryReadState | ActionExecuteFailure>;
   coachSuppressions?(context: ActionExecutorContext): import('../../usage/coach/coachActions.js').UsageCoachSuppressionPort;
   prices?: Readonly<{
     get(context: ActionExecutorContext): Promise<UsageModelPriceCatalog | ActionExecuteFailure>;
@@ -45,6 +49,14 @@ export function executeUsageAction(actionId: UsageActionId, value: unknown, port
 export async function executeUsageAction(actionId: UsageActionId, value: unknown, ports: UsageActionPorts | undefined, context: ActionExecutorContext): Promise<ActionExecuteResult> {
   if (context.signal?.aborted) return failure('cancelled');
   if (!ports) return failure('unsupported_action');
+  if (actionId === USAGE_HISTORY_ACTION_IDS.read) {
+    if (!ports.history) return failure('unsupported_action');
+    const raw = await ports.history(UsageHistoryReadInputSchema.parse(value), context);
+    const refusal = readActionFailureEnvelope(raw);
+    if (refusal) return refusal;
+    const parsed = UsageHistoryReadStateSchema.safeParse(raw);
+    return parsed.success ? { ok: true, result: parsed.data } : failure('usage_history_result_invalid');
+  }
   if (actionId === 'usage.prices.get' || actionId === 'usage.prices.refresh') {
     if (!ports.prices) return failure('unsupported_action');
     const raw = await ports.prices[actionId === 'usage.prices.get' ? 'get' : 'refresh'](context);
