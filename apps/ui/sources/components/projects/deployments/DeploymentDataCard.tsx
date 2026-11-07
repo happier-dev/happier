@@ -16,7 +16,6 @@ export const engineNames: Record<Database['engine'], string> = {
 export function DeploymentDataCard(props: Readonly<{
   detail: DeploymentEnvironmentReadDetailV1;
   onAdd: () => void;
-  onVariables: () => void;
   onBackups: () => void;
   /** Where the template's database runs (its Machine), named after its service; null when not known. */
   place?: string | null;
@@ -28,7 +27,7 @@ export function DeploymentDataCard(props: Readonly<{
   const id = 'project-deployments.environment.data';
   return (
     <ItemGroup testID={id} title={t('projects.deployments.dataTitle')}
-      description={t('projects.deployments.dataConnectionGuide')}
+      description={t('projects.deployments.overviewStatus.dataDescription')}
       // An empty card's one next action is its empty state's; a filled card adds from the header.
       action={data || targets.length > 0 ? <SectionActionButton testID={`${id}.add`} title={t('projects.deployments.dataAdd')}
         destination onPress={props.onAdd} /> : undefined}>
@@ -42,7 +41,6 @@ export function DeploymentDataCard(props: Readonly<{
       {!data && targets.length === 0 ? <SurfaceStateCard testID={`${id}.empty`} size="line" kind="empty"
         title={t('projects.deployments.dataEmptyShort')}
         action={{ label: t('projects.deployments.dataAdd'), onPress: props.onAdd }} /> : null}
-      <Item testID={`${id}.variables`} title={t('projects.deployments.dataVariables')} onPress={props.onVariables} />
       {data && props.detail.content.backup ? <Item testID={`${id}.backups`}
         title={t('projects.deployments.dataBackups')} onPress={props.onBackups} /> : null}
     </ItemGroup>
