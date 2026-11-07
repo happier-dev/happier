@@ -202,7 +202,7 @@ describe('workspace destination row browser gestures', () => {
             storage.getState().upsertWorkflowRuns([workflowRunRowFromSummary(
                 createWorkflowRunSummaryFixture({ id: 'run-gesture', startedBy: 'user' }),
                 { kind: 'available', value: { title: 'Gesture Run' } },
-            )]);
+            )], { serverId: 'server-a', accountId: 'account-a' });
             const screen = await renderScreen(<WorkspaceNavigationProvider value={h.workspace}>
                 <WorkflowRunItemBody kind="workflow_run" runId="run-gesture" serverId="server-a" dataActive={false} />
             </WorkspaceNavigationProvider>);
