@@ -1,4 +1,5 @@
 import { V2SessionListResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
+import { managedMachineActionEndpointPathV1, ManagedMachineActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { SessionListQueryResponseV1Schema } from '@happier-dev/protocol/sessions/listing/response';
 import { AccountPetListResponseV1Schema } from '@happier-dev/protocol/pets/accountLibrary';
 import {
@@ -29,6 +30,7 @@ import { CONNECTED_PRESENTATION_ROWS_ROUTE_V1, CONNECTED_ACKNOWLEDGEMENTS_ROWS_R
 import { AccountSettingsV2HistoryListResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import type { FetchedMachineRow } from '@/sync/engine/machines/syncMachines';
 import { AutomationDefinitionListResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
+import { TaskResourcesListResponseV1Schema } from '@happier-dev/protocol/actions/internalTaskActions';
 import { FeedResponseSchema } from '@/sync/domains/social/feedTypes';
 import type { KvListResponse } from '@/sync/api/account/apiKv';
 import { CHANGES_AFTER_CURSOR_HTTP_HEADER, ChangesResponseSchema, CurrentCursorResponseSchema } from '@happier-dev/protocol/changes';
@@ -46,6 +48,7 @@ export function createEmptyAccountBootstrapHttpResponse(path: string, init?: Req
                 ...(afterHeader === null ? {} : { headers: { [CHANGES_AFTER_CURSOR_HTTP_HEADER]: afterHeader } }),
             });
         }
+        if (pathname === '/v1/tasks') return Response.json(TaskResourcesListResponseV1Schema.parse({ tasks: [] }));
         if (pathname === '/v1/kv') return Response.json({ items: [] } satisfies KvListResponse);
         if (pathname === '/v1/machines') return Response.json([] satisfies FetchedMachineRow[]);
         if (pathname === '/v3/automations') return Response.json(AutomationDefinitionListResponseSchema.parse({ automations: [], nextCursor: null }));
@@ -68,6 +71,10 @@ export function createEmptyAccountBootstrapHttpResponse(path: string, init?: Req
         }
     }
     if (method === 'POST') {
+        // Ordinary Machine input admission reads its managed association; an empty Account has none.
+        if (pathname === managedMachineActionEndpointPathV1('machines.managed.list')) {
+            return Response.json(ManagedMachineActionOutputSchemasV1['machines.managed.list'].parse({ machines: [] }));
+        }
         if (pathname === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) return Response.json(createPlainProjectAccountRowListFixture());
         if (pathname === '/v2/sessions/query') {
             return Response.json(SessionListQueryResponseV1Schema.parse({

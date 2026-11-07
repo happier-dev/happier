@@ -1,6 +1,7 @@
 import type { VoiceAdapterController } from '@/voice/session/types';
 import type { createVoiceSessionLifecycleController } from '@/voice/session/voiceSessionLifecycleController';
 import type { serveAccountHomes } from './actionHomesHttpHarness';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 
 type ElevenLabsVoiceRuntimeScope = Readonly<{
     adapter: VoiceAdapterController;
@@ -74,7 +75,9 @@ export async function withGeneratedElevenLabsVoiceRuntime(
             }
             if (request.method === 'POST' && /\/delivery\/handled$/.test(request.path)) return Response.json({});
             if (/\/messages$/.test(request.path)) return Response.json({ messages: [], hasMore: false });
-            return metadata.handle(request.url, { method: request.method, body: request.body === undefined ? undefined : JSON.stringify(request.body) }) ?? undefined;
+            const init = { method: request.method, headers: request.headers,
+                body: request.body === undefined ? undefined : JSON.stringify(request.body) };
+            return metadata.handle(request.url, init) ?? createEmptyAccountBootstrapHttpResponse(request.path, init) ?? undefined;
         }).handle,
     });
     let disconnect: (() => Promise<void>) | undefined;

@@ -1,10 +1,11 @@
 import React from 'react';
 import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 // Genuine browser persistence SDK; Sync/outbox admission and codecs stay real.
 import 'fake-indexeddb/auto';
 import { act } from 'react-test-renderer';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol';
+import { readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { createDeferred, renderScreen as renderRuntimeScreen, waitForTestEvent } from '@/dev/testkit';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -240,6 +241,7 @@ function LayoutCommitBoundary({
 await loadSyncSingletonForTests();
 
 async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolean; startGate?: Promise<void>; selectedProviderId?: string; local?: boolean; localPlatform?: 'ios' | 'web'; codex?: boolean;
+  coldShell?: boolean;
   transcriptResponse?: (body: Readonly<{ localId: string }>) => Promise<Response | null>;
 }> = {}) {
   platformOsMock.value = input.local ? input.localPlatform ?? 'ios' : 'web';
@@ -249,7 +251,7 @@ async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolea
     expect(globalThis.navigator?.mediaDevices?.getUserMedia).toBeUndefined();
   }
   const { storage } = await import('@/sync/domains/state/storage');
-  const { AccountProfileSchema, PluginProjectionV2Schema } = await import('@happier-dev/protocol');
+  const [{ AccountProfileSchema}, { PluginProjectionV2Schema}] = await Promise.all([import('@happier-dev/protocol/account/profile'), import('@happier-dev/protocol/daemon/contributionRegistryProjection')]);
   const { RPC_METHODS, SESSION_RPC_METHODS } = await import('@happier-dev/protocol/rpc');
   const { SOCKET_RPC_EVENTS } = await import('@happier-dev/protocol/socketRpc');
   const agentProtocol = await import('@happier-dev/protocol/voice/realtime/agentSession');
@@ -274,7 +276,7 @@ async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolea
     ...(input.codex ? { metadata: { machineId, path: '/voice', host: 'test', flavor: 'codex' } } : {}),
   });
   const sessionHttp = createSessionMetadataHttpBoundary(() => ({ [history.id]: history, [nativeSession.id]: nativeSession, ...daemonSessions }));
-  const { createSessionOwnerMetadataV1, createPlainSessionOwnerMetadataEnvelopeV1, projectSessionSharedMetadataV1 } = await import('@happier-dev/protocol');
+  const { createSessionOwnerMetadataV1, createPlainSessionOwnerMetadataEnvelopeV1, projectSessionSharedMetadataV1} = await import('@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1');
   const historyOwner = createSessionOwnerMetadataV1({ metadata: history.metadata });
   if (!historyOwner.ok) throw new Error('Voice history fixture metadata owner unavailable');
   // Persist an actual current owner tuple at the Home HTTP boundary before
@@ -425,7 +427,7 @@ async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolea
       if (path === '/v1/sessions' && init?.method === 'POST') return sessionHttp.createSessionFromPost(history.id, init);
       const sessionResponse = sessionHttp.handle(url, init);
       if (sessionResponse) return sessionResponse;
-      return Response.json({}, { status: 404 });
+      return createEmptyAccountBootstrapHttpResponse(path, init) ?? Response.json({}, { status: 404 });
     }),
   });
   const account = accountConnection;
@@ -451,7 +453,7 @@ async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolea
       : writeVoiceProviderSettingsConfig(voiceSettingsParse({ providerId: ELEVENLABS_PROVIDER_ID }), ELEVENLABS_PROVIDER_ID, ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS);
   const { normalizeVoiceSettingsLocalDelta } = await import('@/sync/domains/settings/voiceSettingsPersistence');
   storage.getState().applySettingsLocal({
-    ...normalizeVoiceSettingsLocalDelta({ voice: { ...voice, providerId: input.selectedProviderId ?? (input.local ? 'local_direct' : ELEVENLABS_PROVIDER_ID) } }, storage.getState().settings),
+    ...normalizeVoiceSettingsLocalDelta({ voice: { ...voice, providerId: input.coldShell ? 'off' : input.selectedProviderId ?? (input.local ? 'local_direct' : ELEVENLABS_PROVIDER_ID) } }, storage.getState().settings),
     ...(input.currentUi ? { featureToggles: { ...storage.getState().settings.featureToggles, voice: true } } : {}),
   });
   sdk.endSession.mockReset().mockResolvedValue(undefined);
@@ -469,6 +471,10 @@ async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolea
   });
   const { VoiceSessionRuntime } = await import('./VoiceSessionRuntime');
   let runtime: React.ReactElement = React.createElement(VoiceSessionRuntime);
+  if (input.coldShell) {
+    const { RealtimeProvider } = await import('@/realtime/RealtimeProvider');
+    runtime = React.createElement(RealtimeProvider, null, React.createElement('ShellContent'));
+  }
   if (input.currentUi) {
     const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
     const { MainAppTabStateProvider } = await import('@/components/navigation/mobile/chrome/MainAppTabStateProvider');
@@ -486,6 +492,22 @@ async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolea
   const screen = await renderRuntimeScreen(runtime);
   generatedRuntimeScreens.push(screen);
   const { getVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleControllerStore');
+  if (input.coldShell) {
+    const { getVoiceAdapterRegistry } = await import('./voiceAdapterRegistry');
+    expect(getVoiceSessionLifecycleController()).toBeNull();
+    expect(getVoiceAdapterRegistry().list()).toHaveLength(0);
+    expect(sdk.startSession).not.toHaveBeenCalled();
+    expect(screen.findAllByType('ShellContent')).toHaveLength(1);
+    await act(async () => {
+      storage.getState().applySettingsLocal(normalizeVoiceSettingsLocalDelta({ voice }, storage.getState().settings));
+    });
+    await vi.waitFor(() => expect(getVoiceSessionLifecycleController()).not.toBeNull());
+    // The cold-runtime change (afe5cc0949) loads the selected provider after
+    // publishing the shell controller. Start needs its real registration.
+    const registry = getVoiceAdapterRegistry();
+    await waitForTestEvent(listener => registry.subscribe!(listener),
+      () => registry.get(ELEVENLABS_PROVIDER_ID), adapter => adapter !== null);
+  }
   const lifecycle = getVoiceSessionLifecycleController();
   if (!lifecycle) throw new Error('Mounted Voice lifecycle unavailable');
   expect(lifecycle.getConfiguredProviderId()).toBe(input.codex ? CODEX_PROVIDER_ID : input.local ? localProviderId : ELEVENLABS_PROVIDER_ID);
@@ -694,6 +716,53 @@ describe('VoiceSessionRuntime', () => {
   afterAll(async () => {
     await nativeSpeech.disposeAudioSession();
     nativeSpeech.disposeNativeSdkBridge();
+  });
+
+  it('keeps a cold disabled shell free of adapters, then starts and stops through the real enabled runtime', async () => {
+    // A browser shell needs its physical media ports, as in the Codex recipe.
+    browserBoundaries.push(installVoiceWebRtcBrowserBoundary());
+    vi.stubGlobal('window', new EventTarget());
+    vi.stubGlobal('document', createMountedBrowserDocument());
+    const { lifecycle } = await prepareGeneratedVoiceRuntime({ coldShell: true });
+    await act(async () => { await lifecycle.toggle(null); });
+    expect(lifecycle.getSnapshot()).toMatchObject({ adapterId: ELEVENLABS_PROVIDER_ID, status: 'connected', canStop: true });
+    expect(sdk.startSession).toHaveBeenCalledOnce();
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { normalizeVoiceSettingsLocalDelta } = await import('@/sync/domains/settings/voiceSettingsPersistence');
+    await act(async () => {
+      storage.getState().applySettingsLocal(normalizeVoiceSettingsLocalDelta({ voice: voiceSettingsParse({ providerId: 'off' }) }, storage.getState().settings));
+      await lifecycle.stop(VOICE_AGENT_GLOBAL_SESSION_ID);
+    });
+    const { getVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleControllerStore');
+    expect(getVoiceSessionLifecycleController()).toBe(lifecycle);
+    expect(lifecycle.getSnapshot().canStop).toBe(false);
+    expect(sdk.endSession).toHaveBeenCalledOnce();
+  });
+
+  it('does not activate a source provider while declaration admission is establishing', async () => {
+    const { storage } = await import('@/sync/domains/state/storage');
+    const originalSettings = storage.getState().settings;
+    storage.setState(state => ({ settings: { ...state.settings, voiceSettingsV1: {
+      ...state.settings.voiceSettingsV1, providerId: ELEVENLABS_PROVIDER_ID,
+    } } }));
+    const { AppShellPluginUiProjectionValueProvider, useAppShellPluginUiProjection } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
+    const { VoiceSessionRuntime } = await import('./VoiceSessionRuntime');
+    function EstablishingDeclarations() {
+      const value = useAppShellPluginUiProjection();
+      return <AppShellPluginUiProjectionValueProvider value={value} declarationReady={false}><VoiceSessionRuntime /></AppShellPluginUiProjectionValueProvider>;
+    }
+    const screen = await renderRuntimeScreen(<EstablishingDeclarations />);
+    generatedRuntimeScreens.push(screen);
+    // Settle the real plugin-module boundary before checking host publication;
+    // the compiled graph test separately counts module evaluation.
+    await act(async () => { await import('@happier-dev/plugins-elevenlabs/happier-plugin-ui/voice-runtime'); });
+    const { getExternalVoiceProviderRegistration } = await import('@/voice/registry/externalVoiceProviderRegistrations');
+    try {
+      expect(getExternalVoiceProviderRegistration(ELEVENLABS_PROVIDER_ID)).toBeNull();
+      expect(sdk.startSession).not.toHaveBeenCalled();
+    } finally {
+      storage.setState({ settings: originalSettings });
+    }
   });
 
   it.each(['live', 'ended'] as const)('keeps direct-session pending requests reachable through the %s glance without a hidden binding', async (phase) => {
@@ -1566,7 +1635,7 @@ describe('VoiceSessionRuntime', () => {
 
   it('synchronously retires an ordinary realtime attempt before a retained current-UI handler can reach either Account port', async () => {
     const { options, screen, runtime } = await mountGeneratedElevenLabsRuntime({ currentUi: true });
-    const { getActionSpec } = await import('@happier-dev/protocol');
+    const { getActionSpec} = await import('@happier-dev/protocol/actions/actionSpecs');
     const { VOICE_ACTION_EXECUTE_TOOL_NAME, VoiceActionExecuteInputSchema } = await import('@/voice/tools/voiceActionExecution');
     const { captureActiveServerAccountScopeLifetime, retireActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
     const lifetime = captureActiveServerAccountScopeLifetime();
@@ -2164,30 +2233,4 @@ describe('VoiceSessionRuntime', () => {
     });
     expect(lifecycleController.getConfiguredProviderId()).toBeNull();
   });
-  it('does not activate a source provider while declaration admission is establishing', async () => {
-    const { storage } = await import('@/sync/domains/state/storage');
-    const originalSettings = storage.getState().settings;
-    storage.setState(state => ({ settings: { ...state.settings, voiceSettingsV1: {
-      ...state.settings.voiceSettingsV1, providerId: ELEVENLABS_PROVIDER_ID,
-    } } }));
-    const { AppShellPluginUiProjectionValueProvider, useAppShellPluginUiProjection } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
-    const { VoiceSessionRuntime } = await import('./VoiceSessionRuntime');
-    function EstablishingDeclarations() {
-      const value = useAppShellPluginUiProjection();
-      return <AppShellPluginUiProjectionValueProvider value={value} declarationReady={false}><VoiceSessionRuntime /></AppShellPluginUiProjectionValueProvider>;
-    }
-    const screen = await renderRuntimeScreen(<EstablishingDeclarations />);
-    generatedRuntimeScreens.push(screen);
-    // Settle the real plugin-module boundary before checking host publication;
-    // the compiled graph test separately counts module evaluation.
-    await act(async () => { await import('@happier-dev/plugins-elevenlabs/happier-plugin-ui/voice-runtime'); });
-    const { getExternalVoiceProviderRegistration } = await import('@/voice/registry/externalVoiceProviderRegistrations');
-    try {
-      expect(getExternalVoiceProviderRegistration(ELEVENLABS_PROVIDER_ID)).toBeNull();
-      expect(sdk.startSession).not.toHaveBeenCalled();
-    } finally {
-      storage.setState({ settings: originalSettings });
-    }
-  });
-
 });

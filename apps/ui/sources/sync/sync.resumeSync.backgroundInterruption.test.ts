@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import 'fake-indexeddb/auto';
-import { AUTHORING_MEMORY_ROUTE_V1, AuthoringMemoryListResponseV1Schema } from '@happier-dev/protocol';
+import { AUTHORING_MEMORY_ROUTE_V1, AuthoringMemoryListResponseV1Schema } from '@happier-dev/protocol/account/authoringMemory';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { SESSION_DRAFT_V2_ROUTE_LIST, SessionDraftListResponseV2Schema } from '@happier-dev/protocol/drafts/sessionDraftsV2';
 import type { PauseController } from '@/utils/timing/pauseController';
@@ -315,8 +315,12 @@ describe('sync resumeSync background interruption', () => {
             pauseController.resume();
             await Promise.allSettled([resumed]);
         }
+        const requestsAtForeground = network.httpRequests.length;
         await sync.resumeSync('app-foreground');
-        expect(network.httpRequests.map(({ url }) => new URL(url).pathname)).toContain('/v2/sessions');
+        // Foreground recovery uses changes catch-up, without the snapshot
+        // fallback removed in 717576ac290e.
+        expect(network.httpRequests.slice(requestsAtForeground)
+            .map(({ url }) => new URL(url).pathname)).toContain('/v2/changes');
     }, 60_000);
 
     it('completes snapshot repair only after a list read started after the old acquisition drains', async () => {
