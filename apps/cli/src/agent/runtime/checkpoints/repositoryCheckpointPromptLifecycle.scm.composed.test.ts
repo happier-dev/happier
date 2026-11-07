@@ -25,8 +25,9 @@ import { isHostSessionRuntimePlan } from '@/agent/runtime/session/loop/lifecycle
 import { resolveHostSessionRuntimeFactoryResult } from '@/agent/runtime/session/loop/factoryResult';
 import type { HostSessionRuntimeHookRuntime } from '@/agent/runtime/session/loop/runHostSessionRuntime';
 import { createCurrentSessionPresentationHost } from '@/session/presentation/currentSessionPresentationService';
+import { createAgentIsolationSessionContext } from '@/daemon/agentIsolation/agentIsolationSessionContext';
 
-async function openNativeSession(cwd: string, session: ReturnType<typeof createMutableApiSessionClientFixture>, pluginExec: ReturnType<typeof createStablePluginExecService>, hasIsolation: boolean) {
+async function openNativeSession(cwd: string, session: ReturnType<typeof createMutableApiSessionClientFixture>, pluginExec: ReturnType<typeof createStablePluginExecService>, execution: 'configured' | 'non-isolated' | 'unavailable') {
     const pluginId = `acme.checkpoint-${session.sessionId}`;
     const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ happyHomeDir: configuration.happyHomeDir, plugins: [{
         manifest: createPluginManifestV2Fixture({ id: pluginId, contributes: { agents: [{
@@ -59,8 +60,14 @@ async function openNativeSession(cwd: string, session: ReturnType<typeof createM
     let online = true;
     const requests: string[] = [];
     const makeHost = () => createRunnerDaemonPluginServicesHost({ createInvocation: async () => ({
-        services, ...(hasIsolation ? { agentIsolation: { read: () => ({ enabled: false,
-            status: { kind: 'effective' as const, platform: 'linux' as const, agentUser: 'happier-agent' }, workspaceRoots: [cwd] }) } } : {}),
+        services, ...(execution !== 'unavailable' ? { agentIsolation: createAgentIsolationSessionContext({
+            ...(execution === 'configured' ? { machine: { read: () => ({ enabled: false,
+                status: { kind: 'disabled' as const }, workspaceRoots: [cwd] }) } } : {}),
+            managedHappierBinaryPath: undefined,
+            sessionRequester: { serverId: 'server', accountId: 'account', machineId: 'machine', installationId: 'installation' },
+            sessionRequesterHomeServerIdentityId: 'home', hostHomeServerIdentityId: 'home', sessionCustodianAccountId: 'account',
+            readMaterial: () => undefined,
+        }) } : {}),
         resourceDescriptors: {}, subscriptionCapabilities: { settingsWatch: false, eventSubscriptions: [], resourceWatches: [], notificationPreferencesWatch: false },
         authorizeOperation: () => {
             const admitted = current;
@@ -131,7 +138,7 @@ async function openNativeSession(cwd: string, session: ReturnType<typeof createM
 }
 
 describe('Session checkpoint execution and captured-turn reads', () => {
-    it.each(['available', 'unavailable'] as const)('reads the real checkpoint producer output when Session execution is %s', async availability => {
+    it.each(['configured', 'non-isolated', 'unavailable'] as const)('reads the real checkpoint producer output when Session execution is %s', async availability => {
         await withTempDir('happier-turn-scm-', async directory => {
             const git = (...args: string[]) => execFileSync('git', args, { cwd: directory, encoding: 'utf8' }).trim();
             git('init', '-q');
@@ -160,7 +167,7 @@ describe('Session checkpoint execution and captured-turn reads', () => {
                 async resolveExecutable() { throw new Error('Undeclared tool must fail before launch'); },
                 async resolvePath() { throw new Error('Undeclared tool must fail before path resolution'); },
             });
-            const native = await openNativeSession(cwd, session, pluginExec, availability === 'available');
+            const native = await openNativeSession(cwd, session, pluginExec, availability);
             const runner = native.runner;
             if (availability === 'unavailable') {
                 expect(await runWithScmCommandRunner(createScmCommandRunnerFromExecService(pluginExec), () => runScmCommand({ bin: 'git', cwd, args: ['rev-parse', '--show-toplevel'] })))
@@ -208,7 +215,7 @@ describe('Session checkpoint execution and captured-turn reads', () => {
                     }
                 }
                 expect(git('status', '--porcelain')).toBe('?? untracked.txt');
-                if (availability === 'available') {
+                if (availability !== 'unavailable') {
                     native.withdrawOnNextAdmission();
                     expect(await runner({ bin: 'git', cwd, args: ['update-ref', 'refs/happier/checkpoints/admission-race', 'HEAD'] }))
                         .toMatchObject({ success: false, stderr: 'scm_exec_unavailable', exitCode: -1 });
