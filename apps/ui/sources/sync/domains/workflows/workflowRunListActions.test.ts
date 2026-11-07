@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { materializeWorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
 import { sealWorkflowAcceptedSnapshotStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
 import { WorkflowRunRecipientCensusResponseV1Schema } from '@happier-dev/protocol/workflows/workflowRunKeyV1';
@@ -14,7 +14,7 @@ import { HAPPIER_COLLECTION_ROW_METRICS } from '@happier-dev/plugin-ui/presentat
 const home = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(home);
 installDisconnectedServerSocketBoundary();
-beforeAll(loadSyncSingletonForTests);
+await loadSyncSingletonForTests();
 const { storage } = await import('@/sync/domains/state/storageStore');
 const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
 const { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
@@ -163,6 +163,8 @@ describe('workflow Run list Action client through the Account storage transport'
                 return { body };
             } });
             let page = await readRunWindowPage('all');
+            console.info('Workflow full-row page transfer', { height, unpagedRows: runs.length,
+                unpagedBytes: Buffer.byteLength(JSON.stringify(corpus)), initial: transfers[0] });
             expect(page.runs).toHaveLength(expectedPages[0]!);
             const received = [...page.runs];
             const metadata = { ...page.metadataByRunId };
@@ -199,11 +201,11 @@ describe('workflow Run list Action client through the Account storage transport'
         expect(page.nextCursor).toBe('cursor-2');
     });
 
-    it('projects readable authored metadata and leaves unnamed opened content readable', async () => {
+    it('projects authored metadata and derives an opened Run name from its frozen prompt', async () => {
         home.answer(serverId, route, { body: await runPage({ title: 'Review 500 files' }) });
         expect((await listWorkflowRuns()).metadataByRunId).toEqual({ [run.id]: { kind: 'available', value: { title: 'Review 500 files' } } });
         home.answer(serverId, route, { body: await runPage() });
-        expect((await listWorkflowRuns()).metadataByRunId).toEqual({ [run.id]: null });
+        expect((await listWorkflowRuns()).metadataByRunId).toEqual({ [run.id]: { kind: 'available', value: { title: 'Continue' } } });
     });
 
     it('keeps unopened accepted content unavailable with a typed reason', async () => {
@@ -235,7 +237,8 @@ describe('workflow Run list Action client through the Account storage transport'
         home.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: { actionsSettingsV1 } }, version: 1 } });
         const failure = await listWorkflowRuns().then(() => null, (error: unknown) => error);
         expect(failure).toBeInstanceOf(WorkflowActionError);
-        expect((failure as InstanceType<typeof WorkflowActionError>).code).toBeNull();
+        expect((failure as InstanceType<typeof WorkflowActionError>).code).toBe('action_disabled');
+        expect((failure as InstanceType<typeof WorkflowActionError>).failure).toBeNull();
         expect((failure as InstanceType<typeof WorkflowActionError>).rawCode).toBe('action_disabled');
         expect(home.requestsFor(route)).toEqual([]);
     });

@@ -80,6 +80,28 @@ describe('approval Artifact header correspondence', () => {
     decision: { kind: 'approve', decidedAtMs: 2 },
   });
 
+  it('indexes Workflow Run custody separately from Automation run ids and admits older headers', () => {
+    const request = ApprovalRequestV2Schema.parse({ ...builtIn, status: 'open', decision: undefined,
+      executionOriginV1: { ...builtIn.executionOriginV1, caller: { kind: 'workflowRun', runId: 'workflow-a',
+        authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' } } } });
+    const external = TargetActionApprovalRequestV1Schema.parse(JSON.parse(JSON.stringify({ ...target, status: 'open', decision: undefined,
+      executionOriginV1: { ...target.executionOriginV1, caller: request.executionOriginV1.caller } })));
+    for (const [value, header] of [[request, buildApprovalRequestArtifactHeaderV1(request)],
+      [external, buildTargetActionApprovalArtifactHeaderV1(external)]] as const) {
+      expect(header.workflowRunId).toBe('workflow-a');
+      expect(approvalArtifactBodyMatchesHeaderV1(header, JSON.stringify(value))?.request).toEqual(value);
+      expect(approvalArtifactBodyMatchesHeaderV1({ ...header, workflowRunId: 'workflow-b' }, JSON.stringify(value))).toBeNull();
+      const { workflowRunId: _relation, ...legacy } = header;
+      expect(approvalArtifactBodyMatchesHeaderV1(legacy, JSON.stringify(value))?.request).toEqual(value);
+    }
+    expect(buildApprovalRequestArtifactHeaderV1(builtIn).workflowRunId).toBeNull();
+    expect(buildTargetActionApprovalArtifactHeaderV1(target).workflowRunId).toBeNull();
+    const automation = ApprovalRequestV2Schema.parse({ ...builtIn, status: 'open', decision: undefined,
+      executionOriginV1: { ...builtIn.executionOriginV1, runId: 'automation-run-1',
+        caller: { kind: 'automationRun', runId: 'automation-run-1', automationId: 'automation-1', cause: { kind: 'manual', invokedAt: 1 } } } });
+    expect(buildApprovalRequestArtifactHeaderV1(automation)).toMatchObject({ runId: 'automation-run-1', workflowRunId: null });
+  });
+
   it('indexes Project Start source custody before hydration, and verifies supplied index facts against the body', () => {
     const workspace = { serverId: 'home', machineId: 'source', workspaceId: 'checkout', rootPath: '/source' };
     const start = ApprovalRequestV2Schema.parse({ ...builtIn, actionId: 'localServices.launcher.start',
@@ -325,6 +347,24 @@ describe('approval Artifact header correspondence', () => {
     expect(readPage).toHaveBeenCalledWith(expect.objectContaining({
       kinds: ['approval_request.v1', 'target_action_approval.v1'], approvalStates: ['open'],
     }));
+    const bodyReads: string[] = [];
+    const selected = await listApprovalArtifactsV1({ ...input,
+      readPage: options => listArtifactHeadersV1({ options, encodeCursor: row => row.artifactId,
+        readPage: async physical => {
+          const start = physical?.cursor ? rows.findIndex(row => row.artifactId === physical.cursor) + 1 : 0;
+          const items = rows.slice(start, start + (physical?.limit ?? 500));
+          return { items: items.map(({ body: _body, ...row }) => ({ ...row, createdAt: 1 })),
+            kindCoverage: { status: 'complete' as const, unclassifiedCount: 0 as const },
+            ...(start + items.length < rows.length ? { nextCursor: items.at(-1)!.artifactId } : {}) };
+        },
+        readBodies: async items => {
+          bodyReads.push(...items.map(row => row.artifactId));
+          return items.map(row => ({ ...row, body: rows.find(item => item.artifactId === row.artifactId)!.body }));
+        },
+      }), read: async () => null,
+    });
+    expect(selected.items.map(item => item.artifactId)).toEqual(['approval-1']);
+    expect(bodyReads).toEqual(['approval-1']);
   });
 
   it('FIX249 lists open caller invitations for the exact Run and Home', async () => {

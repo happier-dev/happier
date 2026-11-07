@@ -17,6 +17,13 @@ A Collection presents keyed items through one headless model, shared list/table/
 
 This page describes **0.3 development source**. It promotes implemented owners, not the historical Collection plan's rollout or unverified fidelity claims.
 
+`CollectionConditionTokens` has one neutral presentation owner,
+`HappierCollectionConditionTokens` in Plugin UI. Core supplies localized labels,
+its existing filter-chip adapter and typography; the public component supplies
+plugin theme and glyphs. Both chips use `HappierFilterChip` for their shell.
+The shared row owns wrapping and the held width/count at which Save becomes an
+icon; callers retain condition removal and saving.
+
 Collection's moving needs-you treatments follow physical row visibility. Web uses the platform's
 intersection observation, including ancestor clipping. Native consumes the existing physical scroll
 owner's measured exact viewport; its separate near-viewport window still owns prebuilding and overscan.
@@ -697,6 +704,14 @@ The development filter also carries qualified Project include/exclude selections
 In 0.3 development, a restricted Session-runtime credential may explicitly list **Under itself** through that same server proof. The result includes its root and readable managed descendants, traversing unreadable intermediates without disclosing them. The server rechecks the runtime binding, graph membership and access before returning the page. These are read-only shared Session projections; Account-private Follow, read/attention state, pins and owner metadata are excluded. Another root, an unscoped Account list and private Account filter facets remain refused. A worker's encrypted content remains locked without its own admitted key; the coordinator's key is never reused for it.
 
 The Run arm of [`SessionItem`](../apps/ui/sources/components/sessions/shell/SessionItem.tsx) uses the shared row geometry and Work status treatment. It reads authoritative admission starter and private authored-step progress, not inferred origin or public invocation counts. Contextual search indexes private title and Where through the same list search owner; it does not read exact Run detail or transcripts. Partial Run windows remain partial after local filtering. A selected Home not served by the active Account window also keeps the List and Board incomplete; mounting a Home alone does not justify pruning its saved Run positions. There is no separate Workflow History renderer or Triggered tab; Started by selects trigger-origin Runs.
+
+Session Work and transcript Run bands consume complete origin/destination windows
+from the same Workflow read owner. A named Run push selects only those Run ids
+through the Session relation; an already materialized unrelated origin needs no
+read or window publication. Unknown membership changes and reconnects retain the
+owner's structural refresh. Discussion bands select their message/start Run ids
+through its exact windows. Failed refreshes retain proven rows and their last
+successful observation time; Account retirement withdraws them.
 
 ### Session sections (0.3 development)
 

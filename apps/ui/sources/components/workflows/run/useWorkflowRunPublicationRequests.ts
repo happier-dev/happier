@@ -17,6 +17,7 @@ export type WorkflowRunPublicationRequest = Readonly<{
 }>;
 
 const emptyArtifacts: readonly DecryptedArtifact[] = [];
+const emptyArtifactRows: Readonly<Record<string, DecryptedArtifact>> = {};
 const publicationSelection = { kinds: [APPROVAL_ARTIFACT_KINDS_V1.builtIn, APPROVAL_ARTIFACT_KINDS_V1.targetAction], approvalStates: ['open'] as const };
 
 /** Read-only navigation from the canonical approval inventory; no separate loader or lifecycle. */
@@ -28,11 +29,15 @@ export function useWorkflowRunPublicationRequests(input: Readonly<{
     const { scope, runId, active } = input;
     const serverId = scope?.serverId;
     const accountId = scope?.accountId;
-    const { current, artifacts } = getStorage()(useShallow(state => {
+    const { current, related, legacy } = getStorage()(useShallow(state => {
         const current = active && Boolean(runId) && Boolean(serverId) && Boolean(accountId) && state.isDataReady
             && areServerAccountScopesEqual(state.profileScope, scope);
-        return { current, artifacts: current ? state.artifactOpenWorkflowPublicationArtifacts : emptyArtifacts };
+        return { current,
+            related: current ? state.artifactWorkflowPublicationArtifactsByRunId[runId] ?? emptyArtifactRows : emptyArtifactRows,
+            legacy: current ? state.artifactUnclassifiedWorkflowPublicationArtifacts : emptyArtifactRows };
     }));
+    const artifacts = React.useMemo(() => current ? [...Object.values(related), ...Object.values(legacy)] : emptyArtifacts,
+        [current, related, legacy]);
     const profilesGeneration = useServerProfilesGeneration();
     React.useEffect(() => {
         if (!current || !serverId || !accountId) return;

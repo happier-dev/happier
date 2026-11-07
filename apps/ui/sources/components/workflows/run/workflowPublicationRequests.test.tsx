@@ -21,6 +21,55 @@ const { useWorkflowRunPublicationRequests } = await import('./useWorkflowRunPubl
 let fixture: Awaited<ReturnType<typeof createArtifactInventoryDemandHarness>>;
 afterEach(async () => { await standardCleanup(); await fixture?.dispose(); storage.setState(previous); });
 
+it.each(['publication', 'invitation', 'external'] as const)('selects the exact Run before cold approval body demand (%s)', async requestKind => {
+    fixture = await createArtifactInventoryDemandHarness();
+    const scope = storage.getState().profileScope!;
+    const own = createWorkflowPublicationApprovalArtifact({ id: '11111111-1111-4111-8111-999999999801',
+        runId: 'run-a', scope, requestKind });
+    const unrelated = Array.from({ length: 2_000 }, (_, index) => createWorkflowPublicationApprovalArtifact({
+        id: `11111111-1111-4111-8111-${String(index).padStart(12, '0')}`, runId: 'run-b', scope, requestKind,
+    }));
+    fixture.inventory = [own, ...unrelated].map(row => createPlainArtifactHttpFixture(row, scope.accountId));
+    const hook = await renderHook(() => useWorkflowRunPublicationRequests({ scope, runId: 'run-a', active: true }));
+    await vi.waitFor(() => expect(hook.getCurrent().map(row => row.artifactId)).toEqual([own.id]));
+    await fixture.settleInventory();
+    expect(fixture.bodyReads.flat()).toEqual([own.id]);
+    expect(fixture.pages.reduce((count, page) => count + page.headers, 0)).toBe(2_001);
+    const selected = hook.getCurrent();
+    await act(async () => storage.getState().updateArtifact({ ...unrelated[0]!, headerVersion: 2, bodyVersion: 2 }));
+    expect(hook.getCurrent()).toBe(selected);
+    expect(fixture.bodyReads.flat()).toEqual([own.id]);
+    await act(async () => storage.getState().deleteArtifact(own.id));
+    expect(hook.getCurrent()).toEqual([]);
+});
+
+it.each(['publication', 'invitation', 'external'] as const)('discovers legacy Run relationships once at the Artifact owner (%s)', async requestKind => {
+    fixture = await createArtifactInventoryDemandHarness();
+    const scope = storage.getState().profileScope!;
+    const own = createWorkflowPublicationApprovalArtifact({ id: '11111111-1111-4111-8111-999999999821',
+        runId: 'run-a', scope, requestKind });
+    const other = createWorkflowPublicationApprovalArtifact({ id: '11111111-1111-4111-8111-999999999822',
+        runId: 'run-b', scope, requestKind });
+    const legacy = [own, other].map(row => {
+        const { workflowRunId: _relation, ...header } = row.header!;
+        return { ...row, header };
+    });
+    fixture.inventory = legacy.map(row => createPlainArtifactHttpFixture(row, scope.accountId));
+    let runId = 'run-a';
+    const hook = await renderHook(() => useWorkflowRunPublicationRequests({ scope, runId, active: true }));
+    await vi.waitFor(() => expect(hook.getCurrent().map(row => row.artifactId)).toEqual([own.id]));
+    await vi.waitFor(() => expect(typeof storage.getState().artifacts[other.id]?.body).toBe('string'));
+    expect(fixture.bodyReads.flat().sort()).toEqual([own.id, other.id].sort());
+    const selected = hook.getCurrent();
+    const openedOther = storage.getState().artifacts[other.id]!;
+    await act(async () => storage.getState().updateArtifact({ ...openedOther, headerVersion: 2, bodyVersion: 2 }));
+    expect(hook.getCurrent()).toBe(selected);
+    runId = 'run-b';
+    await hook.rerender();
+    expect(hook.getCurrent().map(row => row.artifactId)).toEqual([other.id]);
+    expect(fixture.bodyReads.flat()).toHaveLength(2);
+});
+
 it('hydrates cold publications from the inventory Home before learning portable header identity', async () => {
     fixture = await createArtifactInventoryDemandHarness();
     const scope = storage.getState().profileScope!;
@@ -58,7 +107,8 @@ it.each(['publication', 'invitation', 'external'] as const)('FIX249 discovers ex
     expect(hook.getCurrent()).toEqual([{ artifactId: own.id,
         href: buildApprovalHref(own.id, scope.serverId, createWorkflowRunRoute('run-a', scope.serverId)) }]);
     expect(storage.getState().artifacts[own.id]?.body).toBe(own.body);
-    expect(storage.getState().artifacts[other.id]?.body).toBe(other.body);
+    // FIN-PERF-RUN B1: a scoped header refresh never demands another Run's body.
+    expect(fixture.bodyReads.flat()).not.toContain(other.id);
     const selected = hook.getCurrent();
     const inbox = buildInboxWorkGroups({ sessionEntries: [], workflowRuns: [], automationRuns: [],
         automationServerId: null, openApprovals: [readOpenApprovalInboxEntry(own)!],

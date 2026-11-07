@@ -148,6 +148,7 @@ export function buildApprovalRequestArtifactHeaderV1(
     ...(origin?.machineId ? { machineId: origin.machineId } : {}),
     ...(origin?.runId ? { runId: origin.runId } : {}),
     ...(origin?.runOccurrenceId ? { runOccurrenceId: origin.runOccurrenceId } : {}),
+    workflowRunId: readWorkflowPublicationApprovalTargetV1({ family: 'built_in', request })?.runId ?? null,
     approvalListFacts: deriveApprovalArtifactListFactsV1(request),
   };
 }
@@ -171,6 +172,8 @@ export function approvalRequestArtifactHeaderMatches(
       || optionalExactStringMatches(header.approvalSubjectKey, approvalSubjectKey))
     && sessionBindingMatches(header, sessionId || null)
     && (header.approvalListFacts === undefined || listFactsEqual(header.approvalListFacts, deriveApprovalArtifactListFactsV1(request)))
+    && (header.workflowRunId === undefined
+      || header.workflowRunId === (readWorkflowPublicationApprovalTargetV1({ family: 'built_in', request })?.runId ?? null))
     && (request.v === 1 || (
       optionalExactStringMatches(header.serverId, origin?.serverId ?? null)
       && optionalExactStringMatches(header.serverIdentityId, origin?.serverIdentityId ?? null)
@@ -204,6 +207,7 @@ export function buildTargetActionApprovalArtifactHeaderV1(
     ...(machineId ? { machineId } : {}),
     ...(origin?.runId ? { runId: origin.runId } : {}),
     ...(origin?.runOccurrenceId ? { runOccurrenceId: origin.runOccurrenceId } : {}),
+    workflowRunId: readWorkflowPublicationApprovalTargetV1({ family: 'target_action', request })?.runId ?? null,
     ...(sessionId ? { sessionId, sessions: [sessionId] } : {}),
   };
 }
@@ -300,6 +304,8 @@ export function targetActionApprovalArtifactHeaderMatches(
     && optionalExactStringMatches(header.machineId, machineId)
     && optionalExactStringMatches(header.runId, origin?.runId ?? null)
     && optionalExactStringMatches(header.runOccurrenceId, origin?.runOccurrenceId ?? null)
+    && (header.workflowRunId === undefined
+      || header.workflowRunId === (readWorkflowPublicationApprovalTargetV1({ family: 'target_action', request })?.runId ?? null))
     && sessionBindingMatches(header, sessionId);
 }
 
@@ -382,11 +388,17 @@ type ApprovalListArtifactV1 = Readonly<{
   updatedAt: number;
 }>;
 
-/** Correlation comes from admitted publication custody or the exact Run caller, never a Session/header hint. */
-export function readOpenWorkflowPublicationApprovalTargetV1(
+/** Header discovery only: omission is legacy; explicit null establishes no Workflow relation. */
+export function readWorkflowPublicationApprovalHeaderRunIdV1(header: ApprovalArtifactHeaderCandidateV1): string | null | undefined {
+  return header.workflowRunId === undefined ? undefined
+    : typeof header.workflowRunId === 'string' && header.workflowRunId ? header.workflowRunId : null;
+}
+
+/** Correlation comes from publication custody or the exact Run caller, never an Automation run id. */
+function readWorkflowPublicationApprovalTargetV1(
   parsed: ParsedApprovalArtifactBodyV1 | null,
 ): Readonly<{ serverId: string; runId: string }> | null {
-  if (!parsed || parsed.family === 'execution_run_host_action' || parsed.request.status !== 'open'
+  if (!parsed || parsed.family === 'execution_run_host_action'
     || parsed.family === 'built_in' && parsed.request.v !== 2) return null;
   const origin = parsed.family === 'target_action' ? parsed.request.executionOriginV1
     : parsed.request.v === 2 ? parsed.request.executionOriginV1 : undefined;
@@ -397,6 +409,13 @@ export function readOpenWorkflowPublicationApprovalTargetV1(
   const callerRunId = origin.caller.kind === 'workflowRun' ? origin.caller.runId : null;
   const targetRunId = runId ?? callerRunId;
   return targetRunId ? { serverId: origin.serverIdentityId ?? origin.serverId, runId: targetRunId } : null;
+}
+
+/** Admission remains body-authoritative after header-only candidate selection. */
+export function readOpenWorkflowPublicationApprovalTargetV1(
+  parsed: ParsedApprovalArtifactBodyV1 | null,
+): Readonly<{ serverId: string; runId: string }> | null {
+  return parsed?.request.status === 'open' ? readWorkflowPublicationApprovalTargetV1(parsed) : null;
 }
 
 /** One strict private queue projection for keyholding Account Artifact stores. */
@@ -463,10 +482,12 @@ export async function listApprovalArtifactsV1(params: Readonly<{
       } } : {}),
       headerFilter: header => {
         if (header.kind !== APPROVAL_ARTIFACT_KINDS_V1.builtIn && header.kind !== APPROVAL_ARTIFACT_KINDS_V1.targetAction) return false;
+        const indexedWorkflowRunId = workflowRunId ? readWorkflowPublicationApprovalHeaderRunIdV1(header) : undefined;
         // Approval status can change between the header page and hydration.
         // Keep that filter at the fresh, body-authoritative read below.
         return (!params.actionId || (header.kind === APPROVAL_ARTIFACT_KINDS_V1.targetAction ? 'action.invoke' : header.actionId) === params.actionId)
           && (!sessionId || header.sessionId === sessionId)
+          && (!workflowRunId || indexedWorkflowRunId === undefined || indexedWorkflowRunId === workflowRunId)
           && (!params.subjectKey || header.approvalSubjectKey === params.subjectKey);
       }, ...(cursor ? { cursor } : {}) });
     for (const artifact of page.items) {

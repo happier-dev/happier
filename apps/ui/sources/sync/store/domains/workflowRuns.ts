@@ -355,6 +355,20 @@ export function selectWorkflowRunFirstFailedInvocation(
     return invocations.factsById[invocations.firstFailedId] ?? null;
 }
 
+/** Exact member queries can publish facts beyond the loaded history window. */
+export function selectWorkflowRunMemberInvocation(
+    facts: Readonly<Record<string, WorkflowRunInvocationFact>> | null | undefined,
+    parentRecordId: string,
+    memberOrdinal: string,
+): WorkflowRunInvocationFact | null {
+    let newest: WorkflowRunInvocationFact | null = null;
+    for (const fact of Object.values(facts ?? {})) {
+        if (fact.parentRecordId === parentRecordId && fact.memberOrdinal === memberOrdinal
+            && (newest === null || compareInvocationOrder(fact, newest) > 0)) newest = fact;
+    }
+    return newest;
+}
+
 function compareDecimalStrings(left: string, right: string): number {
     // Both are canonical nonnegative decimals, so length orders magnitude and
     // a lexicographic compare orders equal magnitudes. This avoids `BigInt` on

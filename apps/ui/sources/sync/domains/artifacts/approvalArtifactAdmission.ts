@@ -1,4 +1,5 @@
 import { approvalArtifactBodyMatchesHeaderV1, readApprovalArtifactHeaderListFactsV1, readApprovalRequestArtifactSubjectKeyV1,
+    readOpenWorkflowPublicationApprovalTargetV1, readWorkflowPublicationApprovalHeaderRunIdV1,
     type ParsedApprovalArtifactBodyV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { ApprovalRequestV2Schema, type ApprovalRequest, type ApprovalRequesterConfirmationV1, type ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import type { TargetActionApprovalRequestV1 } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
@@ -16,6 +17,17 @@ export type SessionReferenceFact = Readonly<{
     sortKey: string;
 }> & { addressKey?: string };
 type SessionReferenceIndex = Map<string | null, Map<string, SessionReferenceFact>>;
+
+/** Undefined needs legacy discovery; null has no Run relation. Only this owner interprets old bodies. */
+export function readWorkflowPublicationApprovalRunId(artifact: DecryptedArtifact | undefined): string | null | undefined {
+    if (!artifact?.isDecrypted || artifact.draft
+        || (artifact.header?.kind !== APPROVAL_ARTIFACT_KINDS_V1.builtIn && artifact.header?.kind !== APPROVAL_ARTIFACT_KINDS_V1.targetAction)
+        || artifact.header.approvalStatus !== 'open') return null;
+    const indexed = readWorkflowPublicationApprovalHeaderRunIdV1(artifact.header);
+    if (indexed !== undefined) return indexed;
+    if (typeof artifact.body !== 'string') return undefined;
+    return readOpenWorkflowPublicationApprovalTargetV1(readOpenApprovalInboxArtifact(artifact))?.runId ?? null;
+}
 
 function readString(value: unknown): string | null {
     return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;

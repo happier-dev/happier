@@ -42,6 +42,8 @@ export async function refreshWorkflowRunWindowChanges(
         if (current) return 'current';
     }
     const selectedIds = new Set(change.runIds);
+    // A wake covering an exact selection is already the whole window read.
+    if (!sources?.length && filter.runIds?.every(id => selectedIds.has(id))) return 'changed';
     const previousIds = new Set(window.runIds.filter(id => selectedIds.has(id)
         || sources?.includes(window.sourceArtifactIdsByRunId?.[id] ?? '')));
     const currentIds = new Set<string>();

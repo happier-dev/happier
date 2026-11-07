@@ -18,13 +18,22 @@ import {
     resolveVisibleWorkflowInvocations,
     resolveWorkflowRunRows,
     selectWorkflowRunFirstFailedInvocation,
+    selectWorkflowRunMemberInvocation,
     selectWorkflowRunWindowInvocations,
     workflowRunRowFromAutomationRun,
     workflowRunRowFromSummary,
-    sessionWorkflowRunWindowId,
+    workflowRunListWindowStoreKey,
 } from './workflowRuns';
 
 type State = ReturnType<typeof createWorkflowRunsDomain>;
+
+it('FIN selected hold projects the newest exact sibling from shared facts outside history', () => {
+    const old = createWorkflowInvocationIndexFixture({ id: 'old', parentRecordId: 'root', memberOrdinal: '0', sequence: '1', attempt: '0' });
+    const current = createWorkflowInvocationIndexFixture({ id: 'current', parentRecordId: 'root', memberOrdinal: '0', sequence: '3', attempt: '1' });
+    const other = createWorkflowInvocationIndexFixture({ id: 'other', parentRecordId: 'another-root', memberOrdinal: '0', sequence: '4' });
+    expect(selectWorkflowRunMemberInvocation({ old, current, other }, 'root', '0')).toBe(current);
+    expect(selectWorkflowRunMemberInvocation({ old, current, other }, 'root', '1')).toBeNull();
+});
 
 function createHarness(): { state: State; get: () => State } {
     let state = {} as State;
@@ -71,6 +80,26 @@ function summary(input: Readonly<{
 }
 
 describe('workflow run body store', () => {
+    it('retains acknowledged failure facts across delayed equal-revision summaries while accepting independent holds', () => {
+        const failedAt = '2026-10-23T10:00:00.000Z';
+        const unseen = createWorkflowRunSummaryFixture({ id: 'failure-seen', state: 'failed', revision: 2,
+            finishedAt: failedAt, failureUnseen: true, attentionRequired: true });
+        const seen = { ...unseen, attentionSeenFailureAt: failedAt, failureUnseen: false, attentionRequired: false };
+        const harness = createHarness();
+        harness.get().upsertWorkflowRuns([workflowRunRowFromSummary(unseen)], null);
+        harness.get().upsertWorkflowRuns([workflowRunRowFromSummary(seen)], null);
+        expect(harness.get().workflowRunsById[unseen.id]?.summary).toMatchObject(seen);
+        harness.get().upsertWorkflowRuns([workflowRunRowFromSummary({ ...unseen, invocationAttentionRequired: true })], null);
+        expect(harness.get().workflowRunsById[unseen.id]?.summary).toMatchObject({
+            attentionSeenFailureAt: failedAt, failureUnseen: false, invocationAttentionRequired: true, attentionRequired: true,
+        });
+        const other = createHarness();
+        other.get().upsertWorkflowRuns([workflowRunRowFromSummary({ ...unseen, revision: 3 })], null);
+        other.get().upsertWorkflowRuns([workflowRunRowFromSummary(seen)], null);
+        expect(other.get().workflowRunsById[unseen.id]?.summary).toMatchObject({
+            revision: 3, failureUnseen: false, attentionSeenFailureAt: failedAt, attentionRequired: false,
+        });
+    });
     it('retains unrelated window and invocation maps when removing an exact-only Run', () => {
         const store = createStore<State>()((set, get) => createWorkflowRunsDomain({ set, get }));
         store.getState().upsertWorkflowRuns([workflowRunRowFromSummary(summary({ id: 'exact-only' }))], null);
@@ -150,22 +179,22 @@ describe('workflow run body store', () => {
         const scopes = [{ serverId: 'home-a', accountId: 'account' }, { serverId: 'home-b', accountId: 'account' }];
         for (const [index, scope] of scopes.entries()) {
             store.getState().applyWorkflowRunListPage({
-                scope, windowId: sessionWorkflowRunWindowId(scope, 'session', 'origin'),
+                scope, windowId: workflowRunListWindowStoreKey('session-origin:session', scope),
                 runs: [summary({ id: 'same-run', revision: index + 1 }), summary({ id: 'same-run', revision: 1 })],
                 attentionRunIds: ['same-run'], lastSuccessfulReadAt: 100 + index,
                 mode: 'replace', nextCursor: null,
             });
         }
         for (const [index, scope] of scopes.entries()) {
-            const window = store.getState().workflowRunListWindows[sessionWorkflowRunWindowId(scope, 'session', 'origin')]!;
+            const window = store.getState().workflowRunListWindows[workflowRunListWindowStoreKey('session-origin:session', scope)]!;
             expect(window).toMatchObject({ runIds: ['same-run'], attentionRunIds: ['same-run'], lastSuccessfulReadAt: 100 + index });
             expect(resolveWorkflowRunRows(store.getState().workflowRunsById, window.runIds, scope)[0]?.revision).toBe(index + 1);
         }
-        const otherWindow = store.getState().workflowRunListWindows[sessionWorkflowRunWindowId(scopes[1]!, 'session', 'origin')];
+        const otherWindow = store.getState().workflowRunListWindows[workflowRunListWindowStoreKey('session-origin:session', scopes[1]!)];
         store.getState().removeWorkflowRun('same-run', scopes[0]);
-        expect(store.getState().workflowRunListWindows[sessionWorkflowRunWindowId(scopes[0]!, 'session', 'origin')])
+        expect(store.getState().workflowRunListWindows[workflowRunListWindowStoreKey('session-origin:session', scopes[0]!)])
             .toMatchObject({ runIds: [], attentionRunIds: [] });
-        expect(store.getState().workflowRunListWindows[sessionWorkflowRunWindowId(scopes[1]!, 'session', 'origin')]).toBe(otherWindow);
+        expect(store.getState().workflowRunListWindows[workflowRunListWindowStoreKey('session-origin:session', scopes[1]!)]).toBe(otherWindow);
     });
 
     it('keeps colliding Run ids and invocation histories independent across exact Homes and Accounts', () => {
@@ -250,7 +279,8 @@ describe('workflow run body store', () => {
         const store = createStore<State>((set, get) => createWorkflowRunsDomain({ set, get }));
         const run = summary({ id: 'run-1', revision: 4 });
         const invocation = createWorkflowInvocationIndexFixture({ contentRevision: '4' });
-        const list = { windowId: 'all' as const, runs: [run], nextCursor: null, mode: 'replace' as const };
+        const list = { windowId: 'all' as const, runs: [run], nextCursor: null, mode: 'replace' as const,
+            metadataByRunId: { [run.id]: { kind: 'available' as const, value: { title: 'Fresh opinions' } } } };
         const page = { runId: run.id, invocations: [invocation], nextCursor: null, parentRevision: 4, mode: 'replace' as const };
         store.getState().applyWorkflowRunListPage(list);
         store.getState().applyWorkflowRunInvocationPage(page);
@@ -262,6 +292,11 @@ describe('workflow run body store', () => {
         store.getState().upsertWorkflowRunInvocation({ runId: run.id, invocation: structuredClone(invocation), parentRevision: 4 });
         expect(notifications).toBe(0);
         expect(store.getState()).toBe(before);
+        store.getState().upsertWorkflowRuns([workflowRunRowFromSummary(summary({ id: 'unrelated-run' }))]);
+        expect(store.getState().workflowRunsById[run.id]).toBe(before.workflowRunsById[run.id]);
+        expect(store.getState().workflowRunsById[run.id]?.metadata).toBe(before.workflowRunsById[run.id]?.metadata);
+        expect(notifications).toBe(1);
+        notifications = 0;
         store.getState().upsertWorkflowRunInvocation({ runId: run.id, invocation: { ...invocation, contentRevision: '5', lifecycle: 'completed' }, parentRevision: 4 });
         expect(notifications).toBe(1);
         expect(store.getState().workflowRunInvocationsByRunId[run.id]?.factsById[invocation.id]?.lifecycle).toBe('completed');
@@ -427,14 +462,16 @@ describe('workflow run body store', () => {
 
     it('refreshes server attention independently of unchanged parent revision and timestamp', () => {
         const run = summary({ id: 'run-1', revision: 4 });
-        const initial = mergeWorkflowRunBodies({}, [workflowRunRowFromSummary({ ...run, attentionRequired: false })]);
-        const needsYou = mergeWorkflowRunBodies(initial, [workflowRunRowFromSummary({ ...run, attentionRequired: true })]);
+        const clear = { ...run, invocationAttentionRequired: false, attentionRequired: false };
+        const waiting = { ...run, invocationAttentionRequired: true, attentionRequired: true };
+        const initial = mergeWorkflowRunBodies({}, [workflowRunRowFromSummary(clear)]);
+        const needsYou = mergeWorkflowRunBodies(initial, [workflowRunRowFromSummary(waiting)]);
         expect(needsYou['run-1']?.summary).toMatchObject({ attentionRequired: true, revision: 4 });
-        const settled = mergeWorkflowRunBodies(needsYou, [workflowRunRowFromSummary({ ...run, attentionRequired: false })]);
+        const settled = mergeWorkflowRunBodies(needsYou, [workflowRunRowFromSummary(clear)]);
         expect(settled['run-1']?.summary).toMatchObject({ attentionRequired: false, revision: 4 });
-        expect(mergeWorkflowRunBodies(settled, [workflowRunRowFromSummary({ ...run, attentionRequired: false })])).toBe(settled);
-        expect(mergeWorkflowRunBodies(settled, [workflowRunRowFromSummary({ ...run, revision: 3, attentionRequired: true })])).toBe(settled);
-        expect(mergeWorkflowRunBodies(needsYou, [workflowRunRowFromSummary(run)])).toBe(needsYou);
+        expect(mergeWorkflowRunBodies(settled, [workflowRunRowFromSummary(clear)])).toBe(settled);
+        expect(mergeWorkflowRunBodies(settled, [workflowRunRowFromSummary({ ...waiting, revision: 3 })])).toBe(settled);
+        expect(mergeWorkflowRunBodies(needsYou, [workflowRunRowFromSummary(waiting)])).toBe(needsYou);
     });
 
     it('retains an opened Where across control projections and clears it on an unreadable list projection', () => {
@@ -488,6 +525,18 @@ describe('workflow run body store', () => {
         const unreadable = mergeWorkflowRunBodies(controlled, [workflowRunRowFromSummary({ ...run, revision: 5, startedBy: null, stepProgress: null })]);
         expect(unreadable['run-1']?.summary).toMatchObject({ startedBy: null, stepProgress: null });
         expect(mergeWorkflowRunBodies(unreadable, [workflowRunRowFromSummary(projected)])).toBe(unreadable);
+    });
+
+    it('learns frozen source provenance at equal revision and retains it through lean control updates', () => {
+        const run = summary({ id: 'run-source', revision: 4 });
+        const initial = mergeWorkflowRunBodies({}, [workflowRunRowFromSummary(run)]);
+        const sourceSavedBy = { kind: 'person' as const, accountId: 'frozen-editor' };
+        const opened = mergeWorkflowRunBodies(initial, [workflowRunRowFromSummary({ ...run, sourceSavedBy })]);
+        expect(opened['run-source']?.summary?.sourceSavedBy).toEqual(sourceSavedBy);
+        const controlled = mergeWorkflowRunBodies(opened, [workflowRunRowFromSummary({ ...run, revision: 5 })]);
+        expect(controlled['run-source']?.summary?.sourceSavedBy).toEqual(sourceSavedBy);
+        expect(mergeWorkflowRunBodies(controlled, [workflowRunRowFromSummary({ ...run, revision: 5,
+            sourceSavedBy: { ...sourceSavedBy } })])).toBe(controlled);
     });
 
     it('orders authored progress by the existing root observation even when parent revision and time do not move', () => {

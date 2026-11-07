@@ -9,7 +9,8 @@ import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue'
 import type { StoreGet, StoreSet } from './_shared';
 import type { ServerAccountScope } from '../../domains/scope/serverAccountScope';
 import { reconcileFailedApprovalDismissals, retireFailedApprovalDismissals } from '../../domains/state/failedApprovalUiState';
-import { readApprovalArtifactHeaderSessionIds, readDiscussionRequesterApprovalFact } from '../../domains/artifacts/approvalArtifactAdmission';
+import { readApprovalArtifactHeaderSessionIds, readDiscussionRequesterApprovalFact,
+  readWorkflowPublicationApprovalRunId } from '../../domains/artifacts/approvalArtifactAdmission';
 import { projectArtifactInventoryIndex, selectArtifactInventoryRows, type ArtifactInventoryIndex } from './artifactInventoryIndex';
 import { projectWidgetAreaLayoutPublications, type WidgetAreaLayoutPublications } from './widgetAreaLayoutPublications';
 import { patchEnvironmentHealthNotices, type EnvironmentHealthNotices } from '../../domains/artifacts/healthNoticeEnvironments';
@@ -24,7 +25,7 @@ function patchApprovalArtifactGroups(
   previousKeys: readonly string[],
   nextKeys: readonly string[],
   artifact: DecryptedArtifact | null,
-  projection: 'session' | 'discussion',
+  projection: 'session' | 'discussion' | 'workflow',
   removedGroups: Set<string>,
 ): ApprovalArtifactGroups {
   for (const key of new Set([...previousKeys, ...nextKeys])) {
@@ -35,7 +36,7 @@ function patchApprovalArtifactGroups(
     // Session readers consume the admitted request/relationship, not freshness or
     // grant-enrichment carriers. Decisions still read the current Artifact by id.
     // Discussion receipts consume the full revision record and never use this projection.
-    if (projection === 'session' && previous && next && previous.header === next.header && previous.body === next.body
+    if (projection !== 'discussion' && previous && next && previous.header === next.header && previous.body === next.body
       && previous.sessions === next.sessions && previous.sourceServerId === next.sourceServerId
       && previous.draft === next.draft && previous.isDecrypted === next.isDecrypted) continue;
     if (groups === baseline) groups = { ...groups };
@@ -148,12 +149,6 @@ function browserUnready(artifact: DecryptedArtifact | undefined): boolean {
     && (!artifact.isDecrypted || !artifact.rawHeader);
 }
 
-function isOpenWorkflowPublicationCandidate(artifact: DecryptedArtifact | undefined): boolean {
-  return artifact?.isDecrypted === true && !artifact.draft
-    && (artifact.header?.kind === APPROVAL_ARTIFACT_KINDS_V1.builtIn || artifact.header?.kind === APPROVAL_ARTIFACT_KINDS_V1.targetAction)
-    && artifact.header.approvalStatus === 'open';
-}
-
 function approvalArtifactCandidate(artifact: DecryptedArtifact | undefined): DecryptedArtifact | null {
   return artifact && !artifact.draft
     && Object.values(APPROVAL_ARTIFACT_KINDS_V1).some(kind => kind === artifact.header?.kind) ? artifact : null;
@@ -164,9 +159,9 @@ function projectArtifactInventory(state: ArtifactsDomain, artifacts: Record<stri
   let revisions = state.artifactSkillRevisions;
   let unreadyCount = state.artifactInventoryUnreadyCount;
   let browserLoaded = state.artifactBrowserLoaded;
-  // One publication per page: appended and revised candidates are applied together after the loop.
-  const publicationsAdded: DecryptedArtifact[] = [];
-  const publicationsRevised = new Map<string, DecryptedArtifact | null>();
+  let workflowApprovals = state.artifactWorkflowPublicationArtifactsByRunId;
+  let unclassifiedWorkflowApprovals = state.artifactUnclassifiedWorkflowPublicationArtifacts;
+  const removedWorkflowGroups = new Set<string>();
   let inbox = state.artifactInboxEntries;
   const inboxOrderChanges: InboxArtifactOrderChange[] = [];
   let environmentHealth = state.artifactHealthNoticesByEnvironmentId;
@@ -231,17 +226,18 @@ function projectArtifactInventory(state: ArtifactsDomain, artifacts: Record<stri
       if (prompts === state.artifactPromptLibraryArtifacts) prompts = { ...prompts };
       if (promptRow) prompts[id] = promptRow; else delete prompts[id];
     }
-    // This is discovery membership only. The approval owner admits matching
-    // header/body revisions before a publication can be associated with a Run.
-    const candidate = artifact && isOpenWorkflowPublicationCandidate(artifact) ? artifact : null;
-    const before = state.artifacts[id];
-    const wasCandidate = isOpenWorkflowPublicationCandidate(before);
-    if (candidate !== null || wasCandidate) {
-      if (!candidate || before?.header !== candidate.header || before?.body !== candidate.body
-        || before?.isDecrypted !== candidate.isDecrypted || before?.draft !== candidate.draft) {
-        if (wasCandidate) publicationsRevised.set(id, candidate);
-        else if (candidate) publicationsAdded.push(candidate);
+    const beforeRunId = readWorkflowPublicationApprovalRunId(state.artifacts[id]);
+    const runId = readWorkflowPublicationApprovalRunId(artifact);
+    workflowApprovals = patchApprovalArtifactGroups(workflowApprovals, state.artifactWorkflowPublicationArtifactsByRunId, id,
+      typeof beforeRunId === 'string' ? [beforeRunId] : [], typeof runId === 'string' ? [runId] : [],
+      artifact ?? null, 'workflow', removedWorkflowGroups);
+    const unclassified = runId === undefined ? artifact : undefined;
+    if (unclassifiedWorkflowApprovals[id] !== unclassified) {
+      if (unclassifiedWorkflowApprovals === state.artifactUnclassifiedWorkflowPublicationArtifacts) {
+        unclassifiedWorkflowApprovals = { ...unclassifiedWorkflowApprovals };
       }
+      if (unclassified) unclassifiedWorkflowApprovals[id] = unclassified;
+      else delete unclassifiedWorkflowApprovals[id];
     }
     const revision = skillRevision(artifacts[id]);
     if (revision !== revisions[id]) {
@@ -253,17 +249,10 @@ function projectArtifactInventory(state: ArtifactsDomain, artifacts: Record<stri
   }
   // Relationship removals share this synchronous publication. Retire each
   // touched bucket only after its complete changed-id batch has applied.
-  for (const [groups, removedGroups] of [[sessionApprovals, removedSessionGroups], [discussionApprovals, removedDiscussionGroups]] as const) {
+  for (const [groups, removedGroups] of [[sessionApprovals, removedSessionGroups], [discussionApprovals, removedDiscussionGroups],
+    [workflowApprovals, removedWorkflowGroups]] as const) {
     for (const key of removedGroups) if (Object.keys(groups[key]!).length === 0) delete groups[key];
   }
-  let publications = state.artifactOpenWorkflowPublicationArtifacts;
-  // At most one pass over the retained candidates per page, never one per changed row.
-  if (publicationsRevised.size > 0) publications = publications.flatMap(entry => {
-    if (!publicationsRevised.has(entry.id)) return [entry];
-    const revised = publicationsRevised.get(entry.id);
-    return revised ? [revised] : [];
-  });
-  if (publicationsAdded.length > 0) publications = publications.concat(publicationsAdded);
   return { artifactSkillRevisions: revisions, artifactInventoryUnreadyCount: unreadyCount, artifactBrowserLoaded: browserLoaded,
     artifactInventoryIndex: projectArtifactInventoryIndex(state.artifactInventoryIndex, state.artifacts, artifacts, changedIds),
     artifactWidgetAreaLayoutPublications: projectWidgetAreaLayoutPublications(state.artifactWidgetAreaLayoutPublications, state.artifacts, artifacts, changedIds),
@@ -275,7 +264,8 @@ function projectArtifactInventory(state: ArtifactsDomain, artifacts: Record<stri
     artifactListedOpenApprovals: listedApprovals,
     artifactDiscussionAttentionEntries: discussionAttention, artifactIncompleteInboxArtifacts: incompleteInbox,
     artifactBrowserArtifacts: browser, artifactPromptLibraryArtifacts: prompts,
-    artifactOpenWorkflowPublicationArtifacts: publications };
+    artifactWorkflowPublicationArtifactsByRunId: workflowApprovals,
+    artifactUnclassifiedWorkflowPublicationArtifacts: unclassifiedWorkflowApprovals };
 }
 
 export type ArtifactsDomain = {
@@ -302,8 +292,10 @@ export type ArtifactsDomain = {
   artifactDiscussionAttentionEntries: Record<string, ListedOpenApproval>;
   /** Incomplete admissions only; completed open requests never restart body selection. */
   artifactIncompleteInboxArtifacts: Record<string, DecryptedArtifact>;
-  /** Open Run-request candidates, maintained only from changed Artifact ids at ingress. */
-  artifactOpenWorkflowPublicationArtifacts: readonly DecryptedArtifact[];
+  /** Header-selected Run relationships; strict body admission remains at the approval owner. */
+  artifactWorkflowPublicationArtifactsByRunId: ApprovalArtifactGroups;
+  /** Only legacy headers without a classified Run relation still need discovery bodies. */
+  artifactUnclassifiedWorkflowPublicationArtifacts: Record<string, DecryptedArtifact>;
   /** Content revisions only; unrelated Artifacts and body hydration retain this identity. */
   artifactSkillRevisions: Record<string, string>;
   /** Potential Skill bundles (including unknown rows) whose membership/access is not yet readable. */
@@ -350,7 +342,8 @@ export function createArtifactsDomain<S extends ArtifactsDomain & { profileScope
     artifactListedOpenApprovals: {},
     artifactDiscussionAttentionEntries: {},
     artifactIncompleteInboxArtifacts: {},
-    artifactOpenWorkflowPublicationArtifacts: [],
+    artifactWorkflowPublicationArtifactsByRunId: {},
+    artifactUnclassifiedWorkflowPublicationArtifacts: {},
     artifactSkillRevisions: {},
     artifactInventoryUnreadyCount: 0,
     artifactsLoaded: false,

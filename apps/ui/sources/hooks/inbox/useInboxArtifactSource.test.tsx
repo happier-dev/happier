@@ -282,7 +282,7 @@ it.each([2000, 10_500])('applies an inventory page without re-sorting %i retaine
     }
     expect(items!.openApprovals).toHaveLength(retainedCount);
     const settledNotices = items!.accountNotices;
-    const publications = storage.getState().artifactOpenWorkflowPublicationArtifacts;
+    const publications = storage.getState().artifactWorkflowPublicationArtifactsByRunId;
     // One drain step: ten new requests plus ten hydrated revisions of retained requests.
     const added = Array.from({ length: 10 }, (_, offset) => row(retainedCount + 1000 + offset));
     const revised = Array.from({ length: 10 }, (_, offset) => row(offset * 150, 2));
@@ -293,7 +293,6 @@ it.each([2000, 10_500])('applies an inventory page without re-sorting %i retaine
     console.info('Inbox page application cost', { retained: retainedCount, page: page.size, retainedReads });
     // This composed check rejects a retained-list re-sort. The owner test separately asserts
     // bounded retained visits per task, including the first reader and requested row window.
-    // The open Run-request publication still visits retained candidates once per page.
     expect(retainedReads.updatedAt).toBeLessThan(retainedCount);
     expect(retainedReads.id).toBeLessThanOrEqual(retainedCount + 40 * page.size);
     // The merged order is the complete newest-first order, and unchanged lists keep their identity.
@@ -301,11 +300,9 @@ it.each([2000, 10_500])('applies an inventory page without re-sorting %i retaine
     expect(items!.openApprovals.map(artifact => artifact.id)).toEqual(expected);
     expect(items!.openApprovals.find(artifact => artifact.id === revised[3]!.id)).toBe(storage.getState().artifacts[revised[3]!.id]);
     expect(items!.accountNotices).toBe(settledNotices);
-    const nextPublications = storage.getState().artifactOpenWorkflowPublicationArtifacts;
-    expect(nextPublications).toHaveLength(retainedCount + added.length);
-    expect(nextPublications.slice(0, retainedCount).map(artifact => artifact.id)).toEqual(publications.map(artifact => artifact.id));
-    expect(nextPublications[150]).toBe(storage.getState().artifacts['drain-150']);
-    expect(nextPublications.slice(retainedCount).map(artifact => artifact.id)).toEqual(added.map(artifact => artifact.id));
+    // Ordinary approvals never enter a Workflow Run's body-demand projection (FIN-PERF-RUN B1).
+    expect(storage.getState().artifactWorkflowPublicationArtifactsByRunId).toBe(publications);
+    expect(storage.getState().artifactUnclassifiedWorkflowPublicationArtifacts).toEqual({});
     await act(async () => { screen.unmount(); });
 });
 
