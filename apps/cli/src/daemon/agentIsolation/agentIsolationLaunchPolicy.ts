@@ -332,6 +332,13 @@ export function isHostRequesterUnrestrictedOwner(identity: HostRequesterExecutio
         && !identity.separationRequired && identity.accountAutomation === true;
 }
 
+/** Agent folder reads use Agent execution, even when the person can administer
+ * the Machine's filesystem. This does not grant person break-glass to an Agent. */
+export function resolveHostRequesterAgentExecutionIdentity(identity: HostRequesterExecutionIdentity): HostRequesterExecutionIdentity {
+    return identity.kind === 'unknown' ? identity : { kind: 'isolated', requester: identity.requester,
+        separationRequired: identity.kind === 'isolated' && identity.separationRequired };
+}
+
 /** All requesters consume the Machine placement policy. Requester custody and
  * person/administration authority remain independent of execution placement. */
 export function resolveHostRequesterAgentPlacementForHost(input: Readonly<{
