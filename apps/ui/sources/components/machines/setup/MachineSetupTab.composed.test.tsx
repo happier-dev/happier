@@ -180,6 +180,28 @@ describe('Machine setup preparation', () => {
       { ...unavailable, machineId: 'devbox' },
     ] } });
   });
+  it('attaches a new preset last, before the direct source, and never plans a source list without one', async () => {
+    const { prepareMachineSetupPresetApplyInput } = await import('@/components/settings/machines/managed/machineSetupApply');
+    const attached = { kind: 'accountPreset' as const, presetId: 'web', presetRevision: 1, setup: {} };
+    const selected = { ...preset('build', 'Build box'), setup: { scripts: [{ body: 'echo build' }] } };
+    let planned: unknown[] = [attached, { kind: 'direct', setup: {} }];
+    const proposed: unknown[] = [];
+    const executor = createActionExecutor(createActionExecutorBoundaryFixture({ machineSetupPlan: async ({ input }) => {
+      const request = MachineSetupPlanInputV1Schema.parse(input);
+      if (request.mode) proposed.push(request.sources);
+      return { desiredRevision: 3, sources: request.mode ? request.sources : planned, exclusions: [], support: [], recipePlans: [] };
+    } }));
+    const params = { executeAction: executor.execute, context: { surface: 'ui' as const },
+      homeId: 'srv_build', machineId: 'devbox', preset: selected, isCurrent: () => true };
+    expect(await prepareMachineSetupPresetApplyInput(params)).toMatchObject({ ok: true });
+    expect(proposed).toEqual([[attached,
+      { kind: 'accountPreset', presetId: 'build', presetRevision: 2, setup: selected.setup },
+      { kind: 'direct', setup: {} }]]);
+    // A plan without its direct source fails the strict plan schema before any splice can misplace the preset.
+    planned = [attached];
+    expect(await prepareMachineSetupPresetApplyInput(params)).toMatchObject({ ok: false });
+    expect(proposed).toHaveLength(1);
+  });
   it('carries reviewed recipe exclusions to Apply instead of silently reinstating an excluded recipe', async () => {
     const { prepareMachineSetupSourcesApplyInput } = await import('@/components/settings/machines/managed/machineSetupReview');
     const ref = { pluginId: 'com.example.machine-tools', recipeId: 'unavailable', revision: '1' };
