@@ -16,7 +16,7 @@ import type { Theme } from '@/theme';
 function GlanceRowText(props: HappierWidgetGlanceRowTextProps) {
   return (
     <Text
-      numberOfLines={1}
+      numberOfLines={props.lines ?? 1}
       style={[
         props.role === 'title' ? styles.title : styles.meta,
         props.mono ? styles.mono : null,
@@ -38,7 +38,7 @@ function projectGlanceRowColors(theme: Theme): HappierWidgetGlanceRowColors {
     text: theme.colors.text.primary,
     secondaryText: theme.colors.text.secondary,
     mutedText: theme.colors.text.tertiary,
-    attention: theme.colors.state.warning.foreground,
+    attention: theme.colors.state.attention.textForeground,
     danger: theme.colors.status.error,
 
     pressed: theme.colors.surface.pressed,
@@ -61,6 +61,7 @@ export const WidgetGlanceRow = React.memo(function WidgetGlanceRow(
     title: string;
     variant?: 'row' | 'fact';
     tag?: string | null;
+    tagSentence?: boolean;
     fact?: string | null;
     factTone?: 'quiet' | 'attention' | 'danger';
     mono?: boolean;

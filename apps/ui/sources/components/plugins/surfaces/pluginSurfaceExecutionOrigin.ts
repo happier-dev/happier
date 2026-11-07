@@ -1,5 +1,3 @@
-import { resolvePortableServerIdentityForRoutingId } from '@/sync/domains/server/resolvePortableServerIdentityForRoutingId';
-import type { PluginUiHostApiSurfaceTargetV1 } from '@happier-dev/protocol/plugins/ui';
 import * as React from 'react';
 import { arePluginMachineExecutionOriginsEqual, getPluginMachineExecutionOriginRef } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { usePluginExecutionOriginProjectionDemand } from '@/sync/domains/machines/administration/usePluginExecutionOriginProjectionDemand';
@@ -15,22 +13,42 @@ import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/ac
 import { getPluginExecutionOriginCandidateOrigin, type PluginExecutionOriginContextualTarget } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
 import { resolvePluginUiProjectionContributionId } from '@/sync/domains/plugins/ui/projectionRefs';
 import { readSelectedPluginUiResourceCapability } from '@/sync/domains/plugins/ui/resourceCapability';
+import type { PluginUiHostApiSurfaceTargetV1 } from '@happier-dev/protocol/plugins/ui';
+import { resolvePortableServerIdentityForRoutingId } from '@/sync/domains/server/resolvePortableServerIdentityForRoutingId';
 import { readRequiredPluginSurfaceHostMethods } from './boundPluginSurfaceController';
+import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
+import { publishMachineContributionRegistryProjectionInvalidation } from '@/sync/ops/machineContributionRegistryProjectionRevision';
 
 function record(value: unknown): Readonly<Record<string, unknown>> | null {
     return value && typeof value === 'object' && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : null;
 }
 
-/** Declared machine-backed capabilities, not execution availability or a selector policy. */
-export function isPluginSurfaceMachineBound(params: Readonly<{
+type PluginSurfaceMachineDemandInput = Readonly<{
     pluginId: string;
     surface: Readonly<{
         renderer: Readonly<Record<string, unknown>>;
         runtime?: unknown;
         headerActions?: unknown;
+        /** A widget's declared Resources. */
+        resources?: unknown;
     }>;
     projection: PluginUiProjectionModel | null | undefined;
-}>): boolean {
+}>;
+
+/**
+ * Why a surface reads a Machine. `data`: it reads data there (a daemon Resource, a Machine-only read
+ * method, or Resources its widget declares). `actions`: it can run its plugin's daemon Actions.
+ * `contributionPoints`: only its plugin's mounted contribution points (sources other plugins contribute)
+ * are read from the selected Machine. `none` otherwise. Declared capabilities, not execution availability
+ * or a selector policy; any reason but `none` makes the surface Machine-bound.
+ */
+export type PluginSurfaceMachineDemand = 'none' | 'data' | 'actions' | 'contributionPoints';
+
+export function isPluginSurfaceMachineBound(params: PluginSurfaceMachineDemandInput): boolean {
+    return readPluginSurfaceMachineDemand(params) !== 'none';
+}
+
+export function readPluginSurfaceMachineDemand(params: PluginSurfaceMachineDemandInput): PluginSurfaceMachineDemand {
     const { renderer } = params.surface;
     const family = renderer.kind === 'reactNative' ? 'reactNativeBundle'
         : renderer.kind === 'hostedWeb' ? 'hostedWeb' : null;
@@ -41,32 +59,38 @@ export function isPluginSurfaceMachineBound(params: Readonly<{
     const artifact = artifactId ? artifacts?.[artifactId] : null;
     const methods = readRequiredPluginSurfaceHostMethods(renderer.requiredHostMethods
         ?? record(renderer.model)?.requiredHostMethods ?? artifact?.requiredHostMethods);
-    if (methods === null) return false;
-    const declaredExecution = params.projection?.installedPackagesById[params.pluginId]?.declaredExecution;
-    // Mounted contribution points are read from the selected daemon even when
-    // its renderer can also present Account data without required host methods.
-    if (declaredExecution?.contributionPoints === true
-        || params.projection?.installedPackagesById[params.pluginId]?.declaresContributionPoints === true) return true;
+    if (methods === null) return 'none';
     // The same Resource methods also serve Account-owned borrowed host reads.
     // A declared daemon Resource capability implies demand for a target. For an
     // Account renderer, suppliers carry that declaration; only Administration's
     // selected supplier can grant the mounted transport its capability.
     // requiredHostMethods is the renderer's compatibility minimum, not an
     // inventory of the selected member's declared daemon Resource reads.
-    if (readSelectedPluginUiResourceCapability(params.surface).readable
-        || readPluginUiContributionSupplies(params.surface).some(supply => supply.resourceCapability?.readable)) return true;
-    if (methods.some(method => method === 'readStoredImage' || method === 'watchLiveStream'
-        || method === 'statOpenableContent' || method === 'readOpenableContent'
-        || method === 'selectActionInput')) return true;
+    const readsData = readSelectedPluginUiResourceCapability(params.surface).readable
+        || readPluginUiContributionSupplies(params.surface).some(supply => supply.resourceCapability?.readable)
+        || methods.some(method => method === 'readStoredImage' || method === 'watchLiveStream'
+            || method === 'statOpenableContent' || method === 'readOpenableContent'
+            || method === 'selectActionInput');
+    if (readsData) return 'data';
+    const installed = params.projection?.installedPackagesById[params.pluginId];
     const actions = Object.values(params.projection?.actionsById ?? {});
-    if (methods.includes('executeAction') && (declaredExecution?.daemonActions === true
-        || actions.some(action => action.pluginId === params.pluginId && action.execution.target === 'daemon'))) return true;
-    return Array.isArray(params.surface.headerActions) && params.surface.headerActions.some(action => {
-        const command = record(record(action)?.command);
-        const identity = PluginContributionIdentityV1Schema.safeParse(command?.action);
-        return command?.kind === 'executeAction' && identity.success
-            && createPluginUiProjectedActionResolver(params.projection?.actionsById)(identity.data)?.execution.target === 'daemon';
-    });
+    const runsDaemonActions = (methods.includes('executeAction') && (installed?.declaredExecution?.daemonActions === true
+        || actions.some(action => action.pluginId === params.pluginId && action.execution.target === 'daemon')))
+        || (Array.isArray(params.surface.headerActions) && params.surface.headerActions.some(action => {
+            const command = record(record(action)?.command);
+            const identity = PluginContributionIdentityV1Schema.safeParse(command?.action);
+            return command?.kind === 'executeAction' && identity.success
+                && createPluginUiProjectedActionResolver(params.projection?.actionsById)(identity.data)?.execution.target === 'daemon';
+        }));
+    // Mounted contribution points are read from the selected daemon even when
+    // its renderer can also present Account data without required host methods.
+    const readsContributionPoints = installed?.declaredExecution?.contributionPoints === true
+        || installed?.declaresContributionPoints === true;
+    if (!runsDaemonActions && !readsContributionPoints) return 'none';
+    // Already Machine-bound: Resources the widget declares say its own data is read there too, before any
+    // supplier has granted the mounted transport that capability (no Machine yet).
+    if (Array.isArray(params.surface.resources) && params.surface.resources.length > 0) return 'data';
+    return runsDaemonActions ? 'actions' : 'contributionPoints';
 }
 
 /** Presentation adapts producer custody; Administration remains the sole selector. */
@@ -81,9 +105,6 @@ export function usePluginSurfaceExecutionOrigin(params: Readonly<{
     surfaceTarget?: PluginUiHostApiSurfaceTargetV1 | null;
 }>) {
     const classifyRelease = useActivePluginAccountAvailabilityReleaseClassifier(params.pluginId);
-    // Selection is plugin-scoped, just like the shell's Administration
-    // reporter. The open page narrows only the selected producer's supply,
-    // never the candidates or defaults used to choose that producer.
     const checkout = params.surfaceTarget?.kind === 'project' ? params.surfaceTarget.checkout : undefined;
     const projectMachineId = checkout?.machineId;
     const projectServerIdentityId = checkout ? resolvePortableServerIdentityForRoutingId(checkout.serverId) : null;
@@ -201,7 +222,11 @@ export function usePluginSurfaceExecutionOrigin(params: Readonly<{
         if (!fresh || !selectedSupply?.executionOrigin || !selectedSupply.occurrenceId
             || selectedSupply.phase !== 'current' || !selectedSupply.interactionEnabled
             || !arePluginMachineExecutionOriginsEqual(fresh.origin, selectedSupply.executionOrigin)) return false;
-        const projection = readCurrentAppShellPluginUiProjection();
+        // Other suppliers may still be establishing. Read the Account's
+        // declaration, then require this exact supplier's current authority.
+        const projection = accountLifetime ? readCurrentAppShellPluginUiProjection({
+            scope: accountLifetime.scope, declarationsOnly: true,
+        }) : null;
         const entry = params.entry && projection
             ? projection.surfacePlacementsById[params.entry.id] ?? projection.settingsPagesById[params.entry.id]
                 ?? projection.composerControlsById[params.entry.id] ?? projection.composerRegionsById[params.entry.id]
@@ -213,11 +238,33 @@ export function usePluginSurfaceExecutionOrigin(params: Readonly<{
                 && supply.serverId === selectedSupply.serverId
                 && supply.phase === 'current' && supply.interactionEnabled
             ));
-    }, [params.entry, selectedSupply, selection.resolveExecutionOrigin]);
+    }, [accountLifetime, params.entry, selectedSupply, selection.resolveExecutionOrigin]);
     // The exact mounted supplier can enter establishment before the shell's
     // committed selection publication catches up in layout. Its positive
     // loading fact must accompany the fresh guard that already refuses it.
-    const loading = selection.loading || projectionDemand.phase === 'loading' || (selection.state.kind === 'selected'
-        && selectedSupply?.phase === 'establishing');
-    return { selection, selectedSupply, loading, isExecutionOriginCurrent };
+    // Unknown availability is a refused read, not proof that an acquisition is
+    // running. The census/projection loading aggregate must not mask a known
+    // candidate's typed refusal. Selected suppliers still report establishment.
+    const unverified = selection.state.kind === 'unavailable'
+        && selection.state.reasons.includes('unknown')
+        && selection.candidates.length > 0;
+    const presentationSelection = React.useMemo(() => unverified && selection.loading
+        ? { ...selection, loading: false } : selection, [selection, unverified]);
+    const loading = !unverified && (selection.loading || projectionDemand.phase === 'loading'
+        || (selection.state.kind === 'selected' && selectedSupply?.phase === 'establishing'));
+    const retry = React.useCallback(async () => {
+        const targets = [...new Map(selection.candidates.map(candidate => {
+            const origin = getPluginExecutionOriginCandidateOrigin(candidate);
+            const target = { serverId: origin.serverIdentityId, machineId: getPluginMachineExecutionOriginRef(origin).machineId };
+            return [JSON.stringify([target.serverId, target.machineId]), target] as const;
+        })).values()];
+        const sync = getSyncSingleton();
+        // Ask the existing inventory and availability owners again. Registry
+        // invalidation alone cannot hydrate an online census row's missing data.
+        await Promise.allSettled([sync.refreshPluginAccountAvailability(), ...[...new Set(targets.map(target => target.serverId))]
+            .map(serverId => sync.refreshMachines({ serverId }))]);
+        if (!accountLifetime?.isCurrent()) return;
+        for (const target of targets) publishMachineContributionRegistryProjectionInvalidation(target, 'refresh');
+    }, [accountLifetime, selection.candidates]);
+    return { selection: presentationSelection, selectedSupply, loading, unverified, retry, isExecutionOriginCurrent };
 }

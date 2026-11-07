@@ -1,15 +1,17 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createActionExecutor, PluginProjectionV2Schema, PluginProjectedResourceV2Schema, RPC_METHODS } from '@happier-dev/protocol';
+import { createActionExecutor} from '@happier-dev/protocol/actions/actionExecutor';
+import { PluginProjectionV2Schema, PluginProjectedResourceV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { PluginMachineExecutionOriginV1Schema } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import * as originEquality from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
-import { PluginSourceCustodyV1Schema } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
+import { PluginSourceCustodyV1Schema, type PluginSourceCustodyV1 } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import { PluginDeclarativeProjectedModelV1Schema } from '@happier-dev/protocol/plugins/contributions/ui/declarativeProjectedModelV1';
 import {
     normalizePluginUiDestinationBindingV1,
     normalizePluginUiSettingsPageBindingV1,
     type PluginUiDestinationBindingInputV1,
 } from '@happier-dev/protocol/plugins/ui';
-import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol';
+import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import type { PluginMachineMaterializationV1 } from '@happier-dev/protocol/plugins/availability/v1';
 import { PluginAccountAvailabilityIntentReadResponseV1Schema, PluginReleaseFactsV1Schema, PluginMachineMaterializationV1Schema, PluginPortableReleaseManifestV1Schema } from '@happier-dev/protocol/plugins/availability/v1';
 import { projectPluginPortableUiDeclarationsV1, projectPluginReactNativeArtifactEntryV1 } from '@happier-dev/protocol/plugins/contributions/ui';
@@ -19,7 +21,7 @@ import type { PluginClientApi } from '@happier-dev/plugin-sdk';
 import { createPluginReactNativeBundleCache } from '@/components/plugins/reactNative/bundleCache';
 import { getInstalledPluginUiClientExecutableComposition } from '@/components/plugins/reactNative/clientExecutableContributions';
 import { dispatchPluginSurfaceAction } from '@/components/plugins/surfaces/pluginSurfaceActionDispatch';
-import { createPluginUiProjectedActionResolver } from './projection';
+import { createPluginUiProjectedActionResolver, readCompletePluginUiResourceDeclarations } from './projection';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit';
 import { createPluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/reader';
 import { resolvePluginMachineExecutionOriginState } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
@@ -28,9 +30,9 @@ import { resolvePluginSurfaceDestinationOpen } from '@/components/plugins/surfac
 import { normalizePluginUiProjection, EMPTY_PLUGIN_UI_PROJECTION } from './projection';
 import * as projectionUnion from './projectionUnion';
 import { selectPluginSurfacePlacementsForBinding } from './surfacePlacementSelectors';
-import { readPluginUiDaemonProjectionSelection } from './artifactAdoption';
+import { readPluginUiDaemonProjectionSelection, readPluginUiGeneratedArtifactGraph } from './artifactAdoption';
 import { resolveAdmittedPluginSettingsPage } from '@/components/settings/catalog/runtime/pluginSettingsPageCatalog';
-import { resolvePluginAppPages, selectPluginAppPagePlacements } from '@/components/appShell/plugins/pluginAppPages';
+import { resolvePluginPages, selectPluginPagePlacements } from '@/components/plugins/pages/pluginPages';
 import { resolveProjectedPluginUiClientExecutables } from '@/components/plugins/reactNative/clientExecutableProjection';
 import {
     arePluginUiProjectionUnionMembersEquivalent,
@@ -99,6 +101,8 @@ it('retains current Account Actions through installed composition without replac
         displayName: 'Fixture', runtime: { apiVersion: 1 }, contributes: { actions: [{ id: 'read', title: 'Read',
             scopes: ['global'], surfaces: ['ui'], placementBindings: [], dangerLevel: 'safe',
             execution: { target: 'account', account: { artifactId: 'account', exportName: 'activate' } } }],
+            resources: [{ id: 'status', source: 'dynamic', scope: 'session', kind: 'config', contentType: 'application/json',
+                execution: { target: 'account', account: { artifactId: 'account', exportName: 'activate' } } }],
             ui: { renderers: [{ id: 'page', kind: 'declarative', root: { kind: 'text', text: 'Account page' } }],
                 views: [{ id: 'page', container: 'appPage', target: { kind: 'app' }, title: 'Account page', renderer: 'page' }] } } });
     const reader = createPluginAccountAvailabilityReader({ scope: { serverId: 'server-1', accountId: 'account-1' },
@@ -109,6 +113,13 @@ it('retains current Account Actions through installed composition without replac
     });
     const installed = reader.readAccountUiProjection()!;
     const action = installed.actionsById['happier.fixture/read']!;
+    const resource = installed.resourcesById['happier.fixture/status']!;
+    expect(resource).toBeDefined();
+    expect(mergeInstalledPluginUiProjections([installed], null)?.resourcesById['happier.fixture/status']).toBe(resource);
+    const mixedOccurrence = { ...installed, installedPackagesById: { ...installed.installedPackagesById,
+        [manifest.id]: { ...installed.installedPackagesById[manifest.id]!, occurrenceId: 'optional-daemon-occurrence' } } };
+    expect(readCompletePluginUiResourceDeclarations(mixedOccurrence, manifest.id, resource.occurrenceId)).toBe(mixedOccurrence.resourcesById);
+    expect(readCompletePluginUiResourceDeclarations(mixedOccurrence, manifest.id, 'retired-account')).toBeUndefined();
     expect(action).toBeDefined();
     const runtimeAction = { ...action, id: 'machine-read', execution: { target: 'daemon' as const } };
     const runtime = { ...EMPTY_PLUGIN_UI_PROJECTION, actionsById: {
@@ -171,6 +182,55 @@ it('retains current Account Actions through installed composition without replac
     expect(mergeInstalledPluginUiProjections([retiredPage], runtimeWithSupplier)?.surfacePlacementsById[pageId]).toBeUndefined();
 });
 
+it('selects development renderer bytes without replacing an admitted Account destination', () => {
+    const pluginId = 'acme.account-development';
+    const displayName = 'Account development';
+    const digest = `sha256:${'a'.repeat(64)}`;
+    const graph = PluginUiArtifactsManifestEntryV2Schema.parse({ artifactId: 'page', tier: 'reactNative', digest,
+        entry: 'react-native/page/entry.cjs.bundle',
+        files: [{ relativePath: 'react-native/page/entry.cjs.bundle', digest, byteSize: 1 }],
+        executable: { exports: ['renderSurface'] }, builtWith: { bundler: 'esbuild', version: '0.27.2' }, hostUiApiRange: '^1.0.0' });
+    const manifest = PluginPortableReleaseManifestV1Schema.parse({ schemaVersion: 2, id: pluginId, version: '1.0.0',
+        displayName, runtime: { apiVersion: 1 }, contributes: { ui: {
+            renderers: [{ id: 'page', kind: 'reactNative', artifact: 'page', requiredHostMethods: [] }],
+            views: [{ id: 'page', container: 'appPage', target: { kind: 'app' }, title: 'Account page', renderer: 'page' }],
+            settingsPages: [{ id: 'settings', title: 'Account settings', group: { kind: 'host', id: 'general' }, renderer: 'page' }],
+        } } });
+    const reader = createPluginAccountAvailabilityReader({ scope: { serverId: 'server-1', accountId: 'account-1' },
+        snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] },
+        hostBundledUi: [{ pluginId, pluginVersion: manifest.version, displayName,
+            packageName: '@acme/account-development', normalizedManifest: manifest, artifactGraphs: [graph],
+            entriesById: projectPluginPortableUiDeclarationsV1(manifest, [graph]) }],
+    });
+    const installed = reader.readAccountUiProjection()!;
+    expect(installed.surfacePlacementsById[`surfacePlacement:${pluginId}:page`]?.hostAccountOrigin).toBeDefined();
+    const origin = PluginMachineExecutionOriginV1Schema.parse({ serverIdentityId: 'srv_test', sourceRef: {
+        machineId: 'machine-dev', pluginId, sourceCustody: { kind: 'development', registeredRootId: 'source-root' },
+    } });
+    const devDigest = `sha256:${'b'.repeat(64)}`;
+    const devGraph = PluginUiArtifactsManifestEntryV2Schema.parse({ ...graph, digest: devDigest,
+        files: graph.files.map(file => ({ ...file, digest: devDigest })) });
+    const entriesById = projectPluginPortableUiDeclarationsV1(manifest, [devGraph]);
+    const runtime = unionPluginUiProjections([member({ machineId: 'machine-dev', generation: 2,
+        entriesById: Object.fromEntries(Object.entries(entriesById).map(([id, entry]) => [id, { ...entry, executionOrigin: origin }])),
+        producerOriginsByPluginId: { [pluginId]: origin },
+    })], new Map([[pluginId, origin]])).pluginUiProjection!;
+    const merged = mergeInstalledPluginUiProjections([installed], runtime, undefined, new Map([[pluginId, origin]]))!;
+    const pageId = `surfacePlacement:${pluginId}:page`;
+    const settingsId = `settingsPage:${pluginId}:settings`;
+    const bundleId = `reactNativeBundle:${pluginId}:page`;
+    // Renderer selection stays development-owned and is not the requester's
+    // Account authority, which comes only from Availability's exact declaration.
+    expect(readPluginUiGeneratedArtifactGraph(merged.reactNativeBundlesById[bundleId] ?? null)?.digest).toBe(devDigest);
+    expect(merged.surfacePlacementsById[pageId]?.hostAccountOrigin).toEqual(installed.surfacePlacementsById[pageId]?.hostAccountOrigin);
+    expect(merged.settingsPagesById[settingsId]?.hostAccountOrigin).toEqual(installed.settingsPagesById[settingsId]?.hostAccountOrigin);
+    expect(merged.surfacePlacementsById[pageId]?.occurrenceId).toBe(installed.surfacePlacementsById[pageId]?.occurrenceId);
+    expect(readPluginUiContributionSupplies(merged.surfacePlacementsById[pageId])).toMatchObject([{ machineId: 'machine-dev' }]);
+    const automatic = mergeInstalledPluginUiProjections([installed], runtime)!;
+    expect(readPluginUiGeneratedArtifactGraph(automatic.reactNativeBundlesById[bundleId] ?? null)?.digest).toBe(digest);
+    expect(automatic.surfacePlacementsById[pageId]?.hostAccountOrigin).toEqual(merged.surfacePlacementsById[pageId]?.hostAccountOrigin);
+});
+
 it('retains an external archive renderer only from its exact reported installation and artifact slot', () => {
     const mergeInstalledPluginUiProjections = projectionUnion.createInstalledPluginUiProjectionPublication().publish;
     const publishUnion = projectionUnion.createPluginUiProjectionUnionPublication().publish;
@@ -187,7 +247,12 @@ it('retains an external archive renderer only from its exact reported installati
         ref: { pluginId, version: '1.0.0' }, archiveDigestSha256: `sha256:${'b'.repeat(64)}`,
         normalizedManifest: {
             schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'External', runtime: { apiVersion: 1 },
-            contributes: { ui: {
+            contributes: {
+                composerControls: [{ id: 'inspect', label: 'Inspect', icon: 'search',
+                    interaction: { kind: 'surface', renderer: { renderer: 'main' }, presentation: 'popover', layout: 'content' } }],
+                composerRegions: [{ id: 'summary', placement: 'afterComposer', renderer: { renderer: 'main' } }],
+                composerReferences: [{ id: 'issues', title: 'Issues', icon: 'error', triggers: ['@'] }],
+                ui: {
                 renderers: [{ id: 'main', kind: 'reactNative', artifact: 'main', requiredHostMethods: [] }],
                 views: [{ id: 'page', container: 'appPage', target: { kind: 'app' }, title: 'External', renderer: 'main' }],
                 translations: [{ locale: 'en', messages: { title: 'External' } }],
@@ -195,13 +260,14 @@ it('retains an external archive renderer only from its exact reported installati
         },
         collectionContracts: [],
         uiSlots: [{ contributionId: 'main', artifactId: 'main', tier: 'reactNative', platform: 'web',
-            artifactDigest: digest, hostUiApiRange: '^1.0.0' }],
+            artifactDigest: digest, hostUiApiRange: '^1.0.0', artifactGraph: graph }],
         packageAssetArchive: { archiveDigestSha256: `sha256:${'c'.repeat(64)}`, resources: [] },
     });
     const materialization = PluginMachineMaterializationV1Schema.parse({
         serverIdentityId: 'srv_test', machineId: 'machine-external', materializationId: 'archive-install',
         pluginId, version: '1.0.0', sourceClass: 'versionedArchive', portableRelease: true,
-        archiveDigestSha256: release.archiveDigestSha256, uiArtifacts: release.uiSlots,
+        archiveDigestSha256: release.archiveDigestSha256,
+        uiArtifacts: release.uiSlots.map(({ artifactGraph: _artifactGraph, ...slot }) => slot),
         enabled: true, trustState: 'trusted', observedAt: 1,
     });
     const intentRead = PluginAccountAvailabilityIntentReadResponseV1Schema.parse({
@@ -230,11 +296,35 @@ it('retains an external archive renderer only from its exact reported installati
         runtime: { state: 'loadable', diagnostics: [], decision: { state: 'load', reason: 'compatible', diagnostics: [] },
             cacheKey: digest, cacheIdentity: { artifactDigest: digest }, loadPolicy: { source: 'installedArtifact' } },
     }), occurrenceId: 'external:1', executionOrigin: origin };
-    const runtimeFor = (entry: typeof bundle) => {
+    const runtimeFor = (entry: typeof bundle, includeComposer = true) => {
+        if (!('pluginVersion' in entry) || typeof entry.pluginVersion !== 'string') {
+            throw new Error('Expected the artifact producer to carry its plugin version');
+        }
         const projection = normalizePluginUiProjection(PluginProjectionV2Schema.parse({
-        v: 2, generation: 1, installedPackagesById: {}, agentsById: {}, actionsById: {},
-         resourcesById: {}, settingsById: {}, diagnostics: [],
-        familiesById: { pluginUi: { family: 'pluginUi', entriesById: {
+        v: 2, generation: 1, installedPackagesById: { [pluginId]: {
+            id: pluginId, displayName: 'External', version: entry.pluginVersion, enabled: true,
+            source: { kind: 'archive', locator: 'external.tgz' }, occurrenceId: 'external:1', executionOrigin: origin,
+        } }, agentsById: {}, actionsById: {}, 
+        resourcesById: {}, settingsById: {}, diagnostics: [],
+        contributionIntrospection: { version: 1, generation: 1, diagnostics: [], contributions: includeComposer ? [{
+            version: 1, contribution: { kind: 'localId', pluginId, family: 'composerReferences',
+                localId: 'issues', qualifiedId: `${pluginId}/issues` }, occurrenceId: 'external:1',
+            progression: { declared: true, normalized: true, merged: true },
+            registration: { requirement: 'required', state: 'bound', occurrenceId: 'external:1' },
+            activation: { state: 'active', occurrenceId: 'external:1' }, projection: { state: 'projected' },
+            presentation: { kind: 'composerReference', title: 'Issues', icon: 'error', triggers: ['@'] },
+            consumer: 'composer', platforms: ['web'], diagnostics: [],
+        }] : [] },
+        familiesById: {
+        composerControls: { family: 'composerControls', entriesById: includeComposer ? {
+            [`${pluginId}/inspect`]: { id: `${pluginId}/inspect`, pluginId, occurrenceId: 'external:1',
+                identity: { pluginId, localId: 'inspect' }, definition: release.normalizedManifest.contributes.composerControls[0] },
+        } : {} },
+        composerRegions: { family: 'composerRegions', entriesById: includeComposer ? {
+            [`${pluginId}/summary`]: { id: `${pluginId}/summary`, pluginId, occurrenceId: 'external:1',
+                identity: { pluginId, localId: 'summary' }, definition: release.normalizedManifest.contributes.composerRegions[0] },
+        } : {} },
+        pluginUi: { family: 'pluginUi', entriesById: {
             ...Object.fromEntries(Object.entries(declarations).map(([id, declaration]) => [id, {
                 ...declaration, occurrenceId: 'external:1', executionOrigin: origin,
             }])), [entry.id]: entry,
@@ -254,11 +344,35 @@ it('retains an external archive renderer only from its exact reported installati
     // and renderer slot have already been admitted; no reports reach this layer.
     const finalProjection = projectionUnion.mergeInstalledPluginUiProjections([accountProjection], merged);
     const pageId = `surfacePlacement:${pluginId}:page`;
-    expect(finalProjection?.surfacePlacementsById[pageId]).toBe(merged?.surfacePlacementsById[pageId]);
-    expect(finalProjection?.reactNativeBundlesById[bundle.id]).toBe(merged?.reactNativeBundlesById[bundle.id]);
-    expect(finalProjection?.reactNativeBundlesById[bundle.id]).toMatchObject({ executionOrigin: origin });
+    // Portable pluginUi declarations are complete for their own family, not
+    // the independent daemon Composer families or reference introspection.
+    expect(models[0]?.composerControlsById).toEqual({});
+    expect(models[0]?.composerRegionsById).toEqual({});
+    expect(models[0]?.composerReferencesById).toEqual({});
+    for (const [family, localId] of [
+        ['composerControlsById', 'inspect'], ['composerRegionsById', 'summary'], ['composerReferencesById', 'issues'],
+    ] as const) {
+        const row = finalProjection?.[family][`${pluginId}/${localId}`];
+        expect(row).toMatchObject({ occurrenceId: 'external:1' });
+        expect(readPluginUiContributionOrigin(row)).toMatchObject({ executionOrigin: origin, interactionEnabled: true });
+    }
+    expect(finalProjection?.surfacePlacementsById[pageId]).toMatchObject({
+        binding: accountProjection.surfacePlacementsById[pageId]!.binding,
+        occurrenceId: accountProjection.surfacePlacementsById[pageId]!.occurrenceId,
+        hostAccountOrigin: accountProjection.surfacePlacementsById[pageId]!.hostAccountOrigin,
+    });
+    const accountBundle = accountProjection.reactNativeBundlesById[bundle.id]!;
+    expect(finalProjection?.reactNativeBundlesById[bundle.id]).toMatchObject({
+        occurrenceId: accountBundle.occurrenceId, artifactGraph: graph,
+    });
+    expect(finalProjection?.reactNativeBundlesById[bundle.id]?.executionOrigin).toBeUndefined();
     expect(merged?.translationsByPluginId[pluginId]).toBeDefined();
-    expect(finalProjection?.translationsByPluginId[pluginId]).toBe(merged?.translationsByPluginId[pluginId]);
+    expect(finalProjection?.translationsByPluginId[pluginId]?.bundles).toEqual({ en: { title: 'External' } });
+    // The current daemon census still withdraws removed Composer declarations.
+    const withdrawn = mergeInstalledPluginUiProjections(models, runtimeFor(bundle, false), reports);
+    expect(withdrawn?.composerControlsById).toEqual({});
+    expect(withdrawn?.composerRegionsById).toEqual({});
+    expect(withdrawn?.composerReferencesById).toEqual({});
     // Composing descriptive graph facts grants neither Account selection nor bytes.
     expect(reader.readCurrentArtifact({ pluginId, contributionId: 'main', tier: 'reactNative', platform: 'web' }).kind)
         .toBe('unavailable');
@@ -269,8 +383,11 @@ it('retains an external archive renderer only from its exact reported installati
     ]) {
         const rejected = mergeInstalledPluginUiProjections(models, runtimeFor(invalid), reports);
         expect(rejected?.reactNativeBundlesById[bundle.id]).toBeUndefined();
-        expect(projectionUnion.mergeInstalledPluginUiProjections([accountProjection], rejected)?.reactNativeBundlesById[bundle.id])
-            .toBeUndefined();
+        // The independently selected Account graph stays current, but cannot
+        // lend the rejected Machine an execution origin or occurrence.
+        const accountOnly = projectionUnion.mergeInstalledPluginUiProjections([accountProjection], rejected)?.reactNativeBundlesById[bundle.id];
+        expect(accountOnly).toMatchObject({ occurrenceId: accountBundle.occurrenceId, artifactGraph: graph });
+        expect(accountOnly?.executionOrigin).toBeUndefined();
     }
     expect(mergeInstalledPluginUiProjections(models, runtime)?.reactNativeBundlesById[bundle.id]).toBeUndefined();
     const otherPlatform = { [pluginId]: { ...materialization,
@@ -291,6 +408,7 @@ it('retains an external archive renderer only from its exact reported installati
     const rendererOnlyMerged = mergeInstalledPluginUiProjections(rendererOnlyModels, runtime, reports);
     expect(rendererOnlyMerged?.reactNativeBundlesById[bundle.id]).toEqual(runtime.reactNativeBundlesById[bundle.id]);
     expect(rendererOnlyMerged?.surfacePlacementsById[pageId]).toBeUndefined();
+    expect(rendererOnlyMerged?.composerControlsById[`${pluginId}/inspect`]).toBeDefined();
 });
 
 it('uses a development override only for the explicitly selected source and otherwise retains the host bundle', () => {
@@ -354,7 +472,7 @@ it('retains the selected launch authority beside host renderer bytes without adm
     const open = (online: boolean, selected: boolean) => {
         const runtime = unionPluginUiProjections([source(online)], selected ? new Map([[pluginId, origin]]) : new Map()).pluginUiProjection;
         const merged = mergeInstalledPluginUiProjections([declared], runtime)!;
-        const placements = selectPluginAppPagePlacements(merged);
+        const placements = selectPluginPagePlacements(merged, { container: 'appPage', targetKind: 'app' });
         expect(placements[0]?.display).toEqual({ title: 'Host page' });
         return resolvePluginSurfaceDestinationOpen({ placements, targetKind: 'app', accountLifetime: null,
             request: { destination: { pluginId, localId: 'page' }, input: { selected: 'entry' } } });
@@ -901,6 +1019,31 @@ it('admits package occurrences without UI while preserving source trust and port
     } } }).sourceCandidates).toEqual([]);
 });
 
+it('admits exact local installation custody without Account census while retaining portable release admission', () => {
+    const pluginId = 'acme.owner-installed';
+    const origin = { serverIdentityId: 'srv_test', materializationRef: {
+        machineId: 'machine-a', pluginId, materializationId: 'owner-materialization',
+    } };
+    const read = (sourceCustody?: PluginSourceCustodyV1) => readPluginUiExecutionOriginCandidates({ projection: null, pluginId, members: [{
+        machineId: 'machine-a', serverId: 'server-1', serverIdentityId: 'srv_test', phase: 'current', interactionEnabled: true,
+        projection: machineProjection({ generation: 1, entriesById: {}, installedPackagesById: { [pluginId]: {
+            id: pluginId, displayName: 'Owner installed', version: '1.0.0', enabled: true,
+            occurrenceId: 'owner-occurrence', executionOrigin: origin, source: { kind: 'path' },
+            ...(sourceCustody ? { sourceCustody } : {}),
+        } } }),
+    }] }).sourceCandidates;
+    for (const custody of [
+        { kind: 'development', registeredRootId: '/owner/root' },
+        { kind: 'managed', immutableGenerationId: 'owner-generation', installSource: 'localPath' },
+    ] satisfies PluginSourceCustodyV1[]) {
+        expect(read(custody)).toEqual([expect.objectContaining({ validation: { kind: 'admitted' },
+            source: expect.objectContaining({ origin, occurrenceId: 'owner-occurrence' }) })]);
+    }
+    expect(read()).toEqual([]);
+    expect(read({ kind: 'managed', immutableGenerationId: 'portable-generation', installSource: 'npm' })).toEqual([]);
+    expect(read({ kind: 'account_release', pluginId, version: '1.0.0', archiveDigestSha256: `sha256:${'a'.repeat(64)}` })).toEqual([]);
+});
+
 it('does not recreate a conflicted declaration default through package supplies', () => {
     const pluginId = 'acme.source-conflict';
     const entry = placementEntry({ pluginId, localId: 'settings', container: 'appPage' });
@@ -932,6 +1075,7 @@ function machineProjection(input: Readonly<{
     resourcesById?: Readonly<Record<string, unknown>>;
     inputTypesById?: Readonly<Record<string, unknown>>;
     installedPackagesById?: Readonly<Record<string, unknown>>;
+    resourceDeclarationsComplete?: boolean;
 }>) {
     return normalizePluginUiProjection({
         v: 2,
@@ -939,8 +1083,6 @@ function machineProjection(input: Readonly<{
         installedPackagesById: input.installedPackagesById ?? {},
         agentsById: {},
         actionsById: input.actionsById ?? {},
-
-
         resourcesById: input.resourcesById ?? {},
         settingsById: {},
         familiesById: {
@@ -948,7 +1090,7 @@ function machineProjection(input: Readonly<{
             inputTypes: { family: 'inputTypes', entriesById: input.inputTypesById ?? {} },
         },
         diagnostics: [],
-    } as never);
+    } as never, undefined, undefined, input.resourceDeclarationsComplete ? { resourceDeclarations: 'complete' } : undefined);
 }
 
 it('keeps machine-local source candidates selectable across different web artifact supplies', () => {
@@ -958,16 +1100,21 @@ it('keeps machine-local source candidates selectable across different web artifa
     const sourceCustody = { kind: 'development' as const, registeredRootId: 'local-root' };
     const replica = (machineId: string, digest: string): PluginUiProjectionUnionMember => ({
         machineId, serverId: 'server-1', serverIdentityId: 'srv_test', phase: 'current', interactionEnabled: true,
-        projection: machineProjection({ generation: 7, entriesById: { [entry.id]: entry,
+        selectableExecutionOrigins: [PluginMachineExecutionOriginV1Schema.parse({ serverIdentityId: 'srv_test',
+            sourceRef: { machineId, pluginId, sourceCustody } })],
+        projection: machineProjection({ generation: 7, resourceDeclarationsComplete: true,
+            resourcesById: { [`${pluginId}/latest`]: { id: 'latest', pluginId, occurrenceId: entry.occurrenceId,
+                resourceKind: 'config', scope: 'global', contentType: 'application/json' } },
+            entriesById: { [entry.id]: entry,
             [rendererId]: { id: rendererId, pluginId, occurrenceId: entry.occurrenceId, contributionKind: 'hostedWeb',
                 contributionId: 'settings', artifactSelectionOwner: 'daemonProjection', artifactDigest: `sha256:${digest.repeat(64)}` },
         }, installedPackagesById: {
-            [pluginId]: { id: pluginId, displayName: 'Local', version: '1.0.0', enabled: true, source: { kind: 'localPath' },
+            [pluginId]: { id: pluginId, displayName: 'Local', version: machineId === 'machine-a' ? '2.0.0' : '1.0.0', enabled: true, source: { kind: 'localPath' },
                 occurrenceId: entry.occurrenceId, sourceCustody,
                 executionOrigin: { serverIdentityId: 'srv_test', sourceRef: { machineId, pluginId, sourceCustody } } },
         } }),
         materializationsByPluginId: { [pluginId]: { serverIdentityId: 'srv_test', machineId, pluginId,
-            materializationId: machineId, version: '1.0.0', sourceClass: 'localPath', portableRelease: false,
+            materializationId: machineId, version: machineId === 'machine-a' ? '2.0.0' : '1.0.0', sourceClass: 'localPath', portableRelease: false,
             enabled: true, trustState: 'trusted', observedAt: 1,
             uiArtifacts: [{ contributionId: 'settings', artifactId: 'web', tier: 'hostedWeb', platform: 'web',
                 artifactDigest: `sha256:${digest.repeat(64)}`, hostUiApiRange: '^1.0.0' }],
@@ -978,7 +1125,7 @@ it('keeps machine-local source candidates selectable across different web artifa
     const candidates = readPluginUiExecutionOriginCandidates({ projection: unselected, pluginId }).sourceCandidates;
     expect(candidates).toHaveLength(2);
     expect(candidates.every(candidate => candidate.validation.kind === 'admitted')).toBe(true);
-    const selected = candidates.find(candidate => candidate.source.origin.sourceRef.machineId === 'machine-b')!.source.origin;
+    const selected = candidates.find(candidate => originEquality.getPluginMachineExecutionOriginRef(candidate.source.origin).machineId === 'machine-b')!.source.origin;
     const project = (input: readonly PluginUiProjectionUnionMember[]) => unionPluginUiProjections(input, selectedOrigins(selected)).pluginUiProjection;
     const projected = project(members);
     const placement = projected?.surfacePlacementsById[entry.id];
@@ -991,11 +1138,15 @@ it('keeps machine-local source candidates selectable across different web artifa
         transport: { machineId: 'machine-b', serverId: 'server-1' },
     });
     expect(project([...members].reverse())).toEqual(projected);
+    // Another replica's differing artifact must not erase the selected source's
+    // full Resource publication. An unresolved conflict still has no coverage.
+    expect(readCompletePluginUiResourceDeclarations(unselected, pluginId, entry.occurrenceId)).toBeUndefined();
+    expect(readCompletePluginUiResourceDeclarations(projected, pluginId, entry.occurrenceId)).toBe(projected?.resourcesById);
     const revoked = { ...members[0]!, materializationsByPluginId: { [pluginId]: {
         ...members[0]!.materializationsByPluginId![pluginId]!, trustState: 'revoked' as const,
     } } };
     expect(readPluginUiExecutionOriginCandidates({ projection: project([revoked, members[1]!]), pluginId }).sourceCandidates
-        .find(candidate => candidate.source.origin.sourceRef.machineId === 'machine-b')?.validation.kind).toBe('rejected');
+        .find(candidate => originEquality.getPluginMachineExecutionOriginRef(candidate.source.origin).machineId === 'machine-b')?.validation.kind).toBe('rejected');
 });
 
 function placementEntry(input: Readonly<{
@@ -1144,7 +1295,7 @@ function composerMember(machineId: string, label = 'Inspect'): PluginUiProjectio
         installedPackagesById: { [pluginId]: { id: pluginId, displayName: 'Inspector', version: '1.0.0',
             enabled: true, occurrenceId, source: { kind: 'bundled', locator: pluginId },
             executionOrigin: selectedOrigin(pluginId, machineId) } },
-        agentsById: {}, actionsById: {},   resourcesById: {}, settingsById: {}, diagnostics: [],
+        agentsById: {}, actionsById: {}, resourcesById: {}, settingsById: {}, diagnostics: [],
         familiesById: {
             composerControls: { family: 'composerControls', entriesById: {
                 [`${pluginId}/inspect`]: { id: `${pluginId}/inspect`, pluginId,
@@ -1197,7 +1348,7 @@ describe('unionPluginUiProjections', () => {
         const strictMember = (machineId: string, entry: object) => {
             const output = PluginProjectionV2Schema.parse({
                 v: 2, generation: 4, installedPackagesById: {}, agentsById: {}, actionsById: {},
-                  resourcesById: {}, settingsById: {},
+                resourcesById: {}, settingsById: {},
                 familiesById: { pluginUi: { family: 'pluginUi', entriesById: { page: entry } } },
                 diagnostics: [],
             });
@@ -1211,7 +1362,7 @@ describe('unionPluginUiProjections', () => {
             strictMember('machine-notes', appEntry),
             strictMember('machine-preferences', settingsEntry),
         ]).pluginUiProjection;
-        expect(resolvePluginAppPages({ placements: selectPluginAppPagePlacements(union) })
+        expect(resolvePluginPages({ target: { kind: 'app' }, placements: selectPluginPagePlacements(union, { container: 'appPage', targetKind: 'app' }) })
             .map(page => page.routePath)).toEqual(['/plugins/acme.notes/overview']);
         expect(resolveAdmittedPluginSettingsPage({
             projection: union, pluginId: 'acme.preferences', pageId, locale: 'en',
@@ -1228,7 +1379,7 @@ describe('unionPluginUiProjections', () => {
         expect(resolveAdmittedPluginSettingsPage({
             projection: malformedUnion, pluginId: 'acme.preferences', pageId, locale: 'en',
         })).toBeNull();
-        expect(resolvePluginAppPages({ placements: selectPluginAppPagePlacements(malformedUnion) })
+        expect(resolvePluginPages({ target: { kind: 'app' }, placements: selectPluginPagePlacements(malformedUnion, { container: 'appPage', targetKind: 'app' }) })
             .map(page => page.routePath)).toEqual(['/plugins/acme.notes/overview']);
     });
 

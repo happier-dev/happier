@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -26,9 +26,11 @@ vi.mock('react-native-reanimated', async () => {
 import { FloatingFrame, type FrameRect, type FloatingFrameMode } from '@happier-dev/plugin-ui/presentation';
 import {
     createRetainedPresentationSlotsStore,
+    RetainedPresentationFloatingLayerContext,
     RetainedPresentationSlotBinder,
     RetainedPresentationSlotsProvider,
     RetainedPresentationNativeMotionContext,
+    useRetainedPresentationFloatingBody,
     type RetainedPresentationNativeMotion,
 } from '@/components/ui/presentation/retainedPresentationSlots';
 import { NativeFloatingFrame } from './NativeFloatingFrame';
@@ -217,6 +219,81 @@ describe('native FloatingFrame binding', () => {
         await screen.unmount();
     });
 
+    it('moves a body bound in its own tree from a frame drawn in the root floating layer (plan 63 A1, native)', async () => {
+        const store = createRetainedPresentationSlotsStore();
+        const onSettle = vi.fn();
+        let mounts = 0;
+        let renders = 0;
+        const SessionContext = React.createContext<string | null>(null);
+        let pictureSession: string | null = null;
+        function Picture(props: Readonly<{ session: string | null }>) {
+            pictureSession = props.session;
+            React.useEffect(() => { mounts += 1; }, []);
+            return <View testID="layer-picture" />;
+        }
+        // The body's owner still reads its Session's providers: it was never moved out of that tree.
+        function Source(props: Readonly<{ rect: FrameRect }>) {
+            const session = React.useContext(SessionContext);
+            const picture = React.useMemo(() => <Picture session={session} />, [session]);
+            return <RetainedPresentationSlotBinder slotId="viewer" enabled inputPassthrough
+                windowGeometry={{ x: props.rect.x, y: props.rect.y + 40, width: 200, height: 125 }}>
+                {picture}
+            </RetainedPresentationSlotBinder>;
+        }
+        function Session() {
+            renders += 1;
+            const layer = React.useContext(RetainedPresentationFloatingLayerContext);
+            const floating = useRetainedPresentationFloatingBody();
+            const [rect, setRect] = React.useState<FrameRect>({ x: 40, y: 50, width: 200, height: 165 });
+            const frame = floating.frame(<FloatingFrame mode="floating" rect={rect}
+                availableRect={{ x: 16, y: 16, width: 1408, height: 868 }} aspectRatio={1.6} minWidth={180}
+                moveInput="surface" nativeBinding={NativeFloatingFrame} reducedMotion controls={<View />}
+                accessibilityLabel="Viewer" onModeChange={vi.fn()}
+                onRectChange={(next, change) => { onSettle(next, change); setRect(next); }}><View /></FloatingFrame>);
+            return <>
+                {layer ? layer.present(frame) : null}
+                {floating.body(<Source rect={rect} />)}
+            </>;
+        }
+        const screen = await renderScreen(<RetainedPresentationSlotsProvider store={store}>
+            <SessionContext.Provider value="session-a"><Session /></SessionContext.Provider>
+        </RetainedPresentationSlotsProvider>, {
+            // The root layer and the portal stand over the whole 1440 x 900 window.
+            createNodeMock: (element) => ({
+                testID: element.props.testID,
+                measureInWindow: (callback: (x: number, y: number, width: number, height: number) => void) => callback(0, 0, 1440, 900),
+            }),
+        });
+        const layer = () => screen.findHostByTestId('retained-presentation-floating-layer')!;
+        await act(async () => { layer().props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 1440, height: 900 } } }); });
+        // The frame is drawn in the root layer; the body binds above it and reads its own Session.
+        expect(layer().findAllByType(FloatingFrame)).toHaveLength(1);
+        expect(pictureSession).toBe('session-a');
+        const slot = screen.findByTestId('browser-presentation-portal-slot-viewer')!;
+        const zIndex = (node: { props: { style?: unknown } }) => Number(StyleSheet.flatten(node.props.style as StyleProp<ViewStyle>)?.zIndex ?? 0);
+        expect(zIndex(slot)).toBeGreaterThan(zIndex(layer()));
+        const motion = store.getPortalSnapshot()[0].nativeMotion!;
+        expect(motion).toBeTruthy();
+        const gesture = layer().findAllByType('GestureDetector')[0].props.gesture as TestGestureChain;
+        const initialRenders = renders;
+        await act(async () => {
+            gesture.__handlers.onTouchesDown({ allTouches: [{ absoluteX: 140, absoluteY: 130 }] }, { fail: vi.fn() });
+            gesture.__handlers.onBegin({ absoluteX: 140, absoluteY: 130 });
+            gesture.__handlers.onUpdate({ translationX: 900, translationY: 80 });
+        });
+        // The body follows the frame on the same shared values, past where a Session column would end.
+        expect([motion.x.value, motion.y.value]).toEqual([940, 130]);
+        expect(renders).toBe(initialRenders);
+        await act(async () => {
+            gesture.__handlers.onEnd({ translationX: 900, translationY: 80, velocityX: 0, velocityY: 0 }, true);
+            gesture.__handlers.onFinalize({}, true);
+        });
+        expect(onSettle).toHaveBeenLastCalledWith({ x: 940, y: 130, width: 200, height: 165 }, { kind: 'settle' });
+        expect(store.getPortalSnapshot()[0].geometry).toMatchObject({ x: 940, y: 170 });
+        expect(mounts).toBe(1);
+        await screen.unmount();
+    });
+
     it('admits chrome in control mode while leaving remote body input alone', async () => {
         const onRectChange = vi.fn();
         const renderFrame = (moveInput: 'surface' | 'chrome', footer = false, mode: FloatingFrameMode = 'floating') => <FloatingFrame
@@ -252,7 +329,8 @@ describe('native FloatingFrame binding', () => {
             controlPan.__handlers.onEnd({ translationX: 100, translationY: 80 }, true);
             controlPan.__handlers.onFinalize({}, true);
         });
-        expect(onRectChange).toHaveBeenLastCalledWith({ x: 0, y: 0, width: 200, height: 165 }, { kind: 'settle' });
+        // Plan 63 A1: a release rests where the person put it; nothing snaps it to a corner.
+        expect(onRectChange).toHaveBeenLastCalledWith({ x: 140, y: 130, width: 200, height: 165 }, { kind: 'settle' });
         for (const mode of ['expanded', 'docked'] as const) {
             await screen.update(renderFrame('chrome', false, mode));
             expect((screen.findAllByType('GestureDetector')[0].props.gesture as TestGestureChain).__config.enabled).toBe(false);

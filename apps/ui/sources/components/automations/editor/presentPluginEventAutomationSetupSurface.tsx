@@ -5,7 +5,7 @@ import {
     PluginUiEphemeralInputSettlementV1Schema,
     type PluginUiEphemeralInputSettlementV1,
 } from '@happier-dev/protocol/plugins/ui';
-import type { DaemonContributionRegistryProjectionAutomationEligibleEventV1, DaemonContributionRegistryProjectionAutomationEligibleEventSetupSurfaceV1 } from '@happier-dev/protocol';
+import type { DaemonContributionRegistryProjectionAutomationEligibleEventV1, DaemonContributionRegistryProjectionAutomationEligibleEventSetupSurfaceV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { PluginUiLaunchInputV1 } from '@happier-dev/protocol/plugins/ui';
 
 import type { DaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
@@ -20,6 +20,7 @@ import {
 import { readPluginSurfaceEphemeralMountBinding } from '@/components/plugins/surfaces/pluginSurfaceMountBinding';
 import type { BoundPluginSurfaceBinding } from '@/components/plugins/surfaces/boundPluginSurfaceController';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { PluginMachineExecutionOriginPickerProvider } from '@/components/settings/machines/PluginMachineExecutionOriginSelector';
 import { Modal } from '@/modal';
 import type { CustomModalInjectedProps } from '@/modal';
 import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
@@ -144,13 +145,16 @@ function PluginEventAutomationSetupSurfaceModal(
         fallback: null,
         binding,
     });
+    // The picker owns its plugin's Run-on picker, so an offline Machine's "Choose another" opens it here.
     return (
-        <PluginSurfaceHost
-            ephemeralMount={ephemeralMount}
-            machineId={props.machineId}
-            serverId={props.serverId}
-            launchInput={props.launchInput}
-        />
+        <PluginMachineExecutionOriginPickerProvider pluginId={setupSurface.contribution.pluginId}>
+            <PluginSurfaceHost
+                ephemeralMount={ephemeralMount}
+                machineId={props.machineId}
+                serverId={props.serverId}
+                launchInput={props.launchInput}
+            />
+        </PluginMachineExecutionOriginPickerProvider>
     );
 }
 
@@ -239,6 +243,7 @@ export function presentPluginEventAutomationSetupSurface(params: Readonly<{
     serverId: string | null;
     accountLifetime: ActiveServerAccountScopeLifetime;
     signal?: AbortSignal;
+    launchInput?: PluginUiLaunchInputV1;
 }>): Promise<PluginEventAutomationSetupSurfaceSettlement> {
     const surface = params.eligibleEvent.setupSurface;
     if (!surface) return Promise.resolve({ kind: 'cancelled' });

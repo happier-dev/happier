@@ -4,19 +4,21 @@ import { useLocalSearchParams } from '@/components/appShell/workspace/destinatio
 import { PluginAppPageScreen } from '@/components/appShell/plugins/PluginAppPageScreen';
 import { PluginSurfaceFallback } from '@/components/sessions/panes/PluginSurfaceFallback';
 import {
-    readPluginAppPageRouteIdentity,
-} from '@/components/appShell/plugins/pluginAppPageRoute';
-import { readPluginAppPageSubPath } from '@/components/appShell/plugins/pluginAppPages';
+    readPluginAppPageRouteView,
+    readPluginPageRouteIdentity,
+} from '@/components/plugins/pages/pluginPageRoute';
+import { readPluginPageSubPath } from '@/components/plugins/pages/pluginPages';
 
-export const WorkspaceRouteBody = React.memo(function PluginAppPageDeepRoute() {
+export const WorkspaceRouteBody = React.memo(function PluginPageDeepRoute() {
     const params = useLocalSearchParams();
-    const identity = readPluginAppPageRouteIdentity(params);
+    const identity = readPluginPageRouteIdentity(params);
 
     return (
         <PluginAppPageScreen
             pluginId={identity.pluginId}
             localId={identity.localId}
-            subPath={readPluginAppPageSubPath(params.subPath)}
+            subPath={readPluginPageSubPath(params.subPath)}
+            view={readPluginAppPageRouteView(params.view)}
         />
     );
 });

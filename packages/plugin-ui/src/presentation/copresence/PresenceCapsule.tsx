@@ -83,7 +83,8 @@ export type HappierPresenceCapsuleProps = Readonly<{
    * that width (a floating frame shrunk to a small window), the capsule recomposes rather than clip
    * a word: the mark and the action alone, the action as its icon with its label for assistive
    * technology, the words kept as the row's accessible name. It returns to the words once the
-   * container is wide enough for them again. Absent, the capsule never recomposes.
+   * container is wide enough for them again. A `strip` keeps its sentence and labelled buttons and
+   * moves the buttons beneath the sentence instead. Absent, the capsule never recomposes.
    */
   availableWidth?: number;
   /**
@@ -145,6 +146,15 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
     paddingLeft: 10,
     paddingRight: 4,
+  },
+  stripText: {
+    flex: 1,
+    minWidth: 0,
+  },
+  stripStacked: {
+    flexWrap: 'wrap',
+    rowGap: 4,
+    paddingVertical: 6,
   },
   markStrip: {
     alignItems: 'center',
@@ -232,7 +242,11 @@ export function HappierPresenceCapsule(props: HappierPresenceCapsuleProps): Reac
       setWordsWidth(null);
     }
   }, [availableWidth, restoreAt, wordsWidth]);
-  const narrow = restoreAt !== null && props.placement !== 'strip';
+  // Squeezed words give way: a floating capsule to its mark and icon-only action; a strip (a column's
+  // full-width line) keeps them and moves its buttons beneath.
+  const squeezed = restoreAt !== null;
+  const narrow = squeezed && props.placement !== 'strip';
+  const stacked = squeezed && props.placement === 'strip';
   const requestRef = useRef<TakeControlRequest | null>(null);
   const docked = props.placement === undefined || props.placement === 'dock';
   const visible = props.presence.kind !== 'idle';
@@ -310,46 +324,8 @@ export function HappierPresenceCapsule(props: HappierPresenceCapsuleProps): Reac
     const detailColor = mayHaveLanded ? colors.warning : colors.secondaryText;
     const stateKey = human ? 'human' : unconfirmed ? 'unconfirmed' : recovery ? 'recovery' : stopping ? 'stopping' : 'agent';
 
-    const row = (
-      <View
-        // On a phone the unconfirmed stop needs its line whole and two buttons: they move beneath.
-        style={[strip ? styles.strip : styles.capsule, compact && observationRecovery ? styles.capsuleStacked : null]}
-        accessibilityRole="summary"
-        accessibilityLiveRegion="polite"
-        aria-live="polite"
-        // Recomposed to the mark and its action, the row still says what the words said.
-        accessibilityLabel={narrow ? (detail ? `${title}. ${detail}` : title) : undefined}
-        testID={`${testID}-${stateKey}`}
-      >
-        <View style={strip ? styles.markStrip : styles.mark}>
-          {human
-            ? host.renderGlyph('hand', colors.text, MARK_GLYPH_SIZE)
-            : unconfirmed || recovery
-              ? host.renderGlyph('warning', colors.warning, MARK_GLYPH_SIZE)
-              : props.renderAgentMark
-                ? props.renderAgentMark(MARK_GLYPH_SIZE)
-                : host.renderGlyph('sparkle', colors.secondaryText, MARK_GLYPH_SIZE)}
-        </View>
-        {strip && !(compact && observationRecovery) ? (
-          // One line: what, then where or what it is doing.
-          <host.Text numberOfLines={1} style={STRIP_TEXT_STYLE}>
-            <host.Text role="title" color={colors.text} style={TITLE_WRAP}>{title}</host.Text>
-            {detail ? <host.Text role="meta" color={detailColor}>{`  ${detail}`}</host.Text> : null}
-          </host.Text>
-        ) : narrow ? null : (
-          <View
-            style={[styles.text, compact || props.placement !== 'dock' ? styles.textCompact : null]}
-            onLayout={availableWidth === undefined ? undefined : onWordsLayout}
-            testID={`${testID}-text`}
-          >
-            {/* A narrow capsule wraps the sentence rather than clip the Machine or window it names. */}
-            <host.Text role="title" color={colors.text} numberOfLines={2} style={TITLE_WRAP}>{title}</host.Text>
-            {detail ? (
-              // The warning is the one line that must be read whole, so it may wrap.
-              <host.Text role="meta" color={detailColor} numberOfLines={mayHaveLanded ? 2 : 1}>{detail}</host.Text>
-            ) : null}
-          </View>
-        )}
+    const trailingControls = (
+      <>
         {props.onWatch && !(compact && unconfirmed) ? (
           <host.Button emphasis="plain" title={copy.watch} onPress={props.onWatch}
             iconOnly={narrow} leading={narrow ? host.renderGlyph('pointer', colors.text, LEADING_GLYPH_SIZE) : undefined}
@@ -393,6 +369,57 @@ export function HappierPresenceCapsule(props: HappierPresenceCapsuleProps): Reac
             testID={`${testID}-take-control`}
           />
         )}
+      </>
+    );
+    const row = (
+      <View
+        // On a phone the unconfirmed stop needs its line whole and two buttons: they move beneath.
+        style={[strip ? styles.strip : styles.capsule, compact && observationRecovery ? styles.capsuleStacked : null,
+          stacked ? styles.stripStacked : null]}
+        accessibilityRole="summary"
+        accessibilityLiveRegion="polite"
+        aria-live="polite"
+        // Recomposed to the mark and its action, the row still says what the words said.
+        accessibilityLabel={narrow ? (detail ? `${title}. ${detail}` : title) : undefined}
+        testID={`${testID}-${stateKey}`}
+      >
+        <View style={strip ? styles.markStrip : styles.mark}>
+          {human
+            ? host.renderGlyph('hand', colors.text, MARK_GLYPH_SIZE)
+            : unconfirmed || recovery
+              ? host.renderGlyph('warning', colors.warning, MARK_GLYPH_SIZE)
+              : props.renderAgentMark
+                ? props.renderAgentMark(MARK_GLYPH_SIZE)
+                : host.renderGlyph('sparkle', colors.secondaryText, MARK_GLYPH_SIZE)}
+        </View>
+        {strip && !(compact && observationRecovery) ? (
+          // One line: what, then where or what it is doing (never balanced across lines: it ellipsizes).
+          <View style={styles.stripText} onLayout={availableWidth === undefined ? undefined : onWordsLayout} testID={`${testID}-text`}>
+            <host.Text numberOfLines={1} style={STRIP_TEXT_STYLE}>
+              <host.Text role="title" color={colors.text}>{title}</host.Text>
+              {detail ? <host.Text role="meta" color={detailColor}>{`  ${detail}`}</host.Text> : null}
+            </host.Text>
+          </View>
+        ) : narrow ? null : (
+          <View
+            style={[styles.text, compact || props.placement !== 'dock' ? styles.textCompact : null]}
+            onLayout={availableWidth === undefined ? undefined : onWordsLayout}
+            testID={`${testID}-text`}
+          >
+            {/* A narrow capsule wraps the sentence rather than clip the Machine or window it names. */}
+            <host.Text role="title" color={colors.text} numberOfLines={2} style={TITLE_WRAP}>{title}</host.Text>
+            {detail ? (
+              // The warning is the one line that must be read whole, so it may wrap.
+              // At the compact width the detail may wrap to a second line rather than clip its sentence.
+              <host.Text role="meta" color={detailColor} numberOfLines={mayHaveLanded || compact ? 2 : 1}>{detail}</host.Text>
+            ) : null}
+          </View>
+        )}
+        {stacked ? (
+          <View style={[styles.actions, styles.actionsStacked]} testID={`${testID}-actions-beneath`}>
+            {trailingControls}
+          </View>
+        ) : trailingControls}
       </View>
     );
     // The capsule morphs in place between who-is-in-control states; the host's step transition owns

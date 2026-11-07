@@ -1,6 +1,7 @@
-import type { HappierAgentPageRect, HappierPresenceTakeControlResult } from '@happier-dev/plugin-ui/presentation';
+import type { HappierPresenceTakeControlResult } from '@happier-dev/plugin-ui/presentation';
 import { BrowserCommandDispatchResultV1Schema } from '@happier-dev/protocol/browser/control/v1';
-import { type ActionExecuteResult, type BrowserCommandV1 } from '@happier-dev/protocol';
+import { type ActionExecuteResult} from '@happier-dev/protocol/actions/actionExecutionResult';
+import { type BrowserCommandV1 } from '@happier-dev/protocol/browser/control/v1';
 import * as React from 'react';
 
 import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
@@ -21,6 +22,7 @@ import {
     type SessionViewerSourceNavigation,
 } from '@/components/sessions/viewer/SessionViewerController';
 
+import type { BrowserStreamedPageRect } from '@/components/browser/adapters/BrowserStreamedTarget';
 import { BrowserAgentCursor } from './BrowserAgentCursor';
 import { BrowserPresenceFooter } from './BrowserPresenceCapsule';
 
@@ -40,9 +42,9 @@ export type BrowserShellAgentPresence = Readonly<{
     knownAgentId?: string | null;
 }>;
 
-function resolveAgentName(agentId: string | null | undefined): string {
+function resolveAgentName(agentId: string | null | undefined): Readonly<{ name: string; agentless: boolean }> {
     const core = agentId ? getAgentCore(agentId as AgentId) : null;
-    return core ? t(core.displayNameKey) : t('browserPresence.agentFallbackName');
+    return core ? { name: t(core.displayNameKey), agentless: false } : { name: t('browserPresence.agentFallbackName'), agentless: true };
 }
 
 /**
@@ -53,6 +55,8 @@ function resolveAgentName(agentId: string | null | undefined): string {
 export function useBrowserSessionAgentIdentity(agent: BrowserShellAgentPresence | null): Readonly<{
     agentId: string | null;
     name: string;
+    /** No agent resolves: sentences take their agentless form rather than `name` mid-sentence. */
+    agentless: boolean;
     turnActive: boolean | undefined;
 }> {
     const session = useSession(agent?.sessionId ?? '', agent?.serverId ?? null);
@@ -67,7 +71,7 @@ export function useBrowserSessionAgentIdentity(agent: BrowserShellAgentPresence 
     );
     const resolvedAgentId = agentId ?? agent?.knownAgentId ?? null;
     return React.useMemo(
-        () => ({ agentId: resolvedAgentId, name: resolveAgentName(resolvedAgentId), turnActive }),
+        () => ({ agentId: resolvedAgentId, ...resolveAgentName(resolvedAgentId), turnActive }),
         [resolvedAgentId, turnActive],
     );
 }
@@ -87,12 +91,17 @@ export function BrowserShellPresence(props: Readonly<{
     onCheckAgain?: (view: Readonly<{ browserSessionId: string; viewId: string }>) => Promise<ActionExecuteResult>;
     agent: BrowserShellAgentPresence | null;
     /** Where the page is drawn when it does not fill the frame (a fitted stream). */
-    pageRect?: HappierAgentPageRect | null;
+    pageRect?: BrowserStreamedPageRect | null;
     compact?: boolean;
     /** In the Session viewer: the page's Back, Forward and Reload, offered in the viewer's menu. */
     viewerNavigation?: SessionViewerSourceNavigation | null;
     /** Closing the page is what ends a confidential hold (the source owner drops it with the page). */
     onClosePage?: () => void;
+    /**
+     * Whether this viewer is the person in control of a streamed page, as the daemon projects it to
+     * this stream; `false` while another viewer drives it. Null where no stream says.
+     */
+    viewerControlling?: boolean | null;
     nowMs?: () => number;
     testID: string;
 }>): React.ReactElement | null {
@@ -174,11 +183,16 @@ export function BrowserShellPresence(props: Readonly<{
         checking,
     } : null), [agent, canControl, handBack, viewerSource, presence, takeControl, props.onCheckAgain, checkAgain, checking]);
     usePublishSessionViewerPresence('browser', viewerPresence);
+    const pageSize = props.pageRect?.pageSize ?? null;
+    const otherViewerControls = presence.kind === 'human' && props.viewerControlling === false;
     usePublishSessionViewerSourceFacts('browser', inViewer ? {
         machineName: null,
         personInControl: presence.kind === 'human',
         watching: presence.kind === 'agent' || presence.kind === 'stopping' || presence.kind === 'unconfirmed',
         navigation: props.viewerNavigation ?? null,
+        // The page's own shape (as the Computer body publishes its picture's), so the viewer's frame and
+        // phone dock hold the page without bands; never the fitted rect, which follows the frame.
+        aspectRatio: pageSize ? pageSize.width / pageSize.height : null,
     } : null);
 
     return (
@@ -204,8 +218,12 @@ export function BrowserShellPresence(props: Readonly<{
                     presence={presence}
                     agent={agent}
                     compact={props.compact}
+                    // A person drives the page, but from another screen: this viewer watches, and the
+                    // hand back is theirs to give.
+                    {...(otherViewerControls ? { humanTitle: t('browserPresence.interaction.otherViewerTitle'),
+                        humanDetail: t('browserPresence.interaction.otherViewerDetail') } : {})}
                     onTakeControl={canControl ? takeControl : undefined}
-                    onHandBack={canControl ? handBack : undefined}
+                    onHandBack={canControl && !otherViewerControls ? handBack : undefined}
                     onCheckAgain={props.onCheckAgain ? checkAgain : undefined}
                     checking={checking}
                 />

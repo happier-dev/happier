@@ -3,11 +3,12 @@ import { useContainingGlassSurfaceGroup } from '@/components/ui/glass/GlassSurfa
 import * as React from 'react';
 import { Platform, View, type StyleProp, type TextStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1, happierPageTextMetrics, useHappierMaterialColorResolver, useHappierTextPresentation } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable, HAPPIER_ICON_BUTTON_SIZE, HAPPIER_PRESS_FEEDBACK_V1, happierPageTextMetrics, useHappierMaterialColorResolver, useHappierTextPresentation } from '@happier-dev/plugin-ui/presentation';
 import type { PluginUiDetailsPanePresentation } from '@happier-dev/plugin-ui/advanced';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
+import { resolveIconButtonGlyphSize } from '@/components/ui/icons/iconButtonGlyphSize';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import {
     HEADER_BAND_HORIZONTAL_PADDING_PX,
@@ -224,8 +225,11 @@ export type PaneHeaderProps = PaneHeaderContent & Readonly<{
     headingRef?: PluginUiDetailsPanePresentation['headingRef'];
     /** Identity mark beside the title; it has no backing tile. */
     leading?: React.ReactNode;
-    /** A title that is itself a control, such as a named-object switcher. */
-    titleControl?: React.ReactNode;
+    /**
+     * A title that is itself a control, such as a named-object switcher. As a function it wraps the band's
+     * own title text, so the switcher keeps the one title size this header owns.
+     */
+    titleControl?: React.ReactNode | ((title: React.ReactElement) => React.ReactNode);
     /** null allows a long title to wrap; the default pane band stays on one line. */
     titleNumberOfLines?: number | null;
     titleTextStyle?: StyleProp<TextStyle>;
@@ -281,6 +285,18 @@ export const PaneHeader = React.memo(function PaneHeader(props: PaneHeaderProps)
     const onNavigationPlane = useContainingGlassSurfaceGroup() === 'sidebar';
     const topInset = props.navigation?.includeTopInset ? insets.top : 0;
     const hasTitle = props.title.trim().length > 0 || Boolean(props.leading) || Boolean(props.titleControl) || chipVisible;
+    const titleText = (
+        <Text
+            ref={props.headingRef}
+            tabIndex={props.headingRef ? -1 : undefined}
+            testID={`${testID}.title`}
+            numberOfLines={props.titleNumberOfLines === null ? undefined : props.titleNumberOfLines ?? 1}
+            accessibilityRole="header"
+            style={[large ? styles.largeTitle : styles.title, styles.titleText, props.titleTextStyle]}
+        >
+            {props.title}
+        </Text>
+    );
     return (
         <View testID={testID} style={[large ? styles.large : [styles.band, { height: height + topInset, paddingTop: topInset }],
             props.onBack || props.navigation ? styles.bandWithBack : null,
@@ -292,6 +308,8 @@ export const PaneHeader = React.memo(function PaneHeader(props: PaneHeaderProps)
                     iconName={Platform.OS === 'ios' ? 'caret-left' : 'arrow-left'}
                     accessibilityLabel={t('common.back')}
                     variant="plain"
+                    // The identity mark sits one band gap to its right: Back's hit area takes half of it.
+                    interactiveTargetEdgesPx={{ trailing: theme.space.s2 / 2 }}
                     onPress={props.navigation.onBack}
                 />
             ) : null}
@@ -302,6 +320,7 @@ export const PaneHeader = React.memo(function PaneHeader(props: PaneHeaderProps)
                     accessibilityLabel={t('panes.mainColumn.backToTranscript')}
                     tooltip={t('panes.mainColumn.backToTranscript')}
                     variant="plain"
+                    interactiveTargetEdgesPx={{ trailing: theme.space.s2 / 2 }}
                     onPress={props.onBack}
                 />
             ) : null}
@@ -314,18 +333,7 @@ export const PaneHeader = React.memo(function PaneHeader(props: PaneHeaderProps)
                 {props.overline ?? null}
                 {/* A host that already names the thing (a breadcrumb ending on it) passes no title: the live line stands alone. */}
                 {hasTitle ? <View style={styles.titleRow}>
-                {props.titleControl ?? (
-                <Text
-                    ref={props.headingRef}
-                    tabIndex={props.headingRef ? -1 : undefined}
-                    testID={`${testID}.title`}
-                    numberOfLines={props.titleNumberOfLines === null ? undefined : props.titleNumberOfLines ?? 1}
-                    accessibilityRole="header"
-                    style={[large ? styles.largeTitle : styles.title, styles.titleText, props.titleTextStyle]}
-                >
-                    {props.title}
-                </Text>
-                )}
+                {typeof props.titleControl === 'function' ? props.titleControl(titleText) : props.titleControl ?? titleText}
                 {props.onTitleNaturalWidth && !props.titleControl ? (
                     <View testID={`${testID}.titleMeasure`} aria-hidden pointerEvents="none" style={[styles.titleRow, styles.titleMeasure]}
                         onLayout={(event) => props.onTitleNaturalWidth?.(Math.ceil(event.nativeEvent.layout.width))}>
@@ -361,6 +369,14 @@ export const PaneHeader = React.memo(function PaneHeader(props: PaneHeaderProps)
     );
 });
 
+/**
+ * The trailing icon buttons' glyphs (⋯, Close) end on the pane's content edge, the line its rows' values and
+ * chevrons end on, mirroring the title on the leading edge: the band's trailing padding is that edge less the
+ * glyph's own inset in its button.
+ */
+const BAND_TRAILING_PADDING_PX = HEADER_BAND_HORIZONTAL_PADDING_PX
+    - (HAPPIER_ICON_BUTTON_SIZE - resolveIconButtonGlyphSize(HAPPIER_ICON_BUTTON_SIZE)) / 2;
+
 const stylesheet = StyleSheet.create((theme) => ({
     // The band stands above its body, so the shade beneath it overlays the content scrolling under it.
     band: {
@@ -370,7 +386,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         position: 'relative',
         zIndex: 1,
         paddingLeft: HEADER_BAND_HORIZONTAL_PADDING_PX,
-        paddingRight: HEADER_BAND_HORIZONTAL_PADDING_PX / 2,
+        paddingRight: BAND_TRAILING_PADDING_PX,
         gap: theme.space.s2,
         backgroundColor: theme.colors.surface.base,
     },
@@ -510,7 +526,8 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     attention: {
         ...Typography.default('semiBold'),
-        color: theme.colors.state.warning.foreground,
+        // The attention text role: the readable amber words, while the dot keeps the attention amber.
+        color: theme.colors.state.attention.textForeground,
     },
     failure: {
         color: theme.colors.state.danger.foreground,
@@ -531,5 +548,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
         gap: theme.space.s2,
+        // The band leaves 2 px between the identity block and the actions; with this, 6: the leading action's
+        // hit area reaches half of the 6 px actions keep from each other, and a flush control of the identity
+        // block (a lineage link) keeps the other half, so the two never overlap.
+        marginLeft: theme.space.s4,
     },
 }));

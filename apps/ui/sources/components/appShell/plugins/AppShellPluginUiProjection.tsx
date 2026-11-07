@@ -13,6 +13,7 @@ import { createPluginSkillSourceIdentityPublication, EMPTY_PLUGIN_SKILL_SOURCE_I
 
 import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contributionIdentity';
+import { projectConnectedAccountDescriptorV1 } from '@happier-dev/protocol/connect/connectedAccountUiProjectionV1';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGeneration';
@@ -59,12 +60,13 @@ import {
 } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
 import { useAppScopeRightSidebarDestinationHandler } from '@/components/appShell/rightSidebar/appScopeRightSidebarNavigation';
 import {
-    resolvePluginAppPages,
-    selectPluginAppPagePlacements,
-} from './pluginAppPages';
-import { usePluginAppPageDestinationHandler } from './pluginAppPageNavigation';
+    usePluginPages,
+    selectPluginPagePlacements,
+} from '@/components/plugins/pages/pluginPages';
+import { usePluginPageDestinationHandler } from '@/components/plugins/pages/pluginPageNavigation';
 import { usePluginSettingsPageDestinationHandler } from '@/components/settings/plugins/pluginSettingsPageNavigation';
 import { useMachinePresenceMembership } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
+import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import {
     advanceConnectedAccountDescriptorProjectionState,
     createConnectedAccountDescriptorProjectionLoadingState,
@@ -83,6 +85,9 @@ import {
     unloadAppShellProjectedClientExecutables,
 } from './appShellClientExecutableActivation';
 import type { PluginUiClientExecutableReconciliationAttempt } from '@/components/plugins/reactNative/clientExecutableActivation';
+import { readPluginUiClientExecutableProjectionFacts,
+    type PluginUiClientExecutableProjectionSource } from '@/components/plugins/reactNative/clientExecutableProjection';
+import { MountedClientActionDemandContext } from './mountedClientActionDemand';
 import {
     getBundledConversationRuntimeGenerationRevision,
     subscribeBundledConversationRuntimeGeneration,
@@ -90,7 +95,7 @@ import {
 import { useVoiceExecutionMachineId } from '@/voice/credentials/useExecutionMachinePresentation';
 import { useVoiceProviderRuntimeDemand } from '@/voice/session/useVoiceProviderRuntimeDemand';
 
-import { PluginAppPageLaunchInputScope } from './pluginAppPageNavigation';
+import { PluginPageLaunchInputScope } from '@/components/plugins/pages/pluginPageNavigation';
 import {
     createPluginUiTranslationRuntime,
     PluginUiTranslationRuntimeProvider,
@@ -103,6 +108,7 @@ import { usePreferredLanguage } from '@/text/usePreferredLanguage';
 
 export type AppShellPluginUiProjectionValue = Readonly<{
     pluginUiProjection: PluginUiProjectionModel | null;
+    mountedActionProjections?: readonly PluginUiClientExecutableProjectionSource[];
     pluginBrowserProjection: PluginBrowserProjectionModel | null;
     phase: PluginUiProjectionPhase;
     unavailableReasonCode?: string;
@@ -266,7 +272,8 @@ export async function settleAppShellPluginRuntimeUpdate(input: Readonly<{
 export function AppShellPluginUiProjectionValueProvider(props: Readonly<{
     value: AppShellPluginUiProjectionValue;
     declarationReady?: boolean;
-    publication?: Pick<AppShellPluginUiProjectionPublication, 'getSnapshot' | 'subscribe'>;
+    publication?: Pick<AppShellPluginUiProjectionPublication, 'getSnapshot' | 'subscribe'>
+        & Partial<Pick<AppShellPluginUiProjectionPublication, 'publishMountedActions'>>;
     children: React.ReactNode;
 }>): React.ReactElement {
     // Subscribe to the fields a consumer uses. Machine/source reports must not
@@ -376,6 +383,7 @@ export function AppShellPluginUiProjectionValueProvider(props: Readonly<{
         committedProjectionCleanup.current = null;
     }, []);
     return (
+        <MountedClientActionDemandContext.Provider value={props.publication?.publishMountedActions ?? null}>
         <AppShellPluginUiDeclarationProjectionContext.Provider value={declarationSources}>
             <AppShellPluginUiProjectionContext.Provider value={valueSubscription}>
                 {/*
@@ -387,14 +395,16 @@ export function AppShellPluginUiProjectionValueProvider(props: Readonly<{
                   * the input when any of those facts changes.
                   */}
                 <PluginUiTranslationRuntimeProvider runtime={translationRuntime}>
-                <PluginAppPageLaunchInputScope
+                <PluginPageLaunchInputScope
+                    target={{ kind: 'app' }}
                     pluginUiProjection={props.value.pluginUiProjection}
                 >
                     {props.children}
-                </PluginAppPageLaunchInputScope>
+                </PluginPageLaunchInputScope>
                 </PluginUiTranslationRuntimeProvider>
             </AppShellPluginUiProjectionContext.Provider>
         </AppShellPluginUiDeclarationProjectionContext.Provider>
+        </MountedClientActionDemandContext.Provider>
     );
 }
 
@@ -435,7 +445,7 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
     React.useEffect(() => () => projectionPublication.dispose(), [projectionPublication]);
     const {
         accountUiProjection, executionOriginPluginIds, projectionTargets,
-        currentnessForActiveAccountByMachineId, projectionUnion, pluginUiProjection,
+        currentnessForActiveAccountByMachineId, projectionUnion, pluginUiProjection, mountedActionProjections,
         candidateFactsByPluginId, connectedAccountResolution, destinationSurfacePlacements, settingsPages,
     } = derived;
     const publishMachineProjectionCurrentness = projectionPublication.publishMachineCurrentness;
@@ -446,7 +456,7 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
     ) => {
         // The unscoped bootstrap has no Account lifetime to distinguish Homes.
         // An old child's effect must not publish into another Home's sources.
-        if (projectionPublication.getSnapshot().activeServerId !== activeServer.serverId) return;
+        if (projectionPublication.readActiveServerId() !== activeServer.serverId) return;
         projectionPublication.publishExecutionOrigin(pluginId, reportLifetime, origin, selectableOrigins, hasStoredTarget);
     }, [activeServer.serverId, projectionPublication]);
     const accountArtifactProjectionSource = React.useRef<PluginUiReactNativeRuntimeProjectionSource | null>(null);
@@ -496,11 +506,11 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
     const voiceUnionMember = voiceMachineIsUnionMember && voiceExecutionMachineId
         ? currentnessForActiveAccountByMachineId.get(voiceExecutionMachineId)
         : undefined;
-    // Target membership, not currentness settlement: a member whose probe has
-    // not published yet must not be double-described by a second subscription. The
+    // Target membership, not currentness settlement: a member whose observer has
+    // not published yet does not need a second subscription. The
     // disabled dedicated hook is exactly the inert placeholder for that gap.
     // First publish the source's target set; an unpublished membership is not
-    // evidence that this Voice machine needs a separate reader.
+    // evidence that this Voice machine needs another observer.
     const requiresDedicatedVoiceProjection = declarationReady && Boolean(voiceExecutionMachineId) && !voiceMachineIsUnionMember;
     const dedicatedVoiceProjectionCurrentness = usePluginUiProjectionCurrentness({
         machineId: voiceExecutionMachineId,
@@ -531,10 +541,14 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
         setClientExecutableReloadRevision((revision) => revision + 1);
     }, []);
     const [connectedAccountProjectionRevision, setConnectedAccountProjectionRevision] = React.useState(0);
-    const [connectedAccountProjectionReloadRevision, setConnectedAccountProjectionReloadRevision] = React.useState(0);
+    const [executeProjectionAction] = React.useState(() => createFrontDoorActionExecute());
     const reloadConnectedAccountProjection = React.useCallback(() => {
-        setConnectedAccountProjectionReloadRevision((revision) => revision + 1);
-    }, []);
+        if (!accountLifetime?.isCurrent()) return;
+        void executeProjectionAction('connectedServices.catalog.list', { refresh: true }, {
+            surface: 'ui', authority: 'present_user', serverId: accountLifetime.scope.serverId,
+            expectedAccountId: accountLifetime.scope.accountId,
+        }).catch(() => {});
+    }, [accountLifetime, executeProjectionAction]);
     const [connectedAccountProjectionState, setConnectedAccountProjectionState] = React.useState<ConnectedAccountDescriptorProjectionState>(
         () => createConnectedAccountDescriptorProjectionLoadingState(connectedAccountScopeKey),
     );
@@ -542,6 +556,14 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
     const installedConnectedAccountLifetimeRef = React.useRef<
         ActiveServerAccountScopeLifetime | null | undefined
     >(undefined);
+    const accountConnectedAccountDescriptors = availabilityInputs?.accountUiProjection?.connectedAccountDescriptorsById;
+    const accountConnectedAccountMetadata = React.useMemo(() => Object.freeze(
+        Object.values(accountConnectedAccountDescriptors ?? {}).map(({ pluginId, definition, hostAccountOrigin }) =>
+            projectConnectedAccountDescriptorV1({ descriptor: definition, pluginId, serviceId: definition.id,
+                provenance: hostAccountOrigin.sourceCustody.kind === 'bundled_first_party' ? 'first_party' : 'external',
+                sourceKind: hostAccountOrigin.sourceCustody.kind === 'bundled_first_party' ? 'bundled' : 'account_release',
+                availability: { state: 'available', reason: 'account_declaration' }, diagnostics: [] })),
+    ), [accountConnectedAccountDescriptors]);
 
     const commitConnectedAccountProjection = React.useCallback((
         lifetime: ActiveServerAccountScopeLifetime | null,
@@ -553,12 +575,15 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
         ) return;
         const previous = connectedAccountProjectionStateRef.current;
         const next = advanceConnectedAccountDescriptorProjectionState(previous, resolution);
-        if (next === previous) return;
+        const registryChanged = installConnectedAccountDescriptorProjection(next, lifetime, accountConnectedAccountMetadata);
+        if (next === previous) {
+            if (registryChanged) setConnectedAccountProjectionRevision((revision) => revision + 1);
+            return;
+        }
         connectedAccountProjectionStateRef.current = next;
-        installConnectedAccountDescriptorProjection(next, lifetime);
         setConnectedAccountProjectionState(next);
         setConnectedAccountProjectionRevision((revision) => revision + 1);
-    }, []);
+    }, [accountConnectedAccountMetadata]);
 
     React.useEffect(() => {
         const previous = connectedAccountProjectionStateRef.current;
@@ -576,10 +601,10 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
             : createConnectedAccountDescriptorProjectionLoadingState(connectedAccountScopeKey);
         installedConnectedAccountLifetimeRef.current = accountLifetime;
         connectedAccountProjectionStateRef.current = next;
-        installConnectedAccountDescriptorProjection(next, accountLifetime);
+        installConnectedAccountDescriptorProjection(next, accountLifetime, accountConnectedAccountMetadata);
         setConnectedAccountProjectionState(next);
         setConnectedAccountProjectionRevision((revision) => revision + 1);
-    }, [accountLifetime, connectedAccountScopeKey]);
+    }, [accountLifetime, connectedAccountScopeKey, accountConnectedAccountMetadata]);
 
     React.useEffect(() => {
         if (!accountLifetime) return;
@@ -606,19 +631,29 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
     React.useEffect(() => {
         commitConnectedAccountProjection(accountLifetime, connectedAccountResolution);
     }, [accountLifetime, commitConnectedAccountProjection, connectedAccountResolution]);
-    const pluginRuntimeUpdateTailRef = React.useRef<Promise<void>>(Promise.resolve());
     // Activation consumes live admission methods, not the diagnostic observer's
     // cursor/telemetry revision. Actual executable facts and explicit Retry
     // remain dependencies below; every operation still reads current authority.
     const clientExecutableAvailabilityReader = accountLifetime
         ? readPluginAccountAvailability(accountLifetime.scope) : null;
+    const selectExecutableFacts = useShallow((projection: PluginUiProjectionModel | null) => projection
+        ? readPluginUiClientExecutableProjectionFacts(projection) : null);
+    const selectVoiceExecutableFacts = useShallow((projection: PluginUiProjectionModel | null) => projection
+        ? readPluginUiClientExecutableProjectionFacts(projection) : null);
+    const executableFacts = selectExecutableFacts(pluginUiProjection);
+    const voiceExecutableFacts = selectVoiceExecutableFacts(voicePluginUiProjection);
+    // A new admission samples the complete projection; presentation-only
+    // changes do not withdraw an unchanged executable admission.
+    const presentationRef = React.useRef({ pluginUiProjection, voicePluginUiProjection });
+    presentationRef.current = { pluginUiProjection, voicePluginUiProjection };
     const clientExecutableActivationBasis = React.useMemo(() => Object.freeze({
-        projection: pluginUiProjection,
+        executableFacts,
+        mountedActionProjections,
         platform: clientExecutablePlatform,
         voiceInteractionEnabled,
         voiceProjectionAcquiring,
         voiceMachineId,
-        voicePluginUiProjection,
+        voiceExecutableFacts,
         voiceRuntimeGenerationRevision,
         voiceServerId,
         voiceProviderIds,
@@ -628,11 +663,12 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
         accountLifetime,
         clientExecutableAvailabilityReader,
         clientExecutablePlatform,
-        pluginUiProjection,
+        executableFacts,
+        mountedActionProjections,
         voiceInteractionEnabled,
         voiceProjectionAcquiring,
         voiceMachineId,
-        voicePluginUiProjection,
+        voiceExecutableFacts,
         voiceRuntimeGenerationRevision,
         voiceServerId,
         voiceProviderIds,
@@ -650,6 +686,7 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
         ? settledClientExecutableActivation.state
         : ESTABLISHING_CLIENT_EXECUTABLE_ACTIVATION;
     const appNavigationBinding = usePluginSurfaceDestinationNavigationBindingForScope({
+        projection: pluginUiProjection,
         placements: destinationSurfacePlacements,
         settingsPages,
         targetKind: 'app',
@@ -691,38 +728,42 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
         }
         const activation = voiceActivation.current;
         activation.providerIds = basis.voiceProviderIds;
-        const next = basis.projection ?? EMPTY_PLUGIN_UI_PROJECTION;
+        const next = presentationRef.current.pluginUiProjection ?? EMPTY_PLUGIN_UI_PROJECTION;
         let cancelled = false;
-        const voice = basis.voiceInteractionEnabled && basis.voiceMachineId && basis.voicePluginUiProjection
-            ? Object.freeze({ projection: basis.voicePluginUiProjection, machineId: basis.voiceMachineId, serverId: basis.voiceServerId, providerIds: basis.voiceProviderIds })
+        const voiceProjection = presentationRef.current.voicePluginUiProjection;
+        const voice = basis.voiceInteractionEnabled && basis.voiceMachineId && voiceProjection
+            ? Object.freeze({ projection: voiceProjection, machineId: basis.voiceMachineId, serverId: basis.voiceServerId,
+                providerIds: basis.voiceProviderIds })
             : null;
         // Withdrawal is synchronous inside the existing composition owner,
         // before this request waits on prior cleanup or successor Artifact bytes.
         const retention = retainAppShellProjectedClientExecutables({ projection: next, voice,
+            mountedActionProjections: basis.mountedActionProjections,
             platform: basis.platform, accountLifetime: basis.accountLifetime });
-        // This is the one production serial caller. It always reconciles the
-        // complete app Action set, and layers the optional Voice family into
-        // that same transaction rather than allowing Voice currentness to gate
-        // unrelated Action activation.
-        const update = pluginRuntimeUpdateTailRef.current.then(async () => {
-            await retention;
+        // Every request publishes its complete rights set immediately. Exact
+        // target adoption is independent of a retired request's preparation.
+        const update = (async () => {
             const settlement = await settleAppShellPluginRuntimeUpdate({
                 isCancelled: () => cancelled,
                 activate: async () => {
-                    return await reconcileAppShellProjectedClientExecutables({
+                    const activation = reconcileAppShellProjectedClientExecutables({
                         projection: next,
+                        mountedActionProjections: basis.mountedActionProjections,
                         platform: basis.platform,
                         // Catalog authority is independent from executable
                         // interaction readiness. Keeping it here prevents a
                         // disabled/offline projected provider from reappearing
                         // through generated fallback metadata.
-                        voiceProviderProjection: basis.voicePluginUiProjection,
+                        voiceProviderProjection: voiceProjection,
                         voice,
                         reader: basis.availabilityReader,
                         accountLifetime: basis.accountLifetime,
                         readNavigationBinding: readAppNavigationBinding,
-                        isCurrent: () => !cancelled,
+                        isCurrent: () => !cancelled
+                            && projectionPublication.getSnapshot().mountedActionProjections === basis.mountedActionProjections,
                     });
+                    const [attempts] = await Promise.all([activation, retention]);
+                    return attempts;
                 },
             });
             if (!cancelled && settlement.status !== 'cancelled') {
@@ -732,17 +773,15 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
                     activation.settle();
                 }
             }
-        });
-        pluginRuntimeUpdateTailRef.current = update;
+        })();
         void update.catch(activation.reject);
         return () => {
             cancelled = true;
         };
-    }, [clientExecutableActivationRequest, readAppNavigationBinding]);
+    }, [clientExecutableActivationRequest, projectionPublication, readAppNavigationBinding]);
 
     React.useEffect(() => () => {
-        // The executable host is process-global while this update tail belongs
-        // to one component instance. Fence every exact-authority leaf so a
+        // The executable host is process-global. Fence every exact-authority leaf so a
         // pending Action or Voice activation cannot publish on remount.
         void unloadAppShellProjectedClientExecutables().catch(() => {
             // Authority is synchronously fenced before cleanup awaits plugin disposal.
@@ -751,6 +790,7 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
 
     const value = React.useMemo<AppShellPluginUiProjectionValue>(() => ({
         pluginUiProjection,
+        mountedActionProjections,
         pluginBrowserProjection,
         phase,
         unavailableReasonCode,
@@ -766,7 +806,7 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
         getVoiceProviderActivation,
         reloadClientExecutables,
         reloadConnectedAccountProjection,
-    }), [accountLifetime, getVoiceProviderActivation, clientExecutableActivation, connectedAccountProjectionRevision, connectedAccountProjectionState, hasEstablishingMembers, interactionEnabled, phase, platform, pluginBrowserProjection, pluginUiProjection, projectionUnion.machineId, projectionUnion.serverId, reloadClientExecutables, reloadConnectedAccountProjection, unavailableReasonCode]);
+    }), [accountLifetime, getVoiceProviderActivation, clientExecutableActivation, connectedAccountProjectionRevision, connectedAccountProjectionState, hasEstablishingMembers, interactionEnabled, phase, platform, pluginBrowserProjection, pluginUiProjection, mountedActionProjections, projectionUnion.machineId, projectionUnion.serverId, reloadClientExecutables, reloadConnectedAccountProjection, unavailableReasonCode]);
     return (
         <AppShellPluginUiProjectionValueProvider value={value} declarationReady={declarationReady} publication={projectionPublication}>
             {projectionTargets.map((projectionTarget) => (
@@ -774,7 +814,6 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
                     key={`${currentAccountLifetimeKey}:${projectionTarget.serverId ?? 'default'}:${projectionTarget.machineId}`}
                     machineId={projectionTarget.machineId}
                     serverId={projectionTarget.serverId}
-                    reloadRevision={connectedAccountProjectionReloadRevision}
                     load={voiceProjectionDemand && projectionTarget.machineId === voiceExecutionMachineId}
                     accountLifetime={accountLifetime}
                     onCurrentness={publishMachineProjectionCurrentness}
@@ -821,11 +860,11 @@ function AppShellPluginSurfaceNavigationOwners(): null {
     const projection = useAppShellPluginUiProjection();
     const localize = useProjectedPluginLocalizedTextResolver();
     const binding = usePluginSurfaceDestinationNavigationBinding();
-    const pages = React.useMemo(() => resolvePluginAppPages({
-        placements: selectPluginAppPagePlacements(projection.pluginUiProjection),
+    const pages = usePluginPages({ target: { kind: 'app' },
+        placements: selectPluginPagePlacements(projection.pluginUiProjection, { container: 'appPage', targetKind: 'app' }),
         localize,
-    }), [localize, projection.pluginUiProjection]);
-    const openPage = usePluginAppPageDestinationHandler({ pages });
+    });
+    const openPage = usePluginPageDestinationHandler({ pages });
     const openSettingsPage = usePluginSettingsPageDestinationHandler({
         projection: projection.pluginUiProjection,
     });
@@ -834,10 +873,12 @@ function AppShellPluginSurfaceNavigationOwners(): null {
     const pageOwner = React.useMemo(() => ({
         container: 'appPage' as const,
         handler: openPage,
+        openWindow: openPage,
     }), [openPage]);
     const settingsOwner = React.useMemo(() => ({
         container: 'settingsPage' as const,
         handler: openSettingsPage,
+        openWindow: openSettingsPage,
     }), [openSettingsPage]);
     const rightSidebarOwner = React.useMemo(() => ({
         container: 'rightSidebarTab' as const,
@@ -864,7 +905,6 @@ function AppShellPluginSurfaceNavigationOwners(): null {
 const AppShellPluginUiMachineProjection = React.memo(function AppShellPluginUiMachineProjection(props: Readonly<{
     machineId: string;
     serverId: string | null;
-    reloadRevision: number;
     load: boolean;
     accountLifetime: ActiveServerAccountScopeLifetime | null;
     onCurrentness: (
@@ -876,7 +916,6 @@ const AppShellPluginUiMachineProjection = React.memo(function AppShellPluginUiMa
     const currentness = usePluginUiProjectionCurrentness({
         machineId: props.machineId,
         serverId: props.serverId,
-        reloadRevision: props.reloadRevision,
         load: props.load,
     });
     const { accountLifetime, machineId, onCurrentness } = props;
@@ -911,6 +950,7 @@ const AppShellPluginExecutionOriginSelection = React.memo(function AppShellPlugi
     const selection = usePluginMachineExecutionOriginSelection({
         pluginId: props.pluginId,
         includeMachineCandidates: false,
+        observeOriginsOnly: true,
         classifyRelease,
         ...props.facts,
         readSourceCandidates: React.useCallback(() => readCurrentAppShellPluginUiExecutionOriginCandidates(props.pluginId).sourceCandidates, [props.pluginId]),
@@ -933,6 +973,16 @@ const AppShellPluginExecutionOriginSelection = React.memo(function AppShellPlugi
 
 const readAppShellPluginUiProjection = (value: AppShellPluginUiProjectionValue) => value;
 
+/** Imperative dispatch reads the same current owner without subscribing presentation to its whole snapshot. */
+export function useAppShellPluginUiProjectionReader(): () => AppShellPluginUiProjectionValue {
+    return React.useContext(AppShellPluginUiProjectionContext).getSnapshot;
+}
+
+/** In-flight host admission observes this existing owner only while it is pending. */
+export function useAppShellPluginUiProjectionSubscription(): AppShellPluginUiProjectionSubscription {
+    return React.useContext(AppShellPluginUiProjectionContext);
+}
+
 export function useAppShellPluginUiProjection<T>(selector: (value: AppShellPluginUiProjectionValue) => T): T;
 export function useAppShellPluginUiProjection(): AppShellPluginUiProjectionValue;
 export function useAppShellPluginUiProjection<T>(selector?: (value: AppShellPluginUiProjectionValue) => T): AppShellPluginUiProjectionValue | T {
@@ -940,6 +990,29 @@ export function useAppShellPluginUiProjection<T>(selector?: (value: AppShellPlug
     const select = useShallow<AppShellPluginUiProjectionValue, AppShellPluginUiProjectionValue | T>(selector ?? readAppShellPluginUiProjection);
     const getSnapshot = React.useCallback(() => select(context.getSnapshot()), [context, select]);
     return React.useSyncExternalStore(context.subscribe, getSnapshot, getSnapshot);
+}
+
+/**
+ * The projection currentness a mounted surface host (a widget body, its frame) consumes. Executable
+ * activation, mounted Actions and Connected Account descriptors are AppShell diagnostics this value also
+ * carries; selecting the currentness fields keeps their transitions from redrawing every hosted body.
+ */
+function selectAppShellPluginUiProjectionCurrentness(value: AppShellPluginUiProjectionValue): PluginUiProjectionCurrentness {
+    return {
+        pluginUiProjection: value.pluginUiProjection,
+        pluginBrowserProjection: value.pluginBrowserProjection,
+        phase: value.phase,
+        ...(value.unavailableReasonCode !== undefined ? { unavailableReasonCode: value.unavailableReasonCode } : {}),
+        interactionEnabled: value.interactionEnabled,
+        machineId: value.machineId,
+        serverId: value.serverId,
+        platform: value.platform,
+        accountLifetime: value.accountLifetime,
+    };
+}
+
+export function useAppShellPluginUiProjectionCurrentness(): PluginUiProjectionCurrentness {
+    return useAppShellPluginUiProjection(selectAppShellPluginUiProjectionCurrentness);
 }
 
 /** Descriptive declaration consumers do not need executable diagnostics. */

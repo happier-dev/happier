@@ -9,7 +9,7 @@ import {
     type HappierFloatingFrameNativeBindingProps,
 } from '@happier-dev/plugin-ui/presentation';
 
-import { RetainedPresentationNativeMotionContext } from '@/components/ui/presentation/retainedPresentationSlots';
+import { RetainedPresentationNativeMotionContext, usePublishRetainedPresentationNativeMotion } from '@/components/ui/presentation/retainedPresentationSlots';
 import { useCompanionNoDragRegions } from './CompanionNoDragRegion';
 import { useCompanionNativePanGesture } from './useCompanionNativePanGesture';
 
@@ -123,8 +123,11 @@ export function NativeFloatingFrame(props: HappierFloatingFrameNativeBindingProp
         x: translateX, y: translateY, anchorX: rect.x, anchorY: rect.y,
         width, height, chromeHeight, overlay: portalActive ? overlay : null, onPortalActiveChange: setPortalActive,
     }), [translateX, translateY, rect.x, rect.y, width, height, chromeHeight, overlay, portalActive]);
+    const presentedMotion = props.mode === 'docked' ? null : motion;
+    // A body bound in another tree (the frame drawn in the app's floating layer) moves on it too.
+    usePublishRetainedPresentationNativeMotion(presentedMotion);
 
-    return <RetainedPresentationNativeMotionContext.Provider value={props.mode === 'docked' ? null : motion}>
+    return <RetainedPresentationNativeMotionContext.Provider value={presentedMotion}>
         <GestureDetector gesture={pan.gesture}>
             <Animated.View ref={nativeRef} collapsable={false} style={props.mode === 'docked' ? undefined : [
                 { position: 'absolute', left: 0, top: 0 }, sizeStyle, pan.animatedStyle,

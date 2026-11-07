@@ -49,7 +49,7 @@ export type SessionCompanionTranslations = Readonly<{
         onTheBoard: (params: Readonly<{ source: string }>) => string;
     }>;
     drop: Readonly<{ keepBesideChat: string }>;
-    freshness: Readonly<{ machineOffline: (params: Readonly<{ machine: string }>) => string }>;
+    freshness: Readonly<{ machineOffline: (params: Readonly<{ machine: string }>) => string; sessionDisconnected: string; waitingForUpdates: string }>;
     needsYouA11y: (params: Readonly<{ count: number }>) => string;
 }>;
 
@@ -103,6 +103,6 @@ export const sessionCompanionTranslationsEnglish = { en: {
             onTheBoard: ({ source }) => `${source} · on the board`,
         },
         drop: { keepBesideChat: 'Keep beside your chat' },
-        freshness: { machineOffline: ({ machine }) => `${machine} is offline` },
+        freshness: { machineOffline: ({ machine }) => `${machine} is offline`, sessionDisconnected: "The session isn’t connected", waitingForUpdates: "Waiting for the session to check in" },
         needsYouA11y: ({ count }) => `Companion, ${count} waiting for you`,
     } } as const satisfies Pick<Readonly<Record<string, SessionCompanionTranslations>>, "en">;

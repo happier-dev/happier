@@ -1,18 +1,20 @@
 import * as React from 'react';
 import { useWidgetPresentation } from '@happier-dev/plugin-ui';
 import { MeterBar } from '@/components/ui/lists/MeterBar';
-import { I18nManager, Platform, Pressable, View } from 'react-native';
+import { I18nManager, Pressable, View } from 'react-native';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
-import { useSessionListRelativeNowMs } from '@/hooks/session/sessionListRuntimeClock';
+import { useSessionListRuntimeDeadlineNowMs } from '@/hooks/session/sessionListRuntimeClock';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
 import { resolveSessionAwarenessContentLabel } from '@/sync/domains/session/awareness/sessionAwarenessContentLabels';
 import type { SessionPendingPermission } from '@/sync/ops/sessionPendingPermissions';
 import type { SessionPermissionAnswer } from '@/sync/ops/sessionPermissionAnswers';
@@ -22,6 +24,8 @@ import { SessionPendingPromptCards } from '@/components/tools/shell/permissions/
 import { TranscriptOriginSourceProvider } from '@/components/sessions/transcript/source/appSessionTranscriptSource';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { useSessionMachineReachability } from '@/components/sessions/model/useSessionMachineReachability';
+import { sync } from '@/sync/sync';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import type { SessionCompanionDensity } from '../state/sessionCompanionPreference';
 import {
@@ -189,11 +193,11 @@ const SummaryStatus = React.memo(function SummaryStatus(props: Readonly<{
     const { model } = props;
     const words = model.needsYou
         ? t('sessionCompanion.status.waitingForYou')
-        : model.status?.statusText ?? t('sessionBoard.companion.summary.title');
+        : model.status?.statusText ?? null;
     const what = resolveWhatLine(model);
     return (
         <View style={stylesheet.statusBlock}>
-            <SessionSummaryStatusLine words={words} agentId={model.agentId} sinceMs={model.sinceMs}
+            <SessionSummaryStatusLine title={t('sessionBoard.companion.summary.title')} words={words} agentId={model.agentId} sinceMs={model.sinceMs}
                 testID={props.testID} headerAccessory={props.headerAccessory} />
             {what ? (
                 <Text testID={`${props.testID}-what`} style={stylesheet.what} numberOfLines={2}>{what}</Text>
@@ -204,7 +208,7 @@ const SummaryStatus = React.memo(function SummaryStatus(props: Readonly<{
 
 type AskOutcome = Readonly<{ summary: string; answer: SessionPermissionAnswer; atMs: number }>;
 
-/** How long "✓ Allowed … · just now" stays: until the shared relative clock says it is no longer now. */
+/** How long "✓ Allowed … · just now" stays before its one shared-clock expiry. */
 const ANSWERED_JUST_NOW_MS = 60_000;
 
 /**
@@ -225,10 +229,17 @@ const SummaryAsk = React.memo(function SummaryAsk(props: Readonly<{
     const [inFlight, setInFlight] = React.useState<SessionPermissionAnswer | null>(null);
     const [failed, setFailed] = React.useState(false);
     const [outcome, setOutcome] = React.useState<AskOutcome | null>(null);
-    const nowMs = useSessionListRelativeNowMs(outcome !== null);
     const candidate = props.needsYou?.request ?? null;
     const request = candidate && 'requestId' in candidate ? candidate : null;
     const requestId = request?.requestId ?? null;
+    const presented = useLayoutPresentationActive();
+    const viewed = useHostActivelyViewed();
+    // The receipt includes exactly 60 seconds; its existing predicate expires on the next millisecond.
+    const expiresAtMs = outcome === null ? null : outcome.atMs + ANSWERED_JUST_NOW_MS + 1;
+    const readNextRefreshAtMs = React.useCallback((nowMs: number) =>
+        expiresAtMs !== null && nowMs < expiresAtMs ? expiresAtMs : null, [expiresAtMs]);
+    const nowMs = useSessionListRuntimeDeadlineNowMs(readNextRefreshAtMs,
+        outcome !== null && request === null && presented && viewed);
     React.useEffect(() => {
         // A new ask replaces both the confirmation and any failure for the last one.
         if (requestId === null) return;
@@ -324,18 +335,17 @@ const SummaryAsk = React.memo(function SummaryAsk(props: Readonly<{
                 />
                 <View style={stylesheet.grow} />
                 {moreCount > 0 && props.openApprovals ? (
-                    <Pressable accessibilityRole="link" onPress={props.openApprovals} hitSlop={8}>
+                    <HappierPressable accessibilityRole="link" onPress={props.openApprovals}>
                         <Text style={stylesheet.quietLink}>{t('sessionCompanion.ask.moreWaiting', { count: moreCount })}</Text>
-                    </Pressable>
+                    </HappierPressable>
                 ) : props.showInChat ? (
-                    <Pressable
+                    <HappierPressable
                         testID={`${props.testID}-show-in-chat`}
                         accessibilityRole="link"
                         onPress={() => props.showInChat?.(request)}
-                        hitSlop={8}
                     >
                         <Text style={stylesheet.quietLink}>{t('sessionCompanion.ask.showInChat')}</Text>
-                    </Pressable>
+                    </HappierPressable>
                 ) : null}
             </View>
         </View>
@@ -452,19 +462,16 @@ const DetailRow = React.memo(function DetailRow(props: Readonly<{
     return (
         <Animated.View style={emphasisStyle} testID={`${props.testID}-emphasis`}>
             {props.onPress ? (
-                <Pressable
+                <HappierPressable
                     testID={props.testID}
                     accessibilityRole="button"
                     accessibilityLabel={accessibilityLabel}
                     onPress={props.onPress}
-                    style={({ pressed }) => [
-                        stylesheet.row,
-                        { minHeight: resolveMinimumInteractiveTargetSize(Platform.OS) },
-                        pressed && stylesheet.rowPressed,
-                    ]}
+                    hitReach={{ top: theme.space.s2 / 2, bottom: theme.space.s2 / 2 }}
+                    style={({ pressed }) => [stylesheet.row, pressed && stylesheet.rowPressed]}
                 >
                     {body}
-                </Pressable>
+                </HappierPressable>
             ) : (
                 <View style={stylesheet.row} testID={props.testID}>{body}</View>
             )}
@@ -533,10 +540,29 @@ export const SessionSummaryCard = React.memo(function SessionSummaryCard(props: 
             : null;
     // Session runtime freshness and Machine transport reachability are separate facts.
     // This is the same scoped, reactive presence owner that Vitals consumes.
-    const { machineReachability } = useSessionMachineReachability(
+    const { machineReachability, machineLastSeenAt } = useSessionMachineReachability(
         props.session?.id ?? '', props.serverId ?? props.session?.serverId,
     );
     const offline = machineReachability === 'unreachable';
+    // The freshness line says when and why (lab companion CSp): the Machine's own presence owner
+    // first, else the canonical Session status. Retry re-reads the owner that decided the cause.
+    const machineCause = offline && Boolean(props.machineName);
+    const freshnessReason = machineCause
+        ? t('sessionCompanion.freshness.machineOffline', { machine: props.machineName ?? '' })
+        : model.status?.state === 'disconnected' || model.status?.state === 'recoverable_unservable'
+            ? t('sessionCompanion.freshness.sessionDisconnected')
+            : t('sessionCompanion.freshness.waitingForUpdates');
+    const freshnessAsOf = machineCause ? machineLastSeenAt ?? model.asOfMs ?? null : model.asOfMs ?? null;
+    const [retrying, setRetrying] = React.useState(false);
+    const retryServerId = props.serverId ?? props.session?.serverId ?? undefined;
+    const retryFreshness = React.useCallback(() => {
+        if (retrying) return;
+        setRetrying(true);
+        const refresh = machineCause
+            ? sync.refreshMachines(retryServerId ? { serverId: retryServerId } : undefined)
+            : sync.refreshSessions();
+        fireAndForget(refresh.finally(() => setRetrying(false)), { tag: 'SessionSummaryCard.retryFreshness' });
+    }, [machineCause, retryServerId, retrying]);
 
     return (
         <View testID={testID} style={styles.root} accessibilityRole="summary">
@@ -544,9 +570,10 @@ export const SessionSummaryCard = React.memo(function SessionSummaryCard(props: 
                 // Retained facts stay at full strength under one freshness line (pane-states "Stale").
                 <SurfaceFreshnessLine
                     testID={`${testID}-freshness`}
-                    reason={offline && props.machineName
-                        ? t('sessionCompanion.freshness.machineOffline', { machine: props.machineName })
-                        : t('sessionBoard.board.stale')}
+                    asOf={freshnessAsOf}
+                    reason={freshnessReason}
+                    busy={retrying}
+                    action={{ label: t('common.retry'), onPress: retryFreshness }}
                 />
             ) : null}
             {exact ? (
@@ -617,20 +644,17 @@ export const SessionSummaryCard = React.memo(function SessionSummaryCard(props: 
             ) : null}
 
             {exact && visible.hiddenCount > 0 && props.onOpenFullSurface ? (
-                <Pressable
+                <HappierPressable
                     testID={`${testID}-more`}
                     accessibilityRole="button"
                     accessibilityLabel={t('sessionBoard.companion.summary.moreDetailsA11y', { count: visible.hiddenCount })}
                     onPress={props.onOpenFullSurface}
-                    style={({ pressed }) => [
-                        styles.row,
-                        { minHeight: resolveMinimumInteractiveTargetSize(Platform.OS) },
-                        pressed && styles.rowPressed,
-                    ]}
+                    hitReach={{ top: theme.space.s2 / 2, bottom: theme.space.s2 / 2 }}
+                    style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
                 >
                     <Text style={styles.footerLabel}>{t('sessionBoard.companion.summary.moreDetails')}</Text>
                     <Icon name="caret-right" size={14} color={theme.colors.text.link} mirrored={I18nManager.isRTL} />
-                </Pressable>
+                </HappierPressable>
             ) : null}
 
             {availabilityLabel ? (

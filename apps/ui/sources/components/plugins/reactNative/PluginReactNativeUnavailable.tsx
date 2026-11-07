@@ -5,7 +5,7 @@ import { SurfaceStateCard, type SurfaceStateAction } from '@/components/ui/surfa
 import { resolvePluginSurfaceStatePresentation } from '@/sync/domains/surfaces/copy';
 import { t } from '@/text';
 
-import { useOfflineSurfaceNotice } from '../shared/pluginSurfaceInteractionAvailability';
+import { PluginSurfaceMachineRecoveryContext, useOfflineSurfaceNotice } from '../shared/pluginSurfaceInteractionAvailability';
 
 type PluginReactNativeUnavailableProps = Readonly<{
     diagnostics?: readonly string[];
@@ -33,6 +33,8 @@ export function PluginReactNativeUnavailable(props: PluginReactNativeUnavailable
     )];
     const pending = props.retrying === true;
     const offlineNotice = useOfflineSurfaceNotice(false, props.subjectName ?? '');
+    // The host's Machine recovery: an offline card that says "choose another machine" offers that choice.
+    const machineRecovery = React.useContext(PluginSurfaceMachineRecoveryContext);
     const presentation = resolvePluginSurfaceStatePresentation({
         state: pending
             ? 'loading'
@@ -61,7 +63,8 @@ export function PluginReactNativeUnavailable(props: PluginReactNativeUnavailable
             kind={offline ? offlineNotice.kind : card.kind}
             title={offline ? offlineNotice.title : card.title}
             reason={offline ? offlineNotice.reason : card.reason}
-            action={action}
+            action={action ?? (offline ? machineRecovery?.retry : undefined)}
+            secondaryAction={offline ? machineRecovery?.chooseMachine : undefined}
             accessibilitySemantics={card.accessibilitySemantics}
             animationEnabled={props.animationEnabled}
             // The full diagnostic set stays reachable for QA via the testID

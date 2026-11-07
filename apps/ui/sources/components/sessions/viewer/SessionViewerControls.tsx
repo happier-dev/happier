@@ -31,7 +31,7 @@ import { t } from '@/text';
 
 import { useOptionalSessionViewerController } from './SessionViewerController';
 import type { SessionViewerSource } from './sessionViewerPresentation';
-import { resolveSessionViewerSourceLabel, useSessionViewerMachine } from './useSessionViewerMachine';
+import { useSessionViewerMachine } from './useSessionViewerMachine';
 
 /** The gap between the frame's floating capsules. */
 const ROW_GAP = 6;
@@ -40,13 +40,18 @@ const SOURCE_PICKER_WIDTH = 360;
 /** The Machine name is identity, not content: past this width it ellipsizes inside its chip. */
 const IDENTITY_MAX_WIDTH = 176;
 
-const stylesheet = StyleSheet.create(() => ({
+const stylesheet = StyleSheet.create((theme) => ({
+  // The window's own header: the row stands on the floating paint, so the transcript under a floating
+  // frame never reads through the gaps between its capsules (lab LV's solid header).
   row: {
     flex: 1,
     minWidth: 0,
+    alignSelf: 'stretch',
     flexDirection: 'row',
     alignItems: 'center',
     gap: ROW_GAP,
+    borderRadius: HAPPIER_CONTROL_CAPSULE_METRICS.height / 2,
+    backgroundColor: theme.colors.edge.floatingFill,
   },
   identity: {
     minWidth: 0,
@@ -79,7 +84,12 @@ export function SessionViewerControls(
     serverId: string | null;
     source: SessionViewerSource;
     frame?: SessionViewerFrameCommands;
-    /** The narrowest row these controls fit in (the source switch and the buttons side by side). */
+    /**
+     * The frame's width. Below the labelled row's own width (a frame the window narrowed) the controls
+     * take the phone's composition: the switch as its glyphs, the Machine chip ellipsizing.
+     */
+    frameWidth?: number;
+    /** The narrowest row these controls fit in with their labels (the source switch and the buttons side by side). */
     onMinWidthChange?: (width: number) => void;
   }>,
 ): React.ReactElement | null {
@@ -90,17 +100,26 @@ export function SessionViewerControls(
     React.useState<ComputerTargetPickerRequest | null>(null);
   const sourceAnchorRef = React.useRef<View | null>(null);
   const widthsRef = React.useRef({ source: 0, identity: 0, buttons: 0 });
+  // The labelled row's width, as measured with its labels; the glyph-only form never rewrites it.
+  const [labelledWidth, setLabelledWidth] = React.useState(0);
+  const narrow =
+    props.frameWidth !== undefined && labelledWidth > 0 && props.frameWidth < labelledWidth;
+  const compactRef = React.useRef(false);
   const onMinWidthChange = props.onMinWidthChange;
   const measure = React.useCallback(
     (part: 'source' | 'identity' | 'buttons') => (event: Pick<LayoutChangeEvent, 'nativeEvent'>) => {
+      // The glyph-only switch and an ellipsized chip measure their own compact output: not the row.
+      if (compactRef.current && part !== 'buttons') return;
       widthsRef.current[part] = event.nativeEvent.layout.width;
       const { source, identity, buttons } = widthsRef.current;
       // The Machine chip is part of the row it has to fit in: its name shows whole (up to the chip's
       // own cap) instead of being squeezed to its status dot by the switch and the buttons.
-      if (source > 0 && buttons > 0)
-        onMinWidthChange?.(
-          Math.ceil(source + buttons + ROW_GAP + (identity > 0 ? identity + ROW_GAP : 0)),
-        );
+      if (source > 0 && buttons > 0) {
+        // The row's gap also stands on each side of the spacer between the left and right capsules.
+        const width = Math.ceil(source + buttons + ROW_GAP * 2 + (identity > 0 ? identity + ROW_GAP : 0));
+        setLabelledWidth(width);
+        onMinWidthChange?.(width);
+      }
     },
     [onMinWidthChange],
   );
@@ -111,6 +130,10 @@ export function SessionViewerControls(
   );
   const capsuleColors = useCoreCapsuleColors();
   if (!controller) return null;
+  // A phone frame is as wide as the column; a floating frame the window narrowed below the labelled
+  // row recomposes the same way rather than clip its buttons.
+  const compact = controller.phone || narrow;
+  compactRef.current = narrow;
   const { apply, requestSemantic, canPresentSource } = controller;
   const facts = controller.facts[props.source];
   // Each drawn button's hit area reaches the touch target without the capsule
@@ -126,8 +149,11 @@ export function SessionViewerControls(
     },
   });
   const expanded = controller.state.mode === 'expanded';
+  // The switch names the kind of source in a short noun (lab 63s1); the selected window or display
+  // is named by the presence footer and the frame's accessible name, so a long window title never
+  // widens the controls band (and with it the narrowest frame) past the picture.
   const sourceLabel = (source: SessionViewerSource) =>
-    resolveSessionViewerSourceLabel(source, controller.facts[source]?.targetTitle);
+    t(source === 'computer' ? 'computerUse.presentation.sourceComputer' : 'computerUse.presentation.sourceBrowser');
   const choosePickerTarget = () => {
     // Desktop anchors the picker to the switch; a phone keeps the picker's own bottom sheet.
     const request = controller.phone
@@ -154,18 +180,18 @@ export function SessionViewerControls(
   }
   if (!controller.phone && !expanded && props.frame) {
     menuItems.push(
-      { id: 'tl', title: t('computerUse.presentation.moveTopLeft') },
-      { id: 'tr', title: t('computerUse.presentation.moveTopRight') },
-      { id: 'bl', title: t('computerUse.presentation.moveBottomLeft') },
-      { id: 'br', title: t('computerUse.presentation.moveBottomRight') },
-      { id: 'larger', title: t('computerUse.presentation.larger') },
-      { id: 'smaller', title: t('computerUse.presentation.smaller') },
+      { id: 'tl', title: t('presentation.moveTopLeft') },
+      { id: 'tr', title: t('presentation.moveTopRight') },
+      { id: 'bl', title: t('presentation.moveBottomLeft') },
+      { id: 'br', title: t('presentation.moveBottomRight') },
+      { id: 'larger', title: t('presentation.larger') },
+      { id: 'smaller', title: t('presentation.smaller') },
     );
   }
   if (!controller.phone) {
     menuItems.push({
       id: 'dock',
-      title: t('computerUse.presentation.dockView'),
+      title: t('presentation.dockView'),
       testID: 'session-viewer-menu-dock',
     });
   }
@@ -204,9 +230,9 @@ export function SessionViewerControls(
           <SegmentedTabBar
             presentation="plain"
             compact
-            // A phone frame is as wide as the column: the sources are their glyphs, so the Machine's
-            // name has the room it needs beside the switch.
-            labels={controller.phone ? 'none' : undefined}
+            // A phone frame is as wide as the column, and a narrowed floating frame is narrower than
+            // the labelled row: the sources are their glyphs, so the Machine's name has room beside them.
+            labels={compact ? 'none' : undefined}
             segmentSizing="content"
             accessibilityLabel={t('computerUse.presentation.sourceA11y')}
             testIDPrefix="session-viewer-source"
@@ -240,7 +266,7 @@ export function SessionViewerControls(
           // wide as the column, so there the chip ellipsizes in what is left.
           style={[
             stylesheet.identity,
-            controller.phone ? stylesheet.identityShrinks : null,
+            compact ? stylesheet.identityShrinks : null,
           ]}
           onLayout={measure('identity')}
           testID="session-viewer-machine"
@@ -276,13 +302,13 @@ export function SessionViewerControls(
             iconName={expanded ? 'arrows-in' : 'arrows-out'}
             accessibilityLabel={t(
               expanded
-                ? 'computerUse.presentation.restoreView'
-                : 'computerUse.presentation.expandView',
+                ? 'presentation.restoreView'
+                : 'presentation.expandView',
             )}
             tooltip={t(
               expanded
-                ? 'computerUse.presentation.restoreView'
-                : 'computerUse.presentation.expandView',
+                ? 'presentation.restoreView'
+                : 'presentation.expandView',
             )}
             onPress={() => {
               void requestSemantic({
@@ -304,8 +330,8 @@ export function SessionViewerControls(
                   variant="plain"
                   {...buttonTarget('middle')}
                   iconName="dots-three"
-                  accessibilityLabel={t('computerUse.presentation.viewOptions')}
-                  tooltip={t('computerUse.presentation.viewOptions')}
+                  accessibilityLabel={t('presentation.viewOptions')}
+                  tooltip={t('presentation.viewOptions')}
                   onPress={toggle}
                 />
               )}
@@ -316,9 +342,9 @@ export function SessionViewerControls(
             variant="plain"
             {...buttonTarget('last')}
             iconName="x"
-            accessibilityLabel={t('computerUse.presentation.closeView')}
+            accessibilityLabel={t('presentation.closeView')}
             accessibilityHint={t('computerUse.presentation.closeHint')}
-            tooltip={t('computerUse.presentation.closeView')}
+            tooltip={t('presentation.closeView')}
             onPress={() => {
               void requestSemantic({ kind: 'viewer.close' });
             }}

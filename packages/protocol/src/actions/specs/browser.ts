@@ -1,6 +1,6 @@
-import { BrowserProfileLoginsImportV1Schema, BrowserProfileLoginsImportResultV1Schema } from '../../browser/profile/loginsV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { BROWSER_EXTENSION_ACTION_INPUT_SCHEMAS, BROWSER_EXTENSION_ACTION_OUTPUT_SCHEMAS } from '../browserExtensionActions.js';
+import { BrowserProfileLoginsImportV1Schema, BrowserProfileLoginsImportResultV1Schema } from '../../browser/profile/loginsV1.js';
 import { z } from 'zod/mini';
 
 import type { RuntimeActionIdV1 } from '../actionIds.js';
@@ -254,7 +254,7 @@ export const BROWSER_RUNTIME_ACTION_TITLES: Readonly<Partial<Record<RuntimeActio
   'browser.automation.focus': 'Focus browser element',
   'browser.automation.select': 'Select browser option',
   'browser.automation.setValue': 'Set browser field value',
-  'browser.automation.secret.fill': 'Request confidential browser credential entry',
+  'browser.automation.secret.fill': 'Enter a credential in the browser',
   'browser.automation.upload': 'Upload files to browser input',
   'browser.automation.clipboardRead': 'Copy browser selection',
   'browser.automation.clipboardWrite': 'Paste into browser',

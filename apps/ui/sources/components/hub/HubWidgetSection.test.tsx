@@ -2,7 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
-import { PluginProjectionV2Schema } from '@happier-dev/protocol';
+import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { WIDGET_SIZE_POLICY_V1, type WidgetInstanceV1 } from '@happier-dev/protocol/widgets';
 
 import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
@@ -10,8 +10,8 @@ import { normalizePluginUiProjection, type PluginUiProjectionModel } from '@/syn
 import { unionPluginUiProjections } from '@/sync/domains/plugins/ui/projectionUnion';
 import { createNearViewportTracker } from '@/components/widgets/nearViewport';
 import {
-    PluginAppPageLaunchInputScope, usePluginAppPageLaunch, usePluginAppPageLaunchInputStaging,
-} from '@/components/appShell/plugins/pluginAppPageNavigation';
+    PluginPageLaunchInputScope, usePluginPageLaunch, usePluginPageLaunchInputStaging,
+} from '@/components/plugins/pages/pluginPageNavigation';
 import { clearActiveUnsavedChangesGuard, setActiveUnsavedChangesGuard } from '@/utils/navigation/runGuardedNavigation';
 import { HubWidgetSection } from './HubWidgetSection';
 import { AppShellPluginUiProjectionValueProvider } from '@/components/appShell/plugins/AppShellPluginUiProjection';
@@ -34,9 +34,9 @@ vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 const initialState = storage.getState();
 
-function Projection({ children }: React.PropsWithChildren) {
-    return <AppShellPluginUiProjectionValueProvider value={{ pluginUiProjection: boundary.projection,
-        pluginBrowserProjection: null, phase: 'current', interactionEnabled: true, machineId: null,
+function Projection({ children, phase = 'current' }: React.PropsWithChildren<{ phase?: 'current' | 'establishing' }>) {
+    return <AppShellPluginUiProjectionValueProvider value={{ pluginUiProjection: phase === 'establishing' ? null : boundary.projection,
+        pluginBrowserProjection: null, phase, interactionEnabled: phase === 'current', machineId: null,
         serverId: 'home-a', platform: 'web', accountLifetime: null,
         clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {}, reloadConnectedAccountProjection: () => {} }}>
         {children}
@@ -59,12 +59,12 @@ function projection(availability: 'available' | 'disabled' = 'available', phase:
 const widget = { sizeDeclaration: { sizes: [...WIDGET_SIZE_POLICY_V1.home.sizes], defaultSize: WIDGET_SIZE_POLICY_V1.home.defaultSize }, key: 'acme.notes/status', surface: { pluginId: 'acme.notes', localId: 'status' }, title: 'Notes status', pluginName: 'Notes', sharedPluginName: false, icon: 'note' as const, homeDefault: 'shown' as const, target: 'app' as const };
 const instance = { v: 1 as const, id: 'notes-copy', definition: { kind: 'installed' as const, surface: widget.surface }, bindings: {} };
 function LaunchProbe() {
-    boundary.stage = usePluginAppPageLaunchInputStaging();
-    const open = usePluginAppPageLaunch({ pluginId: 'acme.notes', localId: 'notes', subPath: '' });
+    boundary.stage = usePluginPageLaunchInputStaging();
+    const open = usePluginPageLaunch({ pluginId: 'acme.notes', localId: 'notes', subPath: '' });
     return <>{open ? JSON.stringify(open.input) ?? 'input-cleared' : 'no-open'}</>;
 }
 function home() {
-    return <Projection><PluginAppPageLaunchInputScope pluginUiProjection={boundary.projection}><LaunchProbe /><HubWidgetSection widget={widget} instance={instance} frameStyle="plain" menu={null} tracker={createNearViewportTracker({ quantum: 40, initialViewportHeight: 800 })} testID="home-widget" /></PluginAppPageLaunchInputScope></Projection>;
+    return <Projection><PluginPageLaunchInputScope target={{ kind: 'app' }} pluginUiProjection={boundary.projection}><LaunchProbe /><HubWidgetSection widget={widget} instance={instance} frameStyle="plain" menu={null} tracker={createNearViewportTracker({ quantum: 40, initialViewportHeight: 800 })} testID="home-widget" /></PluginPageLaunchInputScope></Projection>;
 }
 beforeEach(() => { boundary.projection = projection(); boundary.pushed = []; boundary.moments = {}; clearActiveUnsavedChangesGuard(); });
 afterEach(() => { clearActiveUnsavedChangesGuard(); standardCleanup(); storage.setState(initialState, true); });
@@ -211,7 +211,8 @@ describe('a card whose definition has not arrived', () => {
         testID="home-pending" {...extra} />;
 
     it('draws a skeleton title rather than the word "Widget", and uses the first name it knows', async () => {
-        const unknown = await frameTitle(pending({}));
+        // Only an establishing app-shell projection is a name still to come (d490e2e3c1); a settled one names the card.
+        const unknown = await frameTitle(<Projection phase="establishing">{pending({})}</Projection>);
         expect(React.isValidElement(unknown.title)).toBe(true);
         expect(unknown.text).not.toContain('boards.widgets.kind');
         // A settled installed widget whose surface cannot mount is named by the plugin it belongs to, not a placeholder word.
@@ -224,5 +225,33 @@ describe('a card whose definition has not arrived', () => {
             .toSatisfy((title: unknown) => React.isValidElement(title));
         expect((await frameTitle(pending({ widget }))).title).toBe('Notes status');
         expect((await frameTitle(pending({}, { ...instance, displayName: 'Ops table' }))).title).toBe('Ops table');
+    });
+});
+
+describe('Home widget projection subscription', () => {
+    it('does not redraw a built card or its body when only executable activation or Connected Account facts change', async () => {
+        const base = { pluginUiProjection: boundary.projection, pluginBrowserProjection: null, phase: 'current' as const,
+            interactionEnabled: true, machineId: null, serverId: 'home-a', platform: 'web' as const, accountLifetime: null,
+            clientExecutableActivation: { status: 'ready' as const }, reloadClientExecutables: () => {}, reloadConnectedAccountProjection: () => {} };
+        type Value = React.ComponentProps<typeof AppShellPluginUiProjectionValueProvider>['value'];
+        let renders = 0;
+        let publish!: (next: Value) => void;
+        // One element for the whole run: only a subscriber inside the card can report a render.
+        const card = <React.Profiler id="home-quiet" onRender={() => { renders++; }}>
+            <HubWidgetSection widget={widget} instance={instance} frameStyle="plain" menu={null} tracker={null} testID="home-quiet" />
+        </React.Profiler>;
+        function Host(props: React.PropsWithChildren) {
+            const [value, setValue] = React.useState<Value>(base);
+            publish = setValue;
+            return <AppShellPluginUiProjectionValueProvider value={value}>{props.children}</AppShellPluginUiProjectionValueProvider>;
+        }
+        const screen = await renderScreen(<Host>{card}</Host>);
+        await flushHookEffects({ cycles: 3 });
+        expect(screen.findAllHostsByTestId('home-quiet.body')).toHaveLength(1);
+        const before = renders;
+        await act(async () => { publish({ ...base, clientExecutableActivation: { status: 'establishing' } }); });
+        await act(async () => { publish({ ...base, connectedAccountProjectionRevision: 2 }); });
+        await flushHookEffects({ cycles: 3 });
+        expect(renders - before).toBe(0);
     });
 });

@@ -8,6 +8,7 @@ import {
 } from '@happier-dev/plugin-ui/presentation';
 
 import { renderWithAppProviders } from '@/dev/testkit/render/renderWithAppProviders';
+import { t } from '@/text';
 import { invokeTestInstanceHandler } from '@/dev/testkit/render/renderScreen';
 import type { BrowserCopresence } from '@/sync/domains/browser/automation/copresence';
 
@@ -21,7 +22,9 @@ import {
 import { SessionViewerControllerProvider } from './SessionViewerControllerProvider';
 import { SessionViewerHost } from './SessionViewerHost';
 import { SESSION_VIEWER_EDGE } from './sessionViewerGeometry';
+import { RetainedPresentationFloatingLayerContext } from '@/components/ui/presentation/retainedPresentationSlots';
 import {
+  SessionCockpitBottomChromeHeightContext,
   SessionCockpitChromeRegistryProvider,
   useReportSessionCockpitComposerChromeHeight,
 } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
@@ -85,13 +88,14 @@ function Tree(
     targetTitle?: string | null;
     aspectRatio?: number;
     agentTitle?: string;
+    phone?: boolean;
   }>,
 ) {
   return (
     <SessionViewerControllerProvider
       sessionId="session-a"
       serverId="home-a"
-      phone={false}
+      phone={props.phone === true}
       canPresentSource={() => true}
       openDocked={() => {}}
     >
@@ -126,17 +130,17 @@ async function mountOpen(
 }
 
 describe('SessionViewerHost', () => {
-  it('propagates the selected display title to the frame and source switch independently of picture or recovery state', async () => {
+  it('names the selected display in the frame while the source switch keeps its short kind label, independently of picture or recovery state', async () => {
     const { result, harness, frame } = await mountOpen(AGENT_PRESENCE, { width: 1200, height: 800 });
     try {
       await result.update(<Tree harness={harness} presence={{ kind: 'unconfirmed', controlEpoch: 2 }} targetTitle="primary" />);
       expect(frame().props.accessibilityLabel).toContain('primary');
       const source = () => result.tree.root.findAll(node => node.props.testID === 'session-viewer-source:computer'
         && typeof node.props.accessibilityLabel === 'string')[0];
-      expect(source()?.props.accessibilityLabel).toBe('primary');
+      expect(source()?.props.accessibilityLabel).toBe(t('computerUse.presentation.sourceComputer'));
       await result.update(<Tree harness={harness} presence={HUMAN_PRESENCE} targetTitle="secondary" />);
       expect(frame().props.accessibilityLabel).toContain('secondary');
-      expect(source()?.props.accessibilityLabel).toBe('secondary');
+      expect(source()?.props.accessibilityLabel).toBe(t('computerUse.presentation.sourceComputer'));
       await result.update(<Tree harness={harness} presence={AGENT_PRESENCE} />);
       expect(frame().props.accessibilityLabel).not.toContain('secondary');
     } finally { await result.unmount(); }
@@ -235,6 +239,29 @@ describe('SessionViewerHost', () => {
     // The chip's own width and the gap that separates it join the row.
     expect((frame().props.minWidth as number) - withoutChip).toBe(100 + 6);
     await result.unmount();
+  });
+
+  it('ends a phone\'s expanded viewer above the floating tab bar, so who acts and Hand back stay reachable', async () => {
+    const tabBar = 84;
+    const harness: Harness = { controller: null };
+    const result = await renderWithAppProviders(
+      <SessionCockpitBottomChromeHeightContext.Provider value={tabBar}>
+        <Tree harness={harness} presence={HUMAN_PRESENCE} phone />
+      </SessionCockpitBottomChromeHeightContext.Provider>,
+    );
+    try {
+      await act(async () => { harness.controller!.port.apply({ kind: 'viewer.open', source: 'computer' }); });
+      await act(async () => { harness.controller!.port.apply({ kind: 'viewer.expand' }); });
+      await act(async () => {
+        invokeTestInstanceHandler(
+          result.tree.root.findByProps({ testID: 'session-viewer-host' }),
+          'onLayout',
+          { nativeEvent: { layout: { x: 0, y: 0, width: 390, height: 760 } } },
+        );
+      });
+      const rect = result.tree.root.findByType(FloatingFrame).props.rect as FrameRect;
+      expect(rect.y + rect.height).toBeLessThanOrEqual(760 - tabBar - SESSION_VIEWER_EDGE);
+    } finally { await result.unmount(); }
   });
 
   it('opens in the corner above the composer band, and lets the person settle it over the composer', async () => {
@@ -374,9 +401,93 @@ describe('SessionViewerHost', () => {
       await layOut('session-viewer-buttons-capsule', 90);
       expect(harness.controller!.state.mode).toBe('floating');
       const frame = result.tree.root.findByType(FloatingFrame);
-      expect(frame.props.minWidth).toBe(453);
-      expect(frame.props.rect.width).toBeGreaterThanOrEqual(453);
+      // Switch, chip and buttons with the row's gap on each side of the spacer between them.
+      expect(frame.props.minWidth).toBe(300 + 51 + 90 + 6 * 3);
+      expect(frame.props.rect.width).toBeGreaterThanOrEqual(300 + 51 + 90 + 6 * 3);
       expect(frame.props.rect.height).toBeLessThanOrEqual(frame.props.availableRect.height);
+    } finally { await result.unmount(); }
+  });
+
+  it('floats over the whole window when the app offers its floating layer: placed outside the Session column, never clamped to it', async () => {
+    // Plan 63 A1: the person may put the viewer anywhere in the viewport (over the sidebar or the
+    // right pane); only the window's edges and safe areas bound it. The Session column sits at
+    // x 300 in a 1440 x 900 window.
+    const layer = { present: (node: React.ReactNode) => node, measure: () => ({ x: 0, y: 0, width: 1440, height: 900 }) };
+    const harness: Harness = { controller: null };
+    const result = await renderWithAppProviders(
+      <RetainedPresentationFloatingLayerContext.Provider value={layer}>
+        <Tree harness={harness} presence={AGENT_PRESENCE} />
+      </RetainedPresentationFloatingLayerContext.Provider>,
+      {
+        createNodeMock: (element) => element.props.testID === 'session-viewer-host'
+          ? { measureInWindow: (callback: (x: number, y: number, width: number, height: number) => void) => callback(300, 40, 700, 860) }
+          : null,
+      },
+    );
+    try {
+      await act(async () => { harness.controller!.port.apply({ kind: 'viewer.open', source: 'computer' }); });
+      await act(async () => {
+        invokeTestInstanceHandler(
+          result.tree.root.findByProps({ testID: 'session-viewer-host' }),
+          'onLayout',
+          { nativeEvent: { layout: { x: 0, y: 0, width: 700, height: 860 } } },
+        );
+      });
+      const frame = () => result.tree.root.findByType(FloatingFrame);
+      expect(frame().props.availableRect).toEqual({
+        x: SESSION_VIEWER_EDGE, y: SESSION_VIEWER_EDGE, width: 1440 - SESSION_VIEWER_EDGE * 2, height: 900 - SESSION_VIEWER_EDGE * 2,
+      });
+      // It first opens in the Session's reading corner, in window space.
+      const opened = frame().props.rect as FrameRect;
+      expect(opened.x).toBeGreaterThanOrEqual(300 + SESSION_VIEWER_EDGE);
+      expect(opened.x + opened.width).toBeLessThanOrEqual(300 + 700 - SESSION_VIEWER_EDGE);
+      // Over the sidebar on the left and over the right pane: the placement stays the person's.
+      const overSidebar = { ...opened, x: SESSION_VIEWER_EDGE, y: SESSION_VIEWER_EDGE };
+      await act(async () => { frame().props.onRectChange(overSidebar, { kind: 'settle' }); });
+      expect(harness.controller!.state.rect).toEqual(overSidebar);
+      const overRightPane = { ...opened, x: 1440 - SESSION_VIEWER_EDGE - opened.width };
+      await act(async () => { frame().props.onRectChange(overRightPane, { kind: 'settle' }); });
+      expect(harness.controller!.state.rect).toEqual(overRightPane);
+    } finally { await result.unmount(); }
+  });
+
+  it('gives the controls the glyph-only switch while the frame is narrower than their labelled row, and the labels back when it is wide again', async () => {
+    const { result, frame } = await mountOpen(AGENT_PRESENCE, { width: 1200, height: 800 });
+    const switchLabels = () => result.tree.root.findAll(
+      (node) => node.props?.testIDPrefix === 'session-viewer-source' && 'labels' in node.props,
+    )[0]?.props.labels;
+    const layOut = async (testID: string, width: number) => {
+      await act(async () => {
+        invokeTestInstanceHandler(
+          result.tree.root.find((node) => node.props?.testID === testID && typeof node.props.onLayout === 'function'),
+          'onLayout',
+          { nativeEvent: { layout: { x: 0, y: 0, width, height: 32 } } },
+        );
+      });
+    };
+    const area = async (width: number, height: number) => {
+      await act(async () => {
+        invokeTestInstanceHandler(
+          result.tree.root.findByProps({ testID: 'session-viewer-host' }),
+          'onLayout',
+          { nativeEvent: { layout: { x: 0, y: 0, width, height } } },
+        );
+      });
+    };
+    try {
+      await layOut('session-viewer-source-capsule', 220);
+      await layOut('session-viewer-machine', 100);
+      await layOut('session-viewer-buttons-capsule', 90);
+      expect(switchLabels()).toBeUndefined();
+      // A short window: the picture's shape narrows the frame below the labelled row.
+      await area(1200, 200);
+      expect((frame().props.rect as FrameRect).width).toBeLessThan(frame().props.minWidth as number);
+      expect(switchLabels()).toBe('none');
+      // Its glyph-only measurement does not become the frame's minimum (no measure-own-output loop).
+      await layOut('session-viewer-source-capsule', 80);
+      expect(frame().props.minWidth).toBe(220 + 100 + 90 + 6 * 3);
+      await area(1200, 800);
+      expect(switchLabels()).toBeUndefined();
     } finally { await result.unmount(); }
   });
 

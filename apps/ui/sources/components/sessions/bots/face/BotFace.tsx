@@ -6,9 +6,10 @@ import { PlanetCanvas } from '@/components/atmosphere/PlanetCanvas';
 import type { BotMotion } from '@happier-dev/protocol/account/settings/accountSettings';
 
 import { botFaceHeroPose, botFaceMoodMouth, type BotFaceMood, type BotFaceMutter } from './botFaceGeometry';
-import { BOT_FACE_LOOK_REST, registerBotFaceBrain, type BotFaceBrainHandle, type BotFaceLook, type BotFaceTurnKind } from './botFaceIdle';
-import { resolveBotFaceArt, type BotFaceIdentity, type BotFaceStyle } from './botFaceIdentity';
-import { botFaceArtHash } from '@happier-dev/protocol/sessions/identity/sessionBotFaceV1';
+import { BOT_FACE_LOOK_REST, botFaceRestLoop, registerBotFaceBrain, type BotFaceBrainHandle, type BotFaceLook, type BotFaceTurnKind } from './botFaceIdle';
+import { BotFaceLoopPlayer } from './BotFaceLoopPlayer';
+import { type BotFaceIdentity, type BotFaceStyle } from './botFaceIdentity';
+import { useBotFaceDrawings } from './useBotFaceDrawings';
 import { botFaceRasterStep, drawBotFaceRaster, type BotFaceRasterImage, type BotFaceRasterInput, type BotFaceTurn } from './botFaceRaster';
 import { createBotFaceScene } from './botFaceScene';
 import { BotFaceRasterView } from './BotFaceRasterView';
@@ -42,6 +43,7 @@ export type BotFaceProps = Readonly<{
 }>;
 
 type Frame = Readonly<{
+  drawRaster: (input: BotFaceRasterInput) => BotFaceRasterImage;
   identity: BotFaceIdentity;
   style: BotFaceStyle;
   size: number;
@@ -58,7 +60,9 @@ type Frame = Readonly<{
  */
 export const BotFace = React.memo(function BotFace(props: BotFaceProps) {
   const { theme } = useUnistyles();
+  const drawRaster = useBotFaceDrawings(props.identity);
   const frame: Frame = {
+    drawRaster,
     identity: props.identity,
     style: props.style,
     size: props.size,
@@ -71,7 +75,7 @@ export const BotFace = React.memo(function BotFace(props: BotFaceProps) {
     <View
       testID={props.testID}
       accessible={Boolean(props.accessibilityLabel)}
-      accessibilityRole="image"
+      accessibilityRole={props.accessibilityLabel ? 'image' : undefined}
       accessibilityLabel={props.accessibilityLabel}
       style={{ width: props.size, height: props.size }}
     >
@@ -112,25 +116,6 @@ function motionDrawing(frame: Frame): Readonly<{ posed: boolean; grain?: number;
 }
 const restingMoment = (mood: BotFaceMood): BotFaceMotionMoment => ({ channels: BOT_FACE_REST, from: mood, to: mood, u: 1 });
 
-/**
- * List drawings a face returns to (a turn bucket, a mutter step, a moment's quantised pose), kept per drawn identity
- * (its art and colour, so a remounted row or the same Bot on another surface reuses them): a face takes few positions
- * and a moment replays the same poses, so after its first plays it reuses them instead of drawing again (R7/R8 "cache
- * pose rasters per state", R10 §2.2). Bounded by the Bots shown times their quantised poses.
- */
-const listDrawings = new Map<string, Map<string, BotFaceRasterImage>>();
-function drawListRaster(input: BotFaceRasterInput): BotFaceRasterImage {
-  const owner = `${input.identity.colour}|${botFaceArtHash(resolveBotFaceArt(input.identity))}`;
-  let drawings = listDrawings.get(owner);
-  if (!drawings) { drawings = new Map(); listDrawings.set(owner, drawings); }
-  const m = input.moment;
-  const key = [input.style, input.size, input.dpr, input.theme, input.mood, input.monochrome ? 1 : 0, input.look ?? 0, input.mutter ?? '',
-    m ? [m.from, m.to, m.u, m.pad, m.channels.tx, m.channels.ty, m.channels.sx, m.channels.sy, m.channels.rot, m.turn?.yaw, m.turn?.pitch, m.turn?.roll].join(',') : ''].join('|');
-  let image = drawings.get(key);
-  if (!image) { image = drawBotFaceRaster(input); drawings.set(key, image); }
-  return image;
-}
-
 /** A Dots face mid-moment (R8 C): the body and its smile as two layers, the smile sliding with the turn. */
 function BotFaceLayered(props: Readonly<{ frame: Frame; smile: NonNullable<BotFaceMotionLayers['smile']>; mutter: BotFaceMutter | null }>) {
   const { identity, size, mood, monochrome, theme, dpr } = props.frame;
@@ -155,15 +140,15 @@ function stagePad(frame: Frame): number {
  * resting turn is one of the face's few cached drawings.
  */
 function BotFacePosed(props: Readonly<{ frame: Frame; style: 'dither' | 'solid'; moment: BotFaceMotionMoment; turn: BotFaceTurn | null; mutter: BotFaceMutter | null }>) {
-  const { identity, size, monochrome, theme, dpr, mood } = props.frame;
+  const { identity, size, monochrome, theme, dpr, mood, drawRaster } = props.frame;
   const { style, turn } = props;
   const mutter = props.mutter ?? undefined;
   const { channels, from, to, u } = props.moment;
   const pad = stagePad(props.frame);
   const image = React.useMemo(() => {
     const input: BotFaceRasterInput = { identity, style, size, monochrome, theme, dpr, mood, mutter, moment: { channels, from, to, u, pad, ...(turn ? { turn } : {}) } };
-    return drawListRaster(input);
-  }, [identity, style, size, monochrome, theme, dpr, mood, mutter, channels, from, to, u, pad, turn]);
+    return drawRaster(input);
+  }, [identity, style, size, monochrome, theme, dpr, mood, mutter, channels, from, to, u, pad, turn, drawRaster]);
   const frame = props.frame;
   return (
     <View style={{ width: frame.size, height: frame.size }}>
@@ -210,7 +195,9 @@ function BotFaceHero(props: Readonly<{ frame: Frame; visible: boolean; mode: Bot
   const { identity, style, size, mood, monochrome, theme, dpr } = props.frame;
   const t = useBotFaceMoment(mood, eligible, props.mode === 'reactions');
   const lively = eligible && props.mode === 'lively';
-  const [look, setLook] = React.useState<BotFaceLook>(BOT_FACE_LOOK_REST);
+  const [brainState, setLook] = React.useState<BotFaceLook | 'loop'>(BOT_FACE_LOOK_REST);
+  const looping = brainState === 'loop';
+  const look = looping ? BOT_FACE_LOOK_REST : brainState;
   const brain = React.useRef<BotFaceBrainHandle | null>(null);
   const moodNow = React.useRef(mood);
   moodNow.current = mood;
@@ -242,39 +229,64 @@ function BotFaceHero(props: Readonly<{ frame: Frame; visible: boolean; mode: Bot
   const breathStyle = useAnimatedStyle(() => ({ transformOrigin: '50% 90%', transform: [{ scaleY: 1 + botFaceMotionTokens.alive.heroBreath.sy * breath.get() }] }));
   const resting = t === null;
   const lookYaw = resting ? look.yaw : 0, lookPitch = resting ? look.pitch : 0, lookRoll = resting ? look.roll : 0, mutter = resting ? look.mutter : null;
+  // A settled Lively hero plays its looks, nods and mutter as a loop on the animation driver.
+  const loop = React.useMemo(() => (looping && resting ? botFaceRestLoop({ seed: identity.seed, turns: 'full', hero: true, mood }) : null), [looping, resting, identity.seed, mood]);
+  const loopFrame = React.useCallback((at: BotFaceLook) => <BotFaceHeroLook frame={props.frame} look={at} />,
+    // The frame object is rebuilt per render; its fields are the drawing's inputs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [identity, style, size, mood, monochrome, theme, dpr]);
+  // Hooks stay unconditional: a loop and a live drawing alternate in the same slot.
+  const draw = React.useCallback(
+    () => {
+      const pose = botFaceHeroPose(mood, t ?? 0, identity.seed, t === null);
+      return {
+        identity,
+        style,
+        size,
+        mood,
+        monochrome,
+        theme,
+        dpr,
+        hero: {
+          pose: { ...pose, yaw: pose.yaw + lookYaw, pitch: pose.pitch + lookPitch, roll: pose.roll + lookRoll,
+            ...(mutter !== null && mood === 'working' ? { mouth: botFaceMoodMouth('working', mutter) } : {}) },
+          t: t ?? 0,
+          rest: t === null,
+        },
+      };
+    },
+    [identity, style, size, mood, monochrome, theme, dpr, t, lookYaw, lookPitch, lookRoll, mutter],
+  );
   return (
     <View ref={ref} collapsable={false} onLayout={measure}>
       <Animated.View testID={lively ? 'bot-face-hero-breath' : undefined} style={breathStyle}>
-      <BotFacePaint
-        frame={props.frame}
-        draw={React.useCallback(
-          () => {
-            const pose = botFaceHeroPose(mood, t ?? 0, identity.seed, t === null);
-            return {
-              identity,
-              style,
-              size,
-              mood,
-              monochrome,
-              theme,
-              dpr,
-              hero: {
-                pose: { ...pose, yaw: pose.yaw + lookYaw, pitch: pose.pitch + lookPitch, roll: pose.roll + lookRoll,
-                  ...(mutter !== null && mood === 'working' ? { mouth: botFaceMoodMouth('working', mutter) } : {}) },
-                t: t ?? 0,
-                rest: t === null,
-              },
-            };
-          },
-          [identity, style, size, mood, monochrome, theme, dpr, t, lookYaw, lookPitch, lookRoll, mutter],
-        )}
-      />
+      {loop ? <BotFaceLoopPlayer loop={loop} seed={identity.seed} size={size}>{loopFrame}</BotFaceLoopPlayer> : <BotFacePaint frame={props.frame} draw={draw} />}
       </Animated.View>
     </View>
   );
 }
 
-type Draw = () => Frame &
+/** One drawing of a resting hero's loop: its rest pose turned by `look`, with the mutter mouth. */
+function BotFaceHeroLook(props: Readonly<{ frame: Frame; look: BotFaceLook }>) {
+  const { look } = props;
+  const { identity, style, size, mood, monochrome, theme, dpr } = props.frame;
+  return (
+    <BotFacePaint
+      frame={props.frame}
+      draw={React.useCallback(() => {
+        const pose = botFaceHeroPose(mood, 0, identity.seed, true);
+        return { identity, style, size, mood, monochrome, theme, dpr, hero: {
+          pose: { ...pose, yaw: pose.yaw + look.yaw, pitch: pose.pitch + look.pitch, roll: pose.roll + look.roll,
+            ...(look.mutter !== null && mood === 'working' ? { mouth: botFaceMoodMouth('working', look.mutter) } : {}) },
+          t: 0,
+          rest: true,
+        } };
+      }, [identity, style, size, mood, monochrome, theme, dpr, look])}
+    />
+  );
+}
+
+type Draw = () => Omit<Frame, 'drawRaster'> &
   Readonly<{
     hero:
       | { pose: ReturnType<typeof botFaceHeroPose>; t: number; rest: boolean }
@@ -293,9 +305,9 @@ function BotFacePaint(props: Readonly<{ frame: Frame; draw: Draw }>) {
         }
       : {
           kind: 'raster' as const,
-          image: input.hero ? drawBotFaceRaster({ ...input, style: input.style }) : drawListRaster({ ...input, style: input.style }),
+          image: input.hero ? drawBotFaceRaster({ ...input, style: input.style }) : props.frame.drawRaster({ ...input, style: input.style }),
         };
-  }, [draw]);
+  }, [draw, props.frame.drawRaster]);
   const size = props.frame.size;
   return output.kind === 'scene' ? (
     <PlanetCanvas width={size} height={size} scene={output.scene} />

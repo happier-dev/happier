@@ -53,7 +53,9 @@ const lightThemeBase = {
         text: {
             primary: HAPPIER_DEFAULT_SURFACE_COLORS.light.foreground,
             secondary: HAPPIER_DEFAULT_SURFACE_COLORS.light.secondary,
-            tertiary: '#99999d',
+            // Informational meta (kickers, facts lines, counts) is read: at least 4.5:1 on the page, its sheets
+            // and the elevated chip fill (#F0F0F0).
+            tertiary: '#6C6C70',
             link: HAPPIER_DEFAULT_SURFACE_COLORS.light.link,
             destructive: '#FF3B30',
             placeholder: '#999999',
@@ -123,7 +125,7 @@ const lightThemeBase = {
         surface: {
             base: HAPPIER_DEFAULT_SURFACE_COLORS.light.background,
             inset: '#F8F8F8',
-            elevated: '#f0f0f0',
+            elevated: HAPPIER_DEFAULT_SURFACE_COLORS.light.elevated,
             ripple: 'rgba(0, 0, 0, 0.08)',
             // Loading-placeholder ink: the theme's own text ink, quiet but plainly there on every surface
             // (re-derived from a profile's text ink in `deriveThemeColors` unless the profile sets it).
@@ -392,8 +394,8 @@ const lightThemeBase = {
         // Message View colors
         message: {
             user: {
-                // One ink step over the page, so a prompt is recognisable while scrolling.
-                background: '#EAE7DE',
+                // Half an ink step over the page, still warm: the fill alone marks a prompt (no hairline or rim).
+                background: '#F3F1EC',
                 foreground: '#222222',
             },
             agent: {
@@ -449,7 +451,8 @@ const darkThemeBase = {
         text: {
             primary: HAPPIER_DEFAULT_SURFACE_COLORS.dark.foreground,
             secondary: HAPPIER_DEFAULT_SURFACE_COLORS.dark.secondary,
-            tertiary: '#6C625D',
+            // Informational meta is read: at least 4.5:1 on the canvas, the page and its cards.
+            tertiary: '#8F8580',
             link: HAPPIER_DEFAULT_SURFACE_COLORS.dark.link,
             destructive: '#EE6E6C',
             placeholder: '#766C67',
@@ -458,11 +461,13 @@ const darkThemeBase = {
         accent: {
             blue: '#9EB9FF',
             green: '#66DC7E',
-            orange: '#E0B65A',
-            yellow: '#F1C96A',
+            // Seven distinct hues on dark surfaces (each >= 5.6:1 on surface.elevated): orange/yellow and
+            // blue/indigo/purple used to collapse into near-twins, which broke the session colour presets.
+            orange: '#F2955A',
+            yellow: '#F1D163',
             red: '#EE6E6C',
-            indigo: '#8EA3FF',
-            purple: '#C0A7FF',
+            indigo: '#8F8CFF',
+            purple: '#D99EFF',
         },
         state: {
             success: {
@@ -516,7 +521,7 @@ const darkThemeBase = {
         surface: {
             base: HAPPIER_DEFAULT_SURFACE_COLORS.dark.background,
             inset: '#171515',
-            elevated: '#221C1C',
+            elevated: HAPPIER_DEFAULT_SURFACE_COLORS.dark.elevated,
             ripple: 'rgba(255, 255, 255, 0.055)',
             skeleton: 'rgba(239, 239, 239, 0.16)',
             pressed: '#302727',

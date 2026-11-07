@@ -7,6 +7,10 @@ import { renderScreen, standardCleanup } from '@/dev/testkit';
 const { Avatar } = await import('./Avatar');
 
 describe('Avatar monogram presentation', () => {
+    it.each([undefined, 'https://example.test/logo.png'])('keeps an unnamed avatar decorative (%s)', async imageUrl => {
+        const screen = await renderScreen(<Avatar id="account-1" imageUrl={imageUrl} testID="decoration" size={28} />);
+        expect(screen.findByTestId('decoration')?.props.accessibilityRole).toBeUndefined();
+    });
     afterEach(() => {
         standardCleanup();
     });

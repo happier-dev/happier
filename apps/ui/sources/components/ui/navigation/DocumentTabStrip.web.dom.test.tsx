@@ -28,6 +28,26 @@ vi.doMock('react-native', () => ({ ...native, View: createUnistylesElement(nativ
 const { DocumentTabStrip } = await import('./DocumentTabStrip');
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
+it.each(['strip', 'bar', 'rail'] as const)('owns named %s tabs without absorbing their auxiliary buttons', async variant => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    const host = document.createElement('div');
+    document.body.append(host);
+    const root = createRoot(host);
+    try {
+        await act(async () => root.render(<DocumentTabStrip variant={variant}
+            tabs={[{ key: 'file', title: 'File', isPinned: true, isPreview: false }]} activeTabKey="file"
+            accessibilityLabel="Documents" onActivate={() => {}} onPin={() => {}} onUnpin={() => {}} onClose={() => {}}
+            renderLeadingIcon={() => null} tabNativeId={id => `tab-${id}`} panelNativeId={id => `panel-${id}`} />));
+        const list = host.querySelector('[role="tablist"]')!;
+        expect(list.getAttribute('aria-label')).toBe('Documents');
+        expect(list.querySelector('[role="button"]')).toBeNull();
+        const owned = list.getAttribute('aria-owns')?.split(' ').map(id => document.getElementById(id));
+        expect(owned?.map(tab => tab?.getAttribute('role'))).toEqual(['tab']);
+        expect(owned?.[0]?.getAttribute('aria-label')).toBeTruthy();
+        expect(owned?.[0]?.getAttribute('aria-controls')).toBe('panel-file');
+    } finally { await act(async () => root.unmount()); host.remove(); }
+});
+
 it.each(['strip', 'bar', 'rail'] as const)('closes a %s tab through onClose on middle click and preserves primary activation', async (variant) => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     const closed: string[] = [];

@@ -7,6 +7,7 @@ import {
   type ViewStyle,
 } from 'react-native';
 
+import { useOptionalPluginUiPresentationHost } from '../../presentationHost/context.js';
 import type { HappierHitReach } from '../../environment/interactiveTarget.js';
 import { useHappierHitArea } from './hitArea.js';
 import { isHappierFocusVisible } from './focusVisible.js';
@@ -300,6 +301,7 @@ export function HappierPressable({
   overlay,
   children,
 }: HappierPressableProps) {
+  const runPress = useOptionalPluginUiPresentationHost()?.runPress;
   const [pendingPress, setPendingPress] = useState(false);
   const [pressed, setPressed] = useState(false);
   const [hovered, setHovered] = useState(false);
@@ -384,7 +386,7 @@ export function HappierPressable({
       return;
     }
 
-    const result = onPress(event);
+    const result = runPress ? runPress(event, () => onPress(event)) : onPress(event);
     if (!isThenable(result)) return;
 
     pendingRef.current = true;
@@ -396,7 +398,7 @@ export function HappierPressable({
       pendingRef.current = false;
       if (mountedRef.current) setPendingPress(false);
     });
-  }, [busy, disabled, focused, onDisabledPress, onPress]);
+  }, [busy, disabled, focused, onDisabledPress, onPress, runPress]);
 
   const handleKeyDown = useCallback((event: unknown) => {
     // RNW still forwards custom keys while disabled. Admit them through the
@@ -465,6 +467,7 @@ export function HappierPressable({
   const semanticSelected = accessibilityRole === 'option' || accessibilityRole === 'tab' || webRole === 'treeitem'
     ? selected === true
     : Platform.OS !== 'web' && current !== undefined ? true : undefined;
+  const semanticChecked = accessibilityRole === 'button' ? undefined : checked;
   // The `aria-posinset`/`aria-setsize` pair below is React Native Web only —
   // React Native maps neither on a device. Android's accessibility service reads
   // membership from `accessibilityCollectionItem`, which React Native's Android
@@ -502,7 +505,9 @@ export function HappierPressable({
       };
       return style(styleState);
     }
-    : style;
+    // Native Unistyles accepts an omitted static style, but enumerates null.
+    // Callers may legitimately have no chrome (for example a delegated ring).
+    : style ?? undefined;
 
   const pressable = (
     <ReactNativePressable
@@ -528,7 +533,7 @@ export function HappierPressable({
       // screen reader on the other platform. React Native resolves the aliases
       // over the object, and both are derived here from the same values, so
       // they cannot disagree.
-      accessibilityState={{ busy: isBusy, checked, disabled: isDisabled, expanded,
+      accessibilityState={{ busy: isBusy, checked: semanticChecked, disabled: isDisabled, expanded,
         selected: Platform.OS === 'web' ? semanticSelected : selected }}
       aria-busy={isBusy || undefined}
       aria-disabled={isDisabled || undefined}
@@ -540,7 +545,7 @@ export function HappierPressable({
       aria-setsize={accessibilitySetSize}
       // @ts-expect-error React Native's published types omit the Android-only collection-item prop its view config accepts.
       accessibilityCollectionItem={nativeCollectionItem}
-      aria-checked={checked}
+      aria-checked={semanticChecked}
       aria-invalid={invalid || undefined}
       aria-errormessage={invalid ? errorMessageId : undefined}
       aria-describedby={describedById}

@@ -6,11 +6,11 @@ import { createPluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18
 import { readPluginSurfaceMountBinding } from '@/components/plugins/surfaces/pluginSurfaceMountBinding';
 import {
     buildPluginAppPageRoutePath,
-    readPluginAppPageSubPath,
-    resolvePluginAppPageForReference,
-    resolvePluginAppPageForRoute,
-    resolvePluginAppPages,
-} from './pluginAppPages';
+    readPluginPageSubPath,
+    resolvePluginPageForReference,
+    resolvePluginPageForRoute,
+    resolvePluginPages,
+} from '@/components/plugins/pages/pluginPages';
 
 const NOTES_PLUGIN_ID = 'acme.notes';
 const JOURNAL_PLUGIN_ID = 'acme.journal';
@@ -57,9 +57,76 @@ function createPagePlacement(
 }
 
 describe('plugin app page catalog (EU-5b)', () => {
+    it('selects an explicit Project page independently from the same app destination and scopes baseline reuse', () => {
+        const binding = normalizePluginUiDestinationBindingV1({ pluginId: NOTES_PLUGIN_ID, destinationId: 'notes',
+            rendererId: 'notes-renderer', container: 'appPage', target: { kind: 'project' } });
+        if (!binding) throw new Error('Project page slot must be admitted');
+        const project = createPagePlacement({ id: 'project-notes', binding });
+        const app = createPagePlacement();
+        const target = { kind: 'project' as const, workspaceRefId: 'ref-one', serverId: 'home-one' };
+        const pages = resolvePluginPages({ target, placements: [app, project] });
+        expect(pages).toHaveLength(1);
+        expect(pages[0]?.routePath).toBe('/projects/ref-one/plugins/acme.notes/notes?serverId=home-one');
+        expect(pages[0]?.columnPlacement).toBeUndefined();
+        expect(resolvePluginPages({ target, placements: [structuredClone(project)], baseline: pages })).toBe(pages);
+        const other = resolvePluginPages({ target: { ...target, serverId: 'home-two' }, placements: [project], baseline: pages });
+        expect(other[0]).not.toBe(pages[0]);
+        expect(other[0]?.routePath).toContain('home-two');
+    });
+
+    it('retains canonical contextual refusal for direct routes while marking inapplicable pages invisible to navigation', () => {
+        const binding = normalizePluginUiDestinationBindingV1({ pluginId: NOTES_PLUGIN_ID, destinationId: 'notes',
+            rendererId: 'notes-renderer', container: 'appPage', target: { kind: 'project' } });
+        if (!binding) throw new Error('Project page slot must be admitted');
+        const placement = createPagePlacement({ binding, availability: {
+            state: 'available', reason: 'available', diagnostics: [],
+            when: { fact: 'project.exists', operator: 'equals', value: true },
+        } });
+        const target = { kind: 'project' as const, workspaceRefId: 'ref-one' };
+        expect(resolvePluginPages({ target, placements: [placement], policyContext: {} })[0])
+            .toMatchObject({ visible: false, disabledReason: 'availability_fact_unavailable' });
+        expect(resolvePluginPages({ target, placements: [placement], policyContext: { data: { project: { exists: false } } } })[0])
+            .toMatchObject({ visible: false, disabledReason: 'availability_not_applicable' });
+        const disabled = { ...placement, availability: { ...placement.availability,
+            disabledWhen: { fact: 'project.exists', operator: 'equals', value: true } as const } };
+        expect(resolvePluginPages({ target, placements: [disabled], policyContext: { data: { project: { exists: true } } } })[0]?.disabledReason)
+            .toBe('policy_disabled');
+    });
+    it('publishes no new page values for equal relevant refresh and changes only the keyed page', () => {
+        const first = createPagePlacement({ column: {
+            binding: pageBinding(NOTES_PLUGIN_ID, 'notes', 'notes-column'),
+            renderer: { kind: 'reactNative', contributionId: 'notes-column' },
+            availability: { state: 'available', reason: 'available', diagnostics: [] },
+        } });
+        const second = createPagePlacement({ id: 'surfacePlacement:acme.journal:notes', pluginId: JOURNAL_PLUGIN_ID });
+        const baseline = resolvePluginPages({ target: { kind: 'app' }, placements: [first, second] });
+        const equal = resolvePluginPages({ target: { kind: 'app' }, placements: [structuredClone(first), structuredClone(second)], baseline });
+        expect(equal).toBe(baseline);
+        const changed = resolvePluginPages({ target: { kind: 'app' }, placements: [first, { ...second,
+            display: { ...second.display, title: 'New journal' } }], baseline });
+        expect(changed.filter(page => !baseline.includes(page))).toHaveLength(1);
+        expect(changed.find(page => page.pluginId === NOTES_PLUGIN_ID)).toBe(baseline.find(page => page.pluginId === NOTES_PLUGIN_ID));
+        expect(changed.find(page => page.pluginId === NOTES_PLUGIN_ID)?.columnPlacement)
+            .toBe(baseline.find(page => page.pluginId === NOTES_PLUGIN_ID)?.columnPlacement);
+    });
+
+    it('keeps publication proportional to the changed descriptor across a large authored catalog', () => {
+        const placements = Array.from({ length: 128 }, (_, index) => createPagePlacement({
+            id: `surfacePlacement:${NOTES_PLUGIN_ID}:page-${index}`, descriptorId: `page-${index}`,
+        }));
+        const baseline = resolvePluginPages({ target: { kind: 'app' }, placements });
+        const equal = resolvePluginPages({ target: { kind: 'app' }, placements: structuredClone(placements).reverse(), baseline });
+        expect(equal).toBe(baseline);
+        const nextPlacements = structuredClone(placements);
+        nextPlacements[64] = { ...nextPlacements[64]!, display: { title: 'Changed page' } };
+        const changed = resolvePluginPages({ target: { kind: 'app' }, placements: nextPlacements, baseline });
+        expect(changed.filter(page => !baseline.includes(page))).toHaveLength(1);
+        expect(changed.filter(page => baseline.includes(page))).toHaveLength(127);
+    });
+
     it('localizes a declared description before any renderer loads, preserving omission', () => {
         const description = { key: 'notes.purpose', fallback: 'Review incoming work.' };
-        const [page] = resolvePluginAppPages({
+        const [page] = resolvePluginPages({ target: { kind: 'app' },
             placements: [createPagePlacement({ display: { title: 'Notes', description } })],
             localize: createPluginLocalizedTextResolver({ locale: 'fr', projection: {
                 ...EMPTY_PLUGIN_UI_PROJECTION,
@@ -71,23 +138,23 @@ describe('plugin app page catalog (EU-5b)', () => {
             } }),
         });
         expect(page?.description).toBe('Relire le travail entrant.');
-        expect(resolvePluginAppPages({ placements: [createPagePlacement()] })[0]).not.toHaveProperty('description');
+        expect(resolvePluginPages({ target: { kind: 'app' }, placements: [createPagePlacement()] })[0]).not.toHaveProperty('description');
     });
 
     it('carries a declared toolbar header style before any renderer loads, preserving omission', () => {
-        const [toolbarPage] = resolvePluginAppPages({
+        const [toolbarPage] = resolvePluginPages({ target: { kind: 'app' },
             placements: [createPagePlacement({ display: { title: 'Notes', headerStyle: 'toolbar' } })],
         });
         expect(toolbarPage?.headerStyle).toBe('toolbar');
-        expect(resolvePluginAppPages({ placements: [createPagePlacement()] })[0]).not.toHaveProperty('headerStyle');
-        const [unknown] = resolvePluginAppPages({
+        expect(resolvePluginPages({ target: { kind: 'app' }, placements: [createPagePlacement()] })[0]).not.toHaveProperty('headerStyle');
+        const [unknown] = resolvePluginPages({ target: { kind: 'app' },
             placements: [createPagePlacement({ display: { title: 'Notes', headerStyle: 'banner' } })],
         });
         expect(unknown).not.toHaveProperty('headerStyle');
     });
 
     it('projects a declared page into a qualified, host-generated destination', () => {
-        const pages = resolvePluginAppPages({ placements: [createPagePlacement()] });
+        const pages = resolvePluginPages({ target: { kind: 'app' }, placements: [createPagePlacement()] });
 
         expect(pages).toHaveLength(1);
         expect(pages[0]).toMatchObject({
@@ -105,7 +172,7 @@ describe('plugin app page catalog (EU-5b)', () => {
         const columnRenderer = { kind: 'reactNative', contributionId: 'notes-column' };
         const columnBinding = pageBinding(NOTES_PLUGIN_ID, 'notes', 'notes-column');
         const available = { state: 'available' as const, reason: 'available', diagnostics: [] };
-        const [withColumn] = resolvePluginAppPages({
+        const [withColumn] = resolvePluginPages({ target: { kind: 'app' },
             placements: [createPagePlacement({ column: { binding: columnBinding, renderer: columnRenderer, availability: available } })],
         });
         expect(withColumn?.columnPlacement).toMatchObject({
@@ -130,24 +197,24 @@ describe('plugin app page catalog (EU-5b)', () => {
         // A second mount of the same page: it must not share the page mount's surface identity.
         expect(withColumn?.columnPlacement?.id).not.toBe(withColumn?.placement.id);
 
-        const [resolving] = resolvePluginAppPages({ placements: [createPagePlacement({
+        const [resolving] = resolvePluginPages({ target: { kind: 'app' }, placements: [createPagePlacement({
             availability: { state: 'resolving', reason: 'available', diagnostics: [] },
             column: { binding: columnBinding, renderer: columnRenderer, availability: available },
         })] });
         expect(resolving?.disabledReason).toBeNull();
         expect(resolving?.columnPlacement?.availability.state).toBe('resolving');
 
-        const [unavailable] = resolvePluginAppPages({
+        const [unavailable] = resolvePluginPages({ target: { kind: 'app' },
             placements: [createPagePlacement({
                 column: { binding: columnBinding, renderer: columnRenderer, availability: { state: 'disabled' as const, reason: 'artifact_missing', diagnostics: [] } },
             })],
         });
         expect(unavailable?.columnPlacement).toBeUndefined();
-        expect(resolvePluginAppPages({ placements: [createPagePlacement()] })[0]?.columnPlacement).toBeUndefined();
+        expect(resolvePluginPages({ target: { kind: 'app' }, placements: [createPagePlacement()] })[0]?.columnPlacement).toBeUndefined();
     });
 
     it('keeps two plugins declaring the same local page id apart', () => {
-        const pages = resolvePluginAppPages({
+        const pages = resolvePluginPages({ target: { kind: 'app' },
             placements: [
                 createPagePlacement(),
                 createPagePlacement({
@@ -172,7 +239,7 @@ describe('plugin app page catalog (EU-5b)', () => {
     });
 
     it('rejects every declaration that claims the same canonical page destination', () => {
-        const pages = resolvePluginAppPages({
+        const pages = resolvePluginPages({ target: { kind: 'app' },
             placements: [
                 createPagePlacement({
                     descriptorId: 'details-a',
@@ -190,14 +257,14 @@ describe('plugin app page catalog (EU-5b)', () => {
         // claim one public destination. The route and openSurface consumers see
         // the same fail-closed catalog rather than an incumbent by accident.
         expect(pages).toEqual([]);
-        expect(resolvePluginAppPageForReference({
+        expect(resolvePluginPageForReference({
             pages,
             destination: { pluginId: NOTES_PLUGIN_ID, localId: 'details' },
         })).toBeNull();
     });
 
     it('lists an unavailable page with its reason instead of hiding it', () => {
-        const pages = resolvePluginAppPages({
+        const pages = resolvePluginPages({ target: { kind: 'app' },
             placements: [createPagePlacement({
                 availability: {
                     state: 'blocked',
@@ -212,7 +279,7 @@ describe('plugin app page catalog (EU-5b)', () => {
     });
 
     it('ignores a stale placement order and uses host-stable ordering for distinct pages', () => {
-        const pages = resolvePluginAppPages({
+        const pages = resolvePluginPages({ target: { kind: 'app' },
             placements: [
                 createPagePlacement({
                     id: `surfacePlacement:${ZETA_PLUGIN_ID}:zeta`,
@@ -259,17 +326,17 @@ describe('plugin app page routes (EU-5b)', () => {
     it('refuses a relative sub-path rather than letting a plugin address out of its namespace', () => {
         expect(buildPluginAppPageRoutePath({ pluginId: 'n', localId: 'n', subPath: '../../settings' }))
             .toBe('/plugins/n/n');
-        expect(readPluginAppPageSubPath('../../settings')).toBeNull();
+        expect(readPluginPageSubPath('../../settings')).toBeNull();
     });
 
     it('reads the router rest parameter in both spellings', () => {
-        expect(readPluginAppPageSubPath('work/ideas.md')).toBe('work/ideas.md');
-        expect(readPluginAppPageSubPath(['work', 'ideas.md'])).toBe('work/ideas.md');
-        expect(readPluginAppPageSubPath(undefined)).toBe('');
+        expect(readPluginPageSubPath('work/ideas.md')).toBe('work/ideas.md');
+        expect(readPluginPageSubPath(['work', 'ideas.md'])).toBe('work/ideas.md');
+        expect(readPluginPageSubPath(undefined)).toBe('');
     });
 
     it('resolves a route to a page only when both identity segments match', () => {
-        const pages = resolvePluginAppPages({
+        const pages = resolvePluginPages({ target: { kind: 'app' },
             placements: [
                 createPagePlacement(),
                 createPagePlacement({
@@ -279,17 +346,17 @@ describe('plugin app page routes (EU-5b)', () => {
             ],
         });
 
-        expect(resolvePluginAppPageForRoute({ pages, pluginId: JOURNAL_PLUGIN_ID, localId: 'notes' })?.id)
+        expect(resolvePluginPageForRoute({ pages, pluginId: JOURNAL_PLUGIN_ID, localId: 'notes' })?.id)
             .toBe(`plugin:${JOURNAL_PLUGIN_ID}:notes`);
-        expect(resolvePluginAppPageForRoute({ pages, pluginId: NOTES_PLUGIN_ID, localId: 'journal' }))
+        expect(resolvePluginPageForRoute({ pages, pluginId: NOTES_PLUGIN_ID, localId: 'journal' }))
             .toBeNull();
-        expect(resolvePluginAppPageForRoute({ pages, pluginId: '', localId: 'notes' }))
+        expect(resolvePluginPageForRoute({ pages, pluginId: '', localId: 'notes' }))
             .toBeNull();
     });
 });
 
 describe('plugin app page openSurface references (EU-5b)', () => {
-    const pages = resolvePluginAppPages({
+    const pages = resolvePluginPages({ target: { kind: 'app' },
         placements: [
             createPagePlacement(),
             createPagePlacement({
@@ -300,21 +367,21 @@ describe('plugin app page openSurface references (EU-5b)', () => {
     });
 
     it('resolves an exact qualified reference to a page', () => {
-        expect(resolvePluginAppPageForReference({
+        expect(resolvePluginPageForReference({
             pages,
             destination: { pluginId: NOTES_PLUGIN_ID, localId: 'notes' },
         })?.id).toBe(`plugin:${NOTES_PLUGIN_ID}:notes`);
     });
 
     it('resolves a qualified reference naming an installed, available plugin page', () => {
-        expect(resolvePluginAppPageForReference({
+        expect(resolvePluginPageForReference({
             pages,
             destination: { pluginId: NOTES_PLUGIN_ID, localId: 'notes' },
         })?.id).toBe(`plugin:${NOTES_PLUGIN_ID}:notes`);
     });
 
     it('refuses an unknown qualified reference', () => {
-        expect(resolvePluginAppPageForReference({
+        expect(resolvePluginPageForReference({
             pages,
             destination: { pluginId: NOTES_PLUGIN_ID, localId: 'missing' },
         }))

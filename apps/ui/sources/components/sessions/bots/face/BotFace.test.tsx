@@ -25,6 +25,7 @@ vi.mock('@shopify/react-native-skia', async () =>
 );
 // Select the web paint adapter; the Canvas2D surface below is the only synthetic port.
 vi.mock('./BotFaceRasterView', async () => import('./BotFaceRasterView.web'));
+vi.mock('./BotFaceLoopPlayer', async () => import('./BotFaceLoopPlayer.web'));
 
 // Collect the real store graph before the platform-clock test window starts.
 const { storage } = await import('@/sync/domains/state/storageStore');
@@ -102,22 +103,104 @@ function driveMotionFrames(start: number, count: number) {
   return ran;
 }
 
-it('mutters a working Lively face from the shared clock: a repaint per step, no frame callbacks, no parent render', async () => {
-  vi.useFakeTimers();
-  let parents = 0;
-  function Parent() {
-    parents++;
-    return <BotFace identity={identity} style="pixel" size={24} mood="working" motion motionMode="lively" />;
+it.each([undefined, 'Session face'])('exposes an image role only for a named face (%s)', async accessibilityLabel => {
+  const screen = await renderScreen(<BotFace identity={identity} style="pixel" size={24} mood="quiet" testID="semantic-face" accessibilityLabel={accessibilityLabel} />);
+  expect(screen.findByTestId('semantic-face')?.props.accessibilityRole).toBe(accessibilityLabel ? 'image' : undefined);
+  expect(screen.findByTestId('semantic-face')?.props.accessibilityLabel).toBe(accessibilityLabel);
+});
+
+it('releases discarded artwork on replacement and unmount while a live face reuses its drawings', async () => {
+  const { generateBotFaceShape } = await import('@happier-dev/protocol/sessions/identity/sessionBotFaceV1');
+  const { BotFaceRasterView } = await import('./BotFaceRasterView');
+  const faces = Array.from({ length: 12 }, (_, seed) => ({ ...identity, shape: generateBotFaceShape(seed + 630) }));
+  const render = (at: BotFaceIdentity, mood: 'quiet' | 'working' = 'quiet') => <BotFace identity={at} style="dither" size={24} mood={mood} />;
+  const live = await renderScreen(render(identity));
+  const liveImage = live.findByType(BotFaceRasterView).props.image;
+  const mirror = await renderScreen(render(identity));
+  expect(mirror.findByType(BotFaceRasterView).props.image).toBe(liveImage);
+  await mirror.unmount();
+  const picker = await renderScreen(render(faces[0]!));
+  const discarded: unknown[] = [];
+  for (const at of faces) {
+    await picker.update(render(at));
+    discarded.push(picker.findByType(BotFaceRasterView).props.image);
   }
-  await mount(<Parent />);
-  const before = paints.length;
-  // One act per 50 ms, as the platform delivers each timer on its own task.
-  for (let t = 0; t < 2800; t += 50) await act(async () => { await vi.advanceTimersByTimeAsync(50); });
-  // Two mutter cycles: four steps each (three raised dots, then the still "…").
-  expect(paints.length - before).toBeGreaterThanOrEqual(7);
-  expect(paints.length - before).toBeLessThanOrEqual(9);
-  expect(driveMotionFrames(0, 120)).toBe(0);
-  expect(parents).toBe(1);
+  await picker.unmount();
+  for (const [index, at] of faces.entries()) {
+    const reopened = await renderScreen(render(at));
+    expect(reopened.findByType(BotFaceRasterView).props.image).not.toBe(discarded[index]);
+    await reopened.unmount();
+  }
+  await live.update(render(identity, 'working'));
+  await live.update(render(identity));
+  expect(live.findByType(BotFaceRasterView).props.image).toBe(liveImage);
+  await live.unmount();
+  const fresh = await renderScreen(render(identity));
+  expect(fresh.findByType(BotFaceRasterView).props.image).not.toBe(liveImage);
+  await fresh.unmount();
+});
+
+it('plays a working Lively face as a compositor loop: no React commit per mutter step or nod once it has bowed', async () => {
+  vi.useFakeTimers();
+  for (const style of ['dither', 'pixel', 'dots'] as const) {
+    let commits = 0;
+    const loops: { keyframes: Keyframe[]; options: KeyframeAnimationOptions }[] = [];
+    // The Web Animations API is the platform boundary that plays the loop.
+    const host = { animate: (keyframes: Keyframe[], options: KeyframeAnimationOptions) => {
+      loops.push({ keyframes, options });
+      return { cancel: () => {}, currentTime: 0 };
+    } };
+    const screen = await renderScreen(
+      <React.Profiler id="face" onRender={() => { commits++; }}>
+        <BotFace identity={identity} style={style} size={24} mood="working" motion motionMode="lively" />
+      </React.Profiler>,
+      { createNodeMock: node => (node.type === 'canvas' ? canvas : host) },
+    );
+    // The live drawing hands off when it meets the phase-aligned loop; its clock then has no pending work.
+    await act(async () => { await vi.runAllTimersAsync(); });
+    const settled = commits;
+    for (let t = 0; t < 10_000; t += 50) await act(async () => { await vi.advanceTimersByTimeAsync(50); });
+    console.info('BOTFACE_WORKING_COMMITS_PER_10S', style, commits - settled);
+    expect(commits - settled, style).toBe(0);
+    expect(driveMotionFrames(0, 120), style).toBe(0);
+    expect(vi.getTimerCount(), style).toBe(0);
+    // One stepped layer per distinct drawing, at least the mutter's four steps, each repeating forever.
+    expect(loops.length, style).toBeGreaterThanOrEqual(4);
+    expect(loops.every(loop => loop.options.iterations === Infinity), style).toBe(true);
+    await act(async () => { screen.unmount(); });
+  }
+});
+
+it('plays every settled Lively face\'s looks and nods as a compositor loop: no React commit per turn step while idle', async () => {
+  vi.useFakeTimers();
+  for (const mood of ['quiet', 'done', 'failed', 'needsYou'] as const) {
+    for (const style of ['dither', 'pixel', 'dots'] as const) {
+      let commits = 0;
+      const loops: KeyframeAnimationOptions[] = [];
+      // The Web Animations API is the platform boundary that plays the loop.
+      const host = { animate: (_keyframes: Keyframe[], options: KeyframeAnimationOptions) => {
+        loops.push(options);
+        return { cancel: () => {}, currentTime: 0 };
+      } };
+      const screen = await renderScreen(
+        <React.Profiler id="face" onRender={() => { commits++; }}>
+          <BotFace identity={identity} style={style} size={24} mood={mood} motion motionMode="lively" />
+        </React.Profiler>,
+        { createNodeMock: node => (node.type === 'canvas' ? canvas : host) },
+      );
+      // A face that bowed into its mood live hands off once its drawing meets the loop's (a one-time commit).
+      for (let t = 0; t < 30_000; t += 250) await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+      const settled = commits;
+      for (let t = 0; t < 10_000; t += 50) await act(async () => { await vi.advanceTimersByTimeAsync(50); });
+      console.info('BOTFACE_IDLE_COMMITS_PER_10S', mood, style, commits - settled);
+      // A quiet face's R7 idle gestures (every 14–40 s) are finite moments of their own and may start in this window.
+      if (mood !== 'quiet') expect(commits - settled, `${mood} ${style}`).toBe(0);
+      else expect(commits - settled, `${mood} ${style}`).toBeLessThanOrEqual(2);
+      expect(loops.length, `${mood} ${style}`).toBeGreaterThan(0);
+      expect(loops.every(loop => loop.iterations === Infinity), `${mood} ${style}`).toBe(true);
+      await act(async () => { screen.unmount(); });
+    }
+  }
 });
 
 it('rests on a still "…" in Reactions only and Still: no timer and no repaint', async () => {
@@ -129,6 +212,21 @@ it('rests on a still "…" in Reactions only and Still: no timer and no repaint'
     expect(vi.getTimerCount(), mode).toBe(0);
     expect(paints, mode).toHaveLength(1);
     await act(async () => { screen.unmount(); });
+  }
+});
+
+it('marks a working Bot with its face alone: no ring, and the needs-you dot stays', async () => {
+  const { BotFaceMarker } = await import('../BotFaceMarker');
+  const { ActivitySpinner } = await import('@/components/ui/feedback/ActivitySpinner');
+  const { AppRailBadge } = await import('@/components/navigation/shell/appRail/AppRailBadge');
+  const facts = { seed: 'marker', face: null };
+  for (const motion of [false, true]) {
+    const working = await mount(<BotFaceMarker facts={facts} size={24} activity="working" motion={motion} />);
+    expect(working.findAllByType(ActivitySpinner)).toHaveLength(0);
+    expect(working.findAllByType(AppRailBadge)).toHaveLength(0);
+    await working.update(<BotFaceMarker facts={facts} size={24} activity="needsYou" motion={motion} />);
+    expect(working.findAllByType(AppRailBadge)).toHaveLength(1);
+    await act(async () => { working.unmount(); });
   }
 });
 
@@ -199,7 +297,7 @@ it('reacts once per activity change and never replays a reaction missed while hi
 it('stops the attention clock when hidden, Still or Reduce motion wins', async () => {
   vi.useFakeTimers();
   const face = (mode: 'lively' | 'still', visible = true) =>
-    <BotFace identity={identity} style="solid" size={24} mood="working" visible={visible} motion motionMode={mode} />;
+    <BotFace identity={identity} style="solid" size={24} mood="quiet" visible={visible} motion motionMode={mode} />;
   const screen = await mount(face('lively'));
   await act(async () => { await vi.advanceTimersByTimeAsync(500); });
   expect(vi.getTimerCount()).toBe(1);
@@ -224,17 +322,23 @@ it('uses the scroll host viewport to stop offscreen rail faces and resume a visi
     // The DOM measurement and raster canvas are real system boundaries.
     createNodeMock: node => node.type === 'canvas' ? canvas : {
       getBoundingClientRect: () => ({ left: 0, top: 1000, width: 24, height: 24 }),
+      animate: () => { loops++; return { cancel: () => { loops--; }, currentTime: 0 }; },
     },
   });
+  let loops = 0;
   await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
   expect(vi.getTimerCount()).toBe(0);
+  expect(loops).toBe(0);
   await act(async () => { tracker.onScroll(createNativeScrollEvent({
     contentOffset: { x: 0, y: 990 }, layoutMeasurement: { width: 100, height: 100 }, contentSize: { width: 100, height: 2000 },
     contentInset: { top: 0, bottom: 0, left: 0, right: 0 }, zoomScale: 1,
   })); });
-  await act(async () => { await vi.advanceTimersByTimeAsync(500); });
-  expect(vi.getTimerCount()).toBe(1);
+  // Visible again, it bows live, then plays its working loop on the animation driver with no clock.
+  await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+  expect(vi.getTimerCount()).toBe(0);
+  expect(loops).toBeGreaterThanOrEqual(4);
   await screen.unmount();
+  expect(loops).toBe(0);
 });
 
 it('stops offscreen hero moments, shows the current face on return, and reacts to the next visible fact', async () => {

@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
 
 const withTimingSpy = vi.hoisted(() => vi.fn());
 
@@ -52,6 +53,12 @@ describe('CapacityRing', () => {
 
     afterEach(() => {
         setReducedMotionPreferenceOverride(null);
+    });
+
+    it.each([undefined, '71% capacity'])('exposes an image role only for a named ring (%s)', async accessibilityLabel => {
+        const screen = await renderScreen(<CapacityRing ratio={0.71} color="#0a0" testID="semantic-ring" accessibilityLabel={accessibilityLabel} />);
+        expect(screen.findByTestId('semantic-ring')?.props.accessibilityRole).toBe(accessibilityLabel ? 'image' : undefined);
+        expect(screen.findByTestId('semantic-ring')?.props.accessibilityLabel).toBe(accessibilityLabel);
     });
 
     it('renders the centered content and accessibility label', () => {

@@ -33,6 +33,13 @@ function appliedByExpoImage(style: unknown): Record<string, unknown> {
 }
 
 describe('SafeExpoImage', () => {
+    it.each([undefined, 'Project mark'])('provides an image alternative for %s', async accessibilityLabel => {
+        const { SafeExpoImage } = await import('./SafeExpoImage');
+        const screen = await renderScreen(<SafeExpoImage testID="mark" accessibilityLabel={accessibilityLabel} source={{ uri: 'https://example.test/mark.png' }} />);
+        expect(screen.findByTestId('mark')?.props.alt).toBe(accessibilityLabel ?? '');
+        // expo-image's loaded web image reads accessibilityLabel, unlike its placeholder's alt fallback.
+        expect(screen.findByTestId('mark')?.props.accessibilityLabel).toBe(accessibilityLabel ?? '');
+    });
     it('hands expo-image a style whose sizes survive its flatten, when the caller passes a Unistyles stylesheet entry', async () => {
         const { SafeExpoImage } = await import('./SafeExpoImage');
         const fill = unistylesWebEntry({ width: '100%', height: '100%' });

@@ -16,7 +16,7 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 import type { Session } from '@/sync/domains/state/storageTypes';
 import {
     useOpenApprovalArtifactsForSession,
-    useSessionProjectScmSnapshot,
+    useSessionProjectScmSummarySnapshot,
     useSessionUsage,
 } from '@/sync/domains/state/storage';
 
@@ -107,7 +107,7 @@ export function useSessionSummaryModel(input: Readonly<{
         serverId: address?.serverId ?? EMPTY_SESSION_LIST_SERVER_KEY,
         session: address ? session : null,
     });
-    const scmSnapshot = useSessionProjectScmSnapshot(
+    const scmSnapshot = useSessionProjectScmSummarySnapshot(
         address?.sessionId ?? null,
         address?.serverId ?? null,
     );
@@ -174,5 +174,6 @@ export function useSessionSummaryModel(input: Readonly<{
         pendingUserActions: pendingRequests.userActionRequests,
         plan,
         turnStartedAtMs,
+        lastObservedAtMs: awarenessSource.activeAt,
     });
 }

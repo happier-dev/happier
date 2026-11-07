@@ -1,4 +1,4 @@
-import type { SessionAwarenessProjectionV1 } from '@happier-dev/protocol';
+import type { SessionAwarenessProjectionV1 } from '@happier-dev/protocol/sessions/awareness/projectionV1';
 import type { SessionViewerProjectionV1 } from '@happier-dev/protocol/sessions/personal/viewer';
 import { selectOldestPendingRequest, type SessionPendingRequest } from '@happier-dev/session-core/pending';
 
@@ -103,6 +103,8 @@ export type SessionSummaryInput = Readonly<{
     plan?: SessionAgentPlan | null;
     /** When the running turn was observed to start; `null` when not known. */
     turnStartedAtMs?: number | null;
+    /** The live row's last runtime observation (`activeAt`): when retained facts were last current. */
+    lastObservedAtMs?: number | null;
 }>;
 
 /** The one ask the hero shows with its answers; the rest are counted. */
@@ -131,6 +133,8 @@ export type SessionSummaryCardModel = Readonly<{
     status: SessionAwarenessPresentationV1 | null;
     /** Lane 09A's freshness, softened once in presentation; values are never zeroed. */
     stale: boolean;
+    /** When the retained facts were last current, for the freshness line's "As of"; `null` when unknown. */
+    asOfMs?: number | null;
     /** Lane 09A's own admission that it could not see everything it describes. */
     availability: SessionAwarenessProjectionV1['availability'];
     /** Canonical content-readability reason; presentation owns only its label. */
@@ -251,10 +255,13 @@ export function projectSessionSummaryCard(input: SessionSummaryInput): SessionSu
         title: input.awareness.title ?? null,
         agentLabel: input.agentLabel,
         agentId: input.agentId ?? null,
-        status: presentSessionAwarenessV1({ ...input.awareness, viewer: input.viewer }, {
-            disconnectedTextMode: 'offline',
-        }),
+        // A disconnected Session is not an offline Machine: Machine reachability is its own
+        // owner and the freshness line names it, so the status never says "Offline" here.
+        status: presentSessionAwarenessV1({ ...input.awareness, viewer: input.viewer }),
         stale: input.awareness.freshness !== 'live',
+        // Only a behind Summary renders the time; a live one carries no clock (a heartbeat is not a fact).
+        asOfMs: input.awareness.freshness !== 'live' && typeof input.lastObservedAtMs === 'number' && input.lastObservedAtMs > 0
+            ? input.lastObservedAtMs : null,
         availability: input.awareness.availability,
         encryption: input.awareness.encryption,
         identityDestination: 'sessionInfo',

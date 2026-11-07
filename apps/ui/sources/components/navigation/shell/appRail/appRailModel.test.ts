@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { SessionOrganizationMoveInput } from '@happier-dev/protocol/actions/sessionOrganizationMoveAction';
 import { treeRowId } from '@/components/sessions/shell/drop-resolution/treeRowId';
 
-import type { PluginAppPage } from '@/components/appShell/plugins/pluginAppPages';
+import type { PluginPage } from '@/components/plugins/pages/pluginPages';
 import {
     isCompactAppDestinationInvokable,
     isCompactAppDestinationVisible,
@@ -10,6 +10,7 @@ import {
 } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 import { createSessionFixture } from '@/dev/testkit';
 import { buildSessionOrganizationProjection, buildSessionOrganizationSessionKey } from '@/sync/domains/session/organization';
+import { resolveNavigationPlacements } from '@/sync/domains/settings/mobileSurfacePinning';
 
 import {
     buildAppRailEntries,
@@ -26,12 +27,14 @@ vi.mock('@/text', async () => {
 
 function page(
     localId: string,
-    placement?: PluginAppPage['requestedPlacement'],
+    placement?: PluginPage['requestedPlacement'],
     rankHint?: number,
-    extra: Partial<PluginAppPage> = {},
-): PluginAppPage {
+    extra: Partial<PluginPage> = {},
+): PluginPage {
     return {
         ...extra,
+        target: { kind: 'app' },
+        visible: true,
         id: `plugin:acme.${localId}:${localId}`,
         pluginId: `acme.${localId}`,
         descriptorId: localId,
@@ -42,16 +45,16 @@ function page(
         disabledReason: null,
         ...(placement === undefined ? {} : { requestedPlacement: placement }),
         ...(rankHint === undefined ? {} : { rankHint }),
-        placement: {} as PluginAppPage['placement'],
+        placement: {} as PluginPage['placement'],
         routePath: `/plugins/acme.${localId}/${localId}`,
-    } as PluginAppPage;
+    } as PluginPage;
 }
 
 const SESSIONS_COLUMN = { kind: 'column', column: 'sessions' } as const;
 
-function catalog(pages: readonly PluginAppPage[], externalSessions = true) {
+function catalog(pages: readonly PluginPage[], externalSessions = true) {
     return resolveCompactAppDestinations({
-        builtins: { externalSessions, inbox: true, workflows: true, friends: false },
+        builtins: { externalSessions, inbox: true, workflows: true, friends: false, bots: true },
         pages,
     });
 }
@@ -62,13 +65,24 @@ describe('app rail model', () => {
     it('puts rail destinations in their region, and a column destination in its column instead of on the rail', () => {
         const rail = buildAppRailEntries(catalog([page('triage', undefined, 1), page('notes', SESSIONS_COLUMN), page('board', { kind: 'rail' }, 0)]));
 
-        expect(ids(rail.app)).toEqual(['sessions', 'search', 'inbox', 'projects', 'workflows', 'boards', 'artifacts', 'bots']);
+        expect(ids(rail.app)).toEqual(['sessions', 'search', 'inbox', 'projects', 'workflows', 'bots', 'boards', 'artifacts']);
         // Plugins anchors its region, then plugin pages by rank.
         expect(ids(rail.plugins)).toEqual(['plugins', 'plugin:acme.board:board', 'plugin:acme.triage:triage']);
         expect(ids(rail.account)).toEqual(['settings']);
         // Browse external sessions and the notes page belong to the Sessions column, not the rail.
         expect(ids([...rail.app, ...rail.plugins, ...rail.account])).not.toContain('browseExistingSessions');
         expect(ids([...rail.app, ...rail.plugins, ...rail.account])).not.toContain('plugin:acme.notes:notes');
+    });
+
+    it('keeps a contextual plugin page off the rail until the person pins it, and lists it to pin (owner Q3)', () => {
+        const entries = buildAppRailEntries(catalog([page('review'), page('board', { kind: 'rail' })]), { includeHidden: true });
+        const items = buildAppRailPlacementItems(entries, false);
+        const placementOf = (id: string) => items.find(item => item.id === id)?.defaultPlacement;
+        expect(placementOf('plugin:acme.review:review')).toBe('hidden');
+        expect(placementOf('plugin:acme.board:board')).toBe('pinned');
+        expect(ids(resolveNavigationPlacements(items).pinned)).not.toContain('plugin:acme.review:review');
+        const pinned = resolveNavigationPlacements(items, { orderedIds: [], placements: { 'plugin:acme.review:review': 'pinned' } });
+        expect(ids(pinned.pinned)).toContain('plugin:acme.review:review');
     });
 
     it('lists Machines once on the rail and in its customizer (its footer control), while the palette can open it', () => {
@@ -114,6 +128,11 @@ describe('app rail model', () => {
         expect(entries.bots.map(entry => [entry.serverId, entry.sessionId])).toEqual([
             ['home-a', 'first'], ['home-a', 'second'], ['home-b', 'first'],
         ]);
+        const off = buildAppRailEntries(resolveCompactAppDestinations({ pages: [], builtins: {
+            externalSessions: true, inbox: true, workflows: true, friends: false, bots: false,
+        } }), { botHomes: botHomes(rows) });
+        expect(off.app.some(entry => entry.id === 'bots')).toBe(false);
+        expect(off.bots).toEqual(entries.bots);
         const promoted = buildAppRailEntries(catalog([]), { botHomes: botHomes(rows.map(row => row.session.id === 'ordinary'
             ? { ...row, session: bot('ordinary') } : row)) });
         expect(promoted.bots.map(entry => entry.sessionId)).toContain('ordinary');
@@ -161,7 +180,7 @@ describe('app rail model', () => {
     });
 
     it("stands a plugin page's own column beside it, and peeks it from its rail icon", () => {
-        const withColumn = page('triage', undefined, undefined, { columnPlacement: {} as PluginAppPage['placement'] });
+        const withColumn = page('triage', undefined, undefined, { columnPlacement: {} as PluginPage['placement'] });
         const destinations = catalog([withColumn, page('notes')]);
         const location = resolveAppShellLocation(destinations, '/plugins/acme.triage/triage/views/mine');
         expect(location.railEntryId).toBe('plugin:acme.triage:triage');
@@ -175,7 +194,7 @@ describe('app rail model', () => {
     });
 
     it('reserves and peeks no column for an unavailable plugin page, whose column renderer mounts nothing', () => {
-        const disabled = { ...page('triage', undefined, undefined, { columnPlacement: {} as PluginAppPage['placement'] }), disabledReason: 'plugin_disabled' } as PluginAppPage;
+        const disabled = { ...page('triage', undefined, undefined, { columnPlacement: {} as PluginPage['placement'] }), disabledReason: 'plugin_disabled' } as PluginPage;
         const destinations = catalog([disabled]);
         expect(resolveAppShellLocation(destinations, '/plugins/acme.triage/triage').column).toEqual({ kind: 'none' });
         const entry = buildAppRailEntries(destinations).plugins.find((candidate) => candidate.id === 'plugin:acme.triage:triage');

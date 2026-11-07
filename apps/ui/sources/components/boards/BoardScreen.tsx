@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import { useIsFocused } from '@react-navigation/native';
 import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -36,9 +37,9 @@ import { BoardCanvas, type BoardCanvasLayoutSnapshot, type BoardCanvasWidget, ty
 import { BoardWidgetCard } from './cards/BoardWidgetCard';
 import { AddToBoardButton, AddToBoardPopover } from './header/AddToBoardPopover';
 import { BoardSettingsButton } from './header/BoardSettingsPopover';
-import { countBoardCardsNeedingYou, hasWorkBoardContent, type BoardCard } from './model/boardCards';
+import { countBoardCardsNeedingYou, describeBoardItemCount, describeBoardNeedYouCount, hasWorkBoardContent, type BoardCard } from './model/boardCards';
 import { describeBoardSources } from './model/boardSourcePresentation';
-import { resolveBoardPruneMembership } from './model/boardMembership';
+import { resolveBoardPruneMembership, type BoardUndeterminedMembership } from './model/boardMembership';
 import { resolveWorkBoardAdd, resolveWorkBoardEntityDrop, workBoardWidgetSurface } from './model/workBoardEntityDrop';
 import { useWorkBoardEntityBinding } from './model/workBoardEntityBinding';
 import { widgetMovementRefused } from '@/sync/ops/actions/widgetEntityMovement';
@@ -48,12 +49,14 @@ import { resolveBoardCardOpenTarget, type BoardCardAction } from './model/boardC
 import { resolveBoardSaveFailure } from './model/boardSaveFailure';
 import { useDispatchWorkBoardIntent, useWorkBoard, useWorkBoardReadState, useWorkBoardSaveQueue, useWorkBoardSaveState, useWorkBoardSummaries } from './model/useWorkBoards';
 import { BoardReadState, useBoardIndexSaidByColumn } from './BoardReadState';
+import { BoardUndeterminedLine } from './BoardUndeterminedLine';
 import { BoardsInboxBoundary } from './BoardsInboxBoundary';
 import { BOARDS_ROUTE } from './boardsRoutes';
 import { BoardSaveFailureLine, describeBoardSaveFailure } from './BoardSaveFailureLine';
 import { machinePageHref } from '@/components/settings/machines/collection/machineCollectionModel';
 import { PopoverScope } from '@/components/ui/popover';
-import { buildPluginAppPageRoutePath } from '@/components/appShell/plugins/pluginAppPageRoute';
+import { buildPluginAppPageRoutePath } from '@/components/plugins/pages/pluginPageRoute';
+import { BoardTaskRefreshContext } from './model/useBoardTaskItems';
 
 /**
  * One board (lab `boards-B1`…`B5`): the header — title, the source line, Canvas | By status, Add to
@@ -94,13 +97,13 @@ export const FilteredBoardScreen = React.memo(function FilteredBoardScreen(props
     const phone = useDeviceType() === 'phone';
     const board = React.useMemo(() => ({ ...createWorkBoardV1({ id: 'filtered-view', name: t('boards.title') }),
         mode: 'by_status' as const, source: { picked: [], filter: props.filter } }), [props.filter]);
-    const { cards } = useBoardLiveCards(board, { enabled: routeFocused });
+    const { cards, membership } = useBoardLiveCards(board, { enabled: routeFocused });
     const onOpen = useOpenBoardCard();
     useLoadPickedRuns(cards);
-    return <View style={styles.root} testID="board-filter-view">
+    return <BoardTaskRefreshContext.Provider value={membership.refreshTaskItems}><View style={styles.root} testID="board-filter-view">
         <PageHeader title={board.name} alwaysShowTitle columnWidth="pane" />
         <BoardByStatus cards={cards} onOpen={onOpen} onAction={onOpen} stacked={phone} active={routeFocused} />
-    </View>;
+    </View></BoardTaskRefreshContext.Provider>;
 });
 
 /**
@@ -168,7 +171,7 @@ function useOpenBoardCard(): (card: BoardCard, action?: BoardCardAction) => void
                 router.push(createWorkflowRunRoute(id, serverId) as never);
                 return;
             case 'workflow':
-                router.push({ pathname: '/workflows/[id]', params: { id, ...(target.intent ? { intent: target.intent } : {}) } } as never);
+                router.push({ pathname: '/workflows/[id]', params: { id, serverId, ...(target.intent ? { intent: target.intent } : {}) } } as never);
                 return;
             case 'machine':
                 // Qualified: the machine's own Home, never the focused Home's same-id machine. Outside
@@ -215,6 +218,7 @@ const BoardBody = React.memo(function BoardBody(props: Readonly<{ board: WorkBoa
     const addAnchorRef = React.useRef<View>(null);
     /** The card just added with ⌘↵ "Add and place": focused on Canvas so arrows or a drag place it. */
     const [placingKey, setPlacingKey] = React.useState<string | null>(null);
+    const clearPlacing = React.useCallback(() => setPlacingKey(null), []);
     const onOpen = useOpenBoardCard();
     useLoadPickedRuns(cards);
 
@@ -277,10 +281,11 @@ const BoardBody = React.memo(function BoardBody(props: Readonly<{ board: WorkBoa
     const addWidgets = React.useMemo(() => ({ scope: widgetSurface, instances: widgetInstances, addInstance: addWidgetInstance }),
         [addWidgetInstance, widgetInstances, widgetSurface]);
     const pluginUi = useAppShellPluginUiProjection().pluginUiProjection;
+    const localizeWidgetText = usePluginLocalizedTextResolver({ projection: pluginUi });
     const installedCandidates = React.useMemo(() => widgetInstances.flatMap(instance => {
-        const descriptor = readWidgetDescriptor(pluginUi, instance.definition);
+        const descriptor = readWidgetDescriptor(pluginUi, instance.definition, instance.displayName ? undefined : localizeWidgetText);
         return descriptor ? [descriptor] : [];
-    }), [pluginUi, widgetInstances]);
+    }), [pluginUi, widgetInstances, localizeWidgetText]);
     const widgetDescriptors = useWidgetInstanceDescriptors(widgetSurface, widgetInstances, installedCandidates);
     const canvasWidgets = React.useMemo((): readonly BoardCanvasWidget[] => widgets.map((placement, index) => ({
         key: buildWorkBoardWidgetKeyV1(placement.ref),
@@ -319,10 +324,14 @@ const BoardBody = React.memo(function BoardBody(props: Readonly<{ board: WorkBoa
     }, [board, dispatch, homes.isHomeMounted, membership]);
 
     const hasSource = hasWorkBoardContent(board);
+    // A board with nothing on it: no source at all, or a source that matches nothing (now: what arrives later replaces this).
+    const empty = membership.settled && cards.length === 0 && widgets.length === 0;
+    const pending = !membership.settled && cards.length === 0 && widgets.length === 0;
     // Only this board's refused save shows here; another board's failure belongs on that board.
     const failure = resolveBoardSaveFailure(saveState, board.id);
 
     return (
+        <BoardTaskRefreshContext.Provider value={membership.refreshTaskItems}>
         <View ref={rootRef} collapsable={false} testID={`board:${board.id}`} style={styles.root} onLayout={() => {
             void measureWindowBounds(toTreeDropMeasurableRef(root.current)).then(bounds => { nativeBounds.current = bounds; binding?.runtime.refresh(); });
         }}>
@@ -336,8 +345,9 @@ const BoardBody = React.memo(function BoardBody(props: Readonly<{ board: WorkBoa
                 details={(
                     <BoardSourceLine
                         board={board}
-                        itemCount={cards.length + widgets.length}
-                        needYou={needYou}
+                        itemCount={membership.settled ? cards.length + widgets.length : null}
+                        needYou={membership.settled ? needYou : null}
+                        undetermined={membership.settled ? membership.undetermined : undefined}
                         onPress={() => setSettingsOpen(true)}
                     />
                 )}
@@ -386,6 +396,8 @@ const BoardBody = React.memo(function BoardBody(props: Readonly<{ board: WorkBoa
                 onOpenChange={setAddOpen}
             />
             <BoardReadState boardId={board.id} retained />
+            {membership.settled ? <BoardUndeterminedLine undetermined={membership.undetermined}
+                taskItemsComplete={membership.taskItemsComplete} onRetryTasks={membership.refreshTaskItems} /> : null}
             {failure ? (
                 <View style={styles.failure}>
                     <BoardSaveFailureLine testID="board-save-failed" failure={failure} context={{ board, membership, isHomeMounted: homes.isHomeMounted }} />
@@ -403,21 +415,21 @@ const BoardBody = React.memo(function BoardBody(props: Readonly<{ board: WorkBoa
                     />
                 </View>
             ) : null}
-            {!hasSource ? (
+            {empty ? (
                 <HappierSurfaceStateFrame size={phone ? 'phone' : 'page'}>
                     <EmptyState
                         testID="board-empty"
                         layout="centered"
                         size={phone ? 'phone' : 'page'}
                         scene="emptyBoard"
-                        title={t('boards.empty.title')}
-                        subtitle={t('boards.empty.body')}
+                        title={t(!hasSource ? 'boards.empty.title' : membership.undetermined.count > 0 || membership.taskItemsComplete === false ? 'boards.empty.uncheckedTitle' : 'boards.empty.sourcedTitle')}
+                        subtitle={t(hasSource ? 'boards.empty.sourcedBody' : 'boards.empty.body')}
                         action={<RoundButton testID="board-empty.add" size="normal" title={t('boards.empty.action')}
                             leading={<Icon name="plus" color={theme.colors.button.primary.tint} />}
                             onPress={() => setAddOpen(true)} />}
                     />
                 </HappierSurfaceStateFrame>
-            ) : <>
+            ) : <View style={styles.body}>
             {mode === 'canvas' && binding ? (
                 <BoardCanvas
                     retainedLayout={canvasLayout}
@@ -428,7 +440,7 @@ const BoardBody = React.memo(function BoardBody(props: Readonly<{ board: WorkBoa
                     positionsByItemRef={board.positionsByItemRef}
                     snap={board.snap}
                     placingKey={placingKey}
-                    onPlaced={() => setPlacingKey(null)}
+                    onPlaced={clearPlacing}
                     onOpen={onOpen}
                     onAction={onOpen}
                     binding={binding}
@@ -436,17 +448,27 @@ const BoardBody = React.memo(function BoardBody(props: Readonly<{ board: WorkBoa
             ) : null}
                 <BoardByStatus cards={cards} widgets={canvasWidgets} renderWidget={renderWidget} onOpen={onOpen} onAction={onOpen} stacked={phone}
                     visible={mode === 'by_status'} active={routeFocused && mode === 'by_status'} />
-            </>}
+            {pending ? (
+                // A source that has not answered yet: the reserved canvas stays and says so quietly; it is
+                // never an empty board, and it leaves once the first card (or the settled answer) arrives.
+                <View style={styles.pending} pointerEvents="none">
+                    <SurfaceStateCard testID="board-pending" size={phone ? 'phone' : 'page'} kind="loading" title={t('boards.empty.pendingTitle')} />
+                </View>
+            ) : null}
+            </View>}
             </PopoverScope>
         </View>
+        </BoardTaskRefreshContext.Provider>
     );
 });
 
 /** The header's one meta line: the source chip (opens Board settings), the item count when there is one, and who needs you. */
 const BoardSourceLine = React.memo(function BoardSourceLine(props: Readonly<{
     board: WorkBoardV1;
-    itemCount: number;
-    needYou: number;
+    itemCount: number | null;
+    needYou: number | null;
+    /** Unresolved candidates make the counts floors. */
+    undetermined?: BoardUndeterminedMembership;
     onPress: () => void;
 }>) {
     const { theme } = useUnistyles();
@@ -466,10 +488,10 @@ const BoardSourceLine = React.memo(function BoardSourceLine(props: Readonly<{
                 <Icon name="caret-down" size={12} color={theme.colors.text.secondary} />
             </Pressable>
             {/* An empty board's empty state already says so; the meta line only counts what is there. */}
-            {props.itemCount === 0 ? null : <Text style={styles.meta}>· {t('boards.meta.items', { count: props.itemCount })}</Text>}
-            {props.needYou > 0 ? (
+            {props.itemCount === null || props.itemCount === 0 ? null : <Text style={styles.meta}>· {describeBoardItemCount(props.itemCount, props.undetermined)}</Text>}
+            {props.needYou !== null && props.needYou > 0 ? (
                 <Text testID="board-header.need-you" style={[styles.meta, workStatusWordStyle('attention')]}>
-                    · {t('boards.meta.needYou', { count: props.needYou })}
+                    · {describeBoardNeedYouCount(props.needYou, props.undetermined)}
                 </Text>
             ) : null}
         </View>
@@ -477,13 +499,20 @@ const BoardSourceLine = React.memo(function BoardSourceLine(props: Readonly<{
 });
 
 const styles = StyleSheet.create((theme) => ({
+    root: {
+        flex: 1,
+        minHeight: 0,
+    },
     body: {
         flex: 1,
         minHeight: 0,
     },
-    root: {
-        flex: 1,
-        minHeight: 0,
+    pending: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
     },
     actions: {
         flexDirection: 'row',

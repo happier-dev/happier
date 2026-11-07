@@ -1,12 +1,13 @@
 import * as React from 'react';
 import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 import { Header } from '@/components/navigation/Header';
-import { Platform, Pressable, View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { Typography } from '@/constants/Typography';
 import { StatusDot } from '@/components/ui/status/StatusDot';
-import { useRouter, useSegments } from 'expo-router';
+import { useSegments } from 'expo-router';
+import { useOpenAppSection, useRouter as useHomeRouter } from '@/components/appShell/workspace/destinationRoute';
 import { getServerInfo } from '@/sync/domains/server/serverConfig';
-import { Image } from 'expo-image';
+import { SafeExpoImage as Image } from '@/components/ui/media/SafeExpoImage';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { useWorkflowsDestinationAccess } from '@/components/workflows/gating/workflowsDestinationAccess';
@@ -19,8 +20,10 @@ import { AppShellThemeToggle } from './appRail/AppShellThemeToggle';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import {
     shouldForceFreshNewSessionEntryFromPressEvent,
-    useResolveNewSessionOrdinaryEntryRoute,
 } from '@/components/sessions/new/navigation/newSessionOrdinaryEntryRoute';
+import { useOpenNewSession } from '@/components/sessions/new/navigation/newSessionEntry';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { openAddHome } from '@/components/homes/add/openAddHome';
 
 
 const stylesheet = StyleSheet.create((theme, runtime) => ({
@@ -108,15 +111,13 @@ export const HomeHeaderNotAuth = React.memo(() => {
 });
 
 function HeaderRight() {
-    const router = useRouter();
-    const resolveNewSessionOrdinaryEntryRoute = useResolveNewSessionOrdinaryEntryRoute();
+    const openNewSession = useOpenNewSession();
     const { theme } = useUnistyles();
     const handleNewSession = React.useCallback((event?: unknown) => {
-        const { draftId, draftOrigin } = resolveNewSessionOrdinaryEntryRoute({
+        openNewSession({
             forceFresh: shouldForceFreshNewSessionEntryFromPressEvent(event),
         });
-        router.push({ pathname: '/new', params: { draftId, draftOrigin } });
-    }, [resolveNewSessionOrdinaryEntryRoute, router]);
+    }, [openNewSession]);
 
     return (
       <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -135,27 +136,26 @@ function HeaderRight() {
 }
 
 function HeaderRightNotAuth() {
-    const router = useRouter();
+    const router = useHomeRouter();
     const { theme } = useUnistyles();
     const styles = stylesheet;
 
 
     return (
-        <Pressable
+        <HappierPressable
             testID="home-header-open-server-config"
-            onPress={() => router.push('/server')}
-            hitSlop={15}
+            onPress={() => openAddHome(router)}
             style={styles.headerButton}
             accessibilityRole="button"
             accessibilityLabel={t('server.serverConfiguration')}
         >
             <Icon name="hard-drives" size={24} color={theme.colors.chrome.header.foreground} />
-        </Pressable>
+        </HappierPressable>
     );
 }
 
 function HeaderLeft(props: { showWorkflows: boolean }) {
-    const router = useRouter();
+    const openSection = useOpenAppSection();
     const updates = useSharedUpdatesSummary();
     const styles = stylesheet;
     const { theme } = useUnistyles();
@@ -176,15 +176,16 @@ function HeaderLeft(props: { showWorkflows: boolean }) {
                 <UpdatesPopoverButton summary={updates} variant="header" testID="home-header-updates-pill" />
             ) : logo}
             {props.showWorkflows ? (
-                <Pressable
-                    onPress={() => router.push('/workflows')}
-                    hitSlop={15}
+                <HappierPressable
+                    onPress={() => openSection('/workflows')}
                     style={styles.headerButton}
                     accessibilityRole="button"
                     accessibilityLabel={t('workflows.openCollection')}
+                    // Abuts the logo / Updates entry (no gap between the two targets).
+                    hitReach={{ left: 0 }}
                 >
                     <Icon name="tree-structure" size={20} color={theme.colors.chrome.header.foreground} />
-                </Pressable>
+                </HappierPressable>
             ) : null}
         </View>
     );

@@ -186,7 +186,6 @@ export const PhoneOpenTabsRail = React.memo(function PhoneOpenTabsRail() {
                 renderLeadingIcon={renderLeadingIcon}
                 entityDragSource={entityDragSource}
                 tabNativeId={railTabNativeId}
-                panelNativeId={railPanelNativeId}
                 railTrailing={trailing}
                 testIds={RAIL_TEST_IDS}
             />
@@ -229,7 +228,6 @@ const PhoneSplitPager = React.memo(function PhoneSplitPager(props: Readonly<{
                 onPress={() => props.onShowPane(next.id)}
                 accessibilityRole="button"
                 accessibilityLabel={`${t('phoneNav.rail.nextPane')}: ${paneName(next)}`}
-                hitSlop={8}
             >
                 <Text style={styles.pagerNextLabel}>{paneName(next)}</Text>
                 <Icon name="caret-right" size={14} color={theme.colors.text.link} />
@@ -240,7 +238,6 @@ const PhoneSplitPager = React.memo(function PhoneSplitPager(props: Readonly<{
 
 const noop = () => {};
 const railTabNativeId = (key: string) => `phone-rail-tab-${key}`;
-const railPanelNativeId = (key: string) => `phone-rail-panel-${key}`;
 const RAIL_TEST_IDS = {
     tab: (key: string) => `phone-rail-tab-${key}`,
     tabClose: (key: string) => `phone-rail-tab-close-${key}`,

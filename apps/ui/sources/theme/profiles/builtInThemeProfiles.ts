@@ -69,7 +69,7 @@ export const BUILT_IN_THEME_PROFILES: readonly BuiltInThemeProfileDefinition[] =
                 'chrome.header.foreground': '#E4E3E8',
                 'text.primary': '#E4E3E8',
                 'text.secondary': '#898892',
-                'text.tertiary': '#5D5C66',
+                'text.tertiary': '#7C7B85',
                 'text.link': '#F3D88B',
                 'text.destructive': '#E07070',
                 'text.placeholder': '#55545E',
@@ -191,7 +191,7 @@ export const BUILT_IN_THEME_PROFILES: readonly BuiltInThemeProfileDefinition[] =
                 'border.strong': 'rgba(0,0,0,0.14)',
                 'text.primary': '#111114',
                 'text.secondary': '#5A5A5F',
-                'text.tertiary': '#7A7A80',
+                'text.tertiary': '#6E6E73',
                 'state.active.background': 'rgba(10,132,255,0.08)',
                 'state.active.border': 'rgba(10,132,255,0.40)',
                 'state.active.foreground': '#111114',
@@ -210,6 +210,4 @@ export const getBuiltInThemeProfileDefinition = (presetId: BuiltInThemeProfilePr
     BUILT_IN_THEME_PROFILES.find((definition) => definition.presetId === presetId)
 );
 
-export const isBuiltInThemeProfilePresetId = (value: string | null | undefined): value is BuiltInThemeProfilePresetId => (
-    typeof value === 'string' && BUILT_IN_THEME_PROFILES.some((definition) => definition.presetId === value)
-);
+export { isBuiltInThemeProfilePresetId } from '@happier-dev/protocol/account/settings/themeProfiles';

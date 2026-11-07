@@ -1,10 +1,13 @@
 import {
-    createActionExecutor,
+    createActionExecutor} from '@happier-dev/protocol/actions/actionExecutor';
+import {
     DaemonPluginActionSchemasReadResponseSchema,
-    type PluginContributionIdentityV1,
-    type PluginProjectedActionV2,
+    type PluginProjectedActionV2} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import {
+    type PluginContributionIdentityV1} from '@happier-dev/protocol/plugins/contribution-identity';
+import {
     type PluginResourceContextV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/contributions/v2';
 import { createWidgetAreaActionPortV1, createWidgetSurfaceArtifactPortV1, createWidgetActionInputResolverV1, readBuiltinWidgetDescriptorV1 } from '@happier-dev/protocol/widgets';
 import type { HomeHubArtifactTransportV1 } from '@happier-dev/protocol/home';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
@@ -30,8 +33,10 @@ import type { PluginProjectionEntry } from '@/agents/backendCatalog/daemonContri
 import { log } from '@/log';
 import { t } from '@/text';
 import { settlePluginSurfaceHostApiRequest } from './createPluginSurfaceHostApi';
+import { registerShellColumnActionOwner } from '@/sync/ops/actions/scopeActionFamily';
 import { WidgetFrameBodyNoticeContext, type WidgetFrameBodyNoticeSource } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { storage } from '@/sync/domains/state/storageStore';
+import { createPluginUiResourceProjection } from '@/dev/testkit/fixtures/pluginUiResourceProjection';
 import {
     createBoundPluginSurfaceController,
     useBoundPluginSurfaceController,
@@ -142,114 +147,6 @@ const FACTS = {
 const TARGETED_RESOURCE_MOUNT_INSTANCE_KEY = 'targeted-surface:v1:review:mount-a';
 
 describe('mounted host Resource admission', () => {
-    it('withdraws a pending host preparation when the mounted Machine binding changes', async () => {
-        const executor = createActionExecutor(createActionExecutorBoundaryFixture({}));
-        const binding = { executeHostAction: executor.execute };
-        let machineId = 'machine_1';
-        const controller = createBoundPluginSurfaceController({
-            facts: { ...FACTS, readActionInputFacts: () => ({ machineId }) }, binding,
-        });
-        const events: import('@happier-dev/protocol/plugins/ui').PluginUiActionControlEventV1[] = [];
-        let pending: Promise<void> | undefined;
-        try {
-            await controller.hostApi.handleRequest(request('actionControl', { kind: 'bind', subscriptionId: 'run',
-                action: 'projects.compute.exec', presentation: { title: 'Run' } }), { actionControlSubscription: {
-                retain: () => {}, publish: event => { events.push(event); },
-            } });
-            pending = controller.actionControls!.press('run');
-            expect(events[0]).toMatchObject({ kind: 'prepare' });
-            machineId = 'machine_2';
-            expect(controller.updateMountedBindings?.({})).toBe(true);
-            await vi.waitFor(() => expect(events.at(-1)).toMatchObject({ kind: 'settled',
-                execution: { ok: false, errorCode: 'stale_surface' } }));
-            await pending;
-            expect(controller.actionControls!.getSnapshot()).toMatchObject([{ id: 'run', busy: false }]);
-        } finally { controller.dispose(); await pending; }
-    });
-    it('prepares one person invocation from a mounted host control while raw requests retain approval', async () => {
-        let launches = 0;
-        const setupHold = { kind: 'pendingApproval', code: 'project_setup_consent_required', reviewedEffectDigest: 'reviewed-setup' } as const;
-        const executor = createActionExecutor(createActionExecutorBoundaryFixture({
-            projectAction: async () => { launches += 1; return setupHold; },
-        }));
-        const controller = createBoundPluginSurfaceController({ facts: FACTS,
-            binding: { executeHostAction: executor.execute } });
-        try {
-            expect(controller.installedMethods).toContain('actionControl');
-            const input = { workspace: { serverId: 'server-1', machineId: 'machine_1', workspaceId: 'workspace-a', rootPath: '/work' },
-                executable: 'act', argv: ['--rm=true', '--reuse=false'], cwd: '/work' };
-            const events: import('@happier-dev/protocol/plugins/ui').PluginUiActionControlEventV1[] = [];
-            let prepared = 0;
-            const release: (() => void)[] = [];
-            await controller.hostApi.handleRequest(request('actionControl', { kind: 'bind', subscriptionId: 'run',
-                action: 'projects.compute.exec', presentation: { title: 'Run' } }), { actionControlSubscription: {
-                retain: cleanup => release.push(cleanup),
-                publish: event => {
-                    events.push(event);
-                    if (event.kind === 'prepare') {
-                        prepared += 1;
-                        void controller.hostApi.handleRequest(request('actionControl', { kind: 'prepared', subscriptionId: 'run',
-                            requestId: event.requestId, preparation: { input } }));
-                    }
-                },
-            } });
-            expect(launches).toBe(0);
-            expect(prepared).toBe(0);
-            const snapshot = controller.actionControls!.getSnapshot();
-            const publication = vi.fn();
-            const unsubscribe = controller.actionControls!.subscribe(publication);
-            await controller.hostApi.handleRequest(request('actionControl', { kind: 'update', subscriptionId: 'run', presentation: { title: 'Run' } }));
-            expect(controller.actionControls!.getSnapshot()).toBe(snapshot);
-            expect(publication).not.toHaveBeenCalled();
-            unsubscribe();
-            await controller.hostApi.handleRequest(request('actionControl', { kind: 'prepared', subscriptionId: 'run',
-                requestId: 'forged', preparation: { input } }));
-            expect(launches).toBe(0);
-            await expect(controller.hostApi.handleRequest(request('executeAction', { action: 'projects.compute.exec', input })))
-                .resolves.toMatchObject({ code: 'unavailable', diagnostics: ['approvals_not_supported'] });
-            await controller.actionControls!.press('run');
-            expect(prepared).toBe(1);
-            expect(launches).toBe(1);
-            expect(events.at(-1)).toMatchObject({ kind: 'settled', execution: { ok: true, result: setupHold } });
-            release.forEach(cleanup => cleanup());
-            expect(controller.actionControls!.getSnapshot()).toHaveLength(0);
-        } finally { controller.dispose(); }
-    });
-    it.each(['cancel', 'misbound', 'retire'] as const)('never executes a withdrawn or mis-bound host preparation (%s)', async disposition => {
-        let effects = 0;
-        const executor = createActionExecutor(createActionExecutorBoundaryFixture({
-            projectAction: async () => { effects += 1; return { kind: 'pendingApproval', code: 'project_setup_consent_required', reviewedEffectDigest: 'setup' }; },
-        }));
-        const controller = createBoundPluginSurfaceController({ facts: FACTS, binding: { executeHostAction: executor.execute } });
-        const events: import('@happier-dev/protocol/plugins/ui').PluginUiActionControlEventV1[] = [];
-        try {
-            await controller.hostApi.handleRequest(request('actionControl', { kind: 'bind', subscriptionId: 'run',
-                action: 'projects.compute.exec', presentation: { title: 'Run' } }), { actionControlSubscription: {
-                retain: () => {}, publish: event => { events.push(event); },
-            } });
-            const pending = controller.actionControls!.press('run');
-            const event = events[0]!;
-            if (event.kind !== 'prepare') throw new Error('Host did not request preparation');
-            const reply = { kind: 'prepared', subscriptionId: 'run', requestId: event.requestId,
-                preparation: { input: { workspace: { serverId: 'server-1', machineId: 'machine_1', workspaceId: 'workspace-a', rootPath: '/work' },
-                    executable: 'act', argv: [], cwd: '/work' } } };
-            if (disposition === 'retire') {
-                controller.retire();
-                expect(await controller.hostApi.handleRequest(request('actionControl', reply))).toMatchObject({ code: 'stale_surface' });
-                controller.dispose();
-            } else {
-                if (disposition === 'misbound') {
-                    expect(await controller.hostApi.handleRequest(request('actionControl', { ...reply, requestId: 'other-gesture' })))
-                        .toMatchObject({ code: 'invalid_payload' });
-                    expect(effects).toBe(0);
-                }
-                await controller.hostApi.handleRequest(request('actionControl', { ...reply, preparation: null }));
-            }
-            await pending;
-            expect(effects).toBe(0);
-            expect(events.filter(event => event.kind === 'settled')).toEqual([]);
-        } finally { controller.dispose(); }
-    });
     it('distinguishes complete current full-describe Resource sets from absent, partial and retired sources', async () => {
         const installed = { ...widgetInstalledPackage('acme.browser', 'Browser'), occurrenceId: FACTS.occurrenceId };
         const orphanRows = { 'acme.browser/stale': {
@@ -277,7 +174,7 @@ describe('mounted host Resource admission', () => {
                 const result = await controller.hostApi.handleRequest(request('readResource', { resource: 'state' }));
                 expect(readResource.mock.calls.length, fixture.name).toBe(fixture.complete ? 0 : 1);
                 expect(result, fixture.name).toMatchObject(fixture.complete
-                    ? { code: 'unavailable', diagnostics: ['plugin_resource_not_found'] }
+                    ? { code: 'plugin_resource_not_found', diagnostics: [] }
                     : { contentType: 'application/json', bytesBase64: 'e30=' });
             } finally { controller.dispose(); }
         }
@@ -296,7 +193,7 @@ describe('mounted host Resource admission', () => {
         }, binding: { readResource } });
         try {
             await expect(controller.hostApi.handleRequest(request('readResource', { resource: 'state' }))).resolves.toMatchObject({
-                code: 'unavailable', diagnostics: ['plugin_resource_not_found'],
+                code: 'plugin_resource_not_found', diagnostics: [],
             });
             expect(readResource).not.toHaveBeenCalled();
         } finally { controller.dispose(); }
@@ -407,6 +304,145 @@ function request(method: string, payload?: unknown) {
 }
 
 describe('BoundPluginSurfaceController (§3.1)', () => {
+    it('keeps page tab Actions on the parent owner while an embedded Session borrows chrome', async () => {
+        const { restoreServerAccountForTest, installDisconnectedServerSocketBoundary } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
+        const { createHomeHubArtifactHttpBoundary } = await import('@/dev/testkit/harness/homeHubArtifactHttpBoundary');
+        installDisconnectedServerSocketBoundary();
+        const http = createHomeHubArtifactHttpBoundary('account-a');
+        const connection = await restoreServerAccountForTest({ serverUrl: 'https://page-tabs-parent-home.test',
+            accountId: 'account-a', request: http.request });
+        let selected = 'session';
+        const unregister = registerShellColumnActionOwner('main', () => ({ present: true, visible: true, available: true,
+            tabs: ['chat'], activeTab: 'chat', selectTab: () => {}, setVisible: () => {} }));
+        const pageOwner = { kind: 'shell.columns' as const, columns: { main: () => ({ present: true, visible: true, available: true,
+            tabs: ['overview', 'session'], activeTab: selected, selectTab: (tab: string) => { selected = tab; }, setVisible: () => {} }) } };
+        // Keep the default controller, scoped executor and scope Action owner real;
+        // only the Account HTTP/socket boundary belongs to the fixture.
+        const facts = { ...FACTS, serverId: connection.home.id, accountLifetime: { ...CURRENT_ACCOUNT_LIFETIME,
+            scope: { serverId: connection.home.id, accountId: 'account-a' } } };
+        const controllers = [false, true].map(addressed => createBoundPluginSurfaceController({ facts,
+            binding: addressed ? { scopeActionOwner: pageOwner } : {} }));
+        const invocation = request('executeAction', { action: 'shell.column.set', input: { column: 'main', visible: true, tab: 'overview' } });
+        try {
+            expect(await settlePluginSurfaceHostApiRequest(invocation, () => controllers[0]!.hostApi.handleRequest(invocation)))
+                .toMatchObject({ kind: 'error', payload: { code: 'unavailable', diagnostics: ['client_control_unavailable'] } });
+            expect(selected).toBe('session');
+            expect(await settlePluginSurfaceHostApiRequest(invocation, () => controllers[1]!.hostApi.handleRequest(invocation)))
+                .toMatchObject({ kind: 'result' });
+            expect(selected).toBe('overview');
+            controllers[1]!.dispose();
+            expect(await settlePluginSurfaceHostApiRequest(invocation, () => controllers[1]!.hostApi.handleRequest(invocation)))
+                .toMatchObject({ kind: 'error', payload: { code: 'stale_surface', diagnostics: ['plugin_surface_retired'] } });
+        } finally { controllers.forEach(controller => controller.dispose()); unregister(); await connection.dispose(); }
+    });
+    it('withdraws a pending host preparation when the mounted Machine binding changes', async () => {
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({}));
+        const binding = { executeHostAction: executor.execute };
+        let machineId = 'machine_1';
+        const controller = createBoundPluginSurfaceController({
+            facts: { ...FACTS, readActionInputFacts: () => ({ machineId }) }, binding,
+        });
+        const events: import('@happier-dev/protocol/plugins/ui').PluginUiActionControlEventV1[] = [];
+        let pending: Promise<void> | undefined;
+        try {
+            await controller.hostApi.handleRequest(request('actionControl', { kind: 'bind', subscriptionId: 'run',
+                action: 'projects.compute.exec', presentation: { title: 'Run' } }), { actionControlSubscription: {
+                retain: () => {}, publish: event => { events.push(event); },
+            } });
+            pending = controller.actionControls!.press('run');
+            expect(events[0]).toMatchObject({ kind: 'prepare' });
+            machineId = 'machine_2';
+            expect(controller.updateMountedBindings?.({})).toBe(true);
+            await vi.waitFor(() => expect(events.at(-1)).toMatchObject({ kind: 'settled',
+                execution: { ok: false, errorCode: 'stale_surface' } }));
+            await pending;
+            expect(controller.actionControls!.getSnapshot()).toMatchObject([{ id: 'run', busy: false }]);
+        } finally { controller.dispose(); await pending; }
+    });
+    it('prepares one person invocation from a mounted host control while raw requests retain approval', async () => {
+        let launches = 0;
+        const setupHold = { kind: 'pendingApproval', code: 'project_setup_consent_required', reviewedEffectDigest: 'reviewed-setup' } as const;
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+            projectAction: async () => { launches += 1; return setupHold; },
+        }));
+        const controller = createBoundPluginSurfaceController({ facts: FACTS,
+            binding: { executeHostAction: executor.execute } });
+        try {
+            expect(controller.installedMethods).toContain('actionControl');
+            const input = { workspace: { serverId: 'server-1', machineId: 'machine_1', workspaceId: 'workspace-a', rootPath: '/work' },
+                executable: 'act', argv: ['--rm=true', '--reuse=false'], cwd: '/work' };
+            const events: import('@happier-dev/protocol/plugins/ui').PluginUiActionControlEventV1[] = [];
+            let prepared = 0;
+            const release: (() => void)[] = [];
+            await controller.hostApi.handleRequest(request('actionControl', { kind: 'bind', subscriptionId: 'run',
+                action: 'projects.compute.exec', presentation: { title: 'Run' } }), { actionControlSubscription: {
+                retain: cleanup => release.push(cleanup),
+                publish: event => {
+                    events.push(event);
+                    if (event.kind === 'prepare') {
+                        prepared += 1;
+                        void controller.hostApi.handleRequest(request('actionControl', { kind: 'prepared', subscriptionId: 'run',
+                            requestId: event.requestId, preparation: { input } }));
+                    }
+                },
+            } });
+            expect(launches).toBe(0);
+            expect(prepared).toBe(0);
+            const snapshot = controller.actionControls!.getSnapshot();
+            const publication = vi.fn();
+            const unsubscribe = controller.actionControls!.subscribe(publication);
+            await controller.hostApi.handleRequest(request('actionControl', { kind: 'update', subscriptionId: 'run', presentation: { title: 'Run' } }));
+            expect(controller.actionControls!.getSnapshot()).toBe(snapshot);
+            expect(publication).not.toHaveBeenCalled();
+            unsubscribe();
+            await controller.hostApi.handleRequest(request('actionControl', { kind: 'prepared', subscriptionId: 'run',
+                requestId: 'forged', preparation: { input } }));
+            expect(launches).toBe(0);
+            await expect(controller.hostApi.handleRequest(request('executeAction', { action: 'projects.compute.exec', input })))
+                .resolves.toMatchObject({ code: 'unavailable', diagnostics: ['approvals_not_supported'] });
+            await controller.actionControls!.press('run');
+            expect(prepared).toBe(1);
+            expect(launches).toBe(1);
+            expect(events.at(-1)).toMatchObject({ kind: 'settled', execution: { ok: true, result: setupHold } });
+            release.forEach(cleanup => cleanup());
+            expect(controller.actionControls!.getSnapshot()).toHaveLength(0);
+        } finally { controller.dispose(); }
+    });
+    it.each(['cancel', 'misbound', 'retire'] as const)('never executes a withdrawn or mis-bound host preparation (%s)', async disposition => {
+        let effects = 0;
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+            projectAction: async () => { effects += 1; return { kind: 'pendingApproval', code: 'project_setup_consent_required', reviewedEffectDigest: 'setup' }; },
+        }));
+        const controller = createBoundPluginSurfaceController({ facts: FACTS, binding: { executeHostAction: executor.execute } });
+        const events: import('@happier-dev/protocol/plugins/ui').PluginUiActionControlEventV1[] = [];
+        try {
+            await controller.hostApi.handleRequest(request('actionControl', { kind: 'bind', subscriptionId: 'run',
+                action: 'projects.compute.exec', presentation: { title: 'Run' } }), { actionControlSubscription: {
+                retain: () => {}, publish: event => { events.push(event); },
+            } });
+            const pending = controller.actionControls!.press('run');
+            const event = events[0]!;
+            if (event.kind !== 'prepare') throw new Error('Host did not request preparation');
+            const reply = { kind: 'prepared', subscriptionId: 'run', requestId: event.requestId,
+                preparation: { input: { workspace: { serverId: 'server-1', machineId: 'machine_1', workspaceId: 'workspace-a', rootPath: '/work' },
+                    executable: 'act', argv: [], cwd: '/work' } } };
+            if (disposition === 'retire') {
+                controller.retire();
+                expect(await controller.hostApi.handleRequest(request('actionControl', reply))).toMatchObject({ code: 'stale_surface' });
+                controller.dispose();
+            } else {
+                if (disposition === 'misbound') {
+                    expect(await controller.hostApi.handleRequest(request('actionControl', { ...reply, requestId: 'other-gesture' })))
+                        .toMatchObject({ code: 'invalid_payload' });
+                    expect(effects).toBe(0);
+                }
+                await controller.hostApi.handleRequest(request('actionControl', { ...reply, preparation: null }));
+            }
+            await pending;
+            expect(effects).toBe(0);
+            expect(events.filter(event => event.kind === 'settled')).toEqual([]);
+        } finally { controller.dispose(); }
+    });
     it('answers an external plugin call entered while connecting after the committed connection settles', async () => {
         const executeContributedAction = vi.fn(async () => ({
             supported: true as const, result: { ok: true as const, result: { refreshed: true } },
@@ -539,7 +575,8 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
             isDaemonConnectionPending: () => pending,
             get daemonInteractionEnabled() { return !failed; },
             get daemonConnectionFailure() {
-                return failed ? { code: 'timeout' as const, reasonCode: 'targeted_contributions_timeout' } : undefined;
+                return failed ? { code: 'timeout' as const, reasonCode: 'targeted_contributions_timeout',
+                    layer: 'target' as const, phase: 'admission' as const, retryable: true } : undefined;
             },
         };
         const executeContributedAction = vi.fn(async () => ({ supported: true as const, result: { ok: true as const, result: { refreshed: true } } }));
@@ -549,7 +586,8 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
             const waitingResult = settlePluginSurfaceHostApiRequest(waiting, () => controller.hostApi.handleRequest(waiting));
             pending = false;
             controller.hostApi.notifyConnectionSettled?.();
-            await expect(waitingResult).resolves.toMatchObject({ kind: 'error', payload: { code: 'timeout',
+            await expect(waitingResult).resolves.toMatchObject({ kind: 'error', payload: { code: 'targeted_contributions_timeout',
+                layer: 'target', phase: 'admission', retryable: true,
                 diagnostics: expect.arrayContaining(['targeted_contributions_timeout']) } });
             for (const [method, payload] of [
                 ['executeAction', { action: 'refresh-index', input: {} }],
@@ -558,7 +596,7 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
                 const invocation = request(method, payload);
                 const result = await settlePluginSurfaceHostApiRequest(invocation, () => controller.hostApi.handleRequest(invocation));
                 expect(result).toMatchObject({ kind: 'error', payload: {
-                    code: 'timeout', diagnostics: expect.arrayContaining(['targeted_contributions_timeout']),
+                    code: 'targeted_contributions_timeout', diagnostics: expect.arrayContaining(['targeted_contributions_timeout']),
                     message: t('pluginRuntime.transportUnavailable'),
                 } });
             }
@@ -879,6 +917,44 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
         expect(row).toBe(before);
         expect(createBoundPluginSurfaceController({ facts: FACTS }).installedMethods).not.toContain('widgetArea');
     });
+    it.each(['absent', 'retired'] as const)('settles an initially missing mounted Action without replay after %s', async settlement => {
+        const executeContributedAction = vi.fn<NonNullable<BoundPluginSurfaceBinding['executeContributedAction']>>(
+            async () => ({ supported: true, result: { ok: true, result: null } }));
+        const hook = await renderHook((pending: boolean) => useBoundPluginSurfaceController({ facts: {
+            ...FACTS, isDaemonConnectionPending: () => pending, resolveContributedAction: () => null,
+        }, binding: { executeContributedAction } }), { initialProps: true });
+        try {
+            const controller = hook.getCurrent();
+            let settled = false;
+            const read = Promise.resolve(controller.hostApi.handleRequest(request('executeAction', { action: 'missing', input: {} })));
+            void read.then(() => { settled = true; });
+            await act(async () => {});
+            expect(settled).toBe(false);
+            if (settlement === 'retired') controller.dispose();
+            else expect(await hook.rerender(false)).toBe(controller);
+            await expect(read).resolves.toEqual(settlement === 'retired'
+                ? { code: 'stale_surface', diagnostics: ['plugin_surface_retired'] }
+                : { code: 'unavailable', diagnostics: ['plugin_surface_action_projection_unavailable'] });
+            controller.hostApi.notifyConnectionSettled?.();
+            controller.hostApi.notifyConnectionSettled?.();
+            expect(executeContributedAction).not.toHaveBeenCalled();
+        } finally { await hook.unmount(); }
+    });
+
+    it.each(['equal', 'replacement'] as const)('fences Action admission by executable identity rather than descriptor allocation (%s)', async change => {
+        let occurrenceId = 'daemon-action-occurrence-a';
+        const controller = createBoundPluginSurfaceController({ facts: { ...FACTS,
+            resolveContributedAction: identity => ({ ...resolveDaemonTargetAction(identity), occurrenceId }),
+        } });
+        try {
+            const admission = controller.hostApi.handleRequest({ version: 1, requestId: 'exact-action-admission',
+                surface: controller.surfaceContext, method: 'admitAction', payload: { action: 'refresh-index', input: {} } });
+            if (change === 'replacement') occurrenceId = 'daemon-action-occurrence-b';
+            await expect(admission).resolves.toEqual(change === 'equal' ? { admitted: true }
+                : { code: 'stale_surface', diagnostics: ['plugin_ui_generation_retired'] });
+        } finally { controller.dispose(); }
+    });
+
     it('passes the raw client target to the canonical dispatcher before daemon availability', async () => {
         const executeContributedAction = vi.fn();
         const controller = createBoundPluginSurfaceController({
@@ -1706,8 +1782,9 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
         });
 
         await expect(pending).resolves.toEqual({
-            code: 'unavailable',
-            diagnostics: ['plugin_surface_retired'],
+            code: 'plugin_surface_retired',
+            diagnostics: [],
+            message: 'plugin_surface_retired',
         });
         await hook.unmount();
     });
@@ -1747,8 +1824,9 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
         expect(original.isCurrent()).toBe(true);
         expect(resourceSignal?.aborted).toBe(true);
         await expect(pending).resolves.toEqual({
-            code: 'unavailable',
-            diagnostics: ['plugin_surface_retired'],
+            code: 'plugin_surface_retired',
+            diagnostics: [],
+            message: 'plugin_surface_retired',
         });
         await hook.unmount();
     });
@@ -1868,6 +1946,7 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
 
         expect(executeContributedAction).toHaveBeenCalledWith('machine_1', {
             serverId: 'server-1',
+            accountLifetime: CURRENT_ACCOUNT_LIFETIME,
             expectedContributorOccurrenceId: 'daemon-action-occurrence-a',
             qualifiedActionId: `${FACTS.pluginId}/self-check`,
             signal: expect.any(AbortSignal),
@@ -2113,7 +2192,7 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
         expect(wrongTarget.installedMethods).toContain('selectActionInput');
     });
 
-    it('keeps the mounted Channels caller binding while its selected provider form consumes only host-resolved Connected Account options', async () => {
+    it.each(['ready', 'late'] as const)('keeps the mounted Channels caller binding while its %s provider form consumes only host-resolved Connected Account options', async (delivery) => {
         const account = {
             service: { pluginId: 'happier.channel.discord', localId: 'discord-bot' },
             accountId: 'account-discord-a',
@@ -2253,12 +2332,17 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
         });
         const hide = vi.spyOn(Modal, 'hide').mockImplementation(() => {});
         try {
+            let currentSelection: Partial<BoundPluginSurfaceFacts> = delivery === 'late'
+                ? { pluginProjectionById: null, targetedContributions: null, machineId: null,
+                    executionOrigin: null, daemonOccurrenceId: null }
+                : { pluginProjectionById, targetedContributions };
+            let machineReady = delivery === 'ready';
             const controller = createBoundPluginSurfaceController({
                 facts: {
                     ...channelsFacts,
                     machineDisplayName: 'Development Mac',
-                    pluginProjectionById,
-                    targetedContributions,
+                    readActionInputFacts: () => currentSelection,
+                    isDaemonInteractionEnabled: () => machineReady,
                 },
                 binding: { executeContributedAction: executeContributedAction as never },
             });
@@ -2279,6 +2363,12 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
                 ...(payload === undefined ? {} : { payload }),
             }) as never;
 
+            if (delivery === 'late') {
+                expect(show).not.toHaveBeenCalled();
+                currentSelection = { ...channelsFacts, pluginProjectionById, targetedContributions };
+                machineReady = true;
+                controller.updateMountedBindings?.({});
+            }
             const selecting = controller.hostApi.handleRequest(channelsRequest('selectActionInput', { operation }));
             await vi.waitFor(() => expect(form).toBeDefined());
             form!.replaceInput({ credentialRef: account });
@@ -2325,11 +2415,13 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
                     providerSetupInput: selection.input,
                     credentialRef: account,
                 },
-            }))).resolves.toEqual({ prepared: true });
+            }), { targetedOperation: operation, selectedActionInput: selection })).resolves.toEqual({ prepared: true });
             expect(executeContributedAction).toHaveBeenCalledWith('machine_1', {
                 serverId: 'server-1',
+                accountLifetime: CURRENT_ACCOUNT_LIFETIME,
                 expectedContributorOccurrenceId: 'daemon-action-occurrence-a',
                 qualifiedActionId: 'happier.channels/connection/prepare-v1',
+                selectedActionInputCarrier: { operation, result: selection },
                 signal: expect.any(AbortSignal),
                 isCurrent: expect.any(Function),
                 input: {
@@ -2544,7 +2636,7 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
     });
 
     it('keeps canonical Connected Accounts navigation available without daemon interaction', async () => {
-        const openConnectedAccounts = vi.fn(async () => undefined);
+        const openConnectedAccounts = vi.fn(async () => ({ kind: 'dismissed' as const }));
         const controller = createBoundPluginSurfaceController({
             facts: { ...FACTS, interactionEnabled: false, daemonInteractionEnabled: false },
             binding: { openConnectedAccounts },
@@ -2554,7 +2646,7 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
         await expect(controller.hostApi.handleRequest(request('openConnectedAccounts', {
             service: { pluginId: 'happier.scm.github', localId: 'github-account' },
             accountId: 'github:work',
-        }))).resolves.toBeNull();
+        }))).resolves.toEqual({ kind: 'dismissed' });
         expect(openConnectedAccounts).toHaveBeenCalledWith({
             service: { pluginId: 'happier.scm.github', localId: 'github-account' },
             accountId: 'github:work',
@@ -2562,8 +2654,8 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
     });
 
     it('updates Connected Accounts navigation only on commit without replacing its physical caller', async () => {
-        const firstOpen = vi.fn(async () => undefined);
-        const secondOpen = vi.fn(async () => undefined);
+        const firstOpen = vi.fn(async () => ({ kind: 'dismissed' as const }));
+        const secondOpen = vi.fn(async () => ({ kind: 'dismissed' as const }));
         let openConnectedAccounts = firstOpen;
         let suspend = false;
         let attempted = 0;
@@ -2592,7 +2684,7 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
             });
             expect(attempted).toBeGreaterThan(0);
             expect(screen.findHostByTestId('pending-navigation')).toBeNull();
-            await expect(first.hostApi.handleRequest(request('openConnectedAccounts', payload))).resolves.toBeNull();
+            await expect(first.hostApi.handleRequest(request('openConnectedAccounts', payload))).resolves.toEqual({ kind: 'dismissed' });
             expect(firstOpen).toHaveBeenCalledOnce();
             expect(secondOpen).not.toHaveBeenCalled();
             suspend = false;
@@ -2602,13 +2694,36 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
             openConnectedAccounts = secondOpen;
             await screen.update(render());
             expect(current).toBe(first);
-            await expect(first.hostApi.handleRequest(request('openConnectedAccounts', payload))).resolves.toBeNull();
+            await expect(first.hostApi.handleRequest(request('openConnectedAccounts', payload))).resolves.toEqual({ kind: 'dismissed' });
             expect(firstOpen).toHaveBeenCalledOnce();
             expect(secondOpen).toHaveBeenCalledExactlyOnceWith(payload);
         } finally {
             await screen.unmount();
             await act(async () => { pending.resolve(); });
         }
+    });
+
+    it('opens typed resources through the same core preference owner from a plugin mount', async () => {
+        const { publishCommittedAppShellPluginUiProjection } = await import('@/components/appShell/plugins/committedPluginUiProjection');
+        onTestFinished(publishCommittedAppShellPluginUiProjection(() => createPluginUiResourceProjection()));
+        const previous = storage.getState().settings;
+        storage.setState({ settings: { ...previous, scmResourceOpenLocation: 'happier' } });
+        onTestFinished(() => storage.setState({ settings: previous }));
+        const launches: unknown[] = [];
+        const controller = createBoundPluginSurfaceController({
+            facts: { ...FACTS, pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION },
+            binding: { resourceNavigation: { targetKind: 'session', openSurface: launch => {
+                launches.push(launch); return { ok: true };
+            } } },
+        });
+        onTestFinished(() => controller.dispose());
+        const resource = { kind: 'pullRequest', url: 'https://forge.example/acme/repo/pull/42' };
+        await expect(controller.hostApi.handleRequest(request('openResource', resource))).resolves.toBeNull();
+        expect(launches).toEqual([{ destination: { pluginId: 'acme.forge', localId: 'details' },
+            instanceKey: resource.url, input: { resource } }]);
+        await expect(controller.hostApi.handleRequest(request('openResource', { ...resource, kind: 'repository' })))
+            .resolves.toMatchObject({ code: 'invalid_payload' });
+        expect(launches).toHaveLength(1);
     });
 
     it('keeps locally served host methods when only the daemon binding is unavailable', async () => {
@@ -2636,9 +2751,11 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
         expect(controller.installedMethods).toEqual([
             'context',
             'executeAction',
+            'actionControl',
             'admitAction',
             'readResource',
             'watchResource',
+            'openResource',
             'notify',
             'confirm',
             'diagnostic',
@@ -2646,6 +2763,7 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
             'writeClipboard',
             'openExternalLink',
             'openNewSession',
+            'openAutomationEvent',
             'readSession',
             'readMachineDisplayName',
             'revealSessionInput',
@@ -2681,12 +2799,15 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
         });
         await expect(controller.hostApi.handleRequest(request('writeClipboard', {
             value: 'review link',
-        }))).resolves.toBeNull();
-        expect(clipboard.setStringAsync).toHaveBeenCalledWith('review link');
+        }))).rejects.toMatchObject({ message: 'action_home_not_found' });
+        // Native copies retain Action settings/approval even without a daemon.
+        // This mount has no registered Home for admitting that Action.
+        expect(clipboard.setStringAsync).not.toHaveBeenCalled();
         await expect(controller.hostApi.handleRequest(request('openExternalLink', {
             url: 'https://example.test/reviews/7',
-        }))).resolves.toBeNull();
-        expect(openUrl).toHaveBeenCalledWith('https://example.test/reviews/7');
+        }))).rejects.toMatchObject({ message: 'action_home_not_found' });
+        // Being locally installed is not approval or an authenticated Action binding.
+        expect(openUrl).not.toHaveBeenCalled();
         diagnosticLog.mockRestore();
         openUrl.mockRestore();
         vi.unstubAllGlobals();
@@ -2834,6 +2955,7 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
 
         expect(executeContributedAction).toHaveBeenCalledWith('machine_1', {
             serverId: 'server-1',
+            accountLifetime: CURRENT_ACCOUNT_LIFETIME,
             expectedContributorOccurrenceId: 'daemon-action-occurrence-a',
             qualifiedActionId: 'acme.browser/save',
             signal: expect.any(AbortSignal),
@@ -2888,7 +3010,7 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
         }
     });
 
-    it.each(['submit', 'cancel', 'retire', 'hydrate'] as const)('collects omitted declarative Action input before mounted dispatch (%s)', async (settlement) => {
+    it.each(['submit', 'cancel', 'retire', 'hydrate', 'unavailable'] as const)('collects omitted declarative Action input before mounted dispatch (%s)', async (settlement) => {
         const action = {
             id: 'launch', occurrenceId: 'daemon-action-occurrence-a', title: 'Launch a worker',
             description: null, icon: null, scopes: ['session'], surfaces: ['ui'],
@@ -2926,21 +3048,35 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
                 inputHints: action.inputHints }) };
         let currentActionFacts: Pick<BoundPluginSurfaceFacts, 'pluginProjectionById' | 'resolveContributedAction'> =
             settlement === 'hydrate' ? { ...actionFacts, pluginProjectionById: null } : actionFacts;
+        const triggerAnchor = { kind: 'rect', rect: { left: 16, top: 48, width: 120, height: 32 } } as const;
+        let currentAnchor: import('@/components/ui/popover').PopoverAnchor | undefined = triggerAnchor;
         const controller = createBoundPluginSurfaceController({
             facts: { ...FACTS, ...currentActionFacts, sessionId: 'session-worker',
+                daemonInteractionEnabled: settlement !== 'unavailable',
                 readActionInputFacts: () => currentActionFacts },
-            binding: { executeContributedAction },
+            binding: { executeContributedAction, readActionInputAnchor: () => currentAnchor },
         });
         try {
             currentActionFacts = actionFacts;
             const pending = controller.dispatchAction({ pluginId: FACTS.pluginId, localId: action.id });
+            // The press ends while schema admission is pending; presentation keeps its captured anchor.
+            currentAnchor = undefined;
+            if (settlement === 'unavailable') {
+                await expect(pending).resolves.toEqual({ code: 'unavailable', diagnostics: ['plugin_mounted_caller_unavailable'] });
+                expect(show).not.toHaveBeenCalled();
+                expect(readSchemas).not.toHaveBeenCalled();
+                expect(executeContributedAction).not.toHaveBeenCalled();
+                return;
+            }
             await vi.waitFor(() => expect(form).toBeDefined());
             expect(form!.getFields().map(field => field.path)).toEqual(['name']);
+            expect(show.mock.calls[0]?.[0].chrome).toMatchObject({ anchor: triggerAnchor, phonePresentation: 'sheet' });
             expect(executeContributedAction).not.toHaveBeenCalled();
             if (settlement === 'submit') {
                 form!.replaceInput({ name: 'Research' });
                 await form!.submit();
                 await expect(pending).resolves.toEqual({ launched: true });
+                expect(executeContributedAction).toHaveBeenCalledOnce();
                 expect(executeContributedAction).toHaveBeenCalledWith('machine_1', expect.objectContaining({
                     input: { name: 'Research' }, sessionId: 'session-worker',
                     invocation: { kind: 'mountedPluginSurface', mountedBinding: expect.objectContaining({
@@ -3017,6 +3153,7 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
 
         expect(executeContributedAction).toHaveBeenCalledWith('machine_1', {
             serverId: 'server-1',
+            accountLifetime: CURRENT_ACCOUNT_LIFETIME,
             expectedContributorOccurrenceId: 'daemon-action-occurrence-a',
             qualifiedActionId: 'acme.reviewer/publish',
             input: { source: 'mounted-surface' },
@@ -3054,6 +3191,7 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
 
         expect(executeContributedAction).toHaveBeenCalledWith('machine_1', {
             serverId: 'server-1',
+            accountLifetime: CURRENT_ACCOUNT_LIFETIME,
             expectedContributorOccurrenceId: 'daemon-action-occurrence-a',
             qualifiedActionId: 'acme.reviewer/publish',
             input: { source: 'bound-session' },

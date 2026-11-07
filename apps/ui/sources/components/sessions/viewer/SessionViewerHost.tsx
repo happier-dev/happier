@@ -25,13 +25,22 @@ import { VOICE_MOTION } from '@/components/voice/light/voiceLightTokens';
 import {
   useSessionCockpitComposerChromeHeight,
   useSessionCockpitComposerChromeTop,
+  useSessionCockpitPageBottomClearance,
 } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
-import type { RetainedPresentationGeometryTransition } from '@/components/ui/presentation/retainedPresentationSlots';
+import {
+  RetainedPresentationFloatingLayerContext,
+  useOptionalRetainedPresentationSlotsStore,
+  useRetainedPresentationFloatingBody,
+  type RetainedPresentationGeometryTransition,
+} from '@/components/ui/presentation/retainedPresentationSlots';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import type { PluginUiProjectionCurrentness } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import { t } from '@/text';
 
 import {
+  SessionViewerControllerScope,
   useOptionalSessionViewerController,
   useSessionViewerHasPresence,
   type SessionViewerController,
@@ -69,7 +78,10 @@ const SESSION_VIEWER_RELEASE_MOTION: CompanionReleaseMotion = Object.freeze({
 const SESSION_VIEWER_SETTLE = resolveFloatingFrameSettleTransition(
   SESSION_VIEWER_RELEASE_MOTION,
 );
-/** The viewer floats over the transcript and under the session's popovers and sheets. */
+/**
+ * Where the app offers no floating layer (yet unmeasured, or no app root), the viewer floats over its
+ * Session area, under the Session's popovers and sheets.
+ */
 const SESSION_VIEWER_LAYER = 20;
 
 type Size = Readonly<{ width: number; height: number }>;
@@ -88,9 +100,13 @@ function offsetRect(rect: FrameRect, origin: Point): FrameRect {
 /**
  * The Session's floating viewer on desktop, and its expanded overlay on every device: one
  * `FloatingFrame` around the retained Computer or Browser body. The floating frame lies above
- * everything in the Session area (reading column, composer, Voice and pet presences) and moves
- * nothing behind it; the person places it and only the area's edges bound it. Phone docking is
- * the transcript's sticky slot.
+ * everything (plan 63 A1): rendered in the app's floating layer (web and native), it floats over the
+ * sidebar, the Session (reading column, composer, Voice and pet presences) and its side panes, and
+ * moves nothing behind them; the person places it and only the window's edges and safe areas bound it.
+ * The host stays in the Session's column to measure where the reading area and composer are, and the
+ * retained body stays here too, under the Session's providers; only the frame's chrome is drawn in the
+ * layer. Without a floating layer it floats over the Session area. Phone docking is the transcript's
+ * sticky slot.
  */
 export function SessionViewerHost(
   props: Readonly<{
@@ -142,7 +158,27 @@ function MountedSessionViewerHost(
   const [liveRect, setLiveRect] = React.useState<FrameRect | null>(null);
   const composerHeight = useSessionCockpitComposerChromeHeight();
   const composerTop = useSessionCockpitComposerChromeTop();
-  const { height: windowHeight } = useWindowDimensions();
+  // The phone's floating tab bar (and its band) covers the column's bottom; 0 where none floats.
+  const bottomChromeClearance = useSessionCockpitPageBottomClearance();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  // The frame's coordinate space: the app's floating layer (window space) where it exists, else the
+  // Session column itself.
+  const floatingLayer = React.useContext(RetainedPresentationFloatingLayerContext);
+  const retainedSlots = useOptionalRetainedPresentationSlotsStore() !== null;
+  const floatingBody = useRetainedPresentationFloatingBody();
+  // A Session kept mounted off screen (another workspace tab) presents nothing over the app.
+  const presented = useLayoutPresentationActive();
+  const [layerRect, setLayerRect] = React.useState<FrameRect | null>(null);
+  const measureLayer = React.useCallback(() => {
+    const next = floatingLayer?.measure() ?? null;
+    setLayerRect((current) =>
+      current && next && current.x === next.x && current.y === next.y && current.width === next.width && current.height === next.height
+        ? current
+        : next,
+    );
+  }, [floatingLayer]);
+  React.useLayoutEffect(measureLayer, [measureLayer, windowWidth, windowHeight]);
+  const safeArea = useChromeSafeAreaInsets();
   const mode: FloatingFrameMode = controller.state.mode;
   const floating = mode === 'floating' && !controller.phone;
 
@@ -160,37 +196,49 @@ function MountedSessionViewerHost(
         );
       }
     });
-  }, []);
+    measureLayer();
+  }, [measureLayer]);
+  // Where the column stands in the frame's space, and the space's own window origin.
+  const spaceOrigin: Point = layerRect ?? origin;
+  const columnX = layerRect ? origin.x - layerRect.x : 0;
+  const columnY = layerRect ? origin.y - layerRect.y : 0;
 
   // Where the composer band starts: the expanded overlay takes over the reading area above it, and
   // a first placement opens in that area's corner rather than over the send box. On desktop the
   // workspace frame lifts the band off the area's bottom edge, so its height alone would put either
   // over the composer's status line; the band's measured top (window space) says where it begins.
+  // Without a composer band (a phone's Browser or Computer tab), the area still ends above the floating
+  // tab bar, which already carries the bottom safe area, or above that safe area when no bar floats.
   const composerStart = React.useMemo(() => {
     if (!size) return null;
-    return composerTop > 0
+    const band = composerTop > 0
       ? Math.min(size.height, windowHeight - composerTop - origin.y)
       : size.height - composerHeight;
-  }, [composerHeight, composerTop, origin.y, size, windowHeight]);
+    return Math.min(band, size.height - Math.max(bottomChromeClearance, layerRect ? safeArea.bottom : 0));
+  }, [bottomChromeClearance, composerHeight, composerTop, layerRect, origin.y, safeArea.bottom, size, windowHeight]);
   const readingRect = React.useMemo<FrameRect | null>(() => {
     if (!size || composerStart === null) return null;
     return {
-      x: SESSION_VIEWER_EDGE,
-      y: SESSION_VIEWER_EDGE,
+      x: columnX + SESSION_VIEWER_EDGE,
+      y: columnY + SESSION_VIEWER_EDGE,
       width: Math.max(0, size.width - SESSION_VIEWER_EDGE * 2),
       height: Math.max(0, composerStart - SESSION_VIEWER_EDGE * 2),
     };
-  }, [composerStart, size]);
-  // The only bound of a floating frame is the area itself (its edges and safe areas).
+  }, [columnX, columnY, composerStart, size]);
+  // The only bound of a floating frame is its space: the window (its edges and safe areas; the root
+  // already keeps the horizontal safe areas out of the layer), or the Session area without a layer.
   const areaRect = React.useMemo<FrameRect | null>(() => {
     if (!size) return null;
+    const space = layerRect ?? size;
+    const top = layerRect ? safeArea.top : 0;
+    const bottom = layerRect ? safeArea.bottom : 0;
     return {
       x: SESSION_VIEWER_EDGE,
-      y: SESSION_VIEWER_EDGE,
-      width: Math.max(0, size.width - SESSION_VIEWER_EDGE * 2),
-      height: Math.max(0, size.height - SESSION_VIEWER_EDGE * 2),
+      y: top + SESSION_VIEWER_EDGE,
+      width: Math.max(0, space.width - SESSION_VIEWER_EDGE * 2),
+      height: Math.max(0, space.height - top - bottom - SESSION_VIEWER_EDGE * 2),
     };
-  }, [size]);
+  }, [layerRect, safeArea.bottom, safeArea.top, size]);
   const availableRect = mode === 'expanded' ? readingRect : areaRect;
 
   const committedRect = controller.state.rect;
@@ -206,7 +254,7 @@ function MountedSessionViewerHost(
   // state card needs the room. The frame's width is where it rests, or the first floating width.
   const defaultWidth = readingRect ? Math.round(readingRect.width * DEFAULT_WIDTH_SHARE) : 0;
   const frameWidth = Math.max(minWidth, placedRef.current?.width ?? defaultWidth);
-  const aspectRatio = resolveSessionViewerBodyAspect(facts?.aspectRatio, frameWidth);
+  const aspectRatio = resolveSessionViewerBodyAspect(facts?.aspectRatio, frameWidth, facts?.stateMinBody ?? undefined);
   const watching = facts?.watching === true;
   const footer = useSessionViewerHasPresence(source);
   const chromeHeight = resolveFloatingFrameChromeHeight({ footer });
@@ -314,31 +362,34 @@ function MountedSessionViewerHost(
 
   const frameRect = mode === 'expanded' ? availableRect : rect;
   const bodyRect = frameRect ? resolveFloatingFrameBodyRect(frameRect, { footer }) : null;
-  const windowGeometry = bodyRect && size ? offsetRect(bodyRect, origin) : null;
+  const windowGeometry = bodyRect && size ? offsetRect(bodyRect, spaceOrigin) : null;
   const transition = liveRect || reducedMotion ? null : SESSION_VIEWER_SETTLE;
   const machine = useSessionViewerMachine(props.sessionId, props.serverId, source);
 
-  return (
-    <View
-      ref={containerRef}
-      onLayout={onLayout}
-      pointerEvents="box-none"
-      style={{
-        position: 'absolute',
-        left: 0,
-        top: 0,
-        right: 0,
-        bottom: 0,
-        zIndex: SESSION_VIEWER_LAYER,
-      }}
-      testID="session-viewer-host"
-    >
+  // The retained body stays in this tree, so the Session's and Account's providers keep reaching it
+  // wherever the frame is drawn; it binds above the frame and moves on the frame's motion.
+  const body = props.body ? null : (
+    <SessionViewerBody
+      sessionId={props.sessionId}
+      serverId={props.serverId}
+      source={source}
+      pluginProjection={props.pluginProjection}
+      windowGeometry={frameRect ? windowGeometry : null}
+      transition={frameRect ? transition : null}
+      inputPassthrough={watching}
+    />
+  );
+  // Without the app's retention owner (isolated renders) the body is drawn inside the frame instead.
+  const bodyInPlace = body !== null && retainedSlots;
+
+  const contents = (
+    <>
       {/* An expanded viewer takes over the transcript's pane: its controls band floats on the page's own paper,
           so the conversation never reads through the gaps and glass of the capsules above the picture. */}
-      {expanded && composerStart !== null ? (
+      {expanded && composerStart !== null && size ? (
         <View
           testID="session-viewer-expanded-backing"
-          style={{ position: 'absolute', left: 0, top: 0, right: 0, height: composerStart, backgroundColor: theme.colors.surface.base }}
+          style={{ position: 'absolute', left: columnX, top: columnY, width: size.width, height: composerStart, backgroundColor: theme.colors.surface.base }}
         />
       ) : null}
       {availableRect && frameRect ? (
@@ -356,7 +407,7 @@ function MountedSessionViewerHost(
           onRectChange={onRectChange}
           onModeChange={onModeChange}
           accessibilityLabel={resolveSessionViewerWatchingLabel(source, machine.name, machine.targetTitle)}
-          resizeLabel={t('computerUse.presentation.resizeView')}
+          resizeLabel={t('presentation.resizeView')}
           pointer={
             Platform.OS === 'web' ? COMPANION_WEB_POINTER_BINDING : undefined
           }
@@ -376,6 +427,7 @@ function MountedSessionViewerHost(
               serverId={props.serverId}
               source={source}
               frame={frameCommands}
+              frameWidth={frameRect.width}
               onMinWidthChange={setMinWidth}
             />
           }
@@ -391,30 +443,44 @@ function MountedSessionViewerHost(
             ) : undefined
           }
         >
-          {props.body ?? (
-            <SessionViewerBody
-              sessionId={props.sessionId}
-              serverId={props.serverId}
-              source={source}
-              pluginProjection={props.pluginProjection}
-              windowGeometry={windowGeometry}
-              transition={transition}
-              inputPassthrough={watching}
-            />
-          )}
+          {props.body ?? (bodyInPlace ? null : body)}
         </FloatingFrame>
-      ) : props.body ? null : (
-        // Claim the same retained slot while this replacement host awaits layout.
-        // The portal keeps its last valid placement until the frame can supply a new one.
-        <SessionViewerBody
-          sessionId={props.sessionId}
-          serverId={props.serverId}
-          source={source}
-          pluginProjection={props.pluginProjection}
-          windowGeometry={null}
-          inputPassthrough={watching}
-        />
-      )}
+      ) : null}
+    </>
+  );
+  // The chrome reads the Session's viewer owner; native draws the layer at the app root, where only
+  // what is carried with it reaches it (web's portal keeps the context anyway).
+  const frame = floatingBody.frame(
+    <SessionViewerControllerScope controller={controller}>{contents}</SessionViewerControllerScope>,
+  );
+
+  return (
+    <View
+      ref={containerRef}
+      onLayout={onLayout}
+      pointerEvents="box-none"
+      style={{
+        position: 'absolute',
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+        zIndex: floatingLayer ? undefined : SESSION_VIEWER_LAYER,
+      }}
+      testID="session-viewer-host"
+    >
+      {!floatingLayer ? frame : presented ? floatingLayer.present(
+        <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0 }} testID="session-viewer-layer">
+          {frame}
+        </View>,
+      ) : null}
+      {bodyInPlace ? (
+        // Claims the retained slot (keeping its last placement while the frame awaits layout); the
+        // body itself paints in the route-stable portal at the frame's body rect.
+        <View pointerEvents="none" style={{ position: 'absolute', left: 0, top: 0, width: 0, height: 0 }}>
+          {floatingBody.body(body)}
+        </View>
+      ) : null}
     </View>
   );
 }

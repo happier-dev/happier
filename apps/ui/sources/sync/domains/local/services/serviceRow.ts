@@ -30,6 +30,8 @@ export type ServiceRow = Readonly<{
     scheme: 'http' | 'https' | 'unknown' | null;
     host: string | null; // "localhost" / "127.0.0.1" / null
     workspaceLabel: string | null; // cwd / workspace path
+    /** Shown when the name and command alone cannot identify this row. */
+    distinguishingWorkspaceLabel?: string | null;
     processLabel: string | null; // redacted command preview
     /** Human identity/address facts projected by the inventory or launch target. */
     serviceLabel?: string | null;
@@ -383,7 +385,7 @@ export function buildLocalServiceRows(input: Readonly<{
             portLabel,
             scheme: readScheme(inventoryRow),
             host: readHost(inventoryRow),
-            workspaceLabel: readWorkspaceLabel(inventoryRow) ?? readString(target.cwd),
+            workspaceLabel: readWorkspaceLabel(inventoryRow) ?? readString(target.cwd) ?? target.workspace?.rootPath ?? null,
             processLabel,
             serviceLabel: readString(isRecord(inventoryRow?.presentation) ? inventoryRow.presentation.displayName : null)
                 ?? readString(isRecord(inventoryRow?.classification) ? inventoryRow.classification.displayName : null)
@@ -408,6 +410,12 @@ export function buildLocalServiceRows(input: Readonly<{
         return { row, index, kind: inventoryRow?.address.kind ?? null, port: inventoryRow?.port ?? null, listenerKey };
     });
     const rows = dedupeLocalBindings(mapped);
+    const identityCounts = new Map<string, number>();
+    const identity = (row: ServiceRow) => JSON.stringify([row.title, row.processLabel]);
+    for (const { row } of rows) {
+        const key = identity(row);
+        identityCounts.set(key, (identityCounts.get(key) ?? 0) + 1);
+    }
 
     return rows
         .sort((a, b) => {
@@ -417,7 +425,8 @@ export function buildLocalServiceRows(input: Readonly<{
             if (runDelta !== 0) return runDelta;
             return a.index - b.index;
         })
-        .map((entry) => entry.row);
+        .map(({ row }) => (identityCounts.get(identity(row)) ?? 0) > 1
+            ? { ...row, distinguishingWorkspaceLabel: row.workspaceLabel } : row);
 }
 
 /**
@@ -461,14 +470,14 @@ export function selectRunningOpenTargetOnPort(
 
 /**
  * The pane's sections, by what the user can do with a row (session-tabs lab S): what is running here,
- * what can be started (a launcher target with a start action), what else runs on the machine, and
+ * what failed to start, what can be started (a launcher target with a start action), what else runs on the machine, and
  * Happier's own listeners. A row that is neither running nor startable (a dead system listener, a
  * script the launcher refuses) has nothing to offer and is not shown (`null`). Derived from the ranking
  * band, status and primary action — never a second ranking.
  */
-export type ServiceRowSection = 'running' | 'ready' | 'elsewhere' | 'happier';
+export type ServiceRowSection = 'running' | 'failed' | 'ready' | 'elsewhere' | 'happier';
 
-const SECTION_ORDER: readonly ServiceRowSection[] = ['running', 'ready', 'elsewhere', 'happier'];
+const SECTION_ORDER: readonly ServiceRowSection[] = ['running', 'failed', 'ready', 'elsewhere', 'happier'];
 
 export function resolveServiceRowSection(row: ServiceRow): ServiceRowSection | null {
     // Happier's own listeners are one quiet group, closed by default, and never "running here".
@@ -480,7 +489,9 @@ export function resolveServiceRowSection(row: ServiceRow): ServiceRowSection | n
     }
     // A Project declaration keeps its row even when it cannot start right now: it says why and
     // offers nothing it can't do, instead of disappearing (plan 22 §2).
-    return row.primaryAction?.kind === 'start' || row.target.declaration ? 'ready' : null;
+    if (row.primaryAction?.kind !== 'start' && !row.target.declaration) return null;
+    // A failed start is not "ready to start": it sits by itself, with its output one press away.
+    return row.status === 'failed' ? 'failed' : 'ready';
 }
 
 /** The ranked rows split into non-empty sections, keeping the ranking order inside each. */

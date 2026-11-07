@@ -1,10 +1,11 @@
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
-import type { ActionId } from '@happier-dev/protocol';
+import type { ExecutionRunLauncherDraftSeed } from '@/components/sessions/runs/launcher/prepareExecutionRunLauncherDraft';
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
 import { VoiceConversationActionResultSchema, type VoiceConversationActionId, type VoiceConversationStatus } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
 
 import type { Command } from './types';
-import type { ChangelogEntry } from '@/changelog';
+import type { AskHappierContext } from '@/sync/domains/pending/pendingSetupIntent.shared';
 import type { KeyboardCommandId } from '@/keyboard';
 import {
   isCompactAppDestinationVisible,
@@ -38,6 +39,7 @@ import { flattenSettingsPageCatalog, SETTINGS_PAGE_CATALOG } from '@/components/
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 import { resolveVoiceSurfaceState } from '@/components/voice/surface/resolveVoiceSurfaceState';
 import { resolveVoiceSurfaceStatusPresentation } from '@/components/voice/surface/resolveVoiceSurfaceStatusPresentation';
+import { desktopHostKind } from '@/utils/platform/desktopHost';
 
 function normalizeId(value: unknown): string {
   return String(value ?? '').trim();
@@ -107,10 +109,11 @@ type BuildCommandPaletteCommandsBaseParams = Readonly<{
   petControls?: PetCommandControls;
   paneControls?: PaneCommandControls;
   fileViewControls?: FileViewCommandControls;
-  askHappierRelease?: Readonly<ChangelogEntry>;
+  askHappierRelease?: AskHappierContext['release'];
   nav: Readonly<{
     push: (path: string) => void;
     openNewSession: () => void;
+    openNewWindow?: () => void | Promise<void>;
     openNewWorkflow?: () => void;
     openWorkflowAgentAuthoring?: () => void;
     /** Reopens the canonical Search surface in its content source, retaining exact invocation scope. */
@@ -121,8 +124,9 @@ type BuildCommandPaletteCommandsBaseParams = Readonly<{
     /** Opens the shared device-pairing panel while retaining the current page. */
     openHomePairingModal?: () => void | Promise<void>;
     /** Supplied only when the ordinary guide draft owner can open the requested context. */
-    openAskHappier?: (context?: Readonly<{ kind: 'release'; release: Readonly<ChangelogEntry> }>) => void | Promise<void>;
+    openAskHappier?: (context?: AskHappierContext) => void | Promise<void>;
     /** Matches `useNavigateToSession`: the Home is passed when the producer holds it. */
+    openExecutionRunDraft?: (seed: ExecutionRunLauncherDraftSeed) => void;
     navigateToSession: (sessionId: string, opts?: Readonly<{ serverId?: string }>) => void;
   }>;
   actions: Readonly<{
@@ -218,6 +222,12 @@ export function buildCommandPaletteCommands(
       action: () => nav.push('/scan/terminal'),
     },
   ];
+
+  if (nav.openNewWindow) cmds.push({
+    id: 'desktop.new-window', actionSpecId: 'desktop.windows.open',
+    title: t('common.newWindow'), icon: 'squares-four',
+    category: t('commandPalette.commands.actionsCategory'), action: nav.openNewWindow,
+  });
 
   for (const [column, id, titleKey] of [
     ['navigation', 'shell.column.toggle', 'settingsKeyboard.commands.shellColumnToggle'],
@@ -424,7 +434,8 @@ export function buildCommandPaletteCommands(
         title: action.title,
         ...(subtitle ? { subtitle } : {}),
         icon: resolvePluginContributedActionIconName(action.icon),
-        category: action.identity.pluginId,
+        // Grouped under the plugin's display name; its id is never a heading.
+        category: action.pluginTitle ?? t('commandPalette.commands.actionsCategory'),
         action: async () => {
           await openPluginContributedAction({
             controller: pluginActionPresentation.controller,
@@ -442,6 +453,16 @@ export function buildCommandPaletteCommands(
   );
   const commandPaletteActionSpecs = actionSpecs.filter((spec) => (spec.placements ?? []).includes('command_palette'));
   const byId = new Map(commandPaletteActionSpecs.map((spec) => [spec.id, spec]));
+
+  const notch = byId.get('desktop.notch.set');
+  if (notch && desktopHostKind() === 'tauri') {
+    cmds.push({
+      id: `action:${notch.id}`, actionSpecId: notch.id,
+      title: t('commandPalette.commands.openNotchTitle'), icon: 'square',
+      category: t('commandPalette.commands.actionsCategory'),
+      action: async () => { await actions.execute(notch.id, { state: 'pinned' }, { surface: 'ui' }); },
+    });
+  }
 
   if (features.executionRunsEnabled) {
     if (activeSessionId && activeSessionServerId) {
@@ -487,17 +508,16 @@ export function buildCommandPaletteCommands(
 
           const serverId = typeof session?.serverId === 'string' ? session.serverId.trim() : '';
           if (!actionDraftAccountScope || !serverId || actionDraftAccountScope.serverId !== serverId) return;
-          storage.getState().createSessionActionDraft(actionDraftAccountScope, { serverId, sessionId }, {
-            actionId: entry.spec.id as any,
+          nav.openExecutionRunDraft?.({ scope: actionDraftAccountScope, sessionId,
+            actionId: entry.spec.id as ActionId,
             input: buildExecutionRunActionDraftInputForUi({
-              actionId: entry.spec.id as any,
+              actionId: entry.spec.id as ActionId,
               sessionId,
               defaultBackendTarget: resolveSessionActionDefaultTarget(defaultBackend),
               defaultBackendId: defaultBackend?.defaultBackendId ?? null,
               instructions: '',
             }),
           });
-          nav.navigateToSession(sessionId, { serverId });
         },
       });
     }

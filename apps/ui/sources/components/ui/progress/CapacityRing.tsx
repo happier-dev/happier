@@ -85,7 +85,7 @@ export function CapacityRing(props: CapacityRingProps) {
         <View
             testID={props.testID}
             pointerEvents="none"
-            accessibilityRole="image"
+            accessibilityRole={props.accessibilityLabel ? 'image' : undefined}
             accessibilityLabel={props.accessibilityLabel}
             style={[styles.root, { width: size, height: size, borderRadius: size / 2 }, props.style]}
         >

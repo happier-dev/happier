@@ -1,6 +1,6 @@
 import { Redirect, useLocalSearchParams, type Href } from 'expo-router';
 import { buildTriageEntryRouteSegmentV1 } from '@happier-dev/triage-protocol/v1';
-import { buildPluginAppPageRoutePath } from '@/components/appShell/plugins/pluginAppPageRoute';
+import { buildPluginAppPageRoutePath } from '@/components/plugins/pages/pluginPageRoute';
 
 /** Retained Zen URLs address the same Account task through the Tasks page. */
 export function ZenTasksRedirect() {

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { StoreProjectScopeChip } from '@/components/store/StoreProjectScopeChip';
 import { useIsFocused } from '@/components/appShell/workspace/destinationRoute';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -21,13 +22,19 @@ import { ListPresentationProvider } from '@/components/ui/lists/listPresentation
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-import { useLocalSetting } from '@/sync/domains/state/storage';
-import { getStorage } from '@/sync/domains/state/storageStore';
+import { useLocalSettingMutable } from '@/sync/store/hooks';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { t } from '@/text';
 import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
+import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
+import { useInPlaceApprovalReview } from '@/components/approvals/ApprovalReviewInPlace';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { openPluginAddModal } from './add/openPluginAddModal';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
 import { SettingAnchor } from '@/components/settings/shell/SettingRow';
+import { useSettingsColumnFilter } from '@/components/settings/shell/useSettingsColumnFilter';
+import { defineSettingsCollectionAdapter } from '@/components/settings/shell/settingsCollectionAdapter';
 
 import {
     DiscoverListingsSection,
@@ -41,11 +48,12 @@ import { PluginDetailView } from './detail/PluginDetailScreen';
 import { listPluginsDeveloperLinks, type PluginsDeveloperRoute } from './model/pluginsDeveloperLinks';
 import { resolvePluginMachineCoverageLabels } from './machines/pluginMachineCoverage';
 import { usePluginMachineMatrix } from './machines/usePluginMachineMatrix';
-import { PluginListingView } from './listing/PluginListingScreen';
+import { PluginListingPane } from './listing/PluginListingScreen';
 import { PLUGIN_CARD_MIN_WIDTH_PX } from './collection/PluginsPageCollection';
 import {
     createPluginSettingsViews,
     filterInstalledPlugins,
+    installedPluginFilterStatus,
     type InstalledPluginStatusFilter,
     type PluginSettingsViewId,
 } from './model/pluginMarketplaceModel';
@@ -56,13 +64,17 @@ import { setPluginsInstalledQuery, usePluginsInstalledQuery } from './model/plug
 import {
     buildPluginDetailRoute,
     buildPluginListingRoute,
-    PLUGINS_HOME_TITLE_KEY,
+    buildPluginsHomeRoute,
+    readPluginsOpenItem,
+    readStoreProjectRoute,
+    pluginsHomeTitleKey,
+    PLUGINS_SURFACE_ICON,
 } from './model/pluginsSurfaceRoutes';
 import { usePluginsSurfaceHost } from './model/usePluginsSurfaceHost';
 import { PluginReadOnlySnapshotNotice } from './PluginReadOnlySnapshotNotice';
 import { NativeAppPluginPanelsSettingsEntry } from './NativeAppPluginPanelsSettingsEntry';
-import { PluginAppPagesSettingsEntry } from './PluginAppPagesSettingsEntry';
 import { PluginUpdateReviewSettingsEntry } from './PluginUpdateReviewSettingsEntry';
+import { PLUGINS_SETTINGS } from './pluginsSettings';
 
 /**
  * The aggregate "All sources" choice. It is a presentation id for "no source filter", which the
@@ -70,6 +82,8 @@ import { PluginUpdateReviewSettingsEntry } from './PluginUpdateReviewSettingsEnt
  * the machine actually has configured.
  */
 const DISCOVER_ALL_SOURCES_ID = 'all';
+const installedColumnAdapter = defineSettingsCollectionAdapter(['status']);
+const INSTALLED_STATED_FIELDS = ['status'] as const;
 
 /**
  * The page's own minimum beside an open plugin: two card columns with the page's side insets and the
@@ -79,8 +93,7 @@ const DISCOVER_ALL_SOURCES_ID = 'all';
 const PLUGINS_PAGE_MIN_WIDTH_PX = PLUGIN_CARD_MIN_WIDTH_PX * 2 + 16 * 2 + 12;
 
 /**
- * Plugins: the selected machine's plugins (Installed) and the marketplace (Browse), in the Settings
- * shell and as the main sidebar's page (one screen, two hosts).
+ * Settings is the selected machine's management home; the app host also offers marketplace Browse.
  *
  * Top to bottom: the page header with the machine chip, decisions waiting on the user, the toolbar
  * (Installed | Browse, search, a filter, Grid | List), the collection, then the Account update
@@ -94,12 +107,35 @@ const PLUGINS_PAGE_MIN_WIDTH_PX = PLUGIN_CARD_MIN_WIDTH_PX * 2 + 16 * 2 + 12;
  */
 export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeScreen() {
     const isFocused = useIsFocused();
+    const layoutPresented = useLayoutPresentationActive();
     const router = useRouter();
     // Settings or the app page: a listing or a plugin's page opens within the host this page is shown in.
     const host = usePluginsSurfaceHost();
     const appShellColumn = useAppShellColumn();
     const viewChoiceInColumn = host === 'app' && appShellColumn.columnVisible;
-    const state = usePluginSettingsScreenState({ focused: isFocused });
+    const routeParams = useLocalSearchParams<{ view?: string; kind?: string; source?: string; plugin?: string; itemId?: string; version?: string; project?: string }>();
+    const { source: requestedSource, plugin: requestedPlugin } = routeParams;
+    // The Store's Plugins kind page (`view=kind&kind=plugin`) is this page's Browse view.
+    const requestedView = routeParams.view === 'kind' && routeParams.kind === 'plugin' ? 'browse' : routeParams.view;
+    const settingsHost = host === 'settings';
+    const legacyDiscoveryHandoff = settingsHost && requestedView === 'browse';
+    const addressedItem = readPluginsOpenItem(routeParams);
+    const state = usePluginSettingsScreenState({ focused: isFocused && !legacyDiscoveryHandoff,
+        ...(legacyDiscoveryHandoff ? { management: false } : addressedItem ? { management: true }
+            : requestedView === 'browse' ? { management: false } : {}),
+        ...(requestedView === 'browse' ? { initialView: 'discover' } : {}),
+        initialCatalogSourceId: requestedView === 'browse' && !requestedPlugin && typeof requestedSource === 'string' ? requestedSource : undefined });
+    const activeView = settingsHost ? 'installed' : state.activeView;
+    // A card's Install or a plugin's Update opens its evaluated review here, where it was pressed.
+    const approvalReview = useInPlaceApprovalReview(state.pluginActionApproval);
+    const approvalWaiting = approvalReview.waiting ? (
+        <ActionApprovalPendingNotice
+            testID="settings.plugins.approvalWaiting"
+            message={t('approvals.waitingForYou')}
+            summary={state.pluginActionApproval.approvalSummary}
+            onOpenApproval={approvalReview.reopen}
+        />
+    ) : null;
     // The webhook administration screen and its account API are both behind the
     // server's public-webhook feature, so the entry only exists where it leads
     // somewhere the server will answer.
@@ -113,28 +149,57 @@ export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeSc
 
     // `?view=browse` (the listing page's breadcrumb, a deep link, the Plugins column) opens the Browse
     // view, and `?view=installed` (the Plugins column) the Installed one.
-    const { view: requestedView } = useLocalSearchParams<{ view?: string }>();
     const { setActiveView } = state;
     React.useEffect(() => {
-        if (requestedView === 'browse') setActiveView('discover');
+        if (settingsHost && requestedView === 'browse') {
+            router.replace(buildPluginsHomeRoute('app', { view: 'browse', open: readPluginsOpenItem(routeParams),
+                ...(typeof requestedSource === 'string' ? { sourceId: requestedSource } : {}) }));
+        }
+        else if (!settingsHost && requestedView === 'browse') setActiveView('discover');
         else if (requestedView === 'installed') setActiveView('installed');
-    }, [requestedView, setActiveView]);
+    }, [settingsHost, requestedView, requestedSource, requestedPlugin, routeParams.itemId, routeParams.version, setActiveView, router]);
 
     // Grid | List, remembered per view on this device.
-    const presentationByView = useLocalSetting('pluginsCollectionViewV1');
-    const presentationKey = state.activeView === 'installed' ? 'installed' : 'discover';
+    const [presentationByView, setPresentationByView] = useLocalSettingMutable('pluginsCollectionViewV1');
+    const presentationKey = activeView === 'installed' ? 'installed' : 'discover';
     const presentation: PluginsCollectionPresentation = presentationByView?.[presentationKey] ?? 'grid';
     const setPresentation = React.useCallback((next: PluginsCollectionPresentation) => {
-        getStorage().getState().applyLocalSettings({ pluginsCollectionViewV1: { ...(presentationByView ?? {}), [presentationKey]: next } }, { source: 'ui' });
-    }, [presentationByView, presentationKey]);
+        setPresentationByView({ ...(presentationByView ?? {}), [presentationKey]: next });
+    }, [presentationByView, setPresentationByView, presentationKey]);
 
     // Installed search and status filter narrow the machine's list locally; Browse searches every source.
     // The page owns the collection's one search control; the column only chooses the destination.
     const installedQuery = usePluginsInstalledQuery();
-    const [installedStatus, setInstalledStatus] = React.useState<InstalledPluginStatusFilter>('all');
+    const installedFacts = React.useMemo(() => state.installedPlugins.map(entry => {
+        const status = installedPluginFilterStatus(entry);
+        return { key: entry.pluginId, title: entry.title, context: entry.description ?? null,
+            status, fields: { status: [status] } };
+    }), [state.installedPlugins]);
+    const installedFilterFields = React.useMemo(() => ({ status: {
+        label: t('settingsPlugins.surfaces.statusFilterLabel'), valueLabel: installedStatusFilterTitle,
+    } }), []);
+    const installedFilter = useSettingsColumnFilter({
+        column: 'plugins', presented: isFocused && activeView === 'installed',
+        testIDPrefix: 'settings.plugins.marketplace.installed', adapter: installedColumnAdapter,
+        // The Installed tab's own status control already says this filter.
+        statedFields: INSTALLED_STATED_FIELDS,
+        fields: installedFilterFields, facts: installedFacts,
+        search: { value: installedQuery, set: setPluginsInstalledQuery },
+    });
+    const statusSelection = installedFilter.filters.status;
+    const installedStatus = !statusSelection || (statusSelection.include.length === 0 && statusSelection.exclude.length === 0)
+        ? 'all' : statusSelection.include.length === 1 && statusSelection.exclude.length === 0
+            && (statusSelection.include[0] === 'enabled' || statusSelection.include[0] === 'disabled' || statusSelection.include[0] === 'attention')
+            ? statusSelection.include[0] : null;
+    const setInstalledStatus = React.useCallback((status: InstalledPluginStatusFilter) => {
+        installedFilter.setFilters(status === 'all' ? {} : { status: { include: [status], exclude: [] } });
+    }, [installedFilter.setFilters]);
     const visibleInstalledPlugins = React.useMemo(
-        () => filterInstalledPlugins(state.installedPlugins, { query: installedQuery, status: installedStatus }),
-        [installedQuery, installedStatus, state.installedPlugins],
+        () => {
+            const queried = filterInstalledPlugins(state.installedPlugins, { query: installedQuery, status: 'all' });
+            return installedFilter.active ? queried.filter(entry => installedFilter.matches(entry.pluginId)) : queried;
+        },
+        [installedQuery, installedFilter.active, installedFilter.matches, state.installedPlugins],
     );
     const installedCollectionState = resolvePluginsCollectionState({
         noTarget,
@@ -142,7 +207,7 @@ export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeSc
         listRead: state.installedPluginsRead,
         itemCount: state.installedPlugins.length,
         visibleCount: visibleInstalledPlugins.length,
-        filtering: installedQuery.trim().length > 0 || installedStatus !== 'all',
+        filtering: installedQuery.trim().length > 0 || installedFilter.active,
     });
     // Where each plugin runs across the Account, from the one plugin/machine matrix owner.
     const machineMatrix = usePluginMachineMatrix();
@@ -152,8 +217,8 @@ export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeSc
     );
     const clearInstalledFilters = React.useCallback(() => {
         setPluginsInstalledQuery('');
-        setInstalledStatus('all');
-    }, []);
+        installedFilter.clearFilters();
+    }, [installedFilter.clearFilters]);
 
     // The detail beside the collection, in the app's details pane; without one, its own page.
     const besidePage = useDetailsPaneAvailable();
@@ -161,30 +226,32 @@ export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeSc
     // A selected detail stays in the existing pane instance while the layout owner recomposes
     // it into a full-width overlay. Availability chooses where a NEW open goes, not what to retain.
     const paneOpen = openItem !== null;
+    const installedPaneOpen = openItem?.kind === 'installed';
     const openPlugin = React.useCallback((pluginId: string) => {
         if (besidePage) {
             setOpenItem({ kind: 'installed', pluginId });
             return;
         }
-        router.push(buildPluginDetailRoute(host, pluginId));
-    }, [besidePage, host, router, setOpenItem]);
-    const openListing = React.useCallback((entry: Readonly<{ id: string; sourceId: string }>) => {
+        router.push(buildPluginDetailRoute(host, pluginId, readStoreProjectRoute(routeParams)));
+    }, [besidePage, host, router, setOpenItem, routeParams.project]);
+    const openListing = React.useCallback((entry: Readonly<{ id: string; sourceId: string; itemId?: string; version?: string | null }>) => {
+        const listing = { sourceId: entry.sourceId, pluginId: entry.id,
+            ...(entry.itemId ? { itemId: entry.itemId } : {}), ...(entry.version ? { version: entry.version } : {}) };
         if (besidePage) {
-            setOpenItem({ kind: 'listing', sourceId: entry.sourceId, pluginId: entry.id });
+            setOpenItem({ kind: 'listing', ...listing });
             return;
         }
-        router.push(buildPluginListingRoute(host, { sourceId: entry.sourceId, pluginId: entry.id }));
-    }, [besidePage, host, router, setOpenItem]);
+        router.push(buildPluginListingRoute(host, listing, readStoreProjectRoute(routeParams)));
+    }, [besidePage, host, router, setOpenItem, routeParams.project]);
     const openPluginSources = React.useCallback(() => router.push(SETTINGS_ROUTES.pluginSources), [router]);
     const openSelectionAsPage = React.useCallback(() => {
         if (!openItem) return;
         router.push(openItem.kind === 'installed'
-            ? buildPluginDetailRoute(host, openItem.pluginId)
-            : buildPluginListingRoute(host, { sourceId: openItem.sourceId, pluginId: openItem.pluginId }));
-    }, [host, router, openItem]);
+            ? buildPluginDetailRoute(host, openItem.pluginId, readStoreProjectRoute(routeParams))
+            : buildPluginListingRoute(host, openItem, readStoreProjectRoute(routeParams)));
+    }, [host, router, openItem, routeParams.project]);
     // A listing belongs to Browse: switching to Installed closes it. An installed plugin stays open
     // in either view (Browse marks it too).
-    const { activeView } = state;
     const previousActiveViewRef = React.useRef(activeView);
     React.useEffect(() => {
         if (previousActiveViewRef.current === activeView) return;
@@ -201,26 +268,29 @@ export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeSc
     const showSnapshotNotice = state.readOnlySnapshotNotice !== null
         && state.readOnlySnapshotNotice.reason !== 'refreshing'
         && !noTarget
-        && !(state.activeView === 'installed' && installedCollectionState === 'readFailed');
+        && !(activeView === 'installed' && installedCollectionState === 'readFailed');
     const styles = stylesheet;
 
+    const storePluginsKind = host === 'app' && activeView === 'discover';
     const pageHeader = (
         <>
         <SettingsPageHeader
-            title={t(PLUGINS_HOME_TITLE_KEY)}
-            description={t('settingsPlugins.surfaces.purpose')}
+            // In the Store, Browse is the Plugins kind page: it is named for its kind, like the other kind pages.
+            title={storePluginsKind ? t('capabilities.store.kinds.plugin.title') : t(pluginsHomeTitleKey(host))}
+            description={storePluginsKind ? t('capabilities.store.kinds.plugin.description') : t('settingsPlugins.surfaces.purpose')}
             actions={(
-                /*
-                  * Every consequential action on this page — including the
-                  * approve/reject decisions below — routes to the exact server
-                  * and machine named here.
-                  */
+                <>
+                {host === 'app' ? <StoreProjectScopeChip /> : null}
                 <MachineAdministrationTargetSelector
                     presentation="chip"
                     selection={state.administrationTargetSelection}
                     testIDPrefix="settings.plugins.administration.target"
                     groupTitle={t('settingsPlugins.administrationMachineTitle')}
                 />
+                <RoundButton testID="settings.plugins.add" title={t('common.add')}
+                    leading={<AddGlyph />}
+                    onPress={() => openPluginAddModal({ host })} />
+                </>
             )}
         />
 
@@ -239,9 +309,11 @@ export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeSc
           */}
         <PendingPluginChangesSection
             pendingChanges={state.pendingPluginChanges}
-            canRunActions={state.daemonOperationsAvailable}
-            isPluginActionInFlight={state.isPluginActionInFlight}
-            onDecide={state.decidePendingPluginChange}
+            active={isFocused && layoutPresented && !legacyDiscoveryHandoff && activeView === 'installed'}
+            target={state.administrationTargetSelection.selectedTarget ? {
+                serverId: state.administrationTargetSelection.selectedTarget.serverIdentityId,
+                machineId: state.administrationTargetSelection.selectedTarget.machineId,
+            } : null}
         />
         <PluginRoutineOperationSettlementRow
             settlement={state.routineOperationSettlement}
@@ -250,22 +322,25 @@ export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeSc
 
         <PluginsToolbar
             // Beside the app rail the Plugins column owns Installed | Browse (lab `xrail-R1p`).
-            views={viewChoiceInColumn ? null : views}
-            activeView={state.activeView}
+            views={settingsHost || viewChoiceInColumn ? null : views}
+            activeView={activeView}
             onSelectView={state.setActiveView}
             presentation={presentation}
             onSelectPresentation={setPresentation}
-            installed={state.activeView === 'installed' ? {
+            installed={activeView === 'installed' ? {
                 // Beside the rail the Plugins column holds the search over this query.
                 query: installedQuery,
                 onChangeQuery: setPluginsInstalledQuery,
                 status: installedStatus,
+                conditionWords: installedFilter.conditionWords,
                 onSelectStatus: setInstalledStatus,
                 // The status filter earns its place only when it could change the list.
-                statusFilterUseful: installedStatus !== 'all' || state.installedPlugins.some((entry) => (
+                statusFilterUseful: installedFilter.active || state.installedPlugins.some((entry) => (
                     filterInstalledPlugins([entry], { query: '', status: 'enabled' }).length === 0)),
             } : null}
-            discover={state.activeView === 'discover' ? {
+            // My plugins manages; discovery is the Store, one quiet door beside the search (lab t:plugins).
+            store={settingsHost ? () => router.push(buildPluginsHomeRoute('app', { view: 'browse' })) : null}
+            discover={activeView === 'discover' ? {
                 searchText: state.discoverSearchText,
                 searchable: state.daemonOperationsAvailable,
                 onChangeSearchText: state.setDiscoverSearchText,
@@ -279,12 +354,13 @@ export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeSc
     );
     const pageFooter = (
         <>
-        <PluginUpdateReviewSettingsEntry />
+        {/* The Store's Plugins kind page is a browse page: the update preference and developer tools are Settings and
+            the Store column's Sources and developers, never furniture under the catalog (TASTE-S4060 D11). */}
+        {storePluginsKind ? null : <PluginUpdateReviewSettingsEntry />}
         <NativeAppPluginPanelsSettingsEntry />
-        <PluginAppPagesSettingsEntry />
 
         {/* Beside the rail the Plugins column pins these at its foot. */}
-        {viewChoiceInColumn ? null : <PluginsDeveloperLinks
+        {viewChoiceInColumn || storePluginsKind ? null : <PluginsDeveloperLinks
             webhooksAvailable={webhooksAvailable}
             inSettingsFromApp={host === 'app'}
             onOpen={(route) => router.push(route)}
@@ -297,9 +373,9 @@ export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeSc
         <DetailsPaneHost
             testID="settings.plugins.detailPane"
             mainColumn={{
-                hideLabel: t('panes.mainColumn.hidePage', { title: t(PLUGINS_HOME_TITLE_KEY) }),
-                showLabel: t('panes.mainColumn.showPage', { title: t(PLUGINS_HOME_TITLE_KEY) }),
-                identity: { name: t(PLUGINS_HOME_TITLE_KEY) },
+                hideLabel: t('panes.mainColumn.hidePage', { title: t(pluginsHomeTitleKey(host)) }),
+                showLabel: t('panes.mainColumn.showPage', { title: t(pluginsHomeTitleKey(host)) }),
+                identity: { name: t(pluginsHomeTitleKey(host)) },
             }}
             mainMinWidthPx={PLUGINS_PAGE_MIN_WIDTH_PX}
             onCloseDetails={closePane}
@@ -322,14 +398,15 @@ export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeSc
                         pluginId={openItem.pluginId}
                         state={state}
                         presentation="pane"
+                        approvalReview={approvalReview}
                     />
                 ) : (
-                    <PluginListingView
+                    <PluginListingPane
                         key={`${openItem.sourceId}:${openItem.pluginId}`}
                         sourceId={openItem.sourceId}
                         pluginId={openItem.pluginId}
-                        state={state}
-                        presentation="pane"
+                        itemId={openItem.itemId}
+                        version={openItem.version}
                     />
                 ),
             } : null}
@@ -340,7 +417,7 @@ export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeSc
                   * list, Installed and Browse alike) and the entries below scroll together, in one
                   * reading and focus order.
                   */}
-                {state.activeView === 'installed' ? (
+                {activeView === 'installed' ? (
                     <InstalledPluginsSection
                         // A registry or snapshot notice means the machine could not say what was added.
                         // A background refresh keeps the machine's answer standing; only a real notice withholds it.
@@ -349,10 +426,16 @@ export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeSc
                         header={(
                             <>
                                 {pageHeader}
-                                <PluginRoutineOperationSettlementRow
-                                    settlement={state.routineOperationSettlement}
-                                    scope="installed"
-                                />
+                                {/* An open plugin's pane is where its Update was pressed: its waiting line and outcome show there. */}
+                                {installedPaneOpen ? null : (
+                                    <>
+                                        {approvalWaiting}
+                                        <PluginRoutineOperationSettlementRow
+                                            settlement={state.routineOperationSettlement}
+                                            scope="installed"
+                                        />
+                                    </>
+                                )}
                             </>
                         )}
                         footer={pageFooter}
@@ -360,14 +443,14 @@ export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeSc
                         installedPlugins={visibleInstalledPlugins}
                         presentation={presentation}
                         selectedPluginId={openItem?.kind === 'installed' && paneOpen ? openItem.pluginId : null}
-                        searchText={installedQuery.trim() || installedStatusFilterTitle(installedStatus)}
+                        searchText={installedQuery.trim() || installedFilter.conditionWords}
                         filtering={installedQuery.trim().length > 0 || installedStatus !== 'all'}
                         projectionByPluginId={state.pluginProjectionById}
                         machineId={state.executionMachineId}
                         serverId={state.executionServerId}
                         machineCoverageByPluginId={machineCoverageByPluginId}
                         onClearSearch={clearInstalledFilters}
-                        onDiscover={() => state.setActiveView('discover')}
+                        onDiscover={() => settingsHost ? openPluginAddModal({ host }) : state.setActiveView('discover')}
                         onRetry={state.refreshPluginTruth}
                         canRunActions={state.canRefreshInstalledPlugins}
                         isPluginActionInFlight={state.isPluginActionInFlight}
@@ -389,6 +472,8 @@ export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeSc
                                 <DiscoverStatusSummary
                                     loading={state.loadingDiscover}
                                     error={state.discoverError}
+                                    failureStatus={state.discoverFailureStatus}
+                                    sources={state.discoverSources}
                                     stale={state.discoverStale}
                                     entryCount={state.discoverEntries.length}
                                     sourceStatuses={state.discoverSourceStatuses}
@@ -402,6 +487,7 @@ export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeSc
                                     onRetry={state.canRefreshDiscover ? state.refreshDiscover : undefined}
                                     onOpenSources={openPluginSources}
                                 />
+                                {approvalWaiting}
                                 <PluginRoutineOperationSettlementRow
                                     settlement={state.routineOperationSettlement}
                                     scope="discover"
@@ -439,7 +525,8 @@ type InstalledToolbarState = Readonly<{
     /** `null` where the Plugins column shows the search over the same query. */
     query: string | null;
     onChangeQuery: (text: string) => void;
-    status: InstalledPluginStatusFilter;
+    status: InstalledPluginStatusFilter | null;
+    conditionWords: string;
     onSelectStatus: (status: InstalledPluginStatusFilter) => void;
     /** Some plugin is disabled or needs attention, or a status is already chosen. */
     statusFilterUseful: boolean;
@@ -457,12 +544,13 @@ type DiscoverToolbarState = Readonly<{
 
 const INSTALLED_STATUS_FILTERS = ['all', 'enabled', 'disabled', 'attention'] as const satisfies readonly InstalledPluginStatusFilter[];
 
-function installedStatusFilterTitle(status: InstalledPluginStatusFilter): string {
+function installedStatusFilterTitle(status: string): string {
     switch (status) {
         case 'all': return t('settingsPlugins.surfaces.statusAll');
         case 'enabled': return t('settingsPlugins.surfaces.statusEnabled');
         case 'disabled': return t('settingsPlugins.surfaces.statusDisabled');
         case 'attention': return t('settingsPlugins.surfaces.statusAttention');
+        default: return status;
     }
 }
 
@@ -480,6 +568,8 @@ function PluginsToolbar(props: Readonly<{
     onSelectPresentation: (presentation: PluginsCollectionPresentation) => void;
     installed: InstalledToolbarState | null;
     discover: DiscoverToolbarState | null;
+    /** Settings' My plugins: the secondary door into the Store's Plugins (S30-R19); Add stays the header's. */
+    store: (() => void) | null;
 }>) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
@@ -542,8 +632,11 @@ function PluginsToolbar(props: Readonly<{
                         id: 'plugins-installed-status',
                         testID: 'settings.plugins.marketplace.installed.statusFilter',
                         label: t('settingsPlugins.surfaces.statusFilterLabel'),
-                        options: INSTALLED_STATUS_FILTERS.map((status) => ({ id: status, label: installedStatusFilterTitle(status) })),
-                        selectedId: props.installed.status,
+                        options: [
+                            ...INSTALLED_STATUS_FILTERS.map((status) => ({ id: status, label: installedStatusFilterTitle(status) })),
+                            ...(props.installed.status === null ? [{ id: 'conditions', label: props.installed.conditionWords }] : []),
+                        ],
+                        selectedId: props.installed.status ?? 'conditions',
                         onChange: (id) => {
                             const status = INSTALLED_STATUS_FILTERS.find((candidate) => candidate === id);
                             if (status && props.installed) props.installed.onSelectStatus(status);
@@ -563,18 +656,34 @@ function PluginsToolbar(props: Readonly<{
                             onChange: (id) => props.discover?.onSelectSource(id === DISCOVER_ALL_SOURCES_ID ? null : id),
                         }} />
                     ) : null}
-                <SegmentedTabBar
+                <SettingAnchor setting={PLUGINS_SETTINGS.settings.collectionView}><SegmentedTabBar
                     tabs={presentationTabs}
                     activeTabId={props.presentation}
                     onSelectTab={props.onSelectPresentation}
                     testIDPrefix="settings.plugins.collectionView"
                     accessibilityLabel={t('settingsPlugins.surfaces.viewLabel')}
                     segmentSizing="content"
-                />
+                /></SettingAnchor>
+                {props.store ? (
+                    <RoundButton
+                        testID="settings.plugins.browseInStore"
+                        size="normal"
+                        display="secondary"
+                        title={t(pluginsHomeTitleKey('app'))}
+                        leading={<Icon name={PLUGINS_SURFACE_ICON} size={14} color={theme.colors.text.secondary} />}
+                        onPress={props.store}
+                    />
+                ) : null}
                 </View>
             </View>
         </View>
     );
+}
+
+/** The header Add's plus, in the primary button's tint. */
+function AddGlyph() {
+    const { theme } = useUnistyles();
+    return <Icon name="plus" size={16} color={theme.colors.button.primary.tint} />;
 }
 
 /**

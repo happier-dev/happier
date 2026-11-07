@@ -1,5 +1,7 @@
-import { normalizeSessionListFilterHomeIds } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
+import { getSessionListFilterUnsupportedFieldsV1, normalizeSessionListFilterHomeIds, normalizeSessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import { ScopeActionInputSchemas, type ScopeActionId, type ScopeActionInputById, type ScopeActionOutputById, type ShellColumn, type FileViewMode, type SettingsColumnFilterColumn, type SettingsColumnFilterV1 } from '@happier-dev/protocol/actions/scopeActionFamily';
+import type { EntityListFilterResultV1 } from '@happier-dev/protocol/collections/filter/entityListFilterV1';
+import type { SettingsCollectionFilter } from '@/components/settings/shell/settingsCollectionAdapter';
 import type { FileChangesScope } from '@happier-dev/protocol/scm';
 import type { SessionListViewFilterController } from '@/components/sessions/shell/search/useSessionListViewFilterController';
 import { resolveSessionListViewContextDefaults } from '@/components/sessions/shell/search/sessionListViewFilters';
@@ -10,8 +12,6 @@ import { selectActiveServerAccountScopeForServer } from '@/sync/domains/scope/ac
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import type { UniversalSearchScopeSeed } from '@/components/appShell/search/UniversalSearchRuntimeContext';
 import type { WorkspaceSymbolSearchInput } from '@/components/appShell/search/workspaceSymbolSearchSource';
-import type { EntityListFilterResultV1 } from '@happier-dev/protocol/collections/filter/entityListFilterV1';
-import type { SettingsCollectionFilter } from '@/components/settings/shell/settingsCollectionAdapter';
 import type { DiscussionListFilterV1 } from '@happier-dev/protocol/discussions/listing/discussionListFilterV1';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
@@ -19,8 +19,11 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 export type SessionListScopeActionController = Pick<SessionListViewFilterController,
   'filters' | 'updateFilters' | 'resetFilters' | 'viewContext' | 'viewContextKey' | 'corpusStorage'
   | 'retentionScopeKey'
-  | 'includeInactive' | 'setIncludeInactive' | 'setSource' | 'queryEnabled' | 'followingAvailable'
-  | 'sourceAvailable' | 'homeOptions' | 'fixedHomeServerIds'>;
+  | 'includeInactive' | 'queryEnabled' | 'followingAvailable'
+  | 'sourceAvailable' | 'homeOptions' | 'fixedHomeServerIds' | 'spacesReady' | 'spaceSettingsScope'> & Readonly<{
+    selectedSpaceId: string;
+    coverage: 'complete' | 'partial' | 'unavailable';
+  }>;
 
 type SessionListActionOwner = Readonly<{
   read: () => SessionListScopeActionController;
@@ -50,6 +53,8 @@ export type ShellColumnActionOwner = Readonly<{
   /** Presentation borrowed by the existing Navigation Settings operation. */
   openNavigationCustomizer?(): Promise<void>;
   arrangementAvailable?: boolean;
+  /** The presented Project's admitted checkout, shared by file-search invocations. */
+  searchScope?: UniversalSearchScopeSeed;
   selectTab?(tab: string): void;
   setVisible(visible: boolean): void;
 }>;
@@ -76,7 +81,7 @@ export type FileEditorActionOwner = Readonly<{
   file?: Readonly<{
     scope: WorkspaceScopeBase;
     path: string;
-    read(): Readonly<{ savedText: string | null; unsaved: boolean }>;
+    read(): Readonly<{ savedText: string | null; unsaved: boolean; text?: string | null }>;
   }>;
   save(): Promise<ScopeActionOutputById['file.editor.save']>;
   resolve(resolution: ScopeActionInputById['file.editor.resolve']['resolution']): Promise<ScopeActionOutputById['file.editor.resolve']>;
@@ -128,7 +133,9 @@ const fileViewOwners = new Map<string, () => FileViewActionOwner>();
 
 /** Private mounted target retained by one UI invocation through Inbox approval. No copied view state. */
 export type MountedScopeActionOwner =
-  Readonly<{ kind: 'shell.column'; column: ShellColumn; read: () => ShellColumnActionOwner }>;
+  | Readonly<{ kind: 'shell.column'; column: ShellColumn; read: () => ShellColumnActionOwner }>
+  | Readonly<{ kind: 'shell.columns'; columns: Partial<Readonly<Record<ShellColumn, () => ShellColumnActionOwner>>> }>
+  | Readonly<{ kind: 'file.view'; read: () => FileViewActionOwner }>;
 
 /** Mounted controller bridge only: the pane tab remains the sole view-state owner. */
 export function registerFileViewActionOwner(key: string, read: () => FileViewActionOwner): () => void {
@@ -149,6 +156,8 @@ function selectFileViewActionOwner(tabId: string | undefined,
 export function readActiveFileViewActionOwner(): FileViewActionOwner | null {
   return selectFileViewActionOwner(undefined);
 }
+const workflowLibraryOwners = new Set<() => WorkflowLibraryViewController>();
+
 export type DiscussionListScopeActionController = Readonly<{
   lifetime: ServerAccountScopeLifetime;
   focused: boolean;
@@ -185,12 +194,10 @@ export function registerSettingsColumnFilterScopeActionOwner(read: () => Setting
   return () => { settingsColumnFilterOwners.delete(read); };
 }
 
-let readLibraryOwner: (() => WorkflowLibraryViewController) | null = null;
-
-/** The focused Library joins the same client-local view-control bridge as Sessions and shell chrome. */
+/** Mounted Library readers share one draft; retiring a page must not retire its visible column. */
 export function registerWorkflowLibraryScopeActionOwner(read: () => WorkflowLibraryViewController): () => void {
-  readLibraryOwner = read;
-  return () => { if (readLibraryOwner === read) readLibraryOwner = null; };
+  workflowLibraryOwners.add(read);
+  return () => { workflowLibraryOwners.delete(read); };
 }
 
 export function registerShellColumnActionOwner(column: ShellColumn, read: () => ShellColumnActionOwner): () => void {
@@ -267,8 +274,11 @@ export async function invokeScopeAction(actionId: ScopeActionId, rawInput: unkno
   }
   if (actionId === 'file.view.get' || actionId === 'file.view.set') {
     const input = ScopeActionInputSchemas[actionId].parse(rawInput);
-    const owner = selectFileViewActionOwner(input.tabId, context);
+    const owner = mountedOwner?.kind === 'file.view' ? mountedOwner.read() : selectFileViewActionOwner(input.tabId, context);
     if (!owner) return unavailable('client_surface_unavailable');
+    if ((input.tabId && owner.tabId !== input.tabId)
+      || (context?.serverId && owner.serverId !== context.serverId)
+      || (context?.runtimeAccountId && owner.accountId !== context.runtimeAccountId)) return unavailable('client_surface_unavailable');
     if (actionId === 'file.view.get') return { tabId: owner.tabId, mode: owner.mode, blame: owner.blame,
       ...(owner.changesScope ? { changesScope: owner.changesScope } : {}) };
     const { tabId: _tabId, ...patch } = ScopeActionInputSchemas['file.view.set'].parse(rawInput);
@@ -278,20 +288,21 @@ export async function invokeScopeAction(actionId: ScopeActionId, rawInput: unkno
     return await owner.set(patch) ? { ok: true } : unavailable('client_control_unavailable');
   }
   if (actionId === 'workflow.library.view.get' || actionId === 'workflow.library.view.set' || actionId === 'workflow.library.view.reset') {
-    const controller = readLibraryOwner?.();
-    if (!controller?.focused || !controller.lifetime?.isCurrent()
-      || (context?.serverId && !selectActiveServerAccountScopeForServer(controller.lifetime.scope, context.serverId))
-      || (context?.runtimeAccountId && context.runtimeAccountId !== controller.lifetime.scope.accountId)) {
-      return unavailable('client_surface_unavailable');
-    }
+    const controller = [...workflowLibraryOwners].map(read => read()).filter(controller => controller.focused
+      && controller.lifetime?.isCurrent()
+      && (!context?.serverId || selectActiveServerAccountScopeForServer(controller.lifetime.scope, context.serverId))
+      && (!context?.runtimeAccountId || context.runtimeAccountId === controller.lifetime.scope.accountId)).at(-1);
+    if (!controller) return unavailable('client_surface_unavailable');
     ScopeActionInputSchemas[actionId].parse(rawInput);
     if (actionId === 'workflow.library.view.get') return {
-      view: controller.view, searchQuery: controller.searchQuery,
+      view: controller.view, filters: controller.filters, searchQuery: controller.searchQuery,
       offeredViews: controller.offeredViews, visibleKeys: controller.visibleKeys,
+      coverage: controller.filterResult.coverage,
+      selectedSpaceId: controller.selectedSpaceId,
     };
-    const patch = actionId === 'workflow.library.view.reset' ? { view: 'all' as const, searchQuery: '' }
-      : ScopeActionInputSchemas['workflow.library.view.set'].parse(rawInput);
-    return controller.update(patch) ? { ok: true } : unavailable('client_control_unavailable');
+    const accepted = actionId === 'workflow.library.view.reset' ? controller.reset()
+      : controller.update(ScopeActionInputSchemas['workflow.library.view.set'].parse(rawInput));
+    return accepted ? { ok: true } : unavailable('client_control_unavailable');
   }
   if (actionId === 'discussion.list.view.get' || actionId === 'discussion.list.view.set' || actionId === 'discussion.list.view.reset') {
     const input = ScopeActionInputSchemas[actionId].parse(rawInput);
@@ -316,7 +327,9 @@ export async function invokeScopeAction(actionId: ScopeActionId, rawInput: unkno
     const columnId = input.column ?? 'navigation';
     const column = mountedOwner?.kind === 'shell.column'
       ? mountedOwner.column === columnId ? mountedOwner.read() : null
-      : readShellColumnActionOwner(columnId);
+      : mountedOwner?.kind === 'shell.columns' && mountedOwner.columns[columnId]
+        ? mountedOwner.columns[columnId]!()
+        : readShellColumnActionOwner(columnId);
     if (!column) return unavailable('client_surface_unavailable');
     if (actionId === 'shell.column.get') return { present: column.present, visible: column.visible, available: column.available,
       ...(column.tabs ? { tabs: column.tabs } : {}), ...(column.activeTab === undefined ? {} : { activeTab: column.activeTab }),
@@ -334,40 +347,48 @@ export async function invokeScopeAction(actionId: ScopeActionId, rawInput: unkno
   }
   const input = ScopeActionInputSchemas[actionId].parse(rawInput);
   const controller = readSessionListOwner(input);
-  if (!controller) return unavailable('client_surface_unavailable');
+  if (!controller?.spaceSettingsScope
+    || (context?.serverId && !areServerProfileIdentifiersEquivalent(controller.spaceSettingsScope.serverId, context.serverId))
+    || (context?.runtimeAccountId && controller.spaceSettingsScope.accountId !== context.runtimeAccountId)) {
+    return unavailable('client_surface_unavailable');
+  }
   if (actionId === 'session.list.view.get') return {
     view: controller.viewContext.kind === 'global' ? { kind: 'global' } : { kind: 'team', ...controller.viewContext.team },
     storage: controller.corpusStorage,
     filters: controller.filters,
+    selectedSpaceId: controller.selectedSpaceId,
+    coverage: controller.coverage,
     includeInactive: controller.includeInactive,
     queryEnabled: controller.queryEnabled,
     followingAvailable: controller.followingAvailable,
     sourceAvailable: controller.sourceAvailable,
     homes: controller.homeOptions,
   };
+  if (!controller.spacesReady) return unavailable('client_control_unavailable');
   if (actionId === 'session.list.view.reset') {
     controller.resetFilters();
     return { ok: true };
   }
   const update = ScopeActionInputSchemas['session.list.view.set'].parse(rawInput);
   const patch = update.filters ?? {};
+  // Admit the changed selections, not an unrelated opaque saved condition retained by this draft.
+  const { searchQuery: _searchQuery, ...selections } = patch;
+  if (getSessionListFilterUnsupportedFieldsV1(normalizeSessionListFilterV1(selections), 'list').length > 0) {
+    return unavailable('client_control_unavailable');
+  }
   const requestedHomes = patch.homeServerIds === undefined ? undefined : normalizeSessionListFilterHomeIds(patch.homeServerIds);
   const scopeAvailability = resolveSessionListFilterScopeAvailability(controller);
   if ((patch.scope !== undefined && !scopeAvailability[patch.scope])
     || (patch.attention !== undefined && !controller.queryEnabled)
     || (patch.audiences !== undefined && !controller.queryEnabled)
     || (patch.source !== undefined && !controller.sourceAvailable)
-    || (update.includeInactive !== undefined && controller.corpusStorage === 'archived')
+    || (patch.includeInactive !== undefined && controller.corpusStorage === 'archived')
     || (requestedHomes?.some((id) => !controller.homeOptions.some((home) => home.serverId === id)))
     || (controller.fixedHomeServerIds && requestedHomes !== undefined
       && (requestedHomes.some((id) => !controller.fixedHomeServerIds?.has(id))
         || [...controller.fixedHomeServerIds].some((id) => !requestedHomes.includes(id))))) {
     return unavailable('client_control_unavailable');
   }
-  const { source, ...filterPatch } = patch;
-  if (Object.keys(filterPatch).length > 0) controller.updateFilters((current) => ({ ...current, ...filterPatch }));
-  // The existing device preference writer remains authoritative for these facets.
-  if (source !== undefined) controller.setSource(source);
-  if (update.includeInactive !== undefined) controller.setIncludeInactive(update.includeInactive);
+  if (Object.keys(patch).length > 0) controller.updateFilters((current) => ({ ...current, ...patch }));
   return { ok: true };
 }

@@ -5,6 +5,19 @@ import { mountThroughReactNativeWeb } from '../../rnwMount.testSupport.js';
 import { HappierPressable } from './Pressable.js';
 
 describe('shared pressable focus ownership', () => {
+    it('uses pressed for toggle buttons and checked for checkboxes', () => {
+        const mounted = mountThroughReactNativeWeb(<>
+            <HappierPressable accessibilityRole="button" accessibilityLabel="Editor first" selected checked />
+            <HappierPressable accessibilityRole="checkbox" accessibilityLabel="Show editor" checked />
+        </>);
+        try {
+            const button = mounted.container.querySelector('[role="button"]')!;
+            expect(button.getAttribute('aria-label')).toBe('Editor first');
+            expect(button.getAttribute('aria-pressed')).toBe('true');
+            expect(button.hasAttribute('aria-checked')).toBe(false);
+            expect(mounted.container.querySelector('[role="checkbox"]')?.getAttribute('aria-checked')).toBe('true');
+        } finally { mounted.unmount(); }
+    });
     it.each([false, true])('preserveFocusOnPress=%s retains the input only when requested and still activates', preserveFocusOnPress => {
         let activations = 0;
         const mounted = mountThroughReactNativeWeb(<>

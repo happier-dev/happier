@@ -1,7 +1,9 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
-import { createSessionFixture, flushHookEffects, renderScreen } from '@/dev/testkit';
+import { createMachineFixture, createSessionFixture, flushHookEffects, renderScreen } from '@/dev/testkit';
+import { clearMachineRequestReachabilityForTest, recordMachineRequestSucceeded } from '@/sync/domains/machines/reachability/machineReachability';
+import { t } from '@/text';
 import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 import { storage, useSession } from '@/sync/domains/state/storage';
 import type { SessionCompanionController } from './state/useSessionCompanionController';
@@ -17,12 +19,11 @@ const { SessionSummaryCard } = await import('./summary/SessionSummaryCard');
 
 let controller: SessionCompanionController;
 const openFullSurface = () => {};
-const resolvePrimaryHost = () => 'companion' as const;
 function RailFacts() {
     const session = useSession('s1', runtime.serverId);
     controller = useSessionCompanionController({ sessionId: 's1', serverId: runtime.serverId, openFullSurface });
     return session ? <SessionCompanionContent session={session} serverId={runtime.serverId}
-        controller={controller} boardBinding={null} presentation="rail" resolvePrimaryHost={resolvePrimaryHost} /> : null;
+        controller={controller} boardBinding={null} presentation="rail" /> : null;
 }
 
 describe('Companion rail real Session facts', () => {
@@ -59,5 +60,30 @@ describe('Companion rail real Session facts', () => {
             expect(screen.findByTestId('session-companion-content-summary-ask')).not.toBeNull();
             expect(screen.findByTestId('session-companion-content-plan-step-second')).not.toBeNull();
         } finally { await screen.unmount(); }
+    });
+    it('names when and why a disconnected Session is behind on an online Machine, offers Retry, and never calls it Offline', async () => {
+        const machine = createMachineFixture({ id: 'machine-online', active: true, activeAt: Date.now() });
+        const base = createSessionFixture();
+        const lastSeenAt = Date.now() - 20 * 60_000;
+        const session = createSessionFixture({ id: 's1', serverId: runtime.serverId, active: false, activeAt: lastSeenAt, presence: lastSeenAt,
+            metadata: { ...base.metadata!, machineId: machine.id, path: '/repo', host: 'Build computer' } });
+        storage.getState().applyMachines([machine], true, { sourceServerId: runtime.serverId });
+        storage.getState().applySessions([session]);
+        recordMachineRequestSucceeded({ serverId: runtime.serverId, accountId: 'account-a', machineId: machine.id });
+        const screen = await renderScreen(<runtime.Wrapper><RailFacts /></runtime.Wrapper>);
+        try {
+            await act(async () => { controller.show(SESSION_SUMMARY_COMPANION_ITEM); });
+            await flushHookEffects({ cycles: 10 });
+            const summary = screen.findByTestId('session-companion-content-summary');
+            const line = screen.findByTestId('session-companion-content-summary-freshness-text');
+            const lineText = String(line?.props.accessibilityLabel ?? '') || screen.getTextContent();
+            const asOfStem = t('surfaceState.asOf', { time: '\u00a7' }).split('\u00a7')[0]!;
+            expect(lineText).toContain(t('sessionCompanion.freshness.sessionDisconnected'));
+            expect(lineText).toContain(asOfStem);
+            expect(lineText).not.toContain(t('sessionBoard.board.stale'));
+            expect(screen.findByTestId('session-companion-content-summary-freshness-action')).not.toBeNull();
+            expect(summary).not.toBeNull();
+            expect(screen.getTextContent()).not.toContain(t('status.offline'));
+        } finally { await screen.unmount(); clearMachineRequestReachabilityForTest(); }
     });
 });

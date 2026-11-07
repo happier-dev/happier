@@ -1,5 +1,6 @@
 import * as React from 'react';
 
+import type { SurfaceStateAction } from '@/components/ui/surfaces/SurfaceStateCard';
 import type { PluginMachineExecutionOriginStateV1 } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
 import { t } from '@/text';
 import { resolvePluginExecutionOriginReasonDetail } from '@/sync/domains/surfaces/copy';
@@ -37,6 +38,12 @@ export type PluginSurfacePageIdentity = Readonly<{
 
 export const PluginSurfacePageHeaderContext = React.createContext<PluginSurfacePageIdentity | null>(null);
 
+/** Machine-owner recovery presented outside the surface's inert snapshot. */
+export const PluginSurfaceMachineRecoveryContext = React.createContext<Readonly<{
+    retry?: SurfaceStateAction;
+    chooseMachine?: SurfaceStateAction;
+}> | null>(null);
+
 /**
  * Why a machine-backed surface is not live yet, when the cause is not the machine's presence:
  * `unavailable` (the chosen or only source is gone, changed or refused), `required` (several sources could
@@ -44,7 +51,7 @@ export const PluginSurfacePageHeaderContext = React.createContext<PluginSurfaceP
  * yet). `null` leaves the machine as the stated cause.
  */
 type PluginSurfacePreciseSourceCause = 'home_unreachable' | 'release_unavailable' | 'non_portable' | 'source_not_ready'
-    | 'daemon_unsupported' | 'daemon_invalid_response' | 'daemon_unavailable' | 'activation_refused' | 'no_materialization';
+    | 'daemon_unsupported' | 'daemon_invalid_response' | 'daemon_unavailable' | 'activation_refused' | 'no_materialization' | 'unknown';
 export type PluginSurfaceSourceCause = 'unavailable' | 'required' | 'connecting' | PluginSurfacePreciseSourceCause;
 
 /** Provided by the mount that owns the execution-origin selection; read by the cold state below. */
@@ -73,7 +80,8 @@ export function resolvePluginSurfaceSourceCause(
                     case 'daemon_invalid_response':
                     case 'daemon_unavailable':
                     case 'activation_refused':
-                    case 'no_materialization': return reason;
+                    case 'no_materialization':
+                    case 'unknown': return reason;
                 }
             }
             return state.reasons.some(reason => reason !== 'offline' && reason !== 'stale')
@@ -110,7 +118,9 @@ export function useOfflineSurfaceNotice(available: boolean, snapshotTitle: strin
     if ((available || hasContent) && !wasLoaded) setWasLoaded(true);
     return wasLoaded
         ? {
-            title: t('pluginSurfaces.state.offline.title'),
+            title: sourceCause === 'unknown'
+                ? t('pluginSurfaces.state.sourceUnavailable.title')
+                : t('pluginSurfaces.state.offline.title'),
             reason: preciseReason ?? t('pluginSurfaces.state.offline.reason'),
             accessibilityLabel: t('pluginSurfaces.offlineSnapshot.accessibilityLabel', { title: snapshotTitle }),
             nothingLoaded: false,

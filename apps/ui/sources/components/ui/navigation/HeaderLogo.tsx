@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { Image } from 'expo-image';
+import { SafeExpoImage as Image } from '@/components/ui/media/SafeExpoImage';
 import { useUnistyles } from 'react-native-unistyles';
 
 /**

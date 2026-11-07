@@ -89,7 +89,8 @@ function buildExactIrohProfileFixture(profile: Record<string, unknown>): Record<
 
 function mockProfile(profile: Record<string, unknown> | null): void {
     const normalizedProfile = profile ? buildExactIrohProfileFixture(profile) : null;
-    vi.doMock('@/sync/domains/server/serverProfiles', () => ({
+    vi.doMock('@/sync/domains/server/serverProfiles', async (importOriginal) => ({
+        ...await importOriginal<typeof import('@/sync/domains/server/serverProfiles')>(),
         getServerProfileById: (_id: string) => normalizedProfile,
     }));
 }
@@ -116,7 +117,10 @@ function mockSyncInfra(): {
     const retryNow = vi.fn();
     const abortServerFetches = vi.fn();
     vi.doMock('@/sync/sync', () => ({ syncSwitchServer, sync: { retryNow } }));
-    vi.doMock('@/sync/http/client', () => ({ abortServerFetches }));
+    vi.doMock('@/sync/http/client', async (importOriginal) => ({
+        ...(await importOriginal<typeof import('@/sync/http/client')>()),
+        abortServerFetches,
+    }));
     return { syncSwitchServer, retryNow, abortServerFetches };
 }
 
@@ -250,8 +254,19 @@ describe('switchConnectionToActiveServer Iroh lease acquisition', () => {
             startNativeLoopbackTunnelRuntimeAppStateLifecycle: startLifecycleSpy,
         }));
 
-        const { restoreConnectionToActiveServer } = await import('./connectionManager');
-        await restoreConnectionToActiveServer(credentials);
+        const { restoreConnectionToActiveServer, isColdActiveServerRestorePending,
+            subscribeColdActiveServerRestore } = await import('./connectionManager');
+        const restoreStates: boolean[] = [];
+        const unsubscribe = subscribeColdActiveServerRestore(() => {
+            restoreStates.push(isColdActiveServerRestorePending());
+        });
+        expect(isColdActiveServerRestorePending()).toBe(false);
+        const restore = restoreConnectionToActiveServer(credentials);
+        expect(isColdActiveServerRestorePending()).toBe(true);
+        await restore;
+        expect(isColdActiveServerRestorePending()).toBe(false);
+        expect(restoreStates).toEqual([true, false]);
+        unsubscribe();
 
         expect(irohRuntimeMock.ensureHomeTunnel.mock.invocationCallOrder[0])
             .toBeLessThan(syncRestore.mock.invocationCallOrder[0]);
@@ -349,8 +364,16 @@ describe('switchConnectionToActiveServer Iroh lease acquisition', () => {
         }));
         irohRuntimeMock.ensureHomeTunnel.mockRejectedValueOnce(new Error('home unreachable'));
 
-        const { restoreConnectionToActiveServer } = await import('./connectionManager');
+        const { restoreConnectionToActiveServer, isColdActiveServerRestorePending,
+            subscribeColdActiveServerRestore } = await import('./connectionManager');
+        const restoreStates: boolean[] = [];
+        const unsubscribe = subscribeColdActiveServerRestore(() => {
+            restoreStates.push(isColdActiveServerRestorePending());
+        });
         await expect(restoreConnectionToActiveServer(credentials)).rejects.toBeTruthy();
+        expect(isColdActiveServerRestorePending()).toBe(false);
+        expect(restoreStates).toEqual([true, false]);
+        unsubscribe();
 
         expect(syncHydrateLocalState).toHaveBeenCalledWith(
             credentials,
@@ -396,28 +419,32 @@ describe('switchConnectionToActiveServer Iroh lease acquisition', () => {
         );
     });
 
-    // Lane-06 fallback matrix: identity, auth, descriptor/integrity, protocol
-    // (ALPN/preamble), endpoint-config, and stale-target failures must fail
-    // closed so the stale/unsafe target never reaches `syncSwitchServer`.
-    const failClosedFailures: ReadonlyArray<Readonly<{ name: string; failure: unknown }>> = [
+    // Without an independently trusted HTTPS endpoint, even failures eligible
+    // for initial-selection fallback cannot publish a transport or reach Sync.
+    // Identity/auth/integrity refusals retain their original error instead.
+    const failClosedFailures: ReadonlyArray<Readonly<{
+        name: string;
+        failure: unknown;
+        transportUnavailable?: true;
+    }>> = [
         { name: 'authenticated ping denial', failure: new Error('iroh_home_tunnel_probe_failed:auth-failed') },
         { name: 'probe identity mismatch', failure: new Error('iroh_home_tunnel_probe_failed:identity-mismatch') },
-        { name: 'unverified identity (features probe unavailable)', failure: new Error('iroh_home_tunnel_probe_failed:features-unavailable') },
+        { name: 'features probe unavailable', failure: new Error('iroh_home_tunnel_probe_failed:features-unavailable'), transportUnavailable: true },
         { name: 'native identity mismatch', failure: new IrohError('identity_mismatch', 'native lease does not match the requested Home identity') },
         { name: 'invalid descriptor', failure: new IrohError('invalid_descriptor', 'descriptor rejected') },
-        { name: 'invalid preamble', failure: new IrohError('invalid_preamble', 'bad preamble byte') },
-        { name: 'unsupported ALPN', failure: new IrohError('unsupported_alpn', 'ALPN rejected') },
-        { name: 'endpoint config conflict', failure: new IrohError('endpoint_config_conflict', 'endpoint config conflict') },
+        { name: 'invalid preamble', failure: new IrohError('invalid_preamble', 'bad preamble byte'), transportUnavailable: true },
+        { name: 'unsupported ALPN', failure: new IrohError('unsupported_alpn', 'ALPN rejected'), transportUnavailable: true },
+        { name: 'endpoint config conflict', failure: new IrohError('endpoint_config_conflict', 'endpoint config conflict'), transportUnavailable: true },
         { name: 'invalid endpoint input', failure: new Error('iroh_home_tunnel_invalid_endpoint') },
         { name: 'stale generation', failure: new Error('iroh_home_tunnel_stale_generation') },
         { name: 'stale focus', failure: new Error('iroh_home_tunnel_stale_focus') },
-        { name: 'native transport loss', failure: new IrohError('transport', 'transport closed') },
-        { name: 'health unreachability', failure: new Error('iroh_home_tunnel_probe_failed:health-unavailable') },
-        { name: 'bounded probe timeout', failure: new Error('iroh_home_tunnel_probe_failed:probe-timeout') },
-        { name: 'relay auth or unknown native failure', failure: new Error('iroh relay admission rejected') },
+        { name: 'native transport loss', failure: new IrohError('transport', 'transport closed'), transportUnavailable: true },
+        { name: 'health unreachability', failure: new Error('iroh_home_tunnel_probe_failed:health-unavailable'), transportUnavailable: true },
+        { name: 'bounded probe timeout', failure: new Error('iroh_home_tunnel_probe_failed:probe-timeout'), transportUnavailable: true },
+        { name: 'unknown native failure (not a typed auth refusal)', failure: new Error('iroh relay admission rejected'), transportUnavailable: true },
     ];
 
-    it.each(failClosedFailures)('fails closed on $name and never switches to the unsafe target', async ({ failure }) => {
+    it.each(failClosedFailures)('fails closed on $name and never switches to the unsafe target', async ({ failure, transportUnavailable }) => {
         mockActiveSnapshot({
             serverId: 'srv_home_a',
             serverUrl: 'https://iroh-fail.example.test',
@@ -447,15 +474,33 @@ describe('switchConnectionToActiveServer Iroh lease acquisition', () => {
         }));
 
         const { switchConnectionToActiveServer } = await import('./connectionManager');
-        await expect(switchConnectionToActiveServer()).rejects.toBe(failure);
+        if (transportUnavailable) {
+            const { ServerScopedTransportUnavailableError } = await import('@/sync/runtime/homeCarrier');
+            await expect(switchConnectionToActiveServer()).rejects.toBeInstanceOf(ServerScopedTransportUnavailableError);
+        } else {
+            await expect(switchConnectionToActiveServer()).rejects.toBe(failure);
+        }
 
         expect(ensureHomeTunnel).toHaveBeenCalledTimes(1);
+        expect(publishActiveServerRuntimeOriginSpy).not.toHaveBeenCalled();
         expect(syncSwitchServer).not.toHaveBeenCalled();
     });
 
+    /** The declared origin at the fetch boundary, recording every credential it receives. */
+    async function serveDeclaredHome(serverIdentityId: string): Promise<Array<string | null>> {
+        const authorizations: Array<string | null> = [];
+        const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
+        setRuntimeFetch(async (input, init) => {
+            authorizations.push(new Headers(init?.headers).get('Authorization'));
+            return new Response(JSON.stringify(String(input).endsWith('/v1/features')
+                ? { features: {}, capabilities: { serverIdentity: { serverIdentityId } } }
+                : { ok: true }), { status: 200, headers: { 'content-type': 'application/json' } });
+        });
+        return authorizations;
+    }
+
     // Only safe pre-acquisition unavailability may hand initial selection to
-    // descriptor-proven HTTPS ingress. Transport and probe failures remain on
-    // the selected Iroh path rather than replaying through another carrier.
+    // descriptor-proven HTTPS ingress, which must then prove the same Home.
     const fallbackAllowedFailures: ReadonlyArray<Readonly<{ name: string; failure: unknown }>> = [
         { name: 'native unavailability', failure: new IrohError('unavailable', 'Native Iroh transport is unavailable.') },
         { name: 'suspended runtime', failure: new Error('iroh_home_tunnel_suspended') },
@@ -490,6 +535,7 @@ describe('switchConnectionToActiveServer Iroh lease acquisition', () => {
         vi.doMock('@/sync/runtime/nativeLoopbackTunnels/runtime', () => ({
             startNativeLoopbackTunnelRuntimeAppStateLifecycle: startLifecycleSpy,
         }));
+        await serveDeclaredHome('srv_home_a');
 
         const { switchConnectionToActiveServer } = await import('./connectionManager');
         await expect(switchConnectionToActiveServer()).resolves.toEqual({ token: 'scoped-token', secret: 'scoped-secret' });
@@ -534,6 +580,7 @@ describe('switchConnectionToActiveServer Iroh lease acquisition', () => {
         vi.doMock('@/sync/runtime/nativeLoopbackTunnels/runtime', () => ({
             startNativeLoopbackTunnelRuntimeAppStateLifecycle: startLifecycleSpy,
         }));
+        await serveDeclaredHome('srv_home_a');
 
         const { switchConnectionToActiveServer } = await import('./connectionManager');
         await switchConnectionToActiveServer();
@@ -542,6 +589,44 @@ describe('switchConnectionToActiveServer Iroh lease acquisition', () => {
             runtimeOrigin: 'https://public.example.test/api',
             carrier: 'https',
         }));
+    });
+
+    it('publishes nothing and sends no credential when a cold start falls back to a different Home', async () => {
+        mockActiveSnapshot({
+            serverId: 'srv_home_a',
+            serverUrl: 'https://iroh-fail.example.test',
+            kind: 'custom',
+            generation: 9,
+        });
+        mockProfile({
+            id: 'profile-a',
+            serverIdentityId: 'srv_home_a',
+            serverUrl: 'https://iroh-fail.example.test',
+            publicServerUrl: 'https://public-iroh-fail.example.test',
+            irohEndpoint: { endpointId: 'endpoint-a' },
+            connectionDescriptorRevision: 2,
+        });
+        mockTokenStorage({ token: 'scoped-token', secret: 'scoped-secret' });
+        const { syncSwitchServer } = mockSyncInfra();
+        vi.doMock('@/sync/runtime/nativeIrohTunnels/runtime', () => ({
+            getIrohHomeTunnelRuntime: () => ({
+                ...irohRuntimeMock,
+                ensureHomeTunnel: vi.fn(async () => {
+                    throw new IrohError('home_unreachable', 'relay outage');
+                }),
+            }),
+        }));
+        vi.doMock('@/sync/runtime/nativeLoopbackTunnels/runtime', () => ({
+            startNativeLoopbackTunnelRuntimeAppStateLifecycle: startLifecycleSpy,
+        }));
+        const authorizations = await serveDeclaredHome('srv_reassigned_home');
+
+        const { switchConnectionToActiveServer } = await import('./connectionManager');
+        await expect(switchConnectionToActiveServer()).rejects.toThrow();
+
+        expect(authorizations).toEqual([null]);
+        expect(publishActiveServerRuntimeOriginSpy).not.toHaveBeenCalled();
+        expect(syncSwitchServer).not.toHaveBeenCalled();
     });
 
     it('fails typed when Iroh is unavailable and the descriptor proves no independent HTTPS ingress', async () => {

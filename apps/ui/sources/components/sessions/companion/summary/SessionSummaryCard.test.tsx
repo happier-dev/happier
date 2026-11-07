@@ -9,6 +9,8 @@ import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createTestSessionTranscriptSource, renderWithSessionTranscriptSource } from '@/dev/testkit/sessionTranscriptSource';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import type { SessionPendingPermission } from '@/sync/ops/sessionPendingPermissions';
+import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { installTimerCensus } from '@/dev/testkit/performance/timerCensus';
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -52,6 +54,63 @@ function model(overrides: Partial<SessionSummaryCardModel> = {}): SessionSummary
 }
 
 describe('SessionSummaryCard (the Companion hero)', () => {
+    it('retires the answered receipt clock after its existing visibility window', async () => {
+        vi.useFakeTimers({ now: Date.parse('2026-09-30T12:00:00.000Z') });
+        const census = installTimerCensus((stack) => stack.includes('sessionListRuntimeClock') ? 'receipt' : null);
+        const answerPermission = vi.fn(async () => {});
+        const screen = await renderScreen(<SessionSummaryCard model={model({ needsYou: { request: ASK, moreCount: 0 } })}
+            density="compact" answerPermission={answerPermission} />);
+        try {
+            await act(async () => { screen.pressByTestId('session-companion-summary-allow'); });
+            await screen.update(<SessionSummaryCard model={model()} density="compact" answerPermission={answerPermission} />);
+            expect(screen.findByTestId('session-companion-summary-answered')).not.toBeNull();
+            // The existing visibility predicate includes the exact 60-second boundary.
+            await act(async () => { vi.advanceTimersByTime(60_000); });
+            expect(screen.findByTestId('session-companion-summary-answered')).not.toBeNull();
+            await act(async () => { vi.advanceTimersByTime(1); });
+            expect(screen.findByTestId('session-companion-summary-answered')).toBeNull();
+            const before = census.readFires();
+            await act(async () => { vi.advanceTimersByTime(300_000); });
+            expect(census.readFires()).toEqual(before);
+            expect(census.read()).toEqual([]);
+        } finally {
+            await screen.unmount();
+            census.stop();
+            vi.useRealTimers();
+        }
+    });
+    it('pauses the retained receipt deadline while hidden and reopens with the expired receipt gone', async () => {
+        vi.useFakeTimers({ now: Date.parse('2026-09-30T12:00:00.000Z') });
+        const census = installTimerCensus((stack) => stack.includes('sessionListRuntimeClock') ? 'receipt' : null);
+        const answerPermission = vi.fn(async () => {});
+        const draw = (active: boolean, needsYou: SessionSummaryCardModel['needsYou']) =>
+            <PluginSurfaceFocusEligibilityProvider active={active}>
+                <SessionSummaryCard model={model({ needsYou })} density="compact" answerPermission={answerPermission} />
+            </PluginSurfaceFocusEligibilityProvider>;
+        const screen = await renderScreen(draw(true, { request: ASK, moreCount: 0 }));
+        try {
+            await act(async () => { screen.pressByTestId('session-companion-summary-allow'); });
+            await screen.update(draw(true, null));
+            expect(screen.findByTestId('session-companion-summary-answered')).not.toBeNull();
+            await screen.update(draw(false, null));
+            const before = census.readFires();
+            await act(async () => { vi.advanceTimersByTime(300_000); });
+            expect(census.readFires()).toEqual(before);
+            expect(census.read()).toEqual([]);
+            await screen.update(draw(true, null));
+            expect(screen.findByTestId('session-companion-summary-answered')).toBeNull();
+            const nextAsk = { ...ASK, requestId: 'req-2', summary: 'New permission request' };
+            await screen.update(draw(true, { request: nextAsk, moreCount: 0 }));
+            await act(async () => { screen.pressByTestId('session-companion-summary-deny'); });
+            await screen.update(draw(true, null));
+            expect(answerPermission).toHaveBeenLastCalledWith(nextAsk, 'deny');
+            expect(screen.findByTestId('session-companion-summary-answered')).not.toBeNull();
+        } finally {
+            await screen.unmount();
+            census.stop();
+            vi.useRealTimers();
+        }
+    });
     it('uses the compact widget summary with a truthful full-surface route and expands detail for a tall body', async () => {
         const openFull = vi.fn();
         const summary = model({ rows: [
@@ -156,6 +215,20 @@ describe('SessionSummaryCard (the Companion hero)', () => {
         expect(screen.findByTestId('session-companion-summary-availability')?.props.children)
             .toBe('status.encryptedUnavailable');
         expect(screen.findByTestId('session-companion-summary-status')).toBeNull();
+    });
+
+    it('titles itself with what it is and says the state on the line beneath, never the state as its title', async () => {
+        const screen = await renderScreen(
+            <SessionSummaryCard
+                model={model({ status: { state: 'disconnected', statusText: 'Offline', quiet: false } })}
+                density="compact"
+            />,
+        );
+        try {
+            expect(screen.findByTestId('session-companion-summary-title')?.props.children)
+                .toBe('sessionBoard.companion.summary.title');
+            expect(screen.findByTestId('session-companion-summary-status')?.props.children).toBe('Offline');
+        } finally { await screen.unmount(); }
     });
 
     it('says the present in words: waiting for you, and the plan step the agent paused before', async () => {

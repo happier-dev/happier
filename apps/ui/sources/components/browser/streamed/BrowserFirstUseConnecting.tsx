@@ -23,7 +23,7 @@ export function BrowserFirstUseConnecting(props: Readonly<{
             testID={props.testID}
             title={preparing
                 ? t('browserPresence.stream.preparingTitle')
-                : t('browserPresence.stream.connectingTitle', { agent: identity.name })}
+                : identity.agentless ? t('browserPresence.stream.connectingTitleAgentless') : t('browserPresence.stream.connectingTitle', { agent: identity.name })}
             reason={preparing
                 ? t('browserPresence.stream.preparingBody')
                 : props.machineName ? t('browserPresence.stream.connectingBody', { machine: props.machineName }) : undefined}

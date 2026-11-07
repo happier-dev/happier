@@ -46,6 +46,8 @@ export type BrowserPresenceTranslations = Readonly<{
     handBack: string;
     stream: Readonly<{
         connectingTitle: (params: AgentParams) => string;
+        /** While no agent resolves: never a fallback name mid-sentence. */
+        connectingTitleAgentless: string;
         connectingBody: (params: Readonly<{ machine: string }>) => string;
         preparingTitle: string;
         preparingBody: string;
@@ -60,11 +62,14 @@ export type BrowserPresenceTranslations = Readonly<{
         sandboxFailedBody: string;
         stalled: string;
         endedTitle: (params: AgentParams) => string;
+        endedTitleAgentless: string;
         endedBody: string;
         openPageHere: string;
         setupTitle: (params: AgentParams) => string;
         unavailableTitle: (params: AgentParams) => string;
         unavailableBody: (params: AgentParams) => string;
+        unavailableTitleAgentless: string;
+        unavailableBodyAgentless: string;
         tryAgain: string;
         inputA11y: string;
         directMode: string;
@@ -100,7 +105,11 @@ export type BrowserPresenceTranslations = Readonly<{
         save: string;
         dismissDownloads: string;
         downloadsA11y: string;
+        popupOpened: string;
+        show: string;
         showKeyboard: string;
+        otherViewerTitle: string;
+        otherViewerDetail: string;
     }>;
 }>;
 
@@ -144,6 +153,7 @@ export const browserPresenceTranslationsEnglish = { en: {
         handBack: 'Hand back',
         stream: {
             connectingTitle: ({ agent }) => `Connecting to ${agent}’s browser`,
+            connectingTitleAgentless: "Connecting to the browser",
             connectingBody: ({ machine }) => `It runs on ${machine}. The page appears here as soon as the first frame arrives.`,
             preparingTitle: 'Preparing the browser…',
             preparingBody: 'Downloading Chromium on this machine. This only happens once. Your page will open when it’s ready.',
@@ -158,11 +168,14 @@ export const browserPresenceTranslationsEnglish = { en: {
             sandboxFailedBody: 'The sandbox couldn’t be allowed on this machine. Try again in a moment.',
             stalled: 'Showing the last frame · reconnecting',
             endedTitle: ({ agent }) => `${agent} closed this browser`,
+            endedTitleAgentless: "This browser was closed",
             endedBody: 'The page is no longer being shown here.',
             openPageHere: "Open page here",
             setupTitle: ({ agent }) => `${agent}’s browser isn’t set up yet`,
             unavailableTitle: ({ agent }) => `Can’t show ${agent}’s browser here`,
             unavailableBody: ({ agent }) => `${agent} keeps browsing; its actions still appear in the chat.`,
+            unavailableTitleAgentless: "Can’t show this browser here",
+            unavailableBodyAgentless: "The page is still open on that machine.",
             tryAgain: 'Try again',
             directMode: 'Direct touch',
             trackpadMode: 'Trackpad',
@@ -197,6 +210,10 @@ export const browserPresenceTranslationsEnglish = { en: {
             save: 'Save',
             dismissDownloads: 'Hide downloads',
             downloadsA11y: 'Downloads',
+            popupOpened: 'The page opened a new tab',
+            show: 'Show',
             showKeyboard: 'Show keyboard',
+            otherViewerTitle: 'Someone else has control',
+            otherViewerDetail: 'They’re using this page from another screen',
         },
     } } satisfies Pick<Record<string, BrowserPresenceTranslations>, "en">;

@@ -156,7 +156,7 @@ export function SecurityOriginIndicator(props: Readonly<{
                 insecure ? stylesheet.chipInsecure : null,
                 props.compact ? stylesheet.chipCompact : null,
             ]}
-            accessibilityRole="text"
+            role="group"
             accessibilityLabel={hasOrigin && model.originLabel
                 ? `${securityLabel}: ${model.originLabel}`
                 : hasOrigin

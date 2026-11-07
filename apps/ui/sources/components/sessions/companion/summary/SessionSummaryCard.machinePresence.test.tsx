@@ -30,10 +30,10 @@ it('keeps Session freshness separate from machine reachability and reacts to the
         density="compact" machineName="Build computer" />;
     const screen = await renderScreen(render());
     expect(screen.getTextContent()).not.toContain(t('sessionCompanion.freshness.machineOffline', { machine: 'Build computer' }));
-    expect(screen.getTextContent()).toContain(t('sessionBoard.board.stale'));
+    expect(screen.getTextContent()).toContain(t('sessionCompanion.freshness.sessionDisconnected'));
     await act(async () => { recordMachineRequestFailed({ serverId, accountId: 'account-a', machineId: machine.id }); });
     expect(screen.getTextContent()).toContain(t('sessionCompanion.freshness.machineOffline', { machine: 'Build computer' }));
     await act(async () => { recordMachineRequestSucceeded({ serverId, accountId: 'account-a', machineId: machine.id }); });
     expect(screen.getTextContent()).not.toContain(t('sessionCompanion.freshness.machineOffline', { machine: 'Build computer' }));
-    expect(screen.getTextContent()).toContain(t('sessionBoard.board.stale'));
+    expect(screen.getTextContent()).toContain(t('sessionCompanion.freshness.sessionDisconnected'));
 });

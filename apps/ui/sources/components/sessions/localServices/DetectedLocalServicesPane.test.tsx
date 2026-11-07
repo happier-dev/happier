@@ -33,7 +33,7 @@ import {
 
 import { ProjectPageBackProvider } from '@/components/projects/detail/projectPageBack';
 import { DetectedLocalServicesPane } from './DetectedLocalServicesPane';
-import type { UserProfile } from '@happier-dev/protocol';
+import type { UserProfile } from '@happier-dev/protocol/social/friends';
 import { LocalServiceLaunchTargetV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 import type { ReactTestInstance } from 'react-test-renderer';
 import { act } from 'react-test-renderer';
@@ -42,6 +42,21 @@ import { commitPreferredLanguage, getPreferredLanguage } from '@/text/preferredL
 function collectText(node: ReactTestInstance): string {
     return node.children.map((child) => typeof child === 'string' ? child : collectText(child)).join(' ');
 }
+
+it('distinguishes matching script names and commands by their checkout', async () => {
+    const targets = ['/repo/checkout-a', '/repo/checkout-b'].map((cwd, index) => LocalServiceLaunchTargetV1Schema.parse({
+        id: `script-${index}`, source: 'package_script', machineId: 'machine-a', title: 'web:dev',
+        cwd, confidence: 'high', state: 'available', actions: ['start'],
+        workspace: { serverId: 'home-a', machineId: 'machine-a', workspaceId: `checkout-${index}`, rootPath: cwd },
+        declaration: { workspaceRefId: `checkout-${index}`, selection: { kind: 'native',
+            source: { kind: 'native', tool: 'package_script', file: 'package.json', target: 'dev' } } },
+        commandPreview: 'pnpm run dev',
+    }));
+    const screen = await renderScreen(<DetectedLocalServicesPane inventoryState={buildLocalServiceInventoryState({ rows: [] })}
+        launcherState={launcherStateWith(targets)} scope="machine" machine={MACBOOK_ONLINE} testID="collision" />);
+    expect(screen.getTextContent()).toContain('/repo/checkout-a');
+    expect(screen.getTextContent()).toContain('/repo/checkout-b');
+});
 
 const deviceState = vi.hoisted(() => ({ type: 'tablet' as 'phone' | 'tablet' }));
 vi.mock('@/utils/platform/responsive', async (importOriginal) => ({
@@ -276,6 +291,7 @@ describe('DetectedLocalServicesPane', () => {
         });
         const { createLocalServicePublicPreviewActions } = await import('./publicPreviewActions');
         const actions = createLocalServicePublicPreviewActions({ machineId: 'machine-a', serverId: 'home',
+            copyToClipboard: async () => false,
             runtimeActionExecute: async (request) => {
                 expect(request.input).toMatchObject({ machineId: 'worker', sessionId: 'worker-session' });
                 const exposures = request.actionId === 'localServices.publicPreview.create' ? [exposure] : [];
@@ -317,6 +333,52 @@ describe('DetectedLocalServicesPane', () => {
         expect(screen.findByTestId('local-services-pane-loading')).toBeTruthy();
         expect(screen.findByTestId('local-services-pane-loading-card')).toBeTruthy();
         expect(screen.findByTestId('local-services-pane-loading-loading-spinner')).toBeTruthy();
+    });
+
+    // A scan can take minutes at Machine scope: the person must still be able to switch back, and the
+    // page keeps saying what it is for, while the whole-pane state stands in for the rows.
+    it('keeps the page purpose and the scope control through every whole-pane state', async () => {
+        const states = [
+            buildLocalServiceInventoryState({ rows: [], generatedAt: 0, refreshState: 'refreshing' }),
+            buildLocalServiceInventoryState({ rows: [] }),
+        ];
+        for (const inventoryState of states) {
+            const onChangeScope = vi.fn();
+            const screen = await renderScreen(
+                <DetectedLocalServicesPane
+                    inventoryState={inventoryState}
+                    machine={MACBOOK_ONLINE}
+                    presentation="page"
+                    scope="machine"
+                    onChangeScope={onChangeScope}
+                    testID="local-services-pane"
+                />,
+            );
+            expect(screen.findAllByTestId('local-services-pane-scope-toggle').length).toBeGreaterThan(0);
+            expect(screen.findAllByTestId('local-services-pane-header').length).toBeGreaterThan(0);
+            await screen.unmount();
+        }
+    });
+
+    // The purpose names what the rows cover: at Machine scope that is every Project's services on the machine.
+    it('says what the page covers for the scope it shows', async () => {
+        const purposes: string[] = [];
+        for (const scope of ['workspace', 'machine'] as const) {
+            const screen = await renderScreen(
+                <DetectedLocalServicesPane
+                    inventoryState={buildLocalServiceInventoryState({ rows: [buildLocalServiceInventoryRow({ id: 'row' })] })}
+                    machine={MACBOOK_ONLINE}
+                    presentation="page"
+                    scope={scope}
+                    onChangeScope={vi.fn()}
+                    testID="local-services-pane"
+                />,
+            );
+            purposes.push(collectText(screen.findByTestId('local-services-pane-header')!));
+            await screen.unmount();
+        }
+        expect(purposes[1]).not.toEqual(purposes[0]);
+        expect(purposes[1]).toContain('this machine');
     });
 
     it('renders empty state after an idle empty snapshot as an invitation (pane-states E)', async () => {
@@ -900,6 +962,34 @@ describe('DetectedLocalServicesPane', () => {
         }
     });
 
+    /** Phone detail under a pane header (the Session cockpit): the header's line is the way back, so no lone arrow row sits under it. */
+    it('puts Back on the pane header line instead of an arrow row of its own', async () => {
+        deviceState.type = 'phone';
+        try {
+            const screen = await renderScreen(inHeaderHost(
+                <DetectedLocalServicesPane
+                    inventoryState={buildLocalServiceInventoryState({
+                        rows: [buildLocalServiceInventoryRow({ id: 'openable-row', state: 'listening' })],
+                    })}
+                    launcherState={launcherStateWith([openableTarget], 'session-a')}
+                    sessionId="session-a"
+                    onOpenServiceInBrowser={vi.fn()}
+                    renderServicePlacement={() => <PlacementProbe />}
+                    testID="local-services-pane"
+                />,
+            ));
+            expect(screen.findAllByTestId('local-services-pane-header-back')).toHaveLength(0);
+            await expandRow(screen, 'local-services-pane-row:inventory:openable-row');
+            expect(screen.findByTestId('local-services-pane-detail')).toBeTruthy();
+            expect(screen.findAllByTestId('local-services-pane-detail-back')).toHaveLength(0);
+            await pressTestInstanceAsync(screen.findByTestId('local-services-pane-header-back'), 'back');
+            expect(screen.findAllByTestId('local-services-pane-detail')).toHaveLength(0);
+            expect(screen.findAllByTestId('local-services-pane-header-back')).toHaveLength(0);
+        } finally {
+            deviceState.type = 'tablet';
+        }
+    });
+
     /**
      * Phone detail inside a Project: the Project's own top bar is the one Back. The pane hands it the
      * way out while the detail is open and draws no second arrow; with no such host it keeps its own.
@@ -997,5 +1087,40 @@ describe('DetectedLocalServicesPane', () => {
         expect(screen.getTextContent()).toContain('1 running on MacBook Pro');
         await pressTestInstanceAsync(screen.findByTestId('local-services-pane-happier-item'), 'happier group');
         expect(screen.findByTestId('local-services-pane-row:inventory:happier-ui')).toBeTruthy();
+    });
+
+    it('reads the Home credential once for the pane, not once for every Service row', async () => {
+        const { createPlainArtifactHomeFixture } = await import('@/dev/testkit/harness/artifactStoreBoundary');
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const home = await createPlainArtifactHomeFixture('https://services-credential-reads.test');
+        const serverId = home.home.id;
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        const previous = storage.getState();
+        const source = createMachineFixture({ id: 'machine-a', activeAt: Date.now() });
+        storage.setState({ machines: { 'machine-a': source }, machineListByServerId: { [serverId]: [source] } });
+        // Secure credential storage is the boundary: count reads, keep the real read.
+        const reads = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl');
+        const readsFor = async (count: number): Promise<number> => {
+            const targets = Array.from({ length: count }, (_, index) => ({ ...openableTarget, id: `inventory:row-${index}`,
+                sourceClass: { kind: 'inventory_entry' as const, inventoryEntryId: `row-${index}` },
+                title: `Service ${index}`,
+                browserTarget: { ...openableTarget.browserTarget, targetId: `inventory-loopback:row-${index}` } }));
+            reads.mockClear();
+            const screen = await renderScreen(<DetectedLocalServicesPane
+                inventoryState={buildLocalServiceInventoryState({ rows: [] })}
+                launcherState={launcherStateWith(targets)} machine={MACBOOK_ONLINE}
+                sourceMachineId="machine-a" serverId={serverId} testID={`reads-${count}`} />);
+            try {
+                await vi.waitFor(() => expect(screen.findByTestId(`reads-${count}-row:inventory:row-${count - 1}`)).toBeTruthy());
+                await flushHookEffects();
+                return reads.mock.calls.length;
+            } finally { await screen.unmount(); }
+        };
+        try {
+            const one = await readsFor(1);
+            const many = await readsFor(24);
+            expect(one).toBeGreaterThan(0);
+            expect(many).toBe(one);
+        } finally { reads.mockRestore(); storage.setState(previous); await home.dispose(); }
     });
 });

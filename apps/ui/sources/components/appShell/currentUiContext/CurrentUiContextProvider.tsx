@@ -1,30 +1,31 @@
 import * as React from 'react';
-import { useGlobalSearchParams, useSegments } from 'expo-router';
+import { useSegments } from 'expo-router';
+import { useCurrentRouteParamsSelector } from '@/components/appShell/workspace/currentRouteLocation';
 import { Platform } from 'react-native';
 
 import { randomUUID } from '@/platform/randomUUID';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { useVisibleModalKind } from '@/modal';
+import { useVisibleModalId } from '@/modal/ModalProvider';
 import { useAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
 import {
     useAppShellPluginUiProjection,
     useProjectedPluginLocalizedTextResolver,
 } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import {
-    readPluginAppPageRouteIdentity,
-} from '@/components/appShell/plugins/pluginAppPageRoute';
+    readPluginPageRouteIdentity,
+} from '@/components/plugins/pages/pluginPageRoute';
 import {
-    resolvePluginAppPageForRoute,
-    resolvePluginAppPages,
-    selectPluginAppPagePlacements,
-} from '@/components/appShell/plugins/pluginAppPages';
+    resolvePluginPageForRoute,
+    usePluginPages,
+    selectPluginPagePlacements,
+} from '@/components/plugins/pages/pluginPages';
 import { useResolvedSettingsPageIdentity } from '@/components/settings/catalog/runtime/useResolvedSettingsPageIdentity';
 import { useMainAppTabState } from '@/components/navigation/mobile/chrome/MainAppTabStateProvider';
 import { usePluginSurfaceCurrentUiContextEligibility } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { useFocusedSessionId } from '@/sync/domains/session/sessionSurfaceVisibility';
-import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
-import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { useActiveServerAccountScopeLifetime } from '@/sync/domains/state/storage';
 import { CurrentUiContextCommandsProvider, useCurrentUiContextComposedCommands } from './CurrentUiContextCommands';
 import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePrivacySettings';
 import { useMachine, useSessionDisplayNameSource, useSetting } from '@/sync/store/hooks';
@@ -66,6 +67,7 @@ type CurrentUiContextMountRecord = Readonly<{
         id: string;
         command: CurrentUiContextMountedCommand;
         retirement: AbortController;
+        foreground?: Readonly<{ modalId: string | null }>;
     }>[];
 }>;
 
@@ -187,15 +189,20 @@ function createMountRecord(input: Readonly<{
     previous: CurrentUiContextMountRecord | null;
 }>): CurrentUiContextMountRecord {
     const retirement = new AbortController();
-    const previous = input.previous?.owner === input.owner ? input.previous : null;
-    const sameEntity = sameStrictJsonValue(previous?.enrichment.entity, input.enrichment.entity);
+    const prior = input.previous;
+    const sameOwner = prior?.owner === input.owner;
+    const sameEntity = sameOwner && sameStrictJsonValue(prior?.enrichment.entity, input.enrichment.entity);
     const retained = new Set<CurrentUiContextMountRecord['semanticCommands'][number]>();
     const semanticCommands = Object.freeze((input.enrichment.commands ?? []).map((entry) => {
-        const unchanged = previous?.semanticCommands.find((candidate, index) => {
-            const descriptor = previous.projection.commands[index]!;
-            return !retained.has(candidate) && descriptor.title === entry.title && descriptor.description === entry.description
-                // Host-local declarations own their semantic lifetime and resolve the latest handler.
-                // Descriptive entity updates must not retire an unchanged declaration.
+        const unchanged = prior?.semanticCommands.find((candidate, index) => {
+            const descriptor = prior.projection.commands[index]!;
+            return !retained.has(candidate) && !candidate.retirement.signal.aborted
+                && descriptor.title === entry.title && descriptor.description === entry.description
+                && sameStrictJsonValue(candidate.foreground, entry.foreground)
+                // Host-local declarations own their semantic lifetime and resolve the latest handler,
+                // so the same declaration keeps its address across entity updates and record owners
+                // (a focused field's publication taking or releasing the record). Each address is a
+                // reverse-RPC room per reachable Machine; re-minting it is pure transport churn.
                 && ((candidate.command === entry.command && (sameEntity || entry.command.kind === 'hostLocal'))
                     || (sameEntity && (entry.command.kind === 'openSurface' || entry.command.kind === 'executeAction')
                         && sameStrictJsonValue(candidate.command, entry.command)));
@@ -204,7 +211,8 @@ function createMountRecord(input: Readonly<{
             retained.add(unchanged);
             return unchanged;
         }
-        return Object.freeze({ id: input.nextCommandId(), command: entry.command, retirement: new AbortController() });
+        return Object.freeze({ id: input.nextCommandId(), command: entry.command, retirement: new AbortController(),
+            ...(entry.foreground === undefined ? {} : { foreground: entry.foreground }) });
     }));
     const projection: CurrentUiContextMountProjection = Object.freeze({
         ...(input.enrichment.entity === undefined ? {} : { entity: input.enrichment.entity }),
@@ -224,6 +232,22 @@ function createMountRecord(input: Readonly<{
     });
 }
 
+/** The single composer admits only the actual foreground overlay's descriptors. Background pages stay withheld. */
+function currentMountProjection(record: CurrentUiContextMountRecord | null, area: string, modalId: string | null,
+    modalVisible: boolean): CurrentUiContextMountProjection | null {
+    if (!record) return null;
+    const foreground = record.semanticCommands.filter(entry => entry.foreground !== undefined
+        && (modalVisible ? modalId !== null && entry.foreground.modalId === modalId : entry.foreground.modalId === null));
+    if (foreground.length) {
+        const ids = new Set(foreground.map(entry => entry.id));
+        return { commands: record.projection.commands.filter(entry => ids.has(entry.id)) };
+    }
+    if (area === 'modal' || area === 'workspace') return null;
+    if (record.semanticCommands.every(entry => entry.foreground === undefined)) return record.projection;
+    const backgroundIds = new Set(record.semanticCommands.filter(entry => entry.foreground === undefined).map(entry => entry.id));
+    return { ...record.projection, commands: record.projection.commands.filter(entry => backgroundIds.has(entry.id)) };
+}
+
 /**
  * Composes and publishes client-local presentational context from incumbent
  * providers. The provider is the one current snapshot composer; exact mounted
@@ -231,12 +255,16 @@ function createMountRecord(input: Readonly<{
  * one-record publication capability below.
  */
 export function CurrentUiContextProvider(props: Readonly<{ children: React.ReactNode }>): React.ReactElement {
-    const viewer = useActiveServerAccountScope();
-    const authority = React.useMemo(() => captureActiveServerAccountScopeLifetime(), [viewer?.serverId, viewer?.accountId]);
+    // Profile IDs can stay unchanged while startup/restore retires and reapplies the Home runtime.
+    const authority = useActiveServerAccountScopeLifetime();
     return <CurrentUiContextCommandsProvider authority={authority}>
         <CurrentUiContextProviderContent>{props.children}</CurrentUiContextProviderContent>
     </CurrentUiContextCommandsProvider>;
 }
+
+/** `[id]` is the incumbent scalar Session/machine route parameter; other params do not render this owner. */
+const selectRouteEntityId = (params: Readonly<Record<string, string | string[] | undefined>>) =>
+    typeof params.id === 'string' ? params.id : undefined;
 
 function CurrentUiContextProviderContent(props: Readonly<{ children: React.ReactNode }>): React.ReactElement {
     const localCommands = useCurrentUiContextComposedCommands();
@@ -251,6 +279,7 @@ function CurrentUiContextProviderContent(props: Readonly<{ children: React.React
         [routeSegments],
     );
     const visibleModalKind = useVisibleModalKind();
+    const visibleModalId = useVisibleModalId();
     const { state: appPaneState } = useAppPaneContext();
     const { activeTab } = useMainAppTabState();
     const focusedSessionId = useFocusedSessionId();
@@ -258,13 +287,13 @@ function CurrentUiContextProviderContent(props: Readonly<{ children: React.React
     const isMachineRoute = route.segments[0] === 'machine' && route.segments[1] === ':id';
     // `[id]` is the incumbent scalar machine route parameter. It is consumed
     // only by the canonical machine selector and never copied into the DTO.
-    const machineRouteParams = useGlobalSearchParams<{ id?: string }>();
-    const sessionRouteId = isSessionRoute ? normalizeSessionId(machineRouteParams.id) : '';
+    const routeEntityId = useCurrentRouteParamsSelector(selectRouteEntityId);
+    const sessionRouteId = isSessionRoute ? normalizeSessionId(routeEntityId) : '';
     // Both sources are keyed to the one foreground route entity. Do not
     // subscribe to the Session or machine collections merely to enrich its
     // already-current framework snapshot.
     const session = useSessionDisplayNameSource(sessionRouteId);
-    const machine = useMachine(machineRouteParams.id ?? '', isMachineRoute);
+    const machine = useMachine(routeEntityId ?? '', isMachineRoute);
     const sessionActive = hasCurrentSessionRoute(focusedSessionId, sessionRouteId);
     const machineActive = isMachineRoute && machine !== null;
     const voiceSettings = useSetting('voice');
@@ -285,18 +314,13 @@ function CurrentUiContextProviderContent(props: Readonly<{ children: React.React
 
     const pluginProjection = useAppShellPluginUiProjection();
     const localizePluginText = useProjectedPluginLocalizedTextResolver();
-    const pluginRouteParams = useGlobalSearchParams();
-    const pluginRouteIdentity = React.useMemo(
-        () => readPluginAppPageRouteIdentity(pluginRouteParams),
-        [pluginRouteParams],
-    );
-    const pluginPages = React.useMemo(() => {
-        const placements = selectPluginAppPagePlacements(pluginProjection.pluginUiProjection);
-        return resolvePluginAppPages({ placements, localize: localizePluginText });
-    }, [localizePluginText, pluginProjection.pluginUiProjection]);
+    const pluginRouteIdentity = useCurrentRouteParamsSelector(readPluginPageRouteIdentity);
+    const pluginPagePlacements = React.useMemo(() => selectPluginPagePlacements(pluginProjection.pluginUiProjection,
+        { container: 'appPage', targetKind: 'app' }), [pluginProjection.pluginUiProjection]);
+    const pluginPages = usePluginPages({ target: { kind: 'app' }, placements: pluginPagePlacements, localize: localizePluginText });
     const pluginPageLabel = React.useMemo(() => {
         if (route.segments[0] !== 'plugins') return null;
-        return resolvePluginAppPageForRoute({
+        return resolvePluginPageForRoute({
             pages: pluginPages,
             pluginId: pluginRouteIdentity.pluginId,
             localId: pluginRouteIdentity.localId,
@@ -309,6 +333,8 @@ function CurrentUiContextProviderContent(props: Readonly<{ children: React.React
         snapshot: CurrentUiContextSnapshotV1;
         sessionId: string | null;
         mountRecord: CurrentUiContextMountRecord | null;
+        visibleModalId: string | null;
+        modalVisible: boolean;
     }> | null>(null);
     const readerListenersRef = React.useRef(new Set<() => void>());
     const providerCurrentRef = React.useRef(true);
@@ -376,10 +402,9 @@ function CurrentUiContextProviderContent(props: Readonly<{ children: React.React
         if (committedSnapshot.detail === CURRENT_UI_CONTEXT_BOUNDED_INCOMPLETENESS_V1) {
             return committedSnapshot;
         }
-        const mountEnrichment = committedSnapshot.navigation.area === 'modal'
-            || committedSnapshot.navigation.area === 'workspace'
-            ? null
-            : currentMountRecordRef.current?.projection ?? null;
+        const committed = committedSnapshotRef.current!;
+        const mountEnrichment = currentMountProjection(currentMountRecordRef.current,
+            committedSnapshot.navigation.area, committed.visibleModalId, committed.modalVisible);
         return composeCurrentUiContextSnapshotFromNavigation(
             committedSnapshot.navigation,
             mountEnrichment,
@@ -433,8 +458,8 @@ function CurrentUiContextProviderContent(props: Readonly<{ children: React.React
         const clearCurrent = (): void => {
             const record = currentMountRecordRef.current;
             if (record?.owner !== owner) return;
-            retireCurrentUiContextMountRecord(record);
             const local = localCommandsRef.current.length ? composeRecord(localOwner, {}) : null;
+            retireCurrentUiContextMountRecord(record, local);
             currentMountRecordRef.current = local;
             if (providerCurrentRef.current) {
                 if (local) dispatchMountRecord({ kind: 'activate', record: local });
@@ -510,25 +535,28 @@ function CurrentUiContextProviderContent(props: Readonly<{ children: React.React
     }), [createMount]);
 
     const focusedDetailsWorkspace = hasActiveDetailsWorkspace(appPaneState);
-    const snapshot = React.useMemo(() => composeCurrentUiContextSnapshot({
-        route,
-        visibleModalKind,
-        focusedDetailsWorkspace,
-        ...(settingsTitle ? {
-            settings: {
-                title: settingsTitle,
-                ...(pluginSettingsPage ? { pluginSettingsPage: true } : {}),
-            },
-        } : {}),
-        ...(pluginPageLabel ? { pluginPage: { label: pluginPageLabel } } : {}),
-        sessionActive,
-        session,
-        machineActive,
-        machine,
-        privacy: voicePrivacy,
-        mobileTab: activeTab,
-        ...(mountRecord === null ? {} : { mountEnrichment: mountRecord.projection }),
-    }), [
+    const snapshot = React.useMemo(() => {
+        const baseline = composeCurrentUiContextSnapshot({
+            route,
+            visibleModalKind,
+            focusedDetailsWorkspace,
+            ...(settingsTitle ? {
+                settings: {
+                    title: settingsTitle,
+                    ...(pluginSettingsPage ? { pluginSettingsPage: true } : {}),
+                },
+            } : {}),
+            ...(pluginPageLabel ? { pluginPage: { label: pluginPageLabel } } : {}),
+            sessionActive,
+            session,
+            machineActive,
+            machine,
+            privacy: voicePrivacy,
+            mobileTab: activeTab,
+        });
+        return composeCurrentUiContextSnapshotFromNavigation(baseline.navigation,
+            currentMountProjection(mountRecord, baseline.navigation.area, visibleModalId, visibleModalKind !== null));
+    }, [
         activeTab,
         focusedDetailsWorkspace,
         machineActive,
@@ -541,13 +569,15 @@ function CurrentUiContextProviderContent(props: Readonly<{ children: React.React
         sessionActive,
         settingsTitle,
         visibleModalKind,
+        visibleModalId,
         voicePrivacy,
     ]);
 
     React.useLayoutEffect(() => {
-        committedSnapshotRef.current = { snapshot, sessionId: sessionActive ? sessionRouteId : null, mountRecord };
+        committedSnapshotRef.current = { snapshot, sessionId: sessionActive ? sessionRouteId : null, mountRecord,
+            visibleModalId, modalVisible: visibleModalKind !== null };
         notifyReaderListeners();
-    }, [hostActivelyViewed, mountRecord, notifyReaderListeners, sessionActive, sessionRouteId, snapshot]);
+    }, [hostActivelyViewed, mountRecord, notifyReaderListeners, sessionActive, sessionRouteId, snapshot, visibleModalId, visibleModalKind]);
 
     return (
         <CurrentUiContextBridge publisher={mountPublisher} reader={reader}>

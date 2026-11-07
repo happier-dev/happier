@@ -13,7 +13,7 @@ import { useWorkflowSessionBinding } from '@/components/workflows/editor/useWork
 import { WorkflowStepSessionDropZone } from '@/components/workflows/editor/WorkflowStepSessionDropZone';
 import { resolveCompactAppDestinations } from '../destinations/compactAppDestinationCatalog';
 import { createWorkspaceState, reduceWorkspaceState } from './workspaceState';
-import { WorkspaceNavigationContext, type WorkspaceNavigationContextValue } from './WorkspaceNavigationContext';
+import { WorkspaceNavigationProvider, type WorkspaceNavigationContextValue } from './WorkspaceNavigationContext';
 import { PhoneOpenTabsRail } from './PhoneOpenTabsRail';
 import type { TestGestureChain } from '@/dev/testkit/mocks/gestureHandler';
 import { ENTITY_DRAG_ACTIVATION_DISTANCE_PX } from '@/components/ui/treeDragDrop/entityDragGestureAdapter';
@@ -71,6 +71,17 @@ function harness(pair = false) {
 afterEach(async () => { act(() => { runtime.cancel(); storage.setState({ profileScope: previousScope }); }); platformBoundary.os = 'web'; await standardCleanup(); });
 
 describe('phone production tab carry', () => {
+    it('names navigation tabs without claiming nonexistent panel ownership', async () => {
+        storage.setState({ profileScope: scope });
+        const h = harness();
+        const screen = await renderScreen(<WorkspaceNavigationProvider value={h.workspace}><PhoneOpenTabsRail /></WorkspaceNavigationProvider>);
+        const tabs = screen.root.findAll(node => typeof node.type === 'string' && node.props.accessibilityRole === 'tab');
+        expect(tabs.length).toBeGreaterThan(0);
+        for (const tab of tabs) {
+            expect(tab.props.accessibilityLabel).toBeTruthy();
+            expect(tab.props['aria-controls']).toBeUndefined();
+        }
+    });
     it('changes only one lightweight strip descriptor for one of 120 restored fallback titles and none for selection', async () => {
         storage.setState({ profileScope: scope });
         const h = harness();
@@ -81,7 +92,7 @@ describe('phone production tab carry', () => {
                 : { type: 'openTab', groupId: 'group:1', tab: { id, target, pinned: false, preview: false } });
             h.workspace.dispatch({ type: 'setFallbackTitle', tabId: id, title: `Restored document ${index}` });
         }
-        const frame = () => <WorkspaceNavigationContext.Provider value={{ ...h.workspace, state: h.workspace.state }}><PhoneOpenTabsRail /></WorkspaceNavigationContext.Provider>;
+        const frame = () => <WorkspaceNavigationProvider value={{ ...h.workspace, state: h.workspace.state }}><PhoneOpenTabsRail /></WorkspaceNavigationProvider>;
         const screen = await renderScreen(frame());
         const readTabs = (): readonly DocumentTabItem[] => screen.root.findByType(DocumentTabStrip).props.tabs;
         const before = readTabs();
@@ -106,7 +117,7 @@ describe('phone production tab carry', () => {
         storage.setState({ profileScope: scope });
         const h = harness();
         const offsets: number[] = [];
-        const screen = await renderScreen(<WorkspaceNavigationContext.Provider value={h.workspace}><PhoneOpenTabsRail /></WorkspaceNavigationContext.Provider>, {
+        const screen = await renderScreen(<WorkspaceNavigationProvider value={h.workspace}><PhoneOpenTabsRail /></WorkspaceNavigationProvider>, {
             createNodeMock: element => String(element.type) === 'ScrollView' ? { scrollTo: (options: { x: number }) => offsets.push(options.x) } : null,
         });
         const scroll = screen.root.find(node => String(node.type) === 'ScrollView' && node.props.accessibilityRole === 'tablist');
@@ -124,7 +135,7 @@ describe('phone production tab carry', () => {
         storage.setState({ profileScope: scope });
         const h = harness();
         try {
-            const screen = await renderScreen(<WorkspaceNavigationContext.Provider value={h.workspace}><PhoneOpenTabsRail /><Target /></WorkspaceNavigationContext.Provider>, {
+            const screen = await renderScreen(<WorkspaceNavigationProvider value={h.workspace}><PhoneOpenTabsRail /><Target /></WorkspaceNavigationProvider>, {
                 createNodeMock: element => element.type === 'View' ? { measureInWindow: (read: (x: number, y: number, width: number, height: number) => void) => read(0, element.props.testID === 'workflow-target' ? 100 : 0, 390, 40) } : null,
             });
             const detectors = screen.root.findAll(node => node.props?.gesture?.__handlers !== undefined);
@@ -148,7 +159,7 @@ describe('phone production tab carry', () => {
     it('keeps ordinary tab activation and horizontal scroll outside the carry lifecycle', async () => {
         storage.setState({ profileScope: scope });
         const h = harness();
-        const screen = await renderScreen(<WorkspaceNavigationContext.Provider value={h.workspace}><PhoneOpenTabsRail /></WorkspaceNavigationContext.Provider>);
+        const screen = await renderScreen(<WorkspaceNavigationProvider value={h.workspace}><PhoneOpenTabsRail /></WorkspaceNavigationProvider>);
         await act(async () => { screen.pressByTestId('phone-rail-tab-session-tab'); });
         expect(h.activated).toEqual(['session-tab']);
         for (const scroll of screen.root.findAll(node => String(node.type) === 'ScrollView' && typeof node.props.onScroll === 'function')) {
@@ -161,7 +172,7 @@ describe('phone production tab carry', () => {
         storage.setState({ profileScope: scope });
         const h = harness(true);
         const hosts: HTMLElement[] = [];
-        const screen = await renderScreen(<WorkspaceNavigationContext.Provider value={h.workspace}><PhoneOpenTabsRail /><Target /></WorkspaceNavigationContext.Provider>, {
+        const screen = await renderScreen(<WorkspaceNavigationProvider value={h.workspace}><PhoneOpenTabsRail /><Target /></WorkspaceNavigationProvider>, {
             createNodeMock: element => {
                 if (element.type !== 'View') return null;
                 const node = document.createElement('div');

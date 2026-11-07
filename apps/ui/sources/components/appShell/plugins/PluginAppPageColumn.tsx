@@ -13,10 +13,10 @@ import {
     useProjectedPluginLocalizedTextResolver,
 } from './AppShellPluginUiProjection';
 import {
-    readPluginAppPageSubPathFromPathname,
-    resolvePluginAppPages,
-    selectPluginAppPagePlacements,
-} from './pluginAppPages';
+    readPluginPageSubPathFromPathname,
+    usePluginPages,
+    selectPluginPagePlacements,
+} from '@/components/plugins/pages/pluginPages';
 
 /**
  * A plugin page's own shell column (design §3.2): the page's placement bound to its column renderer,
@@ -38,17 +38,18 @@ export const PluginAppPageColumn = React.memo(function PluginAppPageColumn(props
         ? shell.columnShown
         : shell.peek.kind === props.destinationId);
     const focused = presented && (shell?.peek === null || shell?.peek.focus === true);
-    const page = React.useMemo(() => resolvePluginAppPages({
-        placements: selectPluginAppPagePlacements(projection.pluginUiProjection),
+    const pages = usePluginPages({ target: { kind: 'app' },
+        placements: selectPluginPagePlacements(projection.pluginUiProjection, { container: 'appPage', targetKind: 'app' }),
         localize,
-    }).find((candidate) => candidate.id === props.destinationId) ?? null, [localize, projection.pluginUiProjection, props.destinationId]);
+    });
+    const page = pages.find(candidate => candidate.id === props.destinationId) ?? null;
     const navigation = usePluginSurfaceDestinationNavigationBinding();
     const openSurface = navigation?.openSurface;
     const binding = React.useMemo<BoundPluginSurfaceBinding>(
         () => (openSurface ? { openSurface } : {}),
         [openSurface],
     );
-    const subPath = page ? readPluginAppPageSubPathFromPathname(page, pathname) : null;
+    const subPath = page ? readPluginPageSubPathFromPathname(page, pathname) : null;
     if (!page?.columnPlacement || page.disabledReason !== null) return null;
     return (
         <PluginSurfaceFocusEligibilityProvider active={focused} presentationActive={presented} currentUiContextActive={false}>

@@ -2,10 +2,12 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { formatHappierAsOfTime } from '@happier-dev/plugin-ui/presentation';
-import type { PublicActionResultById } from '@happier-dev/protocol';
+import type { PublicActionResultById } from '@happier-dev/protocol/actions/actionSpecs';
 import { readWidgetDefinitionResourcesV1, type WidgetDefinitionV1, type WidgetInstanceRefV1 } from '@happier-dev/protocol/widgets';
 
 import { readWidgetDescriptor, type WidgetCandidate } from '@/components/widgets/widgetCatalog';
+import { UnavailableInstalledWidget } from '@/components/widgets/InstalledWidgetSurface';
+import { SurfaceStateSizeProvider } from '@/components/ui/surfaces/surfaceStateSize';
 import type { ConfiguredWidgetTargetResolution } from '@/sync/domains/widgets/widgetBinding';
 import { useWorkBoardSummaries } from '@/components/boards/model/useWorkBoards';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -13,19 +15,25 @@ import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { readPluginUiContributionOrigin } from '@/sync/domains/plugins/ui/projectionUnion';
-import { readCurrentAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
-import { resolvePluginAppPages, selectPluginAppPagePlacements } from '@/components/appShell/plugins/pluginAppPages';
+import { readCurrentAppShellPluginUiProjection, subscribeCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
+import { resolvePluginPages } from '@/components/plugins/pages/pluginPages';
+import { selectPluginSurfacePlacementsByDestination } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
 import { humanizeIdentifier } from '@/components/settings/home/governance/homeFeatureLabels';
-import { createPluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
+import { usePluginLocalizedTextResolver, type PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
+import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import { storage, useArtifact } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
+import { selectSessionDisplayNameSource } from '@/sync/domains/state/storage';
 
 import { WidgetFactRow, WidgetFlowPanel, WidgetFlowTextAction, widgetFlowText } from '@/components/widgets/flow/WidgetFlowPanel';
+import type { WidgetDefinitionCommandOutcome } from './widgetDefinitionCommands';
 
 type PlacementSummary = NonNullable<PublicActionResultById['widgets.definition.get']['placementSummary']>;
+type RefreshOutcome = WidgetDefinitionCommandOutcome<PublicActionResultById['widgets.item.refresh']>;
 
 /** One read the definition admits, as the person reads it. */
 export type WidgetAboutSource = Readonly<{
@@ -73,11 +81,10 @@ export function readWidgetAboutSources(input: Readonly<{
 }
 
 /** The plugin page's own title as the viewer's navigation shows it, or `null` while the page is not in this viewer's projection. */
-function readPluginPageName(pluginId: string, pageId: string): string | null {
-    const projection = readCurrentAppShellPluginUiProjection();
+function readPluginPageName(projection: PluginUiProjectionModel | null, localize: PluginLocalizedTextResolver, pluginId: string, pageId: string): string | null {
     if (!projection) return null;
-    const page = resolvePluginAppPages({ placements: selectPluginAppPagePlacements(projection),
-        localize: createPluginLocalizedTextResolver({ projection }) })
+    const page = resolvePluginPages({ target: { kind: 'app' }, placements: selectPluginSurfacePlacementsByDestination(projection, { pluginId, localId: pageId }),
+        localize })
         .find(candidate => candidate.pluginId === pluginId && candidate.localId === pageId);
     return page?.label ?? null;
 }
@@ -90,6 +97,10 @@ export type WidgetPlacementLabel = Readonly<{ label: string; icon: IconName }>;
  * never guessed. The mark says what kind of place it is, so a Board's name is never followed by "board".
  */
 export function useWidgetPlacementLabels(summary: PlacementSummary | null): readonly WidgetPlacementLabel[] {
+    const isSessionVisible = useSessionRecordingVisibility();
+    const projection = React.useSyncExternalStore(subscribeCommittedAppShellPluginUiProjection,
+        readCurrentAppShellPluginUiProjection, readCurrentAppShellPluginUiProjection);
+    const localize = usePluginLocalizedTextResolver({ projection });
     const boards = useWorkBoardSummaries(summary?.placements.some(ref => ref.surface.owner.kind === 'workBoard') ?? false);
     return React.useMemo(() => {
         if (!summary) return [];
@@ -103,12 +114,13 @@ export function useWidgetPlacementLabels(summary: PlacementSummary | null): read
                 }
                 case 'sessionBoard':
                 case 'companion': {
-                    const session = storage.getState().sessions[owner.sessionId];
+                    const session = isSessionVisible({ sessionId: owner.sessionId, serverId: ref.surface.serverId })
+                        ? selectSessionDisplayNameSource(storage.getState(), owner.sessionId, ref.surface.serverId) : null;
                     return { label: session ? getSessionName(session, ref.surface.serverId) : t('widgetDefinition.placedInASession'), icon: 'chat-circle' };
                 }
                 case 'project': return { label: t('widgetDefinition.placedInAProject'), icon: 'folder' };
                 case 'corePage': return { label: t('widgetDefinition.placedOnACorePage'), icon: 'layout' };
-                case 'pluginArea': return { label: readPluginPageName(owner.pluginId, owner.pageId) ?? t('widgetDefinition.placedOnAPluginPage'), icon: 'puzzle-piece' };
+                case 'pluginArea': return { label: readPluginPageName(projection, localize, owner.pluginId, owner.pageId) ?? t('widgetDefinition.placedOnAPluginPage'), icon: 'puzzle-piece' };
             }
         });
         const seen = new Set<string>();
@@ -118,7 +130,7 @@ export function useWidgetPlacementLabels(summary: PlacementSummary | null): read
             seen.add(key);
             return true;
         });
-    }, [boards, summary]);
+    }, [boards, summary, projection, localize, isSessionVisible]);
 }
 
 /**
@@ -136,7 +148,7 @@ export function WidgetAboutPanel(props: Readonly<{
     placements: PlacementSummary | null;
     /** This copy's binding, in words, and the step that edits it. */
     inputs?: Readonly<{ binding: string | null; onEdit?: () => void }>;
-    onRefresh?: () => Promise<boolean>;
+    onRefresh?: () => Promise<RefreshOutcome>;
     onClose?: () => void;
     onChangeWithAgent?: () => void;
     onDuplicate?: () => Promise<string | null>;
@@ -147,13 +159,15 @@ export function WidgetAboutPanel(props: Readonly<{
     const artifact = useArtifact(props.artifactId ?? '');
     const sources = props.sources;
     const placements = useWidgetPlacementLabels(props.placements);
-    const [refresh, setRefresh] = React.useState<'idle' | 'busy' | 'done' | 'failed'>('idle');
+    const [refresh, setRefresh] = React.useState<'idle' | 'busy' | RefreshOutcome>('idle');
     const [duplicate, setDuplicate] = React.useState<Readonly<{ state: 'idle' | 'busy' } | { state: 'done'; name: string } | { state: 'failed' }>>({ state: 'idle' });
 
     const provenance = props.definition?.provenance.source;
+    const isSessionVisible = useSessionRecordingVisibility();
     const origin = provenance?.kind === 'session'
         ? (() => {
-            const session = storage.getState().sessions[provenance.sessionId];
+            const session = isSessionVisible(provenance)
+                ? selectSessionDisplayNameSource(storage.getState(), provenance.sessionId, provenance.serverId) : null;
             return t('widgetDefinition.savedFromSession', { session: session ? getSessionName(session, provenance.serverId) : t('widgetDefinition.aSession') });
         })()
         : provenance ? t('widgetDefinition.madeInYourAccount') : props.descriptor?.pluginName ?? t('widgetDefinition.aboutUnavailable');
@@ -249,14 +263,19 @@ export function WidgetAboutPanel(props: Readonly<{
                             () => {
                                 if (refresh === 'busy') return;
                                 setRefresh('busy');
-                                void props.onRefresh!().then((ok) => setRefresh(ok ? 'done' : 'failed'));
+                                void props.onRefresh!().then(setRefresh);
                             },
                             `${props.testID}.refreshNow`,
                         ) : null}
                     </View>
-                    {refresh === 'done' || refresh === 'failed' ? (
+                    {typeof refresh !== 'string' && refresh.kind === 'refused' ? (
+                        <SurfaceStateSizeProvider size="line">
+                            <UnavailableInstalledWidget unresolved={{ state: 'unavailable', reasonCode: refresh.errorCode }}
+                                testID={`${props.testID}.refreshResult`} />
+                        </SurfaceStateSizeProvider>
+                    ) : typeof refresh !== 'string' ? (
                         <Text style={text.secondary} accessibilityLiveRegion="polite">
-                            {refresh === 'done' ? t('widgetDefinition.refreshed') : t('widgetDefinition.refreshFailed')}
+                            {refresh.kind === 'applied' ? t('widgetDefinition.refreshed') : t('widgetAdd.areaApprovalPending')}
                         </Text>
                     ) : null}
                 </WidgetFactRow>

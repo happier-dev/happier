@@ -18,6 +18,7 @@ export type SafeExpoImageProps = Readonly<
         placeholder?: Readonly<{ thumbhash: string }> | null;
         tintColor?: string;
         allowDownscaling?: boolean;
+        alt?: string;
     }
 >;
 
@@ -95,10 +96,12 @@ function resolveWebImageStyle(style: unknown): unknown {
 }
 
 export const SafeExpoImage = React.memo(function SafeExpoImage(props: SafeExpoImageProps) {
+    const imageLabel = props.alt ?? props.accessibilityLabel ?? '';
+    const imageProps = { ...props, alt: imageLabel, accessibilityLabel: imageLabel };
     if (isRenderableElementType(ExpoImageImport)) {
         return React.createElement(
             ExpoImageImport as React.ElementType<SafeExpoImageProps>,
-            Platform.OS === 'web' && props.style ? { ...props, style: resolveWebImageStyle(props.style) as SafeExpoImageProps['style'] } : props,
+            Platform.OS === 'web' && props.style ? { ...imageProps, style: resolveWebImageStyle(props.style) as SafeExpoImageProps['style'] } : imageProps,
         );
     }
 
@@ -111,7 +114,7 @@ export const SafeExpoImage = React.memo(function SafeExpoImage(props: SafeExpoIm
         allowDownscaling: _allowDownscaling,
         style,
         ...reactNativeImageProps
-    } = props;
+    } = imageProps;
 
     return (
         <ReactNativeImage

@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { installBrowserClipboardBoundary } from '@/dev/testkit';
 import { LocalServiceLaunchTargetV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 
 import { Item } from '@/components/ui/lists/Item';
@@ -24,13 +25,15 @@ const clipboardSpies = vi.hoisted(() => ({
     setClipboardStringSafe: vi.fn(async (_value: string) => true),
 }));
 
+vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
+
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
     return createModalModuleMock({ spies: { confirm: modalSpies.confirm, alert: modalSpies.alert } }).module;
 });
 
-vi.mock('@/utils/ui/clipboard', () => ({
-    setClipboardStringSafe: clipboardSpies.setClipboardStringSafe,
+vi.mock('expo-clipboard', () => ({
+    setStringAsync: clipboardSpies.setClipboardStringSafe,
 }));
 
 import { ServiceRowView } from './ServiceRowView';
@@ -186,7 +189,7 @@ describe('ServiceRowView', () => {
         expect(details).toContain('1');
     });
 
-    it('reads as Starting on its machine while its own Start is in flight, then returns to Ready to start', async () => {
+    it('keeps the published lifecycle while the Start front door is pending', async () => {
         const { row } = declaredStartRow();
         let settle!: (result: unknown) => void;
         const start = vi.fn(() => new Promise<unknown>((resolve) => { settle = resolve; }));
@@ -194,14 +197,13 @@ describe('ServiceRowView', () => {
         expect(screen.getTextContent()).not.toContain('Starting');
         const idleMeta = collectMetaText(screen.findByTestId('row-meta')!).replace(/\s+/g, ' ');
         await act(async () => { void pressTestInstanceAsync(screen.findByTestId('row-start'), 'row-start'); });
-        expect(screen.getTextContent()).toContain('Starting');
-        expect(screen.getTextContent()).toContain('Starting on devbox');
+        expect(screen.getTextContent()).not.toContain('Starting');
         expect(collectMetaText(screen.findByTestId('row-meta')!).replace(/\s+/g, ' ')).toBe(idleMeta);
         expect(screen.findByTestId('row-source')).toBeTruthy();
         await screen.update(<ServiceRowView row={{ ...row, status: 'unavailable', primaryAction: null,
             reasonCode: 'project_service_binding_unavailable' }} machineName="devbox" onStartLauncherTarget={start} testID="row" />);
-        expect(screen.findByTestId('row-status-starting')).toBeTruthy();
-        expect(screen.findByTestId('row-status-unavailable')).toBeNull();
+        expect(screen.findByTestId('row-status-starting')).toBeNull();
+        expect(screen.findByTestId('row-status-unavailable')).toBeTruthy();
         await act(async () => { settle({ status: 'succeeded' }); await Promise.resolve(); });
         expect(screen.getTextContent()).not.toContain('Starting');
     });
@@ -253,6 +255,7 @@ describe('ServiceRowView', () => {
         modalSpies.confirm.mockResolvedValue(true);
         clipboardSpies.setClipboardStringSafe.mockClear();
         clipboardSpies.setClipboardStringSafe.mockResolvedValue(true);
+        installBrowserClipboardBoundary(async text => { await clipboardSpies.setClipboardStringSafe(text); });
     });
 
     /**
@@ -325,11 +328,18 @@ describe('ServiceRowView', () => {
     });
 
     it('pulses the dot only while a service is starting', async () => {
-        const screen = await renderScreen(
-            <ServiceRowView row={serviceRow({ status: 'starting', reasonCode: null })} testID="row" />,
-        );
-
-        expect(dotStyle(screen).opacity).toBeDefined();
+        const { Platform } = await import('react-native');
+        const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
+        const previousPlatform = { ...Platform };
+        // This assertion observes native Animated opacity, not the web CSS pulse.
+        Object.assign(Platform, (await createReactNativeNativeMock({ platformOS: 'ios' })).Platform);
+        try {
+            const screen = await renderScreen(
+                <ServiceRowView row={serviceRow({ status: 'starting', reasonCode: null })} testID="row" />,
+            );
+            expect(dotStyle(screen).opacity).toBeDefined();
+            await screen.unmount();
+        } finally { Object.assign(Platform, previousPlatform); }
     });
 
     it('announces the status once: the dot is hidden because the row says it in words', async () => {
@@ -463,6 +473,35 @@ describe('ServiceRowView', () => {
         expect(stop?.props.destructive).toBe(true);
         await pressTestInstanceAsync(screen.findByTestId('row-stop'), 'row-stop');
         expect(onStop).toHaveBeenCalledExactlyOnceWith(target);
+    });
+
+    it('keeps the phone detail\'s public-preview reason inside its sheet as a dimmed Share a link row', async () => {
+        const state = applyLocalServicePublicPreviewSnapshot(createLocalServicePublicPreviewState(), {
+            v: 1, machineId: 'machine-a', sessionId: 'session-a', generatedAt: 4_000, refreshState: 'idle',
+            policy: { enabled: false, allowedModes: [], maxTtlMs: 0, maxConcurrentExposures: 0, dnsTlsRequired: true, auditRequired: true, rateLimitProfileIds: [] },
+            exposures: [], diagnostics: [],
+        });
+        const screen = await renderScreen(
+            <ServiceRowView row={openableRow()} presentation="detail" onOpenServiceInBrowser={vi.fn()}
+                publicPreviewState={state} publicPreviewActions={{ create: vi.fn(), copyUrl: vi.fn(async () => true), revoke: vi.fn() }} testID="row" />,
+        );
+        const share = screen.findAllByType(Item).find((item) => item.props.testID === 'row-share');
+        expect(share?.props.disabled).toBe(true);
+        expect(share?.props.subtitle).toBeTruthy();
+        // The reason is that row's, not a second note drawn under the sheet.
+        expect(screen.getTextContent().split(String(share?.props.subtitle)).length - 1).toBe(1);
+    });
+
+    it('ends a stopped phone detail with its own Start sheet, matching the running detail\'s Stop', async () => {
+        const { row } = declaredStartRow();
+        const onStart = vi.fn(async () => ({ status: 'succeeded' }));
+        const screen = await renderScreen(
+            <ServiceRowView row={row} presentation="detail" machineName="devbox" onStartLauncherTarget={onStart}
+                placement={<PlacementProbe />} testID="row" />,
+        );
+        expect(screen.findAllByTestId('row-start')).toHaveLength(0);
+        await pressTestInstanceAsync(screen.findByTestId('row-start-row'), 'row-start-row');
+        expect(onStart).toHaveBeenCalledOnce();
     });
 
     it('shows and copies a wildcard-bound service as localhost, never as its bind address', async () => {
@@ -886,16 +925,16 @@ describe('ServiceRowView', () => {
         expect(screen.getTextContent()).not.toContain('Review output');
     });
 
-    it('drops the failed attempt\'s output the moment Retry is pressed, before the feed reports Starting', async () => {
+    it('retains the published failure until the daemon admits the retry', async () => {
         const diagnostics = [{ code: 'native_service_output', severity: 'info', message: 'EADDRINUSE: address already in use :::3005' }] as const;
         const failed = projectRow(projectTarget({ state: 'available', serviceState: 'failed', actions: ['manage'], diagnostics: [...diagnostics] }));
         const start = vi.fn(() => new Promise<unknown>(() => {}));
         const screen = await renderScreen(<ServiceRowView row={failed} onStartLauncherTarget={start} testID="row" />);
         expect(screen.findByTestId('row-output-toggle')).toBeTruthy();
         await act(async () => { void pressTestInstanceAsync(screen.findByTestId('row-start'), 'row-start'); });
-        expect(screen.findByTestId('row-status-starting')).toBeTruthy();
-        expect(screen.findByTestId('row-output-toggle')).toBeNull();
-        expect(screen.getTextContent()).not.toContain('Review output');
+        expect(screen.findByTestId('row-status-starting')).toBeNull();
+        expect(screen.findByTestId('row-status-failed')).toBeTruthy();
+        expect(screen.findByTestId('row-output-toggle')).toBeTruthy();
     });
 
     /**
@@ -951,6 +990,15 @@ describe('ServiceRowView', () => {
             startedByName={null} testID="row" />);
         expect(unnamed.getTextContent()).not.toContain('ana-account');
         expect(unnamed.getTextContent()).toContain('on build-01');
+    });
+
+    it('does not repeat a detected process\'s name in its facts line', async () => {
+        // Owner screenshot 2026-10-30 16:53: "node ● Running" over "localhost:35681 · node · on NLDW6".
+        const row = serviceRow({ scope: 'machine', title: 'node', processLabel: 'node', serviceLabel: 'node',
+            addressLabel: 'localhost:35681', status: 'running', reasonCode: null,
+            target: launchTarget({ state: 'available', unavailableReason: undefined }) });
+        const screen = await renderScreen(<ServiceRowView row={row} machineName="NLDW6" testID="row" />);
+        expect(collectMetaText(screen.findByTestId('row-meta')!).replace(/\s+/g, ' ').trim()).toBe('localhost:35681 · on NLDW6');
     });
 
     it('labels every status as last known while the machine is offline', async () => {

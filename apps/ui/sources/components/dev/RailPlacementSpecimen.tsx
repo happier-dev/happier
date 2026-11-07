@@ -3,7 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { resolveCompactAppDestinations } from '@/components/appShell/destinations/compactAppDestinationCatalog';
-import type { PluginAppPage } from '@/components/appShell/plugins/pluginAppPages';
+import type { PluginPage } from '@/components/plugins/pages/pluginPages';
 import { AppShellMaterialFrame } from '@/components/navigation/shell/AppShellMaterialFrame';
 import { AppRailSurface } from '@/components/navigation/shell/appRail/AppRail';
 import { AppRailBadge } from '@/components/navigation/shell/appRail/AppRailBadge';
@@ -22,11 +22,13 @@ import { Text } from '@/components/ui/text/Text';
 import type { NavigationPlacementPreferences } from '@/sync/domains/settings/mobileSurfacePinning';
 import { t } from '@/text';
 
-const PAGES = ['channels', 'inspector', 'triage'].map((id, index): PluginAppPage => ({
+const PAGES = ['channels', 'inspector', 'triage'].map((id, index): PluginPage => ({
+    target: { kind: 'app' },
+    visible: true,
     id: `plugin:acme.${id}:${id}`, pluginId: `acme.${id}`, descriptorId: id, localId: id,
     label: id === 'channels' ? 'Channels' : id === 'inspector' ? 'Plugin Inspector' : 'PRs & Issues',
     icon: id === 'channels' ? 'chats-circle' : id === 'inspector' ? 'puzzle-piece' : 'git-pull-request',
-    order: index, disabledReason: null, placement: {} as PluginAppPage['placement'], routePath: `/plugins/acme.${id}/${id}`,
+    order: index, disabledReason: null, placement: {} as PluginPage['placement'], routePath: `/plugins/acme.${id}/${id}`,
 }));
 const FIXTURE_SCOPE = Object.freeze({ serverId: 'rail-specimen', accountId: 'rail-specimen' });
 

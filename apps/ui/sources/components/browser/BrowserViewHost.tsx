@@ -1,7 +1,8 @@
 import type {
-    BrowserProfileV1,
+    BrowserProfileV1} from '@happier-dev/protocol/browser/profile/v1';
+import type {
     BrowserRenderEngineKindV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/browser/adapters/kinds';
 import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
 import * as React from 'react';
 import { useBrowserStreamedPicture } from '@/components/browser/streamed/BrowserStreamedSurfaceScope';
@@ -14,7 +15,7 @@ import { BrowserLocalPreviewElsewhere, BrowserLocalPreviewPublicLinkControls } f
 import { resolveBrowserAdapterUnavailableReason } from '@/sync/domains/browser/adapters/availability';
 import type { BrowserAutomationControlService } from '@/sync/domains/browser/automation';
 import { INJECTED_PAGE_AUTOMATION_ACTIONS } from '@happier-dev/peer-mediation/browser/collector/actions';
-import { resolveHostedPluginBrowserPolicyUnavailableReason } from '@/sync/domains/browser/policy/evaluate';
+import { resolveBrowserTargetProfileUnavailableReason } from '@/sync/domains/browser/policy/evaluate';
 import type {
     BrowserControlCommandEffect,
     BrowserControlViewState,
@@ -282,7 +283,7 @@ function StreamedBrowserView(props: Readonly<{
 }>): React.ReactElement {
     const identity = useBrowserSessionAgentIdentity(props.agent);
     const runtime = useBrowserStreamedPicture(props.runtime);
-    return <BrowserStreamedTarget runtime={runtime} agentName={identity.name} onPageRectChange={props.onPageRectChange}
+    return <BrowserStreamedTarget runtime={runtime} agentName={identity.name} agentless={identity.agentless} onPageRectChange={props.onPageRectChange}
         onOpenPageHere={props.onOpenPageHere} onClosePage={props.onClosePage} pageHost={props.pageHost}
         humanInControl={props.humanInControl} testID={props.testID} />;
 }
@@ -339,6 +340,7 @@ function LocalPreviewView(props: Readonly<{
         enabled: !ended && lifecycleAllowsLease && (view.engineKind === 'webIframe' || view.engineKind === 'nativeWebView' || view.engineKind === 'desktopWebView'),
         nativeDirectEnabled,
         fallbackUrl: noServerRoute ? null : preview?.accessUrl ?? null,
+        serviceAddressLabel: target.display?.addressLabel,
         requestedUrl: noServerRoute && !preview?.nativeDirect ? null : view.pendingUrl ?? view.currentUrl,
         initialPath: preview ? preview.resource.initialPath.pathname + preview.resource.initialPath.search : undefined,
         viewFailed: view.loadingState === 'failed',
@@ -347,9 +349,12 @@ function LocalPreviewView(props: Readonly<{
     });
     const onLifecycle = props.onLifecycle;
     const reasonCode = ended ? 'preview_ended' : access.reasonCode;
+    // The Home has no private preview route: its registration said so, or its access refusal does.
+    const privateRouteUnavailable = noServerRoute || access.reasonCode === 'preview_private_route_unavailable';
     // A view that settled as unreachable shows Can't reach in place of the page, even while its access
     // URL remains: a native engine paints over anything drawn beside it, and Try again reloads it.
     const transportUnavailable = view.loadingState === 'failed' && view.lastError === 'preview_transport_unavailable';
+    const hasAccessRefusal = access.reasonCode === 'destination_port_not_allowed' || access.reasonCode === 'preview_ended';
     React.useEffect(() => {
         if (reasonCode) onLifecycle?.({ kind: 'loadFailed', errorCode: reasonCode });
     }, [reasonCode, onLifecycle]);
@@ -360,6 +365,8 @@ function LocalPreviewView(props: Readonly<{
         ? { ...props.diagnostics, sourceOrigin: nativeOrigin } : props.diagnostics, [nativeOrigin, props.diagnostics]);
     const automation = React.useMemo(() => nativeOrigin && props.automation
         ? { ...props.automation, sourceOrigin: nativeOrigin } : props.automation, [nativeOrigin, props.automation]);
+    // Ended and Can't reach settle the view as failed; an unopened page has its card instead.
+    const pageShown = !ended && !hasAccessRefusal && (privateRouteUnavailable || (Boolean(access.url) && view.loadingState !== 'failed'));
     return <View testID={testID} style={stylesheet.root}>
         {ended ? <BrowserFrameUnavailable testID={testID} reasonCode="preview_ended" recovery={props.recovery} />
             : transportUnavailable ? <BrowserFrameUnavailable testID={testID} reasonCode="preview_transport_unavailable" recovery={props.recovery} />
@@ -375,11 +382,11 @@ function LocalPreviewView(props: Readonly<{
             navigationCommand={props.navigationCommand}
             diagnostics={diagnostics}
             automation={automation}
-            onLifecycle={onLifecycle}
+            onLifecycle={props.onLifecycle}
             recovery={props.recovery}
-        /> : noServerRoute ? <BrowserLocalPreviewElsewhere testID={testID} serviceTitle={title} machineId={target.machineId} />
-                : <BrowserFrameUnavailable testID={testID} reasonCode={access.reasonCode ?? resolveBrowserViewUnavailableReasonCode(view)} recovery={props.recovery} />}
-        <BrowserLocalPreviewPublicLinkControls target={target} serviceTitle={title} serverId={props.serverId} testID={`${testID}-public-link`} />
+        /> : privateRouteUnavailable && !hasAccessRefusal ? <BrowserLocalPreviewElsewhere testID={testID} serviceTitle={title} machineId={target.machineId} serverId={props.serverId} />
+                : <BrowserFrameUnavailable testID={testID} reasonCode={access.reasonCode ?? resolveBrowserViewUnavailableReasonCode(view)} port={access.port} recovery={props.recovery} />}
+        <BrowserLocalPreviewPublicLinkControls target={target} pageShown={pageShown} serviceTitle={title} serverId={props.serverId} testID={`${testID}-public-link`} />
     </View>;
 }
 
@@ -470,7 +477,7 @@ export function BrowserViewHost(props: Readonly<{
         />;
     }
     if (renderKind === 'hostedPlugin' && view.target.kind === 'hostedPluginWeb') {
-        const policyUnavailableReason = resolveHostedPluginBrowserPolicyUnavailableReason({
+        const policyUnavailableReason = resolveBrowserTargetProfileUnavailableReason({
             target: view.target,
             profile: props.browserProfile,
         });

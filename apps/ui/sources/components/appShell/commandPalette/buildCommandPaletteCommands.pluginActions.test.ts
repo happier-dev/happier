@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { PluginProjectedActionV2Schema } from '@happier-dev/protocol';
+import { PluginProjectedActionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { DaemonPluginStructuredMessageActionExecuteResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
@@ -100,7 +100,7 @@ describe('command-palette contributed Actions', () => {
             actions: { execute: async () => ({ ok: true, result: {} }) }, alert: async () => {},
             pluginActionPresentation: { controller, scope: 'session' },
         }).find((candidate) => candidate.id === 'plugin-action:acme.commands/sync-notes');
-        expect(command).toMatchObject({ title: 'Sync notes', subtitle: 'Synchronize the current notes', icon: 'magic-wand', category: 'acme.commands' });
+        expect(command).toMatchObject({ title: 'Sync notes', subtitle: 'Synchronize the current notes', icon: 'magic-wand', category: 'Acme commands' });
         await command?.action();
         expect(machineRpc).toHaveBeenCalledWith(expect.objectContaining({
             machineId: 'machine-command-palette', serverId: lifetime.scope.serverId,

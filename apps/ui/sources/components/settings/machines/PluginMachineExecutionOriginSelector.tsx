@@ -1,10 +1,10 @@
-import { PluginPresentedExecutionOriginProjectionDemand, readPluginPresentedExecutionOriginProjectionTargets } from '@/sync/domains/machines/administration/usePluginExecutionOriginProjectionDemand';
 import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 import { useShallow } from 'zustand/react/shallow';
 
-import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol';
+import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
 import { arePluginMachineExecutionOriginsEqual, getPluginMachineExecutionOriginRef } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import type { PluginExecutionOriginActionOutputSchemas } from '@happier-dev/protocol/actions/pluginExecutionOriginActionFamily';
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
@@ -17,7 +17,9 @@ import { getStorage } from '@/sync/domains/state/storageStore';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import { buildMachineDisplayRenderableFromMachine } from '@/sync/domains/machines/machineDisplayRenderable';
+import { linkMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { useMachinePresenceNowMs } from '@/hooks/machine/useMachinePresenceNowMs';
+import { PluginPresentedExecutionOriginProjectionDemand, readPluginPresentedExecutionOriginProjectionTargets } from '@/sync/domains/machines/administration/usePluginExecutionOriginProjectionDemand';
 
 import type {
     ServerScopedMachineGroup,
@@ -46,6 +48,48 @@ import {
 
 type PreferenceActionSettlement = ReturnType<typeof PluginExecutionOriginActionOutputSchemas['plugins.execution_origin.set']['parse']>;
 const EMPTY_MACHINE_CANDIDATES: readonly MachineAdministrationCandidateV1[] = Object.freeze([]);
+type PluginOriginPickerState = readonly [boolean, React.Dispatch<React.SetStateAction<boolean>>];
+type PluginOriginProjectionTarget = MachineAdministrationTargetV1;
+const PluginOriginPickerStateContext = React.createContext<Readonly<{
+    pluginId: string;
+    state: PluginOriginPickerState;
+    presentTargets: (targets: readonly PluginOriginProjectionTarget[]) => void;
+}> | null>(null);
+
+/** Open the existing page-owned picker without creating a second presenter. */
+export function usePluginMachineExecutionOriginPickerOpener(pluginId: string): (() => void) | null {
+    const picker = React.useContext(PluginOriginPickerStateContext);
+    const setOpen = picker?.pluginId === pluginId ? picker.state[1] : null;
+    return React.useMemo(() => setOpen ? () => setOpen(true) : null, [setOpen]);
+}
+
+/** Page-owned presentation survives replacement of a loading header by its renderer. */
+export function PluginMachineExecutionOriginPickerProvider(props: React.PropsWithChildren<{ pluginId: string; visible?: boolean }>) {
+    const [{ open, targets }, setPicker] = React.useState<Readonly<{
+        open: boolean; targets: readonly PluginOriginProjectionTarget[];
+    }>>({ open: false, targets: [] });
+    const setOpen = React.useCallback<React.Dispatch<React.SetStateAction<boolean>>>(update => {
+        setPicker(previous => {
+            const open = typeof update === 'function' ? update(previous.open) : update;
+            return previous.open === open ? previous : { open, targets: open ? previous.targets : [] };
+        });
+    }, []);
+    const presentTargets = React.useCallback((next: readonly PluginOriginProjectionTarget[]) => {
+        setPicker(previous => {
+            if (!previous.open) return previous;
+            return previous.targets === next ? previous : { ...previous, targets: next };
+        });
+    }, []);
+    const value = React.useMemo(() => ({ pluginId: props.pluginId, state: [open, setOpen] as const, presentTargets }),
+        [open, presentTargets, props.pluginId, setOpen]);
+    // The page keeps the open intent acquired while physical headers hand it
+    // off. A new presenter may still revalidate a settled failure; the shared
+    // loader joins its read without cancelling this page's pending acquisition.
+    return <PluginOriginPickerStateContext.Provider value={value}>
+        {open && props.visible !== false ? <PluginPresentedExecutionOriginProjectionDemand key={props.pluginId} targets={targets} /> : null}
+        {props.children}
+    </PluginOriginPickerStateContext.Provider>;
+}
 
 /** Mount Artifact result custody only for an intent actually awaiting review. */
 function PluginOriginApprovalNotice(props: Readonly<{
@@ -141,7 +185,7 @@ function buildOriginGroups(
         const labels = resolveMachineAdministrationTargetLabel({ target: { serverIdentityId: origin.serverIdentityId, machineId: ref.machineId }, candidates: machineCandidates })!;
         const machine = machineRecords[index];
         const rows = groups.get(origin.serverIdentityId) ?? [];
-        rows.push(Object.freeze({
+        const presented = Object.freeze({
             ...(machine ? buildMachineDisplayRenderableFromMachine(machine) : {
                 // Required row-shape defaults carry no presence authority without a Machine record.
                 presence: null,
@@ -158,7 +202,9 @@ function buildOriginGroups(
             metadata: Object.freeze({ displayName: labels.machine }),
             candidate,
             origin,
-        }));
+        });
+        if (machine) linkMachineActivity(machine, presented);
+        rows.push(presented);
         groups.set(origin.serverIdentityId, rows);
     }
     return Object.freeze([...groups.entries()].map(([serverIdentityId, machines]) => Object.freeze({
@@ -170,24 +216,20 @@ function buildOriginGroups(
     })));
 }
 
-/** Join presence only while the shared picker is mounted, using its exact Home/Machine identity. */
+/** Join presence only while the shared picker is mounted. */
 function PluginOriginPickerGroups(props: Readonly<{
     candidates: readonly PluginExecutionOriginCandidateV1[];
     machineCandidates: readonly MachineAdministrationCandidateV1[];
     children: (groups: readonly ServerScopedMachineGroup<PresentedPluginOrigin>[]) => React.ReactNode;
 }>) {
-    const machineInputs = getStorage()(useShallow((state) => props.candidates.flatMap((candidate) => {
+    const machines = getStorage()(useShallow((state) => props.candidates.map((candidate) => {
         const origin = getPluginExecutionOriginCandidateOrigin(candidate);
         const machine = resolveServerScopedMachine(state, origin.serverIdentityId, getPluginMachineExecutionOriginRef(origin).machineId);
-        // The store can retain a record's identity while its heartbeat restores presence.
-        // Capture the primitive too so that restoration invalidates this open projection.
-        return [machine, machine?.activeAt];
+        return machine;
     })));
-    const machines = React.useMemo(() => machineInputs.filter((input): input is Machine | null => input === null || typeof input === 'object'),
-        [machineInputs]);
     const knownMachines = React.useMemo(() => machines.filter((machine): machine is Machine => machine !== null), [machines]);
-    // Heartbeats mutate retained records in place. The canonical deadline clock re-reads those
-    // records before any grace expiry; plugin provenance never becomes a liveness clock.
+    // Presented rows share the admitted Machine's activity clock. The canonical
+    // deadline owner reschedules continuing beats without rebuilding provenance.
     const nowMs = useMachinePresenceNowMs(knownMachines);
     const groups = React.useMemo(() => buildOriginGroups(props.candidates, props.machineCandidates, machines),
         [props.candidates, props.machineCandidates, machines, nowMs]);
@@ -269,6 +311,8 @@ export function resolvePluginMachineExecutionOriginPresentation(
 }
 
 export function PluginMachineExecutionOriginSelectorView(props: Readonly<{
+    /** Identifies the page-owned picker; nested unrelated selectors keep local presentation. */
+    pluginId?: string;
     selection: PluginMachineExecutionOriginSelectionV1;
     testIDPrefix?: string;
     /** Contextual label for the machine scope this selector presents. */
@@ -283,7 +327,10 @@ export function PluginMachineExecutionOriginSelectorView(props: Readonly<{
     machineCandidates?: readonly MachineAdministrationCandidateV1[];
 }>) {
     const { theme } = useUnistyles();
-    const [pickerOpen, setPickerOpen] = React.useState(false);
+    const localPickerState = React.useState(false);
+    const pagePickerState = React.useContext(PluginOriginPickerStateContext);
+    const pagePicker = pagePickerState?.pluginId === props.pluginId ? pagePickerState : null;
+    const [pickerOpen, setPickerOpen] = pagePicker ? pagePicker.state : localPickerState;
     const [settlementError, setSettlementError] = React.useState<string | null>(null);
     const [pendingApproval, setPendingApproval] = React.useState<PluginExecutionOriginPreferenceApproval | null>(null);
     const settleSelection = React.useCallback(async (
@@ -342,8 +389,14 @@ export function PluginMachineExecutionOriginSelectorView(props: Readonly<{
     const presentedTargets = React.useMemo(() => sourceTargets,
         // eslint-disable-next-line react-hooks/exhaustive-deps
         [sourceTargetsKey]);
+    const presentPageTargets = pagePicker?.presentTargets;
+    React.useLayoutEffect(() => {
+        presentPageTargets?.(presentedTargets);
+        // No unmount withdrawal: the page-owned open intent survives header
+        // replacement. Closing the picker or retiring the page releases it.
+    }, [presentPageTargets, presentedTargets]);
     const projectionDemands = pickerOpen
-        ? <PluginPresentedExecutionOriginProjectionDemand targets={presentedTargets} /> : null;
+        ? <PluginPresentedExecutionOriginProjectionDemand key={props.pluginId} targets={presentedTargets} /> : null;
     const isChosenRow = (machine: PresentedPluginOrigin) => selectedOrigin
         ? exactOriginsEqual(selectedOrigin, machine.origin)
         : storedTarget !== null && storedTarget !== undefined

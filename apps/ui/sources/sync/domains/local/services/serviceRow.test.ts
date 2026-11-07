@@ -4,7 +4,7 @@ import { LocalServiceLaunchTargetV1Schema } from '@happier-dev/protocol/local/se
 import type { LocalServiceInventoryRow } from '@/sync/domains/local/services/inventory/store';
 import type { LocalServiceLaunchTarget } from '@/sync/domains/local/services/launch';
 
-import { buildLocalServiceRows, groupLocalServiceRowsBySection, selectLocalServiceRunningCount, selectRunningOpenTargetOnPort } from './serviceRow';
+import { buildLocalServiceRows, groupLocalServiceRowsBySection, selectLocalServiceRunningCount, selectLocalServiceRowForInventoryEntry, selectRunningOpenTargetOnPort } from './serviceRow';
 
 function inventoryRow(overrides: Partial<LocalServiceInventoryRow> = {}): LocalServiceInventoryRow {
     return {
@@ -62,7 +62,33 @@ function packageTarget(overrides: Partial<LocalServiceLaunchTarget> = {}): Local
     } as LocalServiceLaunchTarget;
 }
 
+describe('selectLocalServiceRowForInventoryEntry', () => {
+    it('selects a Services port without mistaking an unrelated managed row for an inventory identity', () => {
+        const unrelated = LocalServiceLaunchTargetV1Schema.parse(openableTarget({
+            id: 'other-managed-service', source: 'managed_service', serviceState: 'running', sessionId: undefined,
+            sourceClass: { kind: 'managed_service', managedServiceId: 'other' },
+            subtitle: 'localhost:9999', endpointUrl: 'http://127.0.0.1:9999',
+            browserTarget: { kind: 'externalUrl', targetId: 'other', url: 'http://127.0.0.1:9999' },
+        }));
+        const listener = LocalServiceLaunchTargetV1Schema.parse(openableTarget({ sessionId: undefined }));
+        const rows = buildLocalServiceRows({ inventoryRows: [inventoryRow()], launchTargets: [unrelated, listener],
+            sessionId: null, scope: 'machine' });
+        expect(rows[0]?.target.id).toBe(unrelated.id);
+        expect(selectLocalServiceRowForInventoryEntry(rows, { port: 5173 })?.target).toBe(listener);
+        // Processes still uses the exact inventory binding before the absorbed-binding port fallback.
+        expect(selectLocalServiceRowForInventoryEntry(rows, { port: 9999, inventoryEntryId: 'entry-a' })?.target).toBe(listener);
+        expect(selectLocalServiceRowForInventoryEntry(rows, { port: 8888 })).toBeNull();
+    });
+});
+
 describe('buildLocalServiceRows', () => {
+    it('adds checkout context only where the title and command collide', () => {
+        const targets = ['/repo/a', '/repo/b', '/repo/unique'].map((cwd, index) => packageTarget({
+            id: `script-${index}`, cwd, title: index === 2 ? 'api:dev' : 'web:dev', commandPreview: 'pnpm run dev',
+        }));
+        const rows = buildLocalServiceRows({ inventoryRows: [], launchTargets: targets, sessionId: null, scope: 'machine' });
+        expect(rows.map(row => row.distinguishingWorkspaceLabel)).toEqual(['/repo/a', '/repo/b', undefined]);
+    });
     it.each(['managed_service_native_state_unknown', 'managed_service_native_cleanup_unconfirmed'] as const)(
         'keeps %s distinct from running-unhealthy and preserves the exact manage target', reason => {
             const uncertain = openableTarget({ source: 'managed_service', serviceState: 'unhealthy', unavailableReason: reason,
@@ -192,24 +218,38 @@ describe('buildLocalServiceRows', () => {
         { serviceState: 'unhealthy', status: 'running', section: 'running', canStart: false },
         { serviceState: 'detecting', status: 'running', section: 'running', canStart: false },
         { serviceState: 'stopped', status: 'stopped', section: 'ready', canStart: true },
-        { serviceState: 'failed', status: 'failed', section: 'ready', canStart: true },
+        // A failed start is its own group: it is not "ready to start".
+        { serviceState: 'failed', status: 'failed', section: 'failed', canStart: true },
         { serviceState: 'stopping', status: 'stopping', section: 'running', canStart: false },
-    ] as const)('groups an available URL-less managed declaration by its actual $serviceState lifetime, not launcher availability', ({ serviceState, status, section, canStart }) => {
+    ] as const)('groups a managed declaration by its $serviceState lifetime even with retained listening inventory', ({ serviceState, status, section, canStart }) => {
         // feed.ts#managedTarget publishes launcher availability independently
         // of the actual supervisor phase, including stopped/failed records.
         const target = packageTarget({ source: 'managed_service',
-            sourceClass: { kind: 'managed_service', managedServiceId: 'actual-instance' },
+            sourceClass: { kind: 'managed_service', managedServiceId: 'actual-instance', inventoryEntryId: 'entry-a' },
             workspace: { serverId: 'home-a', machineId: 'machine-a', workspaceId: 'accepted', rootPath: '/repo' },
             declaration: { workspaceRefId: 'accepted', selection: { kind: 'manifest', name: 'worker' } },
             state: 'available', serviceState, actions: ['manage'],
         });
-        const rows = buildLocalServiceRows({ inventoryRows: [], launchTargets: [target], sessionId: null, scope: 'workspace' });
+        const rows = buildLocalServiceRows({ inventoryRows: [inventoryRow()], launchTargets: [target], sessionId: null, scope: 'workspace' });
         expect(rows[0]?.primaryAction).toEqual(canStart ? { kind: 'start', target } : null);
         expect(rows[0]?.status).toBe(status);
         expect(groupLocalServiceRowsBySection(rows)[0]?.section).toBe(section);
         // The header's count and the "Running" group are one fact: a supervised worker with no
         // listener is running (the pane never says "Nothing running" above a Running list).
         expect(selectLocalServiceRunningCount(rows)).toBe(status === 'running' ? 1 : 0);
+    });
+    it('groups a retry from the launcher state and returns a failed retry to its failure section', () => {
+        const target = packageTarget({ source: 'managed_service',
+            workspace: { serverId: 'home-a', machineId: 'machine-a', workspaceId: 'accepted', rootPath: '/repo' },
+            declaration: { workspaceRefId: 'accepted', selection: { kind: 'manifest', name: 'worker' } },
+            state: 'available', serviceState: 'failed', actions: ['manage'] });
+        const rows = buildLocalServiceRows({ inventoryRows: [], launchTargets: [target], sessionId: null, scope: 'workspace' });
+        expect(groupLocalServiceRowsBySection(rows)[0]?.section).toBe('failed');
+        const retry = buildLocalServiceRows({ inventoryRows: [], launchTargets: [{ ...target,
+            state: 'starting', serviceState: 'starting', actions: [] }], sessionId: null, scope: 'workspace' });
+        expect(retry[0]?.status).toBe('starting');
+        expect(groupLocalServiceRowsBySection(retry)[0]?.section).toBe('running');
+        expect(groupLocalServiceRowsBySection(rows)[0]?.section).toBe('failed');
     });
     it('projects the declaring file, a truthful address note and no placeholder refusal beside Start', () => {
         const workspace = { serverId: 'home-a', machineId: 'machine-a', workspaceId: 'accepted', rootPath: '/repo' };

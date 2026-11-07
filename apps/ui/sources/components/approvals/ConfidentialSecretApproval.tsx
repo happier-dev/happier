@@ -242,7 +242,8 @@ export function ConfidentialSecretApproval(props: Readonly<{ artifactId: string;
     const rememberFor = (path: string): string | null => fillResult ? rememberMessage(fillResult.remember, false)
         : inputsResult ? rememberMessage(inputsResult.remember.find(entry => entry.path === path)?.status ?? null, true) : null;
     const targetRow = fill?.actionId === 'browser.automation.secret.fill' ? <Item title={t('approvals.confidential.target')}
-        subtitle={joinHappierFacts(fill.request.origin, fill.request.field.fieldId, fill.request.purpose)}
+        // The site and what the entry is for; the field's own id is routing evidence, not a fact for the person.
+        subtitle={joinHappierFacts(fill.request.origin, fill.request.purpose)}
         subtitleLines={0} mode="info" showChevron={false} /> : null;
     // A request settled before this view had a part in it keeps only what it was for; its outcome is the
     // Request section's, and a credential form that can no longer be used is not drawn.
@@ -266,9 +267,7 @@ export function ConfidentialSecretApproval(props: Readonly<{ artifactId: string;
         <ApprovalDecisionBar layout="stacked" busy={busy || props.isDeciding}
             approve={{ testID: 'approvals.secret-continue', label: approveTitle, busy,
                 disabled: disabled || !prepared || !ready, onPress: continueFill }}
-            // The approval page's own pair: Dismiss closes the request with no answer, Deny refuses the agent.
-            dismiss={props.isOpen ? { testID: 'approvals.cancel', accessibilityHint: t('approvals.dismissHint'), disabled: settlement !== null,
-                onPress: async () => { clearDraft(); await props.onDecision('cancel'); } } : undefined}
+            // One way out: Deny answers the agent, so it stops waiting for a credential that will not come.
             reject={props.isOpen ? { testID: 'approvals.reject', disabled: props.unavailable || settlement !== null,
                 onPress: async () => { clearDraft(); await props.onDecision('reject'); } } : undefined} />
     </SectionContentRow></ItemGroup>;

@@ -105,27 +105,6 @@ vi.mock('@/components/appShell/panes/AppPaneProvider', () => ({
     }),
 }));
 
-vi.mock('@/components/appShell/plugins/AppShellPluginUiProjection', () => ({
-    useAppShellPluginUiProjection: () => ({ pluginUiProjection: null }),
-    // Mirrors the real resolver bound to a null projection: strings pass
-    // through and only the declared fallback can answer.
-    useProjectedPluginLocalizedTextResolver: () => (_pluginId: string, value: unknown) => {
-        if (typeof value === 'string') return value;
-        const fallback = (value as { fallback?: unknown } | null)?.fallback;
-        return typeof fallback === 'string' ? fallback : '';
-    },
-}));
-
-vi.mock('@/components/appShell/plugins/pluginAppPageRoute', () => ({
-    readPluginAppPageRouteIdentity: () => ({ pluginId: null, localId: null }),
-}));
-
-vi.mock('@/components/appShell/plugins/pluginAppPages', () => ({
-    resolvePluginAppPageForRoute: () => null,
-    resolvePluginAppPages: () => [],
-    selectPluginAppPagePlacements: () => [],
-}));
-
 vi.mock('@/components/settings/catalog/runtime/useResolvedSettingsPageIdentity', () => ({
     useResolvedSettingsPageIdentity: () => providerState.settingsTitle === null
         ? { activePageId: null, tree: [] }
@@ -176,6 +155,7 @@ import {
     usePublishCurrentUiContext,
 } from './CurrentUiContextProvider';
 import { createCurrentUiContextVoiceToolPort } from './currentUiContextVoiceToolPort';
+import { CurrentRouteLocationProvider } from '@/components/appShell/workspace/currentRouteLocation';
 
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -662,6 +642,19 @@ describe('CurrentUiContextProvider', () => {
         const retainedReader = hook.getCurrent();
         await hook.unmount();
         expect(retainedReader?.readCurrentSessionId?.()).toBeNull();
+    });
+
+    it('follows the workspace URL to the switched Session while Expo still mirrors the previous one', async () => {
+        // Expo's mirror keeps /session/session-a; the workspace switched the same route pattern to session-b.
+        providerState.focusedSessionId = 'session-b';
+        providerState.routeParams = { id: 'session-a' };
+        const location = { pathname: '/session/session-b', params: { id: 'session-b' } };
+        const hook = await renderHook(() => useOptionalCurrentUiContextReader(), {
+            wrapper: (props: React.PropsWithChildren) => React.createElement(CurrentRouteLocationProvider, { value: location },
+                React.createElement(CurrentUiContextTestProvider, null, props.children)),
+        });
+
+        expect(hook.getCurrent()?.readCurrentSessionId?.()).toBe('session-b');
     });
 
     it('does not notify current-context readers for a foreground Session activity update that preserves display metadata', async () => {

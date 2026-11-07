@@ -32,7 +32,7 @@ import { darkTheme, lightTheme } from '.';
  * their measured ratios and owning lane, not silently allowlisted here. They
  * split into two groups: call-site misuse inside `components/browser/**` and
  * `components/sessions/localServices/**` (owned by lanes A3 and F0), and
- * properties of the global palette — `text.tertiary`, `input.placeholder`,
+ * properties of the global palette — `input.placeholder`,
  * `border.default` and the `#34C759` / `#FF9500` / `#FF3B30` status colours —
  * whose correction repaints the whole product and is a design decision above
  * this change. Adding them here as passing entries would assert a clean bill of
@@ -137,6 +137,14 @@ const CORRIDOR_PAIRINGS: readonly CorridorPairing[] = [
     { foreground: 'text.primary', background: 'background.canvas', minRatio: 4.5, renderedBy: 'the pane ancestor of both surfaces' },
     { foreground: 'text.secondary', background: 'surface.base', minRatio: 4.5, renderedBy: 'browser/frame/styles.ts statusText' },
     { foreground: 'text.secondary', background: 'surface.inset', minRatio: 4.5, renderedBy: 'browser/BrowserStatusBar.tsx' },
+
+    // Informational meta (D8): card kickers, job facts lines, widget subtitles and section counts paint
+    // `text.tertiary` on the page and on its sheets, and they are read, so they take the text floor.
+    { foreground: 'text.tertiary', background: 'background.canvas', minRatio: 4.5, renderedBy: 'capabilities/add/RegistryShelf.tsx facts line' },
+    { foreground: 'text.tertiary', background: 'surface.base', minRatio: 4.5, renderedBy: 'ui/lists/ItemGroup section counts' },
+    // "Needs you" words (D8) take the attention text role; the dot beside them keeps the attention amber.
+    { foreground: 'state.attention.textForeground', background: 'background.canvas', minRatio: 4.5, renderedBy: 'appShell/panes/PaneHeader.tsx attention fact' },
+    { foreground: 'state.attention.textForeground', background: 'surface.base', minRatio: 4.5, renderedBy: 'widgets/glance/WidgetGlanceRow.tsx attention' },
 
     // The canonical filled-button pair. `RoundButton` and `SurfaceStateCard.action`
     // paint this, and it is the pairing the corridor's two hand-rolled indigo CTAs
@@ -276,6 +284,37 @@ describe('browser and local-services corridor contrast', () => {
         expect(contrastRatio('#767676', '#ffffff', '#ffffff')).toBeCloseTo(4.54, 1);
         expect(contrastRatio('#000000', '#ffffff', '#ffffff')).toBeCloseTo(21, 5);
     });
+});
+
+/**
+ * Informational meta (D8) is read, so `text.tertiary` keeps the 4.5:1 text floor on the page, its
+ * sheets, inset surfaces and the elevated chip fill, in the base themes and every built-in profile.
+ */
+const TERTIARY_BACKGROUNDS = ['background.canvas', 'surface.base', 'surface.inset', 'surface.elevated'] as const;
+
+function tertiaryFailures(colors: unknown, label: string): string[] {
+    const canvas = readTokenPath(colors, 'background.canvas');
+    const ink = readTokenPath(colors, 'text.tertiary');
+    return TERTIARY_BACKGROUNDS.flatMap((background) => {
+        const ratio = contrastRatio(ink, readTokenPath(colors, background), canvas);
+        return ratio >= 4.5 ? [] : [`${label}: text.tertiary (${ink}) on ${background} (${readTokenPath(colors, background)}) = ${ratio.toFixed(2)}:1`];
+    });
+}
+
+describe('tertiary meta contrast', () => {
+    it('keeps text.tertiary readable on the page, its sheets, inset surfaces and the elevated fill', () => {
+        expect([
+            ...tertiaryFailures(lightTheme.colors, 'light'),
+            ...tertiaryFailures(darkTheme.colors, 'dark'),
+        ]).toEqual([]);
+    });
+
+    for (const definition of BUILT_IN_THEME_PROFILES) {
+        it(`keeps text.tertiary readable on every surface in ${definition.presetId}`, () => {
+            expect((['light', 'dark'] as const).flatMap((mode) =>
+                tertiaryFailures(resolveThemeProfile({ mode, profile: definition.profile }).colors, `${definition.presetId}/${mode}`))).toEqual([]);
+        });
+    }
 });
 
 describe('default tinted status text contrast', () => {

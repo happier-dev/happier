@@ -6,6 +6,7 @@ import { resolveHappierBrandFallback } from '@happier-dev/plugin-ui/presentation
 import { AvatarSkia } from "./AvatarSkia";
 import { AvatarGradient } from "./AvatarGradient";
 import { AvatarBrutalist } from "./AvatarBrutalist";
+import { AvatarPlanet } from './AvatarPlanet';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { SafeExpoImage } from '@/components/ui/media/SafeExpoImage';
 import { useSetting } from '@/sync/store/settingsReadHooks';
@@ -80,6 +81,8 @@ const SQUARE_MARK_CONTROL_SIZE = 28;
 export const Avatar = React.memo((props: AvatarProps) => {
     const { flavor, size = 48, imageUrl, thumbhash, hasUnreadMessages, unreadBadgeTestID, testID, accessibilityLabel, monogram, ...avatarProps } = props;
     const { theme } = useUnistyles();
+    const imageLabel = accessibilityLabel || (props.title ? props.id : undefined);
+    const imageAccessibility = { accessible: Boolean(imageLabel), accessibilityRole: imageLabel ? 'image' as const : undefined, accessibilityLabel: imageLabel };
     // A square mark is clipped to the theme's own radius step, so it nests with rows and sheets
     // instead of drawing hard corners (DESIGN.md: radii derive from one base).
     const squareRadius = theme.borderRadius[size >= SQUARE_MARK_CONTROL_SIZE ? 'md' : 'sm'];
@@ -116,7 +119,7 @@ export const Avatar = React.memo((props: AvatarProps) => {
             const { circleSize, iconSize } = getAgentAvatarOverlaySizes(overlayAgentId ?? '', size);
 
             return (
-                <View testID={testID} accessible={Boolean(accessibilityLabel || props.title)} accessibilityRole="image" accessibilityLabel={accessibilityLabel ?? (props.title ? props.id : undefined)} style={[styles.container, { width: size, height: size }]}>
+                <View testID={testID} {...imageAccessibility} style={[styles.container, { width: size, height: size }]}>
                     {imageElement}
                     {overlayAgentId && (
                         <View style={[styles.flavorIcon, {
@@ -134,7 +137,7 @@ export const Avatar = React.memo((props: AvatarProps) => {
         }
 
         return testID || accessibilityLabel || props.title ? (
-            <View testID={testID} accessible={Boolean(accessibilityLabel || props.title)} accessibilityRole="image" accessibilityLabel={accessibilityLabel ?? (props.title ? props.id : undefined)}>
+            <View testID={testID} {...imageAccessibility}>
                 {imageElement}
             </View>
         ) : imageElement;
@@ -144,7 +147,8 @@ export const Avatar = React.memo((props: AvatarProps) => {
     // Determine which avatar variant to render
     const generated = avatarStyle === 'pixelated' ? <AvatarSkia {...avatarProps} size={size} />
         : avatarStyle === 'brutalist' ? <AvatarBrutalist {...avatarProps} size={size} />
-            : <AvatarGradient {...avatarProps} size={size} />;
+            : avatarStyle === 'planet' ? <AvatarPlanet id={avatarProps.id} size={size} monochrome={avatarProps.monochrome} />
+                : <AvatarGradient {...avatarProps} size={size} />;
     const artwork = avatarProps.square
         ? <View style={{ width: size, height: size, borderRadius: squareRadius, overflow: 'hidden' }}>{generated}</View>
         : generated;
@@ -160,7 +164,7 @@ export const Avatar = React.memo((props: AvatarProps) => {
 
     if (overlayAgentId || hasUnreadMessages || firstGrapheme || testID || accessibilityLabel) {
         return (
-            <View testID={testID} accessible={Boolean(accessibilityLabel || props.title)} accessibilityRole="image" accessibilityLabel={accessibilityLabel ?? (props.title ? props.id : undefined)} style={[styles.container, { width: size, height: size }]}>
+            <View testID={testID} {...imageAccessibility} style={[styles.container, { width: size, height: size }]}>
                 {artwork}
                 {firstGrapheme ? <View style={styles.monogram} pointerEvents="none" accessible={false}>
                     <Text testID="avatar-monogram" style={[styles.monogramText, { fontSize: size * 0.45, lineHeight: size * 0.6 }]}>{firstGrapheme}</Text>

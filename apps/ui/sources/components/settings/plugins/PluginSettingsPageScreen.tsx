@@ -1,10 +1,11 @@
 import * as React from 'react';
+import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import { useIsFocused } from '@/components/appShell/workspace/destinationRoute';
 import { Platform } from 'react-native';
 import { Stack, useRouter } from '@/components/appShell/workspace/destinationRoute';
 
 import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
-import { createPluginAppPageLocationOwner } from '@/components/appShell/plugins/pluginAppPageLocation';
+import { createPluginPageLocationOwner } from '@/components/plugins/pages/pluginPageLocation';
 import { PluginSettingsPageHost } from '@/components/plugins/surfaces';
 import type { BoundPluginSurfaceBinding } from '@/components/plugins/surfaces/boundPluginSurfaceController';
 import { usePluginSurfaceDestinationNavigationBinding } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
@@ -56,6 +57,7 @@ export const PluginSettingsPageScreen = React.memo(function PluginSettingsPageSc
     const daemonSettingsTarget = administration.target;
     const isDaemonSettingsTargetCurrent = administration.isTargetCurrent;
     const locale = getPreferredLanguage();
+    const localize = usePluginLocalizedTextResolver({ projection: appShell.pluginUiProjection, locale });
     const destination = React.useMemo<ResolvedPluginSettingsPageDestination | null>(() => (
         props.pluginId && props.pageId
             ? resolveAdmittedPluginSettingsPage({
@@ -63,9 +65,10 @@ export const PluginSettingsPageScreen = React.memo(function PluginSettingsPageSc
                 pluginId: props.pluginId,
                 pageId: props.pageId,
                 locale,
+                localize,
             })
             : null
-    ), [appShell.pluginUiProjection, locale, props.pageId, props.pluginId]);
+    ), [appShell.pluginUiProjection, localize, locale, props.pageId, props.pluginId]);
     const needsMachineExecution = destination !== null && isPluginSurfaceMachineBound({
         pluginId: destination.page.pluginId, surface: destination.page, projection: appShell.pluginUiProjection,
     });
@@ -121,7 +124,7 @@ export const PluginSettingsPageScreen = React.memo(function PluginSettingsPageSc
         screenIsMountedRef.current = true;
         return () => { screenIsMountedRef.current = false; };
     }, []);
-    const locationOwner = React.useMemo(() => createPluginAppPageLocationOwner({
+    const locationOwner = React.useMemo(() => createPluginPageLocationOwner({
         currentSubPath: () => subPathRef.current,
         // Reached only while a live location exists; the route reader hands
         // back `null` exactly when the identity segments did not parse.
@@ -161,6 +164,7 @@ export const PluginSettingsPageScreen = React.memo(function PluginSettingsPageSc
     const binding = React.useMemo<BoundPluginSurfaceBinding>(
         () => ({
             ...(appTargetBinding ? { openSurface: appTargetBinding.openSurface } : {}),
+            isCurrentUiContextLocationOwned: locationOwner.ownsCurrentLocation,
             // Only a live page has a location to replace. Elsewhere the method
             // is not installed, so the mount truthfully does not advertise it.
             ...(pageIsLive

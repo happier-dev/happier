@@ -1,15 +1,19 @@
 import { DaemonPluginHostPresentedComposerCurrentIntentV1Schema, type DaemonPluginHostPresentedComposerCurrentIntentV1 } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
-import { PluginActionPlacementV2Schema, PluginActionScopeV2Schema, resolveDeclaredInputLeaves, type PluginActionPlacementV2, type PluginActionScopeV2 } from '@happier-dev/protocol/plugins/actions/v2';
+import { PluginActionPlacementV2Schema, PluginActionScopeV2Schema, type PluginActionPlacementV2, type PluginActionScopeV2 } from '@happier-dev/protocol/plugins/actions/v2';
 import { PluginContributionIdentityV1Schema, buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { QualifiedConnectedAccountRefSchema, sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import type { DaemonPluginActionFormConnectedAccountOption } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import { InputHintsSchema as ActionInputHintsSchema, type InputHints as ActionInputHints } from '@happier-dev/protocol/inputs/inputFields';
+import { seedInputByFieldHints, writeInputPath } from '@happier-dev/protocol/inputs/inputFieldRuntime';
+import { readActionSessionTargetOperands, replaceActionSessionTargetField, validateActionSessionAddressV1 } from '@happier-dev/protocol/actions/executor/sessionTargets';
 import type { MessageActionReferenceV1 } from '@happier-dev/protocol/sessions/messages/messageActionReferenceV1';
 import type { PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import {
     PluginUiJsonValueV1Schema,
+    reconstructPluginUiSelectedActionInput,
     type CurrentUiContextSnapshotV1,
     type PluginUiSelectedActionInputForReconstructionV1,
     type PluginUiTargetedContributionOperationV1,
@@ -26,6 +30,7 @@ import type {
 import {
     resolvePluginUiClientActionRegistration,
 } from '@/components/plugins/reactNative/clientExecutableContributions';
+import { readPluginUiAccountExecutableOrigin } from '@/components/plugins/reactNative/executableModuleHost';
 import {
     type DispatchPluginSurfaceActionInput,
     type PluginSurfaceActionDispatchOutcome,
@@ -33,6 +38,7 @@ import {
     type PluginSurfaceHostPresentedActionInvocation,
 } from '@/components/plugins/surfaces/pluginSurfaceActionDispatch';
 import { launchPluginSurfaceAction } from '@/components/plugins/surfaces/launchPluginSurfaceAction';
+import type { PopoverAnchor } from '@/components/ui/popover';
 import type { PluginSurfaceOpenHandler } from '@/components/plugins/surfaces/openPluginSurface';
 import {
     machinePluginActionFormConnectedAccountOptionsResolve,
@@ -50,12 +56,47 @@ import {
 } from '@/sync/domains/plugins/ui/projection';
 import { resolvePluginUiClientExecutablePlatform } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import { getPreferredLanguage } from '@/text';
+import { createPluginLocalizedTextResolver, type PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
+import { readCurrentAppShellPluginUiTranslationRuntime } from '@/components/appShell/plugins/committedPluginUiProjection';
+import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { readPluginAccountAvailability } from '@/sync/domains/plugins/availability/projection';
 
 import {
     createActionInputForm,
     type ActionInputForm,
     type ActionInputFormSubmitOutcome,
 } from './actionInputForm';
+import { comparePluginContributedActionDescriptors } from './pluginContributedActionPresentation';
+import { declaredHostInputFieldAdmitsValue, draftMatchesDeclaredNonSecretFields } from './actionInputDraftValidation';
+export { comparePluginContributedActionDescriptors } from './pluginContributedActionPresentation';
+
+const executeRowAction = createFrontDoorActionExecute();
+
+function isSessionRowPlacement(snapshot: PluginContributedActionCurrentSnapshot,
+    placement: PluginActionPlacementV2 | undefined, scope: PluginActionScopeV2 | undefined): boolean {
+    return snapshot.host.sessionRow === true && scope === 'session' && (placement === 'rowAction' || placement === 'contextMenu');
+}
+
+function readSessionRowAddress(snapshot: PluginContributedActionCurrentSnapshot) {
+    const { serverId, sessionId, accountLifetime } = snapshot.host;
+    return serverId && sessionId && accountLifetime?.isCurrent()
+        && areServerProfileIdentifiersEquivalent(serverId, accountLifetime.scope.serverId)
+        ? { serverId: accountLifetime.scope.serverId, sessionId } : null;
+}
+
+/** Only initial intent is seeded; an edited operand must still match the row at dispatch. */
+function seedSessionRowInput(snapshot: PluginContributedActionCurrentSnapshot,
+    identity: PluginContributedActionDescriptor['identity'], input: Readonly<Record<string, unknown>>) {
+    const address = readSessionRowAddress(snapshot);
+    const declaration = snapshot.resolveContributedAction?.(identity)?.sessionTarget;
+    if (!address || !declaration) return input;
+    const operands = readActionSessionTargetOperands(input, declaration.field);
+    if (operands.length === 1) return replaceActionSessionTargetField(input, operands[0]!.field, address.sessionId);
+    // A wildcard names existing array slots, not a new array grammar. Forms
+    // retain their declared defaults; final admission requires one exact slot.
+    return declaration.field.includes('*') ? input : writeInputPath(input, declaration.field, address.sessionId);
+}
 
 /**
  * This controller adds only its local action identity around Protocol's
@@ -85,6 +126,34 @@ function projectResolvedConnectedAccountOptions(
     };
 }
 
+type NativeCredentialFormChoice = Readonly<{
+    fieldPath: string;
+    nativeServicePath: string;
+    service: Readonly<{ pluginId: string; localId: string }>;
+}>;
+type ResolvedCredentialFormHints = Readonly<{
+    inputHints: ActionInputHints;
+    nativeChoices: readonly NativeCredentialFormChoice[];
+}>;
+
+function resolveNativeCredentialFormInput(candidate: Readonly<Record<string, unknown>>, choices: readonly NativeCredentialFormChoice[]) {
+    let input = candidate;
+    for (const fieldPath of new Set(choices.map(choice => choice.fieldPath))) {
+        const selected = PluginContributionIdentityV1Schema.safeParse(readPath(candidate, fieldPath));
+        if (!selected.success) continue;
+        const choice = choices.find(option => option.fieldPath === fieldPath
+            && option.service.pluginId === selected.data.pluginId && option.service.localId === selected.data.localId);
+        if (!choice) return null;
+        input = writeInputPath(deletePath(input, fieldPath), choice.nativeServicePath, choice.service);
+    }
+    return input;
+}
+
+function readNativeCredentialFormChoices(fieldPath: string, options: readonly DaemonPluginActionFormConnectedAccountOption[]): readonly NativeCredentialFormChoice[] {
+    return options.flatMap(option => 'nativeServicePath' in option
+        ? [{ fieldPath, nativeServicePath: option.nativeServicePath, service: option.value }] : []);
+}
+
 /**
  * The host facts a concrete UI placement already owns. Action currentness is
  * carried by each projected Action's exact contributor occurrence.
@@ -97,6 +166,8 @@ export type PluginContributedActionHostFacts = Readonly<{
     /** Exact mounted targeted-contribution target; never derived from a contributor. */
     targetPluginId?: string | null;
     sessionId?: string | null;
+    /** Concrete list-row intent; reference forms may borrow the same placement without it. */
+    sessionRow?: true;
     messageActionReference?: MessageActionReferenceV1;
     /**
      * The present-user Composer owner supplies one fresh snapshot only at
@@ -138,6 +209,7 @@ export type PluginContributedActionCurrentSnapshot = Readonly<{
      * never uses it to derive currentness, availability, or execution.
      */
     pluginUiProjection?: PluginUiProjectionModel | null;
+    localize?: PluginLocalizedTextResolver;
     /**
      * Exact current raw V2 Action descriptor lookup. This controller carries
      * it unchanged to the canonical dispatcher; it never derives a target
@@ -167,6 +239,8 @@ type PluginContributedActionDescriptorBase = Readonly<{
     qualifiedActionId: string;
     title: string;
     description: string | null;
+    /** The contributing plugin's display name (its projection entry title), for grouping; never its id. */
+    pluginTitle?: string | null;
     /** Manifest Action icon slug; renderer boundaries accept only known local icons. */
     icon: string | null;
     /** Lower values appear first within one semantic placement. */
@@ -323,10 +397,13 @@ export type PluginContributedActionDispatch = (
 export type PluginContributedActionConnectedAccountOptionsTransport = typeof machinePluginActionFormConnectedAccountOptionsResolve;
 
 export type PluginContributedActionController = Readonly<{
-    list(selector: PluginContributedActionSelector): readonly PluginContributedActionDescriptor[];
+    /** Hidden inventories can retain authored copy without demanding Resources; admission is unchanged. */
+    list(selector: PluginContributedActionSelector, presentation?: Readonly<{
+        localize: PluginLocalizedTextResolver;
+    }>): readonly PluginContributedActionDescriptor[];
     /** Current session-scoped slash Actions for the incumbent composer picker. */
     listSlashCommands(): readonly PluginContributedActionDescriptor[];
-    open(action: PluginContributedActionDescriptor): Promise<PluginContributedActionOpenOutcome>;
+    open(action: PluginContributedActionDescriptor, anchor?: PopoverAnchor): Promise<PluginContributedActionOpenOutcome>;
     /**
      * Checks a live capability reference embedded in an immutable host
      * presentation. It deliberately does not reinterpret any historical
@@ -356,6 +433,7 @@ export type PluginContributedActionController = Readonly<{
     openSessionReference(
         action: Readonly<{ pluginId: string; localId: string }>,
         input?: unknown,
+        anchor?: PopoverAnchor,
     ): Promise<PluginContributedActionOpenOutcome>;
 }>;
 
@@ -378,6 +456,10 @@ export type PluginExactBoundActionInputRequest = Readonly<{
     /** Host-stamped caller surface; targeted and Automation selection retain their plugin default. */
     invocationSurface?: 'ui' | 'plugin';
     draft?: Readonly<Record<string, unknown>>;
+    /** Authoring intent, re-admitted against the declared dynamic account choices on submit. */
+    connectedAccount?: import('@happier-dev/protocol/connect/qualified-connected-account-persistence').QualifiedConnectedAccountRef;
+    /** Event authoring may carry schema-declared, non-presented setup operands. */
+    allowSchemaDeclaredDraftFields?: true;
 }>;
 
 export type PluginExactBoundActionInputController = Readonly<{
@@ -486,8 +568,11 @@ function actionPresentationForResolver(
 
 function descriptorForAction(params: Readonly<{
     pluginId: string;
+    /** The plugin's projection entry title (its display name). */
+    pluginTitle?: string | null;
     action: PluginProjectionAction;
     pluginUiProjection?: PluginUiProjectionModel | null;
+    localize?: PluginLocalizedTextResolver;
     selector: PluginContributedActionSelector;
 }>): PluginContributedActionDescriptor | null {
     const identity = PluginContributionIdentityV1Schema.safeParse({
@@ -509,6 +594,7 @@ function descriptorForAction(params: Readonly<{
         pluginId: params.pluginId,
         presentation: actionPresentationForResolver(params.action),
         projection: params.pluginUiProjection,
+        localize: params.localize,
         locale: getPreferredLanguage(),
     });
     const base = {
@@ -516,6 +602,7 @@ function descriptorForAction(params: Readonly<{
         qualifiedActionId: buildQualifiedPluginContributionKey(identity.data),
         title: presentation.title,
         description: presentation.description,
+        pluginTitle: params.pluginTitle?.trim() || null,
         icon: params.action.icon,
         priority: params.action.priority ?? 0,
         placement: params.selector.placement,
@@ -529,33 +616,28 @@ function descriptorForAction(params: Readonly<{
         : { ...base, inputHints, kind: 'direct' };
 }
 
-function presentationForExactBoundAction(
-    action: ExactBoundAction,
-) {
-    return resolvePluginProjectedActionPresentation({
-        pluginId: action.identity.pluginId,
-        presentation: actionPresentationForResolver(action.action),
-        projection: action.snapshot.pluginUiProjection,
-        locale: getPreferredLanguage(),
-    });
-}
-
-/**
- * The one presentation order for every Action consumer. Metadata does not join
- * currentness identity, so an icon or priority refresh cannot invalidate an
- * already opened Action form.
- */
-export function comparePluginContributedActionDescriptors(
-    left: PluginContributedActionDescriptor,
-    right: PluginContributedActionDescriptor,
-): number {
-    const priorityDifference = left.priority - right.priority;
-    if (priorityDifference !== 0) return priorityDifference;
-    return left.qualifiedActionId < right.qualifiedActionId
-        ? -1
-        : left.qualifiedActionId > right.qualifiedActionId
-            ? 1
-            : 0;
+async function prepareActionPresentation(snapshot: PluginContributedActionCurrentSnapshot, pluginId: string, action: PluginProjectionAction) {
+    const projection = snapshot.pluginUiProjection;
+    const locale = getPreferredLanguage();
+    const presentation = actionPresentationForResolver(action);
+    const initialLocalize = snapshot.localize ?? createPluginLocalizedTextResolver({ projection, locale });
+    let hasKeyedCopy = false;
+    const fallback = resolvePluginProjectedActionPresentation({ pluginId, presentation, projection, locale,
+        localize: (id, value) => {
+            if (value && typeof value === 'object' && 'key' in value && typeof value.key === 'string') hasKeyedCopy = true;
+            return initialLocalize(id, value);
+        } });
+    if (!hasKeyedCopy || !projection?.translationsByPluginId[pluginId]?.resourceIdsByLocale) return fallback;
+    const owner = readCurrentAppShellPluginUiTranslationRuntime(projection);
+    if (!owner) return fallback;
+    const runtime = owner.matchesSource(projection, pluginId) ? owner : owner.createScopedRuntime(projection);
+    try {
+        await runtime.demand(pluginId, locale);
+        return resolvePluginProjectedActionPresentation({ pluginId, presentation, projection, locale,
+            localize: createPluginLocalizedTextResolver({ projection, runtime, locale }) });
+    } finally {
+        if (runtime !== owner) runtime.dispose();
+    }
 }
 
 function sameDescriptor(
@@ -648,53 +730,14 @@ function deletePath(input: Readonly<Record<string, unknown>>, path: string): Rea
     return remove(input, 0) as Readonly<Record<string, unknown>>;
 }
 
-function draftMatchesDeclaredNonSecretFields(params: Readonly<{
-    draft: Readonly<Record<string, unknown>>;
-    action: PluginProjectionAction;
-    inputSchema: PluginJsonSchemaV2 | undefined;
-}>): boolean {
-    const schema = params.inputSchema;
-    const fields = params.action.inputHints?.fields ?? [];
-    if (schema === undefined) return fields.length === 0;
-    if (fields.length === 0) {
-        try {
-            return isValidPluginJsonSchemaValue(compilePluginJsonSchema(schema), params.draft);
-        } catch {
-            return false;
-        }
-    }
-    const fieldsByPath = new Map(fields.map((field) => [field.path, field]));
-
-    const visit = (value: unknown, path: string): boolean => {
-        const field = fieldsByPath.get(path);
-        if (field) {
-            if (field.widget === 'secret' || field.connectedAccountOptions === true) return false;
-            // Conditional hints may live in only one union arm. Reuse the
-            // declaration owner's traversal, just as manifest admission does.
-            const leaves = resolveDeclaredInputLeaves(schema, path, 'conditional-field');
-            if (!leaves) return false;
-            try {
-                return leaves.some(leaf => isValidPluginJsonSchemaValue(compilePluginJsonSchema(leaf), value));
-            } catch {
-                return false;
-            }
-        }
-        if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-        const entries = Object.entries(value as Readonly<Record<string, unknown>>);
-        if (entries.length === 0) return false;
-        return entries.every(([key, child]) => visit(child, path ? `${path}.${key}` : key));
-    };
-
-    return Object.entries(params.draft).every(([key, value]) => visit(value, key));
-}
-
 /**
  * One host-owned action catalog/form/currentness seam. It consumes the
  * normalized projection and delegates all execution to the canonical surface
  * dispatcher, which stamps `executionSurface: 'ui'` and invokes daemon policy.
  */
 export function createPluginContributedActionController(params: Readonly<{
-    resolveCurrent: () => PluginContributedActionCurrentSnapshot | null;
+    /** An app catalog can span Machines; a selected Action borrows its own already-admitted host. */
+    resolveCurrent: (identity?: Readonly<{ pluginId: string; localId: string }>) => PluginContributedActionCurrentSnapshot | null;
     dispatch?: PluginContributedActionDispatch;
     resolveConnectedAccountOptions?: PluginContributedActionConnectedAccountOptionsTransport;
 }>): PluginContributedActionController
@@ -704,9 +747,9 @@ export function createPluginContributedActionController(params: Readonly<{
     const resolveConnectedAccountOptions = params.resolveConnectedAccountOptions
         ?? machinePluginActionFormConnectedAccountOptionsResolve;
 
-    function currentSnapshot(): PluginContributedActionCurrentSnapshot | null {
+    function currentSnapshot(identity?: Readonly<{ pluginId: string; localId: string }>): PluginContributedActionCurrentSnapshot | null {
         try {
-            return params.resolveCurrent();
+            return params.resolveCurrent(identity);
         } catch {
             return null;
         }
@@ -746,6 +789,12 @@ export function createPluginContributedActionController(params: Readonly<{
         } catch {
             return false;
         }
+    }
+
+    function hasSessionRowTarget(snapshot: PluginContributedActionCurrentSnapshot,
+        identity: PluginContributedActionDescriptor['identity'], placement: PluginActionPlacementV2, scope: PluginActionScopeV2): boolean {
+        return !isSessionRowPlacement(snapshot, placement, scope)
+            || (readSessionRowAddress(snapshot) !== null && !!snapshot.resolveContributedAction?.(identity)?.sessionTarget);
     }
 
     /**
@@ -794,6 +843,7 @@ export function createPluginContributedActionController(params: Readonly<{
         );
         return originalHost.kind === 'ready'
             && currentHost.kind === 'ready'
+            && isActionCurrent(original, identity)
             && originalHost.machineId === currentHost.machineId
             && originalHost.serverId === currentHost.serverId
             && originalOccurrenceId !== null
@@ -809,7 +859,7 @@ export function createPluginContributedActionController(params: Readonly<{
     function resolveAction(
         requested: PluginContributedActionDescriptor,
     ): ResolveActionResult {
-        const snapshot = currentSnapshot();
+        const snapshot = currentSnapshot(requested.identity);
         if (!snapshot) return { kind: 'unavailable', reason: 'host_unavailable' };
         const host = hostStatus(snapshot);
         if (host.kind !== 'ready') return host;
@@ -828,13 +878,16 @@ export function createPluginContributedActionController(params: Readonly<{
             || !expectedOccurrenceId
             || !isActionCurrent(snapshot, requested.identity)
             || !hasCurrentClientActionRegistration(snapshot, requested.identity)
+            || !hasSessionRowTarget(snapshot, requested.identity, requested.placement, requested.scope)
         ) {
             return { kind: 'stale', reason: 'action_retired' };
         }
         const descriptor = descriptorForAction({
             pluginId: plugin.pluginId,
+            pluginTitle: plugin.title,
             action,
             pluginUiProjection: snapshot.pluginUiProjection,
+            localize: snapshot.localize,
             selector: {
                 placement: requested.placement,
                 scope: requested.scope,
@@ -870,7 +923,7 @@ export function createPluginContributedActionController(params: Readonly<{
     ): ResolveActionResult<ResolvedCurrentAction> {
         const identity = PluginContributionIdentityV1Schema.safeParse(requested);
         if (!identity.success) return { kind: 'unavailable', reason: 'invalid_input' };
-        const snapshot = currentSnapshot();
+        const snapshot = currentSnapshot(identity.data);
         if (!snapshot) return { kind: 'unavailable', reason: 'host_unavailable' };
         const host = hostStatus(snapshot);
         if (host.kind !== 'ready') return host;
@@ -917,8 +970,10 @@ export function createPluginContributedActionController(params: Readonly<{
         }
         const descriptor = descriptorForAction({
             pluginId: plugin.pluginId,
+            pluginTitle: plugin.title,
             action,
             pluginUiProjection: reference.value.snapshot.pluginUiProjection,
+            localize: reference.value.snapshot.localize,
             // Retain only the first non-semantic placement to reuse the
             // descriptor, form, and currentness owner. A semantic
             // Composer/Message binding must never acquire this generic
@@ -1024,6 +1079,8 @@ export function createPluginContributedActionController(params: Readonly<{
         isCurrent: () => boolean,
         signal?: AbortSignal,
         placement?: PluginActionPlacementV2,
+        scope?: PluginActionScopeV2,
+        anchor?: PopoverAnchor,
     ): Promise<PluginContributedActionInvocationOutcome> {
         const host = hostStatus(resolved.snapshot);
         if (host.kind !== 'ready') return host;
@@ -1039,11 +1096,18 @@ export function createPluginContributedActionController(params: Readonly<{
             // performs final field validation at canonical dispatch.
             return { kind: 'unavailable', reason: 'invalid_input' };
         }
+        const rowAddress = isSessionRowPlacement(resolved.snapshot, placement, scope) ? readSessionRowAddress(resolved.snapshot) : null;
+        if (isSessionRowPlacement(resolved.snapshot, placement, scope) && (!rowAddress || !validateActionSessionAddressV1({
+            sessionTarget: projectedAction.sessionTarget,
+            input: transportInput?.data,
+            sessionAddress: rowAddress,
+        }).ok)) return { kind: 'unavailable', reason: 'invalid_input' };
         const invocation = resolveHostInvocation({ resolved, placement });
         if (invocation.kind !== 'resolved') return invocation;
         const dispatchSignal = signal ?? resolved.snapshot.host.signal;
         try {
             const dispatchInput: DispatchPluginSurfaceActionInput = {
+                actionInputAnchor: anchor,
                 // Catalog, Composer, and transcript host presentation never
                 // fabricate a mounted plugin caller. The canonical dispatcher
                 // receives only the current host intent carrier, if required.
@@ -1052,7 +1116,12 @@ export function createPluginContributedActionController(params: Readonly<{
                 ...(resolved.snapshot.resolveContributedAction
                     ? { resolveContributedAction: resolved.snapshot.resolveContributedAction }
                     : {}),
-                ...(executionTarget === 'client'
+                ...(rowAddress ? { hostAction: { execute: executeRowAction, context: {
+                    surface: 'ui' as const, serverId: rowAddress.serverId,
+                    expectedAccountId: resolved.snapshot.host.accountLifetime!.scope.accountId,
+                    defaultSessionId: rowAddress.sessionId,
+                } } } : {}),
+                ...(executionTarget !== 'daemon'
                     ? {
                         clientAction: {
                             ...(placement === 'message.menu' && invocation.invocation?.kind === 'hostPresentedMessage'
@@ -1073,6 +1142,8 @@ export function createPluginContributedActionController(params: Readonly<{
                         contributedAction: {
                             machineId: host.machineId!,
                             serverId: readRequiredString(resolved.snapshot.host.serverId) ?? null,
+                            ...(rowAddress && resolved.snapshot.host.accountLifetime
+                                ? { accountLifetime: resolved.snapshot.host.accountLifetime } : {}),
                             ...(readRequiredString(resolved.snapshot.host.sessionId)
                                 ? { sessionId: readRequiredString(resolved.snapshot.host.sessionId)! }
                                 : {}),
@@ -1107,6 +1178,8 @@ export function createPluginContributedActionController(params: Readonly<{
     function createForm(
         resolved: ResolvedAction,
         inputHints: ActionInputHints,
+        nativeChoices: readonly NativeCredentialFormChoice[] = [],
+        anchor?: PopoverAnchor,
     ): PluginContributedActionForm {
         const form = createActionInputForm<
             PluginSurfaceActionDispatchOutcome,
@@ -1118,6 +1191,9 @@ export function createPluginContributedActionController(params: Readonly<{
                 description: resolved.descriptor.description,
                 inputHints,
             },
+            ...(isSessionRowPlacement(resolved.snapshot, resolved.descriptor.placement, resolved.descriptor.scope) ? { initialInput: seedSessionRowInput(
+                resolved.snapshot, resolved.identity, seedInputByFieldHints({ inputHints }, {}),
+            ) } : {}),
             accountLifetime: resolved.snapshot.host.accountLifetime,
             ...(resolved.snapshot.host.signal ? { signal: resolved.snapshot.host.signal } : {}),
             isCurrent: () => resolveFormAction(
@@ -1132,15 +1208,19 @@ export function createPluginContributedActionController(params: Readonly<{
                 }
                 const current = resolveFormAction(resolved.descriptor, resolved.snapshot);
                 if (current.kind !== 'resolved') return current;
+                const input = resolveNativeCredentialFormInput(candidate, nativeChoices);
+                if (!input) return { kind: 'unavailable', reason: 'invalid_input' };
                 const outcome = await dispatchResolvedAction(
                     current.value,
-                    candidate,
+                    input,
                     () => resolveFormAction(
                         resolved.descriptor,
                         resolved.snapshot,
                     ).kind === 'resolved',
                     context.signal,
                     current.value.descriptor.placement,
+                    current.value.descriptor.scope,
+                    anchor,
                 );
                 // Dispatch owns settlement ordering. A presentation signal can
                 // prevent admission before dispatch, but cannot relabel a
@@ -1156,17 +1236,30 @@ export function createPluginContributedActionController(params: Readonly<{
         } };
     }
 
+    async function prepareFormAction(resolved: ResolvedFormAction): Promise<ResolveActionResult<ResolvedFormAction>> {
+        const action = resolved.snapshot.pluginProjectionById[resolved.identity.pluginId]?.actions
+            .find(candidate => candidate.id === resolved.identity.localId);
+        if (!action) return { kind: 'stale', reason: 'action_retired' };
+        const presentation = await prepareActionPresentation(resolved.snapshot, resolved.identity.pluginId, action);
+        const current = resolveFormAction(resolved.descriptor, resolved.snapshot);
+        if (current.kind !== 'resolved') return current;
+        if (!isResolvedFormAction(current.value) || !presentation.inputHints) return { kind: 'stale', reason: 'action_retired' };
+        return { kind: 'resolved', value: { ...current.value, descriptor: { ...current.value.descriptor,
+            title: presentation.title, description: presentation.description, inputHints: presentation.inputHints } } };
+    }
+
     async function resolveFormConnectedAccountOptions(
         resolved: ResolvedFormAction,
-    ): Promise<ActionInputHints | PluginContributedActionUnavailableOutcome | PluginContributedActionStaleOutcome> {
+    ): Promise<ResolvedCredentialFormHints | PluginContributedActionUnavailableOutcome | PluginContributedActionStaleOutcome> {
         const dynamicFields = resolved.descriptor.inputHints.fields.filter((field) => (
             field.connectedAccountOptions === true
         ));
-        if (dynamicFields.length === 0) return resolved.descriptor.inputHints;
+        if (dynamicFields.length === 0) return { inputHints: resolved.descriptor.inputHints, nativeChoices: [] };
         const host = hostStatus(resolved.snapshot);
         if (host.kind !== 'ready') return host;
         if (!host.machineId) return { kind: 'unavailable', reason: 'host_unavailable' };
         const optionsByPath = new Map<string, ActionInputHints['fields'][number]['options']>();
+        const nativeChoices: NativeCredentialFormChoice[] = [];
         for (const field of dynamicFields) {
             const result: MachinePluginActionFormConnectedAccountOptionsResult = await resolveConnectedAccountOptions(
                 host.machineId,
@@ -1188,13 +1281,14 @@ export function createPluginContributedActionController(params: Readonly<{
                     ? { kind: 'stale', reason: 'action_retired' }
                     : { kind: 'unavailable', reason: 'host_unavailable' };
             }
-            optionsByPath.set(field.path, result.result.options);
+            optionsByPath.set(field.path, result.result.options.map(({ value, label }) => ({ value, label })));
+            nativeChoices.push(...readNativeCredentialFormChoices(field.path, result.result.options));
         }
         try {
             // This transient view is the exact host-produced option result for
             // this one form lifetime. It removes the dynamic marker so the
             // renderer cannot re-resolve, cache, or re-authorize accounts.
-            return ActionInputHintsSchema.parse({
+            return { nativeChoices, inputHints: ActionInputHintsSchema.parse({
                 ...resolved.descriptor.inputHints,
                 fields: resolved.descriptor.inputHints.fields.map((field) => {
                     if (field.connectedAccountOptions !== true) return field;
@@ -1203,7 +1297,7 @@ export function createPluginContributedActionController(params: Readonly<{
                         optionsByPath.get(field.path) ?? [],
                     );
                 }),
-            });
+            }) };
         } catch {
             return { kind: 'unavailable', reason: 'host_unavailable' };
         }
@@ -1306,7 +1400,7 @@ export function createPluginContributedActionController(params: Readonly<{
         if (!identity.success || !expectedOccurrenceId) {
             return { kind: 'unavailable', reason: 'invalid_input' };
         }
-        const snapshot = currentSnapshot();
+        const snapshot = currentSnapshot(identity.data);
         if (!snapshot) return { kind: 'unavailable', reason: 'host_unavailable' };
         const host = hostStatus(snapshot);
         if (host.kind !== 'ready') return host;
@@ -1364,7 +1458,7 @@ export function createPluginContributedActionController(params: Readonly<{
         inputHints: ActionInputHints,
         field: ActionInputHints['fields'][number],
         resolveCurrent: () => ExactBoundAction | PluginContributedActionUnavailableOutcome | PluginContributedActionStaleOutcome,
-    ): Promise<ActionInputHints | PluginContributedActionUnavailableOutcome | PluginContributedActionStaleOutcome> {
+    ): Promise<ResolvedCredentialFormHints | PluginContributedActionUnavailableOutcome | PluginContributedActionStaleOutcome> {
         const host = hostStatus(resolved.snapshot);
         if (host.kind !== 'ready') return host;
         if (!host.machineId) return { kind: 'unavailable', reason: 'host_unavailable' };
@@ -1381,15 +1475,15 @@ export function createPluginContributedActionController(params: Readonly<{
         if (!result.result.ok) return result.result.code === 'plugin_occurrence_stale'
             ? { kind: 'stale', reason: 'action_retired' }
             : { kind: 'unavailable', reason: 'host_unavailable' };
-        const options = result.result.options;
+        const options = result.result.options.map(({ value, label }) => ({ value, label }));
         try {
-            return ActionInputHintsSchema.parse({
+            return { nativeChoices: readNativeCredentialFormChoices(field.path, result.result.options), inputHints: ActionInputHintsSchema.parse({
                 ...inputHints,
                 fields: inputHints.fields.map((candidate) => {
                     if (candidate.path !== field.path) return candidate;
                     return projectResolvedConnectedAccountOptions(candidate, options);
                 }),
-            });
+            }) };
         } catch {
             return { kind: 'unavailable', reason: 'host_unavailable' };
         }
@@ -1411,7 +1505,9 @@ export function createPluginContributedActionController(params: Readonly<{
             resolved,
             isAdditionallyCurrent,
         );
-        const presentation = presentationForExactBoundAction(resolved);
+        const presentation = await prepareActionPresentation(resolved.snapshot, resolved.identity.pluginId, resolved.action);
+        const afterCopyRead = resolveCurrent();
+        if ('kind' in afterCopyRead) return afterCopyRead;
         const inputHints = presentation.inputHints;
         const fields = inputHints?.fields ?? [];
         if (fields.some((field) => field.widget === 'secret')) {
@@ -1421,26 +1517,52 @@ export function createPluginContributedActionController(params: Readonly<{
         if (accountFields.length > 1) {
             return { kind: 'unavailable', reason: 'connected_account_ambiguous' };
         }
-        // The Action's declared input schema is not projected; read it for
-        // this exact occurrence from the Action's machine.
-        const machineId = readRequiredString(resolved.snapshot.host.machineId);
-        if (!machineId) return { kind: 'unavailable', reason: 'host_unavailable' };
-        const schemas = await machinePluginActionSchemasRead(machineId, {
-            serverId: readRequiredString(resolved.snapshot.host.serverId) ?? null,
-            expectedOccurrenceId: resolved.expectedOccurrenceId,
-            qualifiedActionId: buildQualifiedPluginContributionKey(resolved.identity),
-            ...(resolved.snapshot.host.signal ? { signal: resolved.snapshot.host.signal } : {}),
-        });
-        if (!schemas.supported || !schemas.result.ok) {
-            return schemas.supported && !schemas.result.ok && schemas.result.code === 'plugin_occurrence_stale'
-                ? { kind: 'stale', reason: 'action_retired' }
-                : { kind: 'unavailable', reason: 'host_unavailable' };
+        const projectedAction = resolved.snapshot.resolveContributedAction?.(resolved.identity);
+        let inputSchema: PluginJsonSchemaV2 | undefined;
+        if (projectedAction && (projectedAction.execution.target === 'account' || 'hostAccountOrigin' in projectedAction)) {
+            const lifetime = resolved.snapshot.host.accountLifetime;
+            const selected = !projectedAction.accountActionDeclaration && lifetime ? await readPluginAccountAvailability(lifetime.scope)
+                .ensureCurrentAccountExecution(resolved.identity.pluginId) : null;
+            const declaration = projectedAction.accountActionDeclaration ?? (selected?.kind === 'available' && selected.custodyId === projectedAction.occurrenceId
+                ? selected.manifest.contributes.actions.find(action => action.id === resolved.identity.localId) : undefined);
+            if (!declaration || !readPluginUiAccountExecutableOrigin(projectedAction)) {
+                return { kind: 'unavailable', reason: 'host_unavailable' };
+            }
+            inputSchema = declaration.inputSchema ?? {};
+        } else {
+            // Machine-projected Actions retain their exact occurrence schema read;
+            // Account declarations already carry the admitted schema locally.
+            const machineId = readRequiredString(resolved.snapshot.host.machineId);
+            if (!machineId) return { kind: 'unavailable', reason: 'host_unavailable' };
+            const schemas = await machinePluginActionSchemasRead(machineId, {
+                serverId: readRequiredString(resolved.snapshot.host.serverId) ?? null,
+                expectedOccurrenceId: resolved.expectedOccurrenceId,
+                qualifiedActionId: buildQualifiedPluginContributionKey(resolved.identity),
+                ...(resolved.snapshot.host.signal ? { signal: resolved.snapshot.host.signal } : {}),
+            });
+            if (!schemas.supported || !schemas.result.ok) {
+                return schemas.supported && !schemas.result.ok && schemas.result.code === 'plugin_occurrence_stale'
+                    ? { kind: 'stale', reason: 'action_retired' }
+                    : { kind: 'unavailable', reason: 'host_unavailable' };
+            }
+            inputSchema = schemas.result.inputSchema;
         }
-        const inputSchema = schemas.result.inputSchema;
         const afterSchemaRead = resolveCurrent();
         if ('kind' in afterSchemaRead) return afterSchemaRead;
-        const draft = request.draft ?? {};
-        if (!draftMatchesDeclaredNonSecretFields({ draft, action: resolved.action, inputSchema })) {
+        let draft = request.draft ?? {};
+        if (request.connectedAccount) {
+            const accountField = accountFields[0];
+            const parsedDraft = PluginUiJsonValueV1Schema.safeParse(draft);
+            if (!accountField || !parsedDraft.success) return { kind: 'unavailable', reason: 'invalid_draft' };
+            const seeded = reconstructPluginUiSelectedActionInput({ input: parsedDraft.data,
+                connectedAccount: { kind: 'selected', fieldPath: accountField.path, ref: request.connectedAccount } },
+                { allowMatchingConnectedAccount: true });
+            if (!seeded) return { kind: 'unavailable', reason: 'invalid_draft' };
+            draft = seeded;
+        }
+        const nonAccountDraft = request.connectedAccount && accountFields[0] ? deletePath(draft, accountFields[0].path) : draft;
+        if (!draftMatchesDeclaredNonSecretFields({ draft: nonAccountDraft, action: resolved.action, inputSchema,
+            allowDeclaredUnhintedFields: request.connectedAccount !== undefined || request.allowSchemaDeclaredDraftFields === true })) {
             return { kind: 'unavailable', reason: 'invalid_draft' };
         }
         if (!inputHints || fields.length === 0) {
@@ -1471,7 +1593,7 @@ export function createPluginContributedActionController(params: Readonly<{
         }
         const resolvedHints = accountFields[0]
             ? await resolveExactBoundConnectedAccountOptions(resolved, inputHints, accountFields[0], resolveCurrent)
-            : inputHints;
+            : { inputHints, nativeChoices: [] };
         if ('kind' in resolvedHints) return resolvedHints;
 
         type SelectionSettlement = PluginContributedActionExactInputSelectionSettlement;
@@ -1493,7 +1615,7 @@ export function createPluginContributedActionController(params: Readonly<{
             presentation: {
                 title: presentation.title,
                 description: presentation.description,
-                inputHints: resolvedHints,
+                inputHints: resolvedHints.inputHints,
             },
             initialInput: draft,
             accountLifetime: resolved.snapshot.host.accountLifetime,
@@ -1509,30 +1631,42 @@ export function createPluginContributedActionController(params: Readonly<{
                     settle(current);
                     return current;
                 }
+                const normalizedCandidate = resolveNativeCredentialFormInput(candidate, resolvedHints.nativeChoices);
+                if (!normalizedCandidate) return { kind: 'unavailable', reason: 'invalid_input' };
+                for (const field of resolvedHints.inputHints.fields) {
+                    if (!field.inputType || !('hostType' in field.inputType)) continue;
+                    const value = readPath(normalizedCandidate, field.path);
+                    if (value !== undefined && !declaredHostInputFieldAdmitsValue(field, value)) {
+                        return { kind: 'unavailable', reason: 'invalid_input' };
+                    }
+                }
                 // `resolveCurrent` pins the same Action occurrence the schema
                 // was read for.
                 if (inputSchema !== undefined && !isValidPluginJsonSchemaValue(
                     compilePluginJsonSchema(inputSchema),
-                    candidate,
+                    normalizedCandidate,
                 )) return { kind: 'unavailable', reason: 'invalid_input' };
 
                 const accountField = accountFields[0];
-                let input = candidate;
+                let input = normalizedCandidate;
                 type SubmittedSelection = PluginContributedActionExactSubmittedInputResult;
                 let connectedAccount: SubmittedSelection['connectedAccount'] = { kind: 'none' };
                 let connectedAccountLabel: string | null = null;
-                if (accountField) {
+                const nativeSelected = accountField && resolvedHints.nativeChoices.some(choice => choice.fieldPath === accountField.path
+                    && readPath(candidate, accountField.path) !== undefined
+                    && PluginContributionIdentityV1Schema.safeParse(readPath(candidate, accountField.path)).success);
+                if (accountField && !nativeSelected) {
                     const parsedRef = QualifiedConnectedAccountRefSchema.safeParse(
-                        readPath(candidate, accountField.path),
+                        readPath(normalizedCandidate, accountField.path),
                     );
                     if (!parsedRef.success) return { kind: 'unavailable', reason: 'invalid_input' };
-                    input = deletePath(candidate, accountField.path);
+                    input = deletePath(normalizedCandidate, accountField.path);
                     connectedAccount = {
                         kind: 'selected',
                         fieldPath: accountField.path,
                         ref: parsedRef.data,
                     };
-                    const resolvedAccountField = resolvedHints.fields.find((field) => field.path === accountField.path);
+                    const resolvedAccountField = resolvedHints.inputHints.fields.find((field) => field.path === accountField.path);
                     connectedAccountLabel = resolvedAccountField?.options?.flatMap((option) => {
                         const optionRef = QualifiedConnectedAccountRefSchema.safeParse(option.value);
                         return optionRef.success && sameQualifiedConnectedAccountRef(optionRef.data, parsedRef.data)
@@ -1628,7 +1762,7 @@ export function createPluginContributedActionController(params: Readonly<{
     }
 
     return {
-        list(selector) {
+        list(selector, presentation) {
             const snapshot = currentSnapshot();
             if (!snapshot || hostStatus(snapshot).kind !== 'ready') return [];
             const actions: PluginContributedActionDescriptor[] = [];
@@ -1639,11 +1773,14 @@ export function createPluginContributedActionController(params: Readonly<{
                     if (
                         !isActionCurrent(snapshot, identity)
                         || !hasCurrentClientActionRegistration(snapshot, identity)
+                        || !hasSessionRowTarget(snapshot, identity, selector.placement, selector.scope)
                     ) continue;
                     const descriptor = descriptorForAction({
                         pluginId: plugin.pluginId,
+                        pluginTitle: plugin.title,
                         action,
                         pluginUiProjection: snapshot.pluginUiProjection,
+                        localize: presentation?.localize ?? snapshot.localize,
                         selector,
                     });
                     if (descriptor) actions.push(descriptor);
@@ -1665,8 +1802,10 @@ export function createPluginContributedActionController(params: Readonly<{
                     ) continue;
                     const descriptor = descriptorForAction({
                         pluginId: plugin.pluginId,
+                        pluginTitle: plugin.title,
                         action,
                         pluginUiProjection: snapshot.pluginUiProjection,
+                        localize: snapshot.localize,
                         selector: { placement: 'composer.slash', scope: 'session' },
                     });
                     if (!descriptor || !hasComposerSlashTokens(descriptor.slash)) continue;
@@ -1675,27 +1814,32 @@ export function createPluginContributedActionController(params: Readonly<{
             }
             return actions.sort(comparePluginContributedActionDescriptors);
         },
-        async open(requested) {
+        async open(requested, anchor) {
             const current = resolveAction(requested);
             if (current.kind !== 'resolved') return current;
             if (isResolvedFormAction(current.value)) {
                 if (!current.value.snapshot.host.accountLifetime) {
                     return { kind: 'unavailable', reason: 'host_unavailable' };
                 }
-                const inputHints = await resolveFormConnectedAccountOptions(current.value);
+                const prepared = await prepareFormAction(current.value);
+                if (prepared.kind !== 'resolved') return prepared;
+                const inputHints = await resolveFormConnectedAccountOptions(prepared.value);
                 if ('kind' in inputHints) return inputHints;
                 return {
                     kind: 'form',
-                    action: current.value.descriptor,
-                    form: createForm(current.value, inputHints),
+                    action: prepared.value.descriptor,
+                    form: createForm(prepared.value, inputHints.inputHints, inputHints.nativeChoices, anchor),
                 };
             }
             const submitted = await dispatchResolvedAction(
                 current.value,
-                {},
+                isSessionRowPlacement(current.value.snapshot, current.value.descriptor.placement, current.value.descriptor.scope)
+                    ? seedSessionRowInput(current.value.snapshot, current.value.identity, {}) : {},
                 () => resolveAction(requested).kind === 'resolved',
                 undefined,
                 current.value.descriptor.placement,
+                current.value.descriptor.scope,
+                anchor,
             );
             return submitted.kind === 'settled'
                 ? {
@@ -1761,19 +1905,21 @@ export function createPluginContributedActionController(params: Readonly<{
                 resolveMessageReferenceInvocationPlacement(current.value),
             );
         },
-        async openSessionReference(requested, input) {
+        async openSessionReference(requested, input, anchor) {
             const current = resolveSessionReference(requested);
             if (current.kind !== 'resolved') return current;
             if (input === undefined && isResolvedFormAction(current.value)) {
                 if (!current.value.snapshot.host.accountLifetime) {
                     return { kind: 'unavailable', reason: 'host_unavailable' };
                 }
-                const inputHints = await resolveFormConnectedAccountOptions(current.value);
+                const prepared = await prepareFormAction(current.value);
+                if (prepared.kind !== 'resolved') return prepared;
+                const inputHints = await resolveFormConnectedAccountOptions(prepared.value);
                 if ('kind' in inputHints) return inputHints;
                 return {
                     kind: 'form',
-                    action: current.value.descriptor,
-                    form: createForm(current.value, inputHints),
+                    action: prepared.value.descriptor,
+                    form: createForm(prepared.value, inputHints.inputHints, inputHints.nativeChoices, anchor),
                 };
             }
             const submitted = await dispatchResolvedAction(
@@ -1782,6 +1928,8 @@ export function createPluginContributedActionController(params: Readonly<{
                 () => resolveSessionReference(requested).kind === 'resolved',
                 undefined,
                 current.value.descriptor.placement,
+                undefined,
+                anchor,
             );
             return submitted.kind === 'settled'
                 ? {

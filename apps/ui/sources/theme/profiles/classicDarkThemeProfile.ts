@@ -22,7 +22,7 @@ export const classicDarkProfile = createBuiltInProfile('classicDark', 'Classic D
         'chrome.header.foreground': '#ffffff',
         'text.primary': '#ffffff',
         'text.secondary': '#99999d',
-        'text.tertiary': '#747478',
+        'text.tertiary': '#8F8F93',
         'text.link': '#2BACCC',
         'text.destructive': '#FF453A',
         'text.placeholder': '#8E8E93',

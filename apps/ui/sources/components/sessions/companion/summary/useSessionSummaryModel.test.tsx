@@ -1,7 +1,8 @@
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ApprovalRequestV1Schema, buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol';
+import { ApprovalRequestV1Schema} from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { createGitScmCapabilities } from '@happier-dev/protocol/scm/capabilities';
 import { ScmWorkingSnapshotSchema } from '@happier-dev/protocol/scm/workingSnapshot';
 import { SessionAgentActivityHeadlineV1Schema } from '@happier-dev/protocol/sessions/work/agentActivity/agentActivityHeadlineV1';
@@ -136,7 +137,7 @@ describe('useSessionSummaryModel', () => {
         expect(hook.getCurrent().status).toMatchObject({ state: 'stopped', statusText: 'sessionWork.states.stopped' });
         await act(async () => storage.setState({ sessions: { [shellSession.id]: { ...stopped,
             metadata: { ...stopped.metadata!, lifecycleState: 'running' } } } }));
-        expect(hook.getCurrent().status).toMatchObject({ state: 'disconnected', statusText: 'status.offline' });
+        expect(hook.getCurrent().status).toMatchObject({ state: 'disconnected', statusText: 'status.disconnected' });
         await act(async () => storage.setState({ sessions: { [shellSession.id]: session(homeA, {
             latestTurnStatus: 'in_progress', metadata: { ...stopped.metadata!, lifecycleState: 'running' },
         }) } }));

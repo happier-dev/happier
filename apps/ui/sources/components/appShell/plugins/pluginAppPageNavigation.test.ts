@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
-import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 
 import {
@@ -10,18 +10,23 @@ import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/acti
 import type { PluginUiSurfacePlacementProjection } from '@/sync/domains/plugins/ui/projection';
 import type { PluginUiContributionOriginV1 } from '@/sync/domains/plugins/ui/projectionUnion';
 
-import { resolvePluginAppPages, selectPluginAppPagePlacements } from './pluginAppPages';
+import { resolvePluginPages, selectPluginPagePlacements } from '@/components/plugins/pages/pluginPages';
 import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
 import { unionPluginUiProjections } from '@/sync/domains/plugins/ui/projectionUnion';
 import { createPluginSurfaceDestinationNavigationBinding } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
 import { createPluginSurfaceOpenSurfaceHandler } from '@/components/plugins/surfaces/openPluginSurface';
 import {
-    createPluginAppPageLaunchInputStore,
-    createPluginAppPageOpenSurfaceHandler,
-    createPluginAppPageDestinationHandler,
-    resolvePluginAppPageLaunchAuthorities,
-    type PluginAppPageLaunchOpen,
-} from './pluginAppPageNavigation';
+    createPluginPageLaunchInputStore,
+    createPluginPageCatalogActivationHandler,
+    createPluginPageOpenSurfaceHandler,
+    createPluginPageDestinationHandler,
+    resolvePluginPageLaunchAuthorities,
+    type PluginPageLaunchOpen,
+} from '@/components/plugins/pages/pluginPageNavigation';
+import { clearActiveUnsavedChangesGuard, setActiveUnsavedChangesGuard } from '@/utils/navigation/runGuardedNavigation';
+import type { UnsavedChangesDecision } from '@/utils/ui/promptUnsavedChangesAlert';
+
+afterEach(() => clearActiveUnsavedChangesGuard());
 
 // Launch custody/navigation contracts never access the Session-envelope HTTP API.
 vi.mock('@/sync/api/session/sessionDataKeyEnvelopesApi', () => {
@@ -119,7 +124,7 @@ function pageHostOrigin(input: Readonly<{
     };
 }
 
-const pages = resolvePluginAppPages({
+const pages = resolvePluginPages({ target: { kind: 'app' },
     placements: [
         createPagePlacement(),
         createPagePlacement({
@@ -184,7 +189,7 @@ function createHandler() {
         subPath: string;
         input: unknown;
     }>> = [];
-    const open = createPluginAppPageOpenSurfaceHandler({
+    const open = createPluginPageOpenSurfaceHandler({
         pages,
         placements: pages.map((page) => page.placement),
         navigate,
@@ -197,8 +202,8 @@ function createHandler() {
 }
 
 function stageOpen(
-    store: ReturnType<typeof createPluginAppPageLaunchInputStore>,
-    overrides: Partial<PluginAppPageLaunchOpen> = {},
+    store: ReturnType<typeof createPluginPageLaunchInputStore>,
+    overrides: Partial<PluginPageLaunchOpen> = {},
 ): void {
     store.stage({
         authority,
@@ -221,6 +226,73 @@ function authorityWithAccountLifetime(
 }
 
 describe('plugin app page host navigation (EU-5b)', () => {
+    it('settles unsaved edits before replacing launch input or opening another page', async () => {
+        const store = createPluginPageLaunchInputStore();
+        const current = { authority, pageId: NOTES_PAGE_ID, subPath: '', input: { noteId: 'original' } };
+        store.stage(current);
+        const navigate = vi.fn();
+        const dirty = { current: true };
+        const requestDecision = vi.fn<() => Promise<UnsavedChangesDecision>>()
+            .mockResolvedValueOnce('keepEditing').mockResolvedValueOnce('discard');
+        setActiveUnsavedChangesGuard({ isDirtyRef: dirty, requestDecision, tag: 'plugin-page' });
+        const open = createPluginPageOpenSurfaceHandler({
+            pages, placements: pages.map(page => page.placement), navigate,
+            stageLaunchInput: entry => store.stage({ ...entry, authority }),
+        });
+        const request = { destination: { pluginId: NOTES_PLUGIN_ID, localId: 'notes' }, input: { noteId: 'replacement' } };
+        expect(await open(request)).toMatchObject({ ok: false, code: 'unavailable' });
+        expect(navigate).not.toHaveBeenCalled();
+        expect(store.peek(current)?.input).toEqual({ noteId: 'original' });
+        expect(dirty.current).toBe(true);
+
+        expect(await open(request)).toEqual({ ok: true });
+        expect(navigate).toHaveBeenCalledOnce();
+        expect(store.peek(current)?.input).toEqual({ noteId: 'replacement' });
+        expect(dirty.current).toBe(false);
+    });
+
+    it('does not clear a mounted page launch input while catalog departure is awaiting confirmation', async () => {
+        const store = createPluginPageLaunchInputStore();
+        const current = { authority, pageId: NOTES_PAGE_ID, subPath: '', input: { noteId: 'original' } };
+        store.stage(current);
+        const navigate = vi.fn();
+        let decide!: (decision: UnsavedChangesDecision) => void;
+        const decision = new Promise<UnsavedChangesDecision>(resolve => { decide = resolve; });
+        setActiveUnsavedChangesGuard({ isDirtyRef: { current: true }, tag: 'plugin-page',
+            requestDecision: () => decision });
+        const activate = createPluginPageCatalogActivationHandler({
+            navigate,
+            stageLaunchInput: entry => store.stage({ ...entry, authority }),
+        });
+        activate({ id: NOTES_PAGE_ID, routePath: '/notes' });
+        expect(store.peek(current)?.input).toEqual({ noteId: 'original' });
+        expect(navigate).not.toHaveBeenCalled();
+        decide('discard');
+        await vi.waitFor(() => expect(navigate).toHaveBeenCalledWith('/notes'));
+        expect(store.peek(current)?.input).toBeUndefined();
+    });
+
+    it('routes a catalog open even when its cached pathname still names the page root', () => {
+        const navigate = vi.fn();
+        const activate = createPluginPageCatalogActivationHandler({
+            navigate, stageLaunchInput: () => true,
+        });
+        activate({ id: NOTES_PAGE_ID, routePath: '/plugins/acme.notes/notes' });
+        expect(navigate).toHaveBeenCalledWith('/plugins/acme.notes/notes');
+    });
+
+    it('cannot activate an app catalog entry for an otherwise identical Project binding', async () => {
+        const binding = normalizePluginUiDestinationBindingV1({ pluginId: NOTES_PLUGIN_ID, destinationId: 'notes',
+            rendererId: 'notes-renderer', container: 'appPage', target: { kind: 'project' } });
+        if (!binding) throw new Error('Project page binding must be admitted');
+        const placement = createPagePlacement({ binding });
+        const navigate = vi.fn();
+        const open = createPluginPageOpenSurfaceHandler({ target: { kind: 'project', workspaceRefId: 'ref-one' },
+            placements: [placement], pages, navigate, stageLaunchInput: () => true });
+        expect(await open({ destination: { pluginId: NOTES_PLUGIN_ID, localId: 'notes' } }))
+            .toMatchObject({ ok: false, code: 'unavailable' });
+        expect(navigate).not.toHaveBeenCalled();
+    });
     it('opens Browse through the native Session handoff and registered App page before a replica is selected', async () => {
         const pluginId = 'happier.triage';
         const localId = 'triage';
@@ -237,17 +309,17 @@ describe('plugin app page host navigation (EU-5b)', () => {
                 projection: { ...EMPTY_PLUGIN_UI_PROJECTION,
                     surfacePlacementsById: { [placement.id]: placement } } };
         }));
-        const placements = selectPluginAppPagePlacements(union.pluginUiProjection);
+        const placements = selectPluginPagePlacements(union.pluginUiProjection, { container: 'appPage', targetKind: 'app' });
         expect(placements).toHaveLength(1);
         expect(placements[0].hostOrigin).toBeNull();
         expect(placements[0].availability.state).toBe('available');
-        const pages = resolvePluginAppPages({ placements });
-        const authorities = resolvePluginAppPageLaunchAuthorities({ pages, accountLifetime });
-        const store = createPluginAppPageLaunchInputStore();
+        const pages = resolvePluginPages({ target: { kind: 'app' }, placements });
+        const authorities = resolvePluginPageLaunchAuthorities({ pages, accountLifetime });
+        const store = createPluginPageLaunchInputStore();
         const routes: string[] = [];
         const app = createPluginSurfaceDestinationNavigationBinding({ targetKind: 'app', placements, accountLifetime });
-        const unregister = app.registerOwner({ container: 'appPage', handler: createPluginAppPageDestinationHandler({
-            pages, navigate: route => routes.push(route), stageLaunchInput: open => {
+        const unregister = app.registerOwner({ container: 'appPage', handler: createPluginPageDestinationHandler({
+            pages, navigate: route => { routes.push(route); }, stageLaunchInput: open => {
                 const authority = authorities.get(open.pageId);
                 return authority ? store.stage({ ...open, authority }) : false;
             },
@@ -297,6 +369,7 @@ describe('plugin app page host navigation (EU-5b)', () => {
         // the mounted route carries — so an argument addressed to one location
         // cannot be delivered at another.
         expect(staged).toEqual([{
+            target: { kind: 'app' },
             pageId: NOTES_PAGE_ID,
             subPath: 'work/ideas.md',
             input: { noteId: 'a' },
@@ -330,8 +403,8 @@ describe('plugin app page host navigation (EU-5b)', () => {
         // §3.7: an open WITHOUT input REPLACES the previous argument. Staging
         // nothing at all would leave the previous one to be delivered again.
         expect(staged).toEqual([
-            { pageId: NOTES_PAGE_ID, subPath: '', input: { noteId: 'a' } },
-            { pageId: NOTES_PAGE_ID, subPath: '', input: undefined },
+            { target: { kind: 'app' }, pageId: NOTES_PAGE_ID, subPath: '', input: { noteId: 'a' } },
+            { target: { kind: 'app' }, pageId: NOTES_PAGE_ID, subPath: '', input: undefined },
         ]);
     });
 
@@ -363,7 +436,7 @@ describe('plugin app page host navigation (EU-5b)', () => {
 
     it('does not deliver input when the page scope cannot prove the exact selected contribution origin', async () => {
         const navigate = vi.fn();
-        const open = createPluginAppPageOpenSurfaceHandler({
+        const open = createPluginPageOpenSurfaceHandler({
             pages,
             placements: pages.map((page) => page.placement),
             navigate,
@@ -392,6 +465,7 @@ describe('plugin app page host navigation (EU-5b)', () => {
         });
         expect(navigate).toHaveBeenCalledWith(`/plugins/${JOURNAL_PLUGIN_ID}/journal/repair`);
         expect(staged).toEqual([{
+            target: { kind: 'app' },
             pageId: JOURNAL_PAGE_ID,
             subPath: 'repair',
             input: { repair: 'provider-setup' },
@@ -416,8 +490,23 @@ describe('plugin app page host navigation (EU-5b)', () => {
 });
 
 describe('plugin app page launch-input handoff (EU-5b)', () => {
+    it('isolates the same page and location across target kind, exact Project, checkout and Home', () => {
+        const store = createPluginPageLaunchInputStore();
+        const target = { kind: 'project' as const, workspaceRefId: 'ref-one', serverId: 'home-one', rawWorktreeId: 'tree-one' };
+        const open = { authority, target, pageId: NOTES_PAGE_ID, subPath: 'runs/one', input: { secret: 'private' } };
+        expect(store.stage(open)).toBe(true);
+        for (const other of [
+            { kind: 'app' as const }, { ...target, workspaceRefId: 'ref-two' },
+            { ...target, serverId: 'home-two' }, { ...target, rawWorktreeId: 'tree-two' },
+        ]) expect(store.peek({ ...open, target: other })).toBeNull();
+        const delivered = store.peek(open);
+        expect(delivered).toEqual(open);
+        if (!delivered) throw new Error('same target must receive its launch');
+        store.settle(delivered);
+        expect(store.peek(open)).toBeNull();
+    });
     it('maps two pages to their own selected contribution origins, never the app union', () => {
-        const pagesWithDistinctOrigins = resolvePluginAppPages({
+        const pagesWithDistinctOrigins = resolvePluginPages({ target: { kind: 'app' },
             placements: [
                 createPagePlacement({
                     id: `surfacePlacement:${NOTES_PLUGIN_ID}:notes`,
@@ -446,7 +535,7 @@ describe('plugin app page launch-input handoff (EU-5b)', () => {
             ],
         });
 
-        const authorities = resolvePluginAppPageLaunchAuthorities({
+        const authorities = resolvePluginPageLaunchAuthorities({
             pages: pagesWithDistinctOrigins,
             accountLifetime: null,
         });
@@ -474,7 +563,7 @@ describe('plugin app page launch-input handoff (EU-5b)', () => {
     });
 
     it('delivers a pending open only at the location it was addressed to', () => {
-        const store = createPluginAppPageLaunchInputStore();
+        const store = createPluginPageLaunchInputStore();
         stageOpen(store, { subPath: 'work' });
 
         expect(store.peek({ authority, pageId: NOTES_PAGE_ID, subPath: 'work' })?.input)
@@ -484,7 +573,7 @@ describe('plugin app page launch-input handoff (EU-5b)', () => {
     });
 
     it('refuses to deliver an open into a different authority', () => {
-        const store = createPluginAppPageLaunchInputStore();
+        const store = createPluginPageLaunchInputStore();
         stageOpen(store);
 
         const query = { pageId: NOTES_PAGE_ID, subPath: '' } as const;
@@ -497,7 +586,7 @@ describe('plugin app page launch-input handoff (EU-5b)', () => {
     });
 
     it('refuses a same-coordinate input when the selected materialization changes', () => {
-        const store = createPluginAppPageLaunchInputStore();
+        const store = createPluginPageLaunchInputStore();
         store.stage({
             authority: selectedNotesMaterialization,
             pageId: NOTES_PAGE_ID,
@@ -535,7 +624,7 @@ describe('plugin app page launch-input handoff (EU-5b)', () => {
         let accountACurrent = true;
         const authorityA = authorityWithAccountLifetime(accountA);
         const authorityB = authorityWithAccountLifetime(accountB);
-        const store = createPluginAppPageLaunchInputStore();
+        const store = createPluginPageLaunchInputStore();
         const query = { pageId: NOTES_PAGE_ID, subPath: '' } as const;
 
         store.stage({
@@ -563,7 +652,7 @@ describe('plugin app page launch-input handoff (EU-5b)', () => {
             onRetire: () => ({ dispose() {} }),
         } satisfies ActiveServerAccountScopeLifetime;
         const staleAuthority = authorityWithAccountLifetime(accountLifetime);
-        const store = createPluginAppPageLaunchInputStore();
+        const store = createPluginPageLaunchInputStore();
 
         accountCurrent = false;
 
@@ -584,7 +673,7 @@ describe('plugin app page launch-input handoff (EU-5b)', () => {
     });
 
     it('retires an open whose authority has been superseded', () => {
-        const store = createPluginAppPageLaunchInputStore();
+        const store = createPluginPageLaunchInputStore();
         stageOpen(store);
 
         store.retire(nextOccurrence);
@@ -595,16 +684,17 @@ describe('plugin app page launch-input handoff (EU-5b)', () => {
     });
 
     it('retires a pending input when its page no longer has the exact selected origin', () => {
-        const store = createPluginAppPageLaunchInputStore();
+        const store = createPluginPageLaunchInputStore();
         stageOpen(store);
 
-        store.retireOutside([otherMachine]);
+        store.resolveIngressAuthority(new Map([[NOTES_PAGE_ID, otherMachine]]));
 
         expect(store.peek({ authority, pageId: NOTES_PAGE_ID, subPath: '' })).toBeNull();
+        expect(store.peek({ authority: otherMachine, pageId: NOTES_PAGE_ID, subPath: '' })).toBeNull();
     });
 
     it('keeps an open that is still under the current authority', () => {
-        const store = createPluginAppPageLaunchInputStore();
+        const store = createPluginPageLaunchInputStore();
         stageOpen(store);
 
         store.retire(authority);
@@ -614,7 +704,7 @@ describe('plugin app page launch-input handoff (EU-5b)', () => {
     });
 
     it('settles a delivered open so a later navigation cannot inherit it', () => {
-        const store = createPluginAppPageLaunchInputStore();
+        const store = createPluginPageLaunchInputStore();
         stageOpen(store);
         const delivered = store.peek({ authority, pageId: NOTES_PAGE_ID, subPath: '' });
         expect(delivered).not.toBeNull();
@@ -625,7 +715,7 @@ describe('plugin app page launch-input handoff (EU-5b)', () => {
     });
 
     it('never lets a settled predecessor discard the open that replaced it', () => {
-        const store = createPluginAppPageLaunchInputStore();
+        const store = createPluginPageLaunchInputStore();
         stageOpen(store);
         const first = store.peek({ authority, pageId: NOTES_PAGE_ID, subPath: '' });
         stageOpen(store, { input: { noteId: 'b' } });
@@ -637,7 +727,7 @@ describe('plugin app page launch-input handoff (EU-5b)', () => {
     });
 
     it('notifies subscribers on stage, settle and retire', () => {
-        const store = createPluginAppPageLaunchInputStore();
+        const store = createPluginPageLaunchInputStore();
         const listener = vi.fn();
         const unsubscribe = store.subscribe(listener);
 

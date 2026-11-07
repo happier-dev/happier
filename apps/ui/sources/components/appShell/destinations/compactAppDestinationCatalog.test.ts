@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storage';
 import { AppShellPluginUiProjectionValueProvider } from '@/components/appShell/plugins/AppShellPluginUiProjection';
-import type { PluginAppPage } from '@/components/appShell/plugins/pluginAppPages';
+import type { PluginPage } from '@/components/plugins/pages/pluginPages';
 import type { RightSidebarPluginTabDefinition } from '@/components/appShell/rightSidebar/rightSidebarBuiltinTabs';
 import {
     EMPTY_PLUGIN_UI_PROJECTION,
@@ -24,14 +24,20 @@ import { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, 
 import { workspaceDestinationNavigationIdentity } from '@/components/appShell/workspace/workspaceDestinationPolicy';
 import { captureActiveServerAccountScopeLifetime, retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { commitPreferredLanguage, getPreferredLanguage } from '@/text/preferredLanguage';
+import { buildDeploymentEnvironmentHref } from '@/components/projects/deployments/deploymentNavigation';
+import { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { act } from 'react-test-renderer';
 
 import {
+    resolveAppRailBand,
     resolveCompactAppDestinations,
     resolveCurrentAppDestination,
     resolveDestinationRefFromHref,
     hrefForDestinationRef,
     readDestinationInstanceTitle,
     useActivateAppDestination,
+    useCompactAppDestinationCatalog,
     useCompactAppDestinations,
     selectAppDestinationsInPlacement,
     commitCompactAppDestinationSources,
@@ -57,16 +63,72 @@ beforeEach(() => {
     activationBoundary.pushed = [];
     activationBoundary.searchOpens = 0;
     storage.setState(initialStorageState, true);
+    resetServerFeaturesClientForTests();
+    primeServerFeaturesSnapshot({ snapshot: { status: 'ready', features: FeaturesResponseSchema.parse({ features: { bots: { enabled: true }, search: { enabled: true } }, capabilities: {} }) } });
+    storage.getState().applySettingsLocal({ featureToggles: { ...storage.getState().settings.featureToggles, bots: true } });
     storage.getState().applyLocalSettings({
         navigationSurfacePlacementsV1: { appRail: { orderedIds: ['settings', 'sessions'], placements: { sessions: 'hidden', personalize: 'pinned' } } },
     }, { persist: false });
 });
 afterEach(() => {
     standardCleanup();
+    resetServerFeaturesClientForTests();
     storage.setState(initialStorageState, true);
 });
 
 describe('workspace route identity round trips', () => {
+    it('withdraws and restores Search when the Account preference changes in a mounted catalog', async () => {
+        primeServerFeaturesSnapshot({ snapshot: { status: 'ready', features: FeaturesResponseSchema.parse({ features: { search: { enabled: true } }, capabilities: {} }) } });
+        storage.getState().applySettingsLocal({ featureToggles: { ...storage.getState().settings.featureToggles, search: true } });
+        const screen = await renderScreen(React.createElement(CompactCatalogProbe));
+        const read = () => screen.tree.findByType('CompactCatalogProbe' as never).props.destinations as ReturnType<typeof useCompactAppDestinations>;
+        expect(read().some(destination => destination.id === 'search')).toBe(true);
+        await act(async () => { storage.getState().applySettingsLocal({ featureToggles: { ...storage.getState().settings.featureToggles, search: false } }); });
+        expect(read().some(destination => destination.id === 'search')).toBe(false);
+        await act(async () => { storage.getState().applySettingsLocal({ featureToggles: { ...storage.getState().settings.featureToggles, search: true } }); });
+        expect(read().some(destination => destination.id === 'search')).toBe(true);
+    });
+    it('withdraws and restores Bots when the Account preference changes in a mounted catalog', async () => {
+        const screen = await renderScreen(React.createElement(CompactCatalogProbe));
+        const read = () => screen.tree.findByType('CompactCatalogProbe' as never).props.destinations as ReturnType<typeof useCompactAppDestinations>;
+        expect(read().find(destination => destination.id === 'bots')).toBeDefined();
+        await act(async () => { storage.getState().applySettingsLocal({ featureToggles: { ...storage.getState().settings.featureToggles, bots: false } }); });
+        expect(read().find(destination => destination.id === 'bots')).toBeUndefined();
+        await act(async () => { storage.getState().applySettingsLocal({ featureToggles: { ...storage.getState().settings.featureToggles, bots: true } }); });
+        expect(read().find(destination => destination.id === 'bots')).toBeDefined();
+    });
+    it('omits Bots from primary destinations when its feature is off while retaining contextual management', () => {
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { ...ALL_BUILTINS, bots: false, botsRoster: true } });
+        expect(catalog.find(destination => destination.id === 'bots')).toBeUndefined();
+        expect(catalog.find(destination => destination.id === 'store.bots')).toMatchObject({ contextual: true });
+        expect(resolveCompactAppDestinations({ pages: [], builtins: { ...ALL_BUILTINS, bots: true, botsRoster: true } })
+            .find(destination => destination.id === 'bots')).toMatchObject({ availability: 'available' });
+    });
+    it('registers Store Bots as a contextual destination with its own route identity', () => {
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: ALL_BUILTINS });
+        expect(catalog.find(destination => destination.id === 'store.bots')).toMatchObject({
+            contextual: true, activation: 'navigate', routePath: '/plugins/bots',
+        });
+        const ref = resolveDestinationRefFromHref(catalog, '/plugins/bots');
+        expect(ref).toMatchObject({ kind: 'store.bots' });
+        expect(hrefForDestinationRef(catalog, ref!)).toBe('/plugins/bots');
+    });
+    it('round trips a checkout-independent Environment in the existing Projects destination', () => {
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: ALL_BUILTINS });
+        const href = buildDeploymentEnvironmentHref({ serverId: 'home/a', projectSourceId: 'source/a', environmentId: 'env/a' });
+        const target = resolveDestinationRefFromHref(catalog, href);
+        expect(target).toMatchObject({ kind: 'projects', params: { projectSourceId: 'source/a',
+            serverId: 'home/a', deploymentEnvironment: 'env/a' } });
+        expect(target && hrefForDestinationRef(catalog, target)).toBe(href);
+    });
+    it('names the existing plugins destination Store while Settings keeps Plugins and specific pages keep activation', () => {
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: ALL_BUILTINS });
+        const destination = catalog.find(item => item.id === 'plugins');
+        expect(destination).toMatchObject({ id: 'plugins', routePath: '/plugins', title: 'settingsPlugins.surfaces.storeTitle' });
+        expect(resolveDestinationRefFromHref(catalog, '/plugins?view=kind&kind=mcpServer')).toMatchObject({ kind: 'plugins' });
+        expect(readDestinationInstanceTitle(catalog, resolveDestinationRefFromHref(catalog, '/settings/plugins')!))
+            .toBe('settingsPlugins.surfaces.navigationTitle');
+    });
     it('opens the Home Discussion destination and keeps colliding raw IDs in different Homes distinct', () => {
         const catalog = resolveCompactAppDestinations({ pages: [], builtins: { ...ALL_BUILTINS, discussions: true } });
         expect(catalog.find(destination => destination.id === 'discussions')).toMatchObject({
@@ -202,7 +264,7 @@ describe('workspace route identity round trips', () => {
             externalSessions: false, inbox: false, workflows: false, friends: false,
         } });
         const service = { pluginId: 'happier.agent.claude', localId: 'anthropic' };
-        const href = resolveHref(buildConnectedAccountSettingsRoute(service, { kind: 'account', accountId: 'account-a' }));
+        const href = resolveHref(buildConnectedAccountSettingsRoute(service, { kind: 'account', accountId: 'account-a' })!);
         const target = resolveDestinationRefFromHref(catalog, href);
         expect(target).toEqual({ kind: 'settings', params: { ...service, accountId: 'account-a', pageId: 'connected-services/account' } });
         expect(target && hrefForDestinationRef(catalog, target)).toBe('/settings/connected-services/account?pluginId=happier.agent.claude&localId=anthropic&accountId=account-a');
@@ -251,6 +313,8 @@ vi.mock('@/text', async () => {
 });
 
 const page = Object.freeze({
+    target: { kind: 'app' as const },
+    visible: true,
     id: 'plugin:acme.notes:notes',
     pluginId: 'acme.notes',
     descriptorId: 'notes',
@@ -259,9 +323,26 @@ const page = Object.freeze({
     icon: 'note',
     order: 40,
     disabledReason: null,
-    placement: {} as PluginAppPage['placement'],
+    placement: {} as PluginPage['placement'],
     routePath: '/plugins/acme.notes/notes',
-} satisfies PluginAppPage);
+} satisfies PluginPage);
+
+describe('a plugin page presenting another of its views', () => {
+    it('names the view its route carries before the page mounts (cold load of `?view=`)', () => {
+        // A plugin page that presents a sibling view a lens apart writes `?view=` into its route (LIST-R2). On a cold
+        // load nothing has mounted to publish a title, so the static title is the only one shown: it must be the view's.
+        const tasks = { ...page, id: 'plugin:acme.notes:tasks', descriptorId: 'tasks', localId: 'tasks', label: 'Tasks',
+            routePath: '/plugins/acme.notes/tasks' } satisfies PluginPage;
+        const catalog = resolveCompactAppDestinations({ builtins: ALL_BUILTINS, pages: [page, tasks] });
+        const viewed = resolveDestinationRefFromHref(catalog, '/plugins/acme.notes/notes/tasks,mine?view=tasks');
+        expect(viewed && readDestinationInstanceTitle(catalog, viewed)).toBe('Tasks');
+        // No view, or a view the plugin does not declare, keeps the page's own name.
+        const plain = resolveDestinationRefFromHref(catalog, '/plugins/acme.notes/notes/tasks,mine');
+        expect(plain && readDestinationInstanceTitle(catalog, plain)).toBe('Notes');
+        const unknown = resolveDestinationRefFromHref(catalog, '/plugins/acme.notes/notes?view=missing');
+        expect(unknown && readDestinationInstanceTitle(catalog, unknown)).toBe('Notes');
+    });
+});
 
 const appSidebarTab = Object.freeze({
     id: 'plugin:acme.review:review-panel',
@@ -307,19 +388,22 @@ function CompactCatalogProbe() {
 }
 
 const ALL_BUILTINS = Object.freeze({
+    search: true,
     externalSessions: true,
     inbox: true,
     workflows: true,
     friends: false,
+    bots: true,
 });
 const CORE_BUILTINS = Object.freeze({
+    search: true,
     externalSessions: false,
     inbox: false,
     workflows: false,
     friends: false,
 });
 
-function pageWith(localId: string, extra: Partial<PluginAppPage> = {}): PluginAppPage {
+function pageWith(localId: string, extra: Partial<PluginPage> = {}): PluginPage {
     return Object.freeze({
         ...page,
         id: `plugin:acme.${localId}:${localId}` as const,
@@ -335,27 +419,38 @@ function pageWith(localId: string, extra: Partial<PluginAppPage> = {}): PluginAp
 const ids = (destinations: readonly { id: string }[]) => destinations.map((destination) => destination.id);
 
 describe('resolveCompactAppDestinations', () => {
+    it('publishes equal catalogs by identity and only replaces the page whose metadata changed', () => {
+        const pages = [pageWith('notes'), pageWith('journal')];
+        const baseline = resolveCompactAppDestinations({ builtins: ALL_BUILTINS, pages });
+        expect(resolveCompactAppDestinations({ builtins: ALL_BUILTINS, pages: pages.map(page => ({ ...page })), baseline })).toBe(baseline);
+        const changed = resolveCompactAppDestinations({ builtins: ALL_BUILTINS, pages: [pages[0]!, { ...pages[1]!, label: 'Changed' }], baseline });
+        expect(changed.filter(row => !baseline.includes(row))).toHaveLength(1);
+        expect(changed.find(row => row.id === pages[0]!.id)).toBe(baseline.find(row => row.id === pages[0]!.id));
+    });
     it('lists every built-in shell destination in the one catalog, each with its placement', () => {
         const destinations = resolveCompactAppDestinations({ builtins: ALL_BUILTINS, pages: [] });
         expect(destinations.map((destination) => [destination.id, destination.placement])).toEqual([
+            // Owner Q8 (2026-10-30): the app's own entries stand in bands — Work, Together, Library.
             ['sessions', { kind: 'rail', region: 'app' }],
             ['search', { kind: 'rail', region: 'app' }],
             ['inbox', { kind: 'rail', region: 'app' }],
             ['projects', { kind: 'rail', region: 'app' }],
             // One Workflows destination (FIN 04 §3.1): there is no Automations row.
             ['workflows', { kind: 'rail', region: 'app' }],
-            // Together precedes Library (owner Q8).
+            // Bots last of Together, with its rail pins under it (lab `b-rail A`).
             ['bots', { kind: 'rail', region: 'app' }],
             // Boards (INT §5.1): its own column listing the user's boards.
             ['boards', { kind: 'rail', region: 'app' }],
             // Artifacts (RU2 §9.6): a full page over the Account Artifact store, after Boards.
             ['artifacts', { kind: 'rail', region: 'app' }],
             ['browseExistingSessions', { kind: 'column', column: 'sessions' }],
+            ['store.bots', { kind: 'column', column: 'plugins' }],
             ['plugins', { kind: 'rail', region: 'plugins' }],
             // The Machines page's rail door, drawn on the rail by its own footer control (plan 10 §4.2).
             ['machines', { kind: 'rail', region: 'account' }],
             ['settings', { kind: 'rail', region: 'account' }],
             ['personalize', { kind: 'rail', region: 'account' }],
+            ['bot-template', { kind: 'rail', region: 'account' }],
         ]);
         expect(destinations.find((destination) => destination.id === 'machines'))
             .toMatchObject({ column: 'machines', routePath: '/machines', activation: 'navigate', railControl: 'footer' });
@@ -365,9 +460,18 @@ describe('resolveCompactAppDestinations', () => {
         expect(destinations.find((destination) => destination.id === 'boards')).toMatchObject({ column: 'boards', routePath: '/boards' });
         expect(destinations.find((destination) => destination.id === 'artifacts')).toMatchObject({ routePath: '/artifacts', activation: 'navigate' });
         expect(destinations.find((destination) => destination.id === 'artifacts')).not.toHaveProperty('column');
-        // Gated built-ins are omitted; the local Bots overlay remains honestly unavailable until its leaf mounts.
+        // Feature-disabled built-ins are omitted, including the Bots roster.
         expect(ids(resolveCompactAppDestinations({ builtins: CORE_BUILTINS, pages: [] })))
-            .toEqual(['sessions', 'search', 'projects', 'bots', 'boards', 'artifacts', 'plugins', 'machines', 'settings', 'personalize']);
+            .toEqual(['sessions', 'search', 'projects', 'boards', 'artifacts', 'store.bots', 'plugins', 'machines', 'settings', 'personalize', 'bot-template']);
+        const everything = resolveCompactAppDestinations({ builtins: { ...ALL_BUILTINS, friends: true, discussions: true }, pages: [pageWith('notes', { requestedPlacement: { kind: 'rail' } })] });
+        expect(everything.filter(destination => destination.placement.kind === 'rail')
+            .map(destination => [destination.id, resolveAppRailBand(destination)])).toEqual([
+            ['sessions', 'work'], ['search', 'work'], ['inbox', 'work'], ['projects', 'work'], ['workflows', 'work'],
+            ['discussions', 'together'], ['friends', 'together'], ['bots', 'together'],
+            ['boards', 'library'], ['artifacts', 'library'],
+            ['plugins', 'plugins'], ['plugin:acme.notes:notes', 'plugins'],
+            ['machines', 'account'], ['settings', 'account'], ['personalize', 'account'], ['bot-template', 'account'],
+        ]);
     });
 
     it('places a plugin page on the rail or in a named column, and falls back to the rail for a column this host lacks', () => {
@@ -442,9 +546,9 @@ describe('resolveCompactAppDestinations', () => {
                     destination: { pluginId: 'acme.review', localId: 'review-page' },
                     renderer: sharedRenderer,
                 },
-            } as unknown as PluginAppPage['placement'],
+            } as unknown as PluginPage['placement'],
             routePath: '/plugins/acme.review/review-page',
-        } satisfies PluginAppPage);
+        } satisfies PluginPage);
         const sameSurfaceTab = Object.freeze({
             ...appSidebarTab,
             placement: {
@@ -489,7 +593,7 @@ describe('resolveCompactAppDestinations', () => {
         });
         const plugins = destinations.filter((destination) => destination.placement.kind === 'rail' && destination.placement.region === 'plugins');
         expect(ids(plugins)).toEqual(['plugins', 'plugin:acme.eager:eager', 'plugin:acme.late:late']);
-        const sessionsColumn = destinations.filter((destination) => destination.placement.kind === 'column');
+        const sessionsColumn = destinations.filter((destination) => destination.placement.kind === 'column' && destination.placement.column === 'sessions');
         expect(ids(sessionsColumn)).toEqual(['browseExistingSessions', 'plugin:acme.prompts:prompts']);
     });
 });
@@ -617,6 +721,16 @@ describe('catalog destination instances', () => {
             expect(resolveDestinationRefFromHref(catalog, `/projects/workspace-1/${alias}`)).toBeNull();
             expect(hrefForDestinationRef(catalog, { kind: 'project', params: { workspaceRefId: 'workspace-1', pageId: alias } })).toBeNull();
         }
+    });
+    it('keeps qualified plugin page locations under the exact Project identity, including unavailable pages', () => {
+        for (const workspaceRefId of ['workspace-1', 'workspace-2']) {
+            const href = `/projects/${workspaceRefId}/plugins/acme.tools/builds/runs/42?serverId=home-b&worktreeId=checkout-a`;
+            const ref = resolveDestinationRefFromHref(catalog, href);
+            expect(ref).toMatchObject({ kind: 'project', params: { workspaceRefId, pluginId: 'acme.tools', localId: 'builds',
+                pageId: 'plugins/acme.tools/builds/runs/42', serverId: 'home-b', worktreeId: 'checkout-a' } });
+            expect(hrefForDestinationRef(catalog, ref!)).toBe(href);
+        }
+        expect(resolveDestinationRefFromHref(catalog, '/projects/workspace-1/plugins/acme.tools/builds/runs/%2E%2E')).toBeNull();
     });
     it('preserves an addressed setting when a page is opened from search', () => {
         const href = '/settings/appearance?setting=theme#theme';
@@ -807,6 +921,48 @@ describe('committed compact destination catalog', () => {
         }
     });
 
+    it('keeps each builtin variant identity through an equal projection republish when the other variant re-subscribes first', () => {
+        const previousRuntime = getAppliedActiveServerSnapshot();
+        const previousAvailability = isAppliedActiveServerRuntimeAvailable();
+        const scope = { serverId: 'home-a', accountId: 'catalog-account-variants' };
+        const unsubscribe: Array<() => void> = [];
+        try {
+            storage.getState().activateProfileScope(scope);
+            publishAppliedActiveServerSnapshot({ serverId: scope.serverId, serverUrl: 'https://home-a.test', generation: 22 });
+            const lifetime = captureActiveServerAccountScopeLifetime();
+            if (!lifetime) throw new Error('Expected active catalog Account');
+            const sources = (projection: typeof EMPTY_PLUGIN_UI_PROJECTION) => ({
+                withBots: { projection, accountLifetime: lifetime, ready: true, locale: 'en', builtins: { ...CORE_BUILTINS, bots: true, botsRoster: true } } satisfies CompactAppDestinationSources,
+                withoutBots: { projection, accountLifetime: lifetime, ready: true, locale: 'en', builtins: { ...CORE_BUILTINS, bots: true, botsRoster: false } } satisfies CompactAppDestinationSources,
+            });
+            const first = sources({ ...EMPTY_PLUGIN_UI_PROJECTION });
+            let releaseWithBots = subscribeCompactAppDestinations(first.withBots, () => {});
+            commitCompactAppDestinationSources(first.withBots);
+            let releaseWithoutBots = subscribeCompactAppDestinations(first.withoutBots, () => {});
+            commitCompactAppDestinationSources(first.withoutBots);
+            const initialWithBots = readCommittedCompactAppDestinations(first.withBots);
+            const initialWithoutBots = readCommittedCompactAppDestinations(first.withoutBots);
+            expect(initialWithBots.find(row => row.id === 'bots')?.availability).toBe('available');
+            expect(initialWithoutBots.find(row => row.id === 'bots')?.availability).toBe('unavailable');
+            // The plugin UI projection republishes with equal content: each mounted
+            // consumer re-subscribes to the new source in render-commit order.
+            const second = sources({ ...EMPTY_PLUGIN_UI_PROJECTION });
+            releaseWithBots();
+            releaseWithBots = subscribeCompactAppDestinations(second.withBots, () => {});
+            commitCompactAppDestinationSources(second.withBots);
+            releaseWithoutBots();
+            releaseWithoutBots = subscribeCompactAppDestinations(second.withoutBots, () => {});
+            commitCompactAppDestinationSources(second.withoutBots);
+            unsubscribe.push(releaseWithBots, releaseWithoutBots);
+            expect(readCommittedCompactAppDestinations(second.withBots)).toBe(initialWithBots);
+            expect(readCommittedCompactAppDestinations(second.withoutBots)).toBe(initialWithoutBots);
+        } finally {
+            for (const release of unsubscribe) release();
+            retireActiveServerAccountScopeLifetime();
+            publishAppliedActiveServerSnapshot(previousRuntime, previousAvailability);
+        }
+    });
+
     it('shares declaration preparation across builtin variants and publishes the ready locale without serving unready sources', () => {
         const previousLanguage = getPreferredLanguage();
         const placement = createProjectedAppPage();
@@ -852,6 +1008,35 @@ describe('committed compact destination catalog', () => {
 });
 
 describe('useCompactAppDestinations', () => {
+    it.each([
+        { reader: 'rows', useCatalog: useCompactAppDestinations },
+        { reader: 'first Account admission', useCatalog: function useAdmissionRows() { return useCompactAppDestinationCatalog().destinations; } },
+    ])('does not force a second render for an equal declaration publication ($reader)', async ({ useCatalog }) => {
+        const observations: ReturnType<typeof useCompactAppDestinations>[] = [];
+        function Probe() {
+            const catalog = useCatalog();
+            observations.push(catalog);
+            return null;
+        }
+        const child = React.createElement(Probe);
+        const value = {
+            interactionEnabled: true, pluginBrowserProjection: null, phase: 'current' as const,
+            machineId: 'machine-a', serverId: 'home-a', platform: 'web' as const, accountLifetime: null,
+            clientExecutableActivation: { status: 'ready' as const },
+            reloadClientExecutables: () => {}, reloadConnectedAccountProjection: () => {},
+            pluginUiProjection: { ...EMPTY_PLUGIN_UI_PROJECTION, generation: 1 },
+        };
+        const render = (generation: number) => React.createElement(AppShellPluginUiProjectionValueProvider,
+            { value: { ...value, pluginUiProjection: { ...value.pluginUiProjection, generation } }, children: child });
+        const screen = await renderScreen(render(1));
+        const initial = observations.at(-1)!;
+        expect(initial.length).toBeGreaterThan(0);
+        observations.length = 0;
+        await screen.update(render(2));
+        expect(observations).toHaveLength(1);
+        expect(observations[0]).toBe(initial);
+    });
+
     it('shares catalog construction across consumers and performs no traversal while unchanged consumers render', async () => {
         const placement = createProjectedAppPage();
         let traversals = 0;
