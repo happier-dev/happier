@@ -79,6 +79,20 @@ function createSession(active: boolean) {
 }
 
 describe('activatePendingInactiveSession', () => {
+  it('settles an unavailable connected account pool with a closed cause and no private profile data', async () => {
+    vi.mocked(fetchSessionByIdCompat).mockResolvedValue(createSession(false));
+    vi.mocked(readPendingQueueV2ActivationEligibilityFromServer).mockResolvedValue('eligible');
+    const result = await activatePendingInactiveSession({ credentials: tokenOnlyCredentials, machineId: 'machine-1',
+      sessionId: 'session-1', requestId: 'pending-after-ui-death', pendingVersion: 9,
+      spawnSessionForInternalResume: async () => ({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+        errorMessage: 'private provider message', errorDetail: { kind: 'launch_error', code: 'no_eligible_member',
+          message: 'private provider message', connectedAccountPool: { serviceId: 'happier.agent.codex/openai-codex',
+            excluded: [{ profileId: 'private-profile', reason: 'auth_invalid' }] } } }) });
+    const failureDetails = { reason: 'spawn-rejected', spawnErrorCode: 'SPAWN_VALIDATION_FAILED', runtimeReason: 'no_eligible_member' };
+    expect(result).toEqual({ status: 'rejected', reason: 'spawn-rejected', failureDetails });
+    expect(reportPendingSessionActivationFailure).toHaveBeenCalledWith({ token: 'token-only', sessionId: 'session-1',
+      requestId: 'pending-after-ui-death', requestedAt: 10, failureCode: 'runtime_start_failed', failureDetails });
+  });
   it('settles a refused connected account with its closed cause so the Session can lead to signing in again', async () => {
     vi.mocked(fetchSessionByIdCompat).mockResolvedValue(createSession(false));
     vi.mocked(readPendingQueueV2ActivationEligibilityFromServer).mockResolvedValue('eligible');
@@ -97,12 +111,15 @@ describe('activatePendingInactiveSession', () => {
   it('retains a retryable transport spawn refusal as waiting without copying its private message', async () => {
     vi.mocked(fetchSessionByIdCompat).mockResolvedValue(createSession(false));
     vi.mocked(readPendingQueueV2ActivationEligibilityFromServer).mockResolvedValue('eligible');
+    let spawnAttempts = 0;
     const result = await activatePendingInactiveSession({ credentials: tokenOnlyCredentials, machineId: 'machine-1',
       sessionId: 'session-1', requestId: 'pending-after-ui-death', pendingVersion: 9,
-      spawnSessionForInternalResume: async () => ({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+      retryAfterEndpointPublication: Promise.resolve(true),
+      spawnSessionForInternalResume: async () => { spawnAttempts++; return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
         runtimeFailureReason: 'transport_unavailable',
-        errorMessage: 'secret credential and transcript' }) });
+        errorMessage: 'secret credential and transcript' }; } });
     expect(result).toEqual({ status: 'not-needed', reason: 'spawn-retryable' });
+    expect(spawnAttempts).toBe(1);
     expect(reportPendingSessionActivationFailure).not.toHaveBeenCalled();
     expect(JSON.stringify(result)).not.toContain('secret');
   });

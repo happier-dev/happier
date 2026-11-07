@@ -27,207 +27,72 @@ import type { TrackedSession } from '@/daemon/types';
 import { createSpawnedSession } from './createSpawnedSession';
 import { buildSessionSpawnInitialInputAdmissionForLocalIdV1 } from './sessionInputAdmissionIdentity';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
-import { awaitTrackedRunnerAgentSessionOpen } from '@/daemon/agentRuntime/runnerAgentSessionOpenAttestation';
-import { createMachineSessionSpawnRpcHandler } from '@/session/actions/sessionLifecycleActions';
-import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
-import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
-import { accountSettingsParse, createActionExecutor } from '@happier-dev/protocol';
 import { buildSessionMetadataEnvelopeCreateFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
-import { buildCommittedLaunchMetadata } from '@/agent/runtime/createSessionMetadata';
 import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
 import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
-import { resolveAgentDisplayTitle } from '@/agent/catalog/agentDisplayTitle';
-import { readSessionStartupFailurePreview } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
-import { SessionTeamCredentialLaunchUnavailableError } from './sessionTeamCredentialLaunch';
+import { assertStartupFailureThroughCli } from './createSpawnedSession.startupFailure.testkit';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
 import { SessionTurnMutationV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1';
 import { reportSessionRunnerFailure } from '@/cli/resolveSessionRunnerFailureExitCode';
 import { readSessionRunnerFailureCause } from '@/session/shared/spawnSessionContract';
 import { logger } from '@/ui/logger';
+import { SessionTeamCredentialLaunchUnavailableError } from './sessionTeamCredentialLaunchError';
 
 afterEach(() => { vi.unstubAllEnvs(); reloadConfiguration(); });
 
 describe('durable creation after daemon startup refusal', () => {
     it.each([
+        ['agent_startup_failed', 'returned'], ['agent_startup_failed', 'nonce'],
+        ['agent_cli_not_runnable', 'returned'],
+        ['broker_unavailable', 'returned'],
+    ] as const)('retains the typed startup cause after the webhook (%s, %s)', async (code, settlementKind) => {
+        const failureCause = code === 'broker_unavailable'
+            ? { code, phase: 'authentication', failureReason: 'unknown' } as const
+            : { code: code === 'agent_cli_not_runnable' ? 'EACCES' : code, phase: 'client_start',
+            failureReason: code === 'agent_cli_not_runnable' ? 'permission_denied' : 'unclassified_provider_error' } as const;
+        const error = code === 'broker_unavailable' ? new SessionTeamCredentialLaunchUnavailableError(code)
+            : new PluginError({ code, message: 'PRIVATE_NATIVE_STARTUP_BODY',
+            details: { failureCause, path: '/PRIVATE_NATIVE_HOME', token: 'PRIVATE_NATIVE_TOKEN' } });
+        await assertStartupFailureThroughCli({ preparationCode: code, settlementKind,
+            expectedFailureCause: failureCause, publishFailure: async persist => {
+                // Match the real construction catch: classify the native error,
+                // then publish through the turn lifecycle's persistence boundary.
+                const lifecycle = createSessionTurnLifecycle({ session: { sessionId: 'c1234567890123456789012345',
+                    enqueueSessionTurnMutation: async mutation => { await persist(SessionTurnMutationV1Schema.parse(mutation)); },
+                } });
+                try {
+                    await lifecycle.failTurn({ issue: classifyPrimarySessionRuntimeIssue({
+                        cause: 'session_error', error, provider: 'codex',
+                    }), allocateWhenIdle: true });
+                } finally { lifecycle.dispose(); }
+                // Use the real console formatter, including its leading/trailing
+                // newlines, rather than inventing a daemon stderr record.
+                const stderr = new PassThrough();
+                let output = '';
+                stderr.on('data', chunk => { output += String(chunk); });
+                const writer = new Console({ stdout: stderr, stderr });
+                const consoleError = vi.spyOn(console, 'error').mockImplementation(writer.error.bind(writer));
+                const file = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
+                const fatal = vi.spyOn(logger, 'fatal').mockImplementation(() => {});
+                try { expect(reportSessionRunnerFailure(error)).toBe(1); }
+                finally { consoleError.mockRestore(); file.mockRestore(); fatal.mockRestore(); stderr.end(); }
+                expect(readSessionRunnerFailureCause(output)).toEqual(failureCause);
+                expect(output).not.toMatch(/PRIVATE_/);
+            } });
+    });
+    it.each([
         [null, 'returned'], [null, 'nonce'],
         ['agent_cli_not_runnable', 'returned'], ['agent_cli_not_runnable', 'nonce'],
         ['plugin_mcp_preparation_unavailable', 'returned'], ['plugin_mcp_preparation_unavailable', 'nonce'],
-        ['broker_unavailable', 'returned'], ['broker_unavailable', 'nonce'],
-        ['agent_startup_failed', 'returned'], ['agent_startup_failed', 'nonce'],
-    ] as const)('preserves the same creation refusal (%s, %s) after its runner exits before native startup despite published Activity and hostPid', async (preparationCode, settlementKind) => {
-        const home = await mkdtemp(join(tmpdir(), 'happier-native-startup-failure-'));
-        const sessionId = 'c1234567890123456789012345';
-        const machineId = 'machine-native-startup-failure';
-        const credentials = { token: 'fixture-token', encryption: null } as const;
-        const failureCause = preparationCode === 'agent_startup_failed'
-            ? { code: 'agent_startup_failed', phase: 'client_start', failureReason: 'unclassified_provider_error' } as const
-            : preparationCode === 'agent_cli_not_runnable'
-                ? { code: 'EACCES', phase: 'client_start', failureReason: 'permission_denied' } as const : undefined;
-        let operationSequence = 0;
-        const operations = createHostActionOperationRuntime({ machineId, resolveAccountId: async () => 'fixture-account',
-            generateOperationId: () => `native-startup-${++operationSequence}` });
-        let row: ReturnType<typeof createCurrentSessionProjectionRecordFixture> | null = null;
-        const runners: ReturnType<typeof spawn>[] = [];
-        const tracked = new Map<number, TrackedSession>();
-        let launches = 0;
-        let nonceReads = 0;
-        let admittedInputs = 0;
-        let nativeStartupFailure: Extract<SpawnSessionResult, { type: 'error' }> | null = null;
-        const unknownRequests: string[] = [];
-        resetServerFeaturesClientForTests();
-        // HTTP/authentication and the OS child process are the only replaced
-        // boundaries; retained operation custody, native-open observation and
-        // same-key creation/rejoin all run their production implementations.
-        vi.stubGlobal('fetch', vi.fn(async value => String(value).endsWith('/v1/features')
-            ? Response.json({ features: {}, capabilities: { encryption: { storagePolicy: 'optional', allowAccountOptOut: true, defaultAccountMode: 'plain' } } })
-            : Response.json({ id: 'fixture-account' })));
-        vi.spyOn(axios, 'get').mockImplementation(async url => String(url).includes('/v1/access-keys/')
-            ? { status: 200, data: { accessKey: 'fixture-existing-binding' } }
-            : String(url).includes('/v2/sessions/') ? { status: 200, data: { session: row } }
-                : { status: 200, data: createAccountEncryptionCurrentnessFixture() });
-        vi.spyOn(axios, 'post').mockImplementation(async url => {
-            if (String(url).endsWith('/lookup-by-tags')) return { status: 200, data: { sessions: row ? [row] : [] } };
-            if (String(url).endsWith(`/sessions/${sessionId}/pending`)) {
-                admittedInputs += 1;
-                return { status: 200, data: { didWrite: true } };
-            }
-            unknownRequests.push(String(url));
-            throw new Error(`Unexpected native startup HTTP request ${url}`);
-        });
-        const handler = createMachineSessionSpawnRpcHandler({ handlers: {
-            spawnSession: async options => {
-                launches += 1;
-                tracked.clear();
-                const child = spawn(process.execPath, ['-e', 'process.exit(1)'], { stdio: 'ignore' });
-                runners.push(child);
-                if (!child.pid) throw new Error('Missing fixture runner pid');
-                tracked.set(child.pid, { pid: child.pid, startedBy: 'daemon', happySessionId: sessionId,
-                    childProcess: child, processStartTimeMs: Date.now() });
-                const fields = buildSessionMetadataEnvelopeCreateFields({ credentials, accountEncryptionMode: 'plain',
-                    storedContentMode: 'plain', agentState: null, metadata: {
-                        ...buildCommittedLaunchMetadata({ options, directory: home }), hostPid: child.pid,
-                    } });
-                row = createCurrentSessionProjectionRecordFixture({ ...createSessionNotificationContextFixture(sessionId),
-                    encryptionMode: 'plain', share: null, active: false, archivedAt: null,
-                    runtimeActivityState: 'idle', runtimeActivityActiveCount: 0,
-                    runtimeActivityObservedAt: 1, runtimeActivityRevision: 1,
-                    metadataLayoutVersion: fields.metadataLayoutVersion, metadata: fields.sharedMetadata.ciphertext,
-                    ownerMetadata: fields.ownerMetadata, dataEncryptionKey: null });
-                SessionLookupByTagsResponseV2Schema.parse({ sessions: [row] });
-                if (failureCause) {
-                    const error = new PluginError({ code: preparationCode!, message: 'PRIVATE_NATIVE_STARTUP_BODY',
-                        details: { failureCause, path: '/PRIVATE_NATIVE_HOME', token: 'PRIVATE_NATIVE_TOKEN' } });
-                    // The real construction catch publishes through this same lifecycle.
-                    const lifecycle = createSessionTurnLifecycle({ session: { sessionId,
-                        enqueueSessionTurnMutation: async value => {
-                            const mutation = SessionTurnMutationV1Schema.parse(value);
-                            if (mutation.action === 'fail') {
-                                expect(mutation.issue.failureCause).toEqual(failureCause);
-                                if (!row) throw new Error('Startup failure preceded Session custody');
-                                row = { ...row, latestTurnStatus: 'failed', lastRuntimeIssue: mutation.issue };
-                                SessionLookupByTagsResponseV2Schema.parse({ sessions: [row] });
-                            }
-                        },
-                    } });
-                    try {
-                        await lifecycle.failTurn({ issue: classifyPrimarySessionRuntimeIssue({
-                            cause: 'session_error', error, provider: 'codex',
-                        }), allocateWhenIdle: true });
-                    } finally { lifecycle.dispose(); }
-                    // Capture bytes from the actual console formatter, including newlines.
-                    const stderr = new PassThrough();
-                    let output = '';
-                    stderr.on('data', chunk => { output += String(chunk); });
-                    const writer = new Console({ stdout: stderr, stderr });
-                    const consoleError = vi.spyOn(console, 'error').mockImplementation(writer.error.bind(writer));
-                    const file = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
-                    const fatal = vi.spyOn(logger, 'fatal').mockImplementation(() => {});
-                    try { expect(reportSessionRunnerFailure(error)).toBe(1); }
-                    finally { consoleError.mockRestore(); file.mockRestore(); fatal.mockRestore(); stderr.end(); }
-                    expect(readSessionRunnerFailureCause(output)).toEqual(failureCause);
-                    expect(output).not.toMatch(/PRIVATE_/);
-                }
-                return { type: 'success', sessionId };
-            },
-            stopSession: async () => ({ status: 'not_found' }),
-        }, awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ ...input, getTrackedSessions: () => [...tracked.values()],
-            readStartupFailure: async () => failureCause ? row?.lastRuntimeIssue ?? null : preparationCode ? classifyPrimarySessionRuntimeIssue({
-                cause: 'session_error', ...(preparationCode === 'agent_cli_not_runnable' ? { provider: 'codex' } : {}), error: preparationCode === 'broker_unavailable'
-                    ? new SessionTeamCredentialLaunchUnavailableError(preparationCode) : { code: preparationCode }, occurredAt: Date.now(),
-            }) : null,
-        }) });
-        const executor = createActionExecutor(createCliActionDeps({ token: credentials.token, credentials,
-            sessionId: 'cli-global', mode: 'plain', ctx: null, rawSession: {}, serverId: 'fixture-home',
-            serverHttpBaseUrl: 'https://fixture.example.test',
-            actionsSettingsProvider: createActionSettingsProvider({ accountSettings: accountSettingsParse({}) }),
-            sessionSpawnDirectTargetTransport: { machineId,
-                prepare: async () => ({ ok: true, directory: home, directoryKind: 'managed', directoryCreationRequired: false, checkout: null }),
-                spawnedSession: { spawn: async (request, options) => {
-                    try {
-                        const result = await handler(request, options);
-                        if (settlementKind === 'nonce' && result.type === 'error') {
-                            nativeStartupFailure = result;
-                            return { success: true, status: 'pending', sessionIdStatus: 'pending', spawnNonce: request.spawnNonce };
-                        }
-                        return result;
-                    }
-                    catch (error) { expect(error).toMatchObject({ code: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED }); throw error; }
-                },
-                    // The physical launch nonce is already successful; the
-                    // subsequent native startup refusal belongs to the Action.
-                    resolveSpawnSessionByNonce: async () => {
-                        nonceReads += 1;
-                        if (settlementKind === 'returned') return { status: 'success', sessionId };
-                        if (!nativeStartupFailure?.errorCode) throw new Error('Missing native startup settlement');
-                        return { status: 'error', errorCode: nativeStartupFailure.errorCode,
-                            errorMessage: nativeStartupFailure.errorMessage, agentId: nativeStartupFailure.agentId, errorDetail: nativeStartupFailure.errorDetail };
-                    } },
-            } }));
-        const input = { creationKey: 'native-exit', executionTarget: { serverId: 'fixture-home', machineId },
-            directory: { kind: 'managed' as const },
-            agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
-            initialInput: { text: 'Must wait for a native runner' }, initialTriggers: [],
-            connectedServices: { v: 2 as const, bindingsByServiceId: {} }, memoryEnabled: false };
-        const invoke = () => operations.observeExecution({ actionId: 'session.spawn_new', input,
-            actionRequestId: input.creationKey, execute: context => executor.execute('session.spawn_new', input,
-                { ...context, surface: 'cli', authority: 'present_user', serverId: 'fixture-home',
-                    presentUserConfirmation: { actionId: 'session.spawn_new' } }) });
-        try {
-            await invoke();
-            const first = await operations.handlers.getV2({ operationId: 'native-startup-1', waitForTerminal: true });
-            const nonRetryable = preparationCode === 'agent_cli_not_runnable';
-            const launchError = { code: preparationCode ?? 'SPAWN_FAILED', message: readSessionStartupFailurePreview(preparationCode,
-                nonRetryable ? resolveAgentDisplayTitle('codex') : null) ?? 'Agent runner exited before native Session startup completed',
-                ...(failureCause ? { failureCause } : {}) };
-            expect(first).toMatchObject({ kind: 'found', operation: { result: { type: 'error', code: 'spawn_failed',
-                launchError } } });
-            if (first.kind !== 'found') throw new Error('Missing startup operation');
-            expect(SessionSpawnNewResultV1Schema.parse(first.operation.result)).toMatchObject({ type: 'error',
-                code: 'spawn_failed', launchError });
-            expect(JSON.stringify(first.operation.result)).not.toMatch(/PRIVATE_/);
-            expect(launches).toBe(1);
-            const settledNonceReads = nonceReads;
-            const repeated = await invoke();
-            if (nonRetryable) {
-                expect(repeated).toMatchObject({ ok: true, result: { type: 'error', code: 'spawn_failed', retryable: false, launchError } });
-                expect(operationSequence).toBe(1);
-                expect(nonceReads).toBe(settledNonceReads);
-            }
-            expect(await operations.handlers.getV2({ operationId: nonRetryable ? 'native-startup-1' : 'native-startup-2', waitForTerminal: true }))
-                .toMatchObject({ kind: 'found', operation: { result: { type: 'error', code: 'spawn_failed',
-                    launchError } } });
-            expect(launches).toBe(1);
-            expect(admittedInputs).toBe(0);
-            expect(row).toMatchObject({ id: sessionId });
-            expect(unknownRequests).toEqual([]);
-        } finally {
-            await Promise.all(runners.map(async child => {
-                if (child.exitCode === null && child.signalCode === null) await once(child, 'exit');
-            }));
-            vi.restoreAllMocks(); vi.unstubAllGlobals(); resetServerFeaturesClientForTests();
-            await rm(home, { recursive: true, force: true });
-        }
+        ['provider_endpoint_unavailable', 'returned'], ['provider_endpoint_unavailable', 'nonce'],
+        ['connected_service_credential_reconnect_required', 'returned'], ['connected_service_credential_reconnect_required', 'nonce'],
+        ['provider_compatibility_unverified', 'returned'], ['provider_compatibility_unverified', 'nonce'],
+        ['plugin_services_managed_provider_authority_unavailable', 'returned'],
+        ['agent_startup_transport_failed', 'returned'],
+        ['opened', 'returned'],
+    ] as const)('preserves the exact native startup outcome (%s, %s) independently of committed progress', async (preparationCode, settlementKind) => {
+        await assertStartupFailureThroughCli({ preparationCode, settlementKind });
     });
     it.each([
         ['matched', 'returned'], ['conflicting', 'returned'], ['absent', 'returned'], ['matched', 'nonce'],

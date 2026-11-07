@@ -12,9 +12,10 @@ import { readSessionAccessProjectionRoleV1 } from '@happier-dev/protocol/session
 import type { AdmittedRequesterSessionBootstrap } from '../sessionEncryption/requesterSessionCredentials';
 import type { SessionInputMachineTargetV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import type { CurrentMachineExecutionOriginContext } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
-import { isSessionSpawnBrokerUnavailable, SpawnFailureSpawnErrorDetailSchema } from '@happier-dev/protocol/spawnSession';
-import type { SpawnFailureV1 } from '@happier-dev/protocol/machines/processes/spawnFailureV1';
+import { isSessionSpawnBrokerUnavailable, normalizeSpawnSessionErrorDetail } from '@happier-dev/protocol/spawnSession';
+import { readSessionAutoResumeRefusalV1 } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
 import { readConnectedServiceUxDiagnosticFromError } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
+import type { SpawnFailureV1 } from '@happier-dev/protocol/machines/processes/spawnFailureV1';
 import type { RequesterWorkAttributionV1 } from '../lifecycle/requesterWorkAttribution';
 import type { PendingActivationAuthorizationV1, PendingActivationFailureDetailsV1 } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
 
@@ -60,13 +61,13 @@ type PendingInactiveSessionActivationParams = Readonly<{
   requestId: string;
   pendingVersion: number;
   spawnSessionForInternalResume: PendingSessionResumePort;
+  /** This discovery pass may revisit a broker refusal once its endpoint is acknowledged. */
+  retryAfterEndpointPublication?: Promise<boolean>;
   /** Supplied only by the canonical requester runtime resolver, never a pending hint. */
   requester?: Pick<AdmittedRequesterSessionBootstrap, 'attribution' | 'serverHttpBaseUrl' | 'isCurrent'>;
   expectedTarget?: SessionInputMachineTargetV1;
   resolveCurrentMachineExecutionOriginContext?: () => Promise<CurrentMachineExecutionOriginContext | null>;
   onActivationRejected?: (event: PendingInactiveSessionActivationRejected) => Promise<void>;
-  /** A definite cold preparation refusal, with freshly recovered requester authority. */
-  preparationFailed?: boolean;
 }>;
 
 export async function activatePendingInactiveSession(params: PendingInactiveSessionActivationParams): Promise<PendingInactiveSessionActivationResult> {
@@ -166,10 +167,9 @@ async function activateAtAdmittedHome(params: PendingInactiveSessionActivationPa
     return { status: 'not-needed', reason: 'pending-resolved' };
   }
   if (pendingEligibility === 'ineligible') return await rejectTerminal('ineligible');
-  if (params.preparationFailed && params.requester) return await rejectTerminal('identity-unavailable');
 
   const accountEncryptionCurrentness = await fetchAccountEncryptionCurrentness({
-    token: params.credentials.token,
+    credentials: params.credentials, token: params.credentials.token,
   });
   if (!await isCurrent()) return { status: 'not-needed', reason: 'authorization-stale' };
 
@@ -252,28 +252,39 @@ async function activateAtAdmittedHome(params: PendingInactiveSessionActivationPa
     requesterWorkAttributionV1: params.requester.attribution,
     verifyRequesterMachineAdmissionCurrent: isCurrent,
   } : options, { requestId: finalAuthorization.requestId, requestedAt: finalAuthorization.requestedAt });
-  const failureDetail = result.type === 'error' ? SpawnFailureSpawnErrorDetailSchema.safeParse(result.errorDetail).data : undefined;
+  const errorDetail = result.type === 'error' ? normalizeSpawnSessionErrorDetail(result.errorDetail) : null;
+  const failureDetail = errorDetail?.kind === 'spawn_failure' ? errorDetail : undefined;
   const failure = failureDetail ? { reason: failureDetail.reason, ...(failureDetail.errno ? { errno: failureDetail.errno } : {}) } : undefined;
-  // A connected account's closed refusal travels with the failure so the Session can lead to its recovery.
   const credentialCause = result.type === 'error' ? readConnectedServiceUxDiagnosticFromError(result)?.code : undefined;
-  const runtimeReason = credentialCause === 'connected_service_credential_reconnect_required'
-    || credentialCause === 'connected_service_credential_refresh_unavailable'
-    ? credentialCause : result.type === 'error' ? result.runtimeFailureReason : undefined;
+  const runtimeReason = errorDetail?.kind === 'launch_error' && errorDetail.code === 'no_eligible_member'
+    ? 'no_eligible_member'
+    : credentialCause === 'connected_service_credential_reconnect_required'
+      || credentialCause === 'connected_service_credential_refresh_unavailable'
+      ? credentialCause : result.type === 'error' ? result.runtimeFailureReason : undefined;
   if (
     (result.type === 'error' && result.errorCode === SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT)
     || (result.type === 'success' && result.sessionId !== params.sessionId)
   ) {
     return { status: 'not-needed', reason: 'spawn-ambiguous' };
   }
-  if (result.type === 'error'
-    && (result.errorCode === SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE
-      || result.errorCode === SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED
-      && result.runtimeFailureReason === 'transport_unavailable'
-      || isSessionSpawnBrokerUnavailable(result))) {
+  const brokerUnavailable = result.type === 'error' && isSessionSpawnBrokerUnavailable(result);
+  if (brokerUnavailable && await params.retryAfterEndpointPublication) {
+    // Re-enter the existing activation owner for this exact demand, without
+    // repeating discovery or waiting for other Sessions' recovery to settle.
+    return activatePendingInactiveSession({ ...params, retryAfterEndpointPublication: undefined });
+  }
+  if (result.type === 'error' && (
+    result.errorCode === SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE
+    || result.errorCode === SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED && (
+      result.runtimeFailureReason === 'transport_unavailable'
+      || readSessionAutoResumeRefusalV1(result.errorDetail) !== null
+    )
+    || brokerUnavailable
+  )) {
     return { status: 'not-needed', reason: 'spawn-retryable' };
   }
   if (result.type === 'error' && result.errorCode === SPAWN_SESSION_ERROR_CODES.SESSION_DIRECTORY_MISSING) {
-    return await rejectTerminal('session-directory-missing', failure, result.errorCode, result.runtimeFailureReason);
+    return await rejectTerminal('session-directory-missing', failure, result.errorCode, runtimeReason);
   }
   if (result.type !== 'success') return await rejectTerminal('spawn-rejected', failure, result.type === 'error' ? result.errorCode : undefined,
     runtimeReason);

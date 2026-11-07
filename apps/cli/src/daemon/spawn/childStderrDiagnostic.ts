@@ -1,5 +1,5 @@
 import { trimBugReportTextHeadToMaxBytes, trimBugReportTextToMaxBytes } from '@happier-dev/protocol/bugs/reports/redaction';
-import { SESSION_SPAWN_CHILD_STDERR_MAX_BYTES, type SessionSpawnLaunchErrorV1 } from '@happier-dev/protocol/spawnSession';
+import { isSessionSpawnBrokerUnavailable, SESSION_SPAWN_CHILD_STDERR_MAX_BYTES, type SessionSpawnLaunchErrorV1 } from '@happier-dev/protocol/spawnSession';
 import { sanitizeConnectedServiceDiagnosticString } from '../connectedServices/runtimeAuth/sanitizeConnectedServiceDiagnosticString';
 import { readSessionRunnerFailureCause, SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
 import type { ChildExit } from '../sessions/onChildExited';
@@ -82,8 +82,13 @@ export function buildChildExitBeforeWebhookFailure(
     message, childExit,
     ...(input.failureCause ? { failureCause: input.failureCause } : {}),
   } satisfies SessionSpawnLaunchErrorV1;
-  return { type: 'error' as const, errorCode: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK,
-    errorMessage: message, errorDetail };
+  const failureWithTypedCause = { type: 'error' as const, errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
+    errorMessage: message, errorDetail: { ...errorDetail, code: input.failureCause?.code ?? errorDetail.code } };
+  // Keep the existing broker classifier authoritative for Pending recovery,
+  // including a runner that could not register its webhook before construction failed.
+  return isSessionSpawnBrokerUnavailable(failureWithTypedCause) ? failureWithTypedCause
+    : { type: 'error' as const, errorCode: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK,
+      errorMessage: message, errorDetail };
 }
 
 export function formatChildExitBeforeWebhookMessage(input: Readonly<{

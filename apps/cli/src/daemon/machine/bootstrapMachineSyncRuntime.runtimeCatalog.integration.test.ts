@@ -1,13 +1,3 @@
-import { createRequesterSessionCredentialCustody } from '../sessionEncryption/requesterSessionCredentials';
-import { access } from 'node:fs/promises';
-import { spawn } from 'node:child_process';
-import { once } from 'node:events';
-import { readProcessIdentityByPid } from '../processIdentity';
-import { isSessionRunnerActive } from '../sessions/isSessionRunnerActive';
-import type { TrackedSession } from '../types';
-import { MachineInstallationProofV1Schema, verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
-import { SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
-import { z } from 'zod/mini';
 import { describe, expect, it, vi } from 'vitest';
 import fastify from 'fastify';
 import {
@@ -64,6 +54,7 @@ import { createLocalServicePreviewRoutes } from '@/daemon/local/services/preview
 import { createLocalServicePreviewRegistry } from '@/daemon/local/services/preview/registry';
 import { createCliRegistryHostV1 } from '@/registries/createCliRegistryHost';
 import { DEFAULT_MEMORY_SETTINGS } from '@/settings/memorySettings';
+import { RuntimeAuthRecoveryScheduler } from '../connectedServices/runtimeAuth/RuntimeAuthRecoveryScheduler';
 
 import { buildUnavailableMemoryEmbeddingsDiagnostics } from '../memory/resolveOperationalMemoryEmbeddingsSettings';
 import type { MemoryWorkerHandle } from '../memory/memoryWorker';
@@ -90,11 +81,23 @@ import { createDirectTransferServerLifecycle } from '@/machines/transfer/directT
 import { reserveEphemeralPort } from '@/testkit/http/portUtils';
 import { withConfiguredDaemonTestHome } from '../testkit/fakeDaemonLifecycle.testkit';
 import { readSessionMarkerForPid, writeSessionMarker } from '../sessionRegistry';
+import { createRequesterSessionCredentialCustody } from '../sessionEncryption/requesterSessionCredentials';
+import { access } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { readProcessIdentityByPid } from '../processIdentity';
+import { isSessionRunnerActive } from '../sessions/isSessionRunnerActive';
+import type { TrackedSession } from '../types';
 import { SessionMetadataTuplePatchV1Schema } from '@happier-dev/protocol';
+import { MachineInstallationProofV1Schema, verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
+import { SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
+import { z } from 'zod/mini';
 import { readOrCreateInstallationIdentitySync } from '@/daemon/identity/store';
 import { SESSION_FOLLOW_ZERO_FRONTIER_V1 } from '@happier-dev/protocol/sessions/follow/sessionFollowFrontierV1';
-import { SessionFollowObserveInactiveResponseV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowTransportV1';
-import { createSessionFollowOccurrenceDispatcher } from '@/agent/runtime/session/follow/sessionFollowOccurrenceDispatcher';
+import { SessionFollowObserveInactiveResponseV1Schema, SessionFollowObserveSourceRoutesRequestV1Schema, SessionFollowObserveSourceRoutesResponseV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowTransportV1';
+import { SessionFollowInputV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
+import { createSessionFollowOccurrenceDispatcher } from '@/agent/runtime/session/follow/sessionFollowOccurrenceDispatcher.testkit';
+import { normalizeSessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 
 type ConnectedApiMachineForBootstrap = NonNullable<Awaited<ReturnType<BootstrapMachineSyncRuntimeParams['createConnectedApiMachine']>>>;
 
@@ -442,7 +445,7 @@ describe('bootstrapMachineSyncRuntime', () => {
             } finally { await retireMachineSyncRuntimeAttempt(runtime); restoreHttp(); await app.close(); }
         });
     });
-    it('resumes an absent Follow receiver without authored Pending on reconnect and daemon recreation', async () => {
+    it('admits the exact terminal Turn and resumes an absent Follow receiver on reconnect and daemon recreation', async () => {
         await withConfiguredDaemonTestHome({ prefix: 'bootstrap-follow-wake-' }, async ({ homeDir }) => {
             const accountId = 'follow-wake-account';
             const machineId = 'follow-wake-machine';
@@ -464,6 +467,7 @@ describe('bootstrapMachineSyncRuntime', () => {
                 observed: { ...SESSION_FOLLOW_ZERO_FRONTIER_V1, turn: { id: 'failed-source-turn', status: 'failed' } } };
             const observationReads: unknown[] = [];
             const acknowledged: unknown[] = [];
+            const admittedTurns: ReturnType<typeof SessionFollowInputV1Schema.parse>[] = [];
             let listReads = 0;
             let homeAvailable = true;
             let targetAdmitted = true;
@@ -472,9 +476,16 @@ describe('bootstrapMachineSyncRuntime', () => {
             const app = fastify();
             app.get('/v1/account/encryption/currentness', async () => ({ mode: 'plain', version: 1,
                 signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }));
-            app.get('/v2/account/session-follow-rules', async () => ({ rules: [] }));
+            app.get('/v2/account/session-follow-rules', async () => ({ rules: [{
+                ruleId: 'source-discovery', version: 1, receiver: { kind: 'session', sessionId: destinationSessionId },
+                sources: [{ sourceSessionId, delivered: SESSION_FOLLOW_ZERO_FRONTIER_V1 }],
+                content: { t: 'plain', v: { v: 1, enabled: true,
+                    filter: normalizeSessionListFilterV1({ homeServerIds: [target.homeId], scope: 'all_accessible',
+                        show: 'sessions', startedBy: ['you', 'agents', 'triggers'] }), policy: { preset: 'important' } } },
+            }] }));
             app.get('/v2/account/session-follow-preferences', async () => ({ assigned: false, direct: false, team: false, group: false }));
             app.get(`/v2/sessions/${destinationSessionId}/follows/sessions`, async () => ({ sources: [] }));
+            app.get(`/v2/sessions/${destinationSessionId}/delivery-mutes`, async () => ({ scopes: [] }));
             app.get('/v2/sessions', async () => { listReads += 1; return { sessions: [destination], nextCursor: null, hasNext: false }; });
             app.get(`/v2/sessions/${destinationSessionId}`, async () => ({ session: destination }));
             app.get(`/v2/sessions/${sourceSessionId}`, async () => {
@@ -484,7 +495,26 @@ describe('bootstrapMachineSyncRuntime', () => {
             });
             app.get(`/v1/sessions/${sourceSessionId}/messages`, async () => ({ messages: [], hasMore: false,
                 nextBeforeSeq: null, nextAfterSeq: null }));
+            // Home HTTP is the boundary: terminal recovery now verifies one
+            // Turn original and uses ordinary generated Pending before resume.
+            app.post(`/v2/sessions/${sourceSessionId}/follows/occurrence-routes`, async request => {
+                expect(SessionFollowObserveSourceRoutesRequestV1Schema.parse(request.body)).toEqual({
+                    v: 1, destinationSessionId, sourceTurn: { id: 'failed-source-turn', status: 'failed' },
+                });
+                return SessionFollowObserveSourceRoutesResponseV1Schema.parse({ ok: true, v: 1,
+                    sourceSessionId, routes: [observation] });
+            });
+            app.post(`/v2/sessions/${destinationSessionId}/pending`, async request => {
+                const body = request.body;
+                if (!body || typeof body !== 'object') throw new Error('Missing generated Follow input');
+                const delivery = SessionFollowInputV1Schema.parse(Reflect.get(body, 'followDeliveryV1'));
+                expect(delivery).toEqual({ v: 1, delivery: 'wake', event: { kind: 'failed_or_stopped' },
+                    original: { sourceSessionId, sourceTurn: { id: 'failed-source-turn', status: 'failed' } } });
+                admittedTurns.push(delivery);
+                return { didWrite: true };
+            });
             app.post(`/v2/sessions/${destinationSessionId}/follows/inactive-observations`, async (request, reply) => {
+                expect(request.headers['x-happier-request-purpose']).toBe('session-follow:receiver-recovery');
                 observationReads.push(request.body);
                 if (!homeAvailable) return reply.code(503).send({ error: 'unavailable' });
                 if (!targetAdmitted) return { ok: false, v: 1, error: 'forbidden' };
@@ -500,9 +530,11 @@ describe('bootstrapMachineSyncRuntime', () => {
             try {
                 // Recreate only the daemon composition; durable Home observations stay unchanged.
                 for (let daemonAttempt = 0; daemonAttempt < 2; daemonAttempt += 1) {
+                    destination = { ...destination, active: false };
                     let running = false;
                     let requesterUnavailable = false;
                     let changedSession: Parameters<ConnectedApiMachineForBootstrap['onSessionChanged']>[0] | undefined;
+                    let followChanged: Parameters<ConnectedApiMachineForBootstrap['onSessionFollowRulesChanged']>[0] | undefined;
                     let connectOptions: { onConnect?: () => Promise<void> | void } | undefined;
                     const transport = { ...createApiMachineTransportFixture(),
                         setRPCHandlers: vi.fn(emptyMachineRpcLifecycleRegistration), registerLiveStreamRelayRoutes: vi.fn(),
@@ -512,6 +544,11 @@ describe('bootstrapMachineSyncRuntime', () => {
                         onSessionChanged: vi.fn((listener: NonNullable<typeof changedSession>) => {
                             changedSession = listener;
                             return () => { changedSession = undefined; };
+                        }),
+                        onSessionFollowRulesChanged: vi.fn((listener: NonNullable<typeof followChanged>) => {
+                            // The bootstrap also registers the Discussion event presenter.
+                            followChanged ??= listener;
+                            return () => { followChanged = undefined; };
                         }),
                         emitExternalSessionTranscriptUpdate: vi.fn(), sendMachineTransferEnvelope: vi.fn(),
                         sendTransferRelayV2Envelope: vi.fn(), sendMachineLiveStreamRelayEnvelope: vi.fn(),
@@ -525,6 +562,7 @@ describe('bootstrapMachineSyncRuntime', () => {
                         expect(options.executionAuthorization).toBeUndefined();
                         launches.push(destinationSessionId);
                         running = true;
+                        destination = { ...destination, active: true };
                         return { type: 'success', sessionId: destinationSessionId };
                     };
                     const dispatcher = createSessionFollowOccurrenceDispatcher({ accountId, credentials, serverId: target.homeId,
@@ -546,9 +584,14 @@ describe('bootstrapMachineSyncRuntime', () => {
                         spawnSession: async () => { throw new Error('Automatic Follow must not use person Resume'); },
                         stopSession: async () => ({ status: 'stopped' }), isSessionAlreadyRunning: async () => running,
                         resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: target.homeId, machineId }),
-                        dispatchSessionFollowOccurrence: async request => 'observations' in request
-                            ? await dispatcher.dispatchReceiverRange(request)
-                            : { coveredEvents: [], receiverSessionIds: [] },
+                        dispatchSessionFollowOccurrence: async request => {
+                            if ('observations' in request) return dispatcher.dispatchReceiverRange(request);
+                            if ('sourceSessionIdChanged' in request) return {
+                                receiverSessionIds: await dispatcher.readReceiverSessionIds(request.sourceSessionIdChanged),
+                            };
+                            if ('accountFollowSourcesChanged' in request) return dispatcher.dispatchAccountSourceRange(request.accountFollowSourcesChanged);
+                            throw new Error('Unexpected Follow request in receiver recovery');
+                        },
                         readRequesterSessionCredentialBindings: async () => ({ status: 'ready', bindings: requesterUnavailable ? [{
                             sessionId: destinationSessionId, attribution: { serverId: 'requester-home', accountId: 'requester-account', machineId, installationId },
                         }] : [] }),
@@ -576,18 +619,32 @@ describe('bootstrapMachineSyncRuntime', () => {
                         // daemon below proves the exact change-feed wake path.
                         if (daemonAttempt === 0) {
                             await connectOptions.onConnect();
+                            expect(admittedTurns.length).toBeGreaterThan(0);
                             expect(launches).toHaveLength(1);
                         }
                         const launchesBeforeChanges = launches.length;
                         expect(changedSession).toBeTypeOf('function');
                         if (!changedSession) throw new Error('Exact changed Session subscription missing');
+                        if (!followChanged) throw new Error('Exact Follow subscription missing');
+                        const observationCount = observationReads.length;
+                        for (let cursor = 1; cursor <= 100; cursor++) {
+                            await changedSession({ sessionId: destinationSessionId, cursor });
+                        }
+                        vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval'] });
+                        try { await vi.advanceTimersByTimeAsync(60_000); }
+                        finally { vi.useRealTimers(); }
+                        expect(observationReads, 'unrelated Session arrivals and an idle minute do not observe Follow')
+                            .toHaveLength(observationCount);
+                        expect(launches).toHaveLength(launchesBeforeChanges);
+                        const pushFollowChange = () => followChanged!({ full: false, workflowRunIds: [],
+                            receiverSessionIds: [destinationSessionId] });
                         homeAvailable = false;
-                        await expect(Promise.resolve(changedSession({ sessionId: destinationSessionId, cursor: 0 })))
+                        await expect(Promise.resolve(pushFollowChange()))
                             .rejects.toThrow(/inactive Session Follow observation/);
                         homeAvailable = true;
                         requesterUnavailable = true;
                         const readsBeforeUnavailableRequester = observationReads.length;
-                        await changedSession({ sessionId: destinationSessionId, cursor: 1 });
+                        await pushFollowChange();
                         expect(observationReads).toHaveLength(readsBeforeUnavailableRequester);
                         requesterUnavailable = false;
                         const scansBeforeUnrelatedChange = listReads;
@@ -595,20 +652,40 @@ describe('bootstrapMachineSyncRuntime', () => {
                         expect(listReads).toBe(scansBeforeUnrelatedChange);
                         expect(launches).toHaveLength(launchesBeforeChanges);
                         targetAdmitted = false;
-                        await changedSession({ sessionId: destinationSessionId, cursor: 2 });
+                        await pushFollowChange();
                         expect(launches).toHaveLength(launchesBeforeChanges);
                         targetAdmitted = true;
                         holdDuringHydration = true;
-                        await changedSession({ sessionId: destinationSessionId, cursor: 3 });
+                        await pushFollowChange();
                         expect(launches).toHaveLength(launchesBeforeChanges);
                         holdDuringHydration = false;
                         destination = { ...destination, metadata: JSON.stringify(metadata) };
-                        await changedSession({ sessionId: destinationSessionId, cursor: 4 });
+                        const observationsBeforeSourceChange = observationReads.length;
+                        await pushFollowChange();
+                        expect(observationReads, 'one real Follow invalidation demands one observation')
+                            .toHaveLength(observationsBeforeSourceChange + 1);
+                        expect(launches).toHaveLength(daemonAttempt + 1);
                         await connectOptions.onConnect();
+                        const readsBeforeSourceDiscovery = observationReads.length;
+                        const admissionsBeforeSourceDiscovery = admittedTurns.length;
+                        await changedSession({ sessionId: sourceSessionId, cursor: 101 });
+                        expect(observationReads, 'a known private-rule source uses its narrow range, not receiver-wide recovery')
+                            .toHaveLength(readsBeforeSourceDiscovery);
+                        expect(admittedTurns.length, 'source discovery still reaches real original admission')
+                            .toBeGreaterThan(admissionsBeforeSourceDiscovery);
+                        await changedSession({ sessionId: 'c123456789012345678901236', cursor: 102 });
+                        expect(observationReads, 'a source with no admitted range does not observe the receiver')
+                            .toHaveLength(readsBeforeSourceDiscovery);
+                        vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval'] });
+                        try { await vi.advanceTimersByTimeAsync(60_000); }
+                        finally { vi.useRealTimers(); }
+                        expect(observationReads, 'settled source discovery has no periodic receiver recovery')
+                            .toHaveLength(readsBeforeSourceDiscovery);
                     } finally { dispatcher.dispose(); await retireMachineSyncRuntimeAttempt(runtime); }
                 }
                 expect(observationReads).toContainEqual({ v: 1, machineId, installationId });
                 expect(launches).toEqual([destinationSessionId, destinationSessionId]);
+                expect(admittedTurns.length).toBeGreaterThanOrEqual(2);
                 // A launch is not accepted native input. The resumed host retains hydration,
                 // dispatch/currentness and source-progress ACK responsibility.
                 expect(acknowledged).toEqual([]);
@@ -962,6 +1039,7 @@ describe('bootstrapMachineSyncRuntime', () => {
         }));
         const memoryWorker: MemoryWorkerHandle = {
             stop: vi.fn(),
+            waitForReady: async () => {},
             reloadSettings: vi.fn(async () => {}),
             clearIndex: vi.fn(async () => {}),
             ensureUpToDate: vi.fn(async () => {}),
@@ -1289,8 +1367,28 @@ describe('bootstrapMachineSyncRuntime', () => {
         expect(afterRetirement).not.toHaveBeenCalled();
     });
 
-    it('updates server-work connectivity and rebinds retained usage custody on every online transition', async () => {
+    it('updates server-work connectivity and rebinds retained usage custody on every online transition', async ({ onTestFinished }) => {
         usageLimitRecoveryMutationCustodyMocks.bindRecoveredJournals.mockClear();
+        const presentation = new RuntimeAuthRecoveryScheduler({ nowMs: () => Date.now(),
+            recover: async () => { throw new Error('Terminal presentation must not recover a Provider'); } });
+        onTestFinished(() => presentation.dispose());
+        let receiverAvailable = false;
+        let presentationRequests = 0;
+        let admittedPresentations = 0;
+        await presentation.beginClassifiedFailure({ reportId: 'runtime-auth-report:bootstrap-presentation',
+            sessionId: 'presentation-session', switchesThisTurn: 0,
+            classification: { kind: 'usage_limit', serviceId: 'happier.agent.codex/openai-codex', profileId: 'fixture',
+                groupId: null, resetsAtMs: null, planType: null, rateLimits: null, source: 'structured_provider_error' } });
+        await presentation.cancel({ sessionId: 'presentation-session' });
+        const unavailable = createDeferred<void>();
+        presentation.schedulePendingVisibleEventDrain({ delayMs: 0, onError: () => unavailable.resolve(),
+            // External Session delivery boundary; the presentation scheduler remains real.
+            deliver: async () => {
+                presentationRequests += 1;
+                if (!receiverAvailable) throw Object.assign(new Error('Session unavailable'), { code: 'session_unavailable' });
+                admittedPresentations += 1;
+            } });
+        await unavailable.promise;
         let quiescing = false;
         let connectionStateListener: ((state: ManagedConnectionState) => void) | null = null;
         const pauseExternalSessionPassiveFollow = vi.fn(async () => {});
@@ -1379,6 +1477,7 @@ describe('bootstrapMachineSyncRuntime', () => {
         await bootstrapMachineSyncRuntime(Object.assign(params, {
             setDaemonServerWorkOnline,
             onMachineConnectionOnline,
+            wakeRuntimeAuthRecoveryPresentation: (sessionId?: string) => presentation.wakePendingVisibleEventDrain(sessionId),
         }));
 
         const applyConnectionState = requireManagedConnectionStateListener(connectionStateListener);
@@ -1410,6 +1509,23 @@ describe('bootstrapMachineSyncRuntime', () => {
         expect(resumeExternalSessionPassiveFollow).toHaveBeenCalledTimes(1);
         expect(automationWorker.pause).toHaveBeenCalledTimes(1);
         expect(automationWorker.resume).toHaveBeenCalledTimes(1);
+
+        await new Promise(resolve => setTimeout(resolve, 0));
+        const beforeReceiverChange = presentationRequests;
+        const sessionChanged = fakeConnectedApiMachine.onSessionChanged.mock.calls[0]?.[0];
+        if (!sessionChanged) throw new Error('Expected installed Session feed boundary');
+        await sessionChanged({ sessionId: 'presentation-session', cursor: 1,
+            followSourceChanged: false, followReceiverAvailabilityChanged: false });
+        await sessionChanged({ sessionId: 'unrelated-session', cursor: 2,
+            followSourceChanged: false, followReceiverAvailabilityChanged: true });
+        await new Promise(resolve => setTimeout(resolve, 0));
+        expect(presentationRequests).toBe(beforeReceiverChange);
+        receiverAvailable = true;
+        await sessionChanged({ sessionId: 'presentation-session', cursor: 3,
+            followSourceChanged: false, followReceiverAvailabilityChanged: true });
+        await vi.waitFor(() => expect(admittedPresentations).toBe(1));
+        expect(presentationRequests).toBe(beforeReceiverChange + 1);
+        expect(presentation.readForSession('presentation-session')[0].pendingVisibleEvents ?? []).toEqual([]);
 
         quiescing = true;
         applyConnectionState(createManagedConnectionState('offline'));
@@ -1472,10 +1588,12 @@ describe('bootstrapMachineSyncRuntime', () => {
             await publicationReceipt;
             return 'published' as const;
         });
-        const refreshAssignments = vi.fn(async () => {});
+        const catchUp = vi.fn(async () => {});
+        const firstMetadataPublicationStarted = createDeferred<void>();
         const firstMetadataPublication = createDeferred<'suppressed'>();
         const updateMachineMetadata = vi.fn(async () => {
             if (updateMachineMetadata.mock.calls.length === 1) {
+                firstMetadataPublicationStarted.resolve();
                 return await firstMetadataPublication.promise;
             }
             return 'published' as const;
@@ -1526,8 +1644,8 @@ describe('bootstrapMachineSyncRuntime', () => {
             attachTransferRuntimeStatePublisher,
             startAutomationWorkerForMachine: vi.fn((): AutomationWorkerHandle => ({
                 stop: vi.fn(),
-                refreshAssignments,
-                catchUp: refreshAssignments,
+                refreshAssignments: vi.fn(async () => {}),
+                catchUp,
                 pause: vi.fn(),
                 resume: vi.fn(),
                 handleServerUpdate: vi.fn(),
@@ -1594,14 +1712,17 @@ describe('bootstrapMachineSyncRuntime', () => {
                 }),
             }));
             expect(updateDaemonState).toHaveBeenCalled();
-            expect(refreshAssignments).not.toHaveBeenCalled();
+            // Endpoint admission runs first. Its suppression began shutdown,
+            // so unrelated reconnect work must respect the existing stop signal.
+            expect(catchUp).not.toHaveBeenCalled();
             expect(updateMachineMetadata).not.toHaveBeenCalled();
             expect(daemonState).not.toHaveProperty('peerMediation');
             expect(updateDaemonState).toHaveBeenCalledTimes(1);
 
             quiescing = false;
             const firstConnectionPublicationsResume = result.resumeMachineConnectionPublications();
-            await vi.waitFor(() => expect(updateMachineMetadata).toHaveBeenCalledTimes(1));
+            await firstMetadataPublicationStarted.promise;
+            expect(updateMachineMetadata).toHaveBeenCalledTimes(1);
             const joiningConnectionPublicationsResume = result.resumeMachineConnectionPublications();
             firstMetadataPublication.resolve('suppressed');
             await Promise.all([firstConnectionPublicationsResume, joiningConnectionPublicationsResume]);
@@ -1634,7 +1755,7 @@ describe('bootstrapMachineSyncRuntime', () => {
                 transfer: existingTransferState,
                 peerMediation: { loopback: { endpoint: { ...endpoint, expiresAt: now + 600_000 } } },
             });
-            expect(refreshAssignments).toHaveBeenCalledTimes(2);
+            expect(catchUp).toHaveBeenCalledTimes(2);
             expect(updateMachineMetadata).toHaveBeenCalledTimes(2);
             // An owner withdrawal arriving while the earlier advert is being
             // published must drain after its receipt, without waiting for reconnect.
@@ -3044,7 +3165,6 @@ describe('bootstrapMachineSyncRuntime', () => {
                 const identity = await readProcessIdentityByPid(child.pid!);
                 if (!identity) throw new Error('Successor process identity unavailable');
                 successorState.tracked.processStartTimeMs = identity.processStartTimeMs;
-                successorState.tracked.processCommandHash = identity.processCommandHash;
             }
             orphanSessionActive = successorState.tracked !== null;
             return { v: 1 as const, status: successorState.tracked ? 'superseded' as const : 'closed' as const, sessionId: 'startup-orphan' };

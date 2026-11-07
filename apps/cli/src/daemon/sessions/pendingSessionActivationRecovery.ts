@@ -5,6 +5,7 @@ import { fetchSessionsPage as fetchSessionsPageDefault } from '@/session/transpo
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import type { RawSessionListRow } from '@/session/transport/http/sessionsHttp';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { reportPendingSessionActivationFailure } from '@/api/session/pendingActivationTransport';
 import type { AdmittedRequesterSessionBootstrap, RequesterSessionCredentialBinding, RequesterSessionRuntimeContext,
   ResolveRequesterSessionRuntimeContext, ReleaseRequesterSessionRuntimeContext } from '../sessionEncryption/requesterSessionCredentials';
 import type { CurrentMachineExecutionOriginContext } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
@@ -30,11 +31,13 @@ export async function activateRequesterPendingSession(params: Readonly<{
   resolveCurrentMachineExecutionOriginContext(): Promise<CurrentMachineExecutionOriginContext | null>;
   onActivationRejected?: (event: PendingInactiveSessionActivationRejected) => Promise<void>;
   spawnSessionForInternalResume: PendingSessionResumePort;
+  retryAfterEndpointPublication?: Promise<boolean>;
 }>): Promise<void> {
   const { binding, hint } = params;
   if (binding.attribution.machineId !== params.machineId) return;
-  const activate = async (bootstrap: AdmittedRequesterSessionBootstrap, context?: RequesterSessionRuntimeContext) => {
-    const isCurrent = () => context ? context.isCurrent() : bootstrap.isCurrent();
+  const activate = async (context: RequesterSessionRuntimeContext) => {
+    const { bootstrap } = context;
+    const isCurrent = () => context.isCurrent();
     if (!await isCurrent()) return;
     const current = await readRequesterPendingSessionActivation({ sessionId: binding.sessionId, bootstrap,
       resolveCurrentMachineExecutionOriginContext: params.resolveCurrentMachineExecutionOriginContext });
@@ -43,19 +46,42 @@ export async function activateRequesterPendingSession(params: Readonly<{
     const result = await activatePendingInactiveSession({ credentials: bootstrap.credentials,
       machineId: params.machineId, sessionId: current.sessionId, requestId: current.requestId,
       pendingVersion: hint?.pendingVersion ?? current.pendingVersion, requester: bootstrap,
-      expectedTarget: current.target, preparationFailed: context === undefined,
+      retryAfterEndpointPublication: params.retryAfterEndpointPublication,
+      expectedTarget: current.target,
       resolveCurrentMachineExecutionOriginContext: params.resolveCurrentMachineExecutionOriginContext,
       onActivationRejected: params.onActivationRejected,
       spawnSessionForInternalResume: (options, pendingActivation) => params.spawnSessionForInternalResume({ ...options, requesterSessionBootstrap: bootstrap,
-        ...(context ? { requesterSessionRuntimeContext: context } : {}) }, pendingActivation) });
+        requesterSessionRuntimeContext: context }, pendingActivation) });
     if (result.status === 'rejected') logger.warn('[DAEMON RUN] Requester Pending activation rejected; custody retained', {
       sessionId: current.sessionId, requestId: current.requestId, reason: result.reason, failureDetails: result.failureDetails,
     });
   };
   const context = await params.resolveRequesterSessionRuntimeContext(binding.sessionId, binding.attribution, undefined,
-    bootstrap => activate(bootstrap));
+    async refusal => {
+      if (refusal.sessionId !== binding.sessionId) return;
+      await runWithServerHttpBaseUrl(refusal.serverHttpBaseUrl, async () => {
+        // A stamped live hint needs no executable admission to report failure.
+        // Reconnect scans obtain the stamp through the same retained owner bearer.
+        const authorization = hint?.requestedAt !== undefined ? hint
+          : (await fetchSessionById({ reason: 'session-control', token: refusal.credentials.token,
+            sessionId: refusal.sessionId, serverUrl: refusal.serverHttpBaseUrl }))?.pendingActivationAuthorization;
+        if (refusal.signal?.aborted || !authorization || authorization.requestedAt === undefined) return;
+        let didFail: boolean | null = null;
+        try {
+          ({ didFail } = await reportPendingSessionActivationFailure({ token: refusal.credentials.token,
+            sessionId: refusal.sessionId, requestId: authorization.requestId, requestedAt: authorization.requestedAt,
+            failureCode: 'runtime_start_failed' }));
+          if (didFail) await params.onActivationRejected?.({ sessionId: refusal.sessionId,
+            reason: 'identity-unavailable', requester: binding.attribution });
+        } finally {
+          logger.infoFile('[DAEMON RUN] Requester Pending preparation refused', {
+            sessionId: refusal.sessionId, requestId: authorization.requestId, code: 'session_input_target_unavailable', didFail,
+          });
+        }
+      });
+    });
   if (!context) return;
-  try { await activate(context.bootstrap, context); }
+  try { await activate(context); }
   finally { await params.releaseRequesterSessionRuntimeContext(context); }
 }
 
@@ -157,23 +183,24 @@ export async function recoverPendingSessionActivations(params: Readonly<{
 
 export function createPendingSessionActivationRecovery(params: Readonly<{
   token: string;
-  activate: (input: PendingSessionActivationInput) => Promise<void>;
+  activate: (input: PendingSessionActivationInput, retryAfterEndpointPublication?: Promise<boolean>) => Promise<void>;
   warn: (message: string, input: PendingSessionActivationInput, error: unknown) => void;
   fetchSessionsPage?: typeof fetchSessionsPageDefault;
   visitOwnedSession?: (sessionId: string, session: RawSessionListRow) => Promise<void>;
   visitOwnedSessions?: (sessions: readonly RawSessionListRow[]) => Promise<void>;
   /** Host composition discovers only already-held protected requester Session refs. */
-  recoverRequesterSessions?: () => Promise<void>;
+  recoverRequesterSessions?: (retryAfterEndpointPublication?: Promise<boolean>) => Promise<void>;
 }>): Readonly<{
   activateHint: (input: PendingSessionActivationInput) => Promise<void>;
-  recoverAfterConnect: () => Promise<void>;
+  recoverAfterConnect: (retryAfterEndpointPublication?: Promise<boolean>) => Promise<void>;
 }> {
   return {
     activateHint: params.activate,
-    recoverAfterConnect: async () => {
+    recoverAfterConnect: async retryAfterEndpointPublication => {
       await Promise.all([
-        recoverPendingSessionActivations(params),
-        params.recoverRequesterSessions?.(),
+        recoverPendingSessionActivations({ ...params,
+          activate: input => params.activate(input, retryAfterEndpointPublication) }),
+        params.recoverRequesterSessions?.(retryAfterEndpointPublication),
       ]);
     },
   };
