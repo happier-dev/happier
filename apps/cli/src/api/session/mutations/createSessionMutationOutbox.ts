@@ -746,10 +746,38 @@ function createSessionMutationOutboxInstance(params: CreateSessionMutationJourna
         retryTimer = null;
     }
 
+    // When the next flush can act on a queued mutation, or null when none is deliverable.
+    // Follows flush(): parked turns and unsupported Activity snapshots wait for the server
+    // contract, and every non-Activity mutation waits behind the first one still queued, so
+    // only that head's retry time counts, not the never-attempted mutations behind it.
+    function resolveNextActionableAttemptAt(now: number): number | null {
+        let nextAttemptAt: number | null = null;
+        let orderedHeadSeen = false;
+        for (const mutation of mutations) {
+            if (isSessionTurnMutationParkedForReleasedServer(mutation, sessionSyncPendingInputServerContract)) {
+                continue;
+            }
+            if (mutation.kind === 'runtime_activity_snapshot') {
+                if (
+                    !runtimeActivitySnapshotInitialized
+                    || !supportsRuntimeActivityV2(sessionSyncPendingInputServerContract)
+                ) {
+                    continue;
+                }
+            } else {
+                if (orderedHeadSeen) continue;
+                orderedHeadSeen = true;
+            }
+            const attemptAt = mutation.nextAttemptAt || now;
+            nextAttemptAt = nextAttemptAt === null ? attemptAt : Math.min(nextAttemptAt, attemptAt);
+        }
+        return nextAttemptAt;
+    }
+
     function scheduleRetry(minimumDelayMs = 0): void {
         if (closed || retryTimer || mutations.length === 0) return;
         const now = Date.now();
-        const nextAttemptAt = Math.min(...mutations.map((mutation) => mutation.nextAttemptAt || now));
+        const nextAttemptAt = resolveNextActionableAttemptAt(now) ?? now;
         const delayMs = Math.max(minimumDelayMs, 0, nextAttemptAt - now);
         retryTimer = setTimeout(() => {
             retryTimer = null;
@@ -1101,20 +1129,7 @@ function createSessionMutationOutboxInstance(params: CreateSessionMutationJourna
             ) {
                 publishRuntimeActivityTail({ custody: null, settlement: null });
             }
-            const hasDeliverableMutation = mutations.some((mutation) => (
-                !isSessionTurnMutationParkedForReleasedServer(
-                    mutation,
-                    sessionSyncPendingInputServerContract,
-                )
-                && (
-                    mutation.kind !== 'runtime_activity_snapshot'
-                    || (
-                        runtimeActivitySnapshotInitialized
-                        && supportsRuntimeActivityV2(sessionSyncPendingInputServerContract)
-                    )
-                )
-            ));
-            if (!closed && hasDeliverableMutation) {
+            if (!closed && resolveNextActionableAttemptAt(Date.now()) !== null) {
                 if (shouldRequestReconnect) {
                     params.requestReconnect(reason);
                 }
