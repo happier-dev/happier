@@ -28,6 +28,22 @@ const runScmCommand: typeof runCanonicalScmCommand = input => runWithScmCommandR
 const probeScmExecutableAvailable: typeof probeCanonicalScmExecutableAvailable = input => runWithScmCommandRunner(runner, () => probeCanonicalScmExecutableAvailable(input));
 
 describe('runScmCommand output limits', () => {
+    it('preserves complete valid output beyond the former implicit 4 MiB ceiling', async () => {
+        const workspace = mkdtempSync(join(tmpdir(), 'happier-scm-runtime-large-'));
+        try {
+            execFileSync('git', ['init', '-q'], { cwd: workspace });
+            const content = `${'x'.repeat(4 * 1024 * 1024)}\nlast complete record\n`;
+            const blob = execFileSync('git', ['hash-object', '-w', '--stdin'], {
+                cwd: workspace, input: content, encoding: 'utf8',
+            }).trim();
+            const result = await runScmCommand({ bin: 'git', cwd: workspace, args: ['cat-file', 'blob', blob] });
+            expect(result.success).toBe(true);
+            expect(result.stdout).toBe(content);
+        } finally {
+            rmSync(workspace, { recursive: true, force: true });
+        }
+    });
+
     it('fails through host executable resolution when the SCM tool is missing', async () => {
         const originalPath = process.env.PATH;
         process.env.PATH = '';

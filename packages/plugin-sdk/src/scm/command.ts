@@ -23,14 +23,14 @@ export type ScmBackendCommandInput = Readonly<{
     stdoutConsumer?: BackendCommandStreamInput['stdoutConsumer'];
 }>;
 
-const DEFAULT_SCM_BACKEND_COMMAND_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
-
 export function resolveScmBackendCommandMaxOutputBytes(input?: Readonly<{
     inputMaxOutputBytes?: number;
     envValue?: string | null;
     defaultMaxOutputBytes?: number;
 }>): number {
-    const defaultMaxOutputBytes = input?.defaultMaxOutputBytes ?? DEFAULT_SCM_BACKEND_COMMAND_MAX_OUTPUT_BYTES;
+    // Aggregate SCM output is valid repository data. Only an explicit caller or
+    // operator budget limits it; transport projections own their response bounds.
+    const defaultMaxOutputBytes = input?.defaultMaxOutputBytes ?? Number.POSITIVE_INFINITY;
     if (
         typeof input?.inputMaxOutputBytes === 'number'
         && Number.isFinite(input.inputMaxOutputBytes)

@@ -57,6 +57,12 @@ signal failures retain command kind, elapsed time, exit code and termination
 cause in the host result and local file log, without logging operands or content.
 Review presents the canonical failure and its existing Retry action.
 
+The shared SDK command-budget resolver imposes no aggregate output ceiling by
+default. Valid repository output larger than 4 MiB remains readable; an explicit
+command budget or `HAPPIER_SCM_MAX_OUTPUT_BYTES` still applies when configured.
+Captured Review uses its existing paged file-index projection to respect the
+socket response boundary without rejecting a large comparison wholesale.
+
 Credentialed push uses a host-private Git metadata view: object identities,
 references and push configuration are data, while repository/include/attributes
 execution settings are excluded. Host credential helpers remain host-owned.
@@ -242,13 +248,19 @@ Capture comparison evidence first, then optionally ask one analysis Run for
 model. Opening a Walkthrough destination does not start generation; Start does.
 
 Files and Review request `scm.diffSummary.capture` with
-`projection: { kind: 'index', cursor?, path? }`. The daemon retains the full
+`projection: { kind: 'index', cursor?, limit?, path? }`. The daemon retains the full
 comparison; replies carry file metadata with explicit `deferred` diff evidence
 and `page: { totalFiles, nextCursor }`. A file destination selects its absolute
 Machine path and reads only that file's pinned evidence through `scm.diff.file`
 using `{ cwd, captured: { comparisonId, source, path, sessionId? } }`. It never
 substitutes a current working-tree diff for captured evidence. Review loads the
-next metadata page only through its visible More action.
+next metadata page only through its visible More action. A new Review waits for
+its presented layout, then requests the number of compact file rows that fit
+that measured body, using the shared row geometry. More uses the current viewport
+demand and retained cursor; resizing alone does not drain later pages. A file
+destination requests one index entry. The optional limit is caller demand, with
+no fixed row default or cap. Readers omitting it retain the existing transport
+bounded behavior.
 
 Session-scoped reads carry the existing Session authorization through the
 canonical socket method classification. Index and captured-file reads share
@@ -262,7 +274,9 @@ The complete JSON reply fits `WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES`
 from Protocol's workspace-files transport budget, derived from the current
 V2 socket floor shared with server admission after authenticated RPC, cipher
 and base64 framing.
-Pages have explicit continuation; an individual entry or file exceeding the
+This byte budget is a ceiling, not a target page size. The index projection stops
+at the requested row count or byte boundary and returns an explicit continuation.
+An individual entry or file exceeding the
 budget fails visibly rather than being silently truncated. Legacy small
 capture replies remain readable, while an oversized legacy request receives a
 typed failure asking for a client update. Other files' retained patch evidence

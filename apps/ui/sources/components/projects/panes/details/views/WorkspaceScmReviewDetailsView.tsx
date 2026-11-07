@@ -11,6 +11,7 @@ import { useWorkspaceScmSnapshotController } from '@/hooks/workspaces/scm/useWor
 import { NotSourceControlRepositoryState } from '@/components/workspaces/scm/states/NotSourceControlRepositoryState';
 import { SourceControlUnavailableState } from '@/components/workspaces/scm/states/SourceControlUnavailableState';
 import { SourceControlStaleSnapshotNotice } from '@/components/workspaces/scm/states/SourceControlStaleSnapshotNotice';
+import { useScmReviewLimits } from '@/scm/review/useScmReviewLimits';
 import { useSession, useSetting, useWorkspaceRefs, useWorkspaceReviewCommentsDrafts, useWorkspaceScmCommitSelectionPatches, useWorkspaceScmCommitSelectionPaths } from '@/sync/domains/state/storage';
 import { ChangedFilesReview } from '@/components/workspaces/scm/review/ChangedFilesReview';
 import { fetchWorkspaceUnifiedDiffForPath } from '@/scm/diff/fetchWorkspaceUnifiedDiffForPath';
@@ -46,10 +47,11 @@ import { ScmWalkthroughView } from '@/components/sessions/files/walkthrough/ScmW
 import { useCapturedScmComparison } from '@/components/sessions/files/comparison/useCapturedScmComparison';
 import { CapturedComparisonFilesView } from '@/components/sessions/files/comparison/CapturedComparisonFilesView';
 import { listFilesComparisonScopeOptions, resolveFilesComparisonLabel } from '@/components/sessions/files/comparison/filesComparison';
-import { buildWalkthroughReading } from '@/components/sessions/files/walkthrough/walkthroughReading';
+import { useWalkthroughReading } from '@/components/sessions/files/walkthrough/useWalkthroughReading';
 import { useScmReviewedMarks } from '@/components/sessions/files/comparison/useScmReviewedMarks';
-import { SESSION_DETAILS_SCM_REVIEW_TAB_KEY, type SessionScmReviewComparison, type SessionScmReviewView } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
-import { t } from '@/text';
+import { createSessionScmReviewDetailsTab, SESSION_DETAILS_SCM_REVIEW_TAB_KEY, type SessionScmReviewComparison, type SessionScmReviewView } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
+import { t, usePreferredLanguage } from '@/text';
+import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { findWorkspaceRefByScope } from '@/sync/domains/workspaces/workspaceRefs';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { useScmReviewActiveFileSelection, useScmReviewTabState } from '@/components/sessions/files/comparison/useSessionScmReviewTabState';
@@ -60,7 +62,7 @@ import { scmComparisonSourceOf } from '@/sync/domains/scm/diffSummary/selection'
 import { Modal } from '@/modal';
 import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
 import { useSessionScmDiffSummaryBinding } from '@/components/sessions/files/comparison/useSessionScmDiffSummaryBinding';
-import { presentStartReviewDialog } from '@/components/sessions/reviews/walkthrough/StartReviewDialog';
+import { createComparisonReviewExecutionRunDraftDetailsTab } from '@/components/sessions/runs/launcher/executionRunLauncherModel';
 import { WorkspaceCommitsView } from '@/components/projects/scm/WorkspaceCommitsView';
 import { ScmComparisonProposeCommits } from '@/components/sessions/files/comparison/ScmComparisonBar';
 import type { ScmDiffSummaryHost } from '@/sync/ops/scmDiffSummary/results';
@@ -76,6 +78,8 @@ import { useReviewListHunkReview } from '@/components/workspaces/scm/review/hunk
 /** The same comparison body serves Changes and explicit review Details destinations. */
 const WORKSPACE_REVIEW_DETAILS_HEADER = Object.freeze({});
 const NO_WORKSPACE_SESSION_ATTRIBUTION: SessionAttributedFile[] = [];
+const PENDING_REVIEW_VIEWS: readonly SessionScmReviewView[] = ['files', 'walkthrough', 'commits'];
+const CAPTURED_REVIEW_VIEWS: readonly SessionScmReviewView[] = ['files', 'walkthrough'];
 
 export type WorkspaceScmReviewDetailsViewProps = Readonly<{
     scopeId: string;
@@ -139,14 +143,14 @@ export const WorkspaceScmReviewDetailsView = React.memo((props: WorkspaceScmRevi
 function MachineBoundWorkspaceReview(props: WorkspaceScmReviewDetailsViewProps) {
     const comparison: SessionScmReviewComparison = props.comparison ?? { kind: 'workingTree' };
     const bound = useWorkspaceScmDiffSummaryBinding({ machineId: props.machineId, rootPath: props.rootPath,
-        serverId: props.serverId, comparison, output: 'walkthrough',
+        serverId: props.serverId, paneScopeId: props.scopeId, comparison, output: 'walkthrough',
         restoreSelections: [{ comparison: comparison.kind === 'workingTree' ? comparison : null, output: 'commitPlan' }] });
     return <WorkspaceReviewBody {...props} bound={bound} host={{ machineId: props.machineId }} />;
 }
 
 function SessionBoundWorkspaceReview(props: WorkspaceScmReviewDetailsViewProps & Readonly<{ evidenceSessionId: string }>) {
     const bound = useSessionScmDiffSummaryBinding({ sessionId: props.evidenceSessionId, serverId: props.serverId,
-        comparison: props.comparison ?? null, output: 'walkthrough' });
+        comparison: props.comparison ?? null, output: 'walkthrough', paneScopeId: props.scopeId });
     return <WorkspaceReviewBody {...props} bound={bound} host={{ sessionId: props.evidenceSessionId }} />;
 }
 
@@ -154,15 +158,15 @@ const WorkspaceReviewBody = React.memo((props: WorkspaceScmReviewDetailsViewProp
     bound: ReturnType<typeof useWorkspaceScmDiffSummaryBinding>; host: ScmDiffSummaryHost;
 }>) => {
     const { theme } = useUnistyles();
+    const language = usePreferredLanguage();
     const pane = useAppPaneScope(props.scopeId, scope => ({
         reviewTabState: scope?.details.tabState[SESSION_DETAILS_SCM_REVIEW_TAB_KEY],
         activeFileSelection: scope?.details.tabState[`${SESSION_DETAILS_SCM_REVIEW_TAB_KEY}:activeFile`],
     }));
-    const { persistedReviewTabState, setPersistedReviewTabState, mountedInitialReviewState, onScrollTopChange, onCollapsedPathsChange } = useScmReviewTabState(
+    const { persistedReviewTabState, mountedInitialReviewState, onScrollTopChange, onCollapsedPathsChange } = useScmReviewTabState(
         JSON.stringify([props.serverId, props.machineId, props.rootPath]), { patchDetailsTabState: pane.patchDetailsTabState },
         SESSION_DETAILS_SCM_REVIEW_TAB_KEY, pane.scopeState.reviewTabState);
-    const scmReviewMaxFilesSetting = useSetting('scmReviewMaxFiles');
-    const scmReviewMaxChangedLinesSetting = useSetting('scmReviewMaxChangedLines');
+    const { maxFiles, maxChangedLines } = useScmReviewLimits();
     const scmCommitStrategySetting = useSetting('scmCommitStrategy');
     const scmCommitStrategy: ScmCommitStrategy = React.useMemo(() => {
         if (typeof scmCommitStrategySetting !== 'string') return 'atomic';
@@ -177,16 +181,12 @@ const WorkspaceReviewBody = React.memo((props: WorkspaceScmReviewDetailsViewProp
     }), [props.machineId, props.rootPath, props.serverId]);
     const presented = useLayoutPresentationActive();
     const activeReviewFileKey = activeReviewFileKeyForWorkspace(scope);
-    const activeReviewFile = React.useMemo(
-        () => ({ key: activeReviewFileKey, presented, externalLifecycle: true }),
-        [activeReviewFileKey, presented],
-    );
     const reviewCommentsEnabled = useFeatureEnabled('files.reviewComments') === true;
     // Review comments open from the Files menu (the bar's ⋯ or the phone menu); while some are unresolved,
     // or the panel is open, the bar also carries them as one action. Their panel opens under the bar.
     const [commentsOpen, setCommentsOpen] = React.useState(false);
     const [commentsCount, setCommentsCount] = React.useState<number | null>(null);
-    const commentsLabels = React.useMemo(() => buildReviewCommentsHeaderLabels(), []);
+    const commentsLabels = React.useMemo(() => buildReviewCommentsHeaderLabels(), [language]);
     const scmWriteEnabled = useFeatureEnabled('scm.writeOperations') === true;
     const toggleComments = React.useCallback(() => setCommentsOpen((open) => !open), []);
     const commentsMenuSection = useReviewCommentsMenuSection({ enabled: reviewCommentsEnabled, labels: commentsLabels,
@@ -198,20 +198,28 @@ const WorkspaceReviewBody = React.memo((props: WorkspaceScmReviewDetailsViewProp
     const reachability = useCheckoutReachability(scope);
     // Keep / Discard on each file's changes in the Uncommitted list (P5); Discard needs the checkout's write capability.
     const hunkReview = useReviewListHunkReview({ scope, discard: scmWriteEnabled && snapshot?.capabilities?.writeDiscard === true,
-        refresh });
+        refresh, active: presented });
     const comparison = props.comparison ?? { kind: 'workingTree' };
     const view = props.view ?? 'files';
     const explain = props.explain === true;
-    const selectTarget = (patch: Partial<WorkspaceReviewTarget>) => {
+    const onFilePress = useEventCallback((file: ScmFileStatus) => props.onOpenFile?.(file.fullPath));
+    const onFilePressPinned = useEventCallback((file: ScmFileStatus) => props.onOpenFilePinned?.(file.fullPath));
+    const selectTarget = useEventCallback((patch: Partial<WorkspaceReviewTarget>) => {
         const next = { comparison, view, explain, evidenceSessionId: props.evidenceSessionId, ...patch };
         if ((next.comparison.kind === 'session' || next.comparison.kind === 'turnCheckpoint')
             && (!next.evidenceSessionId || (props.evidenceSessions
                 && !props.evidenceSessions.some(choice => choice.sessionId === next.evidenceSessionId)))) return;
         if (patch.comparison && patch.comparison.kind !== 'workingTree' && next.view === 'commits') next.view = 'files';
         props.onSelectTarget?.(next);
-    };
+    });
+    const onSelectComparison = React.useCallback((next: SessionScmReviewComparison, evidenceSessionId?: string) => selectTarget({
+        comparison: next, ...(evidenceSessionId ? { evidenceSessionId } : {}),
+    }), [selectTarget]);
+    const onSelectView = React.useCallback((next: SessionScmReviewView) => selectTarget({ view: next }), [selectTarget]);
+    const onExplainChange = React.useCallback((next: boolean) => selectTarget({ explain: next }), [selectTarget]);
+    const onProposeCommits = React.useCallback(() => selectTarget({ view: 'commits' }), [selectTarget]);
     const bound = props.bound;
-    useScmReviewActiveFileSelection({ pane: { setDetailsTabState: pane.setDetailsTabState }, persistedSelection: pane.scopeState.activeFileSelection,
+    const activeReviewFile = useScmReviewActiveFileSelection({ pane: { setDetailsTabState: pane.setDetailsTabState }, persistedSelection: pane.scopeState.activeFileSelection,
         hostKey: JSON.stringify([props.serverId, bound.scope?.accountId, props.machineId, props.rootPath, props.host.sessionId]),
         activeFileKey: activeReviewFileKey, comparison, view, presented: presented && Boolean(bound.scope), isCurrent: bound.isCurrent });
     const readingIdentity = JSON.stringify([bound.capturedComparison?.id, bound.viewModel?.resultId, bound.viewModel?.revision]);
@@ -228,9 +236,12 @@ const WorkspaceReviewBody = React.memo((props: WorkspaceScmReviewDetailsViewProp
     }, [bound.isCurrent, executeValue]);
     const pluginPermissionGrantActions = React.useMemo(
         () => createPluginPermissionGrantActions({ execute: frontDoorActionExecutor }), [frontDoorActionExecutor]);
+    const [indexPageSize, setIndexPageSize] = React.useState<number | null>(null);
     const capture = useCapturedScmComparison({ host: props.host, machine: bound.machine,
+        indexPageSize,
         identity: { machineId: props.machineId, basePath: props.rootPath }, serverId: props.serverId, comparison,
-        active: comparison.kind !== 'workingTree' || Boolean(comparison.comparisonId), knownComparison: bound.capturedComparison });
+        active: presented && (comparison.kind !== 'workingTree' || Boolean(comparison.comparisonId)) && bound.restoreState !== 'restoring',
+        knownComparison: bound.capturedComparison });
     const displayedComparison = view === 'walkthrough' ? bound.capturedComparison
         : comparison.kind !== 'workingTree' || comparison.comparisonId ? capture.comparison : null;
     const displayedResult = displayedComparison?.id === bound.capturedComparison?.id ? bound.viewModel?.savedResult ?? null : null;
@@ -252,7 +263,7 @@ const WorkspaceReviewBody = React.memo((props: WorkspaceScmReviewDetailsViewProp
     };
     const onExplain = props.onExplain ?? ((basis: Parameters<NonNullable<WorkspaceScmReviewDetailsViewProps['onExplain']>>[0]) => authoringDraft({ ...basis, scope }));
     const onAsk = props.onAsk ?? ((basis: Parameters<NonNullable<WorkspaceScmReviewDetailsViewProps['onAsk']>>[0]) => authoringDraft({ ...basis, scope }));
-    const explainFiles = async () => {
+    const explainFiles = useEventCallback(async () => {
         if (!bound.scope || !bound.machine || !displayedIsCurrent()) return;
         if (displayedComparison) {
             onExplain({ comparison: displayedComparison, result: displayedResult, isCurrent: displayedIsCurrent });
@@ -271,26 +282,29 @@ const WorkspaceReviewBody = React.memo((props: WorkspaceScmReviewDetailsViewProp
         } catch {
             if (displayedIsCurrent()) Modal.alert(t('common.error'), t('common.unavailable'));
         }
-    };
+    });
+    const onExplainDraft = React.useCallback(() => { void explainFiles(); }, [explainFiles]);
     const marks = useScmReviewedMarks({ comparison: bound.capturedComparison, serverId: props.serverId, host: props.host });
-    const reading = React.useMemo(() => bound.capturedComparison ? buildWalkthroughReading({ comparison: bound.capturedComparison,
+    const reading = useWalkthroughReading(bound.capturedComparison ? { comparison: bound.capturedComparison,
         walkthrough: bound.viewModel?.outputs?.walkthrough ?? null, analysis: bound.viewModel?.analysis ?? null,
-        reviewed: marks.record, provenance: bound.viewModel?.savedResult?.walkthroughProvenance }) : null,
-        [bound.capturedComparison, bound.viewModel?.outputs?.walkthrough, bound.viewModel?.analysis, bound.viewModel?.savedResult?.walkthroughProvenance, marks.record]);
+        reviewed: marks.record, provenance: bound.viewModel?.savedResult?.walkthroughProvenance } : null);
     const chosenEvidence = props.evidenceSessions?.find(choice => choice.sessionId === props.evidenceSessionId);
     const latestTurnId = chosenEvidence?.latestTurnId ?? null;
     const scopeLabel = comparison.kind === 'session' && chosenEvidence ? chosenEvidence.label : resolveFilesComparisonLabel(comparison, latestTurnId);
     // Where these changes live, by name ("on fix-settings-modal"); the checkout path is already the page.
     const scopeBranch = pendingComparisonBranch(comparison, snapshot);
     const scopeDetail = scopeBranch ? t('scmComparison.onBranch', { branch: scopeBranch }) : null;
-    const scopeOptions = listFilesComparisonScopeOptions({ showTurnViewToggle: Boolean(latestTurnId), showTurnAgentReportedViewToggle: false,
+    const scopeOptions = React.useMemo(() => {
+        const options = listFilesComparisonScopeOptions({ showTurnViewToggle: Boolean(latestTurnId), showTurnAgentReportedViewToggle: false,
         showTurnCheckpointViewToggle: false, showSessionViewToggle: Boolean(props.evidenceSessionId) }, latestTurnId, comparison,
         { pendingFileCount: snapshot?.entries.length }).filter((option) =>
             (option.sourceKind !== 'turnCheckpoint' || Boolean(props.evidenceSessionId))
             && (option.sourceKind !== 'session' || (!props.evidenceSessions && Boolean(props.evidenceSessionId))))
         .map(option => option.sourceKind === 'turnCheckpoint' && props.evidenceSessionId ? { ...option, evidenceSessionId: props.evidenceSessionId } : option);
-    for (const choice of props.evidenceSessions ?? []) scopeOptions.push({ comparison: { kind: 'session' }, evidenceSessionId: choice.sessionId,
+        for (const choice of props.evidenceSessions ?? []) options.push({ comparison: { kind: 'session' }, evidenceSessionId: choice.sessionId,
         sourceKind: 'session', group: 'explainOnly', label: choice.label, subtitle: t('scmComparison.scopePicker.sessionDescription'), fileCount: null });
+        return options;
+    }, [latestTurnId, comparison, snapshot?.entries.length, props.evidenceSessionId, props.evidenceSessions, language]);
     const pendingComparison = comparison.kind === 'workingTree';
     const reviewDisabled = !bound.scope || !bound.machine || !bound.canControl
         || ((comparison.kind === 'session' || comparison.kind === 'turnCheckpoint') && !props.host.sessionId);
@@ -298,18 +312,15 @@ const WorkspaceReviewBody = React.memo((props: WorkspaceScmReviewDetailsViewProp
         : { machineId: props.machineId, cwd: props.rootPath }, pendingComparison ? comparison : null, 'commitPlan', props.serverId, bound.restoration);
     const startedReviewRunIds = Array.isArray(persistedReviewTabState?.reviewRunIds)
         ? persistedReviewTabState.reviewRunIds.filter((id): id is string => typeof id === 'string') : null;
-    const startReview = () => {
+    const startReview = useEventCallback(() => {
         if (!bound.scope || !bound.machine || !bound.isCurrent()) return;
-        presentStartReviewDialog({ ...(props.host.sessionId ? { sessionId: props.host.sessionId } : { machineId: props.machineId }),
-            serverId: props.serverId, cwd: props.rootPath, comparison, scopeLabel, scopeDetail,
-            defaultWalkthrough: Boolean(props.host.sessionId), onStarted: (started, walkthrough) => {
-                if (!bound.isCurrent()) return;
-                setPersistedReviewTabState({ reviewRunIds: [...started.reviewRunIds] });
-                if (walkthrough) selectTarget({ comparison: { ...comparison, comparisonId: started.comparisonId }, view: 'walkthrough' });
-                if (started.notStartedEngineIds.length || started.narrationError) Modal.alert(t('common.warning'),
-                    started.narrationError ?? started.notStartedEngineIds.join(', '));
-            } });
-    };
+        pane.openDetailsTab(createComparisonReviewExecutionRunDraftDetailsTab({
+            cwd: props.rootPath, comparison, scopeLabel, scopeDetail,
+            defaultWalkthrough: Boolean(props.host.sessionId),
+            origin: { scopeId: props.scopeId, tab: createSessionScmReviewDetailsTab({ comparison, view, explain, evidenceSessionId: props.evidenceSessionId }) },
+        }, props.host.sessionId ? undefined : { machineId: props.machineId, cwd: props.rootPath },
+        props.host.sessionId ?? undefined), { intent: 'preview', start: true });
+    });
     const commitSelectionPaths = useWorkspaceScmCommitSelectionPaths(scope);
     const commitSelectionPatches = useWorkspaceScmCommitSelectionPatches(scope);
     const workspaceRefs = useWorkspaceRefs();
@@ -327,30 +338,19 @@ const WorkspaceReviewBody = React.memo((props: WorkspaceScmReviewDetailsViewProp
         enabled: reviewCommentsEnabled && Boolean(pluginPermissionGrantListInput) && Boolean(bound.scope),
         listInput: pluginPermissionGrantListInput,
     });
-    const directWriteGrants = pluginPermissionGrants.state.grantIds
+    const directWriteGrants = React.useMemo(() => pluginPermissionGrants.state.grantIds
         .map((id) => pluginPermissionGrants.state.grantsById[id])
         .filter((grant): grant is NonNullable<typeof grant> => (
             Boolean(grant)
             && grant?.capability === REVIEW_COMMENTS_DIRECT_WRITE_PERMISSION_CAPABILITY
             && pluginPermissionGrantScopeKey(grant.targetScope) === pluginPermissionGrantScopeKey(directWriteGrantScope)
-        ));
-    const pendingDirectWriteGrantRequests = directWriteGrantScope ? selectPluginPermissionPendingRequests(pluginPermissionGrants.state, {
+        )), [pluginPermissionGrants.state.grantIds, pluginPermissionGrants.state.grantsById, directWriteGrantScope]);
+    const pendingDirectWriteGrantRequests = React.useMemo(() => directWriteGrantScope ? selectPluginPermissionPendingRequests(pluginPermissionGrants.state, {
         capability: REVIEW_COMMENTS_DIRECT_WRITE_PERMISSION_CAPABILITY,
         targetScope: directWriteGrantScope,
-    }) : [];
+    }) : [], [pluginPermissionGrants.state.pendingRequestIds, pluginPermissionGrants.state.pendingRequestsById, directWriteGrantScope]);
+    const onRefreshPermissionGrants = useEventCallback(() => { void pluginPermissionGrants.refresh(); });
 
-    const maxFiles = React.useMemo(() => {
-        const raw = typeof scmReviewMaxFilesSetting === 'number' && Number.isFinite(scmReviewMaxFilesSetting)
-            ? scmReviewMaxFilesSetting
-            : 25;
-        return Math.max(1, Math.floor(raw));
-    }, [scmReviewMaxFilesSetting]);
-    const maxChangedLines = React.useMemo(() => {
-        const raw = typeof scmReviewMaxChangedLinesSetting === 'number' && Number.isFinite(scmReviewMaxChangedLinesSetting)
-            ? scmReviewMaxChangedLinesSetting
-            : 2000;
-        return Math.max(1, Math.floor(raw));
-    }, [scmReviewMaxChangedLinesSetting]);
     const changedFiles = React.useMemo(() => buildWorkspaceChangedFilesData({ scmSnapshot: snapshot }), [snapshot]);
     const fetchUnifiedDiffForPath = React.useCallback<ScmReviewUnifiedDiffFetcher>(async (input) => {
         return await fetchWorkspaceUnifiedDiffForPath({
@@ -400,7 +400,7 @@ const WorkspaceReviewBody = React.memo((props: WorkspaceScmReviewDetailsViewProp
     ]);
 
     // The comments the Files bar's toggle opens: drawn by Review under that bar, above the files.
-    const reviewCommentsPanel = reviewCommentsEnabled ? (
+    const reviewCommentsPanel = React.useMemo(() => reviewCommentsEnabled ? (
         <ReviewCommentsSessionSurface
             scope={bound.scope ?? undefined}
             workspaceId={checkoutRef?.id}
@@ -413,16 +413,26 @@ const WorkspaceReviewBody = React.memo((props: WorkspaceScmReviewDetailsViewProp
             onRevokeDirectWrite={pluginPermissionGrants.revoke}
             permissionGrantStatus={pluginPermissionGrants.state.status}
             permissionGrantError={pluginPermissionGrants.state.error}
-            onRefreshPermissionGrants={() => { void pluginPermissionGrants.refresh(); }}
+            onRefreshPermissionGrants={onRefreshPermissionGrants}
             header="external"
             open={view === 'files' && commentsOpen}
             onUnresolvedCountChange={setCommentsCount}
             testID="workspace-review-comments"
                 />
-    ) : null;
+    ) : null, [reviewCommentsEnabled, bound.scope, checkoutRef?.id, props.machineId, props.rootPath,
+        frontDoorActionExecutor, directWriteGrants, pendingDirectWriteGrantRequests,
+        pluginPermissionGrants.grant, pluginPermissionGrants.dismissRequest, pluginPermissionGrants.revoke,
+        pluginPermissionGrants.state.status, pluginPermissionGrants.state.error, onRefreshPermissionGrants, view, commentsOpen]);
+    const barActions = React.useMemo(() => reviewCommentsEnabled && (commentsOpen || (commentsCount ?? 0) > 0)
+        ? <ReviewCommentsHeaderButton compact labels={commentsLabels} unresolvedCount={commentsCount}
+            expanded={commentsOpen} onPress={toggleComments} testID="workspace-review-comments-trigger" /> : null,
+    [reviewCommentsEnabled, commentsOpen, commentsCount, commentsLabels, toggleComments]);
+    const showProposeCommits = pendingComparison && view !== 'commits' && !commitPlan?.outputs?.commitPlan;
+    const proposeCommits = React.useMemo(() => showProposeCommits
+        ? <ScmComparisonProposeCommits onPress={onProposeCommits} /> : undefined, [showProposeCommits, onProposeCommits]);
 
     return (
-        <View style={{ flex: 1, minHeight: 0, minWidth: 0, backgroundColor: theme.colors.surface.base }}>
+        <View style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
             {authoringApproval.approvalId ? <ActionApprovalPendingNotice message={t('approvals.status.open')} summary={authoringApproval.approvalSummary}
                 testID="workspace-review-authoring-approval" onOpenApproval={() => router.push(
                     buildApprovalHref(authoringApproval.approvalId!, props.serverId),
@@ -430,19 +440,18 @@ const WorkspaceReviewBody = React.memo((props: WorkspaceScmReviewDetailsViewProp
             {snapshot ? <SourceControlStaleSnapshotNotice error={error} onRetry={() => { void refresh(); }} testID="workspace-review-stale" /> : null}
             <InputTypePickerHostProvider enabled={presented} requiresPluginTypes={false} machineId={props.machineId} serverId={props.serverId}
                 contextKey={JSON.stringify([props.serverId, props.machineId, props.rootPath])}>
-            <WorkspaceScmReviewBody activeReviewFile={activeReviewFile} comparison={comparison} view={view} scopeLabel={scopeLabel} scopeDetail={scopeDetail}
+            <WorkspaceScmReviewBody onVisibleFileRowCountChange={setIndexPageSize} activeReviewFile={activeReviewFile} comparison={comparison} view={view} scopeLabel={scopeLabel} scopeDetail={scopeDetail}
                 hostSwitch={props.hostSwitch}
                 barMenuSection={commentsMenuSection}
                 barPanel={reviewCommentsPanel}
-                barActions={reviewCommentsEnabled && (commentsOpen || (commentsCount ?? 0) > 0) ? <ReviewCommentsHeaderButton compact labels={commentsLabels} unresolvedCount={commentsCount}
-                    expanded={commentsOpen} onPress={toggleComments} testID="workspace-review-comments-trigger" /> : null}
-                views={pendingComparison ? ['files', 'walkthrough', 'commits'] : ['files', 'walkthrough']}
+                barActions={barActions}
+                views={pendingComparison ? PENDING_REVIEW_VIEWS : CAPTURED_REVIEW_VIEWS}
                 commitsCount={commitPlan?.outputs?.commitPlan?.value?.groups.length ?? null}
                 onStartReview={startReview} reviewDisabled={reviewDisabled}
                 reviewDisabledReason={reviewDisabled ? t('common.unavailable') : null}
-                onProposeCommits={pendingComparison ? () => selectTarget({ view: 'commits' }) : undefined}
-                proposeCommits={pendingComparison && view !== 'commits' && !commitPlan?.outputs?.commitPlan ? <ScmComparisonProposeCommits onPress={() => selectTarget({ view: 'commits' })} /> : undefined}
-                renderCommits={({ layout, renderBar }) => <WorkspaceCommitsView scope={scope}
+                onProposeCommits={pendingComparison ? onProposeCommits : undefined}
+                proposeCommits={proposeCommits}
+                renderCommits={({ layout, renderBar }) => <WorkspaceCommitsView scope={scope} scopeId={props.scopeId}
                     {...bound.restoration}
                     comparison={comparison} branch={snapshot?.branch.detached ? null : snapshot?.branch.head ?? null} layout={layout === 'phone' ? 'phone' : 'wide'}
                     active={presented} renderBar={() => renderBar()} onShowInGit={props.onShowInGit} />}
@@ -453,14 +462,13 @@ const WorkspaceReviewBody = React.memo((props: WorkspaceScmReviewDetailsViewProp
                     : !capture.comparison ? capture.loading ? <PaneLoadingFallback />
                         : <SourceControlUnavailableState details={capture.error ?? t('scmComparison.unsupportedReason')} onRetry={capture.retry} /> : null}
                 scopeOptions={scopeOptions} evidenceSessionId={props.evidenceSessionId}
-                onSelectComparison={(next, evidenceSessionId) => selectTarget({ comparison: next,
-                    ...(evidenceSessionId ? { evidenceSessionId } : {}) })}
-                onSelectView={(next) => selectTarget({ view: next })} rootPath={props.rootPath}
+                onSelectComparison={onSelectComparison}
+                onSelectView={onSelectView} rootPath={props.rootPath}
                 fileCount={capture.page?.totalFiles ?? capture.comparison?.inventory.files.length ?? (snapshot ? changedFiles.allRepositoryChangedFiles.length : null)}
-                reading={reading} marksAvailable={marks.unavailableReason === null && marks.record !== null}
-                modelLabel={bound.viewModel?.producer?.modelId} explain={explain} onExplainChange={(next) => selectTarget({ explain: next })}
+                reading={reading} marksAvailable={marks.unavailableReason === null && marks.record !== null} marksPending={marks.pending}
+                modelLabel={bound.viewModel?.producer?.modelId} explain={explain} onExplainChange={onExplainChange}
                 onExplainDraft={bound.scope && bound.machine && comparison.kind !== 'session' && comparison.kind !== 'turnCheckpoint'
-                    ? () => { void explainFiles(); } : undefined}
+                    ? onExplainDraft : undefined}
                 renderWalkthrough={({ layout, renderBar, onShowFiles }) => <View testID="workspace-walkthrough" style={{ flex: 1, minHeight: 0 }}>
                     <ScmWalkthroughView bound={bound} displayMachineId={props.machineId} serverId={props.serverId}
                         sessionId={props.host.sessionId} startedReviewRunIds={props.host.sessionId ? startedReviewRunIds : null}
@@ -474,10 +482,11 @@ const WorkspaceReviewBody = React.memo((props: WorkspaceScmReviewDetailsViewProp
                 </View>}
                 renderFiles={(comparisonChrome) => comparison.kind !== 'workingTree' || comparison.comparisonId
                     ? capture.comparison ? <CapturedComparisonFilesView activeReviewFile={activeReviewFile} comparison={capture.comparison} reviewScopeKey={activeReviewFileKey}
+                        error={capture.error}
+                        active={presented && view === 'files'}
                         workspaceScope={scope} discardEnabled={scmWriteEnabled && snapshot?.capabilities?.writeDiscard === true}
                         sessionId={props.evidenceSessionId ?? props.host.sessionId ?? undefined}
                         marks={bound.capturedComparison?.id === capture.comparison.id ? marks : undefined} onRefresh={capture.retry}
-                        error={capture.error}
                         host={props.host} serverId={props.serverId} page={capture.page} onLoadMore={capture.loadMore} loadingMore={capture.loading}
                         comparisonChrome={comparisonChrome} maxFiles={maxFiles} maxChangedLines={maxChangedLines}
                         initialScrollTop={mountedInitialReviewState.scrollTop} onScrollTopChange={onScrollTopChange}
@@ -498,8 +507,8 @@ const WorkspaceReviewBody = React.memo((props: WorkspaceScmReviewDetailsViewProp
 
                 maxFiles={maxFiles}
                 maxChangedLines={maxChangedLines}
-                onFilePress={(file) => props.onOpenFile?.(file.fullPath)}
-                onFilePressPinned={(file) => props.onOpenFilePinned?.(file.fullPath)}
+                onFilePress={onFilePress}
+                onFilePressPinned={onFilePressPinned}
                 renderFileActions={renderReviewFileActions}
                 rowDensity="compact"
                 reviewCommentsEnabled={reviewCommentsEnabled}

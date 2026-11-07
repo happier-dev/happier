@@ -34,7 +34,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', a
         boundary.calls.push(request);
         if (request.method === RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE) {
             if (boundary.response instanceof Error) throw boundary.response;
-            return boundary.response;
+            return typeof boundary.response === 'function' ? boundary.response(request.payload) : boundary.response;
         }
         if (request.method === RPC_METHODS.SCM_CHANGE_DISCARD) return boundary.response;
         if (request.method === RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_LIST) return boundary.savedInventory ?? { success: true,
@@ -45,20 +45,38 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', a
     };
     return createServerScopedMachineRpcBoundaryMock(rpc as typeof import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc').machineRpcWithServerScope);
 });
-const { renderHook, renderScreen, standardCleanup, createSessionFixture, createMachineFixture } = await import('@/dev/testkit');
+const { renderHook, renderScreen: renderUnmeasuredScreen, standardCleanup, createSessionFixture, createMachineFixture } = await import('@/dev/testkit');
 const { getStorage } = await import('@/sync/domains/state/storage');
 const { useSessionCapturedScmComparison } = await import('./useSessionCapturedScmComparison');
 const { useFileChangesScope } = await import('@/components/workspaces/files/file/changes/useFileChangesScope');
 const { useFileChangesActions } = await import('@/components/workspaces/files/file/changes/useFileChangesActions');
 // Router mounts after the app entry publishes the real sync runtime; reproduce that bootstrap.
-await import('@/sync/syncEngine');
+await (await import('@/dev/testkit/harness/syncSingletonLoader')).loadSyncSingletonForTests();
+await (await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage')).prepareSessionDraftPersistenceStorage();
 const { SessionScmReviewDetailsView } = await import('@/components/sessions/files/views/SessionScmReviewDetailsView');
+const { WorkspaceScmReviewBody } = await import('@/components/projects/scm/WorkspaceScmReviewBody');
 const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
 const { useAppPaneScope } = await import('@/components/appShell/panes/hooks/useAppPaneScope');
 const { readSessionScmReviewTarget } = await import('@/components/sessions/panes/url/sessionPaneUrlState');
 const { loadSavedScmDiffSummaryResult, retireScmDiffSummaryScope } = await import('@/sync/ops/scmDiffSummary/generate');
 const initialStorage = getStorage().getState();
 const scopes: Array<{ serverId: string; accountId: string }> = [];
+// The native layout boundary is absent from react-test-renderer. Existing screen
+// scenarios open a presented viewport; the demand regression drives it explicitly.
+async function renderScreen(...args: Parameters<typeof renderUnmeasuredScreen>) {
+    const screen = await renderUnmeasuredScreen(...args);
+    const measure = async () => {
+        if (screen.tree.toJSON() === null) return;
+        await act(async () => {
+            for (const body of screen.findAllByType(WorkspaceScmReviewBody)) body
+                .findAll(node => typeof node.props.onLayout === 'function')[0]?.props.onLayout({ nativeEvent: { layout: { width: 900, height: 360 } } });
+        });
+    };
+    await measure();
+    const update = screen.update;
+    screen.update = async (...updateArgs) => { await update(...updateArgs); await measure(); };
+    return screen;
+}
 // Saved-result discovery is legitimate alongside capture; it is not a checkout read.
 function comparisonCalls() {
     return boundary.calls.filter(call => call.method !== RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_LIST
@@ -83,7 +101,7 @@ async function mount(comparison: SessionScmReviewComparison, active = true) {
         metadata: { path: '/repo/exact', host: 'tester.local', machineId: machine.id, flavor: 'codex' } });
     getStorage().setState({ sessions: { [sessionId]: session }, machines: { [machine.id]: machine }, machineListByServerId: { [serverId]: [machine] } });
     return renderHook<ReturnType<typeof useSessionCapturedScmComparison>, ScmComparison | null>(
-        (knownComparison) => useSessionCapturedScmComparison({ sessionId, serverId, comparison, knownComparison, active }), { initialProps: null });
+        (knownComparison) => useSessionCapturedScmComparison({ sessionId, serverId, comparison, knownComparison, active, indexPageSize: 1 }), { initialProps: null });
 }
 
 // Review is only offered for a comparison that changed something.
@@ -91,6 +109,82 @@ const changedFile = { path: 'src/changed.ts', changeKind: 'modified', binary: fa
     evidence: { state: 'available', unifiedDiff: 'diff --git a/src/changed.ts b/src/changed.ts\n--- a/src/changed.ts\n+++ b/src/changed.ts\n@@ -1 +1 @@\n-old\n+new\n' }, occurrences: [] } as const;
 
 describe('Files reads the canonical captured comparison through authenticated RPC', () => {
+    it('reads only presented viewport summaries from a 9119-file capture and pages on explicit demand', async () => {
+        const setup = await mount({ kind: 'session' }, false);
+        await setup.unmount();
+        const sessionId = 'capture-session';
+        const serverId = getStorage().getState().sessions[sessionId]!.serverId!;
+        const { WorkspaceScmReviewBody } = await import('@/components/projects/scm/WorkspaceScmReviewBody');
+        const { resolveScmChangeCompactRowHeight } = await import('@/components/workspaces/scm/changes/ScmChangeRow');
+        const { CapturedComparisonFilesView } = await import('./CapturedComparisonFilesView');
+        const files = Array.from({ length: 9119 }, (_, index) => ({ ...changedFile, path: `src/file-${index}.ts`,
+            evidence: { state: 'unavailable', reason: 'This fixture contains summary evidence.' } }));
+        const comparison = ScmComparisonSchema.parse({ id: '8'.repeat(64), source: { kind: 'session', sessionId },
+            repository: { rootPath: '/repo/exact' }, endpoints: {}, inventory: { state: 'complete', reasons: [], files } });
+        const responses: string[] = [];
+        boundary.response = (payload: { projection?: { cursor?: number; limit?: number } }) => {
+            const start = payload.projection?.cursor ?? 0;
+            const end = Math.min(files.length, start + (payload.projection?.limit ?? files.length));
+            const response = { success: true, comparison: { ...comparison, inventory: { ...comparison.inventory,
+                files: comparison.inventory.files.slice(start, end) } }, page: { totalFiles: files.length, nextCursor: end < files.length ? end : null },
+                metadata: { sourceKey: comparison.id, source: comparison.source } };
+            responses.push(JSON.stringify(response));
+            return response;
+        };
+        const destination = (active: boolean) => <AppPaneProvider><SessionScmReviewDetailsView sessionId={sessionId} serverId={serverId}
+            active={active} scopeId={`session:${sessionId}`} target={{ comparison: { kind: 'session' }, view: 'files' }} /></AppPaneProvider>;
+        const screen = await renderUnmeasuredScreen(destination(true));
+        const captures = () => boundary.calls.filter(call => call.method === RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE);
+        expect(captures()).toHaveLength(0);
+        const layout = async (height: number) => act(async () => screen.findByType(WorkspaceScmReviewBody)
+            .findAll(node => typeof node.props.onLayout === 'function')[0]!.props.onLayout({ nativeEvent: { layout: { width: 900, height } } }));
+        await screen.update(destination(false));
+        await layout(360);
+        expect(captures()).toHaveLength(0);
+        await screen.update(destination(true));
+        const expected = Math.ceil(360 / resolveScmChangeCompactRowHeight(false));
+        await vi.waitFor(() => expect(screen.findByType(CapturedComparisonFilesView).props.comparison.inventory.files).toHaveLength(expected));
+        expect(captures()).toHaveLength(1);
+        expect(captures()[0]?.payload).toMatchObject({ projection: { kind: 'index', limit: expected } });
+        expect(responses[0]!.length).toBeLessThan(JSON.stringify(comparison).length * expected / files.length * 2);
+        await layout(720);
+        expect(captures()).toHaveLength(1);
+        await screen.pressByTestIdAsync('captured-comparison-load-more');
+        await vi.waitFor(() => expect(captures()).toHaveLength(2));
+        expect(captures()[1]?.payload).toMatchObject({ comparisonId: comparison.id,
+            projection: { kind: 'index', cursor: expected, limit: Math.ceil(720 / resolveScmChangeCompactRowHeight(false)) } });
+        expect(screen.findByType(CapturedComparisonFilesView).props.comparison.inventory.files).toHaveLength(expected * 3);
+    });
+    it.each(['unavailable', 'incomplete', 'complete'] as const)('shows an empty %s capture without claiming unavailable evidence has no changes', async state => {
+        const prior = await mount({ kind: 'session' }, false);
+        await prior.unmount();
+        const sessionId = 'capture-session';
+        const serverId = getStorage().getState().sessions[sessionId]!.serverId!;
+        const { CapturedComparisonFilesView } = await import('./CapturedComparisonFilesView');
+        const { KeyboardShortcutProvider } = await import('@/keyboard/KeyboardShortcutProvider');
+        const comparison = ScmComparisonSchema.parse({ id: 'f'.repeat(64), source: { kind: 'session', sessionId },
+            repository: { rootPath: '/repo/exact' }, endpoints: {}, inventory: { state,
+                reasons: state === 'complete' ? [] : ['Repository evidence could not be captured.'], files: [] } });
+        function RefreshableCapture() {
+            const [current, setCurrent] = React.useState(comparison);
+            return React.createElement(CapturedComparisonFilesView, { comparison: current, sessionId, serverId, maxFiles: 1, maxChangedLines: 100,
+                onRefresh: () => setCurrent({ ...comparison, inventory: { state: 'complete', reasons: [], files: [] } }) });
+        }
+        const screen = await renderScreen(React.createElement(KeyboardShortcutProvider, null, React.createElement(RefreshableCapture)));
+        try {
+            expect(screen.findByTestId('changed-files-review-empty') !== null).toBe(state === 'complete');
+            expect(screen.findByTestId('captured-comparison-unavailable') !== null).toBe(state !== 'complete');
+            if (state !== 'complete') {
+                expect(screen.getTextContent()).toContain(comparison.inventory.reasons[0]);
+                await screen.pressByTestIdAsync('captured-comparison-unavailable-action');
+                expect(screen.findByTestId('captured-comparison-unavailable') === null).toBe(true);
+                expect(screen.findByTestId('changed-files-review-empty') !== null).toBe(true);
+            }
+        } finally {
+            await screen.unmount();
+        }
+    });
+
     it('keeps captured hydration from replacing unchanged review rows or the pending-read fetcher', async () => {
         const prior = await mount({ kind: 'session' }, false);
         await prior.unmount();
@@ -253,7 +347,7 @@ describe('Files reads the canonical captured comparison through authenticated RP
         await act(async () => { loadSavedScmDiffSummaryResult({ sessionId, scope: { serverId, accountId: 'captured-account' }, result }); });
         await first.unmount();
         const readsBeforeReturn = comparisonCalls().length;
-        const returned = await renderHook(() => useSessionCapturedScmComparison({ sessionId, serverId, comparison: source, knownComparison: comparison }));
+        const returned = await renderHook(() => useSessionCapturedScmComparison({ sessionId, serverId, comparison: source, knownComparison: comparison, indexPageSize: 1 }));
         await vi.waitFor(() => expect(returned.getCurrent().comparison?.inventory.files.map(file => file.path))
             .toEqual(['src/changed.ts', 'src/second.ts']));
         expect(returned.getCurrent()).toMatchObject({ loading: false, page: { totalFiles: 3, nextCursor: 2 },
@@ -275,7 +369,7 @@ describe('Files reads the canonical captured comparison through authenticated RP
             machineListByServerId: sessionState.machineListByServerId });
         boundary.response = { success: true, comparison: { ...comparison, id: '4'.repeat(64) },
             metadata: { sourceKey: comparison.id, source: comparison.source } };
-        const reopened = await renderHook(() => useSessionCapturedScmComparison({ sessionId, serverId, comparison: source }));
+        const reopened = await renderHook(() => useSessionCapturedScmComparison({ sessionId, serverId, comparison: source, indexPageSize: 1 }));
         await vi.waitFor(() => expect(reopened.getCurrent().comparison?.id).toBe('4'.repeat(64)));
     });
     it('retains a completed turn capture when navigation pins it before switching to Files', async () => {
@@ -290,7 +384,7 @@ describe('Files reads the canonical captured comparison through authenticated RP
         const sessionId = 'capture-turnCheckpoint';
         const serverId = getStorage().getState().sessions[sessionId]!.serverId!;
         const hook = await renderHook<ReturnType<typeof useSessionCapturedScmComparison>, SessionScmReviewComparison>((selector) => useSessionCapturedScmComparison({
-            sessionId, serverId, comparison: selector,
+            sessionId, serverId, comparison: selector, indexPageSize: 1,
         }), { initialProps: source });
         await vi.waitFor(() => expect(hook.getCurrent().comparison).toEqual(comparison));
         boundary.response = { success: false, errorCode: 'DIFF_UNAVAILABLE', error: 'A second read must not replace evidence already loaded.' };
@@ -336,7 +430,7 @@ describe('Files reads the canonical captured comparison through authenticated RP
             const [record, setRecord] = React.useState<import('@happier-dev/protocol/scm/reviewedMarks').ScmReviewedMarksRecord | null>(null);
             return <CapturedComparisonFilesView comparison={comparison} sessionId={sessionId}
                 workspaceScope={{ serverId, machineId: `machine:${sessionId}`, rootPath: '/repo/exact' }}
-                marks={{ record, unavailableReason: null, setReviewed: () => {}, clear: () => {},
+                marks={{ record, pending: false, unavailableReason: null, setReviewed: () => {}, clear: () => {},
                     setReviewedKeys: (selected, reviewed) => { void port.setReviewedKeys(selected, reviewed).then(result => {
                         if (result.success) setRecord(result.record);
                     }); } }} maxFiles={10} maxChangedLines={100} />;
@@ -543,7 +637,8 @@ describe('Files reads the canonical captured comparison through authenticated RP
         const screen = await renderScreen(<AppPaneProvider><PaneProbe scopeId="session:capture-session" /><SessionScmReviewDetailsView sessionId="capture-session"
             serverId={serverId} scopeId="session:capture-session" target={{ comparison: source, view: 'files' }} /></AppPaneProvider>);
         await vi.waitFor(() => expect(screen.findByTestId('captured-comparison-files')).toBeTruthy());
-        expect(Boolean(screen.findByTestId('captured-inventory-incomplete'))).toBe(state === 'unavailable');
+        expect(Boolean(screen.findByTestId('captured-comparison-unavailable'))).toBe(state === 'unavailable');
+        expect(Boolean(screen.findByTestId('changed-files-review-empty'))).toBe(state === 'complete');
         expect(comparisonCalls().map((call) => call.method)).toEqual([RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE]);
         const capturedView = screen.findByType((await import('./CapturedComparisonFilesView')).CapturedComparisonFilesView);
         expect(capturedView.props.comparison).toEqual(comparison);
@@ -598,7 +693,7 @@ describe('Files reads the canonical captured comparison through authenticated RP
         const hook = await mount(source);
         await vi.waitFor(() => expect(hook.getCurrent().comparison).toEqual(comparison));
         expect(boundary.calls).toEqual([expect.objectContaining({ method: RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE,
-            payload: { sessionId: 'capture-pullRequest', cwd: '/repo/exact', source, projection: { kind: 'index' } } })]);
+            payload: { sessionId: 'capture-pullRequest', cwd: '/repo/exact', source, projection: { kind: 'index', limit: 1 } } })]);
     });
     it('reads a pinned identity and preserves an unavailable response without recapturing source', async () => {
         const source = { kind: 'commit' as const, commit: 'old-ref' };
@@ -607,7 +702,7 @@ describe('Files reads the canonical captured comparison through authenticated RP
         const hook = await mount({ ...source, comparisonId });
         await vi.waitFor(() => expect(hook.getCurrent().error).toBe('saved_evidence_missing'));
         expect(hook.getCurrent().comparison).toBeNull();
-        expect(boundary.calls).toEqual([expect.objectContaining({ payload: { sessionId: 'capture-commit', cwd: '/repo/exact', source, comparisonId, projection: { kind: 'index' } } })]);
+        expect(boundary.calls).toEqual([expect.objectContaining({ payload: { sessionId: 'capture-commit', cwd: '/repo/exact', source, comparisonId, projection: { kind: 'index', limit: 1 } } })]);
     });
     it('clears a failed read when exact saved evidence becomes available without recapturing', async () => {
         const source = { kind: 'commit' as const, commit: 'old-ref' };

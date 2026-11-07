@@ -4,10 +4,15 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { resolveBackendCommandMaxOutputBytes } from '@happier-dev/plugin-sdk/scm/backend';
 import { withTempDir } from '@/testkit/fs/tempDir';
-import { runScmCommand } from './runtime';
+import { createHostScmCommandRunner, runScmCommand as runCanonicalScmCommand, runWithScmCommandRunner } from './runtime';
 import { materializeGitRepositoryCheckpoint } from './checkpoints/materializeGitRepositoryCheckpoint';
 
-describe('SCM command owned stdout files', () => {
+describe.each(['direct', 'delegated Exec'] as const)('SCM command owned stdout files (%s)', mode => {
+    const runner = mode === 'direct' ? undefined : createHostScmCommandRunner({
+        agentIsolation: { read: () => ({ enabled: false, status: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' }, workspaceRoots: [] }) },
+        isCurrent: () => true,
+    });
+    const runScmCommand: typeof runCanonicalScmCommand = input => runWithScmCommandRunner(runner, () => runCanonicalScmCommand(input));
     it('never overwrites an existing sink or opens one for incompatible stdout consumers', async () => {
         await withTempDir('happier-scm-stdout-exclusive-', async cwd => {
             const outputPath = join(cwd, 'listing');
@@ -29,7 +34,7 @@ describe('SCM command owned stdout files', () => {
             const names = Array.from({ length: 22_000 }, (_, index) => `${String(index).padStart(6, '0')}-${'x'.repeat(159)}😀`);
             const tree = execFileSync('git', ['mktree', '-z'], { cwd, encoding: 'utf8',
                 input: names.map(name => `100644 blob ${blob}\t${name}\0`).join('') }).trim();
-            const budget = resolveBackendCommandMaxOutputBytes({});
+            const budget = resolveBackendCommandMaxOutputBytes({ defaultMaxOutputBytes: 4 * 1024 * 1024 });
             const args = ['ls-tree', '-r', '-z', '-l', '--full-tree', tree];
             expect(await runScmCommand({ bin: 'git', cwd, args, maxOutputBytes: budget }))
                 .toMatchObject({ success: false, outputLimitExceeded: true });

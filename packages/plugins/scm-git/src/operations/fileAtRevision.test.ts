@@ -1,4 +1,3 @@
-import { ScmDiffFileRequestSchema } from '@happier-dev/protocol/scm';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
@@ -6,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ScmFileAtRevisionRequest } from '@happier-dev/plugin-sdk/scm';
+import { ScmDiffFileRequestSchema } from '@happier-dev/protocol/scm';
 import { resolveBackendCommandMaxOutputBytes } from '@happier-dev/plugin-sdk/scm/backend';
 
 import { createGitScmBackendRuntimeRegistration } from '../backend.js';
@@ -75,6 +75,23 @@ describe('Git file-at-revision bytes through backend registration and the real p
         expect(await read({ path, selector: { blobId } })).toEqual(expected(committed));
     });
 
+    it('keeps HEAD replacement selection separate from a pinned immutable blob read', async () => {
+        const original = Buffer.from('original A');
+        const current = Buffer.from('current B');
+        await writeFile(join(root, 'file.bin'), original);
+        git(root, ['add', 'file.bin']);
+        git(root, ['commit', '--quiet', '-m', 'A']);
+        const firstCommit = git(root, ['rev-parse', 'HEAD']);
+        await writeFile(join(root, 'file.bin'), current);
+        git(root, ['add', 'file.bin']);
+        git(root, ['commit', '--quiet', '-m', 'B']);
+        const currentCommit = git(root, ['rev-parse', 'HEAD']);
+        const currentBlob = git(root, ['rev-parse', 'HEAD:file.bin']);
+        git(root, ['replace', currentCommit, firstCommit]);
+        expect(await read({ path: 'file.bin', selector: { side: 'before', area: 'included' } })).toEqual(expected(original));
+        expect(await read({ path: 'file.bin', selector: { blobId: currentBlob } })).toEqual(expected(current));
+    });
+
     it('uses literal repository-root paths, including magic, whitespace and leading dashes', async () => {
         await mkdir(join(root, 'sub'));
         const paths = ['[one].bin', '-dash.bin', 'space .bin', 'sub/nested.bin',
@@ -112,7 +129,7 @@ describe('Git file-at-revision bytes through backend registration and the real p
     });
 
     it('honors only the caller admission budget and reads objects beyond the ordinary SCM command cap', async () => {
-        const bytes = Buffer.alloc(resolveBackendCommandMaxOutputBytes() + 17, 255);
+        const bytes = Buffer.alloc(resolveBackendCommandMaxOutputBytes({ defaultMaxOutputBytes: 4 * 1024 * 1024 }) + 17, 255);
         await writeFile(join(root, 'large.bin'), bytes);
         git(root, ['add', 'large.bin']);
         const selector = { side: 'before', area: 'pending' } as const;

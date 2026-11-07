@@ -4,6 +4,7 @@ import { WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES } from '@happier-dev/protoco
 import { projectCapturedComparison } from './projectCapturedComparison';
 import { EXTERNAL_ACTION_RELAY_RESPONSE_SOCKET_MIN_BUFFER_BYTES_V2 } from '@happier-dev/protocol/actions/externalActionApi';
 import { encryptLegacy, encodeBase64 } from '@/api/encryption';
+import { ScmComparisonCaptureInputSchema } from '@happier-dev/protocol/scm/diffSummary';
 
 function capture(count: number, patch = '@@ -1 +1,2 @@\n-before\n+after\n+é😀\n') {
   const comparison: ScmComparison = { id: 'a'.repeat(64), source: { kind: 'workingTree' },
@@ -14,6 +15,30 @@ function capture(count: number, patch = '@@ -1 +1,2 @@\n-before\n+after\n+é😀
 }
 
 describe('captured comparison wire projection', () => {
+  it('projects only caller-demanded rows from a 9,119-file captured index', () => {
+    const retained = capture(9_119);
+    const input = ScmComparisonCaptureInputSchema.parse({ cwd: '/repo', source: { kind: 'workingTree' },
+      projection: { kind: 'index', limit: 13 } });
+    const first = projectCapturedComparison(retained, input.projection);
+    expect(first.success).toBe(true);
+    if (!first.success) throw new Error(first.error);
+    expect(first.page).toEqual({ totalFiles: 9_119, nextCursor: 13 });
+    expect(first.comparison.inventory.files).toHaveLength(13);
+    expect(first.comparison.inventory.files[0]).toMatchObject({ linesAdded: 2, linesRemoved: 1,
+      evidence: { state: 'deferred' } });
+    expect(JSON.stringify(first)).not.toContain('unifiedDiff');
+    const small = projectCapturedComparison(capture(13), input.projection);
+    expect(Buffer.byteLength(JSON.stringify(first))).toBeLessThan(Buffer.byteLength(JSON.stringify(small)) * 2);
+    const next = projectCapturedComparison(retained, { ...input.projection!, cursor: first.page!.nextCursor! });
+    expect(next.success && next.page).toEqual({ totalFiles: 9_119, nextCursor: 26 });
+    expect(next.success && next.comparison.inventory.files.map(file => file.path))
+      .toEqual(retained.comparison.inventory.files.slice(13, 26).map(file => file.path));
+    const final = projectCapturedComparison(retained, { ...input.projection!, cursor: 9_113 });
+    expect(final.success && final.page).toEqual({ totalFiles: 9_119, nextCursor: null });
+    expect(final.success && final.comparison.inventory.files.map(file => file.path))
+      .toEqual(retained.comparison.inventory.files.slice(9_113).map(file => file.path));
+  });
+
   it('retains a 20 MB capture supported by the current socket transport', () => {
     const result = projectCapturedComparison(capture(1, 'x'.repeat(20_000_000)));
     expect(result.success).toBe(true);
@@ -55,18 +80,18 @@ describe('captured comparison wire projection', () => {
     retained.comparison.inventory.files.forEach(file => {
       file.path = 'é'.repeat(Math.ceil(WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES / 8)) + file.path;
     });
-    const first = projectCapturedComparison(retained, { kind: 'index' });
+    const first = projectCapturedComparison(retained, { kind: 'index', limit: 5 });
     expect(first.success).toBe(true);
     if (!first.success || !first.page?.nextCursor) throw new Error('Expected a bounded first page');
     expect(first.comparison.inventory.state).toBe('complete');
     expect(Buffer.byteLength(JSON.stringify(first))).toBeLessThanOrEqual(WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES);
-    const next = projectCapturedComparison(retained, { kind: 'index', cursor: first.page.nextCursor });
+    const next = projectCapturedComparison(retained, { kind: 'index', cursor: first.page.nextCursor, limit: 5 });
     expect(next.success && next.comparison.inventory.files.length + first.comparison.inventory.files.length).toBe(5);
   });
 
   it('selects an absolute opened path and never mutates the retained evidence', () => {
     const retained = capture(14_592);
-    const result = projectCapturedComparison(retained, { kind: 'index', path: '/repo/src/file-14591.ts' });
+    const result = projectCapturedComparison(retained, { kind: 'index', path: '/repo/src/file-14591.ts', limit: 1 });
     expect(result.success && result.comparison.inventory.files.map(file => file.path)).toEqual(['src/file-14591.ts']);
     expect(result.success && result.page).toEqual({ totalFiles: 1, nextCursor: null });
     expect(retained.comparison.inventory.files[14591]?.evidence).toEqual({ state: 'available', unifiedDiff: '@@ -1 +1,2 @@\n-before\n+after\n+é😀\n' });

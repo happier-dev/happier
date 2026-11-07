@@ -2,6 +2,7 @@ import * as fs from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { configuration } from '@/configuration';
+import { ScmComparisonCaptureInputSchema } from '@happier-dev/protocol/scm/diffSummary';
 import { readStoredScmComparison, writeStoredScmComparison } from './comparisonStorage';
 import { createLocalScmRepositoryFixture } from '@/testkit/scm/scmBackendContractFixtures';
 import { captureScmComparison, deleteCapturedScmComparison, readCapturedScmComparison,
@@ -40,6 +41,41 @@ async function countReadBytes(consume: () => Promise<void>): Promise<number> {
 }
 
 describe('captured comparison selective storage reads', () => {
+  it('reads only caller-demanded rows from a 9,119-file seekable capture', async () => {
+    const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'scm-demand-storage-' });
+    let comparisonId: string | undefined;
+    try {
+      await fs.writeFile(join(fixture.rootPath, fixture.trackedPath), 'demanded immutable bytes\n');
+      const captured = await captureScmComparison({ cwd: fixture.rootPath, source: { kind: 'workingTree' } });
+      comparisonId = captured.comparison.id;
+      const path = join(configuration.activeServerDir, 'runtime', 'scm', 'comparisons', 'repository', comparisonId + '.json');
+      const stored = await readStoredScmComparison(path);
+      const selected = stored.comparison.inventory.files[0]!;
+      const input = ScmComparisonCaptureInputSchema.parse({ cwd: fixture.rootPath, comparisonId,
+        source: { kind: 'workingTree' }, projection: { kind: 'index', limit: 13 } });
+      const measure = async (count: number) => {
+        const files = Array.from({ length: count }, (_, index) => ({ ...selected, path: `src/file-${index}.ts` }));
+        await writeStoredScmComparison(path, { ...stored, comparison: { ...stored.comparison,
+          inventory: { ...stored.comparison.inventory, files } } });
+        return countReadBytes(async () => {
+          const page = await readCapturedScmComparisonPage({ cwd: input.cwd, comparisonId: input.comparisonId!,
+            projection: input.projection! });
+          expect(page.success).toBe(true);
+          if (!page.success) throw new Error(page.error);
+          expect(page.page).toEqual({ totalFiles: count, nextCursor: count > 13 ? 13 : null });
+          expect(page.comparison.inventory.files.map(file => file.path)).toEqual(files.slice(0, 13).map(file => file.path));
+          expect(JSON.stringify(page)).not.toContain('unifiedDiff');
+        });
+      };
+      const small = await measure(13);
+      const large = await measure(9_119);
+      expect(large, 'unrequested records must not multiply demand-page filesystem reads').toBeLessThan(small * 2);
+    } finally {
+      if (comparisonId) await deleteCapturedScmComparison({ cwd: fixture.rootPath, comparisonId });
+      await fs.rm(fixture.rootPath, { recursive: true, force: true });
+    }
+  });
+
   it('reads an index and one file without reading unrelated retained patch bytes', async () => {
     const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'scm-selective-storage-' });
     let comparisonId: string | undefined;

@@ -6,6 +6,7 @@ import { useCapturedScmComparison } from './useCapturedScmComparison';
 export function useSessionCapturedScmComparison(params: Readonly<{
     sessionId: string; serverId?: string | null; comparison: SessionScmReviewComparison;
     active?: boolean; knownComparison?: ScmComparison | null;
+    indexPageSize?: number | null;
 }>) {
     const machine = useSessionMachineTarget(params.sessionId, params.serverId);
     const identity = useSessionMachineDisplayIdentity(params.sessionId, params.serverId);

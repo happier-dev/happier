@@ -280,6 +280,7 @@ export async function readCapturedScmComparisonPage(input: ReadCapturedScmCompar
     return projectCapturedComparisonIndex(captured, {
       totalFiles: filtered ? (position === undefined ? 0 : 1) : reader.totalFiles,
       cursor: input.projection.cursor,
+      limit: input.projection.limit,
       readFile: index => reader.readFile(filtered ? position! : index, 'index'),
     });
   });

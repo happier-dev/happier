@@ -25,6 +25,8 @@ export function useCapturedScmComparison(params: Readonly<{
     knownComparison?: ScmComparison | null;
     /** Absolute Machine path, so nested Session roots select the same captured file. */
     filePath?: string;
+    /** Measured presented viewport demand. Null waits for the first layout. */
+    indexPageSize?: number | null;
 }>) {
     const { binding, resolution } = useServerCredentialAccountScopeBinding(params.serverId);
     // Hydrated evidence follows the retained Account identity during Home revalidation;
@@ -72,10 +74,14 @@ export function useCapturedScmComparison(params: Readonly<{
             previous => typeof update === 'function' ? update(previous) : update);
     }, [binding, key, sessionId, params.host.machineId, basePath]);
     const [retryToken, retry] = React.useReducer((value: number) => value + 1, 0);
+    const indexPageSize = params.filePath ? 1 : params.indexPageSize;
+    const pageSizeRef = React.useRef(indexPageSize);
+    pageSizeRef.current = indexPageSize;
+    const demandReady = indexPageSize != null;
     const selectorRef = React.useRef(params.comparison);
     selectorRef.current = params.comparison;
     React.useEffect(() => {
-        if (!binding?.isCurrent() || !scope || !machine || params.active === false || knownOnly || !sourceAvailable) return;
+        if (!binding?.isCurrent() || !scope || !machine || params.active === false || knownOnly || !sourceAvailable || !demandReady) return;
         const abort = new AbortController();
         requestLifetime.current = abort;
         const retirement = binding.onRetire(() => abort.abort());
@@ -100,7 +106,8 @@ export function useCapturedScmComparison(params: Readonly<{
                 const result = await captureScmComparisonForSession({ ...params.host, serverId: scope.serverId,
                     scope, signal: abort.signal, shouldContinue: current,
                     input: { cwd: selected.savedResult?.cwd ?? machine.basePath, source: scmComparisonSourceOf(selected, sessionId ?? ''),
-                        projection: { kind: 'index', ...(params.filePath ? { path: params.filePath } : {}) },
+                        projection: { kind: 'index', ...(params.filePath ? { path: params.filePath } : {}),
+                            limit: pageSizeRef.current! },
                         ...(pinnedComparisonId ? { comparisonId: pinnedComparisonId } : {}) } });
                 if (!current()) return;
                 if (result.success) {
@@ -135,11 +142,11 @@ export function useCapturedScmComparison(params: Readonly<{
         };
         void read();
         return cleanup;
-    }, [binding, scope?.serverId, scope?.accountId, key, machine?.machineId, machine?.basePath, sessionId, sourceAvailable, params.active, knownOnly, retryToken]);
+    }, [binding, scope?.serverId, scope?.accountId, key, machine?.machineId, machine?.basePath, sessionId, sourceAvailable, params.active, knownOnly, retryToken, demandReady]);
     const visible = scope && state?.key === key ? state : null;
     const loadMore = React.useCallback(async () => {
         const abort = requestLifetime.current;
-        if (!scope || !binding || !abort || visible?.loading || !visible?.comparison || visible.page?.nextCursor == null) return;
+        if (!scope || !binding || !abort || params.active === false || !demandReady || visible?.loading || !visible?.comparison || visible.page?.nextCursor == null) return;
         const current = () => !abort.signal.aborted && binding.isCurrent();
         const previous = visible.comparison;
         const cursor = visible.page.nextCursor;
@@ -148,7 +155,7 @@ export function useCapturedScmComparison(params: Readonly<{
             const result = await captureScmComparisonForSession({ ...params.host, serverId: scope.serverId, scope,
                 signal: abort.signal, shouldContinue: current,
                 input: { cwd: previous.repository.rootPath, source: previous.source, comparisonId: previous.id,
-                    projection: { kind: 'index', cursor } } });
+                    projection: { kind: 'index', cursor, limit: pageSizeRef.current! } } });
             if (!current()) return;
             if (!result.success) throw createRpcCallError({ error: result.error, errorCode: result.errorCode });
             setState(state => state?.key === key ? { ...state, loading: false, error: null, page: result.page ?? null,
@@ -159,7 +166,7 @@ export function useCapturedScmComparison(params: Readonly<{
                 error: { message: error instanceof Error ? error.message : t('scmComparison.unsupportedReason'),
                     ...(error instanceof RpcError ? { code: error.rpcErrorCode } : {}) } } : state);
         }
-    }, [scope, binding, visible, key, params.host]);
+    }, [scope, binding, visible, key, params.host, params.active, demandReady]);
     return { comparison: scope && sourceAvailable ? knownOnly ?? visible?.comparison ?? null : null,
         page: knownOnly ? null : visible?.page ?? null, loadMore,
         error: !sourceAvailable ? t('scmComparison.unsupportedReason') : knownOnly ? null : visible?.error?.message ?? null,

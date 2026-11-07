@@ -132,6 +132,7 @@ export const ScmComparisonCaptureInputSchema = lazyZodSchema(() => z.strictObjec
   comparisonId: z.optional(z.string().check(z.regex(/^[a-f0-9]{64}$/))),
   projection: z.optional(z.strictObject({ kind: z.literal('index'),
     cursor: z.optional(z.number().check(z.int(), z.nonnegative())),
+    limit: z.optional(z.number().check(z.int(), z.positive())),
     path: z.optional(z.string().check(z.minLength(1))),
   })),
   backendPreference: z.optional(ScmBackendPreferenceSchema), source: ScmDiffSummarySourceSchema,

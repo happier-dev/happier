@@ -70,14 +70,14 @@ describe('Git demanded entry history', () => {
         expect(await history(['one'], before)).toMatchObject({ success: false, headOid: after, errorCode: 'SCM_SOURCE_CHANGED' });
     });
     it('settles recent demanded facts before older root history exceeds the command output boundary', async () => {
-        // Exercise the canonical default boundary, not an executor's permitted
-        // environment override. Keep that override intact for the other tests.
-        vi.stubEnv('HAPPIER_SCM_MAX_OUTPUT_BYTES', '');
-        const commandOutputBoundary = resolveBackendCommandMaxOutputBytes();
+        // Exercise an explicit operator budget while preserving the executor's
+        // environment for the other tests.
+        vi.stubEnv('HAPPIER_SCM_MAX_OUTPUT_BYTES', String(4 * 1024 * 1024));
+        const commandOutputBoundary = resolveBackendCommandMaxOutputBytes({ envValue: process.env.HAPPIER_SCM_MAX_OUTPUT_BYTES });
         await writeFile(join(root, 'old'), 'old content');
         git(root, ['add', 'old']);
         // A real old commit subject makes the unrestricted root log exceed the
-        // existing 4 MiB process boundary without a slow thousands-commit fixture.
+        // configured 4 MiB process boundary without a slow thousands-commit fixture.
         const oldSubjectFragment = 'old history ';
         const oldSubject = oldSubjectFragment.repeat(Math.floor(commandOutputBoundary / oldSubjectFragment.length) + 1);
         execFileSync('git', ['commit', '--quiet', '-F', '-'], { cwd: root, input: oldSubject });

@@ -60,7 +60,7 @@ export function projectCapturedComparison(captured: Pick<CapturedScmComparison, 
   const totalFiles = sourceFiles.length;
   const cursor = projection.cursor ?? 0;
   if (cursor > totalFiles) return unavailable('The file index cursor is outside this captured comparison.');
-  const page = createIndexPage(captured, totalFiles);
+  const page = createIndexPage(captured, totalFiles, projection.limit);
   if (!page.response.success) return page.response;
   for (let position = cursor; position < totalFiles; position++) {
     if (!page.append(sourceFiles[position]!, position)) break;
@@ -68,7 +68,7 @@ export function projectCapturedComparison(captured: Pick<CapturedScmComparison, 
   return page.response;
 }
 
-function createIndexPage(captured: Pick<CapturedScmComparison, 'comparison' | 'metadata'>, totalFiles: number) {
+function createIndexPage(captured: Pick<CapturedScmComparison, 'comparison' | 'metadata'>, totalFiles: number, limit?: number) {
   const files: ScmComparisonFile[] = [];
   const response = { success: true as const, comparison: { ...captured.comparison,
     inventory: { ...captured.comparison.inventory, files } }, metadata: captured.metadata,
@@ -86,6 +86,10 @@ function createIndexPage(captured: Pick<CapturedScmComparison, 'comparison' | 'm
     }
     bytes += entryBytes;
     files.push(file);
+    if (files.length === limit) {
+      response.page.nextCursor = position + 1 < totalFiles ? position + 1 : null;
+      return false;
+    }
     return true;
   };
   const page = { response: response as ScmComparisonCaptureOutput, append };
@@ -94,10 +98,10 @@ function createIndexPage(captured: Pick<CapturedScmComparison, 'comparison' | 'm
 
 /** The same transport decision consumes either an in-memory inventory or seekable retained records. */
 export async function projectCapturedComparisonIndex(captured: Pick<CapturedScmComparison, 'comparison' | 'metadata'>,
-  input: Readonly<{ totalFiles: number; cursor?: number; readFile: (position: number) => Promise<ScmComparisonFile> }>): Promise<ScmComparisonCaptureOutput> {
+  input: Readonly<{ totalFiles: number; cursor?: number; limit?: number; readFile: (position: number) => Promise<ScmComparisonFile> }>): Promise<ScmComparisonCaptureOutput> {
   const cursor = input.cursor ?? 0;
   if (cursor > input.totalFiles) return unavailable('The file index cursor is outside this captured comparison.');
-  const page = createIndexPage(captured, input.totalFiles);
+  const page = createIndexPage(captured, input.totalFiles, input.limit);
   if (!page.response.success) return page.response;
   for (let position = cursor; position < input.totalFiles; position++) {
     if (!page.append(await input.readFile(position), position)) break;
