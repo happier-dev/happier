@@ -548,6 +548,99 @@ describe('executeExternalAction', () => {
       expect(openExternalActionResponseV2({ envelope: result.response, request: envelope, binding, material })).not.toBeNull();
     } finally { get.mockRestore(); post.mockRestore(); phaseLog.mockRestore(); }
   });
+  it.each(['account', 'terminal'] as const)('returns fresh beginConnect custody through a sealed CLI %s decision', async kind => {
+    const accountId = 'connect-requester';
+    const token = `fixture.${Buffer.from(JSON.stringify({ sub: accountId, tokenEpoch: 7,
+      ...(kind === 'terminal' ? { session: 'terminal-session', provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } } : {}),
+    })).toString('base64url')}.signature`;
+    const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(31) };
+    const credentials = { token, encryption: { ...material, publicKey: tweetnacl.box.keyPair.fromSecretKey(material.machineKey).publicKey },
+      credentialProvenance: 'stored_session' as const };
+    const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(22));
+    const target = { kind: 'machine' as const, machineId: 'controller' };
+    const actionId = 'approval.request.decide';
+    const authentication = { kind, tokenEpoch: 7 };
+    const binding = { serverIdentityId: 'srv_home', accountId, authentication, actionId,
+      requestId: 'connect-decision', target };
+    const envelope = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+      binding, material, input: { artifactId: 'connect-approval', decision: 'approve' }, randomBytes: tweetnacl.randomBytes });
+    const authorization = sealExternalActionRequesterAccountContextV1({ authorization: { v: 1, token: 'home-root', binding: {
+      ...binding, accountEncryptionMode: 'e2ee', custodianAccountId: 'custodian', machineId: target.machineId,
+      installationId: 'installation', requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+      approvalDecisionAdmission: envelope.approvalDecisionAdmission,
+    } }, credentials: encodeStoredCredentials(credentials), purpose: { kind: 'external_action' },
+      invocation: { caller: { kind: 'host' }, surface: 'cli', authority: 'present_user' },
+      installationPublicKey: installation.publicKey, randomBytes: tweetnacl.randomBytes });
+    const settings = prepareAccountSettingsV2Content({ credentials, raw: {}, envelopeKind: 'encrypted' });
+    const service = { pluginId: 'example.accounts', localId: 'service' };
+    const output = getActionSpec('connectedServices.authentication.beginConnect').outputSchema!.parse({
+      status: 'configurationRequired', attemptId: 'attempt',
+      target: { kind: 'attempt', attemptId: 'attempt', service, modeId: 'password' }, missingFieldIds: ['mailbox'],
+    });
+    let stored: ApprovalRequest | null = null;
+    let effects = 0;
+    const resolveTarget = createDaemonExternalActionTargetResolver({ credentials });
+    const currentness = createDaemonApprovalExecutionOriginCurrentness({ accountId, machineId: target.machineId,
+      serverId: 'profile', resolveTarget,
+      resolveCurrentMachineExecutionOriginContext: async () => ({ machineId: target.machineId, serverIdentityId: 'srv_home' }),
+      isAccountCurrent: async () => true, listAccountApiTokens: async () => ({ tokens: [] }),
+    });
+    // Artifact persistence and the native authentication command are system boundaries.
+    const executor = createActionExecutor({ ...createUnavailableHostActionDeps(),
+      approvalsCreate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(request); return { artifactId: 'connect-approval' }; },
+      approvalsGet: async () => stored,
+      approvalsUpdate: async ({ request }) => {
+        if (!stored) throw new Error('Missing approval');
+        const next = ApprovalRequestV2Schema.parse(request);
+        const transition = decideApprovalRequestTransition(stored, next);
+        if (!transition.ok) return transition;
+        stored = next; return { ok: true };
+      },
+      isApprovalExecutionOriginCurrent: currentness,
+      connectedServiceAction: async () => { effects++; return output; },
+    });
+    const created = await executor.execute('connectedServices.authentication.beginConnect', { machineId: target.machineId, service, modeId: 'password' },
+      { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, runtimeAccountId: accountId,
+        serverId: 'profile', serverIdentityId: 'srv_home', actionRequestId: 'connect-origin', defaultSessionMachineId: target.machineId,
+        actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {
+          'connectedServices.authentication.beginConnect': { approvalRequiredSurfaces: ['cli'] },
+        } }) });
+    expect(created, created.ok ? undefined : created.errorCode).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    expect(stored).toMatchObject({ approval: { flow: 'deferred' } });
+    const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/v1/account/profile') return { status: 200, data: { id: accountId } };
+      if (path === '/v2/account/settings') return { status: 200, data: { content: settings, version: 1 } };
+      if (path === '/v1/account/encryption/currentness') return { status: 200, data: { mode: 'e2ee', version: 1,
+        signingKeyFingerprint: null, contentKeyFingerprint: computeAccountEncryptionMigrateKeyFingerprintV1(credentials.encryption.publicKey), updatedAt: 1 } };
+      throw new Error(`Unexpected requester GET ${path}`);
+    });
+    const post = vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { ok: true } });
+    try {
+      const run = () => executeExternalAction({ actionId, envelope,
+        principal: { accountId, authentication, authority: 'account_automation' }, surface: 'cli', executionAuthorization: authorization,
+        currentMachineId: target.machineId, currentServerId: 'profile', currentAccountId: 'custodian', currentInstallationId: 'installation',
+        externalActionMachineRequestPrivateKey: installation.secretKey, verifyExecutionAuthorization: async () => true,
+        resolveTarget: createDaemonExternalActionTargetResolver({ credentials: { token: 'custodian', encryption: null } }), executor,
+        prepareRequesterAccountContext: request => prepareRequesterAccountActionContext({ authorization: request.authorization,
+          purpose: { kind: 'external_action' }, machineId: target.machineId, installationId: 'installation',
+          installationPrivateKey: installation.secretKey, serverId: 'profile', serverIdentityId: 'srv_home',
+          serverHttpBaseUrl: 'https://home.test', isCurrent: async () => true, createExecutor: () => executor }),
+      });
+      const result = await run();
+      expect(result).toMatchObject({ kind: 'response', response: { v: 2 } });
+      if (result.kind !== 'response') throw new Error('Missing encrypted decision reply');
+      expect(openExternalActionResponseV2({ envelope: result.response, request: envelope, binding, material }))
+        .toMatchObject({ ok: true, result: { status: 'executed', liveExecution: { ok: true, result: output } } });
+      const repeated = await run();
+      if (repeated.kind !== 'response') throw new Error('Missing repeated reply');
+      const receipt = openExternalActionResponseV2({ envelope: repeated.response, request: envelope, binding, material });
+      expect(receipt).toMatchObject({ ok: true, result: { status: 'executed' } });
+      if (receipt?.ok) expect(receipt.result).not.toHaveProperty('liveExecution');
+      expect(effects).toBe(1);
+      expect(ApprovalRequestV2Schema.parse(stored).execution?.result).not.toHaveProperty('target');
+    } finally { get.mockRestore(); post.mockRestore(); }
+  });
   it('preserves terminal E2EE identity and automation through actual installed custody, effect and reply', async () => {
     const accountId = 'bob-terminal';
     const token = `fixture.${Buffer.from(JSON.stringify({ sub: accountId, session: 'bob-terminal-session', tokenEpoch: 7,

@@ -901,9 +901,9 @@ async function executeExternalActionRequest(input: Readonly<{
       : resolveExternalActionAccountInvocationSurface(accountPrincipal?.authentication.kind, ownInvocation?.surface ?? input.surface),
     authority: unstampedManagedChild || invocation && invocation.authority !== 'present_user'
       ? 'account_automation'
-      // Home authenticates terminal continuations at an automation floor. Only
-      // the restored private host invocation establishes the person's CLI use.
-      : requesterContext?.invocation && accountPrincipal?.authentication.kind === 'terminal' && admittedAuthorization
+      // The restored private host invocation establishes the person's CLI use
+      // for both Account and terminal continuations at an automation floor.
+      : requesterContext?.invocation && admittedAuthorization
         ? resolveExternalActionRootInvocationAuthority(admittedAuthorization)
         : input.principal.authority,
     actionCaller: pluginCaller ?? sessionActionOrigin?.caller ?? invocation?.caller ?? { kind: 'host' },
