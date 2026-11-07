@@ -1,7 +1,7 @@
 import { expect, vi } from 'vitest';
 import { createDeferred, waitForTestEvent } from '@/dev/testkit';
 import type { RealtimeVoiceProviderRuntime, VoiceSdkHandleConnectionDriver } from '@happier-dev/plugin-sdk/voice/client';
-import type { PluginContributionClientPlatform } from '@happier-dev/protocol';
+import type { PluginContributionClientPlatform } from '@happier-dev/protocol/plugins/contributions/catalog';
 
 import {
   createPluginUiClientExecutableRegistrationIndex,
@@ -70,7 +70,7 @@ export async function createPublicPcmVoiceConversationForTest(
   let now = Date.now();
   const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
   restoreClock = () => clock.mockRestore();
-  const { PluginContributesV2Schema } = await import('@happier-dev/protocol');
+  const { PluginContributesV2Schema} = await import('@happier-dev/protocol/plugins/contributions/v2');
   const { createVoiceTranscriptLadderMapper, VoiceTranscriptCanonicalEventV1Schema } = await import('@happier-dev/plugin-sdk/voice/client');
   const { createBundledConversationRuntimeHostLease, getCurrentBundledConversationRuntimeHost } = await import('@/voice/registry/bundledConversationRuntimeHost');
   const { getExternalVoiceProviderRegistration } = await import('@/voice/registry/externalVoiceProviderRegistrations');
@@ -228,7 +228,8 @@ export async function createPublicPcmVoiceConversationForTest(
     expect(entryId).not.toBeNull();
     return entryId!;
   };
-  return { sent, emit, startOutput, finalizeAssistant, isVoiceTurnInterrupted, providerId,
+  return { sent, emit, startOutput, finalizeAssistant,
+    isVoiceTurnInterrupted: (entryId: string) => isVoiceTurnInterrupted(entryId, environment.historySessionId), providerId,
     browser,
     adapter: registration.adapter,
     getController() {

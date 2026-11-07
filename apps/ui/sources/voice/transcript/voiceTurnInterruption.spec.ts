@@ -1,72 +1,83 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { storage } from '@/sync/domains/state/storage';
+import { normalizeRawMessage } from '@happier-dev/session-core/raw';
 
 import { selectVoiceTranscriptEntriesForConversationSession } from './voiceTranscriptSelectors';
 import {
     __resetVoiceTurnInterruptions,
     isVoiceTurnInterrupted,
     markVoiceConversationAssistantTurnInterrupted,
-    voiceTurnInterruptionVersion,
 } from './voiceTurnInterruption';
 
 function assistantMessage(id: string, text: string, createdAt: number) {
-    return {
-        id,
-        localId: id,
-        createdAt,
-        isSidechain: false,
-        role: 'agent',
-        content: [{ type: 'text', text, uuid: id, parentUUID: null }],
-    };
+    const message = normalizeRawMessage(id, id, createdAt, { role: 'agent',
+        content: { type: 'output', data: { type: 'assistant', uuid: id,
+            message: { role: 'assistant', content: [{ type: 'text', text }] } } } });
+    if (!message) throw new Error('Invalid assistant fixture');
+    return message;
 }
 
 function userMessage(id: string, text: string, createdAt: number) {
-    return {
-        id,
-        localId: id,
-        createdAt,
-        isSidechain: false,
-        role: 'user',
-        content: { type: 'text', text },
-    };
+    const message = normalizeRawMessage(id, id, createdAt, { role: 'user', content: { type: 'text', text } });
+    if (!message) throw new Error('Invalid user fixture');
+    return message;
 }
 
 const ASSISTANT_TEXT = 'one two three four';
 
 function stateWithAssistantTurns(conversationSessionId: string) {
-    return {
-        sessionMessages: {
-            [conversationSessionId]: {
-                messages: [
-                    userMessage('u1', 'tell me a story', 100),
-                    assistantMessage('a1', 'previous response', 200),
-                    assistantMessage('a2', ASSISTANT_TEXT, 300),
-                ],
-            },
-        },
-    };
+    storage.getState().applyMessages(conversationSessionId, [
+        userMessage('u1', 'tell me a story', 100),
+        assistantMessage('a1', 'previous response', 200),
+        assistantMessage('a2', ASSISTANT_TEXT, 300),
+    ]);
+    return storage.getState();
 }
 
 describe('markVoiceConversationAssistantTurnInterrupted', () => {
+    it('publishes a late interruption through the subscribed conversation slice once', () => {
+        storage.setState({ sessionMessages: {} });
+        const message = normalizeRawMessage('late-final', 'late-final', 100, {
+            role: 'agent', content: { type: 'output', data: { type: 'assistant', uuid: 'late-final',
+                message: { role: 'assistant', content: [{ type: 'text', text: ASSISTANT_TEXT }] } } },
+        });
+        if (!message) throw new Error('Invalid assistant fixture');
+        storage.getState().applyMessages('late-conversation', [message]);
+        storage.getState().applyMessages('other-conversation', [{ ...message, id: 'other-final' }]);
+        const other = storage.getState().sessionMessages['other-conversation'];
+        const observed: Array<ReturnType<typeof selectVoiceTranscriptEntriesForConversationSession>> = [];
+        const unsubscribe = storage.subscribe(state => {
+            observed.push(selectVoiceTranscriptEntriesForConversationSession(state, 'late-conversation'));
+        }, { sessionMessages: ['late-conversation'] });
+        try {
+            markVoiceConversationAssistantTurnInterrupted({ conversationSessionId: 'late-conversation', assistantEntryId: 'late-final' });
+            expect(observed).toEqual([[expect.objectContaining({ id: 'late-final', text: ASSISTANT_TEXT, interrupted: true })]]);
+            markVoiceConversationAssistantTurnInterrupted({ conversationSessionId: 'late-conversation', assistantEntryId: 'late-final' });
+            expect(observed).toHaveLength(1);
+            expect(storage.getState().sessionMessages['other-conversation']).toBe(other);
+        } finally {
+            unsubscribe();
+        }
+    });
+
     beforeEach(() => {
         __resetVoiceTurnInterruptions();
+        storage.setState({ sessionMessages: {} });
     });
 
     it('marks the exact authoritative assistant final without rewriting its generated text', () => {
         const conversationSessionId = 'conv-interrupt-1';
-        const state = stateWithAssistantTurns(conversationSessionId);
-        const versionBefore = voiceTurnInterruptionVersion();
+        stateWithAssistantTurns(conversationSessionId);
 
         markVoiceConversationAssistantTurnInterrupted({
             conversationSessionId,
             assistantEntryId: 'a2',
-            getState: () => state,
         });
 
-        expect(isVoiceTurnInterrupted('a1')).toBe(false);
-        expect(isVoiceTurnInterrupted('a2')).toBe(true);
-        expect(voiceTurnInterruptionVersion()).toBeGreaterThan(versionBefore);
+        expect(isVoiceTurnInterrupted('a1', conversationSessionId)).toBe(false);
+        expect(isVoiceTurnInterrupted('a2', conversationSessionId)).toBe(true);
 
-        const entries = selectVoiceTranscriptEntriesForConversationSession(state, conversationSessionId);
+        const entries = selectVoiceTranscriptEntriesForConversationSession(storage.getState(), conversationSessionId);
         expect(entries.find((entry) => entry.id === 'a2')).toMatchObject({
             text: ASSISTANT_TEXT,
             interrupted: true,
@@ -84,27 +95,20 @@ describe('markVoiceConversationAssistantTurnInterrupted', () => {
             realID: 'server-assistant-1',
             localId: 'voice-realtime:attempt-1:assistant:assistant-1',
         };
-        const state = {
-            sessionMessages: {
-                [conversationSessionId]: {
-                    messages: [persisted],
-                },
-            },
-        };
+        storage.getState().applyMessages(conversationSessionId, [persisted]);
 
         markVoiceConversationAssistantTurnInterrupted({
             conversationSessionId,
             assistantEntryId: persisted.localId,
-            getState: () => state,
         });
 
         // The canonical local id is what the transcript renders this row under,
         // so the interruption mark must be keyed there rather than under the
         // later-arriving server id, which no projected entry carries.
-        expect(isVoiceTurnInterrupted(persisted.realID)).toBe(false);
-        expect(isVoiceTurnInterrupted(persisted.localId)).toBe(true);
+        expect(isVoiceTurnInterrupted(persisted.realID, conversationSessionId)).toBe(false);
+        expect(isVoiceTurnInterrupted(persisted.localId, conversationSessionId)).toBe(true);
         expect(selectVoiceTranscriptEntriesForConversationSession(
-            state,
+            storage.getState(),
             conversationSessionId,
         )).toEqual([
             expect.objectContaining({
@@ -116,41 +120,31 @@ describe('markVoiceConversationAssistantTurnInterrupted', () => {
 
     it('does not misattribute interruption to N-1 when the current output has no authoritative final', () => {
         const conversationSessionId = 'conv-interrupt-no-final';
-        const state = {
-            sessionMessages: {
-                [conversationSessionId]: {
-                    messages: [assistantMessage('a1', 'previous response', 200)],
-                },
-            },
-        };
-        const versionBefore = voiceTurnInterruptionVersion();
+        storage.getState().applyMessages(conversationSessionId, [assistantMessage('a1', 'previous response', 200)]);
+        const before = storage.getState();
 
         markVoiceConversationAssistantTurnInterrupted({
             conversationSessionId,
             assistantEntryId: null,
-            getState: () => state,
         });
 
-        expect(isVoiceTurnInterrupted('a1')).toBe(false);
-        expect(voiceTurnInterruptionVersion()).toBe(versionBefore);
+        expect(isVoiceTurnInterrupted('a1', conversationSessionId)).toBe(false);
+        expect(storage.getState()).toBe(before);
     });
 
     it('no-ops when the exact identity is absent from the conversation or belongs to a user turn', () => {
         const conversationSessionId = 'conv-interrupt-missing-identity';
-        const state = stateWithAssistantTurns(conversationSessionId);
-        const versionBefore = voiceTurnInterruptionVersion();
+        const before = stateWithAssistantTurns(conversationSessionId);
 
         markVoiceConversationAssistantTurnInterrupted({
             conversationSessionId,
             assistantEntryId: 'missing',
-            getState: () => state,
         });
         markVoiceConversationAssistantTurnInterrupted({
             conversationSessionId,
             assistantEntryId: 'u1',
-            getState: () => state,
         });
 
-        expect(voiceTurnInterruptionVersion()).toBe(versionBefore);
+        expect(storage.getState()).toBe(before);
     });
 });

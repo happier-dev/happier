@@ -2,8 +2,6 @@ import { readStoredSessionMessages } from "@happier-dev/session-core/messages";
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 import { hasVoiceTranscriptNoteMeta } from './voiceTranscriptNoteMeta';
 import { resolveVoiceTranscriptEntryId } from './voiceTranscriptEntryIdentity';
-import { resolveVoiceTranscriptRenderWindow, VOICE_TRANSCRIPT_SELECTOR_CACHE_MAX } from './voiceTranscriptBounds';
-import { isVoiceTurnInterrupted, voiceTurnInterruptionVersion } from './voiceTurnInterruption';
 import { resolveVoiceContinuationNoteText } from './voiceTranscriptNotePresentation';
 import { getDeviceAnalyticsId } from '@/track/settingsAnalytics/deviceAnalyticsIdentity';
 import { getPreferredLanguage } from '@/text';
@@ -20,50 +18,23 @@ export type VoiceTranscriptEntry = Readonly<{
 const EMPTY_ENTRIES: ReadonlyArray<VoiceTranscriptEntry> = Object.freeze([]);
 
 type TranscriptSelectorCacheEntry = Readonly<{
-    slice: unknown;
     limit: number;
-    interruptionVersion: number;
     viewerDeviceId: string | null;
     language: string;
     result: ReadonlyArray<VoiceTranscriptEntry>;
 }>;
 
-/**
- * Per-conversation memo keyed on the active conversation's message-slice
- * reference. Recompute is scoped to the active conversation: a change to an
- * unrelated session swaps the whole `sessionMessages` map reference but leaves
- * the active slice reference intact, so the cached result is returned unchanged
- * (referential stability for unchanged rows). Only a change to the active
- * conversation's slice (or the requested window) recomputes.
- *
- * Bounded with LRU eviction (`VOICE_TRANSCRIPT_SELECTOR_CACHE_MAX`): the map
- * keeps the most-recently-projected conversations memoized and retires the
- * least-recently-used keys, so it cannot grow without bound over a long-lived
- * session. `Map` iteration order is insertion order, so the first key is the LRU
- * entry once hits re-insert touched keys at the tail.
- */
-const transcriptSelectorCache = new Map<string, TranscriptSelectorCacheEntry>();
+// A memo lives only as long as its canonical message slice, so unrelated
+// conversations cannot evict a demanded slice or keep retired slices alive.
+const transcriptSelectorCache = new WeakMap<object, Map<number, TranscriptSelectorCacheEntry>>();
 
-function readTranscriptSelectorCache(key: string): TranscriptSelectorCacheEntry | undefined {
-    const entry = transcriptSelectorCache.get(key);
-    if (entry !== undefined) {
-        // Touch on hit: move the key to the tail so it is the most-recently-used.
-        transcriptSelectorCache.delete(key);
-        transcriptSelectorCache.set(key, entry);
+function writeTranscriptSelectorCache(slice: object, entry: TranscriptSelectorCacheEntry): void {
+    let windows = transcriptSelectorCache.get(slice);
+    if (!windows) {
+        windows = new Map();
+        transcriptSelectorCache.set(slice, windows);
     }
-    return entry;
-}
-
-function writeTranscriptSelectorCache(key: string, entry: TranscriptSelectorCacheEntry): void {
-    if (transcriptSelectorCache.has(key)) {
-        transcriptSelectorCache.delete(key);
-    } else if (transcriptSelectorCache.size >= VOICE_TRANSCRIPT_SELECTOR_CACHE_MAX) {
-        const oldestKey = transcriptSelectorCache.keys().next().value;
-        if (oldestKey !== undefined) {
-            transcriptSelectorCache.delete(oldestKey);
-        }
-    }
-    transcriptSelectorCache.set(key, entry);
+    windows.set(entry.limit, entry);
 }
 
 type TranscriptOrderKey = Readonly<{
@@ -84,7 +55,7 @@ function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
     return value as Readonly<Record<string, unknown>>;
 }
 
-function projectTranscriptEntry(message: unknown, viewerDeviceId: string | null, entryId?: string): VoiceTranscriptEntry | null {
+function projectTranscriptEntry(message: unknown, viewerDeviceId: string | null, interruptedEntryIds: ReadonlySet<unknown> | undefined, entryId?: string): VoiceTranscriptEntry | null {
     const record = readRecord(message);
     if (!record) return null;
     const id = entryId ?? resolveVoiceTranscriptEntryId(message);
@@ -102,7 +73,7 @@ function projectTranscriptEntry(message: unknown, viewerDeviceId: string | null,
         createdAt: typeof record.createdAt === 'number' && Number.isFinite(record.createdAt) ? record.createdAt : 0,
         kind,
         text: kind === 'note' ? resolveVoiceContinuationNoteText(record.meta, viewerDeviceId) ?? text : text,
-        ...(kind === 'assistant' && isVoiceTurnInterrupted(id)
+        ...(kind === 'assistant' && interruptedEntryIds?.has(id)
             ? { interrupted: true }
             : {}),
     };
@@ -116,21 +87,23 @@ export function selectVoiceTranscriptEntriesForConversationSession(
     const resolvedConversationSessionId = normalizeNonEmptyString(conversationSessionId);
     if (!resolvedConversationSessionId) return EMPTY_ENTRIES;
 
-    const limit = resolveVoiceTranscriptRenderWindow(options?.limit);
+    const requestedLimit = options?.limit;
+    const limit = typeof requestedLimit === 'number' && Number.isFinite(requestedLimit) && requestedLimit > 0
+        ? Math.max(1, Math.trunc(requestedLimit)) : Number.POSITIVE_INFINITY;
     const viewerDeviceId = options?.viewerDeviceId === undefined ? getDeviceAnalyticsId() : options.viewerDeviceId;
     const language = getPreferredLanguage();
     const slice = state?.sessionMessages?.[resolvedConversationSessionId];
-    // Interruption state changes without rewriting the message slice, so its
-    // version participates in the memo key.
-    const interruptionVersion = voiceTurnInterruptionVersion();
-    const cached = readTranscriptSelectorCache(resolvedConversationSessionId);
-    if (cached && cached.slice === slice && cached.limit === limit && cached.interruptionVersion === interruptionVersion
+    if (!slice || typeof slice !== 'object') return EMPTY_ENTRIES;
+    const cached = transcriptSelectorCache.get(slice)?.get(limit);
+    if (cached
         && cached.viewerDeviceId === viewerDeviceId && cached.language === language) {
         return cached.result;
     }
 
     const sessionSlice = state?.sessionMessages?.[resolvedConversationSessionId];
     const sessionRecord = readRecord(sessionSlice);
+    const interruptedEntryIds: ReadonlySet<unknown> | undefined = sessionRecord?.voiceInterruptedEntryIds instanceof Set
+        ? sessionRecord.voiceInterruptedEntryIds : undefined;
     const canonicalIds = sessionRecord?.messageIdsOldestFirst;
     const canonicalMessagesById = readRecord(sessionRecord?.messagesById ?? sessionRecord?.messagesMap);
 
@@ -139,13 +112,13 @@ export function selectVoiceTranscriptEntriesForConversationSession(
         for (let cursor = canonicalIds.length - 1; cursor >= 0 && newestFirst.length < limit; cursor -= 1) {
             const messageId = canonicalIds[cursor];
             const message = typeof messageId === 'string' ? canonicalMessagesById[messageId] : undefined;
-            const entry = projectTranscriptEntry(message, viewerDeviceId);
+            const entry = projectTranscriptEntry(message, viewerDeviceId, interruptedEntryIds);
             if (entry) newestFirst.push(entry);
         }
         const result: ReadonlyArray<VoiceTranscriptEntry> = newestFirst.length === 0
             ? EMPTY_ENTRIES
             : Object.freeze(newestFirst.reverse());
-        writeTranscriptSelectorCache(resolvedConversationSessionId, { slice, limit, interruptionVersion, viewerDeviceId, language, result });
+        writeTranscriptSelectorCache(slice, { limit, viewerDeviceId, language, result });
         return result;
     }
 
@@ -188,13 +161,13 @@ export function selectVoiceTranscriptEntriesForConversationSession(
     const newestFirst: VoiceTranscriptEntry[] = [];
     for (let cursor = orderKeys.length - 1; cursor >= 0 && newestFirst.length < limit; cursor -= 1) {
         const { record, id } = orderKeys[cursor]!;
-        const entry = projectTranscriptEntry(record, viewerDeviceId, id);
+        const entry = projectTranscriptEntry(record, viewerDeviceId, interruptedEntryIds, id);
         if (entry) newestFirst.push(entry);
     }
 
     const result: ReadonlyArray<VoiceTranscriptEntry> = newestFirst.length === 0
         ? EMPTY_ENTRIES
         : Object.freeze(newestFirst.reverse());
-    writeTranscriptSelectorCache(resolvedConversationSessionId, { slice, limit, interruptionVersion, viewerDeviceId, language, result });
+    writeTranscriptSelectorCache(slice, { limit, viewerDeviceId, language, result });
     return result;
 }

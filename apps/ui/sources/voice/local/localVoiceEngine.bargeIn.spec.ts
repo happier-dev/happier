@@ -160,7 +160,7 @@ describe('local voice engine real-producer barge-in', () => {
         const clock = vi.spyOn(Date, 'now').mockImplementation(() => readClock() + 5_000);
         emitFinal(INTERRUPTING_TEXT);
         await handle.turnPromise;
-        expect(isVoiceTurnInterrupted('m1')).toBe(true);
+        expect(isVoiceTurnInterrupted('m1', 's1')).toBe(true);
         clock.mockRestore();
         await waitForLocalVoiceBoundaryEvent('pending-enqueue', 2);
         expect(localVoicePendingEnqueue).toHaveBeenCalledWith(expect.objectContaining({
@@ -177,7 +177,7 @@ describe('local voice engine real-producer barge-in', () => {
         const { isVoiceTurnInterrupted } = await import('@/voice/transcript/voiceTurnInterruption');
         handle.finishSpeak();
         await handle.turnPromise;
-        expect(isVoiceTurnInterrupted('m1')).toBe(false);
+        expect(isVoiceTurnInterrupted('m1', 's1')).toBe(false);
         expect(expoSpeechStop).not.toHaveBeenCalled();
         expect(localVoicePendingEnqueue).toHaveBeenCalledTimes(1);
     }, 180_000);

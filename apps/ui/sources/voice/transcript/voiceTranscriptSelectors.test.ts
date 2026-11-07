@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { VOICE_TRANSCRIPT_ACTIVE_RENDER_WINDOW, VOICE_TRANSCRIPT_SELECTOR_CACHE_MAX } from './voiceTranscriptBounds';
+// A consumer-requested page in the fixtures, not a product retention ceiling.
+const VOICE_TRANSCRIPT_ACTIVE_RENDER_WINDOW = 200;
 import { selectVoiceTranscriptEntriesForConversationSession } from './voiceTranscriptSelectors';
 import { voiceMomentsTranslations } from '@/text/translations/voiceMomentsTranslations';
 
@@ -124,7 +125,7 @@ describe('voiceTranscriptSelectors', () => {
         ]);
     });
 
-    it('bounds the rendered transcript window to the most recent items (perf cap)', () => {
+    it('keeps every loaded transcript row available when no display window is requested', () => {
         const total = VOICE_TRANSCRIPT_ACTIVE_RENDER_WINDOW + 50;
         const messages = Array.from({ length: total }, (_unused, index) => buildUserMessage(index + 1));
         const entries = selectVoiceTranscriptEntriesForConversationSession(
@@ -132,16 +133,12 @@ describe('voiceTranscriptSelectors', () => {
             'carrier-s1',
         );
 
-        // Older items are not surfaced for live render; only the newest window is kept.
-        expect(entries).toHaveLength(VOICE_TRANSCRIPT_ACTIVE_RENDER_WINDOW);
-        expect(entries[0]?.id).toBe(`m-${total - VOICE_TRANSCRIPT_ACTIVE_RENDER_WINDOW + 1}`);
+        expect(entries).toHaveLength(total);
+        expect(entries[0]?.id).toBe('m-1');
         expect(entries[entries.length - 1]?.id).toBe(`m-${total}`);
     });
 
-    it('clamps an explicit over-cap limit to the render window and stays newest-kept with referential stability', () => {
-        // Churn well past the cap and ask for MORE than the cap via an explicit limit.
-        // The explicit limit is the documented over-limit path: before the fix it was
-        // honored verbatim, letting the rendered window exceed the 200-entry cap.
+    it('honors a requested larger page and keeps the unchanged projection stable', () => {
         const total = VOICE_TRANSCRIPT_ACTIVE_RENDER_WINDOW * 3;
         const messages = Array.from({ length: total }, (_unused, index) => buildUserMessage(index + 1));
         const slice = { messages };
@@ -153,18 +150,12 @@ describe('voiceTranscriptSelectors', () => {
             { limit: VOICE_TRANSCRIPT_ACTIVE_RENDER_WINDOW + 400 },
         );
 
-        // Hard cap enforced regardless of the over-cap request: ring stays <= cap.
-        expect(entries.length).toBeLessThanOrEqual(VOICE_TRANSCRIPT_ACTIVE_RENDER_WINDOW);
-        expect(entries).toHaveLength(VOICE_TRANSCRIPT_ACTIVE_RENDER_WINDOW);
-        // Newest-kept: the most recent `cap` items, ending at the latest message.
-        expect(entries[0]?.id).toBe(`m-${total - VOICE_TRANSCRIPT_ACTIVE_RENDER_WINDOW + 1}`);
+        expect(entries).toHaveLength(total);
+        expect(entries[0]?.id).toBe('m-1');
         expect(entries[entries.length - 1]?.id).toBe(`m-${total}`);
 
-        // An over-cap explicit limit resolves to the same window as the default, so the
-        // unchanged slice returns the SAME result reference (referential stability for
-        // unchanged rows): both requests share one cache entry keyed on the clamped limit.
-        const defaultWindow = selectVoiceTranscriptEntriesForConversationSession(state, 'carrier-s1');
-        expect(defaultWindow).toBe(entries);
+        expect(selectVoiceTranscriptEntriesForConversationSession(state, 'carrier-s1',
+            { limit: VOICE_TRANSCRIPT_ACTIVE_RENDER_WINDOW + 400 })).toBe(entries);
     });
 
     it('scopes recompute to the active conversation and keeps referential stability for unchanged sessions', () => {
@@ -201,6 +192,7 @@ describe('voiceTranscriptSelectors', () => {
         const entries = selectVoiceTranscriptEntriesForConversationSession(
             { sessionMessages: { 'carrier-s1': { messages } } },
             'carrier-s1',
+            { limit: VOICE_TRANSCRIPT_ACTIVE_RENDER_WINDOW },
         );
 
         // Same answer as an unbounded projection would give.
@@ -219,6 +211,7 @@ describe('voiceTranscriptSelectors', () => {
         const entries = selectVoiceTranscriptEntriesForConversationSession(
             { sessionMessages: { 'carrier-canonical-bounded': session } },
             'carrier-canonical-bounded',
+            { limit: VOICE_TRANSCRIPT_ACTIVE_RENDER_WINDOW },
         );
 
         expect(entries).toHaveLength(VOICE_TRANSCRIPT_ACTIVE_RENDER_WINDOW);
@@ -249,6 +242,7 @@ describe('voiceTranscriptSelectors', () => {
         const entries = selectVoiceTranscriptEntriesForConversationSession(
             { sessionMessages: { 'carrier-unordered': { messages: shuffled } } },
             'carrier-unordered',
+            { limit: VOICE_TRANSCRIPT_ACTIVE_RENDER_WINDOW },
         );
 
         expect(entries.map((entry) => entry.id)).toEqual(
@@ -273,6 +267,7 @@ describe('voiceTranscriptSelectors', () => {
         const entries = selectVoiceTranscriptEntriesForConversationSession(
             { sessionMessages: { 'carrier-blanks': { messages } } },
             'carrier-blanks',
+            { limit: VOICE_TRANSCRIPT_ACTIVE_RENDER_WINDOW },
         );
 
         expect(entries).toHaveLength(VOICE_TRANSCRIPT_ACTIVE_RENDER_WINDOW);
@@ -281,7 +276,7 @@ describe('voiceTranscriptSelectors', () => {
         expect(entries[entries.length - 1]?.id).toBe(`m-${total}`);
     });
 
-    it('bounds the per-conversation memo cache under churn (LRU eviction)', () => {
+    it('preserves a demanded slice identity beyond the old conversation cache count', () => {
         const buildSession = () => ({ messages: [buildUserMessage(1)] });
         const state: { sessionMessages: Record<string, unknown> } = { sessionMessages: {} };
 
@@ -290,22 +285,17 @@ describe('voiceTranscriptSelectors', () => {
         const firstOld = selectVoiceTranscriptEntriesForConversationSession(state, 's-old');
         expect(selectVoiceTranscriptEntriesForConversationSession(state, 's-old')).toBe(firstOld);
 
-        // Query enough distinct sessions to overflow the cache; 's-old' is the
-        // least-recently-used key and must be evicted rather than retained forever.
-        for (let index = 0; index < VOICE_TRANSCRIPT_SELECTOR_CACHE_MAX; index += 1) {
+        for (let index = 0; index < 65; index += 1) {
             const id = `s-churn-${index}`;
             state.sessionMessages[id] = buildSession();
             selectVoiceTranscriptEntriesForConversationSession(state, id);
         }
 
-        // Re-selecting the evicted session recomputes a fresh reference (its slice
-        // is unchanged, so a still-cached entry would have returned `firstOld`).
         const reselectedOld = selectVoiceTranscriptEntriesForConversationSession(state, 's-old');
-        expect(reselectedOld).not.toBe(firstOld);
-        expect(reselectedOld).toEqual(firstOld);
+        expect(reselectedOld).toBe(firstOld);
 
         // A recently-queried session stays memoized: the cache still serves hits.
-        const recentId = `s-churn-${VOICE_TRANSCRIPT_SELECTOR_CACHE_MAX - 1}`;
+        const recentId = 's-churn-64';
         const recentFirst = selectVoiceTranscriptEntriesForConversationSession(state, recentId);
         expect(selectVoiceTranscriptEntriesForConversationSession(state, recentId)).toBe(recentFirst);
     });

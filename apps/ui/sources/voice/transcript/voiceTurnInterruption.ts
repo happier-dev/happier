@@ -4,41 +4,30 @@ import {
 } from "@happier-dev/session-core/messages";
 import { storage } from '@/sync/domains/state/storage';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
-import { VOICE_TRANSCRIPT_SELECTOR_CACHE_MAX } from './voiceTranscriptBounds';
 import { hasVoiceTranscriptNoteMeta } from './voiceTranscriptNoteMeta';
 import { resolveVoiceTranscriptEntryId } from './voiceTranscriptEntryIdentity';
 
 /**
- * Bounded projection state for assistant turns whose playback was interrupted.
+ * Transient projection state for assistant turns whose playback was interrupted.
  *
  * A client-side playback cursor cannot authoritatively identify the generated
  * text prefix a person heard. Keep the canonical generated text intact and
  * project the truthful fact we do know: playback of this turn was interrupted.
  */
-const interruptedEntryIds = new Map<string, true>();
-let interruptionVersion = 0;
-
-function recordInterruptedEntry(entryId: string): void {
-    if (interruptedEntryIds.has(entryId)) return;
-    if (interruptedEntryIds.size >= VOICE_TRANSCRIPT_SELECTOR_CACHE_MAX) {
-        const oldestKey = interruptedEntryIds.keys().next().value;
-        if (oldestKey !== undefined) interruptedEntryIds.delete(oldestKey);
-    }
-    interruptedEntryIds.set(entryId, true);
-    interruptionVersion += 1;
-}
-
-export function isVoiceTurnInterrupted(entryId: string): boolean {
-    return interruptedEntryIds.has(entryId);
-}
-
-export function voiceTurnInterruptionVersion(): number {
-    return interruptionVersion;
+export function isVoiceTurnInterrupted(entryId: string, conversationSessionId: string): boolean {
+    return storage.getState().sessionMessages[conversationSessionId]?.voiceInterruptedEntryIds?.has(entryId) === true;
 }
 
 export function __resetVoiceTurnInterruptions(): void {
-    interruptedEntryIds.clear();
-    interruptionVersion += 1;
+    storage.setState(state => {
+        let sessionMessages = state.sessionMessages;
+        for (const [sessionId, slice] of Object.entries(state.sessionMessages)) {
+            if (!slice.voiceInterruptedEntryIds?.size) continue;
+            if (sessionMessages === state.sessionMessages) sessionMessages = { ...sessionMessages };
+            sessionMessages[sessionId] = { ...slice, voiceInterruptedEntryIds: undefined };
+        }
+        return sessionMessages === state.sessionMessages ? state : { ...state, sessionMessages };
+    });
 }
 
 type StoreLike = Readonly<{
@@ -87,16 +76,17 @@ function resolveExactAssistantEntryId(
 export function markVoiceConversationAssistantTurnInterrupted(params: Readonly<{
     conversationSessionId: string;
     assistantEntryId: string | null;
-    getState?: () => StoreLike;
 }>): void {
     const conversationSessionId = normalizeNonEmptyString(params.conversationSessionId);
     const assistantEntryId = normalizeNonEmptyString(params.assistantEntryId);
     if (!conversationSessionId || !assistantEntryId) return;
-    const state = (params.getState ?? (() => storage.getState()))();
-    const authoritativeEntryId = resolveExactAssistantEntryId(
-        state,
-        conversationSessionId,
-        assistantEntryId,
-    );
-    if (authoritativeEntryId) recordInterruptedEntry(authoritativeEntryId);
+    storage.setState(state => {
+        const slice = state.sessionMessages[conversationSessionId];
+        if (!slice) return state;
+        const authoritativeEntryId = resolveExactAssistantEntryId(state, conversationSessionId, assistantEntryId);
+        if (!authoritativeEntryId || slice.voiceInterruptedEntryIds?.has(authoritativeEntryId)) return state;
+        return { ...state, sessionMessages: { ...state.sessionMessages, [conversationSessionId]: {
+            ...slice, voiceInterruptedEntryIds: new Set([...(slice.voiceInterruptedEntryIds ?? []), authoritativeEntryId]),
+        } } };
+    });
 }
