@@ -2136,10 +2136,13 @@ export async function deleteSavedSecretResourceInTx(
     if (existing.revision !== input.expectedRevision) return { ok: false, error: "resource_changed" };
     // Retain the grant identities so terminal validation can still see Team or
     // group audience growth after the resource and its grant rows are deleted.
+    // Deletion reads the Account reference census in a Serializable transaction.
+    // Serialize publication at entry so unrelated Account sequence
+    // updates cannot repeatedly invalidate its snapshot during that census.
     const recheckAudience = await acquireSavedSecretPublicationAccountsInTx(tx, input.accountId, () => resolveSavedSecretAudienceAccountIdsInTx(tx, {
         ownerAccountId: input.accountId, accountIds: existing.accountGrants.map(grant => grant.accountId),
         teamIds: existing.teamGrants.map(grant => grant.teamId), groupIds: existing.groupGrants.map(grant => grant.teamGroupId),
-    }));
+    }), 'serializing');
     const resources = await readManagedResourceDependenciesInTx(tx, { kind: "saved-secret", resourceId: input.resourceId });
     if (!acceptsManagedResourceDispositions(resources, input.managedResourceDispositions)) {
         return { ok: false, error: "managed_resources_review_required", resources };

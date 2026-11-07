@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { db, getDbProviderFromEnv, initDbPostgres } from '@/storage/db';
-import { inTx, type Tx } from '@/storage/inTx';
+import { inTx, readPostgresTransactionSqlState, type Tx } from '@/storage/inTx';
+import { createAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
+import { registerSavedSecretResourceRoutes } from '@/app/api/routes/account/registerSavedSecretResourceRoutes';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { NotificationChannelCatalogRecordV1Schema } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
 import { sealEncryptedDataKeyEnvelopeV1, sealQualifiedConnectedAccountContentEnvelope, sealSavedSecretResourceStoredContentV1, verifyAccountContentKeyBindingV1 } from '@happier-dev/protocol';
@@ -20,6 +22,70 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
         await db.$connect();
     });
     afterAll(async () => { await db.$disconnect(); });
+
+    it('deletes immediately after revoking grants while Account publication competes with every attempt', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const recipient = await db.account.create({ data: { encryptionMode: 'plain' } });
+        await db.userRelationship.create({ data: { fromUserId: owner.id, toUserId: recipient.id, status: 'friend' } });
+        const resourceId = randomUUID();
+        expect(await inTx(tx => createSavedSecretResourceInTx(tx, {
+            accountId: owner.id, resourceId, displayName: 'Disposable shared secret', kind: 'token',
+            encryptionMode: 'plain', accountGrants: [],
+            storedContent: { t: 'plain', v: { v: 1, name: 'Disposable shared secret', kind: 'token', value: 'synthetic' } },
+        }))).toMatchObject({ ok: true });
+        expect(await inTx(tx => setSavedSecretResourceGrantsInTx(tx, {
+            accountId: owner.id, resourceId, expectedRevision: 1,
+            accountGrants: [recipient.id], teamGrants: [], groupGrants: [],
+        }), { isolationLevel: 'Serializable' })).toMatchObject({ ok: true, value: { revision: 2 } });
+        expect(await inTx(tx => setSavedSecretResourceGrantsInTx(tx, {
+            accountId: owner.id, resourceId, expectedRevision: 2,
+            accountGrants: [], teamGrants: [], groupGrants: [],
+        }), { isolationLevel: 'Serializable' })).toMatchObject({ ok: true, value: { revision: 3 } });
+        const app = createAuthenticatedTestApp();
+        registerSavedSecretResourceRoutes(app);
+        const transaction = db.$transaction;
+        // Schedule a genuine competing DB publication at admission. No domain
+        // result or SQL is substituted. NOWAIT observes whether the owner's
+        // existing admission excludes the competing non-key Account update.
+        db.$transaction = new Proxy(transaction, { apply(target, receiver, args: unknown[]) {
+            const callback = args[0];
+            if (typeof callback !== 'function') return Reflect.apply(target, receiver, args);
+            return Reflect.apply(target, receiver, [async (tx: Tx) => {
+                let competed = false;
+                return callback(new Proxy(tx, { get(inner, property, innerReceiver) {
+                    if (property !== '$queryRawUnsafe') return Reflect.get(inner, property, innerReceiver);
+                    return async (query: string, ...values: unknown[]) => {
+                        const result = await inner.$queryRawUnsafe(query, ...values);
+                        if (!competed && query.includes('FROM "Account"') && /FOR (KEY SHARE|NO KEY UPDATE)/.test(query)) {
+                            competed = true;
+                            try {
+                                await transaction.call(db, async (competing: Tx) => {
+                                    await competing.$queryRawUnsafe('SELECT "id" FROM "Account" WHERE "id" = $1 FOR NO KEY UPDATE NOWAIT', owner.id);
+                                    await competing.account.update({ where: { id: owner.id }, data: { seq: { increment: 1 } } });
+                                });
+                            } catch (error) {
+                                if (readPostgresTransactionSqlState(error) !== '55P03') throw error;
+                            }
+                        }
+                        return result;
+                    };
+                } }));
+            }, ...args.slice(1)]);
+        } });
+        try {
+            const response = await app.inject({ method: 'POST', url: '/v1/account/saved-secrets/resources/delete',
+                headers: { 'x-test-user-id': owner.id }, payload: {
+                    resourceId, expectedRevision: 3, expectedSettingsVersion: 0,
+                    referenceCensus: { accountMode: 'plain', profiles: { referenceGuardRevision: 'absent', rows: [] } },
+                } });
+            expect(response.statusCode, response.body).toBe(200);
+            expect(await db.savedSecretResource.findUnique({ where: { id: resourceId } })).toBeNull();
+            expect(await db.savedSecretAccountGrant.count({ where: { resourceId } })).toBe(0);
+        } finally {
+            db.$transaction = transaction;
+            await app.close();
+        }
+    });
 
     it.each([
         { mode: 'plain', teamSource: false },
