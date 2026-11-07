@@ -74,6 +74,11 @@ export async function prepareDedicatedDaemonBootstrap(input: DedicatedDaemonBoot
     ...dockerSteps,
     { id: 'daemon-user-linger', kind: 'command', executable: 'loginctl', args: ['enable-linger', 'happier'],
       check: { executable: 'test', args: ['-f', '/var/lib/systemd/linger/happier'], unsatisfiedExitCodes: [1] } },
+    // Some images retain linger without logind activating the user at boot.
+    // Pull in the existing manager directly; its template owns /run/user/UID.
+    { id: 'daemon-user-manager-boot', kind: 'command', executable: 'systemctl',
+      args: ['add-wants', '--', 'multi-user.target', `user@${uid}.service`],
+      check: { executable: 'test', args: ['-e', `/etc/systemd/system/multi-user.target.wants/user@${uid}.service`], unsatisfiedExitCodes: [1] } },
     buildUserManagerGroupRefreshStep({ uid: Number(uid), username: 'happier' }),
   ];
   // This identifies the immutable retained bootstrap inputs, not an online

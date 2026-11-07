@@ -2687,6 +2687,15 @@ replacement may interrupt the requesting daemon; lost confirmation retains the
 existing unknown outcome, never automatic replay or synthesized effective
 isolation. This source contract still requires loaded-runtime qualification.
 
+In 0.3 development, dedicated Debian/Ubuntu bootstrap also makes
+`multi-user.target` want that account's `user@<uid>.service`, while retaining
+lingering and the daemon's enabled user unit. This explicit system boot
+dependency covers images where a retained linger marker does not activate the
+manager after Resume. The existing systemd manager template requires and orders
+its runtime-directory service; bootstrap does not create a second daemon
+service or a reconnect timer. See the upstream [manager template](https://github.com/systemd/systemd/blob/v255/units/user%40.service.in)
+and [add-wants contract](https://github.com/systemd/systemd/blob/v255/man/systemctl.xml).
+
 
 Managed admission retains one server-derived `enrollmentAccountId` from the admitted
 requester; historical rows without it retain custodian enrollment. This is separate

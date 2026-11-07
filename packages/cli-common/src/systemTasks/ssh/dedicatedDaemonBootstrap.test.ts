@@ -98,6 +98,13 @@ describe('portable dedicated daemon bootstrap', () => {
             id: 'daemon-user-linger', kind: 'command', executable: 'loginctl', args: ['enable-linger', 'happier'],
             check: { executable: 'test', args: ['-f', '/var/lib/systemd/linger/happier'], unsatisfiedExitCodes: [1] },
           });
+          // Boot must pull in the manager even on images where logind does not
+          // activate a lingering account. Its template owns the runtime dir.
+          expect(frame.steps).toContainEqual({
+            id: 'daemon-user-manager-boot', kind: 'command', executable: 'systemctl',
+            args: ['add-wants', '--', 'multi-user.target', 'user@1001.service'],
+            check: { executable: 'test', args: ['-e', '/etc/systemd/system/multi-user.target.wants/user@1001.service'], unsatisfiedExitCodes: [1] },
+          });
           expect(frame.basis).toEqual({ kind: 'sshBootstrap', operationId: task.taskId,
             admittedInputDigest: createHash('sha256').update(createCanonicalJsonSigningInput({ ...task, channel: 'stable' })).digest('hex') });
           const plan = await checkMachineSetupEffectPlan({ basis: frame.basis, steps: frame.steps, backend });
@@ -124,6 +131,7 @@ describe('portable dedicated daemon bootstrap', () => {
       : adminAccessAtCreation === 'preauthorized' ? ['check', 'apply', 'grant'] : ['check', 'apply']);
     expect(appliedSteps.has('docker-membership')).toBe(true);
     expect(appliedSteps.has('daemon-user-linger')).toBe(true);
+    expect(appliedSteps.has('daemon-user-manager-boot')).toBe(true);
     expect(events.filter(event => event && typeof event === 'object' && 'stepId' in event && event.stepId === 'bootstrap-complete')).toHaveLength(1);
     expect(events.filter(event => event && typeof event === 'object' && 'type' in event && event.type === 'progress')).toEqual([
       { type: 'progress', stepId: 'bootstrap-check', message: 'Checking machine setup' },
