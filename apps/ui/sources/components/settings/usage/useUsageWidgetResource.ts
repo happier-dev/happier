@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { isPluginUiResourceReadAuthorityLost } from '@happier-dev/plugin-ui/advanced';
 import type { PluginUiResourceSnapshot } from '@happier-dev/plugin-ui/hostApi';
 import { getUsageQueryKey, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
@@ -28,7 +29,7 @@ export type UsageWidgetBodyModel = Readonly<{
     freshness: PluginUiResourceSnapshot['freshness']; updatingPreviousPeriod: boolean;
     /** The shown facts' own read is in flight. Another source still outstanding is that source's state, not this. */
     refreshing: boolean;
-    refresh(): Promise<void>;
+    refresh(callerContext?: ActionExecutorContext): Promise<void>;
 }>;
 const EMPTY_SNAPSHOT: PluginUiResourceSnapshot = Object.freeze({ freshness: 'unknown', pending: 'idle', subscription: 'ended' });
 type UsageWidgetBodySnapshot = Readonly<Pick<PluginUiResourceSnapshot, 'freshness' | 'error'> & {
@@ -53,6 +54,9 @@ export function useUsageWidgetResource(input: Readonly<{
     credentials: AuthCredentials | null; enabled: boolean; plan: UsageWidgetQueryPlan;
     /** A mounted dashboard owns admitted reads while viewport membership changes. */
     retainPendingDemand?: boolean;
+    callerContext?: ActionExecutorContext;
+    /** Existing page selection identity; unrelated later plan changes are UI observations. */
+    callerQuery?: UsageQuery;
 }>): UsageWidgetResource {
     const presented = useLayoutPresentationActive();
     const lifetime = captureActiveServerAccountScopeLifetime();
@@ -60,9 +64,18 @@ export function useUsageWidgetResource(input: Readonly<{
         && areServerAccountScopesEqual(input.plan.scope, lifetime.scope)
         ? captureUiUsageQueryAccountContext(input.credentials) : null,
     [input.enabled, input.credentials, lifetime, input.plan.scope.serverId, input.plan.scope.accountId]);
-    const entry = React.useMemo(() => context && input.plan.input
-        ? getUsageQueryResourceStore(context).getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport(input.plan.input) }) : null,
-    [context, input.plan.batchKey]);
+    const consumedOrigin = React.useRef<UsageQuery | ActionExecutorContext | undefined>(undefined);
+    const entry = React.useMemo(() => {
+        if (!context || !input.plan.input) return null;
+        const origin = input.callerQuery ?? input.callerContext;
+        const callerContext = origin && origin !== consumedOrigin.current ? input.callerContext : undefined;
+        const acquired = getUsageQueryResourceStore(context).getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport(input.plan.input) }, callerContext);
+        if (!callerContext) return acquired;
+        return Object.freeze({ ...acquired, subscribe(listener: () => void, live: boolean) {
+            consumedOrigin.current = origin;
+            return acquired.subscribe(listener, live);
+        } });
+    }, [context, input.plan.batchKey, input.callerContext, input.callerQuery]);
     const admitted = React.useRef(new Set<() => void>());
     React.useLayoutEffect(() => () => {
         for (const release of admitted.current) release();
@@ -172,7 +185,7 @@ export function useUsageWidgetQueryModel(resource: UsageWidgetResource | null, i
     const sourceError = slice?.sources.find(source => source.errorCode);
     const error = React.useMemo(() => snapshot.error ?? (sourceError
         ? { code: sourceError.errorCode!, message: sourceError.errorCode! } : null), [snapshot.error, sourceError]);
-    const refresh = React.useCallback(async () => { if (lifetime?.isCurrent()) await entry?.refresh(); }, [entry, lifetime]);
+    const refresh = React.useCallback(async (callerContext?: ActionExecutorContext) => { if (lifetime?.isCurrent()) await entry?.refresh({ callerContext }); }, [entry, lifetime]);
     // The batch may still be reading private detail or allowance after accounting
     // settles. Those sources keep their own pending state; they do not re-read
     // the already shown accounting. Before the first progress snapshot, retain

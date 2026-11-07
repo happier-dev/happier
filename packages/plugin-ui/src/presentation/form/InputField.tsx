@@ -1,4 +1,4 @@
-import type { ReactElement, ReactNode } from 'react';
+import type { ComponentProps, ReactElement, ReactNode } from 'react';
 import { View } from 'react-native';
 
 import type { HappierUiTheme } from '../../environment/types.js';
@@ -65,6 +65,11 @@ export type HappierInputFieldProps<Value> = Readonly<{
   valueLabel?: string;
   /** A host's request to show the choices now (a repair, a keyboard hand-off); each new positive value opens them. */
   openRequest?: number;
+  /** Optional host binding around the choice field's existing visibility/search owner. */
+  renderChoiceControls?: ComponentProps<typeof HappierChoiceField<Value>>['renderControls'];
+  /** Bind a custom picker's existing opener without replacing its picker or value admission. */
+  renderPicker?: (control: Readonly<{ label: string; disabled: boolean; open: () => Promise<void>;
+    render: (open: () => Promise<void>) => ReactNode }>) => ReactNode;
   style?: HappierStyleProp;
   theme: HappierUiTheme;
 }>;
@@ -104,6 +109,9 @@ export function HappierInputField<Value>(props: HappierInputFieldProps<Value>): 
       ? <HappierStatus label={localization?.translate('happier.plugin-ui.select.empty', 'No options available') ?? 'No options available'}
           tone="neutral" indicator={false} theme={theme} />
       : null;
+  const renderPicker = (render: (open: () => Promise<void>) => ReactNode) => props.renderPicker && picker.affordance
+    ? props.renderPicker({ label: picker.affordance.label, disabled: disabled || !optionsSettled, open: picker.open, render })
+    : render(picker.open);
   let control: ReactNode;
   if (presentation.kind === 'toggle') {
     control = (
@@ -155,7 +163,7 @@ export function HappierInputField<Value>(props: HappierInputFieldProps<Value>): 
     );
   } else if (presentation.kind === 'select') {
     const options = props.options ?? [];
-    control = pickerOnly ? (
+    control = pickerOnly ? renderPicker(open => (
       // A picker-only type has no list to show: its field box reads the value and opens the picker.
       <HappierChoiceField<Value>
         label={label}
@@ -167,11 +175,11 @@ export function HappierInputField<Value>(props: HappierInputFieldProps<Value>): 
         // failed, Browse cannot succeed, so it waits (the failed line's Retry is the next step).
         disabled={disabled || !optionsSettled}
         theme={theme}
-        onOpen={() => { void picker.open(); }}
+        onOpen={() => { void open(); }}
         onChange={props.onChange}
         {...(props.testID === undefined ? {} : { testID: `${props.testID}-picker` })}
       />
-    ) : (
+    )) : (
       <HappierChoiceField<Value>
         label={label}
         options={options}
@@ -184,6 +192,7 @@ export function HappierInputField<Value>(props: HappierInputFieldProps<Value>): 
         {...(props.valueLabel === undefined ? {} : { reading: props.valueLabel })}
         {...(props.testID === undefined ? {} : { testID: props.testID })}
         {...(props.openRequest === undefined ? {} : { openRequest: props.openRequest })}
+        {...(props.renderChoiceControls === undefined ? {} : { renderControls: props.renderChoiceControls })}
         disabled={disabled || !optionsSettled || noChoices}
         theme={theme}
         {...(props.isEqual === undefined ? {} : { isEqual: props.isEqual })}
@@ -208,15 +217,15 @@ export function HappierInputField<Value>(props: HappierInputFieldProps<Value>): 
       />
     );
   }
-  const pickerButton = pickerOnly ? null : (
+  const pickerButton = pickerOnly ? null : renderPicker(open => (
     <HappierInputPickerButton
-      picker={picker}
+      picker={{ ...picker, open }}
       theme={theme}
       // A type with choices checks the picked value against them, so wait while they load or failed.
       disabled={disabled || !optionsSettled}
       {...(props.testID === undefined ? {} : { testID: `${props.testID}-picker` })}
     />
-  );
+  ));
   if (props.frame === 'none') {
     return (
       <View testID={props.testID} style={[{ gap: theme.spacing.small }, props.style]}>

@@ -31,6 +31,7 @@ import { SelectionListFilterChip } from '@/components/ui/selectionList/Selection
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { WidgetAreaLayoutBar } from '@/components/widgets/area/WidgetAreaLayoutBar';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { WidgetSurface } from '@/components/widgets/surface/WidgetSurface';
 import { UsagePeriodSummaryWidget } from './widgets/UsagePeriodSummaryWidget';
@@ -60,6 +61,7 @@ import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import type { Socket } from 'socket.io-client';
 import { currentUiContextCommandClientRpcMethod } from '@happier-dev/protocol/actions/clientDispatchV1';
+import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 
 const currentRoute = vi.hoisted(() => ({ segments: ['(app)', 'settings', 'usage'], params: {} as Record<string, string> }));
 
@@ -139,6 +141,57 @@ afterEach(async () => {
 });
 
 describe('mounted Usage page scope commands', () => {
+    it.each([{ selection: 'period' }, { selection: 'filter' }] as const)('retains native $selection callers through actual page layout admission', async ({ selection }) => {
+        home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-origin-layout.test', accountId: 'account-a' }],
+            route: request => {
+                if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
+                if (request.path === '/v1/kv/bulk') return Response.json({ values: [] });
+                if (request.path === '/v2/usage/query') return Response.json(accounting);
+                return createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined;
+            } });
+        const server = home.homes.a!;
+        publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
+        const screen = await renderMeasuredPage(<InjectedAuthProvider credentials={credentials}>
+            <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider>
+                <CurrentContextPort /><RoutedUsagePage />
+            </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
+        </InjectedAuthProvider>);
+        const { sync } = await import('@/sync/sync');
+        await sync.awaitBootstrapForegroundAcquisition();
+        const machineFilter = () => screen.findAllByType(SelectionListFilterChip).map(node => node.props.filter)
+            .find(filter => filter.id === 'machines');
+        await waitForHomeGovernance(() => expect(machineFilter()?.options.some((option: { id: string }) => option.id === 'machine-a')).toBe(true));
+        await flushHookEffects({ cycles: 40 });
+        const settings = getStorage().getState().settings;
+        getStorage().setState({ settings: { ...settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1,
+            actions: { 'usage.query': { disabledSurfaces: ['agent'] } } }) } });
+        const posts = () => home!.httpRequests.filter(request => request.path === '/v2/usage/query' || request.path === '/v2/usage/query-batch').length;
+        const before = posts();
+        const invoke = async (title: string) => {
+            const command = reader!.readCurrentUiContext()!.commands.find(row => row.title === title);
+            expect(command).toBeDefined();
+            await act(async () => {
+                expect(await createDefaultActionExecutor().execute('ui.current_context.command.invoke',
+                    { commandId: command!.id }, { surface: 'agent', authority: 'account_automation' })).toMatchObject({ ok: true });
+            });
+            await flushHookEffects({ cycles: 40 });
+        };
+        try {
+            if (selection === 'period') {
+                await invoke(t(getUsagePeriodDefinition('30days').translationKey));
+                expect(screen.findByType(UsageFilterBar).props.page.period).toBe('30days');
+            } else {
+                const filter = machineFilter()!;
+                const option = filter.options.find((value: { id: string }) => value.id === 'machine-a')!;
+                await invoke(`${filter.label}: ${option.label}`);
+                expect(screen.findByType(UsageFilterBar).props.page.scope.machines).toEqual(['machine-a']);
+            }
+            expect.soft(posts(), `${selection} layout admission cannot acquire under UI authority`).toBe(before);
+            expect.soft(screen.findAllByType(SurfaceStateCard).some(node => node.props.diagnosticCode === 'action_disabled')).toBe(true);
+        } finally { getStorage().setState({ settings }); }
+    });
     it('retains unchanged offered filter command IDs while a new period read is pending', async () => {
         let readStarted = createDeferred<void>();
         let readGate = createDeferred<void>();
@@ -194,11 +247,14 @@ describe('mounted Usage page scope commands', () => {
         const choices = offered();
         const initial = ids(choices);
         expect(Object.values(initial).every(id => id !== null)).toBe(true);
-        const registrations = new Set<string>();
-        const initialCommandIds = new Set(reader!.readCurrentUiContext()!.commands.map(command => command.id));
+        const registrations = new Map<string, { title: string; description?: string }>();
+        const initialCommands = reader!.readCurrentUiContext()!.commands;
+        const initialCommandIds = new Set(initialCommands.map(command => command.id));
         const stop = reader!.subscribe(() => {
             for (const command of reader!.readCurrentUiContext()?.commands ?? []) {
-                if (!initialCommandIds.has(command.id)) registrations.add(command.id);
+                if (!initialCommandIds.has(command.id)) registrations.set(command.id, {
+                    title: command.title, ...(command.description ? { description: command.description } : {}),
+                });
             }
         });
         try {
@@ -220,7 +276,10 @@ describe('mounted Usage page scope commands', () => {
                 await act(async () => { readGate.resolve(); await refreshed; });
             }
             await waitForHomeGovernance(() => expect(ids(choices)).toEqual(initial));
-            expect(registrations.size, 'unchanged refreshed facts create zero new executable command addresses').toBe(0);
+            expect(registrations.size, `unchanged refreshed facts create zero new executable command addresses: ${JSON.stringify({
+                added: [...registrations.values()], initial: initialCommands.filter(command => [...registrations.values()]
+                    .some(added => added.title === command.title)).map(({ title, description }) => ({ title, description })),
+            })}`).toBe(0);
             readStarted = createDeferred<void>();
             readGate = createDeferred<void>();
             holdRead = true;
@@ -1120,7 +1179,9 @@ describe('mounted Usage page scope commands', () => {
             const retryCommand = reader!.readCurrentUiContext()!.commands.find(command =>
                 command.title === `${t('usage.board.page.viewsLabel')}: ${t('common.retry')}`)
                 ?? reader!.readCurrentUiContext()!.commands.find(command => command.title === t('usage.board.page.retryRead'));
-            expect(retryCommand, 'the visible view inventory Retry has a mounted command').toBeDefined();
+            expect(retryCommand, `the visible view inventory Retry has a mounted command; published: ${reader!.readCurrentUiContext()!.commands
+                .map(command => command.title).filter(title => title.includes(t('common.retry')) || title === t('usage.board.page.retryRead')).join(' | ')}; all: ${reader!.readCurrentUiContext()!.commands.length}; header: ${
+                screen.findHostByTestId('usage-page.header.viewsFailed') ? 'views' : screen.findHostByTestId('usage-page.header.failed') ? 'failed' : 'none'}`).toBeDefined();
             inventoryFails = false;
             await act(async () => {
                 expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',

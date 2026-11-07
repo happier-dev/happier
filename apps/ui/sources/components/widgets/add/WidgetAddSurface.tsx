@@ -1,4 +1,6 @@
 import * as React from 'react';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { Platform, ScrollView, View } from 'react-native';
 import Animated, { FadeIn, ZoomIn } from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -227,7 +229,9 @@ function AnchoredWidgetAddContent(props: Readonly<{
 export function WidgetAddPanel(props: WidgetAddPanelProps): React.ReactElement {
     const styles = stylesheet;
     const [query, setQuery] = React.useState('');
-    const [selectedId, setSelectedId] = React.useState<string | null>(props.initialEntryId ?? null);
+    const [selection, setSelection] = React.useState<Readonly<{ id: string; callerContext?: ActionExecutorContext }> | null>(
+        props.initialEntryId === undefined ? null : { id: props.initialEntryId });
+    const selectedId = selection?.id ?? null;
     // The narrow composition shows the list or the selected widget's pane, one at a time.
     const [pushed, setPushed] = React.useState(props.initialEntryId !== undefined);
     const [direction, setDirection] = React.useState<'none' | 'forward' | 'backward'>('none');
@@ -258,13 +262,23 @@ export function WidgetAddPanel(props: WidgetAddPanelProps): React.ReactElement {
     const sheetHeight = React.useContext(WidgetFlowHeightBoundContext);
     const phoneFixed = props.phone === true && sheetHeight !== null;
     const fill = props.phone !== true || phoneFixed;
-    const select = React.useCallback((id: string) => {
-        setSelectedId(id);
-        if (!split) { setPushed(true); setDirection('forward'); }
-    }, [split]);
-    const back = React.useCallback(() => { setPushed(false); setDirection('backward'); }, []);
+    const commands = useCurrentUiContextLocalCommands([
+        { key: 'search', title: props.searchPlaceholder, invoke: value => { if (typeof value !== 'string') return false; setQuery(value); } },
+        ...[...sections.flatMap(section => section.entries), ...(ask && askEntry ? [askEntry] : [])].map(entry => ({
+            key: `entry:${entry.id}`, title: entry.title, invoke: (push?: import('@happier-dev/protocol/plugins/ui').PluginUiJsonValueV1, callerContext?: ActionExecutorContext) => {
+                setSelection({ id: entry.id, callerContext });
+                if (!split && push !== false) { setPushed(true); setDirection('forward'); }
+            },
+        })),
+        ...(pushed ? [{ key: 'back', title: `${t('common.back')}: ${props.title}`, invoke: () => { setPushed(false); setDirection('backward'); } }] : []),
+        { key: 'another', title: `${t('widgetAdd.addAnother')}: ${props.title}`, invoke: () => {
+            if (split) setSelection(null); else { setPushed(false); setDirection('backward'); }
+        } },
+    ], { unbound: 'local' });
+    const select = React.useCallback((id: string) => { void commands.invoke(`entry:${id}`); }, [commands]);
+    const back = React.useCallback(() => { void commands.invoke('back'); }, [commands]);
     // "Add another" returns to the picker: the split list stays beside an empty stage, a phone pops to the list.
-    const addAnother = React.useCallback(() => { if (split) setSelectedId(null); else back(); }, [back, split]);
+    const addAnother = React.useCallback(() => { void commands.invoke('another'); }, [commands]);
 
     // The selected widget's Add, for ⌘↵ and ↵: its setup registers its own submit.
     const commandRef = React.useRef<(() => void) | null>(null);
@@ -295,7 +309,7 @@ export function WidgetAddPanel(props: WidgetAddPanelProps): React.ReactElement {
         if (key === 'ArrowDown' || key === 'ArrowUp') {
             event.preventDefault?.();
             const next = stepWidgetAddSelection(visibleIds, selectedId, key === 'ArrowDown' ? 1 : -1);
-            if (next) setSelectedId(next);
+            if (next) void commands.invoke(`entry:${next}`, false);
             return;
         }
         if (key === 'Enter' && selectedId !== null) {
@@ -306,9 +320,9 @@ export function WidgetAddPanel(props: WidgetAddPanelProps): React.ReactElement {
         }
         if (key === 'Escape' && query.length > 0) {
             event.preventDefault?.();
-            setQuery('');
+            void commands.invoke('search', '');
         }
-    }, [addSelected, query.length, select, selectedId, split, visibleIds]);
+    }, [addSelected, commands, query.length, select, selectedId, split, visibleIds]);
     // ⌘↵ / Ctrl+↵ adds from anywhere in the surface once the selected widget is ready.
     const onKeyDown = React.useCallback((event: Readonly<{ key: string; metaKey?: boolean; ctrlKey?: boolean; preventDefault?: () => void }>) => {
         if (event.key !== 'Enter' || !(event.metaKey || event.ctrlKey)) return;
@@ -321,7 +335,7 @@ export function WidgetAddPanel(props: WidgetAddPanelProps): React.ReactElement {
         <WidgetAddList
             {...props}
             query={query}
-            onQueryChange={setQuery}
+            onQueryChange={value => { void commands.invoke('search', value); }}
             onSearchKey={onSearchKey}
             sections={sections}
             askEntry={ask ? askEntry : null}
@@ -336,6 +350,7 @@ export function WidgetAddPanel(props: WidgetAddPanelProps): React.ReactElement {
     const detail = (
         <WidgetAddDetail
             entry={selected}
+            callerContext={selection?.callerContext}
             ask={selectedId === ASK_ID ? props.ask ?? null : null}
             addLabel={props.addLabel}
             phone={props.phone === true}
@@ -531,7 +546,7 @@ const WidgetAddRow = React.memo(function WidgetAddRow(props: Readonly<{
     return entry.actions?.length ? (
         <View style={styles.rowWithActions}>
             {row}
-            <ItemRowActions title={entry.title} actions={entry.actions} overflowOnly overflowTriggerTestID={`${props.testID}.actions`} />
+            <ItemRowActions title={entry.title} actions={entry.actions} overflowOnly currentUiContext overflowTriggerTestID={`${props.testID}.actions`} />
         </View>
     ) : row;
 });
@@ -586,6 +601,7 @@ function RowTrailing(props: Readonly<{ entry: WidgetAddEntry; feedback: AddFeedb
  */
 function WidgetAddDetail(props: Readonly<{
     entry: WidgetAddEntry | null;
+    callerContext?: ActionExecutorContext;
     ask: WidgetAddAsk | null;
     addLabel: string;
     phone: boolean;
@@ -615,6 +631,7 @@ function WidgetAddDetail(props: Readonly<{
             <WidgetSetupStep
                 key={entry.id}
                 setup={setup}
+                callerContext={props.callerContext}
                 phone={props.phone}
                 presentation="pane"
                 {...nav}
@@ -782,7 +799,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingHorizontal: HAPPIER_COLLECTION_LIST_METRICS.contentInset - HAPPIER_COLLECTION_LIST_METRICS.rowInset,
         borderRadius: HAPPIER_COLLECTION_LIST_METRICS.rowRadius,
     },
-    rowHover: { backgroundColor: theme.colors.surface.pressed },
+    rowHover: { backgroundColor: theme.colors.surface.hover },
     rowWithActions: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
     rowPick: { flex: 1, minWidth: 0 },
     rowSelected: { backgroundColor: theme.colors.surface.selected },

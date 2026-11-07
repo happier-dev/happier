@@ -837,6 +837,8 @@ export type SelectionListFilter = Readonly<{
 export type SelectionListProps = Readonly<{
     /** Opt this mounted chooser into the current page's shared UI/agent command path. */
     currentUiContextCommandScope?: string;
+    /** The containing overlay opts in; inline lists keep the page's command projection. */
+    currentUiContextForegroundOverlay?: boolean;
     /** `none` lays the picker flat on its host; the default paints the base surface. */
     surface?: 'base' | 'none';
     /** Root step. Pushes accumulate above this. */

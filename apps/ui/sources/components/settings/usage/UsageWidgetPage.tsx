@@ -227,7 +227,10 @@ function UsagePageDocument(props: UsagePageDocumentProps) {
     .filter(row => row.instance.definition.kind === 'builtin' && isUsageQueryWidget(row.instance.definition.id))
     .map(row => row.instance.id) : undefined;
   const inventoryOnly = queryWidgetIds?.length === 0;
-  return <UsageWidgetBatchProvider clauses={admittedContext?.queryOverrides ?? props.context.queryOverrides} inventoryQuery={inventoryQuery} inventoryOnly={inventoryOnly} callerContext={props.page.callerContext} callerQuery={props.page.callerQuery}
+  // The pending context still renders the admitted layout. Its cached batch must
+  // not consume the new selection's caller before that context is admitted.
+  const callerContext = admittedContext === props.context ? props.page.callerContext : undefined;
+  return <UsageWidgetBatchProvider clauses={admittedContext?.queryOverrides ?? props.context.queryOverrides} inventoryQuery={inventoryQuery} inventoryOnly={inventoryOnly} callerContext={callerContext} callerQuery={callerContext ? props.page.callerQuery : undefined}
     queryWidgetIds={queryWidgetIds}>
     <UsagePageDocumentContent {...props} layout={layout} />
   </UsageWidgetBatchProvider>;

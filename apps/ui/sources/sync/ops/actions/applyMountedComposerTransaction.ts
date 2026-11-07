@@ -5,6 +5,7 @@ import {
 } from '@happier-dev/protocol/plugins/ui/composer';
 import type { ComposerRefV1 } from '@happier-dev/protocol/plugins/ui/composerRef';
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 
 import { readMountedComposerPresentationSnapshot, requestRegisteredComposerFocus } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -19,6 +20,7 @@ export async function applyMountedComposerTransaction(input: Readonly<{
     scope: ServerAccountScope;
     ref: ComposerRefV1;
     attachmentContributor?: PluginContributionIdentityV1;
+    callerContext?: ActionExecutorContext;
     operations: (snapshot: ComposerSnapshotV1) => ComposerTransactionV1['operations'];
 }>): Promise<boolean> {
     const { scope, ref } = input;
@@ -31,8 +33,9 @@ export async function applyMountedComposerTransaction(input: Readonly<{
             ...(input.attachmentContributor ? { attachmentContributor: input.attachmentContributor } : {}),
             transaction: { expectedRevision: snapshot.revision, operations: input.operations(snapshot) },
         }, {
-            surface: 'ui', authority: 'present_user', serverId: scope.serverId,
-            expectedAccountId: scope.accountId, actionRequestId: randomUUID(),
+            ...(input.callerContext ?? { surface: 'ui', authority: 'present_user' }),
+            serverId: scope.serverId, expectedAccountId: scope.accountId,
+            actionRequestId: input.callerContext?.actionRequestId ?? randomUUID(),
         });
         if (!outcome.ok) return false;
         const parsed = ComposerTransactionResultV1Schema.safeParse(outcome.result);

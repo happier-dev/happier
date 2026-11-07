@@ -21,7 +21,6 @@ import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentat
 import { renderMountedCurrentUiContext } from '@/dev/testkit/harness/mountedCurrentUiContext';
 import { useOptionalCurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
 import { usePublishUsageWidgetPageContext, useUsageWidgetPageContext } from '@/components/settings/usage/useUsageWidgetPageContext';
-import { executeCurrentUiContextAction } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
 import { ACTION_ID_FAMILIES_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { t } from '@/text';
 
@@ -71,8 +70,8 @@ describe('Usage history through the shared Account Action', () => {
         command.title === t('usage.board.page.historyReadCommand'));
       expect(historyRetry).toBeDefined();
       await act(async () => {
-        expect(await executeCurrentUiContextAction({ actionId: ACTION_ID_FAMILIES_V1.current_ui_context[1],
-          input: { commandId: historyRetry!.id }, context: { surface: 'agent', authority: 'account_automation' } })).toMatchObject({ ok: true });
+        expect(await createDefaultActionExecutor().execute(ACTION_ID_FAMILIES_V1.current_ui_context[1],
+          { commandId: historyRetry!.id }, { surface: 'agent', authority: 'account_automation' })).toMatchObject({ ok: true });
       });
       await expect.poll(() => signals.length).toBe(1);
       expect(model!.state?.status).toBe('reading');

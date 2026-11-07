@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierDataRows, HappierPressable, type HappierChartDatum } from '@happier-dev/plugin-ui/presentation';
@@ -155,18 +156,23 @@ export function UsageWorkDisclosure(
 }
 
 /** Which rows of one body are open. Several can be: comparing two projects is the point. */
-export function useUsageWorkDisclosures(): Readonly<{
+export function useUsageWorkDisclosures(rows: readonly Readonly<{ id: string; title: string }>[]): Readonly<{
   isOpen(id: string): boolean;
   toggle(id: string): void;
 }> {
   const [open, setOpen] = React.useState<ReadonlySet<string>>(() => new Set());
-  const toggle = React.useCallback((id: string) => {
+  const toggleRow = React.useCallback((id: string) => {
     setOpen((current) => {
       const next = new Set(current);
       if (!next.delete(id)) next.add(id);
       return next;
     });
   }, []);
+  const commands = useCurrentUiContextLocalCommands(rows.map(row => ({ key: row.id,
+    title: `${row.title}: ${t(open.has(row.id) ? 'usage.showLess' : 'common.details')}`,
+    invoke: () => toggleRow(row.id),
+  })));
+  const toggle = React.useCallback((id: string) => { void commands.invoke(id); }, [commands.invoke]);
   return React.useMemo(() => ({ isOpen: (id: string) => open.has(id), toggle }), [open, toggle]);
 }
 

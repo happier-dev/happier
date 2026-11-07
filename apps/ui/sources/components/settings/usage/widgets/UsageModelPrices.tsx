@@ -459,6 +459,7 @@ function UsageModelPriceMapChip(
           <SelectionList
             testID={`${props.testID}.list`}
             currentUiContextCommandScope={`${props.testID}.filters`}
+            currentUiContextForegroundOverlay
             maxHeight={maxHeight}
             disableTransitions
             listAccessibilityLabel={t('usage.board.page.priceMap')}

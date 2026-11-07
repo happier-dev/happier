@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { isDemoMachinesSurfaceRead } from '@/demoMode/runtime/demoMachinesWidgetBinding';
 import { WidgetFrameDemandContext, WidgetFrameInstanceIdContext } from '@/components/widgets/frame/widgetFrameDemand';
 import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import { Platform, View, type LayoutChangeEvent } from 'react-native';
@@ -25,16 +26,19 @@ import { useWidgetGroupMenu } from '@/components/widgets/group/useWidgetGroupMen
 import { randomUUID } from '@/platform/randomUUID';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { useWidgetMenuSurface } from '@/components/widgets/flow/WidgetFlowShell';
+import { useWidgetInstanceNetworkEditor } from '@/components/widgets/surface/useWidgetInstanceNetworkEditor';
+import type { UiSurfaceNetworkRequestV1 } from '@happier-dev/protocol/plugins/contributions/ui/hostedHtmlCapabilitiesV1';
 import { getWidgetSizeFootprintV1 } from '@happier-dev/protocol/widgets';
 
 import { useIsFocused } from '@/components/appShell/workspace/destinationRoute';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
-import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
-import { readCoarsePrimaryPointer, useRowActionHoverHost } from '@/components/sessions/transcript/messageActions/rowActionRevealHost';
+import { useAppShellPluginUiProjectionCurrentness } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { useCoarsePrimaryPointer, useRowActionHoverHost } from '@/components/sessions/transcript/messageActions/rowActionRevealHost';
 import { RowActionRevealSlot } from '@/components/ui/lists/RowActionRevealSlot';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { CardGrid, CardGridCell } from '@/components/ui/cardGrid/CardGrid';
+import { retainIfEqual } from '@/sync/domains/state/structuralSharing';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { ItemGroupColumn, ItemGroupColumns } from '@/components/ui/lists/ItemGroupColumns';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
@@ -45,6 +49,7 @@ import { Typography } from '@/constants/Typography';
 import { WidgetAddSurface } from '@/components/widgets/add/WidgetAddSurface';
 import { useAccountWidgetAddSections, type AccountWidgetSurfaceLabels } from '@/components/widgets/add/accountWidgetAddSections';
 import { WidgetFrame, type WidgetFramePlacement } from '@/components/widgets/frame/WidgetFrame';
+import { WidgetAboutContext } from '@/components/widgets/InstalledWidgetSurface';
 import {
     buildWidgetDefinitionActions,
     buildWidgetFrameStyleActions,
@@ -57,7 +62,7 @@ import {
 } from '@/components/widgets/frame/widgetFrameMenu';
 import { useWidgetAreaFrame } from '@/components/widgets/frame/useWidgetFrameStyle';
 import { useWidgetFrameRename } from '@/components/widgets/frame/useWidgetFrameRename';
-import { WidgetFrameBodyCaptionContext, WidgetFrameBodyMetaContext } from '@/components/widgets/frame/widgetFrameBodyCaption';
+import { WidgetFrameBodyCaptionContext, WidgetFrameBodyIdentityContext, WidgetFrameBodyMetaContext, type WidgetFrameBodyIdentity } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { WidgetFrameBodyActionsContext } from '@/components/widgets/frame/widgetFrameBodyActions';
 import { useWidgetDefinitionFlows } from '@/components/widgets/definitions/useWidgetDefinitionFlows';
 import { useWidgetInputsEditor } from '@/components/widgets/surface/useWidgetInputsEditor';
@@ -66,9 +71,10 @@ import type { WidgetBindingValueLabels } from '@/components/widgets/surface/useW
 import { useWidgetInstanceDescriptors } from '@/components/widgets/surface/useWidgetInstanceDescriptor';
 import { WidgetSurface } from '@/components/widgets/surface/WidgetSurface';
 import { runAcknowledgedWidgetSetupCommand, widgetProvidedContext, type WidgetSurfaceContext } from '@/components/widgets/surface/widgetSurfaceSetup';
-import { isBuiltinWidgetSwitchedOff, readWidgetDescriptor, resolveWidgetInstanceTitle, type WidgetCandidate } from '@/components/widgets/widgetCatalog';
+import { isBuiltinWidgetSwitchedOff, readWidgetDescriptor, resolveWidgetInstanceTitle, widgetCandidateHoldsHtml, type WidgetCandidate } from '@/components/widgets/widgetCatalog';
 import { useAtmosphereMoments } from '@/components/atmosphere/atmosphereMoments';
 import { t } from '@/text';
+import { PluginSurfaceFocusEligibilityProvider, usePluginSurfaceCurrentUiContextEligibility, usePluginSurfaceFocusEligibility, usePresentedValue } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useMeasuredNearViewport } from '@/components/widgets/nearViewport';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
@@ -250,11 +256,13 @@ function WidgetAreaWithLayout(props: WidgetAreaProps & Readonly<{ port: WidgetAr
     // child. Other widgets keep the existing touch DnD route.
     const hasGroup = ready?.items.some(item => item.kind === 'group'
         && (props.area === undefined || (item.area ?? 'main') === props.area)) === true;
-    const canOrganize = canAdd && (hasGroup || (ready?.placements.length ?? 0) > 1 && (Platform.OS !== 'web' || readCoarsePrimaryPointer()));
+    const coarsePrimaryPointer = useCoarsePrimaryPointer();
+    const canOrganize = canAdd && (hasGroup || (ready?.placements.length ?? 0) > 1 && (Platform.OS !== 'web' || coarsePrimaryPointer));
     const viewer = useActiveServerAccountScope();
     const focused = useIsFocused();
-    const current = ready !== null && focused && !!viewer && areServerProfileIdentifiersEquivalent(viewer.serverId, ready.surface.serverId)
-        && (viewer.accountId === ready.surface.accountId || ready.admittedViewer?.serverId === viewer.serverId && ready.admittedViewer.accountId === viewer.accountId);
+    const current = ready !== null && focused && (isDemoMachinesSurfaceRead(ready.surface)
+        || !!viewer && areServerProfileIdentifiersEquivalent(viewer.serverId, ready.surface.serverId)
+        && (viewer.accountId === ready.surface.accountId || ready.admittedViewer?.serverId === viewer.serverId && ready.admittedViewer.accountId === viewer.accountId));
     const movement = useWidgetMovementAdmission(current ? ready?.surface ?? null : null, ready?.placements, props.port.movement);
     const drop = useSessionSurfaceEntityDrag(current && ready ? {
         scope: ready.surface, title: props.surfaceName, getItem: () => null, isCurrent: () => current,
@@ -284,19 +292,25 @@ function WidgetAreaWithLayout(props: WidgetAreaProps & Readonly<{ port: WidgetAr
         } else setNotice({ write: layoutWrite, value: describe(outcome) });
         return outcome;
     }, [layoutWrite]);
-    const closeAdd = React.useCallback(() => setAddOpen(false), []);
     const changeOrganizing = React.useCallback((next: boolean) => {
         setOrganizing(next);
         drop.runtime.cancel('organize-changed');
     }, [setOrganizing, drop.runtime]);
-    useCurrentUiContextLocalCommands(current && canOrganize && ready ? [{
-        key: `${stableJsonStringify(ready.surface)}:${props.area ?? 'all'}:organize`,
+    const chromeKey = ready ? `${stableJsonStringify(ready.surface)}:${props.area ?? 'all'}` : props.testID;
+    const chromeCommands = useCurrentUiContextLocalCommands(current && ready ? [
+        ...(canOrganize ? [{
+        key: `${chromeKey}:organize`,
         title: `${t(organizing ? 'common.done' : 'entityDragDrop.organize.title')}: ${props.surfaceName}`,
         invoke: () => changeOrganizing(!organizing),
-    }] : []);
+        }] : []),
+        ...(canAdd ? [{ key: `${chromeKey}:add`, title: t('widgetAdd.areaAdd', { surface: props.surfaceName }),
+            invoke: (value?: import('@happier-dev/protocol/plugins/ui').PluginUiJsonValueV1) => setAddOpen(typeof value === 'boolean' ? value : !addOpen) }] : []),
+        ...(addOpen ? [{ key: `${chromeKey}:close`, title: `${t('common.close')}: ${props.surfaceName}`, invoke: () => setAddOpen(false) }] : []),
+    ] : [], { unbound: 'local' });
+    const closeAdd = React.useCallback(() => { void chromeCommands.invoke(`${chromeKey}:close`); }, [chromeCommands, chromeKey]);
     const organizeControl = canOrganize ? <RoundButton size="small" display="secondary" testID={`${props.testID}.organize`}
         title={t(organizing ? 'common.done' : 'entityDragDrop.organize.title')}
-        onPress={() => changeOrganizing(!organizing)} /> : null;
+        onPress={() => { void chromeCommands.invoke(`${chromeKey}:organize`); }} /> : null;
 
     return (
         <View ref={drop.ref} onLayout={drop.onLayout} testID={props.testID} style={styles.area}>
@@ -319,7 +333,7 @@ function WidgetAreaWithLayout(props: WidgetAreaProps & Readonly<{ port: WidgetAr
                                 selected={addOpen}
                                 expanded={addOpen}
                                 hasPopup="dialog"
-                                onPress={() => setAddOpen((open) => !open)}
+                                onPress={() => { void chromeCommands.invoke(`${chromeKey}:add`); }}
                             />
                         </View>
                     </View>
@@ -356,7 +370,7 @@ function WidgetAreaWithLayout(props: WidgetAreaProps & Readonly<{ port: WidgetAr
                     layout="inline"
                     title={t('widgetAdd.areaEmptyTitle')}
                     reason={t('widgetAdd.areaEmptyReason')}
-                    {...(canAdd ? { action: { label: t('widgetAdd.areaEmptyAction'), onPress: () => setAddOpen(true), testID: `${props.testID}.emptyAdd` } } : {})}
+                    {...(canAdd ? { action: { label: t('widgetAdd.areaEmptyAction'), onPress: () => { void chromeCommands.invoke(`${chromeKey}:add`, true); }, testID: `${props.testID}.emptyAdd` } } : {})}
                 />
             ) : ready ? (
                 <WidgetAreaPlacements {...props} context={ready.context} surface={ready.surface} placements={ready.placements} items={ready.items} canEdit={ready.canEdit}
@@ -385,7 +399,7 @@ function WidgetAreaWithLayout(props: WidgetAreaProps & Readonly<{ port: WidgetAr
                         accessibilityLabel={t('widgetAdd.areaAdd', { surface: props.surfaceName })}
                         disabled={!canAdd}
                         expanded={addOpen}
-                        onPress={() => setAddOpen((open) => !open)}
+                        onPress={() => { void chromeCommands.invoke(`${chromeKey}:add`); }}
                     />
                 </View>
                 </View>
@@ -466,7 +480,7 @@ type PlacementsProps = WidgetAreaProps & Readonly<{
 type AreaWidget = Readonly<{ placement: WidgetPlacementV1; size: WidgetSizeV1 | undefined; descriptor: WidgetCandidate | null }>;
 
 function WidgetAreaPlacements(props: PlacementsProps): React.ReactElement {
-    const runtime = useAppShellPluginUiProjection();
+    const runtime = useAppShellPluginUiProjectionCurrentness();
     const phone = useDeviceType() === 'phone';
     // The layout items (widgets and groups) in the host's projection: a Project column, or the phone's
     // merged order. A group goes where its first widget is placed.
@@ -499,15 +513,29 @@ function WidgetAreaPlacements(props: PlacementsProps): React.ReactElement {
         const entry = byId.get(instanceId);
         return resolveWidgetInstanceTitle(entry?.placement.instance, entry?.descriptor);
     }, [byId]);
-    const renderWidget = (instanceId: string, index: number, count: number, column: (typeof columns)[number], parent?: WidgetAreaGroupChild) => {
+    // A group child draws plain inside its group. Its placement and group position keep their
+    // identity while the layout is unchanged, so the memoized item skips unrelated area renders.
+    const groupChildren = React.useRef(new Map<string, Readonly<{ source: WidgetPlacementV1; placement: WidgetPlacementV1; parent: WidgetAreaGroupChild }>>());
+    const retainGroupChild = (instanceId: string, source: WidgetPlacementV1, next: WidgetAreaGroupChild) => {
+        const prior = groupChildren.current.get(instanceId);
+        const parent = prior && prior.parent.group === next.group && prior.parent.index === next.index && prior.parent.wide === next.wide
+            && retainIfEqual(prior.parent.labels, next.labels) === prior.parent.labels ? prior.parent : next;
+        if (prior && prior.source === source && prior.parent === parent) return prior;
+        const retained = { source, placement: prior?.source === source ? prior.placement : { ...source, frameStyle: 'plain' as const }, parent };
+        groupChildren.current.set(instanceId, retained);
+        return retained;
+    };
+    const renderWidget = (instanceId: string, index: number, count: number, column: (typeof columns)[number], groupChild?: WidgetAreaGroupChild) => {
         const entry = byId.get(instanceId)!;
+        const child = groupChild ? retainGroupChild(instanceId, entry.placement, groupChild) : null;
+        const parent = child?.parent;
         return (
             <WidgetAreaItem
                 key={instanceId}
                 {...props}
                 failed={props.failed?.instanceId === instanceId ? props.failed : null}
                 pending={props.pendingInstanceId === instanceId}
-                placement={parent ? { ...entry.placement, frameStyle: 'plain' } : entry.placement}
+                placement={child ? child.placement : entry.placement}
                 descriptor={entry.descriptor}
                 size={entry.size}
                 area={column.area}
@@ -548,21 +576,26 @@ function WidgetAreaPlacements(props: PlacementsProps): React.ReactElement {
     });
     if (props.geometry === 'column') {
         if (!props.columnLayout) return <View style={styles.column}>{rendered}</View>;
-        const split = Math.ceil(rendered.length / 2);
-        // Both partitions stay mounted at every width; only the shared primitive's cell width changes.
+        // Paired, the widgets read in rows (lab p-overview FIT: About beside Local changes, Checkouts beside
+        // Scripts), each row as tall as its taller widget. Every widget is its own cell of one wrapping grid,
+        // so it stays mounted at every width; only the shared primitive's cell width changes.
         return <ItemGroupColumns columns={2} activeColumns={props.columnLayout.columns}
             paddingHorizontal={0} paddingVertical={0} columnGap={props.columnLayout.gap} rowGap={12}>
-            <ItemGroupColumn><View style={styles.column}>{rendered.slice(0, split)}</View></ItemGroupColumn>
-            <ItemGroupColumn><View style={styles.column}>{rendered.slice(split)}</View></ItemGroupColumn>
+            {rendered.map(cell => <ItemGroupColumn key={cell.key}>{cell}</ItemGroupColumn>)}
         </ItemGroupColumns>;
     }
     return (
         <CardGrid testID={`${props.testID}.grid`} columns={2}>
             {items.map((item, index) => {
+                // Each card's footprint in both dimensions: a half group stacks its children, so it is as tall as their rows.
                 const size = item.kind === 'widget' ? byId.get(item.instance.id)?.size : undefined;
-                const full = item.kind === 'group' ? item.width === 'full'
-                    : !!size && getWidgetSizeFootprintV1(props.surface.owner.kind, size)?.columnSpan === 2;
-                return full ? <CardGridCell key={getWidgetLayoutItemIdV1(item)} span="row">{rendered[index]}</CardGridCell> : rendered[index];
+                const footprint = size ? getWidgetSizeFootprintV1(props.surface.owner.kind, size) : undefined;
+                const full = item.kind === 'group' ? item.width === 'full' : footprint?.columnSpan === 2;
+                const rows = item.kind === 'group'
+                    ? resolveWidgetGroupCells(props.surface.owner.kind, item.children.map(child => ({ id: child.instance.id, size: byId.get(child.instance.id)?.size })))
+                        .reduce((total, cell) => total + cell.rowSpan, 0)
+                    : footprint?.rowSpan;
+                return <CardGridCell key={getWidgetLayoutItemIdV1(item)} {...(full ? { span: 'row' as const } : {})} {...(rows ? { rows } : {})}>{rendered[index]}</CardGridCell>;
             })}
         </CardGrid>
     );
@@ -643,6 +676,8 @@ function WidgetAreaGroup(props: PlacementsProps & Readonly<{
     // "add one" in the empty slot opens this area's Add aimed at the group.
     const slotAnchorRef = React.useRef<View | null>(null);
     const [slotAddOpen, setSlotAddOpen] = React.useState(false);
+    const slotCommands = useCurrentUiContextLocalCommands(slotAddOpen ? [{ key: 'close', title: `${t('common.close')}: ${name}`,
+        description: `${testID}.slotAdd.close`, invoke: () => setSlotAddOpen(false) }] : [], { contextKey: `${testID}.slotAdd`, unbound: 'local' });
     const source = describeWidgetGroupContext(group.context, labels);
     return (
         <View style={styles.cell} {...hover.hoverProps}>
@@ -669,7 +704,7 @@ function WidgetAreaGroup(props: PlacementsProps & Readonly<{
             {slotAddOpen ? (
                 <WidgetAreaAddPopover anchorRef={slotAnchorRef} surface={props.surface} {...(props.area ? { area: props.area } : {})} placements={props.placements}
                     context={props.context} surfaceName={props.surfaceName} groupId={group.id} write={write}
-                    onRequestClose={() => setSlotAddOpen(false)} testID={`${testID}.slotAdd`} />
+                    onRequestClose={() => { void slotCommands.invoke('close'); }} testID={`${testID}.slotAdd`} />
             ) : null}
         </View>
     );
@@ -706,7 +741,7 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
     const caretShown = collapsible && (collapsed || !props.canEdit
         || (instance.definition.kind === 'builtin' && instance.definition.id === 'project_readme'));
     const testID = `${props.testID}.widget.${instance.id}`;
-    const runtime = useAppShellPluginUiProjection();
+    const runtime = useAppShellPluginUiProjectionCurrentness();
     const candidate = props.descriptor;
     const size = props.size;
     const widgetPresentation = React.useMemo(() => size ? { size, footprint: getWidgetSizeFootprintV1(surface.owner.kind, size)! } : undefined,
@@ -719,15 +754,26 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
     const hover = useRowActionHoverHost();
     const tracker = useOptionalPluginUiScrollActivityTracker();
     const sectionRef = React.useRef<View | null>(null);
-    const { near, measured, measure } = useMeasuredNearViewport(tracker, sectionRef, focused, instance.id);
+    // Proximity admits the body once. Loaded content stays mounted on scroll return,
+    // and no longer subscribes to scroll eligibility after that admission.
+    const [opened, setOpened] = React.useState(false);
+    const { near, measured, measure } = useMeasuredNearViewport(opened ? null : tracker, sectionRef, focused, instance.id);
     const demand = React.useContext(WidgetFrameDemandContext);
     const demandBuiltinId = instance.definition.kind === 'builtin' ? instance.definition.id
         : candidate?.authoredDefinition?.body.kind === 'builtin' ? candidate.authoredDefinition.body.id : undefined;
-    const [bodyHeight, setBodyHeight] = React.useState(0);
-    const active = props.current && focused && near;
-    const shown = active && !collapsed;
+    // Collapsed cards wait until expanded; admitted bodies retain their content
+    // under withdrawn presentation so expanding shows it at once.
+    if (near && !collapsed && !opened) setOpened(true);
+    const shown = props.current && focused && opened && !collapsed;
     React.useLayoutEffect(() => demand?.place(instance.id, demandBuiltinId, measured ? shown : null),
         [demand, instance.id, demandBuiltinId, measured, shown]);
+    const [bodyHeight, setBodyHeight] = React.useState(0);
+    // A hidden retained page keeps the body and ⋯ it last showed (demand withdraws with presentation and
+    // with `shown`), so a hide tears nothing down and a show rebuilds nothing.
+    const active = usePresentedValue(props.current && focused && opened);
+    const chromeCurrent = usePresentedValue(props.current);
+    const focusEligible = usePluginSurfaceFocusEligibility();
+    const currentUiEligible = usePluginSurfaceCurrentUiContextEligibility();
     const onBodyLayout = React.useCallback((event: LayoutChangeEvent) => {
         const height = event.nativeEvent.layout.height;
         setBodyHeight(current => current === height ? current : height);
@@ -755,6 +801,9 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
     // The body may name what it shows; a followed group value still wins the source slot.
     const [bodyCaption, setBodyCaption] = React.useState<string | null>(null);
     const [bodyMeta, setBodyMeta] = React.useState<React.ReactNode>(null);
+    // An unnamed widget may take its name and mark from its body ("CPU", not the generic "Metric"); a given name wins.
+    const [bodyIdentity, setBodyIdentity] = React.useState<WidgetFrameBodyIdentity | null>(null);
+    const lentIdentity = instance.displayName == null ? bodyIdentity : null;
     // A built-in withdrawn by its own switch keeps its place in the layout, undrawn (as on Home).
     const switchedOff = isBuiltinWidgetSwitchedOff(instance.definition, useAtmosphereMoments());
     // The body may also lend the entries that act on what it shows; the frame's ⋯ stays the one menu.
@@ -769,15 +818,21 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
         instance, candidate, scope: surface, context: itemContext, audience: props.isShared ? 'shared' : 'personal',
         ...(props.canEdit ? { setInputs: saveInputs } : {}), testID,
     });
-    const definition = useWidgetDefinitionFlows({ instance, scope: surface,
+    // An HTML widget's guest frame reaches only what its network choice allows; editors change it through this area's write.
+    const network = useWidgetInstanceNetworkEditor({ instance, candidate, scope: surface, admittedViewer: props.admittedViewer ?? undefined, anchorRef: edit.anchorRef, testID,
+        ...(props.canEdit ? { setNetwork: (value: UiSurfaceNetworkRequestV1) => runAcknowledgedWidgetSetupCommand(
+            () => write({ actionId: 'widgets.item.network.set', instanceId: instance.id, network: value }), t('sessionBoard.item.network.failed')) } : {}) });
+    const definition = useWidgetDefinitionFlows({ instance, scope: surface, title: resolveWidgetInstanceTitle(instance, candidate),
         admittedViewer: props.admittedViewer ?? undefined, isCurrent: props.isCurrent,
         providedContext: widgetProvidedContext(itemContext), anchorRef: edit.anchorRef, editInputs: edit.editInputs, testID });
     const title = resolveWidgetInstanceTitle(instance, candidate);
-    useCurrentUiContextLocalCommands(props.current && focused && collapsible && !switchedOff ? [{
-        key: `${stableJsonStringify(surface)}:${instance.id}:disclosure`,
+    const disclosureKey = `${stableJsonStringify(surface)}:${instance.id}:disclosure`;
+    const disclosureCommands = useCurrentUiContextLocalCommands(props.current && focused && collapsible && !switchedOff ? [{
+        key: disclosureKey,
         title: `${t(collapsed ? 'projects.widgets.expand' : 'projects.widgets.collapse')}: ${title}`,
-        invoke: () => onCollapsedChange(!collapsed),
-    }] : []);
+        invoke: value => onCollapsedChange(typeof value === 'boolean' ? value : !collapsed),
+    }] : [], { unbound: 'local' });
+    const changeCollapsed = (next: boolean) => { void disclosureCommands.invoke(disclosureKey, next); };
     // Carried, the card keeps its mark and says its source and the size it keeps (lab wgdnd 1).
     const carried = useWidgetCarriedIdentity({ kind: 'widget', mark: candidate?.icon ?? 'squares-four',
         source: groupNamesFollowed ? bodyCaption ?? undefined : followed ?? bodyCaption ?? bindingLabel ?? sourceName, size });
@@ -822,7 +877,7 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
         onSet: size => { void write({ actionId: 'widgets.item.size.set', instanceId: instance.id, size }); },
         ...(sizeLimit ? { unavailable: sizeLimit } : {}),
     } : undefined;
-    const menu = props.current ? (
+    const menu = chromeCurrent ? (
         <View
             ref={edit.anchorRef}
             collapsable={false}
@@ -834,6 +889,7 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
                 renderTrigger={({ toggle, grip }) => <View style={styles.header}>
                     {props.canEdit && props.organizing ? grip : null}
                     <ItemRowActions
+                currentUiContext
                 title={title}
                 compactThreshold={ALWAYS_OVERFLOW}
                 compactActionIds={[]}
@@ -845,6 +901,7 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
                 renderOverflowSection={({ id }) => renderWidgetSizeMenuSection(sizeControl, id, `${testID}.size`)}
                 actions={orderWidgetMenu({
                     instance: buildWidgetInstanceActions({ ...(props.canEdit ? { editInputs: edit.editInputs, onRename: renaming.begin } : {}),
+                        ...(network.onNetwork ? { onNetwork: network.onNetwork } : {}),
                         onMention: () => { void mention({ kind: 'widget-area-instance', scope: { serverId: surface.serverId, accountId: surface.accountId }, ref: { surface, instanceId: instance.id } }, title); } }),
                     size: buildWidgetSizeActions(sizeControl),
                     frame: !props.canEdit || parent ? [] : buildWidgetFrameStyleActions({
@@ -871,8 +928,8 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
                             childTitle: props.childTitle, operations: props.groupOperations }) : []),
                     ] : [],
                     ...(props.canEdit && collapsible ? { collapse: [collapsed
-                        ? { id: 'expand', title: t('projects.widgets.expand'), icon: 'arrows-out' as const, onPress: () => onCollapsedChange(false) }
-                        : { id: 'collapse', title: t('projects.widgets.collapse'), icon: 'arrows-in' as const, onPress: () => onCollapsedChange(true) }] } : {}),
+                        ? { id: 'expand', title: t('projects.widgets.expand'), icon: 'arrows-out' as const, onPress: () => changeCollapsed(false) }
+                        : { id: 'collapse', title: t('projects.widgets.collapse'), icon: 'arrows-in' as const, onPress: () => changeCollapsed(true) }] } : {}),
                     definition: buildWidgetDefinitionActions({ onAbout: definition.about, ...(props.canEdit ? { onAddTo: definition.addTo } : {}) }),
                     surface: props.canEdit ? bodyActions ?? [] : [],
                     remove: props.canEdit ? [{ id: 'remove', title: t('common.remove'), icon: 'trash', destructive: true,
@@ -886,14 +943,18 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
 
     const body = React.useMemo(() => ({
         kind: 'content' as const,
-        // Release executable demand outside the host's admitted window while retaining its room.
+        // Host lifecycle can withdraw executable demand while retaining its room.
         children: active ? (
             // Fills the frame's body room so a state replacing the body sits balanced in the card.
+            <PluginSurfaceFocusEligibilityProvider active={focusEligible && !collapsed} presentationActive={!collapsed}
+                currentUiContextActive={currentUiEligible && !collapsed}>
             <View testID={`${testID}.bodyHeight`} onLayout={onBodyLayout} style={{ flexGrow: 1 }}>
             <WidgetFrameBodyCaptionContext.Provider value={setBodyCaption}>
             <WidgetFrameBodyMetaContext.Provider value={setBodyMeta}>
+            <WidgetFrameBodyIdentityContext.Provider value={setBodyIdentity}>
             <WidgetFrameBodyActionsContext.Provider value={setBodyActions}>
             <WidgetFrameInstanceIdContext.Provider value={instance.id}>
+            <WidgetAboutContext.Provider value={definition.about ?? null}>
             <WidgetSurface
                 scope={surface}
                 admittedViewer={props.admittedViewer ?? undefined}
@@ -911,13 +972,16 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
                 {...(edit.onRepairInputs ? { onRepairInputs: edit.onRepairInputs } : {})}
                 testID={`${testID}.body`}
             />
+            </WidgetAboutContext.Provider>
             </WidgetFrameInstanceIdContext.Provider>
             </WidgetFrameBodyActionsContext.Provider>
+            </WidgetFrameBodyIdentityContext.Provider>
             </WidgetFrameBodyMetaContext.Provider>
             </WidgetFrameBodyCaptionContext.Provider>
             </View>
+            </PluginSurfaceFocusEligibilityProvider>
         ) : <View testID={`${testID}.deferred`} style={{ minHeight: bodyHeight }} />,
-    }), [active, bodyHeight, candidate, edit.onRepairInputs, instance, onBodyLayout, providedContext, context.projectContext, groupContext, runtime, surface, testID, size, props.admittedViewer, props.isCurrent, props.isReadPending]);
+    }), [active, collapsed, focusEligible, currentUiEligible, bodyHeight, candidate, definition.about, edit.onRepairInputs, instance, onBodyLayout, providedContext, context.projectContext, groupContext, runtime, surface, testID, size, props.admittedViewer, props.isCurrent, props.isReadPending]);
 
     if (switchedOff) return null;
     return (
@@ -928,8 +992,8 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
                 frameStyle={frameStyle}
                 placement={GEOMETRY_PLACEMENT[geometry]}
                 widgetPresentation={widgetPresentation}
-                mark={candidate?.icon ?? 'squares-four'}
-                title={renaming.field ?? title}
+                mark={lentIdentity?.mark ?? candidate?.icon ?? 'squares-four'}
+                title={renaming.field ?? lentIdentity?.title ?? title}
                 source={groupNamesFollowed
                     ? bodyCaption ?? undefined
                     : followed
@@ -943,8 +1007,9 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
                 // A core page's rows take their content height (A6/A7): no fixed viewport, size and width kept.
                 {...(surface.owner.kind === 'corePage' ? { bodyHeight: 'content' as const } : {})}
                 menu={menu}
+                livePicture={widgetCandidateHoldsHtml(candidate)}
                 {...(caretShown ? { disclosure: {
-                    collapsed, onCollapsedChange,
+                    collapsed, onCollapsedChange: changeCollapsed,
                     expandLabel: t('projects.widgets.expand'), collapseLabel: t('projects.widgets.collapse'),
                 } } : {})}
                 body={body}
@@ -956,6 +1021,7 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
             />
             {edit.popover}
             {definition.panel}
+            {network.panel}
             <SessionSurfaceEntityTargetFeedback drag={drag} testID={testID} />
         </View>
     );

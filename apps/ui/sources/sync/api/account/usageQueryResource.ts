@@ -73,6 +73,7 @@ import { SessionPartsHttpError, SessionPartsInvalidResponseError } from '@/sync/
 import { OperationUpdateRequiredV1Schema } from '@happier-dev/protocol/compat/operationUpdateRequiredV1';
 import { createUiCoachSuppressionPort } from './usageCoachSuppressions';
 import type { UsageHistoryReadState } from '@happier-dev/protocol/usage/usageSessionEvidence';
+import { UsageHistoryEntry } from './usageHistoryReadState';
 import type { UsageCoachSuppressionStateV1 } from '@happier-dev/protocol/usage/coach/coachActions';
 import { openUsageCompactInput, persistUsageCompactInput } from './usageCompactInput';
 
@@ -509,7 +510,7 @@ type SessionInputLoadRequest = Readonly<{
 
 /** Collect only this finite phase's cache misses; the existing reader owns reuse and retirement. */
 async function readSessionInputPhase(ids: readonly string[], readTranscript: boolean, readSession: SessionInputReader,
-    onFailure: (error: SessionPartsHttpError) => void,
+    onFailure: (sessionId: string, error: unknown) => void,
     loadBatch: (requests: readonly SessionInputLoadRequest[], signal: AbortSignal) => Promise<void>,
     onValue: (id: string, value: SessionInputEvidence | null) => void,
     onProgress?: (id: string, value: SessionInputEvidence) => void,
@@ -522,8 +523,8 @@ async function readSessionInputPhase(ids: readonly string[], readTranscript: boo
         }), onProgress ? value => onProgress(sessionId, value) : undefined, admitted?.get(sessionId) ?? undefined, demandKey?.(sessionId), sourceReferenceKey,
         demandSignal,
     ).catch(error => {
+        if (!demandSignal?.aborted) onFailure(sessionId, error);
         if (!(error instanceof SessionPartsHttpError)) throw error;
-        onFailure(error);
         return null;
     }).then(value => { onValue(sessionId, value); return [sessionId, value] as const; }));
     // One physical batch serves every collected Session read. It ends only when
@@ -583,8 +584,8 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
     nowMs: number,
     signal?: AbortSignal,
     onProgress?: (snapshots: readonly HowYouWorkReadSnapshot[], sources: readonly UsageQuerySourceState[], settled: boolean) => void,
-    history?: Readonly<{ readUnconverted?: boolean; coverage(selected: number, notRead: number): void;
-        converted(): void; failed(code: string): void }>): Promise<HowYouWorkReadSnapshot[]> {
+    history?: Readonly<{ readUnconverted?: boolean; coverage(selected: ReadonlySet<string>, notRead: number): void;
+        converted(sessionId: string): void; succeeded(sessionId: string): void; failed(code: string, sessionId?: string): void }>): Promise<HowYouWorkReadSnapshot[]> {
     const queries = [query];
     const active = captureActiveServerAccountScopeLifetime();
     const byQuery = new Map(accounting.map(snapshot => [getUsageQueryKey(snapshot.query), snapshot.value]));
@@ -769,7 +770,8 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
             return [snapshot];
         }
     }
-    const selectedIds = [...new Set([...idsByQuery.values()].flat())];
+    const selectedIdSet = new Set([...idsByQuery.values()].flat());
+    const selectedIds = [...selectedIdSet];
     const summaryQuery = normalizeUsageQuery({ ...query, includeTranscriptEvidence: false });
     const summaryDemandKey = (sessionId: string) => getUsageSessionEvidenceDemandKey(summaryQuery, nowMs, [sessionId]);
     // Widget output flags do not override the shared window/history read policy.
@@ -778,7 +780,8 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
     const readTranscript = history?.readUnconverted || readsUnconvertedTranscriptsOnOpen(query);
     let updateRequired: UsageQuerySourceState['updateRequired'];
     let projectedReadFailure: SessionPartsHttpError | undefined;
-    const recordReadFailure = (error: unknown) => {
+    const recordReadFailure = (sessionId: string, error: unknown) => {
+        history?.failed(error instanceof SessionPartsHttpError && error.updateRequired ? 'update_required' : 'usage_session_evidence_read_failed', sessionId);
         if (error instanceof SessionPartsHttpError) updateRequired ??= error.updateRequired;
     };
     const loadTranscript = async (sessionId: string, assertCurrent: () => void, signal: AbortSignal,
@@ -923,13 +926,13 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
                 try {
                     const workFactsPersisted = await persistUsageCompactInput({ context, opening: authority.context, value, signal,
                         isCurrent: () => context.accountLifetime.isCurrent() && accountCurrentnessSource.isCurrent() });
-                    if (workFactsPersisted) history?.converted();
+                    if (workFactsPersisted) history?.converted(sessionId);
                     return { ...value, workFactsPersisted };
                 } catch (error) {
                     requireCurrent(context, signal);
                     const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
                         ? error.code : 'usage_work_facts_write_failed';
-                    history?.failed(code);
+                    history?.failed(code, sessionId);
                     return { ...value, workFactsPersisted: false, workFactsWriteErrorCode: code };
                 }
             });
@@ -960,7 +963,7 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
             admitted: sessions.filter(session => session.access?.capabilities.readTranscript !== false
                 && isSessionContentReadable(readSessionContentAvailability(session))).length,
             notRead: [...selected.values()].filter(value => value && (!value.completeMessageCoverage || value.workFactsPersisted === false)).length };
-        history?.coverage(sessionCoverage.selected,
+        history?.coverage(selectedIdSet,
             [...selected.values()].filter(value => value && canReadUnconvertedSessionHistory(value)).length);
         return { query, asOfMs: Date.now(), sessions, sessionCoverage, detail,
             ...(updateRequired ? { errorCode: 'update_required', updateRequired }
@@ -995,7 +998,8 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
     const onValue = (sessionId: string, value: SessionInputEvidence | null, complete: boolean) => {
         requireCurrent(context, signal);
         const changed = !selected.has(sessionId) || selected.get(sessionId) !== value;
-        if (value === null) history?.failed('usage_session_evidence_read_failed');
+        if (value === null) history?.failed('usage_session_evidence_read_failed', sessionId);
+        else if (complete && value.completeMessageCoverage && value.workFactsPersisted !== false) history?.succeeded(sessionId);
         selected.set(sessionId, value);
         if (complete) settled.add(sessionId);
         // Cached progress already supplied these exact facts. Only the last
@@ -1355,15 +1359,17 @@ export async function readUiUsageQueryBatch(
                         }
                         publish();
                     }, { readUnconverted: options?.readUnconvertedHistory,
-                        coverage: (selected, notRead) => accountOwner.publishHistoryCoverage(query, selected, notRead),
-                        converted: () => accountOwner.publishHistoryConversion(query),
-                        failed: code => accountOwner.publishHistoryFailure(query, code) });
+                        coverage: (selected, notRead) => readUsageHistoryEntry(accountOwner, query).coverage(selected,
+                            readsUnconvertedTranscriptsOnOpen(query) ? 0 : notRead),
+                        converted: id => readUsageHistoryEntry(accountOwner, query).converted(id),
+                        succeeded: id => readUsageHistoryEntry(accountOwner, query).succeeded(id),
+                        failed: (code, id) => readUsageHistoryEntry(accountOwner, query).failed(code, id) });
             } catch (error) {
                 requireCurrent(context, signal);
                 if (!isTransientConnectivityError(error)) throw error;
                 const key = getUsageQueryKey(query);
                 const errorCode = 'usage_session_evidence_read_failed';
-                accountOwner.publishHistoryFailure(query, errorCode);
+                readUsageHistoryEntry(accountOwner, query).failed(errorCode);
                 // Keep any actual partial admission/refusal already published.
                 // Otherwise the shared aggregation owner retains the prior facts.
                 howYouWorkByQuery.set(key, { ...(howYouWorkByQuery.get(key) ?? { query }), errorCode });
@@ -1495,9 +1501,6 @@ type UsageAccountingAnswer = {
 type AccountResourceOwner = Readonly<{ store: UsageQueryResourceStore; invalidate(event?: UsageQueryInvalidation): void; readSessionInput: SessionInputReader;
     readSessionSelection: SessionInputSelectionReader;
     history: Map<string, UsageHistoryEntry>;
-    publishHistoryCoverage(query: UsageQuery, selected: number, notRead: number): void;
-    publishHistoryConversion(query: UsageQuery): void;
-    publishHistoryFailure(query: UsageQuery, errorCode: string): void;
     /** The instant this read resolves its accounting windows at. */
     readAccountingInstant(query: UsageQuery): number;
     readAccounting(request: Parameters<typeof queryUsageAnalytics>[1], query: UsageQuery, signal?: AbortSignal,
@@ -1505,25 +1508,14 @@ type AccountResourceOwner = Readonly<{ store: UsageQueryResourceStore; invalidat
     projectionDocuments: ProviderAccountUsageProjectionDocuments }>;
 // This is the existing Resource store's Account ownership, not a response cache.
 const accountStores = new WeakMap<ServerAccountScopeLifetime, AccountResourceOwner>();
-type UsageHistoryEntry = {
-    state: UsageHistoryReadState;
-    listeners: Set<() => void>;
-    controller?: AbortController;
-    pending?: Promise<UsageHistoryReadState>;
-};
 function readUsageHistoryEntry(owner: AccountResourceOwner, query: UsageQuery): UsageHistoryEntry {
     const key = getUsageQueryKey(query);
     let entry = owner.history.get(key);
     if (!entry) {
-        entry = { state: { status: 'idle', progress: { selected: 0, notRead: 0, completed: 0, failed: 0 } }, listeners: new Set() };
+        entry = new UsageHistoryEntry();
         owner.history.set(key, entry);
     }
     return entry;
-}
-function publishUsageHistoryEntry(entry: UsageHistoryEntry, state: UsageHistoryReadState): void {
-    if (sameStrictJsonValue(entry.state, state)) return;
-    entry.state = state;
-    for (const listener of entry.listeners) listener();
 }
 function usageHistoryOwner(context: UsageQueryAccountContext): AccountResourceOwner {
     getUsageQueryResourceStore(context);
@@ -1556,23 +1548,21 @@ export async function readUiUsageHistory(context: UsageQueryAccountContext, inpu
             entry.controller = controller;
             const retirement = context.accountLifetime.onRetire(() => controller.abort());
             if (options?.signal?.aborted) controller.abort();
-            publishUsageHistoryEntry(entry, { status: 'reading', progress: {
-                ...entry.state.progress, completed: 0, failed: 0 } });
+            entry.publish({ status: 'reading', progress: {
+                ...entry.state.progress, completed: 0 } });
             entry.pending = (async () => {
                 try {
                     await readUiUsageQueryBatch(context, { queries: [input.query] }, controller.signal, undefined,
                         { readUnconvertedHistory: true, retainAllowance: true });
-                    publishUsageHistoryEntry(entry, { ...entry.state,
+                    entry.publish({ ...entry.state,
                         status: controller.signal.aborted ? 'cancelled'
-                            : entry.state.progress.notRead || entry.state.progress.failed ? 'partial' : 'complete' });
+                            : entry.state.errorCode || entry.state.progress.notRead || entry.state.progress.failed ? 'partial' : 'complete' });
                     invalidateUsageQueryResources(resolveUsageOwnerLifetime(context));
                 } catch (error) {
                     const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
                         ? error.code : 'usage_history_read_failed';
-                    publishUsageHistoryEntry(entry, { ...entry.state, status: controller.signal.aborted ? 'cancelled' : 'partial',
-                        ...(controller.signal.aborted ? {} : { errorCode: entry.state.errorCode ?? code }),
-                        progress: { ...entry.state.progress,
-                            failed: controller.signal.aborted ? entry.state.progress.failed : Math.max(1, entry.state.progress.failed) } });
+                    entry.publish({ ...entry.state, status: controller.signal.aborted ? 'cancelled' : 'partial',
+                        ...(controller.signal.aborted ? {} : { errorCode: entry.state.errorCode ?? code }) });
                 } finally {
                     retirement.dispose();
                     entry.controller = undefined;
@@ -1730,29 +1720,6 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
     const owner: AccountResourceOwner = {
         projectionDocuments,
         history,
-        publishHistoryCoverage(query, selected, notRead) {
-            const entry = readUsageHistoryEntry(owner, query);
-            // Automatic windows own the read already. Their failures are typed
-            // failures, never an invitation to start a second history read.
-            const progress = { ...entry.state.progress, selected,
-                notRead: readsUnconvertedTranscriptsOnOpen(query) ? 0 : notRead };
-            if (entry.state.status === 'reading') publishUsageHistoryEntry(entry, { ...entry.state, progress });
-            else publishUsageHistoryEntry(entry, { ...entry.state,
-                status: progress.failed ? 'partial' : progress.notRead ? 'idle' : 'complete', progress });
-        },
-        publishHistoryConversion(query) {
-            const entry = readUsageHistoryEntry(owner, query);
-            if (entry.state.status !== 'reading') return;
-            const progress = entry.state.progress;
-            publishUsageHistoryEntry(entry, { ...entry.state, progress: { ...progress,
-                completed: progress.completed + 1, notRead: Math.max(0, progress.notRead - 1) } });
-        },
-        publishHistoryFailure(query, errorCode) {
-            const entry = readUsageHistoryEntry(owner, query);
-            publishUsageHistoryEntry(entry, { ...entry.state, errorCode: entry.state.errorCode ?? errorCode,
-                status: entry.state.status === 'reading' ? 'reading' : 'partial',
-                progress: { ...entry.state.progress, failed: entry.state.progress.failed + 1 } });
-        },
         readAccountingInstant(query) {
             const nowMs = Date.now();
             if (!query.includeAccounting) return nowMs;

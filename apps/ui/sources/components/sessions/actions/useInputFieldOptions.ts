@@ -1,12 +1,12 @@
 import * as React from 'react';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { useShallow } from 'zustand/react/shallow';
-import type { ActionInputFieldHint } from '@happier-dev/protocol';
-import { projectInputOptionsDependencies } from '@happier-dev/protocol/inputs';
+import type { InputFieldHint  as ActionInputFieldHint} from '@happier-dev/protocol/inputs/inputFields';
+import { inputTypeOptionsSourceId, projectInputOptionsDependencies } from '@happier-dev/protocol/inputs';
 
 import { getStorage, useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { resolveMachineTargetForSessionFromState } from '@/sync/domains/session/resolveMachineTargetForSessionFromState';
 import { resolveUiAccountActionFallbackMachineId } from '@/sync/ops/actions/accountActionDeps';
-import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import type { ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
@@ -81,16 +81,21 @@ export function useInputFieldOptions(params: Readonly<{
     accountLifetime?: (ServerAccountScopeLifetime & Partial<Pick<ServerCredentialAccountScopeBinding, 'revision'>>) | null;
     /** Canonical immutable placement, never a draft or component-local object. */
     retentionOwner?: object;
+    /** Only a newly demanded read borrows its opener; retries and refreshes admit their own caller. */
+    initialCallerContext?: ActionExecutorContext;
 }>) {
     const scope = useActiveServerAccountScope(params.serverId ?? undefined);
     const accountScope = params.accountLifetime === undefined ? scope : params.accountLifetime?.scope;
-    // Pin the same incumbent Account relay for the options read and the picker mount.
-    // A later transport fallback must not give a field machine-B choices beside machine-A's type.
+    // Account choices reach the canonical relay selector with their declared type.
+    // Only explicit native/Session producers pin the invocation before selection.
     const optionServerId = params.serverId ?? accountScope?.serverId;
-    const machineId = params.machineId ?? (!params.sessionId && optionServerId && accountScope
-        && areServerProfileIdentifiersEquivalent(optionServerId, accountScope.serverId)
-        && params.requests.some(request => request.field.inputType && 'pluginId' in request.field.inputType)
-        ? resolveUiAccountActionFallbackMachineId(accountScope) : null);
+    const machineId = params.machineId ?? null;
+    const pickerRelays = params.requests.map(request => !params.machineId && !params.sessionId
+        && params.pluginUiProjection === undefined && accountScope && request.field.inputType && 'pluginId' in request.field.inputType
+        ? resolveUiAccountActionFallbackMachineId(accountScope, {
+            optionsRequest: { optionsSourceId: inputTypeOptionsSourceId(request.field.inputType) },
+            accountLifetime: params.accountLifetime,
+        }) : null);
     const sessionMachines = getStorage()(useShallow(state => params.requests.map(request => {
         const selected = request.consumer?.kind === 'widget' ? request.consumer.selectedSession : undefined;
         const sessionId = params.sessionId ?? selected?.sessionId;
@@ -106,7 +111,7 @@ export function useInputFieldOptions(params: Readonly<{
         return readInputTypeOptionsProducer(type, optionServerId, params.pluginUiMachineId);
     });
     const signature = JSON.stringify([accountScope?.accountId, params.accountLifetime?.revision, optionServerId, machineId,
-        params.sessionId, producerRoutes, params.requests.map((request) => ({ ...request,
+        params.sessionId, producerRoutes, pickerRelays, params.requests.map((request) => ({ ...request,
             draftInput: projectInputOptionsDependencies(request.draftInput ?? {}, request.consumer, request.actionId) }))]);
     const { reads, keys, defaultContexts, fieldTargets } = React.useMemo(() => {
         const keys = new Map<string, string>();
@@ -125,9 +130,10 @@ export function useInputFieldOptions(params: Readonly<{
             };
             if ((!request.field.optionsSourceId && !request.field.inputType && !request.field.connectedAccountOptions) || hasLocalStaticOptions(request.field)) continue;
             const producer = producerRoutes[index];
-            const requestMachineId = params.machineId ?? producer?.machineId
-                ?? (!requestSessionId && request.field.inputType && 'pluginId' in request.field.inputType ? machineId : null);
-            const input = { ...(request.field.optionsSourceId ? { optionsSourceId: request.field.optionsSourceId } : {}),
+            const requestMachineId = params.machineId ?? producer?.machineId;
+            const optionsSourceId = request.field.optionsSourceId ?? (!requestMachineId && request.field.inputType
+                ? inputTypeOptionsSourceId(request.field.inputType) : undefined);
+            const input = { ...(optionsSourceId ? { optionsSourceId } : {}),
                 ...(request.actionId ? { actionId: request.actionId, fieldPath: request.field.path } : {}),
                 ...(request.consumer ? { consumer: request.consumer, fieldPath: request.field.path } : {}),
                 ...(request.values ? { values: request.values } : {}),
@@ -138,7 +144,7 @@ export function useInputFieldOptions(params: Readonly<{
                     ...(requestSessionId ? { sessionId: requestSessionId } : {}) },
             };
             if (request.field.inputType && 'pluginId' in request.field.inputType) fieldTargets[request.field.path] = {
-                machineId: requestMachineId ?? null, ...(serverId ? { serverId } : {}),
+                machineId: requestMachineId ?? pickerRelays[index] ?? null, ...(serverId ? { serverId } : {}),
                 ...(requestSessionId ? { sessionId: requestSessionId } : {}),
                 ...(producer?.unavailableReasonCode ? { unavailable: true } : {}),
             };
@@ -147,14 +153,15 @@ export function useInputFieldOptions(params: Readonly<{
                 ...(accountScope?.accountId ? { runtimeAccountId: accountScope.accountId } : {}),
                 ...(requestSessionId ? { defaultSessionId: requestSessionId } : {}) };
             const key = JSON.stringify([input, context, params.accountLifetime?.revision, producer]);
-            reads.set(key, { key, input, context, ...(params.accountLifetime === undefined ? {} : { accountLifetime: params.accountLifetime }),
+            reads.set(key, { key, input, context, initialCallerContext: params.initialCallerContext,
+                ...(params.accountLifetime === undefined ? {} : { accountLifetime: params.accountLifetime }),
                 ...(producer?.unavailableReasonCode ? { unavailableReasonCode: producer.unavailableReasonCode } : {}),
                 ...(params.retentionOwner ? { retention: { owner: params.retentionOwner, field: request.field.path, refreshKey: params.refreshKey } } : {}) });
             keys.set(fieldKey(request.field, request), key);
             defaultContexts.set(JSON.stringify([request.field.path, request.field.optionsSourceId, request.field.inputType]), request);
         }
         return { reads: [...reads.values()], keys, defaultContexts, fieldTargets };
-    }, [signature, params.accountLifetime, params.retentionOwner, params.refreshKey]);
+    }, [signature, params.accountLifetime, params.retentionOwner, params.refreshKey, params.initialCallerContext]);
     const enabled = params.enabled && (params.accountLifetime === undefined || params.accountLifetime?.isCurrent() === true);
     const accountReads = useInputOptionsReadGroup(reads.filter(read => !read.context.externalActionTarget), enabled, params.refreshKey, params.accountLifetime, params.retentionOwner);
     const machineReads = useInputOptionsReadGroup(reads.filter(read => read.context.externalActionTarget), enabled, params.refreshKey, params.accountLifetime, params.retentionOwner);
@@ -173,8 +180,9 @@ export function useInputFieldOptions(params: Readonly<{
         const index = activeReads.findIndex((read) => read.key === key);
         return index === -1 ? INPUT_OPTIONS_LOADING : snapshot[index] ?? INPUT_OPTIONS_LOADING;
     }, [activeReads, keys, defaultContexts, snapshot]);
-    const retry = React.useCallback(() => activeReads.forEach(retryInputFieldOptions), [activeReads]);
-    const pickerMachineId = params.pluginUiProjection === undefined ? machineId : params.machineId ?? params.pluginUiMachineId ?? null;
+    const retry = React.useCallback((callerContext?: ActionExecutorContext) => activeReads.forEach(read => retryInputFieldOptions(read, callerContext)), [activeReads]);
+    const pickerMachineId = params.pluginUiProjection === undefined ? machineId ?? pickerRelays.find(id => id !== null) ?? null
+        : params.machineId ?? params.pluginUiMachineId ?? null;
     const pickerContextKey = JSON.stringify([signature, snapshot, params.requests[0]?.draftInput]);
     const resolveOptions: ResolveSessionActionFieldOptions = React.useMemo(() => Object.assign(
         (field: Parameters<ResolveSessionActionFieldOptions>[0], context?: InputFieldOptionsContext) => state({ ...field, path: field.path ?? '' }, context).options,

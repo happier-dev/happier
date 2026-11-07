@@ -21,6 +21,7 @@ import { useUsageAnalyticsView, useUsageProjectLabels } from './usageBodyKit';
 import { readUsageWidgetPageScope, readUsageWidgetQueryOverrides } from '../usageWidgetPageContext';
 import { buildUsageRouteParams } from '../usageRouteParams';
 import { usageCostKindPhrase } from '../usageCostPresentation';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
 function countLabels(labels: readonly string[]): Map<string, number> {
   const counts = new Map<string, number>();
@@ -135,7 +136,7 @@ export function useUsageWork(
     [displaySessionLabels, renderables, serverId, isSessionVisible],
   );
   const router = useRouter();
-  const openSession = React.useCallback(
+  const navigateSession = React.useCallback(
     (sessionId: string) => {
       router.push(
         buildScopedSessionRouteHref({ sessionId, serverId, suffix: '/usage', query: buildUsageRouteParams({
@@ -149,5 +150,13 @@ export function useUsageWork(
     },
     [router, serverId, query, metric],
   );
+  const sessionCommands = useCurrentUiContextLocalCommands((summary?.sessions ?? []).map(row => ({
+      key: row.sessionId,
+      title: `${t('common.open')}: ${sessionLabel(row.sessionId)}`,
+      invoke: () => navigateSession(row.sessionId),
+    })));
+  const openSession = React.useCallback((sessionId: string) => {
+    void sessionCommands.invoke(sessionId);
+  }, [sessionCommands.invoke]);
   return { summary, format, cell, datum, basisLabel, projectLabel: projectName, projectPlace, sessionLabel, openSession };
 }

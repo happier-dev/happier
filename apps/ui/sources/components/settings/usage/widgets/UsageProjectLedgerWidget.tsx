@@ -62,8 +62,14 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
     props.serverId,
   );
   const drill = useUsageDrill(props.query);
-  const disclosures = useUsageWorkDisclosures();
   const [showAllProjects, setShowAllProjects] = React.useState(false);
+  const disclosures = useUsageWorkDisclosures([
+    ...leadingUsageRows(summary?.projects ?? [], showAllProjects).rows.map(row => ({
+      id: `project:${row.projectKey ?? ''}`,
+      title: [projectLabel(row.projectKey), projectPlace(row.projectKey)].filter(Boolean).join(' · '),
+    })),
+    ...(summary?.branches ?? []).map(row => ({ id: `branch:${row.branch.key}`, title: usageWorkBranchName(row.branch.branch.ref) })),
+  ]);
   useWidgetFrameBodyCaption(
     t('usage.board.work.ledgerCaption', {
       period: usagePeriodPhrase(props.query),

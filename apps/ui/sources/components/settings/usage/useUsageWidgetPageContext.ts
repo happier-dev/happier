@@ -64,7 +64,10 @@ export function useUsageWidgetPageContext(input: UsageWidgetPageContextInput): U
     // Reconcile route intent before children commit. A URL echo of page-owned filters
     // must not commit an inactive publication and retire otherwise unchanged commands.
     if (state.authority !== input.authority || state.sessionId !== input.sessionId || state.initialKey !== initialKey) {
-        setState(initialize());
+        const next = initialize();
+        const echoesSelection = state.authority === input.authority && state.sessionId === input.sessionId
+            && state.period === next.period && getUsageQueryKey(state.query) === getUsageQueryKey(next.query);
+        setState(echoesSelection ? { ...state, initialKey } : next);
     }
     React.useLayoutEffect(() => {
         const authority = input.authority;

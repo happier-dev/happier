@@ -1,6 +1,8 @@
 import * as React from 'react';
+import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import type { View } from 'react-native';
-import type { JsonValue } from '@happier-dev/protocol';
+import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { composeWidgetGroupContextV1, isWidgetTargetHostableV1, projectWidgetBindingInputV1, readWidgetDefinitionNetworkOverrideV1,
     type WidgetDefinitionV1, type WidgetInstanceV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 
@@ -19,6 +21,7 @@ import { readWidgetDescriptor, resolveWidgetInstanceTitle } from '@/components/w
 import { randomUUID } from '@/platform/randomUUID';
 import { useWorkspaceRefs } from '@/sync/domains/state/storage';
 import { t } from '@/text';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 import { isPublicProfileWidgetSurfaceV1, projectWidgetPublicProfileDescriptorV1, translateWidgetPublicProfileCopyV1 } from '@happier-dev/protocol/widgets';
@@ -39,7 +42,9 @@ export type WidgetCopyAttempt = {
  */
 export function useWidgetCopyTarget(instance: WidgetInstanceV1 | null, current: WidgetSurfaceRefV1) {
     const runtime = useAppShellPluginUiProjection();
-    const installed = React.useMemo(() => instance ? readWidgetDescriptor(runtime.pluginUiProjection, instance.definition) : null, [runtime.pluginUiProjection, instance]);
+    const localize = usePluginLocalizedTextResolver({ projection: runtime.pluginUiProjection });
+    const installed = React.useMemo(() => instance ? readWidgetDescriptor(runtime.pluginUiProjection, instance.definition, instance.displayName ? undefined : localize) : null,
+        [runtime.pluginUiProjection, instance, localize]);
     const candidate = useWidgetInstanceDescriptor(current, instance, installed);
     const refs = useWorkspaceRefs();
     const publicProfile = useFeatureDecision('account.publicProfiles', { scopeKind: 'spawn', serverId: current.serverId });
@@ -65,14 +70,16 @@ export function WidgetCopyChooser(props: Readonly<{
     instance: WidgetInstanceV1;
     current: WidgetSurfaceRefV1;
     anchorRef: React.RefObject<View | null>;
-    onChoose: (destinationKey: string) => void;
+    onChoose: (destinationKey: string, callerContext?: ActionExecutorContext) => void;
     onClose: () => void;
     testID: string;
 }>) {
     const { destinations } = useWidgetCopyTarget(props.instance, props.current);
     const { onChoose } = props;
+    const commands = useCurrentUiContextLocalCommands(destinations.map(destination => ({ key: destination.key,
+        title: destination.label, invoke: (_input: unknown, callerContext?: ActionExecutorContext) => onChoose(destination.key, callerContext) })), { unbound: 'local' });
     return <WidgetCopyDestinationMenu destinations={destinations} anchorRef={props.anchorRef}
-        onChoose={destination => onChoose(destination.key)} onClose={props.onClose} testID={`${props.testID}.destination`} />;
+        onChoose={destination => { void commands.invoke(destination.key); }} onClose={props.onClose} testID={`${props.testID}.destination`} />;
 }
 
 /**
@@ -83,6 +90,7 @@ export function WidgetCopyPanel(props: Readonly<{
     instance: WidgetInstanceV1;
     current: WidgetSurfaceRefV1;
     destinationKey: string;
+    callerContext?: ActionExecutorContext;
     providedContext: Readonly<Record<string, readonly JsonValue[]>>;
     /** A library copy Save as your widget already created: placement only, never a second promotion. */
     saved?: WidgetDefinitionV1;
@@ -106,7 +114,7 @@ export function WidgetCopyPanel(props: Readonly<{
     );
     const setup = buildWidgetCopySetup({ candidate, destination, instance: props.instance, current: props.current,
         providedContext: props.providedContext, promoted, attempt: props.attempt ?? attempt.current, testID: props.testID });
-    return <WidgetSetupStep key={destination.key} setup={setup} phone={phone} {...(props.onBack ? { onBack: props.onBack } : {})}
+    return <WidgetSetupStep key={destination.key} setup={setup} callerContext={props.callerContext} phone={phone} {...(props.onBack ? { onBack: props.onBack } : {})}
         onCancel={props.onClose} onDone={result => {
             publishPresentationNotice({ key: `widget-copy:${props.instance.id}`, severity: 'info', message: result.approvalPending
                 ? `${promoted.current ? `${t('widgetDefinition.savedButNotPlaced')} ` : ''}${t('widgetAdd.areaApprovalPending')}`

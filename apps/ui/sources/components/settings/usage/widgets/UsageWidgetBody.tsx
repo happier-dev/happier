@@ -10,6 +10,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useWidgetFrameResourceActivity } from '@/components/widgets/frame/widgetFrameResourceActivity';
 import { t } from '@/text';
 import { UsageBodyReading, type UsageBodyProps, type UsageWidgetPresentationInputs } from './usageBodyKit';
+import { useUsageRetryCommand } from './usageMountedControls';
 import { useWidgetPresentation } from '@happier-dev/plugin-ui';
 import { useUsageWidgetModel } from './usageWidgetBatch';
 import { useUsageQueryActions } from './useUsageQueryActions';
@@ -105,6 +106,7 @@ function UsageQueryWidgetBody(
 ) {
   const { model, query } = useUsageWidgetModel(props.input, props.id);
   const slice = model.slice;
+  const retry = useUsageRetryCommand(model.refresh, !!query && !slice && !!model.error && !model.pending);
   // Dim only facts that are being replaced: a previous period held while the new one arrives. A
   // re-read of the shown facts keeps them at full strength and says "Refreshing" in the frame's meta
   // slot; a source that is still outstanding is said by the body's own coverage line.
@@ -146,7 +148,7 @@ function UsageQueryWidgetBody(
           title={t('usage.board.page.readFailedTitle')}
           reason={t('usage.board.page.readFailedReason')}
           diagnosticCode={model.error.code}
-          action={{ label: t('common.retry'), onPress: model.refresh }}
+          action={{ label: t('common.retry'), onPress: retry }}
         />
       );
     if (!model.requestedQuery && !model.pending)

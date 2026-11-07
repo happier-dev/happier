@@ -1,32 +1,35 @@
 import * as React from 'react';
+import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import type { View } from 'react-native';
 import { isPublicProfileWidgetSurfaceV1, type WidgetDefinitionV1, type WidgetInstanceV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
-import type { JsonValue } from '@happier-dev/protocol';
+import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { canPromoteSessionWidgetDefinitionSourceV1 } from '@happier-dev/protocol/widgets/widgetDefinitionPromotionV1';
 
 import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { PluginSurfaceProjectionDemand } from '@/components/plugins/surfaces/PluginSurfaceProjectionDemand';
-import { describeAuthoredWidgetDefinitionV1, readWidgetDescriptor, type WidgetCandidate } from '@/components/widgets/widgetCatalog';
+import { describeAuthoredWidgetDefinitionV1, readWidgetDescriptor, resolveWidgetInstanceTitle, type WidgetCandidate } from '@/components/widgets/widgetCatalog';
 import { useConfiguredWidgetTarget } from '@/sync/domains/widgets/useConfiguredWidgetTarget';
-import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
-import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { readMountedComposerPresentationSnapshot } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
 import { appendMountedComposerDraft } from '@/sync/ops/actions/appendMountedComposerDraft';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { randomUUID } from '@/platform/randomUUID';
 import { t } from '@/text';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
 import { SaveAsWidgetPanel, type SaveAsWidgetConvertedInput } from './SaveAsWidgetPanel';
 import { WidgetAboutPanel, readWidgetAboutSources } from './WidgetAboutPanel';
 import { createWidgetArtifactWriteAttempt, runWidgetDefinitionCommand } from './widgetDefinitionCommands';
+import { useWidgetDefinitionFlowRead } from './useWidgetDefinitionFlowRead';
 import { WidgetFlowPanel } from '@/components/widgets/flow/WidgetFlowPanel';
 import { WIDGET_FLOW_WIDTH_PX, WidgetFlowShell } from '@/components/widgets/flow/WidgetFlowShell';
 import type { IconName } from '@/components/ui/icons/Icon';
 import { createWidgetSnapshotCaptureSlot, useWidgetSnapshotCaptureAvailable, type WidgetSnapshotCaptureSlot } from './widgetSnapshotCapture';
-import { WidgetSnapshotConfirmPanel } from './WidgetSnapshotConfirmPanel';
+import { buildWidgetSnapshotPreview, WidgetSnapshotConfirmPanel } from './WidgetSnapshotConfirmPanel';
+import { SessionBoardDeclarativeContent } from '@/components/sessions/board/SessionBoardDeclarativeContent';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { WidgetCopyChooser, WidgetCopyPanel, type WidgetCopyAttempt } from './WidgetCopyPanel';
 
 type Flow = 'about' | 'save' | 'snapshot' | 'addTo';
@@ -47,7 +50,16 @@ export type WidgetDefinitionSessionItem = Readonly<{
     renderPreview?: () => React.ReactNode;
 }>;
 
-type OpenedDefinition = Readonly<{ definition: WidgetDefinitionV1; placements: Parameters<typeof WidgetAboutPanel>[0]['placements'] }>;
+/** Save borrows the primary body's admitted snapshot, never another executable or Resource read. */
+function WidgetSavePreview(props: Readonly<{ slot: WidgetSnapshotCaptureSlot; sourceLabel: string; testID: string }>): React.ReactElement {
+    const [, changed] = React.useReducer((revision: number) => revision + 1, 0);
+    React.useEffect(() => props.slot.watch(changed), [props.slot]);
+    const preview = buildWidgetSnapshotPreview(props.slot.capture(), props.sourceLabel, Date.now());
+    return preview
+        ? <SessionBoardDeclarativeContent document={preview.document} snapshot actionBinding={null} testID={props.testID} />
+        : <SurfaceStateCard kind="empty" size="line" accessibilitySemantics="status" testID={props.testID}
+            title={t('sessionBoard.item.runningElsewhere.title')} detail={t('sessionBoard.item.runningElsewhere.reason')} />;
+}
 
 /** The Session whose mounted composer can take a drafted change request, when one is on screen. */
 function readDraftTarget(scope: WidgetSurfaceRefV1, definition: WidgetDefinitionV1 | null): Readonly<{ sessionId: string }> | null {
@@ -72,6 +84,7 @@ function readDraftTarget(scope: WidgetSurfaceRefV1, definition: WidgetDefinition
  */
 export function useWidgetDefinitionFlows(input: Readonly<{
     instance: WidgetInstanceV1 | null;
+    title?: string;
     scope: WidgetSurfaceRefV1 | null;
     /** The containing layout's admitted viewer is distinct from its stored owner. */
     admittedViewer?: ServerAccountScope;
@@ -83,7 +96,7 @@ export function useWidgetDefinitionFlows(input: Readonly<{
      * sibling or from a ⋯ that has scrolled away. Without it the flows open at the ⋯ (`anchorRef`).
      */
     card?: Readonly<{ anchorRef: React.RefObject<View | null>; reveal: () => void }>;
-    editInputs?: Readonly<{ onPress: () => void; binding: string | null }> | undefined;
+    editInputs?: Readonly<{ onPress: (event?: unknown, callerContext?: ActionExecutorContext) => void; binding: string | null }> | undefined;
     sessionItem?: WidgetDefinitionSessionItem | null;
     providedContext?: Readonly<Record<string, readonly JsonValue[]>>;
     testID: string;
@@ -95,7 +108,8 @@ export function useWidgetDefinitionFlows(input: Readonly<{
     snapshotSlot: WidgetSnapshotCaptureSlot;
     panel: React.ReactElement | null;
 }> {
-    const [flow, setFlow] = React.useState<Flow | null>(null);
+    const [openedFlow, setFlow] = React.useState<Readonly<{ kind: Flow; callerContext?: ActionExecutorContext }> | null>(null);
+    const flow = openedFlow?.kind;
     const [slot] = React.useState(createWidgetSnapshotCaptureSlot);
     const capturable = useWidgetSnapshotCaptureAvailable(slot);
     const { instance, scope, editInputs, sessionItem, testID } = input;
@@ -103,7 +117,8 @@ export function useWidgetDefinitionFlows(input: Readonly<{
     const anchorRef = card?.anchorRef ?? input.anchorRef;
     const artifactId = instance?.definition.kind === 'artifact' ? instance.definition.artifactId : null;
     // Add to… chooses its place in the shared chooser first; the copy's setup then opens at setup width.
-    const [copyTo, setCopyTo] = React.useState<string | null>(null);
+    const [copySelection, setCopyTo] = React.useState<Readonly<{ key: string; callerContext?: ActionExecutorContext }> | null>(null);
+    const copyTo = copySelection?.key ?? null;
     // Save as your widget hands each place the person chose to the same setup Add to… uses; the copy it created stays.
     const [placing, setPlacing] = React.useState<Readonly<{ saved: WidgetDefinitionV1; instance: WidgetInstanceV1; remaining: readonly string[];
         attempts: ReadonlyMap<string, WidgetCopyAttempt> }> | null>(null);
@@ -115,38 +130,59 @@ export function useWidgetDefinitionFlows(input: Readonly<{
     const placeNext = React.useCallback(() => {
         const [next, ...remaining] = placing?.remaining ?? [];
         if (!placing || next === undefined) { close(); return; }
-        setCopyTo(next);
+        setCopyTo({ key: next });
         setPlacing({ ...placing, remaining });
     }, [close, placing]);
-    const open = React.useCallback((next: Flow) => { card?.reveal(); setFlow(next); }, [card]);
-    const about = React.useMemo(() => (instance && scope ? () => open('about') : undefined), [instance, open, scope]);
+    const open = React.useCallback((next: Flow, callerContext?: ActionExecutorContext) => { card?.reveal(); setFlow({ kind: next, callerContext }); }, [card]);
+    const about = React.useMemo(() => (instance && scope ? (_input?: unknown, callerContext?: ActionExecutorContext) => open('about', callerContext) : undefined), [instance, open, scope]);
     const addTo = React.useMemo(() => (instance && scope && (scope.owner.kind !== 'sessionBoard'
         || canPromoteSessionWidgetDefinitionSourceV1({ kind: 'widget', instance })) ? () => open('addTo') : undefined), [instance, open, scope]);
     const onBoard = scope?.owner.kind === 'sessionBoard';
     const saveAsYours = React.useMemo(() => (onBoard && sessionItem?.savable ? () => open('save') : undefined), [onBoard, open, sessionItem?.savable]);
     const postSnapshot = React.useMemo(() => (onBoard && sessionItem?.canEdit && capturable ? () => open('snapshot') : undefined),
         [capturable, onBoard, open, sessionItem?.canEdit]);
+    const widgetTitle = input.title ?? sessionItem?.title ?? (instance
+        ? resolveWidgetInstanceTitle(instance, readWidgetDescriptor(null, instance.definition)) : '');
+    const openers = [
+        { key: 'about', title: t('widgetDefinition.aboutTitle'), invoke: about },
+        { key: 'addTo', title: t('widgetFrame.groupAddTo'), invoke: addTo },
+        { key: 'save', title: t('widgetDefinition.saveTitle'), invoke: saveAsYours },
+        { key: 'snapshot', title: t('widgetDefinition.snapshotTitle'), invoke: postSnapshot },
+    ].flatMap(entry => entry.invoke ? [{ key: entry.key, title: `${entry.title}: ${widgetTitle}`, invoke: entry.invoke }] : []);
+    const commands = useCurrentUiContextLocalCommands([
+        ...openers,
+        ...(flow ? [{ key: 'close', title: `${t('common.close')}: ${widgetTitle}`, invoke: placing ? stopPlacing : close }] : []),
+        ...(copyTo !== null && !placing ? [{ key: 'back', title: `${t('common.back')}: ${widgetTitle}`, invoke: () => setCopyTo(null) }] : []),
+    ], { unbound: 'local' });
+    const dismiss = React.useCallback(() => { void commands.invoke('close'); }, [commands]);
+    const showAbout = React.useCallback(() => { void commands.invoke('about'); }, [commands]);
+    const showAddTo = React.useCallback(() => { void commands.invoke('addTo'); }, [commands]);
+    const showSave = React.useCallback(() => { void commands.invoke('save'); }, [commands]);
+    const showSnapshot = React.useCallback(() => { void commands.invoke('snapshot'); }, [commands]);
 
     let panel: React.ReactElement | null = null;
     if (flow === 'about' && scope && instance) {
         // The read belongs to the open flow, above the shell that recomposes on resize.
         panel = <AboutFlow key={`${scope.serverId}/${scope.accountId}/${instance.id}/${artifactId ?? instance.definition.kind}`}
             account={input.admittedViewer ?? { serverId: scope.serverId, accountId: scope.accountId }}
+            callerContext={openedFlow?.callerContext}
             isCurrent={input.isCurrent} scope={scope} instance={instance} artifactId={artifactId}
-            anchorRef={anchorRef} editInputs={editInputs} providedContext={input.providedContext} onClose={close} testID={`${testID}.about`} />;
+            anchorRef={anchorRef} editInputs={editInputs} providedContext={input.providedContext} onClose={dismiss} testID={`${testID}.about`} />;
     } else if (flow === 'addTo' && scope && instance && copyTo === null) {
-        panel = <WidgetCopyChooser instance={instance} current={scope} anchorRef={anchorRef} onChoose={setCopyTo} onClose={close} testID={`${testID}.addTo`} />;
+        panel = <WidgetCopyChooser instance={instance} current={scope} anchorRef={anchorRef}
+            onChoose={(key, callerContext) => setCopyTo({ key, callerContext })} onClose={dismiss} testID={`${testID}.addTo`} />;
     } else if (flow && scope) {
         const placeInstance = placing?.instance ?? instance;
         const title = flow === 'about' ? t('widgetDefinition.aboutTitle') : flow === 'save' ? t('widgetDefinition.saveTitle')
             : flow === 'addTo' ? t('widgetFrame.groupAddTo') : t('widgetDefinition.snapshotTitle');
         const account = { serverId: scope.serverId, accountId: scope.accountId };
         panel = (
-            <WidgetFlowShell anchorRef={anchorRef} title={title} onRequestClose={close} testID={`${testID}.${flow}`}
+            <WidgetFlowShell anchorRef={anchorRef} title={title} onRequestClose={dismiss} testID={`${testID}.${flow}`}
                 {...(flow === 'addTo' ? { width: WIDGET_FLOW_WIDTH_PX.setup } : {})}>
                 {flow === 'addTo' && placeInstance && copyTo !== null ? (
                     <WidgetCopyPanel instance={placeInstance} current={scope} destinationKey={copyTo} providedContext={input.providedContext ?? {}}
-                        {...(placing ? { saved: placing.saved, attempt: placing.attempts.get(copyTo), onDone: placeNext, onClose: stopPlacing } : { onBack: () => setCopyTo(null), onClose: close })}
+                        callerContext={copySelection?.callerContext}
+                        {...(placing ? { saved: placing.saved, attempt: placing.attempts.get(copyTo), onDone: placeNext, onClose: dismiss } : { onBack: () => { void commands.invoke('back'); }, onClose: dismiss })}
                         testID={`${testID}.addTo`} />
                 ) : flow === 'save' && sessionItem && scope.owner.kind === 'sessionBoard' ? (
                     <SaveAsWidgetPanel
@@ -156,76 +192,60 @@ export function useWidgetDefinitionFlows(input: Readonly<{
                         itemId={sessionItem.itemId}
                         defaultName={sessionItem.title}
                         converted={sessionItem.converted}
-                        {...(sessionItem.renderPreview ? { preview: sessionItem.renderPreview() } : {})}
+                        preview={sessionItem.renderPreview?.() ?? <WidgetSavePreview slot={slot} sourceLabel={sessionItem.sourceLabel} testID={`${testID}.save.snapshotPreview`} />}
                         {...(sessionItem.mark ? { mark: sessionItem.mark } : {})}
                         sourceLabel={sessionItem.sourceLabel}
                         providedContext={input.providedContext ?? {}}
-                        onCancel={close}
+                        onCancel={dismiss}
                         onDone={close}
                         onSaved={(saved, [first = null, ...remaining], attempts) => {
                             // The copy is placed from what it is: the item's widget, or its own definition when it declares no inputs.
                             setPlacing({ saved, remaining, attempts, instance: instance ?? { v: 1, id: sessionItem.itemId, definition: { kind: 'inline', definition: saved }, bindings: {} } });
-                            setCopyTo(first); setFlow('addTo');
+                            setCopyTo(first === null ? null : { key: first }); setFlow({ kind: 'addTo' });
                         }}
                         testID={`${testID}.save`}
                     />
                 ) : flow === 'snapshot' && sessionItem?.canEdit && capturable ? (
                     <WidgetSnapshotConfirmPanel surface={scope} title={sessionItem.title} sourceLabel={sessionItem.sourceLabel}
                         {...(sessionItem.mark ? { mark: sessionItem.mark } : {})} watch={slot.watch}
-                        capture={slot.capture} onCancel={close} onDone={close} testID={`${testID}.snapshot`} />
+                        capture={slot.capture} onCancel={dismiss} onDone={close} testID={`${testID}.snapshot`} />
                 ) : null}
             </WidgetFlowShell>
         );
     }
-    return { about, addTo, saveAsYours, postSnapshot, snapshotSlot: slot, panel };
+    return { about: about ? showAbout : undefined, addTo: addTo ? showAddTo : undefined, saveAsYours: saveAsYours ? showSave : undefined,
+        postSnapshot: postSnapshot ? showSnapshot : undefined, snapshotSlot: slot, panel };
 }
 
 function AboutFlow(props: Readonly<{
     account: Readonly<{ serverId: string; accountId: string }>;
     isCurrent?: () => boolean;
+    callerContext?: ActionExecutorContext;
     scope: WidgetSurfaceRefV1;
     instance: WidgetInstanceV1;
     artifactId: string | null;
     anchorRef: React.RefObject<View | null>;
     providedContext?: Readonly<Record<string, readonly JsonValue[]>>;
-    editInputs?: Readonly<{ onPress: () => void; binding: string | null }> | undefined;
+    editInputs?: Readonly<{ onPress: (event?: unknown, callerContext?: ActionExecutorContext) => void; binding: string | null }> | undefined;
     onClose: () => void;
     testID: string;
 }>): React.ReactElement {
-    const [opened, setOpened] = React.useState<OpenedDefinition | 'loading' | 'unavailable'>('loading');
-    const { account, artifactId } = props;
-    const { serverId, accountId } = account;
-    const viewer = useActiveServerAccountScope();
-    const current = props.isCurrent?.() !== false && areServerAccountScopesEqual(viewer, account)
-        && areServerProfileIdentifiersEquivalent(serverId, props.scope.serverId)
-        // Layout access does not grant access to its owner's private definition Artifacts.
-        && (!artifactId || accountId === props.scope.accountId);
-    React.useEffect(() => {
-        if (!artifactId || !current) return;
-        const controller = new AbortController();
-        void runWidgetDefinitionCommand('widgets.definition.get', { account: { serverId, accountId }, artifactId }, { serverId, accountId }, controller.signal).then((outcome) => {
-            if (controller.signal.aborted) return;
-            setOpened(outcome.kind === 'applied' ? { definition: outcome.result.definition, placements: outcome.result.placementSummary ?? null } : 'unavailable');
-        });
-        return () => controller.abort();
-    }, [accountId, artifactId, serverId, current]);
+    const opened = useWidgetDefinitionFlowRead(props);
+    const { current, state } = opened;
+    const { artifactId } = props;
 
     let content: React.ReactElement;
     if (!current) content = <WidgetFlowPanel title={t('widgetDefinition.aboutTitle')} testID={props.testID} onClose={props.onClose}
         note={t('widgetDefinition.aboutUnavailable')}>{null}</WidgetFlowPanel>;
-    else if (artifactId && (opened === 'loading' || opened === 'unavailable')) {
+    else if (artifactId && (state === 'loading' || state === 'unavailable')) {
         content = (
             <WidgetFlowPanel title={t('widgetDefinition.aboutTitle')} testID={props.testID} onClose={props.onClose}
-                note={opened === 'unavailable' ? t('widgetDefinition.aboutUnavailable') : null}>
-                {opened === 'loading' ? <ItemLoadStateRows testID={`${props.testID}.loading`} state={{ kind: 'loading' }} rows={4} lines={2} shape="list" /> : null}
+                note={state === 'unavailable' ? t('widgetDefinition.aboutUnavailable') : null}>
+                {state === 'loading' ? <ItemLoadStateRows testID={`${props.testID}.loading`} state={{ kind: 'loading' }} rows={4} lines={2} shape="list" /> : null}
             </WidgetFlowPanel>
         );
     } else {
-        const definition = !artifactId ? props.instance.definition.kind === 'inline' ? props.instance.definition.definition : null
-            : typeof opened === 'object' ? opened.definition : null;
-        const placements = artifactId && typeof opened === 'object' ? opened.placements
-            : { placements: [{ surface: props.scope, instanceId: props.instance.id }], unavailableScopes: [] };
-        content = <AboutResolvedFlow {...props} definition={definition} placements={placements} />;
+        content = <AboutResolvedFlow {...props} definition={opened.definition} placements={opened.placements} />;
     }
     return <WidgetFlowShell anchorRef={props.anchorRef} title={t('widgetDefinition.aboutTitle')}
         onRequestClose={props.onClose} testID={props.testID}>{content}</WidgetFlowShell>;
@@ -237,8 +257,10 @@ function AboutResolvedFlow(props: Parameters<typeof AboutFlow>[0] & Readonly<{
 }>): React.ReactElement {
     const runtime = useAppShellPluginUiProjection();
     const definition = props.definition;
+    const localize = usePluginLocalizedTextResolver({ projection: runtime.pluginUiProjection });
     const installed = definition && definition.body.kind !== 'installed' && definition.body.kind !== 'builtin' ? null : readWidgetDescriptor(runtime.pluginUiProjection,
-        definition?.body.kind === 'installed' || definition?.body.kind === 'builtin' ? definition.body : props.instance.definition);
+        definition?.body.kind === 'installed' || definition?.body.kind === 'builtin' ? definition.body : props.instance.definition,
+        definition?.name ? undefined : localize);
     const reference = props.instance.definition;
     const descriptor = definition && (reference.kind === 'inline' || reference.kind === 'artifact')
         ? describeAuthoredWidgetDefinitionV1(definition, reference, installed) : installed;
@@ -282,6 +304,19 @@ function AboutPanelContent(props: Parameters<typeof AboutBoundFlow>[0] & Readonl
     const duplicate = React.useRef<ReturnType<typeof createWidgetArtifactWriteAttempt<'widgets.definition.duplicate'>> | null>(null);
     const draftTarget = readDraftTarget(props.scope, props.definition);
     const editInputs = props.editInputs;
+    const commands = useCurrentUiContextLocalCommands([
+        ...(editInputs ? [{ key: 'editInputs', title: `${t('common.edit')}: ${props.name}`,
+            invoke: (_input: unknown, callerContext?: ActionExecutorContext) => {
+                props.onClose(); editInputs.onPress(undefined, callerContext);
+            } }] : []),
+        ...(draftTarget ? [{ key: 'changeWithAgent', title: `${t('widgetDefinition.changeWithAgent')}: ${props.name}`,
+            invoke: async (_input: unknown, callerContext?: ActionExecutorContext) => {
+                const drafted = await appendMountedComposerDraft({ scope: account,
+                    ref: { kind: 'session', sessionId: draftTarget.sessionId }, callerContext,
+                    text: t('widgetDefinition.changeDraft', { widget: props.name }) });
+                if (drafted) props.onClose();
+            } }] : []),
+    ], { unbound: 'local' });
     return (
         <WidgetAboutPanel
             onClose={props.onClose}
@@ -292,15 +327,10 @@ function AboutPanelContent(props: Parameters<typeof AboutBoundFlow>[0] & Readonl
             sources={readWidgetAboutSources({ definition: props.definition, descriptor: props.descriptor, resolution: props.resolution })}
             placements={props.placements}
             inputs={{ binding: editInputs?.binding ?? null,
-                ...(editInputs ? { onEdit: () => { props.onClose(); editInputs.onPress(); } } : {}) }}
-            onRefresh={async () => (await runWidgetDefinitionCommand('widgets.item.refresh',
-                { ref: { surface: props.scope, instanceId: props.instance.id } }, account)).kind === 'applied'}
-            {...(draftTarget ? { onChangeWithAgent: () => {
-                void appendMountedComposerDraft({ scope: account, ref: { kind: 'session', sessionId: draftTarget.sessionId },
-                    text: t('widgetDefinition.changeDraft', { widget: props.name }) }).then((drafted) => {
-                    if (drafted) props.onClose();
-                });
-            } } : {})}
+                ...(editInputs ? { onEdit: () => { void commands.invoke('editInputs'); } } : {}) }}
+            onRefresh={() => runWidgetDefinitionCommand('widgets.item.refresh',
+                { ref: { surface: props.scope, instanceId: props.instance.id } }, account)}
+            {...(draftTarget ? { onChangeWithAgent: () => { void commands.invoke('changeWithAgent'); } } : {})}
             {...(artifactId ? { onDuplicate: async () => {
                 duplicate.current ??= createWidgetArtifactWriteAttempt('widgets.definition.duplicate', account);
                 const outcome = await duplicate.current.run(() => ({ account, artifactId, newArtifactId: randomUUID() }));

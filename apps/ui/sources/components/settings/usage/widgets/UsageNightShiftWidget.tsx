@@ -16,6 +16,8 @@ import { t } from '@/text';
 import { usageSignatureAccent } from '../usageAccent';
 import { usageGridTooltip } from '../usageGridPresentation';
 import { USAGE_SETTINGS } from '../usageSettings';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { UsagePlanDisclosure } from './plans/UsagePlanParts';
 import {
   UsageBodyInsufficient,
@@ -52,30 +54,47 @@ export function UsageNightShiftWidget(props: UsageBodyProps) {
   const [draft, setDraft] = React.useState<{ startHour: number | null; endHour: number | null }>(() => chosen ?? { startHour: null, endHour: null });
   const [open, setOpen] = React.useState<'startHour' | 'endHour' | null>(null);
   React.useEffect(() => { setDraft(chosen ?? { startHour: null, endHour: null }); setOpen(null); }, [chosen, settingsScope]);
+  const choose = async (endpoint: 'startHour' | 'endHour', id: string, context?: ActionExecutorContext) => {
+    if (!isCurrent()) return false;
+    setOpen(null);
+    if (id === 'clear') {
+      const accepted = await setSetting(USAGE_SETTINGS.settings.nightHours, null, { callerContext: context });
+      if (accepted && isCurrent()) setDraft({ startHour: null, endHour: null });
+      return accepted;
+    }
+    const next = { ...draft, [endpoint]: Number(id) };
+    setDraft(next);
+    if (next.startHour !== null && next.endHour !== null && next.startHour !== next.endHour) {
+      return await setSetting(USAGE_SETTINGS.settings.nightHours,
+        { startHour: next.startHour, endHour: next.endHour }, { callerContext: context });
+    }
+    return true;
+  };
+  const commands = useCurrentUiContextLocalCommands((['startHour', 'endHour'] as const).flatMap(endpoint => {
+    const label = t(endpoint === 'startHour' ? 'usage.board.howYouWork.nightStart' : 'usage.board.howYouWork.nightEnd');
+    return [
+      { key: `menu:${endpoint}`, title: `${label}: ${t(open === endpoint ? 'common.close' : 'common.open')}`,
+        invoke: () => { setOpen(current => current === endpoint ? null : endpoint); return true; } },
+      ...Array.from({ length: 24 }, (_, hour) => hour)
+        .filter(hour => draft[endpoint === 'startHour' ? 'endHour' : 'startHour'] !== hour)
+        .map(hour => ({ key: `${endpoint}:${hour}`, title: `${label}: ${clock(hour)}`,
+          invoke: (_input?: unknown, context?: ActionExecutorContext) => choose(endpoint, String(hour), context) })),
+      { key: `${endpoint}:clear`, title: `${label}: ${t('usage.board.howYouWork.nightClear')}`,
+        invoke: (_input?: unknown, context?: ActionExecutorContext) => choose(endpoint, 'clear', context) },
+    ];
+  }));
   const controls = <View style={styles.controls}>
     {(['startHour', 'endHour'] as const).map(endpoint => <DropdownMenu key={endpoint}
-      testID={`${props.testID}.${endpoint}`} open={open === endpoint} onOpenChange={value => setOpen(value ? endpoint : null)}
+      testID={`${props.testID}.${endpoint}`} open={open === endpoint} onOpenChange={value => {
+        if (value !== (open === endpoint)) void commands.invoke(`menu:${endpoint}`);
+      }}
       selectedId={draft[endpoint] === null ? null : String(draft[endpoint])}
       itemTrigger={{ title: t(endpoint === 'startHour' ? 'usage.board.howYouWork.nightStart' : 'usage.board.howYouWork.nightEnd'),
         placeholder: t('usage.board.howYouWork.nightChooseHour') }}
       items={[...Array.from({ length: 24 }, (_, hour) => ({ id: String(hour), title: clock(hour),
         disabled: draft[endpoint === 'startHour' ? 'endHour' : 'startHour'] === hour })),
         { id: 'clear', title: t('usage.board.howYouWork.nightClear') }]}
-      onSelect={id => {
-        if (!isCurrent()) return;
-        setOpen(null);
-        if (id === 'clear') {
-          void setSetting(USAGE_SETTINGS.settings.nightHours, null).then(accepted => {
-            if (accepted && isCurrent()) setDraft({ startHour: null, endHour: null });
-          });
-          return;
-        }
-        const next = { ...draft, [endpoint]: Number(id) };
-        setDraft(next);
-        if (next.startHour !== null && next.endHour !== null && next.startHour !== next.endHour) {
-          void setSetting(USAGE_SETTINGS.settings.nightHours, { startHour: next.startHour, endHour: next.endHour });
-        }
-      }} />)}
+      onSelect={id => { void commands.invoke(`${endpoint}:${id}`); }} />)}
   </View>;
   const buckets =
     props.slice.howYouWork?.activity?.weekdayHourBuckets ??

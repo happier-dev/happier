@@ -1,9 +1,11 @@
 import * as React from 'react';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierInputField, HappierPressable, happierPageTextMetrics, resolveHappierActionFieldPresentation } from '@happier-dev/plugin-ui/presentation';
 import { sameStrictJsonValue, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { readInputOptionValue } from '@happier-dev/protocol/inputs';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 
 import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -53,7 +55,7 @@ export function WidgetSetupFieldRow(props: Readonly<{
     options: readonly WidgetSetupValue[];
     optionsStatus: 'loading' | 'ready' | 'failed';
     /** Reads the choices again after a failed read (the one options resolver's retry). */
-    onRetryOptions?: () => void;
+    onRetryOptions?: (callerContext?: ActionExecutorContext) => void;
     /** A primitive value currently pinned (text, number, boolean) for the plain controls. */
     plainValue: JsonValue | undefined;
     phone: boolean;
@@ -93,13 +95,16 @@ function WidgetBindingControl(props: React.ComponentProps<typeof WidgetSetupFiel
     const { theme } = useUnistyles();
     const follow = props.entry.follow;
     const [open, setOpen] = React.useState(false);
-    if (!follow) return null;
     const following = followsSurface(props.row);
     const trigger = describeTrigger(props.row, theme.colors.text.secondary, theme.colors.state.danger.foreground);
+    const commands = useCurrentUiContextLocalCommands(follow && !props.disabled ? [{ key: 'open',
+        title: [props.entry.field.prompt ?? props.entry.field.title, trigger.spoken].filter(Boolean).join(', '),
+        invoke: value => setOpen(typeof value === 'boolean' ? value : !open) }] : [], { unbound: 'local' });
+    if (!follow) return null;
     return <DropdownMenu
         testID={props.testID}
         open={open}
-        onOpenChange={setOpen}
+        onOpenChange={next => { void commands.invoke('open', next); }}
         items={[{ id: FOLLOW_ID, title: follow.label, checked: following, testID: `${props.testID}.binding.follow`,
             ...(follow.values[0] ? { subtitle: follow.values[0].label } : {}),
             icon: <Icon name="link" size={16} color={theme.colors.text.secondary} /> },
@@ -221,6 +226,9 @@ function InputFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>):
     const { theme } = useUnistyles();
     const presentationTheme = usePluginUiTheme(theme);
     const { entry, row } = props;
+    const commands = useCurrentUiContextLocalCommands(props.optionsStatus === 'failed' && props.onRetryOptions && !props.disabled
+        ? [{ key: 'retry', title: `${t('common.retry')}: ${entry.field.prompt ?? entry.field.title}`,
+            invoke: (_input, callerContext) => props.onRetryOptions?.(callerContext) }] : [], { unbound: 'local' });
     // A list input that declares no placeholder would draw as a blank block: say what to type in it.
     const field = React.useMemo(() => (entry.field.widget === 'text_list' && entry.field.placeholder === undefined
         ? { ...entry.field, placeholder: t(entry.field.listSeparator === 'newline' ? 'widgetAdd.listOnePerLine' : 'widgetAdd.listCommaSeparated') }
@@ -292,13 +300,15 @@ function InputFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>):
                     value={value}
                     selection={selection as JsonValue | readonly JsonValue[] | undefined}
                     options={options}
+                    renderChoiceControls={control => <WidgetChoiceControls control={control} label={field.prompt ?? field.title} />}
+                    renderPicker={control => <WidgetPickerControl control={control} label={field.prompt ?? field.title} />}
                     {...(valueLabel === undefined ? {} : { valueLabel })}
                     // A repair, or ↵ with this input still needed, opens its choices where the request lands.
                     openRequest={(props.focusRequest ?? 0) + (props.autoOpen ? 1 : 0)}
                     optionsStatus={props.optionsStatus}
                     optionsNotice={props.optionsStatus === 'failed' ? (
                         <SurfaceStateCard kind="error" size="line" title={t('widgetAdd.optionsFailed')} testID={`${props.testID}.optionsFailed`}
-                            {...(props.onRetryOptions ? { action: { label: t('common.retry'), onPress: props.onRetryOptions } } : {})} />
+                            {...(props.onRetryOptions ? { action: { label: t('common.retry'), onPress: () => { void commands.invoke('retry'); } } } : {})} />
                     ) : null}
                     disabled={props.disabled === true}
                     isEqual={sameStrictJsonValue}
@@ -313,6 +323,27 @@ function InputFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>):
             )}
         />
     );
+}
+
+type ChoiceControls = Parameters<NonNullable<React.ComponentProps<typeof HappierInputField<JsonValue>>['renderChoiceControls']>>[0];
+function WidgetChoiceControls(props: Readonly<{ control: ChoiceControls; label: string }>) {
+    const { control, label } = props;
+    const commands = useCurrentUiContextLocalCommands(control.disabled ? [] : [
+        { key: 'open', title: `${t('common.open')}: ${label}`, invoke: value => control.onOpenChange(typeof value === 'boolean' ? value : !control.open) },
+        ...(control.open ? [{ key: 'close', title: `${t('common.close')}: ${label}`, invoke: () => control.onOpenChange(false) }] : []),
+        ...(control.open && control.searchable ? [{ key: 'search', title: `${t('common.search')}: ${label}`,
+            invoke: (value: unknown) => { if (typeof value === 'string') control.onQueryChange(value); } }] : []),
+    ], { unbound: 'local' });
+    return <>{control.render({ onOpenChange: next => { void commands.invoke('open', next); },
+        onQueryChange: value => { void commands.invoke('search', value); } })}</>;
+}
+
+type PickerControl = Parameters<NonNullable<React.ComponentProps<typeof HappierInputField<JsonValue>>['renderPicker']>>[0];
+function WidgetPickerControl(props: Readonly<{ control: PickerControl; label: string }>) {
+    const { control } = props;
+    const commands = useCurrentUiContextLocalCommands(control.disabled ? [] : [{ key: 'open', title: `${control.label}: ${props.label}`,
+        invoke: control.open }], { unbound: 'local' });
+    return <>{control.render(async () => { await commands.invoke('open'); })}</>;
 }
 
 const styles = StyleSheet.create((theme) => ({

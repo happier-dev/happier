@@ -18,6 +18,7 @@ import type { UsageWidgetPageScope } from './usageWidgetPageContext';
 import { USAGE_SCOPE_FILTER_ALL, type UsageWidgetPageFilter } from './useUsageWidgetPageFilters';
 import { getAgentIdentityColor } from '@/agents/catalog/catalog';
 import { UsageAgentMark } from './widgets/usageBodyKit';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 
 const COST_BASIS_TITLE = { auto: 'usage.board.page.costBasisAuto', reported: 'usage.board.page.costBasisReported',
     estimated: 'usage.board.page.costBasisEstimated', api_equivalent: 'usage.board.page.factApiEquivalent' } as const;
@@ -36,7 +37,7 @@ export function UsageFilterBar(
     /** The usage read that tells which cost bases exist has not answered yet. */
     costBasisPending: boolean;
     onPeriodChange(period: UsagePeriod): Promise<boolean>;
-    onCostBasisChange(costBasis: UsageWidgetPageScope['costBasis']): Promise<boolean>;
+    onCostBasisChange(costBasis: UsageWidgetPageScope['costBasis'], callerContext?: ActionExecutorContext): Promise<boolean>;
     /** The displayed widgets' shared metric; `null` when they differ or none is shown. */
     metric: 'tokens' | 'cost' | null;
     onMetricChange: ((metric: 'tokens' | 'cost') => void) | null;
@@ -135,8 +136,8 @@ export function UsageFilterBar(
               label: t(COST_BASIS_TITLE[option]),
             })),
             selectedId: page.scope.costBasis,
-            onChange: (id: string) => {
-              void props.onCostBasisChange(id as UsageWidgetPageScope['costBasis']);
+            onChange: (id: string, callerContext?: ActionExecutorContext) => {
+              void props.onCostBasisChange(id as UsageWidgetPageScope['costBasis'], callerContext);
             },
             testID: `${props.testID}.costBasis`,
           },
@@ -175,8 +176,8 @@ export function UsageFilterBar(
   );
   const chips = (
     <>
-      {scopeChooser ? <SelectionListFilterChip filter={scopeChooser} /> : filters.map((filter) => (
-        <SelectionListFilterChip key={filter.id} filter={filter} />
+      {scopeChooser ? <SelectionListFilterChip filter={scopeChooser} currentUiContextCommandScope={scopeChooser.testID} /> : filters.map((filter) => (
+        <SelectionListFilterChip key={filter.id} filter={filter} currentUiContextCommandScope={filter.testID} />
       ))}
     </>
   );
@@ -194,7 +195,7 @@ export function UsageFilterBar(
           />
         </View>
       ) : null}
-      {costFilter ? <SelectionListFilterChip filter={costFilter} /> : null}
+      {costFilter ? <SelectionListFilterChip filter={costFilter} currentUiContextCommandScope={costFilter.testID} /> : null}
     </>
   );
   const period = (
@@ -242,7 +243,7 @@ const SECTION_KEY = '\u0001';
 /** Every scope as one section of the phone chooser; a row toggles exactly what its own chip would. */
 function UsageScopeSections(props: Readonly<{
   filters: readonly SelectionListFilter[];
-  onRequestClose: () => void;
+  onRequestClose: (callerContext?: ActionExecutorContext) => void;
   maxHeight: number;
   testID: string;
 }>) {
@@ -267,11 +268,13 @@ function UsageScopeSections(props: Readonly<{
   return (
     <SelectionList
       testID={`${props.testID}.list`}
+      currentUiContextCommandScope={`${props.testID}.filters`}
+      currentUiContextForegroundOverlay
       rootStep={step}
       selection={{ kind: 'multiple', selectedIds }}
-      onSelect={(id: string) => {
+      onSelect={(id, _option, callerContext) => {
         const [field, option] = id.split(SECTION_KEY);
-        props.filters.find(filter => filter.id === field)?.onChange?.(option ?? '');
+        props.filters.find(filter => filter.id === field)?.onChange?.(option ?? '', callerContext);
       }}
       onRequestClose={props.onRequestClose}
       listAccessibilityLabel={t('usage.board.page.filtersLabel')}

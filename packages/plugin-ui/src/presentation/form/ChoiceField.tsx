@@ -74,6 +74,16 @@ export function HappierChoiceField<Value = string>(
     onOpen?: () => void;
     /** Each new positive value shows the rows now; a host's repair or keyboard hand-off. */
     openRequest?: number;
+    /** Bind the field's own visibility and search controls to a host's presentation commands. */
+    renderControls?: (controls: Readonly<{
+      open: boolean;
+      disabled: boolean;
+      query: string;
+      searchable: boolean;
+      onOpenChange: (open: boolean) => void;
+      onQueryChange: (query: string) => void;
+      render: (handlers: Readonly<{ onOpenChange: (open: boolean) => void; onQueryChange: (query: string) => void }>) => ReactNode;
+    }>) => ReactNode;
     isEqual?: (left: Value, right: Value) => boolean;
     keyForOption?: (
       option: HappierSelectOption<Value>,
@@ -148,7 +158,7 @@ export function HappierChoiceField<Value = string>(
         query,
       }))
     : ordered;
-  const rows = (style: 'floating' | 'inline'): ReactNode => visible.map((entry) => (
+  const rows = (style: 'floating' | 'inline', onOpenChange: (open: boolean) => void): ReactNode => visible.map((entry) => (
     <HappierPressable
       key={entry.key}
       testID={entry.option.testID}
@@ -164,7 +174,7 @@ export function HappierChoiceField<Value = string>(
       onPress={() => {
         props.onChange(entry.nextValue());
         // A single choice settles the field; several stay open for the next pick.
-        if (!props.multiple) setOpen(false);
+        if (!props.multiple) onOpenChange(false);
       }}
       style={(state) => ({
         ...(style === 'floating'
@@ -211,7 +221,9 @@ export function HappierChoiceField<Value = string>(
   ));
   const noMatches = localization?.translate('happier.plugin-ui.select.noMatches', 'No matches') ?? 'No matches';
   const searchLabel = localization?.translate('happier.plugin-ui.select.search', 'Search') ?? 'Search';
-  return (
+  const render = ({ onOpenChange, onQueryChange }: Readonly<{
+    onOpenChange: (open: boolean) => void; onQueryChange: (query: string) => void;
+  }>) => (
     <View style={{ gap: theme.spacing.small, alignSelf: 'stretch' }}>
       <HappierPressable
         testID={
@@ -227,7 +239,7 @@ export function HappierChoiceField<Value = string>(
         expanded={props.onOpen === undefined ? open : undefined}
         onPress={() => {
           if (props.onOpen) props.onOpen();
-          else setOpen((current) => !current);
+          else onOpenChange(!open);
         }}
         // A field box that cannot open yet (its choices are loading or failed) reads as unavailable, not as a
         // field that ignores the press.
@@ -275,7 +287,7 @@ export function HappierChoiceField<Value = string>(
             // reads it; plain labels keep the field's width.
             width: plan.options.some((entry) => entry.option.description !== undefined) ? 'content' : 'anchor',
             autoFocusOnOpen: true,
-            onRequestClose: () => setOpen(false),
+            onRequestClose: () => onOpenChange(false),
             content: (controls) => (
               // The choices stand on the host's menu step, like every anchored menu (absent, they float flat).
               <View style={[{ borderRadius: theme.radii.panel }, palette.menuLift ?? null]}>
@@ -296,7 +308,7 @@ export function HappierChoiceField<Value = string>(
                     label={searchLabel}
                     placeholder={searchLabel}
                     value={query}
-                    onChangeText={setQuery}
+                    onChangeText={onQueryChange}
                     appearance="search"
                     autoCapitalize="none"
                     autoCorrect={false}
@@ -321,7 +333,7 @@ export function HappierChoiceField<Value = string>(
                       >
                         {noMatches}
                       </HappierText>
-                    ) : rows('floating')}
+                    ) : rows('floating', onOpenChange)}
                   </HappierScrollArea>
                 </View>
               </HappierSurface>
@@ -337,10 +349,12 @@ export function HappierChoiceField<Value = string>(
           style={{ gap: 2 }}
         >
           <HappierScrollArea style={{ maxHeight: CHOICE_LIST_MAX_HEIGHT }}>
-            {rows('inline')}
+            {rows('inline', onOpenChange)}
           </HappierScrollArea>
         </View>
       ) : null}
     </View>
   );
+  return props.renderControls ? props.renderControls({ open, disabled, query, searchable, onOpenChange: setOpen, onQueryChange: setQuery, render })
+    : render({ onOpenChange: setOpen, onQueryChange: setQuery });
 }

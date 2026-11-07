@@ -54,7 +54,9 @@ function UsageOutcomesWidgetOriginal(props: UsageBodyProps) {
     props.query,
     props.serverId,
   );
-  const disclosures = useUsageWorkDisclosures();
+  const disclosures = useUsageWorkDisclosures((summary?.outcomes ?? []).map(row => ({
+    id: row.key, title: usageWorkPullRequestTitle(row.outcome.pullRequest),
+  })));
   useWidgetFrameBodyCaption(
     summary
       ? t('usage.board.work.outcomesCaption', {

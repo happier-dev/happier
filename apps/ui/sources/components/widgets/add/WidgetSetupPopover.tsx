@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { View } from 'react-native';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 
 import { AnchoredWidgetShell, WIDGET_FLOW_WIDTH_PX, WidgetSheetShell } from '@/components/widgets/flow/WidgetFlowShell';
 import { useDeviceType } from '@/utils/platform/responsive';
@@ -22,6 +23,7 @@ export function WidgetSetupPopover(props: Readonly<{
     notice?: string | null;
     serverId?: string | null;
     sessionId?: string | null;
+    callerContext?: ActionExecutorContext;
     /** A repair opens the step at the input it names, its choices open. */
     focusPath?: string;
     testID: string;
@@ -36,6 +38,7 @@ function OpenWidgetSetupPopover(props: React.ComponentProps<typeof WidgetSetupPo
     const step = (
         <WidgetSetupStep
             setup={setup}
+            callerContext={props.callerContext}
             phone={props.phone}
             onCancel={props.onRequestClose}
             onClose={props.onRequestClose}

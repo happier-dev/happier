@@ -6,6 +6,9 @@ import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue'
 import type { WidgetDefinitionV1, WidgetLayoutFragmentV1 } from '@happier-dev/protocol/widgets';
 
 import { randomUUID } from '@/platform/randomUUID';
+import { createFrontDoorActionExecute, type UiActionOperation } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+
+const executeWidgetAction = createFrontDoorActionExecute();
 
 /**
  * The definition, promotion and snapshot screens call the canonical `widgets.*` Actions — the very
@@ -35,6 +38,7 @@ type CommandId = Extract<ActionId,
     | 'widgets.item.list'
     | 'widgets.item.remove'
     | 'widgets.item.size.set'
+    | 'widgets.item.network.set'
     | 'widgets.item.refresh'
     | 'widgets.snapshot.post'>;
 
@@ -159,19 +163,18 @@ export async function runWidgetDefinitionCommand<Id extends CommandId>(
      * pressed). It satisfies the policy's default UI confirmation once, so no second dialog follows; an
      * approval configured in Settings → Actions still applies, and agents never carry it.
      */
-    confirmation?: ActionExecutorContext['presentUserConfirmation'],
+    operation?: Pick<UiActionOperation, 'confirmed'> & Readonly<{ callerContext?: ActionExecutorContext }>,
 ): Promise<WidgetDefinitionCommandOutcome<PublicActionResultById[Id]>> {
     try {
         // Preparing widget inputs can fail at the platform or validation boundary too.
-        const preparedInput = await (typeof input === 'function' ? input() : input);
-        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const preparedInput = typeof input === 'function' ? await input() : input;
         // The person pressed it: present-user authority, one request id, so a consequential
         // operation enters the existing approval policy exactly as any other UI Action does.
-        const result = await createDefaultActionExecutor().execute(actionId, preparedInput, {
-            surface: 'ui', authority: 'present_user', serverId: target.serverId, expectedAccountId: target.accountId,
+        const result = await (operation?.confirmed ? executeWidgetAction.confirmed : executeWidgetAction)(actionId, preparedInput, {
+            ...(operation?.callerContext ?? { surface: 'ui' as const, authority: 'present_user' as const }),
+            serverId: target.serverId, expectedAccountId: target.accountId,
             actionRequestId: randomUUID(), ...(signal ? { signal } : {}),
             ...(widgetAreaContext ? { widgetAreaContext } : {}),
-            ...(confirmation ? { presentUserConfirmation: confirmation } : {}),
         });
         return classifyWidgetDefinitionCommandResult(actionId, result);
     } catch (error) {

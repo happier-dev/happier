@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { readUsageScopeOptions } from '@happier-dev/protocol/usage/usageFilterOptions';
 import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
@@ -26,7 +27,7 @@ export type UsageWidgetPageFilter = Readonly<{
     selected: readonly string[];
     /** `agentId`: the Agent a source belongs to. `partial`: this source has a coverage gap; its detail is said once, on "All". */
     options: readonly Readonly<{ id: string; label: string; subtitle?: string; agentId?: string; partial?: boolean }>[];
-    select(id: string): boolean | Promise<boolean>;
+    select(id: string, callerContext?: ActionExecutorContext): boolean | Promise<boolean>;
 }>;
 
 const CAPTURE_KIND_KEY = {
@@ -82,9 +83,9 @@ export function useUsageWidgetPageFilters(page: UsageWidgetPageContextState, sli
                         // "All sources", so a source with a gap carries the dot and, failing other facts, the short fact.
                         ...(field === 'sources' ? sourceOptionDetail(slices, id, sourceGap !== undefined) : {}) };
                 })];
-            return { field, title, selected, options, select: (id: string) => {
+            return { field, title, selected, options, select: (id: string, callerContext?: ActionExecutorContext) => {
                 if (id !== USAGE_SCOPE_FILTER_ALL && !labels.has(id)) return false;
-                return setScope({ [field]: id === USAGE_SCOPE_FILTER_ALL ? [] : toggleUsageScopeSelection(selected, id, listed) });
+                return setScope({ [field]: id === USAGE_SCOPE_FILTER_ALL ? [] : toggleUsageScopeSelection(selected, id, listed) }, callerContext);
             } };
         });
         // Batch progress can change evidence without changing any offered

@@ -70,6 +70,7 @@ export function AgentInputSelectionListPopover(props: AgentInputSelectionListPop
                 >
                     <SelectionList
                         currentUiContextCommandScope={props.currentUiContextCommandScope}
+                        currentUiContextForegroundOverlay
                         rootStep={props.rootStep}
                         {...(props.selection ? { selection: props.selection } : { selectedOptionId: props.selectedOptionId })}
                         autoFocusInputOnWeb

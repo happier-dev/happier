@@ -1,8 +1,10 @@
 import * as React from 'react';
+import { useCurrentUiContextLocalCommands, type CurrentUiContextLocalCommand } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { AccessibilityInfo, Platform, ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { WidgetSizePicker, happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
-import type { JsonValue } from '@happier-dev/protocol';
+import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { resolveEffectiveInputFields } from '@happier-dev/protocol/inputs';
 
@@ -103,6 +105,8 @@ export function WidgetSetupStep(props: Readonly<{
     /** Exact Home/session identity for option reads (never ambient). */
     serverId?: string | null;
     sessionId?: string | null;
+    /** Admission of the opener's initial choices; subsequent draft changes own their reads. */
+    callerContext?: ActionExecutorContext;
     /** Opened by a repair: that input's choices start open. */
     focusPath?: string;
     testID: string;
@@ -143,6 +147,7 @@ export function WidgetSetupStep(props: Readonly<{
     const options = useInputFieldOptions({
         requests,
         enabled: true,
+        initialCallerContext: draft === setup.initial ? props.callerContext : undefined,
         ...(optionServerId ? { serverId: optionServerId } : {}),
         ...(selectedSession ? { sessionId: selectedSession.sessionId } : {}),
         ...(!selectedSession ? { pluginUiMachineId: appRuntime.machineId, pluginUiProjection: appRuntime.pluginUiProjection,
@@ -205,6 +210,41 @@ export function WidgetSetupStep(props: Readonly<{
     const effective = React.useMemo(() => new Map(resolveEffectiveInputFields(
         { inputHints: { fields: setup.fields.map(({ field }) => field) } }, draftInput ?? {}, { includeHidden: true, contextSlots: setup.contextSlots },
     ).map((field) => [field.path, field])), [draftInput, setup.fields, setup.contextSlots]);
+    const fields = setup.fields.flatMap((entry, index) => {
+        const facts = effective.get(entry.field.path);
+        return facts && !facts.visible ? [] : [{ entry, index, facts }];
+    });
+    const sizes = setup.sizeChoices;
+    const widths = setup.widthChoices;
+    const draftCommands: CurrentUiContextLocalCommand[] = fields.flatMap(({ entry, facts }) => {
+        if (busy || facts?.disabled || entry.viewer) return [];
+        const { path } = entry.field;
+        const title = `${setup.title}: ${entry.field.prompt ?? entry.field.title}`;
+        return [
+            { key: `field:${path}`, title, invoke: value => {
+                if (value === undefined) return false;
+                change(path, { kind: 'pin', value });
+            } },
+            { key: `clear:${path}`, title: `${t('common.clear')}: ${title}`, invoke: () => change(path, { kind: 'clear' }) },
+            ...(entry.follow ? [{ key: `follow:${path}`, title: `${entry.follow.label}: ${title}`,
+                invoke: () => change(path, { kind: 'follow', slot: entry.follow!.slot }) }] : []),
+        ];
+    });
+    const commands = useCurrentUiContextLocalCommands([
+        ...draftCommands,
+        ...(!busy && sizes && draft.size ? [{ key: 'size', title: `${setup.title}: ${t('widgetAdd.size')}`,
+            invoke: (value?: import('@happier-dev/protocol/plugins/ui').PluginUiJsonValueV1) => {
+                const size = sizes.sizes.find(size => size === value);
+                if (!size) return false;
+                setError(null); setDraft(current => ({ ...current, size }));
+            } }] : []),
+        ...(!busy && widths && draft.width ? [{ key: 'width', title: `${setup.title}: ${t('widgetFrame.groupWidth')}`,
+            invoke: (value?: import('@happier-dev/protocol/plugins/ui').PluginUiJsonValueV1) => {
+                const choice = widths.find(choice => choice.width === value && !choice.unavailableReason);
+                if (!choice) return false;
+                setError(null); setDraft(current => ({ ...current, width: choice.width }));
+            } }] : []),
+    ], { unbound: 'local' });
 
     // The values the draft is bound to, as their rows name them, for the line that says what Add does.
     const boundValues = setup.describeOutcome ? setup.fields.flatMap((entry, index) => {
@@ -223,9 +263,7 @@ export function WidgetSetupStep(props: Readonly<{
         <ListPresentationProvider value="page" {...(pane ? { pageInsets: 'contained' as const } : {})}>
             {/* In the Add pane the inputs' sheet shares the title's and the preview's edges (lab A2/A2p). */}
             <ItemGroup surface={pane ? 'sheet' : 'none'} density="compact" {...(pane ? { style: PANE_SHEET_FLUSH } : {})}>
-                {setup.fields.map((entry, index) => {
-                    const facts = effective.get(entry.field.path);
-                    if (facts && !facts.visible) return null;
+                {fields.map(({ entry, index, facts }) => {
                     const request = requests[index]!;
                     const state = options.state(request.field, request);
                     const values = state.options.length === 0 ? NO_OPTIONS : state.options.map((option): WidgetSetupValue => ({
@@ -251,7 +289,8 @@ export function WidgetSetupStep(props: Readonly<{
                             autoOpen={props.focusPath === entry.field.path}
                             {...(focusRequest?.path === entry.field.path ? { focusRequest: focusRequest.count } : {})}
                             disabled={busy || facts?.disabled === true}
-                            onChange={(next) => change(entry.field.path, next)}
+                            onChange={next => { void commands.invoke(`${next.kind === 'pin' ? 'field' : next.kind}:${entry.field.path}`,
+                                next.kind === 'pin' ? next.value : undefined); }}
                         />
                     );
                 })}
@@ -268,14 +307,12 @@ export function WidgetSetupStep(props: Readonly<{
     const live = resolution.status === 'ready' && setup.renderPreview ? setup.renderPreview({ input: resolution.input, draft }) : null;
     const waitingText = finishable || props.blockedReason ? t('widgetAdd.previewAfterAdd')
         : t('widgetAdd.previewWaiting', { field: blocker?.title ?? setup.fields[0]?.field.title ?? '' });
-    const sizes = setup.sizeChoices;
-    const widths = setup.widthChoices;
     // A group's width as the same footprint a size has: one or both of the surface's two columns.
     const widthFootprint = (width: 'half' | 'full') => ({ columns: 2, columnSpan: width === 'half' ? 1 : 2, rowSpan: 1 });
     const unavailableWidth = widths?.find(choice => choice.unavailableReason);
     const sizePicker = sizes && draft.size ? <WidgetSizeControl
         testID={`${props.testID}.size`} showLabel={!pane} flush={!pane} surface={sizes.surface} sizes={sizes.sizes}
-        size={draft.size} disabled={busy} onSet={size => { setError(null); setDraft(current => ({ ...current, size })); }} />
+        size={draft.size} disabled={busy} onSet={size => { void commands.invoke('size', size); }} />
         // A saved group offers its width only (lab wgsaved A): the same picker, Half | Full.
         : widths && draft.width ? <View style={styles.widthPicker}>
             <WidgetSizePicker testID={`${props.testID}.width`} accessibilityLabel={t('widgetFrame.groupWidth')} value={draft.width} disabled={busy}
@@ -283,12 +320,7 @@ export function WidgetSetupStep(props: Readonly<{
                     footprint: widthFootprint(choice.width), ...(choice.unavailableReason ? { unavailable: true } : {}) }))}
                 colors={{ track: theme.colors.segmentedControl.trackBackground, thumb: theme.colors.segmentedControl.activeBackground,
                     label: theme.colors.text.secondary, activeLabel: theme.colors.text.primary, focusRing: theme.colors.border.focus }}
-                onChange={key => {
-                    const choice = widths.find(entry => entry.width === key);
-                    if (!choice || choice.unavailableReason) return;
-                    setError(null);
-                    setDraft(current => ({ ...current, width: choice.width }));
-                }} />
+                onChange={key => { void commands.invoke('width', key); }} />
             {unavailableWidth?.unavailableReason ? <Text style={styles.waiting} testID={`${props.testID}.width.unavailable`}>{unavailableWidth.unavailableReason}</Text> : null}
         </View> : null;
     const widgetTitle = setup.widget?.title ?? setup.title;

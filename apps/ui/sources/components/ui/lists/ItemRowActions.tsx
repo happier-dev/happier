@@ -13,9 +13,12 @@ import { Icon } from '@/components/ui/icons/Icon';
 import type { FocusReturnTarget } from '@/keyboard/focusReturn';
 import { resolveHappierFocusRingVisible, useHappierHitArea, useHappierItemOverflowState } from '@happier-dev/plugin-ui/presentation';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
 export interface ItemRowActionsProps {
     title: string;
+    /** Widget/page chrome opts into its containing current-context owner. */
+    currentUiContext?: boolean;
     actions: ItemAction[];
     /**
      * Optional override for the layout width used to decide whether the row is in "compact" mode.
@@ -40,7 +43,7 @@ export interface ItemRowActionsProps {
      * by the row it acts on, with this quiet line under the title (a file's folder).
      */
     overflowPhoneSheet?: Readonly<{ subtitle?: string }>;
-    /** A wider menu for rows with inline controls (a group's Width, Frame, Dividers); default 260. */
+    /** A wider menu for rows with inline controls (a group's Width, Frame, Dividers); default 320. */
     overflowMaxWidthCap?: number;
     /** A taller menu where every entry should show without scrolling; default 280. */
     overflowMaxHeightCap?: number;
@@ -106,6 +109,22 @@ type OverflowTriggerKeyEvent = Readonly<{
 const DEFAULT_ACTION_CONTROL_SIZE = 28;
 
 export function ItemRowActions(props: ItemRowActionsProps) {
+    const overflow = useHappierItemOverflowState({ open: props.overflowOpen, onOpenChange: props.onOverflowOpenChange });
+    return props.currentUiContext ? <CurrentContextItemRowActions {...props} overflow={overflow} />
+        : <ItemRowActionsContent {...props} overflow={overflow} />;
+}
+
+type ItemRowActionsContentProps = ItemRowActionsProps & Readonly<{ overflow: ReturnType<typeof useHappierItemOverflowState> }>;
+
+function CurrentContextItemRowActions(props: ItemRowActionsContentProps) {
+    const key = React.useId();
+    const commands = useCurrentUiContextLocalCommands(props.actions.length ? [{ key, title: props.title,
+        invoke: value => props.overflow.setOpen(typeof value === 'boolean' ? value : !props.overflow.open) }] : [], { unbound: 'local' });
+    return <ItemRowActionsContent {...props} overflow={{ open: props.overflow.open,
+        setOpen: next => { void commands.invoke(key, next); } }} />;
+}
+
+function ItemRowActionsContent(props: ItemRowActionsContentProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const { width: windowWidth } = usePresentationWindowDimensions();
@@ -117,9 +136,7 @@ export function ItemRowActions(props: ItemRowActionsProps) {
             : windowWidth;
     const compact = props.overflowOnly === true
         || widthForCompact < (props.compactThreshold ?? ITEM_ROW_ACTIONS_COMPACT_THRESHOLD_PX);
-    const { open: showOverflow, setOpen: setShowOverflow } = useHappierItemOverflowState({
-        open: props.overflowOpen, onOpenChange: props.onOverflowOpenChange,
-    });
+    const { open: showOverflow, setOpen: setShowOverflow } = props.overflow;
     const overflowAnchorRef = React.useRef<View>(null);
     const requestPopoverCloseRef = React.useRef<PopoverRenderProps['requestClose']>(() => setShowOverflow(false));
     const onOverflowTriggerKeyDown = React.useCallback((event: OverflowTriggerKeyEvent) => {
@@ -174,7 +191,9 @@ export function ItemRowActions(props: ItemRowActionsProps) {
                 accessibilityLabel: action.accessibilityLabel,
                 subtitle: action.subtitle,
                 icon: iconNode,
-                onPress: onPress ? () => closeThen(onPress) : undefined,
+                onPress: onPress ? () => closeThen(() => onPress(undefined, {
+                    anchor: { kind: 'view', ref: overflowAnchorRef },
+                })) : undefined,
                 disabled: action.disabled,
                 selected: action.selected,
                 // Icon and words together: a destructive row is never ink text beside a rose glyph.
@@ -365,7 +384,9 @@ export function ItemRowActions(props: ItemRowActionsProps) {
                         placement={overflowPlacement}
                         gap={10}
                         maxHeightCap={props.overflowMaxHeightCap ?? 280}
-                        maxWidthCap={props.overflowMaxWidthCap ?? 260}
+                        // The menu sizes to its rows up to this width: a one-line consequence ("A copy on another Home or
+                        // project", "This widget only · Home uses Card") reads whole instead of ending in "…".
+                        maxWidthCap={props.overflowMaxWidthCap ?? 320}
                         edgePadding={{ vertical: 8, horizontal: 8 }}
                         portal={overflowPortal}
                         boundaryRef={props.popoverBoundaryRef}

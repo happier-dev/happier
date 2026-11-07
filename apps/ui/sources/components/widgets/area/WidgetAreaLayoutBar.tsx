@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { PopoverAnchor } from '@/components/ui/popover/_types';
 import { Pressable, View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
@@ -26,6 +27,7 @@ import { Text } from '@/components/ui/text/Text';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
 /** One named layout of an area: a host preset, one of the viewer's own, or one shared with them. */
 export type WidgetAreaLayoutOption = Readonly<{
@@ -49,7 +51,8 @@ export type WidgetAreaLayoutOption = Readonly<{
 
 /** The `⋯` actions on the exact selected layout; each is absent when it cannot apply to this viewer. */
 export type WidgetAreaLayoutActions = Readonly<{
-  share?: () => void;
+  /** `anchor`: the `⋯` the share sheet hangs from. */
+  share?: (anchor?: PopoverAnchor) => void;
   /** Attach this document to a Team Source the viewer manages. */
   attach?: Readonly<{
     header: string;
@@ -451,14 +454,16 @@ function LayoutCurrentNameMenu(
   const namesList = props.heading === 'section' && layouts.length < 2 && props.selected?.isDefault === true;
   const name = namesList ? labels.list : (props.selected?.name ?? '');
   const marker = props.selected ? editedMarker(props.selected) : undefined;
+  const commands = useCurrentUiContextLocalCommands([{ key: testID, title: namesList ? labels.list : labels.current(name),
+    invoke: next => setOpen(typeof next === 'boolean' ? next : !open) }], { unbound: 'local' });
   return (
     <DropdownMenu
       open={open}
-      onOpenChange={setOpen}
+      onOpenChange={next => { void commands.invoke(testID, next); }}
       items={items}
       selectedId={selectedId ?? null}
       onSelect={(id) => {
-        setOpen(false);
+        void commands.invoke(testID, false);
         if (id === CREATE) onCreate?.();
         else props.onSelect(id);
       }}
@@ -606,18 +611,21 @@ function WidgetAreaLayoutActionsMenu(
     }
     return list;
   }, [actions, color, labels, testID]);
+  const commands = useCurrentUiContextLocalCommands(items.length === 0 ? [] : [{ key: testID, title: labels.actions(props.name),
+    invoke: value => {
+      const next = typeof value === 'boolean' ? value : !open;
+      if (next) actions.attach?.onDemand?.();
+      setOpen(next);
+    } }], { unbound: 'local' });
   if (items.length === 0) return null;
   return (
     <DropdownMenu
       open={open}
-      onOpenChange={(next: boolean) => {
-        if (next) actions.attach?.onDemand?.();
-        setOpen(next);
-      }}
+      onOpenChange={next => { void commands.invoke(testID, next); }}
       items={items}
-      onSelect={(id) => {
-        setOpen(false);
-        if (id === 'share') actions.share?.();
+      onSelect={(id, selection) => {
+        void commands.invoke(testID, false);
+        if (id === 'share') actions.share?.(selection?.anchor);
         else if (id === 'rename') actions.rename?.();
         else if (id === 'moveBefore') actions.moveBefore?.onPress();
         else if (id === 'moveAfter') actions.moveAfter?.onPress();

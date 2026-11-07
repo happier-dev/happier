@@ -112,7 +112,8 @@ export const SelectionListFilterChip = React.memo(function SelectionListFilterCh
 
     return (
         <>
-            {commandScope ? <SelectionListCommandHost commands={localCommands} contextKey={commandScope} invokeRef={commandInvokeRef} /> : null}
+            {commandScope ? <SelectionListCommandHost commands={localCommands} contextKey={commandScope}
+                foregroundOverlay={open && canOpen} invokeRef={commandInvokeRef} /> : null}
             {/* The anchor is a plain view: the popover measures it, the pressable owns interaction. */}
             <View ref={anchorRef} style={[styles.anchor, stackedInRow ? styles.anchorStacked : null, iconOnly ? styles.anchorIconOnly : null]}>
                 <HappierFilterChip
@@ -189,6 +190,7 @@ export const SelectionListFilterChip = React.memo(function SelectionListFilterCh
                             : optionsStep ? (
                                 <SelectionList
                                     currentUiContextCommandScope={commandScope ? `${commandScope}.list` : undefined}
+                                    currentUiContextForegroundOverlay
                                     testID={`${testID}.list`}
                                     rootStep={optionsStep}
                                     {...(filter.selectedIds

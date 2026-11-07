@@ -5,7 +5,7 @@
 ## Deliverables and basis
 
 - Inventory: `.project/tmp/usage-parity-1107/inventory.json`; canonical Action exports evaluated by adjacent `inventory.mjs`.
-- Current inventory covers 225 semantic control families and 305 callback/forwarding sites, with validation state recorded separately from source wiring.
+- Current inventory covers 227 semantic control families and 305 callback/forwarding sites, with validation state recorded separately from source wiring.
 - Source basis: moving shared checkout; no dependency, persisted schema, or Account default changes authorized.
 - Live basis: Account A, own new browser profile on nl1; `agent-qa-usage-insights`, retained reload 121, HMR disabled.
 - Runtime and captures: `.project/tmp/usage-parity-1107/runtime.json`, `native-context.json`, `live-spotchecks.json`.
@@ -58,16 +58,17 @@ Business effects remain existing Action owners; the external-session direct RPC 
 Command-driven resource reads are also being routed through canonical Action admission while retaining the existing Resource lifecycle.
 Focused evidence: Sources/Coach 72/72 plus real agent folder confirmation; recap/profile 84/84; modal bridge/native/composition 63/63 after removing the unconditional Action-runtime import. Logs live under `.project/tmp/usage-parity-1107/`.
 Disabling only two Resource caller-context relays reproduced forbidden HTTP reads; the sensitivity A/B restored its exact hunks afterward. These relays preceded valid RED, so this does not retroactively establish test-first chronology.
-The six-suite core batch reached 134 passes and 11 failures; actual price-retirement/prompt REDs and fixture corrections await GREEN. Plans' corrected full file passes 28/28 (`plans-capacity-green.log`); lens owner/series 15/15 and selector touch 1/1 pass. The requested post-deployment entry rerun passed 7/7 at 15:25Z (`entry-loads-4.log`); it did not encounter the later reported CLI load break.
+The six-suite core batch reached 134 passes and 11 failures; actual price-retirement/prompt REDs and fixture corrections await GREEN. Plans pass28/28; lens owner/series15 plus DOM1; selector foreground5; Project chooser12. Resource6 and actual Page period/filter2 pass, including zero forbidden HTTP and visible `action_disabled`.
 Adjacent pagination stopped before collection on the deployment-reference subpath; the integration owner was notified. No dependency repair was attempted here.
 Later focused rows stopped before Vitest on the Claude plugin importer/lockfile mismatch; browser collection also exposed an undeclared `session.list.sections` setting. Both prerequisites were routed to Systemic. At 14:14Z Systemic declared lock/install consistent; one corrected retry per row is running. Borrowed Expo remains parked on a separate missing protocol module.
 ChartTooltip's real mounted exact-value journey passes after actual missing-command RED; all three existing tooltip interactions also pass, with boundary exports retained and cold imports collected before tests. Lens owner/series15 plus real DOM placement1 pass. Earlier deployment initialization failures were repaired at 15:05Z.
+Entry-loads4,5 and8 passed7/7. Run6 passed6/7 on a filesystem export during publication; run7 passed6/7 on the foreign readiness export. Run8 loads both current producers. Network passes without valid pre-producer RED; that chronology exception remains explicit.
 No source-fix live pass is claimed from the retained reload-121 browser. Three existing controls were compared in the loaded product.
-Committed `332b4603`, `eb0202c1`, `f2269bfd`: native-price, Sources/Coach, recap, selectors, Plans, modal bridge and delegated approvals; private index/CAS, compatible foreign hunks named. Both latest entry-load runs pass7/7. Remaining controls and adjacent checks continue; final Usage RESULT remains pending.
+Committed `332b4603`, `eb0202c1`, `f2269bfd`, `4759d29f`: native-price, Sources/Coach, recap, selectors, Plans, modal bridge, delegated approvals and exact chart values; private index/CAS, compatible foreign hunks named. A further real rapid hover/blur RED now passes6/6; About leaves pass73/73. Remaining controls and adjacent checks continue; final Usage RESULT remains pending.
 The shared compiler wave ended with CLI/UI **not run** on Cloudflare declaration preparation; no UI delta proof is claimed or duplicate compiler queued. Plugin-UI's two new public-props assertions concern foreign Collection/DetailsPane props. The 11:42Z ruling keeps focused GREEN + entry-loads as the commit gate; integration owns compiler recovery.
 
 ## Residual risk
 
-The new source commands require reload 122 by the orchestrator and a paired smoke check on that loaded bundle.
+Reload122 was needed for new source commands; the orchestrator has since begun reload123. No new-source loaded pass is claimed here. Signed-Session filesystem child transport remains an identified production prerequisite; Account-only composed evidence cannot close it.
 Physical mobile devices, E2EE price mutation and Safari clipboard gesture behavior have not been exercised in this lane.
 Historical R48 causation remains unproven; its current-context failure is not reproducible on the observed mounted client.

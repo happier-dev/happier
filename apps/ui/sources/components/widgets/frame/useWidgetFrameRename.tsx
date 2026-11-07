@@ -7,6 +7,7 @@ import { Text, TextInput } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
 import { t } from '@/text';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { HomeReachabilityGate, useFailureExplainedByUnreachableHome } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
 
@@ -26,7 +27,10 @@ export function useWidgetFrameRename(input: Readonly<{
 }>): Readonly<{ begin: (() => void) | undefined; field: React.ReactElement | null }> {
     const [renaming, setRenaming] = React.useState(false);
     const onRename = input.onRename;
-    const begin = React.useCallback(() => setRenaming(true), []);
+    const commands = useCurrentUiContextLocalCommands(onRename ? [{ key: renaming ? 'cancel' : 'begin',
+        title: `${t(renaming ? 'common.cancel' : 'common.rename')}: ${input.title}`,
+        invoke: () => setRenaming(!renaming) }] : [], { unbound: 'local' });
+    const begin = React.useCallback(() => { void commands.invoke('begin'); }, [commands]);
     const commit = React.useCallback(async (next: string): Promise<boolean> => {
         try {
             await onRename?.(next);
@@ -37,7 +41,7 @@ export function useWidgetFrameRename(input: Readonly<{
             return false;
         }
     }, [onRename]);
-    const cancel = React.useCallback(() => setRenaming(false), []);
+    const cancel = React.useCallback(() => { void commands.invoke('cancel'); }, [commands]);
     return {
         begin: onRename ? begin : undefined,
         field: renaming && onRename ? (
@@ -87,6 +91,8 @@ function WidgetFrameTitleField(props: Readonly<{
     const { theme } = useUnistyles();
     const [draft, setDraft] = React.useState(props.value);
     const [saving, setSaving] = React.useState(false);
+    const commands = useCurrentUiContextLocalCommands(saving ? [] : [{ key: 'draft', title: `${t('common.rename')}: ${props.value}`,
+        invoke: value => { if (typeof value !== 'string') return false; setDraft(value); } }], { unbound: 'local' });
     const homeUnreachable = useFailureExplainedByUnreachableHome(saving && props.serverId ? [props.serverId] : []);
     // A persistent field follows its saved name whenever that changes (a rename from elsewhere, an undo).
     const [saved, setSaved] = React.useState(props.value);
@@ -134,7 +140,7 @@ function WidgetFrameTitleField(props: Readonly<{
             selectTextOnFocus
             {...(props.placeholder ? { placeholder: props.placeholder, placeholderTextColor: theme.colors.text.tertiary } : {})}
             accessibilityLabel={props.accessibilityLabel ?? t('sessionBoard.item.renameA11y')}
-            onChangeText={setDraft}
+            onChangeText={value => { void commands.invoke('draft', value); }}
             onSubmitEditing={() => finish(true)}
             onBlur={() => finish(true)}
             onKeyPress={(event) => {

@@ -2123,6 +2123,12 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         await openWorkspaceHrefOrElse(resolveHref(destination), () => router.push(destination));
       } });
     },
+    executeOrdinaryChildAction: ({ actionId, input, context }) => {
+      // Mounted commands can return before their modal reads start. Re-enter
+      // the ordinary Account lifetime, without the parent's replay admission.
+      const { admittedClientActionId: _parentAction, admittedClientActionParent: _parentCustody, ...ordinaryOptions } = opts ?? {};
+      return createDefaultActionExecutor(ordinaryOptions).execute(actionId, input, context);
+    },
     uiCurrentContextAction: (request) => executeCurrentUiContextAction(request, { execute: executor.execute, context: request.context }),
     accountHomeContinuationAction: (request) => executeCurrentUiContextAction(request),
     sessionAuthoringOpen: args => openSessionAuthoringDraft(args, accountContext ?? undefined),

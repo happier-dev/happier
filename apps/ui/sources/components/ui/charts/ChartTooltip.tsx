@@ -110,7 +110,12 @@ export function ChartTooltip(props: ChartTooltipProps): React.ReactElement {
     const resolvedTriggerTestID = triggerTestID ?? (testID ? `${testID}-trigger` : undefined);
     const commands = useCurrentUiContextLocalCommands(disabled ? [] : [
         { key: 'reveal', title: `${title}: ${value}`, description: subtitle,
-            invoke: () => { props.onSelect?.(); setOpen(true); } },
+            invoke: input => {
+                // Mounted admission can settle after the pointer or focus has left.
+                if (input === 'interaction' && !hoveredRef.current && !focusedRef.current) return;
+                props.onSelect?.();
+                setOpen(true);
+            } },
         { key: 'activate', title: props.accessibilityLabel ?? title, invoke: () => {
             props.onSelect?.();
             // Touch on web may focus before pressing; keep that newly opened value visible.
@@ -132,12 +137,12 @@ export function ChartTooltip(props: ChartTooltipProps): React.ReactElement {
         onFocusChange: (focused: boolean) => {
             focusedRef.current = focused;
             openedByFocusRef.current = focused;
-            if (focused) void commands.invoke('reveal');
+            if (focused) void commands.invoke('reveal', 'interaction');
             else if (!hoveredRef.current) void commands.invoke('dismiss');
         },
         onHoverChange: (hovered: boolean) => {
             hoveredRef.current = hovered;
-            if (hovered) void commands.invoke('reveal');
+            if (hovered) void commands.invoke('reveal', 'interaction');
             else if (!focusedRef.current) void commands.invoke('dismiss');
         },
     };

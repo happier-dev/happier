@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { WidgetSizePicker, happierPageTextMetrics, type WidgetSizePickerCompactInput } from '@happier-dev/plugin-ui/presentation';
@@ -60,15 +61,17 @@ function WidgetSizeMenu(props: Readonly<{ input: WidgetSizePickerCompactInput; t
     const rowPaddingPx = ITEM_ROW_PADDING_HORIZONTAL[useResolvedItemDensity()];
     const { input } = props;
     const selected = input.choices.find((choice) => choice.key === input.value) ?? null;
+    const commands = useCurrentUiContextLocalCommands(input.disabled ? [] : [{ key: 'open', title: input.accessibilityLabel,
+        invoke: value => setOpen(typeof value === 'boolean' ? value : !open) }], { unbound: 'local' });
     return (
         <DropdownMenu
             testID={props.testID}
             open={open}
-            onOpenChange={setOpen}
+            onOpenChange={next => { void commands.invoke('open', next); }}
             items={input.choices.map((choice) => ({ id: choice.key, testID: `${props.testID}.${choice.key}`, title: choice.label,
                 ...(choice.unavailable ? { disabled: true } : {}) }))}
             selectedId={selected?.key ?? null}
-            onSelect={(id) => { input.onChange(id); setOpen(false); }}
+            onSelect={(id) => { input.onChange(id); void commands.invoke('open', false); }}
             variant="default"
             matchTriggerWidth={false}
             itemTrigger={{

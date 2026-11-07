@@ -10,7 +10,7 @@ import type { UsagePlanAccount } from './widgets/plans/usagePlansModel';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { createAccountKvHttpFixture } from '@/dev/testkit/fixtures/accountKvHttpFixture';
 import { USAGE_COACH_SUPPRESSIONS_KV_KEY } from '@happier-dev/protocol/usage/coach/coachActions';
-import { decodeAccountStoredJsonContent } from '@/sync/encryption/accountStoredJsonContent';
+import { decodeAccountStoredJsonContent, encodeAccountStoredJsonContent } from '@/sync/encryption/accountStoredJsonContent';
 import { CONNECTED_SERVICE_POOL_SELECTION_RPC_METHOD, ConnectedServicePoolSelectionGetResponseV1Schema } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
 import type { ServerScopedMachineRpcParams } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
 
@@ -23,7 +23,10 @@ vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async (importOrigin
     return { ...original, createFrontDoorActionExecute: createFrontDoorActionExecuteForVitest(original) };
 });
 
-const { renderScreen } = await import('@/dev/testkit/render/renderScreen');
+const { renderMountedCurrentUiContext: renderScreen } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+const { useOptionalCurrentUiContextReader } = await import('@/components/appShell/currentUiContext/CurrentUiContextProvider');
+const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+const { ACTION_ID_FAMILIES_V1 } = await import('@happier-dev/protocol/actions/actionIds');
 const { renderHook } = await import('@/dev/testkit/hooks/renderHook');
 const { useMountedActionExecution } = await import('@/components/approvals/useMountedActionExecution');
 const { loadSyncSingletonForTests } = await import('@/dev/testkit/harness/syncSingletonLoader');
@@ -57,6 +60,11 @@ const settingsInput = z.object({ content: z.object({ t: z.literal('plain'), v: z
 let serverId: string;
 let raw: Record<string, unknown>;
 let version: number;
+let mountedReader: ReturnType<typeof useOptionalCurrentUiContextReader> = null;
+function CaptureCommands() {
+    mountedReader = useOptionalCurrentUiContextReader();
+    return null;
+}
 
 beforeEach(async () => {
     standardCleanup();
@@ -118,7 +126,7 @@ async function renderNight() {
     const slice = { key: getUsageQueryKey(query), requestedQuery: query, shownQuery: query, pending: false, sources: [] };
     const identity = { query, authority: { serverId, accountId: 'usage-account' } };
     const model: UsageWidgetBodyModel = { requestedQuery: identity, shownQuery: identity, slice, pending: false, error: null, freshness: 'fresh', updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} };
-    return renderScreen(<UsageNightShiftWidget id="usage_night_shift" testID="night" serverId={serverId} query={query} slice={slice} model={model} />);
+    return renderScreen(<><CaptureCommands /><UsageNightShiftWidget id="usage_night_shift" testID="night" serverId={serverId} query={query} slice={slice} model={model} /></>);
 }
 
 function priceSlice() {
@@ -410,7 +418,11 @@ describe('Usage settings UI Action admission', () => {
     });
 
     it('persists Coach check and model choices only after approval, preserving dismissed evidence', async () => {
-        const kv = createAccountKvHttpFixture();
+        const suppression = { v: 1, suppressions: [{ kind: 'dismissed', evidenceKey: 'keep-dismissed' }] };
+        const kv = createAccountKvHttpFixture({ rows: new Map([[USAGE_COACH_SUPPRESSIONS_KV_KEY, {
+            key: USAGE_COACH_SUPPRESSIONS_KV_KEY, version: 1,
+            value: await encodeAccountStoredJsonContent({ mode: 'plain', value: suppression, encryption: null }),
+        }]]) });
         for (const route of [`GET /v1/kv/${encodeURIComponent(USAGE_COACH_SUPPRESSIONS_KV_KEY)}`, 'POST /v1/kv']) {
             harness.answer(serverId, route, { select: async (_input, request) => {
                 const response = await kv.handleFetch(request.url, request.init);
@@ -418,7 +430,7 @@ describe('Usage settings UI Action admission', () => {
                 return { status: response.status, body: await response.json() };
             } });
         }
-        raw.usageCoachPreferencesV1 = { v: 1, suppressions: [{ kind: 'dismissed', evidenceKey: 'keep-dismissed' }] };
+        raw.usageCoachPreferencesV1 = { v: 1 };
         storage.getState().applySettings(settingsParse(raw), ++version);
         const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 } });
         const slice = { key: getUsageQueryKey(query), requestedQuery: query, shownQuery: query, pending: false, sources: [] };
@@ -434,6 +446,7 @@ describe('Usage settings UI Action admission', () => {
         await waitForHomeGovernance(() => expect(storage.getState().settings.usageCoachPreferencesV1.disabledChecks).toEqual(['mcp_overhead']));
         const previousArtifacts = new Set(harness.artifacts(serverId).list().map(row => row.id));
         const dropdown = screen.findAllByType(DropdownMenu).find(row => row.props.testID === 'coach.preferences.model')!;
+        await act(async () => { dropdown.props.onOpenChange(true); });
         await act(async () => { dropdown.props.onSelect('complete_only'); });
         const nextApproval = () => harness.artifacts(serverId).list().find(row => !previousArtifacts.has(row.id));
         await waitForHomeGovernance(() => expect(nextApproval()).toBeTruthy());
@@ -462,8 +475,8 @@ describe('Usage settings UI Action admission', () => {
         const screen = await renderScreen(<UsageCapacityAlertsSettingsGroup />);
         await waitForHomeGovernance(() => expect(screen.findByTestId('settings-usage-alerts-pace')).toBeTruthy());
         await screen.pressByTestIdAsync('settings-usage-alerts-pace');
-        expect(storage.getState().settings.usageQuotaNotificationsV1.pace).toBe(false);
         await waitForHomeGovernance(() => expect(approvalFor('session.providerLimits.alertPace')).toBeTruthy());
+        expect(storage.getState().settings.usageQuotaNotificationsV1.pace).toBe(false);
         expect(raw.usageQuotaNotificationsV1).toMatchObject({ pace: false });
         const artifact = approvalFor('session.providerLimits.alertPace')!;
         await decideApprovalAsInbox(serverId, artifact.id, 'approve');
@@ -607,6 +620,19 @@ describe('Usage settings UI Action admission', () => {
         await act(async () => { screen.findAllByType(DropdownMenu)[0]!.props.onSelect('23'); });
         expect(approvalFor('usage.nightHours')).toBeUndefined();
         expect(storage.getState().settings.usageNightHoursV1).toBeNull();
+        raw.actionsSettingsV1 = { v: 1, actions: { 'settings.set': {
+            disabledSurfaces: ['agent'], approvalRequiredSurfaces: ['ui'],
+        } } };
+        storage.getState().applySettings(settingsParse(raw), ++version);
+        const endHour = mountedReader!.readCurrentUiContext()!.commands.find(command =>
+            command.title.endsWith(`${t('usage.board.howYouWork.nightEnd')}: 07:00`));
+        expect(endHour).toBeDefined();
+        await act(async () => {
+            expect(await createDefaultActionExecutor().execute(ACTION_ID_FAMILIES_V1.current_ui_context[1],
+                { commandId: endHour!.id }, { surface: 'agent', authority: 'account_automation' })).toMatchObject({ ok: false });
+        });
+        expect(approvalFor('usage.nightHours')).toBeUndefined();
+        expect(raw.usageNightHoursV1).toBeNull();
         await act(async () => { screen.findAllByType(DropdownMenu)[1]!.props.onSelect('7'); });
         expect(storage.getState().settings.usageNightHoursV1).toBeNull();
         await waitForHomeGovernance(() => expect(approvalFor('usage.nightHours')).toBeTruthy());

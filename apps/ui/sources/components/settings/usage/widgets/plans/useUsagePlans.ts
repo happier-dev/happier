@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { UsageWidgetBodyModel } from '../../useUsageWidgetResource';
 import { useShallow } from 'zustand/react/shallow';
 import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import type { ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
@@ -48,11 +49,11 @@ const NO_GROUPS: readonly QualifiedConnectedAccountGroupV4[] = [];
  * belong to the displayed Usage Resource; no mounted body creates another quota demand.
  * Nothing here ranks or weights accounts.
  */
-export function useUsagePlans(slice: UsageQueryResultSlice, refresh: () => Promise<void>): Readonly<{
+export function useUsagePlans(slice: UsageQueryResultSlice, refresh: UsageWidgetBodyModel['refresh']): Readonly<{
   projection: UsagePlansProjection;
   nameOf(account: UsagePlanAccount): UsagePlanAccountName;
   inUse: ReadonlySet<string>;
-  refresh(): Promise<void>;
+  refresh: UsageWidgetBodyModel['refresh'];
   nowMs: number;
 }> {
   const nowMs = Date.now();

@@ -69,3 +69,25 @@ it('reveals and dismisses the same exact datum through its UI trigger and mounte
     expect(tooltipOpen()).toBe(true);
     await screen.unmount();
 });
+
+it.each(['hover', 'focus'] as const)('keeps a datum closed when %s leaves before its mounted reveal settles', async (interaction) => {
+    home = await serveDatumHome();
+    const server = home.homes.a!;
+    publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+    const screen = await renderMountedCurrentUiContext(<UsageChartInteractions>
+        <ChartDatum testID="usage.rapid" datum={{ label: 'Cache hit', value: '69.8811%' }}><View /></ChartDatum>
+    </UsageChartInteractions>);
+    const trigger = screen.findByTestId('usage.rapid');
+    expect(trigger).toBeDefined();
+    await act(async () => {
+        if (interaction === 'hover') {
+            trigger!.props.onHoverIn();
+            trigger!.props.onHoverOut();
+        } else {
+            trigger!.props.onFocus();
+            trigger!.props.onBlur();
+        }
+    });
+    expect(screen.findAllByType(Popover).some(node => node.props.open === true)).toBe(false);
+    await screen.unmount();
+});

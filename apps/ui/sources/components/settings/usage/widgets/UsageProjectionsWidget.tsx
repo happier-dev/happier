@@ -217,10 +217,15 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
     setPickedKey(key);
     return true;
   }, [paced]);
-  useCurrentUiContextLocalCommands(!list && paced.length > 1 ? pickerItems.map(item => ({
-    key: item.id, title: `${t(`usage.widgets.${props.id}`)}: ${t('usage.board.plans.windowPicker')}: ${item.title}`,
-    invoke: () => selectWindow(item.id),
-  })) : []);
+  const windowCommands = useCurrentUiContextLocalCommands(!list && paced.length > 1 ? [
+    { key: 'menuOpen', title: `${t('usage.board.plans.windowPicker')}: ${t('common.open')}`, invoke: () => setPickerOpen(true) },
+    { key: 'menuClose', title: `${t('usage.board.plans.windowPicker')}: ${t('common.close')}`, invoke: () => setPickerOpen(false) },
+    ...pickerItems.map(item => ({
+      key: item.id, title: `${t(`usage.widgets.${props.id}`)}: ${t('usage.board.plans.windowPicker')}: ${item.title}`,
+      invoke: () => selectWindow(item.id),
+    })),
+  ] : []);
+  const chooseWindow = React.useCallback((key: string) => { void windowCommands.invoke(key); }, [windowCommands.invoke]);
   const details = useUsageChartDetails(t(`usage.widgets.${props.id}`), !list && Boolean(focus?.window.pace));
   // Beside other widgets the body is a list of meters. Until every account has answered once it holds the
   // list's room (the rows its accounts are expected to report, the pace alert and the notes under them), so
@@ -356,11 +361,11 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
             <DropdownMenu
               testID={`${props.testID}.windowPicker`}
               open={pickerOpen}
-              onOpenChange={setPickerOpen}
+              onOpenChange={open => { if (open !== pickerOpen) void windowCommands.invoke(open ? 'menuOpen' : 'menuClose'); }}
               selectedId={focus.window.key}
               matchTriggerWidth={false}
               items={pickerItems}
-              onSelect={selectWindow}
+              onSelect={chooseWindow}
               trigger={({ toggle, open }) => (
                 <HappierPressable
                   testID={`${props.testID}.windowPicker.trigger`}
@@ -446,7 +451,7 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
               nowMs={nowMs}
               color={accent}
               basis={stacked ? '47%' : '31%'}
-              onPick={selectWindow}
+              onPick={chooseWindow}
               testID={`${props.testID}.multiple.${entry.account.accountId}.${entry.window.meterId}`}
             />
           ))}

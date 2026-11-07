@@ -1,7 +1,11 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
-import { AccountProfileSchema, PluginProjectionV2Schema, RPC_METHODS, createWorkBoardV1, type PublicActionInputById } from '@happier-dev/protocol';
+import { AccountProfileSchema} from '@happier-dev/protocol/account/profile';
+import { PluginProjectionV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { RPC_METHODS} from '@happier-dev/protocol/rpc/methods';
+import { createWorkBoardV1} from '@happier-dev/protocol/boards/workBoardV1';
+import { type PublicActionInputById } from '@happier-dev/protocol/actions/actionSpecs';
 import { flushHookEffects, renderScreen as renderBaseScreen, standardCleanup } from '@/dev/testkit';
 import { HappierInputField, useHappierInputPickerPort } from '@happier-dev/plugin-ui/presentation';
 import { View } from 'react-native';
@@ -19,6 +23,7 @@ import type { WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 import { createWorkBoardArtifactBoundary } from '@/dev/testkit/harness/workBoardArtifactBoundary';
 import { createWorkBoardAccountStore } from '@/components/boards/model/workBoardAccountStore';
 import { buildAccountWidgetAddSections } from './accountWidgetAddSections';
+import { resolveSemanticInputTypePickerReference } from '@/components/sessions/actions/inputTypePickerPort';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
@@ -178,7 +183,7 @@ describe('WidgetSetupStep discovery', () => {
                     occurrenceId: 'current', source: { kind: 'local', locator: `/plugins/${pluginId}` }, executionOrigin: origin } },
                 familiesById: { inputTypes: { family: 'inputTypes', entriesById: { [`${pluginId}/choice`]: {
                     id: `${pluginId}/choice`, pluginId, pluginVersion: '1.0.0', occurrenceId: 'current', executionOrigin: origin,
-                    definition: { id: 'choice', title: 'Choice', semantic: 'choice', valueSchema: { type: 'string' }, picker: 'browse' },
+                    definition: { id: 'choice', title: 'Choice', semantic: pluginId, valueSchema: { type: 'string' }, picker: 'browse' },
                     pickerSurface: { contribution: inputType, occurrenceId: 'current', projectionGeneration: 1,
                         rendererChain: [renderer], selectedRenderer: { identity: renderer,
                             renderer: { kind: 'declarative', contributionId: 'browse' },
@@ -215,15 +220,19 @@ describe('WidgetSetupStep discovery', () => {
                             target: { ...entry.pickerSurface!.contributorTargetedContributions.target, occurrenceId: 'session-current' } } },
                 } } } } });
             pickerProjections.set('picker-bound', sessionWire);
-            await loadDaemonMergedProjectionCacheEntry({ machineId: 'picker-bound', serverId: scope.serverId, accountLifetime });
+            await loadDaemonMergedProjectionCacheEntry({ sections: 'complete', machineId: 'picker-bound', serverId: scope.serverId, accountLifetime });
             fieldTargets = { [fields[0]!.path]: { machineId: 'picker-bound', serverId: scope.serverId, sessionId: 'B' } };
         }
-        await Promise.all(members.map(member => loadDaemonMergedProjectionCacheEntry({ machineId: member.machineId,
+        await Promise.all(members.map(member => loadDaemonMergedProjectionCacheEntry({ sections: 'complete', machineId: member.machineId,
             serverId: scope.serverId, accountLifetime })));
         const projection = unionPluginUiProjections(members, new Map(origins.map(origin => [origin.sourceRef.pluginId, origin]))).pluginUiProjection;
         function PickerProbe() {
             const port = useHappierInputPickerPort();
-            return <>{fields.map(field => <View key={field.path} testID={field.path} accessibilityLabel={port?.describe(field)?.label ?? 'missing'} />)}</>;
+            return <>{fields.map(field => {
+                const inputType = resolveSemanticInputTypePickerReference(port, field.inputType.pluginId, field);
+                return <View key={field.path} testID={field.path} accessibilityLabel={port?.describe(field)?.label ?? 'missing'}
+                    accessibilityValue={{ text: inputType ? `${inputType.pluginId}/${inputType.localId}` : 'missing' }} />;
+            })}</>;
         }
         const fieldsWithProducer = <InputTypePickerHostProvider enabled serverId={scope.serverId} accountLifetime={accountLifetime}
             pluginUiProjection={projection} pluginUiMachineId={null} machineId={null} fieldTargets={fieldTargets}><PickerProbe /></InputTypePickerHostProvider>;
@@ -232,12 +241,15 @@ describe('WidgetSetupStep discovery', () => {
                 {fieldsWithProducer}</InputTypePickerHostProvider>
             : fieldsWithProducer);
         await vi.waitFor(() => fields.forEach(field => expect(screen.findByTestId(field.path)?.props.accessibilityLabel).toBe('inputPicker.browse')));
+        fields.forEach(field => expect(screen.findByTestId(field.path)?.props.accessibilityValue.text)
+            .toBe(`${field.inputType.pluginId}/${field.inputType.localId}`));
     });
     it.each([false, true])('reads contributed choices from the widget producer instead of the first reachable machine (union: %s)', async union => {
         discovery.unrelatedMachine = true;
+        const access = createPlainMachineRowFixture({ id: 'unrelated', accountId: scope.accountId }).access;
         storage.setState({ machines: {
-            unrelated: createMachineFixture({ id: 'unrelated', createdAt: 2, active: true, activeAt: Date.now() }),
-            machine_1: createMachineFixture({ id: 'machine_1', active: true, activeAt: Date.now() }),
+            unrelated: createMachineFixture({ id: 'unrelated', createdAt: 2, active: true, activeAt: Date.now(), access }),
+            machine_1: createMachineFixture({ id: 'machine_1', active: true, activeAt: Date.now(), access }),
         } });
         const { resolveUiAccountActionFallbackMachineId } = await import('@/sync/ops/actions/accountActionDeps');
         expect(resolveUiAccountActionFallbackMachineId(scope)).toBe('unrelated');

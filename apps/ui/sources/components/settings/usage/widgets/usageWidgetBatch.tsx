@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { useShallow } from 'zustand/react/shallow';
 import { WidgetFrameDemandContext, WidgetFrameInstanceIdContext, type WidgetFrameDemand } from '@/components/widgets/frame/widgetFrameDemand';
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -34,6 +35,7 @@ import {
 } from '../useUsageWidgetResource';
 
 type Registration = Readonly<{ query: UsageQuery; key: string }>;
+type BoundRegistration = Registration & Readonly<{ clauses: UsageWidgetQueryOverrides }>;
 type UsageQueryWidgetId = Exclude<UsageBuiltinWidgetIdV1, 'usage_sources'>;
 // Each body declares the facts it renders. Unlisted accounting output sections
 // remain undemanded; style-specific consumers refine this at resolveQuery.
@@ -82,7 +84,7 @@ export function isUsageQueryWidget(id: string): boolean {
 }
 type UsageWidgetBatch = Readonly<{
   clauses: UsageWidgetQueryOverrides;
-  register(id: string, registration: Registration): () => void;
+  register(id: string, registration: BoundRegistration): () => void;
   resource: UsageWidgetResource;
   inventorySlice: UsageQueryResultSlice | undefined;
   costBasisOptions: readonly UsageQuery['costBasis'][];
@@ -131,6 +133,8 @@ export function buildUsageWidgetQueryPlan(
 export function UsageWidgetBatchProvider(
   props: Readonly<{
     clauses: UsageWidgetQueryOverrides;
+    callerContext?: ActionExecutorContext;
+    callerQuery?: UsageQuery;
     inventoryQuery?: UsageQuery;
     /** A ready layout with no query bodies still needs its filter inventory. */
     inventoryOnly?: boolean;
@@ -141,7 +145,7 @@ export function UsageWidgetBatchProvider(
 ) {
   const auth = useAuth();
   const viewer = useActiveServerAccountScope();
-  const [rows, setRows] = React.useState<ReadonlyMap<string, Registration>>(
+  const [rows, setRows] = React.useState<ReadonlyMap<string, BoundRegistration>>(
     () => new Map(),
   );
   const [placements, setPlacements] = React.useState<ReadonlyMap<string, Readonly<{ builtinId?: string; visible: boolean | null }>>>(() => new Map());
@@ -167,9 +171,9 @@ export function UsageWidgetBatchProvider(
     },
   }), []);
   const register = React.useCallback(
-    (id: string, registration: Registration) => {
+    (id: string, registration: BoundRegistration) => {
       setRows((current) =>
-        current.get(id)?.key === registration.key
+        current.get(id)?.key === registration.key && current.get(id)?.clauses === registration.clauses
           ? current
           : new Map(current).set(id, registration),
       );
@@ -200,6 +204,7 @@ export function UsageWidgetBatchProvider(
   // A visible frame can still be binding its inputs after its neighbours mount.
   // Admit their complete cohort, using the frame and binder owners' facts, once.
   const collecting = props.queryWidgetIds?.some(id => !placements.has(id)) === true
+    || [...rows.values()].some(row => row.clauses !== props.clauses)
     || [...placements].some(([id, placement]) => placement.builtinId !== undefined && isUsageQueryWidget(placement.builtinId)
     && (placement.visible === null || placement.visible && !rows.has(id) && !refusals.has(id)));
   const plan = React.useMemo(
@@ -213,6 +218,8 @@ export function UsageWidgetBatchProvider(
     credentials: auth.credentials,
     enabled: auth.credentials != null,
     retainPendingDemand: true,
+    callerContext: props.callerContext,
+    callerQuery: props.callerQuery,
     plan,
   });
   const inventoryRows = React.useMemo(() => inventoryQuery ? [{ query: inventoryQuery, key: getUsageQueryKey(inventoryQuery) }] : [], [inventoryQuery]);
@@ -255,7 +262,7 @@ function resolveQuery(
   clauses: UsageWidgetQueryOverrides,
   input: Readonly<Record<string, JsonValue>>,
   widgetId: UsageQueryWidgetId,
-): Registration | null {
+): BoundRegistration | null {
   try {
     const descriptor = readBuiltinWidgetDescriptorV1({ kind: 'builtin', id: widgetId })!;
     const defaults = proposeWidgetInputDefaultBindingsV1(descriptor);
@@ -302,7 +309,7 @@ function resolveQuery(
       ...(widgetId === 'usage_run_length' && style === 'galaxy' ? { includeActivity: true } : {}),
       ...(autopsy ? { includeWorkEvidence: true, includeSessionEvidence: true, includeTranscriptEvidence: true } : {}),
     });
-    return { query, key: getUsageQueryKey(query) };
+    return { query, key: getUsageQueryKey(query), clauses };
   } catch {
     return null;
   }

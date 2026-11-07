@@ -8,9 +8,10 @@ export const SelectionListActivationCommandContext = React.createContext<((id: s
 export function SelectionListCommandHost(props: Readonly<{
     commands: readonly CurrentUiContextLocalCommand[];
     contextKey: string;
+    foregroundOverlay?: boolean;
     invokeRef: React.RefObject<SelectionListCommandInvoke | null>;
 }>) {
-    const commands = useCurrentUiContextLocalCommands(props.commands, { contextKey: props.contextKey });
+    const commands = useCurrentUiContextLocalCommands(props.commands, { contextKey: props.contextKey, foregroundOverlay: props.foregroundOverlay });
     React.useLayoutEffect(() => {
         props.invokeRef.current = commands.invoke;
         return () => { props.invokeRef.current = null; };

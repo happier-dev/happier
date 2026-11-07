@@ -9,12 +9,12 @@ import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/
 import { publishAppliedActiveServerSnapshot, publishAppliedActiveServerRuntimeAvailability } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { storage } from '@/sync/domains/state/storage';
-import { decodeUsageQueryResource, invalidateUsageQueryResources } from '@/sync/api/account/usageQueryResource';
+import { captureUiUsageQueryAccountContext, decodeUsageQueryResource, getUsageQueryResourceStore, invalidateUsageQueryResources } from '@/sync/api/account/usageQueryResource';
 import { normalizeUsageQuery, normalizeUsageQueryBatchInput, getUsageQueryBatchKey, getUsageQueryKey, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { UsageAnalyticsQueryRequestSchema, type UsageAnalyticsQueryResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { useUsageWidgetResource, useUsageWidgetBodyModel, type UsageWidgetResource, type UsageWidgetBodyModel } from './useUsageWidgetResource';
 import type { UsageWidgetQueryPlan } from './usageWidgetQueries';
-import { useUsageAnalyticsView } from './widgets/usageBodyKit';
+import { usageAgentTitle, useUsageAnalyticsView } from './widgets/usageBodyKit';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { WidgetFrameResourceActivityContext } from '@/components/widgets/frame/widgetFrameResourceActivity';
@@ -25,6 +25,21 @@ import { UsageWidgetBatchProvider, useUsageWidgetModel, useUsageWidgetBatchInven
 import { readUsageWidgetQueryOverrides } from './usageWidgetPageContext';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { renderMountedCurrentUiContext } from '@/dev/testkit/harness/mountedCurrentUiContext';
+import { useOptionalCurrentUiContextReader, type CurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
+import { CurrentUiContextCommandsProvider } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
+import { useUsageWidgetPageContext, usePublishUsageWidgetPageContext } from './useUsageWidgetPageContext';
+import { getUsagePeriodDefinition, type UsagePeriod } from '@/sync/api/account/usagePeriods';
+import { t } from '@/text';
+import { useUsageWidgetPageFilters } from './useUsageWidgetPageFilters';
+import { UsageDrillProvider, usageDrillFromPageFilters } from './usageDrill';
+import { UsageDailyWidget } from './widgets/UsageDailyWidget';
+import { ACTION_ID_FAMILIES_V1 } from '@happier-dev/protocol/actions/actionIds';
 
 // HTTP owns these fake Homes; real Socket.IO dials cannot supply their connection state.
 vi.mock('socket.io-client', async (importOriginal) => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
@@ -64,6 +79,359 @@ function BodyProbe(props: Readonly<{ resource: UsageWidgetResource; instanceId: 
 }
 
 describe('Usage widget shared Resource selection', () => {
+    it('keeps an actual held Daily Agent choice behind Usage Action policy while UI Retry succeeds', async () => {
+        const startMs = Date.parse('2024-04-22T00:00:00Z');
+        const endMs = startMs + 86_400_000;
+        const entry = (key: string) => ({ key, eventCount: 1, tokens: accounting.totals.tokens,
+            cost: accounting.totals.cost });
+        const leader = (key: string) => ({ ...entry(key), sources: [{ source: 'runtime',
+            path: 'runtime' as const, execution: 'happier' as const, eventCount: 1,
+            tokens: accounting.totals.tokens, cost: accounting.totals.cost }] });
+        const response: UsageAnalyticsQueryResponse = { ...accounting,
+            breakdowns: { agent: [entry('codex'), entry('claude')] },
+            engineTimeline: [{ bucketStartMs: startMs, bucketEndMs: endMs,
+                leaders: [leader('codex:local'), leader('claude:local')] }] };
+        const credentials = await mountHome(request => request.path === '/v2/usage/query' ? Response.json(response) : undefined);
+        const query = normalizeUsageQuery({ metric: 'tokens', period: { startMs, endMs }, granularity: 'day',
+            includeWorkEvidence: false, includeSessionEvidence: false, includeTranscriptEvidence: false,
+            includeQuotaHistory: false, includeComparison: false });
+        const authority = captureActiveServerAccountScopeLifetime();
+        const mounted: { reader: CurrentUiContextReader | null; model?: UsageWidgetBodyModel } = { reader: null };
+        function Page() {
+            const page = useUsageWidgetPageContext({ authority,
+                initialFilters: { queryOverrides: readUsageWidgetQueryOverrides(query) } });
+            const selectedQuery = React.useMemo(() => normalizeUsageQuery({ ...query, agents: [...page.scope.agents] }), [page.scope.agents]);
+            const selectedPlan = React.useMemo(() => plan(selectedQuery), [selectedQuery]);
+            const resource = useUsageWidgetResource({ credentials, enabled: true, plan: selectedPlan,
+                callerContext: page.callerContext, callerQuery: page.callerQuery });
+            const model = useUsageWidgetBodyModel(resource, 'first');
+            mounted.model = model;
+            const slices = React.useMemo(() => model.slice ? [model.slice] : [], [model.slice]);
+            const filters = useUsageWidgetPageFilters(page, slices, false);
+            const commands = filters.flatMap(filter => filter.options.map(option => ({
+                field: filter.field, id: option.id, title: `${filter.title}: ${option.label}`,
+                invoke: (context?: ActionExecutorContext) => filter.select(option.id, context),
+            })));
+            const published = usePublishUsageWidgetPageContext({ authority, page, costBasisOptions: [],
+                filterCommands: commands, retryRead: model.error ? model.refresh : undefined });
+            const admitted = filters.map(filter => ({ ...filter,
+                select: (id: string, context?: ActionExecutorContext) => published.selectFilter(filter.field, id, context) }));
+            mounted.reader = useOptionalCurrentUiContextReader();
+            return model.slice ? <UsageDrillProvider value={usageDrillFromPageFilters(admitted)}>
+                <UsageDailyWidget id="usage_daily" query={selectedQuery} slice={model.slice} model={model}
+                    serverId={home!.homes.a!.id} testID="held-origin" />
+            </UsageDrillProvider> : null;
+        }
+        const settings = storage.getState().settings;
+        const screen = await renderMountedCurrentUiContext(<CurrentUiContextCommandsProvider authority={authority}><Page /></CurrentUiContextCommandsProvider>);
+        const posts = () => home!.requests.filter(request => request.path === '/v2/usage/query').length;
+        const invoke = async (id: string, surface: 'agent' | 'ui' = 'agent') => {
+            await act(async () => {
+                expect(await createDefaultActionExecutor().execute(ACTION_ID_FAMILIES_V1.current_ui_context[1], { commandId: id },
+                    surface === 'agent' ? { surface, authority: 'account_automation' }
+                        : { surface, authority: 'present_user', actionCaller: { kind: 'host' } })).toMatchObject({ ok: true });
+            });
+        };
+        try {
+            await expect.poll(() => mounted.model?.slice?.accounting).toBeDefined();
+            const chart = screen.findHostByTestId('held-origin.chart');
+            expect(chart, 'native layout measures the real Daily chart before its plot overlay mounts').toBeTruthy();
+            await act(async () => { chart!.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 640, height: 240 } } }); });
+            const codex = usageAgentTitle('codex');
+            const claude = usageAgentTitle('claude');
+            const bucket = mounted.reader!.readCurrentUiContext()!.commands.find(row => row.title.includes(codex) && row.title.includes(claude));
+            expect(bucket, 'real Daily bucket publishes its exact value lens').toBeDefined();
+            await invoke(bucket!.id);
+            const row = mounted.reader!.readCurrentUiContext()!.commands.find(command => command.title === t('usage.board.page.drillFilterTo', { name: codex }));
+            expect(row, 'held Daily Agent row publishes the existing drill choice').toBeDefined();
+            storage.setState({ settings: { ...settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1,
+                actions: { [ACTION_ID_FAMILIES_V1.usage[0]]: { disabledSurfaces: ['agent'] } } }) } });
+            const beforeChoice = posts();
+            await invoke(row!.id);
+            await expect.poll(() => mounted.model?.pending).toBe(false);
+            expect(mounted.model?.requestedQuery?.query.agents).toEqual(['codex']);
+            expect.soft(mounted.model?.error?.code).toBe('action_disabled');
+            expect(posts(), 'held Agent choice cannot reacquire its data under UI authority').toBe(beforeChoice);
+            const retry = mounted.reader!.readCurrentUiContext()!.commands.find(command => command.title === t('usage.board.page.retryRead'));
+            expect(retry).toBeDefined();
+            await invoke(retry!.id, 'ui');
+            await expect.poll(() => mounted.model?.slice?.accounting).toBeDefined();
+            expect(mounted.model?.error).toBeNull();
+            expect(posts()).toBeGreaterThan(beforeChoice);
+        } finally { storage.setState({ settings }); await screen.unmount(); }
+    });
+    it('does not retain an unused agent entry context for a later UI refresh', async () => {
+        const credentials = await mountHome(request => request.path === '/v2/usage/query' ? Response.json(accounting) : undefined);
+        const query = normalizeUsageQuery({ metric: 'cost', period: { startMs: 1000, endMs: 2000 },
+            includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false,
+            includeComparison: false, includeQuotaHistory: false });
+        const queryPlan = plan(query);
+        const hook = await renderHook(() => useUsageWidgetBodyModel(useUsageWidgetResource({ credentials, enabled: true, plan: queryPlan }), 'first'));
+        const settings = storage.getState().settings;
+        try {
+            await expect.poll(() => hook.getCurrent().slice?.accounting).toBeDefined();
+            const initialError = hook.getCurrent().error;
+            storage.setState({ settings: { ...settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1,
+                actions: { 'usage.query': { disabledSurfaces: ['mcp'] } } }) } });
+            const context = captureUiUsageQueryAccountContext(credentials)!;
+            getUsageQueryResourceStore(context).getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport(queryPlan.input) },
+                { surface: 'mcp', authority: 'account_automation' });
+            await act(async () => { await hook.getCurrent().refresh(); });
+            expect(hook.getCurrent().error).toEqual(initialError);
+            expect(hook.getCurrent().slice?.accounting?.totals.cost.reportedUsd).toBe(1);
+        } finally { storage.setState({ settings }); await hook.unmount(); }
+    });
+    it('supersedes a running UI read with the agent caller without starting a forbidden replacement', async () => {
+        const held = createDeferred<void>();
+        const signals: (AbortSignal | null | undefined)[] = [];
+        const credentials = await mountHome(async request => {
+            if (request.path !== '/v2/usage/query') return undefined;
+            signals.push(request.signal);
+            await held.promise;
+            return Response.json(accounting);
+        });
+        const query = normalizeUsageQuery({ metric: 'cost', period: { startMs: 1000, endMs: 2000 },
+            includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false,
+            includeComparison: false, includeQuotaHistory: false });
+        const settings = storage.getState().settings;
+        storage.setState({ settings: { ...settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1,
+            actions: { 'usage.query': { disabledSurfaces: ['mcp'] } } }) } });
+        const queryPlan = plan(query);
+        const hook = await renderHook(() => useUsageWidgetBodyModel(
+            useUsageWidgetResource({ credentials, enabled: true, plan: queryPlan }), 'first'));
+        try {
+            await expect.poll(() => signals.length).toBe(1);
+            await act(async () => { await hook.getCurrent().refresh({ surface: 'mcp', authority: 'account_automation' }); });
+            expect(hook.getCurrent().error?.code).toBe('action_disabled');
+            expect(signals).toHaveLength(1);
+            expect(signals[0]?.aborted).toBe(true);
+            held.resolve();
+            await flushHookEffects();
+            expect(hook.getCurrent().slice).toBeNull();
+        } finally { held.resolve(); storage.setState({ settings }); await hook.unmount(); }
+    });
+    it('does not change the running UI caller or retain an agent origin when a refresh joins it', async () => {
+        const held = createDeferred<void>();
+        const credentials = await mountHome(async request => {
+            if (request.path !== '/v2/usage/query') return undefined;
+            await held.promise;
+            return Response.json(accounting);
+        });
+        const query = normalizeUsageQuery({ metric: 'cost', period: { startMs: 1000, endMs: 2000 },
+            includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false,
+            includeComparison: false, includeQuotaHistory: false });
+        const queryPlan = plan(query);
+        const settings = storage.getState().settings;
+        storage.setState({ settings: { ...settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1,
+            actions: { 'usage.query': { disabledSurfaces: ['mcp'] } } }) } });
+        const hook = await renderHook(() => useUsageWidgetBodyModel(
+            useUsageWidgetResource({ credentials, enabled: true, plan: queryPlan }), 'first'));
+        try {
+            await expect.poll(() => home!.requests.filter(request => request.path === '/v2/usage/query').length).toBe(1);
+            const entry = getUsageQueryResourceStore(captureUiUsageQueryAccountContext(credentials)!).getEntry({
+                hostRead: 'usage.query', input: projectNativeJsonValueForTransport(queryPlan.input) });
+            let joined: ReturnType<typeof entry.refresh> | undefined;
+            await act(async () => { joined = entry.refresh({ supersede: false,
+                callerContext: { surface: 'mcp', authority: 'account_automation' } }); });
+            held.resolve();
+            await joined;
+            await expect.poll(() => hook.getCurrent().pending).toBe(false);
+            expect(hook.getCurrent().error?.code).not.toBe('action_disabled');
+            expect(hook.getCurrent().slice?.accounting?.totals.cost.reportedUsd).toBe(1);
+            await act(async () => { await hook.getCurrent().refresh(); });
+            expect(hook.getCurrent().error?.code).not.toBe('action_disabled');
+        } finally { held.resolve(); storage.setState({ settings }); await hook.unmount(); }
+    });
+    it('keeps agent refresh and query selection behind Usage Action admission while ordinary UI reads succeed', async () => {
+        const credentials = await mountHome(request => request.path === '/v2/usage/query' ? Response.json(accounting) : undefined);
+        const query = normalizeUsageQuery({ metric: 'cost', period: { startMs: 1000, endMs: 2000 },
+            includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false,
+            includeComparison: false, includeQuotaHistory: false });
+        const callerContext = { surface: 'mcp' as const, authority: 'account_automation' as const };
+        const selectedQuery = { ...query, period: { startMs: 1000, endMs: 3000 } };
+        const settings = storage.getState().settings;
+        storage.setState({ settings: { ...settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1,
+            actions: { 'usage.query': { disabledSurfaces: ['mcp'] } } }) } });
+        const hook = await renderHook((props: Readonly<{ query: UsageQuery; agent: boolean }>) =>
+            useUsageWidgetBodyModel(useUsageWidgetResource({ credentials, enabled: true, plan: plan(props.query),
+                ...(props.agent ? { callerContext, callerQuery: selectedQuery } : {}) }), 'first'), { initialProps: { query, agent: false } });
+        const posts = () => home!.requests.filter(request => request.path === '/v2/usage/query').length;
+        try {
+            await expect.poll(() => hook.getCurrent().slice?.accounting?.totals.cost.reportedUsd).toBe(1);
+            const initialError = hook.getCurrent().error;
+            expect(posts()).toBe(1);
+            await act(async () => { await hook.getCurrent().refresh(callerContext); });
+            expect.soft(hook.getCurrent().error?.code).toBe('action_disabled');
+            expect.soft(posts(), 'agent Retry cannot issue an HTTP read under UI authority').toBe(1);
+            await hook.rerender({ query: selectedQuery, agent: true });
+            await expect.poll(() => hook.getCurrent().pending).toBe(false);
+            expect.soft(hook.getCurrent().error?.code).toBe('action_disabled');
+            expect.soft(posts(), 'agent query changes cannot issue an HTTP read under UI authority').toBe(1);
+            // The selection's origin is finite. A subsequent independently
+            // observed plan change belongs to the mounted UI reader.
+            await hook.rerender({ query: { ...query, period: { startMs: 1000, endMs: 4000 } }, agent: true });
+            await expect.poll(() => hook.getCurrent().slice?.accounting?.totals.cost.reportedUsd).toBe(1);
+            expect.soft(hook.getCurrent().error).toEqual(initialError);
+            expect.soft(posts()).toBe(2);
+        } finally { storage.setState({ settings }); await hook.unmount(); }
+    });
+    it('consumes a same-key page selection before a later independent UI query demand', async () => {
+        await mountHome(request => request.path === '/v2/usage/query' ? Response.json(accounting) : undefined);
+        const settings = storage.getState().settings;
+        storage.setState({ settings: { ...settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1,
+            actions: { 'usage.query': { disabledSurfaces: ['agent'] } } }) } });
+        const authority = captureActiveServerAccountScopeLifetime();
+        const query = normalizeUsageQuery({ period: { relative: '7days' }, includeSessionEvidence: false, includeWorkEvidence: false });
+        let reader: CurrentUiContextReader | null = null;
+        let inventory: ReturnType<typeof useUsageWidgetBatchInventorySlice>;
+        let model: UsageWidgetBodyModel | undefined;
+        function Inventory() { inventory = useUsageWidgetBatchInventorySlice(); return null; }
+        function Body(props: Readonly<{ agents: readonly string[] }>) {
+            model = useUsageWidgetModel({ agents: [...props.agents], period: query.period }, 'usage_breakdowns').model;
+            return null;
+        }
+        function Page(props: Readonly<{ showBody: boolean }>) {
+            const page = useUsageWidgetPageContext({ authority,
+                initialFilters: { queryOverrides: readUsageWidgetQueryOverrides(query) } });
+            usePublishUsageWidgetPageContext({ authority, page, costBasisOptions: [], filterCommands: [{
+                field: 'agents', id: 'codex', title: 'Same-key scope selection',
+                invoke: context => page.setScope({ agents: ['codex'] }, context),
+            }] });
+            reader = useOptionalCurrentUiContextReader();
+            // Filter inventory deliberately remains unfiltered, including when no body is shown.
+            return <UsageWidgetBatchProvider clauses={page.queryOverrides} inventoryQuery={query} inventoryOnly
+                callerContext={page.callerContext} callerQuery={page.callerQuery}>
+                <Inventory />{props.showBody ? <Body agents={page.scope.agents} /> : null}
+            </UsageWidgetBatchProvider>;
+        }
+        const screen = await renderMountedCurrentUiContext(<CurrentUiContextCommandsProvider authority={authority}><Page showBody={false} /></CurrentUiContextCommandsProvider>);
+        const posts = () => home!.requests.filter(request => request.path === '/v2/usage/query').length;
+        try {
+            await expect.poll(() => inventory?.accounting?.totals.cost.reportedUsd).toBe(1);
+            const before = posts();
+            const command = reader!.readCurrentUiContext()!.commands.find(row => row.title === 'Same-key scope selection')!;
+            await act(async () => {
+                expect(await createDefaultActionExecutor().execute('ui.current_context.command.invoke',
+                    { commandId: command.id }, { surface: 'agent', authority: 'account_automation' })).toMatchObject({ ok: true });
+            });
+            await flushHookEffects({ cycles: 20 });
+            expect(posts(), 'a scope change reuses the unfiltered inventory').toBe(before);
+            await screen.update(<CurrentUiContextCommandsProvider authority={authority}><Page showBody /></CurrentUiContextCommandsProvider>);
+            await flushHookEffects({ cycles: 20 });
+            await expect.poll(() => model?.pending).toBe(false);
+            expect.soft(model?.error?.code, 'the later UI demand has no stale agent refusal').not.toBe('action_disabled');
+            expect.soft(model?.slice?.accounting?.totals.cost.reportedUsd).toBe(1);
+            expect.soft(posts()).toBeGreaterThan(before);
+        } finally { storage.setState({ settings }); await screen.unmount(); }
+    });
+    it('preserves the agent caller and Resource cancellation after its selection command retires', async () => {
+        const { ProviderAccountUsageSnapshotV1Schema, buildProviderAccountUsageRecordId } = await import('@happier-dev/protocol/connect/account-usage-primitives');
+        const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
+        const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        const ref = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'resource-origin' };
+        const recordKey = { providerId: 'codex', accountSubjectId: ref.accountId, subjectKind: 'account' as const, quotaScope: 'account' as const };
+        const nowMs = Date.now();
+        const snapshot = ProviderAccountUsageSnapshotV1Schema.parse({ v: 1, recordId: buildProviderAccountUsageRecordId(recordKey), recordKey,
+            providerId: 'codex', accountSubject: { kind: 'providerSubject', id: ref.accountId }, observedAtMs: nowMs,
+            fetchedAtMs: nowMs, staleAfterMs: 60_000, source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data', meters: [] });
+        const held = createDeferred<void>();
+        let holdRead = false;
+        let resourceSignal: AbortSignal | null | undefined;
+        const credentials = await mountHome(async request => {
+            if (request.path === '/v2/usage/query') {
+                if (holdRead) { resourceSignal = request.signal; await held.promise; }
+                return Response.json(accounting);
+            }
+            if (request.path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
+            if (request.path === '/v4/connect/qualified/provider-account-usage/sources/resolve') return Response.json({
+                source: { bindingKind: 'account', ref }, recordId: snapshot.recordId, providerAccountId: ref.accountId,
+                fetchedAt: nowMs, staleAfterMs: 60_000 });
+            if (request.path === '/v4/connect/qualified/provider-account-usage/record') return Response.json({
+                content: { t: 'plain', v: snapshot }, metadata: { fetchedAt: nowMs, staleAfterMs: 60_000, status: 'ok' },
+                sources: [{ bindingKind: 'account', ref }] });
+            if (request.path === '/v2/pending/reset-starts/read') return Response.json({ entries: [] });
+            return undefined;
+        });
+        storage.setState({ profile: AccountProfileSchema.parse({ ...storage.getState().profile, connectedAccountsV4: [{ ref,
+            status: 'connected', authenticationModeId: 'manual', revisionSemantics: 'revisioned',
+            credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz', configurationReady: false, configurationRevision: null, scopes: [] }] }) });
+        await getServerFeaturesSnapshot({ serverId: home!.homes.a!.id, force: true });
+        const query = normalizeUsageQuery({ period: { relative: '7days' }, includeWorkEvidence: false,
+            includeSessionEvidence: false, includeTranscriptEvidence: false, includeQuotaHistory: false, includeComparison: false });
+        const settings = storage.getState().settings;
+        storage.setState({ settings: { ...settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1,
+            actions: { 'connectedServices.quota.get': { disabledSurfaces: ['agent'] } } }) } });
+        const authority = captureActiveServerAccountScopeLifetime();
+        let reader: CurrentUiContextReader | null = null;
+        let model: UsageWidgetBodyModel | undefined;
+        let receivedContext: ActionExecutorContext | undefined;
+        function SelectedBody(props: Readonly<{ agents: readonly string[]; period: UsagePeriod }>) {
+            model = useUsageWidgetModel({ agents: [...props.agents], period: { relative: props.period },
+                metric: query.metric }, 'usage_breakdowns').model;
+            return null;
+        }
+        function Page() {
+            const page = useUsageWidgetPageContext({ authority,
+                initialFilters: { queryOverrides: readUsageWidgetQueryOverrides(query) } });
+            const selected = page.scope.agents.length > 0;
+            usePublishUsageWidgetPageContext({ authority, page, costBasisOptions: [], retryRead: context => model?.refresh(context), filterCommands: selected ? [] : [{
+                field: 'agents', id: 'codex', title: 'Agent origin selection', invoke: (callerContext?: ActionExecutorContext) => {
+                    receivedContext = callerContext;
+                    return page.setScope({ agents: ['codex'] }, callerContext);
+                },
+            }] });
+            reader = useOptionalCurrentUiContextReader();
+            const inventoryQuery = React.useMemo(() => normalizeUsageQuery({ ...query, ...page.queryOverrides,
+                period: { relative: page.period } }), [page.queryOverrides, page.period]);
+            return <UsageWidgetBatchProvider clauses={page.queryOverrides} inventoryQuery={inventoryQuery}
+                callerContext={page.callerContext} callerQuery={page.callerQuery}>
+                <SelectedBody agents={page.scope.agents} period={page.period} />
+            </UsageWidgetBatchProvider>;
+        }
+        const screen = await renderMountedCurrentUiContext(<CurrentUiContextCommandsProvider authority={authority}><Page /></CurrentUiContextCommandsProvider>);
+        try {
+            await expect.poll(() => model?.pending).toBe(false);
+            expect(model?.error).toBeNull();
+            const command = reader!.readCurrentUiContext()!.commands.find(row => row.title === 'Agent origin selection')!;
+            expect(command).toBeDefined();
+            const commandSignal = reader!.resolveCurrentUiCommand(command.id)!.retirementSignal;
+            holdRead = true;
+            await act(async () => {
+                expect(await createDefaultActionExecutor().execute('ui.current_context.command.invoke',
+                    { commandId: command.id }, { surface: 'agent', authority: 'account_automation' })).toMatchObject({ ok: true });
+            });
+            await expect.poll(() => resourceSignal).toBeDefined();
+            expect.soft(receivedContext).toMatchObject({ surface: 'agent', authority: 'account_automation' });
+            expect(reader!.resolveCurrentUiCommand(command.id)).toBeNull();
+            expect(commandSignal.aborted, 'selection removes and retires its own descriptor').toBe(true);
+            expect(resourceSignal?.aborted, 'the page Resource owns the new read cancellation').toBe(false);
+            held.resolve();
+            await expect.poll(() => model?.pending).toBe(false);
+            expect(model?.slice?.accounting?.totals.cost.reportedUsd).toBe(1);
+            // The selected accounting scope reuses already admitted allowance.
+            // Explicit Retry asks the same owner for fresh allowance as well.
+            const retryCommand = reader!.readCurrentUiContext()!.commands.find(row => row.title === t('usage.board.page.retryRead'))!;
+            await act(async () => {
+                expect(await createDefaultActionExecutor().execute('ui.current_context.command.invoke',
+                    { commandId: retryCommand.id }, { surface: 'agent', authority: 'account_automation' })).toMatchObject({ ok: true });
+            });
+            await expect.poll(() => model?.pending).toBe(false);
+            expect.soft(model?.error?.code, 'nested quota Retry still sees the actual agent caller').toBe('action_disabled');
+            // A period changes both the inventory and child registrations.
+            // Their complete new cohort belongs to this one command caller.
+            storage.setState({ settings: { ...settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1,
+                actions: { 'usage.query': { disabledSurfaces: ['agent'] } } }) } });
+            const posts = home!.requests.filter(request => request.path === '/v2/usage/query').length;
+            const periodCommand = reader!.readCurrentUiContext()!.commands.find(row => row.title === t(getUsagePeriodDefinition('30days').translationKey))!;
+            await act(async () => {
+                expect(await createDefaultActionExecutor().execute('ui.current_context.command.invoke',
+                    { commandId: periodCommand.id }, { surface: 'agent', authority: 'account_automation' })).toMatchObject({ ok: true });
+            });
+            await expect.poll(() => model?.pending).toBe(false);
+            expect.soft(model?.error?.code, 'all selected-period reads retain the agent admission').toBe('action_disabled');
+            expect.soft(home!.requests.filter(request => request.path === '/v2/usage/query'), 'no inventory or child query can escape under UI authority').toHaveLength(posts);
+        } finally { held.resolve(); storage.setState({ settings }); await screen.unmount(); }
+    });
     it('cancels the pending read and withdraws a queued live replacement on hide', async () => {
         let amount = 1;
         const held = createDeferred<void>();

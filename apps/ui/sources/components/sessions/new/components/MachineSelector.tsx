@@ -59,6 +59,7 @@ export interface MachineSelectorProps {
     noItemsMessage?: string;
     testIdPrefix?: string;
     currentUiContextCommandScope?: string;
+    currentUiContextForegroundOverlay?: boolean;
     /**
      * When true, offline machines are visible but non-selectable (greyed out + not-allowed cursor on web).
      */
@@ -102,6 +103,7 @@ export function MachineSelector({
     noItemsMessage: noItemsMessageProp,
     testIdPrefix,
     currentUiContextCommandScope,
+    currentUiContextForegroundOverlay,
     disableOfflineMachines = true,
     includeSelectedUnavailableMachine = false,
     describeMachine,
@@ -316,6 +318,7 @@ export function MachineSelector({
         showSearch={showSearch} showCliGlyphs={showCliGlyphs} autoDetectCliGlyphs={autoDetectCliGlyphs} serverId={serverId}
         favoriteGroupPlacement={favoriteGroupPlacement} testIdPrefix={testIdPrefix} disableOfflineMachines={disableOfflineMachines}
         currentUiContextCommandScope={currentUiContextCommandScope}
+        currentUiContextForegroundOverlay={currentUiContextForegroundOverlay}
         includeSelectedUnavailableMachine={includeSelectedUnavailableMachine} searchPlaceholder={searchPlaceholder}
         recentSectionTitle={recentSectionTitle} favoritesSectionTitle={favoritesSectionTitle} allSectionTitle={allSectionTitle}
         noItemsMessage={noItemsMessage}
@@ -374,5 +377,6 @@ function MachineSelectorList(props: MachineSelectorProps) {
     }, [groupServerId, model.rootStep, model.offlineOnlyMachineIdsByServerId, offlineOpen, theme]);
     return <SelectionList testID={props.testIdPrefix ? `${props.testIdPrefix}-list` : 'machine-selector-list'}
         currentUiContextCommandScope={props.currentUiContextCommandScope}
+        currentUiContextForegroundOverlay={props.currentUiContextForegroundOverlay}
         rootStep={rootStep} selectedOptionId={model.selectedOptionId} onSelect={() => {}} onRequestClose={() => {}} />;
 }

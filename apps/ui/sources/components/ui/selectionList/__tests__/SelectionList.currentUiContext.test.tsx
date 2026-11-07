@@ -17,6 +17,7 @@ import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExe
 import { SelectionList } from '../SelectionList';
 import { SelectionListFilterChip } from '../SelectionListFilterChips';
 import type { SelectionListStep } from '../_types';
+import { AgentInputSelectionListPopover } from '@/components/sessions/agentInput/components/AgentInputSelectionListPopover';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 // The anchored portal is the DOM boundary; list and command publication stay real.
@@ -99,6 +100,43 @@ describe('SelectionList mounted commands', () => {
         expect(await executor.execute(ACTION_ID_FAMILIES_V1.current_ui_context[1],
             { commandId: choose!.id, input: { id: 'all' } }, { surface: 'agent' })).toMatchObject({ ok: false });
         expect(selected).not.toHaveBeenCalled();
+    });
+
+    it('keeps inline choices beside page commands and publishes popup choices with their foreground owner', async () => {
+        home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://selection-overlay.test', accountId: 'account-a' }],
+            route: request => request.path === '/v1/kv/bulk' ? Response.json({ values: [] }) : undefined });
+        const server = home.homes.a!;
+        publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+        const selected: string[] = [];
+        const step: SelectionListStep = { id: 'choices', sections: [{ kind: 'static', id: 'choices',
+            options: [{ id: 'main', label: 'Main checkout' }] }] };
+        function Choices() {
+            const [open, setOpen] = React.useState(false);
+            const anchorRef = React.useRef(null);
+            useCurrentUiContextLocalCommands([{ key: 'open', title: 'Open checkout', description: 'page.open', invoke: () => setOpen(true) }]);
+            useCurrentUiContextLocalCommands(open ? [{ key: 'close', title: 'Close checkout', description: 'popup.close', invoke: () => setOpen(false) }] : [],
+                { foregroundOverlay: true });
+            return <>
+                <SelectionList currentUiContextCommandScope="inline" rootStep={step} onSelect={() => {}} />
+                <AgentInputSelectionListPopover open={open} anchorRef={anchorRef} currentUiContextCommandScope="popup.list"
+                    rootStep={step} onSelect={id => selected.push(id)} onRequestClose={() => setOpen(false)} />
+            </>;
+        }
+        await renderMountedCurrentUiContext(<Choices />);
+        const commands = () => readCurrentUiContextActionReader({ surface: 'agent' })!.readCurrentUiContext()!.commands;
+        expect(commands().some(row => row.description === 'page.open')).toBe(true);
+        expect(commands().some(row => row.description?.startsWith('inline.activate'))).toBe(true);
+        const executor = createDefaultActionExecutor();
+        await act(async () => { expect(await executor.execute(ACTION_ID_FAMILIES_V1.current_ui_context[1],
+            { commandId: commands().find(row => row.description === 'page.open')!.id }, { surface: 'agent' })).toMatchObject({ ok: true }); });
+        const activate = commands().find(row => row.description?.startsWith('popup.list.activate'));
+        expect(activate).toBeDefined();
+        expect(commands().some(row => row.description === 'page.open')).toBe(false);
+        expect(commands().some(row => row.description?.startsWith('inline.activate'))).toBe(false);
+        await act(async () => { expect(await executor.execute(ACTION_ID_FAMILIES_V1.current_ui_context[1],
+            { commandId: activate!.id, input: { id: 'main' } }, { surface: 'agent' })).toMatchObject({ ok: true }); });
+        await vi.waitFor(() => expect(commands().some(row => row.description === 'page.open')).toBe(true));
+        expect(selected).toEqual(['main']);
     });
 
     it('preserves the agent policy through a selection and a nested local command while UI can copy', async () => {
