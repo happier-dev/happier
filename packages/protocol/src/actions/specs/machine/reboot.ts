@@ -7,6 +7,7 @@ import { MachineElevatedResultV1Schema } from '../../../machines/adminAccessV1.j
 import { MachineVitalsHostFactsV1Schema } from '../../../machines/vitals/machineVitalsSampleV1.js';
 import { RPC_METHODS } from '../../../rpc/methods.js';
 import type { PreNormalizedActionSpec } from '../../actionSpecs.js';
+import { actionInputServerId } from '../definition.js';
 export { MACHINE_REBOOT_ACTION_IDS } from '../../../machines/rebootActionIdsV1.js';
 
 const id = () => z.string().check(z.trim(), z.minLength(1));
@@ -36,6 +37,7 @@ function createMachineRebootActionSpecs() {
   surfaces: { ui: true, cli: true, agent: true, mcp: true, rpc: true, voice: false },
   bindings: { rpcMethod: RPC_METHODS.MACHINES_REBOOT, mcpToolName: 'machines_reboot' },
   inputSchema: MachineRebootInputV1Schema, outputSchema: MachineRebootResultV1Schema,
+  invocationServerIdForInput: actionInputServerId(MachineRebootInputV1Schema, input => input.serverId),
   cli: { acceptsServerId: true, commands: [{ path: ['machines', 'reboot'], visibility: 'canonical' }] },
   inputHints: { fields: [
     { path: 'serverId', title: 'Home ID', widget: 'text', required: true },

@@ -12,6 +12,7 @@ import { InstallableCapabilityIdSchema } from '../../installables/descriptor.js'
 import { ManagedMachineBootstrapApprovalPromptV1Schema } from '../operations/v1.js';
 import { ManagedMachineEnrollmentIdentityV1Schema } from '../../machines/managed/enrollmentIdentityV1.js';
 import { redactObservationInputPaths } from './observationRedaction.js';
+import { actionInputServerId } from './definition.js';
 export { MachineTerminalOpenInputSchema, MachineTerminalListInputSchema } from './machineTerminal.js';
 
 const id = z.string().check(z.trim(), z.minLength(1));
@@ -170,6 +171,7 @@ function createMachineConnectionActionSpecs() {
     cli: { commands: [{ path: ['machines', 'capabilities', 'detect'], visibility: 'canonical' }] },
     toolExposure: { agent: 'discoverable_only', mcp: 'discoverable_only' },
     inputSchema: MACHINE_PAGE_ACTION_INPUT_SCHEMAS['machines.capabilities.detect'], outputSchema: MACHINE_PAGE_ACTION_OUTPUT_SCHEMAS['machines.capabilities.detect'],
+    invocationServerIdForInput: actionInputServerId(MACHINE_PAGE_ACTION_INPUT_SCHEMAS['machines.capabilities.detect'], input => input.serverId),
     inputHints: { fields: [{ path: 'serverId', title: 'Home ID', widget: 'text' }, { path: 'machineId', title: 'Machine ID', widget: 'text', required: true }] },
   },
   {
@@ -181,6 +183,7 @@ function createMachineConnectionActionSpecs() {
     cli: { commands: [{ path: ['machines', 'runs', 'list'], visibility: 'canonical' }] },
     toolExposure: { agent: 'discoverable_only', mcp: 'discoverable_only' },
     inputSchema: MACHINE_PAGE_ACTION_INPUT_SCHEMAS['machines.runs.list'], outputSchema: MACHINE_PAGE_ACTION_OUTPUT_SCHEMAS['machines.runs.list'],
+    invocationServerIdForInput: actionInputServerId(MACHINE_PAGE_ACTION_INPUT_SCHEMAS['machines.runs.list'], input => input.serverId),
     inputHints: { fields: [{ path: 'serverId', title: 'Home ID', widget: 'text' }, { path: 'machineId', title: 'Machine ID', widget: 'text', required: true }] },
   },
   {
@@ -192,6 +195,7 @@ function createMachineConnectionActionSpecs() {
     cli: { commands: [{ path: ['machines', 'metadata', 'update'], visibility: 'canonical' }] },
     toolExposure: { agent: 'discoverable_only', mcp: 'discoverable_only' },
     inputSchema: MACHINE_PAGE_ACTION_INPUT_SCHEMAS['machines.metadata.update'], outputSchema: MACHINE_PAGE_ACTION_OUTPUT_SCHEMAS['machines.metadata.update'],
+    invocationServerIdForInput: actionInputServerId(MACHINE_PAGE_ACTION_INPUT_SCHEMAS['machines.metadata.update'], input => input.serverId),
     inputHints: { fields: [
       { path: 'serverId', title: 'Home ID', widget: 'text' }, { path: 'machineId', title: 'Machine ID', widget: 'text', required: true },
       { path: 'expectedVersion', title: 'Metadata version', widget: 'text' }, { path: 'patch', title: 'Changes', widget: 'json', required: true },
@@ -206,6 +210,7 @@ function createMachineConnectionActionSpecs() {
     cli: { commands: [{ path: ['machines', 'daemon', 'stop'], visibility: 'canonical' }] },
     toolExposure: { agent: 'discoverable_only', mcp: 'discoverable_only' },
     inputSchema: MACHINE_PAGE_ACTION_INPUT_SCHEMAS['machines.daemon.stop'], outputSchema: MACHINE_PAGE_ACTION_OUTPUT_SCHEMAS['machines.daemon.stop'],
+    invocationServerIdForInput: actionInputServerId(MACHINE_PAGE_ACTION_INPUT_SCHEMAS['machines.daemon.stop'], input => input.serverId),
     inputHints: { fields: [{ path: 'serverId', title: 'Home ID', widget: 'text' }, { path: 'machineId', title: 'Machine ID', widget: 'text', required: true }] },
   },
   {
@@ -218,6 +223,7 @@ function createMachineConnectionActionSpecs() {
     cli: { commands: [{ path: ['machines', 'remove'], visibility: 'canonical' }] },
     toolExposure: { agent: 'discoverable_only', mcp: 'discoverable_only' },
     inputSchema: MACHINE_PAGE_ACTION_INPUT_SCHEMAS['machines.remove'], outputSchema: MACHINE_PAGE_ACTION_OUTPUT_SCHEMAS['machines.remove'],
+    invocationServerIdForInput: actionInputServerId(MACHINE_PAGE_ACTION_INPUT_SCHEMAS['machines.remove'], input => input.serverId),
     inputHints: { fields: [{ path: 'serverId', title: 'Home ID', widget: 'text' }, { path: 'machineId', title: 'Machine ID', widget: 'text', required: true }] },
   },
   {
@@ -229,6 +235,7 @@ function createMachineConnectionActionSpecs() {
     cli: { commands: [{ path: ['machines', 'capabilities', 'install'], visibility: 'canonical' }] },
     toolExposure: { agent: 'discoverable_only', mcp: 'discoverable_only' },
     inputSchema: MachineCapabilityInstallInputSchema, outputSchema: MachineCapabilityInstallOutputSchema,
+    invocationServerIdForInput: actionInputServerId(MachineCapabilityInstallInputSchema, input => input.serverId),
     inputHints: { fields: [
       { path: 'serverId', title: 'Home ID', widget: 'text' }, { path: 'machineId', title: 'Machine ID', widget: 'text', required: true },
       { path: 'capabilityId', title: 'Installable capability ID', widget: 'text', required: true },
@@ -246,6 +253,7 @@ function createMachineConnectionActionSpecs() {
     cli: { commands: [{ path: ['machines', 'replacement', 'set'], visibility: 'canonical' }] },
     toolExposure: { agent: 'discoverable_only', mcp: 'discoverable_only' },
     inputSchema: MachineReplacementSetInputSchema, outputSchema: MachineReplacementOutputSchema,
+    invocationServerIdForInput: actionInputServerId(MachineReplacementSetInputSchema, input => input.serverId),
     inputHints: { fields: [
       { path: 'serverId', title: 'Home ID', widget: 'text' }, { path: 'machineId', title: 'Machine ID', widget: 'text', required: true },
       { path: 'replacementMachineId', title: 'Replacement Machine ID', widget: 'text', required: true },
@@ -262,6 +270,7 @@ function createMachineConnectionActionSpecs() {
     cli: { commands: [{ path: ['machines', 'replacement', 'clear'], visibility: 'canonical' }] },
     toolExposure: { agent: 'discoverable_only', mcp: 'discoverable_only' },
     inputSchema: MachineReplacementClearInputSchema, outputSchema: MachineReplacementOutputSchema,
+    invocationServerIdForInput: actionInputServerId(MachineReplacementClearInputSchema, input => input.serverId),
     inputHints: { fields: [{ path: 'serverId', title: 'Home ID', widget: 'text' }, { path: 'machineId', title: 'Machine ID', widget: 'text', required: true }] },
   },
   {
