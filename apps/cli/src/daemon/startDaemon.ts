@@ -254,6 +254,7 @@ import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtim
 import type { DaemonPluginChangeOwner } from '@/plugins/daemon/changeService';
 import { createDaemonPluginRuntimeOwner, createDaemonPluginTransferRpcResolver } from '@/plugins/daemon/runtimeOwner';
 import { createDaemonMachineAdminAccessRoutes } from '@/machines/adminAccess/createDaemonMachineAdminAccessRoutes';
+import { createAgentIsolationNativeReadinessQualification } from './agentIsolation/agentIsolationReadiness';
 import { createDaemonAgentIsolationEffects } from './agentIsolation/createDaemonAgentIsolationEffects';
 import { createDaemonPluginDevelopmentReviewApprovalPublisher } from '@/plugins/daemon/developmentReviewApproval';
 import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
@@ -1695,14 +1696,16 @@ export async function startDaemon(
         custodianAccountId: externalActionAccountId, privateKey: installation.privateKey,
         token: credentials.token, serverUrl: readManagedPolicyServerHttpBaseUrl() };
     };
-    const readCurrentManagedMachinePolicies = async (signal?: AbortSignal) => {
+    const readCurrentManagedMachinePolicies = async (signal?: AbortSignal, managedId?: string) => {
       const origin = await resolveCurrentMachineExecutionOriginContext(signal);
       const controller = readCurrentManagedPolicyController();
       if (!controller || !origin || origin.serverIdentityId !== controller.homeId || origin.machineId !== controller.controller.machineId) {
         throw Object.assign(new Error('controller_unavailable'), { code: 'controller_unavailable' });
       }
-      return await readManagedMachinePolicyCensus({ ...controller, signal });
+      return await readManagedMachinePolicyCensus({ ...controller, signal, managedId });
     };
+    const readCurrentManagedMachinePolicy = async (managedId: string, signal?: AbortSignal) =>
+      (await readCurrentManagedMachinePolicies(signal, managedId)).machines[0] ?? null;
     const browserRuntimeActionExecute = api.createBrowserRuntimeActionExecutor({
       observeExecution: request => apiMachineForSessions
         ? apiMachineForSessions.observeActionExecution(request)
@@ -1737,6 +1740,9 @@ export async function startDaemon(
     machineRpcRouteAttachments.attachMachineAgentIsolationRoutes(isolationEffects);
     const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext = {
       managedHappierBinaryPath: isolationEffects.installedCli,
+      qualifyNativeReadiness: createAgentIsolationNativeReadinessQualification({
+        read: () => agentIsolation.read(), effects: isolationEffects,
+      }),
       async readMember(input) {
         const machine = apiMachineForSessions;
         if (!machine) throw new Error('agent_isolation_unavailable');
@@ -2318,9 +2324,7 @@ export async function startDaemon(
         }
         return await producer.machineServices.prepareTeamCredentialNativeSource(request, signal);
       },
-      readManagedMachinePolicyCurrent: async (managedId, signal) => (
-        await readCurrentManagedMachinePolicies(signal)
-      ).machines.find(machine => machine.id === managedId) ?? null,
+      readManagedMachinePolicyCurrent: readCurrentManagedMachinePolicy,
       externalActionAccountId,
       resolveProjectWorkerAction: () => projectWorkerAction,
       resolveWorkspaceSyncHandoffAdapter: () => workspaceSyncRuntimeCustody.get()?.handoffAdapter ?? null,
@@ -4290,7 +4294,7 @@ export async function startDaemon(
           machineRpcRouteAttachments.attachApiMachineForSessions(apiMachineForSessions);
           if (attemptedApiMachineForSessions) {
             attemptedApiMachineForSessions.registerManagedFiniteWake({
-              readCurrent: async (managedId, signal) => (await readCurrentManagedMachinePolicies(signal)).machines.find(machine => machine.id === managedId) ?? null,
+              readCurrent: readCurrentManagedMachinePolicy,
               executePolicy: managedMachinePolicyAdapter.executePolicy,
             });
             attemptedManagedMachinePolicyRuntime = createDaemonManagedMachinePolicyRuntime({

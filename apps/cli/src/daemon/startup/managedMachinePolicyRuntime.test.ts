@@ -176,12 +176,18 @@ describe('daemon managed policy census transport', () => {
     it.each([
         { desired: 'delete', submitted: true, enrolled: false, deadline: false },
         { desired: 'delete', submitted: false, enrolled: true, deadline: false },
+        { desired: 'delete', submitted: false, enrolled: false, deadline: false },
         { desired: 'start', submitted: true, enrolled: false, deadline: false },
         { desired: 'delete', submitted: false, enrolled: true, deadline: true },
         { desired: 'stop', submitted: true, enrolled: false, deadline: false },
         { desired: 'stop', submitted: true, enrolled: true, deadline: false },
         { desired: 'stop', submitted: true, enrolled: true, deadline: true },
         { desired: 'suspend', submitted: true, enrolled: true, deadline: false },
+        { desired: 'stop', submitted: false, enrolled: true, deadline: false },
+        { desired: 'stop', submitted: false, enrolled: false, deadline: false },
+        { desired: 'stop', submitted: false, enrolled: true, deadline: true },
+        { desired: 'suspend', submitted: false, enrolled: true, deadline: false },
+        { desired: 'suspend', submitted: false, enrolled: false, deadline: false },
     ] as const)('creates no retention operations during repeated invalidations for a manual Delete or Stop: %j', async fixture => {
         const key = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(8));
         const controller = { machineId: 'controller', installationId: 'installation' };
@@ -189,7 +195,7 @@ describe('daemon managed policy census transport', () => {
             launch: { provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
             allocation: 'bound', resource: { contributionRef: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, value: {} },
             creationState: 'active', desired: fixture.desired, desiredWhen: 'now', intentRevision: 1,
-            retention: fixture.deadline ? { kind: 'deadline', at: 0, effect: 'stop', interrupts: true }
+            retention: fixture.deadline ? { kind: 'deadline', at: 0, effect: 'stop' }
                 : { kind: 'unused', afterMs: 3_600_000, effect: 'stop' }, wakeOnAcceptedMessage: false,
             ...(fixture.enrolled ? { enrolledMachineId: 'guest' } : {}),
             ...(fixture.submitted ? { submittedNativeEffect: { intentRevision: 1, requestId: 'manual-control',
@@ -208,9 +214,13 @@ describe('daemon managed policy census transport', () => {
             executeManagedPolicyAction: (current, context, runApproved, purpose) => executeManagedMachinePolicyAction({ machine: current, purpose,
                 context, runApproved, serverId: 'home', createExecutor: overrides => createActionExecutor({ ...createUnavailableActionTransportDeps(), ...overrides }) }),
         });
+        let readinessReads = 0;
         const runtime = createDaemonManagedMachinePolicyRuntime({
-            loadMachine: async id => ({ id, encryptionMode: 'plain', active: true, metadata: null, metadataVersion: 0,
-                daemonState: { status: 'running' }, daemonStateVersion: 1 }),
+            loadMachine: async id => {
+                readinessReads += 1;
+                return { id, encryptionMode: 'plain', active: true, metadata: null, metadataVersion: 0,
+                    daemonState: { status: 'running' }, daemonStateVersion: 1 };
+            },
             readCensus: signal => readManagedMachinePolicyCensus({ homeId: 'home', controller,
                 custodianAccountId: 'owner', privateKey: key.secretKey, token: 'owner-token', serverUrl: 'https://home.example', signal }),
             executePolicy: adapter.executePolicy,
@@ -222,12 +232,14 @@ describe('daemon managed policy census transport', () => {
             }
             expect(censusReads).toBe(32);
             expect(ActionOperationListV1ResponseSchema.parse(await operations.handlers.listV2({})).items).toHaveLength(0);
+            expect(readinessReads).toBe(0);
         } finally { await runtime.stop(); }
     });
-    it('defers unused retention until guest readiness without deferring a reviewed deadline or canceled creation cleanup', async () => {
+    it.each([false, true])('defers unused retention until exact guest readiness without private cross-Account reads (requester guest=%s)', async requesterGuest => {
         const key = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(8));
         const controller = { machineId: 'controller', installationId: 'installation' };
         let machine = ManagedMachineV1Schema.parse({ id: 'managed', homeId: 'home', custodianAccountId: 'owner',
+            ...(requesterGuest ? { enrollmentAccountId: 'requester' } : {}),
             controller,
             launch: { provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
             allocation: 'bound', resource: { contributionRef: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, value: {} },
@@ -246,8 +258,11 @@ describe('daemon managed policy census transport', () => {
         });
         const list = async () => ActionOperationListV1ResponseSchema.parse(await operations.handlers.listV2({})).items;
         const runtime = createDaemonManagedMachinePolicyRuntime({
-            loadMachine: async id => ({ id, encryptionMode: 'plain', active: true, metadata: null, metadataVersion: 0,
-                daemonState: { status: 'running' }, daemonStateVersion: 1 }),
+            loadMachine: async id => {
+                if (requesterGuest) throw new Error('The custodian cannot read requester-private guest state');
+                return { id, encryptionMode: 'plain', active: true, metadata: null, metadataVersion: 0,
+                    daemonState: { status: 'running' }, daemonStateVersion: 1 };
+            },
             readCensus: signal => readManagedMachinePolicyCensus({ homeId: 'home', controller,
                 custodianAccountId: 'owner', privateKey: key.secretKey, token: 'owner-token', serverUrl: 'https://home.example', signal }),
             executePolicy: adapter.executePolicy,
@@ -267,7 +282,7 @@ describe('daemon managed policy census transport', () => {
             await vi.waitFor(async () => expect(await list()).toMatchObject([{ state: 'failed', error: { errorCode: 'admission_unavailable' },
                 domainRef: { kind: 'managedMachine', id: machine.id } }]));
             machine = ManagedMachineV1Schema.parse({ ...machine, enrolledMachineId: undefined,
-                retention: { kind: 'deadline', at: Date.now() + 3_600_000, effect: 'stop', interrupts: true } });
+                retention: { kind: 'deadline', at: Date.now() + 3_600_000, effect: 'stop' } });
             vi.mocked(axios.post).mockResolvedValue({ status: 200, data: { machines: [machine], targets: [] } });
             await notify();
             await vi.waitFor(async () => expect(await list()).toHaveLength(2));
@@ -405,6 +420,15 @@ describe('daemon managed policy census transport', () => {
         const input = { homeId: 'home', controller: { machineId: 'controller', installationId: 'installation' },
             custodianAccountId: 'owner', privateKey: key.secretKey, token: 'owner-token', serverUrl: 'https://home.example' };
         expect(await readManagedMachinePolicyCensus(input)).toEqual({ machines: [], targets: [] });
+        const exact = { ...input, managedId: 'retained' };
+        expect(await readManagedMachinePolicyCensus(exact)).toEqual({ machines: [], targets: [] });
+        expect(ManagedPolicyCensusInputV1Schema.parse(vi.mocked(axios.post).mock.calls.at(-1)?.[1]))
+            .toMatchObject({ managedId: 'retained' });
+        expect(vi.mocked(axios.post).mock.calls.at(-1)?.[1]).not.toHaveProperty('includeNativeCredentialBindings');
+        expect(await readManagedMachinePolicyCensus({ ...input, nativeCredentialManagedId: 'native-credentials' }))
+            .toEqual({ machines: [], targets: [] });
+        expect(ManagedPolicyCensusInputV1Schema.parse(vi.mocked(axios.post).mock.calls.at(-1)?.[1]))
+            .toMatchObject({ managedId: 'native-credentials', includeNativeCredentialBindings: true });
         vi.mocked(axios.post).mockResolvedValue({ status: 403, data: { machines: [], targets: [] } });
         await expect(readManagedMachinePolicyCensus(input)).rejects.toMatchObject({ code: 'admission_unavailable' });
     });

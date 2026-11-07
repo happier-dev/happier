@@ -28,7 +28,7 @@ interface QueryMeasurement {
 }
 
 /** Observe real Prisma I/O; domain logic, query results and transaction options stay intact. */
-async function measure<T>(phase: string, operation: () => Promise<T>) {
+export async function measure<T>(phase: string, operation: () => Promise<T>) {
     const queries: QueryMeasurement[] = [];
     const original = db.$transaction;
     const start = performance.now();
@@ -236,7 +236,7 @@ export async function exerciseManagedProjectionVolume() {
         installationId: controller.installationId, pluginMaterializationRevision: 1n } });
     const manifest = await seedBundledManagedAvailability(account.id, homeId, controller);
     const launch = { provider: { pluginId: manifest.id, localId: 'lima' }, schemaVersion: 1, name: 'Volume guest',
-        choices: { instance: 'volume-guest', store: '/tmp/volume-guests', image: 'fixture:image', arch: 'x86_64',
+        choices: { store: '/tmp/volume-guests', image: 'fixture:image', arch: 'x86_64',
             vmType: 'qemu', cpus: 2, memoryGiB: 4, diskGiB: 16, mounts: [] } };
     const app = fastify().withTypeProvider<ZodTypeProvider>();
     app.setValidatorCompiler(validatorCompiler);
@@ -265,7 +265,7 @@ export async function exerciseManagedProjectionVolume() {
                 url: '/v1/machines/managed/actions/list', payload: { homeId } })) });
         }
         const create = await measure('create', () => app.inject({ method: 'POST', url: '/v1/machines/managed/controller/admit', payload: {
-            input: { selection: { kind: 'one-off', homeId, controller, launch,
+            input: { enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' }, selection: { kind: 'one-off', homeId, controller, launch,
                 retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } },
             requestId: 'volume-create', continuationPresent: false,
         } }));

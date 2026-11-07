@@ -4,18 +4,18 @@ import {
     MACHINE_PLAIN_DATA_KEY_MARKER, decodeBase64, encodeBase64, encodePlainMachineStoredContent,
     API_TOKEN_FULL_GRANT_V1,
     PluginManifestV2Schema, ManagedPolicyAdmissionInputV1Schema, ManagedControllerMachineOutputV1Schema,
-    ManagedResourceV1Schema, createManagedPolicyProofV1, encodeManagedPolicyProofV1, MANAGED_POLICY_PROOF_HEADER,
+    ManagedResourceV1Schema, createManagedPolicyProofV1, createManagedPolicyCensusProofV1, encodeManagedPolicyProofV1, MANAGED_POLICY_PROOF_HEADER,
     ExternalActionExecutionAuthorizationV1Schema,
     ActionIdSchema, createActionExecutor, getActionSpec, normalizeActionsSettingsV1,
     type ActionExecutorDeps,
     type ExternalActionExecutionAuthorizationV1,
 } from '@happier-dev/protocol';
 import { auth } from '@/app/auth/auth';
-import { db } from '@/storage/db';
+import { db, initDbPostgres } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
-import { setMachineAccessGrantInTx } from '@/app/machines/machineAccess';
+import { setEligibleMachineAccessGrantInTx as setMachineAccessGrantInTx } from '@/testkit/machineAccessGrant.testkit';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
-import { assertManagedWakeOriginCurrentInTx, prepareManagedFiniteActionWake, readManagedWakeTargets } from './managedWake';
+import { assertManagedWakeOriginCurrentInTx, prepareManagedFiniteActionWake, readManagedWakeTargets, resolveManagedWakeTargetInTx } from './managedWake';
 import { projectManagedMachine } from './managedRows';
 import { createExternalActionDaemonDispatcher, EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1,
     resolveCurrentSessionMachineFromServer, resolveCurrentSessionPublisherFromServer } from '@/app/api/socket/externalActionDispatcher';
@@ -24,6 +24,7 @@ import type { Socket } from 'socket.io';
 import tweetnacl from 'tweetnacl';
 import { createExternalActionDaemonDispatchResponseV1, prepareExternalActionResponseEnvelopeV1,
     computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions';
+import { ExternalActionDaemonDispatchRequestSchema } from '@happier-dev/protocol/actions/externalActionApi';
 import { signExternalActionMachineRpcRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { MANAGED_FINITE_WAKE_RPC_METHOD } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { SOCKET_RPC_EVENTS, SessionActionRpcOriginV1Schema } from '@happier-dev/protocol/socketRpc';
@@ -31,7 +32,7 @@ import { signMachineInstallationProof } from '@happier-dev/protocol/machines/ide
 import { createSessionPublisherPresence } from '@/app/presence/sessionPublisherPresence';
 import { getAccountSessionSocketRoom } from '@/app/api/socketRooms';
 import { applyEnvValues, restoreEnv, snapshotEnv } from '@/testkit/env';
-import { encryptString } from '@/modules/encrypt';
+import { encryptString, initEncrypt } from '@/modules/encrypt';
 import { registerManagedMachineRoutes } from './managedRoutes';
 import { createReleaseLessDeclarationV1 } from '@/app/plugins/availability/currentDeclaration';
 import { defineProtocolObject } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
@@ -67,15 +68,31 @@ import { PendingActivationHoldReasonV1Schema, ManagedPendingActivationFailureReq
 import { markPendingActivationAuthorizationFailedInTx, mapPendingActivationAuthorization } from '@/app/session/pending/pendingActivationAuthorization';
 import { sealExternalActionRequestV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
+import { measure } from './managedProjectionVolume.testkit';
 
-describe('finite managed wake original Action authority (real SQLite)', () => {
-    let harness: LightSqliteHarness;
+describe('finite managed wake original Action authority (real storage)', () => {
+    let harness: LightSqliteHarness | undefined;
     const homeId = `srv_${'f'.repeat(32)}`;
+    const initialEnv = snapshotEnv();
     beforeAll(async () => {
-        harness = await createLightSqliteHarness({ tempDirPrefix: 'happier-finite-wake-', initAuth: true, initEncrypt: true,
-            env: { HAPPIER_SERVER_IDENTITY_ID: homeId } });
+        if (process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL) {
+            if (process.env.DATABASE_URL !== process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL) {
+                throw new Error('Use only the disposable PostgreSQL DB-contract harness');
+            }
+            Object.assign(process.env, { HAPPIER_SERVER_IDENTITY_ID: homeId, HANDY_MASTER_SECRET: randomUUID() });
+            initDbPostgres();
+            await db.$connect();
+            await auth.init();
+            await initEncrypt();
+        } else {
+            harness = await createLightSqliteHarness({ tempDirPrefix: 'happier-finite-wake-', initAuth: true, initEncrypt: true,
+                env: { HAPPIER_SERVER_IDENTITY_ID: homeId } });
+        }
     }, 120_000);
-    afterAll(async () => { if (harness) await harness.close(); });
+    afterAll(async () => {
+        try { if (harness) await harness.close(); else await db.$disconnect(); }
+        finally { restoreEnv(initialEnv); }
+    });
 
     async function setup() {
         const account = await db.account.create({ data: { encryptionMode: 'plain' } });
@@ -88,7 +105,8 @@ describe('finite managed wake original Action authority (real SQLite)', () => {
                 homeDir: '/home/wake', happyHomeDir: '/home/wake/.happier' }),
             dataEncryptionKey: new Uint8Array(decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64')),
             operationProtocolCapabilitiesRevision: 1,
-            operationProtocolCapabilities: { externalActionExecutionAuthorization: { protocolVersions: [1] }, projectFiniteExecution: { protocolVersions: [1] } },
+            operationProtocolCapabilities: { externalActionExecutionAuthorization: { protocolVersions: [1] },
+                projectFiniteExecution: { protocolVersions: [1] }, requesterExecutionIsolation: { protocolVersions: [1] } },
         } });
         const controller = await machine(true);
         const guest = await machine(false);
@@ -113,51 +131,126 @@ describe('finite managed wake original Action authority (real SQLite)', () => {
         return { account, controller, controllerKeys, guest, guestKeys, row, target, actionOrigin, check, requestId };
     }
 
-    it('publishes accepted requester Pending activation to its foreign managed controller Account', async () => {
+    it.each([false, true])('retains controller-free explicit Send independently of unattended wake choice (%s)', async wakeOnAcceptedMessage => {
         const test = await setup();
-        const requester = await db.account.create({ data: { encryptionMode: 'plain' } });
-        for (const machine of [test.controller, test.guest]) await inTx(tx => setMachineAccessGrantInTx(tx, {
-            actorAccountId: test.account.id, machineId: machine.id,
-            principal: { kind: 'account', accountId: requester.id }, level: 'admin',
-        }));
+        await db.managedMachine.update({ where: { id: test.row.id }, data: {
+            controllerMachineId: null, controllerInstallationId: null, wakeOnAcceptedMessage,
+        } });
         await db.machine.update({ where: { id: test.guest.id }, data: {
             operationProtocolCapabilities: { sessionInputAdmission: { protocolVersions: [1, 2] } },
         } });
-        const session = await db.session.create({ data: {
-            accountId: requester.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain', active: false,
-        } });
-        expect(await inTx(tx => createSessionMachineAccessKeyInTx(tx, {
-            accountId: requester.id, sessionId: session.id, machineId: test.guest.id, data: 'private-key-ciphertext',
-        }))).toMatchObject({ ok: true });
+        const session = await db.session.create({ data: { accountId: test.account.id, tag: randomUUID(),
+            metadata: '{}', encryptionMode: 'plain', active: false } });
+        expect(await inTx(tx => createSessionMachineAccessKeyInTx(tx, { accountId: test.account.id,
+            sessionId: session.id, machineId: test.guest.id, data: 'private-key-ciphertext' }))).toMatchObject({ ok: true });
         const localId = randomUUID();
-        const authentication = createPresentUserSessionAccessAuthentication();
-        const input = { actorUserId: requester.id, authentication, sessionId: session.id, localId,
-            targetMachineId: test.guest.id, requestedAction: { v: 1, kind: 'send_now' },
-            content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'accepted wake' } } } } as const;
+        const input = { actorUserId: test.account.id, authentication: createPresentUserSessionAccessAuthentication(),
+            sessionId: session.id, localId, targetMachineId: test.guest.id,
+            requestedAction: { v: 1, kind: 'send_now' },
+            content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'kept on the original Session' } } } } as const;
         const envBefore = snapshotEnv();
         applyEnvValues({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional' });
         try {
-            const enqueue = await enqueuePendingMessage(input);
-            expect(enqueue, JSON.stringify(enqueue)).toMatchObject({ ok: true, activationTarget: {
-                accountId: requester.id, managedControllerPublication: { accountId: test.account.id, cursor: expect.any(Number) },
-            } });
-            expect(await db.accountChange.findUnique({ where: { accountId_kind_entityId: {
-                accountId: test.account.id, kind: 'machine', entityId: test.controller.id,
-            } } })).toMatchObject({ cursor: enqueue.ok && 'activationTarget' in enqueue
-                ? enqueue.activationTarget?.managedControllerPublication?.cursor : undefined });
-            const replaced = await updatePendingRequestedAction({ actorUserId: requester.id, authentication,
-                sessionId: session.id, localId, requestedAction: { v: 1, kind: 'enqueue' }, resumeWhenAvailable: true });
-            expect(replaced).toMatchObject({ ok: true, didUpdate: true, activationTarget: {
-                managedControllerPublication: { accountId: test.account.id, cursor: expect.any(Number) },
-            } });
-            await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: test.account.id, machineId: test.controller.id,
-                principal: { kind: 'account', accountId: requester.id }, level: 'view' }));
-            expect(await updatePendingRequestedAction({ actorUserId: requester.id, authentication,
-                sessionId: session.id, localId, requestedAction: { v: 1, kind: 'send_now' } }))
-                .toMatchObject({ ok: true, activationTarget: { accountId: requester.id } });
-            const sessionAfter = await db.session.findUniqueOrThrow({ where: { id: session.id } });
-            expect(sessionAfter.pendingActivationManagedTarget).toBeNull();
+            expect(await enqueuePendingMessage(input)).toMatchObject({ ok: true });
+            const retained = await db.session.findUniqueOrThrow({ where: { id: session.id } });
+            expect(mapPendingActivationAuthorization(retained)?.managedWakeTargetV1).toMatchObject({
+                managedId: test.row.id, enrolledMachineId: test.guest.id,
+                origin: { kind: 'session-input', session: { sessionId: session.id }, pendingRequestId: localId },
+            });
+            const request = { homeId, controller: { machineId: test.controller.id, installationId: test.controller.installationId! } };
+            expect((await readManagedWakeTargets({ actorAccountId: test.account.id, request })).targets).toHaveLength(wakeOnAcceptedMessage ? 1 : 0);
+            expect(await listPendingMessages(input)).toMatchObject({ ok: true, pending: [{ localId,
+                status: 'queued', deliveryState: null, content: input.content }] });
+            expect(await db.managedMachine.findUniqueOrThrow({ where: { id: test.row.id } }))
+                .toMatchObject({ desired: 'stop', intentRevision: test.row.intentRevision });
+            await db.managedMachine.update({ where: { id: test.row.id }, data: { wakeOnAcceptedMessage: false } });
+            expect((await readManagedWakeTargets({ actorAccountId: test.account.id, request })).targets).toEqual([]);
+            expect(await listPendingMessages(input)).toMatchObject({ ok: true, pending: [{ localId,
+                status: 'queued', deliveryState: null, content: input.content }] });
         } finally { restoreEnv(envBefore); }
+    });
+
+    it.each([false, true])('reads one current resource without fleet wake discovery (controller-free: %s)', async controllerFree => {
+        const test = await setup();
+        const controller = { machineId: test.controller.id, installationId: test.controller.installationId! };
+        const ids = [test.row.id];
+        for (let index = 0; index < 3; index += 1) {
+            const other = await setup();
+            await db.managedMachine.update({ where: { id: other.row.id }, data: { custodianAccountId: test.account.id,
+                controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId } });
+            ids.push(other.row.id);
+        }
+        if (controllerFree) await db.managedMachine.update({ where: { id: test.row.id }, data: {
+            controllerMachineId: null, controllerInstallationId: null,
+        } });
+        await withAuthenticatedTestApp(registerManagedMachineRoutes, async app => {
+            const read = (managedId?: string, accountId = test.account.id) => app.inject({ method: 'POST',
+                url: '/v1/machines/managed/controller/policies', headers: { 'x-test-user-id': accountId },
+                payload: { homeId, controller, ...(managedId ? { managedId } : {}),
+                    proof: createManagedPolicyCensusProofV1({ homeId, controller, custodianAccountId: test.account.id,
+                        privateKey: test.controllerKeys.secretKey }) } });
+            const exact = await measure('exact-managed-currentness', () => read(test.row.id));
+            expect(exact.value.statusCode, exact.value.body).toBe(200);
+            expect(exact.value.json().machines.map((machine: { id: string }) => machine.id)).toEqual([test.row.id]);
+            expect(exact.value.json().targets).toEqual([]);
+            expect(exact.queries.filter(query => query.model === 'managedMachine')
+                .reduce((sum, query) => sum + query.rows, 0)).toBe(1);
+            expect(exact.queries.filter(query => query.model === 'session' || query.model === 'automationRun')).toEqual([]);
+            if (!controllerFree) {
+                const fleet = await measure('scheduler-managed-census', () => read());
+                expect(fleet.value.statusCode, fleet.value.body).toBe(200);
+                expect(fleet.value.json().machines.map((machine: { id: string }) => machine.id).sort()).toEqual(ids.sort());
+                expect(fleet.queries.some(query => query.model === 'session')).toBe(true);
+                expect(fleet.queries.some(query => query.model === 'automationRun')).toBe(true);
+            }
+            const stranger = await setup();
+            expect((await read(test.row.id, stranger.account.id)).statusCode).toBe(403);
+            for (const invalid of [
+                { homeId: `srv_${'e'.repeat(32)}`, controller, privateKey: test.controllerKeys.secretKey, status: 403 },
+                { homeId, controller: { ...controller, installationId: randomUUID() }, privateKey: test.controllerKeys.secretKey, status: 409 },
+                { homeId, controller, privateKey: test.guestKeys.secretKey, status: 403 },
+            ]) {
+                const denied = await app.inject({ method: 'POST', url: '/v1/machines/managed/controller/policies',
+                    headers: { 'x-test-user-id': test.account.id }, payload: { homeId: invalid.homeId,
+                        controller: invalid.controller, managedId: test.row.id,
+                        proof: createManagedPolicyCensusProofV1({ ...invalid, custodianAccountId: test.account.id }) } });
+                expect(denied.statusCode, denied.body).toBe(invalid.status);
+            }
+            if (controllerFree) {
+                await db.managedMachine.update({ where: { id: ids[1] }, data: {
+                    controllerMachineId: null, controllerInstallationId: null,
+                } });
+                // A different retained guest is not the Account's private daemon
+                // and cannot inspect this resource as its executor.
+                const guestController = { machineId: test.guest.id, installationId: test.guest.installationId! };
+                const wrongGuest = await app.inject({ method: 'POST', url: '/v1/machines/managed/controller/policies',
+                    headers: { 'x-test-user-id': test.account.id }, payload: { homeId, controller: guestController, managedId: ids[1],
+                        proof: createManagedPolicyCensusProofV1({ homeId, controller: guestController,
+                            custodianAccountId: test.account.id, privateKey: test.guestKeys.secretKey }) } });
+                expect(wrongGuest.statusCode, wrongGuest.body).toBe(200);
+                expect(wrongGuest.json().machines).toEqual([]);
+            }
+        });
+    });
+
+    it.each([false, true])('lets the enrolled guest census read its controller-free Stop policy without acquiring another resource (exact: %s)', async exact => {
+        const test = await setup();
+        await db.managedMachine.update({ where: { id: test.row.id }, data: { controllerMachineId: null,
+            controllerInstallationId: null, desired: 'start', retention: { kind: 'unused', afterMs: 3_600_000, effect: 'stop' } } });
+        const other = await setup();
+        await db.managedMachine.update({ where: { id: other.row.id }, data: { custodianAccountId: test.account.id,
+            controllerMachineId: null, controllerInstallationId: null } });
+        await withAuthenticatedTestApp(registerManagedMachineRoutes, async app => {
+            const controller = { machineId: test.guest.id, installationId: test.guest.installationId! };
+            const response = await app.inject({ method: 'POST', url: '/v1/machines/managed/controller/policies',
+                headers: { 'x-test-user-id': test.account.id }, payload: { homeId, controller,
+                    ...(exact ? { managedId: test.row.id } : {}),
+                    proof: createManagedPolicyCensusProofV1({ homeId, controller, custodianAccountId: test.account.id,
+                        privateKey: test.guestKeys.secretKey }) } });
+            expect(response.statusCode).toBe(200);
+            expect(response.json().machines.map((machine: { id: string }) => machine.id)).toEqual([test.row.id]);
+            expect(response.json().targets).toEqual([]);
+        });
     });
 
     it.each([
@@ -245,6 +338,68 @@ describe('finite managed wake original Action authority (real SQLite)', () => {
             expect(await enqueuePendingMessage({ ...input, sessionId: ordinarySession.id,
                 targetMachineId: ordinaryGuest.id, localId: randomUUID() })).toMatchObject({ ok: true });
             expect((await db.session.findUniqueOrThrow({ where: { id: ordinarySession.id } })).pendingActivationRequestId).toBeNull();
+        } finally { restoreEnv(envBefore); }
+    });
+
+    it.each(['manage', 'use'] as const)('publishes accepted requester Pending activation to its foreign managed controller Account (guest %s)', async role => {
+        const test = await setup();
+        const requester = await db.account.create({ data: { encryptionMode: 'plain' } });
+        // Use-only requesters can submit work to the guest without access to its controller.
+        for (const machine of role === 'manage' ? [test.controller, test.guest] : [test.guest]) await inTx(tx => setMachineAccessGrantInTx(tx, {
+            actorAccountId: test.account.id, machineId: machine.id,
+            principal: { kind: 'account', accountId: requester.id }, level: role === 'manage' ? 'admin' : 'view',
+        }));
+        await db.machine.update({ where: { id: test.guest.id }, data: {
+            operationProtocolCapabilities: { sessionInputAdmission: { protocolVersions: [1, 2] } },
+        } });
+        const session = await db.session.create({ data: {
+            accountId: requester.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain', active: false,
+        } });
+        expect(await inTx(tx => createSessionMachineAccessKeyInTx(tx, {
+            accountId: requester.id, sessionId: session.id, machineId: test.guest.id, data: 'private-key-ciphertext',
+        }))).toMatchObject({ ok: true });
+        const localId = randomUUID();
+        const authentication = createPresentUserSessionAccessAuthentication();
+        const input = { actorUserId: requester.id, authentication, sessionId: session.id, localId,
+            targetMachineId: test.guest.id, requestedAction: { v: 1, kind: 'send_now' },
+            content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'accepted wake' } } } } as const;
+        const envBefore = snapshotEnv();
+        applyEnvValues({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional' });
+        try {
+            const enqueue = await enqueuePendingMessage(input);
+            expect(enqueue, JSON.stringify(enqueue)).toMatchObject({ ok: true, activationTarget: {
+                accountId: requester.id, managedControllerPublication: { accountId: test.account.id, cursor: expect.any(Number) },
+            } });
+            const reconnect = () => readManagedWakeTargets({ actorAccountId: test.account.id, request: { homeId,
+                controller: { machineId: test.controller.id, installationId: test.controller.installationId! } } });
+            expect((await reconnect()).targets).toMatchObject([{ managedId: test.row.id,
+                origin: { kind: 'session-input', session: { sessionId: session.id } } }]);
+            const target = (await reconnect()).targets[0]!;
+            await expect(inTx(tx => assertManagedWakeOriginCurrentInTx(tx, { row: test.row, target })))
+                .resolves.toBeUndefined();
+            if (role === 'use') {
+                expect(await inTx(tx => resolveManagedWakeTargetInTx(tx, { actorAccountId: requester.id,
+                    machineId: test.guest.id, origin: test.target.origin }))).toBeUndefined();
+            }
+            expect(await db.accountChange.findUnique({ where: { accountId_kind_entityId: {
+                accountId: test.account.id, kind: 'machine', entityId: test.controller.id,
+            } } })).toMatchObject({ cursor: enqueue.ok && 'activationTarget' in enqueue
+                ? enqueue.activationTarget?.managedControllerPublication?.cursor : undefined });
+            const replaced = await updatePendingRequestedAction({ actorUserId: requester.id, authentication,
+                sessionId: session.id, localId, requestedAction: { v: 1, kind: 'enqueue' }, resumeWhenAvailable: true });
+            expect(replaced).toMatchObject({ ok: true, didUpdate: true, activationTarget: {
+                managedControllerPublication: { accountId: test.account.id, cursor: expect.any(Number) },
+            } });
+            await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: test.account.id, machineId: test.controller.id,
+                principal: { kind: 'account', accountId: requester.id }, level: 'view' }));
+            // Owner withdrawal of automatic wake takes effect at the next admission.
+            await db.managedMachine.update({ where: { id: test.row.id }, data: { wakeOnAcceptedMessage: false } });
+            expect(await updatePendingRequestedAction({ actorUserId: requester.id, authentication,
+                sessionId: session.id, localId, requestedAction: { v: 1, kind: 'send_now' } }))
+                .toMatchObject({ ok: true, activationTarget: { accountId: requester.id } });
+            const sessionAfter = await db.session.findUniqueOrThrow({ where: { id: session.id } });
+            expect(sessionAfter.pendingActivationManagedTarget).toBeNull();
+            expect((await reconnect()).targets).toEqual([]);
         } finally { restoreEnv(envBefore); }
     });
 
@@ -443,7 +598,7 @@ describe('finite managed wake original Action authority (real SQLite)', () => {
             expect(await inTx(tx => markPendingActivationAuthorizationFailedInTx({ tx, sessionId: session.id,
                 requestId: input.localId, requestedAt: first.pendingActivationRequestedAt!, failureCode: 'runtime_start_failed' }))).toBe(false);
             await db.managedMachine.update({ where: { id: test.row.id }, data: { observation: {
-                observedAt: 20, availability: 'present', power: 'running', storage: 'retained', daemon: 'connected',
+                observedAt: 20, availability: 'present', power: 'running', storage: 'retained',
             } } });
             await db.machine.update({ where: { id: test.guest.id }, data: { active: true } });
             const running = await listPendingMessages(input);
@@ -566,7 +721,7 @@ describe('finite managed wake original Action authority (real SQLite)', () => {
         await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: test.account.id, machineId: test.controller.id,
             principal: { kind: 'account', accountId: requester.id }, level: 'admin' }));
         expect(await inTx(tx => resolveExternalActionExecutionMachineAdmissionInTx(tx, { actorAccountId: requester.id,
-            machineId: test.controller.id, actionId: 'providers.connections.secrets.bind' }))).toMatchObject({ kind: 'denied', code: 'unsupported_operation' });
+            machineId: test.controller.id, actionId: 'providers.connections.secrets.bind' }))).toMatchObject({ kind: 'denied', code: 'custodian_only' });
     });
 
     async function publishWakeDeclaration(test: Awaited<ReturnType<typeof setup>>) {
@@ -600,8 +755,9 @@ describe('finite managed wake original Action authority (real SQLite)', () => {
             trustState: 'trusted', observedAt: new Date() } });
     }
 
-    it('prepares the Home-selected native wake policy without admitting intent before requester Ask, then revalidates admission', async () => {
+    it.each([false, true])('prepares explicit finite wake independently of unattended choice (%s), without admitting intent before requester Ask', async wakeOnAcceptedMessage => {
         const test = await setup();
+        await db.managedMachine.update({ where: { id: test.row.id }, data: { wakeOnAcceptedMessage } });
         await publishWakeDeclaration(test);
         const requester = await db.account.create({ data: { encryptionMode: 'plain' } });
         for (const machine of [test.controller, test.guest]) await inTx(tx => setMachineAccessGrantInTx(tx, {
@@ -793,29 +949,79 @@ describe('finite managed wake original Action authority (real SQLite)', () => {
         } finally { restoreFetch?.(); restoreEnv(envBefore); await app.close(); }
     });
 
-    it('rechecks original source retirement at the final guarded wake transport boundary', async () => {
+    it('admits one finite wake once and uses local cancellation at each transport step', async () => {
         const test = await setup();
         let sourceCurrent = true;
+        let sourceReads = 0;
+        const tokenAdmission = vi.spyOn(auth, 'verifyExternalActionExecutionAuthorization');
+        const cancel = new AbortController();
         const nativeEffect = vi.fn(async () => ({ ok: true as const }));
         const io = {} as Server;
-        const prepared = await prepareManagedFiniteActionWake({ io, actionOrigin: test.actionOrigin,
-            signal: new AbortController().signal, isOriginalSourceCurrent: async () => sourceCurrent,
-            forwardRpc: async request => {
-                const candidate = { id: 'controller-socket', data: { clientType: 'machine-scoped', userId: test.account.id,
-                    machineId: test.controller.id, verifiedMachineInstallationId: test.controller.installationId },
-                    timeout: () => ({ emitWithAck: nativeEffect }) };
-                const guard = request.targetGuard;
-                if (!guard) throw new Error('Finite wake requires a guarded native transport.');
-                expect(await guard.filterTargets([candidate])).toEqual([candidate]);
-                sourceCurrent = false;
-                expect(await guard.runOperation({ target: candidate, readLatestTarget: async () => candidate,
-                    operation: nativeEffect })).toEqual({ status: 'unavailable' });
-                expect(await guard.filterTargets([candidate])).toEqual([]);
-                return { ok: false, error: 'retired-original-source' };
-            } });
-        expect(prepared).toEqual({ kind: 'unavailable' });
-        expect(nativeEffect).not.toHaveBeenCalled();
-        expect((await db.managedMachine.findUniqueOrThrow({ where: { id: test.row.id } })).desired).toBe('stop');
+        let admittedReads: { source: number; token: number } | undefined;
+        const guarded: unknown[] = [];
+        try {
+            const prepared = await prepareManagedFiniteActionWake({ io, actionOrigin: test.actionOrigin,
+                signal: cancel.signal, isOriginalSourceCurrent: async () => { sourceReads++; return sourceCurrent; },
+                forwardRpc: async request => {
+                    const candidate = { id: 'controller-socket', data: { clientType: 'machine-scoped', userId: test.account.id,
+                        machineId: test.controller.id, verifiedMachineInstallationId: test.controller.installationId },
+                        timeout: () => ({ emitWithAck: nativeEffect }) };
+                    const guard = request.targetGuard;
+                    if (!guard) throw new Error('Finite wake requires a guarded native transport.');
+                    const replaced = { ...candidate, id: 'replaced-controller-socket', data: {
+                        ...candidate.data, verifiedMachineInstallationId: randomUUID(),
+                    } };
+                    guarded.push((await guard.filterTargets([replaced, candidate])).map(target => target.id));
+                    admittedReads = { source: sourceReads, token: tokenAdmission.mock.calls.length };
+                    guarded.push(await guard.runOperation({ target: replaced, readLatestTarget: async () => replaced,
+                        operation: nativeEffect }));
+                    sourceCurrent = false;
+                    guarded.push((await guard.filterTargets([candidate])).map(target => target.id));
+                    guarded.push(await guard.runOperation({ target: candidate, readLatestTarget: async () => candidate,
+                        operation: nativeEffect }));
+                    cancel.abort();
+                    guarded.push(await guard.runOperation({ target: candidate, readLatestTarget: async () => candidate,
+                        operation: nativeEffect }));
+                    guarded.push((await guard.filterTargets([candidate])).map(target => target.id));
+                    return { ok: false, error: 'retired-original-source' };
+                } });
+            expect(prepared).toEqual({ kind: 'unavailable' });
+            expect(admittedReads).toEqual({ source: 1, token: 1 });
+            expect(guarded).toEqual([['controller-socket'], { status: 'unavailable' }, ['controller-socket'],
+                { status: 'current', value: { ok: true } }, { status: 'unavailable' }, []]);
+            expect(sourceReads).toBe(1);
+            expect(tokenAdmission).toHaveBeenCalledTimes(1);
+            expect(nativeEffect).toHaveBeenCalledTimes(1);
+            expect((await db.managedMachine.findUniqueOrThrow({ where: { id: test.row.id } })).desired).toBe('stop');
+        } finally { tokenAdmission.mockRestore(); }
+    });
+
+    it.each(['owner', 'wrong-requester', 'wrong-root', 'no-manage'] as const)('admits the real requester and exact root at the finite wake boundary (%s)', async disposition => {
+        const test = await setup();
+        const requester = await db.account.create({ data: { encryptionMode: 'plain' } });
+        for (const machine of [test.controller, test.guest]) await inTx(tx => setMachineAccessGrantInTx(tx, {
+            actorAccountId: test.account.id, machineId: machine.id,
+            principal: { kind: 'account', accountId: requester.id }, level: 'admin',
+        }));
+        const root = await auth.mintExternalActionExecutionAuthorization({ accountId: requester.id,
+            authentication: { kind: 'account', tokenEpoch: requester.tokenEpoch }, serverIdentityId: homeId,
+            machineId: test.guest.id, actionId: 'projects.script.run', requestId: test.requestId,
+            requestEnvelopeDigest: 'd'.repeat(43), target: { kind: 'machine', machineId: test.guest.id } });
+        if (disposition === 'wrong-requester') await db.machineAccountGrant.deleteMany({ where: {
+            machineId: test.guest.id, accountId: requester.id,
+        } });
+        if (disposition === 'no-manage') await inTx(tx => setMachineAccessGrantInTx(tx, {
+            actorAccountId: test.account.id, machineId: test.controller.id,
+            principal: { kind: 'account', accountId: requester.id }, level: 'view',
+        }));
+        const forwardRpc = vi.fn(async () => ({ ok: true as const, result: { ok: true, result: {
+            kind: 'accepted', managedId: test.row.id, intentRevision: 1, operation: { operationId: 'native-policy' },
+        } } }));
+        const result = await prepareManagedFiniteActionWake({ io: new Server(), signal: new AbortController().signal,
+            actionOrigin: disposition === 'wrong-root' ? { ...root, binding: { ...root.binding, requestId: randomUUID() } } : root,
+            forwardRpc });
+        expect(result.kind).toBe(disposition === 'owner' ? 'ready' : 'unavailable');
+        expect(forwardRpc).toHaveBeenCalledTimes(disposition === 'owner' ? 1 : 0);
     });
 
     it('retains the exact original finite PAT grant and mode instead of requiring a native power grant', async () => {
@@ -1165,12 +1371,21 @@ describe('finite managed wake original Action authority (real SQLite)', () => {
         expect(methods).toHaveLength(2);
     });
 
-    it.each(['cancel', 'unknown', 'credential-retired'] as const)('dispatches no guest work when wake is %s', async disposition => {
+    it.each(['cancel', 'unknown', 'credential-retired'] as const)('preserves local wake cancellation and next-destination admission (%s)', async disposition => {
         const test = await setup();
         const cancel = new AbortController();
         const methods: string[] = [];
         const dispatch = createExternalActionDaemonDispatcher({ io: new Server(), forwardRpc: async request => {
             methods.push(request.method);
+            if (request.method === `${test.guest.id}:${EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1}`) {
+                // This is a new destination admission. Keep its actual strict
+                // request/principal owners beneath the substituted RPC transport.
+                expect(disposition).toBe('credential-retired');
+                const guest = ExternalActionDaemonDispatchRequestSchema.parse(request.callParams);
+                if (!guest.executionAuthorization) throw new Error('Missing guest execution authorization');
+                expect(await verifyCurrentExternalActionPrincipal(guest.executionAuthorization.binding)).toBe(false);
+                return { ok: false, error: 'authorization_refused' };
+            }
             expect(request.method.startsWith(`${test.controller.id}:`)).toBe(true);
             if (disposition === 'cancel') cancel.abort();
             if (disposition === 'credential-retired') {
@@ -1185,7 +1400,7 @@ describe('finite managed wake original Action authority (real SQLite)', () => {
             principal: { accountId: test.account.id, authority: 'present_user', authentication: { kind: 'account', tokenEpoch: test.account.tokenEpoch } },
         }, { signal: cancel.signal });
         expect(result.kind).toBe(disposition === 'unknown' ? 'submitted_unknown' : 'placement_error');
-        expect(methods).toHaveLength(1);
+        expect(methods).toHaveLength(disposition === 'credential-retired' ? 2 : 1);
     });
 
     it.each([

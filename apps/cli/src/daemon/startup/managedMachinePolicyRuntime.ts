@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { isDeepStrictEqual } from 'node:util';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import type { Machine } from '@/api/types';
@@ -22,12 +22,14 @@ type PolicySchedulingFacts = Pick<ManagedMachineV1,
 export async function readManagedMachinePolicyCensus(input: Readonly<{
     homeId: string; controller: ManagedControllerV1; custodianAccountId: string;
     privateKey: string | Uint8Array; token: string; serverUrl: string; signal?: AbortSignal;
-    nativeCredentialManagedId?: string;
+    managedId?: string; nativeCredentialManagedId?: string;
 }>): Promise<ManagedMachinePolicyCensus> {
     input.signal?.throwIfAborted();
+    const managedId = input.nativeCredentialManagedId ?? input.managedId;
     const body = ManagedPolicyCensusInputV1Schema.parse({ homeId: input.homeId, controller: input.controller,
         proof: createManagedPolicyCensusProofV1(input),
-        ...(input.nativeCredentialManagedId ? { managedId: input.nativeCredentialManagedId, includeNativeCredentialBindings: true } : {}) });
+        ...(managedId ? { managedId } : {}),
+        ...(input.nativeCredentialManagedId ? { includeNativeCredentialBindings: true } : {}) });
     const response = await axios.post<unknown>(`${input.serverUrl}/v1/machines/managed/controller/policies`, body,
         { headers: { Authorization: `Bearer ${input.token}`, 'Content-Type': 'application/json' },
             validateStatus: () => true, ...(input.signal ? { signal: input.signal } : {}) });
@@ -107,37 +109,42 @@ export function createDaemonManagedMachinePolicyRuntime(params: Readonly<{
             // native completion. A replaced native resource or enrollment does
             // retire its held lifetime. Exact row currentness stays in the driver.
             const signature: PolicySchedulingFacts = { controller: machine.controller, resource: machine.resource,
-                nativeOperationRef: machine.nativeOperationRef, enrolledMachineId: machine.enrolledMachineId, retention: machine.retention,
+                // A bound resource's Delete handle is progress owned by this
+                // driver. Only an unbound allocation uses it as native identity.
+                nativeOperationRef: machine.resource ? undefined : machine.nativeOperationRef,
+                enrolledMachineId: machine.enrolledMachineId, retention: machine.retention,
                 wakeOnAcceptedMessage: machine.wakeOnAcceptedMessage, purpose: purpose.kind,
                 ...(purpose.kind === 'accepted-input-start' ? { origin: purpose.target.origin } : {}) };
             const prior = active.get(machine.id);
             const continuationRequestId = retentionContinuations.get(machine.id);
             const canPrepareRetention = canPrepareManagedRetentionPolicy(machine, continuationRequestId);
-            // Manual power-down retires pre-effect work; Home policy custody continues.
+            // A manual intent retires pre-effect work even while its activity
+            // RPC is pending and the scheduling signature is unchanged. An
+            // issued native effect still belongs to its incumbent completion.
             if (purpose.kind === 'retention' && !machine.submittedNativeEffect && !canPrepareRetention) {
                 if (prior) abortPolicy(machine.id, prior.cancel, 'policy_replaced');
                 continue;
             }
             // Native Stop, or Suspend where that is how the provider parks, satisfies a Stop policy until compute runs again.
-            // A submitted native effect still needs its incumbent reconciliation,
-            // and an accepted wake target takes precedence over retention above.
+            // Manual retirement above retains its cancellation outcome even
+            // when the same census already observes that manual power-down.
             if (purpose.kind === 'retention' && machine.retention.kind !== 'until-delete'
                 && machine.retention.effect === 'stop' && !machine.submittedNativeEffect
                 && machine.observation?.availability === 'present' && (machine.observation.power === 'stopped' || machine.observation.power === 'suspended')) {
                 if (prior) abortPolicy(machine.id, prior.cancel, 'retention_satisfied');
                 continue;
             }
-            // Observed satisfaction must retire an incumbent even when none of
-            // its scheduling inputs changed. Only unsatisfied work can retain
-            // the same outstanding driver lifetime.
+            // Observed satisfaction and manual retirement precede reuse of an
+            // outstanding driver lifetime with unchanged scheduling inputs.
             if (prior && isDeepStrictEqual(prior.signature, signature) && !prior.cancel.signal.aborted) continue;
             if (prior) abortPolicy(machine.id, prior.cancel, 'policy_replaced');
             // Controller publications only recheck an incumbent's currentness.
             // They cannot admit new work, including after that work has failed.
             if (!scheduleNew) continue;
             const continuesRetention = hasSubmittedManagedRetentionEffect(machine, continuationRequestId);
-            // Manual Stop/Suspend/Delete owns its intent. Only Home-admitted
-            // retention custody may prepare or continue this policy.
+            // Manual Stop/Suspend/Delete owns its entire intent, including the
+            // admission-to-submission gap. Incumbent native completion stays
+            // above; only Home-admitted retention custody may resume below.
             if (purpose.kind === 'retention' && !canPrepareRetention) continue;
             // New unused retention needs registration and positive guest evidence.
             // Only a policy-owned submitted Stop/Suspend continues without enrollment.
@@ -186,7 +193,7 @@ export function createDaemonManagedMachinePolicyRuntime(params: Readonly<{
         }
         for (const [id, entry] of active) if (!current.has(id)) abortPolicy(id, entry.cancel, 'policy_target_missing');
     };
-    const notifyChanged = (currentnessOnly = false, nativeManagedIds?: readonly string[]): Promise<void> | undefined => {
+    const notifyChanged = (currentnessOnly = false, nativeManagedIds?: readonly string[]) => {
         if (stopped) return;
         if (currentnessOnly && active.size === 0) return;
         changed = true;

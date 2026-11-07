@@ -200,18 +200,23 @@ export function registerManagedMachineRoutes(app: Fastify): void {
             return skipManagedMachineSetup({ actorAccountId: request.userId, input: request.body });
         }));
     app.post('/v1/machines/managed/controller/policies', { preHandler: app.authenticate, schema: { body: ManagedPolicyCensusInputV1Schema, response: { 200: ManagedPolicyCensusOutputV1Schema } } }, async (request, reply) => respond(reply, async () => {
-        const { homeId, controller, proof } = request.body;
-        const { targets } = await readManagedWakeTargets({ actorAccountId: request.userId, request: { homeId, controller } });
+        const { homeId, controller, proof, managedId } = request.body;
+        const targets = managedId ? [] : (await readManagedWakeTargets({ actorAccountId: request.userId,
+            request: { homeId, controller } })).targets;
         const census = await inReadSnapshot(async tx => {
             await requireManagedControllerInTx(tx, { homeId, controller, custodianAccountId: request.userId });
-            const current = await tx.machine.findUniqueOrThrow({ where: { id: controller.machineId } });
+            const current = await tx.machine.findUniqueOrThrow({ where: { id: controller.machineId },
+                include: { managedResource: { select: { id: true } } } });
             if (!current.installationPublicKey || !verifyMachineInstallationProof({ payload: { version: 1, machineId: controller.machineId,
                 installationId: controller.installationId, accountId: request.userId, managedPolicyCensus: { homeId } }, proof,
                 publicKey: current.installationPublicKey })) throw new ManagedMachineError('permission_denied');
+            const accountManagedIds = managedId
+                ? await resolveSignedManagedAccountExecutorInTx(tx, current, { custodianAccountId: request.userId }) ? [managedId] : []
+                : targets.filter(target => !target.controller).map(target => target.managedId);
             const rows = await tx.managedMachine.findMany({ where: { homeId, custodianAccountId: request.userId,
-                ...(request.body.managedId ? { id: request.body.managedId } : {}),
+                ...(managedId ? { id: managedId } : {}),
                 AND: [{ OR: [{ controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId },
-                    { controllerMachineId: null, id: { in: targets.filter(target => !target.controller).map(target => target.managedId) } },
+                    { controllerMachineId: null, id: { in: accountManagedIds } },
                     { controllerMachineId: null, enrolledMachineId: controller.machineId,
                         retention: jsonPathEquals(['effect'], 'stop') }] }],
                 archivedAt: null, OR: [{ allocation: 'bound', creationState: 'active' },
