@@ -38,6 +38,7 @@ import {
   type StubHttpResponse,
 } from '../../triage/testkit/githubTriage.test-support.js';
 import { renderSurface } from '../renderSurface.js';
+import { GithubEntryPropertyPicker } from './entryPropertyPicker.js';
 import { createTriageEphemeralSharedScopeFixture, createTriageEphemeralSharedScopeOriginFixture } from '../../../../triage/src/ui/window/ephemeralSharedScope.test-support.js';
 import { SourcePanelActionsFixture, invokeSourcePanelFixtureAction } from '../../../../triage/src/ui/sourcePanelActions.test-support.js';
 import {
@@ -263,6 +264,78 @@ async function mountRegisteredFiles(
 }
 
 describe('registered GitHub detail read dispatch', () => {
+  it('keeps native property editors after a sibling membership reread and replaces an explicitly failed directory', async () => {
+    const scope = createTriageEphemeralSharedScopeFixture();
+    let assigned = false;
+    let directoryUnavailable = false;
+    let directoryReads = 0;
+    const transport = createStubGithubTransport({ respond: (request) => {
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/assignees') || path.endsWith('/labels')) {
+        directoryReads++;
+        if (directoryUnavailable) return { status: 403, body: { message: 'Forbidden' } };
+        return { status: 200, body: path.endsWith('/assignees')
+          ? [GITHUB_PULL_REQUEST_RESPONSE.user] : [{ id: 11, name: 'bug' }] };
+      }
+      if (!path.endsWith('/pulls/1284')) return undefined;
+      return { status: 200, body: { ...GITHUB_PULL_REQUEST_RESPONSE,
+        assignees: assigned ? [GITHUB_PULL_REQUEST_RESPONSE.user] : [],
+        labels: assigned ? [{ id: 11, name: 'bug' }] : [],
+      } };
+    } });
+    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: {
+      http: transport.context.services.http, connectedAccounts: transport.context.services.connectedAccounts,
+    } });
+    plugins.push(plugin);
+    const observed = new Map<string, GithubOverviewControllerV1>();
+    const mount = async (name: string, includePropertyChoices: boolean) => {
+      function Probe() {
+        const overview = useGithubOverview(launchInput(), { readWhenActive: true, includePropertyChoices });
+        observed.set(name, overview);
+        const value = overview.value;
+        return !includePropertyChoices || value === null ? null : <>
+          {(['assignees', 'labels'] as const).map(property => <GithubEntryPropertyPicker key={property}
+            property={property} overview={value} pending={false} disabledReason={null}
+            feedback={null} refresh={overview.refresh} onChange={async () => {}} />)}
+        </>;
+      }
+      let detail!: PluginUiTestkit;
+      await act(async () => {
+        detail = await createPluginUiTestkit({
+          identity: { instanceId: name, mountNonce: `${name}-mount` },
+          authorPlugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
+          surface: defineUiSurface(() => <Tabs value="overview" onValueChange={() => {}} ariaLabel={name}>
+            <Tabs.Item value="overview" title="Overview"><Probe /></Tabs.Item>
+          </Tabs>),
+          surfaceContext: createSurfaceContextFixture(),
+          adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope: scope }),
+          handlers: { executeAction: async ({ action, input, signal }) => {
+            if (typeof action === 'string' || input === undefined) throw new Error('Expected an Overview Action');
+            return plugin.invokeAction(action.localId, input, { surface: 'ui', signal });
+          } },
+        });
+      });
+      mounted.push(detail);
+      return detail;
+    };
+    await mount('story', false);
+    const properties = await mount('properties', true);
+    await vi.waitFor(async () => {
+      await expect(properties.getByRole('button', { name: 'Assignees, None' })).resolves.toBeDefined();
+      await expect(properties.getByRole('button', { name: 'Labels, None' })).resolves.toBeDefined();
+    });
+    expect(directoryReads).toBe(2);
+    assigned = true;
+    await act(async () => { await observed.get('story')!.refresh(); });
+    await expect(properties.getByRole('button', { name: `Assignees, ${GITHUB_PULL_REQUEST_RESPONSE.user.login}` })).resolves.toBeDefined();
+    await expect(properties.getByRole('button', { name: 'Labels, bug' })).resolves.toBeDefined();
+    expect(directoryReads).toBe(2);
+    directoryUnavailable = true;
+    await act(async () => { await observed.get('properties')!.refresh(); });
+    await expect(properties.queryByRole('button', { name: 'Labels, bug' })).resolves.toBeUndefined();
+    expect(observed.get('properties')?.value?.propertyChoices?.labels?.kind).toBe('unavailable');
+  });
+
   it('publishes exact Overview membership rereads to mounted action readers without another provider read', async () => {
     const scope = createTriageEphemeralSharedScopeFixture();
     let assigned = false;
