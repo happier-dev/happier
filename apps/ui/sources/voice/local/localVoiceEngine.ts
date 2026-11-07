@@ -1,6 +1,8 @@
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { createAttemptGuard } from '@/utils/timing/attemptGuard';
 import { storage } from '@/sync/domains/state/storage';
+import { t } from '@/text';
+import { resolveVoiceMachineErrorTranslationKey } from '@/voice/runtime/machine/voiceMachineErrorCopy';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
 import { settingsParse, type Settings } from '@/sync/domains/settings/settings';
@@ -822,7 +824,7 @@ async function startLocalVoiceCapture(args: Readonly<{
   throw startError;
 }
 
-async function readNativePermission(
+async function readNativeTurnMessage(
   admission: LocalVoiceCaptureAdmission,
   captureAttempt: LocalVoiceCaptureAttempt,
   text: string,
@@ -893,7 +895,7 @@ async function runVoiceTurnWithSendFailureHandling(
       permissionInput = createNativeVoicePermissionInput({
         address: binding.conversationSessionAddress,
         signal: admission.captureAbortController.signal,
-        readOut: (text, listen, isCurrent, onReady) => readNativePermission(admission, captureAttempt, text, listen, isCurrent, onReady),
+        readOut: (text, listen, isCurrent, onReady) => readNativeTurnMessage(admission, captureAttempt, text, listen, isCurrent, onReady),
         commitTranscript: (text, localId) => voiceAgentSessions.commitUserTranscript(sessionId, text, localId),
         onResponding: () => voiceConversationRuntimeMachine.transitionToThinking({ controlSessionId: sessionId }),
       });
@@ -902,11 +904,16 @@ async function runVoiceTurnWithSendFailureHandling(
     try {
       await runAbortableVoiceTurn(sessionId, runner);
     } catch (error) {
-      // The native SDK can reject the model turn after an acknowledged No.
-      // That ends the declined work, not this connected Voice conversation.
-      // Transport, playback and unapproved execution failures still fail below.
       const code = readSafeVoiceRuntimeFailureCode(error);
-      if (code !== 'claude_error_during_execution'
+      if (code === 'usage_limit' && binding?.transcriptMode === 'native_session' && admission && captureAttempt) {
+        if (!isCaptureAttemptCurrent(admission, captureAttempt)) return;
+        // A settled native provider refusal ends this turn, while the call
+        // stays available for the person's next input or End.
+        await readNativeTurnMessage(admission, captureAttempt,
+          t(resolveVoiceMachineErrorTranslationKey('provider_error', code)), false, () => true, () => {});
+        if (!isCaptureAttemptCurrent(admission, captureAttempt)) return;
+        transitionVoiceRuntimeToIdle({ controlSessionId: sessionId });
+      } else if (code !== 'claude_error_during_execution'
         || await permissionInput?.waitForResponseSettlement() !== 'denied') throw error;
       recordVoiceRuntimeFailure('local_conversation', 'provider_error', 'provider_error', code);
     }

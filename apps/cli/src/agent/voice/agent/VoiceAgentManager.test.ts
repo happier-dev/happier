@@ -37,6 +37,7 @@ import { buildMemoryRecallGuidanceBlockV1 } from '@happier-dev/protocol/prompts/
 import { applyExecutionRunAction } from '@/agent/runtime/bridges/executionRun/executionRunApplyAction';
 import { startVoiceAgentTurnStream, readVoiceAgentTurnStream, cancelVoiceAgentTurnStream } from '@/agent/runtime/bridges/executionRun/voiceAgentTurnStreams';
 import { ExecutionRunTurnStreamReadResponseSchema } from '@happier-dev/protocol/execution/runs/streaming';
+import { readExecutionRunErrorCode } from '@/agent/runtime/bridges/executionRun/errors';
 import type { ExecutionRunState } from '@/agent/runtime/bridges/executionRun/executionRunTypes';
 import type { ExecutionRunController } from '@/agent/executionRuns/controllers/types';
 import { readSettings, updateSettings, writeSettings } from '@/persistence';
@@ -2084,6 +2085,53 @@ describe('VoiceAgentManager', () => {
     } finally {
       await manager.dispose();
     }
+  });
+
+  it.each([
+    { mode: 'stream', provider: 'unified' }, { mode: 'send', provider: 'unified' },
+    { mode: 'stream', provider: 'sdk' }, { mode: 'send', provider: 'sdk' },
+  ] as const)('preserves a native usage-limit category through Voice $mode from $provider and accepts the next turn', async ({ mode, provider }) => {
+    let refused = false;
+    const backend = createDeterministicBackend('quota-category', { onSend(request, publish) {
+      if (!refused) {
+        refused = true;
+        publish({ kind: 'turn-failed', turnId: request.delivery.turnId, diagnostic: {
+          code: provider === 'sdk' ? 'claude_rate_limit' : 'claude.usage_limit',
+          severity: 'error', message: 'The subscription is exhausted.',
+          details: provider === 'sdk' ? {
+            // The SDK boundary publishes a generic source plus its canonical structured classification.
+            v: 1, source: 'agent_session_error',
+            usageLimit: { v: 1, limitCategory: 'usage_limit', quotaScope: 'account', recoverability: 'wait',
+              resetAtMs: null, retryAfterMs: null, planType: null, utilization: null, overage: null,
+              action: null, connectedService: null },
+            runtimeAuthClassification: { kind: 'usage_limit', limitCategory: 'usage_limit',
+              serviceId: 'happier.agent.claude/claude-subscription', profileId: null, groupId: null,
+              resetsAtMs: null, retryAfterMs: null, planType: null, rateLimits: null, source: 'structured_provider_error' },
+          } : { v: 1, source: 'usage_limit' },
+        } });
+        return;
+      }
+      publish({ kind: 'message-delta', turnId: request.delivery.turnId, channel: 'assistant', text: 'The next turn completed.' });
+      publish({ kind: 'turn-complete', turnId: request.delivery.turnId });
+    } });
+    const manager = new VoiceAgentManager({ createRuntime: () => backend });
+    try {
+      const started = await manager.start({ backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        chatModelId: 'chat-model', commitModelId: 'chat-model', permissionIntent: 'default',
+        idleTtlSeconds: 60, initialContext: '' });
+      if (mode === 'stream') {
+        const stream = await manager.startTurnStream({ voiceAgentId: started.voiceAgentId, userText: 'First question' });
+        const events = await readVoiceAgentTurnStreamUntilDone({ manager, voiceAgentId: started.voiceAgentId, streamId: stream.streamId });
+        expect(events).toContainEqual(expect.objectContaining({ t: 'error', errorCode: 'usage_limit' }));
+        expect(events.some(event => event.t === 'done' || event.t === 'voice_output' && event.output.kind === 'turn_final')).toBe(false);
+      } else {
+        const error = await manager.sendTurn({ voiceAgentId: started.voiceAgentId, userText: 'First question' }).catch(error => error);
+        expect(readExecutionRunErrorCode(error)).toBe('usage_limit');
+      }
+      expect(manager.readCurrentRuntimeAuthority(started.voiceAgentId)?.runtimeState).toBe('idle');
+      await expect(manager.sendTurn({ voiceAgentId: started.voiceAgentId, userText: 'Next question' }))
+        .resolves.toEqual({ assistantText: 'The next turn completed.' });
+    } finally { await manager.dispose(); }
   });
 
   it('keeps Account Voice Follow pending through ambiguous delivery and settles it once for later exact acceptance', async () => {

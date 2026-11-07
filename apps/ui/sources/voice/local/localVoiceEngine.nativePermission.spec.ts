@@ -23,12 +23,14 @@ describe('native Voice permission input', () => {
     { label: 'Yes followed by native execution rejection', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false, turnError: 'claude_error_during_execution', continues: false },
     { label: 'No followed by lost transport', enabled: true, answer: 'No.', approved: false, end: false, replaceRequest: false, turnError: 'target_unavailable', continues: false },
     { label: 'an ordinary turn', enabled: true, answer: '', approved: null, end: false, replaceRequest: false },
+    { label: 'provider quota before tools', enabled: true, answer: '', approved: null, end: false, replaceRequest: false, turnError: 'usage_limit', providerFailure: true },
+    { label: 'End before provider quota settles', enabled: true, answer: '', approved: null, end: true, replaceRequest: false, turnError: 'usage_limit', providerFailure: true },
     { label: 'approval opt-out', enabled: false, answer: 'Yes.', approved: null, end: false, replaceRequest: false },
     { label: 'an unclear answer', enabled: true, answer: 'Yes, but no.', approved: null, end: false, replaceRequest: false },
     { label: 'an empty transcript', enabled: true, answer: '', approved: null, end: false, replaceRequest: false },
     { label: 'End', enabled: true, answer: '', approved: null, end: true, replaceRequest: false },
     { label: 'a replacement request while ASR is pending', enabled: true, answer: 'Yes.', approved: null, end: false, replaceRequest: true },
-  ])('reads a native self-permission aloud and respects $label', async ({ label, enabled, answer, approved, end, replaceRequest, turnError, continues, endAfterResponse }) => {
+  ])('reads a native self-permission aloud and respects $label', async ({ label, enabled, answer, approved, end, replaceRequest, turnError, continues, endAfterResponse, providerFailure }) => {
     const storage = await getStorage();
     const state = storage.getState();
     const config = readLocalConversationVoiceSettings(state.settings.voice);
@@ -44,7 +46,7 @@ describe('native Voice permission input', () => {
     const asrStarted = createDeferred<void>();
     const asrHeld = createDeferred<string>();
     localVoiceSpeechTranscription.mockResolvedValueOnce('Write the requested file.');
-    if (label !== 'an ordinary turn') {
+    if (label !== 'an ordinary turn' && !providerFailure) {
       localVoiceSpeechTranscription.mockImplementationOnce(async () => {
         asrStarted.resolve();
         return replaceRequest ? asrHeld.promise : answer;
@@ -129,6 +131,21 @@ describe('native Voice permission input', () => {
         waiting.resolve();
         await submitted;
         await expectNextCommitAccepted();
+        return;
+      }
+      if (providerFailure) {
+        if (end) await lifecycle.stop(target.sessionId);
+        waiting.resolve();
+        await submitted;
+        if (end) {
+          expect(lifecycle.getSnapshot().status).toBe('disconnected');
+          expect(lifecycle.getSnapshot().canCommitInput).not.toBe(true);
+          expect(expoSpeechSpeak).not.toHaveBeenCalled();
+        } else {
+          const { t } = await import('@/text');
+          expect(expoSpeechSpeak.mock.calls.map(([text]) => text)).toEqual([t('session.usageLimitRecovery.banner.title')]);
+          await expectNextCommitAccepted();
+        }
         return;
       }
       const carrierId = binding.conversationSessionAddress.sessionId;

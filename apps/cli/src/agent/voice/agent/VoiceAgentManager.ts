@@ -46,6 +46,7 @@ import type {
 import type { PermissionIntent } from '@happier-dev/agents';
 import { VoiceAgentError } from './voiceAgentTypes';
 import { toVoiceAgentStartError } from './voiceAgentStartError';
+import { normalizeVoiceAgentTurnError } from './voiceAgentTurnError';
 import { renderSessionInputContextPromptV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
 import type { SessionFollowPreparedContext } from '@/agent/runtime/session/follow/sessionFollowContextReconciler';
 import { isSessionProviderInputOutcomeTerminal } from '@/agent/runtime/session/input/providerInputOutcome';
@@ -1086,7 +1087,11 @@ export class VoiceAgentManager {
 		      return extracted.actions.length > 0 ? { assistantText, actions: extracted.actions } : { assistantText };
 		    })();
 
-    return await this.trackWork(voiceAgent, 'inFlight', run);
+    try {
+      return await this.trackWork(voiceAgent, 'inFlight', run);
+    } catch (error) {
+      throw normalizeVoiceAgentTurnError(error);
+    }
   }
 
   async welcome(params: Readonly<{
@@ -1334,8 +1339,9 @@ export class VoiceAgentManager {
       } catch (error: unknown) {
         stream.preparedInstructionsFor = undefined;
         if (settleCancelled()) return;
-        const message = error instanceof Error ? error.message : 'stream_failed';
-        const code = readExecutionRunErrorCode(error);
+        const failure = normalizeVoiceAgentTurnError(error);
+        const message = failure instanceof Error ? failure.message : 'stream_failed';
+        const code = readExecutionRunErrorCode(failure);
         stream.events.push({ t: 'error', error: message, ...(code ? { errorCode: code } : {}) });
       } finally {
         stream.done = true;

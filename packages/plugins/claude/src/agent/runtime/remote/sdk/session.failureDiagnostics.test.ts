@@ -13,6 +13,44 @@ import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import type { PluginProtocolClientHandle } from '@happier-dev/plugin-sdk/exec/protocol-clients';
 
 describe('Claude SDK turn failure diagnostics', () => {
+    it.each(['primary-assistant', 'primary-result', 'availability', 'sidechain'] as const)(
+        'keeps %s quota evidence eligible only until a primary SDK failure owns recovery', async (kind) => {
+            const exec = createSdkExecFixture();
+            const observations: unknown[] = [];
+            const ctx = createPluginContextFixture(createTerminalHostFixture().service, createEventsFixture().service, {
+                exec: exec.service,
+                accountUsage: { async recordSnapshot(input) { observations.push(input); return { status: 'recorded' }; } },
+            });
+            const operations = createClaudeAgentSdkTurnOperations({
+                ctx, directory: '/tmp/claude-quota', launchEnv: {}, happierSessionId: 'quota-session', permissionMode: 'default',
+            });
+            try {
+                operations.beginProviderTurn('quota-turn');
+                await operations.sendProviderTurnPrompt('prompt');
+                await vi.waitFor(() => expect(exec.spawnClient).toHaveBeenCalledOnce());
+                const primary = kind.startsWith('primary-');
+                const failure = primary ? expect(operations.waitForProviderTurnCompletion()).rejects.toThrow() : null;
+                await exec.emit(kind === 'availability'
+                    ? { type: 'rate_limit_event', rate_limit_info: { status: 'rejected', rateLimitType: 'five_hour', utilization: 1 } }
+                    : kind === 'primary-result'
+                        ? { type: 'result', subtype: 'error_during_execution', is_error: true, session_id: 'native-quota',
+                            apiErrorStatus: 429, error: 'rate_limit_error', errors: ['Usage limit reached'] }
+                        : { type: 'assistant', error: 'rate_limit_error', isApiErrorMessage: true,
+                            ...(kind === 'sidechain' ? { parent_tool_use_id: 'sidechain-tool' } : {}),
+                            message: { role: 'assistant', content: [{ type: 'text', text: 'Usage limit reached' }] } });
+                await vi.waitFor(() => expect(observations).toHaveLength(1));
+                if (primary) {
+                    await failure;
+                    expect(observations[0]).toHaveProperty('policyDisposition', 'evidence_only');
+                } else {
+                    expect(observations[0]).not.toHaveProperty('policyDisposition');
+                    await exec.emit({ type: 'result', subtype: 'success', is_error: false, session_id: 'native-quota', result: 'done' });
+                    await operations.waitForProviderTurnCompletion();
+                }
+            } finally { await operations.disposeProviderSession(); }
+        },
+    );
+
     it('retains the admitted Anthropic service through a real native Execution Run failure', async () => {
         const sdk = createSdkExecFixture();
         const boundary = createPluginContextFixture(createTerminalHostFixture().service, createEventsFixture().service);
@@ -64,6 +102,38 @@ describe('Claude SDK turn failure diagnostics', () => {
             })));
             expect(events.every(event => event.runId === 'source-qualified-run' && !('sessionId' in event))).toBe(true);
         } finally { await execution.dispose(); }
+    });
+
+    it('settles the RUN89 weekly limit assistant row before any tool or result', async () => {
+        const exec = createSdkExecFixture();
+        const ctx = createPluginContextFixture(createTerminalHostFixture().service, createEventsFixture().service, { exec: exec.service });
+        const operations = createClaudeAgentSdkTurnOperations({
+            ctx, directory: '/tmp/claude-diagnostics', launchEnv: {},
+            happierSessionId: 'weekly-limit-session', permissionMode: 'default',
+        });
+        const native = createClaudeNativeSessionRuntimeFromOperations(operations,
+            { kind: 'create', sessionId: 'weekly-limit-session', cwd: '/tmp/claude-diagnostics' },
+            { services: { exec: exec.service }, session: { services: {
+                activeInput: { bind: () => ({ dispose() {} }) }, models: { bind: () => ({ dispose() {} }) },
+            } } } as unknown as AgentSessionRuntimeContext);
+        const events: AgentSessionRuntimeEvent[] = [];
+        native.watch(event => events.push(event));
+        try {
+            await expect(native.send({ inputIds: ['weekly-input'], input: { text: 'prompt' },
+                delivery: { kind: 'newTurn', turnId: 'weekly-turn' } })).resolves.toEqual({ status: 'admitted' });
+            await exec.emit({ type: 'assistant', uuid: 'weekly-assistant', isApiErrorMessage: true,
+                isSidechain: false, error: 'rate_limit', message: { role: 'assistant', stop_reason: 'stop_sequence',
+                    content: [{ type: 'text', text: "You've hit your weekly limit · resets Nov 9, 4pm (Europe/Amsterdam)" }] } });
+            await vi.waitFor(() => expect(events.filter(event => event.kind === 'turn-failed')).toEqual([
+                expect.objectContaining({ turnId: 'weekly-turn', diagnostic: expect.objectContaining({
+                    code: 'claude_rate_limit', details: expect.objectContaining({ source: 'agent_session_error',
+                        runtimeAuthClassification: expect.objectContaining({ kind: 'usage_limit', limitCategory: 'usage_limit',
+                            serviceId: 'happier.agent.claude/claude-subscription', source: 'structured_provider_error' }),
+                        usageLimit: expect.objectContaining({ limitCategory: 'usage_limit' }) }),
+                }) }),
+            ]));
+            expect(events.filter(event => event.kind === 'turn-complete' || event.kind === 'tool-call')).toEqual([]);
+        } finally { await native.dispose('session_closed'); }
     });
 
     it.each([
@@ -191,4 +261,61 @@ describe('Claude SDK turn failure diagnostics', () => {
             await operations.disposeProviderSession();
         }
     });
+});
+
+
+it.each(['proven', 'unavailable', 'profile', 'rekey'] as const)('retains the dispatched native identity through a home switch and chronological organization evidence (%s)', async (identityMode) => {
+  const exec = createSdkExecFixture();
+  const base = createPluginContextFixture(createTerminalHostFixture().service, createEventsFixture().service, {exec: exec.service});
+  let accountId = 'issued-account';
+  let profileId = 'issued-profile';
+  let generation = 4;
+  const readFiles = vi.fn(async (_fileIds: readonly string[]) => {
+    if (identityMode === 'unavailable' && _fileIds.includes('.happier-claude-connected-service-home.json')) throw new Error('synthetic metadata unavailable');
+    return {
+    '.claude.json': new TextEncoder().encode(JSON.stringify({oauthAccount: {accountUuid: accountId, organizationUuid: 'issued-org'}})),
+    '.happier-claude-connected-service-home.json': new TextEncoder().encode(JSON.stringify({v: 1, serviceId: 'claude-subscription',
+      credentialProfileId: profileId, credentialCreatedAt: 1, groupId: 'pool', generation, credentialRevision: 'csr_abcdefghijklmnopqrstuv'})),
+  }; });
+  const ctx = {...base, agentRuntime: {...base.agentRuntime, nativeHome: {readFiles}}};
+  const launchEnv = {HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([identityMode === 'profile'
+    ? {kind: 'profile', serviceId: 'claude-subscription', profileId: 'launch-profile', credentialRevision: 'csr_abcdefghijklmnopqrstuv'}
+    : {kind: 'group', serviceId: 'claude-subscription', groupId: 'pool', activeProfileId: 'launch-profile', fallbackProfileId: 'launch-profile', generation: 3, credentialRevision: 'csr_abcdefghijklmnopqrstuv'}])};
+  const operations = createClaudeAgentSdkTurnOperations({ctx, directory: '/tmp/issued-test', launchEnv, happierSessionId: 'issued-session', permissionMode: 'default'});
+  const context = {services: {exec: exec.service}, session: {services: {activeInput: {bind: () => ({dispose() {}})}, models: {bind: () => ({dispose() {}})}}}} as unknown as AgentSessionRuntimeContext;
+  const native = createClaudeNativeSessionRuntimeFromOperations(operations, {kind: 'create', sessionId: 'issued-session', cwd: '/tmp/issued-test', launchEnvironment: {values: launchEnv, unset: []}}, context);
+  const events: AgentSessionRuntimeEvent[] = [];
+  native.watch(event => events.push(event));
+  const observe = async (organizationUuid: string, timestamp: number, phase?: 'initial_replay', extra = {}) => native.observeSourceTranscript?.({
+    providerSessionId: 'native-issued', sourceId: 'source-issued', phase,
+    row: {type: 'attachment', attachment: {type: 'credential_org', organizationUuid}, sessionId: 'native-issued', timestamp, ...extra},
+  });
+  try {
+    await observe('proof-org', 1000, 'initial_replay');
+    expect(events.filter(event => event.kind === 'connected-account-identity-observed')).toEqual([]);
+    expect(readFiles).not.toHaveBeenCalled();
+    await native.send({inputIds: ['issued-input'], input: {text: 'prompt'}, delivery: {kind: 'newTurn', turnId: 'issued-turn'}});
+    await vi.waitFor(() => expect(exec.spawnClient).toHaveBeenCalledOnce());
+    expect(readFiles).toHaveBeenCalledWith(['.claude.json', '.happier-claude-connected-service-home.json']);
+    accountId = 'later-account'; profileId = 'later-profile'; generation = 5;
+    await observe('future-org', 3000);
+    await observe('foreign-org', 1500, undefined, {sessionId: 'foreign'});
+    await observe('sidechain-org', 1600, undefined, {isSidechain: true});
+    await observe('future-org', 4000);
+    expect(events.filter(event => event.kind === 'connected-account-identity-observed')).toMatchObject(identityMode === 'profile' ? [] : [
+      {nativeSessionId: 'native-issued', providerOrganizationId: 'future-org'},
+      {nativeSessionId: 'native-issued', providerOrganizationId: 'future-org'},
+    ]);
+    expect(readFiles.mock.calls.filter(([files]) => files.includes('.happier-claude-connected-service-home.json'))).toHaveLength(1);
+    if (identityMode === 'rekey') await exec.emit({type: 'system', subtype: 'init', session_id: 'native-next'});
+    const reportedOrganizationId = identityMode === 'rekey' ? null : 'proof-org';
+    await exec.emit({type: 'assistant', timestamp: 2000, error: 'rate_limit_error', isApiErrorMessage: true,
+      message: {role: 'assistant', content: [{type: 'text', text: 'Usage limit reached'}]}});
+    await exec.emit({type: 'result', subtype: 'error_during_execution', is_error: true, session_id: identityMode === 'rekey' ? 'native-next' : 'native-issued', errors: ['Usage limit reached']});
+    await vi.waitFor(() => expect(events).toContainEqual(expect.objectContaining({kind: 'turn-failed', diagnostic: expect.objectContaining({details: expect.objectContaining({
+      runtimeAuthClassification: expect.objectContaining(identityMode !== 'unavailable' ? {profileId: 'issued-profile', groupGeneration: 4,
+        sourceProviderAccountId: 'issued-account', sourceProviderOrganizationId: 'issued-org', providerReportedOrganizationId: reportedOrganizationId} : {profileId: null, sourceProviderAccountId: null, sourceProviderOrganizationId: null, providerReportedOrganizationId: reportedOrganizationId}),
+    })})})));
+    expect(readFiles.mock.calls.filter(([files]) => files.includes('.happier-claude-connected-service-home.json'))).toHaveLength(1);
+  } finally {await native.dispose('session_closed');}
 });
