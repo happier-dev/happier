@@ -22,8 +22,6 @@ import {
     managedMachineConsentKey,
 } from './machineCollectionModel';
 
-function managed(id: string): ManagedMachineV1 & Readonly<{ controller: NonNullable<ManagedMachineV1['controller']> }>;
-function managed(id: string, overrides: Partial<ManagedMachineV1>): ManagedMachineV1;
 function managed(id: string, overrides: Partial<ManagedMachineV1> = {}): ManagedMachineV1 {
     return { id, homeId: 'home-a', custodianAccountId: 'owner',
         launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Build box', choices: {} },
@@ -51,6 +49,24 @@ function group(serverId: string, machines: Machine[], overrides: Partial<ActiveS
 afterEach(() => clearMachineRequestReachabilityForTest());
 
 describe('machine collection rail partition', () => {
+    it('keeps a shared managed guest with its custodian alongside shared ordinary Machines', () => {
+        const access = { custodian: { accountId: 'alice', displayName: 'Alice' },
+            role: 'use', resourceMode: 'plain', accessState: 'ready' } as const;
+        const collection = buildMachineCollection({ groups: [group('a', [
+            machine('shared-guest', { isShared: true, access }),
+            machine('shared-host', { isShared: true, access }), machine('own-guest'),
+        ])], groupedByHome: false, managedByServerId: { a: [
+            managed('shared-created', { enrolledMachineId: 'shared-guest', custodianAccountId: 'alice' }),
+            managed('own-created', { enrolledMachineId: 'own-guest' }),
+        ] } });
+        const shared = collection.sections.find(section => section.title === t('machines.destinations.shared', { team: 'Alice' }));
+        expect(shared?.rows.map(row => row.machineId).sort()).toEqual(['shared-guest', 'shared-host']);
+        const created = collection.sections.find(section => section.title === t('machines.destinations.created'));
+        expect(created?.rows.map(row => row.machineId)).toEqual(['own-guest']);
+        expect(machineCollectionHref(shared!.rows.find(row => row.machineId === 'shared-guest')!))
+            .toBe('/settings/machines/shared-guest?serverId=a');
+        expect(collection.machineCount).toBe(3);
+    });
     it('keeps enrolled creations in Created by Happier with their live presence and own name', () => {
         const nowMs = Date.now();
         captureMachinePresenceObservation({ serverId: 'a', accountId: 'collection-account' })(['joined']);
@@ -63,6 +79,14 @@ describe('machine collection rail partition', () => {
         expect(collection.count).toBe(1);
         expect(machineCollectionHref(created!.rows[0]!)).toBe('/settings/machines/joined?serverId=a');
     });
+    it('keeps an unread arrival slot inline even when its presence is offline', () => {
+        captureMachinePresenceObservation({ serverId: 'a', accountId: 'collection-account' })(['known', 'arrival']);
+        const rows = buildMachineCollection({ groups: [group('a', [machine('known'),
+            machine('arrival', { metadata: null, availability: undefined })])], groupedByHome: false }).sections[0]!.rows;
+        const partition = partitionMachineCollectionRailRows(rows, true);
+        expect(partition.inline.map(row => row.machineId)).toEqual(['arrival']);
+        expect(partition.offline.map(row => row.machineId)).toEqual(['known']);
+    });
     it('keeps withdrawn unknown machines out of the offline fold and restores only observed machines', () => {
         const nowMs = Date.now();
         const scope = { serverId: 'a', accountId: 'collection-account' };
@@ -72,11 +96,34 @@ describe('machine collection rail partition', () => {
         const rows = buildMachineCollection({ groups: [group('a', machines)], groupedByHome: false, nowMs }).sections[0]!.rows;
         const partition = partitionMachineCollectionRailRows(rows, true);
         expect(partition.inline.map(row => row.machineId)).toEqual(['studio']);
-        expect(partition.inline[0]).toMatchObject({ online: false, status: 'unknown', presence: t('common.unknown') });
+        expect(partition.inline[0]).toMatchObject({ online: false, status: 'unknown', presence: '' });
         expect(partition.offline.map(row => row.machineId)).toEqual(['sleeping']);
         captureMachinePresenceObservation(scope)(['studio']);
         const restored = buildMachineCollection({ groups: [group('a', machines)], groupedByHome: false, nowMs }).sections[0]!.rows;
         expect(restored.find(row => row.machineId === 'studio')).toMatchObject({ online: true, status: 'online' });
+    });
+    it('lands every row in its final group before presence resolves: offline records fold as Offline, live ones stay up top', () => {
+        const nowMs = 1_000_000_000;
+        const scope = { serverId: 'a', accountId: 'collection-account' };
+        const machines = [
+            machine('alpha-offline', { active: true, activeAt: 1 }),
+            machine('beta-live', { active: true, activeAt: nowMs }),
+            machine('gamma-offline'),
+        ];
+        withdrawMachinePresenceForScope(scope);
+        const rows = buildMachineCollection({ groups: [group('a', machines)], groupedByHome: false, nowMs }).sections[0]!.rows;
+        expect(rows.map(row => row.machineId)).toEqual(['beta-live', 'alpha-offline', 'gamma-offline']);
+        expect(rows.map(row => row.status)).toEqual(['unknown', 'offline', 'offline']);
+        expect(rows.some(row => row.presence === t('common.unknown'))).toBe(false);
+        const partition = partitionMachineCollectionRailRows(rows, true);
+        expect(partition.inline.map(row => row.machineId)).toEqual(['beta-live']);
+        expect(partition.offline.map(row => row.machineId)).toEqual(['alpha-offline', 'gamma-offline']);
+
+        captureMachinePresenceObservation(scope)(machines.map(candidate => candidate.id));
+        const resolved = buildMachineCollection({ groups: [group('a', machines)], groupedByHome: false, nowMs }).sections[0]!.rows;
+        expect(resolved.map(row => [row.machineId, row.status])).toEqual([
+            ['beta-live', 'online'], ['alpha-offline', 'offline'], ['gamma-offline', 'offline'],
+        ]);
     });
     it('keeps long-offline machines folded when the last online machine expires', () => {
         const nowMs = 1_000_000_000;
@@ -143,7 +190,7 @@ describe('buildMachineCollection', () => {
     it('contracts enrolled managed rows without discarding observed retained sleep or borrowing another Home power', () => {
         const stopped = managed('retained', { enrolledMachineId: 'guest', wakeOnAcceptedMessage: true,
             retention: { kind: 'unused', afterMs: 3600000, effect: 'stop' },
-            observation: { observedAt: 10, availability: 'present', power: 'stopped', storage: 'retained', daemon: 'disconnected' } });
+            observation: { observedAt: 10, availability: 'present', power: 'stopped', storage: 'retained' } });
         const collection = buildMachineCollection({ groups: [group('a', [machine('guest')]), group('b', [machine('guest')])], groupedByHome: true,
             managedByServerId: { a: [stopped] } });
         const rows = collection.sections.flatMap(section => section.rows);
@@ -159,21 +206,65 @@ describe('buildMachineCollection', () => {
         expect(row).toMatchObject({ kind: 'managed', managedId: 'retired', serverId: 'a' });
         expect(collection.sections.find(section => section.rows.includes(row!))?.archived).toBe(true);
         expect(machineCollectionHref(row!)).toBe('/settings/machines/managed/retired?serverId=a');
+        expect(collection.machineCount).toBe(0);
+        expect(collection.count).toBe(1);
     });
-    it('counts machines, never recipes or retired created machines, so the header agrees with its groups', () => {
+    it.each([false, true])('opens a confirmed-absent enrolled resource at its retained receipt (Machine retained: %s)', retained => {
+        const collection = buildMachineCollection({ groups: [group('a', retained ? [machine('deleted-guest')] : [])], groupedByHome: false,
+            managedByServerId: { a: [managed('removed', { allocation: 'confirmed-absent', enrolledMachineId: 'deleted-guest',
+                desired: 'delete', observation: { observedAt: 20, availability: 'absent' } })] } });
+        const row = collection.sections.flatMap(section => section.rows)[0]!;
+        expect(row).toMatchObject({ kind: 'managed', managedId: 'removed', presence: t('managedPower.resourceAbsent') });
+        expect(machineCollectionHref(row)).toBe('/settings/machines/managed/removed?serverId=a');
+        expect(machineCollectionHref(row, 'rail')).toBe('/machines/managed/removed?serverId=a');
+    });
+    it('moves ended created machines into Archive, but keeps one whose cleanup is still open in the live list', () => {
+        const collection = buildMachineCollection({ groups: [group('a', [])], groupedByHome: false,
+            managedByServerId: { a: [managed('live'),
+                managed('gone', { allocation: 'confirmed-absent', desired: 'delete', observation: { observedAt: 20, availability: 'absent' } }),
+                managed('never', { creationState: 'canceled', allocation: 'confirmed-absent', resource: undefined, desired: 'delete' }),
+                managed('cleaning', { desired: 'delete', observation: { observedAt: 20, availability: 'absent' },
+                    cleanup: { disposition: 'unavailable', reason: 'plugin_removed' } })] } });
+        const ids = (archived: boolean) => collection.sections.filter(section => Boolean(section.archived) === archived)
+            .flatMap(section => section.rows).map(row => row.kind === 'managed' ? row.managedId : row.machineId).sort();
+        expect(ids(false)).toEqual(['cleaning', 'live']);
+        expect(ids(true)).toEqual(['gone', 'never']);
+        expect(collection.machineCount).toBe(2);
+    });
+    it('tells same-named created Machines apart across enrolled, pending and ended rows', () => {
+        const collection = buildMachineCollection({ groups: [group('a', [machine('guest-1234', { host: 'provider-generated' })])],
+            groupedByHome: false, managedByServerId: { a: [
+                managed('created-joined', { enrolledMachineId: 'guest-1234' }),
+                managed('cua1-pending'),
+                managed('cua2-ended', { allocation: 'confirmed-absent', desired: 'delete' }),
+            ] } });
+        const active = collection.sections.filter(section => !section.archived).flatMap(section => section.rows);
+        const archived = collection.sections.filter(section => section.archived).flatMap(section => section.rows);
+        expect(active.map(row => row.title).sort()).toEqual(['Build box · cua1', 'Build box · gues']);
+        expect(archived.map(row => row.title)).toEqual(['Build box · cua2']);
+        expect(collection.machineCount).toBe(2);
+        expect(buildMachineCollection({ groups: [group('a', [machine('guest-1234')])], groupedByHome: false,
+            managedByServerId: { a: [managed('created-joined', { enrolledMachineId: 'guest-1234' }), managed('cua1-pending'),
+                managed('cua2-ended', { allocation: 'confirmed-absent' })] }, query: 'cua2' }).sections.flatMap(section => section.rows))
+            .toEqual([expect.objectContaining({ managedId: 'cua2-ended', title: 'Build box · cua2' })]);
+    });
+    it('counts machines, never presets or retired created machines, so the header agrees with its groups', () => {
         const preset: ManagedMachinePresetV1 = { id: 'recipe', homeId: 'home-a', revision: 1, name: 'Build recipe',
-            owner: { kind: 'account', accountId: 'owner' }, recipe: managed('m').launch, controller: managed('m').controller };
+            owner: { kind: 'account', accountId: 'owner' }, launch: managed('m').launch, controller: managed('m').controller };
         const collection = buildMachineCollection({ groups: [group('a', [machine('mine'), machine('other')])], groupedByHome: false,
             managedByServerId: { a: [managed('pending'), managed('retired', { archivedAt: 0 })] }, presetsByServerId: { a: [preset] } });
         const liveRows = collection.sections.filter(section => !section.archived).flatMap(section => section.rows);
         expect(liveRows).toHaveLength(3);
         expect(collection.machineCount).toBe(3);
     });
-    it('says the list is still settling while a machine has not yet read its name, instead of naming it "Loading…"', () => {
+    it('reserves only the unread row when a name arrives beside hydrated machines', () => {
         const ready = buildMachineCollection({ groups: [group('a', [machine('mine')])], groupedByHome: false });
         expect(ready.firstAnswerPending).toBe(false);
         const hydrating = buildMachineCollection({ groups: [group('a', [machine('mine'), machine('new', { metadata: null, availability: undefined })])], groupedByHome: false });
-        expect(hydrating.firstAnswerPending).toBe(true);
+        expect(hydrating.firstAnswerPending).toBe(false);
+        expect(hydrating.sections.flatMap(section => section.rows).filter(row => row.hydrating)).toHaveLength(1);
+        const pending = buildMachineCollection({ groups: [group('a', [machine('new', { metadata: null, availability: undefined })])], groupedByHome: false });
+        expect(pending.firstAnswerPending).toBe(true);
     });
     it('titles the machines Happier created, beside your own machines', () => {
         const collection = buildMachineCollection({ groups: [group('a', [machine('mine')])], groupedByHome: false,
@@ -198,7 +289,7 @@ describe('buildMachineCollection', () => {
     });
     it('names preset audiences from the exact Home and owner rather than the operation label', () => {
         const preset: ManagedMachinePresetV1 = { id: 'recipe', homeId: 'home-a', revision: 1, name: 'Build recipe',
-            owner: { kind: 'team', teamId: 'same-id' }, recipe: managed('m').launch, controller: managed('m').controller };
+            owner: { kind: 'team', teamId: 'same-id' }, launch: managed('m').launch, controller: managed('m').controller };
         const collection = buildMachineCollection({ groups: [group('a', []), group('b', [])], groupedByHome: true,
             presetsByServerId: { a: [preset, { ...preset, id: 'personal', owner: { kind: 'account', accountId: 'owner' } }], b: [preset] },
             teamNamesByServerId: { a: { 'same-id': 'Design' }, b: { 'same-id': 'Engineering' } } });
@@ -210,9 +301,9 @@ describe('buildMachineCollection', () => {
         const collection = buildMachineCollection({ groups: [group('a', [machine('shared', { isShared: true })])], groupedByHome: false });
         expect(collection.sections[0]?.title).toBe(t('machines.destinations.sharedWithoutOwner'));
     });
-    it('keeps accessible recipes separate from actual machines and scopes archive/search navigation to their Home', () => {
+    it('keeps accessible presets separate from actual machines and scopes archive/search navigation to their Home', () => {
         const preset: ManagedMachinePresetV1 = { id: 'recipe /', homeId: 'home-a', revision: 2, name: 'Build recipe',
-            owner: { kind: 'account', accountId: 'owner' }, recipe: managed('m').launch, controller: managed('m').controller };
+            owner: { kind: 'account', accountId: 'owner' }, launch: managed('m').launch, controller: managed('m').controller };
         const collection = buildMachineCollection({ groups: [group('a', []), group('b', [])], groupedByHome: true,
             presetsByServerId: { a: [preset, { ...preset, id: 'archived', archivedAt: 0 }], b: [{ ...preset, homeId: 'home-b' }] }, query: 'BUILD' });
         expect(collection.sections.flatMap(section => section.rows)).toEqual([]);
@@ -246,7 +337,17 @@ describe('buildMachineCollection', () => {
         expect(collection.sections.flatMap(section => section.rows.map(row => machineCollectionHref(row)))).toEqual(['/settings/machines/joined?serverId=a']);
         const waitingForMachine = buildMachineCollection({ groups: [group('a', [])], groupedByHome: false,
             managedByServerId: { a: [managed('pending', { enrolledMachineId: 'joined' })] } });
-        expect(machineCollectionHref(waitingForMachine.sections[0]!.rows[0]!)).toBe('/settings/machines/joined?serverId=a');
+        expect(machineCollectionHref(waitingForMachine.sections[0]!.rows[0]!)).toBe('/settings/machines/managed/pending?serverId=a');
+        expect(machineCollectionHref(waitingForMachine.sections[0]!.rows[0]!, 'rail')).toBe('/machines/managed/pending?serverId=a');
+    });
+    it('drops the groups a typed query leaves empty, but keeps them all when nothing matches', () => {
+        const input = { groups: [group('a', [machine('own', { displayName: 'Studio' })])], groupedByHome: false,
+            managedByServerId: { a: [managed('pending', { launch: { ...managed('pending').launch, name: 'Build box' } })] } };
+        const matched = buildMachineCollection({ ...input, query: 'build' });
+        expect(matched.sections.map(section => section.rows.length)).toEqual([1]);
+        // With no match anywhere, each group stays so the list can say so, instead of vanishing.
+        expect(buildMachineCollection({ ...input, query: 'zzz' }).sections.length).toBeGreaterThan(1);
+        expect(buildMachineCollection(input).sections.length).toBeGreaterThan(1);
     });
     it('groups accessible shared Machines under their real custodian without changing exact Home navigation', () => {
         const collection = buildMachineCollection({
@@ -410,7 +511,7 @@ describe('machine collection navigation', () => {
         expect(machineCollectionHref({ machineId: 'm1', serverId: 'a' }, 'rail')).toBe('/machines/m1?serverId=a');
         expect(machineCollectionHref({ kind: 'managed', managedId: 'p', serverId: 'a' }, 'rail')).toBe('/machines/managed/p?serverId=a');
         expect(machineCollectionHref({ kind: 'managed', managedId: 'p', enrolledMachineId: 'm1', serverId: 'a' }, 'rail')).toBe('/machines/m1?serverId=a');
-        // Configuration (recipes) has one home: the Settings door.
+        // Configuration (presets) has one home: the Settings door.
         expect(machineCollectionHref({ kind: 'preset', presetId: 'r', serverId: 'a' }, 'rail')).toBe('/settings/machines/presets/r?serverId=a');
     });
 

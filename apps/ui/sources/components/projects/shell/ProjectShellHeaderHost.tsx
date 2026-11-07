@@ -1,3 +1,5 @@
+import { selectScmChangedFileCount } from '@/scm/scmStatusFiles';
+import { useMountedScopeActionCommand } from '@/components/approvals/useMountedScopeActionCommand';
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -10,13 +12,16 @@ import type { PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEnti
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { useProjectNewSessionAction } from '@/components/projects/useProjectNewSessionAction';
-import {
-  PROJECT_PAGES,
-  type ProjectPageV1,
-} from '@/components/workspaceCockpit/project/projectCockpitState';
+import { type ProjectPageV1, type ProjectPageSelection } from '@/components/workspaceCockpit/project/projectCockpitState';
+import { ProjectPageCatalogProvider, useOptionalProjectPageCatalog, useProjectPageCatalog } from '../navigation/useProjectPageCatalog';
+import { ProjectPageChromeCounts } from '../navigation/ProjectPageChromeCounts';
+import { resolveProjectNavigationCustomizer } from '../navigation/projectNavigationCustomizer';
+import { resolveNavigationPlacements } from '@/sync/domains/settings/mobileSurfacePinning';
+import { useNavigationSurfacePlacement } from '@/components/ui/navigation/useNavigationSurfacePlacement';
+import { Modal } from '@/modal';
 import { useWorkspaceScmSnapshotController } from '@/hooks/workspaces/scm/useWorkspaceScmSnapshotController';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import { useAllMachines, useWorkspaceRefs } from '@/sync/domains/state/storage';
+import { useWorkspaceRefs, useActiveMachineFacts } from '@/sync/domains/state/storage';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { resolveWorkspaceRefById, resolveWorkspaceRefByScope, sameWorkspaceProject } from '@/sync/domains/workspaces/workspaceRefs';
 import { t } from '@/text';
@@ -25,11 +30,11 @@ import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 import { resolveWorkspaceRefDisplayName } from '../resolveWorkspaceRefDisplayName';
 import { useOpenProject } from '../useOpenProject';
 import { useProjectRouteActions } from '../detail/useProjectRouteActions';
+import { readProjectRouteCheckoutRootPath } from '../detail/projectRouteState';
 import {
   ProjectCheckoutChip,
   ProjectShellHeader,
   type ProjectShellCheckout,
-  type ProjectShellPage,
 } from './ProjectShellHeader';
 
 const OPEN_ELSEWHERE = '\u0000open-elsewhere';
@@ -42,6 +47,7 @@ type ProjectShellScope = Readonly<{
   workspaceRef: WorkspaceRefV1;
   activeRootPath: string;
   activeWorktreeId?: string | null;
+  selection?: ProjectPageSelection;
   onSelectRootPath: (path: string) => void;
   onSelectWorkspace?: (workspaceRef: WorkspaceRefV1) => void;
 }>;
@@ -61,7 +67,7 @@ export function useProjectShellCheckout(
   const { theme } = useUnistyles();
   const navigateToOpen = useNavigateToProjectOpen();
   const openProject = useOpenProject();
-  const machines = useAllMachines();
+  const machines = useActiveMachineFacts();
   const refs = useWorkspaceRefs();
   const scope = React.useMemo(
     () => ({
@@ -75,12 +81,13 @@ export function useProjectShellCheckout(
       props.workspaceRef.serverId,
     ],
   );
-  const { snapshot } = useWorkspaceScmSnapshotController(scope);
+  // The header reads branch, worktrees and the change count: a summary, never the list.
+  const { snapshot } = useWorkspaceScmSnapshotController(scope, { refreshOnMount: props.selection?.kind !== 'plugin', detail: 'summary' });
   const machineName = React.useCallback(
     (machineId: string) => {
       const machine =
         machines.find((candidate) => candidate.id === machineId) ?? null;
-      return getMachineDisplayName(machine) ?? machineId;
+      return getMachineDisplayName(machine, machines) ?? machineId;
     },
     [machines],
   );
@@ -201,7 +208,7 @@ export function useProjectShellCheckout(
       choices,
       onSelect,
     },
-    changeCount: snapshot?.entries.length ?? 0,
+    changeCount: snapshot ? selectScmChangedFileCount(snapshot) : 0,
     branch,
   };
 }
@@ -211,61 +218,80 @@ export function useProjectShellCheckout(
  * host projects them and routes each choice through the existing owners — page tabs through the
  * Project route, New session through 23's editable draft (never auto-Send).
  */
-export const ProjectShellHeaderHost = React.memo(
-  function ProjectShellHeaderHost(
-    props: ProjectShellScope &
-      Readonly<{
+type ProjectShellHeaderHostProps = ProjectShellScope & Readonly<{
         page: ProjectPageV1;
         /** Defaults to the Project route's own page navigation. */
         onSelectPage?: (page: ProjectPageV1) => void;
         /** Context's body is Fork D's 65s2; the tab stays a destination either way (D44). */
         pages?: readonly ProjectPageV1[];
         menuActions?: readonly PageHeaderMenuAction[];
-      }>,
-  ) {
+      }>;
+
+export const ProjectShellHeaderHost = React.memo(function ProjectShellHeaderHost(props: ProjectShellHeaderHostProps) {
+    const catalog = useOptionalProjectPageCatalog();
+    const sameScope = catalog?.target.workspaceRefId === props.workspaceRef.id
+      && catalog.authority?.isCurrent() !== false
+      && areServerProfileIdentifiersEquivalent(catalog.target.serverId, props.workspaceRef.serverId)
+      && readProjectRouteCheckoutRootPath({ rawWorktreeId: catalog.target.rawWorktreeId ?? undefined,
+        rawLegacyActiveRootPath: catalog.target.rawActiveRootPath ?? undefined,
+        defaultRootPath: props.workspaceRef.rootPath }) === props.activeRootPath;
+    return sameScope ? <ProjectShellHeaderContent {...props} />
+      : <ProjectPageCatalogProvider workspaceRef={props.workspaceRef} activeRootPath={props.activeRootPath}
+          activeWorktreeId={props.activeWorktreeId} selection={props.selection}><ProjectShellHeaderContent {...props} /></ProjectPageCatalogProvider>;
+});
+
+function ProjectShellHeaderContent(props: ProjectShellHeaderHostProps) {
+    const catalog = useProjectPageCatalog();
+    const { preferences } = useNavigationSurfacePlacement('projectTabBar');
+    const pages = React.useMemo(() => props.pages
+      ? catalog.pages.filter(page => page.kind === 'plugin' || props.pages?.includes(page.selection.kind === 'builtin' ? page.selection.page : 'overview'))
+      : catalog.pages, [catalog.pages, props.pages]);
+    const placements = React.useMemo(() => resolveNavigationPlacements(pages, preferences), [pages, preferences]);
     const newSession = useProjectNewSessionAction({ workspaceRef: props.workspaceRef,
       activeRootPath: props.activeRootPath, page: props.page });
-    const { navigateToSegment } = useProjectRouteActions({
-      workspaceRef: props.workspaceRef,
-      activeRootPath: props.activeRootPath,
-      activeWorktreeId: props.activeWorktreeId,
-    });
-    const { onSelectPage } = props;
-    const selectPage = React.useCallback(
-      (page: ProjectPageV1) => {
-        if (onSelectPage) onSelectPage(page);
-        else navigateToSegment({ segment: page });
-      },
-      [navigateToSegment, onSelectPage],
-    );
+    const executeNavigation = useMountedScopeActionCommand(catalog.authority?.scope ?? null);
+    const selectPage = React.useCallback((id: string) => {
+        void executeNavigation('shell.column.set', { column: 'main', visible: true, tab: id }, {
+            kind: 'shell.column', column: 'main', read: () => catalog.readColumn('main'),
+        });
+    }, [catalog.readColumn, executeNavigation]);
     const { checkout, changeCount } = useProjectShellCheckout(props);
-    const pages = React.useMemo(
-      (): readonly ProjectShellPage[] =>
-        (props.pages ?? PROJECT_PAGES).map((page) =>
-          page === 'changes' && changeCount > 0
-            ? { id: page, count: String(changeCount) }
-            : { id: page },
-        ),
-      [changeCount, props.pages],
-    );
+    const customize = React.useCallback(() => {
+      fireAndForget(import('@/components/ui/navigation/NavigationPlacementCustomizer').then(({ DetailNavigationCustomizer }) => {
+        Modal.show({ component: DetailNavigationCustomizer,
+          props: resolveProjectNavigationCustomizer({ items: catalog.items, device: 'desktop' }) });
+      }), { tag: 'ProjectShellHeader.customize' });
+    }, [catalog.items]);
+    const menuActions = React.useMemo(() => [...(props.menuActions ?? []), {
+      id: 'customize-project-tabs', title: t('navigationPlacement.customize'),
+      testID: 'project-shell-header.customize', onSelect: customize,
+    }], [props.menuActions, customize]);
+    const orderedPageIds = React.useMemo(() => placements.ordered.map(page => page.id), [placements.ordered]);
 
     return (
       <>
-        <ProjectShellHeader
+        <ProjectPageChromeCounts pages={pages} context={catalog.context} projection={catalog.projection}
+          authority={catalog.authority} preferences={preferences}>{countedPages => {
+          const countedPlacements = resolveNavigationPlacements(countedPages, preferences);
+          return <ProjectShellHeader
           projectName={resolveWorkspaceRefDisplayName(props.workspaceRef)}
           checkout={checkout}
-          pages={pages}
-          activePage={props.page}
+          pages={countedPlacements.pinned}
+          overflowPages={countedPlacements.overflow}
+          orderedPageIds={orderedPageIds}
+          activePage={catalog.activePageId}
+          changeCount={changeCount}
+          onCustomizeTabs={customize}
           onSelectPage={selectPage}
           onNewSession={newSession.open}
-          menuActions={props.menuActions ?? []}
+          menuActions={menuActions}
           look={<ProjectAtmosphereLookChip />}
-        />
+        />;
+        }}</ProjectPageChromeCounts>
         {newSession.approvalNotice}
       </>
     );
-  },
-);
+}
 
 /** Phones (lab `p-overview` HOMEp): the checkout as one full-width row under the navigation bar. */
 export const ProjectPhoneCheckoutRow = React.memo(

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { ScmWorkingSnapshotSchema } from '@happier-dev/protocol/scm';
 
@@ -13,18 +13,31 @@ import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/pane
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { PAGE_COLUMN_MAX_WIDTH_PX } from '@/components/ui/layout/contentWidthMode';
 import { settingsParse } from '@/sync/domains/settings/settings';
+import { projectLastActiveRootPathState, projectLastActiveWorktreeIdState } from '@/sync/domains/state/navigationUiState';
+import { replacePersistentUiStateForTest } from '@/dev/testkit/harness/persistentUiState';
+import { paneUiState } from '@/sync/domains/state/filePaneUiState';
+import { EMPTY_PERSISTED_PANE_SCOPE_STATE } from '@/components/appShell/panes/model/paneScopePersistenceSchema';
+import { createWorkspaceActionAdapter, workspaceActionFailure } from '@/components/appShell/workspace/workspaceActions';
+import { createWorkspaceNavigationAdapter } from '@/components/appShell/workspace/workspaceNavigationAdapter';
+import { createWorkspaceState, reduceWorkspaceState } from '@/components/appShell/workspace/workspaceState';
+import { registerMountedWorkspaceAction } from '@/components/appShell/workspace/workspaceActionRuntime';
+import { resolveCompactAppDestinations } from '@/components/appShell/destinations/compactAppDestinationCatalog';
+import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
+import type { WorkspaceActionOutcome } from '@/components/appShell/workspace/workspaceActions';
 
 vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 
 installSessionDetailsPanelNonRnModuleMocks();
+const viewport = vi.hoisted(() => ({ width: 1440, height: 900 }));
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock({
-        useWindowDimensions: () => ({ width: 1440, height: 900, scale: 1, fontScale: 1 }),
-        Dimensions: { get: () => ({ width: 1440, height: 900, scale: 1, fontScale: 1 }) },
+        Dimensions: { get: () => ({ ...viewport, scale: 1, fontScale: 1 }) },
+        useWindowDimensions: () => ({ ...viewport, scale: 1, fontScale: 1 }),
     });
 });
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ renderCustomModals: true }).module);
 const daemon = vi.hoisted(() => vi.fn());
 // Only the addressed daemon transport is replaced; SCM selection, storage and pane lifecycle stay real.
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope: daemon }));
@@ -35,6 +48,7 @@ const { ProjectDetailScreen } = await import('./ProjectDetailScreen');
 const { ProjectRightPanel } = await import('./detail/ProjectRightPanel');
 const { ProjectCockpitShell } = await import('@/components/workspaceCockpit/project/ProjectCockpitShell');
 const { ProjectShellHeaderHost } = await import('./shell/ProjectShellHeaderHost');
+const { PageBottomBarSeatProvider } = await import('@/components/ui/layout/useFloatingChromeClearance');
 const { ProjectOverviewWidgets } = await import('./detail/ProjectOverviewWidgets');
 const { useProjectNewSessionAction } = await import('./useProjectNewSessionAction');
 const { useProjectRouteActions } = await import('./detail/useProjectRouteActions');
@@ -48,6 +62,11 @@ const runtime = installSessionPaneRuntimeTestHarness({
     scopeId: ({ serverId }) => buildProjectPaneScopeId('wr_1', serverId),
     request: async (url, init) => artifacts.handle(new URL(String(url)).pathname, init),
 });
+const { MainAppTabStateProvider } = await import('@/components/navigation/mobile/chrome/MainAppTabStateProvider');
+const { CurrentUiContextProvider } = await import('@/components/appShell/currentUiContext/CurrentUiContextProvider');
+const { CurrentUiContextActionHost } = await import('@/components/appShell/currentUiContext/currentUiContextVoiceToolPort');
+const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
 const worktrees = [
     { id: 'gitwt_main', path: '/repo', branch: 'main', isCurrent: true, isMain: true },
     { id: 'gitwt_feature', path: '/repo/.worktrees/feature-auth', branch: 'feature/auth', isCurrent: false },
@@ -68,7 +87,11 @@ const snapshot = ScmWorkingSnapshotSchema.parse({
         includedAdded: 0, includedRemoved: 0, pendingAdded: 0, pendingRemoved: 0 },
 });
 let workspaceRef: WorkspaceRefV1;
+let unregisterWorkspace: (() => void) | undefined;
+afterEach(() => { unregisterWorkspace?.(); unregisterWorkspace = undefined; });
 beforeEach(async () => {
+    viewport.width = 1440;
+    viewport.height = 900;
     artifacts.clear();
     daemon.mockReset();
     daemon.mockImplementation(async (request: { method: string }) =>
@@ -84,14 +107,34 @@ beforeEach(async () => {
     storage.setState({ settings: settingsParse({ ...storage.getState().settings,
         actionsSettingsV1: { v: 1, actions: { 'settings.set': { disabledSurfaces: ['ui'] } } } }),
         sessions: {}, localSettings: { ...storage.getState().localSettings,
-        uiMultiPanePanelsEnabled: true, projectLastActiveRootPathByWorkspaceRefId: {},
-        projectLastActiveWorktreeIdByWorkspaceRefId: {} } });
+        uiMultiPanePanelsEnabled: true } });
+    replacePersistentUiStateForTest(projectLastActiveRootPathState, {});
+    replacePersistentUiStateForTest(projectLastActiveWorktreeIdState, {});
     storage.getState().updateWorkspaceScmSnapshot({ serverId: runtime.serverId, machineId: 'machine-1', rootPath: '/repo' }, snapshot);
+    // FIXPAR1-BRIEF.md:7 keeps checkout selection behind the mounted Workspace Action owner.
+    // Mount its real reducer/navigation/guard; only the external router commit is inert here.
+    let workspace = createWorkspaceState({ id: 'project', target: { kind: 'project', params: {
+        workspaceRefId: workspaceRef.id, serverId: runtime.serverId, pageId: 'context',
+    } }, pinned: false, preview: false });
+    let nextId = 0;
+    const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
+        externalSessions: false, inbox: true, workflows: false, friends: false,
+    } });
+    const navigation = createWorkspaceNavigationAdapter({ getState: () => workspace, getCatalog: () => catalog,
+        dispatch: action => { workspace = reduceWorkspaceState(workspace, action); }, createId: () => `project:${++nextId}`,
+        onChange: () => {}, transport: { commit: () => {} } });
+    navigation.initialize(`/projects/wr_1/context?serverId=${runtime.serverId}`);
+    const execute = createWorkspaceActionAdapter({ getState: () => workspace, navigation,
+        readCanvas: () => null, createId: () => `project:${++nextId}` });
+    unregisterWorkspace = registerMountedWorkspaceAction(async request => {
+        let result: WorkspaceActionOutcome = workspaceActionFailure('workspace_navigation_cancelled');
+        await runGuardedNavigation(async () => { result = await execute(request.actionId, request.input); });
+        return result;
+    });
 });
 function setPreferences(rootPath: string, worktreeId: string) {
-    storage.setState({ localSettings: { ...storage.getState().localSettings,
-        projectLastActiveRootPathByWorkspaceRefId: { wr_1: rootPath },
-        projectLastActiveWorktreeIdByWorkspaceRefId: { wr_1: worktreeId } } });
+    projectLastActiveRootPathState.set('wr_1', rootPath);
+    projectLastActiveWorktreeIdState.set('wr_1', worktreeId);
 }
 function selectionKey() { return `project-selection:v1:${JSON.stringify([runtime.serverId, 'wr_1'])}`; }
 it('keeps Project route and New Session owners asleep during deferred File drafts and dirty pin metadata', async () => {
@@ -135,6 +178,126 @@ function rootPath(screen: Awaited<ReturnType<typeof mount>>) {
 }
 
 describe('ProjectDetailScreen active worktree selection', () => {
+    it('names the selected Machine identically in the Project header and Checkouts when hosts repeat', async () => {
+        const { ProjectBuiltinWidgetBody } = await import('./widgets/ProjectBuiltinWidgetBody');
+        const { ProjectShellHeader } = await import('./shell/ProjectShellHeader');
+        const { WidgetGlanceRow } = await import('@/components/widgets/glance/WidgetGlanceRow');
+        const named = (id: string) => createMachineFixture({ id, metadata: {
+            ...createMachineFixture().metadata!, host: 'NLDW3-5-36-33', displayName: 'NLDW3-5-36-33',
+        } });
+        storage.getState().applyMachines([named('machine-1'), named('machine-2')], true, { sourceServerId: runtime.serverId });
+        const screen = await renderScreen(<runtime.Wrapper>
+            <ProjectShellHeaderHost workspaceRef={workspaceRef} activeRootPath="/repo" onSelectRootPath={() => {}} page="overview" />
+            <ProjectBuiltinWidgetBody id="project_checkouts" checkout={workspaceRef} testID="checkouts"
+                workspace={{ serverId: runtime.serverId, workspaceId: workspaceRef.id, machineId: workspaceRef.machineId, rootPath: '/repo' }} />
+        </runtime.Wrapper>);
+        const headerName = screen.findByType(ProjectShellHeader).props.checkout.machineName;
+        expect(headerName).toBe('NLDW3-5-36-33 · machine-1');
+        const checkout = screen.findAllByType(WidgetGlanceRow).find(node => node.props.testID === 'checkouts.here');
+        expect(checkout?.props.fact.split(' · ').slice(0, 2).join(' · ')).toBe(headerName);
+        await screen.unmount();
+    });
+    it('renders the comparison-seeded review Start form from phone Project Changes', async () => {
+        viewport.width = 390;
+        viewport.height = 844;
+        const changedSnapshot = ScmWorkingSnapshotSchema.parse({ ...snapshot,
+            entries: [{ path: 'notes.md', previousPath: null, kind: 'modified', includeStatus: '.', pendingStatus: 'M',
+                hasIncludedDelta: false, hasPendingDelta: true,
+                stats: { includedAdded: 0, includedRemoved: 0, pendingAdded: 1, pendingRemoved: 0, isBinary: false } }],
+            totals: { ...snapshot.totals, pendingFiles: 1, pendingAdded: 1 },
+        });
+        daemon.mockImplementation(async (request: { method: string }) => request.method === RPC_METHODS.SCM_STATUS_SNAPSHOT
+            ? { success: true, snapshot: changedSnapshot }
+            : { success: false, errorCode: 'FEATURE_UNSUPPORTED', error: 'No fixture response for this daemon operation' });
+        storage.getState().updateWorkspaceScmSnapshot({ serverId: runtime.serverId, machineId: 'machine-1', rootPath: '/repo' }, changedSnapshot);
+        const { Modal, ModalProvider } = await import('@/modal');
+        const screen = await renderScreen(<runtime.Wrapper>
+            <ProjectDetailScreen workspaceRefId="wr_1" serverId={runtime.serverId} page="changes" />
+            <ModalProvider>{null}</ModalProvider>
+        </runtime.Wrapper>);
+        try {
+            const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+            await vi.waitFor(() => expect(screen.findByTestId('scm-comparison-phone-actions')).not.toBeNull());
+            let menu!: ReturnType<typeof screen.root.find>;
+            await vi.waitFor(() => {
+                menu = screen.root.find(node => node.type === DropdownMenu && node.props.testID === 'scm-comparison-phone-actions'
+                    && node.props.items.some((item: { id: string }) => item.id === 'start-review'));
+                expect(menu.props.items.find((item: { id: string }) => item.id === 'start-review').disabled).toBe(false);
+            });
+            await act(async () => menu.props.onSelect('start-review'));
+            await vi.waitFor(() => expect(screen.findByTestId('execution-run-start-form')).not.toBeNull());
+            expect(screen.getTextContent()).toContain('scmComparison.scope.workingTree');
+            expect(screen.getTextContent()).toContain('scmComparison.onBranch(branch=main)');
+            expect(screen.getTextContent()).toContain('/repo');
+        } finally {
+            await act(async () => Modal.hideAll());
+            await screen.unmount();
+        }
+    });
+    it('publishes the focused Project and accepted checkout through the real current-context Action without paths or sibling reads', async () => {
+        const otherProject = { ...workspaceRef, id: 'wr_other', projectKey: 'project-beta', label: 'Project Beta', rootPath: '/other' };
+        applyProjectAccountRowsFixture(storage, { workspaceRefs: [workspaceRef,
+            ...worktrees.slice(1).map(tree => ({ ...workspaceRef, id: tree.id, rootPath: tree.path })), otherProject] });
+        const context = { surface: 'agent' as const, authority: 'account_automation' as const,
+            serverId: runtime.serverId, expectedAccountId: 'account-a' };
+        const tree = (active: boolean, feature = false, other = false, showProject = true) => <runtime.Wrapper><MainAppTabStateProvider>
+            <CurrentUiContextProvider><CurrentUiContextActionHost />
+                <PluginSurfaceFocusEligibilityProvider active={active} currentUiContextActive={active}>
+                    {showProject ? <ProjectDetailScreen workspaceRefId={other ? otherProject.id : workspaceRef.id} serverId={runtime.serverId} page="context"
+                        activeRootPath={other ? otherProject.rootPath : feature ? '/repo/.worktrees/feature-auth' : '/repo'}
+                        activeWorktreeId={feature ? 'gitwt_feature' : null} isFocused={active} /> : null}
+                </PluginSurfaceFocusEligibilityProvider>
+            </CurrentUiContextProvider>
+        </MainAppTabStateProvider></runtime.Wrapper>;
+        const screen = await renderScreen(tree(true));
+        const executor = createDefaultActionExecutor();
+        const read = () => executor.execute('ui.current_context.read', {}, context);
+        expect(await read()).toMatchObject({ ok: true, result: { entity: { kind: 'project', label: 'Project Alpha',
+            reference: { serverId: runtime.serverId, projectKey: 'project-alpha', workspaceId: 'wr_1',
+                machineId: 'machine-1', worktreeId: null } } } });
+        await screen.update(tree(true, true));
+        const requests = daemon.mock.calls.length;
+        const selected = await read();
+        expect(selected).toMatchObject({ ok: true, result: { entity: { reference: {
+            workspaceId: 'gitwt_feature', worktreeId: 'gitwt_feature' } } } });
+        expect(JSON.stringify(selected)).not.toContain('/repo');
+        expect(daemon.mock.calls.length).toBe(requests);
+        await screen.update(tree(false, true));
+        const inactive = await read();
+        expect(inactive).toMatchObject({ ok: true });
+        expect(inactive).not.toMatchObject({ result: { entity: expect.anything() } });
+        await screen.update(tree(true, true));
+        expect(await read()).toMatchObject({ ok: true, result: { entity: { reference: { workspaceId: 'gitwt_feature' } } } });
+        await screen.update(tree(true, false, true));
+        expect(await read()).toMatchObject({ ok: true, result: { entity: { label: 'Project Beta', reference: {
+            projectKey: 'project-beta', workspaceId: 'wr_other', worktreeId: null } } } });
+        await screen.update(tree(true, false, true, false));
+        const leftProject = await read();
+        expect(leftProject).toMatchObject({ ok: true });
+        expect(leftProject).not.toMatchObject({ result: { entity: expect.anything() } });
+        await screen.unmount();
+    });
+    it('keeps a removed plugin page unavailable without probing SCM until its Files companion opens', async () => {
+        const selection = { kind: 'plugin', destination: { pluginId: 'acme.removed', localId: 'builds' }, subPath: 'runs/42' } as const;
+        // A visible Files companion legitimately reads SCM independently of the page body.
+        paneUiState.set(buildProjectPaneScopeId('wr_1', runtime.serverId), {
+            ...EMPTY_PERSISTED_PANE_SCOPE_STATE,
+            right: { isOpen: false, activeTabId: 'files', selectedDestination: null, tabState: {} },
+        });
+        const screen = await renderScreen(<runtime.Wrapper><ProjectDetailScreen workspaceRefId="wr_1"
+            serverId={runtime.serverId} selection={selection} /></runtime.Wrapper>);
+        expect(screen.findHostByTestId('plugin-app-page-unavailable')).not.toBeNull();
+        expect(screen.findAllByType(ProjectOverviewWidgets)).toHaveLength(0);
+        expect(screen.findHostByTestId('project-shell-header')).not.toBeNull();
+        expect(screen.findAllByType(ProjectRightPanel)).toHaveLength(0);
+        expect(daemon.mock.calls.filter(([request]) => request.method === RPC_METHODS.SCM_STATUS_SNAPSHOT)).toHaveLength(0);
+        await act(async () => runtime.pane.openRight({ tabId: 'files' }));
+        await vi.waitFor(() => expect(daemon.mock.calls.filter(([request]) => request.method === RPC_METHODS.SCM_STATUS_SNAPSHOT)).toHaveLength(1));
+        expect(screen.findAllByType(ProjectRightPanel).length).toBeGreaterThan(0);
+        expect(screen.findHostByTestId('plugin-app-page-unavailable')).not.toBeNull();
+        expect(screen.findAllByType(ProjectOverviewWidgets)).toHaveLength(0);
+        await screen.unmount();
+    });
     it('keeps the Project header on the wide page column for every page while Overview/Code bodies are wide and the rest keep the default cap', async () => {
         storage.setState({ localSettings: { ...storage.getState().localSettings, uiContentWidthMode: 'compact' } });
         const renderProject = (page: 'overview' | 'code' | 'changes' | 'scripts' | 'services' | 'context') => (
@@ -186,10 +349,14 @@ describe('ProjectDetailScreen active worktree selection', () => {
     it('keeps the main panel, header and right panel in sync when the active worktree changes', async () => {
         const screen = await mount();
         expect(rootPath(screen)).toBe('/repo');
-        await act(async () => screen.findByType(ProjectRightPanel).props.onSelectRootPath('/repo/.worktrees/feature-auth'));
-        expect(rootPath(screen)).toBe('/repo/.worktrees/feature-auth');
-        expect(storage.getState().localSettings.projectLastActiveRootPathByWorkspaceRefId)
-            .toEqual({ [selectionKey()]: '/repo/.worktrees/feature-auth' });
+        const settingsWrite = vi.spyOn(storage.getState(), 'applyLocalSettings');
+        try {
+            await act(async () => screen.findByType(ProjectRightPanel).props.onSelectRootPath('/repo/.worktrees/feature-auth'));
+            expect(rootPath(screen)).toBe('/repo/.worktrees/feature-auth');
+            expect(projectLastActiveRootPathState.read(selectionKey())).toBe('/repo/.worktrees/feature-auth');
+            expect(projectLastActiveWorktreeIdState.read(selectionKey())).toBe('gitwt_feature');
+            expect(settingsWrite).not.toHaveBeenCalled();
+        } finally { settingsWrite.mockRestore(); }
     });
 
     it('does not carry uncontrolled checkout selection into another Home with the same id', async () => {
@@ -212,7 +379,7 @@ describe('ProjectDetailScreen active worktree selection', () => {
         const screen = await mount();
         expect(rootPath(screen)).toBe('/repo');
         expect(screen.findByTestId('project-worktree-recovery-toast')).not.toBeNull();
-        expect(storage.getState().localSettings.projectLastActiveRootPathByWorkspaceRefId).toEqual({
+        expect(projectLastActiveRootPathState.readAll()).toEqual({
             wr_1: '/repo/.worktrees/deleted-worktree', [selectionKey()]: '/repo',
         });
     });
@@ -228,10 +395,10 @@ describe('ProjectDetailScreen active worktree selection', () => {
         const onSelectRootPath = vi.fn();
         await mount({ activeRootPath: '/repo/.worktrees/deleted-worktree', isFocused: false, onSelectRootPath });
         expect(onSelectRootPath).not.toHaveBeenCalled();
-        expect(storage.getState().localSettings.projectLastActiveRootPathByWorkspaceRefId).toEqual({});
+        expect(projectLastActiveRootPathState.readAll()).toEqual({});
     });
 
-    it('adopts a persisted active worktree path when local settings hydrate after mount', async () => {
+    it('adopts a persisted active worktree path when device state hydrates after mount', async () => {
         const screen = await mount();
         expect(rootPath(screen)).toBe('/repo');
         await act(async () => setPreferences('/repo/.worktrees/feature-hydrated', 'gitwt_hydrated'));
@@ -244,12 +411,22 @@ describe('ProjectDetailScreen active worktree selection', () => {
         expect(rootPath(screen)).toBe('/repo/.worktrees/feature-persisted');
         await act(async () => screen.findByType(ProjectRightPanel).props.onSelectRootPath('/repo'));
         expect(rootPath(screen)).toBe('/repo');
-        expect(storage.getState().localSettings.projectLastActiveRootPathByWorkspaceRefId).toEqual({
+        expect(projectLastActiveRootPathState.readAll()).toEqual({
             wr_1: '/repo/.worktrees/feature-persisted', [selectionKey()]: '/repo',
         });
-        expect(storage.getState().localSettings.projectLastActiveWorktreeIdByWorkspaceRefId).toEqual({
+        expect(projectLastActiveWorktreeIdState.readAll()).toEqual({
             wr_1: 'gitwt_persisted', [selectionKey()]: '@root',
         });
+    });
+
+    // The File page's kept key row and a selection's Ask bar report to this seat so they stack instead of overlapping
+    // (as on the Session cockpit); a page the Project hosts without it would let the Ask bar cover the key row.
+    it('seats the page and its details companion under one bottom-bar seat so the Ask bar clears the Edit key row', async () => {
+        const screen = await mount({ page: 'code' });
+        await act(async () => runtime.pane.openDetailsTab({ key: 'file:a', kind: 'file', title: 'a', resource: { kind: 'file', path: 'a' } }));
+        const ancestors: unknown[] = [];
+        for (let node = screen.findByType(ProjectCockpitShell).parent; node; node = node.parent) ancestors.push(node.type);
+        expect(ancestors).toContain(PageBottomBarSeatProvider);
     });
 
     // Plan 12 §§2/4 replaced the three-segment forceOverviewMode owner with route-owned pages.

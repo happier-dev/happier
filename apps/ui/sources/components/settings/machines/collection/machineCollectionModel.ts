@@ -1,6 +1,6 @@
 import type { ActiveSelectionMachineGroup } from '../hooks/useActiveSelectionMachineGroups';
 import { describeMachinePresenceLine, projectMachineManagedPresence, type MachineManagedPresence } from '@/utils/sessions/machinePresenceLine';
-import { describeMachineLockedReason, getMachineDisplayName, isMachineDisplayHydrating, resolveMachineDisplayNameParts } from '@/utils/sessions/machineDisplayNames';
+import { describeMachineLockedReason, formatMachineDisplayNameParts, getMachineDisplayName, isMachineDisplayHydrating, resolveMachineDisplayNameParts } from '@/utils/sessions/machineDisplayNames';
 import { formatOSPlatform } from '@/utils/sessions/sessionUtils';
 import { buildMachineOwnershipGroups, describeMachineSharedOwnership, describeMachineSharedGroupTitle } from '@/sync/domains/machines/machineOwnershipGroups';
 import { t } from '@/text';
@@ -9,7 +9,7 @@ import { carryMachineActivity, linkMachineActivity, readMachineActivity } from '
 import { compareMachineListOrder } from '@/sync/domains/machines/machineListOrder';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
-import { describeManagedCreation, managedMachineEnrolledDetailId } from '../managed/managedCreationPresentation';
+import { describeManagedCreation, isManagedMachineListArchived, managedMachineEnrolledDetailId } from '../managed/managedCreationPresentation';
 import type { MachinesDoor } from '@/components/machines/page/machinesDoor';
 import { isMachineSubPageId } from '@/components/machines/page/machineSubPages';
 import { MACHINES_COLLECTION_ROOT, MACHINES_RAIL_ROOT, machinesIndexHref, machinePageHref } from '@/components/machines/page/machinePageHref';
@@ -166,17 +166,28 @@ export function buildMachineCollection(input: Readonly<{
         const enrolledIds = new Set(group.machines.map(machine => machine.id));
         const managedByMachineId = new Map((input.managedByServerId?.[group.serverId] ?? [])
             .flatMap(machine => machine.archivedAt === undefined && machine.enrolledMachineId ? [[machine.enrolledMachineId, machine] as const] : []));
-        const names = resolveMachineDisplayNameParts(group.machines.map(machine => ({ ...machine,
-            managedName: managedByMachineId.get(machine.id)?.launch.name })));
+        // An ended created machine is listed once, by its record in Archive; its former Machine is not a live row.
+        const endedMachineIds = new Set((input.managedByServerId?.[group.serverId] ?? []).flatMap(machine =>
+            machine.enrolledMachineId && isManagedMachineListArchived(machine) ? [machine.enrolledMachineId] : []));
+        for (const machineId of endedMachineIds) managedByMachineId.delete(machineId);
         const managedMachines = (input.managedByServerId?.[group.serverId] ?? [])
-            .filter(machine => machine.archivedAt !== undefined || !machine.enrolledMachineId || !enrolledIds.has(machine.enrolledMachineId));
+            .filter(machine => isManagedMachineListArchived(machine) || !machine.enrolledMachineId || !enrolledIds.has(machine.enrolledMachineId));
+        const names = resolveMachineDisplayNameParts([
+            ...group.machines.filter(machine => !endedMachineIds.has(machine.id)).map(machine => ({ ...machine,
+                managedName: managedByMachineId.get(machine.id)?.launch.name })),
+            ...managedMachines.map(machine => ({ id: machine.id, managedName: machine.launch.name })),
+        ]);
         // Your machines, then the ones Happier created for you, then each Home member's shared machines (lab `R`);
         // retired created machines close the list.
-        const joinedCreations = group.machines.filter(machine => managedByMachineId.has(machine.id));
-        const ownership = buildMachineOwnershipGroups(group.machines.filter(machine => !managedByMachineId.has(machine.id)))
+        const classified = buildMachineOwnershipGroups(group.machines.filter(machine => !endedMachineIds.has(machine.id)));
+        // Managed provenance never overrides shared custody. Partition only the ownership owner's own-Machine group.
+        const joinedCreations = classified.flatMap(ownershipGroup => ownershipGroup.key === 'owned'
+            ? ownershipGroup.machines.filter(machine => managedByMachineId.has(machine.id)) : []);
+        const ownership = classified.map(ownershipGroup => ownershipGroup.key === 'owned'
+            ? { ...ownershipGroup, machines: ownershipGroup.machines.filter(machine => !managedByMachineId.has(machine.id)) } : ownershipGroup)
             .filter(ownershipGroup => managedMachines.length === 0 && joinedCreations.length === 0 || ownershipGroup.machines.length > 0);
         const created = (key: 'managed' | 'managedArchived') => managedMachines.some(machine =>
-            (machine.archivedAt !== undefined) === (key === 'managedArchived')) || key === 'managed' && joinedCreations.length > 0
+            isManagedMachineListArchived(machine) === (key === 'managedArchived')) || key === 'managed' && joinedCreations.length > 0
             ? [{ key, custodian: null, machines: key === 'managed' ? joinedCreations : [] }] : [];
         const ownershipGroups = [
             ...ownership.filter(ownershipGroup => !ownershipGroup.key.startsWith('shared:')),
@@ -211,7 +222,7 @@ export function buildMachineCollection(input: Readonly<{
                     presenceSource: { machine: presenceMachine, managedPresence, scope: group.accountScope },
                     ...(managedPresence?.offline ? { presenceWord: managedPresence.offline.word } : {}),
                     ...(isMachineDisplayHydrating(machine) ? { hydrating: true as const } : {}),
-                    title: titleParts.hint ? `${titleParts.name} · ${titleParts.hint}` : titleParts.name,
+                    title: formatMachineDisplayNameParts(titleParts),
                     titleParts,
                     host: !managedMachine && host && host !== name ? host : null,
                     platformLabel: formatOSPlatform(machine.metadata?.platform),
@@ -230,13 +241,14 @@ export function buildMachineCollection(input: Readonly<{
                 .sort(compareMachineCollectionRows);
             if (ownershipGroup.key === 'managed' || ownershipGroup.key === 'managedArchived') {
                 const managedRows = managedMachines
-                    .filter(machine => (machine.archivedAt !== undefined) === (ownershipGroup.key === 'managedArchived'))
+                    .filter(machine => isManagedMachineListArchived(machine) === (ownershipGroup.key === 'managedArchived'))
                     .map((machine): MachineCollectionRow => {
                         const awaitingConsent = input.awaitingConsent?.has(managedMachineConsentKey(group.serverId, machine.id)) === true;
                         const creation = describeManagedCreation(machine);
                         const enrolledMachineId = managedMachineEnrolledDetailId(machine, enrolledIds.has(machine.enrolledMachineId ?? ''));
+                        const titleParts = names.get(machine.id)!;
                         return { kind: 'managed', managedId: machine.id,
-                        serverId: group.serverId, title: machine.launch.name, titleParts: { name: machine.launch.name, hint: null }, host: null, platformLabel: '', platform: null, online: false, status: 'offline',
+                        serverId: group.serverId, title: formatMachineDisplayNameParts(titleParts), titleParts, host: null, platformLabel: '', platform: null, online: false, status: 'offline',
                         presence: awaitingConsent ? t('approvals.waitingForYou') : creation.line,
                         ...(!awaitingConsent && creation.word ? { presenceWord: creation.word } : {}), reason: null, ownership: null, ownerName: null,
                         ...(enrolledMachineId ? { enrolledMachineId } : {}) };
@@ -318,10 +330,11 @@ export function reconcileMachineCollection(previous: MachineCollection | null, n
 
 /**
  * Online machines first, then the ones that are not, each by the name the user sees (lab `R`): a fleet
- * with dozens of retired or sleeping machines still opens on the ones that can work.
+ * with dozens of retired or sleeping machines still opens on the ones that can work. A live Machine whose
+ * presence is still resolving keeps its place among them, so nothing moves when the answer lands.
  */
 function compareMachineCollectionRows(a: MachineCollectionRow, b: MachineCollectionRow): number {
-    return compareMachineListOrder(a.online, a.title, b.online, b.title)
+    return compareMachineListOrder(a.status !== 'offline', a.title, b.status !== 'offline', b.title)
         || machineCollectionRowKey(a).localeCompare(machineCollectionRowKey(b));
 }
 
