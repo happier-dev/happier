@@ -304,7 +304,7 @@ describe('requester bootstrap installation confidentiality', () => {
     const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'deployment-root', binding: {
       accountId: 'bob', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 },
       serverIdentityId: 'home', machineId: 'controller', installationId: 'controller-installation', accountEncryptionMode: 'plain',
-      actionId: 'deployments.deploy', requestId: 'deploy', requestEnvelopeDigest: 'a'.repeat(43),
+      actionId: 'deployments.deploy', requestId: 'deploy', requestEnvelopeDigest: 'a'.repeat(43), deploymentChildRoot: true,
       target: { kind: 'machine', machineId: 'controller' },
     } });
     const job = DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'member', actionId: 'deployments.deploy',
@@ -337,7 +337,7 @@ describe('requester bootstrap installation confidentiality', () => {
     const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'deployment-root', binding: {
       accountId: 'bob', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 },
       serverIdentityId: 'home', machineId: 'controller', installationId: 'controller-installation', accountEncryptionMode: 'plain',
-      actionId: 'deployments.deploy', requestId: 'deploy', requestEnvelopeDigest: 'a'.repeat(43),
+      actionId: 'deployments.deploy', requestId: 'deploy', requestEnvelopeDigest: 'a'.repeat(43), deploymentChildRoot: true,
       target: { kind: 'machine', machineId: 'controller' },
     } });
     const input = { serverId: 'home', environmentId: 'environment', targetLinkId: 'link' };
