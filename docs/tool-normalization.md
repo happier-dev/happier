@@ -14,7 +14,7 @@ It is written for developers working on **tool reliability and UX** (not for his
 ## Goals
 
 - Provide stable, renderer-friendly tool shapes across providers and protocols.
-- Preserve raw provider payloads for debugging without leaking provider-specific shapes into the UI.
+- Preserve unique provider details for debugging without leaking provider-specific shapes into the UI.
 - Make provider drift visible and easy to update via trace + fixture-driven regression tests.
 - Keep tool rendering configurable (title/summary/full + optional debug/raw view) without branching per provider.
 
@@ -25,7 +25,7 @@ It is written for developers working on **tool reliability and UX** (not for his
 - **Tool call**: a request from the model to run a tool (e.g. `Read`, `Bash`, `Patch`).
 - **Tool result**: the output from running that tool.
 - **Canonical tool name**: the UI renderer key (e.g. `Read`, `Bash`, `Patch`, `TodoWrite`).
-- **V2 tool payload**: a normalized tool input/result that includes stable tool metadata under `_happier` (and `_raw`).
+- **V2 tool payload**: a normalized tool input/result with stable metadata under `_happier` and optional `_raw` details.
 - **Legacy session**: sessions created before V2 tool normalization was emitted by the CLI.
 - **Claude local-control**: sessions where the app mirrors a local terminal transcript and reconstructs tool events client-side.
 - **Codex local-control**: sessions where the CLI mirrors Codex rollout JSONL (`~/.codex/sessions`) into the session as V2-normalized tool calls/results.
@@ -61,7 +61,7 @@ At the **CLI boundary** (before events become “session messages”), tool call
 
 - tool name is canonicalized (`canonicalToolName`)
 - tool input/result is normalized into a stable shape suitable for rendering
-- `_raw` is preserved for debugging
+- `_raw` retains only provider details absent from the canonical fields, within its existing bounds
 
 This is the **preferred** normalization path.
 
@@ -172,7 +172,22 @@ Important design choices:
 Normalized tool input/results are wrapped with:
 
 - `_happier`: stable metadata used for routing/rendering and debugging
-- `_raw`: original provider payload (truncated for safety)
+- `_raw`: optional bounded provider details that are not already represented in the canonical input/result
+
+In current development source, normalization omits redundant `_raw` copies.
+Renderers consume canonical fields; the historical `_raw.output` fallback remains
+readable for retained Edit results. This changes new writes only and does not
+rewrite existing transcripts.
+
+Claude stores an exact repeated command/report body once when plain tool text
+matches native `stdout`, `stderr` or `content`: the full native result becomes
+the canonical tool content, including task/status/diff facts. Distinct text,
+annotations and ambiguous associations remain intact. Historical wrappers remain
+readable.
+
+Inline and native image bytes are removed only after the Session media owner
+persists that image. Unsupported images and failed members of a partially
+successful publication keep their inline bytes.
 
 The on-the-wire field name is `_happier`. Older *development* sessions may contain `_happy`; the app treats `_happy` as a legacy alias
 for routing and detail-level decisions.

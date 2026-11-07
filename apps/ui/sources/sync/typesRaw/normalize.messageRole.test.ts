@@ -3,6 +3,9 @@ import { describe, expect, it } from 'vitest';
 import { hasSyntheticNoResponseMeta } from '../domains/messages/syntheticNoResponseMessageMeta';
 import { normalizeDirectTranscriptMessages } from '../runtime/directSessions/normalizeDirectTranscriptMessages';
 import { normalizeRawMessage } from './normalize';
+import { extractStdStreams } from '@/components/tools/normalization/parse/stdStreams';
+import { readBashBackgroundTaskId } from '@/components/tools/normalization/parse/backgroundTask';
+import { normalizeToolResultForRendering } from '@/components/tools/normalization/normalize/resultNormalization';
 
 function createProducerShapedSyntheticNoResponseRaw() {
     return {
@@ -26,6 +29,32 @@ function createProducerShapedSyntheticNoResponseRaw() {
 }
 
 describe('normalizeRawMessage messageRole metadata', () => {
+    it('renders canonical command and report results with the same native facts as historical stored rows', () => {
+        const report = 'Complete report\nwith all findings';
+        const command = { stdout: report, stderr: '', exit_code: 0, backgroundTaskId: 'task-1' };
+        const task = { content: [{ type: 'text', text: report }], agentId: 'agent-1', structuredPatch: [{ oldStart: 1 }] };
+        for (const result of [command, task]) {
+            const normalizeResult = (historical: boolean) => {
+                const normalized = normalizeRawMessage('result', 'claude-jsonl:main:user:result', 1_701, {
+                    role: 'agent', content: { type: 'output', data: {
+                        type: 'user', uuid: 'result',
+                        ...(historical ? { toolUseResult: result } : {}),
+                        message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tool-1',
+                            content: historical ? report : result, is_error: false }] },
+                    } },
+                }, { messageRole: 'event' });
+                if (normalized?.role !== 'agent' || normalized.content[0]?.type !== 'tool-result') throw new Error('Missing tool result');
+                return JSON.parse(normalized.content[0].content);
+            };
+            const canonical = normalizeResult(false);
+            expect(canonical).toEqual(normalizeResult(true));
+            expect(canonical).toEqual(result);
+            expect(extractStdStreams(canonical)?.stdout).toBe(report);
+            if ('backgroundTaskId' in result) expect(readBashBackgroundTaskId(canonical)).toBe('task-1');
+            else expect(normalizeToolResultForRendering({ canonicalToolName: 'Task', result: canonical })).toMatchObject(task);
+        }
+    });
+
     it('marks Claude synthetic no-response rows for reducer suppression even when stored as events', () => {
         const raw = {
             role: 'agent',

@@ -24,22 +24,21 @@ installFileOpsRendererCommonModuleMocks({
 });
 
 describe('EditView', () => {
-    it('renders a late ACP diff carried by the completed tool result', async () => {
+    it.each(['canonical', 'historical'] as const)('renders a late ACP diff from the %s result', async (shape) => {
         fileOpsRendererModuleState.toolDiffSpy.mockClear();
         const { EditView } = await import('./EditView');
 
+        const output = [{
+            type: 'diff',
+            path: '/tmp/late.ts',
+            oldText: 'const value = 1;',
+            newText: 'const value = 2;',
+        }];
         const tool = makeToolCall({
             name: 'Edit',
             state: 'completed',
             input: { file_path: '/tmp/input.ts' },
-            result: {
-                output: [{
-                    type: 'diff',
-                    path: '/tmp/late.ts',
-                    oldText: 'const value = 1;',
-                    newText: 'const value = 2;',
-                }],
-            },
+            result: shape === 'canonical' ? { output } : { _raw: { output } },
         });
 
         await renderScreen(React.createElement(EditView, makeToolViewProps(tool)));

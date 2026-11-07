@@ -128,7 +128,7 @@ describe('tool normalization fixtures (v1): catalog coverage', () => {
     expect(normalizeFirst('acp/auggie/tool-call/fetch', 1).canonicalToolName).toBe('WebFetch');
   });
 
-  it('normalizes MCP generic tools into a stable safe-display shape (title/subtitle + raw preserved)', () => {
+  it('normalizes MCP generic tools into a stable safe-display shape (title/subtitle + canonical fields)', () => {
     const fixtures = loadFixtureV1();
     const call = firstFixtureEvent(fixtures, 'codex/codex/tool-call/mcp__happier__change_title');
     expect(call).toBeTruthy();
@@ -143,7 +143,6 @@ describe('tool normalization fixtures (v1): catalog coverage', () => {
     expect(callNorm.canonicalToolName).toBe('change_title');
     const input = asRecord(callNorm.input);
     expect(typeof input?.title).toBe('string');
-    expect(asRecord(input)?._raw).toBeDefined();
 
     const result = firstFixtureEvent(fixtures, 'codex/codex/tool-call-result/mcp__happier__change_title');
     expect(result).toBeTruthy();
@@ -157,7 +156,6 @@ describe('tool normalization fixtures (v1): catalog coverage', () => {
     });
     const out = asRecord(resultNorm);
     expect(typeof out?.title).toBe('string');
-    expect(out?._raw).toBeDefined();
   });
 
   it('promotes Happier shell-bridge tool calls to the underlying built-in or MCP tool', () => {

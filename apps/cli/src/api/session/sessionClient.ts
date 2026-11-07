@@ -20,6 +20,7 @@ import { inferAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { configuration } from '@/configuration';
 import type { RawJSONLines } from '@/backends/claude/types';
 import { persistClaudeToolResultMedia } from '@/backends/claude/attachments/persistClaudeToolResultMedia';
+import { compactClaudeToolResultMetadata } from '@/backends/claude/utils/claudeToolResultMetadata';
 import {
     buildClaudeJsonlLocalId,
     buildClaudeJsonlLocalIdFromMessageKey,
@@ -4117,6 +4118,7 @@ export class ApiSessionClient extends EventEmitter {
         ({ body, meta } = await persistClaudeToolResultMedia({
             body, meta, workingDirectory: this.resolveWorkingDirectory(), sessionId: this.sessionId,
         }));
+        body = compactClaudeToolResultMetadata(body);
         this.outboundShapeLogger.log('claude:raw-jsonl', body);
 
         const sidechainId = (() => {

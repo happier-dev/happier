@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { RawJSONLines } from '../types';
 import { extractAcpMediaContentBlocks } from '@/agent/acp/media/extractAcpMediaContentBlocks';
 import type { SessionMediaSource } from '@/agent/core';
@@ -11,8 +12,7 @@ function record(value: unknown): Record<string, unknown> | null {
         ? value as Record<string, unknown> : null;
 }
 
-// Provider payloads are JSON. Image payloads stay out of the transcript even when
-// extraction rejects their encoding. Native Read metadata can duplicate those bytes.
+// Native Read metadata can duplicate bytes in the tool-result image blocks.
 function replaceMediaBytes(value: unknown, data: ReadonlySet<string>): unknown {
     if (typeof value === 'string') return data.has(value.trim()) ? '[session media]' : value;
     if (Array.isArray(value)) return value.map(item => replaceMediaBytes(item, data));
@@ -29,7 +29,6 @@ export async function persistClaudeToolResultMedia(params: Readonly<{
     const { body, meta } = params;
     if (body.type !== 'user' || !Array.isArray(body.message.content)) return { body, meta };
     const media: SessionMediaSource[] = [];
-    const data = new Set<string>();
     for (const value of body.message.content) {
         const block = record(value);
         if (block?.type !== 'tool_result' || typeof block.tool_use_id !== 'string') continue;
@@ -38,23 +37,28 @@ export async function persistClaudeToolResultMedia(params: Readonly<{
             toolCallId: block.tool_use_id, providerEventId: body.uuid,
         });
         media.push(...extracted.media);
-        for (const payload of extracted.inlineData) data.add(payload);
         for (const diagnostic of extracted.diagnostics) {
             logger.infoFile('[claude] Tool-result media unavailable', { code: diagnostic.code });
         }
     }
-    if (media.length === 0 && data.size === 0) return { body, meta };
+    if (media.length === 0) return { body, meta };
     // The protocol envelope owns this budget; do not persist files the row cannot reference.
     if (media.length > SESSION_MEDIA_MESSAGE_MAX_ENTRIES_V1) {
         logger.infoFile('[claude] Tool-result media exceeded the transcript envelope budget', {
             droppedCount: media.length - SESSION_MEDIA_MESSAGE_MAX_ENTRIES_V1,
         });
     }
-    const result = media.length > 0 ? await createAgentSessionMediaPersister({
+    const result = await createAgentSessionMediaPersister({
         workingDirectory: params.workingDirectory, sessionId: params.sessionId,
         accessPolicy: createSessionMediaAccessPolicy({ workingDirectory: params.workingDirectory }),
-    }).persist({ type: 'session-media', source: 'claude-tool-result', media: media.slice(0, SESSION_MEDIA_MESSAGE_MAX_ENTRIES_V1) }) : null;
-    const envelope = result ? { kind: SESSION_MEDIA_MESSAGE_META_KIND_V1, payload: result } : null;
+    }).persist({ type: 'session-media', source: 'claude-tool-result', media: media.slice(0, SESSION_MEDIA_MESSAGE_MAX_ENTRIES_V1) });
+    const envelope = { kind: SESSION_MEDIA_MESSAGE_META_KIND_V1, payload: result };
+    // Only discard a source whose bytes the media owner actually persisted.
+    // Its existing content digest also distinguishes successes from partial failures.
+    const persistedHashes = new Set(result.media.map(item => item.sha256));
+    const data = new Set(media.flatMap(source => source.kind === 'base64'
+        && persistedHashes.has(createHash('sha256').update(Buffer.from(source.data, 'base64')).digest('hex'))
+        ? [source.data] : []));
     return {
         body: {
             ...body,
@@ -64,6 +68,6 @@ export async function persistClaudeToolResultMedia(params: Readonly<{
             },
             ...('toolUseResult' in body ? { toolUseResult: replaceMediaBytes(body.toolUseResult, data) } : {}),
         },
-        meta: envelope ? { ...meta, [meta?.happier === undefined ? 'happier' : 'happierMedia']: envelope } : meta,
+        meta: { ...meta, [meta?.happier === undefined ? 'happier' : 'happierMedia']: envelope },
     };
 }

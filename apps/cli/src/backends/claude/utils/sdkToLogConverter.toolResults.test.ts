@@ -6,6 +6,15 @@ import { convertSDKToLog } from './sdkToLogConverter';
 import { asRecord, conversionContext, createConverter } from './sdkToLogConverter.testkit';
 
 describe('SDKToLogConverter tool result mode metadata', () => {
+  it('stores repeated native stdout once while retaining command and task facts', () => {
+    const text = 'Detailed command report\n'.repeat(100);
+    const native = { stdout: text, backgroundTaskId: 'command-task', exit_code: 0, structuredPatch: [{ oldStart: 1, newStart: 1 }] };
+    const result = createConverter().convert({ type: 'user', uuid: 'duplicate-command', tool_use_result: native,
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'command-tool', content: text }] } });
+    expect(result).toMatchObject({ message: { content: [{ content: native }] } });
+    expect(JSON.stringify(result).split(JSON.stringify(text).slice(1, -1))).toHaveLength(2);
+  });
+
   it.each(['completed', 'failed', 'stopped'] as const)('projects native queued task %s before internal filtering and preserves cancellation', status => {
     const converter = createConverter();
     const native = { type: 'attachment', uuid: 'notification', attachment: { type: 'queued_command', commandMode: 'task-notification',

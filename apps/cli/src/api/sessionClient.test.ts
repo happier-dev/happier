@@ -2006,9 +2006,10 @@ describe('ApiSessionClient connection handling', () => {
             output: expect.objectContaining({
                 stdout: 'TRACE_OK\n',
                 _happier: expect.objectContaining({ v: 2, canonicalToolName: 'Bash' }),
-                _raw: expect.anything(),
             }),
         });
+        // Every raw field is represented by the canonical output, so no _raw copy is kept.
+        expect(decrypted.content.data.output).not.toHaveProperty('_raw');
     });
 
     it('backfills empty TodoWrite tool-result outputs with the requested todos', async () => {
@@ -2160,9 +2161,10 @@ describe('ApiSessionClient connection handling', () => {
             output: expect.objectContaining({
                 stdout: 'TRACE_OK\n',
                 _happier: expect.objectContaining({ v: 2, canonicalToolName: 'Bash' }),
-                _raw: expect.anything(),
             }),
         });
+        // Every raw field is represented by the canonical output, so no _raw copy is kept.
+        expect(decrypted.content.data.output).not.toHaveProperty('_raw');
     });
 
     it('should handle socket connection failure gracefully', async () => {
