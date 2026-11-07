@@ -1,13 +1,11 @@
 import * as React from 'react';
 import { ScrollView, View, useWindowDimensions } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 import { BUILTIN_WORKFLOW_CATALOG_V1 } from '@happier-dev/protocol/workflows/builtins/catalog';
 import type { DetailsSurfaceRendererV1, DetailsSurfaceRenderInputV1 } from '@/components/appShell/panes/details/surfaces';
 import { DetailsSurfaceFallback } from '@/components/appShell/panes/details/surfaces/DetailsSurfaceFallback';
 import { COMPOSER_CONTENT_HORIZONTAL_INSET } from '@/components/sessions/agentInput/composerContentInset';
 import { resolveAgentInputColumn } from '@/components/sessions/agentInput/layout/agentInputColumn';
-import { ContextualStartLead } from '@/components/sessions/authoring/ContextualStartLead';
-import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { WorkflowRunPeekDetailsView } from '@/components/sessions/work/WorkflowRunPeekDetailsView';
 import { isWorkflowRunPeekDetailsResource } from '@/components/sessions/work/createWorkflowRunPeekDetailsTab';
 import { getWorkflowDefinition } from '@/sync/domains/workflows/workflowDefinitionActions';
@@ -102,7 +100,6 @@ function WorkflowStartDetailsBodyForAccount(props: StartParams & Readonly<{
         if (startRef.current(read.selection, { retainedDraft: props.retainedDraft, reuseInputs: true })) selected.current = read.selection;
     }, [props.project, props.retainedDraft, read.selection, start.composerProps?.pending,
         start.composerProps?.reconciling, start.composerProps?.retainedRequest]);
-    const { theme } = useUnistyles();
     // The lead shares the composer's own column, so its title, the Where line and the card keep one edge.
     // The pane and the phone sheet hold it at the composer-area inset at every width (lab flWork `start`/`startP`).
     const column = resolveAgentInputColumn({ screenWidth: useWindowDimensions().width, contentPaddingHorizontal: COMPOSER_CONTENT_HORIZONTAL_INSET });
@@ -113,15 +110,8 @@ function WorkflowStartDetailsBodyForAccount(props: StartParams & Readonly<{
             {start.composerProps ? (
                 // One scroll owner for the Start (pane and phone sheet alike): what runs, where, then its inputs and Start.
                 <ScrollView style={styles.root} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-                    <View style={columnStyle}>
-                        <ContextualStartLead testID="workflow-start-lead"
-                            title={start.composerProps.workflowName ?? t('workflows.start.workflow')}
-                            description={start.composerProps.preview}
-                            marks={<Icon name="tree-structure" size={ICON_SIZE.xl} color={theme.colors.text.secondary} />}>
-                            {props.children}
-                        </ContextualStartLead>
-                    </View>
                     <WorkflowRunComposer {...start.composerProps} autoFocusComposer
+                        directory={props.project?.directory} leadContent={props.children}
                         contentPaddingHorizontal={COMPOSER_CONTENT_HORIZONTAL_INSET} />
                 </ScrollView>
             ) : <>

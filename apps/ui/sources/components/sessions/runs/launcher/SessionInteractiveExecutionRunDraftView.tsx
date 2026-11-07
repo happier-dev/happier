@@ -1,12 +1,10 @@
-import { getExecutionRunStartChipDefinition } from './executionRunStartChipPlacements';
 import { ExecutionRunStartResponseSchema, readExecutionRunStartRunCreation } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { resolveExecutionRunImplicitRoleIdV1 } from '@happier-dev/protocol/prompts/roles/builtInRolesV1';
 import { resolveExecutionRunNotifyParentDefaultV1 } from '@happier-dev/protocol/execution/runs/executionRunNotifyParentDefaultV1';
 import type { DiscussionSelectionSourceV1 } from '@happier-dev/protocol/discussions/content';
 import * as React from 'react';
 import { readableMessageText } from '@/components/sessions/transcript/messageDisplayText';
-import { useHomeAiLaunchProfiles } from '@/sync/store/useAiLaunchProfiles';
-import { Platform, Pressable, View, useWindowDimensions } from 'react-native';
+import { ScrollView, View, useWindowDimensions } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
@@ -15,7 +13,10 @@ import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/
 import { ProviderBoundModelRefSchema, type ProviderBoundModelRef } from '@happier-dev/protocol/providers/model-selection';
 import type { TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol/teams';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { buildRolesRailPickerOption, ROLES_RAIL_PICKER_OPTION_ID } from '@/components/roles/rail/buildRolesRailPickerOption';
+import { buildRolesRailPickerOption } from '@/components/roles/rail/buildRolesRailPickerOption';
+import { ContextualStartComposerBody, useContextualStartComposer, type ContextualStartSource, type ContextualStartAdmissibleSet } from '@/components/sessions/authoring/ContextualStartComposer';
+import { ContextualStartLead } from '@/components/sessions/authoring/ContextualStartLead';
+import { isWorkflowProjectTarget } from '@/sync/domains/workflows/workflowProjectTarget';
 import type { RoleRailItem } from '@/components/roles/rail/rolesRailTypes';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { leafFolderName } from '@/utils/path/pathUtils';
@@ -24,9 +25,9 @@ import { useMachineCapabilitiesCache } from '@/hooks/server/useMachineCapabiliti
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { SESSION_EXECUTION_RUN_LAUNCH_UNAVAILABLE_KEYS, useSessionExecutionRunLaunchability } from '@/hooks/session/useSessionExecutionRunLaunchability';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { DAEMON_AGENT_CATALOG_SECTIONS } from '@/agents/backendCatalog/agentCatalogSections';
 import { useMachineAgents } from '@/agents/machineAgents/useMachineAgents';
 import { extractExecutionRunsBackendsFromMachineCapabilitiesState, resolveExecutionRunsCapabilityRead } from '@/sync/domains/executionRuns/extractExecutionRunsBackendsFromMachineCapabilities';
-import { readExecutionRunProtocolV2Support } from '@happier-dev/protocol/execution/runs/protocolSupport';
 import { appendMountedComposerDraft } from '@/sync/ops/actions/appendMountedComposerDraft';
 import { createRepositoryComposerDocumentOwner } from '@/components/sessions/composer/repositoryComposerDocumentOwner';
 import {
@@ -37,10 +38,8 @@ import {
 import {
     ParticipantComposerSubmissionHeld,
     SessionParticipantComposer,
-    type ParticipantComposerEngine,
     type ParticipantComposerPreparedSubmission,
 } from '@/components/sessions/participants/composer/SessionParticipantComposer';
-import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import { ExecutionRunAgentMark } from '@/components/sessions/runs/ExecutionRunAgentMark';
 import { useExecutionRunMachineName } from '@/components/sessions/runs/details/useExecutionRunMachineName';
@@ -53,7 +52,7 @@ import {
     getSessionInputFailureLabelKey,
 } from '@/components/sessions/pending/pendingMessageVisualState';
 import { Text } from '@/components/ui/text/Text';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { randomUUID } from '@/platform/randomUUID';
 import {
     sessionExecutionRunList,
@@ -61,7 +60,6 @@ import {
 import { writeExistingSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import { sync } from '@/sync/sync';
-import { Modal } from '@/modal';
 import { t } from '@/text';
 import { buildExecutionRunActionDraftInputForUi } from '@/sync/domains/actions/buildExecutionRunActionDraftInputForUi';
 import { ExecutionRunLauncherOptions } from './ExecutionRunLauncherOptions';
@@ -70,8 +68,10 @@ import {
     resolveExecutionRunLauncherActionId,
     resolveExecutionRunTargetFieldPath,
     type ExecutionRunIntent,
+    type ExecutionRunReviewPresentation,
 } from './executionRunLauncherModel';
-import { createExecutionRunReportChip, createExecutionRunReviewerChip, createExecutionRunStartContentChip } from './executionRunStartChips';
+import { createExecutionRunReportChip, createExecutionRunStartContentChip } from './executionRunStartChips';
+import { getExecutionRunStartChipDefinition } from './executionRunStartChipPlacements';
 import { ExecutionRunRouteChoiceContent } from './ExecutionRunRouteChoiceContent';
 import { resolveExecutionRunRouteChoice } from './resolveExecutionRunRouteChoice';
 import type { ExecutionRunLauncherBackendChoice } from './resolveExecutionRunLauncherBackendChoices';
@@ -80,16 +80,13 @@ import { ExecutionRunDraftSelectionContext } from './ExecutionRunDraftSelectionC
 import { resolveExecutionRunIntentTitle } from '@/components/sessions/runs/resolveExecutionRunIntentTitle';
 import { useExecutionRunLauncherOptionsModel } from './useExecutionRunLauncherOptionsModel';
 import { resolveRowlessExecutionRunStartOptions } from './resolveRowlessExecutionRunStartOptions';
-import {
-    ExecutionRunSecretReferenceOverlayField,
-    resolveExecutionRunSessionLaunchProfile,
-    type ExecutionRunSecretReferenceOverlayState,
-} from './ExecutionRunSecretReferenceOverlayField';
+import { admitReviewExecutionRunLaunchSelection, useReviewExecutionRunLaunchOptions, type ReviewExecutionRunLaunchSelection } from './useReviewExecutionRunLaunchOptions';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { PoliteAccessibilityStatus } from '@/components/ui/accessibility/PoliteAccessibilityStatus';
 import { requestRegisteredComposerFocus } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
 import type { ComposerRefV1 } from '@happier-dev/protocol/plugins/ui/composerRef';
 import { useExecutionRunLaunchContext } from './useExecutionRunLaunchContext';
+import { useDetachedExecutionRunProtocolSupport } from './useDetachedExecutionRunProtocolSupport';
 import { ExactModelChoicePicker, useExactModelChoice } from '@/components/sessions/modelPicker/useExactModelChoice';
 import { useExecutionRunChildChoice } from './useExecutionRunChildChoice';
 import {
@@ -105,6 +102,40 @@ import { executionRunLauncherDraftKey } from '@/components/sessions/agents/launc
 import { ExecutionRunChildChoiceCard } from './ExecutionRunChildChoiceCard';
 import { deriveTranscriptInteractionFromSession } from '@/utils/sessions/deriveTranscriptInteraction';
 import { useExecutionRunLauncherDraft } from './useExecutionRunLauncherDraft';
+import { useComparisonReviewDraft, type ComparisonReviewDraftInput } from './useComparisonReviewDraft';
+import { ComparisonReviewScope, ComparisonWalkthroughChoice } from './ComparisonReviewFields';
+import { COMPOSER_CONTENT_HORIZONTAL_INSET } from '@/components/sessions/agentInput/composerContentInset';
+import { getValueAtPath } from '@/components/sessions/actions/ActionInputFields';
+import { useSessionProjectScmSummarySnapshot, useWorkspaceScmSummarySnapshot } from '@/sync/domains/state/storage';
+import { selectScmChangedFileCount } from '@/scm/scmStatusFiles';
+import { scmSnapshotLineTotals } from '@/scm/scmLineDelta';
+import { DiffStat } from '@/components/workspaces/scm/DiffStat';
+
+/** Review's existing SCM summary subscription stays local to the source facts beneath its lead. */
+function ExecutionRunReviewSource(props: Readonly<{
+    sessionId: string | null;
+    serverId: string | null;
+    workspace?: Readonly<{ machineId: string; cwd: string }>;
+    workingChanges: boolean;
+    scopeLabel: string;
+    scopeDetail: string;
+}>) {
+    const sessionSnapshot = useSessionProjectScmSummarySnapshot(props.workingChanges ? props.sessionId : null, props.serverId);
+    const workspaceSnapshot = useWorkspaceScmSummarySnapshot(props.workingChanges && props.sessionId === null
+        && props.serverId && props.workspace ? { serverId: props.serverId, machineId: props.workspace.machineId,
+            rootPath: props.workspace.cwd } : null);
+    const snapshot = sessionSnapshot ?? workspaceSnapshot;
+    const totals = snapshot ? scmSnapshotLineTotals(snapshot) : null;
+    return <View testID="execution-run-review-source">
+        <ComparisonReviewScope scopeLabel={props.scopeLabel} scopeDetail={[
+            props.scopeDetail,
+            snapshot?.branch.head,
+            snapshot ? t('files.repositoryChangedFiles', { count: selectScmChangedFileCount(snapshot) }) : null,
+        ].filter(Boolean).join(' · ')} />
+        {totals ? <DiffStat added={totals.includedAdded + totals.pendingAdded}
+            removed={totals.includedRemoved + totals.pendingRemoved} /> : null}
+    </View>;
+}
 
 /** Mount the exact Agent's Team demand only while its model detail is open. */
 function ExecutionRunAgentModelPicker(props: Readonly<{
@@ -146,12 +177,14 @@ function createDraftIdentity(): DraftIdentity {
     return { correlationId: randomUUID(), inputLocalId: randomUUID() };
 }
 
-export type ExecutionRunStartedPresentation = Readonly<{
+export type ExecutionRunStartedPresentation = ExecutionRunReviewPresentation & Readonly<{
     /** The Run's intent in the person's words — what its tab and header are titled by. */
     title: string | null;
 }>;
 
 const UNAVAILABLE_REASON_KEYS = SESSION_EXECUTION_RUN_LAUNCH_UNAVAILABLE_KEYS;
+const RUN_SESSION_ADMISSIBLE: ContextualStartAdmissibleSet = { who: ['newAgent'], machine: 'fixed', folder: 'fixed' };
+const RUN_DETACHED_ADMISSIBLE: ContextualStartAdmissibleSet = { ...RUN_SESSION_ADMISSIBLE, folder: 'select' };
 
 /**
  * A fresh start of one refused target with its chosen selection. `waiting` are the other refused
@@ -176,45 +209,26 @@ function choiceRunsAgent(choice: ExecutionRunLauncherBackendChoice, agentTargetK
 }
 
 const stylesheet = StyleSheet.create((theme) => ({
-    // The view owns its gutter, so the Details pane and the phone's Run page frame it the same way;
-    // the lead and foot sit on the composer card's edge.
-    root: {
+    // The view owns its gutter and its one scroll, so the Details pane and the phone Start sheet frame
+    // it the same way (lab flRun `review`/`reviewP`): the start reads from the top, under the header.
+    scroll: {
         flex: 1,
+    },
+    root: {
+        flexGrow: 1,
         gap: theme.space.s12,
-        justifyContent: 'flex-end',
         paddingHorizontal: theme.space.s16,
+        paddingTop: theme.space.s8,
+        paddingBottom: theme.space.s16,
     },
-    // Alone on a page there is no transcript above to anchor to: the start sits in the middle.
-    rootCentered: {
-        justifyContent: 'center',
-    },
-    lead: {
-        gap: theme.space.s6,
-        paddingHorizontal: theme.space.s8,
-    },
-    // A question asked of the person stands on the lead's edge, not the composer card's.
-    question: {
-        paddingHorizontal: theme.space.s8,
-    },
-    marks: {
-        flexDirection: 'row',
-        gap: theme.space.s6,
-    },
-    title: {
-        color: theme.colors.text.primary,
-        ...Typography.variant('title'),
-    },
-    description: {
-        ...Typography.default(),
-        color: theme.colors.text.secondary,
-        fontSize: 14,
-        lineHeight: 20,
+    // The participant composer brings the transcript column's gutter; inside the form it hangs that
+    // gutter so its card shares the one edge with the lead, Who answers and the foot.
+    composerHang: {
+        marginHorizontal: -COMPOSER_CONTENT_HORIZONTAL_INSET,
     },
     foot: {
         color: theme.colors.text.secondary,
         ...Typography.variant('meta'),
-        textAlign: 'right',
-        paddingHorizontal: theme.space.s8,
     },
 }));
 
@@ -233,6 +247,13 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
      * person writes their question around) and sent to the agent ahead of the prompt.
      */
     initialText?: string;
+    /** Host context seeds the existing Run draft; retained edits still win on reopen. */
+    initialActionInput?: Readonly<Record<string, unknown>>;
+    comparisonReview?: ComparisonReviewDraftInput | null;
+    /** The plugin chooser returns admitted credentials through this same form. */
+    credentialSelectionOnly?: boolean;
+    selectionIsCurrent?: () => boolean;
+    onLaunchSelection?: (selection: ReviewExecutionRunLaunchSelection) => void;
     launchOrigin?: DiscussionSelectionSourceV1 & Readonly<{ draftCorrelationId: string }>;
     autoFocusComposer?: boolean;
     /**
@@ -248,11 +269,6 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
     roleId?: string | null;
     /** What the tab calls this start ("Second opinion"); the heading says the same, never a second name. */
     heading?: string | null;
-    /**
-     * Where the start sits in its space. The Details pane keeps it on the composer's edge, below the
-     * conversation it belongs to; as a page of its own, with nothing above it, it is centered.
-     */
-    placement?: 'bottom' | 'center';
 }>) => {
     const intent = props.intent ?? null;
     const optionsIntent: ExecutionRunIntent = intent ?? 'delegate';
@@ -260,27 +276,19 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
     const selectionContext = props.launchOrigin ? props.initialText?.trim() || null : null;
     const composerInitialText = props.launchOrigin ? undefined : props.initialText;
     const { theme } = useUnistyles();
-    const interactiveTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
     const explicitServerId = props.serverId?.trim() || null;
     const preferredServerId = usePreferredServerIdForSession({
         serverId: explicitServerId,
         sessionId: props.sessionId ?? '',
     });
     const serverId = props.sessionId === null ? explicitServerId : preferredServerId;
+    const [chosenWorkspace, setChosenWorkspace] = React.useState<typeof props.workspace>();
+    const workspace = chosenWorkspace ?? props.workspace;
+    const launcher = useExecutionRunLaunchContext(props.sessionId, serverId, workspace);
     const { session, accountBinding, accountLifetime, exactSettings, settings, profileCatalogReady, acpCatalogSnapshot, enabledAgentIds, defaultBackend,
-        backendTarget, inheritedModelSelection, inheritedTeamCredentialModel, resolveInheritedModelLabel, inheritedRoutePresentation, inheritedConnectedServicesSelection, machineId, machineReachable, startAction, executeAction } = useExecutionRunLaunchContext(props.sessionId, serverId, props.workspace);
+        backendTarget, inheritedModelSelection, inheritedTeamCredentialModel, resolveInheritedModelLabel, inheritedRoutePresentation, inheritedConnectedServicesSelection, machineId, machineReachable, startAction } = launcher;
     const [mountedComposerRef, setMountedComposerRef] = React.useState<Extract<ComposerRefV1, { kind: 'participantMessage' | 'newSession' }> | null>(null);
     const initialComposerFocusApplied = React.useRef(false);
-    const sharedSavedSecretsEnabled = useFeatureEnabled('teams', {
-        scopeKind: 'spawn',
-        serverId,
-    });
-    const launchProfiles = useHomeAiLaunchProfiles(accountBinding?.scope ?? null);
-    const sessionLaunchProfile = React.useMemo(
-        () => resolveExecutionRunSessionLaunchProfile(session?.metadata, launchProfiles),
-        [session?.metadata, launchProfiles],
-    );
-    const defaultSecretBindings = sessionLaunchProfile?.secretBindings ?? null;
     const sessionLaunchability = useSessionExecutionRunLaunchability(
         props.sessionId ?? '',
         session,
@@ -293,12 +301,10 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         request: { requests: [{ id: 'tool.executionRuns', ...(props.sessionId ? { params: { sessionId: props.sessionId } } : {}) }] },
     });
     const executionRunsEnabled = useFeatureEnabled('execution.runs', { scopeKind: 'spawn', serverId });
-    const detachedProtocol = props.sessionId === null ? readExecutionRunProtocolV2Support(
-        'snapshot' in machineCapabilitiesState && machineCapabilitiesState.snapshot
-            ? { supported: true, response: machineCapabilitiesState.snapshot.response }
-            : { supported: false, reason: machineCapabilitiesState.status === 'not-supported' ? 'not-supported' : 'error' }, {
-            detachedScope: true, startAndWait: false, exactInputResults: true, runScopedAgentBindings: false, secretReferenceOverlay: false,
-        }) : null;
+    const detachedProtocol = useDetachedExecutionRunProtocolSupport(
+        props.sessionId === null && executionRunsEnabled === true && machineReachable ? machineId : null,
+        accountBinding?.scope ?? null,
+    );
     const canLaunchExecutionRuns = props.sessionId === null
         ? executionRunsEnabled === true && machineReachable && detachedProtocol?.ok === true
         : sessionLaunchability.canLaunchExecutionRuns;
@@ -309,28 +315,27 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         ? extractExecutionRunsBackendsFromMachineCapabilitiesState(machineCapabilitiesState) ?? {}
         : sessionLaunchability.executionRunsBackends;
     const daemonMergedProjection = useDaemonMergedProjectionInputs({
+        sections: DAEMON_AGENT_CATALOG_SECTIONS,
         machineId,
         serverId: serverId ?? null,
         enabled: Boolean(machineId),
-        staleMs: 60_000,
     });
     // Which Agents the Machine really has; the New Session picker reads the same inventory.
     const machineAgents = useMachineAgents({ machineId, serverId, load: Boolean(machineId) });
     const browserContextRuntime = useSessionBrowserContextRuntimeContext();
     const [phase, setPhase] = React.useState<'idle' | 'starting' | 'reconciling' | 'unresolved'>('idle');
     const [error, setError] = React.useState<string | null>(null);
-    const [secretOverlayState, setSecretOverlayState] = React.useState<ExecutionRunSecretReferenceOverlayState>({
-        readiness: { ok: true },
-    });
     const launcherDraftKey = executionRunLauncherDraftKey({
         intent,
         roleId: props.roleId,
         discussionCorrelationId: props.launchOrigin?.draftCorrelationId,
+        comparisonReview: props.comparisonReview ?? undefined,
     });
     const launcherDraft = useExecutionRunLauncherDraft({
         lifetime: accountLifetime,
-        sessionId: props.sessionId,
+        sessionId: props.credentialSelectionOnly ? null : props.sessionId,
         draftKey: launcherDraftKey,
+        comparisonReview: props.comparisonReview ?? undefined,
         correlationId: props.launchOrigin?.draftCorrelationId,
         createDefaultInput: () => buildExecutionRunActionDraftInputForUi({
             actionId: resolveExecutionRunLauncherActionId(optionsIntent),
@@ -341,6 +346,9 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
             instructions: '',
             // The Report chip sends the Account's existing default explicitly.
             extra: {
+                ...props.initialActionInput,
+                ...(props.comparisonReview?.preselectedEngineIds
+                    ? { engineIds: [...props.comparisonReview.preselectedEngineIds] } : {}),
                 ...(props.sessionId === null && props.workspace ? { cwd: props.workspace.cwd } : {}),
                 ...(props.roleId ? { roleId: props.roleId } : {}),
                 notifyParentOnCompletion: props.sessionId === null ? false : resolveExecutionRunNotifyParentDefaultV1({
@@ -351,6 +359,17 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         }),
     });
     const { identity, setIdentity, actionInput, setActionInput: setNormalizedActionInput, setUserActionInput: setActionInput } = launcherDraft;
+    const comparisonReview = useComparisonReviewDraft({
+        sessionId: props.sessionId,
+        machineId: machineId ?? undefined,
+        serverId,
+        comparisonReview: props.comparisonReview ?? null,
+        engineIds: Array.isArray(actionInput.engineIds) ? actionInput.engineIds.map(String) : [],
+        actionInput,
+        setActionInput,
+        machineInventory: machineAgents,
+        onRetryInventory: machineAgents.refresh,
+    });
     const options = useExecutionRunLauncherOptionsModel({
         sessionId: props.sessionId,
         intent: optionsIntent,
@@ -372,19 +391,23 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         mergedProviderProjectionById: daemonMergedProjection.inputs?.mergedProviderProjectionById ?? null,
         machineAgents: machineAgents.agents,
     });
-    const teamCredential = useExecutionRunTeamCredentialModel({
+    const childChoice = useExecutionRunChildChoice();
+    const reviewOptions = useReviewExecutionRunLaunchOptions({
+        launcher,
         sessionId: props.sessionId,
         serverId,
-        machineId,
+        backendChoices: options.backendChoices,
         selectedBackendChoice: options.selectedBackendChoice,
-        hasBackendChoices: options.backendChoices.length > 0,
         actionInput,
         setActionInput,
         inheritedSelection: options.inheritedDraftTeamCredentialModel,
         onSelectionChange: () => setError(null),
+        modelSelectionEnabled: intent === 'review' && !childChoice.choice,
+        credentialSelectionOnly: props.credentialSelectionOnly,
+        busy: phase !== 'idle',
     });
+    const { teamCredential, secretState: secretOverlayState } = reviewOptions;
     const machine = useExecutionRunMachineName(session, serverId, props.workspace?.machineId);
-    const childChoice = useExecutionRunChildChoice();
     const runIdRef = React.useRef<string | null>(null);
     const notifiedRunIdRef = React.useRef<string | null>(null);
     const submitInFlightRef = React.useRef(false);
@@ -473,7 +496,24 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         setError(null);
         setPhase('starting');
         try {
-            const result = await startAction(options.actionId, input, identity.correlationId);
+            if (props.credentialSelectionOnly) {
+                const selection = await admitReviewExecutionRunLaunchSelection({
+                    launcher,
+                    draft: input,
+                    operationId: identity.correlationId,
+                    isCurrent: props.selectionIsCurrent ?? accountLifetime.isCurrent,
+                });
+                setPhase('idle');
+                if (selection) props.onLaunchSelection?.(selection);
+                return;
+            }
+            const comparisonStart = props.comparisonReview && boundedIntent === 'review'
+                ? await comparisonReview.submit({ start: startAction, input, instructions: submission.text, operationId: identity.correlationId })
+                : null;
+            if (comparisonStart && !comparisonStart.actionResult) {
+                throw new Error(comparisonStart.comparison.ok ? t('common.requestFailed') : comparisonStart.comparison.error);
+            }
+            const result = comparisonStart?.actionResult ?? await startAction(options.actionId, input, identity.correlationId);
             const members = readExecutionRunFanoutMembers(result);
             // A target whose Agent can't follow this Session asks D9's question, with host proof that
             // nothing started for it. Members that started keep their Runs and members of unknown
@@ -486,7 +526,9 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
                 const [next, ...waiting] = refused;
                 if (retry || refused.length < members.length) {
                     const refusedKeys = refused.map((member) => member.key);
-                    setActionInput((previous) => ({ ...previous, [targetFieldPath]: refusedKeys }));
+                    setActionInput((previous) => ({ ...previous, [targetFieldPath]: refusedKeys,
+                        ...(comparisonStart?.capturedComparisonId ? { comparisonId: comparisonStart.capturedComparisonId } : {}),
+                    }));
                 }
                 childChoice.offer(next!.choice, (selection) => submitBoundedStartRef.current?.(
                     boundedIntent, submission, { selection, targetKeys: [next!.key], waiting, startedRunId }) ?? Promise.resolve());
@@ -509,13 +551,14 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
                     intent: boundedIntent,
                     instructions: submission.displayText ?? submission.text,
                 }),
+                ...(notStarted.length > 0 ? { reviewersNotStarted: notStarted } : {}),
+                ...(comparisonStart?.comparison.ok ? {
+                    comparisonId: comparisonStart.comparison.comparisonId,
+                    reviewRunIds: comparisonStart.comparison.reviewRunIds,
+                    narrationError: comparisonStart.comparison.narrationError,
+                    walkthrough: comparisonReview.plan.walkthrough,
+                } : {}),
             });
-            if (notStarted.length > 0) {
-                Modal.alert(
-                    t('runPage.review.reviewersNotStarted', { count: notStarted.length }),
-                    notStarted.map((reviewer) => t('runPage.review.reviewerNotStarted', { reviewer })).join('\n'),
-                );
-            }
         } catch (cause) {
             setPhase('idle');
             if (cause instanceof ParticipantComposerSubmissionHeld) throw cause;
@@ -527,7 +570,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         } finally {
             submitInFlightRef.current = false;
         }
-    }, [accountLifetime, childChoice.begin, childChoice.offer, startAction, identity.correlationId, actionInput, options.actionId, options.actionSpec, options.backendChoices, options.fields, props.onRunStarted, props.sessionId, secretOverlayState.overlay, secretOverlayState.readiness.ok, teamCredential.available]);
+    }, [accountLifetime, childChoice.begin, childChoice.offer, comparisonReview.submit, launcher, startAction, identity.correlationId, actionInput, options.actionId, options.actionSpec, options.backendChoices, options.fields, props.comparisonReview, props.credentialSelectionOnly, props.selectionIsCurrent, props.onLaunchSelection, props.onRunStarted, props.sessionId, secretOverlayState.overlay, secretOverlayState.readiness.ok, teamCredential.available]);
 
     submitBoundedStartRef.current = submitBoundedStart;
 
@@ -541,6 +584,11 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         const startOptions = options.selectedBackendChoice
             ? resolveRowlessExecutionRunStartOptions({
                 choice: options.selectedBackendChoice,
+                conversation: {
+                    sessionId: props.sessionId,
+                    text: selectionContext ? `${selectionContext}\n\n${submission.text}` : submission.text,
+                    localInputId: identity.inputLocalId,
+                },
                 input: {
                     ...actionInput,
                     ...(secretOverlayState.overlay
@@ -571,12 +619,8 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
                     ? { ...props.launchOrigin, draftCorrelationId: identity.correlationId }
                     : props.sessionId === null ? undefined : { kind: 'session' as const, sessionId: props.sessionId, draftCorrelationId: identity.correlationId };
                 const startInput = {
-                    intent: 'delegate',
                     ...startOptions.options,
                     ...(intentTitle ? { display: { title: intentTitle } } : {}),
-                    retentionPolicy: 'resumable',
-                    runClass: 'long_lived',
-                    ioMode: 'streaming',
                     // Each attempt carries its own correlation so a lost response can be
                     // reconciled; a Discussion launch keeps its selection provenance.
                     ...(launchOrigin ? { launchOrigin } : {}),
@@ -613,12 +657,6 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
             }
 
             if (props.sessionId === null) {
-                if (!machineId) throw new Error(t('common.unavailable'));
-                const sent = await executeAction('execution.run.send', { sessionId: null, runId,
-                    message: selectionContext ? `${selectionContext}\n\n${submission.text}` : submission.text,
-                    localInputId: identity.inputLocalId }, { executionRunTargetMachineId: machineId,
-                    externalActionTarget: { kind: 'machine', machineId } });
-                if (!sent.ok) throw new Error(resolveActionExecutionFailureMessage(sent, t('errors.failedToSendMessage')) ?? t('errors.failedToSendMessage'));
                 if (!accountLifetime.isCurrent()) throw new ParticipantComposerSubmissionHeld();
                 handedOff = true;
                 launcherDraft.clearAcceptedSelection(selectionCapture, submission.onOutboundHandoff());
@@ -639,6 +677,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
             });
             const runDraftOwner = createRepositoryComposerDocumentOwner({
                 scope: accountLifetime.scope,
+                scopeLifetime: accountLifetime,
                 ref: { kind: 'participantMessage', sessionId: props.sessionId, instanceId: identity.inputLocalId },
                 address: { kind: 'run', sessionId: props.sessionId, runId },
                 isCurrent: accountLifetime.isCurrent,
@@ -712,7 +751,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         } finally {
             submitInFlightRef.current = false;
         }
-    }, [accountLifetime, actionInput, childChoice.begin, childChoice.offer, startAction, executeAction, machineId, findCorrelatedRun, identity, notifyRunStarted, options.selectedBackendChoice, props.launchOrigin, props.sessionId, secretOverlayState.overlay, secretOverlayState.readiness.ok, selectionContext, serverId, teamCredential.available]);
+    }, [accountLifetime, actionInput, childChoice.begin, childChoice.offer, startAction, findCorrelatedRun, identity, notifyRunStarted, options.selectedBackendChoice, props.launchOrigin, props.sessionId, secretOverlayState.overlay, secretOverlayState.readiness.ok, selectionContext, serverId, teamCredential.available]);
 
     submitConversationStartRef.current = submitConversationStart;
 
@@ -731,6 +770,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         || (props.sessionId !== null && !session)
         || !canSendMessages
         || canLaunchExecutionRuns !== true
+        || (props.comparisonReview != null && !comparisonReview.plan.canStart)
         || options.targetRequirement !== null
         || !secretOverlayState.readiness.ok
         || !teamCredential.available
@@ -786,7 +826,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
     const chooseRole = React.useCallback((roleId: string) => {
         setError(null);
         const item = roles.find((candidate) => candidate.roleId === roleId);
-        // A role on its own Agent moves who answers there, so the chips say what the run will do.
+        // A role on its own Agent moves the shared Who selection to that Agent.
         const roleAgent = item?.agentTargetKey;
         const follow = roleAgent
             ? options.backendChoices.find((choice) => !choice.disabled && choiceRunsAgent(choice, roleAgent))
@@ -814,53 +854,12 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         onManageRoles: openRoleSettings,
     }), [chooseRole, describeRoleConsequence, openRoleSettings, roleValue, roles]);
 
-    // Who answers: the one engine popover, led by the Roles rail (lab `convo-S2`), when one Agent
-    // takes the start. A review asks for several at once, so its reviewers and role are chips instead.
+    // The shared Who rows and their demanded model details consume the same launch choices.
     const selectedChoice = options.selectedBackendChoice;
-    // While the Machine has not said what it can run, the Agent chip still names the Session's own
-    // Agent instead of vanishing; its popover lists the same choices, unavailable until it answers.
-    const engineChoice = selectedChoice ?? (executionRunsBackends == null ? options.initialBackendChoice : null);
     const draftModelSelection = React.useMemo(() => {
         const parsed = ProviderBoundModelRefSchema.safeParse(actionInput.modelSelection);
         return parsed.success ? parsed.data : null;
     }, [actionInput.modelSelection]);
-    // The Roles row makes the popover a detailed one, where a row commits only through its own
-    // `onSelectImmediate` (as every other detailed picker's rows do); a plain row would just take focus.
-    // The rail draws one heading per group in first-seen order: Agents the Machine has, then the rest.
-    const engineOptions = React.useMemo<ReadonlyArray<AgentInputChipPickerOption>>(() => [
-        ...options.backendChoices.filter((choice) => !choice.unavailable),
-        ...options.backendChoices.filter((choice) => choice.unavailable === 'notOnMachine'),
-        ...options.backendChoices.filter((choice) => choice.unavailable === 'cantRun'),
-    ].map((choice) => ({
-        id: choice.targetKey,
-        label: choice.title,
-        icon: <ExecutionRunAgentMark agentId={choice.agentId} size={12} />,
-        ...(choice.disabled ? { muted: true } : {}),
-        ...(choice.unavailable === 'notOnMachine'
-            ? { sectionId: 'notOnMachine', sectionLabel: t('machineAgents.notOnMachineYet', { machine: machine.name }) }
-            : choice.unavailable === 'cantRun'
-                ? { sectionId: 'cantRun', sectionLabel: t('machineAgents.cantRunOn', { machine: machine.name }) }
-                : {}),
-        onSelectImmediate: () => selectBackend(choice.targetKey),
-        closeOnSelectImmediate: false,
-        ...(!choice.disabled ? {
-            renderDetailContent: () => <ExecutionRunAgentModelPicker
-                choice={choice}
-                sessionId={props.sessionId}
-                machineId={machineId}
-                serverId={serverId}
-                actionInput={actionInput}
-                selected={[draftModelSelection, options.inheritedDraftSelection].find(ref => ref
-                    && choiceRunsAgent(choice, ref.agentTargetKey)) ?? null}
-                inheritedTeamCredentialModel={options.inheritedDraftTeamCredentialModel
-                    && choiceRunsAgent(choice, options.inheritedDraftTeamCredentialModel.agentTargetKey)
-                    ? options.inheritedDraftTeamCredentialModel : null}
-                selectBackend={selectBackend}
-                setActionInput={setActionInput}
-            />,
-        } : {}),
-    })), [actionInput, draftModelSelection, machine.name, machineId, options.backendChoices, options.inheritedDraftSelection, options.inheritedDraftTeamCredentialModel, props.sessionId, selectBackend, serverId, setActionInput]);
-    const roleName = chosenRoleId ? roleItem?.name ?? (rolesStatus === 'loading' ? null : chosenRoleId) : null;
     // One exact-model chooser serves both asks: D9's after a refusal (the refused Agent's default or an
     // exact model), and the Run's own model from the route chip. The route's list loads once asked for.
     const pendingChildChoice = childChoice.choice;
@@ -897,23 +896,6 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
     }), [openExactModel, setActionInput]);
     const exactModelPresentation = exactModelChoice.presentation;
     const exactModelSubtitle = [exactModelPresentation.subtitle, exactModelPresentation.detail].filter(Boolean).join(' · ');
-    const engine = React.useMemo<ParticipantComposerEngine | null>(() => (
-        intent !== 'review' && engineChoice && engineOptions.length > 0
-            ? {
-                agentType: engineChoice.agentId,
-                label: roleName ?? engineChoice.title,
-                ...(!roleName && (draftModelSelection || options.inheritedDraftSelection || teamCredential.selected)
-                    ? { modelLabel: exactModelPresentation.subtitle } : {}),
-                title: t('agentStart.chips.engineTitle'),
-                options: [rolesRail, ...engineOptions],
-                selectedOptionId: engineChoice.targetKey,
-                onSelect: (optionId: string) => {
-                    if (optionId === ROLES_RAIL_PICKER_OPTION_ID) return;
-                    selectBackend(optionId);
-                },
-            }
-            : null
-    ), [draftModelSelection, engineChoice, engineOptions, exactModelPresentation.subtitle, intent, options.inheritedDraftSelection, roleName, rolesRail, selectBackend, teamCredential.selected]);
 
     const reportToSession = actionInput.notifyParentOnCompletion === true;
     const onPatch = options.onPatch;
@@ -969,57 +951,25 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         : null,
     [hasSelectedBackend, inheritedModelSelection, inheritedTeamCredentialModel, inheritedRoutePresentation, intent, options.targetMatchesParent, resolveInheritedModelLabel, routeFollowed]);
 
+    const reviewScopeField = intent === 'review' && !props.comparisonReview
+        ? options.fields.find(field => field.path === 'changeType') : undefined;
+    const reviewScopeLabel = reviewScopeField?.options?.find(option => option.value === actionInput.changeType)?.label
+        ?? t('agentStart.chips.scope');
+    const reviewScopeDetail = intent === 'review' && !props.comparisonReview ? options.fields.flatMap(field => {
+        if (field.visible === false || field.path === 'changeType' || !isReviewScopeFieldPath(field.path)) return [];
+        const value = getValueAtPath(actionInput, field.path);
+        const label = field.options?.find(option => option.value === value)?.label ?? (typeof value === 'string' ? value : '');
+        return label ? [`${field.title ?? field.path}: ${label}`] : [];
+    }).join(' · ') : '';
+
     const startChips = React.useMemo<ReadonlyArray<AgentInputExtraActionChip>>(() => {
         const chips: AgentInputExtraActionChip[] = [];
         const disabled = !editable;
-        if (intent === 'review') {
-            // Lab convo-S1 "Reviewer ▾": the review's role, from the same Roles rail.
-            chips.push(createExecutionRunStartContentChip({
-                key: 'execution-run-start-role', controlId: 'workflowRoles',
-                icon: 'users',
-                label: roleItem?.name ?? (rolesStatus === 'loading' ? t('common.loading') : roleValue ?? t('roles.rail.title')),
-                title: t('roles.rail.title'),
-                testID: 'execution-run-start-role-chip',
-                disabled,
-                revision: `${chipRevision}:${roleValue ?? ''}:${roleItem?.name ?? ''}:${rolesStatus}`,
-                renderContent: ({ requestClose }) => rolesRail.renderDetailContent?.({ onRequestClose: requestClose }) ?? null,
-            }));
-            // Lab convo-S1: one removable chip per chosen reviewer, then "+" for the reviewer tiles.
-            for (const targetKey of options.selectedBackendTargetKeys) {
-                const choice = options.backendChoices.find((candidate) => candidate.targetKey === targetKey);
-                if (!choice) continue;
-                chips.push(createExecutionRunReviewerChip({
-                    targetKey,
-                    label: choice.title,
-                    mark: <ExecutionRunAgentMark agentId={choice.agentId} size={12} />,
-                    disabled,
-                    onRemove: () => {
-                        setError(null);
-                        onSelectBackend(targetKey);
-                    },
-                }));
-            }
-            // The chip that needs a choice says so: with no reviewer Send cannot start anything, and
-            // the missing reviewer reads here rather than as a dead Send.
-            chips.push(createExecutionRunStartContentChip({
-                key: 'execution-run-start-reviewers-add', controlId: 'reviewComments',
-                icon: 'plus',
-                label: options.targetRequirement ? t('agentStart.chips.reviewerNeeded') : t('agentStart.chips.reviewer'),
-                requirement: options.targetRequirement,
-                title: t('agentStart.chips.addReviewer'),
-                testID: 'execution-run-start-reviewers-add-chip',
-                disabled,
-                revision: chipRevision,
-                renderContent: () => renderOptions(['backends']),
-            }));
-        }
         if (options.visiblePermissionModeOptions.length > 1) {
             const selected = options.visiblePermissionModeOptions.find((option) => option.value === options.selectedPermissionMode);
             chips.push(createExecutionRunStartContentChip({
                 ...getExecutionRunStartChipDefinition('permissions'), pending: true,
-                icon: 'shield',
                 label: selected?.label ?? t('executionRuns.newRun.sections.permissions'),
-                title: t('executionRuns.newRun.sections.permissions'),
                 testID: 'execution-run-start-permissions-chip',
                 disabled,
                 revision: chipRevision,
@@ -1033,7 +983,6 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
                 ...getExecutionRunStartChipDefinition('route'), pending: true,
                 icon: inherits ? 'arrow-elbow-down-right' : 'path',
                 label: routeChoice.label,
-                title: t('agentInput.model.title'),
                 testID: 'execution-run-start-route-chip',
                 iconOnly: routeInFoot,
                 disabled,
@@ -1059,23 +1008,33 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
                 ),
             }));
         }
-        const scopeField = intent === 'review' ? options.fields.find((field) => field.path === 'changeType') : undefined;
-        if (scopeField) {
-            const changeType = actionInput.changeType;
-            const scopeLabel = scopeField.options?.find((option) => option.value === changeType)?.label
-                ?? t('agentStart.chips.scope');
+        if (reviewScopeField) {
             chips.push(createExecutionRunStartContentChip({
                 ...getExecutionRunStartChipDefinition('scope'), pending: true,
-                icon: 'git-diff',
-                label: scopeLabel,
-                title: t('agentStart.chips.scope'),
+                label: reviewScopeLabel,
                 testID: 'execution-run-start-scope-chip',
                 disabled,
                 revision: chipRevision,
                 renderContent: () => renderOptions(['fields'], isReviewScopeFieldPath),
             }));
         }
+        // A captured comparison asks one more question (lab flRun `compare`): a walkthrough after the
+        // findings, and who writes it. Its chip names the choice; the content holds the narrator rows.
+        const comparisonFields = props.comparisonReview ? comparisonReview.fields : null;
+        if (comparisonFields) {
+            chips.push(createExecutionRunStartContentChip({
+                ...getExecutionRunStartChipDefinition('walkthrough'), pending: true,
+                label: comparisonFields.walkthrough ? t('reviewWalkthrough.dialog.walkMeThroughAfter') : t('reviewWalkthrough.dialog.findingsOnlyChoice'),
+                testID: 'execution-run-start-walkthrough-chip',
+                disabled,
+                requirement: comparisonFields.plan.blocked === 'no_narrator' ? { code: 'no_narrator', fieldPath: 'narrator' } : null,
+                revision: `${chipRevision}:${comparisonFields.walkthrough}:${comparisonFields.plan.narrator?.engineId ?? ''}:${comparisonFields.plan.narrator?.candidates.length ?? 0}:${comparisonFields.plan.footer?.kind ?? ''}`,
+                renderContent: () => <ComparisonWalkthroughChoice plan={comparisonFields.plan} walkthrough={comparisonFields.walkthrough}
+                    onToggleWalkthrough={comparisonFields.onToggleWalkthrough} onSelectNarrator={comparisonFields.onSelectNarrator} />,
+            }));
+        }
         if (props.sessionId !== null) chips.push(createExecutionRunReportChip({
+            pending: true,
             value: reportToSession,
             disabled,
             onChange: (next) => onPatch({ notifyParentOnCompletion: next }),
@@ -1088,9 +1047,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         if (options.profileChoices.length > 0 || hasAdvancedFields || (intent === 'review' && teamCredential.picker)) {
             chips.push(createExecutionRunStartContentChip({
                 ...getExecutionRunStartChipDefinition('advanced'), pending: true,
-                icon: 'sliders-horizontal',
                 label: t('agentStart.chips.advanced'),
-                title: t('agentStart.chips.advanced'),
                 testID: 'execution-run-start-advanced-chip',
                 disabled,
                 revision: chipRevision,
@@ -1103,7 +1060,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
             }));
         }
         return chips;
-    }, [props.sessionId, actionInput.changeType, chipRevision, editable, routeChoice, routeFollowed, routeInFoot, intent, onPatch, onSelectBackend, roleItem?.name, roleValue, rolesRail, rolesStatus, options.backendChoices, options.fields, options.profileChoices.length, options.selectedBackendTargetKeys, options.selectedPermissionMode, options.targetMatchesParent, options.targetRequirement, options.visiblePermissionModeOptions, renderOptions, reportToSession, teamCredential.picker, exactModelSubtitle, exactModelPresentation.accessibilityLabel, demandRouteModel, chooseDraftModel]);
+    }, [props.sessionId, props.comparisonReview, comparisonReview.fields, reviewScopeField, reviewScopeLabel, chipRevision, editable, routeChoice, routeFollowed, routeInFoot, intent, onPatch, onSelectBackend, roleItem?.name, roleValue, rolesRail, rolesStatus, options.backendChoices, options.fields, options.profileChoices.length, options.selectedBackendTargetKeys, options.selectedPermissionMode, options.targetMatchesParent, options.targetRequirement, options.visiblePermissionModeOptions, renderOptions, reportToSession, teamCredential.picker, exactModelSubtitle, exactModelPresentation.accessibilityLabel, demandRouteModel, chooseDraftModel]);
 
     // Why it can't start yet, said above the kept draft (lab `convo-ST` "Machine offline"): still
     // reading what the machine offers, or the reason agents can't start in this Session.
@@ -1128,7 +1085,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         ? options.backendChoices.filter((choice) => options.selectedBackendTargetKeys.includes(choice.targetKey)).map((choice) => choice.agentId)
         : selectedChoice ? [selectedChoice.agentId] : [];
     // A review is about the changes in this folder (the scope chip says which), not about the machine.
-    const reviewFolder = leafFolderName(props.workspace?.cwd ?? (session ? readSessionOwnerMetadataView(session)?.path : null))
+    const reviewFolder = leafFolderName(workspace?.cwd ?? (session ? readSessionOwnerMetadataView(session)?.path : null))
         ?? t('agentStart.thisFolder');
     const startCount = intent === 'review' ? Math.max(1, options.selectedBackendTargetKeys.length) : 1;
     const startsWhenYouSend = t('agentStart.startsWhenYouSend', { count: startCount });
@@ -1144,8 +1101,55 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         }).inheritDetail
         : null;
 
+    const whereTarget = React.useMemo(() => {
+        const directory = workspace?.cwd ?? (session ? readSessionOwnerMetadataView(session)?.path : null);
+        return machineId && directory ? { machineId, directory } : null;
+    }, [machineId, session, workspace?.cwd]);
+    const reviewModelSubtitle = reviewOptions.modelSubtitle;
+    const contextualSource = React.useMemo<ContextualStartSource>(() => ({
+        enabled: accountLifetime !== null,
+        busy: !editable,
+        sections: [{ category: 'newAgent', section: { kind: 'static', id: 'new-agents', options: options.backendChoices.map(choice => ({
+            id: choice.targetKey, testID: `contextual-start-agent:${choice.agentId}`,
+            label: choice.title, disabled: choice.disabled,
+            icon: <ExecutionRunAgentMark agentId={choice.agentId} size={16} />,
+            ...(choice.unavailable === 'notOnMachine' ? { subtitle: t('machineAgents.notOnMachineYet', { machine: machine.name }) }
+                : choice.unavailable === 'cantRun' ? { subtitle: t('machineAgents.cantRunOn', { machine: machine.name }) } : {}),
+            ...(intent !== 'review' && selectedChoice?.targetKey === choice.targetKey
+                && (draftModelSelection || options.inheritedDraftSelection || teamCredential.selected)
+                ? { subtitle: exactModelPresentation.subtitle } : {}),
+            ...(intent === 'review' && reviewModelSubtitle && options.selectedBackendChoice?.targetKey === choice.targetKey
+                ? { subtitle: reviewModelSubtitle } : {}),
+            onSelect: () => selectBackend(choice.targetKey),
+        })) } }],
+        selectedIds: new Set(options.selectedBackendTargetKeys),
+        where: { accountLifetime, target: whereTarget, machineName: machine.name,
+            machineHomeDir: session ? readSessionOwnerMetadataView(session)?.homeDir : null,
+            testIDPrefix: 'run-start', choose: target => {
+                if (isWorkflowProjectTarget(target)) setChosenWorkspace({ machineId: target.machineId, cwd: target.directory });
+            } },
+    }), [accountLifetime, draftModelSelection, editable, exactModelPresentation.subtitle, intent, machine.name, reviewModelSubtitle,
+        options.backendChoices, options.inheritedDraftSelection, options.selectedBackendTargetKeys, selectBackend,
+        selectedChoice?.targetKey, session, teamCredential.selected, whereTarget]);
+    const contextualComposer = useContextualStartComposer(contextualSource,
+        props.sessionId === null && !props.comparisonReview ? RUN_DETACHED_ADMISSIBLE : RUN_SESSION_ADMISSIBLE);
+    // A single chosen reviewer's model opens under the list from its row's Change (lab flOpinion
+    // `recipe`), never as a whole model list drawn inline.
+    const reviewModelChoice = intent === 'review' && !props.credentialSelectionOnly ? reviewOptions.modelChoice : null;
+    const reviewModelTarget = reviewModelChoice ? options.selectedBackendChoice?.targetKey ?? null : null;
+    const agentDetails = React.useMemo(() => new Map(intent === 'review' ? reviewModelTarget ? [[reviewModelTarget, () => reviewModelChoice] as const] : [] : options.backendChoices.map(choice => [choice.targetKey, () =>
+        <ExecutionRunAgentModelPicker choice={choice} sessionId={props.sessionId} machineId={machineId}
+            serverId={serverId} actionInput={actionInput}
+            selected={[draftModelSelection, options.inheritedDraftSelection].find(ref => ref && choiceRunsAgent(choice, ref.agentTargetKey)) ?? null}
+            inheritedTeamCredentialModel={options.inheritedDraftTeamCredentialModel
+                && choiceRunsAgent(choice, options.inheritedDraftTeamCredentialModel.agentTargetKey) ? options.inheritedDraftTeamCredentialModel : null}
+            selectBackend={selectBackend} setActionInput={setActionInput} />] as const)),
+    [actionInput, draftModelSelection, intent, machineId, options.backendChoices, options.inheritedDraftSelection, reviewModelChoice, reviewModelTarget,
+        options.inheritedDraftTeamCredentialModel, props.sessionId, selectBackend, serverId, setActionInput]);
+
     return (
-        <View style={[styles.root, props.placement === 'center' ? styles.rootCentered : null]}>
+        <ScrollView testID="execution-run-start-form" style={styles.scroll} contentContainerStyle={styles.root}
+            keyboardShouldPersistTaps="handled">
             {/* What this start is, right above the composer where the answer will appear (lab S1/S3).
                 An Ask Agent draft leads with the lead and the selected context instead (collab lab R1). */}
             {props.launchOrigin && selectionContext ? (
@@ -1156,26 +1160,24 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
                     contextText={selectionContext}
                     agentId={options.selectedBackendChoice?.agentId ?? null}
                 />
-            ) : (
-                <View testID="execution-run-start-lead" style={styles.lead}>
-                    {leadAgentIds.length > 0 ? (
-                        <View style={styles.marks}>
-                            {leadAgentIds.slice(0, 3).map((agentId) => (
-                                <ExecutionRunAgentMark key={agentId} agentId={agentId} size={28} />
-                            ))}
-                        </View>
-                    ) : null}
-                    <Text accessibilityRole="header" style={styles.title}>
-                        {props.heading ?? (intent ? t(`runPage.launcher.titles.${intent}` as const) : t('agentStart.titles.conversation'))}
-                    </Text>
-                    <Text style={styles.description}>
-                        {intent === 'review'
-                            ? t('runPage.launcher.descriptions.review', { folder: reviewFolder })
-                            : intent
-                            ? t(`runPage.launcher.descriptions.${intent}` as const, { machine: machine.name })
-                            : t('agentStart.descriptions.conversation', { machine: machine.name })}
-                    </Text>
-                </View>
+            ) : props.credentialSelectionOnly ? null : (
+                // A value-returning selector's sheet band already names it; this lead would repeat it.
+                <ContextualStartLead testID="execution-run-start-lead"
+                    marks={leadAgentIds.length > 0 ? leadAgentIds.slice(0, 3).map((agentId) => (
+                        <ExecutionRunAgentMark key={agentId} agentId={agentId} size={28} />
+                    )) : null}
+                    title={props.heading ?? (intent ? t(`runPage.launcher.titles.${intent}` as const) : t('agentStart.titles.conversation'))}
+                    description={intent === 'review'
+                        ? t('runPage.launcher.descriptions.review', { folder: reviewFolder })
+                        : intent
+                        ? t(`runPage.launcher.descriptions.${intent}` as const, { machine: machine.name })
+                        : t('agentStart.descriptions.conversation', { machine: machine.name })}>
+                    {props.comparisonReview ? <ComparisonReviewScope scopeLabel={comparisonReview.fields.scopeLabel}
+                        scopeDetail={comparisonReview.fields.scopeDetail} error={comparisonReview.fields.error} onRetry={comparisonReview.fields.onRetry} />
+                        : intent === 'review' ? <ExecutionRunReviewSource sessionId={props.sessionId} serverId={serverId}
+                            workspace={workspace} workingChanges={actionInput.changeType === 'uncommitted'}
+                            scopeLabel={reviewScopeLabel} scopeDetail={reviewScopeDetail} /> : null}
+                </ContextualStartLead>
             )}
             {blockedReason ? (
                 <SurfaceStateCard
@@ -1187,7 +1189,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
                 />
             ) : null}
             {pendingChildChoice ? (
-                <View style={styles.question}>
+                <View>
                     <ExecutionRunChildChoiceCard
                         choice={pendingChildChoice}
                         agentTitle={childChoiceAgent?.title ?? t('session.agentContinuation.childChoice.agentFallback')}
@@ -1199,13 +1201,19 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
                     />
                 </View>
             ) : null}
-            <SessionParticipantComposer
+            <ContextualStartComposerBody model={contextualComposer}
+                whoAccessory={{ label: roleItem?.name ?? (rolesStatus === 'loading' ? t('common.loading') : roleValue ?? t('roles.rail.title')),
+                    render: close => rolesRail.renderDetailContent?.({ onRequestClose: close }) ?? null }}
+                details={agentDetails}
+                whoContent={intent === 'review' && props.credentialSelectionOnly ? reviewOptions.modelChoice : null}
+                question={<View style={styles.composerHang}><SessionParticipantComposer
                 // The draft identity rotates as a live prop. Keying on it would remount the
                 // composer and discard the text, references and staged attachments the
                 // person authored but has not sent anywhere.
                 key={JSON.stringify([serverId, accountBinding?.accountId, props.sessionId, launcherDraftKey])}
-                sessionId={props.sessionId}
-                workspace={props.workspace}
+                sessionId={props.credentialSelectionOnly ? null : props.sessionId}
+                workspace={workspace ?? (props.credentialSelectionOnly && machineId && session
+                    ? { machineId, cwd: readSessionOwnerMetadataView(session)?.path ?? '' } : undefined)}
                 serverId={serverId}
                 canSendMessages={canSendMessages}
                 placeholder={intent === 'review' ? t('agentStart.placeholders.review') : undefined}
@@ -1220,23 +1228,14 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
                 onDraftDocumentEdit={launcherDraft.onDocumentEdit}
                 onComposerRefAvailable={setMountedComposerRef}
                 submitPreparedMessage={submitPreparedMessage}
-                engine={engine}
                 extraActionChips={startChips}
-            />
+            /></View>} />
             <Text testID="execution-run-start-foot" style={styles.foot}>
-                {routeInFoot && routeChoice ? `${routeChoice.label} \u00B7 ${startsWhenYouSend}` : startsWhenYouSend}
+                {/* Choosing here returns a selection to the plugin; it starts nothing itself. */}
+                {props.credentialSelectionOnly ? t('agentStart.selector.nothingStarts')
+                    : routeInFoot && routeChoice ? `${routeChoice.label} \u00B7 ${startsWhenYouSend}` : startsWhenYouSend}
             </Text>
-            <ExecutionRunSecretReferenceOverlayField
-                profile={sessionLaunchProfile}
-                machineId={machineId}
-                serverId={serverId}
-                accountScope={accountBinding?.scope ?? null}
-                defaultBindings={defaultSecretBindings}
-                personalSecrets={settings.secrets}
-                sharedEnabled={sharedSavedSecretsEnabled}
-                editable={editable}
-                onChange={setSecretOverlayState}
-            />
+            {reviewOptions.controls}
             {phase === 'starting' || phase === 'reconciling' ? (
                 <Text testID="execution-run-conversation-phase" style={{ color: theme.colors.text.secondary }}>
                     {phase === 'starting'
@@ -1259,7 +1258,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
                         : '')}
             />
             {phase === 'unresolved' ? (
-                <Pressable
+                <HappierPressable
                     accessibilityRole="button"
                     accessibilityLabel={t('sessionDrafts.startAnother')}
                     testID="execution-run-conversation-start-another"
@@ -1272,9 +1271,6 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
                     }}
                     style={({ pressed }) => ({
                         alignSelf: 'flex-start',
-                        minWidth: interactiveTargetSize,
-                        minHeight: interactiveTargetSize,
-                        justifyContent: 'center',
                         paddingVertical: theme.space.s8,
                         paddingHorizontal: theme.space.s10,
                         borderRadius: 10,
@@ -1283,8 +1279,8 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
                     })}
                 >
                     <Text style={{ color: theme.colors.text.primary }}>{t('sessionDrafts.startAnother')}</Text>
-                </Pressable>
+                </HappierPressable>
             ) : null}
-        </View>
+        </ScrollView>
     );
 });

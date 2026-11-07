@@ -1,0 +1,165 @@
+import * as React from 'react';
+import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+import {
+  SelectionList,
+  type SelectionListOption,
+} from '@/components/ui/selectionList';
+import {
+  ContextualStartComposerBody,
+  useContextualStartComposer,
+  type ContextualStartAdmissibleSet,
+  type ContextualStartSource,
+} from './ContextualStartComposer';
+
+vi.mock('react-native', async () =>
+  (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock(),
+);
+
+const ADMISSIBLE: ContextualStartAdmissibleSet = {
+  who: ['newAgent', 'session', 'bot', 'person'],
+  machine: 'fixed',
+  folder: 'fixed',
+};
+
+function options(prefix: string, count: number): SelectionListOption[] {
+  return Array.from({ length: count }, (_, index) => ({
+    id: `${prefix}:${index}`,
+    label: `${prefix} ${index}`,
+    onSelect: () => undefined,
+  }));
+}
+
+function source(
+  input: Readonly<{
+    models: number;
+    sessions: number;
+    bots: number;
+    selected?: readonly string[];
+  }>,
+): ContextualStartSource {
+  return {
+    enabled: true,
+    sections: [
+      {
+        category: 'person',
+        section: { kind: 'static', id: 'people', title: 'People', options: [] },
+      },
+      {
+        category: 'newAgent',
+        section: {
+          kind: 'static',
+          id: 'agents-models',
+          options: options('model', input.models),
+        },
+      },
+      {
+        category: 'session',
+        section: {
+          kind: 'static',
+          id: 'agents-sessions',
+          options: options('session', input.sessions),
+        },
+      },
+      {
+        category: 'bot',
+        section: { kind: 'static', id: 'agents-bots', options: options('bot', input.bots) },
+      },
+    ],
+    selectedIds: new Set(input.selected ?? []),
+    where: null,
+  };
+}
+
+function Composer(props: Readonly<{ source: ContextualStartSource }>) {
+  const model = useContextualStartComposer(props.source, ADMISSIBLE);
+  return <ContextualStartComposerBody model={model} />;
+}
+
+function shownIds(screen: Awaited<ReturnType<typeof renderScreen>>): string[] {
+  const list = screen
+    .findAllByType(SelectionList)
+    .find((node) => node.props.testID === 'contextual-start-who')!;
+  return (
+    list.props.rootStep.sections as Array<{
+      id: string;
+      options?: SelectionListOption[];
+    }>
+  ).flatMap((section) =>
+    section.id === 'people'
+      ? ['people']
+      : (section.options ?? []).map((option) => option.id),
+  );
+}
+
+describe('ContextualStartComposerBody Who list (lab flows `ask`)', () => {
+  it('keeps chosen agents collapsed above the question until Change is pressed', async () => {
+    const screen = await renderScreen(<Composer source={source({ models: 3, sessions: 1, bots: 0, selected: ['model:1'] })} />);
+    expect(screen.getTextContent()).toContain('model 1');
+    expect(screen.getTextContent()).not.toContain('model 0');
+    expect(screen.getTextContent()).not.toContain('model 2');
+    await screen.pressByTestIdAsync('contextual-start-change-who');
+    expect(screen.getTextContent()).toContain('model 0');
+    expect(screen.getTextContent()).toContain('model 2');
+    await screen.pressByTestIdAsync('contextual-start-done-who');
+    expect(screen.getTextContent()).not.toContain('model 0');
+    expect(screen.getTextContent()).not.toContain('model 2');
+    await screen.unmount();
+  });
+  it('folds a long list to mixed top picks with what is chosen first, then opens everything and people on Show all', async () => {
+    const screen = await renderScreen(
+      <Composer
+        source={source({
+          models: 3,
+          sessions: 6,
+          bots: 2,
+          selected: ['session:4'],
+        })}
+      />,
+    );
+    await screen.pressByTestIdAsync('contextual-start-change-who');
+    expect(shownIds(screen)).toEqual([
+      'session:4',
+      'model:0',
+      'model:1',
+      'bot:0',
+      'who:show-all',
+    ]);
+    await screen.pressByTestIdAsync('second-opinion.reviewers-more');
+    expect(shownIds(screen)).toEqual([
+      'model:0',
+      'model:1',
+      'model:2',
+      ...options('session', 6).map((option) => option.id),
+      'bot:0',
+      'bot:1',
+      'people',
+    ]);
+    await screen.unmount();
+  });
+
+  it('fills an absent kind from the next candidates and shows a short list whole with people after it', async () => {
+    const long = await renderScreen(
+      <Composer source={source({ models: 1, sessions: 6, bots: 0 })} />,
+    );
+    expect(shownIds(long)).toEqual([
+      'model:0',
+      'session:0',
+      'session:1',
+      'session:2',
+      'who:show-all',
+    ]);
+    await long.unmount();
+    const short = await renderScreen(
+      <Composer source={source({ models: 2, sessions: 1, bots: 1 })} />,
+    );
+    expect(shownIds(short)).toEqual([
+      'model:0',
+      'model:1',
+      'session:0',
+      'bot:0',
+      'people',
+    ]);
+    await short.unmount();
+  });
+});

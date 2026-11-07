@@ -1,13 +1,23 @@
 import * as React from 'react';
+import { SESSION_CONSUMPTION_REPLACE_EVENT, SessionConsumptionReplaceV1Schema, SessionConsumptionReplaceAckV1Schema } from '@happier-dev/protocol/sessions/sessionConsumptionV1';
 import { Dimensions } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AIBackendProfileSchema, buildBackendTargetKeyV2, DaemonContributionRegistryProjectionDescribeResponseSchema, ExecutionRunPublicStateSchema, FeaturesResponseSchema, PluginProjectionV2Schema, V2SessionByIdResponseSchema } from '@happier-dev/protocol';
+import { AIBackendProfileSchema} from '@happier-dev/protocol/profiles/backendProfileSchema';
+import { buildBackendTargetKeyV2} from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { DaemonContributionRegistryProjectionDescribeResponseSchema, PluginProjectionV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { ExecutionRunPublicStateSchema} from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { ExecutionRunStartRequestSchema } from '@happier-dev/protocol/execution/runs/startRequest';
+import { FeaturesResponseSchema} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { V2SessionByIdResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
 import { MachineAgentInventoryItemSchema } from '@happier-dev/protocol/capabilities';
+import { ManagedMachineActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ReviewWalkthroughResponseSchema } from '@happier-dev/protocol/reviews/reviewNarration';
 import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '@happier-dev/agents/agent-ids';
 import { projectExecutionRunChildChoiceV1, withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol/agents/executionTargetV1';
 import { RPC_ERROR_CODES, RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { DaemonProviderModelProjectionRequestV1Schema, DaemonProviderModelProjectionResponseV1Schema } from '@happier-dev/protocol/rpc/providers';
 import { ACP_CATALOG_ROWS_ROUTE_V1, AcpCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { PROMPT_LIBRARY_ROWS_ROUTE_V1, PromptLibraryRowsListResponseV1Schema } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { SavedSecretResourceMaterialsResponseV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
@@ -17,17 +27,23 @@ import type { RoleOverrideRecordV1 } from '@happier-dev/protocol/prompts/roles/r
 import type { NativeComposerInputHandle } from '@/components/ui/forms/nativeComposerInput';
 
 import { changeTextTestInstance, createMachineFixture, createSessionFixture, renderScreen, standardCleanup } from '@/dev/testkit';
+import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createPlainSessionCurrentProjectionRecordFixture, createSessionAccessFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { serveActionHomes, type ServedHomeRequest } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createSessionReadBatchHttpBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
+import { createArtifactListHttpResponse } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE } from '@/dev/testkit/fixtures/pluginProviderDaemonProjection';
+import { EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE } from '@/dev/testkit/fixtures/executionRunCapabilitiesDescribe';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { getStorage } from '@/sync/domains/state/storageStore';
+import { projectManager } from '@/sync/runtime/orchestration/projectManager';
+import { EMPTY_SCM_CAPABILITIES } from '@/scm/core/snapshotMappers';
+import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
-import { configureSessionDraftRepository, createSessionDraftRepository, ensureSessionDraftAddressesHydrated, ensureSessionDraftRepositoryHydrated, getSessionDraftSnapshot, resetSessionDraftRepositoryForTests, writeExistingSessionDraft, type SessionDraftRepositoryCipher, type SessionDraftRepositoryTransport } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
+import { configureSessionDraftRepository, createSessionDraftRepository, ensureSessionDraftAddressesHydrated, ensureSessionDraftRepositoryHydrated, executionRunLauncherDraftFieldPath, getSessionDraftSnapshot, resetSessionDraftRepositoryForTests, writeExistingSessionDraft, type SessionDraftRepositoryCipher, type SessionDraftRepositoryTransport } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { getSessionDraftDocumentField } from '@/sync/ops/sessionDrafts/sessionDraftDocumentFields';
 import { createSessionDraftPrivatePayloadV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
 import { PROFILE_ROWS_ROUTE_V1, PROFILE_REFERENCE_GUARD_ROUTE_V1, ProfileRowsListResponseV1Schema, ProfileReferenceGuardReadResponseV1Schema, sealProfileRecordContentV1 } from '@happier-dev/protocol/profiles/profileRecordV1';
@@ -52,10 +68,11 @@ import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTarget
 import { beginAcpCatalogLoad } from '@/sync/store/settings/acpCatalogSnapshot';
 import { readComposerPresentationSnapshot } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
 import { AgentInput } from '@/components/sessions/agentInput';
-import { AgentInputChipPickerPanel } from '@/components/sessions/agentInput/components/AgentInputChipPickerPanel';
+import { SelectionList, type SelectionListOption, type SelectionListSectionDescriptor } from '@/components/ui/selectionList';
+import { MachineSelector } from '@/components/sessions/new/components/MachineSelector';
+import { MachinePathBrowserView } from '@/components/ui/pathBrowser/MachinePathBrowserModal';
 import { SessionParticipantComposer } from '@/components/sessions/participants/composer/SessionParticipantComposer';
 import { SessionInteractiveExecutionRunDraftView } from './SessionInteractiveExecutionRunDraftView';
-import { StartReviewDialog } from '@/components/sessions/reviews/walkthrough/StartReviewDialog';
 import { ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { ReviewEngineListItemSchema } from '@happier-dev/protocol/reviews/reviewEngines';
 import { askSelectionQuote, type AskSelectionTargetContext } from '@/components/ui/code/selection/askSelectionTarget';
@@ -75,9 +92,20 @@ import { BUNDLED_ACCOUNT_PROVIDER_DECLARATIONS, BUNDLED_CANONICAL_AGENT_DECLARAT
 // The common AgentInput installer deliberately supplies a small fake store. This journey needs
 // the whole real store, so install its canonical platform factories without that store override.
 const windowState = vi.hoisted(() => ({ width: 1024 }));
+const formBoundary = vi.hoisted(() => ({ commits: 0 }));
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({ useWindowDimensions: () => ({ width: windowState.width, height: 800 }) });
+    const React = await import('react');
+    const native = await createReactNativeWebMock({ useWindowDimensions: () => ({ width: windowState.width, height: 800 }) });
+    // The platform host observes reconciliation of R's own header. A Profiler around
+    // the whole form would also count commits confined to the composer text leaf.
+    const View = React.forwardRef<unknown, Record<string, unknown> & { children?: React.ReactNode }>((props, ref) => {
+        React.useLayoutEffect(() => {
+            if (props.testID === 'execution-run-start-lead') formBoundary.commits += 1;
+        });
+        return React.createElement(native.View, { ...props, ref });
+    });
+    return { ...native, View };
 });
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
@@ -107,6 +135,9 @@ vi.mock('socket.io-client', async () => {
     return { io: (url: string) => {
         const { socket } = createSocketIoBoundaryStub();
         socket.emitWithAck.mockImplementation(async (event, raw) => {
+            if (event === SESSION_CONSUMPTION_REPLACE_EVENT) {
+                return SessionConsumptionReplaceAckV1Schema.parse({ ok: true, ...SessionConsumptionReplaceV1Schema.parse(raw) });
+            }
             if (event !== 'rpc-call') return { v: 1, ok: true, admittedSessionIds: ['session_1'] };
             if (!raw || typeof raw !== 'object' || !('method' in raw) || typeof raw.method !== 'string' || !('params' in raw)) {
                 throw new Error('Malformed Socket RPC boundary request');
@@ -152,7 +183,6 @@ let screen: Screen;
 let backends: Record<string, { available: boolean; intents: string[] }>;
 let protocolSupported = true;
 let detachedScopeSupported = true;
-let detachedSendFailure = false;
 let admissionFailure = false;
 let admissionGate: Promise<void> | null = null;
 /** Holds the Machine's capability read, or fails it, so a test can stand in the unanswered window. */
@@ -165,6 +195,7 @@ let startRelayFailure: Readonly<{ error: string; errorCode: string }> | null = n
 let listedRuns: Run[];
 let listResult: Promise<unknown> | null;
 let emittedStarts: Array<Record<string, unknown>>;
+let detachedInputs: Array<{ input: Record<string, unknown>; machineId: string }>;
 let outbound: ServedHomeRequest[];
 let pluginProjection = false;
 let secretAvailable = false;
@@ -198,7 +229,7 @@ const reviewAgentProjection = PluginProjectionV2Schema.parse({ v: 2, generation:
             return [declaration.contributionKey, { id: declaration.contributionKey, pluginId: identity.pluginId,
                 definition: declaration.definition, provenance: declaration.provenance, sourceKind: 'bundled' }];
         }),
-    ) } },   resourcesById: {}, settingsById: {}, diagnostics: [] });
+    ) } }, resourcesById: {}, settingsById: {}, diagnostics: [] });
 function reviewAgentReadiness() { return Object.fromEntries(['claude', 'codex'].map(agentId => [`cli.${agentId}`, {
     ok: true, checkedAt: Date.now(), data: MachineAgentInventoryItemSchema.parse({ agentId, title: agentId, installed: true,
         version: '1', latestVersion: null, update: { supported: false, command: null },
@@ -285,13 +316,22 @@ async function send(text = 'Inspect this', waitForCompletion = true) {
     await settle();
     if (waitForCompletion) await waitFor(() => expect(screen.findByTestId('execution-run-conversation-phase')).toBeNull());
 }
-// Chooses through the real engine popover panel, as a user does: a row that only takes focus
-// leaves the draft on its previous Agent, which a direct `engine.onSelect` call would hide.
+// Select through the shared list's real row, preserving its controlled selection.
+function whoList() { return screen.findAllByType(SelectionList).find(node => node.props.testID === 'contextual-start-who')!; }
+function agentRows(): readonly SelectionListOption[] {
+    return whoList().props.rootStep.sections.flatMap((section: SelectionListSectionDescriptor) => section.kind === 'static' ? section.options : []);
+}
+function selectedAgentIds(): readonly string[] { return [...whoList().props.selection.selectedIds]; }
+async function showAgentChoices() {
+    if (screen.findByTestId('contextual-start-change-who')) await screen.pressByTestIdAsync('contextual-start-change-who');
+    if (screen.findByTestId('second-opinion.reviewers-more')) await screen.pressByTestIdAsync('second-opinion.reviewers-more');
+}
+function roleLabel() { return screen.root.findAll(node => node.props.testID === 'contextual-start-who-accessory'
+    && typeof node.props.label === 'string')[0]?.props.label; }
 async function selectEngine(id: string) {
-    const engine = composer().engine!;
-    const picker = await renderScreen(<AgentInputChipPickerPanel title={engine.title} options={engine.options}
-        selectedOptionId={engine.selectedOptionId} onSelect={engine.onSelect} onRequestClose={vi.fn()} />);
-    await picker.pressByTestIdAsync(`agent-input-chip-picker.option:${id}`);
+    await showAgentChoices();
+    const row = agentRows().find(option => option.id === id)!;
+    await screen.pressByTestIdAsync(row.testID!);
     await settle();
 }
 async function renderChipContent(key: string) {
@@ -301,23 +341,17 @@ async function renderChipContent(key: string) {
 async function renderChip(key: string) {
     return renderScreen(<>{chip(key).render({ chipStyle: () => ({}), showLabel: true, iconColor: '#000', textStyle: {}, countTextStyle: {}, popoverAnchorRef: React.createRef() })}</>);
 }
-async function reviewers() {
-    const choices = await renderChipContent('execution-run-start-reviewers-add');
-    // The current catalog includes every enabled bundled Agent. This journey chooses
-    // two reviewers; it must not silently select every unrelated catalog entry.
-    const prefix = 'execution-run-launcher-target:';
-    const available = [...new Set(choices.root.findAll(node => typeof node.props.testID === 'string'
-        && node.props.testID.startsWith(prefix)).map(node => String(node.props.testID)))];
-    const ids = ['claude', 'codex'].map(agentId => {
-        const id = available.find(candidate => canonicalTargetKey(candidate.slice(prefix.length)) === canonicalTargetKey(agentId));
-        if (!id) throw new Error('Expected selectable reviewer: ' + agentId);
-        return id;
+async function reviewers(agentIds: readonly string[] = ['claude', 'codex']) {
+    await showAgentChoices();
+    const ids = agentIds.map(agentId => {
+        const row = agentRows().find(option => canonicalTargetKey(option.id) === canonicalTargetKey(agentId));
+        if (!row) throw new Error('Expected selectable reviewer: ' + agentId);
+        return row.id;
     });
-    for (const id of ids) await choices.pressByTestIdAsync(id);
-    await settle();
+    for (const id of ids) await selectEngine(id);
     return ids;
 }
-function reviewerKeys() { return (composer().extraActionChips ?? []).map((item) => item.key).filter((key) => key.startsWith('execution-run-start-reviewer:')); }
+function reviewerKeys() { return selectedAgentIds(); }
 function draft(runId = 'run_1') {
     const snapshot = getSessionDraftSnapshot({ serverId, accountId: 'account_1' }, { kind: 'run', sessionId: 'session_1', runId });
     if (!snapshot) return null;
@@ -333,7 +367,9 @@ function outboundText() {
 }
 
 describe('SessionInteractiveExecutionRunDraftView — real composer and Action path', () => {
+    let restorePopoverGlobals: (() => void) | undefined;
     beforeEach(async () => {
+        restorePopoverGlobals = withPopoverWebGlobals();
         resetTeamsDirectoryEngineForTests();
         resetTeamsSnapshotsForTests();
         teamModelsEnabled = false;
@@ -346,7 +382,6 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         random.next = 0;
         protocolSupported = true;
         detachedScopeSupported = true;
-        detachedSendFailure = false;
         admissionFailure = false;
         admissionGate = null;
         capabilitiesGate = null;
@@ -362,6 +397,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         listedRuns = [];
         listResult = null;
         emittedStarts = [];
+        detachedInputs = [];
         outbound = [];
         modal.alert.mockClear();
         modal.show.mockClear();
@@ -374,6 +410,26 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         clearDaemonMergedProjectionCacheForTests();
         transport.call.mockReset();
         transport.call.mockImplementation(async (request) => {
+            const runProtocol = { ...EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE.capabilities[0]!.protocol,
+                features: { ...EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE.capabilities[0]!.protocol.features,
+                    detachedScope: detachedScopeSupported, runScopedAgentBindings: protocolSupported, secretReferenceOverlay: protocolSupported } };
+            if (request.method === RPC_METHODS.CAPABILITIES_DESCRIBE) return {
+                ...EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE,
+                capabilities: EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE.capabilities.map(descriptor => ({ ...descriptor, protocol: runProtocol })),
+            };
+            if (teamModelsEnabled && request.method === RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION) {
+                const projection = DaemonProviderModelProjectionRequestV1Schema.parse(request.payload);
+                // This Machine RPC boundary supplies the broker route's model list;
+                // Home discovery alone is not an Agent's selectable model catalog.
+                return DaemonProviderModelProjectionResponseV1Schema.parse({ status: 'success',
+                    agentTargetKey: projection.agentTargetKey, groups: [],
+                    teamCredentialResources: projection.teamCredentialResources?.map(resource => ({ ...resource,
+                        providerModels: resource.providerModels
+                            .filter(model => model.selection.agentTargetKey === projection.agentTargetKey)
+                            .map(model => ({ ...model, descriptor: { ...model.descriptor, name: 'Broker source GPT-5.5' } })),
+                    })),
+                });
+            }
             if (request.method === RPC_METHODS.CAPABILITIES_INVOKE) return { ok: true, result: {
                 availableModels: [{ id: 'gpt-6.1-luna', name: '6.1 Luna' }], supportsFreeform: false,
                 source: 'dynamic', observedAt: Date.now(),
@@ -385,8 +441,8 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
             if (request.method === RPC_METHODS.CAPABILITIES_DETECT) return {
                 protocolVersion: 1,
                 results: { ...reviewAgentReadiness(), 'tool.executionRuns': { ok: true, checkedAt: Date.now(), data: {
-                    available: true, backends, protocolVersion: 2,
-                    features: { detachedScope: detachedScopeSupported, startAndWait: true, exactInputResults: true, runScopedAgentBindings: protocolSupported, secretReferenceOverlay: protocolSupported },
+                    available: runProtocol.available, backends, protocolVersion: runProtocol.version,
+                    features: runProtocol.features,
                 } } },
             };
             if (request.method === SESSION_RPC_METHODS.EXECUTION_RUN_START
@@ -401,8 +457,15 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
                 return { type: 'success', sessionId: 'session_1' };
             }
             if (request.method === SESSION_RPC_METHODS.EXECUTION_RUN_LIST) return await (listResult ?? { runs: listedRuns });
-            if (request.method === SESSION_RPC_METHODS.EXECUTION_RUN_SEND) return detachedSendFailure
-                ? { ok: false, error: 'Machine did not accept input' } : { ok: true };
+            if (request.method === SESSION_RPC_METHODS.EXECUTION_RUN_ACTION && record(request.payload).actionId === 'review.walkthrough') {
+                const input = record(record(request.payload).input);
+                return { ok: true, result: ReviewWalkthroughResponseSchema.parse({
+                    ...started('comparison-narrator'), mode: 'seeded_narrator', state: 'collecting',
+                    comparisonId: input.comparisonId, reviewRunIds: input.reviewRunIds,
+                    comparison: { id: input.comparisonId, source: { kind: 'branch', base: 'main', head: 'HEAD' },
+                        repository: { rootPath: '/repo' }, endpoints: {}, inventory: { state: 'complete', files: [], reasons: [] } },
+                }) };
+            }
             if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) return DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
                 protocolVersion: 1,
                 projection: pluginProjection ? { ...PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE,
@@ -425,6 +488,13 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
                 return await (startResults.shift() ?? started());
             },
         });
+        const detachedSend = await createExternalActionAccountHttpBoundary({ serverUrl, serverIdentityId,
+            accountId: 'account_1', machineId: 'machine_1', actionId: 'execution.run.send', tokenEpoch: 0,
+            execute: (input, context) => {
+                detachedInputs.push({ input: record(input), machineId: context.target.machineId });
+                return { ok: true };
+            },
+        });
         home = await serveActionHomes({
             homes: [{ key: 'home', serverUrl, serverIdentityId,
                 accountId: 'account_1', currentAccount: true }],
@@ -443,6 +513,10 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
                     headers: request.headers, signal: request.signal,
                     ...(request.body !== undefined ? { body: JSON.stringify(request.body) } : {}) });
                 if (detachedResponse) return detachedResponse;
+                const detachedSendResponse = await detachedSend.handle(request.url, { method: request.method,
+                    headers: request.headers, signal: request.signal,
+                    ...(request.body !== undefined ? { body: JSON.stringify(request.body) } : {}) });
+                if (detachedSendResponse) return detachedSendResponse;
                 if (request.path === '/v1/actions/review.engines.list') return Response.json(ExternalActionResponseEnvelopeV1Schema.parse({
                     v: 1, actionId: 'review.engines.list', requestId: record(request.body).requestId,
                     execution: { ok: true, result: { items: Object.keys(backends).map((engineId) => ReviewEngineListItemSchema.parse({
@@ -455,6 +529,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
                     capabilities: { session: { pendingInput: { protocolVersion: 3 } }, accountStoredContentCompatibility: { v: 1, currentProtocolVersion: 3, minimumProtocolVersion: 3, declarationTransport: 'http-header-and-socket-auth-v1' } },
                 }));
                 if (request.path === '/v1/machines') return Response.json([createPlainMachineRowFixture({ id: 'machine_1', accountId: 'account_1' })]);
+                if (request.path === '/v1/machines/managed/actions/list') return Response.json(ManagedMachineActionOutputSchemasV1['machines.managed.list'].parse({ machines: [] }));
                 if (request.path === '/v1/machines/read-batch') return createMachineReadBatchResponseFixture(request.body,
                     id => id === 'machine_1' ? createPlainMachineRowFixture({ id, accountId: 'account_1' }) : null);
                 if (request.path === '/v1/machines/machine_1') return Response.json({ machine: createPlainMachineRowFixture({ id: 'machine_1', accountId: 'account_1' }) });
@@ -474,12 +549,15 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
                 if (request.path === PROMPT_LIBRARY_ROWS_ROUTE_V1) await rolesGate;
                 if (request.path === PROMPT_LIBRARY_ROWS_ROUTE_V1) return Response.json(PromptLibraryRowsListResponseV1Schema.parse({ status: 'listed', rows: [{ key: 'role-overrides', revision: 1,
                     content: { t: 'plain', v: { key: 'role-overrides', value: { v: 1, overrides: roleOverrides } } } }] }));
-                if (request.path === '/v1/account/saved-secrets/resources/materials') return Response.json(SavedSecretResourceMaterialsResponseV1Schema.parse({ resources: secretAvailable ? [{
-                    resourceId: 'personal-secret', encryptionMode: 'plain', recipientEnvelope: null,
-                    storedContent: { t: 'plain', v: { v: 1, name: 'Personal secret', kind: 'token', value: 'sealed-secret' } },
-                    entry: { ref: secretRef, source: 'shared_resource', relationship: 'owner', name: 'Personal secret', kind: 'token', revision: 1,
-                        materialStatus: 'ready', capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } },
-                }] : [] }));
+                if (request.path === '/v1/account/saved-secrets/resources/materials' || request.path === '/v1/account/saved-secrets/resources') {
+                    const materials = SavedSecretResourceMaterialsResponseV1Schema.parse({ resources: secretAvailable ? [{
+                        resourceId: 'personal-secret', encryptionMode: 'plain', recipientEnvelope: null,
+                        storedContent: { t: 'plain', v: { v: 1, name: 'Personal secret', kind: 'token', value: 'sealed-secret' } },
+                        entry: { ref: secretRef, source: 'shared_resource', relationship: 'owner', name: 'Personal secret', kind: 'token', revision: 1,
+                            materialStatus: 'ready', capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } },
+                    }] : [] });
+                    return Response.json(request.path.endsWith('/materials') ? materials : { resources: materials.resources.map(resource => resource.entry) });
+                }
                 if (request.path === '/v2/sessions/session_1') {
                     const session = getStorage().getState().sessions.session_1!;
                     return Response.json(V2SessionByIdResponseSchema.parse({ session: createPlainSessionCurrentProjectionRecordFixture({
@@ -496,12 +574,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
                     return Response.json({ didWrite: true, recipient, requestedAction: body.requestedAction,
                         pending: { ...body, recipient, status: 'queued', position: 1, createdAt: 1, updatedAt: 1 }, pendingVersion: 1, pendingCount: 1 });
                 }
-                if (request.path === '/v1/artifacts') {
-                    // Kind-filtered inventory reads (Role catalog) answer the canonical filtered envelope.
-                    const params = new URL(request.url).searchParams;
-                    const filtered = params.has('kind') || params.has('kinds') || params.has('unclassified');
-                    return Response.json(filtered ? { items: [], hasUnclassified: false } : []);
-                }
+                if (request.path === '/v1/artifacts') return createArtifactListHttpResponse(new URL(request.url), []);
                 return undefined;
             }).handle,
         });
@@ -520,7 +593,120 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
             settingsScope: { serverId, accountId: 'account_1' }, profileScope: { serverId, accountId: 'account_1' } });
         await ensureSessionDraftRepositoryHydrated({ serverId, accountId: 'account_1' });
     });
-    afterEach(async () => { await disconnectActiveServerConnection(); await standardCleanup(); await home?.dispose(); });
+    afterEach(async () => { await disconnectActiveServerConnection(); await standardCleanup(); await home?.dispose(); restorePopoverGlobals?.(); });
+
+    it.each([false, true])('summarizes the reviewed working changes from the scoped SCM source (detached=%s)', async detached => {
+        const snapshot: ScmWorkingSnapshot = {
+            projectKey: `${serverId}:machine_1:/repo`, fetchedAt: 1,
+            repo: { isRepo: true, rootPath: '/repo' }, capabilities: EMPTY_SCM_CAPABILITIES,
+            branch: { head: 'release-review-source', upstream: null, ahead: 0, behind: 0, detached: false },
+            stashCount: 0, hasConflicts: false,
+            entries: [{ path: 'release.ts', previousPath: null, kind: 'modified', includeStatus: '', pendingStatus: 'M',
+                hasIncludedDelta: false, hasPendingDelta: true,
+                stats: { includedAdded: 0, includedRemoved: 0, pendingAdded: 7, pendingRemoved: 2, isBinary: false } }],
+            totals: { includedFiles: 0, pendingFiles: 1, untrackedFiles: 0,
+                includedAdded: 0, includedRemoved: 0, pendingAdded: 7, pendingRemoved: 2 },
+        };
+        projectManager.updateWorkspaceScmSnapshot({ serverId, machineId: 'machine_1', rootPath: '/repo' }, snapshot);
+        await mount({ intent: 'review', initialActionInput: { changeType: 'uncommitted' },
+            ...(detached ? { sessionId: null, workspace: { machineId: 'machine_1', cwd: '/repo' } } : {}) });
+        await waitFor(() => {
+            const summary = screen.findByTestId('execution-run-review-source');
+            expect(summary).not.toBeNull();
+            expect(screen.getTextContent()).toContain('release-review-source');
+            expect(screen.getTextContent()).toContain(t('files.repositoryChangedFiles', { count: 1 }));
+        });
+    });
+
+    it.each([false, true])('A2: shares restricted Who and fixed Machine Where, retaining the rich question (detached=%s)', async detached => {
+        const otherMachine = createMachineFixture({ id: 'other_machine', activeAt: Date.now(), storageMode: 'plain' });
+        getStorage().setState(state => ({ machineListByServerId: { ...state.machineListByServerId,
+            [serverId]: [...(state.machineListByServerId[serverId] ?? []), otherMachine] },
+            sessions: { ...state.sessions, existing_other: createSessionFixture({ id: 'existing_other', serverId,
+                metadata: { machineId: otherMachine.id, path: '/elsewhere', host: 'other' } }) } }));
+        await mount({ intent: detached ? undefined : 'review', initialActionInput: detached ? undefined : { engineIds: ['claude'] },
+            ...(detached ? { sessionId: null, workspace: { machineId: 'machine_1', cwd: '/repo' } } : {}) });
+        await waitFor(() => expect(screen.findByTestId('contextual-start-who')).not.toBeNull());
+        await showAgentChoices();
+        const agentRows = [...new Set(screen.root.findAll(node => typeof node.props.testID === 'string'
+            && node.props.testID.startsWith('contextual-start-agent:')).map(node => node.props.testID))];
+        expect(agentRows.some(id => id.includes('claude'))).toBe(true);
+        expect(agentRows.some(id => id.includes('codex'))).toBe(true);
+        expect(screen.root.findAll(node => typeof node.props.testID === 'string'
+            && /discussion-invite-(session|model)|share-principal/.test(node.props.testID))).toEqual([]);
+        expect(screen.findByTestId('run-start-machine')).not.toBeNull();
+        expect(screen.findByTestId('run-start-machine-selector')).toBeNull();
+        expect(screen.findAllByType(MachineSelector)).toHaveLength(0);
+        expect(screen.findByTestId(detached ? 'run-start-project-directory' : 'run-start-project-directory-readonly')).not.toBeNull();
+        expect(screen.findByTestId('second-opinion.question')).toBeNull();
+        expect(composer().engine).toBeUndefined();
+        expect(composer().extraActionChips?.some(chip => chip.key.startsWith('execution-run-start-reviewer'))).toBe(false);
+        await type('Keep this rich question');
+        expect(input().props.value).toBe('Keep this rich question');
+        expect(emittedStarts).toEqual([]);
+        if (detached) {
+            await screen.pressByTestIdAsync('run-start-project-directory');
+            const browser = screen.findByType(MachinePathBrowserView);
+            expect(browser.props.machineId).toBe('machine_1');
+            await act(async () => browser.props.onPickPath('/chosen-folder'));
+            await waitFor(() => expect(composer().workspace).toEqual({ machineId: 'machine_1', cwd: '/chosen-folder' }));
+            expect(screen.findAllByType(MachineSelector)).toHaveLength(0);
+            expect(input().props.value).toBe('Keep this rich question');
+            await send('Keep this rich question');
+            expect(emittedStarts[0]).toMatchObject({ cwd: '/chosen-folder' });
+        }
+    });
+
+    it('A2: retains comparison-bound placement on a detached Start', async () => {
+        await mount({ sessionId: null, workspace: { machineId: 'machine_1', cwd: '/captured-folder' }, intent: 'review',
+            comparisonReview: { cwd: '/captured-folder', comparison: { kind: 'workingTree' }, comparisonId: 'captured-a2',
+                scopeLabel: 'Pending changes', defaultWalkthrough: false, preselectedEngineIds: ['claude'] } });
+        await waitFor(() => expect(screen.findByTestId('contextual-start-who')).not.toBeNull());
+        expect(screen.findByTestId('run-start-project-directory')).toBeNull();
+        expect(screen.findByTestId('run-start-project-directory-readonly')).not.toBeNull();
+        expect(composer().workspace).toEqual({ machineId: 'machine_1', cwd: '/captured-folder' });
+        expect(screen.findAllByType(MachineSelector)).toHaveLength(0);
+        expect(emittedStarts).toEqual([]);
+    });
+
+    it('A2: shared Who consumes existing Run choices without a second inventory or admission', async () => {
+        await mount();
+        await waitFor(() => expect(composer().canSendMessages).toBe(true));
+        expect(screen.findByTestId('contextual-start-who')).not.toBeNull();
+        const readCounts = () => ({
+            capabilities: transport.call.mock.calls.filter(([request]) => [RPC_METHODS.CAPABILITIES_DETECT,
+                RPC_METHODS.CAPABILITIES_DESCRIBE, RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE].some(method => method === request.method)).length,
+            sessionLists: home.requests.filter(request => /^\/v[12]\/sessions(?:\/query)?$/.test(request.path)).length,
+            accountMemory: home.requests.filter(request => request.path.includes('authoring-memory')).length,
+        });
+        const before = readCounts();
+        await showAgentChoices();
+        console.info('flows.F.A2 owner observations', JSON.stringify({ before,
+            listPaths: home.requests.filter(request => /^\/v[12]\/sessions(?:\/query)?$/.test(request.path)).map(request => request.url),
+            memoryPaths: home.requests.filter(request => request.path.includes('authoring-memory')).map(request => request.path) }));
+        // Canonical Run startup already detects its exact target and reads its merged catalog
+        // (the G1 baseline), while Sync bootstraps authoring memory once. Shared fields must not
+        // activate Opinion's separate participant discovery or another authoring-memory owner.
+        expect(before.capabilities).toBe(5);
+        expect(before.accountMemory).toBe(1);
+        const codex = [...new Set(screen.root.findAll(node => typeof node.props.testID === 'string'
+            && node.props.testID.startsWith('contextual-start-agent:') && node.props.testID.includes('codex')).map(node => node.props.testID))][0];
+        expect(codex).toBeDefined();
+        await screen.pressByTestIdAsync(codex!);
+        await type('Use the chosen Agent');
+        expect(readCounts()).toEqual(before);
+        expect(emittedStarts).toEqual([]);
+        let release!: () => void;
+        admissionGate = new Promise(resolve => { release = resolve; });
+        await act(async () => { await sendButton().props.onPress(); });
+        await waitFor(() => expect(emittedStarts).toHaveLength(1));
+        await waitFor(() => expect(outbound).toHaveLength(1));
+        try {
+            expect(agentRows().every(row => row.disabled === true)).toBe(true);
+            expect(screen.findHostByTestId('contextual-start-who-accessory')?.props.accessibilityState?.disabled).toBe(true);
+            expect(emittedStarts[0]).toMatchObject({ backendTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } });
+        } finally { await act(async () => release()); }
+    });
 
     it.each(['project', 'session'] as const)('starts a quote-seeded conversation from the %s pane with its owning context', async (pane) => {
         detachedScopeSupported = pane === 'project';
@@ -547,7 +733,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
             workspaceCacheKey: 'workspace_1', workspaceScope: scope, serverId, machineId: 'machine_1', rootPath: '/repo', activeRootPath: '/repo',
             presentation: 'panel', pinDetailsTab: vi.fn(), openFileTab: vi.fn(), renderWorkspaceInfo: () => null })
             : sessionRunSurfaces.createSessionDetailsSurfaceRenderers({
-                scopeId: 'session:session_1', sessionId: 'session_1', serverId, requestClose: vi.fn(), openFileTab: vi.fn(),
+                scopeId: 'session:session_1', sessionId: 'session_1', serverId, openFileTab: vi.fn(),
                 getStartEditingFileHandler: () => vi.fn(), sessionScreenTestIdsEnabled: false, closeDetailsTab: vi.fn(),
             });
         const renderer = renderers.find(candidate => candidate.canRender(surfaceInput));
@@ -557,19 +743,20 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         await waitFor(() => expect(input().props.value, JSON.stringify({ initialText: composer().initialText,
             sessionId: composer().sessionId, launcherDraftKey: composer().launcherDraftKey,
             draft: getSessionDraftSnapshot({ serverId, accountId: 'account_1' }, { kind: 'session', sessionId: 'session_1' }) })).toContain('selected code'));
+        const inputId = composer().initialLocalId;
         await act(async () => { await sendButton().props.onPress(); });
         await waitFor(() => expect(opened, JSON.stringify({ visible: screen.getTextContent(), emittedStarts })).toHaveBeenCalledWith(expect.objectContaining({ kind: 'executionRun', runId: 'run_1' })));
         if (pane === 'project') {
             expect(opened.mock.calls[0]![0]).toMatchObject({ sessionId: null, workspace: { machineId: 'machine_1', cwd: '/repo' } });
-            expect(emittedStarts).toEqual([expect.objectContaining({ sessionId: null, cwd: '/repo', runClass: 'long_lived' })]);
-            expect(JSON.stringify(transport.call.mock.calls.filter(([request]) => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_SEND))).toContain('selected code');
-            expect(transport.call.mock.calls.filter(([request]) => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_SEND)
-                .every(([request]) => request.machineId === 'machine_1')).toBe(true);
+            expect(emittedStarts).toEqual([expect.objectContaining({ sessionId: null, cwd: '/repo', intent: 'agent',
+                runClass: 'long_lived', instructions: expect.stringContaining('selected code'), localInputId: inputId })]);
+            expect(ExecutionRunStartRequestSchema.safeParse(emittedStarts[0]).success).toBe(true);
+            expect(detachedInputs).toEqual([]);
             expect(outbound).toEqual([]);
         } else {
             expect(opened.mock.calls[0]![0]).not.toHaveProperty('sessionId');
             expect(opened.mock.calls[0]![0]).not.toHaveProperty('workspace');
-            expect(emittedStarts).toEqual([expect.objectContaining({ launchOrigin: { kind: 'session', sessionId: 'session_1', draftCorrelationId: expect.any(String) } })]);
+            expect(emittedStarts).toEqual([expect.objectContaining({ intent: 'delegate', launchOrigin: { kind: 'session', sessionId: 'session_1', draftCorrelationId: expect.any(String) } })]);
             expect(outbound[0]).toMatchObject({ path: '/v2/sessions/session_1/execution-runs/run_1/pending' });
             expect(outboundText()).toContain('selected code');
         }
@@ -629,19 +816,22 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         expect(emittedStarts).toEqual([]);
     });
 
-    it('starts a quote-seeded detached Run and keeps its unsent quote when the first input is refused', async () => {
-        detachedSendFailure = true;
+    it('keeps a detached quote editable when Start refuses the initial input, then retries it once', async () => {
+        startResults.push(noRun(), started());
         const opened = vi.fn();
         await mount({ sessionId: null, workspace: { machineId: 'machine_1', cwd: '/repo' },
             initialText: 'Selected code\nWhy is it here?', onRunStarted: opened });
         await waitFor(() => expect(composer().isSendDisabled).toBe(false));
         const inputId = composer().initialLocalId;
         await act(async () => { await sendButton().props.onPress(); });
-        await waitFor(() => expect(opened, JSON.stringify({ visible: screen.getTextContent(), emittedStarts })).toHaveBeenCalledWith('run_1', {
-            retryInputLocalId: inputId, initialText: 'Selected code\nWhy is it here?',
-        }, expect.anything()));
+        expect(opened).not.toHaveBeenCalled();
         expect(input().props.value).toBe('Selected code\nWhy is it here?');
         expect(emittedStarts).toHaveLength(1);
+        await act(async () => { await sendButton().props.onPress(); });
+        await waitFor(() => expect(opened).toHaveBeenCalledWith('run_1', undefined, expect.anything()));
+        expect(emittedStarts).toEqual([expect.objectContaining({ intent: 'agent', instructions: 'Selected code\nWhy is it here?', localInputId: inputId }),
+            expect.objectContaining({ intent: 'agent', instructions: 'Selected code\nWhy is it here?', localInputId: inputId })]);
+        expect(detachedInputs).toEqual([]);
         expect(outbound).toEqual([]);
     });
 
@@ -658,6 +848,74 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         expect(outbound[0]).toMatchObject({ home: 'home', accountId: 'account_1', path: '/v2/sessions/session_1/execution-runs/run_1/pending' });
         expect(admitted()).toMatchObject({ localId: inputId, targetMachineId: 'machine_1' });
         expect(outboundText()).toContain('Inspect this');
+    });
+
+    it('G1: opening and editing admit zero Runs; typing stays in the leaf and explicit Start admits once', async () => {
+        const opened = vi.fn();
+        await mount({ onRunStarted: opened });
+        await waitFor(() => expect(composer().canSendMessages).toBe(true));
+        const starts = () => transport.call.mock.calls.filter(([request]) => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_START
+            || request.method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1).length;
+        const optionReads = () => ({
+            capabilityDescriptions: transport.call.mock.calls.filter(([request]) => request.method === RPC_METHODS.CAPABILITIES_DESCRIBE).length,
+            capabilityDetections: transport.call.mock.calls.filter(([request]) => request.method === RPC_METHODS.CAPABILITIES_DETECT).length,
+            contributionProjections: transport.call.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE).length,
+            reviewEngineLists: home.requests.filter(request => request.path === '/v1/actions/review.engines.list').length,
+        });
+        expect(starts()).toBe(0);
+        const demandedOptions = optionReads();
+        formBoundary.commits = 0;
+        await type('Inspect');
+        const firstEditCommits = formBoundary.commits;
+        await type('Inspect this');
+        expect(input().props.value).toBe('Inspect this');
+        console.info('flows.F.G1 edit observations', JSON.stringify({ demandedOptions, firstEditCommits,
+            secondEditCommits: formBoundary.commits - firstEditCommits }));
+        expect(formBoundary.commits).toBe(0);
+        expect(optionReads()).toEqual(demandedOptions);
+        expect(starts()).toBe(0);
+        await waitFor(() => expect(composer().isSendDisabled).toBe(false));
+        await act(async () => { await sendButton().props.onPress(); });
+        await waitFor(() => expect(opened, JSON.stringify({ visible: screen.getTextContent(),
+            starts: emittedStarts, requests: transport.call.mock.calls.map(([request]) => request.method) }))
+            .toHaveBeenCalledWith('run_1', undefined, { title: 'Inspect this' }));
+        expect(starts()).toBe(1);
+        expect(outbound).toHaveLength(1);
+        expect(outboundText()).toContain('Inspect this');
+        console.info('flows.F.G1 boundary counts', JSON.stringify({ demandedOptions, openAdmissions: 0,
+            editAdmissions: 0, typingFormCommits: 0, startAdmissions: starts(), firstMessageWrites: outbound.length }));
+    });
+
+    it('G1: 1,000 unrelated Session changes commit no form; a relevant target folder still reaches the form', async () => {
+        const unrelated = Array.from({ length: 1_000 }, (_, index) => createSessionFixture({ id: `unrelated_${index}`, serverId }));
+        getStorage().setState(state => ({ sessions: { ...state.sessions, ...Object.fromEntries(unrelated.map(session => [session.id, session])) } }));
+        await mount({ intent: 'review' });
+        await waitFor(() => expect(composer().canSendMessages).toBe(true));
+        formBoundary.commits = 0;
+        for (const session of unrelated) {
+            await act(async () => {
+                const metadata = session.metadata;
+                if (!metadata) throw new Error('The G1 fixture requires readable Session metadata');
+                getStorage().setState(state => ({ sessions: { ...state.sessions,
+                    [session.id]: createSessionFixture({ ...session, seq: session.seq + 1, metadataVersion: session.metadataVersion + 1,
+                        metadata: { ...metadata, path: `/changed/${session.id}` } }) } }));
+            });
+        }
+        expect(formBoundary.commits).toBe(0);
+        await act(async () => {
+            getStorage().setState(state => {
+                const session = state.sessions.session_1!;
+                const metadata = session.metadata;
+                if (!metadata) throw new Error('The G1 fixture requires readable Session metadata');
+                return { sessions: { ...state.sessions, session_1: createSessionFixture({ ...session,
+                    metadataVersion: session.metadataVersion + 1, metadata: { ...metadata, path: '/renamed-target' } }) } };
+            });
+        });
+        await waitFor(() => expect(screen.getTextContent()).toContain('renamed-target'));
+        expect(formBoundary.commits).toBeGreaterThan(0);
+        expect(emittedStarts).toEqual([]);
+        console.info('flows.F.G1 form counts', JSON.stringify({ unrelatedSessionChanges: unrelated.length,
+            unrelatedFormCommits: 0, relevantTargetCommits: formBoundary.commits }));
     });
     it('waits for the retained launcher draft before seeding host text', async () => {
         await mount();
@@ -736,6 +994,29 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         await waitFor(() => expect(atNavigation).toBe(''));
         expect(input().props.value).toBe('');
     });
+    it('settles an accepted launcher submission after navigating away before the pending acknowledgement', async () => {
+        let acknowledge!: () => void;
+        admissionGate = new Promise((resolve) => { acknowledge = resolve; });
+        await mount();
+        await type('Inspect after navigation');
+        await waitFor(() => expect(composer().canSendMessages).toBe(true));
+        await waitFor(() => expect(composer().isSendDisabled).toBe(false));
+        // Native editor flush supplies the text at this platform callback boundary.
+        await act(async () => { screen.findByType(AgentInput).props.onSend({ inputTextOverride: 'Inspect after navigation' }); });
+        await waitFor(() => expect(outbound, JSON.stringify({ alerts: modal.alert.mock.calls,
+            http: home.requests.map(request => [request.method, request.path]), starts: emittedStarts,
+            text: input().props.value })).toHaveLength(1));
+        expect(draft()?.document.composer.text.value).toBe('Inspect after navigation');
+        await screen.unmount();
+        await act(async () => acknowledge());
+        await waitFor(() => expect(draft()?.document.composer.text.value ?? '').toBe(''));
+        const launcherDocument = getSessionDraftSnapshot({ serverId, accountId: 'account_1' },
+            { kind: 'session', sessionId: 'session_1' })?.document ?? null;
+        expect(getSessionDraftDocumentField(launcherDocument,
+            executionRunLauncherDraftFieldPath('conversation', 'selection'))?.value).toBeUndefined();
+        await mount();
+        await waitFor(() => expect(input().props.value).toBe(''));
+    });
     it('preserves text authored after capture when admission hands off before navigation retires the binding', async () => {
         let acknowledge!: () => void;
         admissionGate = new Promise((resolve) => { acknowledge = resolve; });
@@ -752,7 +1033,8 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
     });
     it('starts with the eligible Agent selected in the real launcher options', async () => {
         await mount();
-        const codex = composer().engine!.options.find((option) => option.id.includes('codex'))!;
+        await showAgentChoices();
+        const codex = agentRows().find((option) => option.id.includes('codex'))!;
         await selectEngine(codex.id);
         await send();
         expect(startedTargetKey(emittedStarts[0]!)).toBe(canonicalTargetKey(codex.id));
@@ -763,10 +1045,11 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         await waitFor(() => expect(composer().canSendMessages).toBe(true));
         await type('Keep my child draft');
         await act(async () => beginAcpCatalogLoad({ serverId, accountId: 'account_1' }));
-        expect(composer().engine).not.toBeNull();
+        expect(screen.findByTestId('contextual-start-who')).not.toBeNull();
         expect(composer().canSendMessages).toBe(true);
         expect(input().props.value).toBe('Keep my child draft');
-        const codex = composer().engine!.options.find((option) => option.id.includes('codex'))!;
+        await showAgentChoices();
+        const codex = agentRows().find((option) => option.id.includes('codex'))!;
         await selectEngine(codex.id);
         startResults.push(childChoiceRefusal(canonicalTargetKey(codex.id)), started());
         await send('Keep my child draft');
@@ -783,8 +1066,11 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
     it('does not let an unavailable default Agent hide an eligible Agent', async () => {
         backends.claude = { available: false, intents: ['delegate'] };
         await mount();
-        expect(composer().engine!.options.some((option) => option.id.includes('codex'))).toBe(true);
-        const codex = composer().engine!.options.find((option) => option.id.includes('codex'))!;
+        await waitFor(() => expect(composer().isSendDisabled).toBe(false));
+        expect(agentRows().some((option) => option.id.includes('codex'))).toBe(true);
+        await showAgentChoices();
+        const codex = agentRows().find((option) => option.id.includes('codex'))!;
+        expect(selectedAgentIds()[0]).toBe(codex.id);
         await send();
         expect(startedTargetKey(emittedStarts[0]!)).toBe(canonicalTargetKey(codex.id));
     });
@@ -865,10 +1151,11 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
     it('preserves selected Agent and correlation across a known no-run retry', async () => {
         startResults.push(noRun(), started());
         await mount();
-        const codex = composer().engine!.options.find((option) => option.id.includes('codex'))!;
+        await showAgentChoices();
+        const codex = agentRows().find((option) => option.id.includes('codex'))!;
         await selectEngine(codex.id);
         await send();
-        expect(composer().engine!.selectedOptionId).toBe(codex.id);
+        expect(selectedAgentIds()[0]).toBe(codex.id);
         await send();
         const selected = canonicalTargetKey(codex.id);
         expect(emittedStarts.map(startedTargetKey)).toEqual([selected, selected]);
@@ -903,7 +1190,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
     it('starts with the exact model picked in the chooser, and Cancel starts nothing', async () => {
         await mount();
         // The chooser asks about the Agent the start targeted, and the model it returns must belong to that Agent.
-        const agent = canonicalTargetKey(composer().engine!.selectedOptionId!);
+        const agent = canonicalTargetKey(selectedAgentIds()[0]!);
         startResults.push(childChoiceRefusal(agent), childChoiceRefusal(agent), started());
         await send();
         await screen.pressByTestIdAsync('execution-run-child-choice-learn-more');
@@ -1052,9 +1339,8 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
             await mountTeamParent();
             let picker: Screen;
             if (entry === 'Agent chip') {
-                const engine = composer().engine!;
-                picker = await renderScreen(<AgentInputChipPickerPanel title={engine.title} options={engine.options}
-                    selectedOptionId={engine.selectedOptionId} onSelect={engine.onSelect} onRequestClose={vi.fn()} />);
+                await screen.pressByTestIdAsync(`contextual-start-change:${selectedAgentIds()[0]}`);
+                picker = screen;
             } else {
                 await chooseModelRow();
                 const shown = modal.show.mock.calls.at(-1)?.[0] as { component: React.ComponentType<Record<string, unknown>>; props: Record<string, unknown> };
@@ -1064,16 +1350,17 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
             const id = `model-picker-overlay-option:${sessionModelSelectionKey(teamModel)}`;
             await waitFor(() => expect(picker.findByTestId(id)).not.toBeNull());
             await waitFor(() => expect(picker.findByTestId(id)?.props.disabled).not.toBe(true));
+            expect(picker.getTextContent()).toContain('Broker source GPT-5.5');
             expect(picker.getTextContent()).toContain('Shared coding pool');
             expect(picker.getTextContent()).toContain('Engineering');
         });
-        it('renders the selected Agent model detail in the engine picker and submits its exact choice', async () => {
+        it('renders the selected Agent model detail in the shared Who and submits its exact choice', async () => {
             await mount();
-            const engine = composer().engine!;
-            const codex = engine.options.find((option) => option.id.includes('codex'))!;
-            const picker = await renderScreen(<AgentInputChipPickerPanel title={engine.title} options={engine.options}
-                selectedOptionId={engine.selectedOptionId} onSelect={engine.onSelect} onRequestClose={vi.fn()} />);
-            await picker.pressByTestIdAsync(`agent-input-chip-picker.option:${codex.id}`);
+            await showAgentChoices();
+            const codex = agentRows().find((option) => option.id.includes('codex'))!;
+            await selectEngine(codex.id);
+            await screen.pressByTestIdAsync(`contextual-start-change:${codex.id}`);
+            const picker = screen;
             const ref = { agentTargetKey: canonicalTargetKey(codex.id), providerConnectionId: null, modelId: 'gpt-6.1-luna' };
             const modelId = `model-picker-overlay-option:${JSON.stringify([ref.agentTargetKey, null, ref.modelId])}`;
             await waitFor(() => expect(picker.findByTestId(modelId)).not.toBeNull());
@@ -1091,7 +1378,8 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         const claude = () => canonicalTargetKey('claude');
         it('opens the real native model rows from Choose for this run and submits the tapped exact choice', async () => {
             await mount();
-            const codex = composer().engine!.options.find((option) => option.id.includes('codex'))!;
+            await showAgentChoices();
+            const codex = agentRows().find((option) => option.id.includes('codex'))!;
             await selectEngine(codex.id);
             await chooseModelRow();
             const shown = modal.show.mock.calls.at(-1)?.[0] as {
@@ -1114,8 +1402,9 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         it('restores unsent text and an explicit Agent/model after repository reload without changing the parent draft', async () => {
             writeExistingSessionDraft({ scope: { serverId, accountId: 'account_1' }, sessionId: 'session_1', patch: { text: 'Parent draft' } });
             await mount();
-            const codex = composer().engine!.options.find((option) => option.id.includes('codex'))!;
-            const defaultTarget = composer().engine?.selectedOptionId;
+            await showAgentChoices();
+            const codex = agentRows().find((option) => option.id.includes('codex'))!;
+            const defaultTarget = selectedAgentIds()[0];
             await selectEngine(codex.id);
             const picker = await chooseModelRow();
             const selected = { agentTargetKey: canonicalTargetKey(codex.id), providerConnectionId: null, modelId: 'gpt-6.1-luna' };
@@ -1132,8 +1421,8 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
             await ensureSessionDraftRepositoryHydrated({ serverId, accountId: 'account_1' });
             await mount();
             expect(input().props.value).toBe('Keep this unsent Run');
-            expect(composer().engine?.selectedOptionId).toBe(codex.id);
-            expect(composer().engine?.label).toBe(codex.label);
+            expect(selectedAgentIds()[0]).toBe(codex.id);
+            expect(agentRows().find(option => option.id === selectedAgentIds()[0])?.label).toBe(codex.label);
             expect(screen.getTextContent()).toContain(chosenLabel);
             expect(screen.getTextContent()).not.toContain(t('agentInput.model.useCliSettings'));
             expect(composer().initialLocalId).toBe(localId);
@@ -1146,7 +1435,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
             await ensureSessionDraftRepositoryHydrated({ serverId, accountId: 'account_1' });
             await mount();
             expect(input().props.value).toBe('');
-            expect(composer().engine?.selectedOptionId).toBe(defaultTarget);
+            expect(selectedAgentIds()[0]).toBe(defaultTarget);
         });
         it('starts on the exact source and model picked, telling same-name models of two sources apart', async () => {
             await mount();
@@ -1344,14 +1633,26 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         expect(input().props.value).toBe('');
         await waitFor(() => expect(opened).toHaveBeenCalledWith('run_claude', undefined, { title: 'Inspect this' }));
     });
-    it('removes one chosen reviewer from its real removable chip', async () => {
+    it('removes one chosen reviewer from its shared Who row', async () => {
         await mount({ intent: 'review' });
         await reviewers();
         const first = reviewerKeys()[0]!;
-        const reviewer = await renderChip(first);
-        await reviewer.pressByTestIdAsync(`${first}:remove`);
+        await selectEngine(first);
         await send();
         expect(emittedStarts).toHaveLength(1);
+    });
+    it('configures a captured comparison and narration in the shared Run draft before admission', async () => {
+        await mount({ intent: 'review', comparisonReview: { cwd: '/repo',
+            comparison: { kind: 'branch', base: 'main', head: 'HEAD' }, comparisonId: 'captured-branch',
+            scopeLabel: 'main → HEAD', defaultWalkthrough: true } });
+        expect(screen.findByTestId('start-review-changes')).not.toBeNull();
+        const walkthrough = await renderChipContent('execution-run-start-walkthrough');
+        expect(walkthrough.findByTestId('start-review-walkthrough')?.props.accessibilityState?.checked).toBe(true);
+        await walkthrough.pressByTestIdAsync('start-review-walkthrough');
+        await settle();
+        const after = await renderChipContent('execution-run-start-walkthrough');
+        expect(after.findByTestId('start-review-walkthrough')?.props.accessibilityState?.checked).toBe(false);
+        expect(emittedStarts).toHaveLength(0);
     });
     it('opens a partially started review and names the reviewer that failed', async () => {
         startResults.push(started('run_claude'), { ok: false, error: 'review_engine_unavailable', errorCode: 'review_engine_unavailable' });
@@ -1359,12 +1660,75 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         await mount({ intent: 'review', onRunStarted: opened });
         await reviewers();
         await send();
-        await waitFor(() => expect(opened).toHaveBeenCalledWith('run_claude', undefined, { title: 'Inspect this' }));
-        await waitFor(() => expect(modal.alert).toHaveBeenCalledWith(t('runPage.review.reviewersNotStarted', { count: 1 }), expect.any(String)));
-        const failureMessage = modal.alert.mock.calls.at(-1)![1];
-        expect(failureMessage).toContain('codex');
-        expect(failureMessage).not.toContain('claude');
+        await waitFor(() => expect(emittedStarts).toHaveLength(2));
+        await waitFor(() => expect(opened).toHaveBeenCalledWith('run_claude', undefined,
+            { title: 'Inspect this', reviewersNotStarted: [t('agentInput.agent.codex')] }));
+        expect(modal.alert).not.toHaveBeenCalled();
         expect(input().props.value).toBe('');
+    });
+    it('rejects a retained comparison resource with a malformed originating pane', async () => {
+        const { createExecutionRunDetailsSurfaceRenderers } = await import('./executionRunDetailsSurfaceRenderers');
+        const { createComparisonReviewExecutionRunDraftDetailsTab } = await import('./executionRunLauncherModel');
+        const renderer = createExecutionRunDetailsSurfaceRenderers({ owner: 'session', sessionId: 'session_1', serverId })[0]!;
+        const tab = createComparisonReviewExecutionRunDraftDetailsTab({ cwd: '/repo', comparison: { kind: 'workingTree' },
+            scopeLabel: 'Pending changes', defaultWalkthrough: false });
+        const scope = { kind: 'session' as const, sessionId: 'session_1', serverId };
+        expect(renderer.canRender({ tab: { ...tab, isPinned: false, isPreview: true, resource: { ...record(tab.resource),
+            comparisonReview: { ...record(record(tab.resource).comparisonReview), origin: { scopeId: 42, tab: {} } },
+        } }, scope, region: 'details', active: true,
+            descriptor: { surfaceId: 'comparison-origin', resourceKey: tab.key, scope, region: 'details', status: 'available' },
+            callbacks: {} })).toBe(false);
+    });
+    it.each([false, true])('links accepted comparison reviewers back to the originating pane (walkthrough %s)', async walkthrough => {
+        const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
+        const { useAppPaneScope } = await import('@/components/appShell/panes/hooks/useAppPaneScope');
+        const { createSessionScmReviewDetailsTab } = await import('@/components/sessions/panes/details/sessionDetailsTabBuilders');
+        const { createComparisonReviewExecutionRunDraftDetailsTab } = await import('./executionRunLauncherModel');
+        const { createExecutionRunDetailsSurfaceRenderers } = await import('./executionRunDetailsSurfaceRenderers');
+        const scopeId = 'session:comparison-origin';
+        const comparison = { kind: 'branch' as const, base: 'main', head: 'HEAD' };
+        const originTab = createSessionScmReviewDetailsTab({ comparison, view: 'files', explain: true, evidenceSessionId: 'session_1' });
+        const context = { cwd: '/repo', comparison, comparisonId: 'captured-branch', scopeLabel: 'main → HEAD',
+            defaultWalkthrough: walkthrough, origin: { scopeId, tab: originTab } };
+        const draft = createComparisonReviewExecutionRunDraftDetailsTab(context);
+        let pane!: ReturnType<typeof useAppPaneScope>;
+        function Control() { pane = useAppPaneScope(scopeId); return null; }
+        const scope = { kind: 'session' as const, sessionId: 'session_1', serverId };
+        const surfaceInput = { tab: { ...draft, isPinned: false, isPreview: true }, scope, region: 'details' as const, active: true,
+            descriptor: { surfaceId: 'comparison-origin', resourceKey: draft.key, scope, region: 'details' as const, status: 'available' as const },
+            callbacks: { replaceTab: (key: string, tab: DetailsTab) => pane.replaceDetailsTab(key, tab) } };
+        const renderer = createExecutionRunDetailsSurfaceRenderers({ owner: 'session', sessionId: 'session_1', serverId })[0]!;
+        screen = await renderScreen(<AppPaneProvider><Control />{renderer.render(surfaceInput)}</AppPaneProvider>);
+        await act(async () => {
+            pane.openDetailsTab(originTab, { intent: 'pinned' });
+            pane.openDetailsTab(draft, { intent: 'preview', start: true });
+        });
+        startResults.push(started('comparison-claude'), started('comparison-codex'));
+        await reviewers();
+        if (walkthrough) {
+            const narrators = await renderChipContent('execution-run-start-walkthrough');
+            await waitFor(() => expect(narrators.findByTestId('start-review-narrator:codex')).not.toBeNull());
+            await narrators.pressByTestIdAsync('start-review-narrator:codex');
+            await settle();
+        }
+        await send();
+        await waitFor(() => expect(pane.scopeState?.details.tabState[originTab.key]).toMatchObject({
+            reviewRunIds: ['comparison-claude', 'comparison-codex'],
+        }));
+        if (walkthrough) {
+            expect(pane.scopeState?.details.tabs.find(tab => tab.key === originTab.key)?.resource).toMatchObject({
+                comparison: { ...comparison, comparisonId: 'captured-branch' }, view: 'walkthrough', explain: true, evidenceSessionId: 'session_1',
+            });
+            expect(pane.scopeState?.details.activeTabKey).toBe(originTab.key);
+        }
+        expect(emittedStarts.every(start => record(start.intentInput).comparisonId === 'captured-branch'
+            && record(start.intentInput).changeType === 'all')).toBe(true);
+        if (walkthrough) expect(transport.call.mock.calls).toEqual(expect.arrayContaining([[expect.objectContaining({
+            method: SESSION_RPC_METHODS.EXECUTION_RUN_ACTION,
+            payload: expect.objectContaining({ actionId: 'review.walkthrough', input: expect.objectContaining({
+                comparisonId: 'captured-branch', reviewRunIds: ['comparison-claude', 'comparison-codex'], narrator: { engineId: 'codex' },
+            }) }),
+        })]]));
     });
     it('keeps the typed draft when the real plan Action refuses every start', async () => {
         startResults.push({ ok: false, error: 'backend_unavailable' });
@@ -1392,13 +1756,11 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         rolesGate = new Promise((resolve) => { release = resolve; });
         invalidateRoleCatalog();
         await mount({ intent: 'review' });
-        const roleChip = await renderChip('execution-run-start-role');
-        expect(roleChip.getTextContent()).toContain(t('common.loading'));
-        expect(roleChip.getTextContent()).not.toContain('reviewer');
+        expect(roleLabel()).toBe(t('common.loading'));
         release();
         await vi.waitFor(async () => {
             await settle();
-            expect((await renderChip('execution-run-start-role')).getTextContent()).toContain('Reviewer');
+            expect(roleLabel()).toBe('Reviewer');
         });
     });
     it('reads an unanswered Machine as checking, offers no Agent yet, and still names the Session\'s own Agent', async () => {
@@ -1407,11 +1769,11 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         await mount();
         expect(screen.getTextContent()).toContain(t('runPage.launcher.checking'));
         expect(screen.getTextContent()).not.toContain(t('runPage.launcher.unavailableReason'));
-        expect(composer().engine?.agentType).toBe('claude');
-        expect(composer().engine!.options.slice(1).every((option) => option.muted === true)).toBe(true);
+        expect(screen.getTextContent()).toContain(t('agentInput.agent.claude'));
+        expect(agentRows().every((option) => option.disabled === true)).toBe(true);
         release();
         await waitFor(() => expect(screen.findByTestId('execution-run-start-blocked')).toBeNull());
-        expect(composer().engine!.options.slice(1).some((option) => option.muted !== true)).toBe(true);
+        expect(agentRows().some((option) => option.disabled !== true)).toBe(true);
     });
     it('says the Machine could not be checked, not that it offers nothing, when its capability read fails', async () => {
         capabilitiesFailure = true;
@@ -1421,16 +1783,9 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
     });
 
     async function chooseRole(roleId: string) {
-        const rail = composer().engine!.options[0]!;
-        expect(rail.id).toBe('roles');
-        const choices = await renderScreen(<>{rail.renderDetailContent?.({ onRequestClose: vi.fn() })}</>);
-        // A real popover receives the composer's current controlled props when
-        // the asynchronous catalog arrives. Keep this separately mounted leaf current too.
-        await vi.waitFor(async () => {
-            await choices.update(<>{composer().engine!.options[0]!.renderDetailContent?.({ onRequestClose: vi.fn() })}</>);
-            expect(choices.findByTestId(`roles-rail-option:${roleId}`), JSON.stringify({ text: choices.getTextContent(), http: home.requests.map((request) => request.path) })).not.toBeNull();
-        });
-        await choices.pressByTestIdAsync(`roles-rail-option:${roleId}`);
+        await screen.pressByTestIdAsync('contextual-start-who-accessory');
+        await waitFor(() => expect(screen.findByTestId(`roles-rail-option:${roleId}`)).not.toBeNull());
+        await screen.pressByTestIdAsync(`roles-rail-option:${roleId}`);
         await settle();
     }
     it('chooses Planner from the real Roles rail and carries roleId through plan admission', async () => {
@@ -1443,25 +1798,18 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         const roles = await createDefaultActionExecutor().execute('roles.list', {}, { serverId, expectedAccountId: 'account_1' });
         expect(roles, JSON.stringify(roles)).toMatchObject({ ok: true });
         await mount({ intent: 'delegate' });
-        const codex = composer().engine!.options.find((option) => option.id.includes('codex'))!;
+        await showAgentChoices();
+        const codex = agentRows().find((option) => option.id.includes('codex'))!;
         roleOverrides = { scout: { roleId: 'scout', engine: { agentTargetKey: canonicalTargetKey(codex.id) } } };
         await refreshPromptLibraryCatalog({ serverId, accountId: 'account_1' });
         invalidateRoleCatalog();
         await settle();
         await chooseRole('scout');
-        expect(composer().engine!.selectedOptionId).toBe(codex.id);
+        expect(selectedAgentIds()[0]).toBe(codex.id);
     });
     it('names the implicit Reviewer role while leaving an unchosen roleId absent from the start', async () => {
         await mount({ intent: 'review' });
-        await act(async () => chip('execution-run-start-role').onIntent?.());
-        const role = await renderChipContent('execution-run-start-role');
-        // The actual open popover receives new controlled props when its demanded catalog arrives.
-        await vi.waitFor(async () => {
-            const renderContent = chip('execution-run-start-role').collapsedContentPopover?.renderContent;
-            await role.update(<>{typeof renderContent === 'function'
-                ? renderContent({ requestClose: vi.fn(), maxHeight: Dimensions.get('window').height }) : renderContent}</>);
-            expect(role.getTextContent()).toContain('Reviewer');
-        });
+        await waitFor(() => expect(roleLabel()).toBe('Reviewer'));
         await reviewers();
         await send();
         expect(emittedStarts[0]).not.toHaveProperty('roleId');
@@ -1482,14 +1830,13 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         expect(input().props.placeholder).toBe(t('agentStart.placeholders.review'));
         await type('Inspect this');
         expect(sendButton().props.disabled).toBe(true);
-        expect(composer().extraActionChips?.find(chip => chip.key === 'execution-run-start-reviewers-add'))
-            .toMatchObject({ requirement: { code: 'reviewer_required', fieldPath: 'engineIds' } });
+        expect(selectedAgentIds()).toEqual([]);
         const snapshot = readComposerPresentationSnapshot(screen.root.findByType(Reflect.get(AgentInput, 'type')).props.composerRef);
         expect(ComposerSnapshotV1Schema.parse(snapshot).state).toMatchObject({ editable: true, submittable: false });
         await act(async () => { await sendButton().props.onPress(); });
         expect(emittedStarts).toEqual([]);
         await reviewers();
-        expect(composer().extraActionChips?.find(chip => chip.key === 'execution-run-start-reviewers-add')?.requirement).toBeNull();
+        expect(selectedAgentIds()).toHaveLength(2);
         await send();
         expect(emittedStarts[0]).toMatchObject({ intent: 'review', roleId: 'second_opinion' });
     });
@@ -1509,82 +1856,71 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         await mount();
         await screen.pressByTestIdAsync('execution-run-secret-overlay-edit');
         const params = record(modal.show.mock.calls.at(-1)?.[0]);
-        const onResolve = record(params.props).onResolve as (value: unknown) => void;
-        await act(async () => onResolve({ action: 'selectSaved', envVarName: 'ANTHROPIC_API_KEY', secretId: secretRef }));
+        const onResult = record(params.props).onResult as (value: unknown) => void;
+        await act(async () => onResult({ kind: 'selected', secretRef }));
         await settle();
     }
-    it('admits a comparison dialog review through the same Saved Secret target checks as the launcher', async () => {
+    it('admits a comparison review through the same Saved Secret target checks as the launcher', async () => {
         protocolSupported = false;
         const profile = AIBackendProfileSchema.parse({ id: 'work', name: 'Work', envVarRequirements: [{ name: 'ANTHROPIC_API_KEY', required: true, kind: 'secret' }] });
         secretAvailable = true;
         publishProfile(profile);
         getStorage().setState((state) => ({ sessions: { session_1: { ...state.sessions.session_1!, metadata: { ...state.sessions.session_1!.metadata!, profileId: 'work' } } } }));
-        screen = await renderScreen(<StartReviewDialog sessionId="session_1" serverId={serverId} cwd="/repo"
-            comparison={{ kind: 'workingTree' }} comparisonId="captured-1" scopeLabel="Pending changes"
-            defaultWalkthrough={false} onClose={vi.fn()} onStarted={vi.fn()} />);
+        await mount({ intent: 'review', onRunStarted: vi.fn(), comparisonReview: { cwd: '/repo',
+            comparison: { kind: 'workingTree' }, comparisonId: 'captured-1', scopeLabel: 'Pending changes', defaultWalkthrough: false } });
+        await reviewers(['claude']);
         await settle();
         await screen.pressByTestIdAsync('execution-run-secret-overlay-edit');
-        const onResolve = record(record(modal.show.mock.calls.at(-1)?.[0]).props).onResolve as (value: unknown) => void;
-        await act(async () => onResolve({ action: 'selectSaved', envVarName: 'ANTHROPIC_API_KEY', secretId: secretRef }));
+        const onResult = record(record(modal.show.mock.calls.at(-1)?.[0]).props).onResult as (value: unknown) => void;
+        await act(async () => onResult({ kind: 'selected', secretRef }));
         await settle();
-        await waitFor(() => expect(screen.findByTestId('start-review-start')?.props.disabled).toBe(false));
-        await screen.pressByTestIdAsync('start-review-start');
+        await send();
         await settle();
         expect(emittedStarts).toEqual([]);
         expect(screen.getTextContent()).toContain(t('sessionDrafts.executionRunStart.secretReferenceOverlayUpdateRequired'));
     });
     it('guides an unconfirmed comparison Start to Runs and Session resume without resending', async () => {
         const onStarted = vi.fn();
-        const onClose = vi.fn();
         startRelayFailure = { error: 'RPC target disconnected after request submission', errorCode: RPC_ERROR_CODES.OUTCOME_UNKNOWN };
-        screen = await renderScreen(<StartReviewDialog sessionId="session_1" serverId={serverId} cwd="/repo"
-            comparison={{ kind: 'workingTree' }} comparisonId="captured-1" scopeLabel="Pending changes"
-            defaultWalkthrough={false} onClose={onClose} onStarted={onStarted} />);
+        await mount({ intent: 'review', onRunStarted: onStarted, comparisonReview: { cwd: '/repo',
+            comparison: { kind: 'workingTree' }, comparisonId: 'captured-1', scopeLabel: 'Pending changes', defaultWalkthrough: false } });
+        await reviewers(['claude']);
         await settle();
-        await waitFor(() => expect(screen.findByTestId('start-review-start')?.props.disabled,
-            JSON.stringify({ text: screen.getTextContent(), rpc: transport.call.mock.calls.map(([request]) => request.method) })).toBe(false));
-        await act(async () => screen.changeTextByTestId('start-review-instructions', 'Keep this review request'));
-        await screen.pressByTestIdAsync('start-review-start');
+        await send('Keep this review request');
         await waitFor(() => expect(screen.getTextContent()).toContain('sessionDrafts.executionRunStart.submittedUnknown'));
         expect(screen.getTextContent()).not.toContain(startRelayFailure.error);
         expect(emittedStarts).toHaveLength(1);
         expect(outbound).toEqual([]);
         expect(onStarted).not.toHaveBeenCalled();
-        expect(onClose).not.toHaveBeenCalled();
-        expect(screen.findByTestId('start-review-instructions')?.props.value).toBe('Keep this review request');
+        expect(input().props.value).toBe('Keep this review request');
         await settle();
         expect(emittedStarts).toHaveLength(1);
     });
     it('translates a structured-output model refusal through the actual comparison Start', async () => {
         const onStarted = vi.fn();
-        const onClose = vi.fn();
         const code = 'model_structured_output_unsupported';
         startResults.push({ ok: false, error: code, errorCode: code,
             details: withExecutionRunStartFailureDetails({ modelId: 'default', structuredOutput: 'unknown' }, 'noRunCreated') });
-        screen = await renderScreen(<StartReviewDialog sessionId="session_1" serverId={serverId} cwd="/repo"
-            comparison={{ kind: 'workingTree' }} comparisonId="captured-1" scopeLabel="Pending changes"
-            defaultWalkthrough={false} onClose={onClose} onStarted={onStarted} />);
+        await mount({ intent: 'review', onRunStarted: onStarted, comparisonReview: { cwd: '/repo',
+            comparison: { kind: 'workingTree' }, comparisonId: 'captured-1', scopeLabel: 'Pending changes', defaultWalkthrough: false } });
+        await reviewers(['claude']);
         await settle();
-        await waitFor(() => expect(screen.findByTestId('start-review-start')?.props.disabled).toBe(false));
-        await act(async () => screen.changeTextByTestId('start-review-instructions', 'Keep this review request'));
-        await screen.pressByTestIdAsync('start-review-start');
+        await send('Keep this review request');
         await waitFor(() => expect(screen.getTextContent()).toContain(t('walkthrough.generationFailure.modelUnavailable')));
         expect(screen.getTextContent()).not.toContain(code);
         expect(emittedStarts).toHaveLength(1);
         expect(outbound).toEqual([]);
         expect(onStarted).not.toHaveBeenCalled();
-        expect(onClose).not.toHaveBeenCalled();
-        expect(screen.findByTestId('start-review-instructions')?.props.value).toBe('Keep this review request');
+        expect(input().props.value).toBe('Keep this review request');
     });
-    it('resumes the stopped host on its exact Home before the comparison dialog starts a review', async () => {
+    it('resumes the stopped host on its exact Home before the comparison starts a review', async () => {
         getStorage().setState((state) => ({ sessions: { session_1: { ...state.sessions.session_1!, active: false,
             metadata: { ...state.sessions.session_1!.metadata!, claudeSessionId: 'native-session-1' } } } }));
-        screen = await renderScreen(<StartReviewDialog sessionId="session_1" serverId={serverId} cwd="/repo"
-            comparison={{ kind: 'workingTree' }} comparisonId="captured-1" scopeLabel="Pending changes"
-            defaultWalkthrough={false} onClose={vi.fn()} onStarted={vi.fn()} />);
+        await mount({ intent: 'review', onRunStarted: vi.fn(), comparisonReview: { cwd: '/repo',
+            comparison: { kind: 'workingTree' }, comparisonId: 'captured-1', scopeLabel: 'Pending changes', defaultWalkthrough: false } });
+        await reviewers(['claude']);
         await settle();
-        await waitFor(() => expect(screen.findByTestId('start-review-start')?.props.disabled).toBe(false));
-        await screen.pressByTestIdAsync('start-review-start');
+        await send();
         await waitFor(() => expect(emittedStarts, JSON.stringify({ text: screen.getTextContent(), rpc: transport.call.mock.calls.map(([request]) => request), http: home.requests.map((request) => request.path) })).toHaveLength(1));
         const resume = transport.call.mock.calls.findIndex(([request]) => request.method === RPC_METHODS.SPAWN_HAPPY_SESSION || request.method === RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE);
         const review = transport.call.mock.calls.findIndex(([request]) => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_START

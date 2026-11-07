@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { ScrollView, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { HAPPIER_MENU_ROW_METRICS } from '@happier-dev/plugin-ui/presentation';
 import type { ExecutableParticipantSelectionV1 } from '@happier-dev/protocol/discussions/executableParticipants';
@@ -13,6 +13,7 @@ import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Item } from '@/components/ui/lists/Item';
 import { ICON_SIZE } from '@/components/ui/icons/Icon';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
+import { AgentInputSelectionPopover } from '@/components/sessions/agentInput/selection/AgentInputSelectionPopover';
 import { CollectionListGroupLabel } from '@/components/ui/lists/collection/CollectionList';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -163,7 +164,10 @@ export function ContextualStartComposerBody({ model, whoHint, question, whoConte
     const busy = !source.enabled || source.busy === true;
     const [detailId, setDetailId] = React.useState<string | null>(null);
     const [accessoryOpen, setAccessoryOpen] = React.useState(false);
+    const accessoryAnchorRef = React.useRef<View | null>(null);
+    const closeAccessory = React.useCallback(() => setAccessoryOpen(false), []);
     const [expanded, setExpanded] = React.useState(false);
+    const [whoEditing, setWhoEditing] = React.useState(() => source.selectedIds.size === 0);
     // Which row's recipe is settling (one-tap default) or open (Change). Presentation only: the recipe
     // and its value stay with the participant owner.
     const [recipe, setRecipe] = React.useState<Readonly<{ rowId: string; mode: 'default' | 'change' }> | null>(null);
@@ -272,6 +276,16 @@ export function ContextualStartComposerBody({ model, whoHint, question, whoConte
         return { step: { ...model.rootStep, inputPlaceholder: peopleChosen ? model.rootStep.inputPlaceholder : undefined,
             sections: [topSection, ...(peopleChosen ? peopleSections : [])] }, selectedIds, unplaced };
     }, [busy, details, detailId, editModel, expanded, participants?.input.selected, participants?.input.people?.chosen, model.rootStep, model.selectedIds, onChoose, onReplace, openRecipe, source.sections]);
+    const chosenStep = React.useMemo<SelectionListStep>(() => ({
+        ...display.step, inputPlaceholder: undefined,
+        sections: display.step.sections.flatMap(section => {
+            if (section.kind !== 'static') return [];
+            const options = section.options.filter(option => display.selectedIds.has(option.id));
+            return options.length > 0 ? [{ ...section, options }] : [];
+        }),
+    }), [display.step, display.selectedIds]);
+    const hasChosen = chosenStep.sections.length > 0 || display.unplaced.length > 0;
+    const choosingWho = whoEditing || !hasChosen;
     const changing = editor !== null && openRecipe?.mode === 'change';
 
     return <View testID="contextual-start-composer" style={styles.root}>
@@ -279,13 +293,17 @@ export function ContextualStartComposerBody({ model, whoHint, question, whoConte
             <View style={[styles.groupRow, styles.hang]}>
                 <CollectionListGroupLabel title={t('agentStart.chips.engineTitle')} presentation="menu" />
                 {whoHint ? <Text style={styles.groupNote} numberOfLines={1}>{whoHint}</Text> : null}
+                {hasChosen ? <TextLinkButton testID={`contextual-start-${choosingWho ? 'done' : 'change'}-who`}
+                    tone="strong" size="meta" label={t(choosingWho ? 'common.done' : 'common.change')}
+                    disabled={busy} onPress={() => setWhoEditing(value => !value)} /> : null}
                 {/* The link holds its own start alignment; its wrapper joins the label's baseline. */}
-                {whoAccessory ? <View><TextLinkButton testID="contextual-start-who-accessory" tone="strong" size="meta"
+                {whoAccessory ? <View ref={accessoryAnchorRef} collapsable={false}><TextLinkButton testID="contextual-start-who-accessory" tone="strong" size="meta"
                     label={whoAccessory.label} disabled={busy} onPress={() => setAccessoryOpen(value => !value)} /></View> : null}
             </View>
             <View style={styles.hang}>
-                <SelectionList testID="contextual-start-who" rootStep={display.step}
-                    inputValue={source.search?.value} onChangeInputValue={source.search?.onChange}
+                <SelectionList testID="contextual-start-who" rootStep={choosingWho ? display.step : chosenStep}
+                    inputValue={choosingWho ? source.search?.value : undefined}
+                    onChangeInputValue={choosingWho ? source.search?.onChange : undefined}
                     selection={{ kind: 'multiple', selectedIds: display.selectedIds }}
                     onSelect={() => undefined} onRequestClose={() => undefined}
                     listAccessibilityLabel={t('agentStart.chips.engineTitle')}
@@ -303,7 +321,12 @@ export function ContextualStartComposerBody({ model, whoHint, question, whoConte
             {/* The recipe settles here (one tap) or opens here (Change); it never covers the form. */}
             {editor}
             {detailId ? details?.get(detailId)?.() : null}
-            {accessoryOpen ? whoAccessory?.render(() => setAccessoryOpen(false)) : null}
+            {whoAccessory ? <AgentInputSelectionPopover open={accessoryOpen} anchorRef={accessoryAnchorRef}
+                onRequestClose={closeAccessory} phonePresentation="sheet" accessibilityLabel={whoAccessory.label}>
+                {({ maxHeight }) => <ScrollView style={{ maxHeight }} keyboardShouldPersistTaps="handled">
+                    {whoAccessory.render(closeAccessory)}
+                </ScrollView>}
+            </AgentInputSelectionPopover> : null}
             {whoContent}
         </View>
         {changing ? null : question ?? (source.question ? <FieldItem label={<View style={styles.hang}>

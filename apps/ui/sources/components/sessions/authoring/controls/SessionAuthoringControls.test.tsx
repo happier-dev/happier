@@ -1,7 +1,6 @@
 import React from 'react';
 import {
   afterEach,
-  beforeAll,
   beforeEach,
   describe,
   expect,
@@ -12,7 +11,6 @@ import { act } from 'react-test-renderer';
 
 import { renderScreen } from '@/dev/testkit';
 import { installAgentInputCommonModuleMocks } from '@/components/sessions/agentInput/agentInputTestHelpers';
-let AgentInputChipPickerPopover: typeof import('@/components/sessions/agentInput/components/AgentInputChipPickerPopover').AgentInputChipPickerPopover;
 
 import type {
   AgentExecutionTargetV1} from '@happier-dev/protocol/agents/executionTargetV1';
@@ -327,14 +325,29 @@ function selectOption(
   popover.props.onSelect(optionId);
 }
 
-// Module transform is paid once, outside any single case's time budget.
-beforeAll(async () => {
-  ({ AgentInputChipPickerPopover } =
-    await import('@/components/sessions/agentInput/components/AgentInputChipPickerPopover'));
-  await import('./SessionAuthoringControls');
-}, 300_000);
+// Collect the real UI graph before behavior deadlines, as in the adjacent composer suites.
+const { AgentInputChipPickerPopover } =
+  await import('@/components/sessions/agentInput/components/AgentInputChipPickerPopover');
+await import('./SessionAuthoringControls');
 
 describe('SessionAuthoringControls', () => {
+  it('lets an engine group supply the field title while retaining the accessible engine trigger', async () => {
+    const { screen } = await renderControls({ presentation: 'fields', fields: ['agentTarget', 'modelSelection'],
+      onChangeFields: () => {}, engineFieldTitle: null, values: baseValues() });
+    expect(screen.findByTestId('session-authoring-control-agentTarget-row')).toBeNull();
+    expect(screen.findByTestId('session-authoring-control-agentTarget')?.props.accessibilityLabel).toBeTruthy();
+    await screen.unmount();
+  });
+  it('leaves an unset Profile out of the fields form and retains an authored Profile', async () => {
+    const facts = { profilesEnabled: true, profiles: [{ id: 'available-profile', label: 'Release' }] };
+    const { screen } = await renderControls({ presentation: 'fields', fields: ['profileId'], values: baseValues(), facts });
+    expect(screen.findAllByTestId('session-authoring-control-profileId-row')).toHaveLength(0);
+    const { SessionAuthoringControls } = await import('./SessionAuthoringControls');
+    await screen.update(<SessionAuthoringControls presentation="fields" fields={['profileId']}
+      values={{ ...baseValues(), profileId: 'retained-profile' }} facts={facts} onChangeField={() => {}} />);
+    expect(screen.findAllByTestId('session-authoring-control-profileId-row').length).toBeGreaterThan(0);
+    await screen.unmount();
+  });
   it('uses the same honest empty engine summary in chips and fields', async () => {
     const { useSessionAuthoringEngineSummary, SessionAuthoringControls } =
       await import('./SessionAuthoringControls');
@@ -422,6 +435,7 @@ describe('SessionAuthoringControls', () => {
     const { screen } = await renderControls({
       presentation: 'fields',
       fields: ['windowsTerminalWindowName', 'windowsRemoteSessionConsole', 'capabilitySelection', 'approvalProfileId', 'profileId'],
+      values: { ...baseValues(), profileId: 'retained-profile' },
       facts: { targetIsWindows: false, profilesEnabled: false, profiles: [] },
     });
     expect(screen.findByTestId('session-authoring-control-windowsTerminalWindowName-row')).toBeNull();
