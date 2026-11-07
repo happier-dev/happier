@@ -1,4 +1,7 @@
 // @vitest-environment jsdom
+import { URL as NodeURL } from 'node:url';
+import { readPluginTranslationResources } from '../../../../../scripts/testing/readPluginTranslationResources.js';
+
 import React, { act } from 'react';
 import { defineUiSurface, Tabs, Text } from '@happier-dev/plugin-ui';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
@@ -18,9 +21,10 @@ import { SENTRY_ACTION_IDS, SENTRY_PLUGIN_ID } from '../sentryContracts.js';
 import { encodeSentryInstanceConfiguration } from '../instances/sentryInstanceConfiguration.js';
 
 import { renderSurface } from './renderSurface.js';
-import { SENTRY_UI_TRANSLATIONS } from './translations.js';
 import { SourcePanelActionsFixture, invokeSourcePanelFixtureAction } from '../../../triage/src/ui/sourcePanelActions.test-support.js';
 import { createTriageEphemeralSharedScopeFixture } from '../../../triage/src/ui/window/ephemeralSharedScope.test-support.js';
+
+const PACKAGED_UI_TRANSLATIONS = readPluginTranslationResources(new NodeURL('../../', import.meta.url));
 
 /**
  * The Sentry detail body, mounted the way the host mounts it.
@@ -380,11 +384,15 @@ describe('the mounted Sentry issue detail body', () => {
     // The shared timeline is the panel: no numbered "Activity" step above it.
     await expect(page.queryByRole('heading', { name: 'Activity' })).resolves.toBeUndefined();
     await expect(page.getByText('Mara')).resolves.toBeDefined();
-    await expect(page.getByText('set_resolved')).resolves.toBeDefined();
+    // Each record is said in human words, never Sentry's raw type ("set_resolved").
+    await expect(page.getByText('Resolved')).resolves.toBeDefined();
     const text = document.body.textContent ?? '';
-    expect(text.indexOf('set_regression')).toBeGreaterThanOrEqual(0);
-    expect(text.indexOf('set_regression')).toBeLessThan(text.indexOf('set_resolved'));
-    await expect(page.getByText('2 activity record(s) read. Sentry states this history on the issue itself and does not paginate it.')).resolves.toBeDefined();
+    expect(text).not.toContain('set_resolved');
+    expect(text).not.toContain('set_regression');
+    expect(text.indexOf('Regression')).toBeGreaterThanOrEqual(0);
+    expect(text.indexOf('Regression')).toBeLessThan(text.indexOf('Resolved'));
+    // A complete history needs no read count under it.
+    expect(text).not.toContain('activity record(s) read');
     await expect(page.queryByRole('tab')).resolves.toBeUndefined();
   });
   it('aborts hidden occurrence paging and resumes from its settled continuation', async () => {
@@ -488,6 +496,25 @@ describe('the mounted Sentry issue detail body', () => {
     const page = await mountDetail(harness, createSurfaceContextFixture(), undefined, 'overview');
     await expect(page.getByRole('heading', { name: 'What happened' })).resolves.toBeDefined();
     await expect(page.queryByRole('tab')).resolves.toBeUndefined();
+    expect(harness.countOf(SENTRY_ACTION_IDS.readEvent)).toBe(1);
+  });
+  it('demands the selected occurrence when the host opens Stack trace directly', async () => {
+    const harness = createHarness();
+    const page = await mountDetail(harness, createSurfaceContextFixture(), undefined, 'stack-trace');
+    expect(harness.countOf(SENTRY_ACTION_IDS.readEvent)).toBe(1);
+    await expect(page.getByText('submitOrder — app/checkout.ts:42')).resolves.toBeDefined();
+    await expect(page.queryByText('Reading this occurrence')).resolves.toBeUndefined();
+  });
+  it('shows a settled occurrence refusal in the host Stack trace panel', async () => {
+    let panel = 'overview';
+    const harness = createHarness({ event: { kind: 'unavailable',
+      failure: { class: 'permission', code: 'sentry-insufficient-permission' } } });
+    const page = await mountDetail(harness, createSurfaceContextFixture(), undefined, () => panel);
+    await expect(page.getByText('This occurrence could not be read')).resolves.toBeDefined();
+    panel = 'stack-trace';
+    await act(async () => { await page.updateSurface(createSurfaceContextFixture()); });
+    await expect(page.getByText('This occurrence could not be read')).resolves.toBeDefined();
+    await expect(page.queryByText('Reading this occurrence')).resolves.toBeUndefined();
     expect(harness.countOf(SENTRY_ACTION_IDS.readEvent)).toBe(1);
   });
   it('states the spread once, from the issue read, and drops the observation chrome', async () => {
@@ -667,6 +694,38 @@ describe('the mounted Sentry issue detail body', () => {
     await expect(page.getByRole('tab', { name: 'Overview' })).resolves.toBeDefined();
     await expect(page.getByRole('tab', { name: 'Occurrences' })).resolves.toBeDefined();
     await expect(page.getByRole('tab', { name: 'Activity' })).resolves.toBeDefined();
+  });
+
+  it('publishes framed panel visibility from the settled occurrence without extra event reads', async () => {
+    const publications: (readonly string[] | null)[] = [];
+    frameNavigation = {
+      panels: ['overview', 'occurrences', 'activity', 'stack-trace'],
+      select() {},
+      publishVisiblePanels: panels => { publications.push(panels); },
+    };
+    const harness = createHarness({ eventSequence: [TRACELESS_EVENT, eventProjection(), TRACELESS_EVENT] });
+    const page = await mountDetail(harness, createSurfaceContextFixture(), undefined, 'overview');
+
+    await expect(page.getByRole('button', { name: 'Reread this occurrence' })).resolves.toBeDefined();
+    expect(publications.at(-1)).toEqual(expect.arrayContaining(['overview', 'occurrences', 'activity']));
+    expect(publications.at(-1)).not.toContain('stack-trace');
+    expect(harness.countOf(SENTRY_ACTION_IDS.readEvent)).toBe(1);
+
+    await act(async () => {
+      await page.press(await page.getByRole('button', { name: 'Reread this occurrence' }));
+    });
+    await expect(page.getByText('ChargeDeclined: card was declined')).resolves.toBeDefined();
+    expect(publications.at(-1)).toContain('stack-trace');
+    expect(harness.countOf(SENTRY_ACTION_IDS.readEvent)).toBe(2);
+
+    await act(async () => {
+      await page.press(await page.getByRole('button', { name: 'Reread this occurrence' }));
+    });
+    await expect(page.getByRole('button', { name: 'Reread this occurrence' })).resolves.toBeDefined();
+    expect(publications.at(-1)).not.toContain('stack-trace');
+    expect(harness.countOf(SENTRY_ACTION_IDS.readEvent)).toBe(3);
+    await act(async () => { await page.retire(); });
+    expect(publications.at(-1)).toBeNull();
   });
 
   it('reads a chosen occurrence only when the reader chooses it', async () => {
@@ -888,7 +947,7 @@ describe('the mounted Sentry issue detail body', () => {
     const harness = createHarness();
     const page = await mountDetail(harness, createSurfaceContextFixture({
       locale: 'ja',
-      translations: SENTRY_UI_TRANSLATIONS.ja,
+      translations: PACKAGED_UI_TRANSLATIONS.ja,
     }));
 
     for (const [key, english] of [
@@ -897,14 +956,14 @@ describe('the mounted Sentry issue detail body', () => {
       ['plugins.sentry.ui.tab.stackTrace', 'Stack Trace'],
       ['plugins.sentry.ui.tab.activity', 'Activity'],
     ] as const) {
-      const translated = SENTRY_UI_TRANSLATIONS.ja[key];
+      const translated = PACKAGED_UI_TRANSLATIONS.ja[key];
       expect(translated).not.toBe(english);
       await expect(page.getByRole('tab', { name: translated })).resolves.toBeDefined();
       await expect(page.queryByRole('tab', { name: english })).resolves.toBeUndefined();
     }
 
     const strip = await page.getByRole('tablist');
-    expect(strip.name).toBe(SENTRY_UI_TRANSLATIONS.ja['plugins.sentry.ui.tabsLabel']);
+    expect(strip.name).toBe(PACKAGED_UI_TRANSLATIONS.ja['plugins.sentry.ui.tabsLabel']);
   });
 
   it('states a refused occurrence read without blanking the rest of the detail', async () => {

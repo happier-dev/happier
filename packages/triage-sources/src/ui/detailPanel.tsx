@@ -3,6 +3,7 @@ import * as React from 'react';
 import { Tabs, usePluginTranslation, type TabsItemProps } from '@happier-dev/plugin-ui';
 import type { TriageDetailSurfaceInputV1, TriageSourceEntryLocalRefV1 } from '@happier-dev/triage-protocol/v1';
 import { triageSourceBindingComponentsV1 } from '@happier-dev/triage-protocol/v1';
+import { useTriageDetailPanelVisibility } from './detailPanelNavigation.js';
 
 /** Exact read authority, independent of freshly parsed navigation inputs. */
 export function useTriageDetailRequest(input: TriageDetailSurfaceInputV1): Readonly<{
@@ -21,11 +22,24 @@ export function useTriageDetailRequest(input: TriageDetailSurfaceInputV1): Reado
   ]);
 }
 
+/**
+ * A source-declared List owns its one vertical scroller (QB-55/81). The frame and source wrappers consume
+ * the same declaration so the List fills its bounded region instead of growing inside a competing scroller.
+ */
+export function triageDetailPanelOwnsScrollerV1(scrollOwner: TriageDetailSurfaceInputV1['panelScrollOwner']): boolean {
+  return scrollOwner === 'list';
+}
+
 /** One root interval across source panels, nested under the host's source slot. */
-export function TriageDetailInstance({ children }: Readonly<{ children: React.ReactNode }>): React.ReactElement {
+export function TriageDetailInstance({ children, scrollOwner }: Readonly<{
+  children: React.ReactNode;
+  /** The selected source tab's declaration (`input.panelScrollOwner`). */
+  scrollOwner?: TriageDetailSurfaceInputV1['panelScrollOwner'];
+}>): React.ReactElement {
   const text = usePluginTranslation();
   const label = text('plugins.triage.detailStory.detail', 'Source detail');
-  return <Tabs value="detail" onValueChange={noop} ariaLabel={label} tabList="host">
+  return <Tabs value="detail" onValueChange={noop} ariaLabel={label} tabList="host"
+    {...(triageDetailPanelOwnsScrollerV1(scrollOwner) ? { layout: 'fill' as const } : {})}>
     <Tabs.Item value="detail" title={label}>{children}</Tabs.Item>
   </Tabs>;
 }
@@ -42,6 +56,9 @@ export function TriageDetailInstance({ children }: Readonly<{ children: React.Re
  */
 export function TriageDetailPanel(props: Readonly<{
   panel: string;
+  /** Current source-owned conditional panel result; omitted when every declared panel is offered. */
+  visiblePanels?: readonly string[];
+  scrollOwner?: TriageDetailSurfaceInputV1['panelScrollOwner'];
   /** The source's own name for its detail, announced for the panel region. */
   ariaLabel: string;
   /** Content per panel id; absent or `null` ids are not offered by this kind. */
@@ -49,11 +66,13 @@ export function TriageDetailPanel(props: Readonly<{
   /** Source-owned panel retention; hidden panels still end their activity. */
   retention?: Readonly<Record<string, TabsItemProps['retention']>>;
 }>): React.ReactElement {
+  useTriageDetailPanelVisibility(props.visiblePanels);
   const panels = Object.hasOwn(props.panels, props.panel)
     ? props.panels
     : { ...props.panels, [props.panel]: null };
   return (
-    <Tabs value={props.panel} onValueChange={noop} ariaLabel={props.ariaLabel} tabList="host">
+    <Tabs value={props.panel} onValueChange={noop} ariaLabel={props.ariaLabel} tabList="host"
+      {...(triageDetailPanelOwnsScrollerV1(props.scrollOwner) ? { layout: 'fill' as const } : {})}>
       {Object.entries(panels).map(([id, content]) => (
         <Tabs.Item key={id} value={id} title={id}
           {...(props.retention?.[id] === undefined ? {} : { retention: props.retention[id] })}

@@ -1,15 +1,19 @@
 import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
+import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import {
   EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
   isExternalActionResultWithinResponseEnvelopeLimitV1,
+  measureExternalActionResultResponseEnvelopeUtf8BytesV1,
 } from '@happier-dev/plugin-sdk/actions';
-import { MAX_TRIAGE_TEXT_UTF8_BYTES_V1, type TriageConfiguredSourceInstanceV1 } from '@happier-dev/triage-protocol/v1';
+import { MAX_TRIAGE_LOCATION_UTF8_BYTES_V1, MAX_TRIAGE_TEXT_UTF8_BYTES_V1, TriagePullRequestStatusResultV1Schema, type TriageConfiguredSourceInstanceV1 } from '@happier-dev/triage-protocol/v1';
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { describe, expect, it, vi } from 'vitest';
+import { projectPullRequestStatusFactsV1 } from '../../../triage/src/sessions/pullRequestGlance/glanceModel.js';
+import { presentTriageMergeReadinessV1 } from '../../../triage/src/ui/header/mergeReadiness.js';
 
-import { activate } from '../activate.js';
-import { GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1, PLUGIN_MANIFEST } from '../manifest.js';
+import { activate, activateAccount } from '../activate.js';
+import { GITHUB_TRIAGE_ACTION_IDS_V1, GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1, PLUGIN_MANIFEST } from '../manifest.js';
 
 import {
   GITHUB_CONNECTED_ACCOUNT_PURPOSE,
@@ -39,7 +43,7 @@ import {
   GithubOverviewResultV1Schema,
   GithubTimelineResultV1Schema,
 } from './detail/contracts.js';
-import { encodeGithubDetailContinuation } from './detail/continuation.js';
+import { decodeGithubDetailContinuation, encodeGithubDetailContinuation } from './detail/continuation.js';
 import {
   readGithubCapabilities,
   readGithubOverview,
@@ -94,6 +98,61 @@ const ISSUE_REF = Object.freeze({
   entryId: '1284',
 });
 
+describe('registered native PR status observation', () => {
+  it('observes the exact declared credential purpose without executing or materializing the provider read', async () => {
+    const caller = new AbortController();
+    const stub = createStubGithubTransport({ signal: caller.signal, respond: () => undefined });
+    const invalidated = Object.assign(vi.fn(), { retire: vi.fn() });
+    const disposed = vi.fn();
+    let notify: (() => void) | undefined;
+    const watch = vi.fn((purpose: string, listener: Parameters<PluginInvocationContext['services']['connectedAccounts']['watch']>[1]) => {
+      expect(purpose).toBe(GITHUB_CONNECTED_ACCOUNT_PURPOSE);
+      notify = () => listener({ kind: 'resync' });
+      return { dispose: disposed };
+    });
+    const context: PluginInvocationContext = { ...stub.context, services: { ...stub.context.services,
+      connectedAccounts: { ...stub.context.services.connectedAccounts, watch },
+    } };
+    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount } });
+    try {
+      expect(PLUGIN_MANIFEST.contributes.actions?.find(action => action.id === GITHUB_TRIAGE_ACTION_IDS_V1.readPullRequestStatus)?.readOnly).toBe(true);
+      const subscription = await plugin.observeAction(GITHUB_TRIAGE_ACTION_IDS_V1.readPullRequestStatus, { v: 1, instance: configuredInstance(), localRef: PULL_REQUEST_REF,
+        lastKnownLocator: { v: 1, webUrl: 'https://github.com/example/repository/pull/1284', displayPath: 'PR #1284', routingToken: REPOSITORY_KEY },
+      }, invalidated, { signal: context.signal, services: context.services });
+      expect(watch).toHaveBeenCalledOnce();
+      expect(stub.requests).toHaveLength(0);
+      expect(stub.materializeCount()).toBe(0);
+      notify?.();
+      expect(invalidated).not.toHaveBeenCalled();
+      notify?.();
+      expect(invalidated).not.toHaveBeenCalled();
+      expect(stub.requests).toHaveLength(0);
+      expect(stub.materializeCount()).toBe(0);
+      caller.abort();
+      expect(disposed).toHaveBeenCalledOnce();
+      await subscription.dispose();
+      expect(disposed).toHaveBeenCalledOnce();
+      notify?.();
+      expect(invalidated).not.toHaveBeenCalled();
+    } finally { caller.abort(); await plugin.dispose(); }
+  });
+
+  it('rejects a foreign configured purpose before installing a credential observer', async () => {
+    const stub = createStubGithubTransport({ respond: () => undefined });
+    const watch = vi.fn(() => ({ dispose() {} }));
+    const context: PluginInvocationContext = { ...stub.context, services: { ...stub.context.services,
+      connectedAccounts: { ...stub.context.services.connectedAccounts, watch },
+    } };
+    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount } });
+    try {
+      await expect(plugin.observeAction(GITHUB_TRIAGE_ACTION_IDS_V1.readPullRequestStatus, { v: 1, instance: configuredInstance('other-purpose'), localRef: PULL_REQUEST_REF },
+        Object.assign(() => {}, { retire() {} }), { signal: context.signal, services: context.services })).rejects.toMatchObject({ code: 'plugin_action_read_observation_unavailable' });
+      expect(watch).not.toHaveBeenCalled();
+      expect(stub.requests).toHaveLength(0);
+    } finally { await plugin.dispose(); }
+  });
+});
+
 it('propagates the caller-owned invocation lifetime through a never-settling detail read', async () => {
   const caller = new AbortController();
   const stub = createStubGithubTransport({
@@ -144,7 +203,7 @@ describe('GitHub capability plane', () => {
         ? jsonResponse(repositoryBody)
         : undefined,
     });
-    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate }, services: {
+    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: {
       http: stub.context.services.http, connectedAccounts: stub.context.services.connectedAccounts,
     } });
     try {
@@ -204,6 +263,7 @@ describe('GitHub overview plane', () => {
         state: 'open',
         draft: false,
         merged: false,
+        locked: false,
         author: 'octocat',
         createdAtMs: Date.parse('2026-08-01T09:14:22Z'),
         updatedAtMs: Date.parse('2026-08-12T18:03:40Z'),
@@ -227,6 +287,20 @@ describe('GitHub overview plane', () => {
         mergeableState: 'behind',
         requiredChecks: { state: 'unknown', failingCount: null, pendingCount: null },
         reviewDecision: null,
+        // The unread rollup is the detail's checks answer too: unknown, never "no checks".
+        checks: expect.objectContaining({ headRevision: HEAD_SHA, state: 'unknown', rows: [],
+          checkRunsFailure: { class: 'transient', code: 'github_request_failed' } }),
+        pullRequestStatus: expect.objectContaining({
+          kind: 'status',
+          observedAtMs,
+          branch: { head: 'frame-pump', base: 'main', headRevision: HEAD_SHA, additions: 214, deletions: 88 },
+          merge: expect.objectContaining({ state: 'unknown', blocker: null }),
+          checks: expect.objectContaining({
+            state: 'unknown',
+            incomplete: true,
+            failure: { class: 'transient', code: 'github_request_failed' },
+          }),
+        }),
       });
       expect(stub.requests.filter((request) => new URL(request.url).pathname.endsWith('/pulls/1284')))
         .toHaveLength(1);
@@ -261,7 +335,7 @@ describe('GitHub overview plane', () => {
       } } } });
       return undefined;
     } });
-    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate }, services: {
+    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: {
       http: stub.context.services.http, connectedAccounts: stub.context.services.connectedAccounts,
     } });
     try {
@@ -443,7 +517,7 @@ describe('GitHub timeline plane', () => {
     );
     expect(result).toEqual({
       kind: 'unavailable',
-      failure: { class: 'permission', code: 'insufficient_scope' },
+      failure: { class: 'permission', code: 'insufficient_scope', detail: 'issues=read', requiredPermissions: 'issues=read' },
     });
   });
 
@@ -545,7 +619,7 @@ describe('GitHub changed-files plane', () => {
     }));
     const stub = createStubGithubTransport({ respond: request => request.url.includes('/files?')
       ? jsonResponse(body) : undefined });
-    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate }, services: {
+    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: {
       http: stub.context.services.http, connectedAccounts: stub.context.services.connectedAccounts,
     } });
     const continuation = encodeGithubDetailContinuation({ v: 1, page: 2, perPage: 100 });
@@ -693,6 +767,69 @@ describe('GitHub changed-files plane', () => {
     if (result.kind !== 'changedFiles') return;
     expect(result.rows[0]).toMatchObject({ path: 'large.txt', evidence: { state: 'unavailable', reason: 'transport_limit' } });
     if (mode === 'comparison') expect(result.comparison).toMatchObject({ inventory: 'complete', content: 'incomplete', reasons: expect.arrayContaining(['transport_limit']) });
+  });
+
+  it.each(['x', '"\\\tΩ😀'])('fits a full provider page with constant envelope serializations while retaining inventory and continuation (%j)', async unit => {
+    // GitHub's real page geometry is 100 files; these exact patches together
+    // exceed the existing Action envelope by a factor of two.
+    const fileCount = 100;
+    const encodedUnitBytes = new TextEncoder().encode(JSON.stringify(unit)).byteLength - 2;
+    const patch = '@@ -0,0 +1 @@\n+' + unit.repeat(Math.ceil(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES * 2 / (fileCount * encodedUnitBytes)));
+    const files = Array.from({ length: fileCount }, (_, index) => ({
+      ...githubChangedFile({ filename: `file-${index}.txt` }), additions: 1, deletions: 0, changes: 1, patch,
+    }));
+    const stub = createStubGithubTransport({ respond: request => {
+      const url = new URL(request.url);
+      if (url.pathname.endsWith('/pulls/1284')) return jsonResponse({ ...GITHUB_PULL_REQUEST_RESPONSE, changed_files: fileCount + 1 });
+      if (!url.pathname.endsWith('/files')) return undefined;
+      return url.searchParams.get('page') === '1'
+        ? jsonResponse(files, { link: githubFollowUpLinkHeader({ requestedUrl: request.url, nextPage: 2 }) })
+        : jsonResponse([{ ...githubChangedFile({ filename: 'last.txt' }), additions: 1, deletions: 0, changes: 1, patch: '@@ -0,0 +1 @@\n+last' }]);
+    } });
+    // Observe the actual platform serialization boundary, leaving the shared
+    // transport measurement and all provider projection/fitting logic real.
+    const serialization = vi.spyOn(JSON, 'stringify');
+    let envelopeSerializations: number;
+    let result: ReturnType<typeof GithubChangedFilesResultV1Schema.parse>;
+    try {
+      result = GithubChangedFilesResultV1Schema.parse(await listGithubChangedFiles(planeInput({ comparison: true, limit: fileCount }), stub.context));
+      // The canonical strict-JSON measurer serializes individual tokens. This
+      // framing key occurs exactly once per complete Action envelope walk.
+      envelopeSerializations = serialization.mock.calls.filter(([value]) => value === 'execution').length;
+    } finally { serialization.mockRestore(); }
+    expect(envelopeSerializations).toBe(2);
+    expect(result.kind).toBe('changedFiles');
+    if (result.kind !== 'changedFiles') throw new Error('Expected the fitted comparison');
+    expect(result.rows.map(row => row.path)).toEqual(files.map(file => file.filename));
+    expect(result).toMatchObject({ omittedRowCount: 0, projectionTruncated: false,
+      comparison: { content: 'incomplete', reasons: expect.arrayContaining(['pages_pending', 'transport_limit']) } });
+    expect(result.rows.some(row => row.evidence?.state === 'available')).toBe(true);
+    expect(isExternalActionResultWithinResponseEnvelopeLimitV1(result)).toBe(true);
+    const omittedIndex = result.rows.findIndex(row => row.evidence?.state === 'unavailable' && row.evidence.reason === 'transport_limit');
+    expect(isExternalActionResultWithinResponseEnvelopeLimitV1({ ...result,
+      rows: result.rows.map((row, index) => index === omittedIndex
+        ? { ...row, evidence: { state: 'available', patch } } : row),
+    })).toBe(false);
+    expect(result.continuation).toBeDefined();
+    expect(decodeGithubDetailContinuation(result.continuation!)?.comparison).toMatchObject({ contentIncomplete: true, inventoryIncomplete: false });
+    const resumed = await listGithubChangedFiles(planeInput({ comparison: true, limit: fileCount, continuation: result.continuation }), stub.context);
+    expect(resumed).toMatchObject({ kind: 'changedFiles', rows: [{ path: 'last.txt' }],
+      comparison: { inventory: 'complete', content: 'incomplete', enumeratedFileCount: fileCount + 1 } });
+  });
+
+  it('retains complete exact patch content at the Action envelope boundary', async () => {
+    const prefix = '@@ -0,0 +1 @@\n+';
+    let patch = prefix + 'x';
+    const stub = createStubGithubTransport({ respond: request => {
+      if (new URL(request.url).pathname.endsWith('/pulls/1284')) return jsonResponse({ ...GITHUB_PULL_REQUEST_RESPONSE, changed_files: 1 });
+      return request.url.includes('/files') ? jsonResponse([{ ...githubChangedFile({ filename: 'boundary.txt' }), additions: 1, deletions: 0, changes: 1, patch }]) : undefined;
+    } });
+    const small = await listGithubChangedFiles(planeInput({ comparison: true }), stub.context);
+    patch = prefix + 'x'.repeat(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES - measureExternalActionResultResponseEnvelopeUtf8BytesV1(small) + 1);
+    const result = await listGithubChangedFiles(planeInput({ comparison: true }), stub.context);
+    expect(result).toMatchObject({ kind: 'changedFiles', rows: [{ path: 'boundary.txt', evidence: { state: 'available', patch } }],
+      comparison: { content: 'complete', inventory: 'complete', reasons: [] } });
+    expect(measureExternalActionResultResponseEnvelopeUtf8BytesV1(result)).toBe(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES);
   });
 
   it.each(['base', 'head'] as const)('refuses a mixed comparison when the %s tip moves before the next page', async (endpoint) => {
@@ -872,6 +1009,38 @@ describe('GitHub changed-files plane', () => {
 /* --------------------------------------------------------------------- feedback */
 
 describe('GitHub feedback plane', () => {
+  it('preserves the complete suggestion through the strict detail Action result', async () => {
+    const stub = createStubGithubTransport({ respond: () => jsonResponse({ data: { repository: {
+      databaseId: 4210, pullRequest: { reviewThreads: { nodes: [{ id: 'thread', isResolved: false,
+        path: 'file.ts', line: 20, diffSide: 'RIGHT', firstComment: { totalCount: 1, nodes: [{
+          id: 'comment', body: '```suggestion\nnew\n```', path: 'file.ts', line: 20, originalLine: 2,
+          originalCommit: { oid: HEAD_SHA }, commit: { oid: BASE_SHA }, outdated: false,
+          diffHunk: '@@ -1,2 +1,2 @@\n context\n-old\n+original',
+        }] }, comments: { nodes: [], pageInfo: { hasPreviousPage: false } } }],
+        pageInfo: { hasPreviousPage: false } } },
+    } } }) });
+    const result = GithubFeedbackResultV1Schema.parse(await readGithubFeedback({ v: 1, instance: configuredInstance(),
+      localRef: PULL_REQUEST_REF, routingToken: REPOSITORY_KEY, connection: 'threads' }, stub.context));
+    expect(result).toMatchObject({ kind: 'threads', rows: [{ firstReply: { suggestions: [{
+      path: 'file.ts', commitOid: HEAD_SHA, startLine: 2, endLine: 2, originalLines: ['original'],
+      replacement: 'new', outdated: false,
+    }] } }] });
+    expect(stub.requests).toHaveLength(1);
+  });
+  it.each([
+    { status: 403, headers: { 'X-Accepted-GitHub-Permissions': 'pull_requests=read' }, body: {},
+      failure: { class: 'permission', code: 'insufficient_scope', detail: 'pull_requests=read', requiredPermissions: 'pull_requests=read' } },
+    { status: 403, headers: {}, body: {}, failure: { class: 'permission', code: 'github_forbidden' } },
+    { status: 200, headers: {}, body: { errors: [{ type: 'FORBIDDEN', message: 'Resource not accessible' }], data: null },
+      failure: { class: 'permission', code: 'github_forbidden' } },
+  ])('preserves provider permission evidence on a GraphQL read ($status, $failure.code)', async ({ status, headers, body, failure }) => {
+    const stub = createStubGithubTransport({ respond: () => ({ status, headers, body }) });
+    expect(GithubFeedbackResultV1Schema.parse(await readGithubFeedback({ v: 1, instance: configuredInstance(),
+      localRef: PULL_REQUEST_REF, routingToken: REPOSITORY_KEY, connection: 'comments' }, stub.context)))
+      .toEqual({ kind: 'unavailable', failure });
+    expect(stub.requests.map(request => new URL(request.url).pathname)).toEqual(['/graphql']);
+  });
+
   it('routes the newest pull-request conversation through the one GraphQL feedback fetcher', async () => {
     const stub = createStubGithubTransport({
       respond: (request) => {
@@ -924,6 +1093,26 @@ describe('GitHub feedback plane', () => {
       previousCursor: 'comments-before',
       rows: [{ id: 'IC_1' }, { id: 'IC_2' }],
     });
+    expect(stub.requests).toHaveLength(1);
+    expect(new URL(stub.requests[0]!.url).pathname).toBe('/graphql');
+  });
+
+  it.each(['reused-route', 'not-found'] as const)('refuses Feedback from %s in one provider read', async scenario => {
+    const stub = createStubGithubTransport({ respond: request => {
+      if (new URL(request.url).pathname === '/repos/octo-org/example-app') {
+        return jsonResponse({ id: scenario === 'reused-route' ? 999 : 4210, full_name: REPOSITORY_KEY });
+      }
+      return jsonResponse(scenario === 'not-found'
+        ? { errors: [{ type: 'NOT_FOUND' }], data: { repository: null } }
+        : { data: { repository: { databaseId: 999, pullRequest: { comments: { nodes: [], pageInfo: { hasPreviousPage: false } } } } } });
+    } });
+    expect(await readGithubFeedback({ v: 1, instance: configuredInstance(), localRef: PULL_REQUEST_REF,
+      routingToken: REPOSITORY_KEY, connection: 'comments' }, stub.context)).toMatchObject({
+      kind: 'unavailable', failure: scenario === 'reused-route'
+        ? { code: 'route-body-mismatch' } : { code: 'github_not_found' },
+    });
+    expect(stub.requests).toHaveLength(1);
+    expect(new URL(stub.requests[0]!.url).pathname).toBe('/graphql');
   });
 
   it('states when a provider cursor cannot cross the canonical Action envelope', async () => {
@@ -1087,14 +1276,31 @@ function checksTransport(input: Readonly<{
       if (request.url.endsWith('/pulls/1284')) {
         return input.pullRequest ?? jsonResponse(GITHUB_PULL_REQUEST_RESPONSE);
       }
-      if (request.url.includes('/check-runs')) {
-        return input.checkRuns ?? jsonResponse(githubCheckRunsResponse({ runs: [] }));
-      }
-      if (request.url.includes(`/commits/${HEAD_SHA}/status`)) {
-        return input.status
-          ?? jsonResponse(githubCombinedStatusResponse({ state: 'success', statuses: [] }));
-      }
-      return undefined;
+      if (new URL(request.url).pathname !== '/graphql') return undefined;
+      // GitHub's head rollup lists the same check runs and commit statuses the REST
+      // collections hold; the fixtures are stated once, as REST bodies.
+      const failed = [input.checkRuns, input.status].find((response) => response !== undefined && response.status !== 200);
+      if (failed !== undefined) return failed;
+      const { variables } = readRecordedJsonBody(request) as { variables: Record<string, unknown> };
+      const upper = (value: unknown) => typeof value === 'string' ? value.toUpperCase() : null;
+      const runs = ((input.checkRuns?.body as { check_runs?: readonly Record<string, unknown>[] } | undefined)?.check_runs ?? [])
+        .map((run) => {
+          const output = run.output as Readonly<Record<string, unknown>> | undefined;
+          return { __typename: 'CheckRun', id: String(run.id), databaseId: run.id, name: run.name,
+            status: upper(run.status), conclusion: upper(run.conclusion), detailsUrl: run.details_url,
+            startedAt: run.started_at, completedAt: run.completed_at, isRequired: false,
+            ...(variables.includeOutput === true ? { title: output?.title ?? null, summary: output?.summary ?? null,
+              text: output?.text ?? null } : {}) };
+        });
+      const statuses = ((input.status?.body as { statuses?: readonly Record<string, unknown>[] } | undefined)?.statuses ?? [])
+        .map((status) => ({ __typename: 'StatusContext', id: String(status.id), context: status.context,
+          state: upper(status.state), targetUrl: status.target_url, createdAt: status.created_at,
+          updatedAt: status.updated_at, isRequired: false,
+          ...(variables.includeOutput === true ? { description: status.description ?? null } : {}) }));
+      const nodes = [...runs, ...statuses];
+      return jsonResponse({ data: { repository: { pullRequest: { headRefOid: HEAD_SHA, commits: { nodes: [{ commit: {
+        oid: HEAD_SHA, statusCheckRollup: nodes.length === 0 ? null : { contexts: { nodes, pageInfo: { hasNextPage: false } } },
+      } }] } } } } });
     },
   });
 }
@@ -1110,7 +1316,7 @@ function checksInput(overrides: Readonly<Record<string, unknown>> = {}) {
 }
 
 describe('GitHub checks plane', () => {
-  it('reads both collections at the pull request current head revision', async () => {
+  it('reads check runs and commit statuses at the pull request current head revision', async () => {
     const stub = checksTransport({
       checkRuns: jsonResponse(githubCheckRunsResponse({
         runs: [
@@ -1133,7 +1339,9 @@ describe('GitHub checks plane', () => {
     // Reading against a remembered revision would answer for a commit the pull
     // request has already moved past.
     expect(result.headRevision).toBe(HEAD_SHA);
-    expect(stub.requests.filter((request) => request.url.includes(HEAD_SHA))).toHaveLength(2);
+    // One head rollup read carries both the check runs and the commit statuses.
+    expect(stub.requests.map((request) => new URL(request.url).pathname).filter((path) => path === '/graphql')).toHaveLength(1);
+    expect(stub.requests.filter((request) => request.url.includes(HEAD_SHA))).toHaveLength(0);
     // Matrix legs share a name and a details URL; the native id keeps them apart.
     expect(result.rows.map((row) => row.key)).toEqual([
       'github-check-run:9001',
@@ -1182,7 +1390,7 @@ describe('GitHub checks plane', () => {
     expect(result.projectionTruncated).toBe(true);
   });
 
-  it('keeps the rows that answered when one of the two reads fails', async () => {
+  it('states an unreadable rollup as unknown, never as counts nobody could compute', async () => {
     const stub = checksTransport({
       checkRuns: { status: 500, headers: {}, body: { message: 'server error' } },
       status: jsonResponse(githubCombinedStatusResponse({
@@ -1195,7 +1403,7 @@ describe('GitHub checks plane', () => {
       await readGithubChecks(checksInput(), stub.context),
     );
     if (result.kind !== 'checks') throw new Error('a partial checks read still settles');
-    expect(result.rows.map((row) => row.key)).toEqual(['github-commit-status:7701']);
+    expect(result.rows).toEqual([]);
     expect(result.state).toBe('unknown');
     expect(result.checkRunsFailure).toEqual({ class: 'transient', code: 'github_server_error' });
     expect(result.commitStatusFailure).toBeUndefined();
@@ -1244,6 +1452,26 @@ describe('GitHub checks plane', () => {
     expect(stub.requests.filter((request) => request.url.includes('/pulls/1284'))).toHaveLength(1);
   });
 
+  it('proves repository identity once, from the pull request it reads anyway, before any check read', async () => {
+    const stub = checksTransport({});
+    const result = GithubChecksResultV1Schema.parse(await readGithubChecks(checksInput(), stub.context));
+    expect(result.kind).toBe('checks');
+    const paths = stub.requests.map((request) => new URL(request.url).pathname);
+    // No separate repository read: the pull request body carries the numeric id.
+    expect(paths.filter((path) => path === `/repos/${GITHUB_FIXTURE_OWNER}/${GITHUB_FIXTURE_REPOSITORY}`)).toEqual([]);
+    expect(paths.filter((path) => path.endsWith('/pulls/1284'))).toHaveLength(1);
+    expect(paths).toHaveLength(2);
+  });
+
+  it('stops before reading checks when the route now names another repository', async () => {
+    const stub = checksTransport({ pullRequest: jsonResponse(Object.freeze({ ...GITHUB_PULL_REQUEST_RESPONSE,
+      base: Object.freeze({ ...GITHUB_PULL_REQUEST_RESPONSE.base,
+        repo: Object.freeze({ ...GITHUB_PULL_REQUEST_RESPONSE.base.repo, id: 999_999 }) }) })) });
+    const result = GithubChecksResultV1Schema.parse(await readGithubChecks(checksInput(), stub.context));
+    expect(result).toMatchObject({ kind: 'unavailable', failure: { code: 'route-body-mismatch' } });
+    expect(stub.requests.filter((request) => request.url.includes(HEAD_SHA))).toEqual([]);
+  });
+
   it('refuses a pull-request body that answers for another entry', async () => {
     const stub = checksTransport({
       pullRequest: jsonResponse(Object.freeze({ ...GITHUB_PULL_REQUEST_RESPONSE, number: 99 })),
@@ -1251,14 +1479,103 @@ describe('GitHub checks plane', () => {
     const result = GithubChecksResultV1Schema.parse(
       await readGithubChecks(checksInput(), stub.context),
     );
-    expect(result).toEqual({
-      kind: 'unavailable',
-      failure: { class: 'unsupportedContract', code: 'github_detail_response_invalid' },
-    });
+    // The canonical pull-request reader answers for exactly this entry or not at all.
+    expect(result).toEqual({ kind: 'unavailable', failure: { class: 'unknown', code: 'route-body-mismatch' } });
+    expect(stub.requests.filter((request) => request.url.includes(HEAD_SHA))).toEqual([]);
   });
 });
 
 describe('GitHub pull-request status operation', () => {
+  it('retains current-head D-I14 fix evidence without fetching thread bodies or another snapshot', async () => {
+    const stub = statusTransport(undefined, {
+      reviewThreads: { nodes: [{ id: 'PRRT_resolved', isResolved: true }, { id: 'PRRT_open', isResolved: false }],
+        pageInfo: { hasPreviousPage: false } },
+      mergeStateStatus: 'DIRTY', reviewDecision: 'CHANGES_REQUESTED',
+      commits: { nodes: [{ commit: { oid: HEAD_SHA, statusCheckRollup: { contexts: {
+        nodes: [
+          { __typename: 'StatusContext', id: 'failed-required', context: 'Required failed', isRequired: true, state: 'FAILURE' },
+          { __typename: 'StatusContext', id: 'pending-required', context: 'Required pending', isRequired: true, state: 'PENDING' },
+          { __typename: 'StatusContext', id: 'failed-optional', context: 'Optional failed', isRequired: false, state: 'FAILURE' },
+        ], pageInfo: { hasNextPage: false },
+      } } } }] },
+    }, undefined, undefined, { mergeable: false, mergeable_state: 'dirty' });
+    const status = TriagePullRequestStatusResultV1Schema.parse(await readGithubPullRequestStatus(statusInput(), stub.context));
+    expect(status).toMatchObject({ kind: 'status', branch: { headRevision: HEAD_SHA },
+      review: { decision: 'changesRequested', threads: { rows: [
+        { id: 'PRRT_resolved', isResolved: true }, { id: 'PRRT_open', isResolved: false },
+      ], incomplete: false } }, merge: { conflicts: true }, checks: { rows: [
+        { id: 'github-commit-status:failed-required', state: 'failed', required: true },
+        { id: 'github-commit-status:pending-required', state: 'pending', required: true },
+        { id: 'github-commit-status:failed-optional', state: 'failed', required: false },
+      ] } });
+    expect(stub.requests).toHaveLength(2);
+    const query = stub.requests.find(request => new URL(request.url).pathname === '/graphql');
+    expect(readRecordedJsonBody(query!)).toMatchObject({ query: expect.stringContaining('reviewThreads') });
+    expect((readRecordedJsonBody(query!) as { query: string }).query).not.toMatch(/\bbody\b/u);
+  });
+
+  it.each([
+    { nodes: [], pageInfo: { hasPreviousPage: true } },
+    { nodes: [{ id: 'PRRT_unknown', isResolved: null }], pageInfo: { hasPreviousPage: false } },
+    null,
+  ])('keeps absent, malformed and windowed thread resolution unknown', async (reviewThreads) => {
+    const stub = statusTransport(undefined, { reviewThreads, mergeStateStatus: 'CLEAN', reviewDecision: 'APPROVED' });
+    expect(await readGithubPullRequestStatus(statusInput(), stub.context)).toMatchObject({ kind: 'status',
+      review: { threads: { rows: [], incomplete: true } }, merge: { conflicts: false } });
+  });
+
+  it('retains denied thread evidence without calling it resolved and discards superseded thread rows', async () => {
+    const reviewThreads = { nodes: [{ id: 'PRRT_open', isResolved: false }], pageInfo: { hasPreviousPage: false } };
+    const denied = statusTransport(undefined, { reviewThreads }, [{ type: 'FORBIDDEN', message: 'Not permitted',
+      path: ['repository', 'pullRequest', 'reviewThreads'] }]);
+    expect(await readGithubPullRequestStatus(statusInput(), denied.context)).toMatchObject({ kind: 'status',
+      review: { decision: 'changesRequested', threads: { rows: [{ id: 'PRRT_open', isResolved: false }], incomplete: true,
+        failure: { class: 'permission' } } }, checks: { rows: expect.arrayContaining([
+          expect.objectContaining({ id: 'github-check-run:9002', state: 'pending', required: true }),
+        ]) } });
+    const superseded = statusTransport(undefined, { reviewThreads, headRefOid: 'b'.repeat(40), mergeStateStatus: 'DIRTY' });
+    expect(await readGithubPullRequestStatus(statusInput(), superseded.context)).toMatchObject({ kind: 'status',
+      branch: { headRevision: 'b'.repeat(40) }, review: { threads: { rows: [], incomplete: true } },
+      merge: { conflicts: null } });
+  });
+
+  it.each([
+    { detailsUrl: 'https://ci.example.com/runs/7', targetUrl: 'https://legacy.example.com/build/9', available: true },
+    { detailsUrl: null, targetUrl: undefined, available: false },
+    { detailsUrl: 'javascript:alert(1)', targetUrl: 'https://user:secret@example.com/build', available: false },
+    { detailsUrl: `https://ci.example.com/${'x'.repeat(MAX_TRIAGE_LOCATION_UTF8_BYTES_V1)}`, targetUrl: '/relative/build', available: false },
+  ])('retains only supplied usable readiness destinations (available=$available)', async ({ detailsUrl, targetUrl, available }) => {
+    const sourceUrl = `https://github.com/${GITHUB_FIXTURE_OWNER}/${GITHUB_FIXTURE_REPOSITORY}/pull/1284`;
+    const stub = statusTransport(undefined, {
+      commits: { nodes: [{ commit: { oid: HEAD_SHA, statusCheckRollup: { contexts: {
+        nodes: [
+          { __typename: 'CheckRun', id: 'url-check', name: 'CI', isRequired: true, status: 'COMPLETED',
+            conclusion: 'FAILURE', detailsUrl, startedAt: '2026-08-31T10:00:00Z' },
+          { __typename: 'StatusContext', id: 'url-status', context: 'Legacy', isRequired: false,
+            state: 'SUCCESS', targetUrl, createdAt: '2026-08-31T10:00:00Z' },
+        ], pageInfo: { hasNextPage: false },
+      } } } }] },
+    }, undefined, undefined, { html_url: available ? sourceUrl : null });
+    const overview = GithubOverviewResultV1Schema.parse(await readGithubOverview({
+      v: 1, instance: configuredInstance(), localRef: PULL_REQUEST_REF, routingToken: REPOSITORY_KEY,
+    }, stub.context));
+    if (overview.kind !== 'overview' || overview.kindId !== 'pull-request' || !overview.pullRequestStatus?.checks) {
+      throw new Error('the retained Overview must expose admitted native status');
+    }
+    const status = overview.pullRequestStatus;
+    if (available) {
+      expect(status).toMatchObject({ sourceUrl, checks: { rows: [
+        { id: 'github-check-run:url-check', detailsUrl }, { id: 'github-commit-status:url-status', detailsUrl: targetUrl },
+      ] } });
+    } else {
+      expect(Object.hasOwn(status, 'sourceUrl')).toBe(false);
+      expect(status.checks!.rows.every((row) => !Object.hasOwn(row, 'detailsUrl'))).toBe(true);
+    }
+    expect(stub.requests.map((request) => new URL(request.url).pathname).sort()).toEqual([
+      '/graphql', `/repos/${GITHUB_FIXTURE_OWNER}/${GITHUB_FIXTURE_REPOSITORY}/pulls/1284`,
+    ].sort());
+  });
+
   function statusInput(localRef: Readonly<{ kindId: string; collisionScope: string; entryId: string }> = PULL_REQUEST_REF) {
     return {
       v: 1, instance: configuredInstance(), localRef,
@@ -1266,13 +1583,15 @@ describe('GitHub pull-request status operation', () => {
     };
   }
 
-  function statusTransport(checkRuns?: StubHttpResponse) {
+  function statusTransport(checkRuns?: StubHttpResponse, native: Readonly<Record<string, unknown>> = {}, errors?: readonly unknown[],
+    rules?: (request: RecordedGithubRequest) => StubHttpResponse, rest: Readonly<Record<string, unknown>> = {},
+    repository: Readonly<Record<string, unknown>> = {}, responseHeaders: Readonly<Record<string, string>> = {}) {
     return createStubGithubTransport({ respond: (request) => {
       const path = new URL(request.url).pathname;
       if (path.endsWith('/pulls/1284')) return jsonResponse({
         ...GITHUB_PULL_REQUEST_RESPONSE, mergeable: true, mergeable_state: 'blocked',
-        additions: 18, deletions: 3,
-      });
+        additions: 18, deletions: 3, ...rest,
+      }, responseHeaders);
       if (path.includes('/check-runs')) return checkRuns ?? jsonResponse(githubCheckRunsResponse({ runs: [
         githubCheckRun({ id: 9001, name: 'build', status: 'completed', conclusion: 'failure' }),
         githubCheckRun({ id: 9002, name: 'test', status: 'in_progress' }),
@@ -1280,8 +1599,46 @@ describe('GitHub pull-request status operation', () => {
       if (path.endsWith('/status')) return jsonResponse(githubCombinedStatusResponse({
         state: 'success', statuses: [githubCommitStatus({ id: 7701, context: 'legacy/ci', state: 'success' })],
       }));
+      if (path.includes('/rules/branches/')) return rules?.(request) ?? jsonResponse([]);
       if (path !== '/graphql') return undefined;
-      const body = readRecordedJsonBody(request) as { query: string };
+      const body = readRecordedJsonBody(request) as { query: string; variables?: Record<string, unknown> };
+      if (body.query.includes('query Checks')) {
+        // GitHub answers `@include(if: $includeOutput)` fields only when the query asks.
+        const output = (run: ReturnType<typeof githubCheckRun>) => {
+          if (body.variables?.includeOutput !== true) return {};
+          const native = (run as { output?: Readonly<Record<string, unknown>> }).output;
+          return { title: native?.title ?? null, summary: native?.summary ?? null, text: native?.text ?? null };
+        };
+        if (checkRuns && checkRuns.status !== 200) return checkRuns;
+        const source = checkRuns?.body as { check_runs?: readonly ReturnType<typeof githubCheckRun>[] } | undefined;
+        const runs = source?.check_runs ?? [
+          githubCheckRun({ id: 9001, name: 'build', status: 'completed', conclusion: 'failure' }),
+          githubCheckRun({ id: 9002, name: 'test', status: 'in_progress' }),
+        ];
+        return jsonResponse({ data: { repository: { ...repository, pullRequest: {
+          id: 'PR_1284', headRefOid: HEAD_SHA, reviewDecision: 'CHANGES_REQUESTED', mergeStateStatus: 'BLOCKED',
+          viewerCanMergeAsAdmin: true, viewerCanUpdate: true,
+          viewerCanEnableAutoMerge: true, viewerCanDisableAutoMerge: false,
+          mergeQueueEntry: null,
+          reviews: { nodes: [
+            { id: 'PRR_1', state: 'APPROVED', author: { login: 'alice' }, submittedAt: '2026-08-11T12:00:00Z' },
+            { id: 'PRR_2', state: 'CHANGES_REQUESTED', author: { login: 'alice' }, submittedAt: '2026-08-12T12:00:00Z' },
+            { id: 'PRR_3', state: 'COMMENTED', author: { login: 'alice' }, submittedAt: null },
+          ], pageInfo: { hasPreviousPage: true } },
+          reviewRequests: { nodes: [{ requestedReviewer: { __typename: 'User', login: 'bob' } }],
+            pageInfo: { hasNextPage: false } },
+          commits: { nodes: [{ commit: { oid: HEAD_SHA, statusCheckRollup: { contexts: {
+            nodes: [
+              ...runs.map((run) => ({ __typename: 'CheckRun', id: String(run.id), name: run.name,
+                isRequired: run.id === 9002, status: typeof run.status === 'string' ? run.status.toUpperCase() : '',
+                conclusion: typeof run.conclusion === 'string' ? run.conclusion.toUpperCase() : null,
+                startedAt: '2026-08-31T10:00:00Z', ...output(run) })),
+              { __typename: 'StatusContext', id: '7701', context: 'legacy/ci', state: 'SUCCESS',
+                isRequired: true, createdAt: '2026-08-31T10:00:00Z', updatedAt: '2026-08-31T10:01:00Z' },
+            ], pageInfo: { hasNextPage: false },
+          } } } }] }, ...native,
+        } } }, ...(errors === undefined ? {} : { errors }) });
+      }
       return jsonResponse({ data: { repository: { databaseId: 4210, pullRequest: body.query.includes('GithubFeedbackReviews')
         ? { reviewDecision: 'CHANGES_REQUESTED', reviews: {
           nodes: [
@@ -1296,6 +1653,181 @@ describe('GitHub pull-request status operation', () => {
     } });
   }
 
+  it.each<{ headers: Readonly<Record<string, string>>; expected: number }>([
+    { headers: { 'x-ratelimit-remaining': '10', 'x-ratelimit-reset': '1788171672' }, expected: 60_000 },
+    { headers: { 'x-poll-interval': '120' }, expected: 120_000 },
+  ])('derives the native refresh hint from the same read response: $expected ms', async ({ headers, expected }) => {
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-08-31T10:11:12Z'));
+    try {
+      const stub = statusTransport(undefined, {}, undefined, undefined, {}, {}, headers);
+      expect(await readGithubPullRequestStatus(statusInput(), stub.context)).toMatchObject({ kind: 'status', refreshAfterMs: expected });
+      expect(stub.requests).toHaveLength(2);
+    } finally { clock.mockRestore(); }
+  });
+
+  it.each([false, true])('omits the native refresh hint for a terminal PR (merged: %s)', async merged => {
+    const stub = statusTransport(undefined, {}, undefined, undefined, { state: 'closed', merged }, {}, { 'x-poll-interval': '120' });
+    const result = await readGithubPullRequestStatus(statusInput(), stub.context);
+    expect(result.kind).toBe('status');
+    expect(result).not.toHaveProperty('refreshAfterMs');
+    expect(stub.requests).toHaveLength(2);
+  });
+
+  it.each([
+    { archived: false, hasIssues: false, merge: true, squash: false, rebase: true },
+    { archived: true, hasIssues: true, merge: false, squash: true, rebase: false },
+    { archived: false, hasIssues: true, merge: false, squash: true, rebase: false },
+  ])('projects every repository capability from the existing Overview summary with exact REST parity: %j', async shape => {
+    const repository = { id: 4210, full_name: REPOSITORY_KEY, archived: shape.archived, has_issues: shape.hasIssues,
+      allow_merge_commit: shape.merge, allow_squash_merge: shape.squash, allow_rebase_merge: shape.rebase };
+    const capTransport = createStubGithubTransport({ respond: () => jsonResponse(repository) });
+    const request = { v: 1, instance: configuredInstance(), localRef: PULL_REQUEST_REF, routingToken: REPOSITORY_KEY };
+    const expected = GithubCapabilitiesResultV1Schema.parse(await readGithubCapabilities(request, capTransport.context));
+    const stub = statusTransport(undefined, {}, undefined, undefined, { mergeable_state: 'behind' }, {
+      isArchived: shape.archived, hasIssuesEnabled: shape.hasIssues,
+      mergeCommitAllowed: shape.merge, squashMergeAllowed: shape.squash, rebaseMergeAllowed: shape.rebase,
+    });
+    const result = GithubOverviewResultV1Schema.parse(await readGithubOverview(request, stub.context));
+    expect(result).toHaveProperty('capabilities', expected);
+    expect(result).toMatchObject({ kind: 'overview', kindId: 'pull-request', mergeableState: 'behind' });
+    expect(stub.requests).toHaveLength(2); // Retained REST PR + the existing summary/checks query.
+    expect(readRecordedJsonBody(stub.requests.find(request => new URL(request.url).pathname === '/graphql')!))
+      .toMatchObject({ query: expect.stringContaining('hasIssuesEnabled') });
+  });
+
+  it('states the detail checks, with each check output, from the Overview read itself', async () => {
+    // One owner per fact: the Overview's PR read and its rollup query are the detail's checks.
+    const stub = statusTransport(jsonResponse(githubCheckRunsResponse({ runs: [
+      githubCheckRun({ id: 9001, name: 'build', status: 'completed', conclusion: 'failure',
+        output: { title: 'Typecheck failed', summary: '2 errors in src/pump.ts' } }),
+      githubCheckRun({ id: 9002, name: 'test', status: 'in_progress' }),
+    ] })));
+    const result = GithubOverviewResultV1Schema.parse(await readGithubOverview({
+      v: 1, instance: configuredInstance(), localRef: PULL_REQUEST_REF, routingToken: REPOSITORY_KEY,
+    }, stub.context));
+    expect(result).toMatchObject({ kind: 'overview', kindId: 'pull-request', checks: {
+      headRevision: HEAD_SHA, state: 'resolved', rowState: { kind: 'failing', failingCount: 1 },
+      rows: [
+        { key: 'github-check-run:9001', name: 'build', conclusion: 'failure', logExcerpt: 'Typecheck failed\n\n2 errors in src/pump.ts' },
+        { key: 'github-check-run:9002', name: 'test', status: 'in_progress' },
+        { key: 'github-commit-status:7701', name: 'legacy/ci' },
+      ],
+    } });
+    expect(isExternalActionResultWithinResponseEnvelopeLimitV1(result)).toBe(true);
+    expect(stub.requests.map((request) => new URL(request.url).pathname))
+      .toEqual([`/repos/${GITHUB_FIXTURE_OWNER}/${GITHUB_FIXTURE_REPOSITORY}/pulls/1284`, '/graphql']);
+  });
+
+  it('answers agents with exactly the checks the Overview states, from the same rollup read', async () => {
+    // One canonical checks reader: the Checks Action and the Overview use the same query,
+    // outcome mapping and identity proof, so an agent sees what the detail shows.
+    const runs = jsonResponse(githubCheckRunsResponse({ runs: [
+      githubCheckRun({ id: 9001, name: 'build', status: 'completed', conclusion: 'failure',
+        output: { title: 'Typecheck failed', summary: '2 errors in src/pump.ts' } }),
+      githubCheckRun({ id: 9002, name: 'test', status: 'in_progress' }),
+    ] }));
+    const overview = GithubOverviewResultV1Schema.parse(await readGithubOverview({
+      v: 1, instance: configuredInstance(), localRef: PULL_REQUEST_REF, routingToken: REPOSITORY_KEY,
+    }, statusTransport(runs).context));
+    const stub = statusTransport(runs);
+    const checks = GithubChecksResultV1Schema.parse(await readGithubChecks({
+      v: 1, instance: configuredInstance(), localRef: PULL_REQUEST_REF, routingToken: REPOSITORY_KEY,
+    }, stub.context));
+    if (overview.kind !== 'overview' || overview.kindId !== 'pull-request') throw new Error('expected a PR overview');
+    const { kind, ...view } = checks;
+    expect(kind).toBe('checks');
+    expect(view).toEqual(overview.checks);
+    expect(stub.requests.map((request) => new URL(request.url).pathname))
+      .toEqual([`/repos/${GITHUB_FIXTURE_OWNER}/${GITHUB_FIXTURE_REPOSITORY}/pulls/1284`, '/graphql']);
+  });
+
+  it('publishes portable original merge offers from the same admitted native acquisition', async () => {
+    const stub = statusTransport(undefined, { mergeStateStatus: 'CLEAN' }, undefined, undefined,
+      { auto_merge: null }, { isArchived: false, mergeCommitAllowed: true, squashMergeAllowed: false, rebaseMergeAllowed: true });
+    const result = await readGithubPullRequestStatus(statusInput(), stub.context);
+    expect(result).toMatchObject({ kind: 'status', operations: {
+      primary: { id: 'merge', disabledReason: expect.any(String),
+        actionRef: { pluginId: GITHUB_PLUGIN_ID, localId: 'github/pull-request/merge' },
+        variants: [
+          { id: 'merge', method: expect.any(Object), input: { instance: configuredInstance(), localRef: PULL_REQUEST_REF,
+            routingToken: REPOSITORY_KEY, headRevision: HEAD_SHA, mergeMethod: 'merge' } },
+          { id: 'rebase', method: expect.any(Object), input: { mergeMethod: 'rebase', headRevision: HEAD_SHA } },
+        ] },
+    } });
+    expect(stub.requests.filter(request => new URL(request.url).pathname === '/graphql')).toHaveLength(1);
+    expect(stub.requests.filter(request => new URL(request.url).pathname.endsWith('/pulls/1284'))).toHaveLength(1);
+    expect(stub.requests).toHaveLength(2);
+    const query = readRecordedJsonBody(stub.requests.find(request => new URL(request.url).pathname === '/graphql')!);
+    expect(query).toMatchObject({ query: expect.stringContaining('mergeCommitAllowed') });
+    expect(query).toMatchObject({ query: expect.stringContaining('squashMergeAllowed') });
+    expect(query).toMatchObject({ query: expect.stringContaining('rebaseMergeAllowed') });
+  });
+
+  it.each([
+    { queue: null, required: true, expected: 'enqueue', auto: false, alternative: 'enableAutoMerge' },
+    { queue: { id: 'queue-entry', state: 'QUEUED', position: 2 }, required: false, expected: 'dequeue', auto: true, alternative: 'cancelAutoMerge' },
+  ])('forwards native $expected and $alternative as exact original Actions', async ({ queue, required, expected, auto, alternative }) => {
+    const stub = statusTransport(undefined, { mergeQueueEntry: queue, viewerCanDisableAutoMerge: auto }, undefined,
+      () => jsonResponse(required ? [{ type: 'merge_queue' }] : []),
+      { auto_merge: auto ? { merge_method: 'squash' } : null },
+      { isArchived: false, mergeCommitAllowed: true, squashMergeAllowed: true, rebaseMergeAllowed: false });
+    const result = await readGithubOverview({ v: 1, instance: configuredInstance(), localRef: PULL_REQUEST_REF,
+      routingToken: REPOSITORY_KEY, includeBranchRules: required }, stub.context);
+    expect(result).toMatchObject({ kind: 'overview', pullRequestStatus: { operations: {
+      primary: { id: expected, actionRef: { pluginId: GITHUB_PLUGIN_ID,
+        localId: `github/pull-request/${expected}` }, variants: [{ input: {
+          instance: configuredInstance(), localRef: PULL_REQUEST_REF, routingToken: REPOSITORY_KEY,
+          ...(expected === 'enqueue' ? { expectedHeadSha: HEAD_SHA } : {}),
+        } }] },
+      alternatives: expect.arrayContaining([{ id: alternative, title: expect.any(String), titleKey: expect.any(String),
+        disabledReason: null, actionRef: { pluginId: GITHUB_PLUGIN_ID, localId: 'github/pull-request/auto-merge-set' },
+        variants: expect.arrayContaining([{ id: auto ? 'cancelAutoMerge' : 'merge', ...(auto ? {} : { method: expect.any(Object) }),
+          input: expect.objectContaining({ enabled: !auto, expectedHeadSha: HEAD_SHA }) }]),
+      }]),
+    } } });
+  });
+
+  it('never guesses methods or retains offers across an observed head change', async () => {
+    const unknown = await readGithubPullRequestStatus(statusInput(), statusTransport().context);
+    expect(unknown).toMatchObject({ kind: 'status', operations: { primary: { variants: [], disabledReason: expect.any(String) } } });
+    const changed = await readGithubPullRequestStatus(statusInput(), statusTransport(undefined,
+      { headRefOid: 'b'.repeat(40) }, undefined, undefined, {}, { mergeCommitAllowed: true }).context);
+    expect(changed.kind).toBe('status');
+    expect(Object.hasOwn(changed, 'operations')).toBe(false);
+  });
+
+  it('retains exact admitted native operands when only the branch display is unavailable', async () => {
+    const stub = statusTransport(undefined, { mergeStateStatus: 'CLEAN',
+      mergeQueueEntry: { id: 'queue-entry', state: 'QUEUED', position: 2 }, viewerCanDisableAutoMerge: true,
+    }, undefined, undefined, { head: { sha: HEAD_SHA, ref: null }, auto_merge: { merge_method: 'squash' } },
+    { isArchived: false, mergeCommitAllowed: false, squashMergeAllowed: true, rebaseMergeAllowed: false });
+    const result = await readGithubPullRequestStatus(statusInput(), stub.context);
+    expect(result).toMatchObject({ kind: 'status', branch: { headRevision: HEAD_SHA, base: 'main' }, operations: {
+      primary: { id: 'dequeue', disabledReason: null, variants: [{ id: 'dequeue', input: {
+        instance: configuredInstance(), localRef: PULL_REQUEST_REF, routingToken: REPOSITORY_KEY,
+      } }] },
+      alternatives: expect.arrayContaining([expect.objectContaining({ id: 'cancelAutoMerge', disabledReason: null,
+        variants: [{ id: 'cancelAutoMerge', input: expect.objectContaining({ enabled: false, expectedHeadSha: HEAD_SHA }) }],
+      })]),
+    } });
+    expect(stub.requests).toHaveLength(2);
+  });
+
+  it('offers only the exact acknowledged without-waiting operands for complete native scope', async () => {
+    const stub = statusTransport(undefined, { mergeStateStatus: 'CLEAN', reviewDecision: 'APPROVED',
+      reviews: { nodes: [], pageInfo: { hasPreviousPage: false } },
+      reviewRequests: { nodes: [], pageInfo: { hasNextPage: false } },
+    }, undefined, undefined, {}, { isArchived: false, mergeCommitAllowed: false, squashMergeAllowed: true, rebaseMergeAllowed: false });
+    const result = await readGithubPullRequestStatus(statusInput(), stub.context);
+    expect(result).toMatchObject({ kind: 'status', operations: { alternatives: [
+      { id: 'withoutWaiting', variants: [{ id: 'squash', method: expect.any(Object), input: {
+        headRevision: HEAD_SHA, mergeMethod: 'squash', intent: 'withoutWaiting',
+        skippedRequirements: [{ kind: 'check', id: 'github-check-run:9002', label: 'test' }],
+      } }] },
+    ] } });
+    expect(stub.requests).toHaveLength(2);
+  });
+
   it('reads detail status at the current head and fills the canonical review/check facts', async () => {
     const stub = statusTransport(jsonResponse(githubCheckRunsResponse({ runs: [
       githubCheckRun({ id: 9001, name: 'x'.repeat(MAX_TRIAGE_TEXT_UTF8_BYTES_V1 + 1), status: 'completed', conclusion: 'failure' }),
@@ -1304,14 +1836,15 @@ describe('GitHub pull-request status operation', () => {
     const result = await readGithubPullRequestStatus(statusInput(), stub.context);
     expect(result).toMatchObject({
       kind: 'status',
+      title: GITHUB_PULL_REQUEST_RESPONSE.title,
       projectionTruncated: true,
       checks: { state: 'complete', passed: 1, failed: 1, pending: 1, total: 3, incomplete: false,
-        rows: [{ id: 'github-check-run:9001', name: 'x'.repeat(MAX_TRIAGE_TEXT_UTF8_BYTES_V1), state: 'failed' }, { id: 'github-check-run:9002', state: 'pending' },
-          { id: 'github-commit-status:7701', state: 'passed' }] },
+        rows: [{ id: 'github-check-run:9001', name: 'x'.repeat(MAX_TRIAGE_TEXT_UTF8_BYTES_V1), state: 'failed', required: false }, { id: 'github-check-run:9002', state: 'pending', required: true },
+          { id: 'github-commit-status:7701', state: 'passed', required: true }] },
       review: { decision: 'changesRequested', reviewers: [{ id: 'user:alice', name: 'alice', verb: 'changesRequested' },
         { id: 'user:bob', name: 'bob', verb: 'pending' }], incomplete: true },
-      merge: { state: 'blocked', blocker: 'blocked' },
-      branch: { head: 'frame-pump', base: 'main', additions: 18, deletions: 3 },
+      merge: { state: 'blocked', nativeState: 'BLOCKED', canMergeWithoutWaiting: true },
+      branch: { head: 'frame-pump', base: 'main', headRevision: HEAD_SHA, additions: 18, deletions: 3 },
       facts: [
         { id: 'github/review-decision', value: { kind: 'status', value: 'Changes requested', tone: 'danger' } },
         { id: 'github/checks', value: { kind: 'status', value: '1 failing', tone: 'danger' } },
@@ -1319,7 +1852,8 @@ describe('GitHub pull-request status operation', () => {
     });
     expect(isExternalActionResultWithinResponseEnvelopeLimitV1(result)).toBe(true);
     expect(stub.requests.filter((request) => new URL(request.url).pathname.endsWith('/pulls/1284'))).toHaveLength(1);
-    expect(stub.requests.filter((request) => request.url.includes(HEAD_SHA))).toHaveLength(2);
+    expect(stub.requests.filter((request) => request.url.includes(HEAD_SHA))).toHaveLength(0);
+    expect(stub.requests.filter((request) => new URL(request.url).pathname === '/graphql')).toHaveLength(1);
   });
 
   it('preserves successful rows while keeping an unreadable check breakdown unknown', async () => {
@@ -1327,10 +1861,302 @@ describe('GitHub pull-request status operation', () => {
     const result = await readGithubPullRequestStatus(statusInput(), stub.context);
     expect(result).toMatchObject({ kind: 'status', checks: {
       state: 'unknown', passed: null, failed: null, pending: null, total: null, incomplete: true,
-      rows: [{ id: 'github-commit-status:7701', state: 'passed' }],
-    } });
+      rows: [], failure: { class: 'transient', code: 'github_server_error' },
+    }, merge: { state: 'blocked', blocker: 'Blocked on GitHub' } });
     if (result.kind !== 'status') throw new Error('partial status must keep the observed detail');
     expect(result.facts.some((fact) => fact.id === 'github/checks')).toBe(false);
+  });
+
+  it('fails credential revocation during the fresh rollup instead of treating it as unknown policy', async () => {
+    const stub = statusTransport({ status: 401, body: { message: 'Bad credentials' } });
+    expect(await readGithubPullRequestStatus(statusInput(), stub.context)).toEqual({
+      kind: 'unavailable', failure: { class: 'authentication', code: 'github_unauthorized' },
+    });
+    expect(await readGithubOverview({ v: 1, instance: configuredInstance(), localRef: PULL_REQUEST_REF,
+      routingToken: REPOSITORY_KEY }, stub.context)).toEqual({
+      kind: 'unavailable', failure: { class: 'authentication', code: 'github_unauthorized' },
+    });
+  });
+
+  it.each([
+    ['CLEAN', 'mergeable'], ['HAS_HOOKS', 'mergeable'], ['UNSTABLE', 'mergeable'],
+    ['BLOCKED', 'blocked'], ['DIRTY', 'conflicts'], ['DRAFT', 'blocked'],
+    ['BEHIND', 'unknown'], ['UNKNOWN', 'unknown'], ['FUTURE_NATIVE_STATE', 'unknown'],
+  ])('preserves native %s without confusing conflict freedom with readiness', async (nativeState, state) => {
+    const stub = statusTransport(jsonResponse(githubCheckRunsResponse({ runs: [
+      githubCheckRun({ id: 9001, name: 'Optional failure', status: 'completed', conclusion: 'failure' }),
+    ] })), { mergeStateStatus: nativeState, reviewDecision: 'APPROVED' }, undefined, undefined, { mergeable_state: 'clean' });
+    const result = await readGithubPullRequestStatus(statusInput(), stub.context);
+    expect(result).toMatchObject({ kind: 'status', merge: { nativeState, state } });
+  });
+
+  it.each(['CLEAN', 'UNSTABLE'])('keeps required checks and reviews blocked despite native %s', async (nativeState) => {
+    const stub = statusTransport(undefined, { mergeStateStatus: nativeState });
+    expect(await readGithubPullRequestStatus(statusInput(), stub.context)).toMatchObject({
+      kind: 'status', merge: { state: 'blocked', nativeState, blocker: expect.any(String) },
+    });
+  });
+
+  it.each(['UNKNOWN', 'FUTURE_NATIVE_STATE', undefined])('retains a known REST block with native %s', async (nativeState) => {
+    const stub = statusTransport(jsonResponse(githubCheckRunsResponse({ runs: [] })),
+      { mergeStateStatus: nativeState, reviewDecision: 'APPROVED' });
+    expect(await readGithubPullRequestStatus(statusInput(), stub.context)).toMatchObject({
+      kind: 'status', merge: { state: 'blocked', blocker: 'Blocked on GitHub' },
+    });
+  });
+
+  it('keeps draft blocked even when REST says conflict free and retains native auto-merge', async () => {
+    const stub = createStubGithubTransport({ respond: (request) => {
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/pulls/1284')) return jsonResponse({ ...GITHUB_PULL_REQUEST_RESPONSE,
+        draft: true, mergeable: true, auto_merge: { merge_method: 'squash' } });
+      if (path === '/graphql') return jsonResponse({ data: { repository: { pullRequest: {
+        headRefOid: HEAD_SHA, mergeStateStatus: 'CLEAN', viewerCanMergeAsAdmin: true,
+        commits: { nodes: [{ commit: { oid: HEAD_SHA, statusCheckRollup: null } }] },
+      } } } });
+      return undefined;
+    } });
+    expect(await readGithubPullRequestStatus(statusInput(), stub.context)).toMatchObject({
+      kind: 'status', merge: { state: 'blocked', draft: true, autoMerge: { enabled: true, method: 'squash' } },
+    });
+  });
+
+  it('walks 201 native contexts once, retaining requiredness and one shared eligibility read', async () => {
+    const stub = createStubGithubTransport({ respond: (request) => {
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/pulls/1284')) return jsonResponse(GITHUB_PULL_REQUEST_RESPONSE);
+      if (path !== '/graphql') return undefined;
+      const body = readRecordedJsonBody(request) as { query: string; variables: { cursor: string | null } };
+      const offset = body.variables.cursor === null ? 0 : Number(body.variables.cursor);
+      return jsonResponse({ data: { repository: { pullRequest: {
+        id: 'PR_1284', headRefOid: HEAD_SHA, mergeStateStatus: 'CLEAN', reviewDecision: 'APPROVED',
+        viewerCanMergeAsAdmin: true, mergeQueueEntry: null,
+        commits: { nodes: [{ commit: { oid: HEAD_SHA, statusCheckRollup: { contexts: {
+          nodes: Array.from({ length: Math.min(100, 201 - offset) }, (_, index) => ({
+            __typename: 'CheckRun', id: `native-${offset + index}`, name: `Check ${offset + index}`,
+            isRequired: index % 2 === 0, status: 'COMPLETED', conclusion: 'SUCCESS',
+            startedAt: '2026-08-31T10:00:00Z',
+          })), pageInfo: { hasNextPage: offset < 200, endCursor: String(offset + 100) },
+        } } } }] },
+      } } } });
+    } });
+    const result = await readGithubPullRequestStatus(statusInput(), stub.context);
+    expect(result).toMatchObject({ kind: 'status', checks: { state: 'complete', total: 201, incomplete: false } });
+    if (result.kind !== 'status') throw new Error('status must be readable');
+    expect(result.checks?.rows).toHaveLength(201);
+    expect(result.checks?.rows.every((row) => typeof row.required === 'boolean')).toBe(true);
+    expect(stub.requests.filter((request) => new URL(request.url).pathname === '/graphql')).toHaveLength(3);
+    expect(stub.requests.filter((request) => /check-runs|\/status/u.test(new URL(request.url).pathname))).toHaveLength(0);
+    expect(stub.requests.filter((request) => request.url.includes('/rules/branches/'))).toHaveLength(1);
+    for (const request of stub.requests.filter((request) => new URL(request.url).pathname === '/graphql')) {
+      expect(readRecordedJsonBody(request)).toMatchObject({ query: expect.stringContaining('viewerCanMergeAsAdmin') });
+      expect((readRecordedJsonBody(request) as { query: string }).query).not.toMatch(/\bbody\b/u);
+    }
+    expect(stub.requests.filter((request) => new URL(request.url).pathname === '/graphql')
+      .map((request) => (readRecordedJsonBody(request) as { variables: { includeSummary: boolean } }).variables.includeSummary))
+      .toEqual([true, false, false]);
+  });
+
+  it.each(['FAILURE', 'SUCCESS'])('fits status rows inside the complete Overview envelope without another acquisition (%s)', async (conclusion) => {
+    const name = '"'.repeat(MAX_TRIAGE_TEXT_UTF8_BYTES_V1);
+    const total = Math.ceil(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES / (MAX_TRIAGE_TEXT_UTF8_BYTES_V1 * 2));
+    const body = 'Context for the pull request.\n'.repeat(1_024);
+    const stub = createStubGithubTransport({ respond: (request) => {
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/pulls/1284')) return jsonResponse({ ...GITHUB_PULL_REQUEST_RESPONSE, body });
+      if (path !== '/graphql') return undefined;
+      const input = readRecordedJsonBody(request) as { variables: { cursor: string | null } };
+      const start = input.variables.cursor === null ? 0 : Number(input.variables.cursor);
+      const end = Math.min(start + 100, total);
+      return jsonResponse({ data: { repository: {
+        isArchived: false, mergeCommitAllowed: true, squashMergeAllowed: true, rebaseMergeAllowed: true,
+        pullRequest: {
+        id: 'PR_1284', headRefOid: HEAD_SHA, reviewDecision: 'APPROVED', mergeStateStatus: 'CLEAN', viewerCanMergeAsAdmin: true,
+        reviews: { nodes: [], pageInfo: { hasPreviousPage: false } },
+        reviewRequests: { nodes: [], pageInfo: { hasNextPage: false } },
+        reviewThreads: { nodes: [{ id: 'PRRT_envelope', isResolved: false }], pageInfo: { hasPreviousPage: false } },
+        mergeQueueEntry: null,
+        commits: { nodes: [{ commit: { oid: HEAD_SHA, statusCheckRollup: { contexts: {
+          nodes: Array.from({ length: end - start }, (_, index) => ({
+            __typename: 'CheckRun', id: `envelope-${start + index}`, name, isRequired: true,
+            status: 'COMPLETED', conclusion: start + index === 0 ? conclusion : 'SUCCESS', startedAt: '2026-08-31T10:00:00Z',
+          })), pageInfo: { hasNextPage: end < total, endCursor: String(end) },
+        } } } }] },
+      } } } });
+    } });
+    const result = GithubOverviewResultV1Schema.parse(await readGithubOverview({
+      v: 1, instance: configuredInstance(), localRef: PULL_REQUEST_REF, routingToken: REPOSITORY_KEY,
+    }, stub.context));
+    expect(isExternalActionResultWithinResponseEnvelopeLimitV1(result)).toBe(true);
+    expect(result).toMatchObject({ kind: 'overview', body, requiredChecks: { state: 'unknown' },
+      pullRequestStatus: { projectionTruncated: true, checks: { total, passed: total - (conclusion === 'FAILURE' ? 1 : 0), failed: conclusion === 'FAILURE' ? 1 : 0, incomplete: true },
+        review: { threads: { rows: [], incomplete: true } },
+        operations: { alternatives: expect.not.arrayContaining([expect.objectContaining({ id: 'withoutWaiting' })]) } },
+    });
+    if (result.kind !== 'overview' || result.kindId !== 'pull-request' || !result.pullRequestStatus?.checks) {
+      throw new Error('the complete Overview must retain its partial status');
+    }
+    const { pullRequestStatus: status } = result;
+    if (conclusion === 'SUCCESS') {
+      expect(status.operations?.readiness).toBe('ready');
+      expect(projectPullRequestStatusFactsV1(status).merge.kind).toBe(status.operations?.readiness);
+      const header = presentTriageMergeReadinessV1({ title: 'Merge', pending: false,
+        disabledReason: status.operations?.primary.disabledReason ?? null,
+        nativeStatus: { kind: 'current', value: status, checkedAtMs: status.observedAtMs },
+        execute: async () => {},
+      }, (_key, fallback) => fallback, (_key, count, words) => count === 1 ? words.one : words.other, 'GitHub');
+      expect(header?.line?.words).toBe('Ready');
+      expect(header?.line?.detail).toBe('{source} sent only part of it');
+    }
+    const checks = result.pullRequestStatus.checks;
+    const rows = checks.rows;
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.length).toBeLessThan(total);
+    const next = { ...status, checks: { ...checks, rows: [...rows,
+      { id: `github-check-run:envelope-${rows.length}`, name, state: 'passed' as const, required: true,
+        startedAtMs: Date.parse('2026-08-31T10:00:00Z') },
+    ] } };
+    expect(isExternalActionResultWithinResponseEnvelopeLimitV1(next)).toBe(true);
+    // The detail's checks view carries exactly the fitted status rows, so one more row is
+    // one more row in both, and the walk already measured them together.
+    const view = result.checks;
+    if (view === undefined) throw new Error('the Overview must state its checks view');
+    expect(view.rows).toHaveLength(rows.length);
+    const nextView = { ...view, rows: [...view.rows, { ...view.rows.at(-1)!, key: `github-check-run:envelope-${rows.length}` }] };
+    expect(isExternalActionResultWithinResponseEnvelopeLimitV1({ ...result, pullRequestStatus: next, checks: nextView })).toBe(false);
+    expect(stub.requests.filter((request) => new URL(request.url).pathname.endsWith('/pulls/1284'))).toHaveLength(1);
+    expect(stub.requests.filter((request) => new URL(request.url).pathname === '/graphql')).toHaveLength(Math.ceil(total / 100));
+    expect(stub.requests.filter((request) => /check-runs|\/status/u.test(new URL(request.url).pathname))).toHaveLength(0);
+    expect(stub.requests.filter((request) => request.url.includes('/rules/branches/'))).toHaveLength(conclusion === 'SUCCESS' ? 1 : 0);
+  });
+
+  it('retains readable native blockers and rows across partial GraphQL errors', async () => {
+    const stub = statusTransport(undefined, { viewerCanMergeAsAdmin: null }, [
+      { type: 'FORBIDDEN', message: 'Resource not accessible', path: ['repository', 'pullRequest', 'viewerCanMergeAsAdmin'] },
+    ]);
+    expect(await readGithubPullRequestStatus(statusInput(), stub.context)).toMatchObject({ kind: 'status',
+      checks: { state: 'unknown', incomplete: true, failure: { class: 'permission', code: 'github_forbidden' }, rows: [
+        { id: 'github-check-run:9001', required: false }, { id: 'github-check-run:9002', required: true },
+        { id: 'github-commit-status:7701', required: true },
+      ] },
+      merge: { state: 'blocked', nativeState: 'BLOCKED', canMergeWithoutWaiting: null },
+    });
+  });
+
+  it('retires old-head native facts instead of using them for a fresh decision', async () => {
+    const nextHead = 'b'.repeat(40);
+    const stub = statusTransport(undefined, { headRefOid: nextHead });
+    expect(await readGithubPullRequestStatus(statusInput(), stub.context)).toMatchObject({ kind: 'status',
+      checks: { state: 'unknown', incomplete: true, rows: [] },
+      review: { decision: null, incomplete: true },
+      merge: { state: 'unknown', draft: null, autoMerge: null, canMergeWithoutWaiting: null }, branch: { headRevision: nextHead },
+    });
+  });
+
+  it('retains a superseding native head when branch display labels are unavailable', async () => {
+    const nextHead = 'b'.repeat(40);
+    const stub = statusTransport(undefined, { headRefOid: nextHead }, undefined, undefined, {
+      head: { ...(GITHUB_PULL_REQUEST_RESPONSE.head as Readonly<Record<string, unknown>>), sha: HEAD_SHA, ref: null },
+      base: { ...(GITHUB_PULL_REQUEST_RESPONSE.base as Readonly<Record<string, unknown>>), sha: BASE_SHA, ref: null },
+    });
+    const result = TriagePullRequestStatusResultV1Schema.parse(await readGithubPullRequestStatus(statusInput(), stub.context));
+    expect(result).toMatchObject({ kind: 'status', branch: { headRevision: nextHead },
+      checks: { state: 'unknown', incomplete: true, rows: [] },
+      merge: { state: 'unknown', canMergeWithoutWaiting: null },
+    });
+    if (result.kind !== 'status') throw new Error('expected native status');
+    expect(result.branch).not.toHaveProperty('head');
+    expect(result.branch).not.toHaveProperty('base');
+    expect(result).not.toHaveProperty('operations');
+    expect(stub.requests).toHaveLength(2);
+  });
+
+  it('reads a CLEAN pull request’s merge queue requirement before offering its primary write', async () => {
+    const stub = statusTransport(jsonResponse(githubCheckRunsResponse({ runs: [
+      githubCheckRun({ id: 9002, name: 'test', status: 'completed', conclusion: 'success' }),
+    ] })), { mergeStateStatus: 'CLEAN', reviewDecision: 'APPROVED',
+      reviews: { nodes: [], pageInfo: { hasPreviousPage: false } },
+      reviewRequests: { nodes: [], pageInfo: { hasNextPage: false } },
+    }, undefined, () => jsonResponse([{ type: 'merge_queue', ruleset_id: 25795136 }]), {},
+    { isArchived: false, mergeCommitAllowed: true, squashMergeAllowed: true, rebaseMergeAllowed: false });
+    const result = GithubOverviewResultV1Schema.parse(await readGithubOverview({ v: 1, instance: configuredInstance(),
+      localRef: PULL_REQUEST_REF, routingToken: REPOSITORY_KEY }, stub.context));
+    expect(result).toMatchObject({ kind: 'overview', pullRequestStatus: {
+      merge: { queueRequired: true, state: 'blocked' },
+      operations: { readiness: 'blocked', primary: { id: 'enqueue', disabledReason: null } },
+    } });
+    expect(stub.requests.filter(request => request.url.includes('/rules/branches/main'))).toHaveLength(1);
+  });
+
+  it.each(['status', 'overview'] as const)('preserves a typed authentication refusal from branch rules in %s', async plane => {
+    const stub = statusTransport(jsonResponse(githubCheckRunsResponse({ runs: [
+      githubCheckRun({ id: 9002, name: 'test', status: 'completed', conclusion: 'success' }),
+    ] })), { mergeStateStatus: 'CLEAN', reviewDecision: 'APPROVED' }, undefined,
+    () => ({ status: 401, body: { message: 'Bad credentials' } }));
+    const result = plane === 'status'
+      ? await readGithubPullRequestStatus(statusInput(), stub.context)
+      : await readGithubOverview({ v: 1, instance: configuredInstance(), localRef: PULL_REQUEST_REF,
+        routingToken: REPOSITORY_KEY, includeBranchRules: true }, stub.context);
+    expect(result).toEqual({ kind: 'unavailable', failure: { class: 'authentication', code: 'github_unauthorized' } });
+    expect(stub.requests.filter(request => request.url.includes('/rules/branches/main'))).toHaveLength(1);
+  });
+
+  it('reads active base-branch rules on disclosure, pages them, and never labels checks by name', async () => {
+    const stub = statusTransport(undefined, { mergeStateStatus: 'CLEAN' }, undefined, (request) =>
+      new URL(request.url).searchParams.get('page') === '2'
+        ? jsonResponse([{ type: 'required_status_checks', ruleset_id: 13,
+          parameters: { strict_required_status_checks_policy: true, required_status_checks: [{ context: 'not-an-emitted-check' }] } }])
+        : jsonResponse([{ type: 'merge_queue', ruleset_id: 12 }], { link:
+          `<https://api.github.com/repos/${GITHUB_FIXTURE_OWNER}/${GITHUB_FIXTURE_REPOSITORY}/rules/branches/main?per_page=100&page=2>; rel="next"` }));
+    const input = { v: 1, instance: configuredInstance(), localRef: PULL_REQUEST_REF, routingToken: REPOSITORY_KEY };
+    await readGithubOverview(input, stub.context);
+    expect(stub.requests.filter((request) => request.url.includes('/rules/branches/'))).toHaveLength(0);
+    const result = GithubOverviewResultV1Schema.parse(await readGithubOverview({ ...input, includeBranchRules: true }, stub.context));
+    expect(result).toMatchObject({ kind: 'overview', pullRequestStatus: { merge: {
+      queueRequired: true, upToDateRequired: true, branchRules: { state: 'complete', rows: [
+        { type: 'merge_queue', rulesetId: '12' }, { type: 'required_status_checks', rulesetId: '13' },
+      ] },
+    }, checks: { rows: [
+      { id: 'github-check-run:9001', required: false }, { id: 'github-check-run:9002', required: true },
+      { id: 'github-commit-status:7701', required: true },
+    ] } } });
+    expect(stub.requests.filter((request) => request.url.includes('/rules/branches/main'))).toHaveLength(2);
+  });
+
+  it.each([
+    { response: jsonResponse([]), state: 'complete' },
+    { response: { status: 403, body: { message: 'Resource not accessible' } }, state: 'unknown' },
+  ])('keeps $state rule evidence from claiming an exemption', async ({ response, state }) => {
+    const stub = statusTransport(undefined, { mergeStateStatus: 'CLEAN' }, undefined,
+      () => response);
+    const result = await readGithubOverview({ v: 1, instance: configuredInstance(), localRef: PULL_REQUEST_REF,
+      routingToken: REPOSITORY_KEY, includeBranchRules: true }, stub.context);
+    expect(result).toMatchObject({ kind: 'overview', pullRequestStatus: { merge: {
+      queueRequired: null, upToDateRequired: null, branchRules: { state, rows: [] },
+    } } });
+  });
+
+  it.each([
+    { evidence: true, expected: true },
+    { evidence: false, expected: false },
+    { evidence: undefined, expected: null },
+    { evidence: 'false', expected: null },
+  ])('retains native review-thread-resolution evidence $evidence without implying its outcome', async ({ evidence, expected }) => {
+    const stub = statusTransport(undefined, { mergeStateStatus: 'BLOCKED' }, undefined,
+      () => jsonResponse([{ type: 'pull_request', ruleset_id: 42,
+        ...(evidence === undefined ? {} : { parameters: { required_review_thread_resolution: evidence } }),
+      }]));
+    const result = GithubOverviewResultV1Schema.parse(await readGithubOverview({
+      v: 1, instance: configuredInstance(), localRef: PULL_REQUEST_REF,
+      routingToken: REPOSITORY_KEY, includeBranchRules: true,
+    }, stub.context));
+    expect(result).toMatchObject({ kind: 'overview', pullRequestStatus: { merge: {
+      state: 'blocked', branchRules: { state: 'complete', rows: [
+        { type: 'pull_request', rulesetId: '42', reviewThreadResolutionRequired: expected },
+      ] },
+    } } });
+    expect(stub.requests.filter((request) => request.url.includes('/rules/branches/'))).toHaveLength(1);
+    expect(stub.requests.filter((request) => new URL(request.url).pathname === '/graphql')).toHaveLength(1);
   });
 
   it('reports omitted normalized-empty names without discarding the known provider counts', async () => {

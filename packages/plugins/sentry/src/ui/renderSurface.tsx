@@ -60,7 +60,7 @@ import {
   type TriageSourceFailureV1,
 } from '@happier-dev/triage-protocol/v1';
 import { TriageActivityTimeline, TriageDetailInstance, TriageDetailPanel, TriageDetailStory, useTriageEvidenceDisclosure, useTriageSourcePanelIntentV1, triageEvidenceDisclosureActionResultV1, type TriageActivityEventV1, type TriageActivityKindV1, type TriageSourcePanelCommandV1 } from '@happier-dev/triage-sources/ui';
-import { TriageDetailSpread, useTriageDetailPanelOpener, type TriageDetailSpreadTileV1, type TriageDetailTrendV1 } from '@happier-dev/triage-sources/ui';
+import { TriageDetailSpread, TriageSourceWrites, useTriageDetailPanelOpener, useTriageDetailRequest, type TriageDetailSpreadTileV1, type TriageDetailTrendV1, type TriageSourceWriteV1 } from '@happier-dev/triage-sources/ui';
 // The presentation rules used below are projections of the Triage contract's own
 // closed fact and failure vocabularies, so they are consumed from the one published
 // owner rather than re-spelled here: six copies is how one declared `compact` number
@@ -84,6 +84,8 @@ import type {
   SentryFrameV1,
 } from '../privacy/sentryEventProjection.js';
 import { sentryProjectionHasTrace } from '../privacy/sentryEventProjection.js';
+import { SENTRY_ACTION_IDS, SENTRY_PLUGIN_ID } from '../sentryContracts.js';
+import { SentryIssueWriteInputV1Schema } from '../source/writeContracts.js';
 import {
   createSentryEvidenceCandidate,
   summarizeSentryEvidenceDisclosure,
@@ -858,6 +860,8 @@ function OverviewPanel({
             ))}
           </Row>
         )}
+        {/* In a Triage panel the writes are the frame's `actions` panel, beside the header's own actions. */}
+        {story ? null : <SentryIssueWrites input={input} />}
         {entries.length > 0
           ? <Metadata title="Facts" titleKey="plugins.sentry.ui.facts" entries={entries} />
           : story ? null : (
@@ -920,6 +924,36 @@ function OverviewPanel({
   );
 }
 
+/**
+ * The person's native issue writes. Resolve and Archive forever are the source's own Actions,
+ * mounted as host controls, offered only where they would change the issue's state. Assign needs
+ * a Sentry member or team id and Sentry exposes no member read to this source yet, so it stays an
+ * Agent/MCP/CLI write until that read exists rather than becoming a raw id field.
+ */
+function SentryIssueWrites({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): React.ReactElement | null {
+  const request = useTriageDetailRequest(input);
+  const presentation = input.observation.snapshot.state.presentation;
+  const writes = React.useMemo((): readonly TriageSourceWriteV1[] => {
+    const target = SentryIssueWriteInputV1Schema.safeParse({ v: 1, ...request });
+    const writeInput = target.success ? target.data : null;
+    const resolve: TriageSourceWriteV1 = {
+      id: 'resolve', action: { pluginId: SENTRY_PLUGIN_ID, localId: SENTRY_ACTION_IDS.resolve }, input: writeInput,
+      title: 'Resolve', titleKey: 'plugins.sentry.ui.write.resolve', variant: 'secondary',
+      appliedTitle: 'Resolved in Sentry', appliedTitleKey: 'plugins.sentry.ui.write.resolved',
+    };
+    const archive: TriageSourceWriteV1 = {
+      id: 'archive', action: { pluginId: SENTRY_PLUGIN_ID, localId: SENTRY_ACTION_IDS.archive }, input: writeInput,
+      title: 'Archive', titleKey: 'plugins.sentry.ui.write.archive', variant: 'secondary',
+      appliedTitle: 'Archived forever in Sentry', appliedTitleKey: 'plugins.sentry.ui.write.archived',
+    };
+    return presentation === 'active' ? [resolve, archive] : presentation === 'suppressed' ? [resolve] : [];
+  }, [presentation, request]);
+  if (writes.length === 0) return null;
+  const webUrl = input.observation.locator.webUrl;
+  return <TriageSourceWrites key={input.observation.observedAtMs} writes={writes} sourceName="Sentry"
+    {...(webUrl === undefined ? {} : { sourceUrl: webUrl })} />;
+}
+
 /* ----------------------------------------------------------------- Occurrences */
 
 /**
@@ -974,9 +1008,9 @@ function OccurrencesFooter({
   const text = usePluginTranslation();
   const commands = React.useMemo<readonly TriageSourcePanelCommandV1[]>(() =>
     state.canLoadMore && !state.pending ? [{ title: text('plugins.sentry.ui.loadMoreEvents', 'Load more retained events'),
-      operation: { kind: 'loadMoreSourceOccurrences' } }] : [], [state.canLoadMore, state.pending, text]);
-  const loadMore = useTriageSourcePanelIntentV1('loadMoreSourceOccurrences', async (operation, signal) => {
-    if (operation.kind !== 'loadMoreSourceOccurrences' || signal.aborted || !state.canLoadMore || state.pending) return { status: 'unavailable' };
+      operation: { kind: 'loadMoreSourceItems', list: 'occurrences' } }] : [], [state.canLoadMore, state.pending, text]);
+  const loadMore = useTriageSourcePanelIntentV1({ kind: 'loadMoreSourceItems', list: 'occurrences' }, async (operation, signal) => {
+    if (operation.kind !== 'loadMoreSourceItems' || signal.aborted || !state.canLoadMore || state.pending) return { status: 'unavailable' };
     controller.loadMore();
     return { status: 'applied' };
   }, commands);
@@ -1001,7 +1035,7 @@ function OccurrencesFooter({
             titleKey="plugins.sentry.ui.loadMoreEvents"
             variant="secondary"
             busy={state.pending}
-            onPress={() => { void loadMore({ kind: 'loadMoreSourceOccurrences' }); }}
+            onPress={() => { void loadMore({ kind: 'loadMoreSourceItems', list: 'occurrences' }); }}
           />
         )
         : null}
@@ -1389,10 +1423,8 @@ type SentryTraceListRowV1 =
 /**
  * The full trace of the one selected occurrence.
  *
- * It performs no read: the projection it renders is the detail-root controller's, the
- * same one Overview summarized, so opening this tab costs nothing and leaving it takes
- * nothing away. The tab is present only while that projection carries a trace, so this
- * body never renders an "unavailable" state for a tab whose absence already said so.
+ * It shares the detail-root controller's selected projection with Overview. A direct
+ * frame entry demands that same projection; a settled read failure remains visible.
  */
 function StackTracePanel({
   controller,
@@ -1405,12 +1437,27 @@ function StackTracePanel({
 }>): React.ReactElement {
   const text = usePluginTranslation();
   const [showSystemFrames, setShowSystemFrames] = React.useState(false);
-  const { read } = controller;
+  const { active } = useTabPanelActivity();
+  const { demand, read } = controller;
+  const readKind = read.kind;
+  React.useEffect(() => {
+    if (active && readKind === 'idle') demand();
+  }, [active, demand, readKind]);
 
-  if (read.kind !== 'success') {
-    // Reachable only in the instant between a refresh starting and settling: the
-    // tab's own condition is derived from a successful projection.
+  if (read.kind === 'idle' || read.kind === 'loading') {
     return <LoadingState title="Reading this occurrence" titleKey="plugins.sentry.ui.readingSelectedOccurrence" />;
+  }
+  if (read.kind === 'error') {
+    return (
+      <ErrorState
+        title="This occurrence could not be read"
+        titleKey="plugins.sentry.ui.occurrenceUnavailable"
+        description={failureDescription(
+          read.failure,
+          text('plugins.sentry.ui.readFailed', 'Sentry could not complete this read.'), text,
+        )}
+      />
+    );
   }
 
   const { projection } = read;
@@ -1624,7 +1671,7 @@ const SENTRY_ACTIVITY_KIND: Readonly<Record<string, Readonly<{ kind: TriageActiv
     unassigned: { kind: 'assignment' },
   });
 
-function sentryActivityEvent(item: SentryActivityHistoryItemV1): TriageActivityEventV1 {
+function sentryActivityEvent(item: SentryActivityHistoryItemV1, text: ReturnType<typeof usePluginTranslation>): TriageActivityEventV1 {
   const known = SENTRY_ACTIVITY_KIND[item.type];
   return {
     id: item.id,
@@ -1632,8 +1679,16 @@ function sentryActivityEvent(item: SentryActivityHistoryItemV1): TriageActivityE
     kind: known?.kind ?? 'other',
     ...(known?.tone === undefined ? {} : { tone: known.tone }),
     ...(item.actor === undefined ? {} : { actor: item.actor }),
-    summary: item.type,
+    // Human words for what happened ("First seen", "Started escalating"); an unmet type is humanized, never raw.
+    summary: known === undefined ? humanizeSentryActivityType(item.type)
+      : text(`plugins.sentry.ui.activity.event.${item.type}`, humanizeSentryActivityType(item.type)),
   };
+}
+
+/** `set_resolved_in_release` → "Resolved in release": Sentry's own word, said as a sentence. */
+function humanizeSentryActivityType(type: string): string {
+  const words = type.replace(/^set_/u, '').replace(/_/gu, ' ').trim();
+  return words === '' ? type : `${words.charAt(0).toUpperCase()}${words.slice(1)}`;
 }
 
 function ActivityBody({
@@ -1645,6 +1700,7 @@ function ActivityBody({
   locale: string;
   nowMs: number;
 }>): React.ReactElement {
+  const text = usePluginTranslation();
   if (history.status === 'unavailable') {
     // A malformed `activity` field is not an issue with no history, and the two
     // must never render the same.
@@ -1662,7 +1718,7 @@ function ActivityBody({
     <TriageActivityTimeline
       accessibilityLabel="Recorded activity for this Sentry issue"
       accessibilityLabelKey="plugins.sentry.ui.activityLabel"
-      events={history.items.map(sentryActivityEvent)}
+      events={history.items.map((item) => sentryActivityEvent(item, text))}
       locale={locale}
       nowMs={nowMs}
       empty={(
@@ -1675,13 +1731,6 @@ function ActivityBody({
       )}
       footer={(
         <Stack gap="small">
-          <Text
-            variant="micro"
-            tone="neutral"
-            valueKey="plugins.sentry.ui.activityRecordsRead"
-            fallback="{count} activity record(s) read. Sentry states this history on the issue itself and does not paginate it."
-            values={{ count: history.items.length }}
-          />
           {history.malformedItemCount + history.omittedItemCount === 0
             ? null
             : (
@@ -1800,6 +1849,8 @@ function SentryDetailBody({
     return (
       <Screen safeArea>
         <TriageDetailPanel
+          visiblePanels={visible.map((declaration) => declaration.id)}
+          scrollOwner={input.panelScrollOwner}
           panel={input.panel}
           retention={DETAIL_PANEL_RETENTION}
           ariaLabel={text('plugins.sentry.ui.tabsLabel', 'Sentry issue detail sections')}
@@ -1821,6 +1872,7 @@ function SentryDetailBody({
             'stack-trace': panels['stack-trace'],
             occurrences: panels.occurrences,
             release: panels.release,
+            actions: <SentryIssueWrites input={input} />,
           }}
         />
       </Screen>
@@ -1881,7 +1933,7 @@ function SentryDetailSurface(context: RenderContext): React.ReactElement {
     );
   }
 
-  return <TriageDetailInstance><SentryDetailBody input={admitted.input} signal={context.signal} /></TriageDetailInstance>;
+  return <TriageDetailInstance scrollOwner={admitted.input.panelScrollOwner}><SentryDetailBody input={admitted.input} signal={context.signal} /></TriageDetailInstance>;
 }
 
 /**

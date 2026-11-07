@@ -1,3 +1,6 @@
+import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES } from '@happier-dev/plugin-sdk/actions';
+import { PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1 } from '@happier-dev/plugin-sdk/collections';
+
 /**
  * Stable V1 identity of the one target-owned Triage sources point.
  *
@@ -57,40 +60,49 @@ export { TRIAGE_SINGLE_LINE_STRING_PATTERN_V1 } from '@happier-dev/plugin-sdk/pr
  */
 export { TRIAGE_COMPOSITE_IDENTIFIER_PATTERN_V1 } from '@happier-dev/plugin-sdk/protocol';
 
+/** One result page; the mounted store appends pages rather than limiting membership. */
+export const MAX_TRIAGE_LIST_WINDOW_ROWS_V1 = 56;
+/** One paged transport batch, not a configured-source membership limit. */
+export const MAX_TRIAGE_LIST_SOURCE_BATCH_V1 = 32;
+
 /**
- * One line of projected display text: a row title, subtitle, scope label, the
- * provider's own state word, or an attention reason. Source projection
- * truncates to this bound and sets `projectionTruncated`; it never drops an
- * identity-valid entry.
+ * Static presentation/control allocation inside the canonical Action envelope.
+ * The finite schema witness has 26 allocated string slots per observed row and
+ * four per source lane (label, failure detail, required permissions, continuation). Single-line
+ * UTF-8 strings expand at most twofold in JSON. Its fixed framing, native
+ * identities, stable scope-unit ids and explicit finite provider-fact witnesses
+ * occupy 1,240,055 bytes, including source-label truncation markers and
+ * optional failures alongside partially readable source lanes.
+ * `maximumEncodedActionValue.test.ts` independently re-derives both coefficients
+ * from the actual schema and proves this allocation fits and the next byte
+ * does not, including all 56 rows and 32 lane continuations.
  *
- * This is a list-row bound, not a document bound. Body, description, comment,
- * activity, diff, and complete label/reviewer content is detail-surface content
- * that a live source materialization returns; it never rides a scan or get
- * result.
- *
- * It is a byte bound on text every writing system has to fit, so its size is
- * the widest encoding of the longest thing it carries, not a character count.
- * The longest is a title, and a title stops being one somewhere around a few
- * hundred characters. A CJK character costs three UTF-8 bytes and an emoji
- * four, so 512 bytes is that length in the widest script a title is routinely
- * written in: 512 Latin characters, 170 Chinese, Japanese, or Korean, 128
- * emoji. The predecessor bound of 192 bytes was that length in Latin only — it
- * clipped a Japanese title at 64 characters and an emoji-bearing one at 48.
- * The entity survived either way, with `projectionTruncated` set and the full
- * text on the detail surface, but the row read as truncated on every non-Latin
- * list in the product, which is a display bound failing at its one job.
- *
- * Its cost is paid by the enclosing Action envelope; no second Triage page
- * count is derived from this display bound.
+ * This protects the bounded projection, not arbitrary provider collections:
+ * facts, relations, transitions and configured scope units have no count quota;
+ * their complete result remains governed by the existing host envelope.
  */
-export const MAX_TRIAGE_TEXT_UTF8_BYTES_V1 = 512;
+const listFixedEnvelopeBytes = 1_240_055;
+const listEscapedFieldUnits = 2 * (
+    MAX_TRIAGE_LIST_WINDOW_ROWS_V1 * 26 + MAX_TRIAGE_LIST_SOURCE_BATCH_V1 * 4
+);
+const listFieldUtf8Bytes = Math.floor(
+    (EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES - listFixedEnvelopeBytes) / listEscapedFieldUnits,
+);
+
+/** Display truncation sets the existing row-local `projectionTruncated` marker. */
+export const MAX_TRIAGE_TEXT_UTF8_BYTES_V1 = listFieldUtf8Bytes;
+/**
+ * Stable storage contract for configured-instance tokens and locator strings.
+ * The retained source-instances V4 writer admits 7,336 UTF-8 bytes. List
+ * projection growth must never narrow this persisted shape (QA82, 2026-10-31).
+ */
+export const MAX_TRIAGE_SOURCE_INSTANCE_FIELD_UTF8_BYTES_V1 = 7_336;
 /**
  * A machine-meaningful location string — an entry or instance `webUrl`, a
- * selected workspace root, or a prepared repository path. It is larger than
- * display text because truncating it silently produces a wrong destination: a
- * source that cannot fit one omits it instead.
+ * selected workspace root, or a prepared repository path. An optional location
+ * beyond the shared allocation is omitted, never shortened to another destination.
  */
-export const MAX_TRIAGE_LOCATION_UTF8_BYTES_V1 = 384;
+export const MAX_TRIAGE_LOCATION_UTF8_BYTES_V1 = listFieldUtf8Bytes;
 /**
  * Provider/source identifier boundary — a declared kind id, provider entry id,
  * native revision, attention reason id, failure code, account purpose, or
@@ -133,40 +145,30 @@ export { MAX_TRIAGE_COLLISION_SCOPE_UTF8_BYTES_V1 } from '@happier-dev/plugin-sd
 /**
  * Source-private current route token carried on an entry locator.
  *
- * It is sized for what routing one entry needs — the owning repository or
- * project a scan discovered it in, so a later `get` reaches it without
- * re-deriving a route from identity — and every byte of it is multiplied by the
- * scan page size.
+ * Uses the shared allocation; a source retains native route validation and
+ * its existing omission evidence rather than truncating a route into another entry.
  */
-export const MAX_TRIAGE_ROUTING_TOKEN_UTF8_BYTES_V1 = 192;
+export const MAX_TRIAGE_ROUTING_TOKEN_UTF8_BYTES_V1 = listFieldUtf8Bytes;
 /**
  * Source-private configured-instance token.
  *
- * It is sized for what a real configured instance encodes — a codec version
- * plus one selected scope, key, or project id — and not for a provider
- * inventory. The first-party encoders produce well under a tenth of it.
+ * Shares the stable configured-instance storage contract, never list allocation.
  */
-export const MAX_TRIAGE_CONFIGURATION_TOKEN_UTF8_BYTES_V1 = 1024;
+export const MAX_TRIAGE_CONFIGURATION_TOKEN_UTF8_BYTES_V1 = MAX_TRIAGE_SOURCE_INSTANCE_FIELD_UTF8_BYTES_V1;
 /**
  * One source lane's invocation-local continuation, derived against the real
- * external Action response envelope at the aggregate's maximum admitted lane
- * count and full mounted row window. `maximumEncodedActionValue.test.ts` rebuilds
- * that maximal schema and proves this exact value is the largest one for which
- * every lane continuation survives in the response.
- *
- * This is not a provider-cursor guess: changing the Action envelope, aggregate
- * result shape, lane batch, or row window forces the derivation to move.
+ * external Action response envelope alongside the row/control allocation above.
+ * All lane frontiers survive the finite witness; no runtime fitter or new
+ * continuation state is needed.
  */
-export const MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1 = 40_322;
+export const MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1 = listFieldUtf8Bytes;
 /** Bounded non-secret failure detail. */
-export const MAX_TRIAGE_FAILURE_DETAIL_UTF8_BYTES_V1 = 256;
+export const MAX_TRIAGE_FAILURE_DETAIL_UTF8_BYTES_V1 = listFieldUtf8Bytes;
 /**
- * One projected row-fact string: a fact's source-local id, its short label, or
- * its rendered value. A row fact is a chip beside a list row, never a sentence.
+ * One projected row-fact string: a fact's source-local id, label or value.
+ * The presenter selects its Signal from the full fact set.
  */
-export const MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1 = 64;
-/** Projected fact count; excess facts set `projectionTruncated`. */
-export const MAX_TRIAGE_ROW_FACTS_V1 = 4;
+export const MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1 = listFieldUtf8Bytes;
 /**
  * One page of the canonical entry-to-Session relation.
  *
@@ -176,7 +178,7 @@ export const MAX_TRIAGE_ROW_FACTS_V1 = 4;
  * from the Collection cursor, so the page never claims to be the whole durable
  * relation and linking itself remains uncapped.
  */
-export const MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1 = 200;
+export const MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1 = PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1;
 
 /**
  * The source-neutral workflow subject of one declared entry kind.

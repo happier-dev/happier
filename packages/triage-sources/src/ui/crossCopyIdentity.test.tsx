@@ -4,6 +4,8 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import * as React from 'react';
+import * as ReactJsxRuntime from 'react/jsx-runtime';
+import * as ReactJsxDevRuntime from 'react/jsx-dev-runtime';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -49,8 +51,8 @@ const BUNDLE_ARTIFACT_SCRIPT = [
   '  write: false,',
   "  format: 'cjs',",
   "  platform: 'neutral',",
-  // The product tsconfig uses the classic runtime, so the only module the
-  // emitted artifact may ask the host for is React itself.
+  // The product's automatic JSX runtime is host-provided with React. Marking
+  // React external also externalizes its JSX runtime subpaths.
   "  jsx: 'transform',",
   "  external: ['react'],",
   "  logLevel: 'silent',",
@@ -99,6 +101,8 @@ function loadArtifactCopy<T>(code: string): T {
   evaluate(
     (specifier) => {
       if (specifier === 'react') return React;
+      if (specifier === 'react/jsx-runtime') return ReactJsxRuntime;
+      if (specifier === 'react/jsx-dev-runtime') return ReactJsxDevRuntime;
       throw new Error(`Unexpected non-external import ${specifier} in a plugin artifact`);
     },
     moduleObject,
@@ -109,10 +113,12 @@ function loadArtifactCopy<T>(code: string): T {
 
 let disclosureCode = '';
 let postMutationCode = '';
+let panelNavigationCode = '';
 
 beforeAll(() => {
   disclosureCode = bundleArtifactCode('evidenceDisclosure.tsx');
   postMutationCode = bundleArtifactCode('postMutation.tsx');
+  panelNavigationCode = bundleArtifactCode('detailPanelNavigation.tsx');
 }, 120_000);
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -137,6 +143,37 @@ function mount(node: React.ReactElement): void {
 function render(node: React.ReactElement): void {
   act(() => { root?.render(node); });
 }
+
+describe('Triage panel visibility across independently bundled artifacts', () => {
+  it('publishes changed source answers once and withdraws them on retirement', () => {
+    type NavigationModule = typeof import('./detailPanelNavigation.js');
+    const aggregate = loadArtifactCopy<NavigationModule>(panelNavigationCode);
+    const source = loadArtifactCopy<NavigationModule>(panelNavigationCode);
+    expect(source.useTriageDetailPanelVisibility).not.toBe(aggregate.useTriageDetailPanelVisibility);
+    const published: (readonly string[] | null)[] = [];
+    const navigation = { panels: ['overview', 'stack-trace'], select: () => {},
+      publishVisiblePanels: (panels: readonly string[] | null) => { published.push(panels); } };
+    function Source({ trace }: Readonly<{ trace: boolean | undefined }>) {
+      source.useTriageDetailPanelVisibility(trace === undefined ? undefined
+        : trace ? ['overview', 'stack-trace'] : ['overview']);
+      return null;
+    }
+    const frame = (trace: boolean | undefined) => <aggregate.TriageDetailPanelNavigationProvider navigation={navigation}>
+      <Source trace={trace} />
+    </aggregate.TriageDetailPanelNavigationProvider>;
+    mount(frame(false));
+    render(frame(false));
+    expect(published).toEqual([['overview']]);
+    render(frame(true));
+    expect(published).toEqual([['overview'], ['overview', 'stack-trace']]);
+    render(frame(undefined));
+    expect(published).toEqual([['overview'], ['overview', 'stack-trace'], null]);
+    render(frame(false));
+    expect(published).toEqual([['overview'], ['overview', 'stack-trace'], null, ['overview']]);
+    render(<></>);
+    expect(published).toEqual([['overview'], ['overview', 'stack-trace'], null, ['overview'], null]);
+  });
+});
 
 const CANDIDATE: TriageEvidenceCandidateV1 = Object.freeze({
   reference: { pluginId: 'happier.example.source', localId: 'evidence' },

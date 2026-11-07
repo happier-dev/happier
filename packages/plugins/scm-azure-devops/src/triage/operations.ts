@@ -362,6 +362,8 @@ async function walkAzureScan(input: Readonly<{
   const { client, origin, viewerId, frontier, signal } = input;
   const state: ScanWalkState = { observations: [], perCallReasons: [], omitted: 0 };
   let repository: AzureRepositoryRow | null = null;
+  let projectRepositories: readonly AzureRepositoryRow[] | null = null;
+  let nextRepositoryIndex = 0;
   const requestedProjectTokens = new Set<string | null>();
 
   while (true) {
@@ -409,41 +411,44 @@ async function walkAzureScan(input: Readonly<{
         frontier.lastCompletedRepositoryId = null;
       }
 
-      const repositories = await readAzureRepositoriesAfter({
-        client,
-        projectId: frontier.projectId,
-        lastCompletedRepositoryId: frontier.lastCompletedRepositoryId,
-        signal,
-      });
-      if (!repositories.ok) {
-        return settle(state, frontier, 'failed', projectAzureSourceFailure(repositories.failure));
-      }
-      recordScopeOmission(frontier, repositories.undecodable);
+      if (projectRepositories === null) {
+        const repositories = await readAzureRepositoriesAfter({
+          client,
+          projectId: frontier.projectId,
+          lastCompletedRepositoryId: frontier.lastCompletedRepositoryId,
+          signal,
+        });
+        if (!repositories.ok) {
+          return settle(state, frontier, 'failed', projectAzureSourceFailure(repositories.failure));
+        }
+        recordScopeOmission(frontier, repositories.undecodable);
+        projectRepositories = repositories.repositories;
+        nextRepositoryIndex = 0;
 
-      // A continuation's lane offsets belong to `currentRepositoryId`, not to whatever happens
-      // to sort first in a freshly enumerated repository array. A repository inserted before the
-      // active one must wait for the next walk; adopting it here would reset the active offsets
-      // and replay that repository from lane zero.
-      const activeRepositoryId = frontier.currentRepositoryId;
-      const next = activeRepositoryId === null
-        ? repositories.repositories[0]
-        : repositories.repositories.find((candidate) => candidate.id === activeRepositoryId);
-      if (activeRepositoryId !== null && next === undefined) {
-        // The offsets in this continuation address only the missing GUID. Advancing from that
-        // immutable boundary keeps repositories inserted before it for the next fresh walk and
-        // avoids replaying one of them from lane zero under somebody else's continuation.
-        recordAzureWalkHealth(frontier, 'lane-unresolved');
-        frontier.lastCompletedRepositoryId = activeRepositoryId;
-        enterAzureRepository(frontier, null);
-        continue;
+        // A continuation's offsets belong to its active GUID. Repositories inserted before it
+        // wait for the next walk, whether that active repository still exists or disappeared.
+        const activeRepositoryId = frontier.currentRepositoryId;
+        if (activeRepositoryId !== null) {
+          const activeIndex = projectRepositories.findIndex((candidate) => candidate.id >= activeRepositoryId);
+          nextRepositoryIndex = activeIndex < 0 ? projectRepositories.length : activeIndex;
+          if (projectRepositories[nextRepositoryIndex]?.id !== activeRepositoryId) {
+            recordAzureWalkHealth(frontier, 'lane-unresolved');
+            frontier.lastCompletedRepositoryId = activeRepositoryId;
+            enterAzureRepository(frontier, null);
+          }
+        }
       }
+
+      const next = projectRepositories[nextRepositoryIndex];
       if (next === undefined) {
+        projectRepositories = null;
         frontier.projectId = null;
         frontier.currentRepositoryId = null;
         frontier.lastCompletedRepositoryId = null;
         if (frontier.projectNextToken === null) return settle(state, frontier, 'finished', null);
         continue;
       }
+      nextRepositoryIndex += 1;
       if (next.isDisabled) {
         // A disabled repository is skipped with an attributed outcome, never presented as a
         // repository whose lanes were empty.

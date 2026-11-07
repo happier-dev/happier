@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { setImmediate } from 'node:timers/promises';
 
 import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol';
+import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
+import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import { PluginSearchQueryV1Schema, PluginSearchResultV1Schema } from '@happier-dev/plugin-sdk';
 import {
     EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
@@ -16,13 +19,21 @@ import {
 } from '@happier-dev/triage-protocol/testing/v1';
 
 import {
+    MAX_TRIAGE_FAILURE_DETAIL_UTF8_BYTES_V1,
+    MAX_TRIAGE_LOCATION_UTF8_BYTES_V1,
     MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1,
+    MAX_TRIAGE_ROUTING_TOKEN_UTF8_BYTES_V1,
+    MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1,
+    MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
+    TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
     TriageReadConfiguredSourceInstancesInputV1Schema,
     TriageReadConfiguredSourceInstancesResultV1Schema,
     TriageSourceAdministrationActionInputV1Schema,
     TriageSourceAdministrationActionResultV1Schema,
     TriagePullRequestStatusResultV1Schema,
     TriageEntryRefV1Schema,
+    TriageEntryLocatorV1Schema,
+    TriageConfiguredSourceInstanceV1Schema,
     TriageTaskWriteResultV1Schema,
     TriageSourcesContributionProtocolV1,
 } from '@happier-dev/triage-protocol/v1';
@@ -120,15 +131,10 @@ const structurallyBoundedSchemas = {
     mountedUiResult: TriageMountedUiResultV1Schema,
     readEntryDetailInput: TriageReadEntryDetailInputV1Schema,
     reobserveEntryInput: TriageReobserveEntryInputV1Schema,
-    transitionTaskInput: TriageTransitionTaskActionInputV1Schema,
-    setEntryPinnedInput: TriageSetEntryPinnedInputV1Schema,
     setEntryPinnedResult: TriageSetEntryPinnedResultV1Schema,
     listPinnedEntriesInput: TriageListPinnedEntriesInputV1Schema,
-    listPinnedEntriesResult: TriageListPinnedEntriesResultV1Schema,
     readFixPullRequestsInput: TriageReadFixPullRequestsInputV1Schema,
-    setFixPullRequestInput: TriageSetFixPullRequestInputV1Schema,
     setFixPullRequestResult: TriageSetFixPullRequestResultV1Schema,
-    linkEntryToSessionInput: TriageLinkEntryToSessionInputV1Schema,
     linkEntryToSessionResult: TriageLinkEntryToSessionActionResultV1Schema,
     unlinkEntryFromSessionInput: TriageUnlinkEntryFromSessionActionInputV1Schema,
     unlinkEntryFromSessionResult: TriageUnlinkEntryFromSessionActionResultV1Schema,
@@ -171,6 +177,10 @@ const ownerBoundedSchemas = {
  * maximum encoded value cannot be derived without inventing a product quota.
  */
 const structurallyUnboundedSchemas = {
+    // Durable display values use the measured Collection envelope, not a field quota.
+    setEntryPinnedInput: TriageSetEntryPinnedInputV1Schema,
+    listPinnedEntriesResult: TriageListPinnedEntriesResultV1Schema,
+    setFixPullRequestInput: TriageSetFixPullRequestInputV1Schema,
     // Linked Sessions follow the real relationship set, not a local count quota.
     readEntryDetailResult: TriageReadEntryDetailResultV1Schema,
     taskDraftInput: TriageTaskDraftV1Schema,
@@ -182,6 +192,8 @@ const structurallyUnboundedSchemas = {
     createTaskInput: TriageCreateTaskActionInputV1Schema,
     editTaskInput: TriageEditTaskActionInputV1Schema,
     taskWriteResult: TriageTaskWriteResultV1Schema,
+    transitionTaskInput: TriageTransitionTaskActionInputV1Schema,
+    linkEntryToSessionInput: TriageLinkEntryToSessionInputV1Schema,
     // Universal Search owns unbounded query text and result items; no local quota.
     searchEntriesInput: PluginSearchQueryV1Schema,
     searchEntriesResult: PluginSearchResultV1Schema,
@@ -217,8 +229,10 @@ const structurallyUnboundedSchemas = {
 
 /**
  * A finite witness for task and configured-unit facts, used only to keep the existing independent
- * row/frontier envelope regression. These example relationships/transitions are
- * not product bounds or a maximum of the now provider-sized list result.
+ * row/frontier presentation and control regression. Optional provider-sized
+ * label collections and the native task projection are excluded. The remaining
+ * example relationships/transitions are not product bounds or a maximum of the
+ * actual provider-sized list result; its transport envelope owns that boundary.
  */
 const taskFactsEntryRef = createTriageSourceV1Fixture().detailInput.observation.entryRef;
 function withTaskFactsWitness(fragment: PluginJsonSchema): PluginJsonSchema {
@@ -227,7 +241,11 @@ function withTaskFactsWitness(fragment: PluginJsonSchema): PluginJsonSchema {
         ...(fragment.anyOf === undefined ? {} : { anyOf: fragment.anyOf.map(withTaskFactsWitness) }),
         ...(fragment.items === undefined ? {} : { items: withTaskFactsWitness(fragment.items) }),
         ...(fragment.properties === undefined ? {} : { properties: Object.fromEntries(
-            Object.entries(fragment.properties).map(([key, child]) => [key,
+            // Optional label collections carry provider-sized names. Exclude
+            // them from this finite sub-envelope rather than invent maxima.
+            Object.entries(fragment.properties)
+                .filter(([key]) => key !== 'labels' && key !== 'labelColors')
+                .map(([key, child]) => [key,
                 key === 'scope' ? { const: {
                     unit: { singularLabel: 'Project', pluralLabel: 'projects' },
                     projection: { kind: 'page', status: 'complete', selection: { kind: 'selected', unitIds: ['project-1'] },
@@ -237,7 +255,9 @@ function withTaskFactsWitness(fragment: PluginJsonSchema): PluginJsonSchema {
                     blockedBy: [taskFactsEntryRef],
                 } } : key === 'taskCapabilities' ? { const: {
                     editFields: ['title'], transitions: [{ id: 'start', label: 'Start', state: { presentation: 'active', stage: 'started' } }],
-                } } : withTaskFactsWitness(child),
+                } } : key === 'facts' && child.type === 'array'
+                    ? { ...withTaskFactsWitness(child), maxItems: 4 }
+                    : withTaskFactsWitness(child),
             ]),
         ) }),
     };
@@ -245,6 +265,10 @@ function withTaskFactsWitness(fragment: PluginJsonSchema): PluginJsonSchema {
 function listEntriesResultWitnessAt(rows: number, frontiers: number): PluginJsonSchema {
     const result = withTaskFactsWitness(TriageListEntriesResultV1Schema.jsonSchema);
     const windowProperties = { ...result.properties?.window?.properties };
+    // Native order/Session relationships are provider-sized adjuncts. This
+    // independent finite row/frontier allocation does not bound them; the
+    // composed 60-Task page test checks its real projection at the host envelope.
+    delete windowProperties.taskProjection;
     if (windowProperties.continuations === undefined || windowProperties.rows === undefined) {
         throw new Error('the list window no longer carries both a row array and a continuation set');
     }
@@ -263,149 +287,182 @@ function listEntriesResultWitnessAt(rows: number, frontiers: number): PluginJson
     };
 }
 
-const measuredSchemas = {
-    ...structurallyBoundedSchemas,
-    ...ownerBoundedSchemas,
-    ...structurallyUnboundedSchemas,
-    // The built-in source now declares these same public source-role schemas.
-    // Their finite maxima and provider-sized witnesses are exercised by the
-    // protocol owner's maximumEncodedResult suite, not a second local catalog.
-    ...Object.fromEntries(Object.entries(TriageSourcesContributionProtocolV1.operations)
-        .flatMap(([role, operation]) => [
-            [`source/${role}/input`, operation.declaration.input.schema],
-            [`source/${role}/result`, operation.declaration.resultSchema],
-        ])),
-};
+/** Re-measure the same bounded allocation with provider collections held at their explicit witnesses. */
+function withFieldAllocation(fragment: PluginJsonSchema, bytes: number): PluginJsonSchema {
+    const fieldBounds = new Set([
+        MAX_TRIAGE_TEXT_UTF8_BYTES_V1, MAX_TRIAGE_LOCATION_UTF8_BYTES_V1,
+        MAX_TRIAGE_ROUTING_TOKEN_UTF8_BYTES_V1,
+        MAX_TRIAGE_FAILURE_DETAIL_UTF8_BYTES_V1, MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1,
+        MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1,
+    ]);
+    const allocated = fragment.type === 'string'
+        && fragment.pattern === TRIAGE_SINGLE_LINE_STRING_PATTERN_V1
+        && fragment['x-happier-max-utf8-bytes'] !== undefined
+        && fieldBounds.has(fragment['x-happier-max-utf8-bytes']);
+    return {
+        ...fragment,
+        ...(allocated ? { 'x-happier-max-utf8-bytes': bytes } : {}),
+        ...(fragment.anyOf === undefined ? {} : { anyOf: fragment.anyOf.map(child => withFieldAllocation(child, bytes)) }),
+        ...(fragment.items === undefined ? {} : { items: withFieldAllocation(fragment.items, bytes) }),
+        ...(fragment.properties === undefined ? {} : { properties: Object.fromEntries(
+            Object.entries(fragment.properties).map(([key, child]) => [key, withFieldAllocation(child, bytes)]),
+        ) }),
+    };
+}
 
 function admits(value: unknown): boolean {
     return AgentRuntimeJsonValueV1Schema.safeParse(value).success;
 }
 
-/**
- * Gives intentionally unconstrained JSON members a finite value for witness
- * construction. This is not a maximum: an empty JSON Schema has none. `null`
- * is merely admitted by that owner while the prompt bound remains the only
- * member this regression is widening.
- */
-function finiteOpaqueJsonWitness(fragment: PluginJsonSchema): PluginJsonSchema {
-    if (Object.keys(fragment).length === 0) return { const: null };
-    // Host source-custody identifiers have no finite maximum. Choose an
-    // admitted witness only for this prompt regression, never a product bound.
-    if (fragment.type === 'string' && fragment.maxLength === undefined
-        && fragment['x-happier-max-utf8-bytes'] === undefined
-        && fragment.enum === undefined && fragment.const === undefined) {
-        return { ...fragment, const: fragment.pattern === '^sha256:[a-f0-9]{64}$'
-            ? `sha256:${'a'.repeat(64)}` : 'fixture-occurrence' };
-    }
-    return {
-        ...fragment,
-        ...(fragment.anyOf === undefined
-            ? {}
-            : { anyOf: fragment.anyOf.map(finiteOpaqueJsonWitness) }),
-        ...(fragment.properties === undefined
-            ? {}
-            : {
-                properties: Object.fromEntries(Object.entries(fragment.properties)
-                    .map(([key, child]) => [key, finiteOpaqueJsonWitness(child)])),
-            }),
-        ...(fragment.items === undefined
-            ? {}
-            : { items: finiteOpaqueJsonWitness(fragment.items) }),
-    };
-}
-
 describe('aggregate Action value shapes', () => {
-    /**
-     * The measured set has to be the declared set, or an Action added later
-     * simply would not be measured. There are no exclusions: an Action this
-     * manifest declares crosses this gate whoever owns its shape.
-     */
-    it('measures every Action schema this plugin declares', () => {
-        const measured = new Set(Object.values<MeasurableSchemaV1>(measuredSchemas)
-            .map((schema) => JSON.stringify(schema.jsonSchema)));
-        const unmeasured = PLUGIN_MANIFEST.contributes.actions.flatMap((action) => (
-            [['input', action.inputSchema], ['result', action.resultSchema]] as const
-        ).filter(([, schema]) => !measured.has(JSON.stringify(schema)))
-            .map(([side]) => `${action.id}:${side}`));
-
-        expect(unmeasured).toEqual([]);
-    });
-
-    it('fits a finite task-facts witness with every continuation and derives its first envelope rejection', () => {
-        const reachable = listEntriesResultWitnessAt(MAX_TRIAGE_LIST_WINDOW_ROWS_V1, MAX_TRIAGE_LIST_SOURCE_BATCH_V1);
-        const rows = reachable.properties?.window?.properties?.rows;
-        const row = rows?.items?.properties;
-        if (rows === undefined || row?.otherObservations === undefined || row.observedByCount === undefined) {
-            throw new Error('the list result no longer carries its observation cardinality');
-        }
-        // Every row consumes at least one observation from this invocation's
-        // total budget. A full window spends it all on the primary observations;
-        // the schema-only per-row maximum cannot also be spent on every row.
+    it('derives one presentation and control field allocation from a finite 56-row 32-lane witness', async () => {
+        const shape = listEntriesResultWitnessAt(MAX_TRIAGE_LIST_WINDOW_ROWS_V1, MAX_TRIAGE_LIST_SOURCE_BATCH_V1);
+        const row = shape.properties?.window?.properties?.rows?.items?.properties;
+        if (row?.otherObservations === undefined || row.observedByCount === undefined) throw new Error('missing observation geometry');
         row.otherObservations.maxItems = 0;
         row.observedByCount.maximum = 1;
-        const maximal = buildMaximalSchemaValue(
-            reachable,
-            'listEntriesResult',
-        );
+        const measure = async (bytes: number, projection = shape) => {
+            // Each maximal witness is real megabytes of JSON. Flush the test
+            // worker's reporting channel between independent measurements.
+            await setImmediate();
+            return measureExternalActionResultResponseEnvelopeUtf8BytesV1(
+                buildMaximalSchemaValue(withFieldAllocation(projection, bytes), 'fieldAllocation'),
+            );
+        };
+        // Sample where string-bearing union arms dominate their fixed numeric
+        // siblings; a one-byte string can select a different maximal arm.
+        const sample = 1024;
+        const sampledBytes = await measure(sample);
+        const escapedFieldUnits = await measure(sample + 1) - sampledBytes;
+        const fixedBytes = sampledBytes - escapedFieldUnits * sample;
+        const derived = Math.floor((EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES - fixedBytes) / escapedFieldUnits);
+        // Adding a real projected text field reduces its envelope allocation,
+        // while all four persisted instance fields keep their retained contract.
+        const expanded = structuredClone(shape);
+        expanded.properties!.window!.properties!.rows!.items!.properties!.extraDisplay =
+            TriageEntryLocatorV1Schema.jsonSchema.properties!.displayPath!;
+        const expandedBytes = await measure(sample, expanded);
+        const expandedUnits = await measure(sample + 1, expanded) - expandedBytes;
+        const expandedFixed = expandedBytes - expandedUnits * sample;
+        expect(Math.floor((EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES - expandedFixed) / expandedUnits)).toBeLessThan(derived);
+        const instance = TriageConfiguredSourceInstanceV1Schema.jsonSchema.properties!;
+        for (const field of [instance.configuration!.properties!.token!,
+            instance.locator!.properties!.displayLabel!, instance.locator!.properties!.displayPath!, instance.locator!.properties!.webUrl!]) {
+            expect(field['x-happier-max-utf8-bytes']).toBe(7_336);
+        }
+        expect([
+            MAX_TRIAGE_TEXT_UTF8_BYTES_V1, MAX_TRIAGE_LOCATION_UTF8_BYTES_V1,
+            MAX_TRIAGE_ROUTING_TOKEN_UTF8_BYTES_V1,
+            MAX_TRIAGE_FAILURE_DETAIL_UTF8_BYTES_V1, MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1,
+            MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1,
+        ], `fixedBytes=${fixedBytes}, escapedFieldUnits=${escapedFieldUnits}, derived=${derived}`)
+            .toEqual(Array.from({ length: 6 }, () => derived));
+        // Share this finite witness with the continuation proof rather
+        // than rebuilding the same 24 MB shape in two overlapping tests.
+        await setImmediate();
+        const maximal = buildMaximalSchemaValue(shape, 'listEntriesResult');
+        await setImmediate();
         const parsed = TriageListEntriesResultV1Schema.parse(maximal);
         expect(parsed.configuredSources[0]?.scope?.projection).toMatchObject({ kind: 'page',
             selection: { kind: 'selected', unitIds: ['project-1'] } });
         expect(parsed.window.rows).toHaveLength(MAX_TRIAGE_LIST_WINDOW_ROWS_V1);
         expect(parsed.window.rows.reduce((total, item) => total + 1 + item.otherObservations.length, 0))
             .toBe(triageListRowBudgetV1(MAX_TRIAGE_LIST_SOURCE_BATCH_V1));
+        await setImmediate();
         const maximalBytes = measureExternalActionResultResponseEnvelopeUtf8BytesV1(maximal);
-        expect(maximalBytes)
-            .toBeLessThanOrEqual(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES);
-        expect(isExternalActionResultWithinResponseEnvelopeLimitV1(maximal)).toBe(true);
-        const laneTokenCount = parsed.window.continuations.length;
-        expect(laneTokenCount).toBe(MAX_TRIAGE_LIST_SOURCE_BATCH_V1);
+        expect(maximalBytes).toBe(fixedBytes + escapedFieldUnits * derived);
+        expect(maximalBytes).toBeLessThanOrEqual(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES);
+        expect(fixedBytes + escapedFieldUnits * (derived + 1))
+            .toBeGreaterThan(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES);
 
-        const widened = structuredClone(reachable);
-        const token = widened.properties?.window?.properties?.continuations
+        const token = shape.properties?.window?.properties?.continuations
             ?.items?.properties?.continuation?.properties?.token;
         if (token?.['x-happier-max-utf8-bytes'] !== MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1) {
             throw new Error('the list continuation token no longer carries the shared byte ceiling');
         }
-        token['x-happier-max-utf8-bytes'] = MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1 + 1;
-        const oneByteWiderPerLane = buildMaximalSchemaValue(widened, 'widenedListEntriesResult');
-        // Measure JSON escaping rather than assuming one token byte costs one
-        // envelope byte. Spend the remaining headroom equally across all lanes.
-        const encodedBytesPerTokenByte = (
-            measureExternalActionResultResponseEnvelopeUtf8BytesV1(oneByteWiderPerLane) - maximalBytes
-        ) / laneTokenCount;
+        const tokenAt = (bytes: number): string => {
+            const value = buildMaximalSchemaValue({ ...token, 'x-happier-max-utf8-bytes': bytes }, 'continuationToken');
+            if (typeof value !== 'string') throw new Error('a continuation token must be a string');
+            return value;
+        };
+        const laneTokenCount = parsed.window.continuations.length;
+        expect(laneTokenCount).toBe(MAX_TRIAGE_LIST_SOURCE_BATCH_V1);
+        const encodedBytesPerTokenByte = encodedJsonBytes(tokenAt(derived + 1))
+            - encodedJsonBytes(tokenAt(derived));
         expect(encodedBytesPerTokenByte).toBeGreaterThan(0);
-        const headroom = EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES - maximalBytes;
-        const firstRejectedTokenUtf8Bytes = MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1
-            + Math.floor(headroom / (laneTokenCount * encodedBytesPerTokenByte)) + 1;
-        expect(firstRejectedTokenUtf8Bytes).toBeGreaterThanOrEqual(MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1);
-        token['x-happier-max-utf8-bytes'] = firstRejectedTokenUtf8Bytes;
-        const oversized = buildMaximalSchemaValue(widened, 'oversizedListEntriesResult');
+        const firstRejectedTokenUtf8Bytes = derived
+            + Math.floor((EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES - maximalBytes)
+                / (laneTokenCount * encodedBytesPerTokenByte)) + 1;
+        const widenedToken = tokenAt(firstRejectedTokenUtf8Bytes);
+        if (maximal === null || typeof maximal !== 'object' || !('window' in maximal)
+            || maximal.window === null || typeof maximal.window !== 'object') {
+            throw new Error('the maximal list witness must carry a window');
+        }
+        // Preserve the measured schema witness, including additive-read probe
+        // fields the successful typed reader may legitimately discard.
+        const oversized = { ...maximal, window: { ...maximal.window,
+            continuations: parsed.window.continuations.map(lane => {
+                if (lane.continuation === undefined) throw new Error('the maximal witness lost a lane frontier');
+                return { ...lane, continuation: { ...lane.continuation, token: widenedToken } };
+            }),
+        } };
+        await setImmediate();
         const oversizedBytes = measureExternalActionResultResponseEnvelopeUtf8BytesV1(oversized);
         expect(oversizedBytes).toBe(maximalBytes
-            + (firstRejectedTokenUtf8Bytes - MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1)
-                * laneTokenCount * encodedBytesPerTokenByte);
+            + (firstRejectedTokenUtf8Bytes - derived) * laneTokenCount * encodedBytesPerTokenByte);
         expect(oversizedBytes - laneTokenCount * encodedBytesPerTokenByte)
             .toBeLessThanOrEqual(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES);
-        expect(oversizedBytes)
-            .toBeGreaterThan(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES);
+        expect(oversizedBytes).toBeGreaterThan(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES);
         expect(isExternalActionResultWithinResponseEnvelopeLimitV1(oversized)).toBe(false);
     }, 120_000);
 
+    /**
+     * The measured set has to be the declared set, or an Action added later
+     * simply would not be measured. There are no exclusions: an Action this
+     * manifest declares crosses this gate whoever owns its shape.
+     */
+    it('validates every finite declared Action maximum through its real schema and the host JSON gate', () => {
+        // The manifest supplies new Actions automatically; the explicitly
+        // classified schemas retain the source-role and owner-bound checks.
+        const schemas = new Map<string, Readonly<{ label: string; schema: PluginJsonSchema; parse?: (value: unknown) => unknown }>>([
+            ...PLUGIN_MANIFEST.contributes.actions.flatMap(action =>
+                ([['input', action.inputSchema], ['result', action.resultSchema]] as const).map(([side, schema]) =>
+                    [JSON.stringify(schema), { label: `${action.id}:${side}`, schema }] as const)),
+            ...Object.entries<MeasurableSchemaV1>({ ...structurallyBoundedSchemas, ...ownerBoundedSchemas,
+                ...structurallyUnboundedSchemas,
+                ...Object.fromEntries(Object.entries(TriageSourcesContributionProtocolV1.operations).flatMap(([role, operation]) => [
+                    [`source/${role}/input`, operation.declaration.input.schema],
+                    [`source/${role}/result`, operation.declaration.resultSchema],
+                ])),
+            }).map(([label, schema]) => [JSON.stringify(schema.jsonSchema), { label, schema: schema.jsonSchema, parse: (value: unknown) => schema.parse(value) }] as const),
+
+        ]);
+        for (const { label, schema, parse } of schemas.values()) {
+            let maximal: unknown;
+            try { maximal = buildMaximalSchemaValue(schema, label); }
+            catch (error) {
+                // Provider-sized sets have no structural maximum; the
+                // separate oversized-envelope test exercises their owner.
+                if (error instanceof Error && /unbounded/u.test(error.message)) continue;
+                throw error;
+            }
+            expect(isValidPluginJsonSchemaValue(compilePluginJsonSchema(schema), maximal), label).toBe(true);
+            expect(admits(parse ? parse(maximal) : maximal), label).toBe(true);
+        }
+    }, 120_000);
+
     it('admits a valid resolved prompt beyond the removed aggregate ceiling', () => {
-        const wider = finiteOpaqueJsonWitness(
-            structuredClone(TriageStartEntrySessionInputV1Schema.jsonSchema),
-        );
-        const delivery = wider.properties?.delivery;
-        const text = delivery?.properties?.text;
-        if (!text) throw new Error('start input delivery no longer carries a prompt body');
-        // Replace the finite witness, not the product's unbounded prompt schema.
-        text.const = 'x'.repeat(1_024 * 1_024 + 1);
-
-        const value = buildMaximalSchemaValue(wider, 'wideStartInput');
-
+        const fixture = createTriageSourceV1Fixture();
+        const value = TriageStartEntrySessionInputV1Schema.parse({
+            v: 1, workspaceMode: 'reference_only',
+            entryRef: fixture.detailInput.observation.entryRef,
+            display: { locator: fixture.detailInput.observation.locator, scopeLabel: 'example/repository' },
+            destination: { kind: 'existing', sessionId: 'session-budget-fixture' },
+            delivery: { kind: 'send', text: 'x'.repeat(1_024 * 1_024 + 1),
+                attachments: [], idempotencyKey: 'prompt-budget-delivery' },
+        });
         expect(encodedJsonBytes(value)).toBeGreaterThan(1_024 * 1_024);
-        const admitted = TriageStartEntrySessionInputV1Schema.safeParse(value);
-        expect(admitted.success, admitted.success ? undefined : JSON.stringify(admitted.error)).toBe(true);
+        expect(admits(value)).toBe(true);
     });
 
     /** `PLAN.md` §0a A9 retains one page size independently of source count. */
@@ -433,7 +490,6 @@ describe('aggregate Action value shapes', () => {
             v: 1,
             availability: 'parsed',
             views: '',
-            selectedViewId: null,
             revision: 'revision-1',
         };
         for (const bytes of [
@@ -449,19 +505,6 @@ describe('aggregate Action value shapes', () => {
             expect(admits(widest)).toBe(true);
         }
     });
-
-    it('admits every finite maximal aggregate Action value as strict JSON', () => {
-        for (const [label, schema] of Object.entries<MeasurableSchemaV1>(structurallyBoundedSchemas)) {
-            const maximal = schema.parse(buildMaximalSchemaValue(schema.jsonSchema, label));
-            expect(admits(maximal), `${label} must be admitted by the host JSON gate`).toBe(true);
-        }
-        // The budget is raised because of what this case DOES, not to silence a
-        // failure: it materializes a maximal value for every structurally
-        // bounded schema and parses each one through strict host JSON admission.
-        // That measures ~6s, just
-        // past vitest's 5s default, so it failed on duration while asserting
-        // cleanly. Anything red here is an assertion, never the clock.
-    }, 60_000);
 
     it('leaves provider-sized relationships valid while the canonical host rejects an oversized result envelope', () => {
         const observed = createTriageSourceV1Fixture().getResult;

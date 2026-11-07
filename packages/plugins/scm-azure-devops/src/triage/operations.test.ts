@@ -1,3 +1,7 @@
+import { createPluginTestkit, createPluginHttpFixture } from '@happier-dev/plugin-sdk/testing';
+import { AZURE_DEVOPS_PLUGIN } from '../manifest.js';
+import { activate as activateAccount } from '../accountRuntime.js';
+import { AZURE_DEVOPS_TRIAGE_ACTION_IDS } from './actions.js';
 import type {
   ConnectedAccountMetadataList,
   ConnectedAccountMaterialization,
@@ -537,6 +541,56 @@ describe('Azure DevOps Triage scan', () => {
     expect(JSON.stringify(result)).not.toContain('Basic');
   });
 
+  it.each([2, 12])('reads one repository inventory per project while walking %i repositories', async (repositoryCount) => {
+    const projectIds = [PROJECT_ID, 'abcdef01-2345-4678-9abc-def012345678'];
+    const repositoriesByProject = projectIds.map((projectId) => (
+      Array.from({ length: repositoryCount }, (_unused, index) => ({
+        ...repository(`${String(index + 1).padStart(8, '0')}-2222-4333-8444-555555555555`),
+        project: { id: projectId, name: projectId },
+        isDisabled: repositoryCount === 12 && index === 0,
+      }))
+    ));
+    const recorder = createRecorder((request) => {
+      const url = new URL(request.url);
+      if (url.pathname.endsWith('_apis/connectionData')) return { body: CONNECTION_DATA };
+      if (url.pathname.endsWith('_apis/projects')) {
+        const projectIndex = url.searchParams.has('continuationToken') ? 1 : 0;
+        return {
+          ...page([project(projectIds[projectIndex], projectIds[projectIndex])]),
+          headers: projectIndex === 0 ? { 'x-ms-continuationtoken': 'next-project' } : {},
+        };
+      }
+      const projectIndex = projectIds.findIndex((projectId) => url.pathname.includes(projectId));
+      if (url.pathname.endsWith('_apis/git/repositories')) {
+        return page([...(repositoriesByProject[projectIndex] ?? [])].reverse());
+      }
+      if (url.pathname.endsWith('/pullrequests')) return page([]);
+      throw new Error(`unexpected request: ${request.url}`);
+    });
+
+    const result = await runAzureTriageScan({
+      services: recorder.services,
+      request: { v: 1, instance: configuredInstance(), page: { kind: 'initial', limit: 64 } },
+      signal: new AbortController().signal,
+    });
+
+    expect(result).toMatchObject({
+      kind: 'complete',
+      observations: [],
+      evidence: repositoryCount === 12
+        ? { kind: 'partial', reason: 'lane-unavailable' }
+        : { kind: 'walkFinished' },
+    });
+    for (const [projectIndex, projectId] of projectIds.entries()) {
+      const projectUrls = recorder.urls.filter((url) => url.includes(projectId));
+      expect(projectUrls.filter((url) => url.includes('_apis/git/repositories?'))).toHaveLength(1);
+      const laneUrls = projectUrls.filter((url) => url.includes('searchCriteria.'));
+      expect(laneUrls.map((url) => new URL(url).pathname.split('/').at(-2))).toEqual(
+        repositoriesByProject[projectIndex]?.filter((row) => !row.isDisabled).flatMap((row) => [row.id, row.id]),
+      );
+    }
+  });
+
   /**
    * The highest-severity currentness case this source has.
    *
@@ -667,15 +721,18 @@ describe('Azure DevOps Triage scan', () => {
   });
 
   it('keeps already-observed rows and reports partial when a later frontier read fails', async () => {
-    let repositoryReads = 0;
+    const secondProjectId = 'abcdef01-2345-4678-9abc-def012345678';
     const recorder = createRecorder((request) => {
       if (request.url.includes('_apis/connectionData')) return { body: CONNECTION_DATA };
-      if (request.url.includes('_apis/projects')) return page([project()]);
+      if (request.url.includes('_apis/projects')) {
+        return request.url.includes('continuationToken=')
+          ? page([project(secondProjectId, 'Billing')])
+          : { ...page([project()]), headers: { 'x-ms-continuationtoken': 'next-project' } };
+      }
       if (request.url.includes('_apis/git/repositories?')) {
-        repositoryReads += 1;
-        return repositoryReads === 1
-          ? page([repository()])
-          : { status: 500, body: { message: 'Server error.' } };
+        return request.url.includes(secondProjectId)
+          ? { status: 500, body: { message: 'Server error.' } }
+          : page([repository()]);
       }
       if (request.url.includes('searchCriteria.creatorId')) return page([pullRequest(17)]);
       if (request.url.includes('searchCriteria.reviewerId')) return page([]);
@@ -2056,4 +2113,32 @@ describe('Azure DevOps final review-workspace verification', () => {
     })).rejects.toBe(aborted);
     expect(execute).toHaveBeenCalledTimes(1);
   });
+});
+
+
+it('scans through Account registration and selected credentials over HTTP without a Machine', async () => {
+  const recorder = createRecorder(happyPath());
+  const kit = await createPluginTestkit({ manifest: AZURE_DEVOPS_PLUGIN.manifest,
+    module: { activate: AZURE_DEVOPS_PLUGIN.activate, activateAccount }, services: {
+      connectedAccounts: recorder.services.connectedAccounts,
+      http: createPluginHttpFixture({ async request(input, options) {
+        expect(input.method).toBe('GET');
+        const signal = options?.signal;
+        if (signal === undefined) throw new Error('Source HTTP must carry its invocation signal');
+        const response = await recorder.services.transport({ url: input.url, method: 'GET',
+          headers: input.headers ?? {}, signal });
+        return { status: response.status, headers: response.headers, body: new TextEncoder().encode(response.bodyText) };
+      } }),
+    },
+  });
+  try {
+    expect(await kit.invokeAction(AZURE_DEVOPS_TRIAGE_ACTION_IDS.scan, {
+      v: 1, instance: configuredInstance(), page: { kind: 'initial', limit: 20 },
+    })).toMatchObject({ observations: [{ kind: 'present', snapshot: { title: expect.any(String) } }] });
+    expect(recorder.materializedAccounts).toEqual([accountRef('account-1')]);
+    expect(recorder.urls.some(url => url.includes('_apis/connectionData'))).toBe(true);
+    expect(recorder.urls).toHaveLength(4);
+    expect(recorder.urls.filter(url => url.includes('searchCriteria.creatorId'))).toHaveLength(1);
+    expect(recorder.urls.filter(url => url.includes('searchCriteria.reviewerId'))).toHaveLength(0);
+  } finally { await kit.dispose(); }
 });

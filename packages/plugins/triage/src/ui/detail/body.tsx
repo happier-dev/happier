@@ -11,10 +11,11 @@ import {
 } from '@happier-dev/plugin-ui';
 import type { PluginUiTargetedContributionSurfaceV1 } from '@happier-dev/plugin-sdk/ui';
 import type { TriageDetailSurfaceInputV1 } from '@happier-dev/triage-protocol/v1';
-import { TriageDetailPanelNavigationProvider, type TriageDetailPanelNavigationV1 } from '@happier-dev/triage-sources/ui';
+import { TriageDetailPanelNavigationProvider, triageDetailPanelOwnsScrollerV1, type TriageDetailPanelNavigationV1, type TriageDetailFixPullRequestNavigationV1 } from '@happier-dev/triage-sources/ui';
 
 import { readTriageDetailTabSummaryV1, type TriageDetailTabV1 } from './tabs.js';
 import { buildTriageDetailSurfaceInputV1 } from './input.js';
+import { TRIAGE_ENTRY_SESSION_COMPANION_V1 } from '../../composer/openEntryDetails.js';
 
 /** One source detail mount: the admitted surface, its strict input and its identity. */
 export type TriageDetailSourceMountV1 = Readonly<{
@@ -25,26 +26,32 @@ export type TriageDetailSourceMountV1 = Readonly<{
 }>;
 
 const SHARED_TAB_COPY = Object.freeze({
-  overview: { key: 'plugins.triage.surface.detail.tab.overview', fallback: 'Overview' },
-  activity: { key: 'plugins.triage.surface.detail.tab.activity', fallback: 'Activity' },
-  files: { key: 'plugins.triage.surface.detail.tab.files', fallback: 'Files' },
-  checks: { key: 'plugins.triage.surface.detail.tab.checks', fallback: 'Checks' },
-});
+  overview: { key: 'plugins.triage.surface.detail.tab.overview', fallback: 'Overview', glyph: 'info' },
+  activity: { key: 'plugins.triage.surface.detail.tab.activity', fallback: 'Activity', glyph: 'list' },
+  files: { key: 'plugins.triage.surface.detail.tab.files', fallback: 'Files', glyph: 'file' },
+  checks: { key: 'plugins.triage.surface.detail.tab.checks', fallback: 'Checks', glyph: 'check' },
+} as const);
+
+export const TRIAGE_DETAIL_PAGE_KIND_V1 = Object.freeze({ pluginId: 'happier.triage', localId: 'entry' });
 
 const FILL_STYLE = Object.freeze({ flex: 1, minWidth: 0, minHeight: 0 });
 
 export type TriageDetailTabSelectionV1 = Readonly<{
   value: string;
   onChange(tab: string): void;
-  onAvailableTabsChange(tabs: readonly TriageDetailTabOptionV1[]): void;
 }>;
 
-export type TriageDetailTabOptionV1 = Readonly<{ id: string; title?: string }>;
+/** Actions are an inline section beside the tabs, selected through the same source navigation seam. */
+export type TriageDetailActionsNavigationV1 = Readonly<{
+  open(): void;
+  close(): void;
+}>;
 
 /** The one panel mount: the source body asked for exactly this tab. */
 export function TriageDetailPanelMount(props: Readonly<{
   mount: TriageDetailSourceMountV1;
   panel: string;
+  scrollOwner?: TriageDetailSurfaceInputV1['panelScrollOwner'];
   fallback: React.ReactNode;
 }>): React.ReactElement {
   const built = React.useMemo(
@@ -56,8 +63,9 @@ export function TriageDetailPanelMount(props: Readonly<{
       ...props.mount.input,
       linkedSessionsHasMore: props.mount.input.linkedSessionsHasMore === true,
       panel: props.panel,
+      panelScrollOwner: props.scrollOwner,
     }),
-    [props.mount.input, props.panel],
+    [props.mount.input, props.panel, props.scrollOwner],
   );
   if (built.kind !== 'admitted') return <>{props.fallback}</>;
   return (
@@ -74,24 +82,39 @@ export function TriageDetailPanelMount(props: Readonly<{
 function SourceDetailInstance(props: Readonly<{
   mount: TriageDetailSourceMountV1;
   panel: string | null;
+  scrollOwner?: TriageDetailSurfaceInputV1['panelScrollOwner'];
   fallback: React.ReactNode;
   overviewLead?: React.ReactNode;
   overviewTail?: React.ReactNode;
+  navigation: TriageDetailPanelNavigationV1;
+  publishVisiblePanels(panels: readonly string[] | null): void;
 }>): React.ReactElement {
-  const [lastPanel, setLastPanel] = React.useState(props.panel ?? 'overview');
-  if (props.panel !== null && props.panel !== lastPanel) setLastPanel(props.panel);
-  const panel = props.panel ?? lastPanel;
+  const [lastPanel, setLastPanel] = React.useState({ id: props.panel ?? 'overview', scrollOwner: props.scrollOwner });
+  if (props.panel !== null && (props.panel !== lastPanel.id || props.scrollOwner !== lastPanel.scrollOwner)) {
+    setLastPanel({ id: props.panel, scrollOwner: props.scrollOwner });
+  }
+  const panel = props.panel ?? lastPanel.id;
+  const scrollOwner = props.panel === null ? lastPanel.scrollOwner : props.scrollOwner;
   const overview = panel === 'overview';
-  // The source detail surface is declared `content`: the frame owns its bounds and its scrolling, so every tab
-  // scrolls here. A source panel's own list grows to its content inside it rather than scrolling itself.
+  const ownsScroller = triageDetailPanelOwnsScrollerV1(scrollOwner);
+  const navigation = React.useMemo(() => ({ ...props.navigation,
+    publishVisiblePanels: props.publishVisiblePanels }), [props.navigation, props.publishVisiblePanels]);
+  // The source declares whether its List owns scrolling. Keep ancestry stable across ownership changes so
+  // retained panels keep their state and viewport while the frame only bounds source-owned Lists (QB-55/81).
   return (
-    <ScrollArea style={FILL_STYLE}>
-      <Stack gap={overview ? 'large' : 'medium'}>
+    <TriageDetailPanelNavigationProvider navigation={navigation}>
+    <ScrollArea
+      style={FILL_STYLE}
+      scrollEnabled={!ownsScroller}
+      contentContainerStyle={ownsScroller ? FILL_STYLE : undefined}
+    >
+      <Stack gap={ownsScroller ? undefined : overview ? 'large' : 'medium'} style={ownsScroller ? FILL_STYLE : undefined}>
         {overview ? props.overviewLead : null}
-        <TriageDetailPanelMount mount={props.mount} panel={panel} fallback={props.fallback} />
+        <TriageDetailPanelMount mount={props.mount} panel={panel} scrollOwner={scrollOwner} fallback={props.fallback} />
         {overview ? props.overviewTail : null}
       </Stack>
     </ScrollArea>
+    </TriageDetailPanelNavigationProvider>
   );
 }
 
@@ -103,10 +126,14 @@ function SourceDetailInstance(props: Readonly<{
  */
 export function TriageDetailTabbedBody(props: Readonly<{
   tabSelection?: TriageDetailTabSelectionV1;
+  actionsNavigation?: TriageDetailActionsNavigationV1;
+  pushed?: boolean;
   tabs: readonly TriageDetailTabV1[];
   entry: TriageDetailSourceMountV1;
   /** The linked fix PR's mount, when an issue or error group has one. */
   fixPullRequest: TriageDetailSourceMountV1 | null;
+  fixPullRequestNavigation?: TriageDetailFixPullRequestNavigationV1 | null;
+  fixPullRequestsEmpty?: boolean;
   /** Above the rail: a waiting agent's permission card. */
   overviewLead?: React.ReactNode;
   /** After the source's steps: Triage's own — the fix PR and ③ the agent. */
@@ -121,33 +148,56 @@ export function TriageDetailTabbedBody(props: Readonly<{
   const text = usePluginTranslation();
   const { locale } = useSurfaceContext();
   const [localSelected, setLocalSelected] = React.useState<string>('overview');
-  const selected = props.tabSelection?.value ?? localSelected;
+  const requested = props.tabSelection?.value ?? localSelected;
   const setSelected = props.tabSelection?.onChange ?? setLocalSelected;
   const hasSession = props.session !== undefined && props.session !== null;
-  const availableTabs = React.useMemo<readonly TriageDetailTabOptionV1[]>(() => [
-    ...props.tabs.map((tab) => ({
-      id: tab.frameId,
-      ...(tab.kind === 'source' ? { title: tab.titleKey === undefined ? tab.title : text(tab.titleKey, tab.title) } : {}),
-    })), ...(hasSession ? [{ id: 'session' }] : []),
-  ], [hasSession, props.tabs, text]);
-  const reportAvailableTabs = props.tabSelection?.onAvailableTabsChange;
-  React.useLayoutEffect(() => { reportAvailableTabs?.(availableTabs); }, [availableTabs, reportAvailableTabs]);
+  type VisiblePanels = Readonly<{ instanceKey: string; panels: readonly string[] }> | null;
+  const [entryPanels, setEntryPanels] = React.useState<VisiblePanels>(null);
+  const [fixPanels, setFixPanels] = React.useState<VisiblePanels>(null);
+  const entryKey = props.entry.instanceKey;
+  const fixKey = props.fixPullRequest?.instanceKey;
+  const publishEntryPanels = React.useCallback((panels: readonly string[] | null) => {
+    setEntryPanels(panels === null ? null : { instanceKey: entryKey, panels });
+  }, [entryKey]);
+  const publishFixPanels = React.useCallback((panels: readonly string[] | null) => {
+    setFixPanels(panels === null || fixKey === undefined ? null : { instanceKey: fixKey, panels });
+  }, [fixKey]);
+  const tabs = React.useMemo(() => props.tabs.filter((tab) => {
+    const answer = tab.from === 'entry' && entryPanels?.instanceKey === entryKey ? entryPanels
+      : tab.from === 'fixPullRequest' && fixPanels?.instanceKey === fixKey ? fixPanels : null;
+    return answer === null || answer.panels.includes(tab.id);
+  }), [props.tabs, entryPanels, entryKey, fixPanels, fixKey]);
+  const selected = tabs.some((tab) => tab.frameId === requested) || requested === 'session' && hasSession
+    ? requested : tabs[0]?.frameId ?? 'overview';
+  React.useEffect(() => { if (selected !== requested) setSelected(selected); }, [requested, selected, setSelected]);
   // A source control that points at a sibling panel selects it through this one owner.
   const navigation = React.useMemo<TriageDetailPanelNavigationV1>(
     () => ({
-      panels: props.tabs.map((tab) => tab.id),
+      panels: [...tabs.map((tab) => tab.id), ...(props.actionsNavigation === undefined ? [] : ['actions'])],
+      ...(props.fixPullRequestNavigation == null ? {} : { fixPullRequest: props.fixPullRequestNavigation }),
+      fixPullRequestsEmpty: props.fixPullRequestsEmpty === true,
       select: (panel) => {
-        const tab = props.tabs.find((candidate) => candidate.id === panel);
-        if (tab !== undefined) setSelected(tab.frameId);
+        if (panel === 'actions' && props.actionsNavigation !== undefined) {
+          props.actionsNavigation.open();
+          return;
+        }
+        const tab = tabs.find((candidate) => candidate.id === panel);
+        if (tab !== undefined) {
+          props.actionsNavigation?.close();
+          setSelected(tab.frameId);
+        }
       },
-    }), [props.tabs, setSelected]);
+    }), [props.actionsNavigation, props.fixPullRequestNavigation, props.fixPullRequestsEmpty, tabs, setSelected]);
 
-  const selectedTab = props.tabs.find((tab) => tab.frameId === selected);
+  const selectedTab = tabs.find((tab) => tab.frameId === selected);
   const slot = selected === 'session' ? 'session' : selectedTab?.from ?? 'unavailable';
 
   return (
     <Stack style={FILL_STYLE}>
       <Tabs
+        presentation="page"
+        pageKind={TRIAGE_DETAIL_PAGE_KIND_V1}
+        phonePresented={props.pushed}
         value={selected}
         onValueChange={setSelected}
         ariaLabel={text('plugins.triage.surface.detail.tabs', 'Entry detail')}
@@ -161,9 +211,12 @@ export function TriageDetailTabbedBody(props: Readonly<{
                   key={props.entry.instanceKey}
                   mount={props.entry}
                   panel={slot === 'entry' ? selectedTab?.id ?? null : null}
+                  scrollOwner={slot === 'entry' ? selectedTab?.scrollOwner : undefined}
                   fallback={props.fallback}
                   overviewLead={props.overviewLead}
                   overviewTail={props.overviewTail}
+                  navigation={navigation}
+                  publishVisiblePanels={publishEntryPanels}
                 />
               </Tabs.Item>
               <Tabs.Item value="fixPullRequest" title="" retention="retain">
@@ -182,7 +235,10 @@ export function TriageDetailTabbedBody(props: Readonly<{
                       key={props.fixPullRequest.instanceKey}
                       mount={props.fixPullRequest}
                       panel={slot === 'fixPullRequest' ? selectedTab?.id ?? null : null}
+                      scrollOwner={slot === 'fixPullRequest' ? selectedTab?.scrollOwner : undefined}
                       fallback={props.fallback}
+                      navigation={navigation}
+                      publishVisiblePanels={publishFixPanels}
                     />
                   </Stack>
                 )}
@@ -198,13 +254,14 @@ export function TriageDetailTabbedBody(props: Readonly<{
           </TriageDetailPanelNavigationProvider>
         )}
       >
-        {props.tabs.map((tab) => {
+        {tabs.map((tab) => {
           // The declaring source's own fact, said beside the title ("Checks 2 failing"); absent says nothing.
           const summary = tab.summary === undefined ? null : readTriageDetailTabSummaryV1(tab.summary, locale);
           return (
             <Tabs.Item
               key={tab.frameId}
               value={tab.frameId}
+              glyph={tab.kind === 'shared' ? SHARED_TAB_COPY[tab.id].glyph : 'file'}
               title={tab.kind === 'shared'
                 ? text(SHARED_TAB_COPY[tab.id].key, SHARED_TAB_COPY[tab.id].fallback)
                 : tab.titleKey === undefined ? tab.title : text(tab.titleKey, tab.title)}
@@ -212,10 +269,14 @@ export function TriageDetailTabbedBody(props: Readonly<{
             />
           );
         })}
-        {props.session === undefined || props.session === null ? null : (
+        {!hasSession ? null : (
           <Tabs.Item
             key="session"
             value="session"
+            // A page tab (the phone's) and the companion beside the story (Plan T `both`).
+            kind="both"
+            companion={TRIAGE_ENTRY_SESSION_COMPANION_V1}
+            glyph="conversations"
             title={text('plugins.triage.surface.detail.tab.session', 'Session')}
           />
         )}

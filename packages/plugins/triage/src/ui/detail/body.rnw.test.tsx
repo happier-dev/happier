@@ -26,7 +26,7 @@ import {
   type TriageDetailSurfaceInputV1,
 } from '@happier-dev/triage-protocol/v1';
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
-import { useTriageDetailPanelOpener } from '@happier-dev/triage-sources/ui';
+import { TriageDetailPanel, useTriageDetailPanelOpener, useTriageDetailFixPullRequestNavigation, type TriageDetailFixPullRequestNavigationV1 } from '@happier-dev/triage-sources/ui';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { TriageDetailTabbedBody } from './body.js';
@@ -79,7 +79,7 @@ const SURFACE = Object.freeze({
 });
 
 /** The published detail input schema, narrowed to require `panel: 'files'`. */
-function panelInputSchema(panel = 'files') {
+function panelInputSchema(panel = 'files', scrollOwner?: 'list') {
   const base = TriageDetailSurfaceInputV1JsonSchema as Readonly<
     Record<string, unknown>
   > & {
@@ -89,8 +89,9 @@ function panelInputSchema(panel = 'files') {
   return {
     ...base,
     // A bare `const` is the canonical projection of a protocol literal.
-    properties: { ...base.properties, panel: { const: panel } },
-    required: [...base.required, 'panel'],
+    properties: { ...base.properties, panel: { const: panel },
+      ...(scrollOwner === undefined ? {} : { panelScrollOwner: { const: scrollOwner } }) },
+    required: [...base.required, 'panel', ...(scrollOwner === undefined ? [] : ['panelScrollOwner'])],
   };
 }
 
@@ -174,6 +175,7 @@ const LIVE_SESSION = {
 
 let tabs: readonly TriageDetailTabV1[] = [];
 let session: React.ReactNode;
+let fixNavigation: TriageDetailFixPullRequestNavigationV1 | undefined;
 const renderBody = defineUiSurface(function Body(
   _context: RenderContext,
 ): React.ReactElement {
@@ -182,6 +184,7 @@ const renderBody = defineUiSurface(function Body(
       tabs={tabs}
       entry={{ surface: SURFACE, input: INPUT, instanceKey: 'entry-a' }}
       fixPullRequest={null}
+      fixPullRequestNavigation={fixNavigation}
       session={session}
       overviewTail={
         <TriageAgentStep
@@ -208,9 +211,12 @@ async function mountBody(
   probe?: React.ReactNode,
   nextSession?: React.ReactNode,
   requiredPanel?: string,
+  navigation?: TriageDetailFixPullRequestNavigationV1,
+  requiredScrollOwner?: 'list',
 ) {
   tabs = nextTabs;
   session = nextSession;
+  fixNavigation = navigation;
   const fixture = await createPluginUiTestkit({
     identity: {
       instanceId: 'fixture-instance-detail-body',
@@ -223,7 +229,7 @@ async function mountBody(
       targetedSurfaces: {
         readCurrentMounts: () => [
           requiredPanel !== undefined
-            ? { ...MOUNT, inputSchema: panelInputSchema(requiredPanel) }
+            ? { ...MOUNT, inputSchema: panelInputSchema(requiredPanel, requiredScrollOwner) }
             : probe === undefined
               ? MOUNT
               : { ...MOUNT, inputSchema: TriageDetailSurfaceInputV1JsonSchema },
@@ -246,13 +252,62 @@ const PR_TABS = planTriageDetailTabsV1({
   entryTabs: [
     { kind: 'shared', id: 'overview' },
     { kind: 'shared', id: 'activity' },
-    { kind: 'shared', id: 'files' },
+    { kind: 'shared', id: 'files', scrollOwner: 'list' },
     { kind: 'shared', id: 'checks' },
   ],
   fixPullRequest: null,
 });
 
 describe('the tabbed detail body (r0.42)', () => {
+  it('uses the source’s visible panels and falls back without retiring its retained detail', async () => {
+    let mounts = 0;
+    let retires = 0;
+    function Source() {
+      const [trace, setTrace] = React.useState(true);
+      React.useEffect(() => { mounts++; return () => { retires++; }; }, []);
+      return <TriageDetailPanel panel="overview" ariaLabel="Source sections"
+        visiblePanels={trace ? ['overview', 'activity', 'stack-trace'] : ['overview', 'activity']}
+        panels={{ overview: <Button title={trace ? 'Remove trace' : 'Restore trace'} onPress={() => setTrace(!trace)} />,
+          activity: <Text value="Event activity" />,
+          'stack-trace': <Text value="Trace frames" /> }} />;
+    }
+    const plan = planTriageDetailTabsV1({ workflowSubject: 'errorIssue',
+      // Keep the page strip visible after withdrawal: Tabs hides a one-page strip.
+      entryTabs: [{ kind: 'shared', id: 'overview' }, { kind: 'shared', id: 'activity' },
+        { kind: 'source', id: 'stack-trace', title: 'Stack trace' }],
+      fixPullRequest: null });
+    if (plan.kind !== 'tabs') throw new Error('Expected tabs');
+    const body = await mountBody(plan.tabs, <Source />);
+    await act(async () => { await body.press(await body.getByRole('tab', { name: 'Stack trace' })); });
+    await act(async () => { await body.press(await body.getByRole('button', { name: 'Remove trace' })); });
+    await expect(body.queryByRole('tab', { name: 'Stack trace' })).resolves.toBeUndefined();
+    await expect(body.getByRole('tab', { name: 'Overview', state: { selected: true } })).resolves.toBeDefined();
+    expect({ mounts, retires }).toEqual({ mounts: 1, retires: 0 });
+    await act(async () => { await body.press(await body.getByRole('button', { name: 'Restore trace' })); });
+    await expect(body.getByRole('tab', { name: 'Stack trace' })).resolves.toBeDefined();
+    expect({ mounts, retires }).toEqual({ mounts: 1, retires: 0 });
+  });
+  it('offers no fix navigation when the frame has no admitted primary', async () => {
+    if (PR_TABS.kind !== 'tabs') throw new Error('Expected tab composition');
+    function Probe() { return <Text value={useTriageDetailFixPullRequestNavigation() === null ? 'No fix navigation' : 'Unexpected navigation'} />; }
+    const mounted = await mountBody(PR_TABS.tabs, <Probe />);
+    await expect(mounted.getByText('No fix navigation')).resolves.toBeDefined();
+  });
+  it('offers the resolved fix navigation to the admitted source through its existing panel context', async () => {
+    if (PR_TABS.kind !== 'tabs') throw new Error('Expected tab composition');
+    const entryRef = { ...INPUT.observation.entryRef, entryId: 'off-page-fix' };
+    let opens = 0;
+    const navigation: TriageDetailFixPullRequestNavigationV1 = { entryRef, title: 'Resolved off-page fix', url: null,
+      open: async () => { opens++; return { kind: 'opened' }; }, openExternal: async () => {} };
+    function Probe() {
+      const fix = useTriageDetailFixPullRequestNavigation();
+      return fix === null ? <Text value="No fix binding" />
+        : <Button title={fix.title} onPress={() => { void fix.open(); }} />;
+    }
+    const mounted = await mountBody(PR_TABS.tabs, <Probe />, undefined, undefined, navigation);
+    await act(async () => { await mounted.press(await mounted.getByRole('button', { name: 'Resolved off-page fix' })); });
+    expect(opens).toBe(1);
+  });
   it.each([false, true])(
     'mounts an admitted source session panel independently of a linked Session (%s)',
     async (linked) => {
@@ -405,6 +460,18 @@ describe('the tabbed detail body (r0.42)', () => {
     await expect(
       body.getByText(`Selected ${secondUuid}, pages 2`),
     ).resolves.toBeDefined();
+    await act(async () => {
+      await body.press(await body.getByRole('tab', { name: 'Files' }));
+    });
+    await expect(
+      body.getByText(`Selected ${secondUuid}, pages 2`),
+    ).resolves.toBeDefined();
+    await act(async () => {
+      await body.press(await body.getByRole('tab', { name: 'Overview' }));
+    });
+    await expect(
+      body.getByText(`Selected ${secondUuid}, pages 2`),
+    ).resolves.toBeDefined();
     const sourceInterval = intervals.at(-1)!;
     await act(async () => {
       await body.press(await body.getByRole('tab', { name: 'Session' }));
@@ -492,7 +559,7 @@ describe('the tabbed detail body (r0.42)', () => {
       entryTabs: [{ kind: 'shared', id: 'overview' }],
       fixPullRequest: {
         detailTabs: [
-          { kind: 'shared', id: 'files' },
+          { kind: 'shared', id: 'files', scrollOwner: 'list' },
           { kind: 'shared', id: 'checks' },
         ],
       },
@@ -513,7 +580,7 @@ describe('the tabbed detail body (r0.42)', () => {
       document.querySelector('[data-testid="triage-story-agent"]')?.textContent,
     ).toContain('Fix rounding');
     await expect(
-      body.getByRole('button', { name: 'Fix rounding' }),
+      body.getByRole('button', { name: 'Open Fix rounding' }),
     ).resolves.toBeDefined();
     // Overview asked for the overview panel, which this fixture refuses.
     await expect(body.getByText(FALLBACK)).resolves.toBeDefined();
@@ -524,7 +591,7 @@ describe('the tabbed detail body (r0.42)', () => {
       workflowSubject: 'pullRequest',
       entryTabs: [
         { kind: 'shared', id: 'overview' },
-        { kind: 'shared', id: 'files' },
+        { kind: 'shared', id: 'files', scrollOwner: 'list' },
         { kind: 'shared', id: 'checks', summaryFact: 'example/checks' },
       ],
       entryFacts: [
@@ -544,23 +611,54 @@ describe('the tabbed detail body (r0.42)', () => {
     await body.dispose();
   });
 
-  it("scrolls every tab's panel, not only Overview: the detail surface is content the frame bounds and scrolls", async () => {
+  it('honors an arbitrary source panel declaring its List as the sole scroller', async () => {
+    const source = createTriageSourceV1Fixture().descriptor;
+    const admitted = admitTriageSourceDescriptorV1({
+      ...source,
+      kinds: [{ ...source.kinds[0], detailTabs: [
+        { kind: 'shared', id: 'overview' },
+        { kind: 'source', id: 'events', title: 'Events', scrollOwner: 'list' },
+      ] }],
+    });
+    if (!admitted.ok) throw new Error(`Public descriptor refused: ${admitted.reason}`);
+    const plan = planTriageDetailTabsV1({ workflowSubject: null,
+      entryTabs: admitted.descriptor.kinds[0]!.detailTabs, fixPullRequest: null });
+    const body = await mountBody(plan.kind === 'tabs' ? plan.tabs : [], undefined, undefined, 'events', undefined, 'list');
+    await act(async () => { await body.press(await body.getByRole('tab', { name: 'Events' })); });
+    await expect(body.getByText(PANEL_BODY)).resolves.toBeDefined();
+    const leaf = [...document.querySelectorAll('*')].find(node => node.textContent === PANEL_BODY && node.children.length === 0);
+    let ancestor = leaf?.parentElement ?? null;
+    while (ancestor !== null) {
+      expect(['auto', 'scroll']).not.toContain(getComputedStyle(ancestor).overflowY);
+      ancestor = ancestor.parentElement;
+    }
+  });
+
+  it("scrolls content panels while source-declared Lists own their scroller (QB-55/81)", async () => {
     // Live 2026-10-23: Activity on a long PR rendered 33 000 px of timeline inside a pane that could not scroll.
+    // Live 2026-11-06 (QB-81): Files nested the source's virtualized diff inside this frame scroller.
+    const scrollAncestor = (text: string): Element | null => {
+      const leaf = [...document.querySelectorAll('*')].find(
+        (node) => node.textContent === text && node.children.length === 0,
+      );
+      let scroller: Element | null = leaf?.parentElement ?? null;
+      while (scroller !== null && !['auto', 'scroll'].includes(getComputedStyle(scroller).overflowY)) {
+        scroller = scroller.parentElement;
+      }
+      return scroller;
+    };
     const body = await mountBody(PR_TABS.kind === 'tabs' ? PR_TABS.tabs : []);
     await act(async () => {
       await body.press(await body.getByRole('tab', { name: 'Files' }));
     });
     await expect(body.getByText(PANEL_BODY)).resolves.toBeDefined();
-    const panel = [...document.querySelectorAll('*')].find(
-      (node) => node.textContent === PANEL_BODY && node.children.length === 0,
-    );
-    let scroller: Element | null = panel?.parentElement ?? null;
-    while (
-      scroller !== null &&
-      !['auto', 'scroll'].includes(getComputedStyle(scroller).overflowY)
-    )
-      scroller = scroller.parentElement;
-    expect(scroller).not.toBeNull();
+    expect(scrollAncestor(PANEL_BODY)).toBeNull();
+
+    await act(async () => {
+      await body.press(await body.getByRole('tab', { name: 'Activity' }));
+    });
+    await expect(body.getByText(FALLBACK)).resolves.toBeDefined();
+    expect(scrollAncestor(FALLBACK)).not.toBeNull();
   });
 
   it('mounts the source asking for exactly the tab it shows', async () => {
