@@ -52,6 +52,12 @@ describe('root route identity ownership', () => {
     ] as const)('declares the central header title for %s', (name, title) => {
         expect(createRootStackRouteOptions('auto')[name]).toMatchObject({ headerShown: true, headerTitle: title });
     });
+    it('gives the Store Bots page the Store chrome with its way back on a phone', () => {
+        const options = createRootStackRouteOptions('auto');
+        const bots = resolveRootStackRouteOptions(options, workspaceRouteFiles['plugins/bots']);
+        expect(bots).toBe(options['plugins/index']);
+        expect(bots).toMatchObject({ headerShown: true, headerBackTitle: 'common.back' });
+    });
     it('hides the shell header on terminal connect', () => {
         expect(createRootStackRouteOptions('auto')['terminal/connect']).toMatchObject({ headerShown: false });
     });

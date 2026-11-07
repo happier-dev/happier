@@ -66,8 +66,9 @@ it.each(['open', 'add'] as const)('browses metadata and reaches the shared previ
         expect(screen.getTextContent()).toContain('Sample');
         expect(screen.getTextContent()).toContain('1.2.3');
     });
-    // Nothing shared with this viewer: that section says nothing rather than an unlabelled "Nothing here yet".
+    // Nothing shared with this viewer: that section explains templates under its own title, never the page's "Nothing here yet".
     expect(screen.findAllByTestId('store.kind.bot.empty')).toHaveLength(0);
+    expect(screen.findByTestId('store.kind.bot.shared.empty')).toBeTruthy();
     const rowId = `store.kind.bot.row.${row.key}`;
     await screen.pressByTestIdAsync(path === 'add' ? `${rowId}.add` : rowId);
     await waitForHomeGovernance(() => expect(promptRegistriesRouterPushSpy).toHaveBeenCalled());

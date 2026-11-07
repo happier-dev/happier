@@ -162,6 +162,8 @@ export function createExpoRouterRuntime(
     adapters: ExpoRouterRuntimeAdapters = {},
 ) {
     const trackedPush = createTrackedRouterMethod<[unknown], unknown>(options.router?.push, adapters);
+    // Expo Router's section navigation (`router.navigate`) is part of the real router, so the boundary mirrors it.
+    const trackedNavigate = createTrackedRouterMethod<[unknown, unknown?], unknown>(options.router?.navigate, adapters);
     const trackedBack = createTrackedRouterMethod<[], unknown>(options.router?.back, adapters);
     const trackedReplace = createTrackedRouterMethod<[unknown], unknown>(options.router?.replace, adapters);
     const trackedDismissTo = createTrackedRouterMethod<[unknown], unknown>(options.router?.dismissTo, adapters);
@@ -169,6 +171,7 @@ export function createExpoRouterRuntime(
     const trackedSetParams = createTrackedRouterMethod<[ExpoRouterParams], unknown>(options.router?.setParams, adapters);
     const router = Object.assign(options.router ?? {}, {
         push: trackedPush.method,
+        navigate: trackedNavigate.method,
         back: trackedBack.method,
         replace: trackedReplace.method,
         dismissTo: trackedDismissTo.method,
@@ -177,6 +180,7 @@ export function createExpoRouterRuntime(
     }) as ExpoRouterRuntimeRouter;
     const spies = {
         push: trackedPush.spy,
+        navigate: trackedNavigate.spy,
         back: trackedBack.spy,
         replace: trackedReplace.spy,
         dismissTo: trackedDismissTo.spy,
@@ -242,6 +246,7 @@ export function createExpoRouterRuntime(
         return state.params;
     };
     spies.push.mockName?.('router.push');
+    spies.navigate.mockName?.('router.navigate');
     spies.back.mockName?.('router.back');
     spies.replace.mockName?.('router.replace');
     spies.dismissTo.mockName?.('router.dismissTo');

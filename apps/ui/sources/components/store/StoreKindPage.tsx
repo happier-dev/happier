@@ -402,7 +402,7 @@ export function useRegistryRows(
 }
 
 export function useSourceTitle(
-  kind: Exclude<StoreDirectoryKind, 'provider'>,
+  kind: Parameters<typeof useRegistrySources>[0],
 ): (sourceId: string) => string {
   const registry = useRegistrySources(kind);
   return React.useCallback(
@@ -636,6 +636,11 @@ export function Directory(
     groupAction?: (groupKey: string) => CollectionGroupAction | null;
     /** Contributed sections own their own empty results; native rows cannot describe the whole search. */
     showEmptyState?: boolean;
+    /**
+     * The directory is one titled section of its page (Bots: Shared with you, From the Store): its empty state is
+     * this, and its catalogs' outage stays a line inside it, so neither becomes the page's state.
+     */
+    emptyState?: React.ReactNode;
   }>,
 ): React.ReactNode {
   const { rows } = props;
@@ -651,14 +656,15 @@ export function Directory(
     (key: string | null) => rows.find((row) => row.key === key)?.open(),
     [rows],
   );
+  // A section titled by its page has no groups of its own.
   const grouping = React.useMemo(
-    () => ({ axis: props.groups, groupOf: (row: DirectoryRow) => row.group }),
+    () => props.groups.length === 0 ? null : ({ axis: props.groups, groupOf: (row: DirectoryRow) => row.group }),
     [props.groups],
   );
   const model = useHappierCollection<DirectoryRow>({
     items: rows,
     keyOf,
-    groups: grouping,
+    ...(grouping ? { groups: grouping } : {}),
     openKey: selectedKey,
     onOpenChange,
   });
@@ -706,8 +712,9 @@ export function Directory(
     all.findIndex((other) => other.sourceId === failure.sourceId) === index);
   const empty =
     !props.list.loading && rows.length === 0 && failures.length === 0;
+  const section = props.emptyState !== undefined;
   // Every catalog failed and nothing is held: that failure is the page's state, said once.
-  const pageFailure = !props.list.loading && rows.length === 0 && failures.length > 0 && props.showEmptyState !== false;
+  const pageFailure = !props.list.loading && rows.length === 0 && failures.length > 0 && props.showEmptyState !== false && !section;
   return (
     <View style={styles.body}>
       {empty && props.showEmptyState === false ? null : empty && props.query ? (
@@ -719,7 +726,7 @@ export function Directory(
           title={t('capabilities.store.noMatch', { query: props.query })}
           primaryAction={{ label: t('capabilities.store.clear'), onPress: onClear }}
         />
-      ) : empty ? (
+      ) : empty && section ? props.emptyState : empty ? (
         // Nothing around it: the page's own state, not a line waiting for rows that aren't there.
         <EmptyState
           testID={`store.kind.${props.kind}.empty`}

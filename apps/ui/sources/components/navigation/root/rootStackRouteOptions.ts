@@ -226,6 +226,8 @@ export function createRootStackRouteOptions(newSessionPresentationMode: 'auto' |
         'dev': options.hiddenHeader,
         'plugins/index': options.pluginsIndex,
         'plugins/listing': options.pluginsListing,
+        // A Store kind page reached from the Bots popover: the Store's bar and its way back, like the Store's other kinds.
+        'plugins/bots': options.pluginsIndex,
         'plugins/[pluginId]': options.pluginsDetail,
         'desktop/activity-overlay': options.desktopActivityOverlay,
         'automations/index': options.automationsIndex,

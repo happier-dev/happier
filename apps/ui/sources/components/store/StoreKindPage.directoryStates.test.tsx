@@ -33,6 +33,26 @@ describe('Store directory states', () => {
         expect(screen.findAllByType(SurfaceStateCard)[0]!.props.size).toBe('page');
     });
 
+    it('lets a section keep its own empty state instead of the page state', async () => {
+        const screen = await renderScreen(<Directory kind="bot" rows={[]} groups={[]} list={idle} query="" sourceTitle={null}
+            emptyState={<EmptyState testID="section.empty" layout="inline" title="Section empty" />} />);
+        expect(screen.findByTestId('section.empty')).toBeTruthy();
+        expect(screen.findByTestId('store.kind.bot.empty')).toBeFalsy();
+    });
+
+    it('says a section\'s catalog outage as a line inside it, naming each catalog', async () => {
+        const screen = await renderScreen(<Directory kind="bot" rows={[]} groups={[]} query="" emptyState={null}
+            sourceTitle={id => (id === 'a' ? 'Happier catalog' : 'Team catalog')}
+            list={{ ...idle, sourceFailures: [
+                { sourceId: 'a', message: 'A failed', onRetry: () => {} }, { sourceId: 'b', message: 'B failed', onRetry: () => {} },
+            ] }} />);
+        const { RegistrySourcesUnavailable } = await import('@/components/capabilities/add/RegistrySourcesUnavailable');
+        const outage = screen.findAllByType(RegistrySourcesUnavailable)[0]!;
+        expect(outage.props.size).toBe('line');
+        expect(outage.props.failures.map((failure: { message: string }) => failure.message))
+            .toEqual(['Happier catalog · A failed', 'Team catalog · B failed']);
+    });
+
     it('keeps the inline no-match state for a real search', async () => {
         const screen = await render({}, 'garden');
         expect(screen.findAllByType(EmptyState)[0]!.props.layout).toBe('inline');
