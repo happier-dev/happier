@@ -4,6 +4,7 @@ import { chmod, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
+import { createBuiltinRelayAccessSelection } from '@happier-dev/cli-common/relayAccess';
 
 import { getPublicServerUrlEnvOverride, getWebappUrlEnvOverride, resolveServerUrls, resolveStackServerEndpoint } from './urls.mjs';
 import { buildServerRuntimeEnv } from './server_env.mjs';
@@ -413,14 +414,22 @@ test('getWebappUrlEnvOverride ignores a leaked global HAPPIER_WEBAPP_URL when no
   assert.equal(out.envWebappUrl, '');
 });
 
-test('resolveServerUrls prefers the canonical relay access url from persisted cloudflare named-tunnel config', async () => {
+test('resolveServerUrls keeps the local origin when a persisted Cloudflare hostname has no verified connector', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'hstack-server-urls-relay-'));
   const homeDir = join(dir, 'home');
   const envPath = join(dir, 'stack.env');
   await mkdir(join(homeDir, '.happier', 'relay', 'access'), { recursive: true });
   await writeFile(
     join(homeDir, '.happier', 'relay', 'access', 'local.json'),
-    JSON.stringify({ providerId: 'cloudflareNamed', hostname: 'relay.example.test', token: 'secret' }),
+    JSON.stringify(createBuiltinRelayAccessSelection('cloudflareNamed', { hostname: 'relay.example.test' }, [
+      {
+        purpose: 'tunnel.manage',
+        credentialRef: {
+          kind: 'connectedAccount',
+          account: { service: { pluginId: 'happier.deploy.cloudflare', localId: 'cloudflare' }, accountId: 'account-a' },
+        },
+      },
+    ])),
     'utf-8'
   );
   await writeFile(envPath, 'HAPPIER_STACK_SERVER_PORT=3005\n', 'utf-8');
@@ -432,7 +441,7 @@ test('resolveServerUrls prefers the canonical relay access url from persisted cl
         HAPPIER_STACK_STACK: 'dev-built',
         HAPPIER_STACK_ENV_FILE: envPath,
         // Real stacks typically inherit the stack.env values into env via withStackEnv.
-        // Ensure relay-access canonical URL still wins over a localhost/default stack URL.
+        // A desired hostname alone does not establish a verified public endpoint.
         HAPPIER_STACK_SERVER_URL: 'http://127.0.0.1:3005',
         HAPPIER_STACK_TAILSCALE_PREFER_PUBLIC_URL: '0',
         HAPPIER_STACK_TAILSCALE_SERVE: '0',
@@ -441,7 +450,7 @@ test('resolveServerUrls prefers the canonical relay access url from persisted cl
       allowEnable: false,
     });
 
-    assert.equal(out.publicServerUrl, 'https://relay.example.test');
+    assert.equal(out.publicServerUrl, 'http://happier-dev-built.localhost:3005');
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -456,7 +465,7 @@ test('resolveServerUrls ignores persisted tailscale relay access config when sta
   await mkdir(binDir, { recursive: true });
   await writeFile(
     join(homeDir, '.happier', 'relay', 'access', 'local.json'),
-    JSON.stringify({ providerId: 'tailscaleFunnel' }),
+    JSON.stringify(createBuiltinRelayAccessSelection('tailscaleFunnel')),
     'utf-8'
   );
   const tailscaleBin = join(binDir, 'tailscale');
@@ -511,7 +520,7 @@ test('resolveServerUrls prefers the persisted tailscale relay access url when th
   await mkdir(binDir, { recursive: true });
   await writeFile(
     join(homeDir, '.happier', 'relay', 'access', 'local.json'),
-    JSON.stringify({ providerId: 'tailscaleFunnel' }),
+    JSON.stringify(createBuiltinRelayAccessSelection('tailscaleFunnel')),
     'utf-8'
   );
   const tailscaleBin = join(binDir, 'tailscale');
@@ -592,7 +601,7 @@ test('resolveServerUrls keeps the named-stack canonical origin stable while infe
   await mkdir(binDir, { recursive: true });
   await writeFile(
     join(homeDir, '.happier', 'relay', 'access', 'local.json'),
-    JSON.stringify({ providerId: 'tailscaleFunnel' }),
+    JSON.stringify(createBuiltinRelayAccessSelection('tailscaleFunnel')),
     'utf-8'
   );
   await writeFile(envPath, 'HAPPIER_STACK_SERVER_PORT=3005\n', 'utf-8');
