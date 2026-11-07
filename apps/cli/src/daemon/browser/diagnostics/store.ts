@@ -24,6 +24,7 @@ type BrowserDiagnosticsDaemonViewState = Readonly<{
     viewId: string;
     navigationGeneration: number;
     events: readonly BrowserDiagnosticsRetainedEvent[];
+    eventsByRevision: readonly BrowserDiagnosticsRetainedEvent[];
     revision: number;
     evictedEventCount: number;
 }>;
@@ -70,19 +71,27 @@ function appendBoundedEvent(
         : [];
     const dedupedEvents = previousEvents.filter(({ event: previous }) => previous.eventId !== event.eventId
         && !(isBrowserDiagnosticLifecycleEvent(event) && isBrowserDiagnosticLifecycleEvent(previous) && previous.family === event.family));
-    const retained = [...dedupedEvents, { event, revision }];
+    const published = { event, revision };
+    const retained = [...dedupedEvents, published];
     const lifecycle = retained.filter(({ event }) => isBrowserDiagnosticLifecycleEvent(event));
     const content = retained.filter(({ event }) => !isBrowserDiagnosticLifecycleEvent(event))
         .sort((a, b) => compareEvents(a.event, b.event));
     const evictedEventCount = (view?.navigationGeneration === event.navigationGeneration ? view.evictedEventCount : 0)
         + Math.max(0, content.length - maxEventsPerView);
+    const events = [...lifecycle, ...content.slice(-maxEventsPerView)].sort((a, b) => compareEvents(a.event, b.event));
+    // Index the same retained records in publication order. Capture order can differ
+    // after upserts; cursor reads must not walk unchanged history to find revisions.
+    const retainedEvents = new Set(events);
+    const eventsByRevision = (view?.eventsByRevision ?? []).filter(entry => retainedEvents.has(entry));
+    if (retainedEvents.has(published)) eventsByRevision.push(published);
     return {
         browserSessionId: event.browserSessionId,
         viewId: event.viewId,
         navigationGeneration: event.navigationGeneration,
         revision,
         evictedEventCount,
-        events: [...lifecycle, ...content.slice(-maxEventsPerView)].sort((a, b) => compareEvents(a.event, b.event)),
+        events,
+        eventsByRevision,
     };
 }
 
@@ -211,16 +220,38 @@ export function createBrowserDiagnosticsDaemonStore(input: Readonly<{
         },
         getViewSnapshot(viewInput) {
             const view = viewsByKey.get(browserViewKey(viewInput));
+            const events: BrowserDiagnosticEventV1[] = [];
+            if (view) {
+                const snapshotStart = Math.max(0, view.events.length - maxSnapshotEvents);
+                if (viewInput.sinceRevision === undefined) {
+                    for (let index = snapshotStart; index < view.events.length; index++) {
+                        events.push(view.events[index]!.event);
+                    }
+                } else {
+                    const revisionIndex = view.eventsByRevision;
+                    let start = 0;
+                    let end = revisionIndex.length;
+                    while (start < end) {
+                        const middle = Math.floor((start + end) / 2);
+                        if (revisionIndex[middle]!.revision <= viewInput.sinceRevision) start = middle + 1;
+                        else end = middle;
+                    }
+                    // Preserve the existing capture-ordered snapshot window, then return
+                    // only its changed records in the same order as a complete snapshot.
+                    const firstSnapshotEvent = view.events[snapshotStart];
+                    for (let index = start; index < revisionIndex.length; index++) {
+                        const event = revisionIndex[index]!.event;
+                        if (firstSnapshotEvent && compareEvents(event, firstSnapshotEvent.event) >= 0) events.push(event);
+                    }
+                    events.sort(compareEvents);
+                }
+            }
             return {
                 v: 1,
                 machineId: input.machineId,
                 generatedAt: now(),
                 refreshState: 'idle',
-                // Retained publication revisions are the existing watch cursor's changed facts.
-                // Apply the snapshot retention projection before selecting the incremental batch.
-                events: (view?.events ?? []).slice(-maxSnapshotEvents)
-                    .filter(entry => viewInput.sinceRevision === undefined || entry.revision > viewInput.sinceRevision)
-                    .map(({ event }) => event),
+                events,
                 // The runtime-action snapshot is view scoped. Store-level diagnostics do not
                 // currently carry view identity, so exposing them here would reintroduce
                 // cross-view metadata leakage. The internal machine RPC keeps `getSnapshot()`.

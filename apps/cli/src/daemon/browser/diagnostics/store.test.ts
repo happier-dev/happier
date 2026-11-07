@@ -2,6 +2,79 @@ import { describe, expect, it } from 'vitest';
 
 import type { BrowserDiagnosticEventV1 } from '@happier-dev/protocol';
 
+it('copies and filters only the changed batch when reading a diagnostics cursor', async () => {
+    const { createBrowserDiagnosticsDaemonStore } = await import('./store');
+    const view = { browserSessionId: 'cursor-cost', viewId: 'view', navigationGeneration: 1 };
+    const measurements = [];
+    for (const retained of [10, 100, 1_000]) {
+        const store = createBrowserDiagnosticsDaemonStore({ machineId: 'machine',
+            maxEventsPerView: retained + 1, maxSnapshotEvents: retained + 1 });
+        for (let n = 0; n < retained; n++) store.publishEvent(createEvent({ ...view, eventId: `event-${n}`, capturedAtMs: n }));
+        const sinceRevision = store.getViewRevision(view);
+        store.publishEvent(createEvent({ ...view, eventId: 'new-event', capturedAtMs: retained }));
+        let predicateVisits = 0;
+        let copiedEvents = 0;
+        const filterDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, 'filter')!;
+        const sliceDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, 'slice')!;
+        const filter = Array.prototype.filter;
+        const slice = Array.prototype.slice;
+        function isRetainedViewEvent(value: unknown): boolean {
+            return typeof value === 'object' && value !== null && 'event' in value
+                && typeof value.event === 'object' && value.event !== null
+                && 'browserSessionId' in value.event && value.event.browserSessionId === view.browserSessionId;
+        }
+        // Transparent synchronous profiling of collection work; both intrinsics and predicates stay real.
+        Object.defineProperty(Array.prototype, 'filter', { ...filterDescriptor,
+            value(this: unknown[], predicate: (value: unknown, index: number, array: unknown[]) => unknown, thisArg?: unknown) {
+                const count = isRetainedViewEvent(this[0]);
+                return filter.call(this, (value, index, array) => {
+                    if (count) predicateVisits++;
+                    return predicate.call(thisArg, value, index, array);
+                });
+            },
+        });
+        Object.defineProperty(Array.prototype, 'slice', { ...sliceDescriptor,
+            value(this: unknown[], start?: number, end?: number) {
+                const result = slice.call(this, start, end);
+                if (isRetainedViewEvent(this[0])) copiedEvents += result.length;
+                return result;
+            },
+        });
+        let events: readonly BrowserDiagnosticEventV1[];
+        try {
+            events = store.getViewSnapshot({ ...view, sinceRevision }).events;
+        } finally {
+            Object.defineProperty(Array.prototype, 'filter', filterDescriptor);
+            Object.defineProperty(Array.prototype, 'slice', sliceDescriptor);
+        }
+        expect(events.map(event => event.eventId)).toEqual(['new-event']);
+        measurements.push({ retained, returnedEvents: events.length, predicateVisits, copiedEvents });
+    }
+    for (const measurement of measurements) {
+        expect(measurement.predicateVisits, JSON.stringify(measurements)).toBeLessThanOrEqual(measurement.returnedEvents);
+        expect(measurement.copiedEvents, JSON.stringify(measurements)).toBeLessThanOrEqual(measurement.returnedEvents);
+    }
+});
+
+it('selects cursor changes within the retained snapshot window across capture-order changes and upserts', async () => {
+    const { createBrowserDiagnosticsDaemonStore } = await import('./store');
+    const store = createBrowserDiagnosticsDaemonStore({ machineId: 'machine', maxEventsPerView: 4, maxSnapshotEvents: 2 });
+    const view = { browserSessionId: 'browser_session_1', viewId: 'view_1', navigationGeneration: 1 };
+    store.publishEvent(createEvent({ eventId: 'a', capturedAtMs: 30 }));
+    const firstRevision = store.getViewRevision(view);
+    store.publishEvent(createEvent({ eventId: 'b', capturedAtMs: 10 }));
+    store.publishEvent(createEvent({ eventId: 'c', capturedAtMs: 20 }));
+    expect(store.getViewSnapshot({ ...view, sinceRevision: firstRevision }).events.map(event => event.eventId)).toEqual(['c']);
+    const beforeUpdates = store.getViewRevision(view);
+    store.publishEvent(createEvent({ eventId: 'c', capturedAtMs: 40 }));
+    store.publishEvent(createEvent({ eventId: 'b', capturedAtMs: 50 }));
+    expect(store.getViewSnapshot({ ...view, sinceRevision: beforeUpdates }).events.map(event => event.eventId)).toEqual(['c', 'b']);
+    expect(store.getViewSnapshot({ ...view, sinceRevision: store.getViewRevision(view) }).events).toEqual([]);
+    expect(store.getViewSnapshot(view).events.map(event => event.eventId)).toEqual(['c', 'b']);
+    store.clearView(view);
+    expect(store.getViewSnapshot({ ...view, sinceRevision: beforeUpdates }).events).toEqual([]);
+});
+
 function createEvent(overrides: Partial<BrowserDiagnosticEventV1> = {}): BrowserDiagnosticEventV1 {
     return {
         v: 1,
