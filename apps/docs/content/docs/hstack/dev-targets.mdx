@@ -862,12 +862,17 @@ defaulting to the configured members of nl1, nl2, linux3, linux2,
 linux1, in that order. Explicit candidate lists remain exact and reject unknown targets; an empty default pool
 fails without a controller-local browser. Windows1 remains excluded while outer Windows C: disk
 health is unverified. Browser selection is only for that foreground
-lifetime and writes no persistent pin. Use the returned local CDP endpoint with agent-browser
-or Playwright on the controller, opening the returned browser-facing `url` with lane-owned ports.
+lifetime and writes no persistent pin. Use the returned `cdpUrl` with agent-browser on the controller;
+Playwright accepts `cdpUrl` or `cdpHttpUrl`. Open the returned browser-facing `url` with lane-owned ports.
 Memory ranking is a launch-time observation: running browsers stay on their selected host as
 their memory use changes. Use `HAPPIER_STACK_QA_BROWSER_TARGETS` to separate browser work from a
 database host when that workload needs isolation; scheduling priority alone does not provide it.
 Dedicated QA-host Chromium uses `--no-sandbox` under the approved policy for Happier's own QA app.
+
+In 0.3 development, keep the entire returned CDP URL, including its browser identity path.
+If the owner ends, acquire a fresh browser: a replacement using the same port refuses older browser
+URLs. Stale HTTP discovery returns HTTP 409 with `qa-browser-custody-lost`. Previously running
+browser owners need a fresh acquisition to gain this protection.
 
 In 0.3 development, sign an existing, signed-out QA browser into an Account with
 `hstack dev-targets browser signin <session> --stack=<qa> --cdp=<returned-cdp-http-url>`, piping the Account

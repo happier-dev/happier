@@ -76,7 +76,7 @@ else if(!session.startsWith('hstack-discovery-'))fs.writeFileSync(${JSON.stringi
         },
         fetchImpl: async () => {
           if (forwards.length === 2) resolveRestored();
-          return { ok: true, json: async () => ({ webSocketDebuggerUrl: 'fixture' }) };
+          return { ok: true, json: async () => ({ webSocketDebuggerUrl: 'ws://localhost/devtools/browser/recovery-browser' }) };
         },
         WebSocketImpl: AnsweringCdpSocket,
       }).then(() => null, error => error);

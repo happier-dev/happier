@@ -1357,6 +1357,13 @@ only then are the SOCKS/CDP forwards retired. Transport loss still uses remote e
 process-group cancellation. A browser forward that disconnects after readiness restores its
 SOCKS/CDP bindings at the same controller address. If it exits during a pending CDP readiness
 request, the launcher reports the failure and requests worker cleanup so callers can restart.
+The browser owner publishes complete HTTP and WebSocket CDP URLs containing Chromium's browser
+identity. Its loopback listener retains the public port during forward recovery, suspends requests
+and attached sockets while the forward is unavailable, and resumes only after discovery matches
+the original browser. A later launcher reusing that public port rejects the old URL with HTTP 409
+and `qa-browser-custody-lost`; Stack discovery consumers preserve that typed result. Keep the entire
+returned URL, including its path. Existing launchers and previously recorded bare-port URLs need a
+fresh browser acquisition to gain this protection; no running browser is migrated.
 A retained profile can be recovered on its original target through
 `qa_browser.mjs --cleanup <session> <profile>`: the same worker cleanup owner closes that exact
 session before removing its named QA profile beneath the target's temporary directory. A failed
