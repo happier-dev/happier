@@ -12,6 +12,11 @@ import { useInboxItemNavigation } from './useInboxItemNavigation';
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
+// Counts Inbox route derivations; the real route owner still runs underneath.
+vi.mock('@/components/inbox/inboxItemFocus', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/components/inbox/inboxItemFocus')>();
+    return { ...actual, createInboxItemRoute: vi.fn(actual.createInboxItemRoute) };
+});
 
 const initialSettings = storage.getState().settings;
 const opened: string[] = [];
@@ -107,13 +112,15 @@ describe('Inbox selection through the shared keyboard runtime', () => {
         expect(state?.focus).toBeNull();
     });
 
-    it('advances only a resolved Needs-you selection; informational opens read only the selected row', async () => {
+    it('keeps a resolved detail selected until the person moves on; informational opens read only the selected row', async () => {
         await renderScreen(<KeyboardShortcutProvider handlers={{}}><Probe /></KeyboardShortcutProvider>);
         await act(async () => key('ArrowDown'));
         await act(async () => {
             state!.setSelectedResolved(true);
             state!.setItems(items => items.map(row => row.key === 'first' ? { ...row, type: 'update', view: 'updates' } : row));
         });
+        expect(state?.focus?.id).toBe('first');
+        await act(async () => key('j'));
         expect(state?.focus?.id).toBe('next');
         expect(read).toEqual([]);
         await act(async () => { state!.setView('updates'); state!.setFocus(initialItems[2]!.focus); });
@@ -126,7 +133,7 @@ describe('Inbox selection through the shared keyboard runtime', () => {
         expect(state?.focus?.id).toBe('mention');
     });
 
-    it('keeps the selected request through hydration gaps and advances once its owner confirms it is answered', async () => {
+    it('keeps the selected request through hydration gaps and a confirmed answer until Next item', async () => {
         await renderScreen(<KeyboardShortcutProvider handlers={{}}><Probe /></KeyboardShortcutProvider>);
         await act(async () => key('ArrowDown'));
         await act(async () => state!.setItems(items => items.filter(row => row.key !== 'first')));
@@ -136,6 +143,8 @@ describe('Inbox selection through the shared keyboard runtime', () => {
         await act(async () => state!.setItems(items => items.filter(row => row.key !== 'first')));
         expect(state?.focus?.id).toBe('first');
         await act(async () => state!.setSelectedResolved(true));
+        expect(state?.focus?.id).toBe('first');
+        await act(async () => key('j'));
         expect(state?.focus?.id).toBe('next');
         expect(read).toEqual([]);
     });
@@ -147,5 +156,26 @@ describe('Inbox selection through the shared keyboard runtime', () => {
         expect(state?.focus?.id).toBe('first');
         await act(async () => state!.setItems([initialItems[1]!]));
         expect(state?.focus?.id).toBe('first');
+    });
+    it('finds the selected row without deriving a route per Inbox row on every render', async () => {
+        const { createInboxItemRoute } = await import('@/components/inbox/inboxItemFocus');
+        const routes = vi.mocked(createInboxItemRoute);
+        await renderScreen(<KeyboardShortcutProvider handlers={{}}><Probe /></KeyboardShortcutProvider>);
+        const many: readonly InboxItem[] = Array.from({ length: 200 }, (_, index) => ({ ...initialItems[0]!, key: `row-${index}`,
+            title: `row-${index}`, source: { kind: 'session', serverId: 'home-a', id: `row-${index}` },
+            focus: { kind: 'session', serverId: 'home-a', id: `row-${index}` } }));
+        await act(async () => state!.setItems(many));
+        routes.mockClear();
+        // Renders with nothing selected never derive a route.
+        for (const resolved of [true, false, true]) await act(async () => state!.setSelectedResolved(resolved));
+        const unselected = routes.mock.calls.length;
+        await act(async () => state!.setFocus({ kind: 'session', serverId: 'home-a', id: 'row-150' }));
+        routes.mockClear();
+        // A selection is found once per Inbox change: a re-render derives only the selection's own key, never one per row.
+        for (const resolved of [false, true, false]) await act(async () => state!.setSelectedResolved(resolved));
+        expect(unselected).toBe(0);
+        expect(routes.mock.calls.length).toBeLessThanOrEqual(3 * 3);
+        await act(async () => key('ArrowDown'));
+        expect(state?.focus?.id).toBe('row-151');
     });
 });

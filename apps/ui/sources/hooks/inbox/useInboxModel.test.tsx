@@ -67,7 +67,7 @@ import { countInbox, countInboxNeedsYou } from '@/components/inbox/inboxCounts';
 import { KeyboardShortcutProvider } from '@/keyboard/KeyboardShortcutProvider';
 import { useInboxItemNavigation } from './useInboxItemNavigation';
 import { useInboxItemResolved } from './useInboxItemResolved';
-import type { InboxItemFocus } from '@/components/inbox/inboxItemFocus';
+import { createInboxItemRoute, type InboxItemFocus } from '@/components/inbox/inboxItemFocus';
 import { buildSessionActivityAttention } from '@/activity/attention/buildSessionActivityAttention';
 import { readAccountNoticeArtifactHeader } from '@/sync/domains/artifacts/usageNoticeArtifacts';
 import { workflowRunRowFromSummary } from '@/sync/store/domains/workflowRuns';
@@ -1531,7 +1531,7 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         await screen.unmount();
     });
 
-    it('keeps the exact selected approval through missing and crossed revisions, then advances on its admitted answer', async () => {
+    it('keeps the exact selected approval through missing and crossed revisions and its admitted answer', async () => {
         listRuns.mockResolvedValue(page([]));
         const serverId = appliedSnapshot().serverId;
         const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
@@ -1553,7 +1553,7 @@ describe('useInboxModel work groups (ORC R-10)', () => {
                 accountNotices: inbox.accountNotices, isDataReady: inbox.source.isDataReady });
             const close = React.useCallback(() => select(null), []);
             const openPage = React.useCallback(() => {}, []);
-            useInboxItemNavigation({ items: inbox.items, view: 'needs_you', focus: selected, selectedResolved,
+            useInboxItemNavigation({ items: inbox.items, view: 'needs_you', focus: selected, ...{ selectedResolved },
                 enabled: true, select, close, open: openPage, markOpened: inbox.markItemOpened });
             focus = selected;
             return null;
@@ -1574,11 +1574,73 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         await act(async () => seedAdmittedArtifactRows([terminal, next], storage));
         expect(focus).toMatchObject({ id: open.id });
         await act(async () => seedAdmittedArtifactRows([{ ...terminal, body: JSON.stringify(answered) }, next], storage));
-        expect(focus).toMatchObject({ id: next.id });
+        expect(focus).toMatchObject({ id: open.id });
         await act(async () => seedAdmittedArtifactRows([{ ...terminal, body: JSON.stringify(answered) },
             { ...next, body: undefined }], storage));
-        expect(focus).toMatchObject({ id: next.id });
+        expect(focus).toMatchObject({ id: open.id });
         hydration.resolve(Response.json({ error: 'unavailable' }, { status: 503 }));
+        await screen.unmount();
+    });
+
+    it('keeps an unread Session in Updates without claiming it was cleared', async () => {
+        const { InboxItemDetail } = await import('@/components/inbox/detail/InboxItemDetail');
+        const { createRealAppRouteElement } = await import('@/dev/testkit/render/renderRealAppRoute');
+        const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
+        const serverId = appliedSnapshot().serverId;
+        const session = createSessionFixture({ id: 'retained-update', serverId, active: false, seq: 3, latestReadyEventSeq: 3,
+            viewer: createSessionViewerFixture({ readState: { state: 'tracking', lastViewedSessionSeq: 0, unreadSince: 1_000 },
+                relevance: { relevant: true, reasons: ['owned_by_me'] },
+                attention: { needsAttention: true, reasons: ['unread'], primary: 'unread', presentation: 'full' } }) });
+        storage.setState({ sessions: { [session.id]: session }, ordinarySessionListMembershipByServerId: { [serverId]: [session.id] },
+            sessionListRowsByServerId: { [serverId]: { [session.id]: buildSessionListRenderableFromSession(session) } } });
+        const focus: InboxItemFocus = { kind: 'session', id: session.id, serverId };
+        const screen = await renderScreen(await createRealAppRouteElement(() =>
+            <AppPaneProvider><InboxModelProvider><Probe /><InboxItemDetail focus={focus} onClose={() => {}} /></InboxModelProvider></AppPaneProvider>, null));
+        await vi.waitFor(() => expect(model!.items.find(item => item.focus.id === session.id)?.view).toBe('updates'));
+        expect(screen.findByTestId('inbox.detail.resolved')).toBeNull();
+        await screen.unmount();
+    });
+
+    it('offers plugin settings when a notice page is absent from the destination catalog', async () => {
+        const { InboxItemDetail } = await import('@/components/inbox/detail/InboxItemDetail');
+        const { router } = await import('expo-router');
+        const { buildPluginDetailRoute } = await import('@/components/settings/plugins/model/pluginsSurfaceRoutes');
+        const artifact = createAccountNoticeArtifactFixture();
+        seedArtifacts({ [artifact.id]: artifact });
+        const focus: InboxItemFocus = { kind: 'notice', id: artifact.id, serverId: appliedSnapshot().serverId };
+        const screen = await renderScreen(<InboxModelProvider><InboxItemDetail focus={focus} onClose={() => {}} /></InboxModelProvider>);
+        await vi.waitFor(() => expect(screen.findByTestId('plugin-app-page-unavailable')).not.toBeNull());
+        expect(screen.getTextContent()).toContain('acme.review');
+        vi.mocked(router.push).mockClear();
+        await screen.pressByTestIdAsync('plugin-app-page-unavailable-action');
+        expect(router.push).toHaveBeenCalledWith(buildPluginDetailRoute('settings', 'acme.review'));
+        await screen.unmount();
+    });
+
+    it('retains a resolved notice’s detail and offers Next item through the Inbox route owner', async () => {
+        const { InboxItemDetail } = await import('@/components/inbox/detail/InboxItemDetail');
+        const { router } = await import('expo-router');
+        const serverId = appliedSnapshot().serverId;
+        function notice(id: string, resolved = false) {
+            const fixture = createAccountNoticeArtifactFixture({ id, header: { type: 'decision', page: undefined, body: 'Last known detail', resolved } });
+            const header = { ...fixture.header };
+            delete header.page;
+            return { ...fixture, header, rawHeader: header };
+        }
+        const open = notice('notice-first');
+        const next = notice('notice-next');
+        seedArtifacts({ [open.id]: open, [next.id]: next });
+        const focus: InboxItemFocus = { kind: 'notice', id: open.id, serverId };
+        const screen = await renderScreen(<InboxModelProvider><InboxItemDetail focus={focus} onClose={() => {}} /></InboxModelProvider>);
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('Last known detail'));
+        expect(screen.findByTestId('inbox.detail.resolved')).toBeNull();
+        const resolved = notice(open.id, true);
+        await act(async () => seedArtifacts({ [resolved.id]: resolved, [next.id]: next }));
+        await vi.waitFor(() => expect(screen.findByTestId('inbox.detail.resolved')).not.toBeNull());
+        expect(screen.getTextContent()).toContain('Last known detail');
+        vi.mocked(router.replace).mockClear();
+        await screen.pressByTestIdAsync('inbox.detail.next');
+        expect(router.replace).toHaveBeenCalledWith(createInboxItemRoute({ kind: 'notice', id: next.id, serverId }, 'needs_you'));
         await screen.unmount();
     });
 

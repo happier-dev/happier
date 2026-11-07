@@ -26,6 +26,7 @@ import { UserCard } from '@/components/ui/cards/UserCard';
 import { Typography } from '@/constants/Typography';
 import type { InboxModel } from '@/hooks/inbox/useInboxModel';
 import { type InboxItemFocus } from './inboxItemFocus';
+import { InboxPluginAvailability } from './InboxPluginAvailability';
 import { t } from '@/text';
 import { trackFriendsProfileView } from '@/track';
 import { buildServerScopedSessionKey } from '@/sync/domains/session/navigation/sessionNavigationOrder';
@@ -239,6 +240,15 @@ function useInboxContentParts(props: InboxContentProps, segmentSize: number) {
         return serverId ? [[`session:${serverId}:${candidate.sessionId}` as string, candidate] as const] : [];
     })), [model.sessionPresentation.readySessions]);
     const viewItems = React.useMemo(() => selectInboxItemsForView(model.items, view), [model.items, view]);
+    const pluginGroupHeads = React.useMemo(() => {
+        const heads = new Map<string, string>();
+        for (const item of viewItems) {
+            if (!item.source.pluginId) continue;
+            const sourceKey = JSON.stringify([item.source.serverId, item.source.pluginId]);
+            if (!heads.has(sourceKey)) heads.set(sourceKey, item.key);
+        }
+        return new Set(heads.values());
+    }, [viewItems]);
     const focusedRouteKey = props.focusedItem ? createInboxItemRoute(props.focusedItem).params.item : null;
     const { accountNotices, dismissAccountNotice } = model;
     const dismissNotice = React.useCallback(async (item: InboxItem) => {
@@ -402,7 +412,13 @@ function useInboxContentParts(props: InboxContentProps, segmentSize: number) {
     const renderSegment = (segment: InboxRowSegment) => {
         const sectionIndex = segment.sectionIndex;
         const virtualizedSegment = segment.first && segment.last ? undefined : { first: segment.first, last: segment.last };
-        const rows = segment.items.map((item, index) => renderRow(item, segment.start + index, segment.total));
+        const rows = segment.items.map((item, index) => {
+            const row = renderRow(item, segment.start + index, segment.total);
+            return item.source.pluginId && pluginGroupHeads.has(item.key)
+                ? <InboxPluginAvailability key={item.key} serverId={item.source.serverId} pluginId={item.source.pluginId}
+                    displayName={item.source.displayName}>{row}</InboxPluginAvailability>
+                : row;
+        });
         if (view === 'needs_you') {
             const section = needsYouSections[sectionIndex]!;
             return (

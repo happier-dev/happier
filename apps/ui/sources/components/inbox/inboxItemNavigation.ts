@@ -1,4 +1,23 @@
-import type { InboxItem, InboxItemView } from './inboxItems';
+import type { InboxItem } from './inboxItems';
+import { createInboxItemRoute, type InboxItemFocus } from './inboxItemFocus';
+
+/** The one identity a selection is matched by: the address the Inbox route carries (`?item=`). */
+export function readInboxItemSelectionKey(focus: InboxItemFocus | null): string | null {
+    return focus ? createInboxItemRoute(focus).params.item : null;
+}
+
+/**
+ * The row a selection points at. Every route key encodes its kind and id, so only rows with both can match;
+ * the full address is derived for those alone, never once per Inbox row.
+ */
+export function findInboxItemForFocus<T extends Pick<InboxItem, 'focus'>>(
+    items: readonly T[], focus: InboxItemFocus | null,
+): T | undefined {
+    const target = readInboxItemSelectionKey(focus);
+    if (target === null || !focus) return undefined;
+    return items.find(item => item.focus.id === focus.id && item.focus.kind === focus.kind
+        && readInboxItemSelectionKey(item.focus) === target);
+}
 
 type NavigationItem = Pick<InboxItem, 'key' | 'focus' | 'view'>;
 
@@ -9,23 +28,4 @@ export function moveInboxItem(
     const index = items.findIndex(item => item.key === selectedKey);
     if (index < 0) return direction === 1 ? items[0]! : items[items.length - 1]!;
     return items[Math.max(0, Math.min(items.length - 1, index + direction))]!;
-}
-
-/** Only an item removed from Needs you may move selection without another user intent. */
-export function advanceResolvedInboxItem(
-    view: InboxItemView, previous: readonly NavigationItem[], current: readonly NavigationItem[], selectedKey: string,
-): NavigationItem | null {
-    if (view !== 'needs_you' || current.some(item => item.key === selectedKey)) return null;
-    const index = previous.findIndex(item => item.key === selectedKey);
-    if (index < 0) return null;
-    const survivors = new Map(current.filter(item => item.view === 'needs_you').map(item => [item.key, item]));
-    for (const item of previous.slice(index + 1)) {
-        const next = survivors.get(item.key);
-        if (next) return next;
-    }
-    for (const item of previous.slice(0, index).reverse()) {
-        const next = survivors.get(item.key);
-        if (next) return next;
-    }
-    return null;
 }

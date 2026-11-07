@@ -1,4 +1,5 @@
 import * as React from 'react';
+import * as zustandTraditional from 'zustand/traditional';
 import { JSDOM } from 'jsdom';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -7,7 +8,7 @@ import { storage } from '@/sync/domains/state/storage';
 import { Modal } from '@/modal';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
-import { KeyboardShortcutProvider, useKeyboardShortcutHandlers, useFindSurfaceRegistration, useFindSurfaceRegistrationHost, useEmbeddedFindKeyboard, useEmbeddedEditorKeyboard, useNativeKeyboardInput, useKeyboardCommand } from './KeyboardShortcutProvider';
+import { KeyboardShortcutProvider, KeyboardShortcutContextBridge, useKeyboardShortcutContextSnapshot, type KeyboardShortcutContextSnapshot, useKeyboardShortcutHandlers, useFindSurfaceRegistration, useFindSurfaceRegistrationHost, useEmbeddedFindKeyboard, useEmbeddedEditorKeyboard, useNativeKeyboardInput, useKeyboardCommand } from './KeyboardShortcutProvider';
 import { useKeyboardShortcutLabel } from './shortcutLabels';
 import { useInboxItemNavigation } from '@/hooks/inbox/useInboxItemNavigation';
 import type { InboxItem } from '@/components/inbox/inboxItems';
@@ -25,6 +26,11 @@ import type { CodeEditorHandle, TextEditorHandle } from '@/components/ui/code/ed
 import * as cmState from '@codemirror/state';
 import * as cmView from '@codemirror/view';
 import { ShortcutsSheet } from './shortcutsSheet/ShortcutsSheet';
+import { useImageAnnotator } from '@/components/ui/media/annotation/useImageAnnotator';
+import type { ImageAnnotator } from '@/components/ui/media/annotation/annotatorStore';
+
+// ESM namespace exports cannot be reconfigured; Vitest supplies transparent spies.
+vi.mock('zustand/traditional', { spy: true });
 
 const testState = vi.hoisted(() => ({
     platformOS: 'web',
@@ -79,6 +85,160 @@ vi.mock('expo-modules-core', async (importOriginal) => ({
 }));
 
 describe('KeyboardShortcutProvider', () => {
+    it.each([false, true])('dispatches and labels the mounted annotator at default preferences, then releases its keys on exit (modal bridge: %s)', async bridged => {
+        testState.platformOS = 'web';
+        vi.stubGlobal('navigator', { platform: 'MacIntel' });
+        storage.setState({ settings: { ...initialSettings, keyboardShortcutsV2Enabled: false,
+            keyboardSingleKeyShortcutsEnabled: false } });
+        let annotator: ImageAnnotator | undefined;
+        let arrowLabel: string | undefined;
+        let snapshot: KeyboardShortcutContextSnapshot | undefined;
+        const newSession = vi.fn();
+        function Caller() {
+            const current = useKeyboardShortcutContextSnapshot();
+            // A modal captures the caller's context once, before its editor registers.
+            snapshot ??= current;
+            return null;
+        }
+        function Annotate() {
+            annotator = useImageAnnotator({ source: { uri: 'blob:picture', width: 100, height: 100, scale: 1 } });
+            arrowLabel = useKeyboardShortcutLabel('annotation.arrow');
+            return null;
+        }
+        const element = (open: boolean) => <KeyboardShortcutProvider handlers={{ 'session.new': newSession }}>
+            <Caller />
+            {open && snapshot ? bridged
+                ? <KeyboardShortcutContextBridge snapshot={snapshot}><Annotate /></KeyboardShortcutContextBridge>
+                : <Annotate /> : null}
+        </KeyboardShortcutProvider>;
+        const screen = await renderScreen(element(false));
+        try {
+            await screen.update(element(true));
+            const editor = annotator!;
+            await act(async () => {
+                editor.setCanvasFocused(true);
+                editor.apply([{ kind: 'mark.add', mark: { id: 'selected', kind: 'step', at: { x: 10, y: 10 }, color: 'red', size: 's' } }], 'selected');
+                window.dispatchEvent(createKeyboardEvent({ key: 'a', code: 'KeyA' }));
+            });
+            expect(editor.store.getState().tool).toBe('arrow');
+            expect(arrowLabel).toBe('A');
+            await act(async () => { window.dispatchEvent(createKeyboardEvent({ key: 'Delete', code: 'Delete' })); });
+            expect(editor.store.getState().document.marks).toHaveLength(0);
+            await act(async () => { window.dispatchEvent(createKeyboardEvent({ key: 'z', code: 'KeyZ', metaKey: true })); });
+            expect(editor.store.getState().document.marks).toHaveLength(1);
+            editor.setTool('blur');
+            const input = new JSDOM('<input>').window.document.querySelector('input');
+            await act(async () => { window.dispatchEvent(createKeyboardEvent({ key: 'a', code: 'KeyA', target: input })); });
+            expect(editor.store.getState().tool).toBe('blur');
+            await screen.update(element(false));
+            editor.setTool('select');
+            await act(async () => {
+                window.dispatchEvent(createKeyboardEvent({ key: 'a', code: 'KeyA' }));
+                window.dispatchEvent(createKeyboardEvent({ key: 'n', code: 'KeyN', metaKey: true }));
+            });
+            expect(editor.store.getState().tool).toBe('select');
+            expect(newSession).not.toHaveBeenCalled();
+        } finally {
+            await screen.unmount();
+        }
+    });
+
+    it('does not execute keyboard selectors for unrelated settings and updates labels for a keyboard preference', async () => {
+        testState.platformOS = 'ios';
+        storage.setState({ settings: { ...initialSettings, keyboardShortcutsV2Enabled: true } });
+        const selected = vi.fn();
+        const { useStoreWithEqualityFn: useStore } = await vi.importActual<typeof zustandTraditional>('zustand/traditional');
+        // Transparent instrumentation: the actual store, routing, selector and equality all run.
+        vi.mocked(zustandTraditional.useStoreWithEqualityFn).mockImplementation((api, selector, equality) =>
+            useStore(api, selector ? state => { selected(); return selector(state); } : selector, equality));
+        let label: string | undefined;
+        function Labels() {
+            useKeyboardShortcutHandlers({ 'settings.open': () => 'handled' });
+            label = useKeyboardShortcutLabel('settings.open');
+            return null;
+        }
+        const screen = await renderScreen(<KeyboardShortcutProvider handlers={{}}><Labels /></KeyboardShortcutProvider>);
+        try {
+            expect(label).toBeDefined();
+            selected.mockClear();
+            await act(async () => {
+                for (let index = 0; index < 10; index += 1) storage.setState(state => ({
+                    settings: { ...state.settings, transcriptMessageCopyActionEnabled: index % 2 === 0 },
+                }));
+            });
+            expect(selected).not.toHaveBeenCalled();
+            await act(async () => storage.setState(state => ({
+                settings: { ...state.settings, keyboardShortcutsV2Enabled: false },
+            })));
+            expect(selected).toHaveBeenCalled();
+            expect(label).toBeUndefined();
+        } finally {
+            await screen.unmount();
+            vi.mocked(zustandTraditional.useStoreWithEqualityFn).mockRestore();
+            vi.restoreAllMocks();
+            storage.setState({ settings: initialSettings });
+        }
+    });
+
+    it('publishes shortcut labels only when their content changes, not on every provider render', async () => {
+        testState.platformOS = 'web';
+        storage.setState({ settings: { ...initialSettings, keyboardShortcutsV2Enabled: true } });
+        let snapshot: KeyboardShortcutContextSnapshot | undefined;
+        let rerender: (() => void) | undefined;
+        function Probe() {
+            snapshot = useKeyboardShortcutContextSnapshot();
+            return null;
+        }
+        function Parent() {
+            const [, setTick] = React.useState(0);
+            rerender = () => setTick(tick => tick + 1);
+            // A fresh handlers object each render, as real parents pass.
+            return <KeyboardShortcutProvider handlers={{}}><Probe /></KeyboardShortcutProvider>;
+        }
+        const screen = await renderScreen(<Parent />);
+        try {
+            const labels = snapshot!.registration!.labels;
+            const published = vi.fn();
+            const stop = labels.subscribe(published);
+            const first = labels.getState();
+            for (let index = 0; index < 5; index += 1) await act(async () => { rerender!(); });
+            stop();
+            expect(published).not.toHaveBeenCalled();
+            expect(labels.getState()).toBe(first);
+        } finally {
+            await screen.unmount();
+            storage.setState({ settings: initialSettings });
+        }
+    });
+
+    it('keeps label consumers from re-rendering when the provider recomputes identical labels', async () => {
+        testState.platformOS = 'web';
+        storage.setState({ settings: { ...initialSettings, keyboardShortcutsV2Enabled: true } });
+        let rerender: (() => void) | undefined;
+        let consumerRenders = 0;
+        const consumer = <Consumer />;
+        function Consumer() {
+            useKeyboardShortcutLabel('find.next');
+            consumerRenders += 1;
+            return null;
+        }
+        function Parent() {
+            const [, setTick] = React.useState(0);
+            rerender = () => setTick(tick => tick + 1);
+            // A fresh handlers object each render recomputes the labels with the same content.
+            return <KeyboardShortcutProvider handlers={{}}>{consumer}</KeyboardShortcutProvider>;
+        }
+        const screen = await renderScreen(<Parent />);
+        try {
+            const before = consumerRenders;
+            for (let index = 0; index < 5; index += 1) await act(async () => { rerender!(); });
+            expect(consumerRenders).toBe(before);
+        } finally {
+            await screen.unmount();
+            storage.setState({ settings: initialSettings });
+        }
+    });
+
     it.each(['web', 'ios', 'android'])('keeps unchanged Find refreshes local on %s while publishing real availability and open changes', async platform => {
         testState.platformOS = platform;
         vi.stubGlobal('navigator', { platform: 'Linux' });
@@ -300,7 +460,7 @@ describe('KeyboardShortcutProvider', () => {
         const markOpened = vi.fn(async () => {});
         let execute: ReturnType<typeof useKeyboardCommand> | undefined;
         function Inbox() {
-            useInboxItemNavigation({ items, focus, view: 'needs_you', selectedResolved: false, enabled: true,
+            useInboxItemNavigation({ items, focus, view: 'needs_you', enabled: true,
                 select: () => {}, close: () => {}, open, markOpened });
             execute = useKeyboardCommand();
             return <Child />;
@@ -309,6 +469,24 @@ describe('KeyboardShortcutProvider', () => {
         await act(async () => { expect(execute?.('inbox.item.open')).toBe(true); });
         expect(open).toHaveBeenCalledWith('/session/source?serverId=home-a&jumpSeq=18');
         expect(markOpened).not.toHaveBeenCalled();
+    });
+    it('keeps advertising the keys that still run with general shortcuts off, and only those', async () => {
+        storage.setState({ settings: { ...initialSettings, keyboardShortcutsV2Enabled: false } });
+        let inboxNext: string | undefined;
+        let settings: string | undefined;
+        function Labels() {
+            useKeyboardShortcutHandlers({ 'inbox.item.next': () => 'handled', 'settings.open': () => 'handled' });
+            inboxNext = useKeyboardShortcutLabel('inbox.item.next');
+            settings = useKeyboardShortcutLabel('settings.open');
+            return <Child />;
+        }
+        try {
+            await renderScreen(<KeyboardShortcutProvider handlers={{}}><Labels /></KeyboardShortcutProvider>);
+            expect(inboxNext).toBeDefined();
+            expect(settings).toBeUndefined();
+        } finally {
+            storage.setState({ settings: initialSettings });
+        }
     });
     it('lets a modal own Escape before closing an open Find surface', async () => {
         let opened = true;

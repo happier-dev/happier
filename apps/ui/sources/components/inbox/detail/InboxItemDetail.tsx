@@ -1,11 +1,11 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { DestinationInstanceHost, type DestinationNavigation } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { WorkspaceDestinationBody } from '@/components/appShell/workspace/WorkspaceDestinationBody';
 import { resolveDestinationRefFromHref, useCompactAppDestinations } from '@/components/appShell/destinations/compactAppDestinationCatalog';
-import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useLocalSearchParams, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { ApprovalDetailScreen } from '@/components/approvals/ApprovalDetailScreen';
 import {
   HeaderActionsScope,
@@ -18,14 +18,30 @@ import { WorkflowRunPane } from '@/components/workflows/run/WorkflowRunPane';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
 import { useOptionalInboxModel } from '@/hooks/inbox/useInboxModel';
+import { useInboxItemResolved } from '@/hooks/inbox/useInboxItemResolved';
+import { InboxPluginAvailability } from '../InboxPluginAvailability';
+import { PluginSurfaceFallback } from '@/components/sessions/panes/PluginSurfaceFallback';
+import { buildPluginDetailRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
+import { findInboxItemForFocus, moveInboxItem } from '../inboxItemNavigation';
+import { selectInboxItemsForView } from '../inboxItems';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { useWorkRelativeTime } from '@/components/sessions/agents/presentation/agentActivityClock';
 import { Modal } from '@/modal';
+import { InvestigationOutcomeBanner } from './InvestigationOutcomeBanner';
+import { Item } from '@/components/ui/lists/Item';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { Icon } from '@/components/ui/icons/Icon';
+import type { AccountNoticeArtifact } from '@/sync/domains/artifacts/usageNoticeArtifacts';
+import { useMachineDisplayNamesById } from '@/sync/store/hooks';
+import {
+  readNoticeInvestigationSubject, useHealthNoticeInvestigate,
+  type BoundHealthNoticeInvestigation, type NoticeInvestigationSubject,
+} from './healthNoticeInvestigation';
 import { t } from '@/text';
 
-import { INBOX_ITEM_DETAIL_REGISTRY, createInboxItemRoute, resolveInboxItemPageRoute, resolveInboxNoticeOwnPageRoute, type InboxItemFocus } from '../inboxItemFocus';
+import { INBOX_ITEM_DETAIL_REGISTRY, createInboxItemRoute, readInboxView, resolveInboxItemPageRoute, resolveInboxNoticeOwnPageRoute, type InboxItemFocus } from '../inboxItemFocus';
 
 function describeOpenPage(focus: InboxItemFocus): string {
   return t(INBOX_ITEM_DETAIL_REGISTRY[focus.kind].openLabel);
@@ -46,6 +62,16 @@ export const InboxItemDetail = React.memo(function InboxItemDetail(
   const router = useRouter();
   const { focus, onClose } = props;
   const model = useOptionalInboxModel();
+  const params = useLocalSearchParams<{ view?: string | string[] }>();
+  const selected = model ? findInboxItemForFocus(model.items, focus) : undefined;
+  const view = readInboxView(params.view) ?? selected?.view ?? 'needs_you';
+  const positivelyResolved = useInboxItemResolved(focus, { sessionCandidates: model?.sessionCandidates ?? [],
+    accountNotices: model?.accountNotices ?? [], isDataReady: model?.source.isDataReady ?? false,
+    sessionScopes: model?.source.audienceScopes });
+  // An answered attention item may still be an unread Update. The receipt describes
+  // clearing this view and always requires the source owner's positive disposition.
+  const resolved = positivelyResolved && selected?.view !== view;
+  const next = resolved && model ? moveInboxItem(selectInboxItemsForView(model.items, view), selected?.key ?? null, 1) : null;
   const scopeKey = `inbox-detail:${React.useId()}`;
   const notice = focus.kind === 'notice'
     ? model?.accountNotices.find(entry => entry.artifact.id === focus.id)?.header
@@ -86,6 +112,9 @@ export const InboxItemDetail = React.memo(function InboxItemDetail(
       {controlsInHeader ? null : (
         <View style={styles.bar}>{renderControls()}</View>
       )}
+      {resolved ? <SurfaceStateCard testID="inbox.detail.resolved" kind="success" size="line"
+        title={t('inbox.resolvedReceipt')} action={next ? { testID: 'inbox.detail.next', label: t('inbox.nextItem'),
+          onPress: () => router.replace(createInboxItemRoute(next.focus, view) as never) } : undefined} /> : null}
       <HeaderActionsScope scopeKey={scopeKey}>
         <InboxItemDetailBody
           key={focusKey}
@@ -145,27 +174,61 @@ function NoticeDetailAdapter(props: DetailBodyProps) {
   const entry = model?.accountNotices.find(candidate => candidate.artifact.id === props.focus.id);
   const ownPage = resolveInboxNoticeOwnPageRoute(entry?.header
     ?? model?.openUsageNotices.find(candidate => candidate.artifact.id === props.focus.id)?.header, props.focus.serverId);
-  if (ownPage) return <PageDetailAdapter {...props} />;
   // Its page is this Inbox item: while the notices load, wait; a notice that is gone says so.
   if (!entry || !model) return model?.isLoading ? <PaneLoadingFallback /> : <SurfaceStateCard kind="unavailable" title={t('common.unavailable')} />;
   const routeKey = createInboxItemRoute(props.focus).params.item;
   const item = model.items.find(candidate => createInboxItemRoute(candidate.focus).params.item === routeKey);
-  return <InboxNoticeDetail title={item?.title ?? entry.header.title} body={item?.excerpt ?? null}
+  // A failing service or an open provider alert is evidence: Investigate hands it to configured Triage.
+  const subject = readNoticeInvestigationSubject(entry.header, model.noticeInvestigation.isEligible(entry));
+  const investigation = subject?.investigable ? bindNoticeInvestigation(model.noticeInvestigation, entry) : null;
+  const plugin = entry.header.source.kind === 'plugin'
+    ? { id: entry.header.source.pluginId, name: item?.source.displayName ?? entry.header.source.pluginId } : undefined;
+  const content = ownPage ? <PageDetailAdapter {...props} plugin={plugin} /> : <InboxNoticeDetail title={item?.title ?? entry.header.title} body={item?.excerpt ?? entry.header.body ?? entry.header.excerpt ?? null}
     source={item?.source.displayName ?? null} createdAt={item?.createdAt ?? entry.artifact.createdAt}
+    serverId={props.focus.serverId} subject={subject} investigation={investigation}
     onDismiss={async () => { await model.dismissAccountNotice(entry); props.onClose(); }} />;
+  return entry.header.source.kind === 'plugin'
+    ? <InboxPluginAvailability detail serverId={props.focus.serverId} pluginId={entry.header.source.pluginId}
+        displayName={item?.source.displayName}>{content}</InboxPluginAvailability>
+    : content;
 }
 
-const InboxNoticeDetail = React.memo(function InboxNoticeDetail(props: Readonly<{
+function bindNoticeInvestigation(
+  investigation: NonNullable<ReturnType<typeof useOptionalInboxModel>>['noticeInvestigation'],
+  entry: AccountNoticeArtifact,
+): BoundHealthNoticeInvestigation {
+  return {
+    readChoices: (options) => investigation.readChoices(entry, options),
+    resume: (options) => investigation.resume(entry, options),
+    run: (selection, options) => investigation.run(entry, selection, options),
+  };
+}
+
+/** A notice as its own page; exported for the dev specimen that draws it over fixture outcomes. */
+export const InboxNoticeDetail = React.memo(function InboxNoticeDetail(props: Readonly<{
   title: string; body: string | null; source: string | null; createdAt: number; onDismiss: () => Promise<void>;
+  /** The Home the notice belongs to: where an approval Investigate asks for is opened. */
+  serverId: string;
+  subject?: NoticeInvestigationSubject | null;
+  investigation?: BoundHealthNoticeInvestigation | null;
 }>) {
+  const { theme } = useUnistyles();
   const age = useWorkRelativeTime(props.createdAt);
   const [pending, setPending] = React.useState(false);
-  const { onDismiss } = props;
+  const { onDismiss, subject } = props;
+  const service = subject?.kind === 'service' ? subject : null;
   const dismiss = React.useCallback(async () => {
     setPending(true);
     try { await onDismiss(); }
     catch { Modal.alert(t('common.error'), t('errors.unknownError')); setPending(false); }
   }, [onDismiss]);
+  const machineNames = useMachineDisplayNamesById(service ? [service.machineId] : NO_MACHINES);
+  const machine = service ? machineNames[service.machineId] ?? service.machineId : null;
+  const canInvestigate = subject?.investigable === true && props.investigation != null;
+  const investigation = useHealthNoticeInvestigate(canInvestigate ? props.investigation ?? null : null);
+  const investigateHint = machine ? t('inbox.work.healthNotice.investigateHint', { machine }) : t('inbox.work.healthNotice.alertInvestigateHint');
+  // One line says why an open notice offers no Investigate: the service's own section, else a quiet line.
+  const ineligible = subject?.open === true && !canInvestigate ? t('inbox.work.healthNotice.investigateUnavailable') : undefined;
   return (
     <ItemList testID="inbox.notice.detail">
       <PageHeader
@@ -176,23 +239,52 @@ const InboxNoticeDetail = React.memo(function InboxNoticeDetail(props: Readonly<
         descriptionLines={0}
         meta={[...(props.source ? [{ key: 'source', text: props.source }] : []), { key: 'age', text: age }]}
         actions={(
-          <RoundButton testID="inbox.notice.dismiss" display="inverted" disabled={pending}
-            title={t('inbox.actionOperations.dismiss')} onPress={dismiss} />
+          <>
+            {canInvestigate ? (
+              <RoundButton testID="inbox.notice.investigate" title={t('inbox.work.healthNotice.investigate')}
+                loading={investigation.pending} disabled={investigation.pending} onPress={investigation.investigate}
+                accessibilityHint={investigateHint} />
+            ) : null}
+            <RoundButton testID="inbox.notice.dismiss" display="secondary" disabled={pending}
+              title={t('inbox.actionOperations.dismiss')} onPress={dismiss} />
+          </>
         )}
         actionsPlacement="page"
       />
+      {investigation.outcome ? <InvestigationOutcomeBanner outcome={investigation.outcome} serverId={props.serverId} onChoosePlacement={investigation.investigateWithPlacement} pending={investigation.pending} /> : null}
+      {ineligible && !service ? (
+        <ItemGroup testID="inbox.notice.investigate.ineligible" surface="none" description={ineligible}>{null}</ItemGroup>
+      ) : null}
+      {service && machine ? (
+        <ItemGroup testID="inbox.notice.health" title={t('inbox.work.healthNotice.where')}
+          description={canInvestigate ? investigateHint : ineligible}>
+          <Item testID="inbox.notice.health.service" icon={<Icon name="stack" size={18} color={theme.colors.text.secondary} />}
+            title={t('inbox.work.healthNotice.service')} detail={service.service} mode="info" />
+          <Item testID={`inbox.notice.health.machine.${service.machineId}`} icon={<Icon name="hard-drives" size={18} color={theme.colors.text.secondary} />}
+            title={t('inbox.work.healthNotice.machine')} detail={machine} mode="info" />
+        </ItemGroup>
+      ) : null}
     </ItemList>
   );
 });
 
+const NO_MACHINES: readonly string[] = [];
+
 const renderNoSession = () => null;
-function PageDetailAdapter(props: DetailBodyProps) {
+function PageDetailAdapter(props: DetailBodyProps & Readonly<{ plugin?: Readonly<{ id: string; name: string }> }>) {
   const catalog = useCompactAppDestinations();
   const router = useRouter();
   const target = React.useMemo(() => resolveDestinationRefFromHref(catalog, props.pageRoute), [catalog, props.pageRoute]);
   const navigation = React.useMemo<DestinationNavigation>(() => ({ push: router.push, replace: router.replace, back: props.onClose }),
     [router.push, router.replace, props.onClose]);
-  if (!target) return <SurfaceStateCard kind="unavailable" title={t('common.unavailable')} />;
+  if (!target) {
+    const plugin = props.plugin;
+    return plugin ? <PluginSurfaceFallback testID="plugin-app-page-unavailable"
+      subjectName={plugin.name} reasonCode="plugin_app_page_unavailable"
+      action={{ label: t('settingsPlugins.managePlugin'), onPress: () => {
+        router.push(buildPluginDetailRoute('settings', plugin.id));
+      } }} /> : <SurfaceStateCard kind="unavailable" title={t('common.unavailable')} />;
+  }
   return <DestinationInstanceHost tabId={`inbox-detail:${props.focus.kind}:${props.focus.id}`} ref={target}
     pathname={props.pageRoute} focused visible navigation={navigation}>
     <WorkspaceDestinationBody target={target} pathname={props.pageRoute} renderSession={renderNoSession} renderSessionDetails={renderNoSession} />
@@ -247,7 +339,6 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minHeight: 0,
     minWidth: 0,
-    backgroundColor: theme.colors.surface.base,
   },
   bar: {
     flexDirection: 'row',

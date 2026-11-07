@@ -228,6 +228,7 @@ export function projectAccountNoticeInboxItemV1(input: Readonly<{
     focus: { kind: 'notice' as const, id: artifactId, serverId }, pageRoute: input.pageRoute,
     author: null, excerpt: header.body ?? header.excerpt ?? null,
     source: { kind: 'account_notice', id: artifactId, serverId,
+      ...(header.source.kind === 'plugin' ? { pluginId: header.source.pluginId } : {}),
       displayName: header.source.kind === 'plugin' ? input.pluginDisplayName ?? null : null } };
 }
 

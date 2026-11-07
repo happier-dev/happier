@@ -935,7 +935,9 @@ export function resolvePluginSurfaceStatePresentation(input: Readonly<{
     const namedTitle = !subjectName
         ? undefined
         : input.state === 'unavailable'
-            ? t('pluginSurfaces.state.namedUnavailable', { name: subjectName })
+            ? reasonCode === 'plugin_app_page_unavailable'
+                ? t('pluginSurfaces.state.namedPageUnavailable', { name: subjectName })
+                : t('pluginSurfaces.state.namedUnavailable', { name: subjectName })
             : input.state === 'failedRetry'
                 ? t('pluginSurfaces.state.namedFailed', { name: subjectName })
                 : undefined;

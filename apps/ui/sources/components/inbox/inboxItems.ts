@@ -83,7 +83,7 @@ export type InboxItem = Readonly<{
     workStatus?: WorkStatusPresentation;
     phase?: 'attention' | 'live';
     /** The owning record, never a mirrored Inbox lifecycle. */
-    source: Readonly<{ kind: string; id: string; serverId: string; displayName?: string | null; onceDelivery?: PersonalFollowOnceOccurrenceV1;
+    source: Readonly<{ kind: string; id: string; serverId: string; displayName?: string | null; pluginId?: string; onceDelivery?: PersonalFollowOnceOccurrenceV1;
         onceDeliveries?: readonly PersonalRunFollowOnceOccurrenceV1[] }>;
     /** Account byline or producing Session name; never inferred from the source owner. */
     author?: Readonly<{ name: string; isSelf?: boolean; avatar?: ReturnType<typeof resolveAccountActorPresentation>['avatar'] }> | null;

@@ -47,6 +47,8 @@ import type { InboxItemFocus } from './inboxItemFocus';
 import type { InboxItemView } from './inboxItems';
 import { InboxWorkItemRow } from './workGroups/InboxWorkItemRow';
 import { Text } from '@/components/ui/text/Text';
+import { replacePluginAccountAvailabilityProjection, clearPluginAccountAvailabilityProjection } from '@/sync/domains/plugins/availability/projection';
+import { PluginAccountAvailabilityIntentReadResponseV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { InboxWorkRow } from './InboxWorkRow';
 import { WorkStatusRowMark } from '@/components/work/status/WorkStatusRowMark';
 import { resolveWorkStatusRowMark } from '@/components/work/status/workStatusRowMark';
@@ -267,13 +269,39 @@ function NavigableInbox(props: Readonly<{ model: InboxModel; view: InboxItemView
         accountNotices: props.model.accountNotices, isDataReady: props.model.source.isDataReady,
         sessionScopes: props.model.source.audienceScopes });
     useInboxItemNavigation({ items: props.model.items, view: props.view, focus, enabled: true,
-        selectedResolved, select, open: routerPush, close, markOpened: props.model.markItemOpened });
+        ...{ selectedResolved }, select, open: routerPush, close, markOpened: props.model.markItemOpened });
     const Content = props.content;
     return <><Content model={props.model} view={props.view} focusedItem={focus} onSelectItem={select} />
         <Text testID="inbox.selected">{JSON.stringify(focus)}</Text></>;
 }
 
 describe('InboxContent rows, attention sources and popover (ORC R-10, lab inbox-I1, P4)', () => {
+    it('keeps a disabled plugin’s rows with one repair note and never calls unknown enablement disabled', async () => {
+        const { InboxContent } = await import('./InboxContent');
+        connection = await restoreServerAccountForTest({ serverUrl: 'https://server-a', accountId: 'account-a' });
+        const scope = storage.getState().profileScope!;
+        const pluginId = 'com.acme.fixture';
+        const response = PluginAccountAvailabilityIntentReadResponseV1Schema.parse({
+            availabilityCursor: 1, hostingCapability: { enabled: true, maxArtifactBytes: 1024, maxAccountBytes: 2048 },
+            intent: { pluginId, desiredVersion: null, enabled: false, offlineUiHosting: 'enabled', writableCollections: [], revision: 'intent-1' },
+            release: null, uiArtifacts: [], packageAssets: [],
+        });
+        replacePluginAccountAvailabilityProjection({ scope, snapshot: { availabilityCursor: 1, materializations: [], snapshots: [],
+            intentReads: [{ pluginId, response }] } });
+        const items: InboxItem[] = ['one', 'two'].map(id => ({ key: id, producer: 'notice', type: 'update', view: 'updates',
+            title: id, context: null, createdAt: NOW, read: false, pageRoute: '/inbox',
+            source: { kind: 'account_notice', id, serverId: scope.serverId, pluginId, displayName: 'Fixture' },
+            focus: { kind: 'notice', id, serverId: scope.serverId } }));
+        const model = { ...createModel({ needsYou: false }), items, openUsageNotices: [] };
+        const screen = await renderScreen(<InboxContent model={model} view="updates" />, { wrapper: PagePresentation });
+        expect(screen.tree.findAllByType(InboxWorkRow).map(row => row.props.title)).toEqual(['one', 'two']);
+        expect(screen.findAll(node => node.props.testID === 'inbox.plugin-disabled').length).toBeGreaterThan(0);
+        expect(screen.tree.findAllByType((await import('./InboxPluginAvailability')).InboxPluginAvailability)).toHaveLength(1);
+        await act(async () => clearPluginAccountAvailabilityProjection());
+        expect(screen.findByTestId('inbox.plugin-disabled')).toBeNull();
+        expect(screen.tree.findAllByType(InboxWorkRow)).toHaveLength(2);
+        await screen.unmount();
+    });
     it('renders Machine reachability in Updates independently of operation custody', async () => {
         const { InboxContent } = await import('./InboxContent');
         const snapshot = ActionOperationSnapshotV1Schema.parse({ version: 1, operationId: 'reboot-reachability', revision: 1,
@@ -881,7 +909,7 @@ describe('InboxContent renders the canonical item model in three views (C1 L10, 
         }
     });
 
-    it('walks and auto-advances the mounted Needs-you order across work groups and request types', async () => {
+    it('walks the mounted Needs-you order and retains an answered detail until explicit navigation', async () => {
         const { InboxContent } = await import('./InboxContent');
         connection = await restoreServerAccountForTest({ serverUrl: 'https://server-a', accountId: 'account-a' });
         const serverId = (await import('@/sync/domains/server/serverRuntime')).getActiveServerSnapshot().serverId;
@@ -909,6 +937,8 @@ describe('InboxContent renders the canonical item model in three views (C1 L10, 
         await screen.update(render({ ...model, items: model.items.filter(item => item.key !== expected[0]!.key),
             sessionCandidates: model.sessionCandidates.map(entry => entry.sessionId === expected[0]!.focus.id
                 ? candidate(entry.session, [], serverId, entry.presentationSource) : entry) }));
+        expect(screen.findByTestId('inbox.selected')?.props.children).toBe(JSON.stringify(expected[0]!.focus));
+        await act(async () => pressInboxKey('j'));
         expect(screen.findByTestId('inbox.selected')?.props.children).toBe(JSON.stringify(expected[1]!.focus));
     });
 

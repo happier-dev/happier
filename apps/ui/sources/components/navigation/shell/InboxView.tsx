@@ -2,28 +2,27 @@ import * as React from 'react';
 import { retryableLazy } from '@/components/ui/performance/retryableLazy';
 import { Platform, View, useWindowDimensions } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { COLLECTION_RAIL_MIN_WIDTH_PX, HappierListDetailLayout, useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
-import { HAPPIER_COLLECTION_RAIL_WIDTH_PX } from '@happier-dev/plugin-ui/advanced';
+import { HappierListDetailLayout, useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 import { useLocalSearchParams, useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { InboxContent, type InboxView as InboxContentView } from '@/components/inbox/InboxContent';
+import { InboxContentList, type InboxView as InboxContentView } from '@/components/inbox/InboxContent';
 import { createInboxItemRoute, readInboxView, resolveInboxItemPageRoute, resolveInboxNoticeOwnPageRoute, type InboxItemDetailContext, type InboxItemFocus } from '@/components/inbox/inboxItemFocus';
+import { findInboxItemForFocus, readInboxItemSelectionKey } from '@/components/inbox/inboxItemNavigation';
 import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
 import { countInboxMentions, countInboxNeedsYou, countInboxUpdates } from '@/components/inbox/inboxCounts';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Header } from '@/components/navigation/Header';
 import { NavigationTitleChromeProvider, PageHeader } from '@/components/ui/layout/PageHeader';
 import { NavigationLargeTitleProvider } from '@/components/ui/layout/navigationTitleChrome';
-import { ItemList } from '@/components/ui/lists/ItemList';
 import { useCollectionRailWidth } from '@/components/ui/lists/collection/useCollectionRailWidth';
 import {
     InboxModelBoundary,
     useInboxModel,
+    type InboxModel,
 } from '@/hooks/inbox/useInboxModel';
 import { t } from '@/text';
 import { useIsTablet } from '@/utils/platform/responsive';
 import { useInboxItemNavigation } from '@/hooks/inbox/useInboxItemNavigation';
-import { useInboxItemResolved } from '@/hooks/inbox/useInboxItemResolved';
 import { InboxKeyHints } from '@/components/inbox/InboxKeyHints';
 import { selectInboxItemsForView } from '@/components/inbox/inboxItems';
 import { useDestinationFocus, useDestinationVisibility } from '@/components/appShell/workspace/DestinationInstanceHost';
@@ -51,14 +50,15 @@ const InboxItemDetail = retryableLazy<React.ComponentProps<typeof import('@/comp
  * sum the Inbox is the list alone and rows open their item's own page.
  */
 const INBOX_DETAIL_MIN_WIDTH_PX = 440;
+/** The list is the wider pane (lab P4: share 0.6, minimum 400): a row's title and its inline answer must not truncate. */
+const INBOX_LIST_MIN_WIDTH_PX = 400;
+const INBOX_LIST_PREFERRED_RATIO = 0.6;
 
 const InboxViewContent = React.memo(function InboxViewContent(props: Readonly<{ focusedItem?: InboxItemFocus | null }>) {
     const { theme } = useUnistyles();
     const materialColor = useHappierMaterialColorResolver();
     const model = useInboxModel();
     const router = useRouter();
-    const destinationFocused = useDestinationFocus();
-    const destinationVisible = useDestinationVisibility();
     // Lab `phone-P4`: on a phone the page carries the Inbox's large title itself (the Home hub's hero
     // step), with the view control under it and no purpose line; the tabs and groups say what it holds.
     // Wide layouts have no navigation title either: the page header carries it beside the control.
@@ -72,8 +72,10 @@ const InboxViewContent = React.memo(function InboxViewContent(props: Readonly<{ 
     const setView = React.useCallback((next: InboxContentView) => {
         router.setParams({ view: next });
     }, [router]);
-    const selected = focusedItem ? model.items.find(item => createInboxItemRoute(item.focus).params.item === createInboxItemRoute(focusedItem).params.item) : undefined;
-    const selectionRouteKey = focusedItem ? createInboxItemRoute(focusedItem).params.item : null;
+    const selectionRouteKey = readInboxItemSelectionKey(focusedItem);
+    const selected = React.useMemo(() => findInboxItemForFocus(model.items, focusedItem),
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- the selection is identified by its key, not its object.
+        [model.items, selectionRouteKey]);
     React.useEffect(() => {
         // Classify a new deep link once its owner is ready. A retained route
         // keeps its view even if opening/answering removed that item on Back.
@@ -84,12 +86,6 @@ const InboxViewContent = React.memo(function InboxViewContent(props: Readonly<{ 
     const select = React.useCallback((focus: InboxItemFocus) => { router.replace(createInboxItemRoute(focus, view) as never); }, [router, view]);
     const close = React.useCallback(() => { router.replace({ pathname: '/inbox', params: { view } } as never); }, [router, view]);
     const open = React.useCallback((route: string) => { router.push(route as never); }, [router]);
-    const selectedResolved = useInboxItemResolved(destinationFocused && destinationVisible ? focusedItem : null, {
-        sessionCandidates: model.sessionCandidates, accountNotices: model.accountNotices, isDataReady: model.source.isDataReady,
-        sessionScopes: model.source.audienceScopes,
-    });
-    useInboxItemNavigation({ items: model.items, focus: focusedItem, view, enabled: destinationFocused && destinationVisible,
-        selectedResolved, select, close, open, markOpened: model.markItemOpened });
     const needsYouCount = countInboxNeedsYou(model);
     const updatesCount = countInboxUpdates(model);
     const mentionsCount = countInboxMentions(model);
@@ -124,31 +120,37 @@ const InboxViewContent = React.memo(function InboxViewContent(props: Readonly<{ 
         />
     );
 
+    const hasRows = React.useMemo(() => selectInboxItemsForView(model.items, view).length > 0, [model.items, view]);
     const renderList = (onSelectItem: ((focus: InboxItemFocus) => void) | undefined) => {
         // Beside an open item the list is a narrow column and the header puts the control under the title.
         const tabs = renderTabs(phone || (onSelectItem !== undefined && focusedItem !== null));
         return (
         <NavigationTitleChromeProvider showsTitle={false}>
             {/* A page of work rows with their inline answers (lab `inbox-I1`): the wide column. */}
-            <ItemList testID="inbox.screen" pageColumn="wide">
-                <NavigationLargeTitleProvider largeTitle={phone}>
-                    <PageHeader
-                        title={t('tabs.inbox')}
-                        description={phone ? undefined : view === 'needs_you' && needsYouSummary ? needsYouSummary : t('inbox.work.pageDescription')}
-                        actions={phone ? undefined : tabs}
-                    />
-                </NavigationLargeTitleProvider>
-                {phone ? <View style={styles.phoneTabs}>{tabs}</View> : null}
-                <InboxContent model={model} presentation="screen" view={view} focusedItem={focusedItem} onSelectItem={onSelectItem} />
-            </ItemList>
-            {phone ? null : <InboxKeyHints itemOpen={focusedItem !== null && onSelectItem !== undefined} advancesOnAnswer={view === 'needs_you'} />}
+            {/* Windowed: only the rows near the viewport mount, however many approvals wait. */}
+            <InboxContentList testID="inbox.screen" pageColumn="wide" model={model} presentation="screen" view={view}
+                focusedItem={focusedItem} onSelectItem={onSelectItem} header={(
+                    <>
+                        <NavigationLargeTitleProvider largeTitle={phone}>
+                            <PageHeader
+                                title={t('tabs.inbox')}
+                                description={phone ? undefined : view === 'needs_you' && needsYouSummary ? needsYouSummary : t('inbox.work.pageDescription')}
+                                actions={phone ? undefined : tabs}
+                            />
+                        </NavigationLargeTitleProvider>
+                        {phone ? <View style={styles.phoneTabs}>{tabs}</View> : null}
+                    </>
+                )} />
+            {/* The keys run only beside the detail pane (`InboxKeyboardNavigation`), and only over rows to move through. */}
+            {phone || onSelectItem === undefined || !hasRows ? null : <InboxKeyHints itemOpen={focusedItem !== null} />}
         </NavigationTitleChromeProvider>
         );
     };
 
     return (
         <View style={[styles.container, { backgroundColor: materialColor(theme.colors.surface.base, 'transparent') }]}>
-            {/* A phone's bar belongs to the tab shell (`MainView`); a second empty band would push the title down. */}
+            {/* A phone's bar belongs to the tab shell (`MainView`) and a web page's top edge to the shell's title strip;
+                a second empty band would push the title down from where every other page has it. */}
             {phone || Platform.OS === 'web' ? null : (
                 <Header
                     title={null}
@@ -160,9 +162,28 @@ const InboxViewContent = React.memo(function InboxViewContent(props: Readonly<{ 
             )}
             {phone ? (
                 <FocusedItemPage focus={focusedItem} list={renderList(undefined)} close={close} />
-            ) : <InboxListDetail focusedItem={focusedItem} renderList={renderList} select={select} close={close} />}
+            ) : <InboxListDetail focusedItem={focusedItem} renderList={renderList} select={select} close={close}
+                keyboard={{ model, view, open }} />}
         </View>
     );
+});
+
+/**
+ * Arrow keys, Return and Escape through the list. Answered details stay until the person moves on. Only
+ * where the item opens beside the list (`InboxListDetail`, split): a selection there is a pane, whereas where
+ * the list is the whole page a selection would open the item's own page, so the keys would walk away from it.
+ */
+const InboxKeyboardNavigation = React.memo(function InboxKeyboardNavigation(props: Readonly<{
+    model: InboxModel; view: InboxContentView; focusedItem: InboxItemFocus | null;
+    select: (focus: InboxItemFocus) => void; close: () => void; open: (route: string) => void;
+}>) {
+    const { model, focusedItem } = props;
+    const focused = useDestinationFocus();
+    const visible = useDestinationVisibility();
+    const enabled = focused && visible;
+    useInboxItemNavigation({ items: model.items, focus: focusedItem, view: props.view, enabled,
+        select: props.select, close: props.close, open: props.open, markOpened: model.markItemOpened });
+    return null;
 });
 
 /**
@@ -222,6 +243,7 @@ const InboxListDetail = React.memo(function InboxListDetail(props: Readonly<{
     select: (focus: InboxItemFocus) => void;
     close: () => void;
     renderList: (onSelectItem: ((focus: InboxItemFocus) => void) | undefined) => React.ReactNode;
+    keyboard: Readonly<{ model: InboxModel; view: InboxContentView; open: (route: string) => void }>;
 }>) {
     const { theme } = useUnistyles();
     const { fontScale } = useWindowDimensions();
@@ -232,12 +254,12 @@ const InboxListDetail = React.memo(function InboxListDetail(props: Readonly<{
             testID="inbox.layout"
             listTestID="inbox.list-pane"
             detailTestID="inbox.detail-pane"
-            minListWidth={COLLECTION_RAIL_MIN_WIDTH_PX * scale}
+            minListWidth={INBOX_LIST_MIN_WIDTH_PX * scale}
             minDetailWidth={INBOX_DETAIL_MIN_WIDTH_PX * scale}
-            listWidthPx={railWidth.widthPx ?? HAPPIER_COLLECTION_RAIL_WIDTH_PX.detailed * scale}
+            listWidthPx={railWidth.widthPx}
             onListWidthCommit={railWidth.commit}
             onListWidthReset={railWidth.reset}
-            preferredListRatio={0.5}
+            preferredListRatio={INBOX_LIST_PREFERRED_RATIO}
             labels={{
                 resize: t('ui.resizableDockedPane.resizeA11y'),
                 resizeHint: t('ui.resizableDockedPane.resizeHint'),
@@ -247,8 +269,13 @@ const InboxListDetail = React.memo(function InboxListDetail(props: Readonly<{
             // The hairline separates the list from an open item; a list alone has nothing to separate from.
             listStyle={props.focusedItem ? { borderRightWidth: 1, borderRightColor: theme.colors.border.default } : undefined}
             list={(layout) => (
-                <FocusedItemPage focus={layout?.mode === 'stacked' ? props.focusedItem : null}
-                    list={props.renderList(layout?.mode === 'split' ? props.select : undefined)} close={props.close} />
+                <>
+                    {layout?.mode === 'split' ? (
+                        <InboxKeyboardNavigation {...props.keyboard} focusedItem={props.focusedItem} select={props.select} close={props.close} />
+                    ) : null}
+                    <FocusedItemPage focus={layout?.mode === 'stacked' ? props.focusedItem : null}
+                        list={props.renderList(layout?.mode === 'split' ? props.select : undefined)} close={props.close} />
+                </>
             )}
             detail={props.focusedItem ? (
                 <React.Suspense fallback={<PaneLoadingFallback />}>

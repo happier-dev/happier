@@ -29,8 +29,6 @@ export const InboxKeyHints = React.memo(function InboxKeyHints(
   props: Readonly<{
     /** An item is open beside the list: Return and Escape act on it. */
     itemOpen: boolean;
-    /** Needs you advances to the next item once one is answered. */
-    advancesOnAnswer: boolean;
   }>,
 ) {
   const keyboard = useHardwareKeyboard();
@@ -58,9 +56,6 @@ export const InboxKeyHints = React.memo(function InboxKeyHints(
           <Keys label={close} />
           <Text variant="meta" style={styles.word}>{t('inbox.work.keyHints.close')}</Text>
         </View>
-      ) : null}
-      {props.advancesOnAnswer ? (
-        <Text variant="meta" style={styles.word}>{t('inbox.work.keyHints.answering')}</Text>
       ) : null}
     </View>
   );
