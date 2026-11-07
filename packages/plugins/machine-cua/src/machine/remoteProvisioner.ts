@@ -1,3 +1,4 @@
+import type { MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { Buffer } from 'node:buffer';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { createCuaByoc } from './byoc.js';
@@ -12,7 +13,8 @@ export type CuaRemoteRole = 'check' | 'options' | 'acquire' | 'reconcile' | 'boo
 function reference<T>(value: T) {
     return { contributionRef: { pluginId: 'happier.machine.cua', localId: id }, schemaVersion: 1, value };
 }
-function pending<T>(operation: T) { return { kind: 'pending' as const, nativeOperationRef: reference(operation) }; }
+function pending<T>(operation: T, nativeCause?: MachineProvisionerNativeCauseV1) { return { kind: 'pending' as const, nativeOperationRef: reference(operation),
+    ...(nativeCause ? { nativeCause } : {}) }; }
 function bytes(encoded: string) {
     return Buffer.from(encoded, 'base64');
 }
@@ -43,6 +45,7 @@ export async function invokeCuaRemoteRole(role: CuaRemoteRole, input: unknown, c
             const result = await byoc.create(launch, name, signal);
             if (result.kind === 'bound') return { kind: 'bound', resource: reference(result.resource) };
             if (result.kind === 'unavailable') return { kind: 'rejected', code: 'provider_unavailable' };
+            return pending(operation, result.nativeCause);
         } catch { /* Submission may have allocated. Lookup, never repurchase. */ }
         return pending(operation);
     }

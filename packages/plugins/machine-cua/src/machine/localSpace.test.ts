@@ -35,6 +35,19 @@ function harness(...responses: Array<PluginProcessResult | Error>) {
 }
 
 describe('created local Cua Space native leaf', () => {
+    it('keeps a stopped created Space pending even when registration and image match', async () => {
+        const h = harness(result({ spaces: [registered] }), result({ ...sandbox, state: 'stopped' }), result({ spaces: [registered] }));
+        expect(await h.spaces.create(launch, 'owned', launch.size.diskBytes)).toMatchObject({ kind: 'unknown' });
+    });
+    it('keeps missing sandbox custody until the created Space registry is absent', async () => {
+        const missing = result({ ...sandbox, status: 'missing', state: 'missing' });
+        const retained = harness(missing, result({ spaces: [registered] }));
+        expect(await retained.spaces.inspect(resource)).toMatchObject({ existence: 'unknown', registry: 'present' });
+        const unavailable = harness(missing, new Error('registry unavailable'));
+        expect(await unavailable.spaces.inspect(resource)).toMatchObject({ existence: 'unknown', registry: 'unknown' });
+        const gone = harness(missing, result({ spaces: [] }));
+        expect(await gone.spaces.inspect(resource)).toMatchObject({ existence: 'absent', registry: 'absent' });
+    });
     it('binds the exact local Space only after inspecting its sandbox on the selected runtime', async () => {
         const h = harness(result({ spaces: [registered] }), result(sandbox), result({ spaces: [registered] }));
         expect(await h.spaces.create(launch, 'owned', 20 * 1024 ** 3)).toEqual({ kind: 'bound', resource });

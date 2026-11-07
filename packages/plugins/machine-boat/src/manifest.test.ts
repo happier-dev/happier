@@ -4,6 +4,7 @@ import type { PluginAccountApi, PluginInvocationContext } from '@happier-dev/plu
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { executeManagedMachineAcquire } from '@happier-dev/cli-common/machines/managed';
 import { defineMachineProvisionerReconciliationSchemas, MachineProvisionerCheckResultV1Schema,
   MachineProvisionerObservationV1Schema, MachineProvisionerOptionsResultV1Schema, MachineProvisionerPowerResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
 import * as exports from './index.js';
@@ -70,6 +71,53 @@ describe('Boat machine provisioner contract', () => {
       expect(recovered).toMatchObject({ kind: 'bound', resource: { value: { sandboxId: 'bx_23456789' } } });
       expect(boundary.requests.filter(request => request.method === 'POST')).toHaveLength(1);
     } finally { await host.dispose(); }
+  });
+  it('consumes price, entitlement, expiry and deletion notices through the portable Account roles', async () => {
+    const boundary = await activated(false, 0, undefined, undefined, 'archived', {
+      stoppedAt: '2026-10-31T10:00:00Z', archiveAfter: '2026-11-02T00:00:00Z', dataExpiredAt: null,
+    });
+    const awake = await activated(false, 0, undefined, undefined, 'ready', {
+      archiveAfter: '2026-11-02T00:00:00Z', dataExpiredAt: null,
+    });
+    let resumed = false;
+    const host = await createPluginTestkit({ manifest: PLUGIN_MANIFEST,
+      module: PLUGIN,
+      services: { http: createPluginHttpFixture({ request: request => {
+        if (request.method === 'POST' && new URL(request.url).pathname.endsWith('/resume')) resumed = true;
+        return (resumed ? awake : boundary).context.services.http.request(request);
+      } }) },
+    });
+    try {
+      expect(MachineProvisionerCheckResultV1Schema.parse(await host.invokeAction('check', {}))).toMatchObject({ available: true });
+      const options = MachineProvisionerOptionsResultV1Schema.parse(await host.invokeAction('options', {}));
+      expect(options.dimensions.size.flatMap(size => size.prices ?? []).map(price => price.amount)).toEqual(['0.018', '0.036', '0.072', '0.200']);
+      const observed = MachineProvisionerObservationV1Schema.parse(await host.invokeAction('inspect', { resource: { sandboxId: 'bx_23456789' } }));
+      expect(observed).toMatchObject({ power: 'stopped', storage: 'retained', nativeExpiry: Date.parse('2026-11-02T00:00:00Z'),
+        deletionNotices: [{ ...options.base?.retention?.deletionNotices?.[0], at: Date.parse('2026-11-14T10:00:00Z') }] });
+      expect(boundary.requests.every(request => request.method === 'GET')).toBe(true);
+      expect(await host.invokeAction('power', { resource: { sandboxId: 'bx_23456789' }, intent: 'resume' })).toEqual({ kind: 'confirmed' });
+      expect(await host.invokeAction('inspect', { resource: { sandboxId: 'bx_23456789' } })).toMatchObject({
+        power: 'running', nativeExpiry: observed.nativeExpiry, deletionNotices: [],
+      });
+      const carrier = await host.invokeAction('bootstrap', { resource: { sandboxId: 'bx_23456789' },
+        bootstrapPublicKey: 'ssh-ed25519 AAAApublic', credentialRef: { kind: 'shared_resource', resourceId: 'bootstrap-key' },
+      });
+      expect(carrier).toMatchObject({ kind: 'ssh', address: '203.0.113.8', hostKeyEvidence: { hostKey: '203.0.113.8 ssh-ed25519 AAAAboat' } });
+      expect(carrier).not.toHaveProperty('trustedHostKey');
+    } finally { await host.dispose(); }
+  });
+  it('declares SSH-only browser availability and rejects through shared admission before any allocation or probe', async () => {
+    const parsed = parsePluginManifest(PLUGIN_MANIFEST);
+    if (!parsed.ok) throw new Error('Expected a valid Boat manifest');
+    const descriptor = parsed.manifest.contributes.machineProvisioners[0];
+    expect(descriptor.browserReachable).toBe(false);
+    let admissions = 0;
+    let allocations = 0;
+    await expect(executeManagedMachineAcquire({ host: 'browser', provisioner: descriptor,
+      admit: async () => { admissions++; throw new Error('Browser must not reach admission'); },
+      onAccepted() {}, run: async () => { allocations++; },
+    })).rejects.toMatchObject({ code: 'provider_unavailable' });
+    expect({ admissions, allocations }).toEqual({ admissions: 0, allocations: 0 });
   });
   it('prepares vendor-reported SSH evidence without a scanner and leaves TOFU to the host', async () => {
     const runtime = await activated();

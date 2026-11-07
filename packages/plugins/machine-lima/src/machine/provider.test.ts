@@ -5,13 +5,15 @@ import { LimaLaunchSchema } from './schemas.js';
 import { MachineProvisionerObservationV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
 
 const launch = LimaLaunchSchema.parse({
-  instance: 'happier-lima-test', store: '/private/lima-test', image: 'https://example.test/ubuntu.img',
+  store: '/private/lima-test', image: 'https://example.test/ubuntu.img',
   vmType: 'vz', arch: 'aarch64', cpus: 2, memoryGiB: 4, diskGiB: 20, mounts: [],
 });
 const { memoryGiB, diskGiB, ...identity } = launch;
-const resource = { ...identity, memoryBytes: memoryGiB * 1024 ** 3, diskBytes: diskGiB * 1024 ** 3 };
+const resource = { ...identity, instance: 'happier-lima-test', memoryBytes: memoryGiB * 1024 ** 3, diskBytes: diskGiB * 1024 ** 3 };
+const managedId = 'test-row';
+const managedInstance = 'happier-424cfeskscqixzgevqcbc981tdeoxvmc20zpn0akjnbxa3dg35';
 const native = {
-  name: launch.instance, dir: `${launch.store}/${launch.instance}`, status: 'Running',
+  name: resource.instance, dir: `${resource.store}/${resource.instance}`, status: 'Running',
   vmType: launch.vmType, arch: launch.arch, cpus: launch.cpus, memory: resource.memoryBytes, disk: resource.diskBytes,
   config: { images: [{ location: launch.image, arch: launch.arch }], mounts: [], ssh: { forwardAgent: false }, containerd: { user: false, system: false } },
 };
@@ -19,16 +21,36 @@ const native = {
 function processBoundary(handler: (args: readonly string[], options?: Parameters<LimaExecutor['capture']>[2]) => LimaCommandResult | Promise<LimaCommandResult>,
   info = { hostOS: 'darwin', hostArch: 'aarch64', vmTypes: ['vz', 'qemu'] }) {
   const effects: string[][] = [];
-  const capture: LimaExecutor['capture'] = async (_command, args, options) => args[0] === 'info'
-    ? { exitCode: 0, out: JSON.stringify(info), err: '' } : handler(args, options);
+  const reads: string[][] = [];
+  const capture: LimaExecutor['capture'] = async (_command, args, options) => {
+    reads.push([...args]);
+    return args[0] === 'info' ? { exitCode: 0, out: JSON.stringify(info), err: '' } : handler(args, options);
+  };
   const run: LimaExecutor['run'] = async (_command, args, options) => {
     effects.push([...args]);
     return handler(args, options);
   };
-  return { executor: { capture, run }, effects };
+  return { executor: { capture, run }, effects, reads };
 }
 
 describe('public Lima native leaf', () => {
+  it('keeps launch choices available after the installed check without probing the version again', async () => {
+    let versionReads = 0;
+    const { executor } = processBoundary(args => {
+      if (args[0] === '--version') {
+        versionReads += 1;
+        return versionReads === 1 ? { exitCode: 0, out: 'limactl version 2.1.0', err: '' }
+          : { exitCode: 1, out: '', err: 'temporary version probe failure' };
+      }
+      return { exitCode: 0, out: '', err: '' };
+    });
+    const provider = createLimaProvider(executor);
+    expect(await provider.check()).toMatchObject({ available: true });
+    expect(await provider.options(launch)).toMatchObject({ base: { available: true, launch } });
+    expect(await provider.options({ ...launch, cpus: 4 })).toMatchObject({ base: { available: true, launch: { cpus: 4 } } });
+    expect(versionReads).toBe(1);
+  });
+
   it.each(['vz', 'qemu'] as const)('disables automatic guest-to-host forwarding in the generated %s template', vmType => {
     const args = buildCreateArgs({ ...launch, instance: 'happier-port-forward-test', vmType });
     const forwarding = args.find((arg, index) => args[index - 1] === '--set' && arg.startsWith('.portForwards = '));
@@ -36,6 +58,89 @@ describe('public Lima native leaf', () => {
     expect(JSON.parse(forwarding!.slice('.portForwards = '.length))).toEqual([
       { guestIP: '0.0.0.0', guestIPMustBeZero: false, proto: 'any', guestPortRange: [1, 65535], ignore: true },
     ]);
+  });
+
+  it.each(['Stopped', 'Broken'])('recovers the exact existing %s guest without allocating or starting it', async status => {
+    const { executor, effects } = processBoundary(() => ({ exitCode: 0, out: JSON.stringify({ ...native, status }), err: '' }));
+    expect(await createLimaProvider(executor).reconcile({ resource })).toMatchObject({ kind: 'bound', resource: { value: resource } });
+    expect(effects).toEqual([]);
+  });
+
+  it('settles an exact acquisition as not created only after a successful empty native read', async () => {
+    const { executor, effects } = processBoundary(() => ({ exitCode: 0, out: '', err: '' }));
+    expect(await createLimaProvider(executor).reconcile({ managedId, launch }))
+      .toMatchObject({ kind: 'rejected', code: 'managed_not_found' });
+    expect(effects).toEqual([]);
+  });
+
+  it('refuses an unresolved template selector before allocating a disk-image recipe', async () => {
+    const { executor, effects } = processBoundary(() => ({ exitCode: 0, out: '', err: '' }));
+    expect(await createLimaProvider(executor).acquire({ managedId, launch: { ...launch, image: 'template:ubuntu' } }))
+      .toMatchObject({ kind: 'rejected', code: 'provider_unavailable', nativeCause: { localCause: 'native_options_changed' } });
+    expect(effects).toEqual([]);
+  });
+
+  it('does not bind a guest when the native start exits successfully but inspection still reports Stopped', async () => {
+    let present = false;
+    const { executor } = processBoundary(args => {
+      if (args[0] === 'create') present = true;
+      return { exitCode: 0, out: present ? JSON.stringify({ ...native, name: managedInstance,
+        dir: `${launch.store}/${managedInstance}`, status: 'Stopped' }) : '', err: '' };
+    });
+    expect(await createLimaProvider(executor).acquire({ managedId, launch }))
+      .toMatchObject({ kind: 'unknown', recovery: { reason: 'lima_start_unconfirmed' } });
+  });
+
+  // Lima 2.2.1 info leaves the base templates unresolved (Rerun 59, nl3).
+  const inheritedInfo = {
+    hostOS: 'linux', hostArch: 'x86_64', vmTypes: ['qemu'], limaHome: '/home/happier/.lima',
+    defaultTemplate: { base: [{ url: 'template:_images/ubuntu' }, { url: 'template:_default/mounts' }],
+      cpus: 4, memory: '4GiB', disk: '100GiB' },
+  };
+  const resolvedImages = [
+    { arch: 'x86_64', location: 'https://cloud-images.ubuntu.com/releases/resolute/release-20260927/ubuntu-26.04-server-cloudimg-amd64.img' },
+    { arch: 'x86_64', location: 'https://cloud-images.ubuntu.com/releases/resolute/release/ubuntu-26.04-server-cloudimg-amd64.img' },
+    { arch: 'aarch64', location: 'https://cloud-images.ubuntu.com/releases/resolute/release-20260927/ubuntu-26.04-server-cloudimg-arm64.img' },
+  ];
+
+  it.each(['x86_64', 'aarch64'] as const)('resolves the inherited default image for selected architecture %s with one native read', async arch => {
+    const { executor, reads, effects } = processBoundary(args => ({ exitCode: 0,
+      out: args[0] === 'template' ? JSON.stringify(resolvedImages) : 'limactl version 2.2.1', err: '' }), inheritedInfo);
+    const options = await createLimaProvider(executor, 123, async () => true).options({ arch });
+    const image = resolvedImages.find(candidate => candidate.arch === arch)?.location;
+    expect(options.base?.launch).toMatchObject({ arch, image, store: inheritedInfo.limaHome,
+      cpus: 4, memoryGiB: 4, diskGiB: 100, mounts: [] });
+    expect(options.dimensions.image).toEqual([]);
+    expect(options.base?.nativeFacts?.image?.id).toBe(image);
+    expect(LimaLaunchSchema.safeParse(options.base?.launch).success).toBe(true);
+    expect(reads.filter(args => args[0] === 'template')).toEqual([
+      ['template', 'yq', 'template:default', '.images | to_json'],
+    ]);
+    expect(effects).toEqual([]);
+  });
+
+  it.each(['explicit', 'inline'] as const)('keeps an %s image without a template expansion read', async source => {
+    const image = 'https://example.test/reviewed.img';
+    const info = { ...inheritedInfo, defaultTemplate: { ...inheritedInfo.defaultTemplate,
+      ...(source === 'inline' ? { images: [{ arch: 'x86_64', location: image }] } : {}) } };
+    const { executor, reads } = processBoundary(() => ({ exitCode: 0, out: 'limactl version 2.2.1', err: '' }), info);
+    const options = await createLimaProvider(executor, 123, async () => true).options(source === 'explicit' ? { image } : {});
+    expect(options.base?.launch).toMatchObject({ image });
+    expect(reads.filter(args => args[0] === 'template')).toEqual([]);
+  });
+
+  it.each(['exit', 'throw', 'malformed', 'other-arch'] as const)('leaves an unresolved image absent on expansion %s', async failure => {
+    const { executor, effects } = processBoundary(args => {
+      if (args[0] !== 'template') return { exitCode: 0, out: 'limactl version 2.2.1', err: '' };
+      if (failure === 'throw') throw new Error('native expansion failed');
+      return { exitCode: failure === 'exit' ? 1 : 0,
+        out: failure === 'malformed' ? 'invalid JSON' : JSON.stringify([resolvedImages[2]]), err: '' };
+    }, inheritedInfo);
+    const options = await createLimaProvider(executor, 123, async () => true).options({});
+    expect(options.base?.launch).toMatchObject({ arch: 'x86_64', cpus: 4, memoryGiB: 4, diskGiB: 100 });
+    expect(options.base?.launch).not.toHaveProperty('image');
+    expect(options.dimensions.image).toEqual([]);
+    expect(effects).toEqual([]);
   });
 
   it.each(['Running', 'Stopped'])('reports retained storage for an exact listed %s guest through the shared observation contract', async status => {
@@ -73,6 +178,7 @@ describe('public Lima native leaf', () => {
     const { executor } = processBoundary(() => ({ exitCode: 0, out: 'limactl version 2.1.0', err: '' }));
     const query = { ...launch, image: 'https://cloud-images.ubuntu.com/releases/noble/release-20260926/ubuntu-24.04-server-cloudimg-amd64.img?x=1' };
     const { base, dimensions } = await createLimaProvider(executor, 123, async () => true).options(query);
+    expect(base).toMatchObject({ guestPlatform: 'linux' });
     expect(dimensions.image).toEqual([]);
     expect(base?.launch).toMatchObject({ image: query.image });
     expect(base?.nativeFacts?.image).toEqual({ id: query.image, title: 'ubuntu-24.04-server-cloudimg-amd64.img',
@@ -89,8 +195,8 @@ describe('public Lima native leaf', () => {
   it('requires the selected guest architecture QEMU tool before any allocation', async () => {
     const { executor, effects } = processBoundary(() => ({ exitCode: 0, out: JSON.stringify(native), err: '' }),
       { hostOS: 'linux', hostArch: 'x86_64', vmTypes: ['qemu'] });
-    expect(await createLimaProvider(executor, 123, async (id) => id === 'qemu-x86-64').acquire({ ...launch, vmType: 'qemu' }))
-      .toEqual({ kind: 'unknown', recovery: { reference: `${launch.store}/${launch.instance}`, reason: 'qemu_unavailable' } });
+    expect(await createLimaProvider(executor, 123, async (id) => id === 'qemu-x86-64').acquire({ managedId, launch: { ...launch, vmType: 'qemu' } }))
+      .toEqual({ kind: 'unknown', recovery: { reference: `${launch.store}/${managedInstance}`, reason: 'qemu_unavailable' } });
     expect(effects).toEqual([]);
   });
 
@@ -101,8 +207,8 @@ describe('public Lima native leaf', () => {
       return { exitCode: 0, out: present ? JSON.stringify({ ...native, arch: 'x86_64',
         config: { ...native.config, images: [{ location: launch.image, arch: 'x86_64' }] } }) : '', err: '' };
     });
-    expect(await createLimaProvider(executor).acquire({ ...launch, arch: 'x86_64' }))
-      .toEqual({ kind: 'unknown', recovery: { reference: `${launch.store}/${launch.instance}`, reason: 'lima_driver_unavailable' } });
+    expect(await createLimaProvider(executor).acquire({ managedId, launch: { ...launch, arch: 'x86_64' } }))
+      .toEqual({ kind: 'unknown', recovery: { reference: `${launch.store}/${managedInstance}`, reason: 'lima_driver_unavailable' } });
     expect(effects).toEqual([]);
   });
 
@@ -125,14 +231,26 @@ describe('public Lima native leaf', () => {
     expect(effects).toEqual([]);
   });
 
+  it('settles retained stopped or broken bootstrap without restarting the guest', async () => {
+    let status = 'Stopped';
+    const { executor, effects } = processBoundary(() => ({ exitCode: 0, out: JSON.stringify({ ...native, status }), err: '' }));
+    const provider = createLimaProvider(executor);
+    await expect(provider.bootstrap(resource)).rejects.toMatchObject({ name: 'PluginError', code: 'native_resource_unavailable' });
+    status = 'Running';
+    await expect(provider.bootstrap(resource)).resolves.toMatchObject({ kind: 'native' });
+    status = 'Broken';
+    await expect(provider.bootstrap(resource)).rejects.toMatchObject({ name: 'PluginError', code: 'native_resource_unavailable' });
+    expect(effects).toEqual([]);
+  });
+
   it('reconciles lost creation response at the same store/name without allocating again', async () => {
     let present = false;
     const { executor, effects } = processBoundary((args, options) => {
       expect(options?.env?.LIMA_HOME).toBe(launch.store);
       if (args[0] === 'create') { present = true; throw new Error('lost process response'); }
-      return { exitCode: 0, out: present ? JSON.stringify(native) : '', err: '' };
+      return { exitCode: 0, out: present ? JSON.stringify({ ...native, name: managedInstance, dir: `${launch.store}/${managedInstance}` }) : '', err: '' };
     });
-    expect(await createLimaProvider(executor).acquire(launch)).toMatchObject({ kind: 'bound', resource: { value: { instance: launch.instance, store: launch.store } } });
+    expect(await createLimaProvider(executor).acquire({ managedId, launch })).toMatchObject({ kind: 'bound', resource: { value: { instance: managedInstance, store: launch.store } } });
     expect(effects.filter((args) => args[0] === 'create')).toHaveLength(1);
     expect(effects.some((args) => args[0] === 'delete')).toBe(false);
   });
@@ -141,17 +259,17 @@ describe('public Lima native leaf', () => {
     let present = false;
     const { executor } = processBoundary((args) => {
       if (args[0] === 'create') present = true;
-      return { exitCode: 0, out: present ? JSON.stringify({ ...native, vmType: 'qemu' }) : '', err: '' };
+      return { exitCode: 0, out: present ? JSON.stringify({ ...native, name: managedInstance, dir: `${launch.store}/${managedInstance}`, vmType: 'qemu' }) : '', err: '' };
     });
-    expect(await createLimaProvider(executor).acquire(launch)).toEqual({
-      kind: 'unknown', recovery: { reference: `${launch.store}/${launch.instance}`, reason: 'resource_mismatch' },
+    expect(await createLimaProvider(executor).acquire({ managedId, launch })).toEqual({
+      kind: 'unknown', recovery: { reference: `${launch.store}/${managedInstance}`, reason: 'resource_mismatch' },
     });
   });
 
   it('does not infer absence from a wrong native identity before acquisition', async () => {
     const { executor, effects } = processBoundary(() => ({ exitCode: 0, out: JSON.stringify({ ...native, name: 'neighbor' }), err: '' }));
-    expect(await createLimaProvider(executor).acquire(launch)).toEqual({
-      kind: 'unknown', recovery: { reference: `${launch.store}/${launch.instance}`, reason: 'LIMA_IDENTITY_MISMATCH' },
+    expect(await createLimaProvider(executor).acquire({ managedId, launch })).toEqual({
+      kind: 'unknown', recovery: { reference: `${launch.store}/${managedInstance}`, reason: 'LIMA_IDENTITY_MISMATCH' },
     });
     expect(effects).toEqual([]);
   });
@@ -161,18 +279,35 @@ describe('public Lima native leaf', () => {
     const { executor, effects } = processBoundary((args, options) => {
       expect(options?.env?.LIMA_HOME).toBe(launch.store);
       if (args[0] === 'delete') {
-        expect(args).toEqual(['delete', '--force', launch.instance]);
+        expect(args).toEqual(['delete', '--force', resource.instance]);
         present = false;
       }
       return { exitCode: 0, out: present ? JSON.stringify(native) : '', err: '' };
     });
     expect(await createLimaProvider(executor).destroy(resource)).toEqual({ kind: 'confirmed' });
-    expect(effects).toEqual([['delete', '--force', launch.instance]]);
+    expect(effects).toEqual([['delete', '--force', resource.instance]]);
   });
 
-  it('refuses a retained resource whose native creation facts changed', async () => {
-    const { executor, effects } = processBoundary(() => ({ exitCode: 0, out: JSON.stringify({ ...native, arch: 'x86_64' }), err: '' }));
-    expect(await createLimaProvider(executor).power(resource, 'start')).toEqual({ kind: 'refused', code: 'resource_mismatch' });
+  it('keeps Inspect, bootstrap, Stop and Delete usable after an owner changes native CPU sizing', async () => {
+    let present = true;
+    let status = 'Running';
+    const { executor, effects } = processBoundary((args) => {
+      if (args[0] === 'stop') status = 'Stopped';
+      if (args[0] === 'delete') present = false;
+      return { exitCode: 0, out: present ? JSON.stringify({ ...native, cpus: 6, status }) : '', err: '' };
+    });
+    const provider = createLimaProvider(executor, 123);
+    expect(await provider.inspect(resource)).toMatchObject({ availability: 'present', power: 'running' });
+    expect(await provider.bootstrap(resource)).toMatchObject({ kind: 'native' });
+    expect(await provider.power(resource, 'stop')).toEqual({ kind: 'confirmed' });
+    expect(await provider.destroy(resource)).toEqual({ kind: 'confirmed' });
+    expect(effects).toEqual([['stop', resource.instance], ['delete', '--force', resource.instance]]);
+  });
+
+  it('still refuses another native name after binding', async () => {
+    const { executor, effects } = processBoundary(() => ({ exitCode: 0, out: JSON.stringify({ ...native, name: 'neighbor' }), err: '' }));
+    expect(await createLimaProvider(executor).power(resource, 'stop')).toMatchObject({ kind: 'refused', code: 'LIMA_IDENTITY_MISMATCH' });
+    expect(await createLimaProvider(executor).destroy(resource)).toMatchObject({ kind: 'refused', code: 'LIMA_IDENTITY_MISMATCH' });
     expect(effects).toEqual([]);
   });
 
@@ -183,7 +318,7 @@ describe('public Lima native leaf', () => {
       return { exitCode: 0, out: JSON.stringify({ ...native, status: running ? 'Running' : 'Stopped' }), err: '' };
     });
     expect(await createLimaProvider(executor).power(resource, 'start')).toEqual({ kind: 'confirmed' });
-    expect(effects).toEqual([['restart', launch.instance]]);
+    expect(effects).toEqual([['restart', resource.instance]]);
   });
 
   it('does not recreate a guest removed after Start admission but before the native command', async () => {

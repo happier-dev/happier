@@ -1,9 +1,9 @@
-import { projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type { ManagedServices } from '@happier-dev/plugin-sdk/managed-services';
+import { observeMachineProvisionerNativeRead, projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { MachineProvisionerAcquireResultV1, MachineProvisionerObservationV1, MachineProvisionerOptionsResultV1,
     MachineProvisionerPowerResultV1, MachineProvisionerNativeIntentV1,
-    MachineProvisionerProcessConfigV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+    MachineProvisionerProcessConfigV1, MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { createCuaLocalSandbox } from './localSandbox.js';
 import { createCuaLocalSpace } from './localSpace.js';
 import { createCuaNativeFacts } from './nativeFacts.js';
@@ -25,8 +25,8 @@ export function createCuaLocalProvisioner(native: CuaNativeClient, localId: CuaL
     const leaf = localId === 'local-space' ? space : sandbox;
     const facts = createCuaNativeFacts(native);
     function reference<T>(value: T) { return { contributionRef, schemaVersion: 1, value }; }
-    function pending(value: ReturnType<typeof CuaLocalNativeOperationV1Schema.parse>) {
-        return { kind: 'pending' as const, nativeOperationRef: reference(value) };
+    function pending(value: ReturnType<typeof CuaLocalNativeOperationV1Schema.parse>, nativeCause?: MachineProvisionerNativeCauseV1) {
+        return { kind: 'pending' as const, nativeOperationRef: reference(value), ...(nativeCause ? { nativeCause } : {}) };
     }
     function resource(input: unknown) {
         const value = parseCuaLocalResource(input);
@@ -55,9 +55,9 @@ export function createCuaLocalProvisioner(native: CuaNativeClient, localId: CuaL
     async function inspect(input: unknown): Promise<MachineProvisionerObservationV1> {
         const value = resource(input);
         const observed = await leaf.inspect(value, signal);
-        return { observedAt, availability: observed.existence === 'unknown' ? 'unavailable' : observed.existence,
+        return observeMachineProvisionerNativeRead(observedAt, { kind: observed.existence,
             ...(observed.existence === 'present' ? { power: observed.power } : {}), billing,
-            ...(observed.existence === 'unknown' ? { reason: 'cua_native_resource_unknown' } : {}) };
+            ...(observed.existence === 'unknown' ? { reason: 'cua_native_resource_unknown' } : {}) });
     }
     return {
         check: () => facts.check(signal),
@@ -93,6 +93,7 @@ export function createCuaLocalProvisioner(native: CuaNativeClient, localId: CuaL
                 const created = await leaf.create(launch, name, launch.size.diskBytes, signal);
                 if (created.kind === 'bound') return { kind: 'bound', resource: reference(created.resource) };
                 if (created.kind === 'unavailable') return { kind: 'rejected', code: 'invalid_request' };
+                return pending(recovery, created.nativeCause);
             } catch { /* Native creation may already exist; retain exact lookup custody. */ }
             return pending(recovery);
         },
@@ -120,20 +121,15 @@ export function createCuaLocalProvisioner(native: CuaNativeClient, localId: CuaL
             return result.kind === 'observed' && result.existence === 'present'
                 && result.power === cuaPowerAfter(intent, 'local') ? { kind: 'confirmed' } : { kind: 'unknown' };
         },
-        async destroy(input: unknown): Promise<MachineProvisionerPowerResultV1> {
-            const result = await leaf.destroy(resource(input), signal);
+        async destroy(input: unknown, expectedImageId?: string): Promise<MachineProvisionerPowerResultV1> {
+            const result = await leaf.destroy(resource(input), signal, expectedImageId);
             return result.kind === 'deleted' ? { kind: 'confirmed' } : { kind: 'unknown', code: 'cua_cleanup_incomplete' };
         },
         async destroyPending(input: unknown): Promise<MachineProvisionerPowerResultV1> {
             const operation = CuaLocalNativeOperationV1Schema.parse(input);
-            const value = resource(operation.resource);
-            // Native identity/runtime/image qualifies created compute even when
-            // Space registration never completed. Enrollment still uses reconcile.
-            const observed = await leaf.inspect(value, signal);
-            if (observed.existence !== 'present' || observed.imageId !== operation.imageId) {
-                return { kind: 'unknown', code: 'cua_cleanup_incomplete' };
-            }
-            return this.destroy(value);
+            // The exact cleanup owner qualifies present compute and can settle
+            // remaining registration when that compute is already absent.
+            return this.destroy(operation.resource, operation.imageId);
         },
         async exec(input: unknown, argv: readonly string[], inputBytes?: Uint8Array, timeoutMs?: number | null,
             processConfig?: MachineProvisionerProcessConfigV1, managedServices?: ManagedServices) {

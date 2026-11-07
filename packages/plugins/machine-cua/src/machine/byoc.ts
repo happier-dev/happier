@@ -1,11 +1,15 @@
 import type { CuaNativeClient } from './nativeClient.js';
-import { MachineProvisionerObservationV1Schema, MachineProvisionerOptionsResultV1Schema,
+import { observeMachineProvisionerNativeRead, MachineProvisionerObservationV1Schema, MachineProvisionerOptionsResultV1Schema,
     type MachineProvisionerObservationV1, type MachineProvisionerOptionsResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import * as z from 'zod/mini';
 import { CuaLocalNameSchema, CuaNativeCloudSandboxSchema, CuaNativeDeleteSchema, CuaNativeImageRefSchema } from './schemas.js';
-import { removeCuaSpaceRegistration } from './nativeSpaces.js';
+import { readCuaSpaceRegistry, removeCuaSpaceRegistration } from './nativeSpaces.js';
 import { cuaNativePowerVerb } from './nativePower.js';
 import { ByocLaunchV1Schema, ByocResourceV1Schema, NativeCloudProviderSchema, NativeCloudResourceSchema, type ByocResourceV1 } from './remoteSchemas.js';
+
+function byocBilling(cloud: ByocResourceV1['cloud']): NonNullable<MachineProvisionerObservationV1['billing']> {
+    return { location: 'cloud', stoppedBilling: cloud === 'modal' ? 'unknown' : 'not-billed' };
+}
 
 export function qualifyByocLaunch(input: unknown, provider: unknown) {
     const launch = ByocLaunchV1Schema.parse(input);
@@ -47,26 +51,6 @@ export function decodeCreatedByocResource(input: unknown, sandboxId: string, res
     return { kind: 'bound' as const, resource };
 }
 
-export function inspectByocLedger(resource: unknown, rows: unknown) {
-    const ref = ByocResourceV1Schema.parse(resource);
-    if (Array.isArray(rows)) {
-        const exact = rows.flatMap((row: unknown) => {
-            const parsed = NativeCloudResourceSchema.safeParse(row);
-            return parsed.success && parsed.data.provider === ref.cloud && parsed.data.id === ref.nativeResourceId
-                && parsed.data.sandbox === ref.sandboxId ? [parsed.data] : [];
-        });
-        const [main] = exact;
-        if (exact.length === 1 && main) return { existence: 'unknown' as const, power: 'unknown' as const,
-            recordedPower: main.state };
-    }
-    // This is the controller's local ledger, not an authenticated cloud lookup.
-    return { existence: 'unknown' as const, power: 'unknown' as const };
-}
-
-export function byocCleanupTarget(resource: unknown) {
-    return ByocResourceV1Schema.parse(resource).sandboxId;
-}
-
 const cloudStatusSchema = z.object({ providers: z.array(NativeCloudProviderSchema), resources: z.array(NativeCloudResourceSchema) });
 /** Remote operations on C53's single native boundary. No enrollment or policy. */
 export function createCuaByoc(native: CuaNativeClient) {
@@ -106,11 +90,14 @@ export function createCuaByoc(native: CuaNativeClient) {
         // Native get performs vendor describe. Its `gone` result is materially
         // different from missing controller state or a failed authorization.
         if (facts.state === 'gone' || facts.state === 'terminated') {
+            // The native ledger cannot prove separate cloud attachments gone (CD9).
+            if (resource.ownedAttachmentIds.length > 0) return unknown;
+            if (resource.spaceId && await readCuaSpaceRegistry(native, resource.spaceId, signal, resource.cloud) !== 'absent') return unknown;
             return { resource, existence: 'absent' as const, power: 'unknown' as const };
         }
         // BYOC VM stop is exposed by the native sandbox layer as Suspended;
         // this route retains disk, not a local sandbox's RAM suspension promise.
-        const power = facts.state === 'suspended' && resource.cloud !== 'modal' ? 'stopped'
+        const power: NonNullable<MachineProvisionerObservationV1['power']> = facts.state === 'suspended' && resource.cloud !== 'modal' ? 'stopped'
             : facts.state === 'running' || facts.state === 'stopped' ? facts.state : 'unknown';
         return { resource, existence: 'present' as const, power,
             ...(facts.expires_at !== null && { nativeExpiryAt: Date.parse(facts.expires_at) }) };
@@ -166,6 +153,7 @@ export function createCuaByoc(native: CuaNativeClient) {
             });
             return MachineProvisionerOptionsResultV1Schema.parse({
                 base: { launch: { cloud, ...(lifetime.kind === 'no-native-ttl' ? { nativeLifetime: lifetime } : {}) },
+                    billing: byocBilling(cloud),
                     retention: { supportedIntents: cloud === 'modal' ? ['delete'] : ['start', 'stop', 'delete'],
                         finiteOnly: lifetime.kind === 'finite' } },
                 dimensions: { ...dimensions, size: sizeOptions, image: [...images.values()],
@@ -174,22 +162,25 @@ export function createCuaByoc(native: CuaNativeClient) {
                         nativeFacts: { location: { id: provider.region, title: provider.region } } }],
                     duration: lifetime.kind === 'finite' ? [{ id: String(lifetime.durationSeconds), title: `${lifetime.durationSeconds} s`,
                         assignments: [{ path: 'nativeLifetime', value: lifetime }], nativeFacts: {
-                            duration: { id: String(lifetime.durationSeconds), title: `${lifetime.durationSeconds} s`, afterMs: lifetime.durationSeconds * 1000 }, } }] : [], },
+                            duration: { id: String(lifetime.durationSeconds), title: `${lifetime.durationSeconds} s`, afterMs: lifetime.durationSeconds * 1000 },
+                        } }] : [],
+                },
                 constraints: [...sizes].map(([id, entries]) => ({ when: { dimension: 'size', optionIds: [id] },
-                    requires: { dimension: 'image', optionIds: [...new Set(entries.map(entry => entry.kind.image))] } })), });
+                    requires: { dimension: 'image', optionIds: [...new Set(entries.map(entry => entry.kind.image))] } })),
+            });
         },
         async observe(input: unknown, observedAt: number, signal?: AbortSignal): Promise<MachineProvisionerObservationV1> {
             MachineProvisionerObservationV1Schema.parse({ observedAt, availability: 'unavailable' });
             const current = await inspect(input, signal);
-            if (current.existence === 'unknown') return { observedAt, availability: 'unavailable',
-                power: 'unknown', reason: 'native_resource_unknown' };
-            if (current.existence === 'absent') return { observedAt, availability: 'absent', power: 'unknown' };
-            return MachineProvisionerObservationV1Schema.parse({ observedAt, availability: 'present', power: current.power,
-                billing: { location: 'cloud', stoppedBilling: current.resource.cloud === 'modal' ? 'unknown' : 'not-billed' },
+            if (current.existence === 'unknown') return observeMachineProvisionerNativeRead(observedAt, { kind: 'unknown',
+                power: 'unknown', reason: 'native_resource_unknown' });
+            if (current.existence === 'absent') return observeMachineProvisionerNativeRead(observedAt, { kind: 'absent', power: 'unknown' });
+            return MachineProvisionerObservationV1Schema.parse(observeMachineProvisionerNativeRead(observedAt, { kind: 'present', power: current.power,
+                billing: byocBilling(current.resource.cloud),
                 ...(current.nativeExpiryAt !== undefined && { nativeExpiry: current.nativeExpiryAt }),
-            });
+            }));
         },
-        async recover(input: unknown, sandboxId: string, signal?: AbortSignal) {
+        async recover(input: unknown, sandboxId: string, signal?: AbortSignal, requireRunning = false) {
             const launch = ByocLaunchV1Schema.parse(input);
             const name = sandboxId.slice(launch.cloud.length + 1);
             if (sandboxId !== `${launch.cloud}:${CuaLocalNameSchema.parse(name)}`) throw new Error('cua_resource_mismatch');
@@ -197,6 +188,7 @@ export function createCuaByoc(native: CuaNativeClient) {
             const decoded = current?.success ? decodeCreatedByocResource(launch, sandboxId, current.data.resources) : undefined;
             if (decoded?.kind === 'bound') {
                 const observed = await exactSandbox(decoded.resource, signal);
+                if (requireRunning && observed?.state !== 'running') return { kind: 'unknown' as const };
                 if (observed && observed.image === launch.nativeImageId) return decoded;
                 if (observed?.image) {
                     // Native CLI aliases are resolved before contrib persistence.
@@ -223,11 +215,11 @@ export function createCuaByoc(native: CuaNativeClient) {
             }
             // Region, instance size and native lifetime are checked above, not
             // invented command flags or rewrites of global cloud connection.
-            await native.json(['--embedded', 'sandbox', 'create', launch.nativeImageId, `--on=${launch.cloud}`,
+            const created = await native.json(['--embedded', 'sandbox', 'create', launch.nativeImageId, `--on=${launch.cloud}`,
                 `--name=${name}`, '--keep-on-failure'], signal);
-            const recorded = await status(launch.cloud, signal);
-            const bound = recorded?.success ? decodeCreatedByocResource(launch, recovery.sandboxId, recorded.data.resources) : undefined;
-            return bound?.kind === 'bound' ? bound : { kind: 'unknown' as const, recovery };
+            const bound = await this.recover(launch, recovery.sandboxId, signal, true);
+            return bound.kind === 'bound' ? bound : { kind: 'unknown' as const, recovery,
+                ...(created.kind !== 'success' && created.nativeCause ? { nativeCause: created.nativeCause } : {}) };
         },
         inspect,
         async power(input: unknown, intent: 'start' | 'stop', signal?: AbortSignal) {

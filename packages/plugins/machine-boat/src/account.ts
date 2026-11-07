@@ -2,7 +2,7 @@ import { createMachineProvisionerFetch } from '@happier-dev/plugin-sdk/machine-p
 import type { ConnectedAccountAuthenticationContext, ConnectedAccountReadContext, ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { HttpService } from '@happier-dev/plugin-sdk/http';
 import { createBoatNativeClient } from './machine/nativeClient.js';
-import { BoatNativeError } from './machine/schemas.js';
+import { BoatNativeError, boatSetupMessage } from './machine/schemas.js';
 
 export const ACCOUNT_ID = 'boat-account';
 export const ACCOUNT_PURPOSE = 'cloud-api';
@@ -24,27 +24,30 @@ export function nativeFetch(context: HttpContext, token?: string): typeof global
 async function confirm(token: string, context: ConnectedAccountAuthenticationContext | ConnectedAccountReadContext, options?: { signal?: AbortSignal }) {
   try {
     await createBoatNativeClient({ fetch: nativeFetch(context, token), signal: options?.signal ?? context.signal }).check();
-    return 'connected' as const;
+    return { status: 'connected' as const };
   } catch (error) {
     if ((options?.signal ?? context.signal).aborted) throw error;
-    return error instanceof BoatNativeError && error.code === 'native_authorization_failed'
-      ? 'reconnectRequired' as const : 'unavailable' as const;
+    const message = error instanceof BoatNativeError ? boatSetupMessage(error.code) : undefined;
+    return { status: error instanceof BoatNativeError && (error.code === 'native_authorization_failed' || message)
+      ? 'reconnectRequired' as const : 'unavailable' as const,
+      diagnostic: message && error instanceof BoatNativeError
+        ? { code: error.code, severity: 'error' as const, message } : diagnostic };
   }
 }
 
 async function health(context: ConnectedAccountReadContext, options?: { signal?: AbortSignal }) {
   const token = await context.credentials.get('token', options);
-  const status = validToken(token) ? await confirm(token!, context, options) : 'reconnectRequired' as const;
-  return status === 'connected' ? { status, displayName: 'Boat' } : { status, diagnostic };
+  const result = validToken(token) ? await confirm(token!, context, options) : { status: 'reconnectRequired' as const, diagnostic };
+  return result.status === 'connected' ? { ...result, displayName: 'Boat' } : result;
 }
 
 export const connectedAccountRuntime: ConnectedAccountRuntime = {
   authentication: { modes: { token: { kind: 'manual', async complete(input, context, options) {
     const token = input.fields.token?.trim();
     if (!validToken(token)) return { status: 'rejected', diagnostic };
-    const status = await confirm(token!, context, options);
-    if (status === 'unavailable') return { status, diagnostic };
-    if (status !== 'connected') return { status: 'rejected', diagnostic };
+    const result = await confirm(token!, context, options);
+    if (result.status === 'unavailable') return { ...result, status: result.status };
+    if (result.status !== 'connected') return { status: 'rejected', diagnostic: result.diagnostic };
     await context.attemptCredentials.set('token', token!, options);
     return { status: 'connected', displayName: 'Boat', scopes: [] };
   } } } },

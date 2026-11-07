@@ -1,4 +1,5 @@
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1, type MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { projectPluginFailureText, PluginError } from '@happier-dev/plugin-sdk';
 import type { ExecService, PluginExecSpawnRequest } from '@happier-dev/plugin-sdk/exec';
 import { createSecureTempDirectorySync, writeAtomicFile } from '@happier-dev/plugin-sdk/fs';
 import { createHash } from 'node:crypto';
@@ -37,9 +38,9 @@ function confirmedDaemonStart(result: Awaited<ReturnType<ExecService['run']>>) {
 
 export type CuaNativeOutcome<T> =
     | Readonly<{ kind: 'success'; value: T }>
-    | Readonly<{ kind: 'unknown'; reason: 'transport' | 'termination' | 'truncated' | 'response' }>
+    | Readonly<{ kind: 'unknown'; reason: 'transport' | 'termination' | 'truncated' | 'response'; nativeCause?: MachineProvisionerNativeCauseV1 }>
     // Native exit 3 is Cua's typed NotFound for the exact id the command named.
-    | Readonly<{ kind: 'unknown'; reason: 'not_found' }>;
+    | Readonly<{ kind: 'unknown'; reason: 'not_found'; nativeCause?: MachineProvisionerNativeCauseV1 }>;
 
 export function createCuaNativeClient(options: {
     exec: Pick<ExecService, 'run'>;
@@ -128,23 +129,35 @@ export function createCuaNativeClient(options: {
         const startsLocalRuntime = args[0] === '--embedded'
             && ((args[1] === 'sandbox' && args[2] === 'resume' && args[3]?.startsWith('local:'))
                 || ((args[1] === 'sandbox' || args[1] === 'spaces') && args[2] === 'create' && args.includes('--on=local')));
+        let nativeCause: MachineProvisionerNativeCauseV1 | undefined;
         try {
             const result = await options.exec.run({ executable: options.executable, args: ['--json', ...args], env: environment }, {
                 signal, ...(startsLocalRuntime ? { descendantDisposition: 'preserve-on-success' as const } : {}),
             });
+            const success = completed(result);
+            if (args.includes('create') && !success) {
+                const observed = result.termination.observed;
+                const stderr = projectPluginFailureText(new Error(new TextDecoder().decode(result.stderr))).trim();
+                nativeCause = { localCause: 'native_command_failed', command: 'create',
+                    exitCode: observed.kind === 'exit' && result.termination.requestedBy.kind === 'none' ? observed.exitCode : null,
+                    ...(stderr ? { stderr: stderr.slice(-MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1) } : {}),
+                    ...(result.stderrTruncated || stderr.length > MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1 ? { stderrTruncated: true } : {}),
+                };
+            }
             if (result.termination.observed.kind === 'exit' && result.termination.observed.exitCode === 3
                 && result.termination.requestedBy.kind === 'none') {
-                return { kind: 'unknown', reason: 'not_found' } as const;
+                return { kind: 'unknown', reason: 'not_found', ...(nativeCause ? { nativeCause } : {}) } as const;
             }
-            if (result.termination.observed.kind !== 'exit' || result.termination.observed.exitCode !== 0
-                || result.termination.requestedBy.kind !== 'none') {
-                return { kind: 'unknown', reason: 'termination' } as const;
+            if (!success) {
+                return { kind: 'unknown', reason: 'termination', ...(nativeCause ? { nativeCause } : {}) } as const;
             }
             return { kind: 'success', value: result } as const;
         } catch {
-            // Native failures may carry credentials or service URLs. The durable
-            // host owner keeps recovery identity; never project native error text.
-            return { kind: 'unknown', reason: 'transport' } as const;
+            // Thrown transport errors can carry private input; retain only the
+            // command classification, never their message.
+            return { kind: 'unknown', reason: 'transport', ...(args.includes('create') ? { nativeCause: {
+                localCause: 'native_command_failed' as const, command: 'create' as const, exitCode: null,
+            } } : {}) } as const;
         }
     }
     return {

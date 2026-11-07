@@ -1,16 +1,10 @@
-import { ByocLaunchV1Schema } from './remoteSchemas.js';
-import type { MachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
-import type { MachineProvisionerOptionsResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
-import { projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
-function select(options: MachineProvisionerOptionsResultV1, selection: MachineProvisionerSelectionV1 = {}) {
-    return projectMachineProvisionerSelectionV1({ options, launchSchema: ByocLaunchV1Schema.jsonSchema,
-        selection: { ...Object.fromEntries(Object.entries(options.dimensions).flatMap(([dimension, entries]) =>
-            entries[0] ? [[dimension, entries[0].id]] : [])), ...selection } });
-}
 import { describe, expect, it } from 'vitest';
 import type { PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import { createCuaNativeClient } from './nativeClient.js';
 import { createCuaByoc } from './byoc.js';
+import { ByocLaunchV1Schema } from './remoteSchemas.js';
+import { projectMachineProvisionerSelectionV1, type MachineProvisionerOptionsResultV1,
+    type MachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 
 const launch = { cloud: 'aws', region: 'us-west-2', nativeImageId: 'linux', nativeSizeId: 't3.medium',
     nativeLifetime: { kind: 'no-native-ttl' } };
@@ -44,26 +38,72 @@ function harness(...values: unknown[]) {
     return { argv, byoc: createCuaByoc(native) };
 }
 
+function select(options: MachineProvisionerOptionsResultV1, selection: MachineProvisionerSelectionV1 = {}) {
+    return projectMachineProvisionerSelectionV1({ options, launchSchema: ByocLaunchV1Schema.jsonSchema,
+        selection: { ...Object.fromEntries(Object.entries(options.dimensions).flatMap(([dimension, entries]) =>
+            entries[0] ? [[dimension, entries[0].id]] : [])), ...selection } });
+}
+
 describe('Cua BYOC native operations', () => {
+    it('does not bind a stopped cloud instance merely because its identity and image match', async () => {
+        const h = harness(emptyStatus, info, status, { ...info, state: 'stopped' });
+        expect(await h.byoc.create(launch, 'owned')).toMatchObject({ kind: 'unknown' });
+    });
+    it('retains a native transport failure from cloud create', async () => {
+        const h = harness(emptyStatus, new Error('private provider credential'), emptyStatus);
+        expect(await h.byoc.create(launch, 'owned')).toMatchObject({ kind: 'unknown', nativeCause: {
+            localCause: 'native_command_failed', command: 'create', exitCode: null,
+        } });
+    });
+    it('keeps missing cloud sandbox custody when owned attachments or its registry are unconfirmed', async () => {
+        const withAttachment = { ...resource, ownedAttachmentIds: ['volume-owned'] };
+        const attached = harness({ ...status, resources: [row, { ...row, id: 'volume-owned', type: 'volume' }] }, { ...info, state: 'gone' });
+        expect(await attached.byoc.observe(withAttachment, 1234)).toMatchObject({ availability: 'unavailable' });
+        const registered = harness(status, { ...info, state: 'gone' }, { spaces: [{ id: resource.spaceId, provider: 'aws', name: 'owned' }] });
+        expect(await registered.byoc.observe(resource, 1234)).toMatchObject({ availability: 'unavailable' });
+    });
+    it('emits native size facts once and keeps qualified image pairs and their prices independent', async () => {
+        const h = harness({ providers: [{ ...provider, kinds: [
+            provider.kinds[0],
+            { image: 'desktop', supported: true, machine_type: 't3.medium', usd_per_hour: 0.06 },
+            { image: 'linux', supported: true, machine_type: 't3.large', usd_per_hour: 0.08 },
+        ] }], resources: [] });
+        const options = await h.byoc.options('aws', 1234);
+        expect(options).toHaveProperty('dimensions');
+        expect(options.dimensions.size.map((entry) => entry.id)).toEqual(['t3.medium', 't3.large']);
+        expect(options.dimensions.image.map((entry) => entry.id)).toEqual(['linux', 'desktop']);
+        expect(options.dimensions.size[0]?.prices).toMatchObject([
+            { amount: '0.0416', when: [{ dimension: 'image', optionIds: ['linux'] }] },
+            { amount: '0.06', when: [{ dimension: 'image', optionIds: ['desktop'] }] },
+        ]);
+        expect(options.constraints).toContainEqual({ when: { dimension: 'size', optionIds: ['t3.large'] },
+            requires: { dimension: 'image', optionIds: ['linux'] } });
+        expect(select(options, { size: 't3.large', image: 'desktop' })).toMatchObject({ kind: 'unavailable' });
+        expect(select(options, { size: 't3.medium', image: 'desktop' })).toMatchObject({ kind: 'ready',
+            prices: [{ amount: '0.06' }], launch: { nativeImageId: 'desktop', nativeSizeId: 't3.medium' } });
+        expect(options).not.toHaveProperty('choices');
+    });
+
     it('publishes the configured Modal lifetime without assigning a finite lifetime to no-TTL AWS or GCP', async () => {
         const modal = harness({ providers: [{ ...provider, name: 'modal', ttl_hours: 2 }], resources: [] });
         expect(select(await modal.byoc.options('modal', 1234))).toMatchObject({ kind: 'ready',
             launch: { cloud: 'modal', nativeLifetime: { kind: 'finite', durationSeconds: 7200 } },
-            retention: { supportedIntents: ['delete'], finiteOnly: true },
+            retention: { supportedIntents: ['delete'], finiteOnly: true }, billing: { location: 'cloud', stoppedBilling: 'unknown' },
             nativeFacts: { duration: { id: '7200', afterMs: 7_200_000 } },
         });
         for (const cloud of ['aws', 'gcp'] as const) {
             const durable = harness({ providers: [{ ...provider, name: cloud, ttl_hours: 0 }], resources: [] });
             const result = select(await durable.byoc.options(cloud, 1234));
             expect(result).toMatchObject({ kind: 'ready', launch: { nativeLifetime: { kind: 'no-native-ttl' } },
-                retention: { supportedIntents: ['start', 'stop', 'delete'], finiteOnly: false } });
+                retention: { supportedIntents: ['start', 'stop', 'delete'], finiteOnly: false },
+                billing: { location: 'cloud', stoppedBilling: 'not-billed' } });
             expect(result.nativeFacts.duration).toBeUndefined();
         }
     });
     it('projects source-timed configured choices without inventing cloud setup or a price', async () => {
         const h = harness(status);
         expect(select(await h.byoc.options('aws', 1234))).toEqual({ kind: 'ready',
-            launch, retention: { supportedIntents: ['start', 'stop', 'delete'], finiteOnly: false }, nativeFacts: { size: { id: 't3.medium', title: 't3.medium' },
+            launch, billing: { location: 'cloud', stoppedBilling: 'not-billed' }, retention: { supportedIntents: ['start', 'stop', 'delete'], finiteOnly: false }, nativeFacts: { size: { id: 't3.medium', title: 't3.medium' },
                 image: { id: 'linux', title: 'linux' }, location: { id: 'us-west-2', title: 'us-west-2' } },
             prices: [{ amount: '0.0416', currency: 'USD', unit: 'hour',
                 source: 'cua-native-cloud-status', observedAt: 1234 }],
@@ -82,16 +122,17 @@ describe('Cua BYOC native operations', () => {
         const denied = harness(status, new Error('native bearer private'));
         expect(await denied.byoc.observe(resource, 1234)).toEqual({ observedAt: 1234, availability: 'unavailable',
             power: 'unknown', reason: 'native_resource_unknown' });
-        const missing = harness(status, { ...info, state: 'gone' });
+        const missing = harness(status, { ...info, state: 'gone' }, { spaces: [] });
         expect(await missing.byoc.observe(resource, 1234)).toEqual({ observedAt: 1234, availability: 'absent', power: 'unknown' });
     });
     it('qualifies before creation, explicitly selects the cloud and retains exact ownership', async () => {
-        const h = harness(emptyStatus, info, status);
+        const h = harness(emptyStatus, info, status, info);
         expect(await h.byoc.create(launch, 'owned')).toEqual({ kind: 'bound', resource });
         expect(h.argv).toEqual([
             ['--json', '--embedded', 'cloud', 'status', 'aws'],
             ['--json', '--embedded', 'sandbox', 'create', 'linux', '--on=aws', '--name=owned', '--keep-on-failure'],
             ['--json', '--embedded', 'cloud', 'status', 'aws'],
+            ['--json', '--embedded', 'sandbox', 'info', 'aws:owned'],
         ]);
         const mismatch = harness({ ...status, providers: [{ ...provider, ttl_hours: 8 }] });
         expect(await mismatch.byoc.create(launch, 'owned')).toMatchObject({ kind: 'unavailable' });
@@ -101,10 +142,11 @@ describe('Cua BYOC native operations', () => {
         expect(collision.argv).toHaveLength(1);
     });
     it('recovers a lost create response by exact name without creating another allocation', async () => {
-        const h = harness(emptyStatus, new Error('private transport'), status);
+        const h = harness(emptyStatus, new Error('private transport'), status, info);
         expect(await h.byoc.create(launch, 'owned')).toEqual({ kind: 'bound', resource });
         const unknown = harness(emptyStatus, new Error('private transport'), emptyStatus);
-        expect(await unknown.byoc.create(launch, 'owned')).toEqual({ kind: 'unknown', recovery: { cloud: 'aws', sandboxId: 'aws:owned' } });
+        expect(await unknown.byoc.create(launch, 'owned')).toMatchObject({ kind: 'unknown', recovery: { cloud: 'aws', sandboxId: 'aws:owned' },
+            nativeCause: { localCause: 'native_command_failed', command: 'create', exitCode: null } });
         expect(unknown.argv.filter(args => args.includes('create'))).toHaveLength(1);
     });
     it('requires the retained exact native id before observing power or deleting', async () => {
@@ -128,9 +170,9 @@ describe('Cua BYOC native operations', () => {
         const h = harness(status, info, 'Suspending', status, { ...info, state: 'suspended', status: 'stopped' });
         expect(await h.byoc.power(resource, 'stop')).toMatchObject({ kind: 'observed', existence: 'present', power: 'stopped' });
         expect(h.argv[2]).toEqual(['--json', '--embedded', 'sandbox', 'suspend', 'aws:owned']);
-        const missing = harness(status, { ...info, state: 'gone', status: 'unknown' });
-        expect(await missing.byoc.power(resource, 'start')).toMatchObject({ kind: 'unavailable' });
-        expect(missing.argv).toHaveLength(2);
+        const missing = harness(status, { ...info, state: 'gone', status: 'unknown' }, { spaces: [] });
+        expect(await missing.byoc.power(resource, 'start')).toMatchObject({ kind: 'unavailable', reason: 'native_resource_absent' });
+        expect(missing.argv.some(args => args.includes('resume') || args.includes('create'))).toBe(false);
         const modal = harness();
         expect(await modal.byoc.power({ ...resource, cloud: 'modal', sandboxId: 'modal:owned' }, 'stop')).toMatchObject({ kind: 'unsupported' });
         expect(modal.argv).toHaveLength(0);
@@ -160,26 +202,4 @@ describe('Cua BYOC native operations', () => {
         const exact = harness(status, { ...info, image: custom.nativeImageId });
         expect(await exact.byoc.recover(custom, 'aws:owned')).toEqual({ kind: 'bound', resource });
     });
-  it('emits native size facts once and keeps qualified image pairs and their prices independent', async () => {
-        const h = harness({ providers: [{ ...provider, kinds: [
-            provider.kinds[0],
-            { image: 'desktop', supported: true, machine_type: 't3.medium', usd_per_hour: 0.06 },
-            { image: 'linux', supported: true, machine_type: 't3.large', usd_per_hour: 0.08 },
-        ] }], resources: [] });
-        const options = await h.byoc.options('aws', 1234);
-        expect(options).toHaveProperty('dimensions');
-        expect(options.dimensions.size.map((entry) => entry.id)).toEqual(['t3.medium', 't3.large']);
-        expect(options.dimensions.image.map((entry) => entry.id)).toEqual(['linux', 'desktop']);
-        expect(options.dimensions.size[0]?.prices).toMatchObject([
-            { amount: '0.0416', when: [{ dimension: 'image', optionIds: ['linux'] }] },
-            { amount: '0.06', when: [{ dimension: 'image', optionIds: ['desktop'] }] },
-        ]);
-        expect(options.constraints).toContainEqual({ when: { dimension: 'size', optionIds: ['t3.large'] },
-            requires: { dimension: 'image', optionIds: ['linux'] } });
-        expect(select(options, { size: 't3.large', image: 'desktop' })).toMatchObject({ kind: 'unavailable' });
-        expect(select(options, { size: 't3.medium', image: 'desktop' })).toMatchObject({ kind: 'ready',
-            prices: [{ amount: '0.06' }], launch: { nativeImageId: 'desktop', nativeSizeId: 't3.medium' } });
-        expect(options).not.toHaveProperty('choices');
-    });
-
 });

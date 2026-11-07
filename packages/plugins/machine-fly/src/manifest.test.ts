@@ -1,9 +1,4 @@
-import { projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
-function projectOptions(raw: unknown) {
-  const options = MachineProvisionerOptionsResultV1Schema.parse(raw);
-  return projectMachineProvisionerSelectionV1({ options, launchSchema: exports.FlyLaunchV1Schema.jsonSchema,
-    selection: Object.fromEntries(Object.entries(options.dimensions).flatMap(([dimension, entries]) => entries[0] ? [[dimension, entries[0].id]] : [])) });
-}
+import { readPluginTranslationResources } from '../../../../scripts/testing/readPluginTranslationResources.js';
 import * as z from 'zod/mini';
 import { readFileSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -11,57 +6,340 @@ import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { PluginApi, PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import { resolveEffectiveInputFields, writeInputPath, type ActionHandler } from '@happier-dev/plugin-sdk/actions';
-import { normalizePluginActionInputHintsV2, PluginActionInputHintsV2Schema } from '@happier-dev/protocol';
-import { MachineProvisionerOptionsResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { definePlugin, type PluginAccountApi } from '@happier-dev/plugin-sdk';
+import type { HttpRequest } from '@happier-dev/plugin-sdk/http';
+import type { ConnectedAccountMaterializationRequest, ConnectedAccountReadContext } from '@happier-dev/plugin-sdk/connected-accounts';
+import { resolveEffectiveInputFields, writeInputPath, type PluginAccountActionHandler, type PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
+import { normalizePluginActionInputHintsV2, PluginActionInputHintsV2Schema } from '@happier-dev/protocol/plugins/actions/v2';
+import { MachineProvisionerAcquireResultV1Schema, MachineProvisionerCheckResultV1Schema, MachineProvisionerObservationV1Schema, MachineProvisionerOptionsResultV1Schema, MachineProvisionerDestroyResultV1Schema,
+  projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import * as exports from './index.js';
 import { compilePluginJsonSchema, isValidPluginJsonSchemaValue, parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import { deliverManagedNativeFile } from '../../../../apps/cli/src/machines/managed/nativeFileDelivery';
-import { MACHINE_PROVISIONER_PUT_FILE_BASE64_MAX_LENGTH_V1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { MACHINE_PROVISIONER_PUT_FILE_BASE64_MAX_LENGTH_V1, MachineProvisionerPowerResultV1Schema, MachineProvisionerPutFileResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { FlyExecRequestSchema } from './machine/schemas.js';
 import { createPluginTestkit, type PluginTestServicesFixture } from '@happier-dev/plugin-sdk/testing';
+import { executeManagedMachineAcquire } from '@happier-dev/cli-common/machines/managed';
+import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { MachineProvisionerContributionV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { connectedAccountRuntime } from './account.js';
 
 const resource = { app: { name: 'managed', ownership: 'existing' }, machineId: 'machine-1', volume: { id: 'vol-1', ownership: 'attached' } };
 const launch = { app: { name: 'managed', ownership: 'existing' }, region: 'ams', imageReference: 'ubuntu:24.04', guest: { cpuKind: 'shared', cpus: 1, memoryMb: 1024 }, volume: { kind: 'attach', volumeId: 'vol-1' } };
-// Partial fixtures replace only host registration, credential materialization
-// and HTTP boundaries; public authoring/schema/native decoding remain real.
-async function activated(response: unknown | ((request: { url: string; body?: Uint8Array; method?: string }) => unknown), status = 200) {
+const emptyDimensions = { size: [], image: [], location: [], network: [], duration: [] };
+function projectOptions(raw: unknown) {
+  const options = MachineProvisionerOptionsResultV1Schema.parse(raw);
+  return projectMachineProvisionerSelectionV1({ options, launchSchema: exports.FlyLaunchV1Schema.jsonSchema,
+    selection: Object.fromEntries(Object.entries(options.dimensions).flatMap(([dimension, entries]) => entries[0] ? [[dimension, entries[0].id]] : [])) });
+}
+// Host registration, seeded credential storage and HTTP are boundaries;
+// account materialization, public authoring and native decoding remain real.
+async function activated(response: unknown | ((request: { url: string; body?: Uint8Array; method?: string }) => unknown), status: number | ((request: { url: string; method?: string }) => number) = 200) {
   const publicExports = exports as unknown as Record<string, unknown>;
-  expect(typeof publicExports.activate).toBe('function');
-  const handlers = new Map<string, ActionHandler>();
-  const activate = publicExports.activate as (api: PluginApi) => Promise<unknown>;
-  await activate({ actions: { register(id: string, handler: ActionHandler) {
+  expect(typeof publicExports.activateAccount).toBe('function');
+  const handlers = new Map<string, PluginAccountActionHandler>();
+  const activate = publicExports.activateAccount as (api: PluginAccountApi) => Promise<unknown>;
+  await activate({ actions: { register(id: string, handler: PluginAccountActionHandler) {
     handlers.set(id, handler); return { dispose() {} };
-  } }, connectedAccounts: { register() {} } } as unknown as PluginApi);
-  const requests: Array<{ url: string; headers?: Readonly<Record<string, string>>; body?: Uint8Array; method?: string }> = [];
-  const materializations: Array<{ kind: string; origin: string }> = [];
+  } } } as unknown as PluginAccountApi);
+  const requests: HttpRequest[] = [];
+  const materializations: ConnectedAccountMaterializationRequest[] = [];
+  const accountContext = { signal: new AbortController().signal,
+    configuration: { values: { organizationSlug: 'selected-org' } },
+    credentials: { get: async () => 'captured-private' },
+  } as unknown as ConnectedAccountReadContext; // Seed only the host credential/configuration boundary.
   const context = { invokedAtMs: 1234, signal: new AbortController().signal, services: {
-    connectedAccounts: { materialize: async (_purpose: string, request: { kind: string; origin: string }) => {
+    connectedAccounts: { materialize: async (_purpose: string, request: ConnectedAccountMaterializationRequest) => {
       materializations.push(request);
-      if (request.kind === 'environment') return { kind: 'environment', env: { FLY_ORGANIZATION: 'selected-org' } };
-      return { kind: 'httpHeaders', headers: { Authorization: 'Bearer captured-private' } };
+      return await connectedAccountRuntime.materialize(request, accountContext);
     } },
-    http: { request: async (request: { url: string; headers?: Readonly<Record<string, string>>; body?: Uint8Array; method?: string }) => {
+    http: { request: async (request: HttpRequest) => {
       requests.push(request);
+      const responseStatus = typeof status === 'function' ? status(request) : status;
       let value = typeof response === 'function' ? response(request) : response;
       // Current native catalog preflight is real internal logic. Only its HTTP
       // responses are fixtures, so acquisition tests keep exercising admission.
-      if (request.url.endsWith('/graphql') && new TextDecoder().decode(request.body).includes('HappierMachineOptions')
+      if (responseStatus >= 200 && responseStatus < 300 && request.url.endsWith('/graphql') && new TextDecoder().decode(request.body).includes('HappierMachineOptions')
         && !(typeof value === 'object' && value !== null && 'data' in value)) value = {
         data: { platform: { regions: [{ code: 'ams', name: 'Amsterdam', deprecated: false, requiresPaidPlan: false }],
           vmSizes: [{ name: 'shared-cpu-1x', cpuCores: 1, memoryMb: 256, maxMemoryMb: 2048, memoryIncrementsMb: [256], priceMonth: 2, priceSecond: 0.001 }] } },
       };
-      if (request.url.includes('/apps?') && !(typeof value === 'object' && value !== null && 'total_apps' in value)) {
+      if (responseStatus >= 200 && responseStatus < 300 && request.url.includes('/apps?') && !(typeof value === 'object' && value !== null && 'total_apps' in value)) {
         value = { total_apps: 1, apps: [{ id: 'app-1', name: 'managed', machine_count: 0, volume_count: 1 }] };
       }
-      if (request.url.endsWith('/volumes') && request.method === 'GET' && !Array.isArray(value)) value = [];
-      return { status, finalUrl: request.url, headers: {}, body: new TextEncoder().encode(JSON.stringify(value)) };
+      if (responseStatus >= 200 && responseStatus < 300 && request.url.endsWith('/volumes') && request.method === 'GET' && !Array.isArray(value)) value = [];
+      return { status: responseStatus, finalUrl: request.url, headers: {}, body: new TextEncoder().encode(JSON.stringify(value)) };
     } },
-  } } as unknown as PluginInvocationContext;
+  } } as unknown as PluginAccountActionContext;
   return { handlers, context, requests, materializations };
 }
 describe('public fly machine provisioner', () => {
+  it('declares whole-path browser ineligibility to the shared acquire owner before admission', async () => {
+    const provisioner = MachineProvisionerContributionV1Schema.parse({ id: 'fly', ...exports.MACHINE_PROVISIONER });
+    expect(provisioner.browserReachable).toBe(false);
+    let admissions = 0;
+    let allocations = 0;
+    const input = {
+      provisioner,
+      admit: async () => {
+        admissions++;
+        return ManagedMachineV1Schema.parse({ id: 'managed-fly', homeId: 'home', custodianAccountId: 'owner',
+          controller: { machineId: 'controller', installationId: 'installation' },
+          launch: { provider: { pluginId: exports.PLUGIN_MANIFEST.id, localId: 'fly' }, schemaVersion: 1, name: 'Fly', choices: launch },
+          allocation: 'unsubmitted', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
+          retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true });
+      },
+      onAccepted() {},
+      run: async () => { allocations++; },
+    };
+    await expect(executeManagedMachineAcquire({ ...input, host: 'browser' })).rejects.toMatchObject({ code: 'provider_unavailable' });
+    expect({ admissions, allocations }).toEqual({ admissions: 0, allocations: 0 });
+    await executeManagedMachineAcquire({ ...input, host: 'native' });
+    expect({ admissions, allocations }).toEqual({ admissions: 1, allocations: 1 });
+  });
+  it('keeps Fly header spend host-custodied across both native API origins', async () => {
+    const runtime = await activated(request => request.url.endsWith('/volumes')
+      ? [{ id: 'vol-1', region: 'ams', state: 'created', attached_machine_id: null }] : {});
+    const options = MachineProvisionerOptionsResultV1Schema.parse(await runtime.handlers.get('options')!(launch, runtime.context));
+    expect(options.base).toMatchObject({ available: true, launch });
+    expect([...new Set(runtime.requests.map(request => new URL(request.url).origin))].sort())
+      .toEqual(['https://api.fly.io', 'https://api.machines.dev']);
+    expect(runtime.materializations.filter(request => request.kind === 'environment')).toHaveLength(1);
+    expect(runtime.materializations.filter(request => request.kind === 'httpHeaders')).toHaveLength(0);
+    for (const request of runtime.requests) {
+      expect(new Headers(request.headers).get('authorization')).toBeNull();
+      expect(request.credentialBinding).toEqual({ kind: 'connectedAccountPurpose', purpose: 'cloud-api',
+        origin: new URL(request.url).origin, method: request.method, headerNames: ['authorization'] });
+    }
+    await runtime.handlers.get('check')!({}, runtime.context);
+    expect(runtime.materializations.filter(request => request.kind === 'environment')).toHaveLength(2);
+    expect(runtime.materializations.filter(request => request.kind === 'httpHeaders')).toHaveLength(0);
+  });
+  it('checks through Account activation without an execution Machine', async () => {
+    const runtime = await activated({});
+    const host = await createPluginTestkit({ manifest: exports.PLUGIN_MANIFEST, module: exports,
+      services: { http: runtime.context.services.http, connectedAccounts: runtime.context.services.connectedAccounts },
+      resolveCurrentPluginMaterializationRef: () => null });
+    const caller = definePlugin({ id: 'test.fly.account-caller', version: '1.0.0', actions: {
+      check: { title: 'Check Fly', surfaces: ['plugin'], dangerLevel: 'safe',
+        execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
+        inputSchema: exports.ROLE_SCHEMAS.checkInput,
+        resultSchema: MachineProvisionerCheckResultV1Schema,
+        run: async (_input, context) => await context.services.actions.execute(exports.PLUGIN.actionContracts.check, {}),
+      },
+    } });
+    const client = await createPluginTestkit({ manifest: caller.manifest, module: caller, actionTargets: [host],
+      resolveCurrentPluginMaterializationRef: () => null });
+    try {
+      expect(await client.invokeAction('check', {}, { surface: 'plugin' })).toMatchObject({ available: true });
+      expect(runtime.requests.length).toBeGreaterThan(0);
+      expect(runtime.materializations.filter(request => request.kind === 'environment')).toHaveLength(1);
+    } finally { await client.dispose(); await host.dispose(); }
+  });
+  it('continues delayed paid attachment cleanup without replaying the Machine DELETE', async () => {
+    let machinePresent = true;
+    let volumePresent = true;
+    const owned = { ...resource, volume: { id: 'vol-1', ownership: 'created' } };
+    const runtime = await activated(request => {
+      if (request.method === 'DELETE' && request.url.endsWith('/volumes/vol-1')) {
+        expect(machinePresent).toBe(false); volumePresent = false;
+      }
+      return request.url.endsWith('/volumes/vol-1') ? { id: 'vol-1', state: 'created', attached_machine_id: null }
+        : { id: resource.machineId, state: 'stopped', region: 'ams', config: { mounts: [], services: [] } };
+    }, request => request.url.endsWith('/volumes/vol-1') ? volumePresent ? 200 : 404
+      : request.method === 'DELETE' || machinePresent ? 200 : 404);
+    const destroy = async (input: unknown) => MachineProvisionerDestroyResultV1Schema.parse(await runtime.handlers.get('destroy')!(input, runtime.context));
+    const first = await destroy({ resource: owned });
+    expect(first).toMatchObject({ kind: 'accepted' });
+    if (first.kind !== 'accepted') throw new Error('Expected retained attachment cleanup');
+    expect(runtime.requests.filter(request => request.method === 'DELETE')).toHaveLength(1);
+    expect(await destroy({ nativeOperation: first.nativeOperationRef.value })).toMatchObject({ kind: 'accepted' });
+    expect(runtime.requests.filter(request => request.method === 'DELETE')).toHaveLength(1);
+    machinePresent = false;
+    expect(await destroy({ nativeOperation: first.nativeOperationRef.value })).toEqual({ kind: 'confirmed' });
+    expect(volumePresent).toBe(false);
+    expect(runtime.requests.filter(request => request.method === 'DELETE').map(request => new URL(request.url).pathname))
+      .toEqual(['/v1/apps/managed/machines/machine-1', '/v1/apps/managed/volumes/vol-1']);
+  });
+  it.each(['volume', 'app'] as const)('retains accepted %s deletion while distinguishing failed confirmation reads', async phase => {
+    let attachmentStatus = 200;
+    const owned = { ...resource,
+      app: phase === 'app' ? { name: 'managed', id: 'app-1', ownership: 'created' } : resource.app,
+      volume: { id: 'vol-1', ownership: phase === 'volume' ? 'created' : 'attached' } };
+    const runtime = await activated(request => {
+      if (request.url.endsWith('/graphql')) return { data: { app: { name: 'managed', certificates: { totalCount: 0 },
+        ipAddresses: { totalCount: 0 }, egressIpAddresses: { totalCount: 0 }, addOns: { totalCount: 0 }, secrets: [],
+        services: [], allocations: [], hasDeploymentSource: false } } };
+      if (request.url.endsWith('/machines') || request.url.endsWith('/volumes')) return [];
+      return request.url.endsWith('/volumes/vol-1') ? { id: 'vol-1', state: 'created', attached_machine_id: null }
+        : { id: 'app-1', name: 'managed' };
+    }, request => request.method === 'DELETE' ? 200 : request.url.endsWith('/machines/machine-1') ? 404
+      : request.url.endsWith(phase === 'volume' ? '/volumes/vol-1' : '/apps/managed') ? attachmentStatus : 200);
+    const destroy = async (input: unknown) => MachineProvisionerDestroyResultV1Schema.parse(await runtime.handlers.get('destroy')!(input, runtime.context));
+    const first = await destroy({ resource: owned });
+    expect(first).toMatchObject({ kind: 'accepted', nativeOperationRef: { value: owned } });
+    if (first.kind !== 'accepted') throw new Error('Expected exact pending attachment custody');
+    attachmentStatus = 403;
+    expect(await destroy({ nativeOperation: first.nativeOperationRef.value })).toMatchObject({ kind: 'unknown',
+      nativeCause: { httpStatusClass: '4xx' } });
+    attachmentStatus = 404;
+    expect(await destroy({ nativeOperation: first.nativeOperationRef.value })).toEqual({ kind: 'confirmed' });
+    expect(runtime.requests.filter(request => request.method === 'DELETE' && request.url.includes('/machines/'))).toHaveLength(1);
+  });
+  it('qualifies an accepted asynchronous Delete for the shared host observer without replaying its native mutation', async () => {
+    const runtime = await activated({ id: resource.machineId, state: 'started', region: 'ams', config: {
+      mounts: [{ volume: resource.volume.id, path: '/home/happier' }], services: [],
+    } });
+    expect(MachineProvisionerDestroyResultV1Schema.parse(await runtime.handlers.get('destroy')!({ resource }, runtime.context)))
+      .toMatchObject({ kind: 'accepted', nativeOperationRef: { value: resource } });
+    expect(runtime.requests.map(request => request.method)).toEqual(['DELETE', 'GET']);
+  });
+  it.each(['created', 'starting'])('defers bootstrap while the exact Fly Machine is %s', async state => {
+    const runtime = await activated({ id: resource.machineId, state, region: 'ams', config: {
+      mounts: [{ volume: resource.volume.id, path: '/home/happier' }], services: [],
+    } });
+    await expect(runtime.handlers.get('bootstrap')!({ resource }, runtime.context)).rejects.toMatchObject({ code: 'native_not_ready' });
+    expect(runtime.requests.every(request => request.method === 'GET')).toBe(true);
+  });
+
+  it('allows bootstrap with native autowake enabled and discloses autonomous power in Inspect', async () => {
+    const runtime = await activated(request => request.url.endsWith('/volumes/vol-1')
+      ? { id: resource.volume.id, state: 'created', attached_machine_id: resource.machineId }
+      : { id: resource.machineId, state: 'started', region: 'ams', config: {
+        mounts: [{ volume: resource.volume.id, path: '/home/happier' }], services: [{ autostart: true, autostop: 'suspend' }],
+      } });
+    await expect(runtime.handlers.get('bootstrap')!({ resource }, runtime.context)).resolves.toMatchObject({ kind: 'native' });
+    const observation = MachineProvisionerObservationV1Schema.parse(await runtime.handlers.get('inspect')!({ resource }, runtime.context));
+    expect(observation).toMatchObject({ availability: 'present', power: 'running', storage: 'retained', reason: 'native_autonomous_power' });
+    expect(runtime.requests.every(request => request.method === 'GET')).toBe(true);
+  });
+
+  it('preserves managed cleanup custody when the Machine is absent but its owned volume remains', async () => {
+    const h = await activated({ id: 'vol-1', state: 'created', attached_machine_id: null },
+      request => request.url.endsWith('/machines/machine-1') ? 404 : 200);
+    const retained = { ...resource, volume: { id: 'vol-1', ownership: 'created' } };
+    expect(MachineProvisionerObservationV1Schema.parse(await h.handlers.get('inspect')!({ resource: retained }, h.context)))
+      .toMatchObject({ availability: 'unavailable', reason: 'native_cleanup_incomplete' });
+    // One exact primary read and its one owned attachment; no fleet inventory or effect.
+    expect(h.requests).toHaveLength(2);
+    expect(h.requests.every(request => request.method === 'GET')).toBe(true);
+  });
+  it.each([403, 503])('preserves native effect refusal versus uncertain delivery for HTTP %i', async status => {
+    const runtime = await activated({ status: 'insufficient_capacity', error: 'private native message', details: { token: 'private credential' } }, status);
+    const expected = { kind: status === 403 ? 'refused' : 'unknown',
+      nativeCause: { httpStatusClass: status === 403 ? '4xx' : '5xx', code: 'insufficient_capacity' } };
+    const power = MachineProvisionerPowerResultV1Schema.parse(await runtime.handlers.get('power')!({ resource, intent: 'stop' }, runtime.context));
+    const destroy = MachineProvisionerPowerResultV1Schema.parse(await runtime.handlers.get('destroy')!({ resource }, runtime.context));
+    const write = MachineProvisionerPutFileResultV1Schema.parse(await runtime.handlers.get('put-file')!({ resource, guestPath: '/data/setup', bytesBase64: 'AA==' }, runtime.context));
+    for (const result of [power, destroy, write]) {
+      expect(result).toMatchObject(expected);
+      expect(JSON.stringify(result)).not.toContain('private');
+    }
+  });
+  it.each([403, 503])('preserves owned-volume DELETE failure after confirmed Machine absence (HTTP %i)', async status => {
+    const runtime = await activated(request => request.url.endsWith('/volumes/vol-owned') && request.method === 'GET'
+      ? { id: 'vol-owned', state: 'created', attached_machine_id: null }
+      : { status: 'volume_placement_capacity', error: 'private reflected input' },
+    request => new URL(request.url).pathname.endsWith('/machines/machine-1') ? request.method === 'GET' ? 404 : 200
+      : request.method === 'DELETE' ? status : 200);
+    const result = MachineProvisionerPowerResultV1Schema.parse(await runtime.handlers.get('destroy')!({ resource: {
+      ...resource, volume: { id: 'vol-owned', ownership: 'created' },
+    } }, runtime.context));
+    expect(result).toMatchObject({ kind: status === 403 ? 'refused' : 'unknown',
+      nativeCause: { httpStatusClass: status === 403 ? '4xx' : '5xx', code: 'volume_placement_capacity' } });
+    expect(runtime.requests.some(request => request.url.endsWith('/volumes/vol-owned') && request.method === 'DELETE')).toBe(true);
+    expect(JSON.stringify(result)).not.toContain('private');
+  });
+  it('keeps an accepted effect unknown when only its confirmation read is refused', async () => {
+    const runtime = await activated({ status: 'unknown', error: 'private native message' }, request => request.method === 'GET' ? 403 : 200);
+    for (const [role, input] of [['power', { resource, intent: 'stop' }], ['destroy', { resource }]] as const) {
+      expect(MachineProvisionerPowerResultV1Schema.parse(await runtime.handlers.get(role)!(input, runtime.context)))
+        .toMatchObject({ kind: 'unknown', nativeCause: { httpStatusClass: '4xx', code: 'unknown' } });
+    }
+  });
+  it.each(['volume-read', 'volume-confirmation', 'app-machines', 'app-volumes', 'app-identity', 'app-inventory', 'app-delete', 'app-confirmation'] as const)
+    ('retains native uncertainty through the %s attachment cleanup boundary', async phase => {
+      let volumeDeleted = false;
+      let appDeleted = false;
+      const fails = (request: { url: string; method?: string }) => {
+        if (request.url.endsWith('/volumes/vol-owned')) return request.method === 'GET'
+          && (phase === 'volume-read' && !volumeDeleted || phase === 'volume-confirmation' && volumeDeleted);
+        if (request.url.endsWith('/machines')) return phase === 'app-machines';
+        if (request.url.endsWith('/volumes')) return phase === 'app-volumes';
+        if (request.url.endsWith('/graphql')) return phase === 'app-inventory';
+        if (request.url.endsWith('/apps/managed')) return request.method === 'DELETE' ? phase === 'app-delete'
+          : phase === 'app-identity' && !appDeleted || phase === 'app-confirmation' && appDeleted;
+        return false;
+      };
+      const runtime = await activated(request => {
+        if (fails(request)) return { status: 'unknown', error: 'private native body' };
+        if (request.url.endsWith('/volumes/vol-owned')) {
+          if (request.method === 'DELETE') volumeDeleted = true;
+          return { id: 'vol-owned', state: 'created', attached_machine_id: null };
+        }
+        if (request.url.endsWith('/machines') || request.url.endsWith('/volumes')) return [];
+        if (request.url.endsWith('/graphql')) return { data: { app: { name: 'managed',
+          certificates: { totalCount: 0 }, ipAddresses: { totalCount: 0 }, egressIpAddresses: { totalCount: 0 },
+          addOns: { totalCount: 0 }, secrets: [], services: [], allocations: [], hasDeploymentSource: false } } };
+        if (request.url.endsWith('/apps/managed') && request.method === 'DELETE') appDeleted = true;
+        return { id: 'owned-app', name: 'managed' };
+      }, request => fails(request) ? 503
+        : request.method === 'GET' && (request.url.endsWith('/machines/machine-1')
+          || request.url.endsWith('/volumes/vol-owned') && volumeDeleted || request.url.endsWith('/apps/managed') && appDeleted) ? 404 : 200);
+      const result = MachineProvisionerPowerResultV1Schema.parse(await runtime.handlers.get('destroy')!({ resource: {
+        ...resource, app: { name: 'managed', ownership: 'created', id: 'owned-app' }, volume: { id: 'vol-owned', ownership: 'created' },
+      } }, runtime.context));
+      expect(result).toMatchObject({ kind: 'unknown', nativeCause: { httpStatusClass: '5xx', code: 'unknown' } });
+      expect(JSON.stringify(result)).not.toContain('private');
+    });
+  it.each(['bootstrap', 'exec', 'process-config'] as const)('carries native failure through the public PluginError for %s', async role => {
+    const runtime = await activated({ status: 'insufficient_capacity', error: 'private native message' }, 403);
+    const input = role === 'bootstrap' ? { resource } : { resource, argv: ['true'], timeoutMs: null,
+      ...(role === 'process-config' ? { processConfig: { environment: { HOME: '/data', HAPPIER_HOME_DIR: '/data/.happier' },
+        detachedDaemonStartArgv: ['happier', 'daemon', 'start', '--json'] } } : {}) };
+    await expect(runtime.handlers.get(role === 'bootstrap' ? role : 'exec')!(input, runtime.context)).rejects.toMatchObject({
+      name: 'PluginError', details: { nativeCause: { httpStatusClass: '4xx', code: 'insufficient_capacity' } },
+    });
+  });
+  it('acquires the exact unchanged launch offered by options through native qualification', async () => {
+    const runtime = await activated(request => request.url.endsWith('/volumes')
+      ? [{ id: 'vol-1', region: 'ams', state: 'created', attached_machine_id: null }]
+      : { id: 'machine-offered' });
+    const offered = MachineProvisionerOptionsResultV1Schema.parse(await runtime.handlers.get('options')!(launch, runtime.context));
+    const selected = projectOptions(offered);
+    expect(selected).toMatchObject({ kind: 'ready', launch });
+    if (selected.kind !== 'ready') throw new Error('Reviewed Fly form did not produce a launch');
+    const input = exports.ROLE_SCHEMAS.acquireInput.parse({ launch: selected.launch, managedId: 'managed-offered' });
+    expect(MachineProvisionerAcquireResultV1Schema.parse(await runtime.handlers.get('acquire')!(input, runtime.context)))
+      .toMatchObject({ kind: 'bound', resource: { value: { machineId: 'machine-offered' } } });
+    expect(runtime.requests.some(request => request.url.endsWith('/machines') && request.method === 'POST')).toBe(true);
+  });
+  it('retains uncertain exact-read failure evidence through the activated inspect role', async () => {
+    const { handlers, context } = await activated({ status: 'insufficient_capacity', error: 'private native message' }, 403);
+    expect(MachineProvisionerObservationV1Schema.parse(await handlers.get('inspect')!({ resource }, context))).toMatchObject({
+      observedAt: 1234, availability: 'unavailable', reason: 'authorization',
+      nativeCause: { httpStatusClass: '4xx', code: 'insufficient_capacity' },
+    });
+  });
+  it('preserves the safe native cause through activated check, options and acquire contracts', async () => {
+    const nativeCause = { httpStatusClass: '4xx', code: 'insufficient_capacity' };
+    const { handlers, context } = await activated({ status: nativeCause.code, error: 'private reflected input', details: { token: 'private credential' } }, 403);
+    expect(await handlers.get('check')!({}, context)).toMatchObject({ available: false, nativeCause });
+    const options = await handlers.get('options')!({}, context);
+    expect(MachineProvisionerOptionsResultV1Schema.parse(options)).toEqual({ dimensions: emptyDimensions, code: 'provider_unavailable', nativeCause });
+    expect(await handlers.get('acquire')!({ launch, managedId: 'managed-retained' }, context))
+      .toEqual({ kind: 'rejected', code: 'provider_unavailable', nativeCause });
+  });
+  it('keeps the native acquisition failure beside its exact retained recovery reference', async () => {
+    const { handlers, context } = await activated(request => request.url.endsWith('/volumes')
+      ? [{ id: 'vol-1', region: 'ams', state: 'created', attached_machine_id: null }]
+      : { status: 'insufficient_capacity', error: 'private reflected input' },
+    request => request.url.endsWith('/machines') && request.method === 'POST' ? 422 : 200);
+    const result = MachineProvisionerAcquireResultV1Schema.parse(await handlers.get('acquire')!({ launch, managedId: 'managed-retained' }, context));
+    expect(result).toMatchObject({ kind: 'pending', nativeCause: { httpStatusClass: '4xx', code: 'insufficient_capacity' },
+      nativeOperationRef: { value: { operation: { requestId: 'managed-retained', phase: 'machine' } } } });
+    expect(JSON.stringify(result)).not.toContain('private');
+  });
   it.skipIf(process.platform === 'win32')('writes an exact maximum host-produced fragment through the activated file Action and native client', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'fly-native-fragment-'));
     try {
@@ -169,25 +447,26 @@ describe('public fly machine provisioner', () => {
     expect(runtime.requests.every(request => request.method !== 'DELETE')).toBe(true);
     expect(runtime.requests.filter(request => request.method === 'POST').every(request => request.url.endsWith('/graphql'))).toBe(true);
   });
-  it.each([403, 500])('retains pending cleanup on native observation failure %i without replay qualification', async status => {
-    const runtime = await activated({}, status);
+  it.each([403, 503])('retains pending cleanup on native observation failure %i without replay qualification', async status => {
+    const runtime = await activated({ status: 'unknown', error: 'private native message' }, status);
     const cleanup = runtime.handlers.get('observe-cleanup');
     expect(cleanup).toBeDefined();
-    expect(await cleanup!({ nativeOperation: { launch,
+    const failure = await cleanup!({ nativeOperation: { launch,
       operation: { app: launch.app, volume: { id: 'vol-owned', ownership: 'created' }, requestId: 'managed-1', phase: 'volume' },
-    } }, runtime.context)).toMatchObject({ kind: 'unknown' });
+    } }, runtime.context).catch((error: unknown) => error);
+    expect(failure).toMatchObject({ name: 'PluginError', code: 'volume-observation-unavailable',
+      details: { nativeCause: { httpStatusClass: status === 403 ? '4xx' : '5xx', code: 'unknown' } } });
+    expect(JSON.stringify(failure)).not.toContain('private');
     expect(runtime.requests.every(request => request.method === 'GET')).toBe(true);
   });
   it('admits the full cold manifest with host confirmation and canonical native role ids', () => {
     const parsed = parsePluginManifest(exports.PLUGIN_MANIFEST);
     expect(parsed, parsed.ok ? undefined : JSON.stringify(parsed.diagnostics)).toMatchObject({ ok: true });
-    const bundles = exports.PLUGIN_MANIFEST.contributes?.ui?.translations ?? [];
-    const english = bundles.find(bundle => bundle.locale === 'en');
-    expect(english).toBeDefined();
-    for (const bundle of bundles) {
-      for (const key of Object.keys(english!.messages)) {
-        expect(bundle.messages[key], `${bundle.locale}: ${key}`).toEqual(expect.any(String));
-        expect(bundle.messages[key]?.trim().length, `${bundle.locale}: ${key}`).toBeGreaterThan(0);
+    const bundles = readPluginTranslationResources(new URL('../', import.meta.url), exports.PLUGIN_MANIFEST);
+    for (const [locale, messages] of Object.entries(bundles)) {
+      for (const key of Object.keys(bundles.en)) {
+        expect(messages[key], `${locale}: ${key}`).toEqual(expect.any(String));
+        expect(messages[key]?.trim().length, `${locale}: ${key}`).toBeGreaterThan(0);
       }
     }
   });
@@ -201,8 +480,9 @@ describe('public fly machine provisioner', () => {
         expect.objectContaining({ amount: '0.08', currency: 'USD', unit: 'GB-month' }),
       ] } });
     expect(result).toHaveProperty('billing', exports.MACHINE_PROVISIONER.billing);
-    expect(new Headers(runtime.requests[0]?.headers).get('authorization')).toBe('Bearer captured-private');
-    expect(runtime.materializations[0]?.kind).toBe('httpHeaders');
+    expect(new Headers(runtime.requests[0]?.headers).get('authorization')).toBeNull();
+    expect(runtime.requests[0]?.credentialBinding).toMatchObject({ kind: 'connectedAccountPurpose', purpose: 'cloud-api' });
+    expect(runtime.materializations).toHaveLength(0);
     expect(JSON.stringify(result)).not.toContain('captured-private');
   });
   it('does not translate native authorization failure into confirmed absence', async () => {
@@ -210,13 +490,20 @@ describe('public fly machine provisioner', () => {
     expect(await runtime.handlers.get('inspect')!({ resource }, runtime.context)).toMatchObject({ availability: 'unavailable' });
   });
   it('forwards the containing native exec budget in qualified seconds without shortening fractional seconds', async () => {
-    const runtime = await activated({ exit_code: 0, stdout: 'installed', stderr: '' });
-    const input = { resource, argv: ['cat'], timeoutMs: 15001 };
+    const stdin = '\uFEFFinstall café · 東京\0';
+    const stdout = 'ready 🛫';
+    const stderr = 'diagnostic é';
+    const runtime = await activated({ exit_code: 0, stdout, stderr });
+    const input = { resource, argv: ['cat'], timeoutMs: 15001, inputBase64: Buffer.from(stdin).toString('base64') };
     expect(exports.ROLE_SCHEMAS.execInput.safeParse(input).success).toBe(true);
-    await runtime.handlers.get('exec')!(input, runtime.context);
-    expect(JSON.parse(new TextDecoder().decode(runtime.requests[0].body))).toEqual({ command: ['cat'], timeout: 16 });
+    expect(await runtime.handlers.get('exec')!(input, runtime.context)).toMatchObject({
+      stdoutBase64: Buffer.from(stdout).toString('base64'), stderrBase64: Buffer.from(stderr).toString('base64'),
+    });
+    expect(JSON.parse(new TextDecoder().decode(runtime.requests[0].body))).toEqual({ command: ['cat'], stdin, timeout: 16 });
     await runtime.handlers.get('exec')!({ ...input, timeoutMs: null }, runtime.context);
-    expect(JSON.parse(new TextDecoder().decode(runtime.requests[1].body))).toEqual({ command: ['cat'] });
+    expect(JSON.parse(new TextDecoder().decode(runtime.requests[1].body))).toEqual({ command: ['cat'], stdin });
+    await expect(runtime.handlers.get('exec')!({ ...input, inputBase64: '/4A=' }, runtime.context)).rejects.toThrow();
+    expect(runtime.requests).toHaveLength(2);
   });
   it('refuses a launch organization different from the captured account scope before buying an app or volume', async () => {
     const runtime = await activated({ id: 'paid-resource' });
@@ -412,7 +699,7 @@ describe('public fly machine provisioner', () => {
 describe('brand mark', () => {
   it('declares its packaged brand mark through the generic brand Resource', () => {
     expect(exports.PLUGIN_MANIFEST.brand).toEqual({ iconResourceId: 'brand-icon', monochrome: true });
-    expect(exports.PLUGIN_MANIFEST.contributes.resources).toEqual([{ id: 'brand-icon', kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' }]);
+    expect(exports.PLUGIN_MANIFEST.contributes.resources).toEqual(expect.arrayContaining([{ id: 'brand-icon', kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' }]));
     const asset = readFileSync(new URL('../assets/brand.png', import.meta.url));
     expect([...asset.subarray(0, 8)]).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
     expect(asset.readUInt32BE(16)).toBe(asset.readUInt32BE(20));

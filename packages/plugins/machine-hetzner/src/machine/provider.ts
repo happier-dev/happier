@@ -1,4 +1,5 @@
 import { createHetznerNativeClient } from './nativeClient.js';
+import { MACHINE_PROVISIONER_CLOUD_SSH_USER } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { HetznerNativeClientOptions } from './nativeClient.js';
 import { HetznerAcquireV1Schema, HetznerNativeError, parseHetznerValue } from './schemas.js';
 
@@ -25,29 +26,21 @@ export function createHetznerProvider(options: HetznerNativeClientOptions) {
     async acquire(rawInput: unknown) {
       const input = parseHetznerValue(HetznerAcquireV1Schema, rawInput);
       if (!input.launch.publicNetworking.ipv4 && !input.launch.publicNetworking.ipv6) {
-        return { kind: 'rejected' as const, code: 'native_ssh_network_unavailable' };
-      }
-      const current = await native.options();
-      const size = current.sizes.find(value => value.name === input.launch.serverTypeId || String(value.id) === input.launch.serverTypeId);
-      const images = current.images.filter(value => (value.name === input.launch.imageId || String(value.id) === input.launch.imageId)
-        && value.architecture === size?.architecture && value.status === 'available' && value.deprecated === null);
-      const image = images.length === 1 ? images[0] : undefined;
-      const location = current.locations.find(value => value.name === input.launch.locationId || String(value.id) === input.launch.locationId);
-      if (!size || !image || !location || image.status !== 'available' || image.deprecated !== null || size.architecture !== image.architecture
-        || !size.prices.some(value => value.location === location.name)
-        || (size.deprecation?.unavailable_after && Date.parse(size.deprecation.unavailable_after) <= current.observedAt)) {
-        return { kind: 'rejected' as const, code: 'native_options_changed' };
+        return { kind: 'rejected' as const, code: 'native_ssh_network_unavailable', nativeCause: { localCause: 'native_ssh_network_unavailable' as const } };
       }
       return native.acquire(input);
     },
     async bootstrap(rawResource: unknown) {
       const observed = await native.inspect(rawResource);
       if (observed.kind === 'absent') throw new HetznerNativeError('native_identity_not_found');
-      if (observed.power !== 'running') throw new HetznerNativeError('native_not_ready');
+      // Only an observed native start can advance without another user effect.
+      // Stopping, deleting and unknown transitions do not prove startup.
+      if (['initializing', 'starting'].includes(observed.server.status)) throw new HetznerNativeError('native_not_ready');
+      if (observed.power !== 'running') throw new HetznerNativeError('native_resource_unavailable');
       const address = observed.server.public_net.ipv4?.ip ?? firstIpv6Host(observed.server.public_net.ipv6?.ip);
-      if (!address) throw new HetznerNativeError('native_ssh_address_unavailable');
+      if (!address) throw new HetznerNativeError('native_not_ready');
       // Local-only address facts are not public Action results or enrollment carriers.
-      return { kind: 'ssh' as const, address, port: 22, username: 'root' };
+      return { kind: 'ssh' as const, address, port: 22, username: MACHINE_PROVISIONER_CLOUD_SSH_USER };
     },
   };
 }

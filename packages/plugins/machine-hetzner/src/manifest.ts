@@ -1,17 +1,17 @@
-import { projectHetznerOptions } from './machine/options.js';
-import { definePlugin, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { definePlugin, PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import { machinePresentationLabel, machineCheckPresentation } from './ui/translations.js';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
-import { defineMachineProvisionerSchemas, defineMachineProvisionerReconciliationSchemas, prepareMachineProvisionerStoredSchemas,
+import { observeMachineProvisionerNativeRead, defineMachineProvisionerSchemas, defineMachineProvisionerReconciliationSchemas, prepareMachineProvisionerStoredSchemas, buildMachineProvisionerPinnedSshBootstrap,
   MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
   MachineProvisionerObservationV1Schema, MachineProvisionerOptionsResultV1Schema,
-  MachineProvisionerPowerResultV1Schema, type MachineProvisionerAuthorDefinitionV1, type MachineProvisionerOptionsResultV1,
+  MachineProvisionerPowerResultV1Schema, type MachineProvisionerAuthorDefinitionV1, type MachineProvisionerOptionsResultV1, type MachineProvisionerNativeCauseV1, type MachineProvisionerCloudHostKeyV1,
 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { resolveMachineProvisionerSshBootstrap } from '@happier-dev/plugin-sdk/machine-provisioners/ssh';
 import { createHetznerProvider } from './machine/provider.js';
-import { HetznerLaunchV1Schema, HetznerResourceV1Schema, HetznerNativeOperationV1Schema } from './machine/schemas.js';
-import { ACCOUNT_ID, ACCOUNT_PURPOSE, connectedAccountRuntime, nativeFetch } from './account.js';
-
+import { projectHetznerOptions } from './machine/options.js';
+import { HetznerLaunchV1Schema, HetznerResourceV1Schema, HetznerNativeOperationV1Schema, HetznerNativeError } from './machine/schemas.js';
+import { ACCOUNT_ID, ACCOUNT_PURPOSE, connectedAccountRuntime, connectedAccountPortableRuntime, nativeFetch } from './account.js';
 
 export const PLUGIN_ID = 'happier.machine.hetzner';
 export const PROVISIONER_ID = 'hetzner';
@@ -20,19 +20,29 @@ const reconciliation = defineMachineProvisionerReconciliationSchemas(nativeSchem
 export const ROLE_SCHEMAS = { ...defineMachineProvisionerSchemas(nativeSchemas), acquireResult: reconciliation.result };
 export const prepareStoredSchemas = () => prepareMachineProvisionerStoredSchemas(nativeSchemas);
 function resourceRef<T>(value: T) { return { contributionRef: { pluginId: PLUGIN_ID, localId: PROVISIONER_ID }, schemaVersion: 1, value }; }
-function pending(correlation: string) { return { kind: 'pending' as const, nativeOperationRef: resourceRef({ correlation }) }; }
+function pending(correlation: string, nativeCause?: MachineProvisionerNativeCauseV1) { return { kind: 'pending' as const, nativeOperationRef: resourceRef({ correlation }), ...(nativeCause ? { nativeCause } : {}) }; }
+function failureCause(error: unknown) { return error instanceof HetznerNativeError && error.nativeCause ? { nativeCause: error.nativeCause } : {}; }
 const billing = { location: 'cloud', stoppedBilling: 'billed' } as const;
-const defaults = { scopes: ['machine'], surfaces: ['cli', 'plugin'], hostAccess: ['native-api', ACCOUNT_PURPOSE] } as const;
-const runtime = async (context: PluginInvocationContext) => createHetznerProvider({ token: 'host-bound', fetch: nativeFetch(context), signal: context.signal });
-function unavailable() { return { observedAt: 0, availability: 'unavailable' as const, reason: 'provider_unavailable' }; }
-
+const defaults = { scopes: ['global'], surfaces: ['ui', 'cli', 'plugin'], hostAccess: ['native-api', ACCOUNT_PURPOSE],
+  execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
+} as const;
+async function runtime(context: PluginAccountActionContext | PluginInvocationContext, guestHostKey?: MachineProvisionerCloudHostKeyV1) {
+  const material = await context.services.connectedAccounts.materialize(ACCOUNT_PURPOSE,
+    { kind: 'httpHeaders', origin: 'https://api.hetzner.cloud', headerNames: ['authorization'] }, { signal: context.signal });
+  context.signal.throwIfAborted();
+  if (material.kind !== 'httpHeaders') throw new PluginError({ code: 'credential_unavailable' });
+  return createHetznerProvider({ token: 'host-bound', fetch: nativeFetch(context, material.headers), signal: context.signal, guestHostKey });
+}
 
 export const MACHINE_PROVISIONER = {
   title: 'Hetzner', icon: 'hard-drives', resourceKind: 'hetzner-server', schemaVersion: 1,
+  enrollmentRole: 'server',
   kindTitle: machinePresentationLabel('kind'), description: machinePresentationLabel('description'),
   launchSchema: HetznerLaunchV1Schema.jsonSchema, resourceSchema: HetznerResourceV1Schema.jsonSchema, resourceIdPath: 'serverId',
-  platforms: ['darwin', 'linux', 'win32'], prerequisites: [{ kind: 'systemTool', id: 'ssh-keyscan' }],
-  billing, retention: { supportedIntents: ['start', 'stop', 'delete'] },
+  platforms: ['darwin', 'linux', 'win32'], prerequisites: [],
+  // Required SSH bootstrap makes the whole browser create path unavailable.
+  browserReachable: false,
+  billing, retention: { supportedIntents: ['start', 'stop', 'delete'], guestLocalStop: 'poweroff' },
   actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' },
   reconciliation: { action: 'reconcile', nativeOperationSchema: HetznerNativeOperationV1Schema.jsonSchema },
 } satisfies MachineProvisionerAuthorDefinitionV1;
@@ -55,8 +65,7 @@ export const PLUGIN = definePlugin({
     "i18n-zh-hant": { kind: 'asset', path: "assets/i18n/zh-Hant.json", contentType: 'application/json' },
     "i18n-ja": { kind: 'asset', path: "assets/i18n/ja.json", contentType: 'application/json' },
   },
-  description: 'Manage exact reviewed Hetzner resources through captured cloud credentials.',
-  engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  description: 'Manage exact reviewed Hetzner resources through captured cloud credentials.', entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: { required: [
     { id: 'native-api', capability: 'network', reason: 'Operate the exact reviewed Hetzner resource.',
       scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://api.hetzner.cloud' }], methods: ['GET', 'POST', 'DELETE'] } },
@@ -67,60 +76,93 @@ export const PLUGIN = definePlugin({
   ], optional: [] },
   systemTools: { 'ssh-keyscan': { title: 'OpenSSH host key scanner', executableNames: ['ssh-keyscan'] } },
   connectedAccountDescriptors: { [ACCOUNT_ID]: {
-    declaration: { title: 'Hetzner cloud account', authentication: { defaultModeId: 'token', modes: [{
+    declaration: { title: 'Hetzner cloud account', description: 'Run coding sessions on Hetzner Cloud servers.', ui: { category: 'cloud-machines' }, authentication: {
+      account: { artifactId: 'account-runtime', exportName: 'activateAccount' }, defaultModeId: 'token', modes: [{
       id: 'token', kind: 'manual', title: 'API token', outcomeReconciliation: 'none',
-      directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 },
-      fields: [{ id: 'token', title: 'API token', schema: { type: 'string', minLength: 1 }, secret: true }],
       setup: { url: 'https://console.hetzner.com/', createKeyTitle: 'Open Hetzner Console',
         checklist: ['Open your project in Hetzner Console, then choose Security → API tokens.', 'Generate a token with Read & Write access, then paste it here.'] },
-    }] } }, runtime: connectedAccountRuntime,
+      credentialFieldKeys: { token: 'token' },
+      credentialOrigin: 'authentication',
+      directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 },
+      // The mode's setup guide says where the token comes from; the field repeats none of it.
+      fields: [{ id: 'token', title: 'API token', schema: { type: 'string', minLength: 1 }, secret: true }],
+    }] } }, runtime: connectedAccountRuntime, accountRuntime: connectedAccountPortableRuntime,
   } },
   machineProvisioners: { [PROVISIONER_ID]: MACHINE_PROVISIONER },
   actions: {
     reconcile: { ...defaults, title: 'Recover exact Hetzner resource', dangerLevel: 'safe',
       inputSchema: reconciliation.input, resultSchema: reconciliation.result,
       async run(input, context) {
-        const correlation = 'nativeOperation' in input ? input.nativeOperation.correlation : input.correlation.managedId;
+        let correlation: string;
+        if ('nativeOperation' in input) {
+          if ('serverId' in input.nativeOperation) return { kind: 'bound' as const,
+            resource: resourceRef({ serverId: input.nativeOperation.serverId, owned: input.nativeOperation.owned }) };
+          correlation = input.nativeOperation.correlation;
+        } else correlation = input.correlation.managedId;
         try {
           const result = await (await runtime(context)).recover(correlation);
           if (result.kind === 'bound') return { kind: 'bound' as const, resource: resourceRef(result.resource) };
           if (result.kind === 'rejected') return result;
-        } catch { /* An unavailable read neither proves absence nor authorizes another purchase. */ }
-        return pending(correlation);
+          return pending(correlation, result.nativeCause);
+        } catch (error) { return pending(correlation, error instanceof HetznerNativeError ? error.nativeCause : undefined); }
       },
     },
     check: { ...defaults, title: 'Check Hetzner API access', dangerLevel: 'safe',
       inputSchema: ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerCheckResultV1Schema,
-      async run(_input, context) { try { return machineCheckPresentation(await (await runtime(context)).check()); } catch { return machineCheckPresentation({ available: false, code: 'provider_unavailable' }); } },
+      async run(_input, context) { try { return machineCheckPresentation(await (await runtime(context)).check()); } catch (error) { return { ...machineCheckPresentation({ available: false, code: 'provider_unavailable' }), ...failureCause(error) }; } },
     },
     options: { ...defaults, title: 'Discover Hetzner options', dangerLevel: 'safe',
       inputSchema: ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerOptionsResultV1Schema,
-      async run(_input, context): Promise<MachineProvisionerOptionsResultV1> { return projectHetznerOptions(await (await runtime(context)).options()); },
+      async run(_input, context): Promise<MachineProvisionerOptionsResultV1> {
+        try { return projectHetznerOptions(await (await runtime(context)).options()); }
+        catch (error) { return { dimensions: { size: [], image: [], location: [], network: [], duration: [] }, code: 'provider_unavailable', ...failureCause(error) }; }
+      },
     },
     acquire: { ...defaults, title: 'Acquire Hetzner resource', dangerLevel: 'destructive',
       confirmation: { title: 'Create this Hetzner Server?', body: 'This creates the reviewed paid resource. Powered-off Servers remain billable.' },
       inputSchema: ROLE_SCHEMAS.acquireInput, resultSchema: ROLE_SCHEMAS.acquireResult,
       async run(input, context) {
         if (!input.managedId || !input.bootstrapPublicKey) return { kind: 'rejected' as const, code: 'invalid_request' as const };
-        try { const result = await (await runtime(context)).acquire({ launch: input.launch, name: `happier-${input.managedId}`, correlation: input.managedId, bootstrapSshPublicKey: input.bootstrapPublicKey });
+        const guestHostCredential = input.guestHostPublicKey === undefined ? undefined : {
+          publicKey: input.guestHostPublicKey, lease: await context.services.machineProvisioners.materializeGuestHostCredential(),
+        };
+        try { const result = await (await runtime(context, guestHostCredential && {
+          publicKey: guestHostCredential.publicKey, privateKey: new TextDecoder().decode(guestHostCredential.lease.bytes),
+        })).acquire({ launch: input.launch, name: `happier-${input.managedId}`, correlation: input.managedId, bootstrapSshPublicKey: input.bootstrapPublicKey });
         if (result.kind === 'bound') return { kind: 'bound' as const, resource: resourceRef(result.resource) };
-        return result.kind === 'rejected' ? { kind: 'rejected' as const, code: 'provider_unavailable' as const }
-          : pending(input.managedId); }
-        catch { return pending(input.managedId); }
+        const nativeCause = 'nativeCause' in result ? result.nativeCause : undefined;
+        return result.kind === 'rejected' ? { kind: 'rejected' as const, code: 'provider_unavailable' as const, ...(nativeCause ? { nativeCause } : {}) }
+          : pending(input.managedId, nativeCause); }
+        catch (error) { return pending(input.managedId, error instanceof HetznerNativeError ? error.nativeCause : undefined); }
+        finally { await guestHostCredential?.lease.dispose(); }
       },
     },
-    bootstrap: { ...defaults, hostAccess: [...defaults.hostAccess, 'ssh-evidence'], title: 'Resolve protected Hetzner bootstrap', dangerLevel: 'writesLocal',
+    bootstrap: { ...defaults, title: 'Resolve protected Hetzner bootstrap', dangerLevel: 'writesLocal',
       confirmation: { title: 'Prepare this Hetzner Server for Happier?', body: 'Allow Happier to resolve the protected SSH transport for the exact managed resource.' },
       inputSchema: ROLE_SCHEMAS.bootstrapInput, resultSchema: MachineProvisionerBootstrapCarrierV1Schema,
-      async run(input, context) { const connection = await (await runtime(context)).bootstrap(input.resource);
-        return resolveMachineProvisionerSshBootstrap({ exec: context.services.exec, signal: context.signal,
-          connection: { address: connection.address, user: connection.username, port: connection.port }, credentialRef: input.credentialRef }); },
+      async run(input, context: PluginAccountActionContext | PluginInvocationContext) {
+        try {
+          const connection = await (await runtime(context)).bootstrap(input.resource);
+          if (input.guestHostPublicKey !== undefined && input.credentialRef !== undefined) return buildMachineProvisionerPinnedSshBootstrap({
+            connection: { address: connection.address, user: connection.username, port: connection.port },
+            credentialRef: input.credentialRef, guestHostPublicKey: input.guestHostPublicKey });
+          return await resolveMachineProvisionerSshBootstrap({ ...('exec' in context.services ? { exec: context.services.exec } : {}), signal: context.signal,
+            connection: { address: connection.address, user: connection.username, port: connection.port }, credentialRef: input.credentialRef });
+        } catch (error) {
+          if (error instanceof HetznerNativeError) throw new PluginError({ code: error.code,
+            ...(error.nativeCause ? { details: { nativeCause: error.nativeCause } } : {}) });
+          throw error;
+        }
+      },
     },
     inspect: { ...defaults, title: 'Inspect exact Hetzner resource', dangerLevel: 'safe',
       inputSchema: ROLE_SCHEMAS.resourceInput, resultSchema: MachineProvisionerObservationV1Schema,
       async run(input, context) { try { const result = await (await runtime(context)).inspect(input.resource);
-        return { observedAt: context.invokedAtMs, availability: result.kind,
-          ...(result.kind === 'present' ? { power: result.power === 'transitioning' ? 'unknown' as const : result.power, storage: 'retained' as const, billing } : {}) }; } catch { return { ...unavailable(), observedAt: context.invokedAtMs }; } },
+        return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: result.kind,
+          ...(result.kind === 'present' ? { power: result.power === 'transitioning' ? 'unknown' as const : result.power, storage: 'retained' as const, billing } : {}) });
+        } catch (error) { return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown',
+          reason: error instanceof HetznerNativeError && error.code === 'native_cleanup_unconfirmed'
+            ? 'native_cleanup_incomplete' : 'provider_unavailable', ...failureCause(error) }); } },
     },
     power: { ...defaults, title: 'Change Hetzner power', dangerLevel: 'destructive',
       confirmation: { title: 'Change this Hetzner Server’s power?', body: 'This starts or stops the exact managed resource. Powered-off Servers remain billable.' },
@@ -132,16 +174,27 @@ export const PLUGIN = definePlugin({
         if (changed.kind === 'refused') return { kind: 'refused' as const, code: changed.code };
         const observed = await native.inspect(input.resource);
         return observed.kind === 'present' && observed.power === (input.intent === 'start' ? 'running' : 'stopped')
-          ? { kind: 'confirmed' as const } : { kind: 'unknown' as const, code: 'native_power_pending' }; } catch { return { kind: 'unknown' as const, code: 'provider_unavailable' }; }
+          ? { kind: 'confirmed' as const } : { kind: 'unknown' as const, code: 'native_power_pending' }; } catch (error) { return { kind: 'unknown' as const, code: 'provider_unavailable', ...failureCause(error) }; }
       },
     },
     destroy: { ...defaults, title: 'Delete exact Hetzner resource', dangerLevel: 'destructive',
       confirmation: { title: 'Delete this Hetzner Server?', body: 'This permanently deletes the exact managed Server and its recorded owned volumes and primary IPs.' },
-      inputSchema: reconciliation.destroyInput, resultSchema: MachineProvisionerPowerResultV1Schema,
+      inputSchema: reconciliation.destroyInput, resultSchema: reconciliation.destroyResult,
       async run(input, context) {
-        if (!('resource' in input)) return { kind: 'refused' as const, code: 'native_cleanup_unavailable' };
-        try { const result = await (await runtime(context)).destroy(input.resource);
-        return result.kind === 'confirmed' ? { kind: 'confirmed' as const } : { kind: 'unknown' as const, code: 'native_cleanup_incomplete' }; } catch { return { kind: 'unknown' as const, code: 'provider_unavailable' }; } },
+        const resource = 'resource' in input ? input.resource : 'serverId' in input.nativeOperation ? input.nativeOperation : undefined;
+        if (!resource) return { kind: 'refused' as const, code: 'native_cleanup_unavailable' };
+        try {
+          const continuing = !('resource' in input);
+          const result = await (await runtime(context)).destroy(resource, continuing);
+          if (result.kind === 'confirmed') return { kind: 'confirmed' as const };
+          const code = 'code' in result ? result.code : undefined;
+          const nativeCause = 'nativeCause' in result ? result.nativeCause : undefined;
+          if (!code && !nativeCause) {
+            return { kind: 'accepted' as const, nativeOperationRef: resourceRef(('nativeOperation' in result ? result.nativeOperation : undefined) ?? resource) };
+          }
+          return { kind: 'unknown' as const, code: code ?? 'native_cleanup_incomplete',
+            ...(nativeCause ? { nativeCause } : {}) };
+        } catch (error) { return { kind: 'unknown' as const, code: 'provider_unavailable', ...failureCause(error) }; } },
     },
   },
   ui: { translations: [

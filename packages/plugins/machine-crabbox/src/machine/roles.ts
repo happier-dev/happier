@@ -1,0 +1,101 @@
+import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
+import type { ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
+import { machineCheckPresentation } from '../ui/translations.js';
+import { prepareCrabboxConnection } from './connection.js';
+import { crabboxLeaseId, createCrabboxProvider } from './provider.js';
+import { observeMachineProvisionerNativeRead, type MachineProvisionerOptionsResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import type { PluginContributionRef } from '@happier-dev/plugin-sdk';
+import { CRABBOX_PLUGIN_ID, CRABBOX_PROVISIONER_ID } from './constants.js';
+import { CrabboxOptionsInputV1Schema, CrabboxResourceV1Schema, resolveCrabboxLaunchQueryCandidate } from './schemas.js';
+import type { CRABBOX_ROLE_SCHEMAS, CRABBOX_RECONCILIATION, CrabboxLaunchV1, CrabboxResourceV1 } from './schemas.js';
+
+export type CoordinatorContext = Readonly<{
+  services: Pick<PluginAccountActionContext['services'], 'connectedAccounts' | 'http'>;
+  signal: AbortSignal;
+  invokedAtMs: number;
+}>;
+
+type RoleInput<K extends keyof typeof CRABBOX_ROLE_SCHEMAS> = ProtocolSchemaOutput<(typeof CRABBOX_ROLE_SCHEMAS)[K]>;
+export type CrabboxProviderResolver<TContext extends CoordinatorContext> =
+  (selection: CrabboxLaunchV1 | CrabboxResourceV1, context: TContext) => Promise<ReturnType<typeof createCrabboxProvider>>;
+const contributionRef = { pluginId: CRABBOX_PLUGIN_ID, localId: CRABBOX_PROVISIONER_ID };
+
+export async function reconcileCrabbox<TContext extends CoordinatorContext>(
+  input: ProtocolSchemaOutput<typeof CRABBOX_RECONCILIATION.input>, context: TContext,
+  providerFor: CrabboxProviderResolver<TContext>, reference: PluginContributionRef = contributionRef) {
+  let resource: CrabboxResourceV1;
+  if ('nativeOperation' in input) resource = input.nativeOperation;
+  else {
+    const leaseId = crabboxLeaseId(input.correlation.managedId);
+    const recovered = CrabboxResourceV1Schema.safeParse({ backendId: input.correlation.launch.backendId,
+      namespace: input.correlation.launch.namespace, transport: input.correlation.launch.transport, leaseId,
+      ...('localContainerRuntime' in input.correlation.launch && input.correlation.launch.localContainerRuntime
+        ? { localContainerRuntime: input.correlation.launch.localContainerRuntime } : {}) });
+    if (!recovered.success) return { kind: 'unknown' as const, recovery: { reference: leaseId, reason: 'native_correlation_unqualified' } };
+    resource = recovered.data;
+  }
+  try { return await (await providerFor(resource, context)).reconcile(resource); }
+  catch { return { kind: 'pending' as const, nativeOperationRef: { contributionRef: reference, schemaVersion: 1, value: resource } }; }
+}
+
+export async function acquireCrabbox<TContext extends CoordinatorContext>(input: RoleInput<'acquireInput'>, context: TContext,
+  providerFor: CrabboxProviderResolver<TContext>) {
+  if (input.launch.transport === 'direct' && input.launch.backendId !== 'local-container') return { kind: 'rejected' as const,
+    code: 'provider_unavailable' as const, nativeCause: { localCause: 'native_route_unavailable' as const } };
+  if (!input.managedId || !input.bootstrapPublicKey) return { kind: 'rejected' as const, code: 'invalid_request' as const };
+  try { return await (await providerFor(input.launch, context)).acquire(input); }
+  catch { return { kind: 'rejected' as const, code: 'credential_unavailable' as const }; }
+}
+
+export async function bootstrapCrabbox<TContext extends CoordinatorContext>(input: RoleInput<'bootstrapInput'>, context: TContext,
+  providerFor: CrabboxProviderResolver<TContext>) {
+  return (await providerFor(input.resource, context)).bootstrap(input);
+}
+
+export async function inspectCrabbox<TContext extends CoordinatorContext>(input: RoleInput<'resourceInput'>, context: TContext,
+  providerFor: CrabboxProviderResolver<TContext>) {
+  if (!input.resource.nativeInstanceId) return observeMachineProvisionerNativeRead(context.invokedAtMs,
+    { kind: 'unknown', reason: 'crabbox_connection_custody_unavailable' });
+  try { return await (await providerFor(input.resource, context)).inspect(input.resource); }
+  catch { return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown', reason: 'credential_unavailable' }); }
+}
+
+export async function destroyCrabbox<TContext extends CoordinatorContext>(
+  input: ProtocolSchemaOutput<typeof CRABBOX_RECONCILIATION.destroyInput>, context: TContext, providerFor: CrabboxProviderResolver<TContext>) {
+  const resource = 'resource' in input ? input.resource : input.nativeOperation;
+  try { return await (await providerFor(resource, context)).destroy(resource); }
+  catch { return { kind: 'refused' as const, code: 'credential_unavailable' }; }
+}
+
+export async function inspectedCrabboxProvider(context: CoordinatorContext, reference: PluginContributionRef = contributionRef) {
+  return createCrabboxProvider({ ...await prepareCrabboxConnection(context.services.connectedAccounts, context.services.http, context.signal),
+    observedAt: context.invokedAtMs, signal: context.signal, contributionRef: reference });
+}
+
+export async function checkCrabboxCoordinator(context: CoordinatorContext) {
+  try { await inspectedCrabboxProvider(context); return machineCheckPresentation({ available: true }); }
+  catch { return machineCheckPresentation({ available: false, code: 'credential_unavailable' }); }
+}
+
+/** Only a selected direct route demands its native host adapter. Coordinator
+ * checks/options never discover or probe the local executable. */
+export async function crabboxOptions(input: ProtocolSchemaOutput<typeof CrabboxOptionsInputV1Schema>, context: CoordinatorContext,
+  direct?: () => Promise<unknown>): Promise<MachineProvisionerOptionsResultV1> {
+  const dimensions = { size: [], image: [], location: [], network: [], duration: [] };
+  const selected = resolveCrabboxLaunchQueryCandidate(input);
+  if (!selected.success) return { dimensions };
+  const launch = selected.data;
+  let available = false;
+  try {
+    if (launch.transport === 'coordinator') {
+      const selectedConnection = await prepareCrabboxConnection(context.services.connectedAccounts, context.services.http, context.signal);
+      available = launch.namespace === selectedConnection.connection.namespace;
+    } else if (launch.backendId === 'local-container' && direct) {
+      await direct();
+      available = true;
+    }
+  } catch { /* The selected route is unavailable; preserve its reviewed launch. */ }
+  return { dimensions, base: { launch,
+    guestPlatform: launch.target === 'macos' ? 'darwin' as const : 'linux' as const,
+    enrollmentRole: launch.backendId === 'local-container' ? 'sandbox' as const : 'server' as const, available } };
+}

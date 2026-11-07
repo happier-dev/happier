@@ -1,10 +1,3 @@
-import type { MachineProvisionerOptionsResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
-import { projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
-function select(options: MachineProvisionerOptionsResultV1) {
-    return projectMachineProvisionerSelectionV1({ options, launchSchema: CuaLocalLaunchV1Schema.jsonSchema,
-        selection: Object.fromEntries(Object.entries(options.dimensions).flatMap(([dimension, entries]) =>
-            entries[0] ? [[dimension, entries[0].id]] : [])) });
-}
 import { describe, expect, it, vi } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
@@ -18,19 +11,26 @@ import { createCuaLocalProvisioner } from './localProvisioner.js';
 import { CUA_PLUGIN } from '../manifest.js';
 import { CuaLocalLaunchV1Schema } from './schemas.js';
 import { createPluginTestkit, type PluginTestServicesFixture } from '@happier-dev/plugin-sdk/testing';
-import { MachineProvisionerOptionsResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { MachineProvisionerOptionsResultV1Schema, projectMachineProvisionerSelectionV1,
+    type MachineProvisionerOptionsResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { localAcquireOperation } from './localProvisionerSchemas.js';
 
 const size = { cpu: 4, memoryBytes: 4096 * 1024 ** 2, diskBytes: 20 * 1024 ** 3 };
 const launch = { on: 'local', runtimeId: 'qemu', imageId: 'ghcr.io/trycua/linux:24.04-disk', size };
 const resource = { kind: 'sandbox', namespace: 'local', runtimeId: 'qemu', sandboxId: 'local:owned' };
-const managedId = 'ac2c7f10-2a41-4af1-88ac-d64eeb18bdc7';
+// Captured ManagedMachine.id from the server's @default(cuid()) generator.
+const managedId = 'cmvnxb7gn009mmcagisyszwlh';
 const doctor = { host: { os: 'linux', arch: 'x86_64', kvm: true, accel: { x86_64: 'kvm', aarch64: 'tcg' } },
     backends: [{ backend: 'qemu', ready: true, provisionable: false }],
     qemu: { version: '10.1.0' }, lume: { version: null }, container: { reachable: false, gvisor: false, runtimes: [] } };
 const digest = `sha256:${'a'.repeat(64)}`;
 const images = [{ ref: launch.imageId, os: 'linux', arch: ['amd64'], local: 'qemu', published: true, spacesd: true,
     digest, sizes: { digest, platforms: [{ arch: 'amd64', disk: size.diskBytes }] } }];
+function select(options: MachineProvisionerOptionsResultV1) {
+    return projectMachineProvisionerSelectionV1({ options, launchSchema: CuaLocalLaunchV1Schema.jsonSchema,
+        selection: Object.fromEntries(Object.entries(options.dimensions).flatMap(([dimension, entries]) =>
+            entries[0] ? [[dimension, entries[0].id]] : [])) });
+}
 function result(value: unknown): PluginProcessResult {
     return { termination: { observed: { kind: 'exit', exitCode: 0 }, requestedBy: { kind: 'none' } },
         stdout: new TextEncoder().encode(JSON.stringify(value)), stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false };
@@ -93,6 +93,45 @@ async function activated(dependencyReady = true, nativeRun?: ExecService['run'],
 }
 
 describe('consumed Cua local provisioner roles', () => {
+    it.each(['local-sandbox', 'local-space'] as const)('retains projected native create failure for %s', async localId => {
+        const h = harness();
+        const native = createCuaNativeClient({ executable: { kind: 'systemTool', id: 'cua' }, exec: {
+            run: async request => request.args?.includes('create') ? { ...result(null),
+                termination: { observed: { kind: 'exit', exitCode: 1 }, requestedBy: { kind: 'none' } },
+                stderr: new TextEncoder().encode('boot failed token=private-acquisition-token') } : h.run(request),
+        } });
+        const acquired = await createCuaLocalProvisioner(native, localId, 10).acquire(launch, managedId);
+        expect(acquired).toMatchObject({ kind: 'pending', nativeCause: { localCause: 'native_command_failed', command: 'create', exitCode: 1 } });
+        expect(JSON.stringify(acquired)).not.toContain('private-acquisition-token');
+    });
+
+    it('does not bind a stopped sandbox returned by create', async () => {
+        const h = harness();
+        const native = createCuaNativeClient({ executable: { kind: 'systemTool', id: 'cua' }, exec: {
+            run: async request => request.args?.includes('create') ? result({ id: `local:happier-${managedId}`, name: `happier-${managedId}`,
+                location: 'local', runtime: 'qemu', kind: 'vm', image: launch.imageId, status: 'ready', state: 'stopped', ephemeral: false }) : h.run(request),
+        } });
+        expect(await createCuaLocalProvisioner(native, 'local-sandbox', 10).acquire(launch, managedId)).toMatchObject({ kind: 'pending' });
+    });
+    it.each(['sandbox', 'space'])('qualifies the offered local %s launch through the registered acquisition role', async prefix => {
+        const h = await activated();
+        const options = MachineProvisionerOptionsResultV1Schema.parse(await h.action(`${prefix}-options`)({ runtimeId: launch.runtimeId, imageId: launch.imageId, size }, h.context));
+        const selected = select(options);
+        expect(selected).toMatchObject({ kind: 'ready', launch });
+        if (selected.kind !== 'ready') throw new Error('Expected complete native selection');
+        const acquired = await h.action(`${prefix}-acquire`)({ launch: selected.launch, managedId }, h.context);
+        expect(acquired).toMatchObject({ kind: prefix === 'sandbox' ? 'bound' : 'pending' });
+        expect(h.requests.find(request => request.args?.includes('create'))?.args).toContain(`--name=happier-${managedId}`);
+    });
+
+    it('refuses a qemu Space disk below its image minimum before native creation', async () => {
+        const h = harness();
+        const provider = createCuaLocalProvisioner(createCuaNativeClient({ exec: { run: h.run },
+            executable: { kind: 'systemTool', id: 'cua' } }), 'local-space', 10);
+        const smaller = { ...launch, size: { ...size, diskBytes: 10 * 1024 ** 3 } };
+        expect(await provider.acquire(smaller, managedId)).toEqual({ kind: 'rejected', code: 'invalid_request' });
+        expect(h.requests.some((request) => request.args?.includes('create'))).toBe(false);
+    });
     it.each(['sandbox', 'space'])('declares the reviewed selectors needed to obtain a complete fresh %s launch', async prefix => {
         const h = await activated();
         const options = CUA_PLUGIN.manifest.contributes.actions?.find(action => action.id === `${prefix}-options`);
@@ -195,20 +234,89 @@ describe('consumed Cua local provisioner roles', () => {
         expect(requests.filter(request => request.args?.includes('create'))).toHaveLength(runtimeId === 'runc' ? 1 : 0);
         expect(requests.some(request => request.args?.includes('add'))).toBe(false);
     });
-    it.each(['wrong-image', 'unavailable'])('refuses pending Space deletion when native identity qualification is %s', async condition => {
+    it.each(['sandbox', 'space'] as const)('settles repeated pending %s cleanup after losing the native rm reply', async prefix => {
         const requests: PluginExecSpawnRequest[] = [];
-        const pendingResource = { kind: 'space', spaceId: 'local:owned', sandboxId: 'local:owned', runtimeId: 'qemu' };
+        let present = true;
+        const pendingResource = prefix === 'sandbox' ? resource : { kind: 'space', spaceId: 'local:owned',
+            sandboxId: 'local:owned', runtimeId: 'qemu' };
+        const h = await activated(true, async request => {
+            requests.push(request);
+            const args = request.args ?? [];
+            if (args.includes('info')) return present
+                ? result({ id: 'local:owned', name: 'owned', location: 'local', runtime: 'qemu', kind: 'vm',
+                    image: launch.imageId, status: 'ready', state: 'running', ephemeral: false })
+                : { ...result(null), termination: { observed: { kind: 'exit', exitCode: 3 }, requestedBy: { kind: 'none' } } };
+            if (args.includes('ls')) return result({ spaces: [] });
+            if (args.includes('sandbox') && args.includes('rm')) {
+                present = false;
+                throw new Error('Native rm completed but its reply was lost');
+            }
+            throw new Error('Unexpected native effect');
+        });
+        const input = { nativeOperation: { resource: pendingResource, imageId: launch.imageId } };
+        expect(await h.action(`${prefix}-destroy`)(input, h.context)).toMatchObject({ kind: 'unknown' });
+        expect(await h.action(`${prefix}-destroy`)(input, h.context)).toEqual({ kind: 'confirmed' });
+        expect(requests.filter(request => request.args?.includes('sandbox') && request.args.includes('rm'))).toHaveLength(1);
+    });
+    it.each(['retained', 'reply-lost'] as const)('settles repeated pending Space cleanup after registry removal is %s', async failure => {
+        const remainingCompute = new Set(['local:owned', 'local:neighbor']);
+        const registrations = new Set(['local:owned', 'local:neighbor']);
+        let firstRemoval = true;
+        const h = await activated(true, async request => {
+            const args = request.args ?? [];
+            if (args.includes('info')) return remainingCompute.has('local:owned')
+                ? result({ id: 'local:owned', name: 'owned', location: 'local', runtime: 'qemu', kind: 'vm',
+                    image: null, status: 'ready', state: 'running', ephemeral: false })
+                : { ...result(null), termination: { observed: { kind: 'exit', exitCode: 3 }, requestedBy: { kind: 'none' } } };
+            if (args.includes('sandbox') && args.includes('rm')) {
+                remainingCompute.delete(args[args.indexOf('rm') + 1]);
+                return result({ deleted: 'local:owned', missing: false });
+            }
+            if (args.includes('ls')) return result({ spaces: [...registrations].map(id => ({ id, provider: 'local', image: launch.imageId })) });
+            if (args.includes('spaces') && args.includes('rm')) {
+                if (!firstRemoval || failure === 'reply-lost') registrations.delete(args[args.indexOf('rm') + 1]);
+                if (firstRemoval) {
+                    firstRemoval = false;
+                    throw new Error('Native registry removal reply unavailable');
+                }
+                return result({ removed: { id: 'local:owned', provider: 'local' } });
+            }
+            throw new Error('Unexpected native effect');
+        });
+        const input = { nativeOperation: { resource: { kind: 'space', spaceId: 'local:owned',
+            sandboxId: 'local:owned', runtimeId: 'qemu' }, imageId: launch.imageId } };
+        const first = await h.action('space-destroy')(input, h.context);
+        expect(first).toMatchObject({ kind: failure === 'retained' ? 'unknown' : 'confirmed' });
+        if (failure === 'retained') {
+            expect(await h.action('space-inspect')({ resource: input.nativeOperation.resource }, h.context))
+                .toMatchObject({ availability: 'unavailable' });
+        }
+        expect(await h.action('space-destroy')(input, h.context)).toEqual({ kind: 'confirmed' });
+        expect([...remainingCompute]).toEqual(['local:neighbor']);
+        expect([...registrations]).toEqual(['local:neighbor']);
+    });
+    it.each([
+        ['sandbox', 'wrong-image'], ['sandbox', 'unavailable'], ['space', 'wrong-image'], ['space', 'unavailable'],
+        ['space', 'wrong-registry-image'], ['space', 'registry-unavailable'],
+    ] as const)('refuses pending %s deletion when native identity qualification is %s', async (prefix, condition) => {
+        const requests: PluginExecSpawnRequest[] = [];
+        const pendingResource = prefix === 'sandbox' ? resource : { kind: 'space', spaceId: 'local:owned', sandboxId: 'local:owned', runtimeId: 'qemu' };
         const h = await activated(true, async request => {
             requests.push(request);
             if (request.args?.includes('info')) {
                 if (condition === 'unavailable') throw new Error('Native read unavailable');
                 return result({ id: 'local:owned', name: 'owned', location: 'local', runtime: 'qemu', kind: 'vm',
-                    image: 'other-image', status: 'ready', state: 'running', ephemeral: false });
+                    image: condition === 'wrong-registry-image' || condition === 'registry-unavailable' ? null : 'other-image',
+                    status: 'ready', state: 'running', ephemeral: false });
             }
-            if (request.args?.includes('ls')) return result({ spaces: [] });
+            if (request.args?.includes('ls')) {
+                if (condition === 'registry-unavailable') throw new Error('Registry read unavailable');
+                return result({ spaces: [{ id: 'local:owned', provider: 'local',
+                    image: condition === 'wrong-registry-image' ? 'other-image' : launch.imageId }] });
+            }
             throw new Error('No cleanup effect is qualified');
         });
-        expect(await h.action('space-destroy')({ nativeOperation: { resource: pendingResource, imageId: launch.imageId } }, h.context))
+        expect(await h.action(`${prefix}-destroy`)({ nativeOperation: { resource: pendingResource, imageId: launch.imageId } }, h.context))
             .toMatchObject({ kind: 'unknown' });
         expect(requests.some(request => request.args?.includes('rm'))).toBe(false);
     });
@@ -401,15 +509,4 @@ describe('consumed Cua local provisioner roles', () => {
         expect(await h.action('sandbox-acquire')({ launch, managedId }, h.context)).toEqual({ kind: 'rejected', code: 'provider_unavailable' });
         expect(h.requests).toEqual([]);
     });
-  it.each(['sandbox', 'space'])('qualifies the offered local %s launch through the registered acquisition role', async prefix => {
-        const h = await activated();
-        const options = MachineProvisionerOptionsResultV1Schema.parse(await h.action(`${prefix}-options`)({ runtimeId: launch.runtimeId, imageId: launch.imageId, size }, h.context));
-        const selected = select(options);
-        expect(selected).toMatchObject({ kind: 'ready', launch });
-        if (selected.kind !== 'ready') throw new Error('Expected complete native selection');
-        const acquired = await h.action(`${prefix}-acquire`)({ launch: selected.launch, managedId }, h.context);
-        expect(acquired).toMatchObject({ kind: prefix === 'sandbox' ? 'bound' : 'pending' });
-        expect(h.requests.find(request => request.args?.includes('create'))?.args).toContain(`--name=happier-${managedId}`);
-    });
-
 });

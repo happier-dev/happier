@@ -2,9 +2,8 @@ import {
   defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion,
 } from '@happier-dev/plugin-sdk/protocol';
 import type { ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
-import { prepareMachineProvisionerStoredSchemas } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { defineMachineProvisionerReconciliationSchemas, defineMachineProvisionerSchemas, prepareMachineProvisionerStoredSchemas } from '@happier-dev/plugin-sdk/machine-provisioners';
 
-export const CRABBOX_NATIVE_VERSION = '0.71.0';
 const closed = { policy: 'closed' } as const;
 const cloudBackend = defineProtocolUnion([defineProtocolLiteral('aws'), defineProtocolLiteral('gcp'), defineProtocolLiteral('hetzner')]);
 export const CrabboxBackendIdSchema = defineProtocolUnion([cloudBackend, defineProtocolLiteral('local-container'), defineProtocolLiteral('blacksmith-testbox')]);
@@ -47,6 +46,11 @@ export const CrabboxLaunchV1Schema = defineProtocolUnion([
 ]);
 export type CrabboxLaunchV1 = ProtocolSchemaOutput<typeof CrabboxLaunchV1Schema>;
 
+export const CRABBOX_RECONCILIATION = defineMachineProvisionerReconciliationSchemas({ launch: CrabboxLaunchV1Schema,
+  resource: CrabboxResourceV1Schema, nativeOperation: CrabboxResourceV1Schema });
+export const CRABBOX_ROLE_SCHEMAS = { ...defineMachineProvisionerSchemas({ launch: CrabboxLaunchV1Schema,
+  resource: CrabboxResourceV1Schema }), acquireResult: CRABBOX_RECONCILIATION.result };
+
 // The canonical options Action exposes editable, reviewed native inputs. It
 // returns a launch only when the whole selected native variant is valid.
 export const CrabboxOptionsInputV1Schema = defineProtocolObject({
@@ -58,6 +62,23 @@ export const CrabboxOptionsInputV1Schema = defineProtocolObject({
   localContainerRuntime: localRuntime.optional(),
   localContainerCpus: defineProtocolNumber({ integer: true, minimum: 0 }).optional(), localContainerMemory: nativeString.optional(),
 }, closed);
+
+/** Retained form fields are a draft; only the active backend enters a launch. */
+export function resolveCrabboxLaunchQueryCandidate(rawQuery: unknown) {
+  const query = CrabboxOptionsInputV1Schema.parse(rawQuery);
+  const common = { backendId: query.backendId, transport: query.transport, namespace: query.namespace,
+    target: query.target, nativeImageId: query.nativeImageId,
+    ttlSeconds: query.ttlSeconds, idleTimeoutSeconds: query.idleTimeoutSeconds };
+  const candidate = query.backendId === 'local-container'
+    ? { ...common,
+      ...(query.localContainerRuntime === undefined ? {} : { localContainerRuntime: query.localContainerRuntime }),
+      ...(query.localContainerCpus === undefined ? {} : { localContainerCpus: query.localContainerCpus }),
+      ...(query.localContainerMemory === undefined ? {} : { localContainerMemory: query.localContainerMemory }) }
+    : { ...common, nativeSizeId: query.nativeSizeId,
+      ...(query.backendId === 'gcp' ? { gcpProject: query.gcpProject, gcpZone: query.gcpZone } : {}),
+      ...(query.backendId === 'hetzner' ? { location: query.location } : {}) };
+  return CrabboxLaunchV1Schema.safeParse(candidate);
+}
 
 // Persistence projections stay with the SDK/Protocol owner. Native ingress and
 // writes retain the closed schemas above.

@@ -14,6 +14,16 @@ function success(stdout = new Uint8Array()): PluginProcessResult {
 }
 
 describe('public Lima process transport', () => {
+  it('uses the resolved native executable independently of the internal command label', async () => {
+    const exec: Pick<ExecService, 'run'> = { run: async request => {
+      expect(request.executable).toEqual(executable);
+      expect(request.args).toEqual(['--version']);
+      return success(new TextEncoder().encode('limactl version 2.1.0'));
+    } };
+    const executor = createLimaSdkExecutor({ exec, executable, signal: new AbortController().signal });
+    await expect(executor.capture('/native/limactl', ['--version'])).resolves.toMatchObject({ exitCode: 0, out: 'limactl version 2.1.0' });
+  });
+
   it.each(['start', 'stop'] as const)('uses the native daemon lifetime for retained power %s', async intent => {
     let running = intent === 'stop';
     // Replace only public process IO; the shared power owner chooses the real
@@ -76,5 +86,21 @@ describe('public Lima process transport', () => {
     const executor = createLimaSdkExecutor({ exec, executable, signal: new AbortController().signal });
     await expect(executor.capture('limactl', ['list', '--all-fields', '--format=json', identity.instance]))
       .rejects.toMatchObject({ code: 'LIMA_INSPECT_UNAVAILABLE' });
+  });
+
+  it.each([false, true])('retains bounded projected stderr for failed or cancelled start (cancelled=%s)', async cancelled => {
+    const stderr = `token=private-token ${'x'.repeat(10_100)} failed to open "/private/secret/image": no such file or directory`;
+    const exec: Pick<ExecService, 'run'> = { run: async () => ({ ...success(),
+      termination: { observed: { kind: 'exit', exitCode: cancelled ? 0 : 1 }, requestedBy: cancelled ? { kind: 'abort' } : { kind: 'none' } },
+      stderr: new TextEncoder().encode(stderr),
+    }) };
+    const executor = createLimaSdkExecutor({ exec, executable, signal: new AbortController().signal });
+    const error = await executor.capture('limactl', ['restart', identity.instance]).catch(error => error);
+    expect(error).toMatchObject({ code: 'lima_start_failed', nativeCause: { localCause: 'native_command_failed',
+      command: 'restart', exitCode: cancelled ? null : 1, stderrTruncated: true } });
+    expect(error.nativeCause.stderr.length).toBeLessThanOrEqual(10_000);
+    expect(error.nativeCause.stderr).toContain('no such file or directory');
+    expect(error.nativeCause.stderr).not.toContain('/private/secret');
+    expect(error.nativeCause.stderr).not.toContain('private-token');
   });
 });

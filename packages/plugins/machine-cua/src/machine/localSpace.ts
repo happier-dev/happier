@@ -1,3 +1,4 @@
+import type { MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { CuaNativeClient } from './nativeClient.js';
 import { createCuaLocalSandbox } from './localSandbox.js';
 import type { CuaPowerIntent } from './nativePower.js';
@@ -7,7 +8,7 @@ import { CuaLocalLaunchV1Schema, CuaNativeSpaceRegistrySchema, CuaNativeSpaceSch
 type SpaceResource = Extract<CuaLocalResourceV1, { kind: 'space' }>;
 export type CuaLocalSpaceCreate =
     | Readonly<{ kind: 'bound'; resource: SpaceResource }>
-    | Readonly<{ kind: 'unknown'; recovery: SpaceResource }>
+    | Readonly<{ kind: 'unknown'; recovery: SpaceResource; nativeCause?: MachineProvisionerNativeCauseV1 }>
     | Readonly<{ kind: 'unavailable'; reason: 'native_size_units_unrepresentable' | 'image_disk_mismatch' }>;
 export type CuaLocalSpaceCleanup = Readonly<{
     kind: 'deleted' | 'incomplete'; resource: SpaceResource;
@@ -34,6 +35,9 @@ export function createCuaLocalSpace(native: CuaNativeClient) {
     async function inspectSpace(resource: SpaceResource, signal?: AbortSignal) {
         const inspected = await sandbox.inspect(resource, signal);
         const registry = await readCuaSpaceRegistryEntry(native, resource.spaceId, signal, 'local');
+        if (inspected.existence === 'absent' && registry.presence !== 'absent') {
+            return { ...inspected, existence: 'unknown' as const, resource, registry: registry.presence };
+        }
         if (inspected.existence !== 'present') return { ...inspected, resource, registry: registry.presence };
         const imageId = inspected.imageId ?? registry.image;
         return { ...inspected, ...(imageId !== undefined ? { imageId } : {}), resource, registry: registry.presence };
@@ -50,7 +54,7 @@ export function createCuaLocalSpace(native: CuaNativeClient) {
                 // newly created exact local id. There is no public import route.
                 const created = await sandbox.create(launch, name, imageDiskBytes, signal);
                 if (created.kind === 'unavailable') return created;
-                if (created.kind !== 'bound') return { kind: 'unknown', recovery: resource };
+                if (created.kind !== 'bound') return { kind: 'unknown', recovery: resource, nativeCause: created.nativeCause };
                 const registered = await native.json(['--embedded', 'spaces', 'add', created.resource.sandboxId], signal);
                 const parsed = registered.kind === 'success' ? CuaNativeSpaceSchema.safeParse(registered.value) : undefined;
                 return parsed?.success && parsed.data.id === resource.spaceId && parsed.data.provider === 'local'
@@ -68,7 +72,7 @@ export function createCuaLocalSpace(native: CuaNativeClient) {
             const created = await native.json(['--embedded', 'spaces', 'create', '--on=local',
                 `--runtime=${launch.runtimeId}`, `--name=${name}`, `--cpus=${launch.size.cpu}`,
                 `--memory-mb=${memoryMiB}`, `--disk-gb=${diskGiB}`, '--', launch.imageId], signal);
-            if (created.kind !== 'success') return { kind: 'unknown', recovery: resource };
+            if (created.kind !== 'success') return { kind: 'unknown', recovery: resource, nativeCause: created.nativeCause };
             const parsed = CuaNativeSpaceRegistrySchema.safeParse(created.value);
             if (!parsed.success || parsed.data.spaces.length !== 1 || parsed.data.spaces[0].id !== resource.spaceId
                 || parsed.data.spaces[0].provider !== 'local') {
@@ -78,7 +82,7 @@ export function createCuaLocalSpace(native: CuaNativeClient) {
             // exact sandbox, never create again. `spaces create` answers a row
             // without an image, so the qualification reads the registry listing.
             const inspected = await inspectSpace(resource, signal);
-            return inspected.existence === 'present' && inspected.registry === 'present' && inspected.imageId === launch.imageId
+            return inspected.existence === 'present' && inspected.power === 'running' && inspected.registry === 'present' && inspected.imageId === launch.imageId
                 ? { kind: 'bound', resource }
                 : { kind: 'unknown', recovery: resource };
         },
@@ -90,10 +94,16 @@ export function createCuaLocalSpace(native: CuaNativeClient) {
             // Native registry power_state is historical, not current power proof.
             return sandbox.power(resource, intent, signal);
         },
-        async destroy(input: unknown, signal?: AbortSignal): Promise<CuaLocalSpaceCleanup> {
+        async destroy(input: unknown, signal?: AbortSignal, expectedImageId?: string): Promise<CuaLocalSpaceCleanup> {
             const resource = spaceResource(input);
-            const deleted = await sandbox.destroy(resource, signal);
+            const deleted = await sandbox.destroy(resource, signal, expectedImageId);
             const existence = deleted.kind === 'deleted' ? 'absent' : 'unknown';
+            // Pending compute must qualify before any cleanup effect. Retain the
+            // registry's image evidence until deletion is proven; a later exact
+            // absence can finish this registration after a lost native reply.
+            if (expectedImageId !== undefined && existence !== 'absent') {
+                return { kind: 'incomplete', sandbox: existence, registry: 'unknown', resource };
+            }
             // rm/remove forgets the entry and token, without touching compute.
             const disposition = await removeCuaSpaceRegistration(native, resource.spaceId, signal, 'local');
             return { kind: existence === 'absent' && disposition === 'removed' ? 'deleted' : 'incomplete',

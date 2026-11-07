@@ -1,1 +1,1 @@
-export { resolveMachineProvisionerSshBootstrap } from '../ssh.js';
+export * from './index.public.js';

@@ -56,29 +56,37 @@ const defaults = { placementBindings: [], surfaces: ['ui', 'cli', 'plugin'], hos
 } as const;
 const runtime = (context: Parameters<typeof nativeFetch>[0]) => createBoatNativeClient({ fetch: nativeFetch(context), signal: context.signal });
 const PRICE_SOURCE = 'https://docs.boat.dev/pricing';
+// Static rates verified against https://docs.boat.dev/pricing.md on 2026-10-30.
+// /limits supplies current entitlement, not a fresh observation of these rates.
+const PRICE_OBSERVED_AT = Date.parse('2026-10-30T00:00:00Z');
+
 function sizeTitle(size: BoatSize): string {
   return `${size.id} · ${size.multiplier}x · ${size.cpuCores} vCPU · ${size.memoryGb} GB RAM · ${size.diskGb} GB · $${size.hourlyUsd}/hour`;
 }
 
-function sizeOption(size: BoatSize, observedAt: number) {
+function sizeOption(size: BoatSize) {
   return {
     id: size.id, title: sizeTitle(size), assignments: [{ path: 'size', value: size.id }],
-    prices: [{ label: boatPresentationLabel('compute'), amount: size.hourlyUsd, currency: 'USD', unit: 'hour', source: PRICE_SOURCE, observedAt }],
+    prices: [{ label: boatPresentationLabel('compute'), amount: size.hourlyUsd, currency: 'USD', unit: 'hour', source: PRICE_SOURCE, observedAt: PRICE_OBSERVED_AT }],
     nativeFacts: {
       size: { id: size.id, title: `${size.id} (${size.multiplier}x)`, cpuCores: size.cpuCores,
-        memoryBytes: size.memoryGb * 1024 ** 3, diskBytes: size.diskGb * 1000 ** 3 }, }, };
+        memoryBytes: size.memoryGb * 1024 ** 3, diskBytes: size.diskGb * 1000 ** 3 },
+    },
+  };
 }
 
-function sourceOption(source: { kind: 'blank' } | { kind: 'named-snapshot'; name: string } | { kind: 'fork'; sandboxId: string }, title: string) {
+function sourceOption(source: BoatLaunchV1['source'], title: string) {
   const id = source.kind === 'blank' ? 'blank' : source.kind === 'named-snapshot' ? `snapshot/${source.name}` : `fork/${source.sandboxId}`;
   // These are filesystem starting sources; the existing image/source control
   // carries their exact native selector, including a fork's source sandbox id.
   // Boat's Linux sandbox contract also covers saved disks and forks: https://docs.boat.dev/concepts.
-  return { id, title, assignments: [{ path: 'source', value: source }], nativeFacts: { image: { id, title } } };
+  return { id, title, guestPlatform: 'linux' as const, assignments: [{ path: 'source', value: source }], nativeFacts: { image: { id, title } } };
 }
 
 export const MACHINE_PROVISIONER = {
   title: 'Boat', icon: 'cloud', resourceKind: 'boat-sandbox', schemaVersion: 1,
+  browserReachable: false,
+  enrollmentRole: 'server',
   kindTitle: boatPresentationLabel('kind'), description: boatPresentationLabel('description'),
   launchSchema: BoatLaunchV1Schema.jsonSchema, resourceSchema: BoatResourceV1Schema.jsonSchema, resourceIdPath: 'sandboxId',
   platforms: ['darwin', 'linux', 'win32'], prerequisites: [{ kind: 'systemTool', id: 'ssh-keyscan' }],
@@ -160,9 +168,9 @@ export function createBoatPlugin(resolveSshBootstrap?: typeof resolveMachineProv
       inputSchema: ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerOptionsResultV1Schema,
       async run(_input, context): Promise<MachineProvisionerOptionsResultV1> {
         const facts = await runtime(context).options().catch(rethrowNativeFailure);
-        return { base: { launch: {}, retention, nativeFacts: { monthlyCapStatus: 'none' },
+        return { base: { launch: {}, guestPlatform: 'linux', retention, nativeFacts: { monthlyCapStatus: 'none' },
         }, dimensions: {
-          size: facts.sizes.map(size => sizeOption(size, context.invokedAtMs)),
+          size: facts.sizes.map(sizeOption),
           image: [sourceOption({ kind: 'blank' }, 'Blank sandbox'),
             ...facts.snapshots.map(snapshot => sourceOption({ kind: 'named-snapshot', name: snapshot.name }, `Snapshot ${snapshot.name}`)),
             ...facts.sandboxes.map(sandbox => sourceOption({ kind: 'fork', sandboxId: sandbox.id }, `Fork ${sandbox.name ?? sandbox.id} (${sandbox.id})`))],

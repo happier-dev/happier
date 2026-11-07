@@ -52,29 +52,28 @@ export const CRABBOX_CONNECTED_ACCOUNT_RUNTIME: ConnectedAccountRuntime = {
   },
 };
 
-/** Each invocation captures one admitted account and connection. Every request
- * re-materializes that exact account so retirement/configuration drift refuses
- * before native IO; no ambient environment or default coordinator is consulted. */
-export async function prepareCrabboxConnection(accounts: ConnectedAccountsService, http: HttpService, signal: AbortSignal) {
+/** Each finite invocation acquires its selected account and connection once.
+ * Native steps share that admission and the containing cancellation signal. */
+export async function prepareCrabboxConnection(accounts: Pick<ConnectedAccountsService, 'getBinding' | 'materialize'>, http: HttpService, signal: AbortSignal) {
+  signal.throwIfAborted();
   const binding = await accounts.getBinding(CRABBOX_CONNECTION_PURPOSE, { signal });
   if (!binding || binding.account.service.pluginId !== CRABBOX_CONNECTION_SERVICE.pluginId
     || binding.account.service.localId !== CRABBOX_CONNECTION_SERVICE.localId) throw unavailable();
   const account = binding.account;
-  async function materialize() {
-    const value = await accounts.materialize(CRABBOX_CONNECTION_PURPOSE, { kind: 'environment', keys: environmentKeys }, { signal, expectedAccount: account });
-    if (value.kind !== 'environment') throw unavailable();
-    return connection({ endpoint: value.env.CRABBOX_COORDINATOR_URL, namespace: value.env.CRABBOX_ORG }, value.env.CRABBOX_COORDINATOR_TOKEN);
-  }
-  const selected = await materialize();
+  signal.throwIfAborted();
+  const value = await accounts.materialize(CRABBOX_CONNECTION_PURPOSE, { kind: 'environment', keys: environmentKeys }, { signal, expectedAccount: account });
+  signal.throwIfAborted();
+  if (value.kind !== 'environment') throw unavailable();
+  const selected = connection({ endpoint: value.env.CRABBOX_COORDINATOR_URL, namespace: value.env.CRABBOX_ORG }, value.env.CRABBOX_COORDINATOR_TOKEN);
   const nativeHttp: CrabboxHttp = async (url, init) => {
-    const current = await materialize();
-    if (current.endpoint !== selected.endpoint || current.namespace !== selected.namespace) throw unavailable();
+    signal.throwIfAborted();
     const method = init.method;
     if (method !== 'GET' && method !== 'PUT' && method !== 'POST') throw unavailable();
     const headers = Object.fromEntries(new Headers(init.headers).entries());
-    headers.authorization = `Bearer ${current.token}`;
+    headers.authorization = `Bearer ${selected.token}`;
     const reply = await http.request({ url, method, headers, redirect: 'error',
       ...(init.body === undefined ? {} : { body: new TextEncoder().encode(String(init.body)) }) }, { signal });
+    signal.throwIfAborted();
     if (reply.finalUrl !== url) throw unavailable();
     return new Response(Uint8Array.from(reply.body), { status: reply.status, headers: reply.headers });
   };

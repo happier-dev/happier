@@ -1,3 +1,5 @@
+import { projectPluginFailureText } from '@happier-dev/plugin-sdk';
+import { MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1, type MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
 import { DockerSandboxesLaunchV1Schema, DockerSandboxesNameSchema, DockerSandboxesResourceV1Schema } from './schemas.js';
@@ -28,19 +30,30 @@ export function createDockerSandboxesNativeClient(exec: Pick<ExecService, 'run'>
     signal?.throwIfAborted();
     return exec.run({ executable, args, ...(stdin === undefined ? {} : { stdin }) }, { signal });
   };
+  function commandFailure(command: 'create' | 'run', result?: PluginProcessResult) {
+    const observed = result?.termination.observed;
+    const exitCode = observed?.kind === 'exit' && result?.termination.requestedBy.kind === 'none' ? observed.exitCode : null;
+    const stderr = result ? projectPluginFailureText(new Error(new TextDecoder().decode(result.stderr))).trim() : '';
+    return { localCause: 'native_command_failed', command, exitCode,
+      ...(stderr ? { stderr: stderr.slice(-MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1) } : {}),
+      ...(result?.stderrTruncated || stderr.length > MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1 ? { stderrTruncated: true } : {}),
+    } satisfies MachineProvisionerNativeCauseV1;
+  }
   const client = {
     async create(input: DockerSandboxesLaunchV1, signal?: AbortSignal) {
       const launch = DockerSandboxesLaunchV1Schema.safeParse(input);
       if (!launch.success) return { status: 'refused', code: 'docker_sandbox_launch_invalid' } as const;
       const resource = { sandboxName: launch.data.name };
+      let failed: PluginProcessResult | undefined;
       try {
         const result = await run(['create', '--name', launch.data.name, '--template', launch.data.templateId, 'shell'], signal);
         if (completed(result)) return { status: 'allocated', resource, readiness: 'unqualified' } as const;
+        failed = result;
       } catch {
         // The native effect may precede loss of its process result. Keep its
         // preselected locator; the host decides recovery, never a new acquire.
       }
-      return { status: 'unknown', resource, nativeAbsence: 'unproven' } as const;
+      return { status: 'unknown', resource, nativeAbsence: 'unproven', nativeCause: commandFailure('create', failed) } as const;
     },
     async probe(signal?: AbortSignal) {
       try {
@@ -115,12 +128,15 @@ export function createDockerSandboxesNativeClient(exec: Pick<ExecService, 'run'>
       if (!('presence' in observation)) return observation;
       if (observation.presence !== 'present') return { status: 'refused', code: observation.presence === 'absent'
         ? 'docker_sandbox_absent' : 'docker_sandbox_presence_unknown' } as const;
+      let failed: PluginProcessResult | undefined;
       try {
-        if (completed(await run(['run', '--detached', '--name', resource.sandboxName], signal))) {
+        const result = await run(['run', '--detached', '--name', resource.sandboxName], signal);
+        if (completed(result)) {
           return { status: 'start-accepted', resource: readLocator(resource) } as const;
         }
+        failed = result;
       } catch { /* Native acceptance may precede loss of the process reply. */ }
-      return { status: 'unknown', resource: readLocator(resource), nativeAbsence: 'unproven' } as const;
+      return { status: 'unknown', resource: readLocator(resource), nativeAbsence: 'unproven', nativeCause: commandFailure('run', failed) } as const;
     },
     async stop(resource: SandboxLocator, signal?: AbortSignal) {
       if (!isSandboxName(resource.sandboxName)) return invalidName();

@@ -7,7 +7,12 @@ const droplet = { id: 42, name: 'managed-42', status: 'active', volume_ids: ['ex
 const action = (status: string) => ({ id: 9, status, type: 'create', resource_id: 42, resource_type: 'droplet' });
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 function boundary(replies: (Response | Error)[]) {
-  return vi.fn<typeof fetch>(async () => {
+  return vi.fn<typeof fetch>(async input => {
+    const url = new URL(String(input));
+    // DigitalOcean REST v2 droplets/parameters.yml forbids these selectors together.
+    if (url.pathname === '/v2/droplets' && url.searchParams.has('tag_name') && url.searchParams.has('type')) {
+      return response({ id: 'bad_request' }, 400);
+    }
     const next = replies.shift();
     if (next instanceof Error) throw next;
     if (!next) throw new Error('Unexpected native request');
@@ -22,18 +27,39 @@ const optionResponses = () => [
 ];
 
 describe('DigitalOcean provider admission', () => {
-  it('revalidates launch against native options before an effect and refuses an unavailable recipe', async () => {
-    const network = boundary(optionResponses());
-    const provider = createDigitalOceanProvider({ token: 'token', fetch: network });
-    expect(await provider.acquire({ launch: { ...launch, sizeSlug: 'removed-size' }, name: 'managed-42', recoveryTag: 'managed-42', bootstrapSshPublicKey: 'ssh-ed25519 public' })).toMatchObject({ kind: 'rejected', reason: 'launch-unavailable' });
-    expect(network.mock.calls.every(([, init]) => init?.method === 'GET')).toBe(true);
+  it('sends retained host-key bytes only to cloud-init and retains the exact Droplet for cleanup', async () => {
+    const guestHostKey = { publicKey: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+      privateKey: '-----BEGIN OPENSSH PRIVATE KEY-----\nretained-host-key\n-----END OPENSSH PRIVATE KEY-----\n' };
+    const network = boundary([response({ droplet: { id: 42 } }, 202), new Response(null, { status: 204 }), response({}, 404)]);
+    const options = { token: 'private-vendor-token', fetch: network, guestHostKey };
+    const provider = createDigitalOceanProvider(options);
+    const result = await provider.acquire({ launch, name: 'managed-42', recoveryTag: 'managed-42', bootstrapSshPublicKey: 'ssh-ed25519 public' });
+    expect(result).toEqual({ kind: 'bound', resource });
+    const submitted = JSON.parse(String(network.mock.calls[0][1]?.body));
+    const config = JSON.parse(submitted.user_data.slice('#cloud-config\n'.length));
+    expect(config.ssh_keys).toEqual({ ed25519_private: guestHostKey.privateKey, ed25519_public: guestHostKey.publicKey });
+    expect(JSON.stringify(result)).not.toMatch(/retained-host-key|private-vendor-token/);
+    expect(await provider.destroy(resource)).toMatchObject({ kind: 'deleted', resource });
+    expect(network.mock.calls.slice(1).map(([url]) => url)).toEqual([
+      'https://api.digitalocean.com/v2/droplets/42', 'https://api.digitalocean.com/v2/droplets/42',
+    ]);
   });
-
-  it('creates only after native availability is verified, retaining accepted identity', async () => {
-    const network = boundary([...optionResponses(), response({ droplet, links: { actions: [{ id: 9 }] } }, 202)]);
+  it('keeps missing Droplet custody until every owned volume is absent', async () => {
+    const owned = { ...resource, ownedVolumeIds: ['owned-volume'] };
+    const network = boundary([response(null, 404), response({ volume: { id: 'owned-volume' } }),
+      response(null, 404), response({ id: 'unauthorized' }, 401), response(null, 404), response(null, 404)]);
+    const client = createDigitalOceanNativeClient({ token: 'token', fetch: network });
+    expect(await client.inspect(owned)).toMatchObject({ kind: 'unavailable', reason: 'cleanup-unconfirmed' });
+    expect(await client.inspect(owned)).toMatchObject({ kind: 'unavailable', reason: 'authorization' });
+    expect(await client.inspect(owned)).toEqual({ kind: 'absent', resource: owned });
+    expect(network.mock.calls.every(([, init]) => !init?.method || init.method === 'GET')).toBe(true);
+  });
+  it('creates the reviewed launch directly, retaining accepted identity', async () => {
+    const network = boundary([response({ droplet, links: { actions: [{ id: 9 }] } }, 202)]);
     const provider = createDigitalOceanProvider({ token: 'token', fetch: network });
-    expect(await provider.acquire({ launch, name: 'managed-42', recoveryTag: 'managed-42', bootstrapSshPublicKey: 'ssh-ed25519 public' })).toMatchObject({ kind: 'bound', resource, ready: false });
+    expect(await provider.acquire({ launch, name: 'managed-42', recoveryTag: 'managed-42', bootstrapSshPublicKey: 'ssh-ed25519 public' })).toMatchObject({ kind: 'bound', resource });
     expect(network.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(1);
+    expect(network).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -41,12 +67,12 @@ describe('DigitalOcean provider admission', () => {
     { type: 'base', distribution: 'Unknown', slug: 'windows-x64' },
     { type: 'base', distribution: 'FreeBSD', slug: 'freebsd-x64' },
     { type: 'snapshot', distribution: 'Ubuntu', slug: 'ubuntu-24-04-x64' },
-  ])('refuses a guest image without documented root cloud-init support: %j', async image => {
+  ])('omits a guest image without documented root cloud-init support from review: %j', async image => {
     const replies = optionResponses();
     replies[2] = response({ images: [{ id: 1, name: 'Guest', regions: ['nyc3'], status: 'available', ...image }], links: {} });
     const network = boundary(replies);
     const provider = createDigitalOceanProvider({ token: 'token', fetch: network });
-    expect(await provider.acquire({ launch: { ...launch, imageId: 1 }, name: 'managed-42', recoveryTag: 'managed-42', bootstrapSshPublicKey: 'ssh-ed25519 public' })).toMatchObject({ kind: 'rejected', reason: 'launch-unavailable' });
+    expect((await provider.options()).dimensions.image).toEqual([]);
     expect(network.mock.calls.every(([, init]) => init?.method === 'GET')).toBe(true);
   });
 
@@ -55,7 +81,8 @@ describe('DigitalOcean provider admission', () => {
     replies[2] = response({ images: [{ id: 1, name: 'Ubuntu', distribution: 'Ubuntu', type: 'base', slug: 'ubuntu-latest', regions: ['nyc3'], status: 'available' }], links: {} });
     const network = boundary([...replies, response({ droplet, links: { actions: [{ id: 9 }] } }, 202)]);
     const provider = createDigitalOceanProvider({ token: 'token', fetch: network });
-    expect(await provider.acquire({ launch: { ...launch, imageId: 1 }, name: 'managed-42', recoveryTag: 'managed-42', bootstrapSshPublicKey: 'ssh-ed25519 public' })).toMatchObject({ kind: 'bound', resource, ready: false });
+    expect((await provider.options()).dimensions.image).toMatchObject([{ id: '1', guestPlatform: 'linux' }]);
+    expect(await provider.acquire({ launch: { ...launch, imageId: 1 }, name: 'managed-42', recoveryTag: 'managed-42', bootstrapSshPublicKey: 'ssh-ed25519 public' })).toMatchObject({ kind: 'bound', resource });
   });
 
   it('rejects undeclared acquire fields before discovery or purchase', async () => {
@@ -68,6 +95,42 @@ describe('DigitalOcean provider admission', () => {
 });
 
 describe('DigitalOcean native Droplet contract', () => {
+  it.each([
+    [400, 'bad_request'], [401, 'unauthorized'], [403, 'forbidden'], [404, 'not_found'],
+    [409, 'conflict'], [422, 'unprocessable_entity'], [429, 'too_many_requests'],
+  ])('preserves only documented native error identity for rejected creation (%s)', async (status, code) => {
+    const client = createDigitalOceanNativeClient({ token: 'private-vendor-token', fetch: boundary([
+      response({ id: code, message: 'private-vendor-token request content', request_id: 'private-request' }, status),
+    ]) });
+    expect(await client.create({ launch, name: 'managed-42', recoveryTag: 'managed-42', bootstrapSshPublicKey: 'ssh-ed25519 public' }))
+      .toEqual({ kind: 'unavailable', reason: status === 401 || status === 403 ? 'authorization' : 'native-error', status,
+        nativeCause: { httpStatusClass: '4xx', code } });
+  });
+
+  it('keeps status evidence for uncertain create without leaking unknown ids or non-JSON errors', async () => {
+    const client = createDigitalOceanNativeClient({ token: 'token', fetch: boundary([
+      response({ id: 'server_error', message: 'private-body' }, 500),
+      response({ id: 'private-vendor-token', message: 'private-body' }, 503),
+      new Response('<html>private-body</html>', { status: 502 }),
+    ]) });
+    const input = { launch, name: 'managed-42', recoveryTag: 'managed-42', bootstrapSshPublicKey: 'ssh-ed25519 public' };
+    expect(await client.create(input)).toEqual({ kind: 'unknown', recoveryTag: 'managed-42', reason: 'native-error',
+      nativeCause: { httpStatusClass: '5xx', code: 'server_error' } });
+    for (let index = 0; index < 2; index += 1) expect(await client.create(input)).toEqual({
+      kind: 'unknown', recoveryTag: 'managed-42', reason: 'native-error', nativeCause: { httpStatusClass: '5xx' },
+    });
+  });
+
+  it('retains safe native failure evidence in check and paged options reads', async () => {
+    const client = createDigitalOceanNativeClient({ token: 'token', fetch: boundary([
+      response({ id: 'forbidden', message: 'private' }, 403),
+      response({ id: 'too_many_requests', message: 'private' }, 429),
+    ]) });
+    expect(await client.check()).toEqual({ available: false, code: 'authorization', nativeCause: { httpStatusClass: '4xx', code: 'forbidden' } });
+    expect(await client.options()).toEqual({ kind: 'unavailable', reason: 'native-error', status: 429,
+      nativeCause: { httpStatusClass: '4xx', code: 'too_many_requests' } });
+  });
+
   it('retains exact identity but waits for create action completion before bootstrap readiness', async () => {
     const network = boundary([
       response({ droplet, links: { actions: [{ id: 9, rel: 'create', href: 'https://api.digitalocean.com/v2/actions/9' }] } }, 202),
@@ -75,12 +138,13 @@ describe('DigitalOcean native Droplet contract', () => {
       response({ action: action('errored') }),
     ]);
     const client = createDigitalOceanNativeClient({ token: 'private-vendor-token', fetch: network });
-    expect(await client.create({ launch, name: 'managed-42', recoveryTag: 'managed-42', bootstrapSshPublicKey: 'ssh-ed25519 public' })).toMatchObject({ kind: 'bound', resource, actionIds: [9], ready: false });
+    expect(await client.create({ launch, name: 'managed-42', recoveryTag: 'managed-42', bootstrapSshPublicKey: 'ssh-ed25519 public' })).toMatchObject({ kind: 'bound', resource });
     expect(await client.observeAction(resource, 9)).toMatchObject({ kind: 'pending', resource });
     expect(await client.observeAction(resource, 9)).toMatchObject({ kind: 'failed', resource });
     const body = JSON.parse(String(network.mock.calls[0][1]?.body));
     expect(body).toMatchObject({ tags: ['managed-42'] });
-    expect(body.user_data).toBe('#cloud-config\nssh_authorized_keys:\n  - "ssh-ed25519 public"\n');
+    expect(body.user_data).toContain('"name":"happier-bootstrap"');
+    expect(body).not.toHaveProperty('ssh_keys');
     expect(JSON.stringify(body)).not.toContain('private-vendor-token');
   });
 
@@ -99,9 +163,24 @@ describe('DigitalOcean native Droplet contract', () => {
     expect(await client.recover('managed-42')).toMatchObject({ kind: 'unknown', reason: 'ambiguous' });
   });
 
-  it('retains a returned Droplet identity even if native action references are malformed', async () => {
-    const network = boundary([response({ droplet, links: { actions: [{ id: 'invalid' }] } }, 202)]);
-    expect(await createDigitalOceanNativeClient({ token: 'token', fetch: network }).create({ launch, name: 'managed-42', recoveryTag: 'managed-42', bootstrapSshPublicKey: 'ssh-ed25519 public' })).toMatchObject({ kind: 'bound', resource, ready: false });
+  it.each([
+    { droplet, links: { actions: [{ id: 'invalid' }] } },
+    { droplet: { id: 42 } },
+    { droplet: { ...droplet, status: null, networks: { v4: 'unavailable' } } },
+  ])('retains returned identity without treating malformed ancillary facts as readiness: %j', async body => {
+    const network = boundary([response(body, 202), response(body)]);
+    const client = createDigitalOceanNativeClient({ token: 'token', fetch: network });
+    expect(await client.create({ launch, name: 'managed-42', recoveryTag: 'managed-42', bootstrapSshPublicKey: 'ssh-ed25519 public' }))
+      .toEqual({ kind: 'bound', resource });
+    const inspection = await client.inspect(resource);
+    expect(inspection).toMatchObject('name' in body.droplet && body.droplet.status !== null
+      ? { kind: 'present', ready: true } : { kind: 'unavailable', reason: 'invalid-response', resource });
+  });
+
+  it.each([undefined, 0, -1, 1.5, '42', Number.MAX_SAFE_INTEGER + 1])('refuses invalid create identity %s', async id => {
+    const client = createDigitalOceanNativeClient({ token: 'token', fetch: boundary([response({ droplet: { ...droplet, id } }, 202)]) });
+    expect(await client.create({ launch, name: 'managed-42', recoveryTag: 'managed-42', bootstrapSshPublicKey: 'ssh-ed25519 public' }))
+      .toEqual({ kind: 'unknown', recoveryTag: 'managed-42', reason: 'invalid-response' });
   });
 
   it('distinguishes exact-id absence from authorization and transport failures, preserving off billing', async () => {
@@ -139,8 +218,9 @@ describe('DigitalOcean native Droplet contract', () => {
   });
 
   it('deletes only exact Droplet and owned volumes, retaining incomplete cleanup after volume failure', async () => {
-    const network = boundary([new Response(null, { status: 204 }), response({}, 404), response({}, 403)]);
-    expect(await createDigitalOceanNativeClient({ token: 'token', fetch: network }).destroy({ ...resource, ownedVolumeIds: ['owned-volume'] })).toMatchObject({ kind: 'incomplete', resource: { ...resource, ownedVolumeIds: ['owned-volume'] }, remainingVolumeIds: ['owned-volume'] });
+    const network = boundary([new Response(null, { status: 204 }), response({}, 404), response({ id: 'forbidden', message: 'private' }, 403)]);
+    expect(await createDigitalOceanNativeClient({ token: 'token', fetch: network }).destroy({ ...resource, ownedVolumeIds: ['owned-volume'] })).toMatchObject({ kind: 'incomplete', resource: { ...resource, ownedVolumeIds: ['owned-volume'] }, remainingVolumeIds: ['owned-volume'],
+      nativeCause: { httpStatusClass: '4xx', code: 'forbidden' } });
     expect(network.mock.calls.map(([url]) => url)).toEqual(['https://api.digitalocean.com/v2/droplets/42', 'https://api.digitalocean.com/v2/droplets/42', 'https://api.digitalocean.com/v2/volumes/owned-volume']);
   });
 
@@ -153,7 +233,7 @@ describe('DigitalOcean native Droplet contract', () => {
     const network = boundary([response({ action: action('completed') }), response({ droplet: { ...droplet, status: 'new' } }), response({ action: action('completed') }), response({ droplet })]);
     const client = createDigitalOceanNativeClient({ token: 'token', fetch: network });
     expect(await client.observeAction(resource, 9)).toMatchObject({ kind: 'pending', resource });
-    expect(await client.observeAction(resource, 9)).toMatchObject({ kind: 'completed', resource, ready: true, ssh: { address: '203.0.113.42', user: 'root' } });
+    expect(await client.observeAction(resource, 9)).toMatchObject({ kind: 'completed', resource, ready: true, ssh: { address: '203.0.113.42', user: 'happier-bootstrap' } });
   });
 
   it('does not forward the vendor bearer to an untrusted native pagination URL', async () => {
@@ -167,16 +247,28 @@ describe('DigitalOcean native Droplet contract', () => {
     const network = boundary([
       response({ droplets: [{ ...droplet, id: 99, tags: ['unrelated'] }], links: { pages: { next: 'https://api.digitalocean.com/v2/droplets?tag_name=managed-42&page=2' } } }),
       response({ droplets: [droplet, droplet], links: {} }),
-      response({ droplets: [], links: {} }),
+      response({ droplets: [{ ...droplet, id: 100, tags: ['managed-420'] }], links: { pages: { next: 'https://api.digitalocean.com/v2/droplets?type=gpus&page=2' } } }),
+      response({ droplets: [droplet], links: {} }),
     ]);
     expect(await createDigitalOceanNativeClient({ token: 'token', fetch: network }).recover('managed-42')).toMatchObject({ kind: 'bound', resource });
-    expect(network).toHaveBeenCalledTimes(3);
+    expect(network).toHaveBeenCalledTimes(4);
   });
 
   it('checks the separate GPU Droplet listing before accepting a unique recovery match', async () => {
-    const network = boundary([response({ droplets: [droplet], links: {} }), response({ droplets: [{ ...droplet, id: 43 }], links: {} })]);
+    const network = boundary([response({ droplets: [droplet], links: {} }), response({ droplets: [
+      { ...droplet, id: 43 }, { ...droplet, id: 99, tags: ['unrelated'] },
+    ], links: {} })]);
     expect(await createDigitalOceanNativeClient({ token: 'token', fetch: network }).recover('managed-42')).toMatchObject({ kind: 'unknown', reason: 'ambiguous' });
     expect(String(network.mock.calls[1][0])).toContain('type=gpus');
+  });
+
+  it('recovers the unique exact-tag GPU Droplet from an unfiltered GPU inventory', async () => {
+    const network = boundary([
+      response({ droplets: [], links: {} }),
+      response({ droplets: [{ ...droplet, id: 99, tags: ['managed-420'] }, droplet, { ...droplet, id: 100, tags: [] }], links: {} }),
+    ]);
+    expect(await createDigitalOceanNativeClient({ token: 'token', fetch: network }).recover('managed-42'))
+      .toEqual({ kind: 'bound', resource });
   });
 
   it('keeps cleanup incomplete until exact Droplet absence and never deletes discovered neighbors', async () => {
@@ -201,9 +293,21 @@ describe('DigitalOcean native Droplet contract', () => {
   });
 
   it('checks all native create evidence before returning a private bootstrap address', async () => {
-    const network = boundary([response({ actions: [action('in-progress')], links: {} }), response({ actions: [action('completed')], links: {} }), response({ droplet })]);
+    const network = boundary([response({ actions: [action('in-progress')], links: {} }), response({ droplet }),
+      response({ actions: [action('completed')], links: {} }), response({ droplet })]);
     const client = createDigitalOceanNativeClient({ token: 'token', fetch: network });
     expect(await client.observeResourceActions(resource)).toMatchObject({ kind: 'pending', resource });
     expect(await client.observeResourceActions(resource)).toMatchObject({ kind: 'present', resource, ready: true });
+  });
+
+  it.each([
+    { actions: [] },
+    { actions: [{ ...action('in-progress'), type: 'snapshot' }] },
+    { actions: [action('completed'), { ...action('in-progress'), id: 10, type: 'shutdown' }] },
+  ])('uses current running evidence without waiting for unrelated or missing historical actions: %j', async ({ actions }) => {
+    const network = boundary([response({ actions, links: {} }), response({ droplet })]);
+    const provider = createDigitalOceanProvider({ token: 'token', fetch: network });
+    expect(await provider.bootstrap(resource)).toMatchObject({ kind: 'present', resource, ready: true });
+    expect(network.mock.calls.every(([, init]) => init?.method === 'GET')).toBe(true);
   });
 });

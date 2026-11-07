@@ -1,11 +1,11 @@
-import { projectDigitalOceanOptions } from './machine/options.js';
-import { definePlugin, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import { machinePresentationLabel, machineCheckPresentation, DIGITALOCEAN_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
+import { definePlugin, PluginError } from '@happier-dev/plugin-sdk';
+import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
+import { machinePresentationLabel, machineCheckPresentation } from './ui/translations.js';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
-import { defineMachineProvisionerSchemas, defineMachineProvisionerReconciliationSchemas, prepareMachineProvisionerStoredSchemas,
+import { observeMachineProvisionerNativeRead, buildMachineProvisionerPinnedSshBootstrap, defineMachineProvisionerSchemas, defineMachineProvisionerReconciliationSchemas, prepareMachineProvisionerStoredSchemas,
   MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
   MachineProvisionerObservationV1Schema, MachineProvisionerOptionsResultV1Schema,
-  MachineProvisionerPowerResultV1Schema, type MachineProvisionerAuthorDefinitionV1,
+  MachineProvisionerPowerResultV1Schema, type MachineProvisionerAuthorDefinitionV1, type MachineProvisionerCloudHostKeyV1,
 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { resolveMachineProvisionerSshBootstrap } from '@happier-dev/plugin-sdk/machine-provisioners/ssh';
 import { createDigitalOceanProvider } from './machine/provider.js';
@@ -22,15 +22,27 @@ function resourceRef<T>(value: T) { return { contributionRef: { pluginId: PLUGIN
 function pending(recoveryTag: string) { return { kind: 'pending' as const, nativeOperationRef: resourceRef({ recoveryTag }) }; }
 const billing = { location: 'cloud', stoppedBilling: 'billed' } as const;
 const defaults = { scopes: ['machine'], surfaces: ['cli', 'plugin'], hostAccess: ['native-api', ACCOUNT_PURPOSE] } as const;
-const runtime = async (context: PluginInvocationContext) => createDigitalOceanProvider({ token: 'host-bound', fetch: nativeFetch(context), signal: context.signal, now: () => new Date(context.invokedAtMs) });
-function unavailable() { return { observedAt: 0, availability: 'unavailable' as const, reason: 'provider_unavailable' }; }
+const accountDefaults = { ...defaults, scopes: ['global'],
+  execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
+} as const;
+async function accountRuntime(context: PluginAccountActionContext, guestHostKey?: MachineProvisionerCloudHostKeyV1) {
+  const material = await context.services.connectedAccounts.materialize(ACCOUNT_PURPOSE,
+    { kind: 'httpHeaders', origin: 'https://api.digitalocean.com', headerNames: ['authorization'] }, { signal: context.signal });
+  context.signal.throwIfAborted();
+  if (material.kind !== 'httpHeaders') throw new PluginError({ code: 'credential_unavailable' });
+  return createDigitalOceanProvider({ token: 'host-bound', fetch: nativeFetch(context, material.headers),
+    signal: context.signal, now: () => new Date(context.invokedAtMs), ...(guestHostKey ? { guestHostKey } : {}) });
+}
 
 export const MACHINE_PROVISIONER = {
   title: 'DigitalOcean', icon: 'hard-drives', resourceKind: 'digitalocean-droplet', schemaVersion: 1,
+  enrollmentRole: 'server',
+  browserReachable: false,
   kindTitle: machinePresentationLabel('kind'), description: machinePresentationLabel('description'),
   launchSchema: dropletLaunchSchema.jsonSchema, resourceSchema: dropletResourceSchema.jsonSchema, resourceIdPath: 'dropletId',
-  platforms: ['darwin', 'linux', 'win32'], prerequisites: [{ kind: 'systemTool', id: 'ssh-keyscan' }],
-  billing, retention: { supportedIntents: ['start', 'stop', 'delete'] },
+  platforms: ['darwin', 'linux', 'win32'], prerequisites: [],
+  // Guest poweroff is the same retained Stop; host admin policy decides availability.
+  billing, retention: { supportedIntents: ['start', 'stop', 'delete'], guestLocalStop: 'poweroff' },
   actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' },
   reconciliation: { action: 'reconcile', nativeOperationSchema: dropletNativeOperationSchema.jsonSchema },
 } satisfies MachineProvisionerAuthorDefinitionV1;
@@ -39,97 +51,156 @@ export const PLUGIN = definePlugin({
   id: PLUGIN_ID, version: '0.0.0', displayName: 'DigitalOcean Machines',
   // The provider's own mark beside its name in Machines: DigitalOcean's mark from Simple Icons 13.21.0 (CC0-1.0), brand blue #0080FF.
   brand: { iconResourceId: 'brand-icon' },
-  resources: { 'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' } },
-  description: 'Manage exact reviewed DigitalOcean resources through captured cloud credentials.',
-  engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  resources: { 'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' },
+    "i18n-en": { kind: 'asset', path: "assets/i18n/en.json", contentType: 'application/json' },
+    "i18n-de": { kind: 'asset', path: "assets/i18n/de.json", contentType: 'application/json' },
+    "i18n-ru": { kind: 'asset', path: "assets/i18n/ru.json", contentType: 'application/json' },
+    "i18n-pl": { kind: 'asset', path: "assets/i18n/pl.json", contentType: 'application/json' },
+    "i18n-es": { kind: 'asset', path: "assets/i18n/es.json", contentType: 'application/json' },
+    "i18n-fr": { kind: 'asset', path: "assets/i18n/fr.json", contentType: 'application/json' },
+    "i18n-it": { kind: 'asset', path: "assets/i18n/it.json", contentType: 'application/json' },
+    "i18n-pt": { kind: 'asset', path: "assets/i18n/pt.json", contentType: 'application/json' },
+    "i18n-ca": { kind: 'asset', path: "assets/i18n/ca.json", contentType: 'application/json' },
+    "i18n-zh-hans": { kind: 'asset', path: "assets/i18n/zh-Hans.json", contentType: 'application/json' },
+    "i18n-zh-hant": { kind: 'asset', path: "assets/i18n/zh-Hant.json", contentType: 'application/json' },
+    "i18n-ja": { kind: 'asset', path: "assets/i18n/ja.json", contentType: 'application/json' },
+  },
+  description: 'Manage exact reviewed DigitalOcean resources through captured cloud credentials.', entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: { required: [
     { id: 'native-api', capability: 'network', reason: 'Operate the exact reviewed DigitalOcean resource.',
       scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://api.digitalocean.com' }], methods: ['GET', 'POST', 'DELETE'] } },
     { id: ACCOUNT_PURPOSE, capability: 'connectedAccounts', reason: 'Use only the captured DigitalOcean account.',
       scope: { serviceRefs: [ACCOUNT_ID], operations: ['use'], materializationKinds: ['httpHeaders'] } },
-    { id: 'ssh-evidence', capability: 'process', reason: 'Observe the managed guest key for the canonical SSH trust prompt.',
-      scope: { executables: [{ kind: 'systemTool', id: 'ssh-keyscan' }] } },
   ], optional: [] },
-  systemTools: { 'ssh-keyscan': { title: 'OpenSSH host key scanner', executableNames: ['ssh-keyscan'] } },
   connectedAccountDescriptors: { [ACCOUNT_ID]: {
     declaration: { title: 'DigitalOcean cloud account', ui: { category: 'cloud-machines' }, authentication: { defaultModeId: 'token', modes: [{
       id: 'token', kind: 'manual', title: 'API token', outcomeReconciliation: 'none',
-      directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 },
-      fields: [{ id: 'token', title: 'API token', schema: { type: 'string', minLength: 1 }, secret: true }],
       setup: { url: 'https://cloud.digitalocean.com/account/api/tokens', createKeyTitle: 'Open DigitalOcean API tokens',
         checklist: ['In the DigitalOcean Control Panel, open Account → API → Tokens and choose Generate New Token.', 'Choose a name, expiration and permissions for managing Droplets, SSH keys and tags, and reading sizes, images and regions.', 'Generate the personal access token, then copy and paste it here.'] },
+      credentialFieldKeys: { token: 'token' },
+      credentialOrigin: 'authentication',
+      directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 },
+      fields: [{ id: 'token', title: 'API token', description: {
+        key: 'machineDigitalOcean.account.tokenHint',
+        fallback: 'Use a DigitalOcean personal access token. Create one in the control panel under Account → API → Tokens.',
+      }, schema: { type: 'string', minLength: 1 }, secret: true }],
     }] } }, runtime: connectedAccountRuntime,
   } },
-  ui: { translations: DIGITALOCEAN_UI_TRANSLATION_BUNDLES },
+  ui: { translations: [
+    { locale: "en", resourceId: "i18n-en" },
+    { locale: "de", resourceId: "i18n-de" },
+    { locale: "ru", resourceId: "i18n-ru" },
+    { locale: "pl", resourceId: "i18n-pl" },
+    { locale: "es", resourceId: "i18n-es" },
+    { locale: "fr", resourceId: "i18n-fr" },
+    { locale: "it", resourceId: "i18n-it" },
+    { locale: "pt", resourceId: "i18n-pt" },
+    { locale: "ca", resourceId: "i18n-ca" },
+    { locale: "zh-Hans", resourceId: "i18n-zh-hans" },
+    { locale: "zh-Hant", resourceId: "i18n-zh-hant" },
+    { locale: "ja", resourceId: "i18n-ja" },
+  ] },
   machineProvisioners: { [PROVISIONER_ID]: MACHINE_PROVISIONER },
   actions: {
-    reconcile: { ...defaults, title: 'Recover exact DigitalOcean resource', dangerLevel: 'safe',
+    reconcile: { ...accountDefaults, title: 'Recover exact DigitalOcean resource', dangerLevel: 'safe',
       inputSchema: reconciliation.input, resultSchema: reconciliation.result,
       async run(input, context) {
-        const recoveryTag = 'nativeOperation' in input ? input.nativeOperation.recoveryTag : `happier-${input.correlation.managedId}`;
+        let recoveryTag: string;
+        if ('nativeOperation' in input) {
+          if ('dropletId' in input.nativeOperation) return { kind: 'bound' as const, resource: resourceRef(input.nativeOperation) };
+          recoveryTag = input.nativeOperation.recoveryTag;
+        } else recoveryTag = `happier-${input.correlation.managedId}`;
         try {
-          const result = await (await runtime(context)).recover(recoveryTag);
+          const result = await (await accountRuntime(context)).recover(recoveryTag);
           if (result.kind === 'bound') return { kind: 'bound' as const, resource: resourceRef(result.resource) };
+          return { ...pending(recoveryTag), ...('nativeCause' in result && result.nativeCause ? { nativeCause: result.nativeCause } : {}) };
         } catch { /* An unavailable read neither proves absence nor authorizes another purchase. */ }
         return pending(recoveryTag);
       },
     },
-    check: { ...defaults, title: 'Check DigitalOcean API access', dangerLevel: 'safe',
+    check: { ...accountDefaults, title: 'Check DigitalOcean API access', dangerLevel: 'safe',
       inputSchema: ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerCheckResultV1Schema,
-      async run(_input, context) { try { return machineCheckPresentation(await (await runtime(context)).check()); } catch { return machineCheckPresentation({ available: false, code: 'provider_unavailable' }); } },
+      async run(_input, context) { try { return machineCheckPresentation(await (await accountRuntime(context)).check()); } catch { return machineCheckPresentation({ available: false, code: 'provider_unavailable' }); } },
     },
-    options: { ...defaults, title: 'Discover DigitalOcean options', dangerLevel: 'safe',
+    options: { ...accountDefaults, title: 'Discover DigitalOcean options', dangerLevel: 'safe',
       inputSchema: ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerOptionsResultV1Schema,
-      async run(_input, context) { return projectDigitalOceanOptions(await (await runtime(context)).options()); },
+      async run(_input, context) { return (await accountRuntime(context)).options(); },
     },
-    acquire: { ...defaults, title: 'Acquire DigitalOcean resource', dangerLevel: 'destructive',
+    acquire: { ...accountDefaults, title: 'Acquire DigitalOcean resource', dangerLevel: 'destructive',
       confirmation: { title: 'Create this DigitalOcean Droplet?', body: 'This creates the reviewed paid resource. Stopped Droplets remain billable.' },
       inputSchema: ROLE_SCHEMAS.acquireInput, resultSchema: ROLE_SCHEMAS.acquireResult,
       async run(input, context) {
         if (!input.managedId || !input.bootstrapPublicKey) return { kind: 'rejected' as const, code: 'invalid_request' as const };
-        try { const result = await (await runtime(context)).acquire({ launch: input.launch, name: `happier-${input.managedId}`, recoveryTag: `happier-${input.managedId}`, bootstrapSshPublicKey: input.bootstrapPublicKey });
+        // Acquire private custody before any paid request; a refusal is not an unknown allocation.
+        const guestHostLease = input.guestHostPublicKey === undefined ? undefined
+          : await context.services.machineProvisioners.materializeGuestHostCredential();
+        try { const guestHostKey = guestHostLease && input.guestHostPublicKey !== undefined
+          ? { publicKey: input.guestHostPublicKey, privateKey: new TextDecoder().decode(guestHostLease.bytes) } : undefined;
+        const result = await (await accountRuntime(context, guestHostKey)).acquire({ launch: input.launch, name: `happier-${input.managedId}`, recoveryTag: `happier-${input.managedId}`, bootstrapSshPublicKey: input.bootstrapPublicKey });
         if (result.kind === 'bound') return { kind: 'bound' as const, resource: resourceRef(result.resource) };
-        if (result.kind === 'unknown') return pending(`happier-${input.managedId}`);
-        return { kind: 'rejected' as const, code: 'provider_unavailable' as const }; }
+        if (result.kind === 'unknown') return { ...pending(`happier-${input.managedId}`), ...(result.nativeCause ? { nativeCause: result.nativeCause } : {}) };
+        return { kind: 'rejected' as const, code: 'provider_unavailable' as const,
+          ...('nativeCause' in result && result.nativeCause ? { nativeCause: result.nativeCause } : {}) }; }
         catch { return pending(`happier-${input.managedId}`); }
+        finally { await guestHostLease?.dispose(); }
       },
     },
-    bootstrap: { ...defaults, hostAccess: [...defaults.hostAccess, 'ssh-evidence'], title: 'Resolve protected DigitalOcean bootstrap', dangerLevel: 'writesLocal',
+    bootstrap: { ...accountDefaults, title: 'Resolve protected DigitalOcean bootstrap', dangerLevel: 'writesLocal',
       confirmation: { title: 'Prepare this DigitalOcean Droplet for Happier?', body: 'Allow Happier to resolve the protected SSH transport for the exact managed resource.' },
       inputSchema: ROLE_SCHEMAS.bootstrapInput, resultSchema: MachineProvisionerBootstrapCarrierV1Schema,
-      async run(input, context) { const observed = await (await runtime(context)).bootstrap(input.resource);
-        if (observed.kind !== 'present' || !observed.ready || !observed.ssh) throw new Error('provider_unavailable');
-        return resolveMachineProvisionerSshBootstrap({ exec: context.services.exec, signal: context.signal,
+      async run(input, context) { const observed = await (await accountRuntime(context)).bootstrap(input.resource);
+        if (observed.kind === 'present' && observed.power === 'stopped') throw new PluginError({ code: 'native_resource_unavailable' });
+        if (observed.kind === 'pending' || observed.kind === 'present' && !observed.ready) throw new PluginError({ code: 'native_not_ready' });
+        if (observed.kind === 'failed') throw new PluginError({ code: 'native_action_failed' });
+        if (observed.kind !== 'present' || !observed.ready || !observed.ssh) throw new PluginError({ code: 'provider_unavailable',
+          ...(observed.kind === 'unavailable' && observed.nativeCause ? { details: { nativeCause: observed.nativeCause } } : {}) });
+        if (input.guestHostPublicKey !== undefined && input.credentialRef) return buildMachineProvisionerPinnedSshBootstrap({
+          connection: observed.ssh, credentialRef: input.credentialRef, guestHostPublicKey: input.guestHostPublicKey });
+        return resolveMachineProvisionerSshBootstrap({ signal: context.signal,
           connection: observed.ssh, credentialRef: input.credentialRef }); },
     },
-    inspect: { ...defaults, title: 'Inspect exact DigitalOcean resource', dangerLevel: 'safe',
+    inspect: { ...accountDefaults, title: 'Inspect exact DigitalOcean resource', dangerLevel: 'safe',
       inputSchema: ROLE_SCHEMAS.resourceInput, resultSchema: MachineProvisionerObservationV1Schema,
-      async run(input, context) { try { const result = await (await runtime(context)).inspect(input.resource);
-        return { observedAt: context.invokedAtMs, availability: result.kind === 'unavailable' ? 'unavailable' as const : result.kind,
+      async run(input, context) { try { const result = await (await accountRuntime(context)).inspect(input.resource);
+        return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: result.kind === 'unavailable' ? 'unknown' : result.kind,
           ...(result.kind === 'present' ? { power: result.power, storage: 'retained' as const, billing } : {}),
-          ...(result.kind === 'unavailable' ? { reason: result.reason } : {}) }; } catch { return { ...unavailable(), observedAt: context.invokedAtMs }; } },
+          ...(result.kind === 'unavailable' ? { reason: result.reason === 'cleanup-unconfirmed' ? 'native_cleanup_incomplete' : result.reason,
+            ...(result.nativeCause ? { nativeCause: result.nativeCause } : {}) } : {}) });
+        } catch { return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown', reason: 'provider_unavailable' }); } },
     },
-    power: { ...defaults, title: 'Change DigitalOcean power', dangerLevel: 'destructive',
+    power: { ...accountDefaults, title: 'Change DigitalOcean power', dangerLevel: 'destructive',
       confirmation: { title: 'Change this DigitalOcean Droplet’s power?', body: 'This starts or stops the exact managed resource. Stopped Droplets remain billable.' },
       inputSchema: ROLE_SCHEMAS.powerInput, resultSchema: MachineProvisionerPowerResultV1Schema,
       async run(input, context) {
         if (input.intent !== 'start' && input.intent !== 'stop') return { kind: 'refused' as const, code: 'native_unsupported_intent' };
-        try { const native = await runtime(context);
+        try { const native = await accountRuntime(context);
         const changed = await native.power(input.resource, input.intent);
         if (changed.kind === 'failed') return { kind: 'refused' as const, code: 'native_action_failed' };
-        if (changed.kind === 'unavailable') return { kind: 'unknown' as const, code: changed.reason };
+        if (changed.kind === 'unavailable') return { kind: 'unknown' as const, code: changed.reason,
+          ...('nativeCause' in changed && changed.nativeCause ? { nativeCause: changed.nativeCause } : {}) };
         const observed = await native.observeAction(input.resource, changed.actionId);
-        return observed.kind === 'completed' ? { kind: 'confirmed' as const } : { kind: 'unknown' as const, code: 'native_power_pending' }; } catch { return { kind: 'unknown' as const, code: 'provider_unavailable' }; }
+        return observed.kind === 'completed' ? { kind: 'confirmed' as const } : { kind: 'unknown' as const, code: 'native_power_pending',
+          ...('nativeCause' in observed && observed.nativeCause ? { nativeCause: observed.nativeCause } : {}) }; } catch { return { kind: 'unknown' as const, code: 'provider_unavailable' }; }
       },
     },
-    destroy: { ...defaults, title: 'Delete exact DigitalOcean resource', dangerLevel: 'destructive',
+    destroy: { ...accountDefaults, title: 'Delete exact DigitalOcean resource', dangerLevel: 'destructive',
       confirmation: { title: 'Delete this DigitalOcean Droplet?', body: 'This permanently deletes the exact managed Droplet and its recorded owned volumes.' },
-      inputSchema: reconciliation.destroyInput, resultSchema: MachineProvisionerPowerResultV1Schema,
+      inputSchema: reconciliation.destroyInput, resultSchema: reconciliation.destroyResult,
       async run(input, context) {
-        if (!('resource' in input)) return { kind: 'refused' as const, code: 'native_cleanup_unavailable' };
-        try { const result = await (await runtime(context)).destroy(input.resource);
-        return result.kind === 'deleted' ? { kind: 'confirmed' as const } : { kind: 'unknown' as const, code: 'native_cleanup_incomplete' }; } catch { return { kind: 'unknown' as const, code: 'provider_unavailable' }; } },
+        const resource = 'resource' in input ? input.resource : 'dropletId' in input.nativeOperation ? input.nativeOperation : undefined;
+        if (!resource) return { kind: 'refused' as const, code: 'native_cleanup_unavailable' };
+        try {
+          const continuing = !('resource' in input);
+          const result = await (await accountRuntime(context)).destroy(resource, continuing);
+          if (result.kind === 'deleted') return { kind: 'confirmed' as const };
+          if (result.kind === 'incomplete' && !result.reason && !result.nativeCause) {
+            return { kind: 'accepted' as const, nativeOperationRef: resourceRef(resource) };
+          }
+          return { kind: 'unknown' as const, code: 'reason' in result ? result.reason : 'native_cleanup_incomplete',
+            ...('nativeCause' in result && result.nativeCause ? { nativeCause: result.nativeCause } : {}) };
+        } catch { return { kind: 'unknown' as const, code: 'provider_unavailable' }; } },
     },
   },
 });
+export const activateAccount = PLUGIN.activateAccount;
 export const PLUGIN_MANIFEST = PLUGIN.manifest;

@@ -1,6 +1,7 @@
 import { Buffer } from 'node:buffer';
-import { describe, expect, it } from 'vitest';
-import { createCrabboxProvider } from './provider.js';
+import { createHash } from 'node:crypto';
+import { describe, expect, it, vi } from 'vitest';
+import { crabboxLeaseId, createCrabboxProvider } from './provider.js';
 import { CrabboxLaunchV1Schema, CrabboxResourceV1Schema } from './schemas.js';
 import { prepareMachineProvisionerStoredSchemas } from '@happier-dev/plugin-sdk/machine-provisioners';
 
@@ -12,6 +13,41 @@ const hostKey = `ssh-ed25519 ${Buffer.from('native-host-key-wire').toString('bas
 const credentialRef = { kind: 'shared_resource' as const, resourceId: 'host-retained-key' };
 
 describe('Crabbox managed provisioner roles', () => {
+  it.each([
+    ['', 'cbx_e3b0c44298fc'],
+    ['abc', 'cbx_ba7816bf8f01'],
+    ['managed-host-row-1', `cbx_${createHash('sha256').update('managed-host-row-1').digest('hex').slice(0, 12)}`],
+    ['managed-机器-🦀', `cbx_${createHash('sha256').update('managed-机器-🦀').digest('hex').slice(0, 12)}`],
+  ])('preserves raw native SHA256 lease identity for %s', (managedId, expected) => {
+    expect(crabboxLeaseId(managedId)).toBe(expected);
+  });
+
+  it('derives the raw SSH-key fingerprint without a Node Buffer global', async () => {
+    const expected = `SHA256:${createHash('sha256').update(Buffer.from('native-host-key-wire')).digest('base64').replace(/=+$/, '')}`;
+    const reply = Response.json({ lease: { id: 'cbx_abcdef123456', provider: 'aws', org: launch.namespace,
+      state: 'active', host: '10.0.0.1', sshUser: 'crabbox', sshPort: '22', sshHostKey: hostKey } });
+    // Node's Response body decoder itself uses global Buffer; the mocked HTTP
+    // boundary supplies decoded JSON so this assertion exercises plugin bytes.
+    const decoded: unknown = await reply.json();
+    vi.spyOn(reply, 'json').mockResolvedValue(decoded);
+    const provider = createCrabboxProvider({ connection, observedAt: 100, http: async () => reply });
+    vi.stubGlobal('Buffer', undefined);
+    try {
+      expect(await provider.bootstrap({ resource: { backendId: 'aws', namespace: launch.namespace,
+        transport: 'coordinator', leaseId: 'cbx_abcdef123456' }, credentialRef }))
+        .toMatchObject({ hostKeyEvidence: { hostKey, fingerprint: expected }, credentialRef });
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it('carries positive pending readiness through the public plugin error contract', async () => {
+    const resource = { backendId: 'aws' as const, namespace: launch.namespace, transport: 'coordinator' as const, leaseId: 'cbx_abcdef123456' };
+    const provider = createCrabboxProvider({ connection, observedAt: 100, http: async () => Response.json({ lease: {
+      id: resource.leaseId, provider: 'aws', org: launch.namespace, state: 'provisioning', cloudID: 'i-exact',
+    } }) });
+    await expect(provider.bootstrap({ resource, credentialRef })).rejects.toMatchObject({ name: 'PluginError', code: 'native_not_ready',
+      data: { name: 'PluginError', code: 'native_not_ready' } });
+  });
+
   it('uses the durable host tag for fixed lease replay and preserves uncertain acquisition custody', async () => {
     const requests: { url: string; body: Record<string, unknown> }[] = [];
     const provider = createCrabboxProvider({ connection, observedAt: 100, http: async (url, init) => {

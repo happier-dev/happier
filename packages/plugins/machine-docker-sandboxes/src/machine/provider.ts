@@ -1,6 +1,7 @@
 import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
-import type { MachineProvisionerNativeIntentV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import type { MachineProvisionerNativeIntentV1, MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { observeMachineProvisionerNativeRead } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { createDockerSandboxesNativeClient } from './nativeClient.js';
 import { DockerSandboxesLaunchV1Schema, DockerSandboxesResourceV1Schema, DOCKER_SANDBOXES_RECONCILIATION_SCHEMAS } from './schemas.js';
 import type { DockerSandboxesLaunchV1, DockerSandboxesResourceV1 } from './schemas.js';
@@ -21,8 +22,8 @@ function acquisitionResource(launch: DockerSandboxesLaunchV1, managedId: string)
 export function createDockerSandboxesProvider(exec: Pick<ExecService, 'run'>, executable: ManagedExecutableRef,
   observedAt: number, signal?: AbortSignal) {
   const native = createDockerSandboxesNativeClient(exec, executable);
-  const pending = (resource: DockerSandboxesResourceV1) => ({ kind: 'pending' as const,
-    nativeOperationRef: { contributionRef, schemaVersion: 1, value: resource } });
+  const pending = (resource: DockerSandboxesResourceV1, nativeCause?: MachineProvisionerNativeCauseV1) => ({ kind: 'pending' as const,
+    nativeOperationRef: { contributionRef, schemaVersion: 1, value: resource }, ...(nativeCause ? { nativeCause } : {}) });
   async function requirePresent(raw: DockerSandboxesResourceV1) {
     const resource = DockerSandboxesResourceV1Schema.parse(raw);
     const observation = await native.inspect(resource, signal);
@@ -39,8 +40,9 @@ export function createDockerSandboxesProvider(exec: Pick<ExecService, 'run'>, ex
     async options() {
       const catalog = await native.templates(signal);
       if (catalog.status !== 'available') fail('docker_sandbox_options_unavailable');
-      return { base: { launch: { name: 'happier' }, }, dimensions: { size: [], location: [], network: [], duration: [],
-        image: catalog.templateIds.map(templateId => ({ id: templateId, title: templateId, assignments: [{ path: 'templateId', value: templateId }], nativeFacts: { image: { id: templateId, title: templateId } } })) } };
+      return { base: { launch: { name: 'happier' }, guestPlatform: 'linux' as const }, dimensions: { size: [], location: [], network: [], duration: [],
+        image: catalog.templateIds.map(templateId => ({ id: templateId, title: templateId, guestPlatform: 'linux' as const,
+          assignments: [{ path: 'templateId', value: templateId }], nativeFacts: { image: { id: templateId, title: templateId } } })) } };
     },
     async acquire(raw: DockerSandboxesLaunchV1, managedId?: string) {
       const launch = DockerSandboxesLaunchV1Schema.safeParse(raw);
@@ -49,15 +51,20 @@ export function createDockerSandboxesProvider(exec: Pick<ExecService, 'run'>, ex
       const selected = managedId === undefined || !launch.success ? undefined : acquisitionResource(launch.data, managedId);
       if (!launch.success || !selected?.success || signal?.aborted) return { kind: 'rejected' as const, code: 'invalid_request' as const };
       const resource = selected.data;
+      const templates = await native.templates(signal);
+      if (templates.status !== 'available') return { kind: 'rejected' as const, code: 'provider_unavailable' as const };
+      if (!templates.templateIds.includes(launch.data.templateId)) return { kind: 'rejected' as const, code: 'provider_unavailable' as const,
+        nativeCause: { localCause: 'native_options_changed' as const } };
       const acquired = await native.create({ ...launch.data, name: resource.sandboxName }, signal);
       if (acquired.status !== 'allocated') {
         return acquired.status === 'refused' ? { kind: 'rejected' as const, code: 'invalid_request' as const }
-          : pending(resource);
+          : pending(resource, acquired.nativeCause);
       }
       // Detached mode is native sbx state, not a host keeper. A mere create or
       // foreground process exit does not establish retained guest lifetime.
       const started = await native.start(resource, signal);
-      if (started.status !== 'start-accepted') return pending(resource);
+      if (started.status !== 'start-accepted') return pending(resource, 'nativeCause' in started ? started.nativeCause : undefined);
+      if (await native.power(resource, signal) !== 'running') return pending(resource);
       return { kind: 'bound' as const, resource: { contributionRef, schemaVersion: 1, value: resource } };
     },
     async reconcile(input: unknown) {
@@ -69,6 +76,7 @@ export function createDockerSandboxesProvider(exec: Pick<ExecService, 'run'>, ex
       } };
       const resource = selected.data;
       const observed = await native.inspect(resource, signal);
+      if ('presence' in observed && observed.presence === 'absent') return { kind: 'rejected' as const, code: 'managed_not_found' as const };
       return 'presence' in observed && observed.presence === 'present'
         ? { kind: 'bound' as const, resource: { contributionRef, schemaVersion: 1, value: resource } }
         : pending(resource);
@@ -80,17 +88,17 @@ export function createDockerSandboxesProvider(exec: Pick<ExecService, 'run'>, ex
     async inspect(resource: DockerSandboxesResourceV1) {
       const observation = await native.inspect(resource, signal);
       if (!('presence' in observation) || observation.presence === 'unknown') {
-        return { observedAt, availability: 'unavailable' as const, reason: 'docker_sandbox_presence_unknown', billing };
+        return observeMachineProvisionerNativeRead(observedAt, { kind: 'unknown', reason: 'docker_sandbox_presence_unknown', billing });
       }
-      // Native JSON status supplies power; presence and enrollment stay distinct.
-      return { observedAt, availability: observation.presence, billing,
-        power: observation.presence === 'present' ? await native.power(resource, signal) : 'unknown' as const,
-        storage: observation.presence === 'present' ? 'retained' as const : 'lost' as const,
-        daemon: 'unknown' as const };
+      // One complete native inventory supplies presence and power together.
+      return observeMachineProvisionerNativeRead(observedAt, { kind: observation.presence, billing,
+        power: observation.presence === 'present' ? observation.power : 'unknown' as const,
+        storage: observation.presence === 'present' ? 'retained' as const : 'lost' as const });
     },
     async power(resource: DockerSandboxesResourceV1, intent: MachineProvisionerNativeIntentV1) {
       if (intent !== 'start' && intent !== 'stop') return { kind: 'refused' as const, code: 'docker_sandbox_intent_unsupported' };
-      try { await requirePresent(resource); }
+      // Start checks presence at the native owner before its create-capable run.
+      try { if (intent === 'stop') await requirePresent(resource); }
       catch (error) { return { kind: 'refused' as const, code: error !== null && typeof error === 'object'
         && 'code' in error && typeof error.code === 'string' ? error.code : 'invalid_request' }; }
       const outcome = intent === 'start' ? await native.start(resource, signal) : await native.stop(resource, signal);

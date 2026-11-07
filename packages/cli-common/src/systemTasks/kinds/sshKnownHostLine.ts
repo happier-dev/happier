@@ -36,3 +36,4 @@ export function extractFirstScannedSshKnownHostLine(output: string): ParsedSshKn
   }
   return parsed;
 }
+

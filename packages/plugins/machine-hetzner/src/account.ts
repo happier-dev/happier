@@ -1,6 +1,6 @@
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import type { ConnectedAccountRuntime, ConnectedAccountAuthenticationContext, ConnectedAccountReadContext } from '@happier-dev/plugin-sdk/connected-accounts';
-import type { HttpMethod } from '@happier-dev/plugin-sdk/http';
+import { createMachineProvisionerFetch } from '@happier-dev/plugin-sdk/machine-provisioners';
+import type { ConnectedAccountRuntime, ConnectedAccountAuthenticationContext, ConnectedAccountReadContext, ConnectedAccountPortableRuntime, ConnectedAccountMaterializationRequest } from '@happier-dev/plugin-sdk/connected-accounts';
+import type { HttpService } from '@happier-dev/plugin-sdk/http';
 import { createHetznerProvider } from './machine/provider.js';
 import { HetznerNativeError } from './machine/schemas.js';
 
@@ -10,31 +10,15 @@ const origins: readonly string[] = ["https://api.hetzner.cloud"];
 const diagnostic = { code: 'credential_unavailable', severity: 'error' as const, message: 'Hetzner API access could not be confirmed.' };
 function validToken(value: string | null | undefined) { return typeof value === 'string' && value.trim() !== '' && !/[\r\n]/.test(value); }
 
-/** Vendor IO always goes through host HTTP and the captured Action credential. */
-export function nativeFetch(context: Pick<PluginInvocationContext, 'services' | 'signal'>, token?: string): typeof fetch {
-  return async (input, init) => {
-    const url = String(input);
-    const origin = new URL(url).origin;
-    if (!origins.includes(origin)) throw new Error('provider_unavailable');
-    const method = init?.method ?? 'GET';
-    if (!['GET', 'POST', 'DELETE'].includes(method)) throw new Error('invalid_request');
-    const signal = init?.signal ?? context.signal;
-    const material = token === undefined
-      ? await context.services.connectedAccounts.materialize(ACCOUNT_PURPOSE,
-          { kind: 'httpHeaders', origin, headerNames: ['authorization'] }, { signal })
-      : { kind: 'httpHeaders' as const, headers: { Authorization: `Bearer ${token}` } };
-    if (material.kind !== 'httpHeaders') throw new Error('credential_unavailable');
-    const authorization = new Headers(material.headers).get('authorization');
-    if (!authorization) throw new Error('credential_unavailable');
-    const headers = new Headers(init?.headers);
-    headers.set('Authorization', authorization);
-    const response = await context.services.http.request({ url, method: method as HttpMethod,
-      headers: Object.fromEntries(headers.entries()), redirect: 'error',
-      ...(init?.body === undefined ? {} : { body: new TextEncoder().encode(String(init.body)) }),
-    }, { signal });
-    if (response.finalUrl !== url) throw new Error('provider_unavailable');
-    return new Response(response.status === 204 ? null : new Uint8Array(response.body), { status: response.status, headers: response.headers });
-  };
+type HttpContext = Readonly<{ signal: AbortSignal; services: Readonly<{ http: Pick<HttpService, 'request'> }> }>;
+
+/** HTTP uses the host-captured purpose or its invocation-scoped materialization. */
+export function nativeFetch(context: HttpContext, credential?: string | Readonly<Record<string, string>>): typeof fetch {
+  return createMachineProvisionerFetch(context, {
+    purpose: ACCOUNT_PURPOSE, origins: origins, headerName: 'authorization',
+    credential: typeof credential === 'string' ? { authorization: `Bearer ${credential}` } : credential,
+    methods: ['GET', 'POST', 'DELETE'],
+  });
 }
 async function confirm(token: string, context: ConnectedAccountAuthenticationContext | ConnectedAccountReadContext, options?: { signal?: AbortSignal }) {
   try {
@@ -50,8 +34,7 @@ async function health(context: ConnectedAccountReadContext, options?: { signal?:
   const status = validToken(token) ? await confirm(token!, context, options) : 'reconnectRequired' as const;
   return status === 'connected' ? { status, displayName: 'Hetzner' } : { status, diagnostic };
 }
-export const connectedAccountRuntime: ConnectedAccountRuntime = {
-  authentication: { modes: { token: { kind: 'manual', async complete(input, context, options) {
+const authentication: ConnectedAccountRuntime['authentication'] = { modes: { token: { kind: 'manual', async complete(input, context, options) {
     const token = input.fields.token?.trim();
     if (!validToken(token)) return { status: 'rejected', diagnostic };
     const status = await confirm(token!, context, options);
@@ -59,14 +42,18 @@ export const connectedAccountRuntime: ConnectedAccountRuntime = {
     if (status !== 'connected') return { status: 'rejected', diagnostic };
     await context.attemptCredentials.set('token', token!, options);
     return { status: 'connected', displayName: 'Hetzner', scopes: [] };
-  } } } },
+  } } } };
+async function materialize(request: ConnectedAccountMaterializationRequest,
+  context: Pick<ConnectedAccountReadContext, 'credentials'>, options?: { signal?: AbortSignal }) {
+  if (request.kind !== 'httpHeaders' || !origins.includes(request.origin)
+    || request.headerNames.some(name => name.toLowerCase() !== 'authorization')) throw new Error('credential_unavailable');
+  const token = await context.credentials.get('token', options);
+  if (!validToken(token)) throw new Error('credential_unavailable');
+  return { kind: 'httpHeaders' as const, headers: { Authorization: `Bearer ${token}` } };
+}
+export const connectedAccountPortableRuntime = { authentication, materialize } satisfies ConnectedAccountPortableRuntime;
+export const connectedAccountRuntime: ConnectedAccountRuntime = {
+  authentication, materialize,
   status: health, refresh: health,
   async revoke() { return { status: 'remoteUnsupported' }; },
-  async materialize(request, context, options) {
-    if (request.kind !== 'httpHeaders' || !origins.includes(request.origin)
-      || request.headerNames.some(name => name.toLowerCase() !== 'authorization')) throw new Error('credential_unavailable');
-    const token = await context.credentials.get('token', options);
-    if (!validToken(token)) throw new Error('credential_unavailable');
-    return { kind: 'httpHeaders', headers: { Authorization: `Bearer ${token}` } };
-  },
 };

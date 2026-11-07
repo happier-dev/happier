@@ -10,10 +10,44 @@ const result = (exitCode: number, stdout = ''): PluginProcessResult => ({
   stdout: new TextEncoder().encode(stdout), stderr: new Uint8Array(),
   stdoutTruncated: false, stderrTruncated: false,
 });
+const inventory = (...names: string[]) => JSON.stringify({ sandboxes: names.map(name => ({ name, status: 'running' })) });
 
 describe('Docker Sandboxes managed provisioner roles', () => {
   const resource = { sandboxName: 'happier-managed-row-1' };
   const launch = { name: 'happier', templateId: 'docker.io/example/template:1' };
+  it.each([1, 0])('keeps failed or still-stopped native starts pending (exit %s)', async exitCode => {
+    const process = { run: vi.fn<ExecService['run']>(async request => request.args?.[0] === 'run'
+      ? { ...result(exitCode), stderr: new TextEncoder().encode('boot failed token=private-acquisition-token') }
+      : result(0, request.args?.[0] === 'template' ? `${launch.templateId}\n` : request.args?.[0] === 'ls'
+        ? JSON.stringify({ sandboxes: [{ name: resource.sandboxName, status: 'stopped' }] }) : '')) };
+    const acquired = await nativeModule.createDockerSandboxesProvider(process, executable, 123).acquire(launch, 'managed-row-1');
+    expect(acquired).toMatchObject({ kind: 'pending' });
+    if (exitCode !== 0) expect(acquired).toMatchObject({ nativeCause: { localCause: 'native_command_failed', command: 'run', exitCode } });
+    expect(JSON.stringify(acquired)).not.toContain('private-acquisition-token');
+  });
+  it('rejects a vanished template before creating a sandbox', async () => {
+    const process = { run: vi.fn<ExecService['run']>(async () => result(0, 'another-template\n')) };
+    expect(await nativeModule.createDockerSandboxesProvider(process, executable, 123).acquire(launch, 'managed-row-1'))
+      .toMatchObject({ kind: 'rejected', nativeCause: { localCause: 'native_options_changed' } });
+    expect(process.run.mock.calls.some(([request]) => request.args?.[0] === 'create')).toBe(false);
+  });
+
+  it('uses one complete JSON inventory for Inspect and one per side of a power effect', async () => {
+    let status = 'stopped';
+    const process = { run: vi.fn<ExecService['run']>(async request => {
+      if (request.args?.[0] === 'run') status = 'running';
+      return result(0, request.args?.[0] === 'ls' ? request.args.includes('--json')
+        ? JSON.stringify({ sandboxes: [{ name: resource.sandboxName, status }] }) : `${resource.sandboxName}\n` : '');
+    }) };
+    const provisioner = nativeModule.createDockerSandboxesProvider(process, executable, 123);
+    expect(await provisioner.inspect(resource)).toMatchObject({ availability: 'present', power: 'stopped' });
+    expect(process.run.mock.calls.map(([request]) => request.args)).toEqual([['ls', '--json']]);
+    process.run.mockClear();
+    expect(await provisioner.power(resource, 'start')).toEqual({ kind: 'confirmed' });
+    expect(process.run.mock.calls.map(([request]) => request.args)).toEqual([
+      ['ls', '--json'], ['run', '--detached', '--name', resource.sandboxName], ['ls', '--json'],
+    ]);
+  });
 
   it('settles Stop and same-resource Start only after the requested native power is observed', async () => {
     let status = 'running';
@@ -44,28 +78,30 @@ describe('Docker Sandboxes managed provisioner roles', () => {
     const process = { run: vi.fn<ExecService['run']>(async () => result(0, 'docker.io/example/first:1\ndocker.io/example/second:2\n')) };
     const options = await nativeModule.createDockerSandboxesProvider(process, executable, 123).options();
     expect(options.base.launch).toEqual({ name: 'happier' });
+    expect(options.base.guestPlatform).toBe('linux');
     expect(options.dimensions.image).toEqual(['docker.io/example/first:1', 'docker.io/example/second:2'].map(id => ({
-      id, title: id, assignments: [{ path: 'templateId', value: id }], nativeFacts: { image: { id, title: id } },
+      id, title: id, guestPlatform: 'linux', assignments: [{ path: 'templateId', value: id }], nativeFacts: { image: { id, title: id } },
     })));
     expect(process.run).toHaveBeenCalledExactlyOnceWith({ executable, args: ['template', 'ls', '--quiet'] }, { signal: undefined });
   });
 
   it('does not confirm canceled private file delivery even if the native process exits zero', async () => {
-    const process = { run: vi.fn<ExecService['run']>(async request => request.args?.[0] === 'ls' ? result(0, `${resource.sandboxName}\n`)
+    const process = { run: vi.fn<ExecService['run']>(async request => request.args?.[0] === 'ls' ? result(0, inventory(resource.sandboxName))
       : { ...result(0), termination: { observed: { kind: 'exit', exitCode: 0 }, requestedBy: { kind: 'abort' } } }) };
     expect(await nativeModule.createDockerSandboxesProvider(process, executable, 123).putFile(resource, '/tmp/private-payload', new Uint8Array([255])))
       .toEqual({ kind: 'unknown' });
   });
 
   it('uses the durable managed row name for mountless acquire and native detached lifetime without claiming enrollment', async () => {
-    const process = { run: vi.fn<ExecService['run']>(async request => result(0, request.args?.[0] === 'ls' ? `${resource.sandboxName}\n` : '')) };
+    const process = { run: vi.fn<ExecService['run']>(async request => result(0, request.args?.[0] === 'template' ? `${launch.templateId}\n` : request.args?.[0] === 'ls' ? inventory(resource.sandboxName) : '')) };
     const provisioner = nativeModule.createDockerSandboxesProvider(process, executable, 123);
     expect(await provisioner.acquire(launch, 'managed-row-1')).toEqual({ kind: 'bound', resource: {
       contributionRef: { pluginId: 'happier.machine.docker-sandboxes', localId: 'docker-sandboxes' }, schemaVersion: 1, value: resource,
     } });
     expect(process.run.mock.calls.map(([request]) => request.args)).toEqual([
+      ['template', 'ls', '--quiet'],
       ['create', '--name', resource.sandboxName, '--template', launch.templateId, 'shell'],
-      ['ls', '--quiet'], ['run', '--detached', '--name', resource.sandboxName],
+      ['ls', '--json'], ['run', '--detached', '--name', resource.sandboxName], ['ls', '--json'],
     ]);
   });
 
@@ -78,10 +114,11 @@ describe('Docker Sandboxes managed provisioner roles', () => {
 
   it('retains the preselected native name when detached start loses its reply', async () => {
     const process = { run: vi.fn<ExecService['run']>(async request => {
+      if (request.args?.[0] === 'template') return result(0, `${launch.templateId}\n`);
       if (request.args?.[0] === 'run') throw new Error('native transport lost');
-      return result(0, request.args?.[0] === 'ls' ? `${resource.sandboxName}\n` : '');
+      return result(0, request.args?.[0] === 'ls' ? inventory(resource.sandboxName) : '');
     }) };
-    expect(await nativeModule.createDockerSandboxesProvider(process, executable, 123).acquire(launch, 'managed-row-1')).toEqual({
+    expect(await nativeModule.createDockerSandboxesProvider(process, executable, 123).acquire(launch, 'managed-row-1')).toMatchObject({
       kind: 'pending', nativeOperationRef: {
         contributionRef: { pluginId: 'happier.machine.docker-sandboxes', localId: 'docker-sandboxes' }, schemaVersion: 1, value: resource,
       },
@@ -89,21 +126,21 @@ describe('Docker Sandboxes managed provisioner roles', () => {
   });
 
   it('recovers the exact retained native name read-only after a dropped acquire response', async () => {
-    const process = { run: vi.fn<ExecService['run']>(async () => result(0, `${resource.sandboxName}\n`)) };
+    const process = { run: vi.fn<ExecService['run']>(async () => result(0, inventory(resource.sandboxName))) };
     expect(await nativeModule.createDockerSandboxesProvider(process, executable, 123).reconcile({ nativeOperation: resource })).toEqual({ kind: 'bound', resource: {
       contributionRef: { pluginId: 'happier.machine.docker-sandboxes', localId: 'docker-sandboxes' }, schemaVersion: 1, value: resource,
     } });
     expect(process.run.mock.calls.every(([request]) => request.args?.[0] === 'ls')).toBe(true);
   });
 
-  it('keeps a missing acquisition name pending because inventory cannot prove allocation never happened', async () => {
-    const process = { run: vi.fn<ExecService['run']>(async () => result(0, 'happier-other\n')) };
-    expect(await nativeModule.createDockerSandboxesProvider(process, executable, 123).reconcile({ nativeOperation: resource })).toMatchObject({ kind: 'pending', nativeOperationRef: { value: resource } });
+  it('settles the exact missing acquisition name after a successful complete inventory', async () => {
+    const process = { run: vi.fn<ExecService['run']>(async () => result(0, inventory('happier-other'))) };
+    expect(await nativeModule.createDockerSandboxesProvider(process, executable, 123).reconcile({ nativeOperation: resource })).toMatchObject({ kind: 'rejected', code: 'managed_not_found' });
     expect(process.run.mock.calls.every(([request]) => request.args?.[0] === 'ls')).toBe(true);
   });
 
   it('recovers the preselected name from retained row correlation when no native response was delivered', async () => {
-    const process = { run: vi.fn<ExecService['run']>(async () => result(0, `${resource.sandboxName}\n`)) };
+    const process = { run: vi.fn<ExecService['run']>(async () => result(0, inventory(resource.sandboxName))) };
     expect(await nativeModule.createDockerSandboxesProvider(process, executable, 123).reconcile({
       correlation: { managedId: 'managed-row-1', requestId: 'original-request', launch },
     })).toEqual({ kind: 'bound', resource: {
@@ -116,7 +153,7 @@ describe('Docker Sandboxes managed provisioner roles', () => {
     let present = true;
     const process = { run: vi.fn<ExecService['run']>(async request => {
       if (request.args?.[0] === 'rm') present = false;
-      return result(0, request.args?.[0] === 'ls' ? `${present ? `${resource.sandboxName}\n` : ''}${resource.sandboxName}-other\n` : '');
+      return result(0, request.args?.[0] === 'ls' ? inventory(...(present ? [resource.sandboxName] : []), `${resource.sandboxName}-other`) : '');
     }) };
     expect(await nativeModule.createDockerSandboxesProvider(process, executable, 123).destroy({ nativeOperation: resource })).toEqual({ kind: 'confirmed' });
     expect(process.run.mock.calls.filter(([request]) => request.args?.[0] === 'rm').map(([request]) => request.args))
@@ -125,7 +162,7 @@ describe('Docker Sandboxes managed provisioner roles', () => {
 
   it('delivers buffered native stdin privately and preserves stdout, stderr and termination facts', async () => {
     const bytes = Uint8Array.from([0, 255, 10, 65]);
-    const process = { run: vi.fn<ExecService['run']>(async request => request.args?.[0] === 'ls' ? result(0, `${resource.sandboxName}\n`) : result(17, 'private-output')) };
+    const process = { run: vi.fn<ExecService['run']>(async request => request.args?.[0] === 'ls' ? result(0, inventory(resource.sandboxName)) : result(17, 'private-output')) };
     const provisioner = nativeModule.createDockerSandboxesProvider(process, executable, 123);
     expect(await provisioner.bootstrap(resource)).toEqual({ kind: 'native', transport: {
       contributionRef: { pluginId: 'happier.machine.docker-sandboxes', localId: 'docker-sandboxes' }, schemaVersion: 1,
@@ -136,7 +173,7 @@ describe('Docker Sandboxes managed provisioner roles', () => {
   });
 
   it('writes host-chosen binary files through stdin with literal guest path and native mode', async () => {
-    const process = { run: vi.fn<ExecService['run']>(async request => result(0, request.args?.[0] === 'ls' ? `${resource.sandboxName}\n` : '')) };
+    const process = { run: vi.fn<ExecService['run']>(async request => result(0, request.args?.[0] === 'template' ? `${launch.templateId}\n` : request.args?.[0] === 'ls' ? inventory(resource.sandboxName) : '')) };
     const bytes = Uint8Array.from([0, 255, 10, 65]);
     const path = '/tmp/private payload $(echo never)';
     expect(await nativeModule.createDockerSandboxesProvider(process, executable, 123).putFile(resource, path, bytes, 0o1600)).toEqual({ kind: 'confirmed' });
@@ -156,7 +193,7 @@ describe('Docker Sandboxes managed provisioner roles', () => {
   });
 
   it('does not recreate an absent retained name on Start or bootstrap', async () => {
-    const process = { run: vi.fn<ExecService['run']>(async () => result(0, 'happier-another-row\n')) };
+    const process = { run: vi.fn<ExecService['run']>(async () => result(0, inventory('happier-another-row'))) };
     const provisioner = nativeModule.createDockerSandboxesProvider(process, executable, 123);
     expect(await provisioner.power(resource, 'start')).toEqual({ kind: 'refused', code: 'docker_sandbox_absent' });
     await expect(provisioner.bootstrap(resource)).rejects.toMatchObject({ code: 'docker_sandbox_absent' });
@@ -177,14 +214,18 @@ const successfulProcess = () => ({ run: vi.fn<ExecService['run']>(async () => re
 
 describe('Docker Sandboxes native resource evidence', () => {
   it.each([
-    { stdout: 'not-json', truncated: false },
-    { stdout: JSON.stringify({ sandboxes: [{ name: 'happier-exact', status: 'running' }] }), truncated: true },
-    { stdout: JSON.stringify({ sandboxes: [{ name: 'happier-exact', status: 'running' }, { name: 'happier-exact', status: 'stopped' }] }), truncated: false },
-    { stdout: JSON.stringify({ sandboxes: [{ name: 'happier-exact-other', status: 'running' }] }), truncated: false },
-    { stdout: JSON.stringify({ sandboxes: [{ name: 'happier-exact', status: 'starting' }] }), truncated: false },
-  ])('keeps partial, ambiguous and unsettled native power unknown: %j', async ({ stdout, truncated }) => {
+    { stdout: 'not-json', truncated: false, presence: 'unknown' },
+    { stdout: inventory('happier-exact'), truncated: true, presence: 'unknown' },
+    { stdout: JSON.stringify({ sandboxes: [{ name: 'happier-exact', status: 'running' }, { name: 'happier-exact', status: 'stopped' }] }), truncated: false, presence: 'unknown' },
+    { stdout: inventory('happier-exact-other'), truncated: false, presence: 'absent' },
+    { stdout: JSON.stringify({ sandboxes: [{ name: 'happier-exact', status: 'starting' }] }), truncated: false, presence: 'present' },
+    { stdout: inventory('--invalid-name'), truncated: false, presence: 'unknown' },
+    { stdout: inventory(), truncated: false, presence: 'absent' },
+  ])('keeps full native presence distinct from partial, ambiguous and unsettled power: %j', async ({ stdout, truncated, presence }) => {
     const process = { run: vi.fn<ExecService['run']>(async () => ({ ...result(0, stdout), stdoutTruncated: truncated })) };
-    expect(await createDockerSandboxesNativeClient(process, executable).power({ sandboxName: 'happier-exact' })).toBe('unknown');
+    const native = createDockerSandboxesNativeClient(process, executable);
+    expect(await native.inspect({ sandboxName: 'happier-exact' })).toMatchObject({ presence });
+    expect(await native.power({ sandboxName: 'happier-exact' })).toBe('unknown');
   });
 
   it('records a mountless allocation without claiming native running or enrollment', async () => {
@@ -219,7 +260,7 @@ describe('Docker Sandboxes native resource evidence', () => {
 
   it('retains the possible native locator when acquisition loses its process result', async () => {
     const process = { run: vi.fn<ExecService['run']>(async () => { throw new Error('process transport lost'); }) };
-    expect(await createDockerSandboxesNativeClient(process, executable).create({ name: 'happier-exact', templateId: 'docker.io/example/template:1' })).toEqual({
+    expect(await createDockerSandboxesNativeClient(process, executable).create({ name: 'happier-exact', templateId: 'docker.io/example/template:1' })).toMatchObject({
       status: 'unknown', resource: { sandboxName: 'happier-exact' }, nativeAbsence: 'unproven',
     });
   });
@@ -240,17 +281,17 @@ describe('Docker Sandboxes native resource evidence', () => {
     expect(process.run).not.toHaveBeenCalled();
   });
 
-  it('observes native absence from a complete quiet inventory without confusing a sibling name', async () => {
-    const process = { run: vi.fn<ExecService['run']>(async () => result(0, 'happier-exact-other\n')) };
+  it('observes native absence from a complete JSON inventory without confusing a sibling name', async () => {
+    const process = { run: vi.fn<ExecService['run']>(async () => result(0, inventory('happier-exact-other'))) };
     const resource = { sandboxName: 'happier-exact' };
     expect(await createDockerSandboxesNativeClient(process, executable).inspect(resource)).toEqual({
       presence: 'absent', resource, readiness: 'unqualified',
     });
-    expect(process.run).toHaveBeenCalledExactlyOnceWith({ executable, args: ['ls', '--quiet'] }, { signal: undefined });
+    expect(process.run).toHaveBeenCalledExactlyOnceWith({ executable, args: ['ls', '--json'] }, { signal: undefined });
   });
 
   it('never infers absence from a truncated native inventory', async () => {
-    const process = { run: vi.fn<ExecService['run']>(async () => ({ ...result(0, 'happier-other\n'), stdoutTruncated: true })) };
+    const process = { run: vi.fn<ExecService['run']>(async () => ({ ...result(0, inventory('happier-other')), stdoutTruncated: true })) };
     const resource = { sandboxName: 'happier-exact' };
     expect(await createDockerSandboxesNativeClient(process, executable).inspect(resource)).toEqual({
       presence: 'unknown', resource, readiness: 'unqualified',

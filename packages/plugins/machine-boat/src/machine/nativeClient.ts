@@ -62,9 +62,9 @@ export const BOAT_STOPPED_STORAGE_NOTICE = { kind: 'stopped-storage',
   rule: { kind: 'after-stop', afterMs: 14 * 24 * 60 * 60 * 1000 }, consequence: 'disk-deleted' } as const;
 
 const BASE_SIZES: readonly BoatSize[] = [
-  { id: 'small', multiplier: 0.5, cpuCores: 2, memoryGb: 4, diskGb: 12, hourlyUsd: '0.018' },
-  { id: 'default', multiplier: 1, cpuCores: 4, memoryGb: 8, diskGb: 50, hourlyUsd: '0.036' },
-  { id: 'large', multiplier: 2, cpuCores: 8, memoryGb: 16, diskGb: 125, hourlyUsd: '0.072' },
+  { id: 'small', multiplier: 0.5, cpuCores: 2, memoryGb: 4, diskGb: 51, hourlyUsd: '0.018' },
+  { id: 'default', multiplier: 1, cpuCores: 4, memoryGb: 8, diskGb: 51, hourlyUsd: '0.036' },
+  { id: 'large', multiplier: 2, cpuCores: 8, memoryGb: 16, diskGb: 111, hourlyUsd: '0.072' },
 ];
 const XLARGE: BoatSize = { id: 'xlarge', multiplier: 5.56, cpuCores: 16, memoryGb: 32, diskGb: 251, hourlyUsd: '0.200' };
 

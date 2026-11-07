@@ -1,5 +1,6 @@
 import type { CuaNativeClient } from './nativeClient.js';
 import { cuaNativePowerVerb, type CuaPowerIntent } from './nativePower.js';
+import { readCuaSpaceRegistryEntry } from './nativeSpaces.js';
 import { CuaLocalLaunchV1Schema, CuaLocalNameSchema, parseCuaLocalResource, CuaNativeSandboxSchema, CuaNativeDeleteSchema,
     type CuaLocalResourceV1 } from './schemas.js';
 
@@ -49,10 +50,10 @@ export function createCuaLocalSandbox(native: CuaNativeClient) {
             const response = await native.json(['--embedded', 'sandbox', 'create', '--on=local', `--runtime=${launch.runtimeId}`,
                 `--name=${name}`, `--cpu=${launch.size.cpu}`, `--memory=${launch.size.memoryBytes / 1024 ** 2}MB`,
                 '--keep-on-failure', launch.imageId], signal);
-            if (response.kind !== 'success') return { kind: 'unknown' as const, recovery };
+            if (response.kind !== 'success') return { kind: 'unknown' as const, recovery, nativeCause: response.nativeCause };
             const parsed = CuaNativeSandboxSchema.safeParse(response.value);
             if (!parsed.success || parsed.data.id !== resource.sandboxId || parsed.data.runtime !== resource.runtimeId
-                || parsed.data.name !== name || parsed.data.image !== launch.imageId || parsed.data.ephemeral) {
+                || parsed.data.name !== name || parsed.data.image !== launch.imageId || parsed.data.ephemeral || parsed.data.state !== 'running') {
                 return { kind: 'unknown' as const, recovery };
             }
             return { kind: 'bound' as const, resource };
@@ -69,15 +70,23 @@ export function createCuaLocalSandbox(native: CuaNativeClient) {
             if (response.kind !== 'success') return { kind: 'unknown' as const, resource };
             return { kind: 'observed' as const, ...await inspect(resource, signal) };
         },
-        async destroy(input: unknown, signal?: AbortSignal) {
+        async destroy(input: unknown, signal?: AbortSignal, expectedImageId?: string) {
             const resource = parseCuaLocalResource(input);
             const before = await inspect(resource, signal);
             if (before.existence === 'unknown') return { kind: 'unknown' as const, existence: 'unknown' as const, resource };
             if (before.existence === 'absent') return { kind: 'deleted' as const, existence: 'absent' as const, resource };
+            if (expectedImageId !== undefined) {
+                // VM Spaces report a null native image; their exact local
+                // registration is the image evidence while compute is present.
+                const imageId = before.imageId ?? (resource.kind === 'space'
+                    ? (await readCuaSpaceRegistryEntry(native, resource.spaceId, signal, 'local')).image : undefined);
+                if (imageId !== expectedImageId) return { kind: 'unknown' as const, existence: 'unknown' as const, resource };
+            }
             // Immutable native basis 2bce4442: sandbox-core/sandbox.rs
             // 2349–2382,3373–3379 awaits local runtime deletion (or typed native
             // NotFound) before deleting its record. CLI rm serializes this only
-            // after awaiting delete. Subsequent record NotFound is not proof.
+            // after awaiting delete. A later typed NotFound can therefore settle
+            // cleanup after the completed rm reply was lost.
             const response = await native.json(['--embedded', 'sandbox', 'rm', resource.sandboxId, '--force'], signal);
             const parsed = response.kind === 'success' ? CuaNativeDeleteSchema.safeParse(response.value) : undefined;
             return parsed?.success && parsed.data.deleted === resource.sandboxId
