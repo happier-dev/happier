@@ -25,6 +25,9 @@ import { reloadConfiguration } from '@/configuration';
 import { retainExecutionRunState } from '@/daemon/executionRunRegistry';
 import { registerExecutionRunHandlers } from '@/rpc/handlers/executionRuns';
 import { createDeferred } from '@/testkit/async/deferred';
+import { createCapabilitiesService } from '@/capabilities/service';
+import { executionRunsCapability } from '@/capabilities/registry/toolExecutionRuns';
+import { CHECKLIST_IDS } from '@/capabilities/checklistIds';
 
 const boundary = vi.hoisted(() => ({ machine: vi.fn() }));
 // Only the Machine network port is replaced; its packet codec, daemon registrar,
@@ -62,20 +65,28 @@ describe('detached Run Stop through the UI Action and registered Machine RPC', (
         await rm(directory, { recursive: true, force: true });
     });
 
-    it('stops a running detached Run and observes cancellation through a fresh UI Get', async () => {
-        const serverId = await homes.addHome({ name: 'Run Home', serverUrl: 'https://run-stop.test', accountId: 'alice' });
+    it.each([
+        { actorAccountId: 'alice', refuse: false },
+        { actorAccountId: 'guest', refuse: false },
+        { actorAccountId: 'guest', refuse: true },
+    ])('preserves Run custody and typed refusals through installed daemon admission ($actorAccountId, refusal=$refuse)', async ({ actorAccountId, refuse }) => {
+        const serverId = await homes.addHome({ name: 'Run Home', serverUrl: 'https://run-stop.test', accountId: actorAccountId });
         const run = { runId: 'machine-run', callId: 'machine-call', sidechainId: 'machine-sidechain', sessionId: null,
             depth: 0, intent: 'agent', backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, backendId: 'claude',
             instructions: '', permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'request_response',
             status: 'running', startedAtMs: 1,
+            requesterWorkAttributionV1: { serverId, accountId: actorAccountId, machineId: 'machine', installationId: 'installation' },
         } satisfies ExecutionRunState;
         await retainExecutionRunState(run);
+        await retainExecutionRunState({ ...run, runId: 'retained-own-run', callId: 'retained-own-call', status: 'cancelled', finishedAtMs: 2 });
+        await retainExecutionRunState({ ...run, runId: 'foreign-run', callId: 'foreign-call', status: 'cancelled', finishedAtMs: 2,
+            requesterWorkAttributionV1: { ...run.requesterWorkAttributionV1, accountId: actorAccountId === 'alice' ? 'guest' : 'alice' } });
         const installation = tweetnacl.sign.keyPair();
         // Home admission HTTP is a genuine external boundary. The request
         // signer, exact-Machine checks and method-scope decision run for real.
         vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { v: 1, ok: true } });
-        const machineAdmission = { actorAccountId: 'alice', custodianAccountId: 'alice', machineId: 'machine',
-            installationId: 'installation', role: 'manage' as const, encryptionMode: 'plain' as const };
+        const machineAdmission = { actorAccountId, custodianAccountId: 'alice', machineId: 'machine',
+            installationId: 'installation', role: actorAccountId === 'alice' ? 'manage' as const : 'use' as const, encryptionMode: 'plain' as const };
         const rpc = new RpcHandlerManager({ scopePrefix: 'machine', localMachineId: 'machine', encryptionMode: 'plain',
             authorizeRequest: request => authorizeMachineRpcRequest(request, {
                 machineId: 'machine', resolveInstallationId: () => 'installation', resolveCustodianAccountId: async () => 'alice',
@@ -85,6 +96,7 @@ describe('detached Run Stop through the UI Action and registered Machine RPC', (
         });
         registerExecutionRunHandlers(rpc, {
             sessionId: null, cwd: directory, machineId: 'machine', parentProvider: 'daemon.executionRuns', sendAcp: async () => {},
+            serverId, runtimeAccountId: 'alice',
             executionRunProfileCatalog: buildExecutionRunProfileCatalog(),
             getServerFeaturesSnapshot: () => ({ status: 'ready', features: FeaturesResponseSchema.parse({
                 features: { execution: { runs: { enabled: true } } },
@@ -137,22 +149,38 @@ describe('detached Run Stop through the UI Action and registered Machine RPC', (
         rpc.onSocketConnect(daemonSocket);
         await daemonSocket.emitWithAck('fixture-registration-ready');
         const socket = await connect('user-scoped');
-        const readyCapability = { protocolVersion: 1, results: {
-            'tool.executionRuns': { ok: true, checkedAt: 1, data: { protocolVersion: 2, features: { detachedScope: true, startAndWait: true } } },
-        } };
+        const readyCapability = createCapabilitiesService({
+            capabilities: [executionRunsCapability],
+            checklists: { [CHECKLIST_IDS.NEW_SESSION]: [], [CHECKLIST_IDS.MACHINE_DETAILS]: [] },
+            buildContext: async () => { throw new Error('Effectful capability discovery is unavailable'); },
+        }).describe();
         let readCapability: () => Promise<unknown> = async () => readyCapability;
         boundary.machine.mockImplementation(async ({ method, payload, machineId }) => {
             expect(machineId).toBe('machine');
             // Capability discovery is the remote OS/tool boundary fixture. Its
             // real UI parser and V2 support decision remain in the path.
-            if (method === RPC_METHODS.CAPABILITIES_DETECT) return await readCapability();
+            if (method === RPC_METHODS.CAPABILITIES_DESCRIBE) return await readCapability();
             return await callSocketRpc({ socket, target: { kind: 'machine', id: machineId }, method, params: payload, content: { mode: 'plain' } });
         });
         const executor = createDefaultActionExecutor();
         const context = { surface: 'ui', authority: 'present_user', serverId, executionRunTargetMachineId: 'machine' } as const;
         const get = () => executor.execute('execution.run.get', { sessionId: null, runId: run.runId }, context);
+        if (refuse) {
+            machineAdmission.installationId = 'replaced-installation';
+            expect(await get()).toMatchObject({ ok: false, errorCode: 'RPC_FORBIDDEN', effectAttempted: false });
+            return;
+        }
         const before = await get();
         expect(before, JSON.stringify(before)).toMatchObject({ ok: true, result: { run: { status: 'running' } } });
+        const recovered = await executor.execute('execution.run.get', { sessionId: null, runId: 'retained-own-run' }, context);
+        expect(recovered).toMatchObject({ ok: true, result: { run: { runId: 'retained-own-run', status: 'cancelled' } } });
+        if (!recovered.ok) throw new Error(recovered.errorCode);
+        expect(ExecutionRunGetResponseSchema.parse(recovered.result).run.runId).toBe('retained-own-run');
+        const foreign = await executor.execute('execution.run.get', { sessionId: null, runId: 'foreign-run' }, context);
+        const missing = await executor.execute('execution.run.get', { sessionId: null, runId: 'missing-run' }, context);
+        expect(foreign).toMatchObject({ ok: false, errorCode: 'execution_run_not_found' });
+        // Correlation ids identify these two requests, never the queried Run.
+        expect({ ...foreign, requestId: null }).toEqual({ ...missing, requestId: null });
         // A missing socket publication must refuse through this same front
         // door and leave the live Run untouched, even with a local handler.
         const stopMethod = `machine:${SESSION_RPC_METHODS.EXECUTION_RUN_STOP}`;

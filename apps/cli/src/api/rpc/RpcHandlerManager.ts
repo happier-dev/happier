@@ -845,6 +845,7 @@ export class RpcHandlerManager {
                     diagnostic.admissionDenied = true;
                     if (authorization.admissionPredicate) this.reportAdmissionDenial(diagnostic, authorization.admissionPredicate);
                     return await respond(request, {
+                        ok: false,
                         error: confidential ? 'confidential_continuation_failed' : authorization.error,
                         ...(confidential ? { errorCode: 'confidential_continuation_failed' } : authorization.errorCode ? { errorCode: authorization.errorCode } : {}),
                         effectAttempted: false,
@@ -1198,7 +1199,7 @@ export class RpcHandlerManager {
                     signal,
                 });
                 signal.throwIfAborted();
-                if (!authorization.ok) return { error: authorization.error,
+                if (!authorization.ok) return { ok: false, error: authorization.error,
                     ...(authorization.errorCode ? { errorCode: authorization.errorCode } : {}), effectAttempted: false };
             }
             let countedInFlight = !this.pausedRequestAdmission.has(method);

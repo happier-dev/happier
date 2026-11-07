@@ -12,6 +12,8 @@ import { CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION, MACHINE_PLAIN
     buildAccountStoredContentCompatibilitySocketAuthV1, decodeBase64, encodePlainMachineStoredContent } from "@happier-dev/protocol";
 import tweetnacl from 'tweetnacl';
 import { SOCKET_RPC_EVENTS } from "@happier-dev/protocol/socketRpc";
+import { resolveSocketRpcSessionAuthorization } from '@happier-dev/protocol/socketRpc';
+import { resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 
 import { db } from "@/storage/db";
 import { createAccountTokenForTests, createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
@@ -211,7 +213,13 @@ describe("Session RPC final access admission on SQLite", () => {
         }
     });
 
-    it('preserves the typed Machine admission refusal through the RPC error path', async () => {
+    it.each([
+        RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE,
+        ...Object.values(SESSION_RPC_METHODS).filter(method =>
+            resolveSocketRpcSessionAuthorization(method)?.machineScope === true
+            && resolveMachineRpcRoutePolicy(method).sharedMachineAccess === 'custodian_only',
+        ),
+    ])('refuses a Use caller on custodian-only %s through real Home admission', async rpcMethod => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const guest = await db.account.create({ data: { encryptionMode: 'plain' } });
         const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, active: true,
@@ -228,10 +236,16 @@ describe("Session RPC final access admission on SQLite", () => {
             io: createSocketRoomDiscoveryHarness(async () => []) });
         const callback = vi.fn();
         await triggerSocketHandler(caller, SOCKET_RPC_EVENTS.CALL, {
-            method: `${machine.id}:${RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE}`, params: {},
+            method: `${machine.id}:${rpcMethod}`, params: {},
         }, callback);
-        expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN,
-            failureCause: expect.objectContaining({ phase: 'rpc.admission.machine', errorCode: 'custodian_only' }) }));
+        expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
+        // Keep the ordinary admission's detailed cause contract. Server-origin
+        // Run methods may instead be refused before ordinary Machine admission.
+        if (rpcMethod === RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE) {
+            expect(callback).toHaveBeenCalledWith(expect.objectContaining({
+                failureCause: expect.objectContaining({ phase: 'rpc.admission.machine', errorCode: 'custodian_only' }),
+            }));
+        }
     });
 
     it.each(['skills.read', 'session.user_action.answer'] as const)('admits a paired terminal daemon Session %s and rechecks credential, installation and Session binding', async (rpcMethod) => {

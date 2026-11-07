@@ -930,9 +930,8 @@ export async function authorizeMachineRpcRequest(request: Readonly<{
   }
   if (sessionRule?.machineScope === true && request.machineAdmission !== undefined) {
     // The exact installation and current Home admission were verified above.
-    // Dual-scope Run methods use that Machine custody, not a fabricated Session
-    // write proof. Keep detached control custodian-only, as on the Home relay.
-    if (request.machineAdmission.actorAccountId !== request.machineAdmission.custodianAccountId) return forbidden('machine_custodian');
+    // Home already enforced the method declaration's sharedMachineAccess.
+    // Requester-owned Runs retain their Account isolation at the Run store.
     return request.authorization === undefined ? { ok: true } : forbidden('session_authorization');
   }
   if (sessionRule?.optionalSessionScope) {

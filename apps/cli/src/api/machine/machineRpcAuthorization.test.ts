@@ -12,13 +12,14 @@ import { authorizeMachineRpcRequest, verifyMachineRpcAdmissionCurrent, verifyMan
 import { logger } from '@/ui/logger';
 
 describe('authorizeMachineRpcRequest', () => {
-  it('uses declared Machine scope only after exact current custodian admission, without weakening Session writes', async () => {
+  it('consumes exact current Machine admission without weakening Session writes', async () => {
     const machineAdmission = { actorAccountId: 'alice', custodianAccountId: 'alice', machineId: 'machine',
       installationId: 'installation', role: 'manage' as const, encryptionMode: 'plain' as const };
     let current = true;
     // The Home verification callback is the network boundary; local target,
     // installation, actor and method-scope checks remain real.
     const boundary: MachineRpcAdmissionBoundary = { machineId: 'machine', resolveInstallationId: () => 'installation',
+      resolveHomeServerIdentityId: async () => 'home',
       resolveCustodianAccountId: async () => 'alice', verifyMachineAdmission: async () => current };
     for (const method of [SESSION_RPC_METHODS.EXECUTION_RUN_STOP, SESSION_RPC_METHODS.EXECUTION_RUN_SEND,
       SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE, SESSION_RPC_METHODS.EXECUTION_RUN_CANCEL_TURN_V1]) {
@@ -28,9 +29,8 @@ describe('authorizeMachineRpcRequest', () => {
         { ...request, machineAdmission: undefined },
         { ...request, method: `other-machine:${method}` },
         { ...request, machineAdmission: { ...machineAdmission, installationId: 'replaced-installation' } },
-        { ...request, machineAdmission: { ...machineAdmission, actorAccountId: 'bob', role: 'use' as const } },
         { ...request, authorization: { kind: 'session.write' as const, sessionId: 'session' } },
-      ]) expect(await authorizeMachineRpcRequest(refused, boundary)).toMatchObject({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN });
+      ]) expect(await authorizeMachineRpcRequest(refused, boundary), method).toMatchObject({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN });
       current = false;
       expect(await authorizeMachineRpcRequest(request, boundary)).toMatchObject({ ok: false, admissionPredicate: 'machine_currentness' });
       current = true;
