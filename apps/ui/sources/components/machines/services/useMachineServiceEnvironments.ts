@@ -1,5 +1,7 @@
 import * as React from 'react';
+import type { DeploymentEnvironmentReadCollectionV1 } from '@happier-dev/deployments';
 import { useDeploymentInventory } from '@/components/projects/deployments/useDeploymentProject';
+import { projectDeploymentEnvironmentTabResult, type DeploymentEnvironmentTabResult } from '@/components/projects/deployments/useDeploymentReads';
 import { useProjectSource } from '@/components/projects/sources/useProjectSources';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { readMachineDeploymentReferencesV1, type MachineDeploymentReferencesPageV1,
@@ -13,6 +15,7 @@ import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAcc
 import { readServerAccountScopeOwnerLifetime, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 
 export type MachineServiceEnvironmentHeader = Readonly<{ title: string; projectSourceId: string }>;
+const NO_ENVIRONMENTS: DeploymentEnvironmentReadCollectionV1['items'] = Object.freeze([]);
 
 export type MachineDeploymentRoleEnvironment = MachineServiceEnvironmentHeader & Readonly<{
   environmentId: string; roles: NonNullable<MachineReferenceV1['deploymentRoles']>;
@@ -74,7 +77,7 @@ function censusEntry(lifetime: ServerAccountScopeLifetime, serverId: string, mac
       if (!event.entityIds || event.entityIds.some(id => isAccountCurrentnessEntityIdV1(id)
         || id === PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1 || id === TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1
         || readDeploymentAccountChangeV1({ kind: 'account', entityId: id }))) entry.load();
-    }, { serverIds: [serverId] });
+    }, { serverIds: [serverId], reconnect: { readNotCurrent: () => !entry.read?.value } });
     entry.stop = () => { current.abort(); stopChanges(); stopRetirement.dispose(); reading = false; pending = false; entry.stop = null; };
     entry.load();
   };
@@ -123,24 +126,27 @@ export function useMachineDeploymentRoles(input: Readonly<{ serverId: string; ma
 /**
  * The admitted headers of exactly the Environments visible service rows belong to (plan 30 §3.8 "One Environment
  * grouping"): one read through the deployment owner's exact-id selector, never an Account-wide inventory scan or a
- * per-service read. An Environment the person can't read stays absent; its group keeps the generic name.
+ * per-service read. Missing names stay absent; the inventory's typed result explains read availability.
  */
 export function useMachineServiceEnvironments(input: Readonly<{
   serverId: string; environmentIds: readonly string[]; active: boolean;
 }>): Readonly<{ headers: ReadonlyMap<string, MachineServiceEnvironmentHeader>; settled: boolean;
-  status: ReturnType<typeof useDeploymentInventory>['snapshot']['status'] }> {
+  status: ReturnType<typeof useDeploymentInventory>['snapshot']['status'];
+  result: DeploymentEnvironmentTabResult<DeploymentEnvironmentReadCollectionV1['items'][number]> }> {
   const { binding: lifetime } = useServerCredentialAccountScopeBinding(input.serverId);
   const demand = React.useMemo(() => ({ mounted: input.active, visible: input.active, focused: input.active }), [input.active]);
   const read = useDeploymentInventory(input.environmentIds.length === 0 ? null : lifetime, demand,
     { environmentIds: input.environmentIds });
-  const items = read.snapshot.value?.items;
-  // Settled: the read answered, so an Environment it left out is one the person can't read (not one still loading).
+  const items = read.snapshot.value?.items ?? NO_ENVIRONMENTS;
+  // An answered read settles loading; omission alone carries no permission decision.
   const settled = read.snapshot.status === 'ready' || read.snapshot.status === 'unavailable';
-  const headers = React.useMemo(() => new Map((items ?? []).map(item => [item.environment.id, {
+  const headers = React.useMemo(() => new Map(items.map(item => [item.environment.id, {
     title: item.title, projectSourceId: item.environment.projectSourceId,
   }])), [items]);
   const status = read.snapshot.status;
-  return React.useMemo(() => ({ headers, settled, status }), [headers, settled, status]);
+  const result = React.useMemo(() => projectDeploymentEnvironmentTabResult(read.snapshot, items, read.refresh,
+    read.snapshot.value?.coverage), [read.snapshot, items, read.refresh]);
+  return React.useMemo(() => ({ headers, settled, status, result }), [headers, settled, status, result]);
 }
 
 /** The admitted Source's name, read once per distinct visible Source through its existing detail reader. */

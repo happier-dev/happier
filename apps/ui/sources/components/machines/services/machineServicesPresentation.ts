@@ -49,6 +49,15 @@ export function machineServiceEnvironmentIds(rows: readonly MachineServiceRowV1[
   return [...new Set(rows.flatMap(row => row.authority === 'project' && row.environmentId ? [row.environmentId] : []))].sort();
 }
 
+/** An Environment health warning needs its readable front door; the service's underlying health stays unchanged. */
+export function machineServiceCanShowHealthWarning(
+  row: Pick<MachineServiceRowV1, 'authority' | 'lifecyclePurpose' | 'environmentId'>,
+  environmentHeaders: ReadonlyMap<string, unknown>,
+): boolean {
+  const environmentId = machineServiceGroupEnvironmentId(machineServiceGroupOf(row));
+  return environmentId === null || environmentHeaders.has(environmentId);
+}
+
 /**
  * The row's identity mark: what the service is (a container, a systemd unit, a Workspace's dev server), or the
  * infrastructure and plugin marks for those groups (lab `machine/services/list`: Caddy's globe, a container, a unit).

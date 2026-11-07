@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, buildDeploymentAccountChangeV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance, type HomeDomainAnswer } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { act, renderHook } from '@/dev/testkit/hooks/renderHook';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
@@ -9,11 +9,91 @@ import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
-const { useMachineDeploymentRoles } = await import('./useMachineServiceEnvironments');
+const { useMachineDeploymentRoles, useMachineServiceEnvironments } = await import('./useMachineServiceEnvironments');
 const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
 const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
 beforeEach(() => homes.reset());
 afterEach(() => standardCleanup());
+
+it('preserves partial header availability and Retry through the real Environment inventory', async () => {
+    const serverId = await homes.addHome({ name: 'Service headers', serverUrl: 'https://service-headers.test',
+        serverIdentityId: 'srv_service_headers', accountId: 'alice', currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const readable = createDeploymentEnvironmentHeaderV1({ id: 'readable', serverId: 'srv_service_headers' });
+    const missing = createDeploymentEnvironmentHeaderV1({ id: 'missing-header', serverId: 'srv_service_headers',
+        contentArtifactId: 'missing-environment-artifact' });
+    await account.createArtifactDocument({ artifactId: readable.contentArtifactId,
+        header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: 'Production' }, body: '{}' });
+    let response: HomeDomainAnswer = { body: { ok: true, items: [readable, missing], nextCursor: null } };
+    homes.answer(serverId, '/v1/deployments/environments', { select: (_body, request) => {
+        expect(new URL(request.url).searchParams.getAll('environmentIds')).toEqual([missing.id, readable.id]);
+        return response;
+    } });
+    const hook = await renderHook(({ active }: { active: boolean }) => useMachineServiceEnvironments({
+        serverId, environmentIds: [readable.id, missing.id], active,
+    }), { initialProps: { active: false } });
+    const reads = () => homes.requests.filter(request => request.path.split('?')[0] === '/v1/deployments/environments');
+    try {
+        expect(reads()).toHaveLength(0);
+        await hook.rerender({ active: true });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().settled).toBe(true));
+        expect([...hook.getCurrent().headers.keys()]).toEqual([readable.id]);
+        expect(hook.getCurrent().result).toMatchObject({ status: 'unavailable',
+            reason: 'deployment_content_unavailable', retryable: true,
+            items: [{ environment: { id: readable.id }, title: 'Production' }] });
+        const partial = hook.getCurrent().result;
+        if (partial.status !== 'unavailable') throw new Error('Expected retryable partial headers');
+        const pending = createDeferred<void>();
+        response = { respondAfter: pending.promise, body: { ok: true, items: [readable], nextCursor: null } };
+        const headers = hook.getCurrent().headers;
+        let refresh!: Promise<void>;
+        await act(async () => { refresh = partial.retry(); });
+        await waitForHomeGovernance(() => expect(reads()).toHaveLength(2));
+        expect(hook.getCurrent().headers).toBe(headers);
+        await act(async () => { pending.resolve(); await refresh; });
+        expect(hook.getCurrent().result).toMatchObject({ status: 'ready', items: [{ environment: { id: readable.id } }] });
+        response = { body: { ok: false, error: 'deployment_access_denied' } };
+        await act(async () => publishHomeAccountChange(serverId, [buildDeploymentAccountChangeV1({
+            environmentId: readable.id, revision: 2 }).entityId], { changeKinds: ['account'] }));
+        await waitForHomeGovernance(() => {
+            expect(hook.getCurrent().result).toEqual({ status: 'denied', items: [] });
+            expect(hook.getCurrent().headers.size).toBe(0);
+        });
+        response = { body: { ok: true, items: [readable], nextCursor: null } };
+        await act(async () => publishHomeAccountChange(serverId, [buildDeploymentAccountChangeV1({
+            environmentId: readable.id, revision: 3 }).entityId], { changeKinds: ['account'] }));
+        await waitForHomeGovernance(() => {
+            expect(hook.getCurrent().result.status).toBe('ready');
+            expect(hook.getCurrent().headers.get(readable.id)?.title).toBe('Production');
+        });
+        await hook.rerender({ active: false });
+        const settledReads = reads().length;
+        await act(async () => publishHomeAccountChange(serverId, [buildDeploymentAccountChangeV1({
+            environmentId: readable.id, revision: 4 }).entityId], { changeKinds: ['account'] }));
+        await flushHookEffects();
+        expect(reads()).toHaveLength(settledReads);
+    } finally { await hook.unmount(); account.dispose(); }
+});
+
+it('preserves typed header failure and recovery without treating an omitted Environment as denied', async () => {
+    const serverId = await homes.addHome({ name: 'Header failure', serverUrl: 'https://header-failure.test',
+        serverIdentityId: 'srv_header_failure', accountId: 'alice', currentAccount: true });
+    let response: HomeDomainAnswer = { body: { ok: false, error: 'deployment_unavailable' } };
+    homes.answer(serverId, '/v1/deployments/environments', { select: () => response });
+    const hook = await renderHook(() => useMachineServiceEnvironments({ serverId,
+        environmentIds: ['omitted-environment'], active: true }));
+    try {
+        await waitForHomeGovernance(() => expect(hook.getCurrent().settled).toBe(true));
+        expect(hook.getCurrent().result).toMatchObject({ status: 'unavailable', items: [],
+            reason: 'deployment_unavailable', retryable: false });
+        const failed = hook.getCurrent().result;
+        if (failed.status !== 'unavailable') throw new Error('Expected the typed source failure');
+        response = { body: { ok: true, items: [], nextCursor: null } };
+        await act(async () => failed.retry());
+        expect(hook.getCurrent().result).toEqual({ status: 'empty', items: [] });
+        expect(hook.getCurrent().headers.size).toBe(0);
+    } finally { await hook.unmount(); }
+});
 
 it('reads exact role pages and admitted headers without service inventory, hides denied names, and withdraws hidden demand', async () => {
     const serverId = await homes.addHome({ name: 'Deployment roles', serverUrl: 'https://machine-roles.test',

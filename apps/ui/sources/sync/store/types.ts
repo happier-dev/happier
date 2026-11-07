@@ -1,8 +1,7 @@
-import type { SessionPublicationSource } from '../domains/session/sessionRuntimeObservation';
 import type { SessionModelOptionsContext } from '@/sync/domains/models/modelOptions';
+import type { PushTokensRemoteAlertProjectionV2 } from '@happier-dev/protocol/push/pushTokenRegistration';
 import type { TodoState } from '@/sync/domains/todos/todoOps';
 
-import type { ArtifactsDomain } from './domains/artifacts';
 import type { FeedItem } from '../domains/social/feedTypes';
 import type { RelationshipUpdatedEvent, UserProfile } from '../domains/social/friendTypes';
 import type { LocalSettings } from '../domains/settings/localSettings';
@@ -18,10 +17,12 @@ import type { AccountPetMetadata } from '../domains/pets/accountPetLibraryTypes'
 import type { LocalPetSourceMetadata } from '../domains/pets/localPetSourceTypes';
 import type { Settings } from '../domains/settings/settings';
 import type { AuthoringMemoryDomain } from './domains/authoringMemory';
+import type { ArtifactsDomain } from './domains/artifacts';
 import type { AccountSettingsSyncStatus } from '../domains/settings/accountSettingsSyncStatus';
 import type { AccountSettingsScope } from '../domains/settings/scope/accountSettingsScope';
 import type { ServerAccountScope } from '../domains/scope/serverAccountScope';
 import type { SessionListRenderableSession } from '../domains/session/listing/sessionListRenderable';
+import type { SessionPublicationSource } from '../domains/session/sessionRuntimeObservation';
 import type { ConcurrentSessionListCacheByServerId } from '../domains/session/listing/concurrentSessionListCache';
 import type { SessionListQueryMembership } from '../domains/session/listing/sessionListQueryController';
 import type { SessionListIndexItem } from '../domains/sessionList/sessionListIndex';
@@ -38,8 +39,6 @@ import type {
     SocketStatus,
     SyncError,
 } from './domains/realtime';
-import type { SessionActionDraft } from '../domains/sessionActions/sessionActionDraftTypes';
-import type { SessionActionDraftStatus } from '../domains/sessionActions/sessionActionDraftTypes';
 import type { SettingsAnalyticsSource } from '@/track/settingsAnalytics/types';
 import type { WorkspaceScopeBase } from '../domains/workspaces/workspaceScope';
 import type { SessionOrganizationDomain } from './domains/sessionOrganization';
@@ -56,11 +55,12 @@ export interface SettingsDomainSlice {
     savedSecretReferenceSettings: import('./domains/settings').SettingsDomain['savedSecretReferenceSettings'];
     settingsVersion: number | null;
     settingsScope: AccountSettingsScope | null;
+    settingsRemoteAlertPolicyStatus: PushTokensRemoteAlertProjectionV2['accountRemoteAlerts']['status'] | null;
     localSettings: LocalSettings;
-    applySettings: (settings: Settings, version: number) => void;
+    applySettings: (settings: Settings, version: number, remoteAlertPolicyStatus?: PushTokensRemoteAlertProjectionV2['accountRemoteAlerts']['status']) => void;
     activateSettingsScope: (scope: AccountSettingsScope, legacyScopes?: readonly AccountSettingsScope[]) => Promise<void>;
     clearSettingsScope: () => void;
-    applySettingsForScope: (scope: AccountSettingsScope, settings: Settings, version: number) => void;
+    applySettingsForScope: (scope: AccountSettingsScope, settings: Settings, version: number, remoteAlertPolicyStatus?: PushTokensRemoteAlertProjectionV2['accountRemoteAlerts']['status']) => void;
     applySettingsLocal: (settings: Partial<Settings>) => void;
     applyLocalSettings: (settings: Partial<LocalSettings>, options?: { source?: SettingsAnalyticsSource; persist?: boolean }) => void;
 }
@@ -108,7 +108,6 @@ export interface SessionsDomainSlice extends Pick<SessionsDomain,
     workspaceRepositoryTreeExpandedPathsByWorkspaceCacheKey: Record<string, string[]>;
     reviewCommentsDraftsBySessionId: Record<string, ReviewCommentDraft[]>;
     reviewCommentsDraftsByWorkspaceCacheKey: Record<string, ReviewCommentDraft[]>;
-    sessionActionDraftsByAddressKey: Record<string, SessionActionDraft[]>;
     sessionLocalStateScope: ServerAccountScope | null;
     /** Core Account projections; independent of draft hydration and outbox recovery. */
     isDataReady: boolean;
@@ -151,20 +150,6 @@ export interface SessionsDomainSlice extends Pick<SessionsDomain,
     setWorkspaceReviewCommentDraftIncluded: (workspaceCacheKey: string, commentId: string, included: boolean) => void;
     deleteWorkspaceReviewCommentDraft: (workspaceCacheKey: string, commentId: string, expectedDraft?: ReviewCommentDraft) => void;
     clearWorkspaceReviewCommentDrafts: (workspaceCacheKey: string) => void;
-    createSessionActionDraft: (
-        scope: ServerAccountScope,
-        address: import('@/sync/domains/session/sessionAddress').SessionAddress,
-        draft: Readonly<{ actionId: string; input?: Record<string, unknown> }>,
-    ) => SessionActionDraft;
-    updateSessionActionDraftInput: (
-        scope: ServerAccountScope,
-        address: import('@/sync/domains/session/sessionAddress').SessionAddress,
-        draftId: string,
-        patch: Record<string, unknown>,
-    ) => void;
-    setSessionActionDraftStatus: (scope: ServerAccountScope, address: import('@/sync/domains/session/sessionAddress').SessionAddress, draftId: string, status: SessionActionDraftStatus, error?: string | null) => void;
-    deleteSessionActionDraft: (scope: ServerAccountScope, address: import('@/sync/domains/session/sessionAddress').SessionAddress, draftId: string) => void;
-    clearSessionActionDrafts: (scope: ServerAccountScope, address: import('@/sync/domains/session/sessionAddress').SessionAddress) => void;
     markSessionOptimisticThinking: (sessionId: string) => void;
     clearSessionOptimisticThinking: (sessionId: string) => void;
     markSessionResuming: (sessionId: string) => void;
@@ -174,7 +159,7 @@ export interface SessionsDomainSlice extends Pick<SessionsDomain,
     applySessionTerminalLifecycle: (sessionId: string, turnCompletedAt: number | null) => void;
     markSessionViewed: (sessionId: string) => void;
     /** Applies the server's authoritative responsible Account after a committed mutation. */
-    applySessionResponsibleAccount: (sessionId: string, responsibleAccountId: string | null, scope: ServerAccountScope, responsibleAccount?: import('@happier-dev/protocol').SessionAccessAccountSummaryV1 | null) => void;
+    applySessionResponsibleAccount: (sessionId: string, responsibleAccountId: string | null, scope: ServerAccountScope, responsibleAccount?: import('@happier-dev/protocol/sessions/access/sessionAccessPrincipalV1').SessionAccessAccountSummaryV1 | null) => void;
     updateSessionPermissionMode: (sessionId: string, mode: PermissionMode) => void;
     updateSessionModelMode: (sessionId: string, mode: SessionModelMode, context?: SessionModelOptionsContext) => void;
     /**
@@ -190,6 +175,8 @@ export type MachinesDomainSlice = MachinesDomain;
 
 export interface MessagesDomainSlice {
     sessionMessages: Record<string, SessionMessages>;
+    sessionMessageToolVersion: MessagesDomain['sessionMessageToolVersion'];
+    sessionUserMessageHistory: MessagesDomain['sessionUserMessageHistory'];
     sessionMessagesHistoryStartLoaded: Record<string, true>;
     markSessionMessagesHistoryStartLoaded: (sessionId: string) => void;
     applyMessages: MessagesDomain['applyMessages'];
@@ -214,6 +201,7 @@ export interface RealtimeDomainSlice {
     accountSettingsSyncStatus: AccountSettingsSyncStatus;
     lastSyncAt: number | null;
     endpointStatus: EndpointConnectivityStatus;
+    endpointOnlineRetained: boolean;
     endpointReason: string | null;
     endpointAttempt: number;
     endpointNextRetryAt: number | null;
@@ -285,9 +273,6 @@ export interface ProjectDomainSlice {
             status: ScmStatus | null;
         }>>,
     ) => void;
-    getWorkspaceScmTouchedPathsForSession: (sessionId: string, serverId?: string | null) => string[];
-    markWorkspaceScmTouchedPathsForSession: (sessionId: string, paths: string[], serverId?: string | null) => void;
-    pruneWorkspaceScmTouchedPathsForSession: (sessionId: string, activePaths: Set<string>, serverId?: string | null) => void;
     getSessionProjectScmCommitSelectionPaths: (sessionId: string, serverId?: string | null) => string[];
     markSessionProjectScmCommitSelectionPaths: (sessionId: string, paths: string[], serverId?: string | null) => void;
     unmarkSessionProjectScmCommitSelectionPaths: (sessionId: string, paths: string[], serverId?: string | null) => void;
@@ -322,9 +307,6 @@ export interface ProjectDomainSlice {
         scope: WorkspaceScopeBase,
         error: import('../runtime/orchestration/projectManager').ProjectScmSnapshotError | null
     ) => void;
-    getWorkspaceScmTouchedPaths: (scope: WorkspaceScopeBase) => string[];
-    markWorkspaceScmTouchedPaths: (scope: WorkspaceScopeBase, paths: string[], touchedAt?: number) => void;
-    pruneWorkspaceScmTouchedPaths: (scope: WorkspaceScopeBase, activePaths: Set<string>) => void;
     getWorkspaceScmCommitSelectionPaths: (scope: WorkspaceScopeBase) => string[];
     markWorkspaceScmCommitSelectionPaths: (scope: WorkspaceScopeBase, paths: string[], selectedAt?: number) => void;
     unmarkWorkspaceScmCommitSelectionPaths: (scope: WorkspaceScopeBase, paths: string[]) => void;

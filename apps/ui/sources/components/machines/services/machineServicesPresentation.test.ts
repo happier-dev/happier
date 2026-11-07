@@ -6,6 +6,7 @@ import {
   machineServiceGroupKeys,
   machineServiceGroupOf,
   machineServiceHealthQualifier,
+  machineServiceCanShowHealthWarning,
   machineServiceKind,
   machineServiceIdentityLine,
   machineServiceDeclaredFacts,
@@ -38,6 +39,20 @@ function row(name: string, patch: Partial<Row> = {}): Row {
 }
 const SYSTEMD = { pluginId: 'happier.machine.services', localId: 'systemd' };
 describe('Machine services presentation', () => {
+  it('keeps an inaccessible Environment service visible without health attention, preserving warnings for readable Environments and independent watches', () => {
+    const service = row('web', { authority: 'project', lifecyclePurpose: 'deployment',
+      environmentId: 'env-prod', state: 'unhealthy' });
+    const headers = new Map<string, unknown>();
+    expect(machineServiceCanShowHealthWarning(service, headers)).toBe(false);
+    expect(service.state).toBe('unhealthy');
+    headers.set('env-prod', { title: 'Production' });
+    expect(machineServiceCanShowHealthWarning(service, headers)).toBe(true);
+    headers.delete('env-prod');
+    expect(machineServiceCanShowHealthWarning(service, headers)).toBe(false);
+    expect(machineServiceCanShowHealthWarning(row('watched', { state: 'unhealthy' }), headers)).toBe(true);
+    expect(machineServiceCanShowHealthWarning(row('dev', { authority: 'project', state: 'failed' }), headers)).toBe(true);
+  });
+
   it('groups deployed services by their real Environment, never a Workspace service or an independent watch', () => {
     const web = row('web', { authority: 'project', lifecyclePurpose: 'deployment', environmentId: 'env-prod' });
     const staging = row('web-staging', { authority: 'project', lifecyclePurpose: 'deployment', environmentId: 'env-staging' });
