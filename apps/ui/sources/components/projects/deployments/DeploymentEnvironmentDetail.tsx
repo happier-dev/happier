@@ -28,7 +28,7 @@ import { PageHeaderMarkIcon } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { Item } from '@/components/ui/lists/Item';
 import { WorkStatusGlyph } from '@/components/work/status/WorkStatusGlyph';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
-import { buildSessionListDateGroups } from '@/sync/domains/session/listing/sessionListDateGroups';
+import { buildSessionListDateGroups, formatDayGroupedAgeShort } from '@/sync/domains/session/listing/sessionListDateGroups';
 import { useCollectionConditionHeader } from '@/components/ui/lists/collection/useCollectionConditionHeader';
 import {
   createDeploymentHistoryFilterRegistry,
@@ -48,7 +48,8 @@ import {
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
-import { formatRelativeTime, formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
+import { HappyError } from '@/utils/errors/errors';
+import { formatRelativeTime } from '@/utils/time/formatShortRelativeTime';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { machinePageHref } from '@/components/machines/page/machinePageHref';
@@ -455,7 +456,11 @@ export const DeploymentEnvironmentDetail = React.memo(
               if (neverDeployed) return [];
               const result = await props.disposition!.teardown({ environmentId: detail.environment.id,
                 ...(targetLinkId ? { targetLinkId } : {}), reason: 'manual', mode: 'preview' }, { signal });
-              if (!result.ok || !('kind' in result) || result.kind !== 'preview') throw new Error('deployment_unavailable');
+              if (!result.ok) throw new HappyError(result.error, true, { code: result.error,
+                details: 'details' in result ? result.details : result,
+                ...('failureCause' in result ? { failureCause: result.failureCause } : {}) });
+              if (!('kind' in result) || result.kind !== 'preview') throw new HappyError('invalid_action_output', false,
+                { code: 'invalid_action_output' });
               return result.volumes;
             } } : {}),
         ...(!targetLinkId || running ? { domains: { controller: props.controller, environmentId: detail.environment.id } } : {}),
@@ -1284,7 +1289,8 @@ const DeploymentReceiptRow = React.memo(function DeploymentReceiptRow(
 ) {
   const { receipt } = props;
   const duration = deploymentDurationMs(receipt);
-  const age = formatRelativeTimeShort(receipt.settledAtMs ?? receipt.startedAtMs ?? receipt.requestedAtMs, Date.now());
+  // The same calendar-day boundary as History's day groups, so a row never disagrees with its heading.
+  const age = formatDayGroupedAgeShort(receipt.settledAtMs ?? receipt.startedAtMs ?? receipt.requestedAtMs, Date.now());
   // A settled success says nothing; trouble and work in progress lead the facts line in their tone.
   const lead = receipt.title ? deploymentHistoryLead(receipt, receipt.failure) : null;
   const facts = props.byYou ? [t('projects.deployments.byYou')] : [];

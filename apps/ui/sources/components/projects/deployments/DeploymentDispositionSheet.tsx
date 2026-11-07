@@ -24,6 +24,8 @@ import { DeploymentTabState } from './DeploymentTabState';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import type { DeploymentTeardownPreviewV1, DeploymentTeardownVolumesV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 
 type Choice = 'remove' | 'detach';
 const PRESENTED = { mounted: true, visible: true, focused: true } as const;
@@ -68,17 +70,20 @@ function DeploymentDispositionSheet(
   );
   const [busy, setBusy] = React.useState(false);
   const [volumeReview, setVolumeReview] = React.useState<DeploymentTeardownPreviewV1['volumes'] | null>(null);
-  const [volumeError, setVolumeError] = React.useState(false);
+  const [volumeError, setVolumeError] = React.useState<ActionExecuteFailure | null>(null);
   const [volumeChoices, setVolumeChoices] = React.useState<Record<string, 'keep' | 'delete'>>({});
   const [confirmations, setConfirmations] = React.useState<Record<string, string>>({});
   React.useEffect(() => {
-    if (choice !== 'remove' || !props.reviewVolumes || volumeReview !== null) return;
+    if (choice !== 'remove' || !props.reviewVolumes || volumeReview !== null || volumeError) return;
     const controller = new AbortController();
     void props.reviewVolumes(controller.signal).then(volumes => {
       if (!controller.signal.aborted) setVolumeReview(volumes);
-    }, () => { if (!controller.signal.aborted) setVolumeError(true); });
+    }, error => {
+      if (!controller.signal.aborted) setVolumeError({ ok: false,
+        ...normalizeActionExecutorThrownError(error, 'deployment.teardown.preview') });
+    });
     return () => controller.abort();
-  }, [choice, props.reviewVolumes, volumeReview]);
+  }, [choice, props.reviewVolumes, volumeReview, volumeError]);
   const volumesReady = !props.reviewVolumes || volumeReview !== null;
   const volumesConfirmed = volumeReview?.every(volume => volumeChoices[volume.name] !== 'delete'
     || confirmations[volume.name] === volume.name) ?? true;
@@ -89,6 +94,7 @@ function DeploymentDispositionSheet(
   const domains = useDeploymentEnvironmentDomains(domainInput?.controller ?? null, domainInput?.environmentId ?? null, PRESENTED);
   const domainsReady = !domainInput || domains.result.status === 'ready' || domains.result.status === 'empty';
   const failure = refused?.failure ? presentActionFailureOutcome(refused.failure, 'deployment') : null;
+  const volumeFailure = volumeError ? presentActionFailureOutcome(volumeError, 'deployment') : null;
   const confirmTitle =
     choice === 'detach'
       ? target
@@ -255,7 +261,13 @@ function DeploymentDispositionSheet(
       ) : null}
       {choice === 'remove' && props.reviewVolumes ? <ItemGroup title={t('projects.deployments.factData')}>
         {volumeReview === null ? <SurfaceStateCard size="line" kind={volumeError ? 'error' : 'loading'}
-          title={volumeError ? t('projects.deployments.volumeReviewError') : t('projects.deployments.loading')} /> : null}
+          testID={volumeError ? 'project-deployments.disposition.volumes.error' : undefined}
+          title={volumeError ? t('projects.deployments.volumeReviewError') : t('projects.deployments.loading')}
+          reason={volumeFailure?.reason ?? undefined}
+          diagnosticCode={volumeFailure?.code}
+          diagnosticDetail={volumeFailure?.technicalDetails.map(line => `${line.label}: ${line.value}`).join('\n')}
+          action={volumeError ? { label: t('common.retry'), onPress: () => setVolumeError(null),
+            testID: 'project-deployments.disposition.volumes.retry' } : undefined} /> : null}
         {volumeReview?.length === 0 ? <Item testID="project-deployments.disposition.volumes.empty"
           title={t('projects.deployments.noDataToKeep')} mode="info" /> : null}
         {volumeReview?.map(volume => <React.Fragment key={volume.name}>

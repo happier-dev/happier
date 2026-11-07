@@ -25,6 +25,45 @@ import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/action
 import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 
+it.each(['remote-refusal', 'unsupported-placement', 'remote-throw'] as const)(
+    'preserves the native volume review refusal for recovery: %s', async scenario => {
+        const environment = createDeploymentEnvironmentDetailV1();
+        environment.environment.controllerMachineId = 'controller-machine';
+        const link = environment.targetLinks[0].targetLink;
+        link.machines = ['machine-a'];
+        link.members = [{ machineId: 'machine-a', installationId: 'installation-a', state: 'active' }];
+        if (scenario === 'unsupported-placement') link.members.push({ machineId: 'machine-b',
+            installationId: 'installation-b', state: 'active' });
+        const refusal = { ok: false as const, errorCode: 'unsupported_action', error: 'unsupported_action',
+            effectAttempted: false, details: { reason: 'native_executor_unavailable',
+                remedy: 'Update the target Machine daemon before reviewing its named volumes.' },
+            failureCause: { phase: 'deployment.teardown.preview', errorClass: 'Error' as const,
+                errorCode: 'unsupported_action', httpStatus: null } };
+        // Home records and the cross-Machine transport are genuine IO boundaries.
+        const teardown = createOwnServerTeardownForHost({ serverId: 'home', machineId: 'controller-machine',
+            credentials: { token: 'test-token', encryption: null }, serverHttpBaseUrl: 'https://unused-home.test',
+            runtime: { async acquire() { throw new Error('Review cannot acquire workload execution'); } },
+            async readEnvironment() { return environment; },
+            async *readBuildHistory() { yield createDeploymentReceiptDetailV1(); },
+            async readReceipt() { throw new Error('No receipt mutation is admitted'); },
+            async writeTransition() { throw new Error('No receipt mutation is admitted'); },
+            async findReceipt() { return null; },
+            async createCandidate() { throw new Error('Preview cannot create a candidate'); },
+            async sendChild() {
+                if (scenario === 'remote-throw') throw Object.assign(new Error('machine_unavailable'), { code: 'machine_unavailable' });
+                return refusal;
+            },
+        });
+        const result = await teardown.preview({ serverId: 'home', environmentId: environment.environment.id,
+            targetLinkId: link.id, reason: 'manual', mode: 'preview' }, {});
+        if (scenario === 'remote-refusal') expect(result).toEqual(refusal);
+        else if (scenario === 'remote-throw') expect(result).toMatchObject({ ok: false, errorCode: 'machine_unavailable',
+            effectAttempted: false, failureCause: { phase: 'deployment.teardown.preview', errorClass: 'Error',
+                errorCode: 'machine_unavailable', httpStatus: null } });
+        else expect(result).toMatchObject({ ok: false, errorCode: 'unsupported_action', effectAttempted: false,
+            details: { reason: 'target_placement_unsupported', requiredFact: 'controllerMachineId=controller-machine' } });
+    });
+
 it.each(['exact', 'changed-input'] as const)(
     'retains the person’s confirmation through never-deployed Compose removal preparation: %s', async confirmation => {
         const actionId = 'deployments.teardown';

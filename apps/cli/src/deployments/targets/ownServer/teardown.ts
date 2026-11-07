@@ -6,7 +6,7 @@ import { ActionExecuteFailureSchema, projectActionFailureCauseV1, type ActionExe
 import { buildDeploymentTeardownInputV1, DeploymentTeardownNothingDeployedInputV1Schema,
     type DeploymentTeardownInputV1, type DeploymentTeardownRefusalDetailsV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentOwnServerContentV1Schema, type DeploymentContentV1, type DeploymentEnvironmentDetailV1,
-    type DeploymentReceiptDetailV1, type DeploymentOwnServerContentV1 } from '@happier-dev/deployment-protocol';
+    type DeploymentReceiptDetailV1, type DeploymentOwnServerContentV1, type DeploymentTeardownResourceV1 } from '@happier-dev/deployment-protocol';
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { configuration } from '@/configuration';
 import { authorizePluginExecLaunchForHost } from '@/plugins/runtime/invocation/services/exec';
@@ -71,10 +71,11 @@ export function createOwnServerTeardownForHost(host: Host) {
             `controllerMachineId=${environment.environment.controllerMachineId}`); }
     };
     const readVolumes = async (input: DeploymentTeardownRequestInputV1, context: ActionExecutorContext,
-        environment: DeploymentEnvironmentDetailV1) => {
+        environment: DeploymentEnvironmentDetailV1): Promise<DeploymentTeardownResourceV1[] | ActionExecuteFailure> => {
         const targetLinkId = input.targetLinkId ?? environment.environment.runtimeTargetLinkId;
         const link = targetLinkId ? select(environment, targetLinkId, false) : null;
-        if (!link || 'errorCode' in link) throw Object.assign(new Error('target_mismatch'), { code: 'target_mismatch' });
+        if (!link) return failure('target_mismatch');
+        if ('errorCode' in link) return link;
         const member = link.members[0];
         const deployments = new Set<string>();
         let deployed = link.activeDeploymentId !== undefined;
@@ -92,7 +93,7 @@ export function createOwnServerTeardownForHost(host: Host) {
                     environmentId: input.environmentId, targetLinkId: link.id, reason: input.reason },
                 expectedRevision: environment.environment.revision, expectedTargetLinkRevision: link.revision }), context);
             const failed = ActionExecuteFailureSchema.safeParse(response);
-            if (failed.success) throw Object.assign(new Error(failed.data.errorCode), { code: failed.data.errorCode });
+            if (failed.success) return failed.data;
             return DeploymentTeardownPreviewV1Schema.parse(response).volumes.map(volume => ({ id: volume.name,
                 kind: 'data' as const, machineId: volume.machineId, ownership: 'owned' as const, disposition: 'retain' as const }));
         }
@@ -210,10 +211,14 @@ export function createOwnServerTeardownForHost(host: Host) {
             try {
                 const environment = await host.readEnvironment({ environmentId: input.environmentId, context });
                 const resources = await readVolumes(input, context, environment);
+                if ('errorCode' in resources) return resources;
                 return DeploymentTeardownPreviewV1Schema.parse({ ok: true, kind: 'preview', volumes: resources.map(resource => ({
                     name: resource.id, machineId: resource.machineId })) });
-            } catch (error) { return failure(context.signal?.aborted ? 'cancelled'
-                : error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'deployment_content_unavailable'); }
+            } catch (error) { return {
+                ...normalizeActionExecutorThrownError(error, 'deployment.teardown.preview'),
+                ...failure(context.signal?.aborted ? 'cancelled'
+                    : error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'deployment_content_unavailable'),
+                effectAttempted: false }; }
         },
         async admit(environment: DeploymentEnvironmentDetailV1, targetLinkId: string, content: DeploymentContentV1,
             input: DeploymentTeardownInputV1, context: ActionExecutorContext, retainedIntent = false) {
@@ -225,6 +230,7 @@ export function createOwnServerTeardownForHost(host: Host) {
             if (data.length) {
                 const owned = retainedIntent ? data : await readVolumes({ serverId: input.serverId, environmentId: input.environmentId,
                     targetLinkId, reason: input.reason }, context, environment);
+                if ('errorCode' in owned) return owned;
                 const selected = new Map(input.volumes?.map(volume => [volume.name, volume.disposition]));
                 for (const resource of data) {
                     if (resource.machineId !== link.members[0].machineId || resource.ownership !== 'owned'
@@ -282,6 +288,7 @@ export function createOwnServerTeardownForHost(host: Host) {
                 const volumes = prior ? prior.content.teardown?.resources.filter(resource => resource.kind === 'data') ?? []
                     : input.volumes?.length ? await readVolumes({ serverId: input.serverId, environmentId: input.environmentId,
                     targetLinkId: link.id, reason: input.reason }, context, environment) : [];
+                if ('errorCode' in volumes) return volumes;
                 const selected = new Map(input.volumes?.map(volume => [volume.name, volume.disposition]));
                 if (input.volumes?.some(volume => !volumes.some(resource => resource.id === volume.name))) return failure('deployment_conflict');
                 const resources = [...inventory(input.environmentId, link.members[0].machineId),
@@ -301,8 +308,11 @@ export function createOwnServerTeardownForHost(host: Host) {
                     preview: normalizeStrictJsonValue({ environmentId: input.environmentId, targetLinkId: input.targetLinkId,
                         summary: 'Stop and remove this Environment’s containers and owned networks. Only explicitly selected named data volumes are deleted; other volumes and images are kept.',
                         machines: link.machines, resources: content.teardown?.resources ?? [] }) };
-            } catch (error) { return failure(context.signal?.aborted ? 'cancelled'
-                : error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'deployment_content_unavailable'); }
+            } catch (error) { return {
+                ...normalizeActionExecutorThrownError(error, 'deployment.teardown.prepare'),
+                ...failure(context.signal?.aborted ? 'cancelled'
+                    : error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'deployment_content_unavailable'),
+                effectAttempted: false }; }
         },
         async executeNative(job: Extract<DeploymentChildRpcV1, { actionId: 'deployments.teardown' }>, context: ActionExecutorContext) {
             try {
@@ -313,6 +323,7 @@ export function createOwnServerTeardownForHost(host: Host) {
                     if (environment.environment.revision !== job.expectedRevision || link.revision !== job.expectedTargetLinkRevision
                         || link.members[0].machineId !== host.machineId || link.members[0].installationId !== job.installationId) return failure('deployment_conflict');
                     const resources = await readVolumes(job.input, context, environment);
+                    if ('errorCode' in resources) return resources;
                     return DeploymentTeardownPreviewV1Schema.parse({ ok: true, kind: 'preview', volumes: resources.map(resource => ({
                         name: resource.id, machineId: resource.machineId })) });
                 }
@@ -345,7 +356,8 @@ export function createOwnServerTeardownForHost(host: Host) {
                     machineId: job.machineId, installationId: job.installationId, step: job.step, resources, context }); }
                 finally { await native.release(); }
             } catch (error) {
-                return { ok: false as const, ...normalizeActionExecutorThrownError(error, `deployment.teardown.${job.kind === 'prepare' ? 'preview' : job.mode}`) };
+                return { ok: false as const, ...normalizeActionExecutorThrownError(error, `deployment.teardown.${job.kind === 'prepare' ? 'preview' : job.mode}`),
+                    ...(job.kind === 'prepare' ? { effectAttempted: false } : {}) };
             }
         },
         async execute(request: DeploymentReceiptDispatchV1) {

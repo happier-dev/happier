@@ -367,14 +367,17 @@ describe('Project deployments page', () => {
   });
 
   it.each([
-    { removed: false, neverDeployed: false }, { removed: true, neverDeployed: false },
-    { removed: true, neverDeployed: true },
-  ])('consumes the root Environment-removal result from Stop and remove (removed $removed, never deployed $neverDeployed)', async ({ removed, neverDeployed }) => {
+    { removed: false, neverDeployed: false, inventoryFailure: null },
+    { removed: true, neverDeployed: false, inventoryFailure: null },
+    { removed: true, neverDeployed: true, inventoryFailure: null },
+    { removed: true, neverDeployed: false, inventoryFailure: 'transport' },
+    { removed: true, neverDeployed: false, inventoryFailure: 'read' },
+  ])('consumes the root Environment-removal result from Stop and remove (removed $removed, never deployed $neverDeployed, inventory failure $inventoryFailure)', async ({ removed, neverDeployed, inventoryFailure }) => {
     const homeIdentity = `srv_${'d'.repeat(32)}`;
     scope.serverId = await homes.addHome({ name: 'Idle removal', serverUrl: 'https://idle-removal.test',
       serverIdentityId: homeIdentity, accountId: scope.accountId, currentAccount: true });
     const base = environmentDetailForHome();
-    const detail = removed && !neverDeployed ? base : { ...base, targetLinks: base.targetLinks.map(item => ({ ...item,
+    const detail = removed && !neverDeployed && !inventoryFailure ? base : { ...base, targetLinks: base.targetLinks.map(item => ({ ...item,
       targetLink: { ...item.targetLink, activeDeploymentId: undefined } })) };
     const { controller } = controllerFor({ detail, ...(neverDeployed ? { history: [] } : {}) });
     const { ModalProvider } = await import('@/modal');
@@ -385,13 +388,20 @@ describe('Project deployments page', () => {
       targetLinks: detail.targetLinks.map(item => item.targetLink),
     } });
     const machineId = detail.environment.controllerMachineId!;
+    let inventoryReads = 0;
     await answerTeardownController(machineId, raw => {
       const input = DeploymentTeardownActionInputV1Schema.parse(raw);
       if ('mode' in input && input.mode === 'preview') {
+        inventoryReads += 1;
         if (neverDeployed) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+        if (inventoryFailure && inventoryReads === 1) return inventoryFailure === 'transport'
+          ? { ok: false, errorCode: 'machine_rpc_unavailable', error: 'machine_rpc_unavailable',
+              failureCause: { phase: 'dispatch', errorClass: 'Error', errorCode: 'ECONNREFUSED', httpStatus: null } }
+          : { ok: false, error: 'deployment_content_unavailable' };
+        if (inventoryFailure) return { ok: true, kind: 'preview', volumes: [] };
         return { ok: true, kind: 'preview', volumes: [{ name: 'app_data', machineId }, { name: 'app_logs', machineId }] };
       }
-      if (removed && !neverDeployed) expect(input).toMatchObject({ volumes: [
+      if (removed && !neverDeployed && !inventoryFailure) expect(input).toMatchObject({ volumes: [
         { name: 'app_data', disposition: 'delete', confirmation: 'app_data' },
         { name: 'app_logs', disposition: 'keep' },
       ] });
@@ -400,7 +410,7 @@ describe('Project deployments page', () => {
         : { ok: false, errorCode: 'deployment_domain_native_unavailable', error: 'deployment_domain_native_unavailable' };
     }, result => {
       const failure = ActionExecuteFailureSchema.safeParse(result);
-      return failure.success ? { errorCode: failure.data.errorCode, error: failure.data.error } : null;
+      return failure.success ? failure.data : null;
     });
     const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
     const { createDeploymentActions } = await import('./deploymentActions');
@@ -409,10 +419,10 @@ describe('Project deployments page', () => {
       const screen = await renderScreen(<ModalProvider><DeploymentEnvironmentDetail controller={controller}
         environmentId={detail.environment.id} demand={shown} accountId={scope.accountId} serverId={scope.serverId}
         phone={false} deploy={null} review={noReview} onOpenReceipt={() => {}} lifetime={lifetime}
-        destination={removed && !neverDeployed ? { tab: 'settings', section: null } : undefined}
+        destination={removed && !neverDeployed && !inventoryFailure ? { tab: 'settings', section: null } : undefined}
         disposition={createDeploymentActions(lifetime, scope.projectSourceId)} onDeleted={done} />
       </ModalProvider>);
-      if (removed && !neverDeployed) {
+      if (removed && !neverDeployed && !inventoryFailure) {
         await screen.pressByTestIdAsync('project-deployments.environment.settings.servers-build.unlink');
         await screen.pressByTestIdAsync('project-deployments.disposition.choice:remove');
         await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.disposition.volume.app_data:delete')).not.toBeNull());
@@ -430,6 +440,18 @@ describe('Project deployments page', () => {
         await screen.pressByTestIdAsync('project-deployments.environment.menu');
         await waitForContent(screen, 'project-deployments.environment.menu.delete');
         await screen.pressByTestIdAsync('project-deployments.environment.menu.delete');
+      }
+      if (inventoryFailure) {
+        const errorId = 'project-deployments.disposition.volumes.error';
+        await waitForContent(screen, errorId);
+        expect(screen.findByTestId('project-deployments.disposition.confirm')?.props.disabled).toBe(true);
+        await screen.pressByTestIdAsync(`${errorId}-details-toggle`);
+        expect(screen.getTextContent()).toContain(inventoryFailure === 'transport' ? 'machine_rpc_unavailable' : 'deployment_content_unavailable');
+        if (inventoryFailure === 'transport') expect(screen.getTextContent()).toContain('ECONNREFUSED');
+        expect(inventoryReads).toBe(1);
+        await screen.pressByTestIdAsync('project-deployments.disposition.volumes.retry');
+        await waitForContent(screen, 'project-deployments.disposition.volumes.empty');
+        expect(inventoryReads).toBe(2);
       }
       await waitForHomeGovernance(() => {
         expect(screen.findByTestId('project-deployments.disposition.confirm')?.props.disabled).toBe(false);
