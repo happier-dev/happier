@@ -63,7 +63,7 @@ import { mutateTriageAction, TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1, TRIAGE_DEFAULT_AC
 import { createTestkitAccountKv } from '../settings/testkit/accountKv.test-support.js';
 import type { TriageSessionActionInvokerV1 } from '../sessions/entrySessionOpen.js';
 import { linkEntryToSession } from '../sessions/entrySessionLinks.js';
-import { refreshTriageListWindow } from './window/mountedWindow.js';
+import { readTriageListWindowSnapshot, subscribeToTriageListWindow } from './window/mountedWindow.js';
 import { createTriageEphemeralSharedScopeFixture } from './window/ephemeralSharedScope.test-support.js';
 import { renderSurface as renderShellSurface } from './surface.js';
 import { createTriageMountedUiActionHandler } from '../actions/mountedUi.js';
@@ -666,7 +666,18 @@ async function mountShell(
     // after automatic open, just as it does in the live host.
     harness.setMountRetirement(async () => { await fixture.retire('session_opened'); });
     await act(async () => {
-        await refreshTriageListWindow('view', fixture.context.hostApi, ephemeralSharedScope);
+        const idle = () => readTriageListWindowSnapshot(fixture.context.hostApi, ephemeralSharedScope).pending === 'idle';
+        if (idle()) return;
+        await new Promise<void>(resolve => {
+            let unsubscribe = () => {};
+            const settleWindow = () => {
+                if (!idle()) return;
+                unsubscribe();
+                resolve();
+            };
+            unsubscribe = subscribeToTriageListWindow(fixture.context.hostApi, settleWindow, ephemeralSharedScope);
+            settleWindow();
+        });
     });
     return { shell: fixture, locations, invokeMounted: async (operation) => {
         const command = published?.commands?.find((entry) => entry.command.kind === 'executeAction');

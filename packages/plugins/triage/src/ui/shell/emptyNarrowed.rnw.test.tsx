@@ -21,6 +21,7 @@ import {
 import { renderSurface as renderShellSurface } from '../surface.js';
 import { refreshTriageListWindow } from '../window/mountedWindow.js';
 import { createTriageEphemeralSharedScopeFixture } from '../window/ephemeralSharedScope.test-support.js';
+import { parseTriageRouteSubPathV1 } from '../navigation/location.js';
 
 /**
  * An empty list that the reader's own search emptied: the page names the way out beside the sentence
@@ -126,6 +127,8 @@ describe('a list the reader’s own search emptied', () => {
 
         await expect(shell.getByText('Replace the duplicated normalizer')).resolves.toBeDefined();
         await expect(shell.queryByText('Nothing matches your search')).resolves.toBeUndefined();
-        expect(locations.some((location) => location.includes(SEARCH_THAT_MATCHES_NOTHING))).toBe(false);
+        // LIST-R2 publishes the opening view; Clear search must settle a new route.
+        expect(locations.length).toBeGreaterThan(0);
+        expect(parseTriageRouteSubPathV1(locations.at(-1)).query).toBe('');
     });
 });
