@@ -730,6 +730,10 @@ unclassified. Agent activity and waiting are still derived from linked Sessions.
 Optional parent, children summary and blocked-by facts use the existing complete
 entry reference. External sources materialize these relationships live; the
 contract adds no provider mirror, task store or relationship writer.
+In the development [relation schema](../packages/triage-protocol/src/v1/observations.ts),
+child entries may additionally carry a bounded title and an exact locator from
+the same relation read. These presentation fields do not expand canonical entry
+identity; parent and blocker references retain their existing shape.
 
 Optional snapshot `dueDate` retains a source's ISO calendar date or datetime;
 personal tasks project their existing deadline as an ISO datetime. Optional

@@ -26,6 +26,7 @@ import { TriageReadActionsInputV1Schema } from '../actions/actionsCatalogProtoco
 import { TriageReadSavedViewsInputV1Schema } from '../actions/savedViewsProtocol.js';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { TriageDetailInstance, useTriagePostMutationCompletion, useTriageEvidenceDisclosure, type TriageDetailPrimaryWriteV1 } from '@happier-dev/triage-sources/ui';
+import { triageSourcePanelIntentKeyV1 } from '@happier-dev/triage-sources/runtime';
 import { PLUGIN_UI_SUB_PATH_MAX_UTF8_BYTES_V1 } from '@happier-dev/plugin-sdk/ui';
 import {
     formatTriageTimestampV1,
@@ -47,6 +48,7 @@ import {
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PluginUiContextEnrichmentV1, PluginUiPageNavigationV1 } from '@happier-dev/plugin-sdk/ui';
 import { TriageMountedUiInputV1Schema } from '../actions/mountedUiProtocol.js';
+import { TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1 } from '../actions/resolveResourceProtocol.js';
 import { TriageEditTaskActionInputV1Schema, TriageTaskDraftV1Schema } from '../actions/tasksProtocol.js';
 import { TRIAGE_TASKS_READ_ORIGIN_ERROR_ACTION_LOCAL_ID_V1, type TriageTaskOriginErrorV1Schema } from '../actions/taskOriginProtocol.js';
 import { unlinkEntryFromSession } from '../sessions/entrySessionLinks.js';
@@ -102,6 +104,7 @@ import { TRIAGE_TASK_PROPERTIES_TEST_ID_V1, TRIAGE_TASK_TEXT_EDITOR_TEST_ID_V1 }
 import { TRIAGE_TASK_STORY_TEST_ID_V1 } from './detail/taskStory.js';
 import { readTriageListWindowSnapshot, refreshTriageListWindow } from './window/mountedWindow.js';
 import { renderSurface as renderShellSurface } from './surface.js';
+import { TriageResourceSurface } from './resourceSurface.js';
 import { renderSurface as renderTasksSurface } from './tasksSurface.js';
 import { renderSurface as renderEntrySessionCompanion } from './detail/sessionCompanion.js';
 import { MAX_TRIAGE_LIST_WINDOW_ROWS_V1 } from '../projection/listWindow.js';
@@ -882,6 +885,8 @@ let lastPageLocation: Readonly<{ subPath: string; backLocation: string | undefin
 async function mountShell(
     options: Readonly<{
         contributesDetail?: boolean;
+        resource?: boolean;
+        sourcePanelProbe?: boolean;
         subPath?: string;
         launchInput?: JsonValue;
         deliveredLaunch?: { current: JsonValue | undefined };
@@ -973,6 +978,8 @@ async function mountShell(
     const admittedSurface = surfaceContext(options);
     // The host retains one delivered launch object until navigation retires it.
     const pageLaunch = options.explicitOpen ? { kind: 'explicit' as const } : undefined;
+    const resource = { kind: 'pullRequest' as const, url: 'https://example.test/pull/17' };
+    const resourceSurface = defineUiSurface(() => <TriageResourceSurface resource={resource} />);
     const { targetedContributions: _targetedContributions, ...accountSurface } = admittedSurface;
     await act(async () => {
         fixture = await createPluginUiTestkit({
@@ -982,7 +989,7 @@ async function mountShell(
             ...(options.launchInput === undefined ? {} : { launchInput: options.launchInput }),
             // The semantic host's RenderContext omits its activity snapshot;
             // supply this genuine host boundary fact for mounted-action cases.
-            surface: (context) => (options.taskEdit ? renderTasksSurface : renderShellSurface)(
+            surface: (context) => (options.resource ? resourceSurface : options.taskEdit ? renderTasksSurface : renderShellSurface)(
                 { ...context,
                     ...(options.deliveredLaunch === undefined ? {} : { launchInput: options.deliveredLaunch.current }),
                     ...(pageLaunch === undefined ? {} : { launch: pageLaunch }),
@@ -1011,6 +1018,7 @@ async function mountShell(
                             renderers={securityAlertRenderers} /></TriageDetailInstance>
                     ) : (
                         <>{content}<PostMutationProbe />{options.offerPrimaryWrite ? <PrimaryWriteProbe /> : null}
+                          {options.sourcePanelProbe ? <ResourceSourcePanelProbe /> : null}
                           {options.sourceOverviewProbe ? <MountedOverviewProbe input={launchInput} /> : null}</>
                     ),
                 },
@@ -1067,6 +1075,10 @@ async function mountShell(
                         options.onSecurityAlertWrite?.(request);
                         throw new Error('No GitHub writes in the mounted dismissal test');
                     }
+                    if (action === TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1) return { kind: 'resolved',
+                        sourceInstance: { source: SOURCE, sourceInstanceId: INSTANCE },
+                        entryRef: { source: SOURCE, kindId: 'pull-request', collisionScope: 'example/repository', entryId: '17' },
+                        locator: testkitLocator() };
                     if (action === 'shell.column.set' && typeof input === 'object' && input !== null && 'tab' in input && typeof input.tab === 'string') {
                         const current = await fixture.context.hostApi.context();
                         if (pageNavigation !== null) await fixture.updateSurface({ ...current, page: projectPage(input.tab) });
@@ -1229,6 +1241,77 @@ function MountedOverviewProbe({ input }: Readonly<{ input: unknown }>) {
     const overview = useGithubOverview(TriageDetailSurfaceInputV1Schema.parse(input), { readWhenActive: true });
     return <Text testID="mounted-source-overview" value={overview.value?.body ?? 'Reading source body'} />;
 }
+
+/** A fixture source publishes through its public panel API, just as packaged contributors do. */
+function ResourceSourcePanelProbe() {
+    const { panelActions } = useTriageEvidenceDisclosure();
+    const [loaded, setLoaded] = React.useState(false);
+    React.useLayoutEffect(() => panelActions?.bind(triageSourcePanelIntentKeyV1({ kind: 'loadMoreSourceItems', list: 'resource-fixture' }), async (operation) => {
+        if (operation.kind !== 'loadMoreSourceItems' || operation.list !== 'resource-fixture') return { status: 'unavailable' };
+        setLoaded(true);
+        return { status: 'applied' };
+    }, [{ title: 'Load resource source page', operation: { kind: 'loadMoreSourceItems', list: 'resource-fixture' } }]), [panelActions]);
+    return <Text value={loaded ? 'Resource source page loaded' : 'Resource source first page'} />;
+}
+
+it('publishes and dispatches real detail controls from a resource preview', async () => {
+    const published: (PluginUiContextEnrichmentV1 | null)[] = [];
+    let aggregateReads = 0;
+    const page = await mountShell({ resource: true, automaticDemandOnly: true, tabbedDetail: true,
+        sourcePanelProbe: true, linkedSessionCount: MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1 + 1, activeSurface: true,
+        onAggregateRead: () => { aggregateReads += 1; },
+        publishCurrentUiContext: context => { published.push(context); } });
+    await expect(page.getByText(DETAIL_BODY_TEXT)).resolves.toBeDefined();
+    const commands = published.at(-1)?.commands;
+    expect(commands?.length).toBeGreaterThan(0);
+    const find = (kind: string) => commands?.find(command => command.command.kind === 'executeAction'
+        && TriageMountedUiInputV1Schema.safeParse(command.command.input).success
+        && TriageMountedUiInputV1Schema.parse(command.command.input).operation.kind === kind);
+    const tab = find('selectDetailTab');
+    const session = find('selectLinkedSession');
+    const source = find('loadMoreSourceItems');
+    const moreSessions = find('loadMore');
+    expect(tab).toBeDefined();
+    expect(session).toBeDefined();
+    expect(source).toBeDefined();
+    expect(moreSessions).toBeDefined();
+    const invoke = async (command: typeof tab) => {
+        if (command?.command.kind !== 'executeAction') throw new Error('Missing resource command');
+        await act(async () => { expect(await page.context.hostApi.executeAction(command.command.action, command.command.input)).toEqual({ status: 'applied' }); });
+    };
+    await invoke(source);
+    await expect(page.getByText('Resource source page loaded')).resolves.toBeDefined();
+    const files = commands?.find(command => {
+        if (command.command.kind !== 'executeAction') return false;
+        const parsed = TriageMountedUiInputV1Schema.safeParse(command.command.input);
+        return parsed.success && parsed.data.operation.kind === 'selectDetailTab' && parsed.data.operation.tab === 'files';
+    });
+    await invoke(files);
+    await expect(page.getByRole('tab', { name: 'Files', state: { selected: true } })).resolves.toBeDefined();
+    await invoke(session);
+    await expect(page.getByRole('tab', { name: 'Session', state: { selected: true } })).resolves.toBeDefined();
+    await invoke(moreSessions);
+    expect(published.at(-1)?.detail).toMatchObject({ linkedSessionIds: expect.arrayContaining(['session-linked-201']) });
+    expect(aggregateReads).toBe(0);
+});
+
+it('recovers failed fix PR links in a resource preview through its mounted Retry', async () => {
+    const published: (PluginUiContextEnrichmentV1 | null)[] = [];
+    const page = await mountShell({ resource: true, automaticDemandOnly: true, activeSurface: true,
+        fixPullRequestState: 'unreachable', publishCurrentUiContext: context => { published.push(context); } });
+    await expect(page.getByText('Fix pull request links could not be read.')).resolves.toBeDefined();
+    const retry = published.at(-1)?.commands?.find(command => {
+        if (command.command.kind !== 'executeAction') return false;
+        const parsed = TriageMountedUiInputV1Schema.safeParse(command.command.input);
+        return parsed.success && parsed.data.operation.kind === 'retryFixPullRequests';
+    });
+    expect(retry).toBeDefined();
+    if (retry?.command.kind !== 'executeAction') throw new Error('Missing resource fix PR Retry');
+    await act(async () => {
+        expect(await page.context.hostApi.executeAction(retry.command.action, retry.command.input)).toEqual({ status: 'applied' });
+    });
+    await expect(page.queryByText('Fix pull request links could not be read.')).resolves.toBeUndefined();
+});
 
 it('re-enters the same settled entry through the real shell without another Overview read', async () => {
     let overviewReads = 0;
@@ -2191,6 +2274,8 @@ describe('opening a row into the source detail', () => {
         await expect(shell.getByText('These details could not be read')).resolves.toBeDefined();
         await expect(shell.queryByText('This connection is no longer configured')).resolves.toBeUndefined();
         await expect(shell.queryByRole('button', { name: 'Retry' })).resolves.toBeUndefined();
+        // No retry control, so no invitation to try again either (UI4 D8): the words and the controls agree.
+        expect(document.body.textContent).not.toMatch(/try again/i);
         await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Details' })); });
         expect(document.body.textContent).toContain('machine_not_found');
         expect(document.body.textContent).toContain('target_machine_required');
