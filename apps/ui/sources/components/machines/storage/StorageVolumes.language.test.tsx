@@ -76,13 +76,24 @@ it('shows sampled reclaimable capacity quietly in the bar, preserving the free-n
     expect(bar().segments.some((segment: { id: string }) => segment.id === 'purgeable')).toBe(false);
 });
 
-it('lists data disks but keeps the boot and EFI partitions out of the disk section', async () => {
-    const disk = (volumeId: string, mountPath: string, happierBytes = 0): StorageVolume => ({ volume: { volumeId, mountPath, label: mountPath },
-        totalBytes: 1_000_000, freeBytes: 500_000, happierBytes, pileBytes: 0, trashBytes: 0 });
-    const summary = { volumes: [disk('root', '/', 40_960), disk('boot', '/boot'), disk('efi', '/boot/efi'), disk('data', '/srv/data')] } as unknown as StorageSummary;
+it('keeps the owner\'s system partitions out of the disk section and says why a disk cannot be cleaned', async () => {
+    const disk = (volumeId: string, mountPath: string, cleanup?: StorageVolume['cleanup'], happierBytes = 0): StorageVolume => ({ volume: { volumeId, mountPath, label: mountPath },
+        totalBytes: 1_000_000, freeBytes: 500_000, happierBytes, pileBytes: 0, trashBytes: 0, ...(cleanup ? { cleanup } : {}) });
+    const summary = { volumes: [
+        disk('root', '/', { kind: 'available' }, 40_960),
+        disk('boot', '/boot', { kind: 'unavailable', reason: 'system_partition' }),
+        disk('efi', '/boot/efi', { kind: 'unavailable', reason: 'system_partition' }),
+        disk('data', '/srv/data', { kind: 'unavailable', reason: 'permission_denied' }),
+        disk('ro', '/mnt/ro', { kind: 'unavailable', reason: 'read_only' }),
+        disk('old', '/mnt/old'),
+    ] } as unknown as StorageSummary;
     const screen = await renderScreen(<StorageVolumes summary={summary} compact={false} />);
-    expect(screen.findAllByTestId('machine-storage-volume-root')).not.toHaveLength(0);
-    expect(screen.findAllByTestId('machine-storage-volume-data')).not.toHaveLength(0);
-    expect(screen.findAllByTestId('machine-storage-volume-boot')).toHaveLength(0);
-    expect(screen.findAllByTestId('machine-storage-volume-efi')).toHaveLength(0);
+    for (const id of ['root', 'data', 'ro', 'old']) expect(screen.findAllHostsByTestId(`machine-storage-volume-${id}`)).not.toHaveLength(0);
+    expect(screen.findAllHostsByTestId('machine-storage-volume-boot')).toHaveLength(0);
+    expect(screen.findAllHostsByTestId('machine-storage-volume-efi')).toHaveLength(0);
+    expect(screen.findAllHostsByTestId('machine-storage-volume-data-cleanup')).not.toHaveLength(0);
+    expect(screen.getTextContent()).toContain(t('machineStorage.volumes.cleanupUnavailable.permission_denied'));
+    expect(screen.getTextContent()).toContain(t('machineStorage.volumes.cleanupUnavailable.read_only'));
+    expect(screen.findAllHostsByTestId('machine-storage-volume-root-cleanup')).toHaveLength(0);
+    expect(screen.findAllHostsByTestId('machine-storage-volume-old-cleanup')).toHaveLength(0);
 });

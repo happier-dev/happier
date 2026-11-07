@@ -468,6 +468,57 @@ describe('MachineStorageTab', () => {
         expect(screen.findByTestId('machine-storage-worktree-locale')).toBeNull();
     });
 
+    describe('Docker Free space', () => {
+        const sha = (c: string) => `sha256:${c.repeat(64)}`;
+        const candidates = [
+            { nativeId: sha('a'), configDigest: sha('b'), platform: 'linux/amd64', sizeBytes: 400_000_000, reclaimableBytes: 300_000_000 },
+            { nativeId: sha('c'), configDigest: sha('d'), platform: 'linux/amd64', sizeBytes: 200_000_000, reclaimableBytes: 150_000_000 },
+        ];
+        const ready = (custody: unknown = { kind: 'complete', candidates }) => ({ kind: 'ready', engineId: 'engine-1',
+            images: { count: 7, sizeBytes: 2 * GB, reclaimableBytes: 450_000_000, custody },
+            volumes: { count: 2, sizeBytes: 800_000_000, alwaysKept: true },
+            buildCache: { count: 4, sizeBytes: 600_000_000, reclaimableBytes: 0, reason: 'build_cache_custody_unavailable' },
+            releases: { kind: 'ready', environments: [{ environmentId: 'env-1', keptReleaseCount: 2 }, { environmentId: 'env-2', keptReleaseCount: 1 }] } });
+
+        it('reviews the owner\'s exact unused images in place and removes them through the one prune Action', async () => {
+            const prunes: Rpc[] = [];
+            const { screen } = await mount({ id: 'storage' }, {}, (rpc) => {
+                if (rpc.method === RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET || rpc.method === RPC_METHODS.DAEMON_STORAGE_SIZE_REFRESH) return { ...SUMMARY, docker: ready() };
+                if (rpc.method === RPC_METHODS.DAEMON_STORAGE_DOCKER_PRUNE) {
+                    prunes.push(rpc);
+                    return { kind: 'completed', buildCache: 'unsupported', removed: [sha('a'), sha('c')], kept: [sha('e')] };
+                }
+                return undefined;
+            });
+            await vi.waitFor(async () => { await act(async () => {}); expect(screen.findByTestId('machine-storage-docker')).not.toBeNull(); });
+            const facts = screen.getTextContent();
+            expect(facts).toContain(t('machineStorage.docker.alwaysKept'));
+            expect(facts).toContain(t('machineStorage.docker.releasesKept', { count: 3 }));
+            expect(facts).not.toContain(sha('a'));
+            await act(async () => { screen.pressByTestId('machine-storage-docker-free-space'); });
+            expect(screen.getTextContent()).toContain(t('machineStorage.docker.reviewLead', { count: 2 }));
+            expect(screen.getTextContent()).toContain(formatMachineBytes(450_000_000, 'storage'));
+            expect(prunes).toHaveLength(0);
+            await act(async () => { screen.pressByTestId('machine-storage-docker-remove'); });
+            await vi.waitFor(async () => { await act(async () => {}); expect(screen.getTextContent()).toContain(t('machineStorage.docker.removed', { removed: 2, kept: 1 })); });
+            expect(prunes).toHaveLength(1);
+            expect(prunes[0]!.payload).toMatchObject({ expectedEngineId: 'engine-1', selection: { kind: 'explicit',
+                images: candidates.map(({ nativeId, configDigest, platform }) => ({ nativeId, configDigest, platform })), buildCacheIds: [] } });
+        });
+
+        it('offers nothing to remove when custody is unproven, and hides Docker where it does not run', async () => {
+            let docker: unknown = ready({ kind: 'unavailable', reason: 'image_custody_unavailable' });
+            const { screen } = await mount({ id: 'storage' }, {}, (rpc) => rpc.method === RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET
+                || rpc.method === RPC_METHODS.DAEMON_STORAGE_SIZE_REFRESH ? { ...SUMMARY, docker } : undefined);
+            await vi.waitFor(async () => { await act(async () => {}); expect(screen.findByTestId('machine-storage-docker')).not.toBeNull(); });
+            expect(screen.getTextContent()).toContain(t('machineStorage.docker.custodyUnavailable'));
+            expect(screen.findAllHostsByTestId('machine-storage-docker-free-space')).toHaveLength(0);
+            docker = { kind: 'unavailable', reason: 'native_runtime_unavailable' };
+            await act(async () => { screen.pressByTestId('machine-storage-size-again'); });
+            await vi.waitFor(async () => { await act(async () => {}); expect(screen.findAllHostsByTestId('machine-storage-docker')).toHaveLength(0); });
+        });
+    });
+
     it('boxes every row the owner offers and names what an in-use row loses before it joins the pile', async () => {
         const inUse = { ...item('pw', 'Playwright 1.56', 0.6 * GB, 'keep', 'in_use'), loses: [{ code: 'in_use' as const }] };
         const { screen } = await mount({ id: 'storage', page: 'category', categoryId: 'caches' }, {}, ({ method }) => {
@@ -495,6 +546,19 @@ describe('MachineStorageTab', () => {
         expect(screen.getTextContent()).toContain(t('machineAttention.words.diskNearlyFull', { volume: 'Macintosh HD' }));
         await act(async () => { screen.pressByTestId('machine-storage-disk-attention-action'); });
         expect(setParams).toHaveBeenCalledWith({ id: 'storage', prepare: 'lowDisk', volumeId: 'mac' });
+    });
+
+    it('names why a nearly full disk cannot be cleaned and offers no clean action there', async () => {
+        const reason = { key: 'disk:mac', level: 'needs_you', since: 1, metric: 'disk', nextStep: 'free_up_space',
+            kind: 'disk_nearly_full', volumeId: 'mac', volumeLabel: 'Macintosh HD' } as const;
+        const volumes = SUMMARY.volumes.map((volume) => volume.volume.volumeId === 'mac'
+            ? { ...volume, cleanup: { kind: 'unavailable', reason: 'read_only' } } : volume);
+        const { screen } = await mount({ id: 'storage' }, { daemonState: { resources: { v: 1, vitals: { state: 'reporting' },
+            host: { logicalCores: 4, memoryTotalBytes: 100, bootedAt: 1 }, attention: { level: 'needs_you', reasons: [reason] } } } },
+            ({ method }) => method === RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET ? { ...SUMMARY, volumes } : undefined);
+        await vi.waitFor(async () => { await act(async () => {}); expect(screen.findByTestId('machine-storage-disk-attention')).not.toBeNull(); });
+        expect(screen.findAllHostsByTestId('machine-storage-disk-attention-action')).toHaveLength(0);
+        expect(screen.getTextContent()).toContain(t('machineStorage.volumes.cleanupUnavailable.read_only'));
     });
 
     it('keeps a calm disk free of the low-disk callout', async () => {

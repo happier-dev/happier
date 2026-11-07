@@ -11143,6 +11143,8 @@ const ja: typeof en = {
         action: '下書きを削除',
         confirmTitle: 'この下書きを削除しますか？',
         confirmDescription: '同期されているすべての端末からこの下書きが削除されます。',
+        failedTitle: '下書きを削除できませんでした',
+        launchInCustody: 'この下書きはセッションを開始中です。開始が終わったら削除できます。',
     },
     conflict: {
         title: '競合する変更を確認',

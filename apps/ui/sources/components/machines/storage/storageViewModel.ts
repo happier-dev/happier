@@ -137,13 +137,14 @@ export function storageVolumeName(volume: StorageVolume, form: 'title' | 'senten
 }
 
 /** The mount path beside the name, when it says something the name does not ("/Volumes/Work"). */
-/**
- * The boot and EFI partitions a Linux machine mounts: the system's, never where Happier or anything
- * the person clears lives. The disk section leaves them out unless Happier keeps something there.
- */
-export function isStorageBootPartition(volume: StorageVolume): boolean {
-    const path = volume.volume.mountPath;
-    return volume.happierBytes === 0 && (path === '/boot' || path.startsWith('/boot/'));
+/** The owner's per-volume cleanup fact: system partitions leave the disk section; other refusals say why in words. */
+export function isStorageSystemPartition(volume: StorageVolume): boolean {
+    return volume.cleanup?.kind === 'unavailable' && volume.cleanup.reason === 'system_partition';
+}
+
+/** Why Happier cannot clean this disk, or null when it can (or the machine did not say). */
+export function describeStorageVolumeCleanupRefusal(volume: StorageVolume): string | null {
+    return volume.cleanup?.kind === 'unavailable' ? t(`machineStorage.volumes.cleanupUnavailable.${volume.cleanup.reason}`) : null;
 }
 
 export function storageVolumeMountHint(volume: StorageVolume): string | null {

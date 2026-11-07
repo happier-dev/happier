@@ -11138,6 +11138,8 @@ const zhHant: typeof en = {
         action: '刪除草稿',
         confirmTitle: '刪除這個草稿？',
         confirmDescription: '這會從你所有已同步的裝置上移除這個草稿。',
+        failedTitle: '無法刪除這個草稿',
+        launchInCustody: '這個草稿正在啟動工作階段。啟動完成後即可刪除。',
     },
     conflict: {
         title: '檢查衝突的變更',

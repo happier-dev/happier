@@ -11168,6 +11168,8 @@ const pl: typeof en = {
         action: 'Usuń szkic',
         confirmTitle: 'Usunąć ten szkic?',
         confirmDescription: 'Szkic zostanie usunięty ze wszystkich zsynchronizowanych urządzeń.',
+        failedTitle: 'Nie udało się usunąć szkicu',
+        launchInCustody: 'Ten szkic uruchamia sesję. Możesz go usunąć, gdy uruchamianie się zakończy.',
     },
     conflict: {
         title: 'Przejrzyj sprzeczne zmiany',

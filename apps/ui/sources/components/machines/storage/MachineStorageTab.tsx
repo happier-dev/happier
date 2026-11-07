@@ -37,6 +37,7 @@ import { getVersionSupportState } from '@/utils/system/versionUtils';
 
 import { StorageBreakdown } from './StorageBreakdown';
 import { StorageCategoryPage } from './StorageCategoryPage';
+import { StorageDockerCleanup } from './StorageDockerCleanup';
 import { useStorageCollect } from './StorageCollectToggle';
 import { StorageItemRow } from './StorageItemRow';
 import { StorageSaySection } from './StoragePageHead';
@@ -69,6 +70,7 @@ import { useMachineTabFacts } from '@/components/machines/page/useMachineTabFact
 import {
   describeStorageSentence,
   describeStorageFailure,
+  describeStorageVolumeCleanupRefusal,
   readStorageCanGoBytes,
   selectStorageTabView,
   storageVolumeName,
@@ -387,6 +389,7 @@ function StorageMainView(
           recipient={view.recipient}
           policyUnavailable={view.policyUnavailable}
           onRetry={retry}
+          onSizeAgain={storage.sizeAgain}
           compact={layout.compact}
           lowDiskVolumeId={
             props.params.prepare === 'lowDisk'
@@ -421,6 +424,7 @@ function StorageHappierView(
     /** Protection and cleanup await the machine's resources policy: sizes only, nothing that offers to clear. */
     policyUnavailable: boolean;
     onRetry: () => void;
+    onSizeAgain: () => Promise<unknown>;
     compact: boolean;
     lowDiskVolumeId: string | null;
     onOpenCategory: (categoryId: HappierStorageCategoryIdV1) => void;
@@ -490,6 +494,16 @@ function StorageHappierView(
             cleanupHidden={props.policyUnavailable}
             onOpenCategory={props.onOpenCategory}
           />
+          {props.summary.docker && !props.policyUnavailable ? (
+            <StorageDockerCleanup
+              serverId={props.serverId}
+              machineId={props.machineId}
+              machineName={props.machineName}
+              docker={props.summary.docker}
+              offline={props.offline}
+              onSizeAgain={props.onSizeAgain}
+            />
+          ) : null}
           {nothingToClear ? (
             <ItemGroup>
               <SurfaceStateCard
@@ -588,7 +602,9 @@ function StorageDiskAttention(
   );
   if (!reason || (reason.kind !== 'disk_nearly_full' && reason.kind !== 'disk_full')) return null;
   const volume = props.summary.volumes.find((entry) => entry.volume.volumeId === reason.volumeId);
-  const action = props.offline ? null : resolveMachineReasonAction(reason);
+  // A disk the owner says Happier cannot clean says why, and offers no clean action.
+  const refusal = volume ? describeStorageVolumeCleanupRefusal(volume) : null;
+  const action = props.offline || refusal ? null : resolveMachineReasonAction(reason);
   const usedPct = volume && volume.totalBytes > 0
     ? Math.round((1 - volume.freeBytes / volume.totalBytes) * 100)
     : null;
@@ -608,7 +624,7 @@ function StorageDiskAttention(
         kind="warning"
         size="line"
         title={describeMachineAttentionWord(reason)}
-        {...(detail ? { reason: detail } : {})}
+        {...(detail || refusal ? { reason: [detail, refusal].filter(Boolean).join(' ') } : {})}
         {...(action ? {
           action: {
             label: action.label,

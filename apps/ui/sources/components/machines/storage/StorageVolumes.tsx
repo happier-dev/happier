@@ -13,7 +13,7 @@ import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
 
-import { isStorageBootPartition, resolveStorageVolumeParts, storageVolumeMountHint, storageVolumeName, type StorageSummary, type StorageVolume } from './storageViewModel';
+import { describeStorageVolumeCleanupRefusal, isStorageSystemPartition, resolveStorageVolumeParts, storageVolumeMountHint, storageVolumeName, type StorageSummary, type StorageVolume } from './storageViewModel';
 
 const BAR_HEIGHT = 10;
 /** A part the legend names stays visible on the bar: Happier's few GB on a 2 TB disk is still a sliver of its colour. */
@@ -28,7 +28,7 @@ const LEGEND_TEXT = happierPageTextMetrics('meta');
  */
 export const StorageVolumes = React.memo(function StorageVolumes(props: Readonly<{ summary: StorageSummary; compact: boolean }>) {
     usePreferredLanguage();
-    const volumes = props.summary.volumes.filter(volume => !isStorageBootPartition(volume));
+    const volumes = props.summary.volumes.filter(volume => !isStorageSystemPartition(volume));
     if (volumes.length === 0) return null;
     return (
         <ItemGroup accessibilityLabel={t('machineStorage.volumes.label')}>
@@ -47,6 +47,7 @@ export const StorageVolumeRow = React.memo(function StorageVolumeRow(props: Read
     const name = storageVolumeName(volume);
     const hint = storageVolumeMountHint(volume);
     const parts = resolveStorageVolumeParts(volume);
+    const refusal = describeStorageVolumeCleanupRefusal(volume);
     const figure = formatMachinePartOfWhole(parts.free, volume.totalBytes, 'storage', 'part');
     const holdsHappier = parts.happier + parts.pile + parts.trash > 0;
     // Happier's share is the one signature accent of the usage chart language (`usageAccent.ts`).
@@ -88,6 +89,7 @@ export const StorageVolumeRow = React.memo(function StorageVolumeRow(props: Read
                 <CompositionStrip theme={pluginTheme} label={label} total={volume.totalBytes} segments={legendSegments}
                     variant="legend" unknownLabel="" appearance={{ legend: 'compact', figure: 'value', textStyle: LEGEND_TEXT }} valueFormatter={format} />
             </View>
+            {refusal ? <Text testID={`machine-storage-volume-${volume.volume.volumeId}-cleanup`} style={styles.after}>{refusal}</Text> : null}
             {parts.afterCleanupFree !== null ? (
                 <Text testID={`machine-storage-volume-${volume.volume.volumeId}-after`} style={styles.after}>
                     {`${t(props.after === 'trashEmpties' ? 'machineStorage.volumes.afterTrashEmpties' : 'machineStorage.volumes.afterCleanup')} `}

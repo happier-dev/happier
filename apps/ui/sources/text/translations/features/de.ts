@@ -11139,6 +11139,8 @@ const de: typeof en = {
         action: 'Entwurf löschen',
         confirmTitle: 'Diesen Entwurf löschen?',
         confirmDescription: 'Damit wird der Entwurf von deinen synchronisierten Geräten entfernt.',
+        failedTitle: 'Entwurf konnte nicht gelöscht werden',
+        launchInCustody: 'Dieser Entwurf startet gerade eine Session. Du kannst ihn löschen, sobald der Start abgeschlossen ist.',
     },
     conflict: {
         title: 'Widersprüchliche Änderungen prüfen',
