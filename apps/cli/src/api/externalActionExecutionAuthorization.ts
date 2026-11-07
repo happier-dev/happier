@@ -716,6 +716,9 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
   if (input.target.kind === 'session' && input.actionId !== 'session.message.send') return fail('target_unavailable');
   const requiresMachineProof = input.invocation?.caller.kind === 'plugin'
     || input.actionId === 'session.spawn_new' && input.invocation !== undefined
+    // Fresh approval results belong to the deciding invocation. Retain its
+    // private authority even when the receiving Machine has the same Account.
+    || input.actionId === 'approval.request.decide' && input.invocation !== undefined
     || input.managedContinuation !== undefined
     || requiresOriginalAccountMachineActionProof(input.actionId, input.input);
   const workflow = input.installedWorkflow;
