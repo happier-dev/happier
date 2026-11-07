@@ -290,7 +290,8 @@ export const TriageSourcesContributionProtocolV1 = defineContributionProtocol({
                 schema: TriagePrepareReviewWorkspaceInputV1Schema,
             },
             resultSchema: TriagePrepareReviewWorkspaceResultV1Schema,
-            action: { surfaces: ['plugin'], dangerLevel: 'writesLocal' },
+            // Prepared New Session authoring invokes this role from mounted UI.
+            action: { surfaces: ['plugin', 'ui'], dangerLevel: 'writesLocal' },
         },
         verifyReviewWorkspace: {
             required: false,
