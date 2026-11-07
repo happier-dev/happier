@@ -38,6 +38,10 @@ import { BotTemplateMemorySection, BotTemplateSkillsSection } from './BotTemplat
 import { BotTemplateNeedsSection } from './BotTemplateNeedsSection';
 import { BotTemplateAgentSection } from './BotTemplateAgentSection';
 import { requestBotTemplateDraft } from './openBotTemplate';
+import { useDeleteBotTemplateDraft } from './useDeleteBotTemplate';
+import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
+import { getArtifactKindPolicyV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
+import { BOT_TEMPLATE_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/bots/templates/botTemplateV1';
 import { storage } from '@/sync/domains/state/storageStore';
 import { selectHomeQualifiedSession } from '@/sync/domains/session/selectHomeQualifiedSession';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
@@ -142,6 +146,10 @@ function EditorIdentity(props: LoadedProps) {
     const author = presentSharePrincipal({ ref: { kind: 'account', accountId: props.scope.accountId }, profile,
         viewerAccountId: props.scope.accountId }).displayName;
     const router = useRouter();
+    // This editor opens only the owner's draft (the author read refuses anyone else); the kind's policy decides
+    // whether an owner may delete it.
+    const remove = useDeleteBotTemplateDraft(getArtifactKindPolicyV1(BOT_TEMPLATE_ARTIFACT_KIND_V1).ownerDeleteAllowed
+        ? { serverId: props.serverId, artifactId: props.artifactId } : null);
     const edit = (key: 'name' | 'description', value: string) => props.buffer.edit(draft => ({ ...draft,
         content: { ...draft.content, identity: { ...draft.content.identity, [key]: value } } }));
     return <BotTemplateHeader identity={identity} author={author} version={version} sharing={t('botTemplates.privateDraft')}
@@ -149,10 +157,15 @@ function EditorIdentity(props: LoadedProps) {
             onChangeText: value => edit('name', value), onCommit: () => { void props.buffer.commit(props.save); }, testID: 'bot-template-name' }}
         descriptionEditor={{ value: identity.description, placeholder: t('botTemplates.description'), accessibilityLabel: t('botTemplates.description'),
             onChangeText: value => edit('description', value), onCommit: () => { void props.buffer.commit(props.save); }, testID: 'bot-template-description' }}
-        actions={props.presentation === 'pane' ? <IconButton testID="bot-template-expand" variant="plain" iconName="arrows-out"
-            accessibilityLabel={t('common.expand')} tooltip={t('common.expand')} tooltipPlacement="bottom"
-            onPress={() => router.pushRetainingCurrent(buildBotTemplateEditorRoute({ draftArtifactId: props.artifactId,
-                sourceSessionRef: props.buffer.getSnapshot().draft.sourceSessionRef, presentation: 'page' }) as never)} /> : undefined} />;
+        actions={<>
+            {props.presentation === 'pane' ? <IconButton testID="bot-template-expand" variant="plain" iconName="arrows-out"
+                accessibilityLabel={t('common.expand')} tooltip={t('common.expand')} tooltipPlacement="bottom"
+                onPress={() => router.pushRetainingCurrent(buildBotTemplateEditorRoute({ draftArtifactId: props.artifactId,
+                    sourceSessionRef: props.buffer.getSnapshot().draft.sourceSessionRef, presentation: 'page' }) as never)} /> : null}
+            {remove ? <ItemRowActions title={t('common.moreActions')} overflowOnly overflowTriggerTestID="bot-template-editor:more"
+                actions={[{ id: 'bot-template-editor:delete', title: t('botTemplates.deleteTemplateEllipsis'), icon: 'trash', destructive: true,
+                    onPress: () => { void remove(); } }]} /> : null}
+        </>} />;
 }
 
 function TemplateField(props: Readonly<{ buffer: BotTemplateEditorBuffer; save: BotTemplateSave; field: 'instructions' | 'firstTask' }>) {
