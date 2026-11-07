@@ -664,8 +664,8 @@ export async function setArtifactAccessGrantInTx(tx: Tx, input: ArtifactAccessGr
     if (!access) return { ok: false, error: "artifact_not_found" };
     if (!mayManageResourceGrants(access, input.accessLevel)) return { ok: false, error: "artifact_access_forbidden" };
     const mutation = await readArtifactGrantMutationInTx(tx, input);
-    const principal = input.principal;
-    const principalError = await validateResourceGrantPrincipalInTx(tx, access.ownerAccountId, principal);
+    const principalError = await validateResourceGrantPrincipalInTx(tx, { actorAccountId: input.actorAccountId,
+        ownerAccountId: access.ownerAccountId, principal: input.principal, hasExistingGrant: mutation.previous !== null });
     if (principalError) return { ok: false, error: `artifact_${principalError}` };
     const changed = mutation.previous?.accessLevel !== input.accessLevel;
     if (changed) await mutation.upsert();

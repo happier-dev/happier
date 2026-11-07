@@ -13,6 +13,8 @@ import { EFFECTIVE_TEAM_MEMBERSHIP_WHERE, isEffectiveTeamMembership } from './me
 import { EFFECTIVE_TEAM_GROUP_MEMBERSHIP_WHERE, isEffectiveTeamGroupMembership } from './groups/effectiveGroupMembership';
 import { getDbProviderFromEnv, prismaRuntime } from '@/storage/prisma';
 
+import { resolveShareSubjectInTx, type ShareSubjectError } from './shareEligibility';
+
 type Member = Readonly<{ accountId: string; status: TeamMembershipStatus; account: Readonly<{ status: AccountStatus }> }>;
 
 /** Resource adapters supply current storage facts; links and keys never supply grants. */
@@ -60,6 +62,22 @@ const accessRank = { view: 1, edit: 2, admin: 3, owner: 4 } as const;
  * The actor and lifecycle predicates must match the SAME membership row.
  * Resource adapters still own visibility and final private-content admission.
  */
+export function resourceGrantArmWheres(actorAccountId: string) {
+    const member = { ...EFFECTIVE_TEAM_MEMBERSHIP_WHERE, accountId: actorAccountId };
+    return {
+        account: { accountId: actorAccountId, account: { status: 'active' as const } },
+        team: { team: { memberships: { some: member } } },
+        group: { teamGroup: { memberships: { some: { ...EFFECTIVE_TEAM_GROUP_MEMBERSHIP_WHERE, teamMembership: member } } } },
+    };
+}
+
+/** The non-owner arm alone, for lists that already exclude the caller's own resources. */
+export async function resolveReceivedResourceGrantWhere(actorAccountId: string,
+    readGrantedResourceIds: (grants: ReturnType<typeof resourceGrantArmWheres>) => Promise<readonly (readonly string[])[]>) {
+    const granted = await readGrantedResourceIds(resourceGrantArmWheres(actorAccountId));
+    return { id: { in: [...new Set(granted.flat())] } };
+}
+
 export function resourceGrantAccessWhere(actorAccountId: string) {
     const member = { ...EFFECTIVE_TEAM_MEMBERSHIP_WHERE, accountId: actorAccountId };
     return { OR: [
@@ -192,23 +210,20 @@ export function mayManageResourceGrants(access: ResourceGrantAccess, nextLevel?:
     return access.level === 'owner' || (access.level === 'admin' && nextLevel !== 'admin');
 }
 
-/** Validate a grant's current principal without adding a membership or key authority. */
-export async function validateResourceGrantPrincipalInTx(tx: Tx, ownerAccountId: string, principal: PrincipalRefV1):
-    Promise<'owner_grant_invalid' | 'subject_not_found' | 'subject_ineligible' | null> {
-    if (principal.kind === 'account') {
-        if (principal.accountId === ownerAccountId) return 'owner_grant_invalid';
-        const account = await tx.account.findUnique({ where: { id: principal.accountId }, select: { status: true } });
-        return !account ? 'subject_not_found' : account.status !== 'active' ? 'subject_ineligible' : null;
-    }
-    if (principal.kind === 'team') {
-        const team = await tx.team.findUnique({ where: { id: principal.teamId }, select: { archivedAt: true } });
-        return !team ? 'subject_not_found' : team.archivedAt ? 'subject_ineligible' : null;
-    }
-    const group = await tx.teamGroup.findUnique({ where: { id: principal.groupId }, select: {
-        teamId: true, archivedAt: true, team: { select: { archivedAt: true } },
-    } });
-    return !group || group.teamId !== principal.teamId ? 'subject_not_found'
-        : group.archivedAt || group.team.archivedAt ? 'subject_ineligible' : null;
+export type ResourceGrantPrincipalError = 'owner_grant_invalid' | 'subject_not_found' | 'subject_ineligible';
+
+/** Resource wire codes have no self-share code; a self-share is simply not an eligible subject. */
+function resourceGrantPrincipalError(error: ShareSubjectError): ResourceGrantPrincipalError {
+    return error === 'self_grant_invalid' ? 'subject_ineligible' : error;
+}
+
+/** A resource grant writer's subject admission: the one share-eligibility rule; an existing grant stays editable. */
+export async function validateResourceGrantPrincipalInTx(tx: Tx, input: Readonly<{
+    actorAccountId: string; ownerAccountId: string; principal: PrincipalRefV1; hasExistingGrant: boolean;
+}>): Promise<ResourceGrantPrincipalError | null> {
+    const resolution = await resolveShareSubjectInTx(tx, { actorAccountId: input.actorAccountId,
+        resourceOwnerAccountId: input.ownerAccountId, subject: input.principal, hasExistingGrant: input.hasExistingGrant });
+    return resolution.ok ? null : resourceGrantPrincipalError(resolution.error);
 }
 
 export interface ResourceStoredRecipientEnvelope {

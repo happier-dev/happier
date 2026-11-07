@@ -84,7 +84,8 @@ export async function previewDiscussionSecondOpinionInTx(tx: Tx, input: Actor & 
     const request = parsed.data;
     for (const participant of request.participants ?? []) {
         if (participant.accountId === input.actorAccountId) continue;
-        const error = await validateResourceGrantPrincipalInTx(tx, input.actorAccountId, participant);
+        const error = await validateResourceGrantPrincipalInTx(tx, { actorAccountId: input.actorAccountId,
+            ownerAccountId: input.actorAccountId, principal: participant, hasExistingGrant: false });
         if (error) return discussionFailure(`discussion_${error}`);
     }
     const facts = await sourceFactsInTx(tx, { ...input, source: request.source });

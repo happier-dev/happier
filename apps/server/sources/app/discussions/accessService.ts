@@ -66,7 +66,8 @@ export async function validateInitialDiscussionGrantsInTx(tx: Tx, input: Readonl
     const participantAccountIds = (input.request.participants ?? []).flatMap(participant => participant.kind === 'account' ? [participant.accountId] : []);
     if (new Set(participantAccountIds).size !== participantAccountIds.length) return discussionFailure("discussion_subject_ineligible");
     for (const accountId of participantAccountIds) {
-        const error = await validateResourceGrantPrincipalInTx(tx, input.actorAccountId, { kind: "account", accountId });
+        const error = await validateResourceGrantPrincipalInTx(tx, { actorAccountId: input.actorAccountId,
+            ownerAccountId: input.actorAccountId, principal: { kind: "account", accountId }, hasExistingGrant: false });
         if (error) return discussionFailure(`discussion_${error}`);
     }
     const envelopes = input.request.recipientKeyEnvelopes ?? [];
@@ -157,27 +158,31 @@ export async function setDiscussionGrantInTx(tx: Tx, input: DiscussionActorInput
     const context = await resolveDiscussionContextInTx(tx, { discussionId: input.discussionId, accountId: input.actorAccountId, authentication: input.authentication });
     if (!context) return discussionFailure("discussion_not_found");
     if (!mayManageResourceGrants(context.access, input.request.accessLevel)) return discussionFailure("discussion_access_forbidden");
-    const error = await validateResourceGrantPrincipalInTx(tx, context.ownerAccountId, input.request.principal);
-    if (error) return discussionFailure(`discussion_${error}`);
-    const sourceQuote = await admitDiscussionSecondOpinionGrantInTx(tx, { ...input, principal: input.request.principal });
-    if (!sourceQuote.ok) return sourceQuote;
-    const previousAudience = await resolveDiscussionAudienceInTx(tx, input.discussionId);
     const data = { accessLevel: input.request.accessLevel, createdByAccountId: input.actorAccountId };
     const principal = input.request.principal;
-    let changed: boolean;
+    let previous: Readonly<{ accessLevel: string }> | null;
+    let upsert: () => Promise<unknown>;
     if (principal.kind === "account") {
         const where = { discussionId_accountId: { discussionId: input.discussionId, accountId: principal.accountId } };
-        changed = (await tx.discussionAccountGrant.findUnique({ where }))?.accessLevel !== data.accessLevel;
-        if (changed) await tx.discussionAccountGrant.upsert({ where, create: { discussionId: input.discussionId, accountId: principal.accountId, ...data }, update: data });
+        previous = await tx.discussionAccountGrant.findUnique({ where });
+        upsert = () => tx.discussionAccountGrant.upsert({ where, create: { discussionId: input.discussionId, accountId: principal.accountId, ...data }, update: data });
     } else if (principal.kind === "team") {
         const where = { discussionId_teamId: { discussionId: input.discussionId, teamId: principal.teamId } };
-        changed = (await tx.discussionTeamGrant.findUnique({ where }))?.accessLevel !== data.accessLevel;
-        if (changed) await tx.discussionTeamGrant.upsert({ where, create: { discussionId: input.discussionId, teamId: principal.teamId, ...data }, update: data });
+        previous = await tx.discussionTeamGrant.findUnique({ where });
+        upsert = () => tx.discussionTeamGrant.upsert({ where, create: { discussionId: input.discussionId, teamId: principal.teamId, ...data }, update: data });
     } else {
         const where = { discussionId_teamGroupId: { discussionId: input.discussionId, teamGroupId: principal.groupId } };
-        changed = (await tx.discussionGroupGrant.findUnique({ where }))?.accessLevel !== data.accessLevel;
-        if (changed) await tx.discussionGroupGrant.upsert({ where, create: { discussionId: input.discussionId, teamGroupId: principal.groupId, ...data }, update: data });
+        previous = await tx.discussionGroupGrant.findUnique({ where });
+        upsert = () => tx.discussionGroupGrant.upsert({ where, create: { discussionId: input.discussionId, teamGroupId: principal.groupId, ...data }, update: data });
     }
+    const error = await validateResourceGrantPrincipalInTx(tx, { actorAccountId: input.actorAccountId,
+        ownerAccountId: context.ownerAccountId, principal, hasExistingGrant: previous !== null });
+    if (error) return discussionFailure(`discussion_${error}`);
+    const sourceQuote = await admitDiscussionSecondOpinionGrantInTx(tx, { ...input, principal });
+    if (!sourceQuote.ok) return sourceQuote;
+    const previousAudience = await resolveDiscussionAudienceInTx(tx, input.discussionId);
+    const changed = previous?.accessLevel !== data.accessLevel;
+    if (changed) await upsert();
     if (changed) await reconcileDiscussionGrantAudienceInTx(tx, input.discussionId, previousAudience);
     return mutationResultInTx(tx, input, context.ownerAccountId, changed);
 }
@@ -505,7 +510,9 @@ export async function transferDiscussionOwnerInTx(tx: Tx, input: DiscussionActor
     if (!context) return discussionFailure("discussion_not_found");
     if (input.request.accountId === context.ownerAccountId) return mutationResultInTx(tx, input, context.ownerAccountId, false);
     if (context.access.level !== "owner") return discussionFailure("discussion_access_forbidden");
-    const error = await validateResourceGrantPrincipalInTx(tx, context.ownerAccountId, { kind: "account", accountId: input.request.accountId });
+    // Transfer names a current audience member, never a new share.
+    const error = await validateResourceGrantPrincipalInTx(tx, { actorAccountId: input.actorAccountId, ownerAccountId: context.ownerAccountId,
+        principal: { kind: "account", accountId: input.request.accountId }, hasExistingGrant: true });
     if (error) return discussionFailure(`discussion_${error}`);
     const audience = await resolveDiscussionAudienceInTx(tx, input.discussionId);
     if (!audience.includes(input.request.accountId)) return discussionFailure("discussion_subject_ineligible");
