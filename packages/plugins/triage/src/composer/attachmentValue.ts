@@ -1,5 +1,6 @@
 import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/plugin-sdk';
-import { defineProtocolLiteral, defineProtocolObject } from '@happier-dev/plugin-sdk/protocol';
+import { defineProtocolLiteral, defineProtocolObject, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
+import { SessionInputForgeEvidenceV1Schema, type SessionInputForgeEvidenceV1 } from '@happier-dev/plugin-sdk/sessions';
 import {
     TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
     TriageEntryLocatorV1Schema,
@@ -85,12 +86,25 @@ export type TriageComposerEntryAttachmentValueV1 = Readonly<{
  * produces a refusal the reader can act on, never an operation against another
  * entry that happens to occupy the same route.
  */
-export const TriageComposerEntryAttachmentValueV1Schema = defineProtocolObject({
+const entryIdentityValue = defineProtocolObject({
     v: defineProtocolLiteral(1),
     entryRef: TriageEntryRefV1Schema,
     sourceInstance: TriageSourceInstanceRefV1Schema,
     lastKnownLocator: TriageEntryLocatorV1Schema.optional(),
 }, { policy: 'closed' });
+
+/** Selected evidence uses the incumbent attachment envelope without inventing an entry. */
+export const TriageComposerForgeEvidenceAttachmentValueV1Schema = defineProtocolObject({
+    v: defineProtocolLiteral(1), forgeEvidence: SessionInputForgeEvidenceV1Schema,
+}, { policy: 'closed' });
+export const TriageComposerEntryAttachmentValueV1Schema = defineProtocolUnion([
+    entryIdentityValue, TriageComposerForgeEvidenceAttachmentValueV1Schema,
+]);
+
+export function readTriageComposerForgeEvidenceV1(value: unknown): SessionInputForgeEvidenceV1 | null {
+    const parsed = TriageComposerForgeEvidenceAttachmentValueV1Schema.safeParse(value);
+    return parsed.success ? parsed.data.forgeEvidence : null;
+}
 
 export type TriageComposerEntryAttachmentParseResultV1 =
     | Readonly<{ status: 'valid'; value: TriageComposerEntryAttachmentValueV1 }>
@@ -135,7 +149,7 @@ export function deriveTriageComposerEntryAttachmentKey(entryRef: TriageEntryRefV
 export function parseTriageComposerEntryAttachmentValue(
     value: unknown,
 ): TriageComposerEntryAttachmentParseResultV1 {
-    const parsed = TriageComposerEntryAttachmentValueV1Schema.safeParse(value);
+    const parsed = entryIdentityValue.safeParse(value);
     if (!parsed.success) return { status: 'invalid', reason: 'shape' };
 
     const candidate = parsed.data as TriageComposerEntryAttachmentValueV1;

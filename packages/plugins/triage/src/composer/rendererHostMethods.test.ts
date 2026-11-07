@@ -41,7 +41,7 @@ describe('Triage Composer renderer host-method declarations', () => {
         // entire reason this surface exists; `openTriageEntryDetails` →
         // `openSurface`, the whole of **View details**.
         expect([...declaredHostMethods('entry-picker') ?? []].sort())
-            .toEqual(['applyComposer', 'executeAction', 'openSurface', 'readComposer', 'watchComposer']);
+            .toEqual(['applyComposer', 'executeAction', 'openResource', 'openSurface', 'readComposer', 'watchComposer']);
     });
 
     it('declares the canonical snapshot methods the compact label reads from', () => {

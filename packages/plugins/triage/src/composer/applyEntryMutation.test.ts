@@ -8,7 +8,7 @@ import type {
 } from '@happier-dev/plugin-ui';
 import { describe, expect, it } from 'vitest';
 
-import { applyTriageEntryMutation } from './applyEntryMutation.js';
+import { applyTriageEntryMutation, describeTriageMutationRefusal } from './applyEntryMutation.js';
 import { deriveTriageComposerEntryAttachmentKey } from './attachmentValue.js';
 
 const SOURCE = { pluginId: 'happier.forge', localId: 'items' } as const;
@@ -55,7 +55,7 @@ function snapshot(input: Readonly<{
 /**
  * The composer document is a genuine host boundary: it lives in another program
  * and answers over the mounted transport. Only that boundary is replaced here —
- * the plan, the revision check and the replay decision are the real ones.
+ * the plan, revision check and conflict settlement are the real ones.
  */
 function createHandle(script: Readonly<{
     reads: readonly (ComposerReadResultV1 | Error)[];
@@ -78,7 +78,7 @@ function createHandle(script: Readonly<{
             return settle(script.applies[Math.min(applyIndex++, script.applies.length - 1)]!);
         },
     } as unknown as ComposerHandle;
-    return { handle, applied };
+    return { handle, applied, readCount: () => readIndex };
 }
 
 describe('applyTriageEntryMutation', () => {
@@ -101,11 +101,8 @@ describe('applyTriageEntryMutation', () => {
         expect(applied[0]?.expectedRevision).toBe(12);
     });
 
-    it('re-plans rather than resubmitting when the draft moved under it', async () => {
-        // Between the two reads the draft changed. Resubmitting the same
-        // operation with a newer revision would apply a decision made against a
-        // draft that no longer exists; re-planning addresses what is there now.
-        const { handle, applied } = createHandle({
+    it('surfaces a known Composer conflict once without rereading or automatically replaying', async () => {
+        const { handle, applied, readCount } = createHandle({
             reads: [
                 {
                     status: 'ready',
@@ -125,58 +122,12 @@ describe('applyTriageEntryMutation', () => {
             entryRef: entryRef('42'),
         });
 
-        expect(outcome).toEqual({ kind: 'applied' });
-        expect(applied).toHaveLength(2);
-        // The replay addresses the record the *second* read reported, at the
-        // revision that read carried.
-        expect(applied[1]).toEqual({
-            expectedRevision: 13,
-            operations: [{ kind: 'attachment.remove', instanceId: 'triage-9' }],
-        });
-    });
-
-    it('settles instead of resurrecting an entry the replay finds already gone', async () => {
-        const { handle, applied } = createHandle({
-            reads: [
-                {
-                    status: 'ready',
-                    snapshot: snapshot({ revision: 12, attachments: [triageAttachment('42', 'triage-0')] }),
-                },
-                { status: 'ready', snapshot: snapshot({ revision: 13 }) },
-            ],
-            applies: [{ status: 'conflict', currentRevision: 13 }],
-        });
-
-        const outcome = await applyTriageEntryMutation({
-            handle,
-            intent: 'remove',
-            entryRef: entryRef('42'),
-        });
-
-        expect(outcome).toEqual({ kind: 'settled' });
-        expect(applied).toHaveLength(1);
-    });
-
-    it('reports a second conflict instead of retrying forever', async () => {
-        const { handle, applied } = createHandle({
-            reads: [{
-                status: 'ready',
-                snapshot: snapshot({ revision: 12, attachments: [triageAttachment('42', 'triage-0')] }),
-            }],
-            applies: [{ status: 'conflict', currentRevision: 13 }],
-        });
-
-        const outcome = await applyTriageEntryMutation({
-            handle,
-            intent: 'remove',
-            entryRef: entryRef('42'),
-        });
-
-        expect(outcome).toEqual({
-            kind: 'refused',
-            reason: 'The draft changed while this was applied. Try again.',
-        });
-        expect(applied).toHaveLength(2);
+        expect(outcome).toEqual({ kind: 'refused', refusal: { code: 'conflict' } });
+        expect(readCount()).toBe(1);
+        expect(applied).toEqual([{
+            expectedRevision: 12,
+            operations: [{ kind: 'attachment.remove', instanceId: 'triage-0' }],
+        }]);
     });
 
     it('refuses a closed composer without planning anything', async () => {
@@ -191,7 +142,7 @@ describe('applyTriageEntryMutation', () => {
             entryRef: entryRef('42'),
         });
 
-        expect(outcome).toEqual({ kind: 'refused', reason: 'The composer is no longer open.' });
+        expect(outcome).toEqual({ kind: 'refused', refusal: { code: 'composerUnavailable' } });
         expect(applied).toHaveLength(0);
     });
 
@@ -211,10 +162,7 @@ describe('applyTriageEntryMutation', () => {
             entryRef: entryRef('42'),
         });
 
-        expect(outcome).toEqual({
-            kind: 'refused',
-            reason: 'The composer could not be reached. Try again.',
-        });
+        expect(outcome).toEqual({ kind: 'refused', refusal: { code: 'unreachable' } });
         expect(applied).toHaveLength(0);
     });
 
@@ -256,37 +204,49 @@ describe('applyTriageEntryMutation', () => {
             entryRef: entryRef('42'),
         });
 
-        expect(outcome).toEqual({
-            kind: 'refused',
-            reason: 'The composer could not be reached. Try again.',
-        });
+        expect(outcome).toEqual({ kind: 'refused', refusal: { code: 'unreachable' } });
         expect(applied).toHaveLength(1);
     });
 
-    it('settles a rejection raised by the conflict replay', async () => {
-        // The replay reaches the same boundary a second time, so its rejection
-        // has to settle through the same answer rather than escaping the
-        // outcome the first attempt was already committed to producing.
-        const { handle } = createHandle({
-            reads: [
-                {
-                    status: 'ready',
-                    snapshot: snapshot({ revision: 12, attachments: [triageAttachment('42', 'triage-0')] }),
-                },
-                new Error('transport closed'),
-            ],
-            applies: [{ status: 'conflict', currentRevision: 13 }],
-        });
+});
 
-        const outcome = await applyTriageEntryMutation({
-            handle,
-            intent: 'remove',
-            entryRef: entryRef('42'),
-        });
+describe('a refused attachment carries the host\'s typed reason', () => {
+    const attach = (applies: readonly ComposerTransactionResultV1[]) => applyTriageEntryMutation({
+        handle: createHandle({
+            reads: [{ status: 'ready', snapshot: snapshot({ revision: 12 }) }],
+            applies,
+        }).handle,
+        intent: 'attach',
+        entryRef: entryRef('42'),
+        sourceInstance: SOURCE_INSTANCE,
+        presentation: PRESENTATION,
+    });
 
-        expect(outcome).toEqual({
-            kind: 'refused',
-            reason: 'The composer could not be reached. Try again.',
-        });
+    it('names the attachment limit and its maximum instead of a generic failure', async () => {
+        const outcome = await attach([{ status: 'limitExceeded', limit: 'composerAttachments', maximum: 8, actual: 9 }]);
+
+        expect(outcome).toEqual({ kind: 'refused', refusal: { code: 'attachmentLimit', maximum: 8 } });
+    });
+
+    it.each([
+        ['attachment_value_invalid', 'invalidValue'],
+        ['attachment_authority_mismatch', 'notAcceptedHere'],
+        ['attachments_unsupported', 'attachmentsUnsupported'],
+        ['some_reason_the_host_adds_later', 'changeRejected'],
+    ] as const)('maps the host reason %s to %s', async (reason, code) => {
+        const outcome = await attach([{ status: 'invalidOperation', operationIndex: 0, reason }]);
+
+        expect(outcome).toEqual({ kind: 'refused', refusal: { code } });
+    });
+
+    it('describes every refusal in the reader\'s language, filling the limit into the sentence', () => {
+        const text = (key: string, fallback?: string, params?: Readonly<Record<string, string | number>>) => (
+            `${key}|${(fallback ?? '').replace(/\{(\w+)\}/gu, (_, name: string) => String(params?.[name]))}`
+        );
+
+        expect(describeTriageMutationRefusal(text, { code: 'attachmentLimit', maximum: 8 })).toMatch(
+            /^plugins\.triage\.picker\.refusal\.attachmentLimit\|.*\b8\b/u,
+        );
+        expect(describeTriageMutationRefusal(text, { code: 'changeRejected' })).not.toMatch(/raw|invalidOperation|limitExceeded/iu);
     });
 });

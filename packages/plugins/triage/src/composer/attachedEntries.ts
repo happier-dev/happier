@@ -5,6 +5,7 @@ import {
     TRIAGE_ENTRY_ATTACHMENT_IDENTITY_V1,
     deriveTriageComposerEntryAttachmentKey,
     parseTriageComposerEntryAttachmentValue,
+    readTriageComposerForgeEvidenceV1,
 } from './attachmentValue.js';
 
 /**
@@ -90,6 +91,7 @@ export function selectTriageAttachedEntries(
         ) {
             continue;
         }
+        if (readTriageComposerForgeEvidenceV1(record.value) !== null) continue;
         const parsed = parseTriageComposerEntryAttachmentValue(record.value);
         attached.push({
             instanceId: record.instanceId,

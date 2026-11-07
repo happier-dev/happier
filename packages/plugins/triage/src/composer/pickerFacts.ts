@@ -70,9 +70,8 @@ export function projectTriagePickerCorpusFacts(input: Readonly<{
         health: projectTriageFailedSourceHealth(snapshot),
         // Whether a Refresh press can read anything is the refresh coordinator's
         // decision, carried here verbatim. The picker used to re-derive a
-        // narrower answer from rate-limit failures alone and therefore offered a
-        // Refresh that the coordinator was already refusing for an aggregate
-        // backoff, with no banner, no disabled control and no log.
+        // narrower answer from rate-limit failures alone. Every source-stated
+        // deadline must be reflected in the same banner and disabled control.
         refreshBlocked: snapshot.refreshBlocked ?? null,
         nowMs: input.nowMs,
     });

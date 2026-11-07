@@ -1,8 +1,6 @@
-import type { PluginCancellationOptions } from '@happier-dev/plugin-sdk';
-import {
-    raceWithTimeout,
-    throwIfAborted,
-} from '@happier-dev/plugin-sdk/async';
+import { isPluginError, PluginError, type PluginCancellationOptions } from '@happier-dev/plugin-sdk';
+import { renderSessionInputContextPromptV1, type SessionInputForgeEvidenceV1 } from '@happier-dev/plugin-sdk/sessions';
+import { throwIfAborted } from '@happier-dev/plugin-sdk/async';
 import {
     normalizeTriageSingleLineV1,
     type TriageConfiguredSourceInstanceV1,
@@ -20,7 +18,7 @@ import { qualifyEntryLocalRef } from '../corpus/fold/qualify.js';
 import { renderSourceQualifiedId } from '../corpus/identity/components.js';
 import { reconcileMergedSuccessor } from '../sessions/reconcileMergedSuccessor.js';
 import type { createTriageSourceSessionRelations } from '../sessions/sourceSessionRelations.js';
-import { parseTriageComposerEntryAttachmentValue } from './attachmentValue.js';
+import { parseTriageComposerEntryAttachmentValue, readTriageComposerForgeEvidenceV1 } from './attachmentValue.js';
 
 /**
  * Fresh exact resolution immediately before an Agent dispatch
@@ -35,8 +33,8 @@ import { parseTriageComposerEntryAttachmentValue } from './attachmentValue.js';
  * hours ago.
  *
  * It resolves; it does not repair. There is no retry loop, no successor
- * following, no account substitution and no queue. A
- * blocked attachment is reported as blocked and the canonical host owns the
+ * following, no account substitution and no queue. A blocked attachment is
+ * reported as blocked and the canonical host owns the
  * all-or-none dispatch refusal, because a partially resolved selection is a
  * prompt that quietly omits something the user attached.
  * Resolved Session attachments record their relationship through the same
@@ -81,8 +79,6 @@ export type TriageEntryDispatchDepsV1 = Readonly<{
     sessionLinks: CorpusCollectionsV1['sessionLinks'];
     executeGet: TriageAdmittedGetExecutorV1;
     signal?: AbortSignal;
-    /** Owner-private test injection; never a source-facing deadline override. */
-    getDeadlineMs?: number;
 }>;
 
 /** One attached record as the canonical resolve request carries it. */
@@ -99,7 +95,7 @@ export type TriageEntryDispatchRequestV1 = Readonly<{
 }>;
 
 export type TriageEntryDispatchOutcomeV1 =
-    | Readonly<{ instanceId: string; status: 'ready'; context: string }>
+    | Readonly<{ instanceId: string; status: 'ready'; context: string; forgeEvidence?: SessionInputForgeEvidenceV1 }>
     | Readonly<{
         instanceId: string;
         status: 'unavailable' | 'notFound' | 'invalid' | 'failed';
@@ -212,20 +208,31 @@ export async function resolveTriageEntryForDispatch(
     deps: TriageEntryDispatchDepsV1,
 ): Promise<TriageEntryDispatchResultV1> {
     throwIfAborted(deps.signal);
-    const deadline = new AbortController();
+    const invocationController = new AbortController();
     const signal = deps.signal === undefined
-        ? deadline.signal
-        : AbortSignal.any([deps.signal, deadline.signal]);
+        ? invocationController.signal
+        : AbortSignal.any([deps.signal, invocationController.signal]);
     const options: PluginCancellationOptions = { signal };
     const invocation = (async (): Promise<TriageEntryDispatchResultV1> => {
-        const sourceView = await deps.sourceRelations.readSources();
+        // Only actual entry identities demand a source inventory. Selected text
+        // has already crossed its source boundary and is retained data.
+        const evidence = request.attachments.map((attachment) => readTriageComposerForgeEvidenceV1(attachment.value));
+        const hasEntries = evidence.some((value) => value === null);
+        const sourceView = hasEntries ? await deps.sourceRelations.readSources() : null;
         throwIfAborted(signal);
-        const configured = new Map(sourceView.configured.rows.map((row) => [row.configured.instance.sourceInstanceId, row.configured]));
-        const admittedByQualifiedId = sourceView.sources;
+        const configured = new Map(sourceView?.configured.rows.map((row) => [row.configured.instance.sourceInstanceId, row.configured]) ?? []);
+        const admittedByQualifiedId = sourceView?.sources ?? new Map<string, TriageAdmittedSourceV1>();
 
         const attachments: TriageEntryDispatchOutcomeV1[] = [];
-        for (const attachment of request.attachments) {
+        for (const [index, attachment] of request.attachments.entries()) {
             throwIfAborted(signal);
+            const selectedEvidence = evidence[index];
+            if (selectedEvidence != null) {
+                attachments.push({ instanceId: attachment.instanceId, status: 'ready',
+                    forgeEvidence: selectedEvidence,
+                    context: renderSessionInputContextPromptV1({ transformedUserText: '', forgeEvidence: selectedEvidence }) });
+                continue;
+            }
             attachments.push(await resolveOne(attachment, {
                 sessionId: request.sessionId,
                 configured,
@@ -238,26 +245,11 @@ export async function resolveTriageEntryForDispatch(
         }
         return { attachments };
     })();
-    if (deps.getDeadlineMs === undefined) {
-        try {
-            return await invocation;
-        } finally {
-            deadline.abort();
-        }
+    try {
+        return await invocation;
+    } finally {
+        invocationController.abort();
     }
-    const settled = await raceWithTimeout(invocation, deps.getDeadlineMs);
-    deadline.abort();
-    throwIfAborted(deps.signal);
-    if (settled.type === 'resolved') return settled.value;
-    if (settled.type === 'rejected') throw settled.error;
-    return {
-        attachments: request.attachments.map((attachment) => blocked(
-            attachment.instanceId,
-            'failed',
-            true,
-            'This entry could not be read.',
-        )),
-    };
 }
 
 async function resolveOne(
@@ -324,7 +316,10 @@ async function resolveOne(
             },
             context.options,
         );
-    } catch {
+    } catch (error) {
+        // Keep the host's typed refusal for its content-free diagnostic
+        // projection instead of replacing it with a generic attachment result.
+        if (isPluginError(error)) throw error;
         // An invocation that never produced an observation is a failure of the
         // read, not a conclusion about the entry — it is retryable precisely
         // because nothing was learned.
@@ -361,7 +356,11 @@ async function resolveOne(
             return {
                 instanceId: attachment.instanceId,
                 status: 'ready',
-                context: projectTriageDispatchContext({ entryRef, snapshot: observation.snapshot }),
+                context: renderSessionInputContextPromptV1({ transformedUserText: '', forgeEvidence: { v: 1, items: [{
+                    source: { kind: 'entry', label: observation.snapshot.scopeLabel },
+                    author: { kind: 'unknown' },
+                    text: projectTriageDispatchContext({ entryRef, snapshot: observation.snapshot }),
+                }, ...(observation.dispatchEvidence?.items ?? [])] } }),
             };
         }
         case 'absent':
@@ -378,12 +377,16 @@ async function resolveOne(
             // successor this aggregate can address, and a merge nobody can
             // qualify moves nothing. The dispatch answer is the same either way.
             if (successor.status === 'qualified') {
-                await reconcileMergedSuccessor({
+                const moved = await reconcileMergedSuccessor({
                     collections: { sessionLinks: context.sessionLinks },
+                    sourceRelations: context.sourceRelations,
                     entryRef,
                     successorEntryRef: successor.entryRef,
                     ...(context.options?.signal ? { signal: context.options.signal } : {}),
                 });
+                if (moved.status !== 'reconciled') return blocked(attachment.instanceId, 'failed', moved.status === 'incomplete',
+                    moved.status === 'unsupported' ? 'Its source does not support moving Session links to the successor.'
+                        : 'Its Session links could not be moved to the successor.');
             }
             // The successor is a different entry. Resolving it would send the
             // model something the user never attached; the user removes and
@@ -391,11 +394,12 @@ async function resolveOne(
             return blocked(attachment.instanceId, 'notFound', false, 'It was merged into another entry.');
         }
         case 'unresolved':
-            return blocked(
-                attachment.instanceId,
-                'failed',
-                retryableFailure(observation.failure),
-                'Its source could not confirm it.',
-            );
+            // The authoritative source code uses the same failure envelope as
+            // an invocation refusal. Provider detail stays at the source.
+            throw new PluginError({
+                code: observation.failure.code,
+                retryable: retryableFailure(observation.failure),
+                message: 'Its source could not confirm this entry.',
+            });
     }
 }

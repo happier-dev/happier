@@ -419,11 +419,9 @@ describe('buildTriagePickerView — corpus result state', () => {
     });
 
     /**
-     * The discriminating case for the split this model used to hold: an
-     * aggregate transient backoff carries no rate-limit failure and no provider
-     * deadline, so a local `class === 'rateLimit'` scan reports an available
-     * Refresh while the coordinator refuses it — a press that does nothing and
-     * says nothing.
+     * The coordinator carries the deadline independently from failure class.
+     * A local rate-limit-only scan would enable Refresh for a transient failure
+     * even while the source's own deadline still refuses it.
      */
     it('refuses a Refresh the coordinator is blocking for a reason no failure states', () => {
         const view = buildTriagePickerView({
@@ -432,9 +430,9 @@ describe('buildTriagePickerView — corpus result state', () => {
                 health: [{
                     sourceInstance: { source: SOURCE, sourceInstanceId: INSTANCE_ID },
                     displayName: 'acme on Forge',
-                    failure: { class: 'transient', code: 'bad-gateway' },
+                    failure: { class: 'transient', code: 'bad-gateway', retryNotBeforeMs: NOW_MS + 5_000 },
                 }],
-                refreshBlocked: { reason: 'failureBackoff', nextEligibleAtMs: NOW_MS + 5_000 },
+                refreshBlocked: { reason: 'sourceRetryDeadline', nextEligibleAtMs: NOW_MS + 5_000 },
             }),
             query: '',
             attached: [],
@@ -442,7 +440,7 @@ describe('buildTriagePickerView — corpus result state', () => {
 
         expect(view.refresh).toEqual({
             kind: 'blockedUntil',
-            reason: 'failureBackoff',
+            reason: 'sourceRetryDeadline',
             nextEligibleAtMs: NOW_MS + 5_000,
         });
         expect(requestTriagePickerRefresh(view)).toEqual({ status: 'refused', reason: 'notYetEligible' });

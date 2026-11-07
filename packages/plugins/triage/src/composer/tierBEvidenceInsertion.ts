@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { PluginCancellationOptions } from '@happier-dev/plugin-sdk';
-import type { ComposerRefV1 } from '@happier-dev/plugin-ui';
+import { usePluginTranslation, type ComposerRefV1 } from '@happier-dev/plugin-ui';
 import type {
     TriageEvidenceDisclosureOutcomeV1,
     TriageEvidenceDisclosureResolverV1,
@@ -8,22 +8,18 @@ import type {
 } from '@happier-dev/triage-sources/ui';
 
 import { isHostCancellation } from '../hostCancellation.js';
-import { applyTriageRevisionCheckedMutation } from './applyEntryMutation.js';
+import {
+    applyTriageRevisionCheckedMutation,
+    describeTriageMutationRefusal,
+    type TriageMutationRefusalV1,
+} from './applyEntryMutation.js';
 import { planTriageTierBEvidenceInsertion } from './mutationPlan.js';
 import { useTriageBoundComposer } from './useBoundComposer.js';
 
 export type { TriageEvidenceCandidateV1 } from './mutationPlan.js';
 
-const UNAVAILABLE: TriageEvidenceDisclosureOutcomeV1 = Object.freeze({
-    kind: 'refused',
-    reason: 'The composer is no longer open.',
-});
 const CANCELLED: TriageEvidenceDisclosureOutcomeV1 = Object.freeze({ kind: 'cancelled' });
 const INERT: TriageEvidenceDisclosureOutcomeV1 = Object.freeze({ kind: 'inert' });
-const CONFLICT: TriageEvidenceDisclosureOutcomeV1 = Object.freeze({
-    kind: 'refused',
-    reason: 'The draft changed while this was applied. Try again.',
-});
 
 /**
  * The single Triage consumer for source-owned Tier-B evidence candidates.
@@ -42,6 +38,7 @@ const CONFLICT: TriageEvidenceDisclosureOutcomeV1 = Object.freeze({
 export function useTriageTierBEvidenceInsertion(
     originComposer: ComposerRefV1 | null,
 ): TriageEvidenceDisclosureV1 {
+    const text = usePluginTranslation();
     const handle = useTriageBoundComposer(originComposer);
     const generation = React.useRef(0);
     const active = React.useRef<AbortController | null>(null);
@@ -60,7 +57,11 @@ export function useTriageTierBEvidenceInsertion(
         options?: PluginCancellationOptions,
     ): Promise<TriageEvidenceDisclosureOutcomeV1> => {
         if (options?.signal?.aborted) return INERT;
-        if (handle === null) return UNAVAILABLE;
+        const refuse = (refusal: TriageMutationRefusalV1): TriageEvidenceDisclosureOutcomeV1 => ({
+            kind: 'refused',
+            reason: describeTriageMutationRefusal(text, refusal),
+        });
+        if (handle === null) return refuse({ code: 'composerUnavailable' });
 
         active.current?.abort();
         const controller = new AbortController();
@@ -85,18 +86,16 @@ export function useTriageTierBEvidenceInsertion(
                 isCurrent,
                 plan: (snapshot) => planTriageTierBEvidenceInsertion(snapshot, disclosed),
             });
-            return outcome.kind === 'conflict' ? CONFLICT : outcome;
+            if (outcome.kind === 'conflict') return refuse({ code: 'conflict' });
+            return outcome.kind === 'refused' ? refuse(outcome.refusal) : outcome;
         } catch (error) {
             if (!isCurrent() || isHostCancellation(error, controller.signal)) return INERT;
-            return {
-                kind: 'refused',
-                reason: 'The evidence reference could not be prepared. Try again.',
-            };
+            return refuse({ code: 'evidenceNotPrepared' });
         } finally {
             options?.signal?.removeEventListener('abort', abort);
             if (active.current === controller) active.current = null;
         }
-    }, [handle]);
+    }, [handle, text]);
 
     return React.useMemo(() => Object.freeze({
         available: handle !== null,

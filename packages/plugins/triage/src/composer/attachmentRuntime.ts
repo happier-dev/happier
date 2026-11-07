@@ -11,6 +11,7 @@ import { bindCorpusCollections } from '../corpus/collections/bindCorpusCollectio
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
 import { resolveTriageEntryForDispatch } from './resolveForDispatch.js';
 import { createTriageSourceSessionRelations } from '../sessions/sourceSessionRelations.js';
+import { readTriageComposerForgeEvidenceV1 } from './attachmentValue.js';
 
 /**
  * The registered half of the one declared `entry` attachment lifecycle role.
@@ -39,6 +40,13 @@ export function createTriageEntryAttachmentRuntime(): ComposerAttachmentRuntime 
             });
     };
     return {
+        async prepareForSend(request) {
+            return { attachments: request.attachments.map(attachment => {
+                const forgeEvidence = readTriageComposerForgeEvidenceV1(attachment.value);
+                return { instanceId: attachment.instanceId, status: 'ready' as const, value: attachment.value,
+                    ...(forgeEvidence === null ? {} : { forgeEvidence }) };
+            }) };
+        },
         resolveForDispatch: resolve,
         resolveForDispatchV2: resolve,
     };

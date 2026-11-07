@@ -99,8 +99,8 @@ export type TriagePickerCorpusFactsV1 = Readonly<{
      *
      * It arrives as a decided fact for the same reason freshness does: a local
      * derivation here would be a second pacing owner, and the narrower one this
-     * module used to compute knew only about rate limits — so an aggregate
-     * transient backoff left Refresh enabled and silent.
+     * module used to compute knew only about rate-limit failures. Other failure
+     * classes can also carry an authoritative source retry deadline.
      */
     refreshBlocked: TriageRefreshPacingBlockV1 | null;
     nowMs: number;
@@ -118,7 +118,7 @@ export type TriagePickerRowMutationV1 =
     | Readonly<{ kind: 'unavailable'; reason: 'noObservingInstance' }>;
 
 export type TriagePickerRowViewDetailsV1 =
-    | Readonly<{ kind: 'open'; sourceInstance: TriageSourceInstanceRefV1 }>
+    | Readonly<{ kind: 'open'; sourceInstance: TriageSourceInstanceRefV1; webUrl?: string }>
     | Readonly<{ kind: 'unavailable'; reason: 'noObservingInstance' }>;
 
 export type TriagePickerRowV1 = Readonly<{
@@ -193,7 +193,7 @@ function resolveRefresh(
     }
     if (facts.refreshRunning) return { kind: 'running' };
 
-    // A provider deadline or an aggregate backoff is still running. Refresh stays
+    // A provider deadline is still running. Refresh stays
     // disabled until it passes, and it is stated immediately rather than after a
     // press that does nothing. Which deadline, and whether any connection is
     // still readable, are the coordinator's answers — read, never recomputed.
@@ -292,7 +292,7 @@ export function buildTriagePickerView(input: Readonly<{
                         },
                 viewDetails: sourceInstance === null
                     ? { kind: 'unavailable', reason: 'noObservingInstance' }
-                    : { kind: 'open', sourceInstance },
+                    : { kind: 'open', sourceInstance, ...(row.locator?.webUrl === undefined ? {} : { webUrl: row.locator.webUrl }) },
             };
         });
 
