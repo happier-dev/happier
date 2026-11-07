@@ -11,6 +11,16 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
+export function resolveClaudeSdkResultMainModelId(params: Readonly<{
+    observedMainModelId?: string | null;
+    modelUsage: unknown;
+}>): string | null {
+    if (params.observedMainModelId) return params.observedMainModelId;
+    const modelUsage = asRecord(params.modelUsage);
+    const modelIds = modelUsage ? Object.keys(modelUsage).map(modelId => modelId.trim()).filter(Boolean) : [];
+    return modelIds.length === 1 ? modelIds[0]! : null;
+}
+
 export function isClaudeSdkUsageResult(value: unknown): boolean {
     const result = asRecord(value);
     if (result?.type !== 'result') return false;
@@ -29,10 +39,10 @@ function readContextWindowFromModelUsageEntry(entry: unknown): number | null {
 
 function readContextWindowTokensFromModelUsage(params: Readonly<{
     modelUsage: unknown;
-    modelId: string;
+    modelId: string | null;
 }>): number | null {
     const modelUsage = asRecord(params.modelUsage);
-    if (!modelUsage) return null;
+    if (!modelUsage || params.modelId === null) return null;
 
     return readContextWindowFromModelUsageEntry(modelUsage[params.modelId]);
 }
@@ -54,7 +64,7 @@ function readLastMessageIterationContextTokens(usage: Record<string, unknown>): 
 }
 
 export function buildClaudeSdkResultUsageObservation(params: Readonly<{
-    modelId: string;
+    modelId: string | null;
     modelSource?: ClaudeUsageModelSource;
     result: unknown;
     observedAtMs?: number;

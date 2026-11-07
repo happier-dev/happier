@@ -439,6 +439,85 @@ describe('Claude agent-SDK session work-state ingress', () => {
 
 
 describe('SDK workflow hook resumption', () => {
+  it('completes a successful SDK turn when accepted-prompt history admission fails', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'claude-follow-acquire-'));
+    const providerSessionId = 'claude-follow-acquire';
+    const transcriptPath = join(root, `${providerSessionId}.jsonl`);
+    await writeFile(transcriptPath, '');
+    const terminalHost = createTerminalHostFixture();
+    const exec = createSdkExecFixture();
+    const sessionHooks = createSessionHooksFixture();
+    const baseCtx = createPluginContextFixture(terminalHost.service, createEventsFixture().service);
+    let sourceAvailable = false;
+    const followSource = vi.fn(async () => {
+      if (!sourceAvailable) {
+        throw Object.assign(new Error('Terminal transcript follow admission failed (bind): plugin_external_follow_acquisition_failed'), {
+          code: 'native_agent_terminal_transcript_follow_admission_failed',
+          followCode: 'plugin_external_follow_acquisition_failed', phase: 'bind', retryable: true,
+        });
+      }
+      return { dispose: async () => {} };
+    });
+    const ctx = createPluginContextFixture(terminalHost.service, createEventsFixture().service, {
+      exec: exec.service, sessionHooks: sessionHooks.service,
+      transcripts: { ...baseCtx.agentRuntime.transcripts, followSource },
+    });
+    const operations = createClaudeAgentSdkProviderOperations({
+      ctx, directory: root, happierSessionId: 'happy-follow-acquire', launchEnv: {},
+      permissionMode: 'default', enableSessionWorkState: true, enableSessionResumability: true,
+    });
+    const context = { session: { services: {
+      activeInput: { bind: () => ({ dispose() {} }) },
+      models: { bind: () => ({ dispose() {} }) },
+    } } } as unknown as AgentSessionRuntimeContext;
+    const session = createClaudeNativeSessionRuntimeFromOperations(operations, {
+      kind: 'create', sessionId: 'happy-follow-acquire', cwd: root,
+    }, context);
+    const events: AgentSessionRuntimeEvent[] = [];
+    const subscription = session.watch(event => events.push(event));
+    try {
+      operations.beginProviderTurn('follow-acquire-turn');
+      await operations.sendProviderTurnPrompt('reply OK only');
+      await vi.waitFor(() => expect(exec.spawnClient).toHaveBeenCalledOnce());
+      const hook = sessionHooks.service.startServer.mock.calls[0]?.[0]?.onSessionHook;
+      if (!hook) throw new Error('Session hook server was not started');
+      await hook(providerSessionId, { hook_event_name: 'SessionStart', session_id: providerSessionId,
+        source: 'startup', transcript_path: transcriptPath });
+      await hook(providerSessionId, { hook_event_name: 'UserPromptSubmit', session_id: providerSessionId,
+        prompt: 'reply OK only' });
+      await appendFile(transcriptPath, JSON.stringify({ type: 'user', sessionId: providerSessionId,
+        message: { content: 'reply OK only' } }) + '\n');
+      await vi.waitFor(() => expect(followSource).toHaveBeenCalledOnce());
+      await exec.emit({ type: 'assistant', session_id: providerSessionId,
+        message: { role: 'assistant', content: [{ type: 'text', text: 'OK.' }] } });
+      await exec.emit({ type: 'result', subtype: 'success', is_error: false, result: 'OK.',
+        session_id: providerSessionId, num_turns: 1, total_cost_usd: 0, duration_ms: 10, duration_api_ms: 8 });
+      await expect(operations.waitForProviderTurnCompletion()).resolves.toBeUndefined();
+      expect(events.filter(event => event.kind === 'runtime-activity-snapshot').at(-1))
+        .toMatchObject({ state: 'unknown', activeCount: 0 });
+      expect(followSource).toHaveBeenCalledOnce();
+      expect(events.some(event => event.kind === 'runtime-ended')).toBe(false);
+      sourceAvailable = true;
+      operations.beginProviderTurn('follow-acquire-next-turn');
+      await operations.sendProviderTurnPrompt('reply OK again');
+      await vi.waitFor(() => expect(exec.spawnClient).toHaveBeenCalledTimes(2));
+      const nextHook = sessionHooks.service.startServer.mock.calls.at(-1)?.[0]?.onSessionHook;
+      if (!nextHook) throw new Error('Next Session hook server was not started');
+      await nextHook(providerSessionId, { hook_event_name: 'SessionStart', session_id: providerSessionId,
+        source: 'resume', transcript_path: transcriptPath });
+      expect(followSource).toHaveBeenCalledTimes(2);
+      await exec.emit({ type: 'result', subtype: 'success', is_error: false, result: 'OK.',
+        session_id: providerSessionId, num_turns: 1, total_cost_usd: 0, duration_ms: 10, duration_api_ms: 8 });
+      await expect(operations.waitForProviderTurnCompletion()).resolves.toBeUndefined();
+      expect(events.filter(event => event.kind === 'runtime-activity-snapshot').at(-1))
+        .toMatchObject({ state: 'idle', activeCount: 0 });
+    } finally {
+      subscription.dispose();
+      await session.dispose();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     { outcome: 'unavailable', recover: false, nativeLoss: false },
     { outcome: 'recovered', recover: true, nativeLoss: false },
@@ -484,7 +563,7 @@ describe('SDK workflow hook resumption', () => {
       await expect(hookRequest.onSessionHook('claude-provider-session-1', {
         hook_event_name: 'SessionStart', session_id: 'claude-provider-session-1', source: 'resume',
         transcript_path: '/tmp/claude-provider-session-1.jsonl',
-      })).rejects.toBe(baselineFailure);
+      })).resolves.toBeUndefined();
       await vi.waitFor(() => expect(activityEvents.at(-1)).toMatchObject({
         kind: 'runtime-activity-snapshot', state: 'unknown', activeCount: 0,
       }));
@@ -587,7 +666,7 @@ describe('SDK workflow hook resumption', () => {
         hook_event_name: 'SessionStart', session_id: 'claude-provider-session-1', source: 'resume',
         transcript_path: '/tmp/claude-provider-session-1.jsonl',
       };
-      await expect(hookRequest.onSessionHook('claude-provider-session-1', sessionStart)).rejects.toBe(baselineFailure);
+      await expect(hookRequest.onSessionHook('claude-provider-session-1', sessionStart)).resolves.toBeUndefined();
       await hookRequest.onSessionHook('claude-provider-session-1', sessionStart);
       await vi.waitFor(() => expect(activityEvents.at(-1)).toMatchObject({ state: 'active', activeCount: 1 }));
       await vi.waitFor(() => expect(records.at(-1)).toMatchObject({

@@ -93,7 +93,7 @@ function readNonnegativeInteger(value: unknown): number | null {
 }
 
 function readClaudeSubscriptionSelection(value: unknown): ClaudeSubscriptionRuntimeAuthSelection | null {
-  if (!isRecord(value) || value.serviceId !== 'claude-subscription') return null;
+  if (!isRecord(value) || readClaudeConnectedServiceRuntimeServiceId(value.serviceId) !== 'happier.agent.claude/claude-subscription') return null;
   const credentialRevision = readString(value.credentialRevision);
   if (!credentialRevision || !/^csr_[A-Za-z0-9_-]{22,64}$/u.test(credentialRevision)) return null;
   if (value.kind === 'profile') {
@@ -133,16 +133,37 @@ export function readClaudeSubscriptionRuntimeAuthSelectionFromEnv(
   return null;
 }
 
+/** Launch-only preference from the existing admitted selection transport, before subprocess isolation. */
+export function readClaudePoolNativeWaitingPreferenceFromEnv(
+  env: Readonly<Record<string, string | undefined>> | null | undefined,
+): boolean | undefined {
+  for (const item of parseJsonArray(env?.[CONNECTED_SERVICE_SELECTIONS_ENV_KEY])) {
+    if (!isRecord(item) || item.kind !== 'group') continue;
+    if (readClaudeConnectedServiceRuntimeServiceId(readString(item.serviceId)) === null) continue;
+    return isRecord(item.policy) && item.policy.claudeCodeAutoContinueAtUsageLimit === true;
+  }
+  return undefined;
+}
+
+function readClaudeConnectedServiceRuntimeServiceId(
+  value: unknown,
+): 'happier.agent.claude/claude-subscription' | 'happier.agent.claude/anthropic' | null {
+  const serviceId = value;
+  if (serviceId === 'claude-subscription' || serviceId === 'happier.agent.claude/claude-subscription') {
+    return 'happier.agent.claude/claude-subscription';
+  }
+  return serviceId === 'anthropic' || serviceId === 'happier.agent.claude/anthropic'
+    ? 'happier.agent.claude/anthropic' : null;
+}
+
 export function readClaudeConnectedServiceRuntimeServiceFromEnv(
   env: Readonly<Record<string, string | undefined>> | null | undefined,
 ): 'happier.agent.claude/claude-subscription' | 'happier.agent.claude/anthropic' | null {
   let hasAnthropic = false;
   for (const item of parseJsonArray(env?.[CONNECTED_SERVICE_SELECTIONS_ENV_KEY])) {
-    const serviceId = readString(isRecord(item) ? item.serviceId : null);
-    if (serviceId === 'claude-subscription' || serviceId === 'happier.agent.claude/claude-subscription') {
-      return 'happier.agent.claude/claude-subscription';
-    }
-    if (serviceId === 'anthropic' || serviceId === 'happier.agent.claude/anthropic') hasAnthropic = true;
+    const serviceId = readClaudeConnectedServiceRuntimeServiceId(isRecord(item) ? readString(item.serviceId) : null);
+    if (serviceId === 'happier.agent.claude/claude-subscription') return serviceId;
+    if (serviceId === 'happier.agent.claude/anthropic') hasAnthropic = true;
   }
   return hasAnthropic ? 'happier.agent.claude/anthropic' : null;
 }

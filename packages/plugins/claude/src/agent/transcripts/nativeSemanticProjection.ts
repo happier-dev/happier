@@ -1,4 +1,4 @@
-import { readTranscriptPeerSenderV1 } from '@happier-dev/protocol/sessions/messages/transcriptPeerSenderV1';
+import { readTranscriptPeerSenderV1 } from '@happier-dev/plugin-sdk/sessions';
 import { readClaudeProviderIdentityValue, readClaudeTranscriptProviderSessionId } from '../../protocol/providerIdentity.js';
 import { readSessionHookSidechainAgentId } from '../hooks/sidechain.js';
 import {
@@ -11,6 +11,7 @@ import {
 } from './messageRole.js';
 import { parseRawJsonLinesObject } from './parseRawJsonLines.js';
 import type { RawJSONLines } from './rawJsonLines.js';
+import { readClaudeJsonlRowTimestampMs } from './jsonlReplaySuppression.js';
 import { normalizeClaudeToolUseNamesInRawJsonLines } from './toolUseNames.js';
 import { readClaudeCompactionMetadata } from './compactionMetadata.js';
 import {
@@ -75,7 +76,14 @@ export type ClaudeNativeTranscriptBoundary = Readonly<{
   id: string | null;
 }>;
 
+export type ClaudeCredentialOrganizationObservation = Readonly<{
+  nativeSessionId: string;
+  providerOrganizationId: string | null;
+  observedAtMs: number;
+}>;
+
 export type ClaudeNativeTranscriptRowClassification = Readonly<{
+  credentialOrganization?: ClaudeCredentialOrganizationObservation;
   rawObject: unknown | null;
   rawType: string | null;
   row: RawJSONLines | null;
@@ -413,14 +421,15 @@ export function classifyClaudeNativeTranscriptRow(
   }
 
   if (isClaudeInternalEventType(rawType)) {
-    return createBaseClassification({
+    const credentialOrganization = readCredentialOrganization(rawObject);
+    return { ...createBaseClassification({
       rawObject,
       rawType,
       row: null,
       visibility: 'hidden',
       messageRole: 'event',
       content: { kind: 'none' },
-    });
+    }), ...(credentialOrganization ? { credentialOrganization } : {}) };
   }
 
   const parsed = parseRawJsonLinesObject(rawObject);
@@ -658,4 +667,14 @@ export function readClaudeCompactBoundaryEventId(params: Readonly<{
     nativeBoundaryId,
     observedAtMs,
   });
+}
+
+function readCredentialOrganization(value: unknown): ClaudeCredentialOrganizationObservation | null {
+  if (!isRecord(value) || value.type !== 'attachment' || value.isSidechain === true
+    || !isRecord(value.attachment) || value.attachment.type !== 'credential_org') return null;
+  const nativeSessionId = readClaudeTranscriptProviderSessionId(value);
+  const observedAtMs = readClaudeJsonlRowTimestampMs(value);
+  if (!nativeSessionId || observedAtMs === null) return null;
+  return { nativeSessionId, observedAtMs,
+    providerOrganizationId: readClaudeProviderIdentityValue(value.attachment.organizationUuid) };
 }

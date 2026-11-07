@@ -32,9 +32,29 @@ function readNonNegativeInteger(value: unknown): number | null {
 
 function readProviderWillRetry(record: Readonly<Record<string, unknown>>): boolean {
     if (record.willRetry === true || record.will_retry === true) return true;
-    const attempt = readPositiveInteger(record.attempt ?? record.retryAttempt ?? record.retry_attempt);
+    const attempt = readPositiveInteger(readProviderRetryAttempt(record));
     const maxRetries = readPositiveInteger(record.max_retries ?? record.maxRetries ?? record.maxRetryAttempts);
     return attempt !== null && maxRetries !== null && attempt < maxRetries;
+}
+
+function readProviderRetryAttempt(record: Readonly<Record<string, unknown>>): number | null {
+    return readFiniteNumber(record.attempt ?? record.retryAttempt ?? record.retry_attempt);
+}
+
+export function readClaudeAgentSdkRuntimeRetry(message: unknown): Readonly<{
+    attempt: number | null;
+    reason: 'rate_limited' | 'server_error' | 'unknown';
+}> | null {
+    if (!isRecord(message) || !readProviderWillRetry(message)) return null;
+    if (!(message.type === 'system' && message.subtype === 'api_error')
+        && !(message.type === 'assistant' && message.isApiErrorMessage === true)) return null;
+    const attempt = readProviderRetryAttempt(message);
+    const status = readFiniteNumber(message.error_status ?? message.apiErrorStatus);
+    return {
+        attempt: attempt !== null && Number.isSafeInteger(attempt) && attempt > 0 ? attempt : null,
+        reason: status === 429 ? 'rate_limited'
+            : status !== null && status >= 500 && status <= 599 ? 'server_error' : 'unknown',
+    };
 }
 
 function readFailureRetryAfterMs(record: Readonly<Record<string, unknown>>): number | null {

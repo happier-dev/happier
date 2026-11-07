@@ -2925,7 +2925,11 @@ authenticated accepted-prompt transcript proof; its pending observation scope
 keeps Activity unknown. Successful source admission retires only that pending
 scope, preserving real observation loss and outstanding native tasks. Refused
 acquisition leaves the baseline pending rather than marking the native stream
-lost, so later admission of the same binding can settle it. Authenticated native
+lost, so later admission of the same binding can settle it. SDK history acquisition
+failure settles at that observation owner: it does not invalidate accepted-prompt
+resume proof or change a successful live SDK result into a failed turn. A later
+authenticated SessionStart can retry the pending binding. Physical terminal
+launch retains its separate required-follow admission barrier. Authenticated native
 restart receipts remain pending for the existing identity-filtered reconciliation
 after actual history admission. Resumed
 histories still acquire their historical baseline at SessionStart. This source
@@ -2934,12 +2938,9 @@ Session's retained observation loss.
 
 The host follow owner classifies admission refusals as deterministic or retryable,
 carrying that fact through the private daemon/runner result and terminal bind error.
-Claude's accepted-prompt proof consumer acknowledges a deterministic refusal
-instead of throwing it back into JSONL delivery. The candidate retains
-that refusal and logs its closed cause once. New relevant transcript evidence,
-an authenticated SessionStart, or a new accepted turn permits another admission;
-elapsed polling time does not. Retryable and unclassified failures retain ordinary
-at-least-once redelivery. The follow lease owner deduplicates only acknowledged
+Claude's SDK history binding settles either refusal class without invalidating
+accepted-prompt proof. Actual transcript-proof read failures retain their existing
+error handling and JSONL redelivery. The follow lease owner deduplicates only acknowledged
 metadata writes, retaining failed updates for retry at the existing source recovery
 boundary without a new timer.
 Private replay diagnostics distinguish page reads from listener delivery and
