@@ -5,6 +5,7 @@ import { actionOperationSelectors } from '@/sync/domains/actionOperations/action
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { readSpawnSessionRpcTimeoutMsFromEnv } from './spawnSessionRpcTimeout';
+import { readSpawnAttemptCustodyState, type PersistedSpawnAttempt } from './spawnAttemptNonceStore';
 
 export function buildManualSessionCreationKey(userAttemptId: string) {
     const normalized = userAttemptId.trim();
@@ -33,7 +34,8 @@ export async function readManualSessionSpawnOperationDetails(
     options: Readonly<{ waitForTerminal?: true; signal?: AbortSignal }> = {},
 ): Promise<ActionOperationSnapshotV1 | null> {
     if (!shouldContinue()) return null;
-    if (!options.waitForTerminal && (operation.state !== 'succeeded' || operation.result !== undefined)) return operation;
+    if (!options.waitForTerminal && (operation.state !== 'succeeded' && operation.state !== 'failed'
+        || operation.result !== undefined)) return operation;
     const { getActionOperation } = await import('@/sync/ops/actionOperations');
     if (!shouldContinue()) return null;
     const response = await getActionOperation({
@@ -51,7 +53,7 @@ export async function readManualSessionSpawnOperationDetails(
         || response.operation.scope.sessionId !== operation.scope.sessionId
         || response.operation.revision < operation.revision
         || (options.waitForTerminal ? !['succeeded', 'failed', 'cancelled'].includes(response.operation.state)
-            : response.operation.state !== 'succeeded')
+            : response.operation.state !== 'succeeded' && response.operation.state !== 'failed')
         || response.operation.state === 'succeeded' && response.operation.result === undefined) {
         throw new Error('action_operation_result_unavailable');
     }
@@ -62,32 +64,33 @@ export async function readManualSessionSpawnOperationDetails(
     return response.operation;
 }
 
-/** Join the operation owner: foreign requester revisions are withheld from the custodian push stream. */
+/** Read the same local preparation result or join its admitted native operation. */
 export async function awaitManualSessionSpawnOperation(
     scope: ServerAccountScope,
     userAttemptId: string,
     signal: AbortSignal,
     machineId: string,
-): Promise<ActionOperationSnapshotV1 | null> {
+): Promise<ActionOperationSnapshotV1 | NonNullable<PersistedSpawnAttempt['terminalResult']> | null> {
     if (signal.aborted) return null;
+    const custody = readSpawnAttemptCustodyState(scope);
+    const matching = custody.status === 'valid' ? Object.values(custody.attempts).filter(attempt =>
+        attempt.userAttemptId === userAttemptId.trim() && attempt.machineId === machineId) : [];
+    if (matching.length === 1 && matching[0]?.terminalResult) return matching[0].terminalResult;
     try {
         const { listActionOperations } = await import('@/sync/ops/actionOperations');
         const transport = { serverId: scope.serverId, accountId: scope.accountId, machineId, signal,
             timeoutMs: readSpawnSessionRpcTimeoutMsFromEnv() };
         let operation = readManualSessionSpawnOperation(scope, userAttemptId);
         if (operation?.scope.machineId !== machineId) operation = null;
-        let cursor: string | undefined;
-        const cursors = new Set<string>();
-        while (!operation && !signal.aborted) {
-            const page = await listActionOperations({ ...transport, request: cursor ? { cursor } : {} });
+        for (const requestId of [userAttemptId, buildManualSessionCreationKey(userAttemptId)]) {
+            if (operation || signal.aborted) break;
+            const page = await listActionOperations({ ...transport,
+                request: { requestIdentity: { actionId: 'session.spawn_new', requestId } } });
             operation = page.items.find(candidate => candidate.actionId === 'session.spawn_new'
                 && candidate.scope.accountId === scope.accountId && candidate.scope.machineId === machineId
-                && (candidate.requestId === userAttemptId || candidate.requestId === buildManualSessionCreationKey(userAttemptId))) ?? null;
+                && candidate.requestId === requestId) ?? null;
             if (operation) actionOperationStore.mergeSnapshots({ serverId: scope.serverId, snapshots: [operation] });
             if (signal.aborted) return null;
-            if (!page.nextCursor || cursors.has(page.nextCursor)) break;
-            cursors.add(page.nextCursor);
-            cursor = page.nextCursor;
         }
         if (signal.aborted) return null;
         if (!operation) throw new Error('action_operation_result_unavailable');

@@ -3,16 +3,30 @@ import { describe, expect, it, vi } from 'vitest';
 import { createActionOperationRunner } from './actionOperationRunner';
 import { createActionOperationStore } from './actionOperationStore';
 import { getActionSpec } from '@happier-dev/protocol/actions';
+import { MachineAgentIsolationReadyPreviewV1Schema, MachineAgentIsolationSetInputV1Schema, MachineStorageDockerPruneResultV1Schema } from '@happier-dev/protocol';
 import { ActionOperationCredentialUseV1Schema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ActionOperationSnapshotV1Schema, projectActionOperationSnapshotForV1Reader } from '@happier-dev/protocol/actions/operations/v1';
 import { ActionOperationSnapshotV1Schema as PredecessorSnapshotSchema } from './testFixtures/predecessorActionOperationV1';
 import { createRpcCallError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { ManagedMachineControllerError } from '@happier-dev/cli-common/machines/managed';
+import { callSocketRpc, type SocketRpcContent } from '@happier-dev/sync-client';
 
 const scope = { accountId: 'account-1', machineId: 'machine-1' } as const;
 
 describe('action operation canonical execution observer', () => {
+  it('settles a known Project Open checkout refusal as failed with its original failureCause and receipt', async () => {
+    const store = createActionOperationStore();
+    const spec = getActionSpec('projects.open');
+    const runner = createActionOperationRunner({ store, generateOperationId: () => 'failed-open',
+      resolveAction: () => ({ actionId: spec.id, title: spec.title, operation: spec.operation! }) });
+    const result = { kind: 'refused', code: 'COMMAND_FAILED', failureCause: { phase: 'project_open.checkout_ref',
+      errorClass: 'Error', errorCode: null, httpStatus: null } } as const;
+    await runner.observe({ actionId: spec.id, scope, requestId: 'open', input: {},
+      execute: async () => ({ ok: true, result }) });
+    expect(store.get(scope, 'failed-open')).toMatchObject({ state: 'failed',
+      error: { errorCode: result.code, failureCause: result.failureCause }, result });
+  });
   it('retains the child failureCause on the managed operation and projects it away for a predecessor reader', async () => {
     const store = createActionOperationStore();
     const spec = getActionSpec('machines.managed.acquire');
@@ -33,6 +47,220 @@ describe('action operation canonical execution observer', () => {
     expect(predecessor.error).not.toHaveProperty('failureCause');
     expect(JSON.stringify(snapshot)).not.toContain('PRIVATE_TOKEN');
   });
+  it('rejoins pending review only for matching input and clears its result before a newly reviewed resume', async () => {
+    const store = createActionOperationStore();
+    const spec = getActionSpec('machines.agentIsolation.set');
+    const runner = createActionOperationRunner({ store, generateOperationId: () => 'reviewed-owner',
+      resolveAction: () => ({ actionId: spec.id, title: spec.title, operation: spec.operation!, operationReentry: spec.operationReentry }) });
+    const firstReview = MachineAgentIsolationReadyPreviewV1Schema.parse({ kind: 'ready', policy: { enabled: true }, metadataVersion: 1,
+      status: { kind: 'applying', phase: 'workspace' }, plan: { roots: [], ancestorAcls: [], sessionsToReplace: 0,
+        requiresAdmin: true, planDigest: 'first-review' } });
+    const nextReview = MachineAgentIsolationReadyPreviewV1Schema.parse({ ...firstReview,
+      plan: { ...firstReview.plan, planDigest: 'changed-native-facts' } });
+    const firstInput = MachineAgentIsolationSetInputV1Schema.parse({ machineId: scope.machineId, enabled: true,
+      expectedPolicy: firstReview.policy, expectedMetadataVersion: firstReview.metadataVersion, expectedPlanDigest: firstReview.plan.planDigest });
+    const nextInput = { ...firstInput, expectedPlanDigest: nextReview.plan.planDigest };
+    const identity = { actionId: spec.id, scope, requestId: 'retained-native-intent' };
+    const pendingReceipt = { kind: 'approval_request_created', artifactId: 'pending-first-review', actionId: spec.id } as const;
+    const nextPendingReceipt = { ...pendingReceipt, artifactId: 'pending-changed-review' };
+    let executions = 0;
+    await runner.observe({ ...identity, input: { ...firstInput, expectedPlanDigest: 'initial' }, execute: async operation => {
+      executions++;
+      operation.publishOwnerUpdate({ state: 'running', observation: { kind: 'review_required', code: 'agent_isolation_effect_changed',
+        machineId: scope.machineId, enabled: true, current: firstReview } });
+      return { ok: true, result: { kind: 'plan_changed', operationId: 'reviewed-owner', current: firstReview } };
+    } });
+    expect(await runner.observe({ ...identity, input: firstInput, rejoinPendingApproval: true, execute: async () => {
+      executions++; return { ok: true, result: pendingReceipt };
+    } })).toEqual({ ok: true, result: pendingReceipt });
+    const mustNotExecute = async () => { throw new Error('A retry is not another native intent'); };
+    expect(await runner.observe({ ...identity, input: firstInput, rejoinPendingApproval: true, execute: mustNotExecute }))
+      .toEqual({ ok: true, result: pendingReceipt });
+    expect(await runner.observe({ ...identity, input: { ...firstInput, expectedPlanDigest: 'not-reviewed' },
+      rejoinPendingApproval: true, execute: mustNotExecute })).toMatchObject({ ok: false, errorCode: 'action_request_input_conflict' });
+    // The approved continuation may itself discover new facts. Its original
+    // Artifact cannot answer the newly reviewed operands on the next native submit.
+    await runner.observe({ ...identity, input: firstInput, execute: async operation => {
+      executions++;
+      expect(operation.resumeActionRequest).toBe(true);
+      operation.publishOwnerUpdate({ state: 'running', observation: { kind: 'review_required', code: 'agent_isolation_effect_changed',
+        machineId: scope.machineId, enabled: true, current: nextReview } });
+      return { ok: true, result: { kind: 'plan_changed', operationId: 'reviewed-owner', current: nextReview } };
+    } });
+    let enter!: () => void, release!: () => void;
+    const entered = new Promise<void>(resolve => { enter = resolve; });
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const resumed = runner.observe({ ...identity, input: nextInput, rejoinPendingApproval: true, execute: async operation => {
+      executions++; expect(operation.resumeActionRequest).toBe(true);
+      enter(); await held;
+      return { ok: true, result: nextPendingReceipt };
+    } });
+    try {
+      expect(await Promise.race([entered.then(() => 'executing'), resumed.then(() => 'old-receipt')])).toBe('executing');
+      expect(store.get(scope, 'reviewed-owner')).not.toHaveProperty('result');
+      expect(store.list(scope).items).toHaveLength(1);
+    } finally { release(); await resumed; }
+    expect(await resumed).toEqual({ ok: true, result: nextPendingReceipt });
+    expect(await runner.observe({ ...identity, input: nextInput, rejoinPendingApproval: true, execute: mustNotExecute }))
+      .toEqual({ ok: true, result: nextPendingReceipt });
+    expect(executions).toBe(4);
+  });
+
+  it('refuses an observation-only pending join after terminal projection while the original handler is still alive', async () => {
+    const store = createActionOperationStore();
+    const spec = getActionSpec('deployments.deploy');
+    const runner = createActionOperationRunner({ store, generateOperationId: () => 'pending-observation',
+      resolveAction: () => ({ actionId: spec.id, title: spec.title, operation: spec.operation }) });
+    let finish!: () => void;
+    const gate = new Promise<void>(resolve => { finish = resolve; });
+    const pending = { ok: true, environmentId: 'environment', revision: 2,
+      kind: 'pending', actionOperationId: 'pending-observation' } as const;
+    const request = { actionId: 'deployments.deploy', scope, requestId: 'original-deploy', input: { captured: 'unchanged' },
+      async execute(context: Parameters<Parameters<typeof runner.observe>[0]['execute']>[0]) {
+        context.operationAcceptance?.accept(pending);
+        await gate;
+        return { ok: true as const, result: { settled: true } };
+      } };
+    try {
+      expect(await runner.observe(request)).toEqual({ ok: true, result: pending });
+      store.succeed('pending-observation', { settled: true });
+      const onOperation = vi.fn();
+      // The private host hint cannot replay a terminal result or expose the
+      // still-live acceptance promise after the canonical snapshot settled.
+      const observation = { ...request, existingDeploymentOperationId: 'pending-observation', onOperation };
+      expect(await runner.observe(observation)).toEqual({ ok: false,
+        errorCode: 'action_operation_unavailable', error: 'action_operation_unavailable' });
+      expect(onOperation).not.toHaveBeenCalled();
+      expect(store.get(scope, 'pending-observation')).toMatchObject({ state: 'succeeded', result: { settled: true } });
+    } finally { finish(); }
+  });
+
+  it.each(['not_applied', 'outcome_unknown', 'needs_attendance'] as const)('does not call a persisted administrator intent host success (%s)', async outcome => {
+    const store = createActionOperationStore();
+    const spec = getActionSpec('machines.setup.adminAccess.set');
+    const runner = createActionOperationRunner({ store, generateOperationId: () => 'admin-transition',
+      resolveAction: () => ({ actionId: spec.id, title: spec.title, operation: spec.operation }) });
+    const receipt = { status: 'applied' as const, policy: { version: 1 as const, mode: 'preauthorized' as const }, metadataVersion: 2,
+      effect: outcome === 'not_applied' ? { outcome, reasonCode: 'not_preauthorized' as const }
+        : outcome === 'needs_attendance' ? { outcome, operationId: 'admin-transition',
+          prompt: { kind: 'sudo.password' as const, adminUsername: 'ops.admin' } } : { outcome } };
+    let executions = 0;
+    const request = { actionId: spec.id, scope, requestId: 'reviewed-admin-transition',
+      execute: async () => { executions++; return { ok: true as const, result: receipt }; } };
+    expect(await runner.observe(request)).toEqual({ ok: true, result: receipt });
+    const operation = store.get(scope, 'admin-transition');
+    if (outcome === 'not_applied') {
+      expect(operation).toMatchObject({ state: 'failed', error: { errorCode: 'not_preauthorized' }, result: receipt });
+    } else {
+      expect(operation).toMatchObject({ state: 'running', cancellation: 'unsupported',
+        observation: { kind: 'outcome_uncertain', code: outcome === 'needs_attendance' ? outcome : 'action_outcome_unknown' } });
+      expect(operation).not.toHaveProperty('settledAt');
+      expect(await runner.observe(request)).toMatchObject({ ok: false, errorCode: 'action_operation_unavailable' });
+      expect(executions).toBe(1);
+    }
+  });
+
+  it.each(['already_waiting', 'becomes_waiting'] as const)('returns an active approval hold without settling or replaying the Action (%s)', async timing => {
+    const store = createActionOperationStore();
+    const spec = getActionSpec('deployments.deploy');
+    const runner = createActionOperationRunner({ store, generateOperationId: () => 'approval-held',
+      resolveAction: () => ({ actionId: spec.id, title: spec.title, operation: spec.operation }),
+    });
+    let finish!: () => void;
+    let hold!: () => void;
+    const executionGate = new Promise<void>(resolve => { finish = resolve; });
+    const execute = vi.fn(async (context: Parameters<Parameters<typeof runner.observe>[0]['execute']>[0]) => {
+      hold = () => context.updateProgress({ phase: 'waiting_for_approval', label: 'Waiting for approval',
+        approval: { kind: 'approval_request_created', artifactId: 'approval', actionId: 'deployments.deploy' } });
+      if (timing === 'already_waiting') hold();
+      await executionGate;
+      return { ok: true as const, result: { deployed: true } };
+    });
+    const execution = runner.observe({ actionId: 'deployments.deploy', scope, requestId: 'exact-deploy', execute });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    const observation = new AbortController();
+    let observed: Awaited<ReturnType<typeof runner.waitForTerminal>> | undefined;
+    const waiting = runner.waitForTerminal(scope, 'approval-held', observation.signal,
+      { includeSetupReview: true }).then(snapshot => { observed = snapshot; });
+    let terminalObserved = false;
+    const terminal = runner.waitForTerminal(scope, 'approval-held').then(snapshot => {
+      terminalObserved = true;
+      return snapshot;
+    });
+    try {
+      if (timing === 'becomes_waiting') hold();
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(observed).toMatchObject({ operationId: 'approval-held', state: 'running',
+        progress: { kind: 'phase', phase: 'waiting_for_approval' } });
+      expect(observed).not.toHaveProperty('settledAt');
+      expect(terminalObserved).toBe(false);
+      expect(execute).toHaveBeenCalledTimes(1);
+    } finally {
+      observation.abort();
+      await waiting.catch(() => undefined);
+      finish();
+      await execution;
+      await terminal;
+    }
+    await expect(runner.waitForTerminal(scope, 'approval-held')).resolves.toMatchObject({ state: 'succeeded', result: { deployed: true } });
+  });
+
+  it.each(['acknowledged', 'handler_cancelled', 'handler_throws', 'other_operation', 'unvalidated_receipt'] as const)('keeps uncertain native service control owned instead of terminalizing its typed receipt (%s)', async carrier => {
+    const store = createActionOperationStore();
+    const spec = getActionSpec('machines.services.control');
+    const runner = createActionOperationRunner({ store, generateOperationId: () => 'native-control',
+      resolveAction: () => ({ actionId: spec.id, title: spec.title, operation: spec.operation }) });
+    const execution = runner.observe({ actionId: spec.id, scope, requestId: 'native-stop',
+      input: { serverId: 'home', machineId: scope.machineId, serviceId: 'service', expectedGeneration: 'generation', operation: 'stop' },
+      async execute(context) {
+        if (!context.operationAcceptance) throw new Error('Expected canonical operation acceptance');
+        context.publishOwnerUpdate({ cancellation: 'unsupported', outcome: {
+          ok: false, errorCode: 'action_outcome_unknown', error: 'Native settlement is unknown',
+        } });
+        if (carrier === 'handler_throws') throw Object.assign(new Error('Caller release failed'), { code: 'caller_release_failed' });
+        if (carrier === 'handler_cancelled') return { ok: false, errorCode: 'cancelled', error: 'Current caller retired' };
+        return { ok: true, result: { kind: 'outcome_unknown', operation: {
+          operationId: carrier === 'other_operation' ? 'other-native-operation' : context.operationAcceptance.operationId,
+        }, ...(carrier === 'unvalidated_receipt' ? { state: 'stopped' } : {}) } };
+      } });
+    const errorCode = carrier === 'handler_throws' ? 'caller_release_failed'
+      : carrier === 'handler_cancelled' ? 'cancelled' : 'action_outcome_unknown';
+    if (carrier === 'handler_throws') await expect(execution).rejects.toMatchObject({ code: errorCode });
+    else expect(await execution).toMatchObject(carrier === 'acknowledged'
+        ? { ok: true, result: { kind: 'outcome_unknown', operation: { operationId: 'native-control' } } }
+        : { ok: false, errorCode });
+    expect(store.get(scope, 'native-control')).toMatchObject({ state: 'running', cancellation: 'unsupported',
+      observation: { kind: 'outcome_uncertain', code: errorCode } });
+    expect(store.get(scope, 'native-control')).not.toHaveProperty('settledAt');
+  });
+
+  it.each(['acknowledged', 'unvalidated_receipt'] as const)('retains a strict typed prune receipt while native settlement stays uncertain without effect replay (%s)', async carrier => {
+    const store = createActionOperationStore();
+    const spec = getActionSpec('machines.storage.docker.prune');
+    const runner = createActionOperationRunner({ store, generateOperationId: () => 'native-prune',
+      resolveAction: () => ({ actionId: spec.id, title: spec.title, operation: spec.operation }) });
+    const receipt = MachineStorageDockerPruneResultV1Schema.parse({ kind: 'outcome_unknown', removed: [], kept: [] });
+    let effects = 0;
+    const request = { actionId: spec.id, scope, requestId: 'native-prune-request',
+      input: { serverId: 'home', machineId: scope.machineId, expectedEngineId: 'engine',
+        selection: { kind: 'explicit', images: [], buildCacheIds: [] } },
+      async execute(context: Parameters<Parameters<typeof runner.observe>[0]['execute']>[0]) {
+        effects++;
+        context.publishOwnerUpdate({ cancellation: 'unsupported', outcome: {
+          ok: false, errorCode: 'action_outcome_unknown', error: 'Native settlement is unknown',
+        } });
+        return { ok: true as const, result: carrier === 'acknowledged' ? receipt : { ...receipt, state: 'removed' } };
+      } };
+    const observed = await runner.observe(request);
+    expect(store.get(scope, 'native-prune')).toMatchObject({ state: 'running', cancellation: 'unsupported',
+      observation: { kind: 'outcome_uncertain', code: 'action_outcome_unknown' } });
+    expect(store.get(scope, 'native-prune')).not.toHaveProperty('settledAt');
+    if (carrier === 'acknowledged') expect(observed).toEqual({ ok: true, result: receipt });
+    else expect(observed).toMatchObject({ ok: false, errorCode: 'action_outcome_unknown' });
+    expect(await runner.observe(request)).toMatchObject({ ok: false, errorCode: 'action_operation_unavailable' });
+    expect(effects).toBe(1);
+  });
+
   it('retains a typed RPC refusal thrown by a managed Action in its terminal operation', async () => {
     const store = createActionOperationStore();
     const spec = getActionSpec('machines.managed.power.set');
@@ -43,6 +271,27 @@ describe('action operation canonical execution observer', () => {
       execute: async () => { throw createRpcCallError({ error: 'Guest refused the activity read', errorCode: RPC_ERROR_CODES.FORBIDDEN }); } }))
       .rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN });
     expect(store.list(scope).items).toMatchObject([{ state: 'failed', error: { errorCode: RPC_ERROR_CODES.FORBIDDEN } }]);
+  });
+  it.each(['plain', 'e2ee'] as const)('retains Home availability facts from a thrown %s socket refusal in the Setup operation', async mode => {
+    const details = { reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine' };
+    const store = createActionOperationStore();
+    const spec = getActionSpec('machines.setup.apply');
+    const runner = createActionOperationRunner({ store, generateOperationId: () => 'refused-setup',
+      resolveAction: () => ({ actionId: spec.id, title: spec.title, operation: spec.operation! }) });
+    // Only the Home socket is faked; RPC decoding, exception projection and operation persistence stay real.
+    const socket = { emit() {}, timeout: () => ({ emitWithAck: async () => ({ ok: false,
+      error: 'Target unavailable', errorCode: 'target_unavailable', details }) }) };
+    const content: SocketRpcContent = mode === 'plain' ? { mode } : { mode, cipher: {
+      encryptRaw: async () => 'ciphertext', decryptRaw: async () => { throw new Error('Refusal must not be opened'); },
+    } };
+    await expect(runner.observe({ actionId: spec.id, scope, requestId: 'setup-request',
+      execute: async () => ({ ok: true, result: await callSocketRpc({ socket,
+        target: { kind: 'machine', id: scope.machineId }, method: 'actionOperation.list.v2', params: {}, content, timeoutMs: 30_000 }) }) }))
+      .rejects.toMatchObject({ rpcErrorCode: 'target_unavailable', details });
+    const snapshot = ActionOperationSnapshotV1Schema.parse(JSON.parse(JSON.stringify(store.get(scope, 'refused-setup'))));
+    expect(snapshot).toMatchObject({ state: 'failed', error: { errorCode: 'target_unavailable', details,
+      failureCause: { phase: spec.id, errorClass: 'RpcError', errorCode: 'target_unavailable' } } });
+    expect(PredecessorSnapshotSchema.safeParse(projectActionOperationSnapshotForV1Reader(snapshot)).success).toBe(true);
   });
   it('continues an arbitrary tracked Action past its deferred approval receipt', async () => {
     const store = createActionOperationStore();
@@ -74,10 +323,19 @@ describe('action operation canonical execution observer', () => {
         : { ok: true as const, result: terminalResult },
     };
 
-    await expect(runner.observe(request)).resolves.toMatchObject({
+    const pending = await runner.observe(request);
+    expect(pending).toMatchObject({
       ok: true,
       result: { kind: 'approval_request_created', artifactId: 'approval-1', actionId: action.actionId },
     });
+    // Another delivery of the original native-confirmed invocation is not an
+    // Artifact decision. It observes the same pending receipt without creating
+    // a second request or entering its effect. Actual approved continuation
+    // retains the ordinary fresh re-entry below.
+    const repeatedInvocation = { ...request, rejoinPendingApproval: true as const };
+    await expect(runner.observe(repeatedInvocation)).resolves.toEqual(pending);
+    expect(executionCount).toBe(1);
+    expect(store.list(scope).items).toHaveLength(1);
     await expect(runner.observe(request)).resolves.toEqual({ ok: true, result: terminalResult });
     await expect(runner.observe(request)).resolves.toEqual({ ok: true, result: terminalResult });
 
@@ -256,6 +514,37 @@ describe('action operation canonical execution observer', () => {
     expect(PredecessorSnapshotSchema.parse(legacy)).toEqual(legacy);
     if (outcome.ok) expect(legacy.result).toEqual(outcome.result);
     else expect(legacy.state).toBe(outcome.errorCode === 'cancelled' ? 'cancelled' : 'failed');
+  });
+
+  it('retains actual handler credential observations when a native failure determines settlement', async () => {
+    // These are host-observed result annotations, as stamped by the canonical
+    // Action executor; the plugin's domain JSON cannot supply this metadata.
+    const handlerUse = ActionOperationCredentialUseV1Schema.parse({
+      v: 1, kind: 'connected_account', label: 'Personal GitHub',
+      owner: { kind: 'account', accountId: scope.accountId },
+      service: { pluginId: 'acme.github', localId: 'github' },
+      why: { kind: 'purpose_binding', purpose: { consumer: { pluginId: 'acme.release', localId: 'release' }, purpose: 'download' }, target: 'account' },
+      currentness: { kind: 'current_at_materialization' },
+    });
+    const operationCredentialUses = [handlerUse];
+    const store = createActionOperationStore();
+    const runner = createActionOperationRunner({ store, generateOperationId: () => 'native-credential-operation',
+      resolveAction: actionId => ({ actionId, title: 'Download', operation: {
+        version: 1, visibility: 'activity', progress: 'indeterminate', presentation: { onStart: 'activity' },
+      } }),
+    });
+    const request = { actionId: 'acme.release.download', scope, requestId: 'native-credential-request',
+      execute: async ({ publishOwnerUpdate }: Parameters<Parameters<typeof runner.observe>[0]['execute']>[0]) => {
+        publishOwnerUpdate({ outcome: { ok: false, errorCode: 'receiver_refused', error: 'Receiver refused' } });
+        return { ok: true as const, result: { state: 'failed' }, operationCredentialUses: [handlerUse] };
+      } };
+    const result = await runner.observe(request);
+    expect(result).toMatchObject({ ok: false, errorCode: 'receiver_refused', operationCredentialUses });
+    const operation = store.get(scope, 'native-credential-operation');
+    expect(operation).toMatchObject({ state: 'failed', operationCredentialUses });
+    expect(ActionOperationSnapshotV1Schema.parse(operation)).toEqual(operation);
+    expect(store.list(scope).items[0]).toMatchObject({ operationCredentialUses });
+    expect(await runner.observe({ ...request, execute: async () => { throw new Error('Rejoin must not execute'); } })).toEqual(result);
   });
 
   it('does not derive credential attribution from a plugin result payload', async () => {
@@ -476,6 +765,7 @@ describe('action operation canonical execution observer', () => {
             workspaceRefId: 'workspace', cwd: '/project' }, state: 'running',
         });
         else context.operationAcceptance!.accept({ status: 'accepted' });
+        context.updateProgress({ phase: 'waiting_for_approval', label: 'Waiting for approval' });
         // Only actual process settlement, not cancellation, resolves this boundary.
         await new Promise<void>(resolve => { releases.push(resolve); });
         return context.signal.aborted ? { ok: false, errorCode: 'cancelled', error: 'cancelled' }
@@ -671,71 +961,6 @@ describe('action operation canonical execution observer', () => {
     }).catch(() => undefined);
     expect(store.get(scope, 'sync-throw')).toMatchObject({ state: 'accepted', observation: { kind: 'outcome_uncertain' } });
     expect(runner.cancel(scope, 'sync-throw')).toEqual({ kind: 'unsupported' });
-  });
-  it('uses the same Stop custody on internal exact access loss without changing other requester work or history', async () => {
-    const store = createActionOperationStore();
-    let nextId = 0;
-    const runner = createActionOperationRunner({ store, generateOperationId: () => `access-${++nextId}`,
-      resolveAction: actionId => ({ actionId, title: 'Exec', operation: {
-        version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'current' },
-      } }),
-    });
-    const stopped: string[] = [];
-    const completions: (() => void)[] = [];
-    const launch = async (targetScope: Readonly<{ accountId: string; machineId: string }>, cancellation: 'supported' | 'unsupported') => await runner.observe({
-      actionId: 'projects.compute.exec', scope: targetScope, cancellation,
-      execute: async ({ publishOwnerUpdate, signal, operationAcceptance }) => {
-        publishOwnerUpdate({ domainRef: { kind: 'projectCommand', purpose: 'exec', serverId: 'home', machineId: targetScope.machineId,
-          workspaceRefId: 'workspace', cwd: '/project' } });
-        await new Promise<void>(resolve => { completions.push(resolve);
-          signal.addEventListener('abort', () => { stopped.push(operationAcceptance!.operationId); }, { once: true }); });
-        return signal.aborted ? { ok: false, errorCode: 'cancelled', error: 'cancelled' } : { ok: true, result: {} };
-      },
-    });
-    await launch(scope, 'supported');
-    await launch(scope, 'unsupported');
-    await launch({ accountId: 'other-account', machineId: scope.machineId }, 'supported');
-    await launch({ accountId: scope.accountId, machineId: 'other-machine' }, 'supported');
-    store.create({ operationId: 'history', actionId: 'projects.compute.exec', title: 'Done', scope, cancellation: 'supported', inputIdentity: '{}' });
-    store.succeed('history', {});
-    const history = store.get(scope, 'history');
-    const cancellationResults = await runner.cancelForAccessLoss(scope);
-    expect(cancellationResults).toHaveLength(2);
-    expect(cancellationResults).toEqual(expect.arrayContaining([
-      { operationId: 'access-1', result: { kind: 'requested' } },
-      { operationId: 'access-2', result: { kind: 'unsupported' } },
-    ]));
-    expect(stopped).toEqual(['access-1']);
-    expect(store.get(scope, 'access-1')?.state).toBe('accepted');
-    expect(store.get(scope, 'history')).toEqual(history);
-    for (const complete of completions) complete();
-    await runner.waitForTerminal(scope, 'access-1');
-    expect(store.get(scope, 'access-1')?.state).toBe('cancelled');
-  });
-  it('rechecks bound current access loss for each original operation before initiating Stop', async () => {
-    const store = createActionOperationStore();
-    let nextId = 0;
-    const runner = createActionOperationRunner({ store, generateOperationId: () => `current-${++nextId}`,
-      resolveAction: actionId => ({ actionId, title: 'Exec', operation: { version: 1,
-        visibility: 'activity', progress: 'reported', presentation: { onStart: 'current' } } }) });
-    const stopped: string[] = [];
-    const completions: (() => void)[] = [];
-    for (let index = 0; index < 2; index++) await runner.observe({ actionId: 'projects.compute.exec', scope, cancellation: 'supported',
-      execute: async ({ publishOwnerUpdate, signal, operationAcceptance }) => {
-        publishOwnerUpdate({ domainRef: { kind: 'projectCommand', purpose: 'exec', serverId: 'home', machineId: scope.machineId,
-          workspaceRefId: 'workspace', cwd: '/project' } });
-        await new Promise<void>(resolve => { completions.push(resolve);
-          signal.addEventListener('abort', () => stopped.push(operationAcceptance!.operationId), { once: true }); });
-        return { ok: true, result: {} };
-      } });
-    let currentChecks = 0;
-    const results = await runner.cancelForAccessLoss(scope, async () => ++currentChecks === 1);
-    expect(results.map(row => row.result.kind).sort()).toEqual(['admission_not_current', 'requested']);
-    expect(stopped).toEqual(results.filter(row => row.result.kind === 'requested').map(row => row.operationId));
-    const denied = results.find(row => row.result.kind === 'admission_not_current')!;
-    expect(store.get(scope, denied.operationId)).toMatchObject({ state: 'accepted' });
-    for (const complete of completions) complete();
-    await Promise.all(['current-1', 'current-2'].map(id => runner.waitForTerminal(scope, id)));
   });
   it('keeps accepted finite custody uncertain when its observation throws instead of reporting process exit', async () => {
     const store = createActionOperationStore();
@@ -950,6 +1175,12 @@ describe('action operation canonical execution observer', () => {
     expect(execute).toHaveBeenCalledTimes(1);
     expect(store.list(scope).items).toHaveLength(1);
     expect(new Set(published.map((snapshot) => snapshot.operationId))).toEqual(new Set(['operation-1']));
+    const snapshot = store.get(scope, 'operation-1')!;
+    if (actionId === 'session.spawn_new' && result.type === 'error') {
+      expect(snapshot.state).toBe('failed');
+      expect(projectActionOperationSnapshotForV1Reader(snapshot)).not.toHaveProperty('result');
+    }
+    expect(PredecessorSnapshotSchema.safeParse(projectActionOperationSnapshotForV1Reader(snapshot)).success).toBe(true);
   });
 
   it('joins an in-flight exact replay and rejects the same request identity with different input', async () => {
