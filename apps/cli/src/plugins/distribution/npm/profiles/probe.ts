@@ -2,15 +2,18 @@ import type { PersistedNpmRegistryProfile } from '@/plugins/store/npmRegistries/
 
 import { createNpmRegistryHttpsClient, NpmRegistryHttpError } from '../httpsClient';
 
-export function createNpmRegistryProfileProbe(): (input: Readonly<{
+export function createNpmRegistryProfileProbe(http: Pick<Parameters<typeof createNpmRegistryHttpsClient>[0], 'request' | 'lookup'> = {}): (input: Readonly<{
   profile: PersistedNpmRegistryProfile;
   authorizationHeader?: string;
+  signal?: AbortSignal;
 }>) => Promise<Readonly<{ status: 'available' | 'authentication_failed' | 'offline' }>> {
-  return async ({ profile, authorizationHeader }) => {
+  return async ({ profile, authorizationHeader, signal }) => {
     const client = createNpmRegistryHttpsClient({
+      ...http,
       registryOrigin: profile.origin,
       allowPrivateNetwork: profile.allowPrivateNetwork,
       ...(authorizationHeader ? { authorizationHeader } : {}),
+      signal,
     });
     try {
       await client.getJson({

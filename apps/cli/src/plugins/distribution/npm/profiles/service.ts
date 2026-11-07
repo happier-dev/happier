@@ -1,6 +1,7 @@
 import { DaemonNpmRegistryProfileMutationRequestV1Schema, DaemonNpmRegistryProfileMutationResponseV1Schema, DaemonNpmRegistryProfileSnapshotV1Schema } from '@happier-dev/protocol/rpc/npmRegistryProfiles';
 import type { DaemonNpmRegistryProfileMutationRequestV1, DaemonNpmRegistryProfileMutationResponseV1, DaemonNpmRegistryProfileSnapshotV1 } from '@happier-dev/protocol/rpc/npmRegistryProfiles';
 import { createHash, randomUUID } from 'node:crypto';
+import { resolve } from 'node:path';
 
 import {
   createNpmRegistryProfileStore,
@@ -10,7 +11,7 @@ import {
 } from '@/plugins/store/npmRegistries/store';
 import { NPM_REGISTRY_AUTHORITY_LOCK_NAME, withPluginStoreLock } from '@/plugins/store/lock';
 
-import { NpmRegistryHttpError } from '../httpsClient';
+import { createNpmRegistryHttpsClient, NpmRegistryHttpError } from '../httpsClient';
 import { normalizeNpmArtifactRequest } from '../normalize';
 import type {
   NormalizeNpmArtifactRequestInput,
@@ -18,9 +19,12 @@ import type {
   NpmRegistryProfile,
 } from '../types';
 import { createNpmRegistryCredentialStore } from './credentials';
+import { readMachineNpmAuthorization, type NpmMachineConfigEnvironment } from './machineLogin';
+import { completeNpmWebLogin, startNpmWebLogin } from './webLogin';
 
 type ProbeResult = Readonly<{ status: 'available' | 'authentication_failed' | 'offline' }>;
 type MutationErrorCode = Extract<DaemonNpmRegistryProfileMutationResponseV1, { status: 'error' }>['code'];
+type SignIn = Readonly<{ authorizationHeader: string; machineNpmConfig?: Readonly<{ projectDir: string }> }>;
 
 export class NpmRegistryProfileOperationError extends Error {
   readonly code: 'authentication_failed' | 'authentication_required' | 'source_changed';
@@ -56,7 +60,8 @@ function rpcError(code: MutationErrorCode, options?: Readonly<{
 
 function mutationFingerprint(request: DaemonNpmRegistryProfileMutationRequestV1): string {
   const intent = request.action === 'login'
-    ? { action: request.action, profileId: request.profileId, credentialKind: request.credential.kind }
+    ? { action: request.action, profileId: request.profileId, credentialKind: request.credential.kind,
+        ...(request.credential.kind === 'bearer_token' ? {} : { credential: request.credential }) }
     : request;
   return createHash('sha256').update(JSON.stringify(intent), 'utf8').digest('hex');
 }
@@ -81,6 +86,7 @@ function sourceAuthorityEquals(
     || left.allowPrivateNetwork !== right.allowPrivateNetwork
     || left.credentialSecretRef !== right.credentialSecretRef
     || left.credentialRevision !== right.credentialRevision
+    || left.machineNpmConfig?.projectDir !== right.machineNpmConfig?.projectDir
     || left.scopes.length !== right.scopes.length
   ) {
     return false;
@@ -142,13 +148,13 @@ function recordCheck(
   origin: string,
   probe: ProbeResult,
   now: number,
-  signIn: Readonly<{ credentialSecretRef: string }> | null,
+  signIn: Readonly<{ credentialSecretRef: string | null; machineNpmConfig?: Readonly<{ projectDir: string }> }> | null,
 ): NpmRegistryProfileFile {
   return {
     ...current,
     profiles: current.profiles.map((entry) => entry.profileId === profileId ? {
       ...entry,
-      ...(signIn ? { credentialSecretRef: signIn.credentialSecretRef, credentialRevision: entry.credentialRevision + 1 } : {}),
+      ...(signIn ? { credentialSecretRef: signIn.credentialSecretRef, machineNpmConfig: signIn.machineNpmConfig, credentialRevision: entry.credentialRevision + 1 } : {}),
       availability: probe.status === 'authentication_failed' ? 'sign_in_required' : probe.status,
       lastSuccessfulCheckAtMs: probe.status === 'available' ? now : entry.lastSuccessfulCheckAtMs,
       updatedAtMs: now,
@@ -169,9 +175,12 @@ function answerCheck(
 export function createNpmRegistryProfileService(params: Readonly<{
   happyHomeDir?: string;
   now?: () => number;
+  npmConfig?: NpmMachineConfigEnvironment;
+  http?: Pick<Parameters<typeof createNpmRegistryHttpsClient>[0], 'request' | 'lookup'>;
   probe?: (input: Readonly<{
     profile: PersistedNpmRegistryProfile;
     authorizationHeader?: string;
+    signal?: AbortSignal;
   }>) => Promise<ProbeResult>;
 }> = {}): Readonly<{
   snapshot(): Promise<DaemonNpmRegistryProfileSnapshotV1>;
@@ -192,6 +201,12 @@ export function createNpmRegistryProfileService(params: Readonly<{
   const store = createNpmRegistryProfileStore({ happyHomeDir: params.happyHomeDir });
   const credentials = createNpmRegistryCredentialStore({ happyHomeDir: params.happyHomeDir });
   const now = params.now ?? Date.now;
+  const browserLogins = new Map<string, Readonly<{ loginId: string; doneUrl: string; origin: string; controller: AbortController }>>();
+
+  async function authorizationFor(profile: PersistedNpmRegistryProfile): Promise<string | undefined> {
+    if (profile.machineNpmConfig) return await readMachineNpmAuthorization(profile.origin, profile.machineNpmConfig.projectDir, params.npmConfig);
+    return profile.credentialSecretRef ? await credentials.get(profile.credentialSecretRef) ?? undefined : undefined;
+  }
 
   async function reconcileCredentialReferences(): Promise<void> {
     const file = await store.read();
@@ -217,7 +232,9 @@ export function createNpmRegistryProfileService(params: Readonly<{
 
   async function project(file: NpmRegistryProfileFile): Promise<DaemonNpmRegistryProfileSnapshotV1> {
     const profiles = await Promise.all(file.profiles.map(async (profile) => {
-      const hasCredentials = profile.credentialSecretRef !== null && await credentials.has(profile.credentialSecretRef);
+      const hasCredentials = profile.machineNpmConfig
+        ? Boolean(await authorizationFor(profile).catch(() => undefined))
+        : profile.credentialSecretRef !== null && await credentials.has(profile.credentialSecretRef);
       return {
         profileId: profile.profileId,
         displayName: profile.displayName,
@@ -227,7 +244,7 @@ export function createNpmRegistryProfileService(params: Readonly<{
         allowPrivateNetwork: profile.allowPrivateNetwork,
         hasCredentials,
         authenticationState: hasCredentials ? 'configured' as const : 'missing' as const,
-        availability: profile.credentialSecretRef !== null && !hasCredentials ? 'sign_in_required' as const : profile.availability,
+        availability: (profile.credentialSecretRef !== null || profile.machineNpmConfig) && !hasCredentials ? 'sign_in_required' as const : profile.availability,
         lastSuccessfulCheckAtMs: profile.lastSuccessfulCheckAtMs,
         updatedAtMs: profile.updatedAtMs,
       };
@@ -267,10 +284,10 @@ export function createNpmRegistryProfileService(params: Readonly<{
     }
   }
 
-  async function runProbe(profile: PersistedNpmRegistryProfile, authorizationHeader: string | undefined): Promise<ProbeResult> {
+  async function runProbe(profile: PersistedNpmRegistryProfile, authorizationHeader: string | undefined, signal?: AbortSignal): Promise<ProbeResult> {
     if (!params.probe) throw new Error('npm_registry_probe_unavailable');
     try {
-      return await params.probe({ profile, ...(authorizationHeader ? { authorizationHeader } : {}) });
+      return await params.probe({ profile, ...(authorizationHeader ? { authorizationHeader } : {}), ...(signal ? { signal } : {}) });
     } catch {
       return { status: 'offline' };
     }
@@ -279,24 +296,22 @@ export function createNpmRegistryProfileService(params: Readonly<{
   /**
    * Checks a sign-in's new credential before it is committed, outside the
    * authority lock exactly like `test`. The commit's expected revision still
-   * fences the profile that was checked. `null` when no check can run here: a
-   * service without a probe, a replayed mutation (answered by its receipt), or
-   * an unknown profile (answered by the commit).
+   * fences the selected profile that was checked. `null` when this service has
+   * no probe. The acquired credential never follows a later origin update.
    */
   async function checkSignIn(
-    request: Extract<DaemonNpmRegistryProfileMutationRequestV1, { action: 'login' }>,
+    profile: PersistedNpmRegistryProfile,
+    authorizationHeader: string,
+    signal?: AbortSignal,
   ): Promise<ProbeResult | null> {
     if (!params.probe) return null;
-    const file = await store.read();
-    if (file.mutations.some((entry) => entry.mutationId === request.mutationId)) return null;
-    const profile = file.profiles.find((entry) => entry.profileId === request.profileId);
-    if (!profile) return null;
-    return await runProbe(profile, `Bearer ${request.credential.secret}`);
+    return await runProbe(profile, authorizationHeader, signal);
   }
 
   async function mutateParsed(
     request: DaemonNpmRegistryProfileMutationRequestV1,
     signInCheck: ProbeResult | null = null,
+    signIn?: SignIn,
   ): Promise<DaemonNpmRegistryProfileMutationResponseV1> {
     if (request.action === 'add' || request.action === 'update') {
       const priorProfile = request.action === 'update'
@@ -310,6 +325,7 @@ export function createNpmRegistryProfileService(params: Readonly<{
           profileId: request.profileId,
           ...request.profile,
           credentialSecretRef: originChanged ? null : existing?.credentialSecretRef ?? null,
+          machineNpmConfig: originChanged ? undefined : existing?.machineNpmConfig,
           credentialRevision: originChanged ? (existing?.credentialRevision ?? 0) + 1 : existing?.credentialRevision ?? 0,
           availability: originChanged ? 'sign_in_required' : existing?.availability ?? 'unknown',
           lastSuccessfulCheckAtMs: originChanged ? null : existing?.lastSuccessfulCheckAtMs ?? null,
@@ -349,14 +365,16 @@ export function createNpmRegistryProfileService(params: Readonly<{
     if (!profile) return rpcError('not_found', { currentRevision: before.revision });
 
     if (request.action === 'login') {
-      const secretRef = credentialSecretRef(request.profileId, request.mutationId);
-      await credentials.set(secretRef, `Bearer ${request.credential.secret}`);
+      if (!signIn) return rpcError('authentication_required');
+      const secretRef = signIn.machineNpmConfig ? null : credentialSecretRef(request.profileId, request.mutationId);
+      if (secretRef) await credentials.set(secretRef, signIn.authorizationHeader);
       const result = await applyStoreMutation(request, (current) => {
         const currentProfile = current.profiles.find((entry) => entry.profileId === request.profileId);
         if (!currentProfile) throw new Error('profile_conflict');
         if (signInCheck) {
           return recordCheck(current, request.profileId, currentProfile.origin, signInCheck, now(), {
             credentialSecretRef: secretRef,
+            machineNpmConfig: signIn.machineNpmConfig,
           });
         }
         return {
@@ -364,6 +382,7 @@ export function createNpmRegistryProfileService(params: Readonly<{
           profiles: current.profiles.map((entry) => entry.profileId === request.profileId ? {
             ...entry,
             credentialSecretRef: secretRef,
+            machineNpmConfig: signIn.machineNpmConfig,
             credentialRevision: entry.credentialRevision + 1,
             availability: 'unknown',
             updatedAtMs: now(),
@@ -372,7 +391,7 @@ export function createNpmRegistryProfileService(params: Readonly<{
         };
       });
       if ('status' in result) {
-        await credentials.delete(secretRef).catch(() => undefined);
+        if (secretRef) await credentials.delete(secretRef).catch(() => undefined);
         return result;
       }
       if (profile.credentialSecretRef && profile.credentialSecretRef !== secretRef) {
@@ -394,6 +413,7 @@ export function createNpmRegistryProfileService(params: Readonly<{
             : current.profiles.map((entry) => entry.profileId === request.profileId ? {
               ...entry,
               credentialSecretRef: null,
+              machineNpmConfig: undefined,
               credentialRevision: entry.credentialRevision + 1,
               availability: 'sign_in_required',
               updatedAtMs: now(),
@@ -413,8 +433,8 @@ export function createNpmRegistryProfileService(params: Readonly<{
 
     if (!params.probe) return rpcError('unavailable', { retryable: true });
     let authorizationHeader: string | undefined;
-    if (profile.credentialSecretRef) {
-      authorizationHeader = await credentials.get(profile.credentialSecretRef) ?? undefined;
+    if (profile.credentialSecretRef || profile.machineNpmConfig) {
+      authorizationHeader = await authorizationFor(profile);
       if (!authorizationHeader) return rpcError('authentication_required');
     }
     const probe = await runProbe(profile, authorizationHeader);
@@ -430,8 +450,65 @@ export function createNpmRegistryProfileService(params: Readonly<{
     if (!parsed.success) return rpcError('invalid_request');
     const request = parsed.data;
     if (request.action === 'test') return await mutateParsed(request);
-    const signInCheck = request.action === 'login' ? await checkSignIn(request) : null;
-    return await withAuthority(async () => await mutateParsed(request, signInCheck));
+    if (request.action !== 'login') {
+      const result = await withAuthority(async () => await mutateParsed(request));
+      if (result.status === 'success' && (request.action === 'logout' || request.action === 'remove' || request.action === 'update')) {
+        browserLogins.get(request.profileId)?.controller.abort();
+        browserLogins.delete(request.profileId);
+      }
+      return result;
+    }
+
+    const credential = request.credential;
+    const pending = browserLogins.get(request.profileId);
+    if (credential.kind === 'browser' && credential.step === 'cancel') {
+      if (!pending || pending.loginId !== credential.loginId) return rpcError('not_found');
+      pending.controller.abort();
+      browserLogins.delete(request.profileId);
+      return { status: 'cancelled' };
+    }
+    const file = await store.read();
+    if (file.mutations.some((entry) => entry.mutationId === request.mutationId)) {
+      return await withAuthority(async () => await mutateParsed(request));
+    }
+    if (file.revision !== request.expectedRevision) return rpcError('revision_conflict', { currentRevision: file.revision });
+    const profile = file.profiles.find((entry) => entry.profileId === request.profileId);
+    if (!profile) return rpcError('not_found');
+    let signIn: SignIn;
+    let active: typeof pending;
+    try {
+      if (credential.kind === 'machine') {
+        const projectDir = resolve(credential.projectDir ?? params.npmConfig?.cwd ?? process.cwd());
+        const authorizationHeader = await readMachineNpmAuthorization(profile.origin, projectDir, params.npmConfig);
+        if (!authorizationHeader) return rpcError('authentication_required');
+        signIn = { authorizationHeader, machineNpmConfig: { projectDir } };
+      } else if (credential.kind === 'browser') {
+        const client = createNpmRegistryHttpsClient({ ...params.http, registryOrigin: profile.origin, allowPrivateNetwork: profile.allowPrivateNetwork });
+        if (credential.step === 'start') {
+          const { loginUrl, doneUrl } = await startNpmWebLogin(client, profile.origin);
+          pending?.controller.abort();
+          const loginId = randomUUID();
+          browserLogins.set(request.profileId, { loginId, doneUrl, origin: profile.origin, controller: new AbortController() });
+          return { status: 'browser_login_required', loginId, loginUrl };
+        }
+        if (!pending || pending.loginId !== credential.loginId || pending.origin !== profile.origin) return rpcError('not_found');
+        active = pending;
+        signIn = { authorizationHeader: await completeNpmWebLogin(client, pending.doneUrl, pending.controller.signal) };
+      } else signIn = { authorizationHeader: `Bearer ${credential.secret}` };
+      const signInCheck = await checkSignIn(profile, signIn.authorizationHeader, active?.controller.signal);
+      active?.controller.signal.throwIfAborted();
+      return await withAuthority(async () => {
+        active?.controller.signal.throwIfAborted();
+        return await mutateParsed(request, signInCheck, signIn);
+      });
+    } catch (error) {
+      if (active?.controller.signal.aborted) return { status: 'cancelled' };
+      if (credential.kind === 'browser' && error instanceof NpmRegistryHttpError
+          && (error.statusCode >= 400 && error.statusCode < 500 || error.statusCode === 500)) return rpcError('web_login_unsupported');
+      return rpcError('unavailable', { retryable: true });
+    } finally {
+      if (active && browserLogins.get(request.profileId) === active) browserLogins.delete(request.profileId);
+    }
   }
 
   async function withAuthorization<T>(profileId: string, use: (input: Readonly<{
@@ -442,10 +519,8 @@ export function createNpmRegistryProfileService(params: Readonly<{
       const file = await store.read();
       const profile = file.profiles.find((entry) => entry.profileId === profileId);
       if (!profile) throw new Error('npm_registry_profile_not_found');
-      const authorizationHeader = profile.credentialSecretRef
-        ? await credentials.get(profile.credentialSecretRef) ?? undefined
-        : undefined;
-      if (profile.credentialSecretRef && !authorizationHeader) throw new Error('npm_registry_authentication_required');
+      const authorizationHeader = await authorizationFor(profile);
+      if ((profile.credentialSecretRef || profile.machineNpmConfig) && !authorizationHeader) throw new Error('npm_registry_authentication_required');
       return { profile, ...(authorizationHeader ? { authorizationHeader } : {}) };
     });
     return await use(access);
@@ -472,10 +547,8 @@ export function createNpmRegistryProfileService(params: Readonly<{
         profileId: profile.profileId,
       });
     }
-    const authorizationHeader = profile?.credentialSecretRef
-      ? await credentials.get(profile.credentialSecretRef) ?? undefined
-      : undefined;
-    if (profile?.credentialSecretRef && !authorizationHeader) {
+    const authorizationHeader = profile ? await authorizationFor(profile) : undefined;
+    if ((profile?.credentialSecretRef || profile?.machineNpmConfig) && !authorizationHeader) {
       throw new NpmRegistryProfileOperationError('authentication_required', {
         origin: request.registryOrigin,
         profileId: profile.profileId,
