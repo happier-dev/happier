@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import type { ServerFetchOptions } from '@/sync/http/client';
 import type { FetchedMachineRow, MachineDataKeyCacheEntry } from './syncMachines';
 import type { Machine } from '@/sync/domains/state/storageTypes';
-import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createMachineFixture, createPlainMachineRowFixture, createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { Encryption } from '@/sync/encryption/encryption';
 import { buildMachineDisplayRenderableFromMachine, type MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
 import { createStore } from 'zustand/vanilla';
@@ -106,6 +107,87 @@ async function loadFetchAndApplyMachines() {
 }
 
 describe('fetchAndApplyMachines request override', () => {
+    it('reads only changed Machines and preserves census recovery for withdrawn access', async () => {
+        const { createCapturedServerReadTransport } = await import('@/sync/runtime/orchestration/serverScopedRpc/capturedServerReadTransport');
+        const fetchAndApplyMachines = await loadFetchAndApplyMachines();
+        const store = createMachineStore();
+        const fleet = Array.from({ length: 137 }, (_, index) => createPlainMachineRowFixture({ id: `machine-${index}`, accountId: 'account-1' }));
+        const requests: string[] = [];
+        const selections: string[][] = [];
+        let available = fleet;
+        let sparse = false;
+        const request = async (path: string, init?: RequestInit) => {
+            requests.push(new URL(path, 'https://home.test').pathname);
+            if (path === '/v1/machines/read-batch') {
+                const { machineIds } = JSON.parse(String(init?.body)) as { machineIds: string[] };
+                selections.push(machineIds);
+                return createMachineReadBatchResponseFixture({ machineIds }, id => {
+                    const row = available.find(row => row.id === id) ?? null;
+                    return sparse && row ? { ...row, seq: undefined } : row;
+                });
+            }
+            return jsonResponse(available);
+        };
+        function requestWithResponse(path: string, init?: RequestInit, options?: ServerFetchOptions): Promise<Response>;
+        function requestWithResponse<T>(path: string, init: RequestInit | undefined, options: ServerFetchOptions | undefined,
+            consume: (response: Response) => Promise<T>): Promise<T>;
+        async function requestWithResponse<T>(path: string, init?: RequestInit, _options?: ServerFetchOptions,
+            consume?: (response: Response) => Promise<T>): Promise<Response | T> {
+            const response = await request(path, init);
+            return consume ? await consume(response) : response;
+        }
+        const readTransport = createCapturedServerReadTransport({ serverId: 'machine-selection.test', credentials: legacyCredentials,
+            prepared: { endpointUrl: 'https://home.test', generation: 1,
+                request: requestWithResponse } });
+        const refresh = (machineIds?: readonly string[]) => fetchAndApplyMachines({
+            credentials: legacyCredentials, expectedAccountMode: 'plain',
+            encryption: null, machineDataKeys: new Map(), request, readTransport, machineIds, replace: true, throwOnError: true,
+            getMachineSnapshot: () => store.getState().machines,
+            getExistingMachine: id => store.getState().machines[id],
+            applyMachines: (rows, replace) => store.getState().applyMachines(rows, replace),
+        });
+        await refresh();
+        const untouched = store.getState().machines['machine-136'];
+        requests.length = 0;
+        await refresh([]);
+        expect(requests).toEqual([]);
+        available = fleet.map(row => row.id === 'machine-0' ? { ...row, daemonStateVersion: (row.daemonStateVersion ?? 0) + 1 } : row);
+        const { applyPlannedChangeActions } = await import('@/sync/runtime/orchestration/changesApplier');
+        const { planSyncActionsFromChanges } = await import('@/sync/runtime/orchestration/changesPlanner');
+        const result = await applyPlannedChangeActions({
+            credentials: legacyCredentials,
+            planned: planSyncActionsFromChanges([
+                { cursor: 1, kind: 'machine', entityId: 'machine-0', changedAt: 1, hint: null },
+                { cursor: 2, kind: 'machineRecipientAccess', entityId: 'machine-0', changedAt: 2, hint: null },
+            ]),
+            isSessionMessagesLoaded: () => false,
+            invalidate: { machines: async machineIds => { await refresh(machineIds); } },
+            invalidateMessagesForSession: async () => {}, invalidateScmStatusForSession: () => {},
+            applyTodoSocketUpdates: async () => {}, kvBulkGet: async () => ({ values: [] }),
+        });
+        expect(result.status).toBe('complete');
+        expect(requests).toEqual(['/v1/machines/read-batch']);
+        expect(selections).toEqual([['machine-0']]);
+        expect(store.getState().machines['machine-0']?.daemonStateVersion).toBe(available[0]!.daemonStateVersion);
+        expect(store.getState().machines['machine-136']).toBe(untouched);
+        expect(Object.keys(store.getState().machines)).toHaveLength(137);
+        requests.length = 0;
+        sparse = true;
+        await refresh(['machine-0']);
+        expect(requests).toEqual(['/v1/machines/read-batch', '/v1/machines']);
+        expect(store.getState().machines['machine-136']).toBe(untouched);
+        sparse = false;
+        requests.length = 0;
+        await refresh(['not-in-discovery']);
+        expect(requests).toEqual(['/v1/machines']);
+        expect(Object.keys(store.getState().machines)).toHaveLength(137);
+        requests.length = 0;
+        available = available.filter(row => row.id !== 'machine-0');
+        await refresh(['machine-0']);
+        expect(requests).toEqual(['/v1/machines/read-batch', '/v1/machines']);
+        expect(store.getState().machines['machine-0']).toBeUndefined();
+        expect(store.getState().machines['machine-136']).toBe(untouched);
+    });
     it('retains revoked predecessor identity for Session replacement resolution', async () => {
         const { fetchMachineRows } = await import('./syncMachines');
         const old = { ...createPlainMachineRowFixture({ id: 'old', accountId: 'account-1' }), active: false, revokedAt: 1, replacedByMachineId: 'current' };

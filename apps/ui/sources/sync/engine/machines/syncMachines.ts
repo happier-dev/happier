@@ -20,7 +20,7 @@ import { encodeBase64 } from '@/encryption/base64';
 import { yieldToEventLoop } from '@/sync/encryption/cryptoBatchYield';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { hasCurrentMachineContent } from '@/sync/domains/machines/resolveServerScopedMachines';
-import { readMachineCensus } from '@/sync/api/machines/machineRowsApi';
+import { readMachineCensus, readMachineRows } from '@/sync/api/machines/machineRowsApi';
 import type { CapturedServerReadTransport } from '@/sync/runtime/orchestration/serverScopedRpc/capturedServerReadTransport';
 import { captureMachinePresenceObservation } from '@/sync/domains/machines/reachability/machineReachability';
 import { createServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -479,6 +479,8 @@ function isMachineHydrationSnapshotCurrent(current: Machine | null, captured: Ma
 
 export async function fetchAndApplyMachines(params: {
     credentials: AuthCredentials;
+    /** A named push refreshes these rows through the existing captured exact reader. */
+    machineIds?: readonly string[];
     /** Persisted custodian Account mode for owner rows without an access projection. */
     expectedAccountMode?: 'plain' | 'e2ee';
     readAccountMode?: () => Promise<'plain' | 'e2ee'>;
@@ -506,8 +508,8 @@ export async function fetchAndApplyMachines(params: {
     /** Called after the complete list is published, including display-first hydration. */
     onListComplete?: () => void;
     /**
-     * When true, drop any locally-cached machines that are missing from the
-     * latest fetch response.
+     * When true, publish a complete inventory replacement only while its
+     * captured membership is current; omission can mean withdrawn access.
      *
      * Defaults to false to keep machine lists stable during transient server
      * inconsistencies (SWR-style) and to avoid confusing UI flicker.
@@ -523,6 +525,7 @@ export async function fetchAndApplyMachines(params: {
      */
     throwOnError?: boolean;
 }): Promise<void> {
+    if (params.machineIds?.length === 0) return;
     const { credentials, encryption, machineDataKeys, applyMachines } = params;
     let viewerAccountId: string | null = null;
     try { viewerAccountId = parseToken(credentials.token); } catch { /* Historical token-only Plain reads need no content key. */ }
@@ -532,15 +535,35 @@ export async function fetchAndApplyMachines(params: {
     const throwOnError = params.throwOnError === true;
     const isRequestMachineContextCurrent = encryption?.captureMachineEncryptionContextRead();
     const requestMachineSnapshot = params.getMachineSnapshot?.();
+    const isCensusMembershipCurrent = () => !requestMachineSnapshot || !params.getMachineSnapshot
+        || Object.entries(params.getMachineSnapshot()).every(([id, machine]) =>
+            isMachineReadSnapshotCurrent(machine, incumbentRows.get(id) ?? requestMachineSnapshot[id]));
 
     let machines: readonly FetchedMachineRow[];
+    let completeCensus = true;
     try {
-        machines = await fetchMachineRows({
+        // New/unknown discovery still uses the persistent-only census. Exact
+        // selection also admits Session runners and must not broaden discovery.
+        const knownSelection = params.machineIds?.every(id => requestMachineSnapshot?.[id] ?? params.getExistingMachine?.(id));
+        const selected = knownSelection && params.machineIds && params.readTransport ? await readMachineRows({
+            machineIds: params.machineIds, readTransport: params.readTransport, signal: params.signal,
+        }) : undefined;
+        // The exact wire also serves key-preparation readers with sparse rows.
+        // Inventory publication needs the complete liveness/identity carriers.
+        const selectedRows = selected && [...selected.values()].flatMap(row => row
+            && typeof row.seq === 'number' && typeof row.active === 'boolean' && typeof row.activeAt === 'number'
+            && typeof row.createdAt === 'number' && typeof row.updatedAt === 'number'
+            ? [{ ...row, seq: row.seq, active: row.active, activeAt: row.activeAt, createdAt: row.createdAt, updatedAt: row.updatedAt }]
+            : []);
+        // Only a complete current census owns withdrawal by omission. Keep that
+        // recovery for an absent/inaccessible row; ordinary named changes patch.
+        completeCensus = !selectedRows || selectedRows.length !== selected!.size;
+        machines = completeCensus ? await fetchMachineRows({
             credentials,
             ...(params.request ? { request: params.request } : {}),
             readTransport: params.readTransport,
             signal: params.signal,
-        });
+        }) : selectedRows!;
     } catch (error) {
         if (shouldContinue()) params.onListUnavailable?.(error);
         if (throwOnError) {
@@ -645,7 +668,7 @@ export async function fetchAndApplyMachines(params: {
                 && !hasCurrentMachineContent(merged) && !canRetainOpenedMachineContent(merged, presence)
                 ? { ...merged, availability: undefined } : merged;
         });
-        applyMachines(current, replace && current.length === incoming.length,
+        applyMachines(current, replace && current.length === incoming.length && isCensusMembershipCurrent(),
             current.flatMap(machine => {
                 const row = capturedRows.get(machine.id);
                 return row ? [row] : [];
@@ -961,7 +984,8 @@ export async function fetchAndApplyMachines(params: {
                 },
             };
         });
-        const replace = (params.replace ?? false) && !hasOlderRows && machines.every((machine) => isMachineCurrent(machine.id));
+        const replace = completeCensus && (params.replace ?? false) && !hasOlderRows
+            && isCensusMembershipCurrent() && machines.every((machine) => isMachineCurrent(machine.id));
         params.applyMachineDisplayEntries!(displayEntries, { replace });
         applyCurrentMachines(warmMachines, replace);
         hydratingPublishedRows = true;
@@ -1052,7 +1076,7 @@ export async function fetchAndApplyMachines(params: {
     // Prefer SWR-style merges by default: do not drop machines that are missing from a
     // particular refresh response unless the caller opts into a hard replace.
     if (!shouldContinue()) return;
-    applyCurrentMachines(decryptedMachines, (params.replace ?? false) && !hasOlderRows && machines.every((machine) => isMachineCurrent(machine.id)));
+    applyCurrentMachines(decryptedMachines, completeCensus && (params.replace ?? false) && !hasOlderRows && machines.every((machine) => isMachineCurrent(machine.id)));
     if (shouldContinue()) params.onListComplete?.();
     log.log(`🖥️ fetchMachines completed - processed ${decryptedMachines.length} machines`);
 }

@@ -1443,6 +1443,8 @@ class Sync {
     private profileSync: InvalidateSync;
     private purchasesSync: InvalidateSync;
     private machinesSync: InvalidateSync;
+    // Selection belongs to the incumbent invalidation queue; null demands discovery.
+    private machineRefreshIds: Set<string> | null = null;
     private nativeUpdateSync: InvalidateSync;
     private artifactsSync: InvalidateSync;
     private artifactInventoryConsumers = new Set<Readonly<{
@@ -1730,7 +1732,16 @@ class Sync {
             });
             this.profileSync = new InvalidateSync(this.fetchProfile, { onError, onSuccess, onRetry, pause, backoff, shouldRetry });
             this.purchasesSync = new InvalidateSync(this.syncPurchases, { onError, onSuccess, onRetry, pause, backoff, shouldRetry });
-            this.machinesSync = new InvalidateSync(this.fetchMachines, { onError, onSuccess, onRetry, pause, backoff, shouldRetry });
+            this.machinesSync = new InvalidateSync(async () => {
+                const ids = this.machineRefreshIds;
+                const generation = this.serverScopeGeneration;
+                this.machineRefreshIds = new Set();
+                try { await this.fetchMachines(ids === null ? undefined : [...ids]); }
+                catch (error) {
+                    if (this.serverScopeGeneration === generation) this.selectMachineRefresh(ids === null ? undefined : [...ids]);
+                    throw error;
+                }
+            }, { onError, onSuccess, onRetry, pause, backoff, shouldRetry });
             this.nativeUpdateSync = new InvalidateSync(this.fetchNativeUpdate, { pause, backoff, shouldRetry });
             this.artifactsSync = new InvalidateSync(this.refreshDemandedArtifactInventories, { pause, backoff, shouldRetry });
             this.friendsSync = new InvalidateSync(this.fetchFriends, { pause, backoff, shouldRetry });
@@ -3534,6 +3545,7 @@ class Sync {
         this.sessionDataKeyEnvelopes.clear();
         this.machineDataKeys.clear();
         this.machineRecipientChangeCursors.clear();
+        this.machineRefreshIds = null;
         this.publishedAccountChangeCursors = new Map();
         this.artifactDataKeys.clear();
 
@@ -8175,6 +8187,7 @@ class Sync {
                       if (!shouldContinue()) {
                           return;
                       }
+                      if (syncUnit === this.machinesSync) this.selectMachineRefresh();
                       syncUnit.invalidateCoalesced();
                       await syncUnit.awaitQueue({ timeoutMs, signal });
                   };
@@ -8361,6 +8374,7 @@ class Sync {
 
           // Each peripheral publishes its own loading/error state. These queues
           // and independent lists never wait for whole-Account draft recovery.
+          this.selectMachineRefresh();
           for (const syncUnit of [
               this.accountPetsSync, this.machinesSync, this.artifactsSync,
               this.pluginAvailabilitySync, this.purchasesSync,
@@ -8409,6 +8423,7 @@ class Sync {
 
           const invalidateBounded = async (syncUnit: InvalidateSync, timeoutMs: number) => {
               if (!isCurrent()) return { status: 'stopped' } as const;
+              if (syncUnit === this.machinesSync) this.selectMachineRefresh();
               try {
                   return await syncUnit.invalidateAndAwait({ timeoutMs, signal: opts.signal });
               } catch (error) {
@@ -9400,7 +9415,12 @@ class Sync {
         });
     }
 
-    private fetchMachines = async () => {
+    private selectMachineRefresh(machineIds?: readonly string[]): void {
+        if (machineIds === undefined) this.machineRefreshIds = null;
+        else if (this.machineRefreshIds !== null) for (const id of machineIds) this.machineRefreshIds.add(id);
+    }
+
+    private fetchMachines = async (machineIds?: readonly string[]) => {
         if (!await this.awaitBootstrapForegroundAcquisition()) return;
         if (!this.credentials) return;
         const credentials = this.credentials;
@@ -9420,6 +9440,7 @@ class Sync {
 
         await fetchAndApplyMachines({
             credentials,
+            machineIds,
             readAccountMode: async () => (await fetchAccountEncryptionMode(credentials, { request: this.createAppliedTransportRequest(appliedTransportTarget), usage: 'identity' })).mode,
             request: this.createAppliedTransportRequest(appliedTransportTarget),
             readTransport,
@@ -13008,7 +13029,8 @@ class Sync {
                         invalidate: {
                             settings: () => invalidateForResume(this.settingsSync),
                             profile: () => invalidateForResume(this.profileSync),
-                            machines: async () => {
+                            machines: async machineIds => {
+                                this.selectMachineRefresh(machineIds);
                                 await invalidateForResume(this.machinesSync);
                                 refreshedByCatchUp.machines = true;
                             },
@@ -13353,7 +13375,10 @@ class Sync {
               onMessageGapDetected: (sessionId, info) => { if (hasCurrentCarrier(sessionId)) this.recoverSessionMessageGap(sessionId, info); },
               assumeUsers: (userIds) => this.assumeUsers(userIds),
               applyTodoSocketUpdates: (changes) => this.applyTodoSocketUpdates(changes),
-              invalidateMachines: () => this.machinesSync.invalidate(),
+              invalidateMachines: machineId => {
+                  this.selectMachineRefresh(machineId ? [machineId] : undefined);
+                  this.machinesSync.invalidate();
+              },
               invalidateSessions: () => this.sessionsSync.invalidate(),
             invalidateArtifacts: () => this.artifactsSync.invalidate(),
             invalidateFriends: () => this.friendsSync.invalidate(),

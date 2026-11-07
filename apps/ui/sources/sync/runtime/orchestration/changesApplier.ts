@@ -13,7 +13,7 @@ import {
 import { runTasksWithLimit } from './runTasksWithLimit';
 import type { ApiChangeEntry } from '@/sync/api/types/apiTypes';
 import { canonicalSessionDraftAddressV2, type SessionDraftAddressV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
-import { readSessionUpdatedMessageChangeHintV1 } from '@happier-dev/protocol/changes';
+import { readSessionUpdatedMessageChangeHintV1, isMachineProjectionChangeKindV1 } from '@happier-dev/protocol/changes';
 
 export type TodoSocketUpdate = Readonly<{
     key: string;
@@ -54,7 +54,7 @@ export async function applyPlannedChangeActions(params: {
     invalidate: {
         settings?: () => Promise<void>;
         profile?: () => Promise<void>;
-        machines?: () => Promise<void>;
+        machines?: (machineIds?: readonly string[]) => Promise<void>;
         machinePools?: () => Promise<void>;
         /** Refresh exactly the Artifact rows named by this durable Account-change page. */
         artifacts?: (artifactIds: readonly string[]) => Promise<void>;
@@ -203,7 +203,11 @@ export async function applyPlannedChangeActions(params: {
 
     if (planned.invalidate.settings) tasks.push(() => params.invalidate.settings?.() ?? Promise.resolve());
     if (planned.invalidate.profile) tasks.push(() => params.invalidate.profile?.() ?? Promise.resolve());
-    if (planned.invalidate.machines) tasks.push(() => params.invalidate.machines?.() ?? Promise.resolve());
+    if (planned.invalidate.machines) {
+        const machineIds = [...new Set(planned.changes.filter(change => isMachineProjectionChangeKindV1(change.kind))
+            .map(change => change.entityId).filter(Boolean))];
+        tasks.push(() => params.invalidate.machines?.(machineIds.length ? machineIds : undefined) ?? Promise.resolve());
+    }
     if (planned.invalidate.machinePools) {
         tasks.push(async () => {
             try {

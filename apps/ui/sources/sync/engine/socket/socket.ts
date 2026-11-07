@@ -1136,7 +1136,7 @@ export async function handleSocketUpdate(params: {
     onMessageGapDetected: (sessionId: string, info: { prevMaterializedMaxSeq: number; messageSeq: number | null }) => void;
     assumeUsers: (userIds: string[]) => Promise<void>;
     applyTodoSocketUpdates: (changes: any[]) => Promise<void>;
-    invalidateMachines: () => void;
+    invalidateMachines: (machineId?: string) => void;
     invalidateSessions: () => void;
     invalidateArtifacts: () => void;
     invalidateFriends: () => void;
@@ -1272,7 +1272,7 @@ export async function handleUpdateContainer(params: {
     onMessageGapDetected: (sessionId: string, info: { prevMaterializedMaxSeq: number; messageSeq: number | null }) => void;
     assumeUsers: (userIds: string[]) => Promise<void>;
     applyTodoSocketUpdates: (changes: any[]) => Promise<void>;
-    invalidateMachines: () => void;
+    invalidateMachines: (machineId?: string) => void;
     invalidateSessions: () => void;
     invalidateArtifacts: () => void;
     invalidateFriends: () => void;
@@ -2025,7 +2025,7 @@ export async function handleUpdateContainer(params: {
         const existingMachine = storage.getState().machines[machineId];
         if (existingMachine && (machineUpdate.metadataVersion < existingMachine.metadataVersion
             || machineUpdate.daemonStateVersion < existingMachine.daemonStateVersion)) {
-            invalidateMachines();
+            invalidateMachines(machineId);
             return;
         }
 
@@ -2066,7 +2066,7 @@ export async function handleUpdateContainer(params: {
                     ...(access.success ? { access: access.data, isShared: access.data.custodian.accountId !== viewerAccountId } : {}),
                 }], false, { sourceServerId });
             }
-            invalidateMachines();
+            invalidateMachines(machineId);
             return;
         }
         let decryptedDataKey: Uint8Array | null = null;
@@ -2160,7 +2160,7 @@ export async function handleUpdateContainer(params: {
         }], false, { sourceServerId });
 
         // Hydrate machine details + encryption keys via the existing machines sync pipeline.
-        invalidateMachines();
+        invalidateMachines(machineId);
     } else if (updateData.body.t === 'update-machine') {
         const machineUpdate = updateData.body;
         const machineId = machineUpdate.machineId; // Changed from .id to .machineId
@@ -2172,7 +2172,7 @@ export async function handleUpdateContainer(params: {
         if (machine && ('dataEncryptionKey' in machineUpdate || 'keyBasis' in machineUpdate || 'access' in machineUpdate)
             && ((metadataVersion !== undefined && metadataVersion < machine.metadataVersion)
             || (daemonStateVersion !== undefined && daemonStateVersion < machine.daemonStateVersion))) {
-            invalidateMachines();
+            invalidateMachines(machineId);
             return;
         }
 
@@ -2193,7 +2193,7 @@ export async function handleUpdateContainer(params: {
                     ...machine, metadata: null, daemonState: null,
                     availability: { kind: 'locked', reason: 'encryption_material_unavailable' },
                 }], false, { sourceServerId });
-                invalidateMachines();
+                invalidateMachines(machineId);
                 return;
             }
         }
@@ -2207,13 +2207,13 @@ export async function handleUpdateContainer(params: {
             getMachineEncryption: (id) => encryption?.getMachineEncryption(id) ?? null,
         });
         if (!updatedMachine) {
-            invalidateMachines();
+            invalidateMachines(machineId);
             return;
         }
         if (!shouldContinue()) return;
         // A neighboring socket update or snapshot may have committed during decryption.
         if (storage.getState().machines[machineId] !== machine) {
-            invalidateMachines();
+            invalidateMachines(machineId);
             return;
         }
 
@@ -2225,7 +2225,7 @@ export async function handleUpdateContainer(params: {
             ...(access.success ? { access: access.data } : {}),
         }], false, { sourceServerId });
         if (!encryption?.getMachineEncryption(machineId)) {
-            invalidateMachines();
+            invalidateMachines(machineId);
         }
     } else if (updateData.body.t === 'relationship-updated') {
         log.log('👥 Received relationship-updated update');
