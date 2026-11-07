@@ -61,10 +61,14 @@ export function createFirstConversationAgentFixture(promptMarker: string, option
             async stop() { return { status: 'notRunning' }; }, async dispose() {},
           };
         }, async openConversation(request, { services }) {
-          if (request.kind !== 'create') throw new Error('First conversation must create one native Run');
+          ${options.nativeSession
+            ? `if (request.kind === 'fork' || request.kind === 'resume' && request.checkpointId !== ${JSON.stringify(options.nativeSession.providerSessionId)}) throw new Error('Native resume changed the provider Session id');`
+            : "if (request.kind !== 'create') throw new Error('First conversation must create one native Run');"}
           let listener;
           return {
-            watch(next) { listener = next; return { dispose() { listener = undefined; } }; },
+            watch(next) { listener = next;
+              ${options.nativeSession ? `listener({ kind: 'provider-session-id', providerSessionId: ${JSON.stringify(options.nativeSession.providerSessionId)} });` : ''}
+              return { dispose() { listener = undefined; } }; },
             async send(input) {
               listener({ kind: 'input-accepted', inputIds: input.inputIds, delivery: input.delivery });
               listener({ kind: 'turn-start', turnId: input.delivery.turnId, startedBy: 'host' });

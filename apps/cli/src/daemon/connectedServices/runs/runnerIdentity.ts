@@ -20,12 +20,18 @@ export function createExecutionRunConnectedServicesRunnerIdentityCapture(params:
   return async ({ runnerPid, expectedParentSessionId, runId, controllerOccurrenceId }) => {
     if (runnerPid === process.pid && expectedParentSessionId === undefined && runId !== undefined) {
       const record = await readRetainedExecutionRunRecord(runId).catch(() => null);
-      const processIdentity = await readProcessIdentityByPid(process.pid);
       const attribution = record?.requesterWorkAttributionV1;
-      if (record?.state.runId === runId && record.state.sessionId === null
-        && record.ownerPid === process.pid && record.ownerProcessStartTimeMs !== undefined
-        && processIdentity?.processStartTimeMs !== undefined
-        && processGenerationMatches(record.ownerProcessStartTimeMs, processIdentity.processStartTimeMs)) {
+      if (record?.state.runId === runId && record.state.sessionId === null) {
+        const resume = record.state.status !== 'running' && controllerOccurrenceId
+          ? params.getApiMachineForSessions()?.captureExecutionRunResumeMaterialization(runId, controllerOccurrenceId) : null;
+        if (record.state.status === 'running') {
+          const processIdentity = await readProcessIdentityByPid(process.pid);
+          if (record.ownerPid !== process.pid || record.ownerProcessStartTimeMs === undefined
+            || processIdentity?.processStartTimeMs === undefined
+            || !processGenerationMatches(record.ownerProcessStartTimeMs, processIdentity.processStartTimeMs)) return null;
+        } else if (!resume?.isCurrent()) return null;
+        // A retained conversation can outlive its original daemon. Its exact
+        // admitted resume controller owns current custody on the replacement host.
         const requester = attribution && attribution.accountId !== params.externalActionAccountId
           ? params.getApiMachineForSessions()?.captureExecutionRunWorkflowRequester(runId) : null;
         // A Workflow borrows its already admitted requester. Attribution alone
@@ -36,9 +42,6 @@ export function createExecutionRunConnectedServicesRunnerIdentityCapture(params:
             || attribution.installationId !== readInstallationIdentityIfExistsSync()?.installationId
             || !isDeepStrictEqual(attribution, requester.bootstrap.attribution)
             || !requester.isCurrent() || !await requester.bootstrap.isCurrent())))) return null;
-        const resume = record.state.status !== 'running' && controllerOccurrenceId
-          ? params.getApiMachineForSessions()?.captureExecutionRunResumeMaterialization(runId, controllerOccurrenceId) : null;
-        if (record.state.status !== 'running' && !resume?.isCurrent()) return null;
         return Object.freeze({ identity: params, parentSessionId: null,
           ...(requester ? { requesterSessionBootstrap: requester.bootstrap } : {}),
           isCurrent: () => params.isCurrent() && (!requester || requester.isCurrent()) && (!resume || resume.isCurrent()) });
